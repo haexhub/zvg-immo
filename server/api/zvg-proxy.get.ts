@@ -47,17 +47,20 @@ export default defineEventHandler(async (event) => {
     return buf
   }
 
-  // Detail page: inject <base> so its relative CSS/images resolve, and rewrite
-  // its internal index.php links to also go through this proxy so the user
-  // doesn't hit upstream directly (which would fail without Referer).
+  // Detail page: rewrite upstream's relative resource URLs (images/foo.gif,
+  // images/basis.css) to absolute zvg-portal.de URLs so they still load, and
+  // route its internal index.php links through this proxy so the user doesn't
+  // hit upstream directly (which fails without Referer). We deliberately do
+  // NOT inject a <base> tag — that would also rebase our /api/zvg-proxy links
+  // against zvg-portal.de and break every rewritten link.
   let html = buf.toString('utf8')
   html = html.replace(
-    /<head[^>]*>/i,
-    (m) => `${m}\n  <base href="https://www.zvg-portal.de/">`,
+    /\b(src|href)=(["']?)(images\/[^"'\s>]+)\2/gi,
+    (_m, attr, q, path) => `${attr}=${q}https://www.zvg-portal.de/${path}${q}`,
   )
   // Rewrite internal links to go through our proxy. Covers three href shapes:
   //   index.php?button=...   (navigation)
-  //   ?button=showAnhang&... (PDF attachment links — relative to the injected <base>)
+  //   ?button=showAnhang&... (PDF attachment links — bare query strings)
   //   https://www.zvg-portal.de/{index.php,}?...
   // Trailing whitespace inside the attribute value is tolerated (upstream emits it).
   html = html.replace(
@@ -65,6 +68,8 @@ export default defineEventHandler(async (event) => {
     (_m, q, qs) => `href=${q}/api/zvg-proxy?${qs.replace(/&amp;/g, '&')}${q}`,
   )
   setHeader(event, 'content-type', 'text/html; charset=utf-8')
-  setHeader(event, 'cache-control', 'public, max-age=600')
+  // Short max-age + must-revalidate: detail HTML rewrites are tweaked often
+  // (e.g. earlier <base> bug stranded users on stale links for 10 min).
+  setHeader(event, 'cache-control', 'public, max-age=60, must-revalidate')
   return html
 })
