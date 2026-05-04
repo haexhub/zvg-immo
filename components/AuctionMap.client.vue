@@ -1,7 +1,16 @@
 <script setup lang="ts">
 import 'leaflet/dist/leaflet.css'
 import L from 'leaflet'
+import iconUrl from 'leaflet/dist/images/marker-icon.png'
+import iconRetinaUrl from 'leaflet/dist/images/marker-icon-2x.png'
+import shadowUrl from 'leaflet/dist/images/marker-shadow.png'
 import type { GeoAuction } from '~/server/api/auctions-geo.get'
+
+// Leaflet's default Icon resolves marker images via `_getIconUrl`, which
+// assumes the PNGs live at the site root. With Vite the assets are bundled
+// under hashed URLs, so we override the default with the imported URLs.
+delete (L.Icon.Default.prototype as { _getIconUrl?: () => string })._getIconUrl
+L.Icon.Default.mergeOptions({ iconUrl, iconRetinaUrl, shadowUrl })
 
 const props = defineProps<{
   auctions: GeoAuction[]
@@ -100,7 +109,7 @@ watch(() => props.auctions, refreshMarkers, { deep: false })
 </script>
 
 <template>
-  <div ref="mapEl" class="h-[70vh] w-full rounded-xl border shadow-sm overflow-hidden" />
+  <div ref="mapEl" class="isolate h-[70vh] w-full rounded-xl border shadow-sm overflow-hidden" />
 </template>
 
 <style>
