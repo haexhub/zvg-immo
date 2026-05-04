@@ -1,0 +1,115 @@
+<script setup lang="ts">
+import 'leaflet/dist/leaflet.css'
+import L from 'leaflet'
+import type { GeoAuction } from '~/server/api/auctions-geo.get'
+
+const props = defineProps<{
+  auctions: GeoAuction[]
+}>()
+
+const mapEl = ref<HTMLDivElement | null>(null)
+let map: L.Map | null = null
+let markersLayer: L.LayerGroup | null = null
+
+const GERMANY_CENTER: [number, number] = [51.1657, 10.4515]
+
+function formatEur(n: number | null): string {
+  if (n == null) return '–'
+  return n.toLocaleString('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
+}
+
+function formatDate(iso: string | null, fallback: string | null): string {
+  if (!iso) return fallback ?? '–'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return fallback ?? iso
+  return d.toLocaleString('de-DE', {
+    weekday: 'short', day: '2-digit', month: 'short',
+    hour: '2-digit', minute: '2-digit',
+  })
+}
+
+function buildPopupHtml(a: GeoAuction): string {
+  const thumb = a.thumbnailUrl
+    ? `<a href="${a.attachments.find((x) => x.kind === 'foto')?.proxyUrl ?? a.detailUrl}" target="_blank" rel="noopener">
+         <img src="${a.thumbnailUrl}" referrerpolicy="no-referrer"
+              style="width:100%;height:120px;object-fit:cover;border-radius:6px;display:block;margin-bottom:.5rem;">
+       </a>`
+    : ''
+  const links = [
+    a.pdfUrl ? `<a href="${a.pdfUrl}" target="_blank" rel="noopener">Bekanntmachung</a>` : '',
+    `<a href="${a.detailUrl}" target="_blank" rel="noopener">Details</a>`,
+  ].filter(Boolean).join(' · ')
+  return `
+    <div style="min-width:240px;font-family:system-ui;font-size:13px;line-height:1.45;">
+      ${thumb}
+      <div style="font-weight:600;font-size:14px;margin-bottom:2px;">${a.objekt ?? 'Objekt'}</div>
+      <div style="color:#6b7280;margin-bottom:.4rem;">${a.adresse ?? ''}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.4rem;font-size:12px;margin-bottom:.4rem;">
+        <div><div style="text-transform:uppercase;color:#6b7280;font-size:10px;">Termin</div>${formatDate(a.terminIso, a.terminText)}</div>
+        <div><div style="text-transform:uppercase;color:#6b7280;font-size:10px;">Verkehrswert</div>${formatEur(a.verkehrswertEur)}</div>
+      </div>
+      <div style="font-size:12px;border-top:1px solid #e5e7eb;padding-top:.4rem;">
+        <span style="color:#6b7280;">${a.amtsgericht} · ${a.aktenzeichen}</span><br>
+        ${links}
+      </div>
+    </div>
+  `
+}
+
+function refreshMarkers(): void {
+  if (!map || !markersLayer) return
+  markersLayer.clearLayers()
+  const points: [number, number][] = []
+  for (const a of props.auctions) {
+    if (a.lat == null || a.lng == null) continue
+    const marker = L.marker([a.lat, a.lng], {
+      title: `${a.objekt ?? ''} · ${a.adresse ?? ''}`,
+    })
+    marker.bindPopup(buildPopupHtml(a), { maxWidth: 300 })
+    marker.addTo(markersLayer)
+    points.push([a.lat, a.lng])
+  }
+  if (points.length > 0) {
+    const bounds = L.latLngBounds(points)
+    map.fitBounds(bounds, { padding: [40, 40], maxZoom: 12 })
+  } else {
+    map.setView(GERMANY_CENTER, 6)
+  }
+}
+
+onMounted(() => {
+  if (!mapEl.value) return
+  map = L.map(mapEl.value, { scrollWheelZoom: true }).setView(GERMANY_CENTER, 6)
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    maxZoom: 19,
+  }).addTo(map)
+  markersLayer = L.layerGroup().addTo(map)
+  refreshMarkers()
+})
+
+onBeforeUnmount(() => {
+  if (map) {
+    map.remove()
+    map = null
+    markersLayer = null
+  }
+})
+
+watch(() => props.auctions, refreshMarkers, { deep: false })
+</script>
+
+<template>
+  <div ref="mapEl" class="h-[70vh] w-full rounded-xl border shadow-sm overflow-hidden" />
+</template>
+
+<style>
+/* Leaflet popup styling to match shadcn-style cards */
+.leaflet-popup-content-wrapper {
+  border-radius: 8px;
+  padding: 4px;
+}
+.leaflet-popup-content {
+  margin: 8px 12px;
+}
+</style>

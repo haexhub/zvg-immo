@@ -1,0 +1,12 @@
+node_modules
+.nuxt
+.output
+.env
+.cache
+dist
+*.log
+.DS_Store
+.cache_zvg
+.playwright-mcp
+amtsgericht-open.png
+no-filters-map.png

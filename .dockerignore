@@ -1,0 +1,15 @@
+node_modules
+.nuxt
+.output
+.cache
+.cache_zvg
+.pnpm-store
+.git
+.gitignore
+.env
+.env.*
+*.log
+.DS_Store
+.vscode
+.idea
+no-filters-map.png

@@ -1,0 +1,15 @@
+services:
+  app:
+    build: .
+    image: zvg-immo:latest
+    container_name: zvg-immo
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - geocode-cache:/app/.cache_zvg
+    environment:
+      NODE_ENV: production
+
+volumes:
+  geocode-cache:
