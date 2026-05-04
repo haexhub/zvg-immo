@@ -6,11 +6,19 @@ import iconRetinaUrl from 'leaflet/dist/images/marker-icon-2x.png'
 import shadowUrl from 'leaflet/dist/images/marker-shadow.png'
 import type { GeoAuction } from '~/server/api/auctions-geo.get'
 
-// Leaflet's default Icon resolves marker images via `_getIconUrl`, which
-// assumes the PNGs live at the site root. With Vite the assets are bundled
-// under hashed URLs, so we override the default with the imported URLs.
-delete (L.Icon.Default.prototype as { _getIconUrl?: () => string })._getIconUrl
-L.Icon.Default.mergeOptions({ iconUrl, iconRetinaUrl, shadowUrl })
+// Pass an explicit Icon to every marker. Mutating L.Icon.Default at module
+// top level was tree-shaken by the production build, so the markers fell
+// back to relative filenames that 404 from the site root.
+const markerIcon = L.icon({
+  iconUrl,
+  iconRetinaUrl,
+  shadowUrl,
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  tooltipAnchor: [16, -28],
+  shadowSize: [41, 41],
+})
 
 const props = defineProps<{
   auctions: GeoAuction[]
@@ -72,6 +80,7 @@ function refreshMarkers(): void {
   for (const a of props.auctions) {
     if (a.lat == null || a.lng == null) continue
     const marker = L.marker([a.lat, a.lng], {
+      icon: markerIcon,
       title: `${a.objekt ?? ''} · ${a.adresse ?? ''}`,
     })
     marker.bindPopup(buildPopupHtml(a), { maxWidth: 300 })
