@@ -3,7 +3,6 @@
 // disk-cached so repeat calls are fast; the first cold run can take a couple
 // of minutes due to Nominatim's 1 req/s rate limit.
 
-import { crawlAll, crawlSingle } from '../crawlers/registry'
 import { geocodeAddress } from '../utils/geocode'
 import type { Auction, CrawlResult } from '~/types/auction'
 
@@ -26,14 +25,13 @@ export default defineEventHandler(async (event): Promise<GeoCrawlResult> => {
   // for missing addresses (subject to 1 req/s rate limit, slow on cold start).
   const fetchMissing = query.fetch !== '0'
 
-  let result: CrawlResult
-  if (country === 'all') {
-    result = await crawlAll({ immobilienOnly })
-  } else if (region === 'all') {
-    result = await crawlAll({ immobilienOnly, country })
-  } else {
-    result = await crawlSingle({ country, region, immobilienOnly })
-  }
+  // Reuse the /api/auctions handler instead of calling crawlAll directly.
+  // That route is SWR-cached (see nuxt.config.ts), so a hot cache returns in
+  // a few ms. Calling crawlAll here would re-run the full multi-state crawl
+  // on every request and time out behind Traefik in production.
+  const result = await $fetch<CrawlResult>('/api/auctions', {
+    query: { country, region, immo: immobilienOnly ? '1' : '0' },
+  })
 
   const enriched: GeoAuction[] = []
   for (const a of result.auctions) {
