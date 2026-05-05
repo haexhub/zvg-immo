@@ -1,6 +1,6 @@
 import { load } from 'cheerio'
 import type { Auction } from '~/types/auction'
-import { ZVG_BASE, BUNDESLAND_NAMES } from './constants'
+import { ZVG_BASE, DE_REGION_NAMES, COUNTRY } from './constants'
 import { clean, parseEuro, parseGermanDateTime, parseGermanTimestamp } from './text'
 
 export interface ParseResult {
@@ -56,10 +56,10 @@ export function parseAuctionsHtml(html: string, landAbk: string, platformId: str
     const letzteAktualisierungIso = updateMatch ? parseGermanTimestamp(updateMatch[1]) : null
 
     let amtsgericht = ''
-    // Bundesland comes from landAbk (canonical), not from the HTML.
+    // Region name comes from landAbk (canonical), not from the HTML.
     // Upstream is inconsistent — e.g. BW renders as "Baden-Wuerttemberg" without
-    // umlaut. landAbk is what we asked for and BUNDESLAND_NAMES is canonical.
-    const bundeslandName = BUNDESLAND_NAMES[landAbk] || landAbk
+    // umlaut. landAbk is what we asked for and DE_REGION_NAMES is canonical.
+    const regionName = DE_REGION_NAMES[landAbk] || landAbk
     // Capture only the first <b>…</b> after the Amtsgericht marker, with no
     // nested tags ([^<]+). A previous greedy variant matched across the entire
     // chunk and bled into later <b> blocks (Verkehrswert/Termin) when their
@@ -115,10 +115,11 @@ export function parseAuctionsHtml(html: string, landAbk: string, platformId: str
 
     auctions.push({
       platform: platformId,
+      country: COUNTRY,
+      region: regionName,
       zvgId,
       aktenzeichen,
       amtsgericht,
-      bundesland: bundeslandName,
       objekt,
       adresse,
       verkehrswertEur,

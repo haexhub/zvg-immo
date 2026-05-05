@@ -10,3 +10,4 @@ dist
 .playwright-mcp
 amtsgericht-open.png
 no-filters-map.png
+.claude/

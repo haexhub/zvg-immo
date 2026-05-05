@@ -1,4 +1,4 @@
-// Crawls every Bundesland and resolves missing addresses to lat/lng via
+// Crawls every registered region and resolves missing addresses to lat/lng via
 // Nominatim. Idempotent: addresses already in the disk cache are skipped, so
 // the first run is slow (~40 min for ~2200 cold lookups at 1 req/s) and
 // subsequent runs finish in seconds.
@@ -12,7 +12,7 @@ import { geocodeAddress } from '../utils/geocode'
 export default defineTask({
   meta: {
     name: 'geocode',
-    description: 'Crawl all Bundesländer and geocode addresses missing from the cache.',
+    description: 'Crawl all registered regions and geocode addresses missing from the cache.',
   },
   async run() {
     const startedAt = Date.now()
@@ -31,7 +31,7 @@ export default defineTask({
     for (const a of withAddress) {
       processed++
       try {
-        const point = await geocodeAddress(a.adresse, { fetchMissing: true })
+        const point = await geocodeAddress(a.adresse, a.country, { fetchMissing: true })
         if (point) geocoded++
       } catch {
         failed++

@@ -1,31 +1,34 @@
-import type { BundeslandInfo } from '../types'
+import type { RegionInfo } from '../types'
 
 export const ZVG_BASE = 'https://www.zvg-portal.de'
 export const UA = 'Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101 Firefox/130.0'
 
+export const COUNTRY = 'de'
+
 /**
  * The joint federal-state portal serves all 16 Bundesländer through a single
  * `land_abk` query parameter. Order matches the typical Bundesland sort.
+ * The `code` is the upstream's `land_abk` value.
  */
-export const BUNDESLAENDER: readonly BundeslandInfo[] = [
-  { abk: 'bw', name: 'Baden-Württemberg' },
-  { abk: 'by', name: 'Bayern' },
-  { abk: 'be', name: 'Berlin' },
-  { abk: 'br', name: 'Brandenburg' },
-  { abk: 'hb', name: 'Bremen' },
-  { abk: 'hh', name: 'Hamburg' },
-  { abk: 'he', name: 'Hessen' },
-  { abk: 'mv', name: 'Mecklenburg-Vorpommern' },
-  { abk: 'ni', name: 'Niedersachsen' },
-  { abk: 'nw', name: 'Nordrhein-Westfalen' },
-  { abk: 'rp', name: 'Rheinland-Pfalz' },
-  { abk: 'sl', name: 'Saarland' },
-  { abk: 'sn', name: 'Sachsen' },
-  { abk: 'st', name: 'Sachsen-Anhalt' },
-  { abk: 'sh', name: 'Schleswig-Holstein' },
-  { abk: 'th', name: 'Thüringen' },
+export const DE_REGIONS: readonly RegionInfo[] = [
+  { code: 'bw', name: 'Baden-Württemberg' },
+  { code: 'by', name: 'Bayern' },
+  { code: 'be', name: 'Berlin' },
+  { code: 'br', name: 'Brandenburg' },
+  { code: 'hb', name: 'Bremen' },
+  { code: 'hh', name: 'Hamburg' },
+  { code: 'he', name: 'Hessen' },
+  { code: 'mv', name: 'Mecklenburg-Vorpommern' },
+  { code: 'ni', name: 'Niedersachsen' },
+  { code: 'nw', name: 'Nordrhein-Westfalen' },
+  { code: 'rp', name: 'Rheinland-Pfalz' },
+  { code: 'sl', name: 'Saarland' },
+  { code: 'sn', name: 'Sachsen' },
+  { code: 'st', name: 'Sachsen-Anhalt' },
+  { code: 'sh', name: 'Schleswig-Holstein' },
+  { code: 'th', name: 'Thüringen' },
 ] as const
 
-export const BUNDESLAND_NAMES: Record<string, string> = Object.fromEntries(
-  BUNDESLAENDER.map((b) => [b.abk, b.name]),
+export const DE_REGION_NAMES: Record<string, string> = Object.fromEntries(
+  DE_REGIONS.map((r) => [r.code, r.name]),
 )

@@ -32,9 +32,11 @@ export default defineNuxtConfig({
       '0 */6 * * *': ['geocode'],
     },
     routeRules: {
+      // The auctions list (HTML scraping) is the expensive part. The geo
+      // endpoint just decorates with cached lookups, so it must not be cached
+      // independently — that would freeze geocodedCount after the first hit.
       '/api/auctions': { swr: 1800 },
-      '/api/auctions-geo': { swr: 3600 },
-      '/api/bundeslaender': { swr: 86400 },
+      '/api/regions': { swr: 86400 },
     },
   },
 })
