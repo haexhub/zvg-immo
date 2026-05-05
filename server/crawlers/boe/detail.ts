@@ -58,14 +58,17 @@ function parseVer1(html: string): Pick<DetailInfo, 'tasacionEur' | 'tasacionText
 function parseVer3(html: string): Pick<DetailInfo, 'beschreibung' | 'adresse'> {
   const p = extractTablePairs(html)
   const beschreibung = p.get('descripción') ?? p.get('descripcion') ?? null
-  const street = p.get('dirección') ?? p.get('direccion') ?? null
-  const cp = p.get('código postal') ?? p.get('codigo postal') ?? null
-  const localidad = p.get('localidad') ?? null
-  const provincia = p.get('provincia') ?? null
-  // Compose a Nominatim-friendly line. Skip parts that say "no consta" /
-  // are clearly placeholders.
-  const parts = [street, [cp, localidad].filter(Boolean).join(' '), provincia, 'España'].filter(
-    (s): s is string => Boolean(s) && !/no consta/i.test(s),
+  // Skip "no consta" placeholders per-field BEFORE composing — otherwise a
+  // valid CP would be dropped together with a "no consta" localidad.
+  const drop = (s: string | null | undefined): string | null =>
+    s && !/no consta/i.test(s) ? s : null
+  const street = drop(p.get('dirección') ?? p.get('direccion'))
+  const cp = drop(p.get('código postal') ?? p.get('codigo postal'))
+  const localidad = drop(p.get('localidad'))
+  const provincia = drop(p.get('provincia'))
+  const cpLocalidad = [cp, localidad].filter(Boolean).join(' ').trim() || null
+  const parts = [street, cpLocalidad, provincia, 'España'].filter(
+    (s): s is string => Boolean(s),
   )
   const adresse = parts.length >= 2 ? parts.join(', ') : null
   return { beschreibung, adresse }

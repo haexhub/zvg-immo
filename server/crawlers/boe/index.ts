@@ -30,9 +30,12 @@ function applyDetail(auction: AuctionDetailFields, info: DetailInfo): void {
   if (info.beschreibung) auction.beschreibung = info.beschreibung
   // ver=3 has the structured address; trust it over the listing's best-effort.
   if (info.adresse) auction.adresse = info.adresse
-  // Construct the official BOE-Boletín document URL from its id.
-  if (info.anuncioBoeId) {
-    auction.pdfUrlUpstream = `https://www.boe.es/diario_boe/txt.php?id=${info.anuncioBoeId}`
+  // Construct the official BOE-Boletín document URL from its id. The id
+  // must look like `BOE-B-2026-12345`; trim and pick the first whitespace-
+  // delimited token to defend against rogue values, then encode.
+  const rawId = info.anuncioBoeId?.trim().split(/\s+/)[0]
+  if (rawId && /^BOE-/.test(rawId)) {
+    auction.pdfUrlUpstream = `https://www.boe.es/diario_boe/txt.php?id=${encodeURIComponent(rawId)}`
     auction.pdfUrl = auction.pdfUrlUpstream
   }
 }
