@@ -40,7 +40,14 @@ export function listRegions(): RegionEntry[] {
   for (const p of platforms) {
     for (const r of p.regions) {
       const key = `${p.country}:${r.code}`
-      if (seen.has(key)) continue
+      if (seen.has(key)) {
+        // Two crawlers claiming the same {country, region} silently shadowing
+        // each other has historically caused hard-to-trace data gaps. Fail
+        // loudly so the conflict is fixed at registration time.
+        throw new Error(
+          `Duplicate crawler region registration: ${key} (platform "${p.id}")`,
+        )
+      }
       seen.add(key)
       entries.push({
         ...r,
@@ -159,8 +166,10 @@ export async function crawlAll(
   return {
     platform: 'multi',
     source: [...new Set(results.map((r) => r.source))].join(', '),
-    countries: [...new Set(results.flatMap((r) => r.countries))],
-    regions: [...new Set(results.flatMap((r) => r.regions))],
+    // Reflect the requested scope, not just the successful subset — failed
+    // regions still belong to the run and reappear in `errors`.
+    countries: [...new Set(all.map((r) => r.country))],
+    regions: [...new Set(all.map((r) => r.name))],
     fetchedAt: new Date().toISOString(),
     totalReported,
     auctions: merged,

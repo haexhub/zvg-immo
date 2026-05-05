@@ -49,7 +49,6 @@ const forwarded = useForwardPropsEmits(delegated, emits)
     <SheetOverlay />
     <DialogContent
       v-bind="forwarded"
-      aria-describedby="undefined"
       :class="cn(sheetVariants({ side }), props.class)"
     >
       <slot />
