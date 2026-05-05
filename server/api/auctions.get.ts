@@ -3,13 +3,19 @@ import { crawlAll, crawlSingle } from '../crawlers/registry'
 
 export default defineEventHandler(async (event): Promise<CrawlResult> => {
   const query = getQuery(event)
-  const land = (typeof query.land === 'string' ? query.land : 'sn').toLowerCase()
+  const country = typeof query.country === 'string' ? query.country.toLowerCase() : 'all'
+  const region = typeof query.region === 'string' ? query.region.toLowerCase() : 'all'
   const immobilienOnly = query.immo !== '0'
   try {
-    if (land === 'all') {
+    if (country === 'all') {
+      // All countries, all regions.
       return await crawlAll({ immobilienOnly })
     }
-    return await crawlSingle({ bundesland: land, immobilienOnly })
+    if (region === 'all') {
+      // One country, all its regions.
+      return await crawlAll({ immobilienOnly, country })
+    }
+    return await crawlSingle({ country, region, immobilienOnly })
   } catch (err) {
     throw createError({
       statusCode: 502,

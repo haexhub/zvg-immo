@@ -1,4 +1,4 @@
-// Geocodes German addresses via OpenStreetMap Nominatim, with strict 1 req/s rate
+// Geocodes addresses via OpenStreetMap Nominatim, with strict 1 req/s rate
 // limit (per Nominatim policy) and a disk-backed cache so repeat lookups are free.
 
 import { mkdir, readFile, writeFile, stat } from 'node:fs/promises'
@@ -22,13 +22,13 @@ async function ensureCacheDir(): Promise<void> {
   await mkdir(CACHE_DIR, { recursive: true })
 }
 
-function cacheKey(query: string): string {
-  return createHash('sha1').update(query).digest('hex').slice(0, 16)
+function cacheKey(query: string, country: string): string {
+  return createHash('sha1').update(`${country}:${query}`).digest('hex').slice(0, 16)
 }
 
-async function readCache(query: string): Promise<GeoPoint | null> {
+async function readCache(query: string, country: string): Promise<GeoPoint | null> {
   try {
-    const path = join(CACHE_DIR, `${cacheKey(query)}.json`)
+    const path = join(CACHE_DIR, `${cacheKey(query, country)}.json`)
     const buf = await readFile(path, 'utf8')
     const parsed = JSON.parse(buf)
     if (parsed.notFound) return null
@@ -39,18 +39,18 @@ async function readCache(query: string): Promise<GeoPoint | null> {
   return null
 }
 
-async function writeCache(query: string, value: GeoPoint | null): Promise<void> {
+async function writeCache(query: string, country: string, value: GeoPoint | null): Promise<void> {
   await ensureCacheDir()
-  const path = join(CACHE_DIR, `${cacheKey(query)}.json`)
+  const path = join(CACHE_DIR, `${cacheKey(query, country)}.json`)
   await writeFile(
     path,
-    JSON.stringify(value === null ? { notFound: true, query } : { ...value, query }),
+    JSON.stringify(value === null ? { notFound: true, query, country } : { ...value, query, country }),
   )
 }
 
-async function cacheHasKey(query: string): Promise<boolean> {
+async function cacheHasKey(query: string, country: string): Promise<boolean> {
   try {
-    await stat(join(CACHE_DIR, `${cacheKey(query)}.json`))
+    await stat(join(CACHE_DIR, `${cacheKey(query, country)}.json`))
     return true
   } catch {
     return false
@@ -67,8 +67,8 @@ async function rateLimitedFetch(url: string): Promise<Response> {
 
 /** Returns the geocode result, or null for "not found", or undefined when the
  *  upstream rejected/erred (don't cache this — retry next time). */
-async function geocodeOnce(query: string): Promise<GeoPoint | null | undefined> {
-  const url = `${NOMINATIM_BASE}?format=json&limit=1&countrycodes=de&q=${encodeURIComponent(query)}`
+async function geocodeOnce(query: string, country: string): Promise<GeoPoint | null | undefined> {
+  const url = `${NOMINATIM_BASE}?format=json&limit=1&countrycodes=${country}&q=${encodeURIComponent(query)}`
   let res: Response
   try {
     res = await rateLimitedFetch(url)
@@ -97,38 +97,53 @@ async function geocodeOnce(query: string): Promise<GeoPoint | null | undefined> 
   }
 }
 
+/** Country-specific PLZ + city fallbacks. Tightening the regex per country
+ *  avoids false matches across postal-code formats. */
+const POSTAL_PATTERNS: Record<string, RegExp> = {
+  de: /(\d{5})\s+([^,]+?)(?:,|$)/,
+  at: /(\d{4})\s+([^,]+?)(?:,|$)/,
+  es: /(\d{5})\s+([^,]+?)(?:,|$)/,
+  it: /(\d{5})\s+([^,]+?)(?:,|$)/,
+  cz: /(\d{3}\s?\d{2})\s+([^,]+?)(?:,|$)/,
+  pl: /(\d{2}-\d{3})\s+([^,]+?)(?:,|$)/,
+}
+
 /**
- * Normalises a "Otzdorfer Straße 30, 04736 Waldheim" address into a Nominatim-friendly
- * query, optionally falling back to PLZ+city if the full address fails to resolve.
+ * Normalises an address into a Nominatim-friendly query, optionally falling
+ * back to PLZ+city if the full address fails to resolve.
  */
-function buildQueries(address: string): string[] {
+function buildQueries(address: string, country: string): string[] {
   const cleaned = address.replace(/\s+/g, ' ').replace(/\s*,\s*/g, ', ').trim()
   const queries = [cleaned]
-  // Fallback: drop street & house number, keep PLZ + city
-  const m = cleaned.match(/(\d{5})\s+([^,]+?)(?:,|$)/)
-  if (m) {
-    const fallback = `${m[1]} ${m[2]}`.trim()
-    if (fallback !== cleaned) queries.push(fallback)
+  const pattern = POSTAL_PATTERNS[country]
+  if (pattern) {
+    const m = cleaned.match(pattern)
+    if (m) {
+      const fallback = `${m[1]} ${m[2]}`.trim()
+      if (fallback !== cleaned) queries.push(fallback)
+    }
   }
   return queries
 }
 
 export async function geocodeAddress(
   address: string | null,
+  country: string,
   options: { fetchMissing?: boolean } = { fetchMissing: true },
 ): Promise<GeoPoint | null> {
   if (!address) return null
-  for (const q of buildQueries(address)) {
-    const cached = await readCache(q)
+  const c = country.toLowerCase()
+  for (const q of buildQueries(address, c)) {
+    const cached = await readCache(q, c)
     if (cached) return cached
-    if (await cacheHasKey(q)) continue // cached as not-found
+    if (await cacheHasKey(q, c)) continue // cached as not-found
     if (!options.fetchMissing) continue
-    const hit = await geocodeOnce(q)
+    const hit = await geocodeOnce(q, c)
     if (hit === undefined) {
       // Upstream error — don't cache, just skip this query and try fallbacks
       continue
     }
-    await writeCache(q, hit)
+    await writeCache(q, c, hit)
     if (hit) return hit
   }
   return null

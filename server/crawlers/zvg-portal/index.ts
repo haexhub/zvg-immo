@@ -1,6 +1,6 @@
 import type { CrawlResult } from '~/types/auction'
 import type { CrawlOptions, PlatformCrawler } from '../types'
-import { ZVG_BASE, UA, BUNDESLAENDER, BUNDESLAND_NAMES } from './constants'
+import { ZVG_BASE, UA, DE_REGIONS, DE_REGION_NAMES, COUNTRY } from './constants'
 import { parseAuctionsHtml, buildSearchBody } from './list'
 import { enrichInBatches } from './detail'
 
@@ -27,7 +27,7 @@ async function fetchListHtml(landAbk: string, immobilienOnly: boolean): Promise<
 }
 
 async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
-  const landAbk = opts.bundesland.toLowerCase()
+  const landAbk = opts.region.toLowerCase()
   const immobilienOnly = opts.immobilienOnly ?? true
   const enrichDetails = opts.enrichDetails ?? true
 
@@ -49,7 +49,8 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
   return {
     platform: PLATFORM_ID,
     source: ZVG_BASE,
-    bundeslaender: [BUNDESLAND_NAMES[landAbk] || landAbk],
+    countries: [COUNTRY],
+    regions: [DE_REGION_NAMES[landAbk] || landAbk],
     fetchedAt: new Date().toISOString(),
     totalReported,
     auctions,
@@ -60,6 +61,7 @@ export const zvgPortalCrawler: PlatformCrawler = {
   id: PLATFORM_ID,
   name: 'Justizportal des Bundes und der Länder',
   baseUrl: ZVG_BASE,
-  bundeslaender: BUNDESLAENDER,
+  country: COUNTRY,
+  regions: DE_REGIONS,
   crawl,
 }

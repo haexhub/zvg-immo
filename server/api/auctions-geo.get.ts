@@ -19,20 +19,25 @@ export interface GeoCrawlResult extends Omit<CrawlResult, 'auctions'> {
 
 export default defineEventHandler(async (event): Promise<GeoCrawlResult> => {
   const query = getQuery(event)
-  const land = (typeof query.land === 'string' ? query.land : 'sn').toLowerCase()
+  const country = typeof query.country === 'string' ? query.country.toLowerCase() : 'all'
+  const region = typeof query.region === 'string' ? query.region.toLowerCase() : 'all'
   const immobilienOnly = query.immo !== '0'
   // ?fetch=0 → use only cached geocodes (instant). ?fetch=1 (default) → fall back to Nominatim
   // for missing addresses (subject to 1 req/s rate limit, slow on cold start).
   const fetchMissing = query.fetch !== '0'
 
-  const result: CrawlResult =
-    land === 'all'
-      ? await crawlAll({ immobilienOnly })
-      : await crawlSingle({ bundesland: land, immobilienOnly })
+  let result: CrawlResult
+  if (country === 'all') {
+    result = await crawlAll({ immobilienOnly })
+  } else if (region === 'all') {
+    result = await crawlAll({ immobilienOnly, country })
+  } else {
+    result = await crawlSingle({ country, region, immobilienOnly })
+  }
 
   const enriched: GeoAuction[] = []
   for (const a of result.auctions) {
-    const point = await geocodeAddress(a.adresse, { fetchMissing })
+    const point = await geocodeAddress(a.adresse, a.country, { fetchMissing })
     enriched.push({ ...a, lat: point?.lat ?? null, lng: point?.lng ?? null })
   }
 

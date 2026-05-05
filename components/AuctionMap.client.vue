@@ -118,7 +118,7 @@ watch(() => props.auctions, refreshMarkers, { deep: false })
 </script>
 
 <template>
-  <div ref="mapEl" class="isolate h-[70vh] w-full rounded-xl border shadow-sm overflow-hidden" />
+  <div ref="mapEl" class="isolate h-full w-full rounded-xl border shadow-sm overflow-hidden" />
 </template>
 
 <style>
