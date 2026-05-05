@@ -19,13 +19,22 @@ export default defineEventHandler(async (event): Promise<CrawlResult> => {
     }
     return await crawlSingle({ country, region, immobilienOnly })
   } catch (err) {
-    const msg = (err as Error).message
-    // Upstream rate-limit responses (e.g. BOE's captcha page) are temporary
-    // and self-clear within minutes. Surfacing them as 502 makes the whole
-    // map view break for that provincia, including the geocoding data we
-    // already have. Degrade gracefully: log server-side, return an empty
-    // result so the rest of the UI keeps working.
-    if (msg.includes('CAPTCHA') || msg.includes('rate limit')) {
+    // Normalize: thrown values aren't guaranteed to be Errors.
+    const msg =
+      typeof err === 'string'
+        ? err
+        : err instanceof Error
+          ? err.message
+          : String(err)
+    // Upstream rate-limit responses (BOE's captcha page or an HTTP 429) are
+    // temporary and self-clear within minutes. Surfacing them as 502 makes
+    // the whole map view break for that provincia, including the geocoding
+    // data we already have. Degrade gracefully: log server-side, return an
+    // empty result so the rest of the UI keeps working.
+    const lower = msg.toLowerCase()
+    const rateLimited =
+      lower.includes('captcha') || lower.includes('rate limit') || /\b429\b/.test(msg)
+    if (rateLimited) {
       console.warn(`[api/auctions] ${country}/${region} rate-limited: ${msg}`)
       return {
         platform: 'multi',
