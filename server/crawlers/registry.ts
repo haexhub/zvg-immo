@@ -1,6 +1,7 @@
 import type { CrawlResult } from '~/types/auction'
 import type { CrawlOptions, PlatformCrawler, RegionInfo } from './types'
 import { zvgPortalCrawler } from './zvg-portal'
+import { boeCrawler } from './boe'
 
 /**
  * All registered platform crawlers. Adding a new platform is purely additive:
@@ -9,7 +10,7 @@ import { zvgPortalCrawler } from './zvg-portal'
  * Multiple platforms may share the same country (e.g. several private auction
  * sites for one nation); the country code distinguishes regions.
  */
-export const platforms: readonly PlatformCrawler[] = [zvgPortalCrawler] as const
+export const platforms: readonly PlatformCrawler[] = [zvgPortalCrawler, boeCrawler] as const
 
 export interface RegionEntry extends RegionInfo {
   country: string

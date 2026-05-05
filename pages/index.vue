@@ -8,14 +8,12 @@ import SelectTrigger from '~/components/ui/select/SelectTrigger.vue'
 import SelectValue from '~/components/ui/select/SelectValue.vue'
 import SelectContent from '~/components/ui/select/SelectContent.vue'
 import SelectItem from '~/components/ui/select/SelectItem.vue'
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetFooter,
-  SheetTitle,
-  SheetDescription,
-} from '~/components/ui/sheet'
+import Sheet from '~/components/ui/sheet/Sheet.vue'
+import SheetContent from '~/components/ui/sheet/SheetContent.vue'
+import SheetHeader from '~/components/ui/sheet/SheetHeader.vue'
+import SheetFooter from '~/components/ui/sheet/SheetFooter.vue'
+import SheetTitle from '~/components/ui/sheet/SheetTitle.vue'
+import SheetDescription from '~/components/ui/sheet/SheetDescription.vue'
 import { ListFilter } from 'lucide-vue-next'
 
 // Country/region cascade filter. Default 'all' = aggregate over every
