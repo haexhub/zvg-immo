@@ -95,7 +95,11 @@ export async function enrichInBatches(
       const info = await fetchDetail(auction.zvgId)
       apply(auction, info)
       enriched++
-    } catch {
+    } catch (err) {
+      // Swallowed on purpose — partial enrichment is better than aborting
+      // the whole batch — but emit at debug level so the rare BOE captcha
+      // / 5xx is visible when investigating.
+      console.debug(`[boe] detail enrichment failed for ${auction.zvgId}: ${(err as Error).message}`)
       errors++
     }
   }

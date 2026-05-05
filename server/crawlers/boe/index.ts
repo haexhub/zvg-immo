@@ -1,9 +1,14 @@
-import type { CrawlResult } from '~/types/auction'
+import type { Auction, CrawlResult } from '~/types/auction'
 import type { CrawlOptions, PlatformCrawler } from '../types'
 import { BOE_BASE, COUNTRY, ES_REGIONS, ES_REGION_NAMES } from './constants'
 import { boeFetch, looksLikeCaptcha } from './fetch'
 import { buildSearchUrl, parseListingHtml } from './list'
 import { enrichInBatches, type DetailInfo } from './detail'
+
+type AuctionDetailFields = Pick<
+  Auction,
+  'verkehrswertEur' | 'verkehrswertText' | 'beschreibung' | 'adresse' | 'pdfUrl' | 'pdfUrlUpstream'
+>
 
 const PLATFORM_ID = 'boe'
 
@@ -19,7 +24,7 @@ async function fetchListHtml(provincia: string): Promise<string> {
   return html
 }
 
-function applyDetail(auction: { verkehrswertEur: number | null; verkehrswertText: string | null; beschreibung: string | null; adresse: string | null; pdfUrlUpstream: string | null; pdfUrl: string | null }, info: DetailInfo): void {
+function applyDetail(auction: AuctionDetailFields, info: DetailInfo): void {
   if (info.tasacionEur != null) auction.verkehrswertEur = info.tasacionEur
   if (info.tasacionText) auction.verkehrswertText = info.tasacionText
   if (info.beschreibung) auction.beschreibung = info.beschreibung
