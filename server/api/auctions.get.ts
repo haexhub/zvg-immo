@@ -19,10 +19,28 @@ export default defineEventHandler(async (event): Promise<CrawlResult> => {
     }
     return await crawlSingle({ country, region, immobilienOnly })
   } catch (err) {
+    const msg = (err as Error).message
+    // Upstream rate-limit responses (e.g. BOE's captcha page) are temporary
+    // and self-clear within minutes. Surfacing them as 502 makes the whole
+    // map view break for that provincia, including the geocoding data we
+    // already have. Degrade gracefully: log server-side, return an empty
+    // result so the rest of the UI keeps working.
+    if (msg.includes('CAPTCHA') || msg.includes('rate limit')) {
+      console.warn(`[api/auctions] ${country}/${region} rate-limited: ${msg}`)
+      return {
+        platform: 'multi',
+        source: '',
+        countries: [country],
+        regions: [region],
+        fetchedAt: new Date().toISOString(),
+        totalReported: null,
+        auctions: [],
+      }
+    }
     throw createError({
       statusCode: 502,
       statusMessage: 'Crawler-Quelle nicht erreichbar',
-      data: { detail: (err as Error).message },
+      data: { detail: msg },
     })
   }
 })
