@@ -8,12 +8,14 @@ export default defineEventHandler(async (event): Promise<CrawlResult> => {
   const immobilienOnly = query.immo !== '0'
   try {
     if (country === 'all') {
-      // All countries, all regions.
-      return await crawlAll({ immobilienOnly })
+      // All countries, all regions. Detail enrichment off — a country-wide
+      // crawl across every platform would otherwise issue thousands of
+      // detail fetches and time out behind Traefik.
+      return await crawlAll({ immobilienOnly, enrichDetails: false })
     }
     if (region === 'all') {
-      // One country, all its regions.
-      return await crawlAll({ immobilienOnly, country })
+      // One country, all its regions. Same reasoning as above.
+      return await crawlAll({ immobilienOnly, country, enrichDetails: false })
     }
     return await crawlSingle({ country, region, immobilienOnly })
   } catch (err) {

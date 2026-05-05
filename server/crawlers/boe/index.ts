@@ -1,54 +1,40 @@
 import type { CrawlResult } from '~/types/auction'
 import type { CrawlOptions, PlatformCrawler } from '../types'
-import { BOE_BASE, UA, COUNTRY, ES_REGIONS, ES_REGION_NAMES } from './constants'
+import { BOE_BASE, COUNTRY, ES_REGIONS, ES_REGION_NAMES } from './constants'
+import { boeFetch, looksLikeCaptcha } from './fetch'
 import { buildSearchUrl, parseListingHtml } from './list'
+import { enrichInBatches, type DetailInfo } from './detail'
 
 const PLATFORM_ID = 'boe'
 
-const FETCH_TIMEOUT_MS = 15_000
-
-// BOE serves a CAPTCHA after a burst of requests from one IP. The shared
-// `crawlAll` worker pool runs up to 4 regions in parallel, which would point
-// every Spain crawl straight at that wall. A module-level minimum gap
-// effectively serialises BOE traffic regardless of how many workers grab a
-// provincia at once.
-const MIN_GAP_MS = 800
-let lastFetchAt = 0
-
 async function fetchListHtml(provincia: string): Promise<string> {
-  const now = Date.now()
-  const wait = Math.max(0, lastFetchAt + MIN_GAP_MS - now)
-  if (wait > 0) await new Promise((r) => setTimeout(r, wait))
-  lastFetchAt = Date.now()
+  const html = await boeFetch(buildSearchUrl(provincia))
+  // BOE shows a CAPTCHA when an IP makes too many requests in a short window
+  // — the response is still 200 but the result body is the empty search form
+  // wrapped around a captcha image. Detecting it lets crawlAll record the
+  // failure in `errors` instead of silently returning 0 auctions.
+  if (looksLikeCaptcha(html)) {
+    throw new Error(`BOE returned a CAPTCHA page for provincia ${provincia} — rate limit likely`)
+  }
+  return html
+}
 
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
-  try {
-    const res = await fetch(buildSearchUrl(provincia), {
-      signal: controller.signal,
-      headers: {
-        'User-Agent': UA,
-        Accept: 'text/html,application/xhtml+xml',
-        'Accept-Language': 'es-ES,es;q=0.9,en;q=0.5',
-      },
-    })
-    if (!res.ok) throw new Error(`BOE ${res.status} for provincia ${provincia}`)
-    const html = await res.text()
-    // BOE shows a CAPTCHA when an IP makes too many requests in a short window
-    // — the response is still 200 but the result body is the empty search form
-    // wrapped around a captcha image. Detecting it lets crawlAll record the
-    // failure in `errors` instead of silently returning 0 auctions.
-    if (html.includes('cajaCaptcha') || html.includes('showCaptcha.php')) {
-      throw new Error(`BOE returned a CAPTCHA page for provincia ${provincia} — rate limit likely`)
-    }
-    return html
-  } finally {
-    clearTimeout(timer)
+function applyDetail(auction: { verkehrswertEur: number | null; verkehrswertText: string | null; beschreibung: string | null; adresse: string | null; pdfUrlUpstream: string | null; pdfUrl: string | null }, info: DetailInfo): void {
+  if (info.tasacionEur != null) auction.verkehrswertEur = info.tasacionEur
+  if (info.tasacionText) auction.verkehrswertText = info.tasacionText
+  if (info.beschreibung) auction.beschreibung = info.beschreibung
+  // ver=3 has the structured address; trust it over the listing's best-effort.
+  if (info.adresse) auction.adresse = info.adresse
+  // Construct the official BOE-Boletín document URL from its id.
+  if (info.anuncioBoeId) {
+    auction.pdfUrlUpstream = `https://www.boe.es/diario_boe/txt.php?id=${info.anuncioBoeId}`
+    auction.pdfUrl = auction.pdfUrlUpstream
   }
 }
 
 async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
   const provincia = opts.region
+  const enrichDetails = opts.enrichDetails ?? true
 
   const html = await fetchListHtml(provincia)
   const { totalReported, auctions } = parseListingHtml(html, provincia, PLATFORM_ID)
@@ -63,10 +49,14 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
     )
   }
 
-  // Detail enrichment (tasación, structured address, fotos) is intentionally
-  // skipped for the MVP. The listing already carries enough for the map
-  // (location, court, terminus, description); enrichment can be added later
-  // as a per-auction GET to /detalleSubasta.php?idSub=...&ver=1 and ver=3.
+  if (enrichDetails && auctions.length > 0) {
+    const result = await enrichInBatches(auctions, applyDetail)
+    if (result.errors > 0) {
+      console.warn(
+        `[boe] provincia ${provincia}: enriched ${result.enriched}/${auctions.length}, ${result.errors} detail fetches failed`,
+      )
+    }
+  }
 
   return {
     platform: PLATFORM_ID,
