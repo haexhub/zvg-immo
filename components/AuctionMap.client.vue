@@ -22,6 +22,10 @@ const markerIcon = L.icon({
 
 const props = defineProps<{
   auctions: GeoAuction[]
+  /** Bumping this string requests a re-fit on the next marker refresh — used
+   *  by the parent so country/region changes recenter the map, while polling
+   *  updates leave the user's current zoom/pan alone. */
+  fitKey?: string
 }>()
 
 const mapEl = ref<HTMLDivElement | null>(null)
@@ -73,6 +77,11 @@ function buildPopupHtml(a: GeoAuction): string {
   `
 }
 
+// True at mount and whenever the parent bumps `fitKey` (filter change). The
+// next refreshMarkers call consumes it, so polling-driven updates never reset
+// the user's zoom/pan.
+let shouldFitNext = true
+
 function refreshMarkers(): void {
   if (!map || !markersLayer) return
   markersLayer.clearLayers()
@@ -87,6 +96,8 @@ function refreshMarkers(): void {
     marker.addTo(markersLayer)
     points.push([a.lat, a.lng])
   }
+  if (!shouldFitNext) return
+  shouldFitNext = false
   if (points.length > 0) {
     const bounds = L.latLngBounds(points)
     map.fitBounds(bounds, { padding: [40, 40], maxZoom: 12 })
@@ -112,6 +123,10 @@ onBeforeUnmount(() => {
     map = null
     markersLayer = null
   }
+})
+
+watch(() => props.fitKey, () => {
+  shouldFitNext = true
 })
 
 watch(() => props.auctions, refreshMarkers, { deep: false })

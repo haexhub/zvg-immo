@@ -347,7 +347,7 @@ function attachmentLabel(att: { kind: string; label: string }): string {
         Fehler beim Geokodieren: {{ geoError.statusMessage || geoError.message }}
       </p>
       <template v-else-if="geoData">
-        <AuctionMap :auctions="filteredGeo" />
+        <AuctionMap :auctions="filteredGeo" :fit-key="`${selectedCountry}:${selectedRegion}`" />
       </template>
     </section>
 
