@@ -39,6 +39,6 @@ USER node
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
-    CMD wget -qO- http://localhost:3000/api/bundeslaender > /dev/null || exit 1
+    CMD wget -qO- http://localhost:3000/api/regions > /dev/null || exit 1
 
 CMD ["node", ".output/server/index.mjs"]
