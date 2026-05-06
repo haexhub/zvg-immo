@@ -45,7 +45,7 @@ const queryParams = computed(() => ({
 }))
 
 // Lazy fetch so SSR doesn't block on a cold multi-region crawl.
-const { data, pending, error, refresh } = useLazyFetch<CrawlResult>('/api/auctions', {
+const { data, pending, error, refresh } = useLazyFetch<CrawlResult | null>('/api/auctions', {
   query: queryParams,
   default: () => null,
 })
@@ -66,7 +66,7 @@ const {
   error: geoError,
   execute: loadGeo,
   refresh: refreshGeo,
-} = useFetch<GeoCrawlResult>('/api/auctions-geo', {
+} = useFetch<GeoCrawlResult | null>('/api/auctions-geo', {
   query: {
     country: selectedCountry,
     region: selectedRegion,
@@ -169,7 +169,7 @@ const headerLabel = computed(() => {
     : selectedCountryLabel.value
 })
 
-const courts = computed(() => {
+const courts = computed<string[]>(() => {
   if (!data.value) return []
   return [...new Set(data.value.auctions.map((a) => a.amtsgericht).filter(Boolean))].sort()
 })
@@ -226,7 +226,7 @@ const filtered = computed<Auction[]>(() => {
 
 const filteredGeo = computed<GeoAuction[]>(() => {
   if (!geoData.value) return []
-  return applyFilters(geoData.value.auctions).filter((a) => a.lat != null && a.lng != null)
+  return applyFilters<GeoAuction>(geoData.value.auctions).filter((a) => a.lat != null && a.lng != null)
 })
 
 const totals = computed(() => {

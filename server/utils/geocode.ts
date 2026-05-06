@@ -90,6 +90,7 @@ async function geocodeOnce(query: string, country: string): Promise<GeoPoint | n
   if (!Array.isArray(data)) return undefined
   if (data.length === 0) return null // genuinely not found — cache this
   const hit = data[0]
+  if (!hit) return undefined
   return {
     lat: parseFloat(hit.lat),
     lng: parseFloat(hit.lon),

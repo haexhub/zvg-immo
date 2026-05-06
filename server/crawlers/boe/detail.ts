@@ -37,8 +37,8 @@ function extractTablePairs(html: string): Map<string, string> {
   const pairs = new Map<string, string>()
   const re = /<th[^>]*>([\s\S]*?)<\/th>\s*<td[^>]*>([\s\S]*?)<\/td>/g
   for (const m of html.matchAll(re)) {
-    const k = clean(m[1].replace(/<[^>]+>/g, ''))
-    const v = clean(m[2].replace(/<[^>]+>/g, ' '))
+    const k = clean((m[1] ?? '').replace(/<[^>]+>/g, ''))
+    const v = clean((m[2] ?? '').replace(/<[^>]+>/g, ' '))
     if (k) pairs.set(k.toLowerCase(), v)
   }
   return pairs

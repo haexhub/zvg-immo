@@ -10,7 +10,7 @@ export interface ParseResult {
 
 export function parseAuctionsHtml(html: string, landAbk: string, platformId: string): ParseResult {
   const totalMatch = html.match(/Insgesamt\s+(\d+)/)
-  const totalReported = totalMatch ? parseInt(totalMatch[1], 10) : null
+  const totalReported = totalMatch?.[1] ? parseInt(totalMatch[1], 10) : null
 
   // Each entry block is delimited by the comment markers + a final <hr>.
   // Strategy: split the raw HTML at "<!--Aktenzeichen--->" and parse each chunk.
@@ -27,7 +27,7 @@ export function parseAuctionsHtml(html: string, landAbk: string, platformId: str
     let terminIso: string | null = null
     let aufgehoben = false
     const terminMatch = chunk.match(/<TR>\s*<TD[^>]*>\s*Termin\s*<\/[Tt][Dd]>([\s\S]*?)<\/[Tt][Rr]>/i)
-    if (terminMatch) {
+    if (terminMatch?.[1]) {
       const inner = terminMatch[1].replace(/<[^>]+>/g, ' ')
       const decoded = clean(inner)
       aufgehoben = /aufgehoben/i.test(decoded)
@@ -45,7 +45,7 @@ export function parseAuctionsHtml(html: string, landAbk: string, platformId: str
       aktenzeichen = aktenzeichenA.text().replace(/\(Detailansicht\)/i, '').trim()
     } else {
       const azMatch = chunk.match(/<nobr>\s*(\d+\s+K\s+\d+\/\d+)\s*(?:&nbsp;)?\s*(?:\(Detailansicht\))?\s*<\/nobr>/i)
-      if (azMatch) aktenzeichen = azMatch[1].trim()
+      if (azMatch?.[1]) aktenzeichen = azMatch[1].trim()
     }
     aktenzeichen = clean(aktenzeichen)
     if (!aktenzeichen && !zvgIdMatch) continue
@@ -53,7 +53,7 @@ export function parseAuctionsHtml(html: string, landAbk: string, platformId: str
     const zvgId = zvgIdMatch || `az:${aktenzeichen}`
 
     const updateMatch = chunk.match(/letzte Aktualisierung\s+([\d-]+\s+[\d:]+)/)
-    const letzteAktualisierungIso = updateMatch ? parseGermanTimestamp(updateMatch[1]) : null
+    const letzteAktualisierungIso = updateMatch?.[1] ? parseGermanTimestamp(updateMatch[1]) : null
 
     let amtsgericht = ''
     // Region name comes from landAbk (canonical), not from the HTML.
@@ -68,7 +68,7 @@ export function parseAuctionsHtml(html: string, landAbk: string, platformId: str
     // themselves contain " in " (e.g. "Landau in der Pfalz"), so split on the
     // LAST occurrence.
     const amtMatch = chunk.match(/<!--Amtsgericht--->[\s\S]*?<b>\s*([^<]+?)\s*<\/b>/i)
-    if (amtMatch) {
+    if (amtMatch?.[1]) {
       const inner = clean(amtMatch[1])
       const sep = inner.lastIndexOf(' in ')
       amtsgericht = sep >= 0 ? inner.slice(0, sep) : inner
@@ -77,7 +77,7 @@ export function parseAuctionsHtml(html: string, landAbk: string, platformId: str
     let objekt: string | null = null
     let adresse: string | null = null
     const lageMatch = chunk.match(/<b>([^<]+?)<!--Lage--->\s*:?\s*<\/b>\s*([^<\n]+)/)
-    if (lageMatch) {
+    if (lageMatch?.[1] && lageMatch[2]) {
       objekt = clean(lageMatch[1])
       adresse = clean(lageMatch[2])
     }
@@ -85,7 +85,7 @@ export function parseAuctionsHtml(html: string, landAbk: string, platformId: str
     let verkehrswertEur: number | null = null
     let verkehrswertText: string | null = null
     const vwMatch = chunk.match(/Verkehrswert in[\s\S]*?<b>([\s\S]*?)<\/b>/)
-    if (vwMatch) {
+    if (vwMatch?.[1]) {
       const inner = vwMatch[1].replace(/<[^>]+>/g, ' ')
       verkehrswertText = clean(inner) || null
       verkehrswertEur = parseEuro(inner)
@@ -94,11 +94,11 @@ export function parseAuctionsHtml(html: string, landAbk: string, platformId: str
     let pdfUrl: string | null = null
     let pdfUrlUpstream: string | null = null
     const pdfMatch = chunk.match(/href="([^"]*showAnhang[^"]*)"/i)
-    if (pdfMatch) {
+    if (pdfMatch?.[1]) {
       const raw = pdfMatch[1].trim().replace(/\s+$/, '')
       pdfUrlUpstream = `${ZVG_BASE}/${raw.replace(/^\/+/, '')}`
       const fileIdMatch = raw.match(/file_id=(\d+)/)
-      if (fileIdMatch && zvgIdMatch) {
+      if (fileIdMatch?.[1] && zvgIdMatch) {
         pdfUrl = `/api/zvg-proxy?button=showAnhang&land_abk=${landAbk}&file_id=${fileIdMatch[1]}&zvg_id=${zvgIdMatch}`
       }
     }
