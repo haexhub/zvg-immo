@@ -36,6 +36,10 @@ export default defineEventHandler(async (event): Promise<CrawlResult> => {
       lower.includes('captcha') || lower.includes('rate limit') || /\b429\b/.test(msg)
     if (rateLimited) {
       console.warn(`[api/auctions] ${country}/${region} rate-limited: ${msg}`)
+      // Don't let Nitro's SWR cache pin an empty response for the next 30 min
+      // — once the upstream cooldown expires we want the very next request to
+      // try BOE again, not serve stale empties.
+      setResponseHeader(event, 'cache-control', 'no-store, max-age=0')
       return {
         platform: 'multi',
         source: '',

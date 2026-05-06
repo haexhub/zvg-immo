@@ -14,6 +14,18 @@ const MIN_GAP_MS = 1500
 let lastFetchAt = 0
 let queue: Promise<void> = Promise.resolve()
 
+// Once BOE shows a captcha, the IP is on a cooldown that lasts much longer
+// than our gate. Continuing to hit them just extends the ban. After the
+// first captcha we skip all BOE requests for COOLDOWN_MS so the upstream
+// can forgive us — the user-facing API surfaces the same "captcha" message
+// and falls through to the empty-result graceful path in auctions.get.ts.
+const CAPTCHA_COOLDOWN_MS = 30 * 60 * 1000
+let captchaCooldownUntil = 0
+
+export function markBoeCaptcha(): void {
+  captchaCooldownUntil = Date.now() + CAPTCHA_COOLDOWN_MS
+}
+
 function gate(): Promise<void> {
   // Chain each acquire onto the previous one so we get strict serial
   // execution of the wait-then-stamp dance, even with many concurrent
@@ -38,6 +50,10 @@ function gate(): Promise<void> {
  * returned HTML for CAPTCHA markers — `fetchListHtml` and `detail.ts` do.
  */
 export async function boeFetch(url: string): Promise<string> {
+  if (Date.now() < captchaCooldownUntil) {
+    const remainSec = Math.ceil((captchaCooldownUntil - Date.now()) / 1000)
+    throw new Error(`BOE in CAPTCHA cooldown for ${remainSec}s`)
+  }
   await gate()
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)

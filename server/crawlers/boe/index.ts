@@ -1,7 +1,7 @@
 import type { Auction, CrawlResult } from '~/types/auction'
 import type { CrawlOptions, PlatformCrawler } from '../types'
 import { BOE_BASE, COUNTRY, ES_REGIONS, ES_REGION_NAMES } from './constants'
-import { boeFetch, looksLikeCaptcha } from './fetch'
+import { boeFetch, looksLikeCaptcha, markBoeCaptcha } from './fetch'
 import { buildSearchUrl, parseListingHtml } from './list'
 import { enrichInBatches, type DetailInfo } from './detail'
 
@@ -19,6 +19,7 @@ async function fetchListHtml(provincia: string): Promise<string> {
   // wrapped around a captcha image. Detecting it lets crawlAll record the
   // failure in `errors` instead of silently returning 0 auctions.
   if (looksLikeCaptcha(html)) {
+    markBoeCaptcha()
     throw new Error(`BOE returned a CAPTCHA page for provincia ${provincia} — rate limit likely`)
   }
   return html

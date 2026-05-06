@@ -1,6 +1,6 @@
 import type { Auction } from '~/types/auction'
 import { BOE_BASE } from './constants'
-import { boeFetch, looksLikeCaptcha } from './fetch'
+import { boeFetch, looksLikeCaptcha, markBoeCaptcha } from './fetch'
 import { clean, parseEuroEs } from './text'
 
 /**
@@ -25,6 +25,7 @@ async function fetchTab(idSub: string, ver: 1 | 3): Promise<string> {
   const url = `${BOE_BASE}/detalleSubasta.php?idSub=${encodeURIComponent(idSub)}&ver=${ver}`
   const html = await boeFetch(url)
   if (looksLikeCaptcha(html)) {
+    markBoeCaptcha()
     throw new Error(`BOE CAPTCHA on ${idSub} ver=${ver}`)
   }
   return html
