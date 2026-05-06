@@ -6,7 +6,11 @@ const FETCH_TIMEOUT_MS = 15_000
 // of how many concurrent crawlAll workers / detail fetches race for the
 // upstream. Detail enrichment uses Promise.all internally for ver=1+ver=3
 // pairs; both still serialise through this gap.
-const MIN_GAP_MS = 800
+//
+// 1500 ms (~40 req/min) was chosen empirically — 800 ms still tripped the
+// captcha when a user filtered to a province with ~80 auctions and the
+// detail-enrichment loop fired ~160 requests back-to-back.
+const MIN_GAP_MS = 1500
 let lastFetchAt = 0
 let queue: Promise<void> = Promise.resolve()
 
