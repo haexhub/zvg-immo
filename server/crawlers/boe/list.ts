@@ -51,7 +51,7 @@ export function parseListingHtml(
 
   // "Resultados 1 a 77 de 77" — pull the total if present.
   const totalMatch = html.match(/Resultados[\s\S]{0,80}?de\s+(\d+)/i)
-  const totalReported = totalMatch ? parseInt(totalMatch[1], 10) : null
+  const totalReported = totalMatch?.[1] ? parseInt(totalMatch[1], 10) : null
 
   $('li.resultado-busqueda').each((_i, el) => {
     const $el = $(el)
@@ -73,12 +73,12 @@ export function parseListingHtml(
 
     // "Conclusión prevista: 25/05/2026 a las 18:00:00"
     const terminMatch = estadoLine.match(/Conclusión[^:]*:\s*([^\]]+)/i)
-    const terminText = terminMatch ? terminMatch[1].trim() : null
+    const terminText = terminMatch?.[1]?.trim() ?? null
     const terminIso = terminText ? parseSpanishDateTime(terminText) : null
 
     // Estado prefix before the bracket: "Estado: Celebrándose" → "Celebrándose"
     const estadoMatch = estadoLine.match(/Estado:\s*([^\-\[]+)/i)
-    const estadoLabel = estadoMatch ? estadoMatch[1].trim() : null
+    const estadoLabel = estadoMatch?.[1]?.trim() ?? null
 
     // Description and address are merged in the listing. Take the whole
     // string as `objekt` for now and let detail enrichment split it later.
@@ -88,7 +88,7 @@ export function parseListingHtml(
     let adresse: string | null = null
     if (descLine) {
       const cp = descLine.match(/(\d{5}\s+[^,]+?)(?:\s*\(|$)/)
-      if (cp) adresse = `${cp[1].trim()}, España`
+      if (cp?.[1]) adresse = `${cp[1].trim()}, España`
     }
 
     const detailUrlUpstream = `${BOE_BASE}/detalleSubasta.php?idSub=${encodeURIComponent(idSub)}`

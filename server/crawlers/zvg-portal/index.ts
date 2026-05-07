@@ -40,8 +40,9 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
       auction.beschreibung = info.beschreibung
       const fotos = info.attachments.filter((a) => a.kind === 'foto')
       auction.fotoCount = fotos.length
-      if (fotos.length > 0) {
-        auction.thumbnailUrl = `/api/zvg-thumb?file_id=${fotos[0].fileId}&zvg_id=${auction.zvgId}&land_abk=${landAbk}`
+      const firstFoto = fotos[0]
+      if (firstFoto) {
+        auction.thumbnailUrl = `/api/zvg-thumb?file_id=${firstFoto.fileId}&zvg_id=${auction.zvgId}&land_abk=${landAbk}`
       }
     })
   }

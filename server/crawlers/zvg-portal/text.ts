@@ -8,7 +8,8 @@ export function parseGermanDateTime(text: string): string | null {
   // "Donnerstag, 07. Mai 2026, 10:00 Uhr"
   const m = text.match(/(\d{1,2})\.\s*(\p{L}+)\s+(\d{4}),?\s*(\d{1,2}):(\d{2})/u)
   if (!m) return null
-  const [, d, monthName, y, hh, mm] = m
+  const [, d = '', monthName, y, hh = '', mm] = m
+  if (!monthName) return null
   const month = MONTH_DE[monthName]
   if (!month) return null
   return `${y}-${month}-${d.padStart(2, '0')}T${hh.padStart(2, '0')}:${mm}:00`
@@ -25,7 +26,7 @@ export function parseGermanTimestamp(text: string): string | null {
 export function parseEuro(text: string): number | null {
   // "214.000,00 Euro" or "800.000,00" or "16.100,00&nbsp;"
   const m = text.replace(/\s|&nbsp;/g, '').match(/([\d.]+,\d{2})/)
-  if (!m) return null
+  if (!m?.[1]) return null
   const n = m[1].replace(/\./g, '').replace(',', '.')
   const num = parseFloat(n)
   return Number.isFinite(num) ? num : null
@@ -33,7 +34,7 @@ export function parseEuro(text: string): number | null {
 
 export function parseFileSize(text: string): number | null {
   const m = text.match(/([\d.,]+)\s*(kB|MB|KB|B)/i)
-  if (!m) return null
+  if (!m?.[1] || !m[2]) return null
   // The portal mixes formats: "1.234,56" (German thousands+decimal) and "188.25" (English decimal).
   // Heuristic: a comma marks the decimal; otherwise a single dot followed by 1-2 digits is the decimal.
   let s = m[1]

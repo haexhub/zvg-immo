@@ -50,8 +50,8 @@ export async function fetchDetailPage(zvgId: string, landAbk: string): Promise<D
     if (!anchor.length) return
     const href = anchor.attr('href') || ''
     const fileIdMatch = href.match(/file_id=(\d+)/)
-    if (!fileIdMatch) return
-    const fileId = fileIdMatch[1]
+    const fileId = fileIdMatch?.[1]
+    if (!fileId) return
     if (seenFileIds.has(fileId)) return
     seenFileIds.add(fileId)
 
@@ -76,7 +76,7 @@ export async function fetchDetailPage(zvgId: string, landAbk: string): Promise<D
   // Beschreibung is in the same column as Objekt/Lage. Extract the full block.
   let beschreibung: string | null = null
   const beschrMatch = html.match(/Beschreibung[^<]*<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/i)
-  if (beschrMatch) {
+  if (beschrMatch?.[1]) {
     const text = beschrMatch[1].replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, ' ')
     const cleaned = decodeEntities(text).replace(/[ \t]+/g, ' ').replace(/\n[ \t]+/g, '\n').trim()
     if (cleaned.length > 0) beschreibung = cleaned
@@ -96,7 +96,7 @@ export async function enrichInBatches<T extends { zvgId: string }>(
     while (cursor < items.length) {
       const idx = cursor++
       const item = items[idx]
-      if (!/^\d+$/.test(item.zvgId)) continue
+      if (!item || !/^\d+$/.test(item.zvgId)) continue
       try {
         const info = await fetchDetailPage(item.zvgId, landAbk)
         enricher(item, info)

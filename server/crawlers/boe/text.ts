@@ -20,7 +20,7 @@ export function clean(s: string): string {
 /** Parses Spanish-formatted Euro amounts like `88.029,53 €` → 88029.53. */
 export function parseEuroEs(text: string): number | null {
   const m = decodeEntities(text).replace(/\s|&nbsp;/g, '').match(/([\d.]+,\d{2})/)
-  if (!m) return null
+  if (!m?.[1]) return null
   const n = m[1].replace(/\./g, '').replace(',', '.')
   const num = parseFloat(n)
   return Number.isFinite(num) ? num : null
@@ -32,7 +32,7 @@ export function parseEuroEs(text: string): number | null {
 export function parseSpanishDateTime(text: string): string | null {
   const m = text.match(/(\d{1,2})[\/.](\d{1,2})[\/.](\d{4})(?:\s*(?:a las|,)?\s*(\d{1,2}):(\d{2})(?::(\d{2}))?)?/)
   if (!m) return null
-  const [, d, mo, y, hh, mm, ss] = m
+  const [, d = '', mo = '', y = '', hh, mm, ss] = m
   const day = d.padStart(2, '0')
   const mon = mo.padStart(2, '0')
   const time = hh ? `T${hh.padStart(2, '0')}:${mm}:${ss ?? '00'}` : 'T00:00:00'
