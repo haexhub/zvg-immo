@@ -49,12 +49,21 @@ function gate(): Promise<void> {
  * the standard browser-ish headers BOE expects. The caller may inspect the
  * returned HTML for CAPTCHA markers — `fetchListHtml` and `detail.ts` do.
  */
-export async function boeFetch(url: string): Promise<string> {
+function ensureNoCooldown(): void {
   if (Date.now() < captchaCooldownUntil) {
     const remainSec = Math.ceil((captchaCooldownUntil - Date.now()) / 1000)
     throw new Error(`BOE in CAPTCHA cooldown for ${remainSec}s`)
   }
+}
+
+export async function boeFetch(url: string): Promise<string> {
+  // Two checks: pre-gate fast-path so callers fail before queuing, and
+  // post-gate re-check because another in-flight worker may have marked
+  // captcha while we were waiting on the rate gate. Without the second
+  // check, queued callers would still hit BOE and extend the ban.
+  ensureNoCooldown()
   await gate()
+  ensureNoCooldown()
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
   try {
