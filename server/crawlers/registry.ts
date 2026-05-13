@@ -126,6 +126,21 @@ export async function crawlSingle(
     const firstReject = settled.find((s) => s.status === 'rejected')
     throw firstReject ? (firstReject as PromiseRejectedResult).reason : new Error('all crawlers failed')
   }
+  // Overlapping platforms (e.g. zvg-portal + zvbawü both list the same BW
+  // property) would otherwise produce duplicate pins and list rows. Dedup by
+  // a normalized {amtsgericht, aktenzeichen} key — the Aktenzeichen is the
+  // court's own case number and is stable across portals. When that key isn't
+  // available, fall back to {platform, zvgId} so platform-internal uniqueness
+  // is preserved.
+  const seen = new Set<string>()
+  const auctions = results.flatMap((r) => r.auctions).filter((a) => {
+    const az = a.aktenzeichen.trim().toLowerCase().replace(/\s+/g, ' ')
+    const ag = a.amtsgericht.trim().toLowerCase()
+    const key = az && ag ? `az|${ag}|${az}` : `pf|${a.platform}|${a.zvgId}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
   return {
     platform: results.length === 1 ? (results[0] as CrawlResult).platform : 'multi',
     source: [...new Set(results.map((r) => r.source))].join(', '),
@@ -136,7 +151,7 @@ export async function crawlSingle(
       (sum, r) => (r.totalReported == null ? sum : (sum ?? 0) + r.totalReported),
       null,
     ),
-    auctions: results.flatMap((r) => r.auctions),
+    auctions,
   }
 }
 

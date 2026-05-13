@@ -19,11 +19,19 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
   )
 
   let totalReported = 0
-  const auctions = courtResults.flatMap((r) => {
-    if (r.status !== 'fulfilled') return []
-    totalReported += r.value.totalReported
-    return r.value.auctions
-  })
+  const auctions = []
+  for (const [i, r] of courtResults.entries()) {
+    if (r.status === 'fulfilled') {
+      totalReported += r.value.totalReported
+      auctions.push(...r.value.auctions)
+      continue
+    }
+    // Silent drops here have masked coverage regressions before (a single
+    // court's parser breaking quietly hid 10–20% of BW from the map).
+    const court = BW_COURTS_FALLBACK[i]
+    const reason = r.reason instanceof Error ? r.reason.message : String(r.reason)
+    console.warn(`[zvbawu] court crawl failed (${court?.slug ?? 'unknown'}): ${reason}`)
+  }
 
   if (enrichDetails && auctions.length > 0) {
     const result = await enrichInBatches(auctions, (auction, info) => {

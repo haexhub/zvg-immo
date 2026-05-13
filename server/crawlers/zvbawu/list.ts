@@ -34,18 +34,31 @@ interface ListPage {
 
 const REGION_NAME = 'Baden-Württemberg'
 
+const FETCH_TIMEOUT_MS = 15_000
+
 async function fetchPage(courtSlug: string, page: number): Promise<ListPage | null> {
   const url = `${ZVBAWU_BASE}/amtsgerichte/${courtSlug}/zwangsversteigerungen${page > 1 ? `?page=${page}` : ''}`
-  const res = await fetch(url, {
-    headers: {
-      'User-Agent': UA,
-      Accept: 'text/html,application/xhtml+xml',
-      'Accept-Language': 'de-DE,de;q=0.9',
-    },
-  })
-  if (!res.ok) return null
-  const html = await res.text()
-  return extractInertiaPage<ListPage>(html)
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': UA,
+        Accept: 'text/html,application/xhtml+xml',
+        'Accept-Language': 'de-DE,de;q=0.9',
+      },
+    })
+    if (!res.ok) return null
+    const html = await res.text()
+    return extractInertiaPage<ListPage>(html)
+  } catch {
+    // AbortError or network failure — treat as a missing page so the caller
+    // (crawlCourt) breaks out cleanly instead of aborting the whole run.
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 function deriveAmtsgericht(facts: ListFact[], courtName: string): string {

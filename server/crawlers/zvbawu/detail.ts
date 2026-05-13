@@ -41,17 +41,28 @@ export interface DetailInfo {
   aktenzeichen: string | null
 }
 
+const FETCH_TIMEOUT_MS = 15_000
+
 async function fetchDetail(link: string): Promise<DetailPage | null> {
   const url = `${ZVBAWU_BASE}${link.startsWith('/') ? link : `/${link}`}`
-  const res = await fetch(url, {
-    headers: {
-      'User-Agent': UA,
-      Accept: 'text/html,application/xhtml+xml',
-      'Accept-Language': 'de-DE,de;q=0.9',
-    },
-  })
-  if (!res.ok) return null
-  return extractInertiaPage<DetailPage>(await res.text())
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': UA,
+        Accept: 'text/html,application/xhtml+xml',
+        'Accept-Language': 'de-DE,de;q=0.9',
+      },
+    })
+    if (!res.ok) return null
+    return extractInertiaPage<DetailPage>(await res.text())
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 function buildAttachments(d: DetailPage['props']['auction']): Attachment[] {
@@ -113,11 +124,20 @@ export async function enrichInBatches(
       const idx = cursor++
       const item = items[idx]
       if (!item) continue
+      // Cancelled auctions consistently return HTTP 410 from the detail
+      // endpoint. We already know they're aufgehoben from the list view, so
+      // skipping spares 11 wasted requests and keeps the error count
+      // meaningful — it then reflects only unexpected failures.
+      if (item.aufgehoben) continue
       try {
         const info = await fetchDetailFor(item.detailUrlUpstream.replace(ZVBAWU_BASE, ''))
         if (info) {
           onEnriched(item, info)
           enriched++
+        } else {
+          // Null = fetch failed or upstream returned non-OK / unparsable HTML.
+          // Surface as an error so the aggregate count reflects reality.
+          errors++
         }
       } catch {
         errors++
