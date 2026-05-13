@@ -2,20 +2,27 @@ import type { CrawlResult } from '~/types/auction'
 import type { CrawlOptions, PlatformCrawler, RegionInfo } from './types'
 import { zvgPortalCrawler } from './zvg-portal'
 import { boeCrawler } from './boe'
+import { zvbawuCrawler } from './zvbawu'
 
 /**
  * All registered platform crawlers. Adding a new platform is purely additive:
  * 1. Implement the PlatformCrawler interface in server/crawlers/<name>/.
  * 2. Append it here.
- * Multiple platforms may share the same country (e.g. several private auction
- * sites for one nation); the country code distinguishes regions.
+ * Multiple platforms may share the same {country, region} (e.g. the joint
+ * Bund-Länder portal + a state-specific portal for one Bundesland). Crawls
+ * dispatch to every registered platform for the region and merge results.
  */
-export const platforms: readonly PlatformCrawler[] = [zvgPortalCrawler, boeCrawler] as const
+export const platforms: readonly PlatformCrawler[] = [
+  zvgPortalCrawler,
+  boeCrawler,
+  zvbawuCrawler,
+] as const
 
 export interface RegionEntry extends RegionInfo {
   country: string
-  platformId: string
-  platformName: string
+  /** All platforms that serve this {country, region}. Multiple entries when
+   *  several portals overlap (e.g. zvg-portal + zvbawü for Baden-Württemberg). */
+  platforms: Array<{ id: string; name: string }>
 }
 
 export interface CountryEntry {
@@ -36,29 +43,23 @@ const COUNTRY_NAMES: Record<string, string> = {
 }
 
 export function listRegions(): RegionEntry[] {
-  const seen = new Set<string>()
-  const entries: RegionEntry[] = []
+  const byKey = new Map<string, RegionEntry>()
   for (const p of platforms) {
     for (const r of p.regions) {
       const key = `${p.country}:${r.code}`
-      if (seen.has(key)) {
-        // Two crawlers claiming the same {country, region} silently shadowing
-        // each other has historically caused hard-to-trace data gaps. Fail
-        // loudly so the conflict is fixed at registration time.
-        throw new Error(
-          `Duplicate crawler region registration: ${key} (platform "${p.id}")`,
-        )
+      const existing = byKey.get(key)
+      if (existing) {
+        existing.platforms.push({ id: p.id, name: p.name })
+      } else {
+        byKey.set(key, {
+          ...r,
+          country: p.country,
+          platforms: [{ id: p.id, name: p.name }],
+        })
       }
-      seen.add(key)
-      entries.push({
-        ...r,
-        country: p.country,
-        platformId: p.id,
-        platformName: p.name,
-      })
     }
   }
-  return entries.sort(
+  return [...byKey.values()].sort(
     (a, b) =>
       a.country.localeCompare(b.country) || a.name.localeCompare(b.name, 'de'),
   )
@@ -80,29 +81,78 @@ export function listCountries(): CountryEntry[] {
     .sort((a, b) => a.name.localeCompare(b.name, 'de'))
 }
 
-export function getCrawlerForRegion(country: string, regionCode: string): PlatformCrawler | null {
+export function getCrawlersForRegion(country: string, regionCode: string): PlatformCrawler[] {
   const c = country.toLowerCase()
   const r = regionCode.toLowerCase()
-  for (const p of platforms) {
-    if (p.country !== c) continue
-    if (p.regions.some((reg) => reg.code === r)) return p
-  }
-  return null
+  return platforms.filter(
+    (p) => p.country === c && p.regions.some((reg) => reg.code === r),
+  )
 }
 
 /**
- * Crawl one region via the platform that owns it.
+ * Crawl one region via every platform that owns it. When multiple platforms
+ * cover the same {country, region}, their results are merged into a single
+ * CrawlResult. Per-platform failures are logged but do not abort the whole
+ * region (the surviving platforms' auctions are still returned).
  */
 export async function crawlSingle(
   opts: CrawlOptions & { country: string },
 ): Promise<CrawlResult> {
-  const crawler = getCrawlerForRegion(opts.country, opts.region)
-  if (!crawler) {
+  const crawlers = getCrawlersForRegion(opts.country, opts.region)
+  if (crawlers.length === 0) {
     throw new Error(
       `Kein Crawler für ${opts.country}/${opts.region} registriert`,
     )
   }
-  return await crawler.crawl(opts)
+  if (crawlers.length === 1) {
+    const crawler = crawlers[0]
+    if (!crawler) throw new Error('unreachable')
+    return await crawler.crawl(opts)
+  }
+  const settled = await Promise.allSettled(crawlers.map((c) => c.crawl(opts)))
+  const results: CrawlResult[] = []
+  for (const [i, s] of settled.entries()) {
+    if (s.status === 'fulfilled') {
+      results.push(s.value)
+    } else {
+      console.warn(
+        `[crawlSingle] ${opts.country}/${opts.region} via ${crawlers[i]?.id}: ${(s.reason as Error).message}`,
+      )
+    }
+  }
+  if (results.length === 0) {
+    // Every platform failed — surface the first error so the API layer can
+    // decide whether it's a rate-limit (graceful degrade) or a real outage.
+    const firstReject = settled.find((s) => s.status === 'rejected')
+    throw firstReject ? (firstReject as PromiseRejectedResult).reason : new Error('all crawlers failed')
+  }
+  // Overlapping platforms (e.g. zvg-portal + zvbawü both list the same BW
+  // property) would otherwise produce duplicate pins and list rows. Dedup by
+  // a normalized {amtsgericht, aktenzeichen} key — the Aktenzeichen is the
+  // court's own case number and is stable across portals. When that key isn't
+  // available, fall back to {platform, zvgId} so platform-internal uniqueness
+  // is preserved.
+  const seen = new Set<string>()
+  const auctions = results.flatMap((r) => r.auctions).filter((a) => {
+    const az = a.aktenzeichen.trim().toLowerCase().replace(/\s+/g, ' ')
+    const ag = a.amtsgericht.trim().toLowerCase()
+    const key = az && ag ? `az|${ag}|${az}` : `pf|${a.platform}|${a.zvgId}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+  return {
+    platform: results.length === 1 ? (results[0] as CrawlResult).platform : 'multi',
+    source: [...new Set(results.map((r) => r.source))].join(', '),
+    countries: [opts.country],
+    regions: [...new Set(results.flatMap((r) => r.regions))],
+    fetchedAt: new Date().toISOString(),
+    totalReported: results.reduce<number | null>(
+      (sum, r) => (r.totalReported == null ? sum : (sum ?? 0) + r.totalReported),
+      null,
+    ),
+    auctions,
+  }
 }
 
 export interface CrawlAllOptions {
