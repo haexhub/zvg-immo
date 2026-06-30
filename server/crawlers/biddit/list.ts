@@ -70,7 +70,12 @@ export interface MappedAuction {
 function mapItem(inner: SearchItemInner, platformId: string): MappedAuction | null {
   if (!inner.referenceCode) return null
   const prop = inner.properties?.[0] ?? null
-  const detailUrlUpstream = `${BIDDIT_BASE}/lot/${encodeURIComponent(inner.referenceCode)}`
+  // Biddit's public lot URL is `/{locale}/catalog/detail/{id}`, not `/lot/{id}`
+  // (which 500s) — verified against their sitemap_index.xml. We default to the
+  // German UI since the consuming map is German-language; users can switch
+  // language in biddit's own UI if they want. fr/nl/de all render the same
+  // underlying lot data.
+  const detailUrlUpstream = `${BIDDIT_BASE}/de/catalog/detail/${encodeURIComponent(inner.referenceCode)}`
 
   // publicSaleStatus values seen on the API: CURRENT (active), WITHDRAWN
   // (lot pulled), CLOSED (bidding done). The `withdrawn` boolean is a more
