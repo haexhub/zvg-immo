@@ -3,6 +3,7 @@ import type { CrawlOptions, PlatformCrawler, RegionInfo } from './types'
 import { zvgPortalCrawler } from './zvg-portal'
 import { boeCrawler } from './boe'
 import { zvbawuCrawler } from './zvbawu'
+import { atEdikteCrawler } from './at'
 
 /**
  * All registered platform crawlers. Adding a new platform is purely additive:
@@ -16,6 +17,7 @@ export const platforms: readonly PlatformCrawler[] = [
   zvgPortalCrawler,
   boeCrawler,
   zvbawuCrawler,
+  atEdikteCrawler,
 ] as const
 
 export interface RegionEntry extends RegionInfo {
