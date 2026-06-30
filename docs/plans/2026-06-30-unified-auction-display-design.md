@@ -1,7 +1,10 @@
 # Unified Auction Display — Design
 
 Date: 2026-06-30
-Status: Approved (design phase); Phase 1 implemented
+Status: Phases 1, 2a, 2b, 5 implemented & pushed. Phases 3, 4 remaining.
+Branch: feat/unified-auction-display (off main). Work happens in a git worktree
+(~/.config/superpowers/worktrees/mobile/feat-unified-auction-display), never the
+user's main checkout — they edit it in parallel.
 
 ## Goal
 
@@ -158,18 +161,36 @@ attachment grouped by kind + upstream links), Beschreibung.
 
 ## Phasing (each phase independently shippable)
 
-1. **Data foundation** — `extraction` field + `PropertyType`; server-side rules
-   extractor (classifyObjekt + size parsers); extraction cache; `enrich` task +
-   bootstrap + schedule; overlay in `auctions.get.ts`; vitest + unit tests.
-   *Rules-only works end-to-end.*  ← implemented
-2. **PDF text + LLM type/size** — proxy client + `runtimeConfig`; `pdftotext`
-   into the extractor; LLM fallback for rules-misses.
-3. **PDF image extraction** — `pdfimages` + filter; `photos[]`;
-   `/api/auction-image` endpoint.
-4. **Enriched snapshot + detail route** — persist `auctions.json`;
-   `/api/auction/[platform]/[id]`; detail page; card → detail link.
-5. **UI enrichment** — type/size badges on cards; new size filters;
-   `propertyType` filter from the server field.
+1. ✅ **Data foundation** (commit 1f216b6) — `extraction?` field on `Auction` +
+   `PropertyType`/`PROPERTY_TYPES` in lib/objektart; rules extractor
+   (`server/utils/extract/{sizes,rules}.ts`); extraction cache
+   (`server/utils/extraction-cache.ts`); `enrich` task + `enrich-bootstrap`
+   plugin + `30 */6` schedule; overlay in `auctions.get.ts`; vitest + 28 tests.
+2a. ✅ **enrichOne** (commit 7941cf7) — optional `enrichOne(auction)` on the
+   `PlatformCrawler` interface, implemented by all 5 crawlers (reuse their
+   `enrichInBatches`). Enrich task fetches detail only for *uncached* auctions
+   (once ever), runs rules over objekt + beschreibung. Failed fetches stay
+   uncached for retry.
+2b. ✅ **LLM + PDF text** (commit 7889b46) — `server/utils/extract/llm.ts`
+   (proxy client; pure parse + clamp unit-tested) + `pdf-text.ts` (`pdftotext`
+   fetch/cache). `runtimeConfig.extractLlm.{baseUrl,model}`. Enrich task: rules
+   → LLM fallback (PDF text in prompt), rules values preferred, gaps filled from
+   LLM; per-run LLM cap; failed calls uncached.
+5. ✅ **UI enrichment** (commit da40bb4) — type badge + size line on cards,
+   land/living range filters, `propertyType`-driven Objektart filter in
+   `pages/index.vue`.
+3. ⬜ **PDF image extraction** — `pdfimages -all -p` over the best PDF (reuse
+   `pdf-text.ts`'s `resolveSource` + `pickBestPdf`); filter junk (min ~400×300px,
+   dedup logos repeated across pages, cap count); store under
+   `.cache_zvg/images/<platform>/<id>/`. Add `photos: string[]` to
+   `AuctionExtraction` (or top-level), set `thumbnailUrl = photos[0]` when empty.
+   New `GET /api/auction-image/[platform]/[id]/[n]` serving cached files
+   (mirror `zvg-thumb.get.ts`). Wire into the enrich task alongside the LLM step.
+4. ⬜ **Enriched snapshot + detail route** — enrich task also writes enriched
+   `Auction` objects to `.cache_zvg/auctions.json`; `GET /api/auction/[platform]/[id]`
+   reads it; `pages/objekt/[platform]/[id].vue` (photo gallery, key-facts grid,
+   single-marker map, "Offizielle Quellen" = all attachments by kind + upstream
+   links, Beschreibung); make the card link to it.
 
 ## Risks / notes
 
@@ -185,3 +206,37 @@ attachment grouped by kind + upstream links), Beschreibung.
   degrade to rules-only when unreachable.
 - Detail snapshot staleness bounded by task interval; a single detail page
   could refresh live later if needed.
+
+## Measured learnings (Sachsen, ~105 real auctions)
+
+- **Type classification is essentially solved by rules**: 98% from `objekt`
+  alone (no detail needed). Non-DE sources (BOE, Biddit) will be lower — that's
+  the LLM's job.
+- **Sizes are the hard part**: ~1% from `objekt` alone, ~40% with `beschreibung`
+  (hence enrichDetails/enrichOne in 2a). The remaining ~60% live only in the
+  Gutachten/Exposé PDFs.
+- **Regex over PDF text is too noisy** (produced `land=5 m²` etc.) — so PDF text
+  goes to the *LLM*, not the regex rules. The LLM was precise: 3/3 sampled
+  residual auctions gained correct sizes from their Gutachten (e.g. living=75.33,
+  land=2174). This is why 2b feeds `pdftotext` output to the LLM rather than the
+  rules.
+
+## How to resume / operational notes
+
+- **Verify approach used this session**: a temporary `server/utils/extract/_probe.test.ts`
+  (deleted after each use) crawls one region live + runs the real extractor, and
+  Playwright drives the dev UI for a screenshot. Re-create as needed; don't commit it.
+- **LLM is off by default** (empty `extractLlm.baseUrl`). To enable, set
+  `NUXT_EXTRACT_LLM_BASE_URL` to the proxy URL (and `NUXT_EXTRACT_LLM_MODEL`,
+  default `claude-haiku-4-5`).
+- **haex-claude-proxy** (~/Projekte/haex-claude-proxy): Anthropic-compatible.
+  Start with `PROXY_RESOLVER=file PROXY_CREDENTIALS_HOME=$HOME PORT=<free> node src/server.js`
+  — uses the user's `claude` OAuth login, spawns a `claude` subprocess per
+  request. Structured output: send `tools:[{name:'final_result', input_schema}]`,
+  read back the `tool_use` block's `input`. **Port 8080 on the user's host is
+  occupied by an unrelated service** — use a free port (8091 worked).
+- **Typecheck**: `pnpm exec nuxi prepare && pnpm exec tsc -p .nuxt/tsconfig.server.json --noEmit`
+  (vue-tsc isn't installed, so .vue files aren't type-checked).
+- **Commits**: English, no Claude attribution, explicit `git add <paths>` (the
+  user edits the repo in parallel). Push as the `haexhub` gh account
+  (`gh auth switch --user haexhub`), not `haex-space`.
