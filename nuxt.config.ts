@@ -30,6 +30,9 @@ export default defineNuxtConfig({
       // Every 6 hours: re-crawl and fill in missing geocodes. After the first
       // bulk run the cache is hot; subsequent ticks finish in seconds.
       '0 */6 * * *': ['geocode'],
+      // Offset 30 min from geocode so the two full crawls don't overlap. Fills
+      // the extraction cache (property type + sizes) for new listings.
+      '30 */6 * * *': ['enrich'],
     },
     routeRules: {
       // The auctions list (HTML scraping) is the expensive part. The geo

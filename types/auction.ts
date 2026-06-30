@@ -1,3 +1,5 @@
+import type { PropertyType } from '~/lib/objektart'
+
 export type AttachmentKind = 'bekanntmachung' | 'foto' | 'exposee' | 'gutachten' | 'sonstiges'
 
 export interface Attachment {
@@ -47,6 +49,27 @@ export interface Auction {
   fotoCount: number
   /** Local URL for a JPEG thumbnail of the first photo, if any. */
   thumbnailUrl: string | null
+  /** Structured fields extracted from the listing text/documents. Always absent
+   *  at crawl time — populated read-only from the extraction cache by the
+   *  /api/auctions overlay (mirrors how verkehrswertEur is filled). */
+  extraction?: AuctionExtraction | null
+}
+
+/** The "extracted layer": property type + sizes derived by the enrich task's
+ *  rules pass (and later the LLM fallback). */
+export interface AuctionExtraction {
+  propertyType: PropertyType | null
+  /** Grundstücksfläche in m². */
+  landAreaSqm: number | null
+  /** Wohnfläche in m² (kept separate from land area). */
+  livingAreaSqm: number | null
+  rooms: number | null
+  /** Number of Wohneinheiten. */
+  units: number | null
+  source: 'rules' | 'llm'
+  confidence: 'high' | 'low'
+  /** ISO timestamp of when this extraction was produced. */
+  at: string
 }
 
 export interface CrawlResult {

@@ -1,6 +1,7 @@
 import type { CrawlResult } from '~/types/auction'
 import { crawlAll, crawlSingle } from '../crawlers/registry'
 import { cacheKey, readVerkehrswertCache } from '../utils/verkehrswert-cache'
+import { readExtractionCache } from '../utils/extraction-cache'
 
 export default defineEventHandler(async (event): Promise<CrawlResult> => {
   const query = getQuery(event)
@@ -23,6 +24,7 @@ export default defineEventHandler(async (event): Promise<CrawlResult> => {
       result = await crawlSingle({ country, region, immobilienOnly })
     }
     await overlayCachedVerkehrswert(result)
+    await overlayExtraction(result)
     return result
   } catch (err) {
     // Normalize: thrown values aren't guaranteed to be Errors.
@@ -74,5 +76,17 @@ async function overlayCachedVerkehrswert(result: CrawlResult): Promise<void> {
     if (!hit) continue
     a.verkehrswertEur = hit.verkehrswertEur
     a.verkehrswertText = hit.verkehrswertText
+  }
+}
+
+// Decorate auctions with the structured fields (property type + sizes) produced
+// by the enrich task. Read-only, like the Verkehrswert overlay: a cache miss
+// just leaves `extraction` undefined.
+async function overlayExtraction(result: CrawlResult): Promise<void> {
+  const cache = await readExtractionCache()
+  if (Object.keys(cache).length === 0) return
+  for (const a of result.auctions) {
+    const hit = cache[cacheKey(a.platform, a.zvgId)]
+    if (hit) a.extraction = hit
   }
 }

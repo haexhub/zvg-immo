@@ -1,0 +1,63 @@
+import { describe, expect, it } from 'vitest'
+import { extractByRules } from './rules'
+
+describe('extractByRules', () => {
+  it('extracts type and both areas for a clearly described house', () => {
+    const r = extractByRules({
+      objekt: 'Einfamilienhaus',
+      beschreibung: 'Wohnfläche 140 m², Grundstücksgröße 620 m²',
+    })
+    expect(r.propertyType).toBe('einfamilienhaus')
+    expect(r.livingAreaSqm).toBe(140)
+    expect(r.landAreaSqm).toBe(620)
+    expect(r.confident).toBe(true)
+  })
+
+  it('is confident with a known type and a single area (Eigentumswohnung)', () => {
+    const r = extractByRules({
+      objekt: 'Eigentumswohnung',
+      beschreibung: 'Wohnfläche 98 m², 3 Zimmer',
+    })
+    expect(r.propertyType).toBe('eigentumswohnung')
+    expect(r.livingAreaSqm).toBe(98)
+    expect(r.landAreaSqm).toBeNull()
+    expect(r.rooms).toBe(3)
+    expect(r.confident).toBe(true)
+  })
+
+  it('classifies from the description when objekt is empty', () => {
+    const r = extractByRules({
+      objekt: null,
+      beschreibung:
+        'Verkauft wird ein Mehrfamilienhaus mit 3 Wohneinheiten, Wohnfläche 240 m²',
+    })
+    expect(r.propertyType).toBe('mehrfamilienhaus')
+    expect(r.units).toBe(3)
+    expect(r.livingAreaSqm).toBe(240)
+    expect(r.confident).toBe(true)
+  })
+
+  it('converts agricultural hectares to m²', () => {
+    const r = extractByRules({
+      objekt: 'Ackerland',
+      beschreibung: 'Grundstücksfläche 2,5 ha',
+    })
+    expect(r.propertyType).toBe('land-forst')
+    expect(r.landAreaSqm).toBe(25000)
+    expect(r.confident).toBe(true)
+  })
+
+  it('is not confident when the type is known but no area is found', () => {
+    const r = extractByRules({ objekt: 'Einfamilienhaus', beschreibung: null })
+    expect(r.propertyType).toBe('einfamilienhaus')
+    expect(r.livingAreaSqm).toBeNull()
+    expect(r.landAreaSqm).toBeNull()
+    expect(r.confident).toBe(false)
+  })
+
+  it('returns null type and not-confident for empty input', () => {
+    const r = extractByRules({ objekt: null, beschreibung: null })
+    expect(r.propertyType).toBeNull()
+    expect(r.confident).toBe(false)
+  })
+})

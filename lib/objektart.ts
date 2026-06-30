@@ -3,6 +3,22 @@ export interface ObjektKategorie {
   label: string
 }
 
+/** Canonical property-type ids the rules/LLM extractor may emit. Mirrors the
+ *  RULES ids below plus 'sonstiges'. 'unbekannt' is represented as null. */
+export type PropertyType =
+  | 'mehrfamilienhaus'
+  | 'zweifamilienhaus'
+  | 'wohn-geschaefts'
+  | 'doppelhaushaelfte'
+  | 'reihenhaus'
+  | 'einfamilienhaus'
+  | 'eigentumswohnung'
+  | 'gewerbe'
+  | 'land-forst'
+  | 'unbebaut'
+  | 'garage-stellplatz'
+  | 'sonstiges'
+
 interface KategorieRule extends ObjektKategorie {
   test: RegExp
 }
