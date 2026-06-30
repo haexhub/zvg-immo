@@ -19,6 +19,23 @@ export type PropertyType =
   | 'garage-stellplatz'
   | 'sonstiges'
 
+/** Runtime list of the PropertyType union — for LLM schema enums and validation
+ *  (TypeScript can't enumerate a type at runtime). Keep in sync with the union. */
+export const PROPERTY_TYPES: readonly PropertyType[] = [
+  'mehrfamilienhaus',
+  'zweifamilienhaus',
+  'wohn-geschaefts',
+  'doppelhaushaelfte',
+  'reihenhaus',
+  'einfamilienhaus',
+  'eigentumswohnung',
+  'gewerbe',
+  'land-forst',
+  'unbebaut',
+  'garage-stellplatz',
+  'sonstiges',
+]
+
 interface KategorieRule extends ObjektKategorie {
   test: RegExp
 }

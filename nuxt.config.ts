@@ -22,6 +22,16 @@ export default defineNuxtConfig({
       ],
     },
   },
+  runtimeConfig: {
+    // LLM fallback for the enrich task, via haex-claude-proxy. Disabled when
+    // baseUrl is empty (rules-only). Override per env:
+    //   NUXT_EXTRACT_LLM_BASE_URL=http://haex-claude-proxy:8080
+    //   NUXT_EXTRACT_LLM_MODEL=claude-haiku-4-5
+    extractLlm: {
+      baseUrl: '',
+      model: 'claude-haiku-4-5',
+    },
+  },
   nitro: {
     experimental: {
       tasks: true,
