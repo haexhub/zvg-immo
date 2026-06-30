@@ -23,17 +23,24 @@ export interface BoeState {
 export const EMPTY_BOE_STATE: BoeState = { captchaCooldownUntil: 0, lastCaptchaAt: null }
 
 export async function readBoeState(): Promise<BoeState> {
+  // ENOENT (file not yet written) is the legitimate empty-state case. Any
+  // other error — corrupt JSON, permission denied, half-written file — is a
+  // real problem: silently defaulting to a zero cooldown would re-enable BOE
+  // traffic and restart the very loop this state file exists to prevent.
+  // Propagate so `boeFetch` refuses to run instead of failing open.
+  let buf: string
   try {
-    const buf = await readFile(STATE_PATH, 'utf8')
-    const parsed = JSON.parse(buf) as Partial<BoeState>
-    return {
-      captchaCooldownUntil:
-        typeof parsed.captchaCooldownUntil === 'number' ? parsed.captchaCooldownUntil : 0,
-      lastCaptchaAt:
-        typeof parsed.lastCaptchaAt === 'number' ? parsed.lastCaptchaAt : null,
-    }
-  } catch {
-    return { ...EMPTY_BOE_STATE }
+    buf = await readFile(STATE_PATH, 'utf8')
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { ...EMPTY_BOE_STATE }
+    throw err
+  }
+  const parsed = JSON.parse(buf) as Partial<BoeState>
+  return {
+    captchaCooldownUntil:
+      typeof parsed.captchaCooldownUntil === 'number' ? parsed.captchaCooldownUntil : 0,
+    lastCaptchaAt:
+      typeof parsed.lastCaptchaAt === 'number' ? parsed.lastCaptchaAt : null,
   }
 }
 

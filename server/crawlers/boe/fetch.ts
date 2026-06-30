@@ -47,7 +47,15 @@ let hydratePromise: Promise<void> | null = null
 function hydrate(): Promise<void> {
   if (!hydratePromise) {
     hydratePromise = (async () => {
-      state = await readBoeState()
+      try {
+        state = await readBoeState()
+      } catch (err) {
+        // Don't cache the failure — once someone fixes / removes the broken
+        // boe-state.json on disk, the next caller should re-attempt instead
+        // of needing a process restart.
+        hydratePromise = null
+        throw err
+      }
     })()
   }
   return hydratePromise

@@ -24,12 +24,26 @@ export function cacheKey(platform: string, zvgId: string): string {
 }
 
 export async function readVerkehrswertCache(): Promise<VerkehrswertCache> {
+  // ENOENT (cache not yet built) is the legitimate empty case. Any other
+  // failure means persistence is broken — log it so the geocode task and the
+  // /api/auctions overlay aren't silently degraded on every request.
+  let buf: string
   try {
-    const buf = await readFile(CACHE_PATH, 'utf8')
+    buf = await readFile(CACHE_PATH, 'utf8')
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {}
+    console.warn(
+      `[verkehrswert-cache] failed to read ${CACHE_PATH}: ${(err as Error).message}`,
+    )
+    return {}
+  }
+  try {
     const parsed = JSON.parse(buf) as unknown
     if (parsed && typeof parsed === 'object') return parsed as VerkehrswertCache
-  } catch {
-    // miss → empty cache
+  } catch (err) {
+    console.warn(
+      `[verkehrswert-cache] corrupt JSON at ${CACHE_PATH}: ${(err as Error).message}`,
+    )
   }
   return {}
 }

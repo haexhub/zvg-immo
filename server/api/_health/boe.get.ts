@@ -20,15 +20,28 @@
 import { getBoeState, isBoeDisabled } from '../../crawlers/boe/fetch'
 
 export default defineEventHandler(async () => {
-  const state = await getBoeState()
   const now = Date.now()
-  return {
+  const base = {
     disabled: isBoeDisabled(),
-    inCooldown: state.captchaCooldownUntil > now,
-    captchaCooldownUntil: state.captchaCooldownUntil,
-    msUntilFree: Math.max(0, state.captchaCooldownUntil - now),
-    lastCaptchaAt: state.lastCaptchaAt,
-    lastFetchAt: state.lastFetchAt || null,
     serverTime: new Date(now).toISOString(),
+  }
+  try {
+    const state = await getBoeState()
+    return {
+      ...base,
+      inCooldown: state.captchaCooldownUntil > now,
+      captchaCooldownUntil: state.captchaCooldownUntil,
+      msUntilFree: Math.max(0, state.captchaCooldownUntil - now),
+      lastCaptchaAt: state.lastCaptchaAt,
+      lastFetchAt: state.lastFetchAt || null,
+    }
+  } catch (err) {
+    // The whole point of this endpoint is to surface BOE problems, so a
+    // failed state-file read shouldn't 500 the diagnostic itself. Surface
+    // the error inline; operators get actionable info instead of a stack trace.
+    return {
+      ...base,
+      stateReadError: (err as Error).message,
+    }
   }
 })
