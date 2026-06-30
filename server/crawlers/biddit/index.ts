@@ -40,6 +40,10 @@ function applyDetail(auction: AuctionDetailFields, info: DetailInfo): void {
   if (info.aufgehoben) auction.aufgehoben = true
 }
 
+async function enrichOne(auction: Auction): Promise<void> {
+  await enrichInBatches([auction], applyDetail)
+}
+
 async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
   if (opts.region.toLowerCase() !== 'all') {
     throw new Error(`biddit crawler does not support region ${opts.region}`)
@@ -92,4 +96,5 @@ export const bidditCrawler: PlatformCrawler = {
   country: COUNTRY,
   regions: BE_REGIONS,
   crawl,
+  enrichOne,
 }

@@ -41,6 +41,10 @@ function applyDetail(auction: AuctionDetailFields, info: DetailInfo): void {
   if (info.thumbnailUrl) auction.thumbnailUrl = info.thumbnailUrl
 }
 
+async function enrichOne(auction: Auction): Promise<void> {
+  await enrichInBatches([auction], applyDetail)
+}
+
 async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
   const regionCode = opts.region.toLowerCase()
   const regionName = AT_REGION_NAMES[regionCode]
@@ -84,4 +88,5 @@ export const atEdikteCrawler: PlatformCrawler = {
   country: COUNTRY,
   regions: AT_REGIONS,
   crawl,
+  enrichOne,
 }

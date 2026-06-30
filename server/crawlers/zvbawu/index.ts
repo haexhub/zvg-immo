@@ -1,11 +1,28 @@
-import type { CrawlResult } from '~/types/auction'
+import type { Auction, CrawlResult } from '~/types/auction'
 import type { CrawlOptions, PlatformCrawler } from '../types'
 import { ZVBAWU_BASE, COUNTRY, DE_REGIONS, BW_COURTS_FALLBACK } from './constants'
 import { crawlCourt } from './list'
-import { enrichInBatches } from './detail'
+import { enrichInBatches, type DetailInfo } from './detail'
 
 const PLATFORM_ID = 'zvbawu'
 const REGION_NAME = 'Baden-Württemberg'
+
+function applyDetail(auction: Auction, info: DetailInfo): void {
+  auction.beschreibung = info.beschreibung
+  auction.attachments = info.attachments
+  auction.fotoCount = info.fotoCount
+  auction.thumbnailUrl = info.thumbnailUrl
+  auction.pdfUrl = info.pdfUrl
+  auction.pdfUrlUpstream = info.pdfUrlUpstream
+  auction.aufgehoben = info.aufgehoben
+  // Detail page exposes the file number as a dedicated field; the list view
+  // derives it from facts[0]. Prefer the structured value when set.
+  if (info.aktenzeichen) auction.aktenzeichen = info.aktenzeichen
+}
+
+async function enrichOne(auction: Auction): Promise<void> {
+  await enrichInBatches([auction], applyDetail)
+}
 
 async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
   if (opts.region.toLowerCase() !== 'bw') {
@@ -34,18 +51,7 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
   }
 
   if (enrichDetails && auctions.length > 0) {
-    const result = await enrichInBatches(auctions, (auction, info) => {
-      auction.beschreibung = info.beschreibung
-      auction.attachments = info.attachments
-      auction.fotoCount = info.fotoCount
-      auction.thumbnailUrl = info.thumbnailUrl
-      auction.pdfUrl = info.pdfUrl
-      auction.pdfUrlUpstream = info.pdfUrlUpstream
-      auction.aufgehoben = info.aufgehoben
-      // Detail page exposes the file number as a dedicated field; the list
-      // view derives it from facts[0]. Prefer the structured value when set.
-      if (info.aktenzeichen) auction.aktenzeichen = info.aktenzeichen
-    })
+    const result = await enrichInBatches(auctions, applyDetail)
     if (result.errors > 0) {
       console.warn(
         `[zvbawu] enriched ${result.enriched}/${auctions.length}, ${result.errors} detail fetches failed`,
@@ -71,4 +77,5 @@ export const zvbawuCrawler: PlatformCrawler = {
   country: COUNTRY,
   regions: DE_REGIONS,
   crawl,
+  enrichOne,
 }

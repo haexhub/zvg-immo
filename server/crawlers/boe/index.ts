@@ -44,6 +44,10 @@ function applyDetail(auction: AuctionDetailFields, info: DetailInfo): void {
   }
 }
 
+async function enrichOne(auction: Auction): Promise<void> {
+  await enrichInBatches([auction], applyDetail)
+}
+
 async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
   const provincia = opts.region
   const enrichDetails = opts.enrichDetails ?? true
@@ -88,4 +92,5 @@ export const boeCrawler: PlatformCrawler = {
   country: COUNTRY,
   regions: ES_REGIONS,
   crawl,
+  enrichOne,
 }
