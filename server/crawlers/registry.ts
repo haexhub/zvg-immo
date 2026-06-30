@@ -4,6 +4,7 @@ import { zvgPortalCrawler } from './zvg-portal'
 import { boeCrawler } from './boe'
 import { zvbawuCrawler } from './zvbawu'
 import { atEdikteCrawler } from './at'
+import { bidditCrawler } from './biddit'
 
 /**
  * All registered platform crawlers. Adding a new platform is purely additive:
@@ -18,6 +19,7 @@ export const platforms: readonly PlatformCrawler[] = [
   boeCrawler,
   zvbawuCrawler,
   atEdikteCrawler,
+  bidditCrawler,
 ] as const
 
 export interface RegionEntry extends RegionInfo {
@@ -42,6 +44,7 @@ const COUNTRY_NAMES: Record<string, string> = {
   it: 'Italien',
   cz: 'Tschechien',
   pl: 'Polen',
+  be: 'Belgien',
 }
 
 export function listRegions(): RegionEntry[] {
