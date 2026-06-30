@@ -19,7 +19,10 @@ async function fetchListHtml(provincia: string): Promise<string> {
   // wrapped around a captcha image. Detecting it lets crawlAll record the
   // failure in `errors` instead of silently returning 0 auctions.
   if (looksLikeCaptcha(html)) {
-    markBoeCaptcha()
+    console.warn(
+      `[boe] CAPTCHA on listing for provincia ${provincia} at ${new Date().toISOString()} — arming 24h cooldown`,
+    )
+    await markBoeCaptcha()
     throw new Error(`BOE returned a CAPTCHA page for provincia ${provincia} — rate limit likely`)
   }
   return html
