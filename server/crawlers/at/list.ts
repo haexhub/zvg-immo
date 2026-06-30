@@ -54,15 +54,14 @@ export async function fetchListHtml(url: string): Promise<string> {
 
 const UNID_RE = /alldoc\/([a-f0-9]+)/i
 
-/** "1230 Wien Otto-Mauer-Gasse 10" → { adresse: "1230 Wien, Otto-Mauer-Gasse 10" }. */
+/** Whitespace-normalises a listing-cell address ("1230 Wien Otto-Mauer-Gasse 10").
+ *  We can't reliably split PLZ/Ort from the street here — Austrian localities
+ *  routinely contain multiple words ("Sankt Johann im Pongau", "Bad Ischl"),
+ *  so a "PLZ + first word = Ort" heuristic corrupts those. Detail enrichment
+ *  later replaces this with the structured "Strasse, PLZ Ort" form anyway. */
 function formatAddressLine(raw: string): string | null {
   const cleaned = raw.replace(/\s+/g, ' ').trim()
-  if (!cleaned) return null
-  // PLZ prefix: insert a comma after "PLZ Ort " so downstream geocoders can
-  // tokenize it like the BOE/zvbawü address strings.
-  const m = cleaned.match(/^(\d{4,5}\s+\S+)\s+(.+)$/)
-  if (m && m[1] && m[2]) return `${m[1]}, ${m[2]}`
-  return cleaned
+  return cleaned || null
 }
 
 /**

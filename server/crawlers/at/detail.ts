@@ -62,18 +62,24 @@ function extractLabelPairs($: ReturnType<typeof load>): Map<string, string> {
   return pairs
 }
 
+/**
+ * Section-label → AttachmentKind. Plans (Grundriss, Lageplan) stay as
+ * 'sonstiges' even though they happen to ship as JPEGs: fotoCount and
+ * thumbnailUrl downstream are meant for actual property photographs, not
+ * floor-plan drawings. The Attachment is still preserved in the array — it
+ * just doesn't claim photo semantics it doesn't have.
+ */
 const KIND_BY_SECTION_LABEL: ReadonlyArray<[RegExp, AttachmentKind]> = [
   [/edikt|bekanntmachung|verlautbarung/i, 'bekanntmachung'],
   [/gutachten/i, 'gutachten'],
   [/expos[ée]/i, 'exposee'],
-  [/foto|bild|grundriss|lageplan|plan/i, 'foto'],
+  [/foto|bild/i, 'foto'],
 ]
 
-function classifyBySection(sectionLabel: string, href: string): AttachmentKind {
+function classifyBySection(sectionLabel: string): AttachmentKind {
   for (const [re, kind] of KIND_BY_SECTION_LABEL) {
     if (re.test(sectionLabel)) return kind
   }
-  if (/\.(jpe?g|png|gif|webp)(?:[?#]|$)/i.test(href)) return 'foto'
   return 'sonstiges'
 }
 
@@ -129,7 +135,7 @@ function buildAttachments(html: string): ExtractedAttachments {
       const sizeBytes = sizeMatch?.[1] ? parseInt(sizeMatch[1], 10) * 1024 : null
       const fileIdMatch = hrefRaw.match(/\/0\/([a-f0-9]+)/i)
       const fileId = fileIdMatch?.[1] ?? href
-      const kind = classifyBySection(sectionLabel, href)
+      const kind = classifyBySection(sectionLabel)
       out.push({
         kind,
         label: linkLabel
@@ -205,7 +211,16 @@ export async function fetchDetail(detailUrl: string): Promise<DetailInfo> {
   const beschreibung = descParts.join('\n\n') || null
 
   const { attachments, thumbnailUrl: explicitThumb } = buildAttachments(html)
-  const firstPdf = attachments.find((a) => /\.pdf(?:[?#]|$)/i.test(a.proxyUrl))
+  // Headline PDF: prefer the official notice (matches zvbawü's `bulletin`
+  // and BOE's boletín document), then the Gutachten — which on AT is the
+  // most informative file when no separate bekanntmachung PDF exists.
+  // Falling back to "any PDF" last keeps the field non-null when an
+  // Exposé-only Edikt shows up.
+  const isPdf = (a: Attachment): boolean => /\.pdf(?:[?#]|$)/i.test(a.proxyUrl)
+  const headlinePdf =
+    attachments.find((a) => a.kind === 'bekanntmachung' && isPdf(a)) ??
+    attachments.find((a) => a.kind === 'gutachten' && isPdf(a)) ??
+    attachments.find(isPdf)
   const firstPhoto = attachments.find((a) => a.kind === 'foto')
   const photos = attachments.filter((a) => a.kind === 'foto')
 
@@ -220,8 +235,8 @@ export async function fetchDetail(detailUrl: string): Promise<DetailInfo> {
     geringstesGebotText,
     beschreibung,
     attachments,
-    pdfUrl: firstPdf?.proxyUrl ?? null,
-    pdfUrlUpstream: firstPdf?.proxyUrl ?? null,
+    pdfUrl: headlinePdf?.proxyUrl ?? null,
+    pdfUrlUpstream: headlinePdf?.proxyUrl ?? null,
     fotoCount: photos.length,
     // Prefer the inline thumbnail (~55x80px) over the full-size photo URL;
     // both lead to the same image, but the thumbnail saves bandwidth in the
