@@ -597,16 +597,14 @@ function attachmentLabel(att: { kind: string; label: string }): string {
     <ul v-if="filtered.length" class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
       <li v-for="a in filtered" :key="`${a.platform}:${a.zvgId}`">
         <article
-          class="h-full flex flex-col rounded-xl border bg-card text-card-foreground shadow-sm overflow-hidden"
+          class="h-full flex flex-col rounded-xl border bg-card text-card-foreground shadow-sm overflow-hidden transition-shadow hover:shadow-md"
           :class="{ 'opacity-60': a.aufgehoben }"
         >
-          <a
+          <NuxtLink
             v-if="a.thumbnailUrl"
-            :href="a.attachments.find((x) => x.kind === 'foto')?.proxyUrl ?? a.detailUrl"
-            target="_blank"
-            rel="noopener"
+            :to="`/objekt/${a.platform}/${a.zvgId}`"
             class="relative block overflow-hidden border-b group"
-            :title="`${a.fotoCount} Foto${a.fotoCount === 1 ? '' : 's'} öffnen`"
+            :title="`${a.fotoCount} Foto${a.fotoCount === 1 ? '' : 's'}`"
           >
             <img
               :src="a.thumbnailUrl"
@@ -619,10 +617,12 @@ function attachmentLabel(att: { kind: string; label: string }): string {
               v-if="a.fotoCount > 1"
               class="absolute bottom-2 right-2 rounded-full bg-black/70 px-2 py-0.5 text-xs text-white"
             >+{{ a.fotoCount - 1 }}</span>
-          </a>
-          <div v-else-if="!a.aufgehoben" class="flex aspect-[16/10] items-center justify-center bg-muted text-muted-foreground text-sm border-b">
-            Kein Foto
-          </div>
+          </NuxtLink>
+          <NuxtLink
+            v-else-if="!a.aufgehoben"
+            :to="`/objekt/${a.platform}/${a.zvgId}`"
+            class="flex aspect-[16/10] items-center justify-center bg-muted text-muted-foreground text-sm border-b hover:text-primary transition-colors"
+          >Details öffnen</NuxtLink>
 
           <div class="p-4 flex-1 flex flex-col gap-2">
             <div class="flex flex-wrap items-center gap-2 text-xs">
@@ -635,7 +635,11 @@ function attachmentLabel(att: { kind: string; label: string }): string {
               <span v-if="a.aufgehoben" class="rounded-md bg-destructive/15 text-destructive px-2 py-0.5 font-medium">Aufgehoben</span>
               <span class="font-mono text-muted-foreground">{{ a.aktenzeichen }}</span>
             </div>
-            <h2 class="text-base font-semibold leading-tight mt-1">{{ a.objekt || 'Objektart unbekannt' }}</h2>
+            <h2 class="text-base font-semibold leading-tight mt-1">
+              <NuxtLink :to="`/objekt/${a.platform}/${a.zvgId}`" class="hover:text-primary transition-colors">
+                {{ a.objekt || 'Objektart unbekannt' }}
+              </NuxtLink>
+            </h2>
             <p v-if="a.adresse" class="text-sm text-muted-foreground">{{ a.adresse }}</p>
             <p v-if="sizeBits(a).length" class="text-sm font-medium text-foreground/80">
               {{ sizeBits(a).join(' · ') }}
@@ -672,9 +676,9 @@ function attachmentLabel(att: { kind: string; label: string }): string {
               rel="noopener"
               class="text-primary hover:underline"
             >{{ attachmentLabel(att) }}</a>
-            <a :href="a.detailUrl" target="_blank" rel="noopener" class="ml-auto text-primary hover:underline">
+            <NuxtLink :to="`/objekt/${a.platform}/${a.zvgId}`" class="ml-auto text-primary hover:underline">
               Details →
-            </a>
+            </NuxtLink>
           </footer>
         </article>
       </li>

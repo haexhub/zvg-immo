@@ -22,13 +22,22 @@
 // Triggered by the scheduled task config in nuxt.config.ts and once shortly
 // after server startup via server/plugins/enrich-bootstrap.ts.
 
+import { join } from 'node:path'
 import type { AuctionExtraction } from '~/types/auction'
 import { crawlAll, platforms } from '../crawlers/registry'
+import { writeAuctionSnapshot } from '../utils/auction-snapshot'
 import { extractByRules } from '../utils/extract/rules'
 import { extractByLlm, type LlmConfig } from '../utils/extract/llm'
+import { extractPdfPhotos } from '../utils/extract/pdf-images'
 import { pdfToText, pickBestPdf } from '../utils/extract/pdf-text'
-import { readExtractionCache, writeExtractionCache } from '../utils/extraction-cache'
-import { cacheKey } from '../utils/verkehrswert-cache'
+import {
+  applyExtractionToAuctions,
+  readExtractionCache,
+  writeExtractionCache,
+} from '../utils/extraction-cache'
+import { cacheKey, readVerkehrswertCache } from '../utils/verkehrswert-cache'
+
+const IMAGES_DIR = join(process.cwd(), '.cache_zvg', 'images')
 
 const ENRICH_CONCURRENCY = 8
 const FLUSH_EVERY = 200
@@ -66,6 +75,8 @@ export default defineTask({
     let confident = 0
     let enrichedCount = 0
     let llmCalls = 0
+    let photoExtractions = 0
+    let photosTotal = 0
     const at = new Date().toISOString()
 
     let cursor = 0
@@ -98,13 +109,13 @@ export default defineTask({
         }
         let source: 'rules' | 'llm' = 'rules'
         let cacheable: boolean
+        const bestPdf = pickBestPdf(a.attachments)
 
         if (rules.confident) {
           cacheable = true
         } else if (llmConfig && llmCalls < MAX_LLM_PER_RUN) {
           llmCalls++
-          const pdf = pickBestPdf(a.attachments)
-          const pdfText = pdf ? await pdfToText(pdf.proxyUrl) : null
+          const pdfText = bestPdf ? await pdfToText(bestPdf.proxyUrl) : null
           const llm = await extractByLlm(
             { objekt: a.objekt, beschreibung: a.beschreibung, pdfText },
             llmConfig,
@@ -131,12 +142,25 @@ export default defineTask({
 
         if (!cacheable) continue
 
+        // Extract embedded photos from the best PDF (independent of the
+        // rules/LLM size pipeline). Skip when the listing already has native
+        // foto attachments — extra extraction is wasted I/O.
+        let photos: string[] = []
+        if (bestPdf && a.fotoCount === 0) {
+          photoExtractions++
+          photos = await extractPdfPhotos(bestPdf.proxyUrl, {
+            destDir: join(IMAGES_DIR, a.platform, a.zvgId),
+          })
+          photosTotal += photos.length
+        }
+
         const hasType = fields.propertyType != null && fields.propertyType !== 'sonstiges'
         const hasArea = fields.landAreaSqm != null || fields.livingAreaSqm != null
         const entry: AuctionExtraction = {
           ...fields,
           source,
           confidence: hasType && hasArea ? 'high' : 'low',
+          photos: photos.length > 0 ? photos : undefined,
           at,
         }
         cache[cacheKey(a.platform, a.zvgId)] = entry
@@ -149,9 +173,24 @@ export default defineTask({
 
     if (cached > 0) await writeExtractionCache(cache)
 
+    // Snapshot the fully decorated crawl (extraction + photo URLs + cached
+    // Verkehrswerte) so /api/auction/[platform]/[id] can serve detail pages
+    // without re-running the crawlers. The same overlays /api/auctions applies
+    // are applied here so the snapshot matches what the list view sees.
+    const vwCache = await readVerkehrswertCache()
+    for (const a of result.auctions) {
+      if (a.verkehrswertEur != null) continue
+      const hit = vwCache[cacheKey(a.platform, a.zvgId)]
+      if (!hit) continue
+      a.verkehrswertEur = hit.verkehrswertEur
+      a.verkehrswertText = hit.verkehrswertText
+    }
+    applyExtractionToAuctions(result.auctions, cache)
+    await writeAuctionSnapshot(result.auctions)
+
     const durationMs = Date.now() - startedAt
     console.log(
-      `[enrich] done in ${(durationMs / 1000).toFixed(0)}s · crawled=${result.auctions.length} new=${todo.length} cached=${cached} enriched=${enrichedCount} llmCalls=${llmCalls} confident=${confident}`,
+      `[enrich] done in ${(durationMs / 1000).toFixed(0)}s · crawled=${result.auctions.length} new=${todo.length} cached=${cached} enriched=${enrichedCount} llmCalls=${llmCalls} photos=${photosTotal}/${photoExtractions} confident=${confident}`,
     )
 
     return {
@@ -161,6 +200,8 @@ export default defineTask({
         cached,
         enriched: enrichedCount,
         llmCalls,
+        photoExtractions,
+        photosTotal,
         confident,
         durationMs,
       },

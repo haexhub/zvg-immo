@@ -40,16 +40,11 @@ function resolveSource(proxyUrl: string): { url: string; headers: Record<string,
   return { url: proxyUrl, headers: { 'User-Agent': UA, Accept: 'application/pdf,*/*' } }
 }
 
-/** Fetch the PDF at `proxyUrl` and return its text, or null on any failure. */
-export async function pdfToText(proxyUrl: string): Promise<string | null> {
-  const key = createHash('sha1').update(proxyUrl).digest('hex')
-  const cachePath = join(CACHE_DIR, `${key}.txt`)
-  try {
-    return await readFile(cachePath, 'utf8')
-  } catch {
-    // miss — fetch + extract below
-  }
-
+/**
+ * Fetch the PDF at `proxyUrl` and return its bytes, or null on any failure
+ * (network error, non-200, non-PDF response).
+ */
+export async function fetchPdfBuffer(proxyUrl: string): Promise<Buffer | null> {
   const { url, headers } = resolveSource(proxyUrl)
   let buf: Buffer
   try {
@@ -60,6 +55,21 @@ export async function pdfToText(proxyUrl: string): Promise<string | null> {
     return null
   }
   if (!buf.subarray(0, 5).toString('ascii').startsWith('%PDF-')) return null
+  return buf
+}
+
+/** Fetch the PDF at `proxyUrl` and return its text, or null on any failure. */
+export async function pdfToText(proxyUrl: string): Promise<string | null> {
+  const key = createHash('sha1').update(proxyUrl).digest('hex')
+  const cachePath = join(CACHE_DIR, `${key}.txt`)
+  try {
+    return await readFile(cachePath, 'utf8')
+  } catch {
+    // miss — fetch + extract below
+  }
+
+  const buf = await fetchPdfBuffer(proxyUrl)
+  if (!buf) return null
 
   const dir = await mkdtemp(join(tmpdir(), 'zvg-pdftext-'))
   const inputPath = join(dir, 'in.pdf')

@@ -68,6 +68,10 @@ export interface AuctionExtraction {
   units: number | null
   source: 'rules' | 'llm'
   confidence: 'high' | 'low'
+  /** Filenames of photos extracted from the best PDF attachment, relative to
+   *  `.cache_zvg/images/<platform>/<zvgId>/`. Empty when the PDF held no
+   *  usable photos or no PDF was available. Served via /api/auction-image. */
+  photos?: string[]
   /** ISO timestamp of when this extraction was produced. */
   at: string
 }

@@ -1,7 +1,7 @@
 import type { CrawlResult } from '~/types/auction'
 import { crawlAll, crawlSingle } from '../crawlers/registry'
 import { cacheKey, readVerkehrswertCache } from '../utils/verkehrswert-cache'
-import { readExtractionCache } from '../utils/extraction-cache'
+import { applyExtractionToAuctions, readExtractionCache } from '../utils/extraction-cache'
 
 export default defineEventHandler(async (event): Promise<CrawlResult> => {
   const query = getQuery(event)
@@ -85,8 +85,5 @@ async function overlayCachedVerkehrswert(result: CrawlResult): Promise<void> {
 async function overlayExtraction(result: CrawlResult): Promise<void> {
   const cache = await readExtractionCache()
   if (Object.keys(cache).length === 0) return
-  for (const a of result.auctions) {
-    const hit = cache[cacheKey(a.platform, a.zvgId)]
-    if (hit) a.extraction = hit
-  }
+  applyExtractionToAuctions(result.auctions, cache)
 }

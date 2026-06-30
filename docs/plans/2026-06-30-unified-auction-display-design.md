@@ -1,7 +1,7 @@
 # Unified Auction Display — Design
 
 Date: 2026-06-30
-Status: Phases 1, 2a, 2b, 5 implemented & pushed. Phases 3, 4 remaining.
+Status: All phases implemented & pushed.
 Branch: feat/unified-auction-display (off main). Work happens in a git worktree
 (~/.config/superpowers/worktrees/mobile/feat-unified-auction-display), never the
 user's main checkout — they edit it in parallel.

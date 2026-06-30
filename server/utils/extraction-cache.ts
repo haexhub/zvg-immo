@@ -11,11 +11,32 @@
 
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import type { AuctionExtraction } from '~/types/auction'
+import type { Auction, AuctionExtraction } from '~/types/auction'
+import { cacheKey } from './verkehrswert-cache'
 
 const CACHE_PATH = join(process.cwd(), '.cache_zvg', 'extraction.json')
 
 export type ExtractionCache = Record<string, AuctionExtraction>
+
+/**
+ * Apply the extraction cache to a set of auctions (mutates in place). Synthesises
+ * a `thumbnailUrl` and bumps `fotoCount` from `extraction.photos` when the
+ * listing didn't bring its own photo attachment. Shared by the /api/auctions
+ * overlay and the enrich-task snapshot writer so they stay consistent.
+ */
+export function applyExtractionToAuctions(auctions: Auction[], cache: ExtractionCache): void {
+  for (const a of auctions) {
+    const hit = cache[cacheKey(a.platform, a.zvgId)]
+    if (!hit) continue
+    a.extraction = hit
+    const photos = hit.photos ?? []
+    if (photos.length === 0) continue
+    if (!a.thumbnailUrl) {
+      a.thumbnailUrl = `/api/auction-image/${a.platform}/${a.zvgId}/${photos[0]}`
+    }
+    if (a.fotoCount < photos.length) a.fotoCount = photos.length
+  }
+}
 
 export async function readExtractionCache(): Promise<ExtractionCache> {
   let buf: string
