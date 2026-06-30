@@ -1,4 +1,5 @@
 import { UA } from './constants'
+import { readBoeState, writeBoeState, type BoeState } from '../../utils/boe-state'
 
 const FETCH_TIMEOUT_MS = 15_000
 // BOE serves a CAPTCHA after a burst of requests from one IP. Module-level
@@ -14,16 +15,68 @@ const MIN_GAP_MS = 1500
 let lastFetchAt = 0
 let queue: Promise<void> = Promise.resolve()
 
-// Once BOE shows a captcha, the IP is on a cooldown that lasts much longer
-// than our gate. Continuing to hit them just extends the ban. After the
-// first captcha we skip all BOE requests for COOLDOWN_MS so the upstream
-// can forgive us — the user-facing API surfaces the same "captcha" message
-// and falls through to the empty-result graceful path in auctions.get.ts.
-const CAPTCHA_COOLDOWN_MS = 30 * 60 * 1000
-let captchaCooldownUntil = 0
+// Once BOE shows a captcha, the IP is on a ban that can last hours to days.
+// We persist the cooldown to disk so a container restart doesn't reset it —
+// previously every restart sent one BOE request, got captcha, and re-armed a
+// fresh local cooldown, indefinitely extending the upstream ban.
+//
+// 24 h is conservative: BOE doesn't publish recovery windows, and shorter
+// cooldowns just keep pinging a poisoned IP. Once we're cooled off and BOE
+// forgives us, the next scheduled crawl succeeds and life goes on.
+const CAPTCHA_COOLDOWN_MS = 24 * 60 * 60 * 1000
 
-export function markBoeCaptcha(): void {
-  captchaCooldownUntil = Date.now() + CAPTCHA_COOLDOWN_MS
+// Hard kill switch read from the container env. When BOE has banned the IP
+// for an extended period, set BOE_DISABLED=1 in the deployment env and no
+// `boeFetch` ever leaves the server. The crawler returns 0 auctions per
+// provincia; the rest of the platforms keep working. Unset / `0` / `false`
+// keep the crawler enabled.
+function envFlag(name: string): boolean {
+  const v = process.env[name]
+  if (v == null) return false
+  const s = v.trim().toLowerCase()
+  return s !== '' && s !== '0' && s !== 'false' && s !== 'no'
+}
+export function isBoeDisabled(): boolean {
+  return envFlag('BOE_DISABLED')
+}
+
+// Module-level mirror of the on-disk state — hydrated lazily on first
+// boeFetch so module-import time stays synchronous.
+let state: BoeState = { captchaCooldownUntil: 0, lastCaptchaAt: null }
+let hydratePromise: Promise<void> | null = null
+function hydrate(): Promise<void> {
+  if (!hydratePromise) {
+    hydratePromise = (async () => {
+      try {
+        state = await readBoeState()
+      } catch (err) {
+        // Don't cache the failure — once someone fixes / removes the broken
+        // boe-state.json on disk, the next caller should re-attempt instead
+        // of needing a process restart.
+        hydratePromise = null
+        throw err
+      }
+    })()
+  }
+  return hydratePromise
+}
+
+export async function markBoeCaptcha(): Promise<void> {
+  const now = Date.now()
+  state = { captchaCooldownUntil: now + CAPTCHA_COOLDOWN_MS, lastCaptchaAt: now }
+  try {
+    await writeBoeState(state)
+  } catch (err) {
+    // Persisting the cooldown is best-effort — the in-memory cooldown still
+    // protects this process even if disk writes fail (read-only volume,
+    // disk full, etc). Log so it's noticed.
+    console.warn('[boe] failed to persist cooldown state:', (err as Error).message)
+  }
+}
+
+export async function getBoeState(): Promise<BoeState & { lastFetchAt: number }> {
+  await hydrate()
+  return { ...state, lastFetchAt }
 }
 
 function gate(): Promise<void> {
@@ -44,25 +97,34 @@ function gate(): Promise<void> {
   })
 }
 
+function ensureNotDisabled(): void {
+  if (isBoeDisabled()) {
+    throw new Error('BOE crawler disabled via BOE_DISABLED env')
+  }
+}
+
+function ensureNoCooldown(): void {
+  if (Date.now() < state.captchaCooldownUntil) {
+    const remainSec = Math.ceil((state.captchaCooldownUntil - Date.now()) / 1000)
+    throw new Error(`BOE in CAPTCHA cooldown for ${remainSec}s`)
+  }
+}
+
 /**
  * Issues a rate-limited GET against subastas.boe.es with a 15s deadline and
  * the standard browser-ish headers BOE expects. The caller may inspect the
  * returned HTML for CAPTCHA markers — `fetchListHtml` and `detail.ts` do.
  */
-function ensureNoCooldown(): void {
-  if (Date.now() < captchaCooldownUntil) {
-    const remainSec = Math.ceil((captchaCooldownUntil - Date.now()) / 1000)
-    throw new Error(`BOE in CAPTCHA cooldown for ${remainSec}s`)
-  }
-}
-
 export async function boeFetch(url: string): Promise<string> {
+  ensureNotDisabled()
+  await hydrate()
   // Two checks: pre-gate fast-path so callers fail before queuing, and
   // post-gate re-check because another in-flight worker may have marked
   // captcha while we were waiting on the rate gate. Without the second
   // check, queued callers would still hit BOE and extend the ban.
   ensureNoCooldown()
   await gate()
+  ensureNotDisabled()
   ensureNoCooldown()
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)

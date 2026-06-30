@@ -25,7 +25,10 @@ async function fetchTab(idSub: string, ver: 1 | 3): Promise<string> {
   const url = `${BOE_BASE}/detalleSubasta.php?idSub=${encodeURIComponent(idSub)}&ver=${ver}`
   const html = await boeFetch(url)
   if (looksLikeCaptcha(html)) {
-    markBoeCaptcha()
+    console.warn(
+      `[boe] CAPTCHA on detail ${idSub} ver=${ver} at ${new Date().toISOString()} — arming 24h cooldown`,
+    )
+    await markBoeCaptcha()
     throw new Error(`BOE CAPTCHA on ${idSub} ver=${ver}`)
   }
   return html

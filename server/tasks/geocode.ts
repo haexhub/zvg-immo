@@ -6,8 +6,16 @@
 // Triggered by the scheduled task config in nuxt.config.ts and once on server
 // startup via server/plugins/geocode-bootstrap.ts.
 
+import type { Auction } from '~/types/auction'
 import { crawlAll } from '../crawlers/registry'
+import { enrichInBatches as enrichAtDetails } from '../crawlers/at/detail'
 import { geocodeAddress } from '../utils/geocode'
+import {
+  cacheKey,
+  readVerkehrswertCache,
+  writeVerkehrswertCache,
+  type VerkehrswertCache,
+} from '../utils/verkehrswert-cache'
 
 export default defineTask({
   meta: {
@@ -44,11 +52,53 @@ export default defineTask({
       }
     }
 
+    // AT-Edikte hides Schätzwert on the per-Edikt detail page, so it's null on
+    // the listing path the API uses. Enrich missing entries here and persist
+    // them so the API can overlay the value read-only.
+    const verkehrswert = await enrichAtVerkehrswert(result.auctions)
+
     const durationMs = Date.now() - startedAt
     console.log(
-      `[geocode] done in ${(durationMs / 1000).toFixed(0)}s · geocoded=${geocoded} failed=${failed}`,
+      `[geocode] done in ${(durationMs / 1000).toFixed(0)}s · geocoded=${geocoded} failed=${failed} · verkehrswert(at)=${verkehrswert.added} added/${verkehrswert.errors} err`,
     )
 
-    return { result: { processed, geocoded, failed, durationMs } }
+    return {
+      result: {
+        processed,
+        geocoded,
+        failed,
+        verkehrswertAdded: verkehrswert.added,
+        verkehrswertErrors: verkehrswert.errors,
+        durationMs,
+      },
+    }
   },
 })
+
+async function enrichAtVerkehrswert(
+  auctions: Auction[],
+): Promise<{ added: number; errors: number }> {
+  const atAuctions = auctions.filter((a) => a.platform === 'at-edikte')
+  if (atAuctions.length === 0) return { added: 0, errors: 0 }
+
+  const cache: VerkehrswertCache = { ...(await readVerkehrswertCache()) }
+  const toFetch = atAuctions.filter((a) => !(cacheKey(a.platform, a.zvgId) in cache))
+  if (toFetch.length === 0) {
+    console.log(`[geocode] verkehrswert(at): ${atAuctions.length} entries, all cached`)
+    return { added: 0, errors: 0 }
+  }
+  console.log(
+    `[geocode] verkehrswert(at): fetching ${toFetch.length}/${atAuctions.length} missing details`,
+  )
+
+  let added = 0
+  const result = await enrichAtDetails(toFetch, (auction, info) => {
+    cache[cacheKey('at-edikte', auction.zvgId)] = {
+      verkehrswertEur: info.schaetzwertEur,
+      verkehrswertText: info.schaetzwertText,
+    }
+    added++
+  })
+  if (added > 0) await writeVerkehrswertCache(cache)
+  return { added, errors: result.errors }
+}
