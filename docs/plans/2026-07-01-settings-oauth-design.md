@@ -1,7 +1,7 @@
 # /settings page — Claude OAuth login flow
 
 Date: 2026-07-01
-Status: Design agreed; implementation pending on a fresh branch.
+Status: Implemented on `feat/settings-oauth`.
 
 ## Goal
 
@@ -35,7 +35,7 @@ credentials from that point on.
 
 ## Architecture
 
-```
+```text
 Browser                    zvg-immo (Nitro)              haex-claude-proxy
   /settings                  /api/settings/*                 /setup/*
     │                          │                                │
@@ -93,7 +93,7 @@ volumes:
 
 `.env` (not committed, dokumentiert in `.env.example`):
 
-```
+```env
 PROXY_SETUP_TOKEN=<openssl rand -hex 32>
 SETTINGS_PASSWORD=<user-chosen>
 SETTINGS_SESSION_SECRET=<openssl rand -hex 32>
@@ -107,17 +107,25 @@ successful `/api/settings/*` request).
 
 **Files:**
 
-- `server/utils/settings-auth.ts` — `signSession(expiry)`,
-  `verifySession(cookie)`, `requireSession(event)`. Timing-safe HMAC compare.
-- `server/middleware/settings.ts` — guards `/api/settings/*` (whitelist the
-  `login` endpoint); 401 on failure.
-- `server/api/settings/login.post.ts` — timing-safe compare against
+- `server/utils/settings-auth.ts` — `signSession(secret, expiry)`,
+  `verifySession(secret, cookie, now)`, hash-then-`timingSafeEqual` password
+  compare (no length-based short-circuit that would leak the real password's
+  length through timing).
+- `server/middleware/settings-auth.ts` — guards `/api/settings/*` (whitelisted:
+  `login`, `session`); 401 on failure. Refreshes the cookie on every
+  authorized request.
+- `server/api/settings/login.post.ts` — hash-based timing-safe compare against
   `SETTINGS_PASSWORD`; sets the cookie on match.
 - `server/api/settings/logout.post.ts` — clears the cookie.
+- `server/api/settings/session.get.ts` — public probe returning
+  `{ authed: boolean }` so the page mount can pick the right initial view.
 
-**Rate-limit:** in-memory counter keyed by `x-forwarded-for` (Traefik sets it),
-5 failed attempts → 60 s lock. Not persisted across restarts — YAGNI for a
-solo deployment.
+**Rate-limit:** in-memory counter keyed by socket peer IP by default. When the
+app runs behind a trusted reverse proxy that overwrites `x-forwarded-for`
+(e.g. Traefik in a compose network with port 3000 not publicly exposed), set
+`NUXT_TRUST_FORWARDED_FOR=1` so the limit tracks real clients rather than the
+proxy's IP. 5 failed attempts → 60 s lock. Map is capped at 10 000 keys with
+sweep-on-check to prevent unbounded growth from a rotating-IP scanner.
 
 **Explicitly out of scope:** password reset, recovery codes, 2FA, multi-user.
 
@@ -128,7 +136,7 @@ that. Every wrapper is `$fetch` at `http://haex-claude-proxy:8080/setup/*` with
 `Authorization: Bearer <PROXY_SETUP_TOKEN>` from `useRuntimeConfig().proxySetupToken`.
 `AbortSignal.timeout(10_000)` on every call.
 
-```
+```text
 GET  /api/settings/claude/status → { state, oauthUrl?, errorMessage?, hasCredentials }
 POST /api/settings/claude/login  → { oauthUrl }         // proxies /setup/login
 POST /api/settings/claude/code   → { ok: true }         // proxies /setup/code
@@ -161,7 +169,7 @@ side.
 Single file, ~250 LOC. Same `h-full overflow-y-auto` pattern as the detail
 route so the global `body { overflow: hidden }` doesn't lock scrolling.
 
-```
+```text
 <header> ← Zurück zur Übersicht · h1 "Einstellungen"
 
 v-if="!authed":

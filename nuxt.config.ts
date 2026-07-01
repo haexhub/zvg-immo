@@ -41,6 +41,12 @@ export default defineNuxtConfig({
     //   NUXT_SETTINGS_SESSION_SECRET=<openssl rand -hex 32>
     settingsPassword: '',
     settingsSessionSecret: '',
+    // Set to '1' when this app runs behind a trusted reverse proxy (e.g.
+    // Traefik in the sibling compose service) that overwrites
+    // x-forwarded-for. Off by default so a directly-exposed instance can't
+    // have its rate-limit buckets rotated by a spoofed header.
+    //   NUXT_TRUST_FORWARDED_FOR=1
+    trustForwardedFor: '',
   },
   nitro: {
     experimental: {

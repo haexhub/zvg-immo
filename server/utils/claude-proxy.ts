@@ -33,6 +33,21 @@ function readProxyConfig(): ProxyConfig {
   return { baseUrl: baseUrl.replace(/\/$/, ''), token }
 }
 
+/**
+ * Extract the upstream's own status message without leaking internal details.
+ * `$fetch`'s `.message` includes the request URL and node fetch internals
+ * (e.g. `[GET] "http://haex-claude-proxy:8080/setup/status": <no response>
+ * fetch failed`) — surfacing that to the browser exposes container names and
+ * ports. Prefer the proxy's structured `statusMessage` / `data.statusMessage`
+ * whenever available, and fall back to a generic message otherwise.
+ */
+function extractProxyMessage(err: unknown): string {
+  const e = err as { statusMessage?: unknown; data?: { statusMessage?: unknown } }
+  if (typeof e.data?.statusMessage === 'string' && e.data.statusMessage) return e.data.statusMessage
+  if (typeof e.statusMessage === 'string' && e.statusMessage) return e.statusMessage
+  return 'Proxy nicht erreichbar.'
+}
+
 /** GET or POST against /setup/<path> on the proxy. `body` is JSON-encoded. */
 export async function callProxySetup<T>(
   method: 'GET' | 'POST',
@@ -50,7 +65,9 @@ export async function callProxySetup<T>(
     return res as T
   } catch (err) {
     const status = (err as { statusCode?: number }).statusCode ?? 502
-    const msg = (err as Error).message || 'proxy unreachable'
-    throw createError({ statusCode: status, statusMessage: `Claude-Proxy: ${msg}` })
+    throw createError({
+      statusCode: status,
+      statusMessage: `Claude-Proxy: ${extractProxyMessage(err)}`,
+    })
   }
 }

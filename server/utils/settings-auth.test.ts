@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import {
+  _rateLimitMapSize,
   checkRateLimit,
   recordFailedAttempt,
   resetRateLimit,
@@ -102,5 +103,14 @@ describe('rate limit', () => {
     for (let i = 0; i < 5; i++) recordFailedAttempt(ip, Date.now())
     resetRateLimit()
     expect(checkRateLimit(ip, Date.now())).toBe(true)
+  })
+
+  it('removes stale keys when checkRateLimit finds the window empty', () => {
+    const t0 = 1_700_000_000_000
+    for (let i = 0; i < 3; i++) recordFailedAttempt('1.2.3.4', t0)
+    expect(_rateLimitMapSize()).toBe(1)
+    // Query past the window — the key should be dropped, freeing the slot.
+    expect(checkRateLimit('1.2.3.4', t0 + 61_000)).toBe(true)
+    expect(_rateLimitMapSize()).toBe(0)
   })
 })

@@ -12,10 +12,16 @@ import {
 const SESSION_COOKIE = 'settings_session'
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000
 
-function clientIp(event: ReturnType<typeof getRequestHeaders> extends infer _ ? any : never): string {
-  // Traefik sets x-forwarded-for. Fall back to remote address for local dev.
-  const fwd = getRequestHeader(event, 'x-forwarded-for')
-  if (fwd) return fwd.split(',')[0]!.trim()
+function clientIp(event: ReturnType<typeof getRequestHeaders> extends infer _ ? any : never, trustForwarded: boolean): string {
+  // Only honour x-forwarded-for when explicitly opted in. Otherwise a client
+  // hitting the app directly (e.g. port 3000 exposed on the host) could
+  // rotate rate-limit buckets by sending arbitrary header values. When behind
+  // a real reverse proxy that overwrites the header, set
+  // NUXT_TRUST_FORWARDED_FOR=1.
+  if (trustForwarded) {
+    const fwd = getRequestHeader(event, 'x-forwarded-for')
+    if (fwd) return fwd.split(',')[0]!.trim()
+  }
   return event.node.req.socket?.remoteAddress ?? 'unknown'
 }
 
@@ -30,7 +36,8 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  const ip = clientIp(event)
+  const trustForwarded = String(config.trustForwardedFor ?? '') === '1'
+  const ip = clientIp(event, trustForwarded)
   const now = Date.now()
   if (!checkRateLimit(ip, now)) {
     throw createError({

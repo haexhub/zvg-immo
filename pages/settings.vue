@@ -41,11 +41,44 @@ async function login(): Promise<void> {
   }
 }
 
-async function logout(): Promise<void> {
-  await $fetch('/api/settings/logout', { method: 'POST' }).catch(() => {})
+function clearAuthState(): void {
   authed.value = false
   status.value = null
   stopPolling()
+}
+
+async function logout(): Promise<void> {
+  claudeError.value = null
+  try {
+    await $fetch('/api/settings/logout', { method: 'POST' })
+    clearAuthState()
+  } catch (err) {
+    // 401 means the cookie was already invalid — that's a successful logout
+    // from the user's perspective. Any other error means the server-side
+    // cookie may still be valid; keep the UI signed in so the user notices.
+    if ((err as { statusCode?: number }).statusCode === 401) {
+      clearAuthState()
+      return
+    }
+    claudeError.value = (err as { statusMessage?: string; message?: string }).statusMessage
+      || (err as Error).message
+      || 'Abmelden fehlgeschlagen.'
+  }
+}
+
+/**
+ * A 401 on a protected route means the session cookie expired or was
+ * rotated — flip back to the login form instead of leaving the UI stuck in
+ * the authenticated branch (which would keep polling and stacking 401s).
+ */
+function normalizeSettingsError(err: unknown, fallback: string): string {
+  if ((err as { statusCode?: number }).statusCode === 401) {
+    clearAuthState()
+    return 'Sitzung abgelaufen.'
+  }
+  return (err as { statusMessage?: string; message?: string }).statusMessage
+    || (err as Error).message
+    || fallback
 }
 
 // Claude OAuth flow state — mirrored from the proxy's setup state machine.
@@ -63,9 +96,7 @@ async function refreshStatus(): Promise<void> {
     status.value = await $fetch<ClaudeSetupStatus>('/api/settings/claude/status', { cache: 'no-store' })
     claudeError.value = null
   } catch (err) {
-    claudeError.value = (err as { statusMessage?: string }).statusMessage
-      || (err as Error).message
-      || 'Status nicht erreichbar.'
+    claudeError.value = normalizeSettingsError(err, 'Status nicht erreichbar.')
   }
 }
 
@@ -76,9 +107,7 @@ async function startLogin(): Promise<void> {
     await $fetch('/api/settings/claude/login', { method: 'POST' })
     await refreshStatus()
   } catch (err) {
-    claudeError.value = (err as { statusMessage?: string }).statusMessage
-      || (err as Error).message
-      || 'Login-Start fehlgeschlagen.'
+    claudeError.value = normalizeSettingsError(err, 'Login-Start fehlgeschlagen.')
   } finally {
     actionPending.value = false
   }
@@ -96,9 +125,7 @@ async function submitCode(): Promise<void> {
     codeInput.value = ''
     await refreshStatus()
   } catch (err) {
-    claudeError.value = (err as { statusMessage?: string }).statusMessage
-      || (err as Error).message
-      || 'Code-Übermittlung fehlgeschlagen.'
+    claudeError.value = normalizeSettingsError(err, 'Code-Übermittlung fehlgeschlagen.')
   } finally {
     actionPending.value = false
   }
@@ -112,9 +139,7 @@ async function resetFlow(): Promise<void> {
     codeInput.value = ''
     await refreshStatus()
   } catch (err) {
-    claudeError.value = (err as { statusMessage?: string }).statusMessage
-      || (err as Error).message
-      || 'Zurücksetzen fehlgeschlagen.'
+    claudeError.value = normalizeSettingsError(err, 'Zurücksetzen fehlgeschlagen.')
   } finally {
     actionPending.value = false
   }
