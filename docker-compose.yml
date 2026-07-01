@@ -10,6 +10,34 @@ services:
       - geocode-cache:/app/.cache_zvg
     environment:
       NODE_ENV: production
+      # LLM extractor points at the sibling proxy service via the compose
+      # network. Leaving these unset falls back to rules-only extraction.
+      NUXT_EXTRACT_LLM_BASE_URL: http://haex-claude-proxy:8080
+      NUXT_EXTRACT_LLM_MODEL: claude-haiku-4-5
+      # /settings page + Claude passthrough. See .env.example for how to
+      # generate values. All three must be set for /settings to work.
+      NUXT_PROXY_SETUP_TOKEN: ${PROXY_SETUP_TOKEN}
+      NUXT_SETTINGS_PASSWORD: ${SETTINGS_PASSWORD}
+      NUXT_SETTINGS_SESSION_SECRET: ${SETTINGS_SESSION_SECRET}
+    depends_on:
+      - haex-claude-proxy
+
+  # Per-project proxy so each project's Claude credentials stay isolated.
+  # The proxy spawns a `claude` subprocess per LLM request against the
+  # OAuth session stored in the claude-creds volume.
+  haex-claude-proxy:
+    image: ghcr.io/haexhub/haex-claude-proxy:latest
+    container_name: zvg-immo-claude-proxy
+    restart: unless-stopped
+    volumes:
+      - claude-creds:/data
+    environment:
+      PROXY_RESOLVER: file
+      PROXY_CREDENTIALS_HOME: /data
+      # Enables the /setup/* endpoints the /settings page drives. Must match
+      # NUXT_PROXY_SETUP_TOKEN above.
+      PROXY_SETUP_TOKEN: ${PROXY_SETUP_TOKEN}
 
 volumes:
   geocode-cache:
+  claude-creds:

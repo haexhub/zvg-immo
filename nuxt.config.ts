@@ -31,6 +31,22 @@ export default defineNuxtConfig({
       baseUrl: '',
       model: 'claude-haiku-4-5',
     },
+    // Bearer token that authenticates zvg-immo against haex-claude-proxy's
+    // /setup/* endpoints. Same value must be set on both containers.
+    //   NUXT_PROXY_SETUP_TOKEN=<openssl rand -hex 32>
+    proxySetupToken: '',
+    // Password protecting the /settings page — solo-deployment scope, no user
+    // db. HMAC secret signs the session cookie.
+    //   NUXT_SETTINGS_PASSWORD=<user-chosen>
+    //   NUXT_SETTINGS_SESSION_SECRET=<openssl rand -hex 32>
+    settingsPassword: '',
+    settingsSessionSecret: '',
+    // Set to '1' when this app runs behind a trusted reverse proxy (e.g.
+    // Traefik in the sibling compose service) that overwrites
+    // x-forwarded-for. Off by default so a directly-exposed instance can't
+    // have its rate-limit buckets rotated by a spoofed header.
+    //   NUXT_TRUST_FORWARDED_FOR=1
+    trustForwardedFor: '',
   },
   nitro: {
     experimental: {
