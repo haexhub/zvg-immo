@@ -172,8 +172,14 @@ export async function fetchDetail(referenceCode: string): Promise<DetailInfo | n
   const expertPdf = attachments.find((a) => a.kind === 'gutachten')
   const headlinePdf = tacPdf ?? expertPdf ?? attachments.find((a) => /\.pdf$/i.test(a.proxyUrl))
 
+  // Biddit uses estimatedPrice = 1 as a "not filled in" placeholder (the field
+  // is non-nullable in their DB). Real appraisals are always well above the
+  // Mindestgebot, so anything ≤ 1 is treated as absent.
+  const estimatedPrice =
+    d.estimatedPrice != null && d.estimatedPrice > 1 ? d.estimatedPrice : null
+
   return {
-    estimatedPrice: d.estimatedPrice ?? null,
+    estimatedPrice,
     beschreibung,
     adresse,
     attachments: [...attachments, ...photos],

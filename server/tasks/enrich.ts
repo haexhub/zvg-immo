@@ -23,9 +23,9 @@
 // after server startup via server/plugins/enrich-bootstrap.ts.
 
 import { join } from 'node:path'
-import type { AuctionExtraction } from '~/types/auction'
+import type { Auction, AuctionExtraction } from '~/types/auction'
 import { crawlAll, platforms } from '../crawlers/registry'
-import { writeAuctionSnapshot } from '../utils/auction-snapshot'
+import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
 import { extractByRules } from '../utils/extract/rules'
 import { extractByLlm, type LlmConfig } from '../utils/extract/llm'
 import { extractPdfPhotos } from '../utils/extract/pdf-images'
@@ -64,12 +64,27 @@ export default defineTask({
 
     const result = await crawlAll({ immobilienOnly: true, enrichDetails: false })
     const cache = await readExtractionCache()
+    const previousSnapshot = await readAuctionSnapshot()
     const byPlatform = new Map(platforms.map((p) => [p.id, p]))
     const llmConfig = readLlmConfig()
 
-    const todo = result.auctions.filter((a) => !cache[cacheKey(a.platform, a.zvgId)])
+    // Two independent reasons to enrich: no extraction yet, OR extraction exists
+    // but the previous snapshot has no detail data (attachments + beschreibung
+    // both empty) — meaning enrichOne either never ran or was clobbered by a
+    // subsequent snapshot write. The latter is a one-shot backfill; once
+    // enrichOne succeeds, the snapshot has the data and the auction drops out
+    // of the todo list.
+    const needsEnrich = (a: Auction): boolean => {
+      const crawler = byPlatform.get(a.platform)
+      if (!crawler?.enrichOne) return false
+      const prev = previousSnapshot[cacheKey(a.platform, a.zvgId)]
+      return !prev || (prev.attachments.length === 0 && prev.beschreibung == null)
+    }
+    const todo = result.auctions.filter(
+      (a) => !cache[cacheKey(a.platform, a.zvgId)] || needsEnrich(a),
+    )
     console.log(
-      `[enrich] crawled ${result.auctions.length}, ${todo.length} new · llm=${llmConfig ? llmConfig.model : 'off'}`,
+      `[enrich] crawled ${result.auctions.length}, ${todo.length} to (re)enrich · llm=${llmConfig ? llmConfig.model : 'off'}`,
     )
 
     let cached = 0
@@ -86,8 +101,11 @@ export default defineTask({
         const a = todo[cursor++]
         if (!a) continue
         const crawler = byPlatform.get(a.platform)
+        const key = cacheKey(a.platform, a.zvgId)
+        const extractionMissing = !cache[key]
 
-        // Detail fetch (beschreibung + attachments) so extraction has real text.
+        // Detail fetch (beschreibung + attachments) so extraction has real text
+        // and the snapshot writer has enrichOne-populated fields to persist.
         let enriched = false
         if (crawler?.enrichOne) {
           try {
@@ -99,6 +117,12 @@ export default defineTask({
         }
         if (enriched) enrichedCount++
         const detailOk = enriched || !crawler?.enrichOne
+
+        // Skip the rules/LLM/photo extraction pipeline when we already have a
+        // cached result — this loop iteration may only be here to backfill
+        // snapshot detail data (see needsEnrich above). Overwriting the cache
+        // would clobber a prior LLM extraction with a downgraded rules-only one.
+        if (!extractionMissing) continue
 
         const rules = extractByRules({ objekt: a.objekt, beschreibung: a.beschreibung })
         let fields = {
@@ -172,7 +196,7 @@ export default defineTask({
           photos: photos.length > 0 ? photos : undefined,
           at,
         }
-        cache[cacheKey(a.platform, a.zvgId)] = entry
+        cache[key] = entry
         cached++
         if (entry.confidence === 'high') confident++
         if (cached % FLUSH_EVERY === 0) await writeExtractionCache(cache)
