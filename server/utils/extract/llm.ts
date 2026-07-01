@@ -132,10 +132,15 @@ export async function extractByLlm(
   }
   let resp: unknown
   try {
+    // Bound the request: the proxy spawns a `claude` subprocess per call, so a
+    // stuck spawn (or upstream stall) would keep this promise pending forever
+    // and — because the enrich task awaits every worker via Promise.all — block
+    // the whole run.
     resp = await $fetch(`${config.baseUrl.replace(/\/$/, '')}/v1/messages`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' },
       body,
+      signal: AbortSignal.timeout(60_000),
     })
   } catch (err) {
     console.warn(`[extract/llm] request failed: ${(err as Error).message}`)

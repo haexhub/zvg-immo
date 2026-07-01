@@ -35,6 +35,7 @@ import {
   readExtractionCache,
   writeExtractionCache,
 } from '../utils/extraction-cache'
+import { isSafePathSegment } from '../utils/path-segment'
 import { cacheKey, readVerkehrswertCache } from '../utils/verkehrswert-cache'
 
 const IMAGES_DIR = join(process.cwd(), '.cache_zvg', 'images')
@@ -144,9 +145,17 @@ export default defineTask({
 
         // Extract embedded photos from the best PDF (independent of the
         // rules/LLM size pipeline). Skip when the listing already has native
-        // foto attachments — extra extraction is wasted I/O.
+        // foto attachments — extra extraction is wasted I/O. Also skip when
+        // platform/zvgId would be unsafe as a directory segment; the API
+        // endpoint enforces the same shape, so those files would be
+        // unreachable anyway.
         let photos: string[] = []
-        if (bestPdf && a.fotoCount === 0) {
+        if (
+          bestPdf &&
+          a.fotoCount === 0 &&
+          isSafePathSegment(a.platform) &&
+          isSafePathSegment(a.zvgId)
+        ) {
           photoExtractions++
           photos = await extractPdfPhotos(bestPdf.proxyUrl, {
             destDir: join(IMAGES_DIR, a.platform, a.zvgId),

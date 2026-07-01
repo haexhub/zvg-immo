@@ -8,9 +8,8 @@
 import type { Auction } from '~/types/auction'
 import { readAuctionSnapshot } from '../../../utils/auction-snapshot'
 import { geocodeAddress } from '../../../utils/geocode'
+import { isSafePathSegment } from '../../../utils/path-segment'
 import { cacheKey } from '../../../utils/verkehrswert-cache'
-
-const SLUG_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i
 
 export interface AuctionDetail extends Auction {
   lat: number | null
@@ -20,7 +19,7 @@ export interface AuctionDetail extends Auction {
 export default defineEventHandler(async (event): Promise<AuctionDetail> => {
   const platform = String(event.context.params?.platform ?? '')
   const id = String(event.context.params?.id ?? '')
-  if (!SLUG_RE.test(platform) || !SLUG_RE.test(id)) {
+  if (!isSafePathSegment(platform) || !isSafePathSegment(id)) {
     throw createError({ statusCode: 400, statusMessage: 'invalid platform/id' })
   }
   const snapshot = await readAuctionSnapshot()

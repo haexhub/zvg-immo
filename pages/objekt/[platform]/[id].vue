@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ALL_KATEGORIEN, classifyObjekt } from '~/lib/objektart'
 import type { AuctionDetail } from '~/server/api/auction/[platform]/[id].get'
+import type { Attachment } from '~/types/auction'
 import { ArrowLeft } from 'lucide-vue-next'
 
 const route = useRoute()
@@ -42,7 +43,9 @@ function formatArea(n: number | null): string {
 }
 
 // Photo URLs: native foto attachments (when present) first, then extracted
-// embedded photos from the Gutachten/Exposé PDF.
+// embedded photos from the Gutachten/Exposé PDF. Segments are
+// encodeURIComponent'd — the API endpoint validates them against a strict
+// allow-list, but the URL itself needs to be well-formed before we get there.
 const photoUrls = computed<string[]>(() => {
   if (!a.value) return []
   const urls: string[] = []
@@ -50,8 +53,10 @@ const photoUrls = computed<string[]>(() => {
     if (att.kind === 'foto') urls.push(att.proxyUrl)
   }
   const extracted = a.value.extraction?.photos ?? []
+  const platform = encodeURIComponent(a.value.platform)
+  const zvgId = encodeURIComponent(a.value.zvgId)
   for (const name of extracted) {
-    urls.push(`/api/auction-image/${a.value.platform}/${a.value.zvgId}/${name}`)
+    urls.push(`/api/auction-image/${platform}/${zvgId}/${encodeURIComponent(name)}`)
   }
   return urls
 })
@@ -70,9 +75,9 @@ const KIND_LABEL: Record<string, string> = {
 }
 const KIND_ORDER = ['bekanntmachung', 'gutachten', 'exposee', 'foto', 'sonstiges']
 
-const groupedAttachments = computed(() => {
-  if (!a.value) return [] as Array<{ kind: string; label: string; items: typeof a.value.attachments }>
-  const byKind = new Map<string, typeof a.value.attachments>()
+const groupedAttachments = computed<Array<{ kind: string; label: string; items: Attachment[] }>>(() => {
+  if (!a.value) return []
+  const byKind = new Map<string, Attachment[]>()
   for (const att of a.value.attachments) {
     const list = byKind.get(att.kind) ?? []
     list.push(att)
@@ -122,7 +127,7 @@ useHead(() => ({
         <div class="overflow-hidden rounded-xl border bg-muted">
           <img
             :src="photoUrls[activePhotoIndex]"
-            alt=""
+            :alt="`Foto ${activePhotoIndex + 1} von ${photoUrls.length} — ${a.objekt || 'Immobilie'}`"
             referrerpolicy="no-referrer"
             class="block w-full max-h-[60vh] object-contain bg-black/5"
           >
@@ -134,11 +139,12 @@ useHead(() => ({
             type="button"
             class="relative shrink-0 overflow-hidden rounded-md border transition-all"
             :class="i === activePhotoIndex ? 'ring-2 ring-primary border-primary' : 'opacity-70 hover:opacity-100'"
+            :aria-label="`Foto ${i + 1} anzeigen`"
             @click="activePhotoIndex = i"
           >
             <img
               :src="url"
-              alt=""
+              :alt="`Foto ${i + 1}`"
               referrerpolicy="no-referrer"
               class="block h-16 w-24 object-cover"
             >

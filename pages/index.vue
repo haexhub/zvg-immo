@@ -188,6 +188,10 @@ function auctionKategorie(a: Auction): { id: string; label: string } {
   return classifyObjekt(a.objekt)
 }
 
+function detailHref(a: Auction): string {
+  return `/objekt/${encodeURIComponent(a.platform)}/${encodeURIComponent(a.zvgId)}`
+}
+
 function fmtArea(n: number): string {
   return `${n.toLocaleString('de-DE', { maximumFractionDigits: 0 })} m²`
 }
@@ -602,7 +606,7 @@ function attachmentLabel(att: { kind: string; label: string }): string {
         >
           <NuxtLink
             v-if="a.thumbnailUrl"
-            :to="`/objekt/${a.platform}/${a.zvgId}`"
+            :to="detailHref(a)"
             class="relative block overflow-hidden border-b group"
             :title="`${a.fotoCount} Foto${a.fotoCount === 1 ? '' : 's'}`"
           >
@@ -620,7 +624,7 @@ function attachmentLabel(att: { kind: string; label: string }): string {
           </NuxtLink>
           <NuxtLink
             v-else-if="!a.aufgehoben"
-            :to="`/objekt/${a.platform}/${a.zvgId}`"
+            :to="detailHref(a)"
             class="flex aspect-[16/10] items-center justify-center bg-muted text-muted-foreground text-sm border-b hover:text-primary transition-colors"
           >Details öffnen</NuxtLink>
 
@@ -636,7 +640,7 @@ function attachmentLabel(att: { kind: string; label: string }): string {
               <span class="font-mono text-muted-foreground">{{ a.aktenzeichen }}</span>
             </div>
             <h2 class="text-base font-semibold leading-tight mt-1">
-              <NuxtLink :to="`/objekt/${a.platform}/${a.zvgId}`" class="hover:text-primary transition-colors">
+              <NuxtLink :to="detailHref(a)" class="hover:text-primary transition-colors">
                 {{ a.objekt || 'Objektart unbekannt' }}
               </NuxtLink>
             </h2>
@@ -676,7 +680,7 @@ function attachmentLabel(att: { kind: string; label: string }): string {
               rel="noopener"
               class="text-primary hover:underline"
             >{{ attachmentLabel(att) }}</a>
-            <NuxtLink :to="`/objekt/${a.platform}/${a.zvgId}`" class="ml-auto text-primary hover:underline">
+            <NuxtLink :to="detailHref(a)" class="ml-auto text-primary hover:underline">
               Details →
             </NuxtLink>
           </footer>

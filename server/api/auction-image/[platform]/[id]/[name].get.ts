@@ -5,12 +5,12 @@
 // Strict parameter whitelist: only ascii-slug platform/id and `<index>.<ext>`
 // filenames are accepted, so no `..` or path traversal is possible.
 
-import { readFile, stat } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { isSafePathSegment } from '../../../../utils/path-segment'
 
 const IMAGES_DIR = join(process.cwd(), '.cache_zvg', 'images')
 
-const SLUG_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i
 // `<md5-prefix>.<ext>` — content-addressable filenames written by
 // extractPdfPhotos. Strict allow-list keeps path traversal impossible.
 const FILENAME_RE = /^([0-9a-f]{8,32})\.(jpg|jpeg|png)$/i
@@ -26,7 +26,7 @@ export default defineEventHandler(async (event) => {
   const id = String(event.context.params?.id ?? '')
   const name = String(event.context.params?.name ?? '')
 
-  if (!SLUG_RE.test(platform) || !SLUG_RE.test(id)) {
+  if (!isSafePathSegment(platform) || !isSafePathSegment(id)) {
     throw createError({ statusCode: 400, statusMessage: 'invalid platform/id' })
   }
   const match = FILENAME_RE.exec(name)
@@ -35,12 +35,17 @@ export default defineEventHandler(async (event) => {
   }
   const ext = match[2].toLowerCase()
   const filePath = join(IMAGES_DIR, platform, id, name)
+  // Single guarded read: check-then-use would race with cache cleanup and add
+  // redundant I/O. readFile itself surfaces ENOENT which we translate to 404.
+  let buf: Buffer
   try {
-    await stat(filePath)
-  } catch {
-    throw createError({ statusCode: 404, statusMessage: 'not found' })
+    buf = await readFile(filePath)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw createError({ statusCode: 404, statusMessage: 'not found' })
+    }
+    throw err
   }
-  const buf = await readFile(filePath)
   setHeader(event, 'content-type', CONTENT_TYPE[ext] ?? 'application/octet-stream')
   setHeader(event, 'cache-control', 'public, max-age=86400, immutable')
   return buf

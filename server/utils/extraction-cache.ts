@@ -9,6 +9,7 @@
 // published. A later run may still re-process entries whose `confidence` is
 // 'low' to upgrade them with the LLM (see the enrich task).
 
+import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { Auction, AuctionExtraction } from '~/types/auction'
@@ -62,9 +63,10 @@ export async function readExtractionCache(): Promise<ExtractionCache> {
 
 export async function writeExtractionCache(cache: ExtractionCache): Promise<void> {
   await mkdir(dirname(CACHE_PATH), { recursive: true })
-  // Atomic write: tmp file + rename so a crash mid-write can't truncate the
-  // cache to an unparseable state.
-  const tmp = `${CACHE_PATH}.tmp`
+  // Atomic write: unique tmp path (concurrent workers in the enrich task flush
+  // in parallel — a shared `${CACHE_PATH}.tmp` would race, so one writer's
+  // rename could ENOENT another's mid-write file).
+  const tmp = `${CACHE_PATH}.${randomUUID()}.tmp`
   await writeFile(tmp, JSON.stringify(cache))
   await rename(tmp, CACHE_PATH)
 }

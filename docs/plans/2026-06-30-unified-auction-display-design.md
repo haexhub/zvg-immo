@@ -179,18 +179,26 @@ attachment grouped by kind + upstream links), Beschreibung.
 5. ✅ **UI enrichment** (commit da40bb4) — type badge + size line on cards,
    land/living range filters, `propertyType`-driven Objektart filter in
    `pages/index.vue`.
-3. ⬜ **PDF image extraction** — `pdfimages -all -p` over the best PDF (reuse
-   `pdf-text.ts`'s `resolveSource` + `pickBestPdf`); filter junk (min ~400×300px,
-   dedup logos repeated across pages, cap count); store under
-   `.cache_zvg/images/<platform>/<id>/`. Add `photos: string[]` to
-   `AuctionExtraction` (or top-level), set `thumbnailUrl = photos[0]` when empty.
-   New `GET /api/auction-image/[platform]/[id]/[n]` serving cached files
-   (mirror `zvg-thumb.get.ts`). Wire into the enrich task alongside the LLM step.
-4. ⬜ **Enriched snapshot + detail route** — enrich task also writes enriched
-   `Auction` objects to `.cache_zvg/auctions.json`; `GET /api/auction/[platform]/[id]`
-   reads it; `pages/objekt/[platform]/[id].vue` (photo gallery, key-facts grid,
-   single-marker map, "Offizielle Quellen" = all attachments by kind + upstream
-   links, Beschreibung); make the card link to it.
+3. ✅ **PDF image extraction** (commit 315c3b3) — `pdfimages -list -p` over the
+   best PDF (reuse `pdf-text.ts`'s `resolveSource` + `pickBestPdf`); filter drops
+   masks, too-small (<400×300), extreme aspect, near-square smallish crests and
+   page-1 covers; MD5 dedup removes logos that repeat across pages; landscape-
+   first sort so the thumbnail lands on a photo, not an info sheet.
+   Content-addressable filenames under `.cache_zvg/images/<platform>/<id>/`.
+   `photos: string[]` on `AuctionExtraction`; overlay synthesises `thumbnailUrl`
+   from `photos[0]` when the listing has no native foto attachment. New
+   `GET /api/auction-image/[platform]/[id]/[name]` with strict allow-list.
+4. ✅ **Enriched snapshot + detail route** (commit 315c3b3) — enrich task writes
+   fully-decorated `Auction` objects to `.cache_zvg/auctions.json`;
+   `GET /api/auction/[platform]/[id]` reads it and adds cache-only geocode
+   lookups; `pages/objekt/[platform]/[id].vue` renders the photo gallery,
+   Eckdaten grid, single-marker Leaflet map, "Offizielle Quellen" grouped by
+   attachment kind + upstream links, and Beschreibung. List cards and map
+   popups link here.
+
+Phase numbering (2a, 2b, 5, 3, 4) reflects the actual shipping order — Phase 5
+(UI on cards) shipped before 3/4 (PDF photos + detail page) because it only
+needed the extraction data from 2b and didn't block on either.
 
 ## Risks / notes
 

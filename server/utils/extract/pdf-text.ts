@@ -48,7 +48,10 @@ export async function fetchPdfBuffer(proxyUrl: string): Promise<Buffer | null> {
   const { url, headers } = resolveSource(proxyUrl)
   let buf: Buffer
   try {
-    const res = await fetch(url, { headers })
+    // Bound the fetch: a slow upstream would otherwise hang both text and
+    // photo extraction (the enrich task uses Promise.all across workers, so
+    // one stuck request stalls the whole run).
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(30_000) })
     if (!res.ok) return null
     buf = Buffer.from(await res.arrayBuffer())
   } catch {
