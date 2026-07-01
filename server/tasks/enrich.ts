@@ -68,17 +68,17 @@ export default defineTask({
     const byPlatform = new Map(platforms.map((p) => [p.id, p]))
     const llmConfig = readLlmConfig()
 
-    // Two independent reasons to enrich: no extraction yet, OR extraction exists
-    // but the previous snapshot has no detail data (attachments + beschreibung
-    // both empty) — meaning enrichOne either never ran or was clobbered by a
-    // subsequent snapshot write. The latter is a one-shot backfill; once
-    // enrichOne succeeds, the snapshot has the data and the auction drops out
-    // of the todo list.
+    // Two independent reasons to enrich: no extraction yet, OR the previous
+    // snapshot never recorded a detail fetch (`detailFetchedAt` absent) —
+    // meaning enrichOne either never ran or ran before the marker existed and
+    // is due for a one-shot backfill. Once the marker is set, the listing
+    // drops out of the todo list even if it legitimately has no attachments /
+    // beschreibung (which would otherwise cause endless retries).
     const needsEnrich = (a: Auction): boolean => {
       const crawler = byPlatform.get(a.platform)
       if (!crawler?.enrichOne) return false
       const prev = previousSnapshot[cacheKey(a.platform, a.zvgId)]
-      return !prev || (prev.attachments.length === 0 && prev.beschreibung == null)
+      return !prev?.detailFetchedAt
     }
     const todo = result.auctions.filter(
       (a) => !cache[cacheKey(a.platform, a.zvgId)] || needsEnrich(a),
@@ -106,13 +106,18 @@ export default defineTask({
 
         // Detail fetch (beschreibung + attachments) so extraction has real text
         // and the snapshot writer has enrichOne-populated fields to persist.
+        // Stamp detailFetchedAt when enrichOne returned without throwing — even
+        // if the listing legitimately has no attachments/beschreibung — so we
+        // don't re-fetch the same empty response on every future run.
         let enriched = false
         if (crawler?.enrichOne) {
           try {
             await crawler.enrichOne(a)
             enriched = a.beschreibung != null || a.attachments.length > 0
+            a.detailFetchedAt = at
           } catch {
-            // Transient (network / BOE captcha) — handled by detailOk below.
+            // Transient (network / BOE captcha): leave detailFetchedAt unset so
+            // this listing is retried on the next run.
           }
         }
         if (enriched) enrichedCount++

@@ -55,13 +55,17 @@ export default defineTask({
 
     // AT-Edikte and Biddit both hide their Schätzwert / estimatedPrice on the
     // listing path the API uses. Enrich missing entries here and persist them
-    // so the API can overlay the value read-only.
+    // so the API can overlay the value read-only. Load the cache once and
+    // share it — two concurrent writers would each rebuild the file from their
+    // own local read, silently dropping the sibling's entries.
+    const vwCache: VerkehrswertCache = { ...(await readVerkehrswertCache()) }
     const [vwAt, vwBe] = await Promise.all([
-      enrichAtVerkehrswert(result.auctions),
-      enrichBidditVerkehrswert(result.auctions),
+      enrichAtVerkehrswert(result.auctions, vwCache),
+      enrichBidditVerkehrswert(result.auctions, vwCache),
     ])
     const vwAdded = vwAt.added + vwBe.added
     const vwErrors = vwAt.errors + vwBe.errors
+    if (vwAdded > 0) await writeVerkehrswertCache(vwCache)
 
     const durationMs = Date.now() - startedAt
     console.log(
@@ -83,11 +87,11 @@ export default defineTask({
 
 async function enrichAtVerkehrswert(
   auctions: Auction[],
+  cache: VerkehrswertCache,
 ): Promise<{ added: number; errors: number }> {
   const atAuctions = auctions.filter((a) => a.platform === 'at-edikte')
   if (atAuctions.length === 0) return { added: 0, errors: 0 }
 
-  const cache: VerkehrswertCache = { ...(await readVerkehrswertCache()) }
   const toFetch = atAuctions.filter((a) => !(cacheKey(a.platform, a.zvgId) in cache))
   if (toFetch.length === 0) {
     console.log(`[geocode] verkehrswert(at): ${atAuctions.length} entries, all cached`)
@@ -105,7 +109,6 @@ async function enrichAtVerkehrswert(
     }
     added++
   })
-  if (added > 0) await writeVerkehrswertCache(cache)
   return { added, errors: result.errors }
 }
 
@@ -115,11 +118,11 @@ async function enrichAtVerkehrswert(
 // every run.
 async function enrichBidditVerkehrswert(
   auctions: Auction[],
+  cache: VerkehrswertCache,
 ): Promise<{ added: number; errors: number }> {
   const beAuctions = auctions.filter((a) => a.platform === 'biddit')
   if (beAuctions.length === 0) return { added: 0, errors: 0 }
 
-  const cache: VerkehrswertCache = { ...(await readVerkehrswertCache()) }
   const toFetch = beAuctions.filter((a) => !(cacheKey(a.platform, a.zvgId) in cache))
   if (toFetch.length === 0) {
     console.log(`[geocode] verkehrswert(be): ${beAuctions.length} entries, all cached`)
@@ -140,6 +143,5 @@ async function enrichBidditVerkehrswert(
     }
     added++
   })
-  if (added > 0) await writeVerkehrswertCache(cache)
   return { added, errors: result.errors }
 }

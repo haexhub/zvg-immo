@@ -49,6 +49,13 @@ export interface Auction {
   fotoCount: number
   /** Local URL for a JPEG thumbnail of the first photo, if any. */
   thumbnailUrl: string | null
+  /** ISO timestamp of the last successful (non-throwing) `enrichOne` call.
+   *  Absent on the fresh listing crawl; set on the auction-snapshot side and
+   *  preserved across snapshot merges. Used by the enrich task to distinguish
+   *  "detail never fetched" from "fetched, and the listing legitimately has no
+   *  attachments/beschreibung" — the latter would otherwise be retried on every
+   *  run. */
+  detailFetchedAt?: string | null
   /** Structured fields extracted from the listing text/documents. Always absent
    *  at crawl time — populated read-only from the extraction cache by the
    *  /api/auctions overlay (mirrors how verkehrswertEur is filled). */

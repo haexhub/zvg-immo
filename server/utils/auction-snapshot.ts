@@ -40,10 +40,13 @@ export async function readAuctionSnapshot(): Promise<AuctionSnapshot> {
  * Fields populated by the crawlers' `enrichOne` — absent on the fresh listing
  * crawl. Preserved from the previous snapshot when the new auction has them
  * empty so a run that didn't re-enrich doesn't wipe out the detail data.
+ * Snapshot JSON is loaded untyped, so guard against malformed / legacy entries
+ * where fields might be missing or the wrong shape.
  */
 function mergePreservedDetail(next: Auction, prev: Auction): Auction {
-  if (next.attachments.length === 0 && prev.attachments.length > 0) {
-    next.attachments = prev.attachments
+  const prevAttachments = Array.isArray(prev.attachments) ? prev.attachments : []
+  if (next.attachments.length === 0 && prevAttachments.length > 0) {
+    next.attachments = prevAttachments
   }
   if (next.beschreibung == null && prev.beschreibung != null) {
     next.beschreibung = prev.beschreibung
@@ -52,7 +55,7 @@ function mergePreservedDetail(next: Auction, prev: Auction): Auction {
     next.pdfUrl = prev.pdfUrl
     next.pdfUrlUpstream = prev.pdfUrlUpstream
   }
-  if (next.fotoCount === 0 && prev.fotoCount > 0) {
+  if (next.fotoCount === 0 && typeof prev.fotoCount === 'number' && prev.fotoCount > 0) {
     next.fotoCount = prev.fotoCount
   }
   if (next.thumbnailUrl == null && prev.thumbnailUrl != null) {
@@ -61,6 +64,9 @@ function mergePreservedDetail(next: Auction, prev: Auction): Auction {
   if (next.verkehrswertEur == null && prev.verkehrswertEur != null) {
     next.verkehrswertEur = prev.verkehrswertEur
     next.verkehrswertText = prev.verkehrswertText
+  }
+  if (next.detailFetchedAt == null && prev.detailFetchedAt != null) {
+    next.detailFetchedAt = prev.detailFetchedAt
   }
   return next
 }
