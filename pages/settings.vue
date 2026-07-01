@@ -220,7 +220,7 @@ onBeforeUnmount(stopPolling)
 
         <template v-else>
           <div
-            v-if="status.state === 'idle' && !status.hasCredentials"
+            v-if="status.state === 'idle' && !status.credentialsExist"
             class="space-y-3"
           >
             <p class="text-sm">Status: <span class="font-medium">Nicht verbunden</span></p>
@@ -233,7 +233,7 @@ onBeforeUnmount(stopPolling)
           </div>
 
           <div
-            v-else-if="status.state === 'idle' && status.hasCredentials"
+            v-else-if="status.state === 'idle' && status.credentialsExist"
             class="space-y-3"
           >
             <p class="text-sm text-emerald-600 dark:text-emerald-500">✓ Bereits angemeldet</p>

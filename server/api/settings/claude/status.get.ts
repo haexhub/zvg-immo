@@ -5,7 +5,7 @@ export interface ClaudeSetupStatus {
   oauthUrl: string | null
   errorMessage: string | null
   startedAt: string | null
-  hasCredentials?: boolean
+  credentialsExist?: boolean
 }
 
 export default defineEventHandler(async () => {
