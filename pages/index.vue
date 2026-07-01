@@ -14,7 +14,7 @@ import SheetHeader from '~/components/ui/sheet/SheetHeader.vue'
 import SheetFooter from '~/components/ui/sheet/SheetFooter.vue'
 import SheetTitle from '~/components/ui/sheet/SheetTitle.vue'
 import SheetDescription from '~/components/ui/sheet/SheetDescription.vue'
-import { ListFilter } from 'lucide-vue-next'
+import { ListFilter, Settings as SettingsIcon } from 'lucide-vue-next'
 
 // Country/region cascade filter. Default 'all' = aggregate over every
 // registered platform across every country.
@@ -364,6 +364,14 @@ function attachmentLabel(att: { kind: string; label: string }): string {
           class="ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-xs font-medium text-primary-foreground"
         >{{ activeFilterCount }}</span>
       </button>
+      <NuxtLink
+        to="/settings"
+        class="h-9 inline-flex items-center justify-center rounded-md border bg-card px-3 text-sm shadow-xs hover:border-primary hover:text-primary transition-colors"
+        title="Einstellungen"
+        aria-label="Einstellungen"
+      >
+        <SettingsIcon class="h-4 w-4" />
+      </NuxtLink>
       <div class="inline-flex h-9 items-center rounded-md border bg-card p-1 text-sm shadow-xs">
         <button
           class="h-7 rounded px-3 transition-colors"
