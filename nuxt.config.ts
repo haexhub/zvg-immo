@@ -22,6 +22,16 @@ export default defineNuxtConfig({
       ],
     },
   },
+  runtimeConfig: {
+    // LLM fallback for the enrich task, via haex-claude-proxy. Disabled when
+    // baseUrl is empty (rules-only). Override per env:
+    //   NUXT_EXTRACT_LLM_BASE_URL=http://haex-claude-proxy:8080
+    //   NUXT_EXTRACT_LLM_MODEL=claude-haiku-4-5
+    extractLlm: {
+      baseUrl: '',
+      model: 'claude-haiku-4-5',
+    },
+  },
   nitro: {
     experimental: {
       tasks: true,
@@ -30,6 +40,9 @@ export default defineNuxtConfig({
       // Every 6 hours: re-crawl and fill in missing geocodes. After the first
       // bulk run the cache is hot; subsequent ticks finish in seconds.
       '0 */6 * * *': ['geocode'],
+      // Offset 30 min from geocode so the two full crawls don't overlap. Fills
+      // the extraction cache (property type + sizes) for new listings.
+      '30 */6 * * *': ['enrich'],
     },
     routeRules: {
       // The auctions list (HTML scraping) is the expensive part. The geo

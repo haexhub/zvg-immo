@@ -49,28 +49,48 @@ function formatDate(iso: string | null, fallback: string | null): string {
   })
 }
 
+function detailHref(a: GeoAuction): string {
+  return `/objekt/${encodeURIComponent(a.platform)}/${encodeURIComponent(a.zvgId)}`
+}
+
+// Crawler-sourced fields (objekt, adresse, amtsgericht, aktenzeichen) come
+// from foreign HTML/PDFs we don't control. Leaflet's bindPopup uses innerHTML,
+// so every interpolated value must be escaped or a malformed source record
+// could execute script in the user's browser.
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 function buildPopupHtml(a: GeoAuction): string {
+  const href = detailHref(a) // encodeURIComponent above already makes this attribute-safe
   const thumb = a.thumbnailUrl
-    ? `<a href="${a.attachments.find((x) => x.kind === 'foto')?.proxyUrl ?? a.detailUrl}" target="_blank" rel="noopener">
-         <img src="${a.thumbnailUrl}" referrerpolicy="no-referrer"
+    ? `<a href="${href}">
+         <img src="${escapeHtml(a.thumbnailUrl)}" referrerpolicy="no-referrer"
               style="width:100%;height:120px;object-fit:cover;border-radius:6px;display:block;margin-bottom:.5rem;">
        </a>`
     : ''
   const links = [
-    a.pdfUrl ? `<a href="${a.pdfUrl}" target="_blank" rel="noopener">Bekanntmachung</a>` : '',
-    `<a href="${a.detailUrl}" target="_blank" rel="noopener">Details</a>`,
+    a.pdfUrl ? `<a href="${escapeHtml(a.pdfUrl)}" target="_blank" rel="noopener">Bekanntmachung</a>` : '',
+    `<a href="${href}">Details</a>`,
   ].filter(Boolean).join(' · ')
   return `
     <div style="min-width:240px;font-family:system-ui;font-size:13px;line-height:1.45;">
       ${thumb}
-      <div style="font-weight:600;font-size:14px;margin-bottom:2px;">${a.objekt ?? 'Objekt'}</div>
-      <div style="color:#6b7280;margin-bottom:.4rem;">${a.adresse ?? ''}</div>
+      <div style="font-weight:600;font-size:14px;margin-bottom:2px;">
+        <a href="${href}" style="color:inherit;text-decoration:none;">${escapeHtml(a.objekt ?? 'Objekt')}</a>
+      </div>
+      <div style="color:#6b7280;margin-bottom:.4rem;">${escapeHtml(a.adresse ?? '')}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:.4rem;font-size:12px;margin-bottom:.4rem;">
-        <div><div style="text-transform:uppercase;color:#6b7280;font-size:10px;">Termin</div>${formatDate(a.terminIso, a.terminText)}</div>
-        <div><div style="text-transform:uppercase;color:#6b7280;font-size:10px;">Verkehrswert</div>${formatEur(a.verkehrswertEur)}</div>
+        <div><div style="text-transform:uppercase;color:#6b7280;font-size:10px;">Termin</div>${escapeHtml(formatDate(a.terminIso, a.terminText))}</div>
+        <div><div style="text-transform:uppercase;color:#6b7280;font-size:10px;">Verkehrswert</div>${escapeHtml(formatEur(a.verkehrswertEur))}</div>
       </div>
       <div style="font-size:12px;border-top:1px solid #e5e7eb;padding-top:.4rem;">
-        <span style="color:#6b7280;">${a.amtsgericht} · ${a.aktenzeichen}</span><br>
+        <span style="color:#6b7280;">${escapeHtml(a.amtsgericht)} · ${escapeHtml(a.aktenzeichen)}</span><br>
         ${links}
       </div>
     </div>

@@ -1,4 +1,4 @@
-import type { CrawlResult } from '~/types/auction'
+import type { Auction, CrawlResult } from '~/types/auction'
 
 export interface RegionInfo {
   /** Internal region code as used by the platform (e.g. 'sn' for Sachsen).
@@ -33,4 +33,10 @@ export interface PlatformCrawler {
    *  single entry with code='all'. */
   regions: readonly RegionInfo[]
   crawl(opts: CrawlOptions): Promise<CrawlResult>
+  /** Enrich a single already-listed auction in place with its detail-page data
+   *  (beschreibung, attachments, …). Lets the enrich task fetch detail only for
+   *  auctions not yet in the extraction cache, instead of re-enriching every
+   *  listing on every run (which would hammer the upstream portals). Optional —
+   *  a crawler that can't enrich one item in isolation omits it. */
+  enrichOne?(auction: Auction): Promise<void>
 }

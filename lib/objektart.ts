@@ -3,6 +3,39 @@ export interface ObjektKategorie {
   label: string
 }
 
+/** Canonical property-type ids the rules/LLM extractor may emit. Mirrors the
+ *  RULES ids below plus 'sonstiges'. 'unbekannt' is represented as null. */
+export type PropertyType =
+  | 'mehrfamilienhaus'
+  | 'zweifamilienhaus'
+  | 'wohn-geschaefts'
+  | 'doppelhaushaelfte'
+  | 'reihenhaus'
+  | 'einfamilienhaus'
+  | 'eigentumswohnung'
+  | 'gewerbe'
+  | 'land-forst'
+  | 'unbebaut'
+  | 'garage-stellplatz'
+  | 'sonstiges'
+
+/** Runtime list of the PropertyType union — for LLM schema enums and validation
+ *  (TypeScript can't enumerate a type at runtime). Keep in sync with the union. */
+export const PROPERTY_TYPES: readonly PropertyType[] = [
+  'mehrfamilienhaus',
+  'zweifamilienhaus',
+  'wohn-geschaefts',
+  'doppelhaushaelfte',
+  'reihenhaus',
+  'einfamilienhaus',
+  'eigentumswohnung',
+  'gewerbe',
+  'land-forst',
+  'unbebaut',
+  'garage-stellplatz',
+  'sonstiges',
+]
+
 interface KategorieRule extends ObjektKategorie {
   test: RegExp
 }

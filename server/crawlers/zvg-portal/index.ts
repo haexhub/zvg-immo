@@ -1,10 +1,27 @@
-import type { CrawlResult } from '~/types/auction'
+import type { Auction, CrawlResult } from '~/types/auction'
 import type { CrawlOptions, PlatformCrawler } from '../types'
 import { ZVG_BASE, UA, DE_REGIONS, DE_REGION_NAMES, COUNTRY } from './constants'
 import { parseAuctionsHtml, buildSearchBody } from './list'
-import { enrichInBatches } from './detail'
+import { enrichInBatches, type DetailInfo } from './detail'
 
 const PLATFORM_ID = 'zvg-portal'
+
+function applyDetail(auction: Auction, info: DetailInfo, landAbk: string): void {
+  auction.attachments = info.attachments
+  auction.beschreibung = info.beschreibung
+  const fotos = info.attachments.filter((a) => a.kind === 'foto')
+  auction.fotoCount = fotos.length
+  const firstFoto = fotos[0]
+  if (firstFoto) {
+    auction.thumbnailUrl = `/api/zvg-thumb?file_id=${firstFoto.fileId}&zvg_id=${auction.zvgId}&land_abk=${landAbk}`
+  }
+}
+
+async function enrichOne(auction: Auction): Promise<void> {
+  const landAbk = new URLSearchParams(auction.detailUrl.split('?')[1] ?? '').get('land_abk')
+  if (!landAbk || !/^\d+$/.test(auction.zvgId)) return
+  await enrichInBatches([auction], landAbk, (a, info) => applyDetail(a, info, landAbk))
+}
 
 async function fetchListHtml(landAbk: string, immobilienOnly: boolean): Promise<string> {
   const body = buildSearchBody(landAbk, immobilienOnly)
@@ -35,16 +52,7 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
   const { totalReported, auctions } = parseAuctionsHtml(html, landAbk, PLATFORM_ID)
 
   if (enrichDetails) {
-    await enrichInBatches(auctions, landAbk, (auction, info) => {
-      auction.attachments = info.attachments
-      auction.beschreibung = info.beschreibung
-      const fotos = info.attachments.filter((a) => a.kind === 'foto')
-      auction.fotoCount = fotos.length
-      const firstFoto = fotos[0]
-      if (firstFoto) {
-        auction.thumbnailUrl = `/api/zvg-thumb?file_id=${firstFoto.fileId}&zvg_id=${auction.zvgId}&land_abk=${landAbk}`
-      }
-    })
+    await enrichInBatches(auctions, landAbk, (auction, info) => applyDetail(auction, info, landAbk))
   }
 
   return {
@@ -65,4 +73,5 @@ export const zvgPortalCrawler: PlatformCrawler = {
   country: COUNTRY,
   regions: DE_REGIONS,
   crawl,
+  enrichOne,
 }
