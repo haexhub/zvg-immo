@@ -16,6 +16,16 @@ function extractPhotos(atts: Attachment[]): Attachment[] {
   return atts.filter((a) => a.kind === 'foto')
 }
 
+// AT-Edikte and zvg-portal publish "Foto" attachments as PDFs (one photo per
+// page). `<img src="…pdf">` fails silently in the browser, so we route those
+// through /api/pdf-thumb which rasterises the first page.
+function slideSrc(a: Attachment): string {
+  if (/\.pdf(?:[?#]|$)/i.test(a.proxyUrl)) {
+    return `/api/pdf-thumb?src=${encodeURIComponent(a.proxyUrl)}`
+  }
+  return a.proxyUrl
+}
+
 const photos = ref<Attachment[]>(extractPhotos(props.auction.attachments))
 const thumbnailUrl = ref<string | null>(props.auction.thumbnailUrl)
 const loading = ref(false)
@@ -72,7 +82,7 @@ const swiperModules = [Navigation, Pagination, Keyboard]
       >
         <SwiperSlide v-for="(p, i) in photos" :key="p.fileId || i">
           <a :href="p.proxyUrl" target="_blank" rel="noopener">
-            <img :src="p.proxyUrl" referrerpolicy="no-referrer" loading="lazy" :alt="`Foto ${i + 1} – ${auction.objekt ?? 'Objekt'}`">
+            <img :src="slideSrc(p)" referrerpolicy="no-referrer" loading="lazy" :alt="`Foto ${i + 1} – ${auction.objekt ?? 'Objekt'}`">
           </a>
         </SwiperSlide>
       </Swiper>
