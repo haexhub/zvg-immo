@@ -19,28 +19,39 @@ function applyDetail(auction: Auction, info: DetailInfo, landAbk: string): void 
 
 async function enrichOne(auction: Auction): Promise<void> {
   const landAbk = new URLSearchParams(auction.detailUrl.split('?')[1] ?? '').get('land_abk')
+  // Missing land_abk / non-numeric zvgId is permanent — nothing to fetch, ever.
   if (!landAbk || !/^\d+$/.test(auction.zvgId)) return
-  await enrichInBatches([auction], landAbk, (a, info) => applyDetail(a, info, landAbk))
+  const r = await enrichInBatches([auction], landAbk, (a, info) => applyDetail(a, info, landAbk))
+  if (r.errors > 0) throw new Error('zvg-portal detail fetch failed')
 }
+
+const FETCH_TIMEOUT_MS = 20_000
 
 async function fetchListHtml(landAbk: string, immobilienOnly: boolean): Promise<string> {
   const body = buildSearchBody(landAbk, immobilienOnly)
-  // Single-shot: all=1 returns the full list in one response.
-  const res = await fetch(`${ZVG_BASE}/index.php?button=Suchen&all=1`, {
-    method: 'POST',
-    headers: {
-      'User-Agent': UA,
-      Accept: 'text/html,application/xhtml+xml',
-      'Accept-Language': 'de-DE,de;q=0.9',
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Referer: `${ZVG_BASE}/index.php?button=Termine+suchen`,
-    },
-    body,
-  })
-  if (!res.ok) throw new Error(`ZVG ${res.status} for ${landAbk}`)
-  // The page declares ISO-8859-1 in <meta>, but the HTTP Content-Type header
-  // and actual bytes are UTF-8. Trust the header.
-  return await res.text()
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+  try {
+    // Single-shot: all=1 returns the full list in one response.
+    const res = await fetch(`${ZVG_BASE}/index.php?button=Suchen&all=1`, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'User-Agent': UA,
+        Accept: 'text/html,application/xhtml+xml',
+        'Accept-Language': 'de-DE,de;q=0.9',
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Referer: `${ZVG_BASE}/index.php?button=Termine+suchen`,
+      },
+      body,
+    })
+    if (!res.ok) throw new Error(`ZVG ${res.status} for ${landAbk}`)
+    // The page declares ISO-8859-1 in <meta>, but the HTTP Content-Type header
+    // and actual bytes are UTF-8. Trust the header.
+    return await res.text()
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
@@ -52,7 +63,14 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
   const { totalReported, auctions } = parseAuctionsHtml(html, landAbk, PLATFORM_ID)
 
   if (enrichDetails) {
-    await enrichInBatches(auctions, landAbk, (auction, info) => applyDetail(auction, info, landAbk))
+    const result = await enrichInBatches(auctions, landAbk, (auction, info) =>
+      applyDetail(auction, info, landAbk),
+    )
+    if (result.errors > 0) {
+      console.warn(
+        `[zvg-portal] ${landAbk}: enriched ${result.enriched}/${auctions.length}, ${result.errors} detail fetches failed`,
+      )
+    }
   }
 
   return {

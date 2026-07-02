@@ -26,6 +26,7 @@ export default defineEventHandler(async (event) => {
       'Accept-Language': 'de-DE,de;q=0.9',
       Referer: 'https://www.zvg-portal.de/index.php?button=Suchen',
     },
+    signal: AbortSignal.timeout(20_000),
   })
 
   if (!res.ok) {

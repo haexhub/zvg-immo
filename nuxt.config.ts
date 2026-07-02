@@ -61,10 +61,11 @@ export default defineNuxtConfig({
       '30 */6 * * *': ['enrich'],
     },
     routeRules: {
-      // The auctions list (HTML scraping) is the expensive part. The geo
-      // endpoint just decorates with cached lookups, so it must not be cached
-      // independently — that would freeze geocodedCount after the first hit.
-      '/api/auctions': { swr: 1800 },
+      // /api/auctions caches inside the handler (defineCachedFunction) instead
+      // of an SWR route rule: the route-rule cache would also pin the graceful
+      // empty response a rate-limited crawl returns. The geo endpoint just
+      // decorates with cached lookups, so it must not be cached independently —
+      // that would freeze geocodedCount after the first hit.
       '/api/regions': { swr: 86400 },
     },
   },

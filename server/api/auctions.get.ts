@@ -3,26 +3,47 @@ import { crawlAll, crawlSingle } from '../crawlers/registry'
 import { cacheKey, readVerkehrswertCache } from '../utils/verkehrswert-cache'
 import { applyExtractionToAuctions, readExtractionCache } from '../utils/extraction-cache'
 
-export default defineEventHandler(async (event): Promise<CrawlResult> => {
-  const query = getQuery(event)
-  const country = typeof query.country === 'string' ? query.country.toLowerCase() : 'all'
-  const region = typeof query.region === 'string' ? query.region.toLowerCase() : 'all'
-  const immobilienOnly = query.immo !== '0'
-  try {
-    let result: CrawlResult
+// Caching lives here (defineCachedFunction) instead of an SWR route rule:
+// Nitro's route-rule cache stores the handler response regardless of any
+// cache-control header the handler sets, so the graceful empty result below
+// used to get pinned for the full SWR window. cachedFunction only persists
+// successful results — a rate-limited crawl throws, is caught below, and the
+// very next request retries the upstream.
+const cachedCrawl = defineCachedFunction(
+  async (country: string, region: string, immobilienOnly: boolean): Promise<CrawlResult> => {
     if (country === 'all') {
       // All countries, all regions. Detail enrichment off — a country-wide
       // crawl across every platform would otherwise issue thousands of
       // detail fetches and time out behind Traefik. Missing Verkehrswerte
       // (currently only AT) are filled from the disk cache populated by the
       // geocode task, see overlayCachedVerkehrswert below.
-      result = await crawlAll({ immobilienOnly, enrichDetails: false })
-    } else if (region === 'all') {
-      // One country, all its regions. Same reasoning as above.
-      result = await crawlAll({ immobilienOnly, country, enrichDetails: false })
-    } else {
-      result = await crawlSingle({ country, region, immobilienOnly })
+      return crawlAll({ immobilienOnly, enrichDetails: false })
     }
+    if (region === 'all') {
+      // One country, all its regions. Same reasoning as above.
+      return crawlAll({ immobilienOnly, country, enrichDetails: false })
+    }
+    return crawlSingle({ country, region, immobilienOnly })
+  },
+  {
+    name: 'auctions-crawl',
+    maxAge: 1800,
+    swr: true,
+    getKey: (country, region, immobilienOnly) =>
+      `${country}:${region}:${immobilienOnly ? '1' : '0'}`,
+  },
+)
+
+export default defineEventHandler(async (event): Promise<CrawlResult> => {
+  const query = getQuery(event)
+  const country = typeof query.country === 'string' ? query.country.toLowerCase() : 'all'
+  const region = typeof query.region === 'string' ? query.region.toLowerCase() : 'all'
+  const immobilienOnly = query.immo !== '0'
+  try {
+    const result = await cachedCrawl(country, region, immobilienOnly)
+    // The overlays mutate the cached object; that's safe (they only fill
+    // nulls, synchronously) and wanted — newly cached Verkehrswerte and
+    // extractions show up without waiting for the crawl cache to expire.
     await overlayCachedVerkehrswert(result)
     await overlayExtraction(result)
     return result
@@ -44,9 +65,8 @@ export default defineEventHandler(async (event): Promise<CrawlResult> => {
       lower.includes('captcha') || lower.includes('rate limit') || /\b429\b/.test(msg)
     if (rateLimited) {
       console.warn(`[api/auctions] ${country}/${region} rate-limited: ${msg}`)
-      // Don't let Nitro's SWR cache pin an empty response for the next 30 min
-      // — once the upstream cooldown expires we want the very next request to
-      // try BOE again, not serve stale empties.
+      // Not cached: cachedCrawl above only stores successful results, and this
+      // header keeps browsers/proxies from holding on to the empty response.
       setResponseHeader(event, 'cache-control', 'no-store, max-age=0')
       return {
         platform: 'multi',

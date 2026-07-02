@@ -8,7 +8,9 @@ function parseGermanNumber(raw: string): number | null {
   let s = raw.trim()
   if (s.includes(',')) {
     s = s.replace(/\./g, '').replace(',', '.')
-  } else {
+  } else if (!/^\d+\.\d{1,2}$/.test(s)) {
+    // A single dot with a 1–2 digit fraction ("2.5") is a decimal point;
+    // groups of 3 digits ("1.500", "1.234.567") are thousands separators.
     s = s.replace(/\./g, '')
   }
   const n = parseFloat(s)
@@ -32,7 +34,12 @@ export function parseAreaValue(text: string): number | null {
 
 /** Find the area value that directly follows one of the given labels. */
 function findLabeledArea(text: string, labelAlternation: string): number | null {
-  const re = new RegExp(`(?:${labelAlternation})\\D{0,14}?(${AREA_TOKEN})`, 'i')
+  // The lookahead stops the unit matching inside a word ("Grundstück mit
+  // 1 Haus" must not read "1 Ha" as one hectare).
+  const re = new RegExp(
+    `(?:${labelAlternation})\\D{0,14}?(${AREA_TOKEN})(?![a-zäöü\\d])`,
+    'i',
+  )
   const m = text.match(re)
   return m && m[1] ? parseAreaValue(m[1]) : null
 }
@@ -49,10 +56,16 @@ export function findLandAreaSqm(text: string): number | null {
   return findLabeledArea(text, LAND_LABELS)
 }
 
+// The fallback patterns ("label then number") must not fire on compounds
+// ("Wohnzimmer", "2 Schlafzimmer") — hence the negative lookbehind — and the
+// gap between label and number must be letter-free so prose like
+// "Wohneinheit Nr. 5" isn't read as a count. The number-first patterns are
+// safe: NUM directly precedes the label, so a compound can't match.
+
 export function findRooms(text: string): number | null {
   let m = text.match(new RegExp(`(${NUM})\\s*(?:zimmer|zi\\.)`, 'i'))
   if (m && m[1]) return parseGermanNumber(m[1])
-  m = text.match(new RegExp(`zimmer\\D{0,6}?(${NUM})`, 'i'))
+  m = text.match(new RegExp(`(?<![a-zäöüß])zimmer[^a-zäöüß\\d]{0,6}?(${NUM})`, 'i'))
   if (m && m[1]) return parseGermanNumber(m[1])
   return null
 }
@@ -60,7 +73,7 @@ export function findRooms(text: string): number | null {
 export function findUnits(text: string): number | null {
   let m = text.match(/(\d+)\s*wohneinheiten?/i)
   if (m && m[1]) return parseInt(m[1], 10)
-  m = text.match(/wohneinheiten?\D{0,6}?(\d+)/i)
+  m = text.match(/(?<![a-zäöüß])wohneinheiten?[^a-zäöüß\d]{0,6}?(\d+)/i)
   if (m && m[1]) return parseInt(m[1], 10)
   return null
 }

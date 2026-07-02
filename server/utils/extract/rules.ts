@@ -25,7 +25,14 @@ export interface RulesExtraction {
  */
 export function extractByRules(input: ExtractionInput): RulesExtraction {
   const text = [input.objekt, input.beschreibung].filter(Boolean).join('\n')
-  const cat = classifyObjekt(text || null)
+  // Classify the structured `objekt` field first: prose in the beschreibung
+  // ("Eigentumswohnung im 3. OG eines Mehrfamilienhauses") would otherwise
+  // hit a higher-priority rule and misclassify. Only fall back to the
+  // combined text when objekt yields nothing usable.
+  let cat = classifyObjekt(input.objekt)
+  if (cat.id === 'unbekannt' || cat.id === 'sonstiges') {
+    cat = classifyObjekt(text || null)
+  }
   const propertyType: PropertyType | null =
     cat.id === 'unbekannt' ? null : (cat.id as PropertyType)
 

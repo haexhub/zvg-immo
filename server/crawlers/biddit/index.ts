@@ -41,7 +41,10 @@ function applyDetail(auction: AuctionDetailFields, info: DetailInfo): void {
 }
 
 async function enrichOne(auction: Auction): Promise<void> {
-  await enrichInBatches([auction], applyDetail)
+  const r = await enrichInBatches([auction], applyDetail)
+  // A vanished lot (detail API 404) yields no error — permanent, stamp it.
+  // Real fetch failures must throw so the enrich task retries later.
+  if (r.errors > 0) throw new Error('biddit detail fetch failed')
 }
 
 async function crawl(opts: CrawlOptions): Promise<CrawlResult> {

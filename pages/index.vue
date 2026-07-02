@@ -15,6 +15,7 @@ import SheetFooter from '~/components/ui/sheet/SheetFooter.vue'
 import SheetTitle from '~/components/ui/sheet/SheetTitle.vue'
 import SheetDescription from '~/components/ui/sheet/SheetDescription.vue'
 import { ListFilter } from 'lucide-vue-next'
+import { refDebounced } from '@vueuse/core'
 
 // Country/region cascade filter. Default 'all' = aggregate over every
 // registered platform across every country.
@@ -39,9 +40,20 @@ watch(selectedCountry, () => {
   selectedRegion.value = 'all'
 })
 
+// useFetch re-fetches synchronously on query changes, i.e. before the watcher
+// above resets selectedRegion — a country switch would briefly fire a request
+// with the old country's region. Self-correct: only pass the region through
+// when it actually exists for the currently selected country.
+const effectiveRegion = computed(() => {
+  if (selectedRegion.value === 'all') return 'all'
+  return availableRegions.value.some((r) => r.code === selectedRegion.value)
+    ? selectedRegion.value
+    : 'all'
+})
+
 const queryParams = computed(() => ({
   country: selectedCountry.value,
-  region: selectedRegion.value,
+  region: effectiveRegion.value,
 }))
 
 // Lazy fetch so SSR doesn't block on a cold multi-region crawl.
@@ -69,7 +81,7 @@ const {
 } = useFetch<GeoCrawlResult | null>('/api/auctions-geo', {
   query: {
     country: selectedCountry,
-    region: selectedRegion,
+    region: effectiveRegion,
     fetch: computed(() => (fetchMissing.value ? '1' : '0')),
   },
   default: () => null,
@@ -92,22 +104,37 @@ const geocodingInProgress = computed(() => {
 })
 
 let geoPollTimer: ReturnType<typeof setInterval> | null = null
+let pollInFlight = false
 async function pollGeoOnce(): Promise<void> {
   // Direct $fetch bypasses the useFetch payload cache that holds the first
   // hydration snapshot — refresh() alone keeps returning the stale value.
+  // Snapshot the selection so a stale response never overwrites data the
+  // user requested for a different country/region mid-flight.
+  const country = selectedCountry.value
+  const region = effectiveRegion.value
+  const fetchParam = fetchMissing.value ? '1' : '0'
+  pollInFlight = true
   try {
     const fresh = await $fetch<GeoCrawlResult>('/api/auctions-geo', {
       query: {
-        country: selectedCountry.value,
-        region: selectedRegion.value,
-        fetch: fetchMissing.value ? '1' : '0',
+        country,
+        region,
+        fetch: fetchParam,
       },
       // Bypass the HTTP cache so each poll sees the growing geocode cache.
       cache: 'no-store',
     })
-    geoData.value = fresh
+    if (
+      country === selectedCountry.value
+      && region === effectiveRegion.value
+      && fetchParam === (fetchMissing.value ? '1' : '0')
+    ) {
+      geoData.value = fresh
+    }
   } catch {
     // Ignore transient poll errors; the next tick will retry.
+  } finally {
+    pollInFlight = false
   }
 }
 function startGeoPoll(): void {
@@ -118,7 +145,7 @@ function startGeoPoll(): void {
       stopGeoPoll()
       return
     }
-    if (geoPending.value) return
+    if (geoPending.value || pollInFlight) return
     pollGeoOnce()
   }, 15_000)
 }
@@ -128,8 +155,8 @@ function stopGeoPoll(): void {
     geoPollTimer = null
   }
 }
-watch(geocodingInProgress, (running) => {
-  if (running && view.value === 'map') startGeoPoll()
+watch([geocodingInProgress, view], ([running, v]) => {
+  if (running && v === 'map') startGeoPoll()
   else stopGeoPoll()
 }, { immediate: true })
 
@@ -142,6 +169,10 @@ onBeforeUnmount(() => {
 })
 
 const search = ref('')
+// Every keystroke re-runs filteredGeo and rebuilds thousands of map markers —
+// debounce the search term so typing stays smooth. Selects/checkboxes keep
+// applying instantly.
+const debouncedSearch = refDebounced(search, 250)
 const includeAufgehoben = ref(false)
 const courtFilter = ref<string>('all')
 const priceMin = ref<number | null>(null)
@@ -195,6 +226,8 @@ const kategorienMitCount = computed<{ id: string; label: string; count: number }
 })
 
 function clearAllFilters(): void {
+  selectedCountry.value = 'all'
+  selectedRegion.value = 'all'
   search.value = ''
   courtFilter.value = 'all'
   priceMin.value = null
@@ -204,11 +237,17 @@ function clearAllFilters(): void {
   includeAufgehoben.value = false
 }
 
+// v-model.number yields '' (empty string) when the input is cleared; treat
+// anything that isn't a real number as "filter not set".
+function numOrNull(v: unknown): number | null {
+  return typeof v === 'number' && !Number.isNaN(v) ? v : null
+}
+
 function applyFilters<T extends Auction>(items: T[]): T[] {
-  const q = search.value.trim().toLowerCase()
+  const q = debouncedSearch.value.trim().toLowerCase()
   const kat = kategorieFilter.value
-  const min = priceMin.value
-  const max = priceMax.value
+  const min = numOrNull(priceMin.value)
+  const max = numOrNull(priceMax.value)
   return items.filter((a) => {
     if (!includeAufgehoben.value && a.aufgehoben) return false
     if (courtFilter.value !== 'all' && a.amtsgericht !== courtFilter.value) return false
@@ -248,8 +287,8 @@ const activeFilterCount = computed(() => {
   if (selectedRegion.value !== 'all') n++
   if (search.value.trim()) n++
   if (courtFilter.value !== 'all') n++
-  if (priceMin.value != null) n++
-  if (priceMax.value != null) n++
+  if (numOrNull(priceMin.value) != null) n++
+  if (numOrNull(priceMax.value) != null) n++
   if (kategorieFilter.value !== 'all') n++
   if (onlyWithPhotos.value) n++
   if (includeAufgehoben.value) n++

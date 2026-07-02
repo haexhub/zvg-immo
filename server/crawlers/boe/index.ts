@@ -45,7 +45,10 @@ function applyDetail(auction: AuctionDetailFields, info: DetailInfo): void {
 }
 
 async function enrichOne(auction: Auction): Promise<void> {
-  await enrichInBatches([auction], applyDetail)
+  const r = await enrichInBatches([auction], applyDetail)
+  // Throw on failure (captcha cooldown, 5xx) so the enrich task leaves the
+  // listing unstamped and retries it on a later run instead of dropping it.
+  if (r.errors > 0) throw new Error('boe detail fetch failed')
 }
 
 async function crawl(opts: CrawlOptions): Promise<CrawlResult> {

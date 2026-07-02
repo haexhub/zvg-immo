@@ -40,6 +40,23 @@ interface SearchPage {
 
 const FETCH_TIMEOUT_MS = 20_000
 
+/** "2026-07-15T14:00:00.000Z" → "15.07.2026, 16:00 Uhr" (Belgian local time),
+ *  matching the human-readable terminText the other platforms provide. */
+function formatTerminText(iso: string | null | undefined): string | null {
+  if (!iso) return null
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return null
+  const formatted = date.toLocaleString('de-DE', {
+    timeZone: 'Europe/Brussels',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+  return `${formatted} Uhr`
+}
+
 export async function fetchSearchPage(page: number): Promise<SearchPage> {
   const url = `${BIDDIT_BASE}/api/eco/search-service/lot/_search?page=${page}&pageSize=${PAGE_SIZE}&handlingMethods=${HANDLING_METHOD_PUBLIC}`
   const controller = new AbortController()
@@ -98,7 +115,7 @@ function mapItem(inner: SearchItemInner, platformId: string): MappedAuction | nu
     verkehrswertEur: null,
     verkehrswertText: null,
     terminIso: inner.biddingEndDateTime ?? inner.biddingStartDateTime ?? null,
-    terminText: inner.biddingEndDateTime ?? null,
+    terminText: formatTerminText(inner.biddingEndDateTime),
     aufgehoben,
     letzteAktualisierungIso: inner.firstPublicationDateTime ?? null,
     pdfUrl: null,

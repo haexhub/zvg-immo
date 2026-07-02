@@ -7,6 +7,7 @@
 // first-write-wins semantics with no TTL. Entries whose detail page lacked a
 // Schätzwert row are stored as null to suppress re-fetching on every nightly run.
 
+import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
@@ -51,8 +52,9 @@ export async function readVerkehrswertCache(): Promise<VerkehrswertCache> {
 export async function writeVerkehrswertCache(cache: VerkehrswertCache): Promise<void> {
   await mkdir(dirname(CACHE_PATH), { recursive: true })
   // Atomic write: tmp file + rename so a crash mid-write can't truncate the
-  // cache to an unparseable state.
-  const tmp = `${CACHE_PATH}.tmp`
+  // cache to an unparseable state. Unique tmp name so parallel writers can't
+  // clobber each other's half-written file.
+  const tmp = `${CACHE_PATH}.${randomUUID()}.tmp`
   await writeFile(tmp, JSON.stringify(cache))
   await rename(tmp, CACHE_PATH)
 }

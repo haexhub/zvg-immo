@@ -142,9 +142,9 @@ export async function extractPdfPhotos(
 
   const workDir = await mkdtemp(join(tmpdir(), 'zvg-pdfimages-'))
   const inputPath = join(workDir, 'in.pdf')
-  await writeFile(inputPath, buf)
 
   try {
+    await writeFile(inputPath, buf)
     let listOut: string
     try {
       const { stdout } = await exec('pdfimages', ['-list', '-p', inputPath], {

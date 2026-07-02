@@ -18,12 +18,31 @@ import {
   type VerkehrswertCache,
 } from '../utils/verkehrswert-cache'
 
+// Guards against overlapping runs: a cold-start bootstrap run can take ~40 min
+// and would otherwise race a cron-triggered run of the same task (duplicate
+// Nominatim traffic, concurrent verkehrswert cache writes).
+let running = false
+
 export default defineTask({
   meta: {
     name: 'geocode',
     description: 'Crawl all registered regions and geocode addresses missing from the cache.',
   },
   async run() {
+    if (running) {
+      console.warn('[geocode] previous run still in progress — skipping')
+      return { result: undefined }
+    }
+    running = true
+    try {
+      return await runGeocode()
+    } finally {
+      running = false
+    }
+  },
+})
+
+async function runGeocode() {
     const startedAt = Date.now()
     console.log('[geocode] start')
 
@@ -82,8 +101,7 @@ export default defineTask({
         durationMs,
       },
     }
-  },
-})
+}
 
 async function enrichAtVerkehrswert(
   auctions: Auction[],

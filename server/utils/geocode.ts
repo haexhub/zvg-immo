@@ -1,16 +1,30 @@
 // Geocodes addresses via OpenStreetMap Nominatim, with strict 1 req/s rate
 // limit (per Nominatim policy) and a disk-backed cache so repeat lookups are free.
 
-import { mkdir, readFile, writeFile, stat } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 
 const CACHE_DIR = join(process.cwd(), '.cache_zvg', 'geocode')
 const NOMINATIM_BASE = 'https://nominatim.openstreetmap.org/search'
-const UA = 'Mozilla/5.0 (compatible; ZVG-Sachsen-DemoApp/1.0)'
+// Nominatim policy requires an identifying UA, not a browser imitation.
+const UA = 'zvg-immo/1.0 (self-hosted; github.com/haexhub)'
 
 let lastRequestAt = 0
 const MIN_GAP_MS = 1100
+// Serialises the wait-then-stamp dance across concurrent callers so request
+// starts stay MIN_GAP_MS apart (same pattern as server/crawlers/boe/fetch.ts).
+let queue: Promise<void> = Promise.resolve()
+
+// Minimal upstream backoff: 403/429 bans and outages surface as `undefined`
+// results from geocodeOnce (fetch error / !res.ok / non-JSON body). After 5
+// consecutive failures we stop fetching for 15 minutes — geocodeAddress then
+// treats cache misses as if fetchMissing=false (skip instead of hammering a
+// banned IP). Any successful request resets the counter.
+const MAX_CONSECUTIVE_FAILURES = 5
+const FAILURE_COOLDOWN_MS = 15 * 60 * 1000
+let consecutiveFailures = 0
+let cooldownUntil = 0
 
 export interface GeoPoint {
   lat: number
@@ -26,17 +40,25 @@ function cacheKey(query: string, country: string): string {
   return createHash('sha1').update(`${country}:${query}`).digest('hex').slice(0, 16)
 }
 
-async function readCache(query: string, country: string): Promise<GeoPoint | null> {
+/** Single-read cache lookup: 'hit' (geocoded), 'notFound' (attempted, but
+ *  Nominatim had no result — cached to suppress retries) or 'missing' (never
+ *  attempted / unreadable). */
+async function readCacheEntry(
+  query: string,
+  country: string,
+): Promise<{ state: 'hit' | 'notFound' | 'missing'; point?: GeoPoint }> {
   try {
     const path = join(CACHE_DIR, `${cacheKey(query, country)}.json`)
     const buf = await readFile(path, 'utf8')
     const parsed = JSON.parse(buf)
-    if (parsed.notFound) return null
-    if (typeof parsed.lat === 'number' && typeof parsed.lng === 'number') return parsed
+    if (parsed.notFound) return { state: 'notFound' }
+    if (typeof parsed.lat === 'number' && typeof parsed.lng === 'number') {
+      return { state: 'hit', point: parsed }
+    }
   } catch {
     // miss
   }
-  return null
+  return { state: 'missing' }
 }
 
 async function writeCache(query: string, country: string, value: GeoPoint | null): Promise<void> {
@@ -48,20 +70,20 @@ async function writeCache(query: string, country: string, value: GeoPoint | null
   )
 }
 
-async function cacheHasKey(query: string, country: string): Promise<boolean> {
-  try {
-    await stat(join(CACHE_DIR, `${cacheKey(query, country)}.json`))
-    return true
-  } catch {
-    return false
-  }
-}
-
 async function rateLimitedFetch(url: string): Promise<Response> {
+  // Chain each acquire onto the previous one so concurrent callers serialise
+  // instead of racing past the gap check simultaneously.
+  const prev = queue
+  let release!: () => void
+  queue = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  await prev
   const now = Date.now()
   const wait = Math.max(0, lastRequestAt + MIN_GAP_MS - now)
   if (wait > 0) await new Promise((r) => setTimeout(r, wait))
   lastRequestAt = Date.now()
+  release()
   return fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/json' } })
 }
 
@@ -91,11 +113,10 @@ async function geocodeOnce(query: string, country: string): Promise<GeoPoint | n
   if (data.length === 0) return null // genuinely not found — cache this
   const hit = data[0]
   if (!hit) return undefined
-  return {
-    lat: parseFloat(hit.lat),
-    lng: parseFloat(hit.lon),
-    displayName: hit.display_name,
-  }
+  const lat = parseFloat(hit.lat)
+  const lng = parseFloat(hit.lon)
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return undefined
+  return { lat, lng, displayName: hit.display_name }
 }
 
 /** Country-specific PLZ + city fallbacks. Tightening the regex per country
@@ -142,9 +163,9 @@ export async function geocodeStatus(
   const c = country.toLowerCase()
   let allAttempted = true
   for (const q of buildQueries(address, c)) {
-    const cached = await readCache(q, c)
-    if (cached) return 'geocoded'
-    if (!(await cacheHasKey(q, c))) allAttempted = false
+    const cached = await readCacheEntry(q, c)
+    if (cached.state === 'hit') return 'geocoded'
+    if (cached.state === 'missing') allAttempted = false
   }
   return allAttempted ? 'unresolvable' : 'pending'
 }
@@ -156,16 +177,24 @@ export async function geocodeAddress(
 ): Promise<GeoPoint | null> {
   if (!address) return null
   const c = country.toLowerCase()
+  // During the failure cooldown a cache miss behaves like fetchMissing=false:
+  // serve what's cached but leave Nominatim alone until the ban blows over.
+  const fetchMissing = Boolean(options.fetchMissing) && Date.now() >= cooldownUntil
   for (const q of buildQueries(address, c)) {
-    const cached = await readCache(q, c)
-    if (cached) return cached
-    if (await cacheHasKey(q, c)) continue // cached as not-found
-    if (!options.fetchMissing) continue
+    const cached = await readCacheEntry(q, c)
+    if (cached.state === 'hit') return cached.point!
+    if (cached.state === 'notFound') continue
+    if (!fetchMissing) continue
     const hit = await geocodeOnce(q, c)
     if (hit === undefined) {
       // Upstream error — don't cache, just skip this query and try fallbacks
+      consecutiveFailures += 1
+      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        cooldownUntil = Date.now() + FAILURE_COOLDOWN_MS
+      }
       continue
     }
+    consecutiveFailures = 0
     await writeCache(q, c, hit)
     if (hit) return hit
   }

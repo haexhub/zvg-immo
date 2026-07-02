@@ -47,7 +47,8 @@ interface KategorieRule extends ObjektKategorie {
 const RULES: KategorieRule[] = [
   { id: 'mehrfamilienhaus', label: 'Mehrfamilienhaus', test: /mehrfamilienhaus|dreifamilienhaus/i },
   { id: 'zweifamilienhaus', label: 'Zweifamilienhaus', test: /zweifamilienhaus/i },
-  { id: 'wohn-geschaefts', label: 'Wohn-/Geschäftshaus', test: /wohn[\s-]*\/?\s*geschäftshaus/i },
+  // Matches "Wohn- und Geschäftshaus", "Wohn-/Geschäftshaus", "Wohn/Geschäftshaus".
+  { id: 'wohn-geschaefts', label: 'Wohn-/Geschäftshaus', test: /wohn-?\s*(?:und\s+|\/\s*)?geschäftshaus/i },
   { id: 'doppelhaushaelfte', label: 'Doppelhaushälfte', test: /doppelhaushälfte/i },
   { id: 'reihenhaus', label: 'Reihenhaus', test: /reihenhaus/i },
   { id: 'einfamilienhaus', label: 'Einfamilienhaus', test: /einfamilienhaus/i },
@@ -62,7 +63,9 @@ const RULES: KategorieRule[] = [
   {
     id: 'garage-stellplatz',
     label: 'Garage / Stellplatz',
-    test: /\b(garage|kfz-stellplatz|stellplatz)\b/i,
+    // Substring match on purpose: compounds and plurals ("Tiefgaragenstellplatz",
+    // "Doppelgarage", "Garagen", "Stellplätze") must classify as garage too.
+    test: /garage|stellpl(?:atz|ätze)/i,
   },
 ]
 

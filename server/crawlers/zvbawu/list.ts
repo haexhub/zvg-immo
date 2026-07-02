@@ -127,7 +127,12 @@ export async function crawlCourt(
   // last_page can be >1 for high-volume courts (per_page=12).
   for (let p = 2; p <= meta.last_page; p++) {
     const page = await fetchPage(court.slug, p)
-    if (!page) break
+    if (!page) {
+      console.warn(
+        `[zvbawu] ${court.slug}: page ${p}/${meta.last_page} failed — stopping pagination early`,
+      )
+      break
+    }
     for (const a of page.props.auctions.data) {
       auctions.push(mapAuction(a, platformId, court.name))
     }

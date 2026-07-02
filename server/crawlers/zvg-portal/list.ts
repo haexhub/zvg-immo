@@ -26,7 +26,8 @@ export function parseAuctionsHtml(html: string, landAbk: string, platformId: str
     let terminText: string | null = null
     let terminIso: string | null = null
     let aufgehoben = false
-    const terminMatch = chunk.match(/<TR>\s*<TD[^>]*>\s*Termin\s*<\/[Tt][Dd]>([\s\S]*?)<\/[Tt][Rr]>/i)
+    // <TR[^>]*> — live HTML sometimes renders "<TR >" with a stray space.
+    const terminMatch = chunk.match(/<TR[^>]*>\s*<TD[^>]*>\s*Termin\s*<\/[Tt][Dd]>([\s\S]*?)<\/[Tt][Rr]>/i)
     if (terminMatch?.[1]) {
       const inner = terminMatch[1].replace(/<[^>]+>/g, ' ')
       const decoded = clean(inner)

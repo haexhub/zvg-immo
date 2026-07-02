@@ -27,7 +27,11 @@ export default defineEventHandler(async (event): Promise<AuctionPhotoDetail> => 
   const zvgId = String(query.zvgId ?? '')
   const region = typeof query.region === 'string' ? query.region : ''
 
-  if (!platform || !zvgId) {
+  // Shape check: zvgId is interpolated into upstream URLs (AT path segment,
+  // zvg-portal query string), so reject anything that could smuggle extra
+  // path segments or query parameters. Covers all platforms: zvg-portal ids
+  // are numeric, AT ids are Notes UNIDs (hex), Biddit ids are alphanumeric.
+  if (!platform || !/^[\w-]{1,64}$/.test(zvgId)) {
     throw createError({ statusCode: 400, statusMessage: 'platform and zvgId required' })
   }
 

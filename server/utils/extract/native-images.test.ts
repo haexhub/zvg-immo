@@ -163,4 +163,24 @@ describe('downloadNativeImages', () => {
     const files = await downloadNativeImages(urls, { destDir, maxImages: 5 })
     expect(files).toHaveLength(5)
   })
+
+  it('counts successes against maxImages, not attempts', async () => {
+    // Dead URLs at the front must not eat into the cap: with maxImages 2 and
+    // the first three URLs failing, both later valid URLs still get written.
+    const responses: Record<string, FakeResponse> = {}
+    const urls: string[] = []
+    for (let i = 0; i < 3; i++) {
+      const u = `https://example.com/dead-${i}.jpg`
+      urls.push(u)
+      responses[u] = { ok: false, status: 404, body: null }
+    }
+    for (let i = 0; i < 2; i++) {
+      const u = `https://example.com/live-${i}.jpg`
+      urls.push(u)
+      responses[u] = { ok: true, body: makeImage(JPEG_MAGIC, i + 40), contentType: 'image/jpeg' }
+    }
+    stubFetch(responses)
+    const files = await downloadNativeImages(urls, { destDir, maxImages: 2 })
+    expect(files).toHaveLength(2)
+  })
 })

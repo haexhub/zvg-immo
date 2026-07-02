@@ -21,18 +21,28 @@ export interface DetailInfo {
   beschreibung: string | null
 }
 
+const FETCH_TIMEOUT_MS = 20_000
+
 export async function fetchDetailPage(zvgId: string, landAbk: string): Promise<DetailInfo> {
   const url = `${ZVG_BASE}/index.php?button=showZvg&zvg_id=${zvgId}&land_abk=${landAbk}`
-  const res = await fetch(url, {
-    headers: {
-      'User-Agent': UA,
-      Accept: 'text/html',
-      'Accept-Language': 'de-DE,de;q=0.9',
-      Referer: `${ZVG_BASE}/index.php?button=Suchen`,
-    },
-  })
-  if (!res.ok) return { attachments: [], beschreibung: null }
-  const html = await res.text()
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+  let html: string
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': UA,
+        Accept: 'text/html',
+        'Accept-Language': 'de-DE,de;q=0.9',
+        Referer: `${ZVG_BASE}/index.php?button=Suchen`,
+      },
+    })
+    if (!res.ok) throw new Error(`ZVG detail HTTP ${res.status} for ${zvgId}`)
+    html = await res.text()
+  } finally {
+    clearTimeout(timer)
+  }
   if (html.length < 64 && html.trim() === 'error') {
     return { attachments: [], beschreibung: null }
   }
@@ -90,8 +100,10 @@ export async function enrichInBatches<T extends { zvgId: string }>(
   landAbk: string,
   enricher: (item: T, info: DetailInfo) => void,
   concurrency = 10,
-): Promise<void> {
+): Promise<{ enriched: number; errors: number }> {
   let cursor = 0
+  let enriched = 0
+  let errors = 0
   async function worker() {
     while (cursor < items.length) {
       const idx = cursor++
@@ -100,10 +112,15 @@ export async function enrichInBatches<T extends { zvgId: string }>(
       try {
         const info = await fetchDetailPage(item.zvgId, landAbk)
         enricher(item, info)
-      } catch {
-        // Best-effort enrichment; skip on error
+        enriched++
+      } catch (err) {
+        console.debug(
+          `[zvg-portal] detail enrichment failed for ${item.zvgId}: ${(err as Error).message}`,
+        )
+        errors++
       }
     }
   }
   await Promise.all(Array.from({ length: concurrency }, worker))
+  return { enriched, errors }
 }

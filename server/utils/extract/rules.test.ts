@@ -37,6 +37,32 @@ describe('extractByRules', () => {
     expect(r.confident).toBe(true)
   })
 
+  it('prefers the objekt field over prose in the description', () => {
+    const r = extractByRules({
+      objekt: 'Eigentumswohnung',
+      beschreibung:
+        'Eigentumswohnung im 3. OG eines Mehrfamilienhauses, Wohnfläche 75 m²',
+    })
+    expect(r.propertyType).toBe('eigentumswohnung')
+  })
+
+  it('classifies "Wohn- und Geschäftshaus"', () => {
+    const r = extractByRules({ objekt: 'Wohn- und Geschäftshaus', beschreibung: null })
+    expect(r.propertyType).toBe('wohn-geschaefts')
+  })
+
+  it('classifies garage compounds and plurals', () => {
+    expect(
+      extractByRules({ objekt: 'Tiefgaragenstellplatz', beschreibung: null }).propertyType,
+    ).toBe('garage-stellplatz')
+    expect(
+      extractByRules({ objekt: 'Doppelgarage', beschreibung: null }).propertyType,
+    ).toBe('garage-stellplatz')
+    expect(
+      extractByRules({ objekt: '2 Garagen', beschreibung: null }).propertyType,
+    ).toBe('garage-stellplatz')
+  })
+
   it('converts agricultural hectares to m²', () => {
     const r = extractByRules({
       objekt: 'Ackerland',

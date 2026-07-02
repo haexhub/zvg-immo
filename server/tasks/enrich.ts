@@ -53,6 +53,11 @@ function readLlmConfig(): LlmConfig | null {
   return { baseUrl: c.baseUrl, model: c.model || 'claude-haiku-4-5' }
 }
 
+// Guards against overlapping runs: a cold-start bootstrap run (many detail
+// fetches + PDF work) can still be active when the cron tick fires. Two
+// concurrent runs would double-fetch details and race on the snapshot write.
+let running = false
+
 export default defineTask({
   meta: {
     name: 'enrich',
@@ -60,6 +65,20 @@ export default defineTask({
       'Crawl all regions and extract property type + sizes (rules + LLM fallback) for new listings into the disk cache.',
   },
   async run() {
+    if (running) {
+      console.warn('[enrich] previous run still in progress — skipping')
+      return { result: undefined }
+    }
+    running = true
+    try {
+      return await runEnrich()
+    } finally {
+      running = false
+    }
+  },
+})
+
+async function runEnrich() {
     const startedAt = Date.now()
     console.log('[enrich] start')
 
@@ -266,5 +285,4 @@ export default defineTask({
         durationMs,
       },
     }
-  },
-})
+}
