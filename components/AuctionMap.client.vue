@@ -51,33 +51,55 @@ function mountLotPopover(el: HTMLElement, a: GeoAuction): VueApp {
 // the user's zoom/pan.
 let shouldFitNext = true
 
+// Markers keyed by `platform:zvgId` so refreshMarkers can diff instead of
+// rebuilding — existing markers (and an open popup) survive poll updates.
+const markersByKey = new Map<string, L.Marker>()
+
+function createMarker(a: GeoAuction, lat: number, lng: number): L.Marker {
+  const marker = L.marker([lat, lng], {
+    icon: markerIcon,
+    title: `${a.objekt ?? ''} · ${a.adresse ?? ''}`,
+  })
+  // Empty container; the Vue app is mounted lazily on popupopen so the
+  // /api/auction-detail fetch only fires when the popup is actually opened.
+  marker.bindPopup('<div class="lot-popover-mount"></div>', { maxWidth: 320, minWidth: 280 })
+  let app: VueApp | null = null
+  marker.on('popupopen', (e) => {
+    const el = e.popup.getElement()?.querySelector('.lot-popover-mount') as HTMLElement | null
+    if (!el) return
+    app = mountLotPopover(el, a)
+  })
+  marker.on('popupclose', () => {
+    if (app) {
+      app.unmount()
+      app = null
+    }
+  })
+  return marker
+}
+
 function refreshMarkers(): void {
   if (!map || !markersLayer) return
-  markersLayer.clearLayers()
+  const seen = new Set<string>()
   const points: [number, number][] = []
   for (const a of props.auctions) {
     if (a.lat == null || a.lng == null) continue
-    const marker = L.marker([a.lat, a.lng], {
-      icon: markerIcon,
-      title: `${a.objekt ?? ''} · ${a.adresse ?? ''}`,
-    })
-    // Empty container; the Vue app is mounted lazily on popupopen so the
-    // /api/auction-detail fetch only fires when the popup is actually opened.
-    marker.bindPopup('<div class="lot-popover-mount"></div>', { maxWidth: 320, minWidth: 280 })
-    let app: VueApp | null = null
-    marker.on('popupopen', (e) => {
-      const el = e.popup.getElement()?.querySelector('.lot-popover-mount') as HTMLElement | null
-      if (!el) return
-      app = mountLotPopover(el, a)
-    })
-    marker.on('popupclose', () => {
-      if (app) {
-        app.unmount()
-        app = null
-      }
-    })
-    marker.addTo(markersLayer)
+    const key = `${a.platform}:${a.zvgId}`
+    seen.add(key)
+    if (!markersByKey.has(key)) {
+      const marker = createMarker(a, a.lat, a.lng)
+      marker.addTo(markersLayer)
+      markersByKey.set(key, marker)
+    }
     points.push([a.lat, a.lng])
+  }
+  // Remove markers whose auctions dropped out (removal closes an open popup,
+  // which fires popupclose and unmounts its Vue app).
+  for (const [key, marker] of markersByKey) {
+    if (!seen.has(key)) {
+      markersLayer.removeLayer(marker)
+      markersByKey.delete(key)
+    }
   }
   if (!shouldFitNext) return
   shouldFitNext = false

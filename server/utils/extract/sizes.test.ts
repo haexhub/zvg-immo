@@ -30,6 +30,10 @@ describe('parseAreaValue', () => {
     expect(parseAreaValue('2,5 ha')).toBe(25000)
   })
 
+  it('treats a short dot fraction as a decimal point', () => {
+    expect(parseAreaValue('2.5 m²')).toBe(2.5)
+  })
+
   it('returns null when no area unit is present', () => {
     expect(parseAreaValue('keine Angabe')).toBeNull()
   })
@@ -79,6 +83,18 @@ describe('findLandAreaSqm', () => {
   it('returns null when only living area is present', () => {
     expect(findLandAreaSqm('Wohnfläche 140 m²')).toBeNull()
   })
+
+  it('finds a plain m² value after the Grundstück label', () => {
+    expect(findLandAreaSqm('Grundstück 450 m²')).toBe(450)
+  })
+
+  it('finds a hectare value after the Grundstück label', () => {
+    expect(findLandAreaSqm('Grundstück 2 ha')).toBe(20000)
+  })
+
+  it('does not read "1 Haus" as one hectare', () => {
+    expect(findLandAreaSqm('Grundstück mit 1 Haus und Garten')).toBeNull()
+  })
 })
 
 describe('findRooms', () => {
@@ -93,6 +109,14 @@ describe('findRooms', () => {
   it('returns null without a room count', () => {
     expect(findRooms('Einfamilienhaus')).toBeNull()
   })
+
+  it('finds a plain room count', () => {
+    expect(findRooms('3 Zimmer')).toBe(3)
+  })
+
+  it('does not count room-name compounds', () => {
+    expect(findRooms('Wohnzimmer, 2 Schlafzimmer, Küche, Bad')).toBeNull()
+  })
 })
 
 describe('findUnits', () => {
@@ -106,5 +130,13 @@ describe('findUnits', () => {
 
   it('returns null without a unit count', () => {
     expect(findUnits('Einfamilienhaus, 140 m²')).toBeNull()
+  })
+
+  it('finds a plural unit count', () => {
+    expect(findUnits('2 Wohneinheiten')).toBe(2)
+  })
+
+  it('does not read a unit number as a count', () => {
+    expect(findUnits('Wohneinheit Nr. 5')).toBeNull()
   })
 })

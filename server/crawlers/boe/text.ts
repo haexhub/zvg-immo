@@ -5,12 +5,13 @@ export function decodeEntities(s: string): string {
     .replace(/&#x([0-9a-fA-F]+);/g, (_m, hex) => String.fromCodePoint(parseInt(hex, 16)))
     .replace(/&#(\d+);/g, (_m, dec) => String.fromCodePoint(parseInt(dec, 10)))
     .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
     .replace(/&quot;/g, '"')
     .replace(/&apos;/g, "'")
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&euro;/g, '€')
+    // &amp; must be decoded last — otherwise "&amp;lt;" would double-decode.
+    .replace(/&amp;/g, '&')
 }
 
 export function clean(s: string): string {

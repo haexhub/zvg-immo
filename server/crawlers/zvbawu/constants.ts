@@ -10,10 +10,9 @@ export const DE_REGIONS: readonly RegionInfo[] = [
 ] as const
 
 // 35 BW Amtsgerichte as published on the zvbawü.de index page. The {slug}.{id}
-// suffix is the canonical court id; both parts together form the URL path. The
-// list is fetched once and cached at module load — see fetchCourts() — but we
-// keep this static fallback so a transient failure of the index page does not
-// block the whole crawl.
+// suffix is the canonical court id; both parts together form the URL path.
+// Static list, maintained by hand — extend it when new Amtsgerichte appear on
+// zvbawü.de.
 export const BW_COURTS_FALLBACK: ReadonlyArray<{ slug: string; name: string }> = [
   { slug: 'albstadt.92332', name: 'Albstadt' },
   { slug: 'baden-baden.35828', name: 'Baden-Baden' },

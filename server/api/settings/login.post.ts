@@ -16,11 +16,12 @@ function clientIp(event: ReturnType<typeof getRequestHeaders> extends infer _ ? 
   // Only honour x-forwarded-for when explicitly opted in. Otherwise a client
   // hitting the app directly (e.g. port 3000 exposed on the host) could
   // rotate rate-limit buckets by sending arbitrary header values. When behind
-  // a real reverse proxy that overwrites the header, set
-  // NUXT_TRUST_FORWARDED_FOR=1.
+  // a real reverse proxy (e.g. Traefik) that APPENDS to the header, set
+  // NUXT_TRUST_FORWARDED_FOR=1. Use the LAST entry: it is the one appended by
+  // the trusted proxy, while the first entry is client-supplied and spoofable.
   if (trustForwarded) {
     const fwd = getRequestHeader(event, 'x-forwarded-for')
-    if (fwd) return fwd.split(',')[0]!.trim()
+    if (fwd) return fwd.split(',').at(-1)!.trim()
   }
   return event.node.req.socket?.remoteAddress ?? 'unknown'
 }

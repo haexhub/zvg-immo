@@ -8,7 +8,7 @@
 // handles both.
 
 import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -83,7 +83,7 @@ export async function pdfToText(proxyUrl: string): Promise<string | null> {
       maxBuffer: 20 * 1024 * 1024,
     })
     await mkdir(CACHE_DIR, { recursive: true })
-    const tmp = `${cachePath}.tmp`
+    const tmp = `${cachePath}.${randomUUID()}.tmp`
     await writeFile(tmp, stdout)
     await rename(tmp, cachePath)
     return stdout

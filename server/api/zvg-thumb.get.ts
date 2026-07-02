@@ -3,9 +3,10 @@
 
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { mkdir, readFile, writeFile, stat } from 'node:fs/promises'
+import { mkdir, readFile, unlink, writeFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { randomUUID } from 'node:crypto'
 
 const exec = promisify(execFile)
 
@@ -34,6 +35,7 @@ async function fetchPdf(landAbk: string, fileId: string, zvgId: string): Promise
       Accept: 'application/pdf,*/*',
       Referer: `${ZVG_BASE}/index.php?button=Suchen`,
     },
+    signal: AbortSignal.timeout(20_000),
   })
   if (!res.ok) throw new Error(`upstream ${res.status}`)
   const buf = Buffer.from(await res.arrayBuffer())
@@ -47,8 +49,12 @@ async function fetchPdf(landAbk: string, fileId: string, zvgId: string): Promise
 }
 
 async function renderThumbnail(pdfBuf: Buffer, fileId: string): Promise<Buffer> {
-  const inputPath = join(tmpdir(), `zvg-${fileId}-${process.pid}.pdf`)
-  const outputPrefix = join(tmpdir(), `zvg-${fileId}-${process.pid}-out`)
+  // Unique per invocation — two concurrent requests for the same uncached
+  // file_id must not share temp paths, or one request's cleanup deletes the
+  // other's files mid-render.
+  const base = join(tmpdir(), `zvg-${fileId}-${randomUUID()}`)
+  const inputPath = `${base}.pdf`
+  const outputPrefix = `${base}-out`
   await writeFile(inputPath, pdfBuf)
   try {
     await exec('pdftoppm', [
@@ -62,8 +68,8 @@ async function renderThumbnail(pdfBuf: Buffer, fileId: string): Promise<Buffer> 
   } finally {
     // Best-effort cleanup
     await Promise.all([
-      readFile(inputPath).then(() => exec('rm', ['-f', inputPath])).catch(() => {}),
-      readFile(`${outputPrefix}.jpg`).then(() => exec('rm', ['-f', `${outputPrefix}.jpg`])).catch(() => {}),
+      unlink(inputPath).catch(() => {}),
+      unlink(`${outputPrefix}.jpg`).catch(() => {}),
     ])
   }
 }

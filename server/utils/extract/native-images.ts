@@ -99,7 +99,10 @@ export async function downloadNativeImages(
 
   const written: string[] = []
   const seenHashes = new Set<string>()
-  for (const url of urls.slice(0, cap)) {
+  // The cap counts successful downloads, not attempts — dead URLs at the
+  // front of the list must not block valid ones further back.
+  for (const url of urls) {
+    if (written.length >= cap) break
     const buf = await fetchImageBytes(url)
     if (!buf || buf.length < MIN_BYTES) continue
     const ext = detectImageExt(buf)

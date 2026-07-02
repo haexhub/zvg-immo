@@ -16,9 +16,18 @@ const PUBLIC_PATHS = new Set([
 
 export default defineEventHandler((event) => {
   const url = event.node.req.url ?? ''
-  if (!url.startsWith('/api/settings/')) return
-  // Strip query string so a `?foo=bar` doesn't bypass the whitelist.
-  const path = url.split('?')[0]!
+  // Strip query string so a `?foo=bar` doesn't bypass the whitelist. Decode
+  // and lowercase so encoded or differently-cased variants can't slip past
+  // the prefix check — the guard must not depend on how the router happens
+  // to normalize paths. Malformed encoding keeps the raw path (fail closed).
+  let path = url.split('?')[0]!
+  try {
+    path = decodeURIComponent(path)
+  } catch {
+    // keep raw path
+  }
+  path = path.toLowerCase()
+  if (!path.startsWith('/api/settings/')) return
   if (PUBLIC_PATHS.has(path)) return
 
   const config = useRuntimeConfig()

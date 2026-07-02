@@ -25,11 +25,12 @@ export function stripHtml(html: string | null | undefined): string {
     .replace(/<\/(p|h\d|li|tr)>/gi, '\n')
     .replace(/<[^>]+>/g, '')
     .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
+    // &amp; must be decoded last — otherwise "&amp;lt;" would double-decode.
+    .replace(/&amp;/g, '&')
     .replace(/[ \t]+/g, ' ')
     .replace(/\n[ \t]+/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
@@ -49,9 +50,10 @@ export function extractInertiaPage<T = unknown>(html: string): T | null {
   const decoded = m[1]
     .replace(/&quot;/g, '"')
     .replace(/&#039;/g, "'")
-    .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
+    // &amp; must be decoded last — otherwise "&amp;lt;" would double-decode.
+    .replace(/&amp;/g, '&')
   try {
     return JSON.parse(decoded) as T
   } catch {

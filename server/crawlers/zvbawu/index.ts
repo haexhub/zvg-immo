@@ -21,7 +21,11 @@ function applyDetail(auction: Auction, info: DetailInfo): void {
 }
 
 async function enrichOne(auction: Auction): Promise<void> {
-  await enrichInBatches([auction], applyDetail)
+  const r = await enrichInBatches([auction], applyDetail)
+  // Aufgehobene auctions are skipped inside enrichInBatches (no error), so a
+  // throw here only signals real fetch failures — the enrich task then leaves
+  // the listing unstamped and retries it on a later run.
+  if (r.errors > 0) throw new Error('zvbawu detail fetch failed')
 }
 
 async function crawl(opts: CrawlOptions): Promise<CrawlResult> {

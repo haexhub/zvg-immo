@@ -9,6 +9,7 @@
 // subsequent runs those fields are empty on the fresh crawl, so we merge with
 // the previous snapshot to keep the enriched values from the first crawl.
 
+import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { Auction } from '~/types/auction'
@@ -74,13 +75,24 @@ function mergePreservedDetail(next: Auction, prev: Auction): Auction {
 export async function writeAuctionSnapshot(auctions: Auction[]): Promise<void> {
   const previous = await readAuctionSnapshot()
   const map: AuctionSnapshot = {}
+  const platformsSeen = new Set<string>()
   for (const a of auctions) {
+    platformsSeen.add(a.platform)
     const key = cacheKey(a.platform, a.zvgId)
     const prev = previous[key]
     map[key] = prev ? mergePreservedDetail(a, prev) : a
   }
+  // A platform that is entirely absent from this crawl most likely failed
+  // (e.g. BOE captcha cooldown) — keep its previous entries instead of
+  // dropping them and losing the enrichOne detail data for good. Deliberate
+  // trade-off: a legitimately empty platform keeps stale entries, which is
+  // better than permanent data loss during an outage.
+  for (const [key, prev] of Object.entries(previous)) {
+    const platform = key.split(':')[0]!
+    if (!platformsSeen.has(platform)) map[key] = prev
+  }
   await mkdir(dirname(SNAPSHOT_PATH), { recursive: true })
-  const tmp = `${SNAPSHOT_PATH}.tmp`
+  const tmp = `${SNAPSHOT_PATH}.${randomUUID()}.tmp`
   await writeFile(tmp, JSON.stringify(map))
   await rename(tmp, SNAPSHOT_PATH)
 }

@@ -46,7 +46,7 @@ function decodeEntities(s) {
 }
 
 function fixMojibake(s) {
-  if (!/Ã[-¿]/.test(s)) return s
+  if (!s.includes('Ã')) return s
   return s
     .replace(/Ã¤/g, 'ä').replace(/Ã¶/g, 'ö').replace(/Ã¼/g, 'ü')
     .replace(/Ã„/g, 'Ä').replace(/Ã–/g, 'Ö').replace(/Ãœ/g, 'Ü')

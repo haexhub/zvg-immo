@@ -77,7 +77,11 @@ async function fetchDetailJson(referenceCode: string): Promise<DetailResponse | 
         Referer: `${BIDDIT_BASE}/`,
       },
     })
-    if (!res.ok) return null
+    // 404/410 = lot vanished upstream — a permanent condition, reported as
+    // null so callers don't retry it forever. Anything else non-ok is
+    // transient (5xx, rate limit) and must surface as an error.
+    if (res.status === 404 || res.status === 410) return null
+    if (!res.ok) throw new Error(`biddit detail HTTP ${res.status}`)
     return (await res.json()) as DetailResponse
   } finally {
     clearTimeout(timer)
@@ -210,7 +214,8 @@ export async function enrichInBatches(
           apply(item, info)
           enriched++
         } else {
-          errors++
+          // Lot vanished upstream (404) — permanent, not an error.
+          console.debug(`[biddit] lot ${item.zvgId} gone upstream — skipping enrichment`)
         }
       } catch (err) {
         console.debug(`[biddit] detail enrich failed for ${item.zvgId}: ${(err as Error).message}`)

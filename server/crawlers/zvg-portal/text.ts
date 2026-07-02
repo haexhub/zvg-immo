@@ -24,8 +24,13 @@ export function parseGermanTimestamp(text: string): string | null {
 }
 
 export function parseEuro(text: string): number | null {
-  // "214.000,00 Euro" or "800.000,00" or "16.100,00&nbsp;"
-  const m = text.replace(/\s|&nbsp;/g, '').match(/([\d.]+,\d{2})/)
+  // "214.000,00 Euro" or "800.000,00" or "16.100,00&nbsp;" — and amounts
+  // without decimals ("74.800 €, wobei auf die einzelnen Parzellen entfallen:
+  // lfd. Nr. 1: 500 €"). Prefer the first currency-anchored amount (the total
+  // precedes any per-parcel sub-amounts); fall back to the bare "1.234,56"
+  // form for values rendered without a currency marker.
+  const s = text.replace(/&euro;|&#128;/g, '€').replace(/\s|&nbsp;/g, '')
+  const m = s.match(/([\d.]+(?:,\d+)?)(?:€|EUR|Euro)/i) ?? s.match(/([\d.]+,\d{2})/)
   if (!m?.[1]) return null
   const n = m[1].replace(/\./g, '').replace(',', '.')
   const num = parseFloat(n)
@@ -67,12 +72,12 @@ export function decodeEntities(s: string): string {
 // already UTF-8 encoded. After Latin-1 decoding, those values look like "GÃ¶rlitz".
 // This unscrambles the common cases.
 export function fixMojibake(s: string): string {
-  if (!/Ã[-¿]/.test(s)) return s
+  if (!s.includes('Ã')) return s
   return s
     .replace(/Ã¤/g, 'ä').replace(/Ã¶/g, 'ö').replace(/Ã¼/g, 'ü')
     .replace(/Ã„/g, 'Ä').replace(/Ã–/g, 'Ö').replace(/Ãœ/g, 'Ü')
     .replace(/ÃŸ/g, 'ß').replace(/Ã©/g, 'é').replace(/Ã¨/g, 'è')
-    .replace(/Ã¡/g, 'á').replace(/Ã ¡/g, 'á')
+    .replace(/Ã¡/g, 'á').replace(/Ã\u00a0/g, 'à') // Ã + NBSP = mojibake 'à'
 }
 
 export function clean(s: string): string {
