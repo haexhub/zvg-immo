@@ -140,13 +140,13 @@ export async function geocodeStatus(
 ): Promise<GeocodeStatus> {
   if (!address) return 'unresolvable'
   const c = country.toLowerCase()
-  let anyAttempt = false
+  let allAttempted = true
   for (const q of buildQueries(address, c)) {
     const cached = await readCache(q, c)
     if (cached) return 'geocoded'
-    if (await cacheHasKey(q, c)) anyAttempt = true
+    if (!(await cacheHasKey(q, c))) allAttempted = false
   }
-  return anyAttempt ? 'unresolvable' : 'pending'
+  return allAttempted ? 'unresolvable' : 'pending'
 }
 
 export async function geocodeAddress(

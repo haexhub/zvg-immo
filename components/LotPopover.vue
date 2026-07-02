@@ -57,7 +57,7 @@ const swiperModules = [Navigation, Pagination, Keyboard]
       >
         <SwiperSlide v-for="(url, i) in photoUrls" :key="i">
           <a :href="detailHref">
-            <img :src="url" referrerpolicy="no-referrer" loading="lazy" alt="">
+            <img :src="url" referrerpolicy="no-referrer" loading="lazy" :alt="`Foto ${i + 1} – ${auction.objekt ?? 'Objekt'}`">
           </a>
         </SwiperSlide>
       </Swiper>
