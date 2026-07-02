@@ -177,6 +177,10 @@ const includeAufgehoben = ref(false)
 const courtFilter = ref<string>('all')
 const priceMin = ref<number | null>(null)
 const priceMax = ref<number | null>(null)
+const landAreaMin = ref<number | null>(null)
+const landAreaMax = ref<number | null>(null)
+const livingAreaMin = ref<number | null>(null)
+const livingAreaMax = ref<number | null>(null)
 const kategorieFilter = ref<string>('all')
 const onlyWithPhotos = ref(false)
 
@@ -232,6 +236,10 @@ function clearAllFilters(): void {
   courtFilter.value = 'all'
   priceMin.value = null
   priceMax.value = null
+  landAreaMin.value = null
+  landAreaMax.value = null
+  livingAreaMin.value = null
+  livingAreaMax.value = null
   kategorieFilter.value = 'all'
   onlyWithPhotos.value = false
   includeAufgehoben.value = false
@@ -248,6 +256,10 @@ function applyFilters<T extends Auction>(items: T[]): T[] {
   const kat = kategorieFilter.value
   const min = numOrNull(priceMin.value)
   const max = numOrNull(priceMax.value)
+  const landMin = numOrNull(landAreaMin.value)
+  const landMax = numOrNull(landAreaMax.value)
+  const livMin = numOrNull(livingAreaMin.value)
+  const livMax = numOrNull(livingAreaMax.value)
   return items.filter((a) => {
     if (!includeAufgehoben.value && a.aufgehoben) return false
     if (courtFilter.value !== 'all' && a.amtsgericht !== courtFilter.value) return false
@@ -255,6 +267,18 @@ function applyFilters<T extends Auction>(items: T[]): T[] {
     if (onlyWithPhotos.value && a.fotoCount === 0) return false
     if (min != null && (a.verkehrswertEur == null || a.verkehrswertEur < min)) return false
     if (max != null && (a.verkehrswertEur == null || a.verkehrswertEur > max)) return false
+    if (landMin != null || landMax != null) {
+      const v = a.extraction?.landAreaSqm ?? null
+      if (v == null) return false
+      if (landMin != null && v < landMin) return false
+      if (landMax != null && v > landMax) return false
+    }
+    if (livMin != null || livMax != null) {
+      const v = a.extraction?.livingAreaSqm ?? null
+      if (v == null) return false
+      if (livMin != null && v < livMin) return false
+      if (livMax != null && v > livMax) return false
+    }
     if (!q) return true
     const hay = `${a.aktenzeichen} ${a.amtsgericht} ${a.objekt ?? ''} ${a.adresse ?? ''} ${a.beschreibung ?? ''}`.toLowerCase()
     return hay.includes(q)
@@ -289,6 +313,10 @@ const activeFilterCount = computed(() => {
   if (courtFilter.value !== 'all') n++
   if (numOrNull(priceMin.value) != null) n++
   if (numOrNull(priceMax.value) != null) n++
+  if (numOrNull(landAreaMin.value) != null) n++
+  if (numOrNull(landAreaMax.value) != null) n++
+  if (numOrNull(livingAreaMin.value) != null) n++
+  if (numOrNull(livingAreaMax.value) != null) n++
   if (kategorieFilter.value !== 'all') n++
   if (onlyWithPhotos.value) n++
   if (includeAufgehoben.value) n++
@@ -487,6 +515,52 @@ function attachmentLabel(att: { kind: string; label: string }): string {
                 class="rounded-full border px-3 py-0.5 text-xs text-muted-foreground hover:border-primary hover:text-primary transition-colors"
                 @click="priceMin = p.min; priceMax = p.max"
               >{{ p.label }}</button>
+            </div>
+          </div>
+
+          <div class="space-y-2">
+            <label class="block text-sm font-medium">Grundstücksfläche (m²)</label>
+            <div class="flex items-center gap-2">
+              <input
+                v-model.number="landAreaMin"
+                type="number"
+                min="0"
+                step="50"
+                placeholder="von"
+                class="h-9 flex-1 min-w-0 rounded-md border bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+              <span class="text-muted-foreground">–</span>
+              <input
+                v-model.number="landAreaMax"
+                type="number"
+                min="0"
+                step="50"
+                placeholder="bis"
+                class="h-9 flex-1 min-w-0 rounded-md border bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+            </div>
+          </div>
+
+          <div class="space-y-2">
+            <label class="block text-sm font-medium">Wohnfläche (m²)</label>
+            <div class="flex items-center gap-2">
+              <input
+                v-model.number="livingAreaMin"
+                type="number"
+                min="0"
+                step="10"
+                placeholder="von"
+                class="h-9 flex-1 min-w-0 rounded-md border bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+              <span class="text-muted-foreground">–</span>
+              <input
+                v-model.number="livingAreaMax"
+                type="number"
+                min="0"
+                step="10"
+                placeholder="bis"
+                class="h-9 flex-1 min-w-0 rounded-md border bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
             </div>
           </div>
 
