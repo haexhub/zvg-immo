@@ -32,10 +32,18 @@ onMounted(async () => {
   await nextTick()
   if (!mapEl.value) return
   map = L.map(mapEl.value, { scrollWheelZoom: false }).setView([props.lat, props.lng], 14)
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  const streets = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
     maxZoom: 19,
   }).addTo(map)
+  const satellite = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    {
+      attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics',
+      maxZoom: 19,
+    },
+  )
+  L.control.layers({ Straße: streets, Satellit: satellite }, undefined, { position: 'topright' }).addTo(map)
   const marker = L.marker([props.lat, props.lng], { icon: markerIcon })
   if (props.label) marker.bindTooltip(props.label)
   marker.addTo(map)
