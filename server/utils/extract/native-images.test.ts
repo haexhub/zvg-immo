@@ -4,10 +4,14 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { downloadNativeImages } from './native-images'
 
-// Minimal valid JPEG/PNG magic-byte prefixes. Real bodies would be longer but
-// downloadNativeImages only inspects the first bytes to reject non-images.
+// Minimal valid JPEG/PNG/WebP magic-byte prefixes. Real bodies would be longer
+// but downloadNativeImages only inspects the first bytes to reject non-images.
 const JPEG_MAGIC = Buffer.from([0xff, 0xd8, 0xff, 0xe0])
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+// WebP RIFF container: 'RIFF' at 0-3, 4-byte little-endian size, 'WEBP' at 8-11.
+const WEBP_MAGIC = Buffer.from([
+  0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50,
+])
 
 function makeImage(magic: Buffer, extraByte: number): Buffer {
   // Pad to >= 512 bytes so the min-size filter still passes. The extra byte
@@ -77,6 +81,16 @@ describe('downloadNativeImages', () => {
     expect(files[1]).toMatch(/^[0-9a-f]{16}\.png$/)
     const written = await readdir(destDir)
     expect(written.sort()).toEqual([...files].sort())
+  })
+
+  it('downloads WebP and writes with .webp extension', async () => {
+    const webp = makeImage(WEBP_MAGIC, 7)
+    stubFetch({
+      'https://example.com/pic.webp': { ok: true, body: webp, contentType: 'image/webp' },
+    })
+    const files = await downloadNativeImages(['https://example.com/pic.webp'], { destDir })
+    expect(files).toHaveLength(1)
+    expect(files[0]).toMatch(/^[0-9a-f]{16}\.webp$/)
   })
 
   it('skips URLs whose response body is not an image', async () => {

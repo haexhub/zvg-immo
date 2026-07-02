@@ -13,12 +13,13 @@ const IMAGES_DIR = join(process.cwd(), '.cache_zvg', 'images')
 
 // `<md5-prefix>.<ext>` — content-addressable filenames written by
 // extractPdfPhotos. Strict allow-list keeps path traversal impossible.
-const FILENAME_RE = /^([0-9a-f]{8,32})\.(jpg|jpeg|png)$/i
+const FILENAME_RE = /^([0-9a-f]{8,32})\.(jpg|jpeg|png|webp)$/i
 
 const CONTENT_TYPE: Record<string, string> = {
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
   png: 'image/png',
+  webp: 'image/webp',
 }
 
 export default defineEventHandler(async (event) => {

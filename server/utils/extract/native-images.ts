@@ -8,10 +8,10 @@ import { createHash } from 'node:crypto'
 import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-/** JPEG/PNG magic bytes. Guards against upstreams that return HTML/JSON error
- *  pages with a 200 status — the file would be served as an image by the API
- *  and break silently in the browser. */
-function detectImageExt(buf: Buffer): 'jpg' | 'png' | null {
+/** JPEG/PNG/WebP magic bytes. Guards against upstreams that return HTML/JSON
+ *  error pages with a 200 status — the file would be served as an image by
+ *  the API and break silently in the browser. */
+function detectImageExt(buf: Buffer): 'jpg' | 'png' | 'webp' | null {
   if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpg'
   if (
     buf.length >= 8 &&
@@ -25,6 +25,20 @@ function detectImageExt(buf: Buffer): 'jpg' | 'png' | null {
     buf[7] === 0x0a
   ) {
     return 'png'
+  }
+  // WebP RIFF container: 'RIFF' at offset 0, 'WEBP' at offset 8.
+  if (
+    buf.length >= 12 &&
+    buf[0] === 0x52 &&
+    buf[1] === 0x49 &&
+    buf[2] === 0x46 &&
+    buf[3] === 0x46 &&
+    buf[8] === 0x57 &&
+    buf[9] === 0x45 &&
+    buf[10] === 0x42 &&
+    buf[11] === 0x50
+  ) {
+    return 'webp'
   }
   return null
 }
@@ -76,7 +90,7 @@ export async function downloadNativeImages(
   const existing = new Set<string>()
   try {
     for (const name of await readdir(opts.destDir)) {
-      const m = /^([0-9a-f]{16})\.(jpg|png)$/.exec(name)
+      const m = /^([0-9a-f]{16})\.(jpg|png|webp)$/.exec(name)
       if (m?.[1]) existing.add(m[1])
     }
   } catch {

@@ -180,8 +180,14 @@ export default defineTask({
         //      (edikte.justiz.gv.at JPGs) and Biddit (biddit.be JPEGs) publish
         //      photos directly. We mirror them into the local image cache so
         //      the browser fetches from us, not the upstream on every card.
-        //   b) Otherwise, when there's still no photo, mine the best PDF for
-        //      embedded rasters (DE zvg-portal Foto.pdf).
+        //   b) When (a) yields nothing (no native URLs, or all downloads
+        //      failed), mine the best PDF for embedded rasters — but only if
+        //      the listing didn't already declare foto attachments, since
+        //      Gutachten photos are a different set from the listing's own
+        //      Foto.pdf/JPG and we don't want to overwrite them.
+        // Wrapped in try/catch so a disk-full or subprocess failure on one
+        // listing can't reject the whole Promise.all — mirrors the enrichOne
+        // pattern above.
         let photos: string[] = []
         if (isSafePathSegment(a.platform) && isSafePathSegment(a.zvgId)) {
           const destDir = join(IMAGES_DIR, a.platform, a.zvgId)
@@ -192,13 +198,19 @@ export default defineTask({
                 /^https?:\/\/.*\.(?:jpe?g|png|webp)(?:[?#]|$)/i.test(att.proxyUrl),
             )
             .map((att) => att.proxyUrl)
-          if (nativeFotoUrls.length > 0) {
-            photos = await downloadNativeImages(nativeFotoUrls, { destDir })
+          try {
+            if (nativeFotoUrls.length > 0) {
+              photos = await downloadNativeImages(nativeFotoUrls, { destDir })
+            }
+            if (photos.length === 0 && bestPdf && a.fotoCount === 0) {
+              photoExtractions++
+              photos = await extractPdfPhotos(bestPdf.proxyUrl, { destDir })
+            }
             photosTotal += photos.length
-          } else if (bestPdf && a.fotoCount === 0) {
-            photoExtractions++
-            photos = await extractPdfPhotos(bestPdf.proxyUrl, { destDir })
-            photosTotal += photos.length
+          } catch (err) {
+            console.warn(
+              `[enrich] photo extraction failed for ${a.platform}:${a.zvgId}: ${(err as Error).message}`,
+            )
           }
         }
 
