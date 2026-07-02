@@ -3,7 +3,7 @@
 // disk-cached so repeat calls are fast; the first cold run can take a couple
 // of minutes due to Nominatim's 1 req/s rate limit.
 
-import { geocodeAddress } from '../utils/geocode'
+import { geocodeAddress, geocodeStatus } from '../utils/geocode'
 import type { Auction, CrawlResult } from '~/types/auction'
 
 export interface GeoAuction extends Auction {
@@ -14,6 +14,10 @@ export interface GeoAuction extends Auction {
 export interface GeoCrawlResult extends Omit<CrawlResult, 'auctions'> {
   auctions: GeoAuction[]
   geocodedCount: number
+  /** Addresses tried against Nominatim without a hit (cached as notFound).
+   *  Once this + geocodedCount equals auctions.length there is nothing left
+   *  to attempt — the client stops showing "läuft …". */
+  unresolvableCount: number
 }
 
 export default defineEventHandler(async (event): Promise<GeoCrawlResult> => {
@@ -34,14 +38,20 @@ export default defineEventHandler(async (event): Promise<GeoCrawlResult> => {
   })
 
   const enriched: GeoAuction[] = []
+  let unresolvableCount = 0
   for (const a of result.auctions) {
     const point = await geocodeAddress(a.adresse, a.country, { fetchMissing })
     enriched.push({ ...a, lat: point?.lat ?? null, lng: point?.lng ?? null })
+    if (point == null) {
+      const status = await geocodeStatus(a.adresse, a.country)
+      if (status === 'unresolvable') unresolvableCount++
+    }
   }
 
   return {
     ...result,
     auctions: enriched,
     geocodedCount: enriched.filter((a) => a.lat != null).length,
+    unresolvableCount,
   }
 })

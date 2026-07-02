@@ -81,11 +81,14 @@ watch(view, (v) => {
 })
 
 // While the geocode bootstrap task fills the cache server-side, the client's
-// snapshot of geocodedCount is stale. Poll until cache catches up to total
-// addresses, so freshly-coded markers show up without a manual refresh.
+// snapshot of geocodedCount is stale. Poll until every address has either
+// been geocoded or definitively tried (cached-as-notFound). Ignoring
+// unresolvableCount here would keep the "läuft …" spinner running forever
+// against addresses Nominatim can't resolve.
 const geocodingInProgress = computed(() => {
   if (!geoData.value) return false
-  return geoData.value.geocodedCount < geoData.value.auctions.length
+  const done = geoData.value.geocodedCount + geoData.value.unresolvableCount
+  return done < geoData.value.auctions.length
 })
 
 let geoPollTimer: ReturnType<typeof setInterval> | null = null
@@ -349,7 +352,7 @@ function attachmentLabel(att: { kind: string; label: string }): string {
     <div class="shrink-0 mb-3 flex items-center justify-end gap-3">
       <div v-if="filtered.length" class="text-sm text-muted-foreground mr-auto">
         {{ filtered.length }} Treffer<span v-if="view === 'map' && geoData">
-          · {{ filteredGeo.length }} auf Karte ({{ geoData.geocodedCount }}/{{ geoData.auctions.length }} geokodiert<span v-if="geocodingInProgress">, läuft …</span>)
+          · {{ filteredGeo.length }} auf Karte ({{ geoData.geocodedCount }}/{{ geoData.auctions.length }} geokodiert<span v-if="geoData.unresolvableCount > 0">, {{ geoData.unresolvableCount }} unauffindbar</span><span v-if="geocodingInProgress">, läuft …</span>)
         </span>
       </div>
       <button

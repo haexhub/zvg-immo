@@ -103,6 +103,7 @@ async function geocodeOnce(query: string, country: string): Promise<GeoPoint | n
 const POSTAL_PATTERNS: Record<string, RegExp> = {
   de: /(\d{5})\s+([^,]+?)(?:,|$)/,
   at: /(\d{4})\s+([^,]+?)(?:,|$)/,
+  be: /(\d{4})\s+([^,]+?)(?:,|$)/,
   es: /(\d{5})\s+([^,]+?)(?:,|$)/,
   it: /(\d{5})\s+([^,]+?)(?:,|$)/,
   cz: /(\d{3}\s?\d{2})\s+([^,]+?)(?:,|$)/,
@@ -125,6 +126,27 @@ function buildQueries(address: string, country: string): string[] {
     }
   }
   return queries
+}
+
+export type GeocodeStatus = 'geocoded' | 'unresolvable' | 'pending'
+
+/** Cache-only inspection: has this address been geocoded, tried-and-failed
+ *  ("notFound" cached), or never attempted? Used by the client to distinguish
+ *  a still-running background geocode from addresses Nominatim can't resolve
+ *  at all — the latter must stop the "läuft …" progress spinner. */
+export async function geocodeStatus(
+  address: string | null,
+  country: string,
+): Promise<GeocodeStatus> {
+  if (!address) return 'unresolvable'
+  const c = country.toLowerCase()
+  let anyAttempt = false
+  for (const q of buildQueries(address, c)) {
+    const cached = await readCache(q, c)
+    if (cached) return 'geocoded'
+    if (await cacheHasKey(q, c)) anyAttempt = true
+  }
+  return anyAttempt ? 'unresolvable' : 'pending'
 }
 
 export async function geocodeAddress(
