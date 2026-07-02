@@ -28,6 +28,7 @@ import { crawlAll, platforms } from '../crawlers/registry'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
 import { extractByRules } from '../utils/extract/rules'
 import { extractByLlm, type LlmConfig } from '../utils/extract/llm'
+import { downloadNativeImages } from '../utils/extract/native-images'
 import { extractPdfPhotos } from '../utils/extract/pdf-images'
 import { pdfToText, pickBestPdf } from '../utils/extract/pdf-text'
 import {
@@ -172,24 +173,45 @@ export default defineTask({
 
         if (!cacheable) continue
 
-        // Extract embedded photos from the best PDF (independent of the
-        // rules/LLM size pipeline). Skip when the listing already has native
-        // foto attachments — extra extraction is wasted I/O. Also skip when
-        // platform/zvgId would be unsafe as a directory segment; the API
-        // endpoint enforces the same shape, so those files would be
-        // unreachable anyway.
+        // Two-way photo pipeline (platform/zvgId guard applies to both — the
+        // API endpoint enforces the same shape, so files under an unsafe path
+        // would be unreachable anyway):
+        //   a) Native image URLs from the crawler's foto attachments — AT
+        //      (edikte.justiz.gv.at JPGs) and Biddit (biddit.be JPEGs) publish
+        //      photos directly. We mirror them into the local image cache so
+        //      the browser fetches from us, not the upstream on every card.
+        //   b) When (a) yields nothing (no native URLs, or all downloads
+        //      failed), mine the best PDF for embedded rasters — but only if
+        //      the listing didn't already declare foto attachments, since
+        //      Gutachten photos are a different set from the listing's own
+        //      Foto.pdf/JPG and we don't want to overwrite them.
+        // Wrapped in try/catch so a disk-full or subprocess failure on one
+        // listing can't reject the whole Promise.all — mirrors the enrichOne
+        // pattern above.
         let photos: string[] = []
-        if (
-          bestPdf &&
-          a.fotoCount === 0 &&
-          isSafePathSegment(a.platform) &&
-          isSafePathSegment(a.zvgId)
-        ) {
-          photoExtractions++
-          photos = await extractPdfPhotos(bestPdf.proxyUrl, {
-            destDir: join(IMAGES_DIR, a.platform, a.zvgId),
-          })
-          photosTotal += photos.length
+        if (isSafePathSegment(a.platform) && isSafePathSegment(a.zvgId)) {
+          const destDir = join(IMAGES_DIR, a.platform, a.zvgId)
+          const nativeFotoUrls = a.attachments
+            .filter(
+              (att) =>
+                att.kind === 'foto' &&
+                /^https?:\/\/.*\.(?:jpe?g|png|webp)(?:[?#]|$)/i.test(att.proxyUrl),
+            )
+            .map((att) => att.proxyUrl)
+          try {
+            if (nativeFotoUrls.length > 0) {
+              photos = await downloadNativeImages(nativeFotoUrls, { destDir })
+            }
+            if (photos.length === 0 && bestPdf && a.fotoCount === 0) {
+              photoExtractions++
+              photos = await extractPdfPhotos(bestPdf.proxyUrl, { destDir })
+            }
+            photosTotal += photos.length
+          } catch (err) {
+            console.warn(
+              `[enrich] photo extraction failed for ${a.platform}:${a.zvgId}: ${(err as Error).message}`,
+            )
+          }
         }
 
         const hasType = fields.propertyType != null && fields.propertyType !== 'sonstiges'
