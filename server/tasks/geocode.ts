@@ -9,6 +9,7 @@
 import type { Auction } from '~/types/auction'
 import { crawlAll } from '../crawlers/registry'
 import { enrichInBatches as enrichAtDetails } from '../crawlers/at/detail'
+import { enrichInBatches as enrichBidditDetails } from '../crawlers/biddit/detail'
 import { geocodeAddress } from '../utils/geocode'
 import {
   cacheKey,
@@ -52,14 +53,23 @@ export default defineTask({
       }
     }
 
-    // AT-Edikte hides Schätzwert on the per-Edikt detail page, so it's null on
-    // the listing path the API uses. Enrich missing entries here and persist
-    // them so the API can overlay the value read-only.
-    const verkehrswert = await enrichAtVerkehrswert(result.auctions)
+    // AT-Edikte and Biddit both hide their Schätzwert / estimatedPrice on the
+    // listing path the API uses. Enrich missing entries here and persist them
+    // so the API can overlay the value read-only. Load the cache once and
+    // share it — two concurrent writers would each rebuild the file from their
+    // own local read, silently dropping the sibling's entries.
+    const vwCache: VerkehrswertCache = { ...(await readVerkehrswertCache()) }
+    const [vwAt, vwBe] = await Promise.all([
+      enrichAtVerkehrswert(result.auctions, vwCache),
+      enrichBidditVerkehrswert(result.auctions, vwCache),
+    ])
+    const vwAdded = vwAt.added + vwBe.added
+    const vwErrors = vwAt.errors + vwBe.errors
+    if (vwAdded > 0) await writeVerkehrswertCache(vwCache)
 
     const durationMs = Date.now() - startedAt
     console.log(
-      `[geocode] done in ${(durationMs / 1000).toFixed(0)}s · geocoded=${geocoded} failed=${failed} · verkehrswert(at)=${verkehrswert.added} added/${verkehrswert.errors} err`,
+      `[geocode] done in ${(durationMs / 1000).toFixed(0)}s · geocoded=${geocoded} failed=${failed} · verkehrswert(at)=${vwAt.added}/${vwAt.errors} · verkehrswert(be)=${vwBe.added}/${vwBe.errors}`,
     )
 
     return {
@@ -67,8 +77,8 @@ export default defineTask({
         processed,
         geocoded,
         failed,
-        verkehrswertAdded: verkehrswert.added,
-        verkehrswertErrors: verkehrswert.errors,
+        verkehrswertAdded: vwAdded,
+        verkehrswertErrors: vwErrors,
         durationMs,
       },
     }
@@ -77,11 +87,11 @@ export default defineTask({
 
 async function enrichAtVerkehrswert(
   auctions: Auction[],
+  cache: VerkehrswertCache,
 ): Promise<{ added: number; errors: number }> {
   const atAuctions = auctions.filter((a) => a.platform === 'at-edikte')
   if (atAuctions.length === 0) return { added: 0, errors: 0 }
 
-  const cache: VerkehrswertCache = { ...(await readVerkehrswertCache()) }
   const toFetch = atAuctions.filter((a) => !(cacheKey(a.platform, a.zvgId) in cache))
   if (toFetch.length === 0) {
     console.log(`[geocode] verkehrswert(at): ${atAuctions.length} entries, all cached`)
@@ -99,6 +109,39 @@ async function enrichAtVerkehrswert(
     }
     added++
   })
-  if (added > 0) await writeVerkehrswertCache(cache)
+  return { added, errors: result.errors }
+}
+
+// Biddit's estimatedPrice is on the detail (BFF) JSON but not on the search
+// listing the /api/auctions crawl uses. Mirror the AT flow: fetch once per new
+// auction, store null when the field is a placeholder so we don't re-fetch it
+// every run.
+async function enrichBidditVerkehrswert(
+  auctions: Auction[],
+  cache: VerkehrswertCache,
+): Promise<{ added: number; errors: number }> {
+  const beAuctions = auctions.filter((a) => a.platform === 'biddit')
+  if (beAuctions.length === 0) return { added: 0, errors: 0 }
+
+  const toFetch = beAuctions.filter((a) => !(cacheKey(a.platform, a.zvgId) in cache))
+  if (toFetch.length === 0) {
+    console.log(`[geocode] verkehrswert(be): ${beAuctions.length} entries, all cached`)
+    return { added: 0, errors: 0 }
+  }
+  console.log(
+    `[geocode] verkehrswert(be): fetching ${toFetch.length}/${beAuctions.length} missing details`,
+  )
+
+  let added = 0
+  const result = await enrichBidditDetails(toFetch, (auction, info) => {
+    cache[cacheKey('biddit', auction.zvgId)] = {
+      verkehrswertEur: info.estimatedPrice,
+      verkehrswertText:
+        info.estimatedPrice != null
+          ? `${info.estimatedPrice.toLocaleString('de-DE')} €`
+          : null,
+    }
+    added++
+  })
   return { added, errors: result.errors }
 }
