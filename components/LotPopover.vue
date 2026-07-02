@@ -4,27 +4,42 @@ import { Navigation, Pagination, Keyboard } from 'swiper/modules'
 import 'swiper/css'
 import 'swiper/css/navigation'
 import 'swiper/css/pagination'
+import type { Attachment } from '~/types/auction'
 import type { GeoAuction } from '~/server/api/auctions-geo.get'
+import type { AuctionPhotoDetail } from '~/server/api/auction-detail.get'
 
 const props = defineProps<{ auction: GeoAuction }>()
 
-// Photos come from the enrich task's extraction cache (see
-// server/utils/extraction-cache.ts): every file lives locally under
-// .cache_zvg/images/<platform>/<zvgId>/ and is served by /api/auction-image.
-// Falling back to the single thumbnailUrl keeps the popover useful for lots
-// whose snapshot hasn't been built yet.
-const photoUrls = computed<string[]>(() => {
-  const photos = props.auction.extraction?.photos ?? []
-  if (photos.length === 0) return props.auction.thumbnailUrl ? [props.auction.thumbnailUrl] : []
-  return photos.map((name) =>
-    `/api/auction-image/${encodeURIComponent(props.auction.platform)}/${encodeURIComponent(props.auction.zvgId)}/${encodeURIComponent(name)}`,
-  )
-})
+const LAZY_PLATFORMS = new Set(['at-edikte', 'biddit', 'zvg-portal'])
 
-const detailHref = computed(
-  () =>
-    `/objekt/${encodeURIComponent(props.auction.platform)}/${encodeURIComponent(props.auction.zvgId)}`,
-)
+function extractPhotos(atts: Attachment[]): Attachment[] {
+  return atts.filter((a) => a.kind === 'foto')
+}
+
+const photos = ref<Attachment[]>(extractPhotos(props.auction.attachments))
+const thumbnailUrl = ref<string | null>(props.auction.thumbnailUrl)
+const loading = ref(false)
+
+onMounted(async () => {
+  if (photos.value.length > 0) return
+  if (!LAZY_PLATFORMS.has(props.auction.platform)) return
+  loading.value = true
+  try {
+    const detail = await $fetch<AuctionPhotoDetail>('/api/auction-detail', {
+      query: {
+        platform: props.auction.platform,
+        zvgId: props.auction.zvgId,
+        region: props.auction.region,
+      },
+    })
+    photos.value = extractPhotos(detail.attachments)
+    if (detail.thumbnailUrl) thumbnailUrl.value = detail.thumbnailUrl
+  } catch {
+    // Silent; user can still open the detail link.
+  } finally {
+    loading.value = false
+  }
+})
 
 function formatEur(n: number | null): string {
   if (n == null) return '–'
@@ -46,26 +61,30 @@ const swiperModules = [Navigation, Pagination, Keyboard]
 
 <template>
   <div class="lot-popover">
-    <div v-if="photoUrls.length > 0" class="lot-popover__media">
+    <div v-if="photos.length > 0" class="lot-popover__media">
       <Swiper
         :modules="swiperModules"
-        :navigation="photoUrls.length > 1"
-        :pagination="photoUrls.length > 1 ? { clickable: true } : false"
+        :navigation="photos.length > 1"
+        :pagination="photos.length > 1 ? { clickable: true } : false"
         :keyboard="{ enabled: true }"
-        :loop="photoUrls.length > 1"
+        :loop="photos.length > 1"
         class="lot-popover__swiper"
       >
-        <SwiperSlide v-for="(url, i) in photoUrls" :key="i">
-          <a :href="detailHref">
-            <img :src="url" referrerpolicy="no-referrer" loading="lazy" :alt="`Foto ${i + 1} – ${auction.objekt ?? 'Objekt'}`">
+        <SwiperSlide v-for="(p, i) in photos" :key="p.fileId || i">
+          <a :href="p.proxyUrl" target="_blank" rel="noopener">
+            <img :src="p.proxyUrl" referrerpolicy="no-referrer" loading="lazy" :alt="`Foto ${i + 1} – ${auction.objekt ?? 'Objekt'}`">
           </a>
         </SwiperSlide>
       </Swiper>
     </div>
-
-    <div class="lot-popover__title">
-      <a :href="detailHref">{{ auction.objekt ?? 'Objekt' }}</a>
+    <div v-else-if="loading" class="lot-popover__placeholder">Lade Fotos …</div>
+    <div v-else-if="thumbnailUrl" class="lot-popover__media">
+      <a :href="auction.detailUrl" target="_blank" rel="noopener">
+        <img :src="thumbnailUrl" referrerpolicy="no-referrer" class="lot-popover__thumb">
+      </a>
     </div>
+
+    <div class="lot-popover__title">{{ auction.objekt ?? 'Objekt' }}</div>
     <div class="lot-popover__address">{{ auction.adresse ?? '' }}</div>
 
     <div class="lot-popover__grid">
@@ -83,7 +102,7 @@ const swiperModules = [Navigation, Pagination, Keyboard]
       <span class="lot-popover__source">{{ auction.amtsgericht }} · {{ auction.aktenzeichen }}</span><br>
       <a v-if="auction.pdfUrl" :href="auction.pdfUrl" target="_blank" rel="noopener">Bekanntmachung</a>
       <span v-if="auction.pdfUrl"> · </span>
-      <a :href="detailHref">Details</a>
+      <a :href="auction.detailUrl" target="_blank" rel="noopener">Details</a>
     </div>
   </div>
 </template>
@@ -128,17 +147,27 @@ const swiperModules = [Navigation, Pagination, Keyboard]
 .lot-popover__swiper :deep(.swiper-pagination-bullet-active) {
   background: #2563eb;
 }
+.lot-popover__thumb {
+  width: 100%;
+  height: 120px;
+  object-fit: cover;
+  border-radius: 6px;
+  display: block;
+}
+.lot-popover__placeholder {
+  height: 160px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #6b7280;
+  background: #f3f4f6;
+  border-radius: 6px;
+  margin-bottom: 0.5rem;
+}
 .lot-popover__title {
   font-weight: 600;
   font-size: 14px;
   margin-bottom: 2px;
-}
-.lot-popover__title a {
-  color: inherit;
-  text-decoration: none;
-}
-.lot-popover__title a:hover {
-  text-decoration: underline;
 }
 .lot-popover__address {
   color: #6b7280;

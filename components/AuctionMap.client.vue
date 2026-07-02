@@ -36,6 +36,16 @@ let markersLayer: L.LayerGroup | null = null
 
 const GERMANY_CENTER: [number, number] = [51.1657, 10.4515]
 
+/** Mount LotPopover.vue into a fresh container that Leaflet will inject into
+ *  its popup DOM. We mount lazily on popupopen (see refreshMarkers) so the
+ *  lazy /api/auction-detail fetch only fires when the user actually opens
+ *  the marker, not for all 2932 pins upfront. */
+function mountLotPopover(el: HTMLElement, a: GeoAuction): VueApp {
+  const app = createApp(LotPopover, { auction: a })
+  app.mount(el)
+  return app
+}
+
 // True at mount and whenever the parent bumps `fitKey` (filter change). The
 // next refreshMarkers call consumes it, so polling-driven updates never reset
 // the user's zoom/pan.
@@ -51,15 +61,14 @@ function refreshMarkers(): void {
       icon: markerIcon,
       title: `${a.objekt ?? ''} · ${a.adresse ?? ''}`,
     })
-    // Empty container; LotPopover mounts into it on popupopen so Swiper's
-    // slider only initialises when the user actually opens the popup.
+    // Empty container; the Vue app is mounted lazily on popupopen so the
+    // /api/auction-detail fetch only fires when the popup is actually opened.
     marker.bindPopup('<div class="lot-popover-mount"></div>', { maxWidth: 320, minWidth: 280 })
     let app: VueApp | null = null
     marker.on('popupopen', (e) => {
       const el = e.popup.getElement()?.querySelector('.lot-popover-mount') as HTMLElement | null
       if (!el) return
-      app = createApp(LotPopover, { auction: a })
-      app.mount(el)
+      app = mountLotPopover(el, a)
     })
     marker.on('popupclose', () => {
       if (app) {
