@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import 'leaflet/dist/leaflet.css'
 import L from 'leaflet'
+import { createApp, type App as VueApp } from 'vue'
 import iconUrl from 'leaflet/dist/images/marker-icon.png'
 import iconRetinaUrl from 'leaflet/dist/images/marker-icon-2x.png'
 import shadowUrl from 'leaflet/dist/images/marker-shadow.png'
 import type { GeoAuction } from '~/server/api/auctions-geo.get'
+import LotPopover from '~/components/LotPopover.vue'
 
 // Pass an explicit Icon to every marker. Mutating L.Icon.Default at module
 // top level was tree-shaken by the production build, so the markers fell
@@ -34,67 +36,14 @@ let markersLayer: L.LayerGroup | null = null
 
 const GERMANY_CENTER: [number, number] = [51.1657, 10.4515]
 
-function formatEur(n: number | null): string {
-  if (n == null) return '–'
-  return n.toLocaleString('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
-}
-
-function formatDate(iso: string | null, fallback: string | null): string {
-  if (!iso) return fallback ?? '–'
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return fallback ?? iso
-  return d.toLocaleString('de-DE', {
-    weekday: 'short', day: '2-digit', month: 'short',
-    hour: '2-digit', minute: '2-digit',
-  })
-}
-
-function detailHref(a: GeoAuction): string {
-  return `/objekt/${encodeURIComponent(a.platform)}/${encodeURIComponent(a.zvgId)}`
-}
-
-// Crawler-sourced fields (objekt, adresse, amtsgericht, aktenzeichen) come
-// from foreign HTML/PDFs we don't control. Leaflet's bindPopup uses innerHTML,
-// so every interpolated value must be escaped or a malformed source record
-// could execute script in the user's browser.
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
-
-function buildPopupHtml(a: GeoAuction): string {
-  const href = detailHref(a) // encodeURIComponent above already makes this attribute-safe
-  const thumb = a.thumbnailUrl
-    ? `<a href="${href}">
-         <img src="${escapeHtml(a.thumbnailUrl)}" referrerpolicy="no-referrer"
-              style="width:100%;height:120px;object-fit:cover;border-radius:6px;display:block;margin-bottom:.5rem;">
-       </a>`
-    : ''
-  const links = [
-    a.pdfUrl ? `<a href="${escapeHtml(a.pdfUrl)}" target="_blank" rel="noopener">Bekanntmachung</a>` : '',
-    `<a href="${href}">Details</a>`,
-  ].filter(Boolean).join(' · ')
-  return `
-    <div style="min-width:240px;font-family:system-ui;font-size:13px;line-height:1.45;">
-      ${thumb}
-      <div style="font-weight:600;font-size:14px;margin-bottom:2px;">
-        <a href="${href}" style="color:inherit;text-decoration:none;">${escapeHtml(a.objekt ?? 'Objekt')}</a>
-      </div>
-      <div style="color:#6b7280;margin-bottom:.4rem;">${escapeHtml(a.adresse ?? '')}</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.4rem;font-size:12px;margin-bottom:.4rem;">
-        <div><div style="text-transform:uppercase;color:#6b7280;font-size:10px;">Termin</div>${escapeHtml(formatDate(a.terminIso, a.terminText))}</div>
-        <div><div style="text-transform:uppercase;color:#6b7280;font-size:10px;">Verkehrswert</div>${escapeHtml(formatEur(a.verkehrswertEur))}</div>
-      </div>
-      <div style="font-size:12px;border-top:1px solid #e5e7eb;padding-top:.4rem;">
-        <span style="color:#6b7280;">${escapeHtml(a.amtsgericht)} · ${escapeHtml(a.aktenzeichen)}</span><br>
-        ${links}
-      </div>
-    </div>
-  `
+/** Mount LotPopover.vue into a fresh container that Leaflet will inject into
+ *  its popup DOM. We mount lazily on popupopen (see refreshMarkers) so the
+ *  lazy /api/auction-detail fetch only fires when the user actually opens
+ *  the marker, not for all 2932 pins upfront. */
+function mountLotPopover(el: HTMLElement, a: GeoAuction): VueApp {
+  const app = createApp(LotPopover, { auction: a })
+  app.mount(el)
+  return app
 }
 
 // True at mount and whenever the parent bumps `fitKey` (filter change). The
@@ -112,7 +61,21 @@ function refreshMarkers(): void {
       icon: markerIcon,
       title: `${a.objekt ?? ''} · ${a.adresse ?? ''}`,
     })
-    marker.bindPopup(buildPopupHtml(a), { maxWidth: 300 })
+    // Empty container; the Vue app is mounted lazily on popupopen so the
+    // /api/auction-detail fetch only fires when the popup is actually opened.
+    marker.bindPopup('<div class="lot-popover-mount"></div>', { maxWidth: 320, minWidth: 280 })
+    let app: VueApp | null = null
+    marker.on('popupopen', (e) => {
+      const el = e.popup.getElement()?.querySelector('.lot-popover-mount') as HTMLElement | null
+      if (!el) return
+      app = mountLotPopover(el, a)
+    })
+    marker.on('popupclose', () => {
+      if (app) {
+        app.unmount()
+        app = null
+      }
+    })
     marker.addTo(markersLayer)
     points.push([a.lat, a.lng])
   }

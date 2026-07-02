@@ -2,7 +2,7 @@
 import type { Auction, CrawlResult } from '~/types/auction'
 import type { GeoAuction, GeoCrawlResult } from '~/server/api/auctions-geo.get'
 import type { CountryEntry } from '~/server/crawlers/registry'
-import { classifyObjekt, ALL_KATEGORIEN } from '~/lib/objektart'
+import { classifyObjekt } from '~/lib/objektart'
 import Select from '~/components/ui/select/Select.vue'
 import SelectTrigger from '~/components/ui/select/SelectTrigger.vue'
 import SelectValue from '~/components/ui/select/SelectValue.vue'
@@ -14,7 +14,7 @@ import SheetHeader from '~/components/ui/sheet/SheetHeader.vue'
 import SheetFooter from '~/components/ui/sheet/SheetFooter.vue'
 import SheetTitle from '~/components/ui/sheet/SheetTitle.vue'
 import SheetDescription from '~/components/ui/sheet/SheetDescription.vue'
-import { ListFilter, Settings as SettingsIcon } from 'lucide-vue-next'
+import { ListFilter } from 'lucide-vue-next'
 
 // Country/region cascade filter. Default 'all' = aggregate over every
 // registered platform across every country.
@@ -81,11 +81,14 @@ watch(view, (v) => {
 })
 
 // While the geocode bootstrap task fills the cache server-side, the client's
-// snapshot of geocodedCount is stale. Poll until cache catches up to total
-// addresses, so freshly-coded markers show up without a manual refresh.
+// snapshot of geocodedCount is stale. Poll until every address has either
+// been geocoded or definitively tried (cached-as-notFound). Ignoring
+// unresolvableCount here would keep the "läuft …" spinner running forever
+// against addresses Nominatim can't resolve.
 const geocodingInProgress = computed(() => {
   if (!geoData.value) return false
-  return geoData.value.geocodedCount < geoData.value.auctions.length
+  const done = geoData.value.geocodedCount + geoData.value.unresolvableCount
+  return done < geoData.value.auctions.length
 })
 
 let geoPollTimer: ReturnType<typeof setInterval> | null = null
@@ -145,10 +148,6 @@ const priceMin = ref<number | null>(null)
 const priceMax = ref<number | null>(null)
 const kategorieFilter = ref<string>('all')
 const onlyWithPhotos = ref(false)
-const landMin = ref<number | null>(null)
-const landMax = ref<number | null>(null)
-const livingMin = ref<number | null>(null)
-const livingMax = ref<number | null>(null)
 
 // When the user switches country/region, the previously-selected court may
 // no longer exist. Reset filters that depend on the dataset.
@@ -178,36 +177,6 @@ const courts = computed<string[]>(() => {
   return [...new Set(data.value.auctions.map((a) => a.amtsgericht).filter(Boolean))].sort()
 })
 
-const KAT_LABEL = new Map(ALL_KATEGORIEN.map((k) => [k.id, k.label]))
-
-// Canonical category for an auction: server-extracted propertyType first,
-// client-side classifier as fallback for not-yet-enriched items.
-function auctionKategorie(a: Auction): { id: string; label: string } {
-  const pt = a.extraction?.propertyType
-  if (pt) return { id: pt, label: KAT_LABEL.get(pt) ?? pt }
-  return classifyObjekt(a.objekt)
-}
-
-function detailHref(a: Auction): string {
-  return `/objekt/${encodeURIComponent(a.platform)}/${encodeURIComponent(a.zvgId)}`
-}
-
-function fmtArea(n: number): string {
-  return `${n.toLocaleString('de-DE', { maximumFractionDigits: 0 })} m²`
-}
-
-// Compact size facts for a card, nulls omitted.
-function sizeBits(a: Auction): string[] {
-  const e = a.extraction
-  if (!e) return []
-  const bits: string[] = []
-  if (e.landAreaSqm != null) bits.push(`${fmtArea(e.landAreaSqm)} Grundstück`)
-  if (e.livingAreaSqm != null) bits.push(`${fmtArea(e.livingAreaSqm)} Wohnfläche`)
-  if (e.rooms != null) bits.push(`${e.rooms} Zi.`)
-  if (e.units != null && e.units > 1) bits.push(`${e.units} WE`)
-  return bits
-}
-
 // Counts of normalized Objektart categories. Sorted by descending count so
 // the most common categories show up first in the dropdown.
 const kategorienMitCount = computed<{ id: string; label: string; count: number }[]>(() => {
@@ -215,7 +184,7 @@ const kategorienMitCount = computed<{ id: string; label: string; count: number }
   const counts = new Map<string, { label: string; count: number }>()
   for (const a of data.value.auctions) {
     if (a.aufgehoben) continue
-    const k = auctionKategorie(a)
+    const k = classifyObjekt(a.objekt)
     const entry = counts.get(k.id)
     if (entry) entry.count++
     else counts.set(k.id, { label: k.label, count: 1 })
@@ -233,10 +202,6 @@ function clearAllFilters(): void {
   kategorieFilter.value = 'all'
   onlyWithPhotos.value = false
   includeAufgehoben.value = false
-  landMin.value = null
-  landMax.value = null
-  livingMin.value = null
-  livingMax.value = null
 }
 
 function applyFilters<T extends Auction>(items: T[]): T[] {
@@ -247,16 +212,10 @@ function applyFilters<T extends Auction>(items: T[]): T[] {
   return items.filter((a) => {
     if (!includeAufgehoben.value && a.aufgehoben) return false
     if (courtFilter.value !== 'all' && a.amtsgericht !== courtFilter.value) return false
-    if (kat !== 'all' && auctionKategorie(a).id !== kat) return false
+    if (kat !== 'all' && classifyObjekt(a.objekt).id !== kat) return false
     if (onlyWithPhotos.value && a.fotoCount === 0) return false
     if (min != null && (a.verkehrswertEur == null || a.verkehrswertEur < min)) return false
     if (max != null && (a.verkehrswertEur == null || a.verkehrswertEur > max)) return false
-    const land = a.extraction?.landAreaSqm
-    if (landMin.value != null && (land == null || land < landMin.value)) return false
-    if (landMax.value != null && (land == null || land > landMax.value)) return false
-    const living = a.extraction?.livingAreaSqm
-    if (livingMin.value != null && (living == null || living < livingMin.value)) return false
-    if (livingMax.value != null && (living == null || living > livingMax.value)) return false
     if (!q) return true
     const hay = `${a.aktenzeichen} ${a.amtsgericht} ${a.objekt ?? ''} ${a.adresse ?? ''} ${a.beschreibung ?? ''}`.toLowerCase()
     return hay.includes(q)
@@ -294,8 +253,6 @@ const activeFilterCount = computed(() => {
   if (kategorieFilter.value !== 'all') n++
   if (onlyWithPhotos.value) n++
   if (includeAufgehoben.value) n++
-  if (landMin.value != null || landMax.value != null) n++
-  if (livingMin.value != null || livingMax.value != null) n++
   return n
 })
 
@@ -349,7 +306,7 @@ function attachmentLabel(att: { kind: string; label: string }): string {
     <div class="shrink-0 mb-3 flex items-center justify-end gap-3">
       <div v-if="filtered.length" class="text-sm text-muted-foreground mr-auto">
         {{ filtered.length }} Treffer<span v-if="view === 'map' && geoData">
-          · {{ filteredGeo.length }} auf Karte ({{ geoData.geocodedCount }}/{{ geoData.auctions.length }} geokodiert<span v-if="geocodingInProgress">, läuft …</span>)
+          · {{ filteredGeo.length }} auf Karte ({{ geoData.geocodedCount }}/{{ geoData.auctions.length }} geokodiert<span v-if="geoData.unresolvableCount > 0">, {{ geoData.unresolvableCount }} unauffindbar</span><span v-if="geocodingInProgress">, läuft …</span>)
         </span>
       </div>
       <button
@@ -364,14 +321,6 @@ function attachmentLabel(att: { kind: string; label: string }): string {
           class="ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-xs font-medium text-primary-foreground"
         >{{ activeFilterCount }}</span>
       </button>
-      <NuxtLink
-        to="/settings"
-        class="h-9 inline-flex items-center justify-center rounded-md border bg-card px-3 text-sm shadow-xs hover:border-primary hover:text-primary transition-colors"
-        title="Einstellungen"
-        aria-label="Einstellungen"
-      >
-        <SettingsIcon class="h-4 w-4" />
-      </NuxtLink>
       <div class="inline-flex h-9 items-center rounded-md border bg-card p-1 text-sm shadow-xs">
         <button
           class="h-7 rounded px-3 transition-colors"
@@ -502,52 +451,6 @@ function attachmentLabel(att: { kind: string; label: string }): string {
             </div>
           </div>
 
-          <div class="space-y-2">
-            <label class="block text-sm font-medium">Grundstücksfläche (m²)</label>
-            <div class="flex items-center gap-2">
-              <input
-                v-model.number="landMin"
-                type="number"
-                min="0"
-                step="50"
-                placeholder="von"
-                class="h-9 flex-1 min-w-0 rounded-md border bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              >
-              <span class="text-muted-foreground">–</span>
-              <input
-                v-model.number="landMax"
-                type="number"
-                min="0"
-                step="50"
-                placeholder="bis"
-                class="h-9 flex-1 min-w-0 rounded-md border bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              >
-            </div>
-          </div>
-
-          <div class="space-y-2">
-            <label class="block text-sm font-medium">Wohnfläche (m²)</label>
-            <div class="flex items-center gap-2">
-              <input
-                v-model.number="livingMin"
-                type="number"
-                min="0"
-                step="10"
-                placeholder="von"
-                class="h-9 flex-1 min-w-0 rounded-md border bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              >
-              <span class="text-muted-foreground">–</span>
-              <input
-                v-model.number="livingMax"
-                type="number"
-                min="0"
-                step="10"
-                placeholder="bis"
-                class="h-9 flex-1 min-w-0 rounded-md border bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              >
-            </div>
-          </div>
-
           <div v-if="kategorienMitCount.length" class="space-y-2">
             <label class="block text-sm font-medium">Objektart</label>
             <Select v-model="kategorieFilter">
@@ -609,14 +512,16 @@ function attachmentLabel(att: { kind: string; label: string }): string {
     <ul v-if="filtered.length" class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
       <li v-for="a in filtered" :key="`${a.platform}:${a.zvgId}`">
         <article
-          class="h-full flex flex-col rounded-xl border bg-card text-card-foreground shadow-sm overflow-hidden transition-shadow hover:shadow-md"
+          class="h-full flex flex-col rounded-xl border bg-card text-card-foreground shadow-sm overflow-hidden"
           :class="{ 'opacity-60': a.aufgehoben }"
         >
-          <NuxtLink
+          <a
             v-if="a.thumbnailUrl"
-            :to="detailHref(a)"
+            :href="a.attachments.find((x) => x.kind === 'foto')?.proxyUrl ?? a.detailUrl"
+            target="_blank"
+            rel="noopener"
             class="relative block overflow-hidden border-b group"
-            :title="`${a.fotoCount} Foto${a.fotoCount === 1 ? '' : 's'}`"
+            :title="`${a.fotoCount} Foto${a.fotoCount === 1 ? '' : 's'} öffnen`"
           >
             <img
               :src="a.thumbnailUrl"
@@ -629,38 +534,20 @@ function attachmentLabel(att: { kind: string; label: string }): string {
               v-if="a.fotoCount > 1"
               class="absolute bottom-2 right-2 rounded-full bg-black/70 px-2 py-0.5 text-xs text-white"
             >+{{ a.fotoCount - 1 }}</span>
-          </NuxtLink>
-          <NuxtLink
-            v-else-if="!a.aufgehoben"
-            :to="detailHref(a)"
-            class="flex aspect-[16/10] items-center justify-center bg-muted text-muted-foreground text-sm border-b hover:text-primary transition-colors"
-          >Details öffnen</NuxtLink>
+          </a>
+          <div v-else-if="!a.aufgehoben" class="flex aspect-[16/10] items-center justify-center bg-muted text-muted-foreground text-sm border-b">
+            Kein Foto
+          </div>
 
           <div class="p-4 flex-1 flex flex-col gap-2">
             <div class="flex flex-wrap items-center gap-2 text-xs">
-              <span
-                v-if="auctionKategorie(a).id !== 'unbekannt'"
-                class="rounded-md bg-primary/10 text-primary px-2 py-0.5 font-semibold"
-              >{{ auctionKategorie(a).label }}</span>
               <span class="rounded-md bg-secondary text-secondary-foreground px-2 py-0.5 font-medium">{{ a.amtsgericht }}</span>
               <span v-if="a.region" class="rounded-md bg-muted text-muted-foreground px-2 py-0.5">{{ a.region }}</span>
               <span v-if="a.aufgehoben" class="rounded-md bg-destructive/15 text-destructive px-2 py-0.5 font-medium">Aufgehoben</span>
               <span class="font-mono text-muted-foreground">{{ a.aktenzeichen }}</span>
             </div>
-            <h2 class="text-base font-semibold leading-tight mt-1">
-              <NuxtLink :to="detailHref(a)" class="hover:text-primary transition-colors">
-                {{ a.objekt || 'Objektart unbekannt' }}
-              </NuxtLink>
-            </h2>
+            <h2 class="text-base font-semibold leading-tight mt-1">{{ a.objekt || 'Objektart unbekannt' }}</h2>
             <p v-if="a.adresse" class="text-sm text-muted-foreground">{{ a.adresse }}</p>
-            <p v-if="sizeBits(a).length" class="text-sm font-medium text-foreground/80">
-              {{ sizeBits(a).join(' · ') }}
-              <span
-                v-if="a.extraction?.source === 'llm'"
-                class="ml-1 align-middle rounded bg-muted px-1 text-[10px] font-normal text-muted-foreground"
-                title="Automatisch aus Dokumenten extrahiert"
-              >auto</span>
-            </p>
             <p v-if="a.beschreibung" class="text-sm text-muted-foreground leading-relaxed mt-1">
               {{ truncate(a.beschreibung, 220) }}
             </p>
@@ -688,9 +575,9 @@ function attachmentLabel(att: { kind: string; label: string }): string {
               rel="noopener"
               class="text-primary hover:underline"
             >{{ attachmentLabel(att) }}</a>
-            <NuxtLink :to="detailHref(a)" class="ml-auto text-primary hover:underline">
+            <a :href="a.detailUrl" target="_blank" rel="noopener" class="ml-auto text-primary hover:underline">
               Details →
-            </NuxtLink>
+            </a>
           </footer>
         </article>
       </li>
