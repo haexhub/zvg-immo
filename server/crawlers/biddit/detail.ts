@@ -1,4 +1,5 @@
-import type { Auction, Attachment, AttachmentKind } from '~/types/auction'
+import type { Auction, Attachment } from '~/types/auction'
+import { classifyAttachment } from '~/server/utils/classify-attachment'
 import { BIDDIT_BASE, UA } from './constants'
 import { formatAddress, pickLocalized, type AddressLike, type LocalizedString } from './text'
 
@@ -93,20 +94,12 @@ async function fetchDetailJson(referenceCode: string): Promise<DetailResponse | 
  *  notice or appraisal, so the natural fallback is 'sonstiges'. The
  *  Cahier des charges / Verkoopsvoorwaarden (TAC) and any expert
  *  appraisal report are the two that map cleanly to existing kinds. */
-function classify(name: string | null | undefined, docType: string | null | undefined): AttachmentKind {
-  const haystack = `${name ?? ''} ${docType ?? ''}`.toLowerCase()
-  if (/tac|cahier|terms|conditions|verkoopsvoorwaarden/.test(haystack)) return 'bekanntmachung'
-  if (/expert|expertise|estim|sch[aä]tz|gutacht/.test(haystack)) return 'gutachten'
-  if (/expos|brochure|prospect/.test(haystack)) return 'exposee'
-  if (/photo|picture|foto|image/.test(haystack)) return 'foto'
-  return 'sonstiges'
-}
 
 function toAttachment(a: DetailAttachment): Attachment | null {
   if (!a.bucketUrl) return null
   const name = a.name ?? a.bucketUrl.split('/').pop() ?? 'document'
   return {
-    kind: classify(a.name, a.type),
+    kind: classifyAttachment(a.name, a.type),
     label: a.name ?? a.type ?? 'Document',
     filename: name,
     sizeBytes: typeof a.size === 'number' ? a.size : null,

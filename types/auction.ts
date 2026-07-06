@@ -39,8 +39,9 @@ export interface Auction {
   detailUrl: string
   /** Original upstream URL for the PDF (for reference). */
   pdfUrlUpstream: string | null
-  /** Original upstream URL for the detail page (for reference). */
-  detailUrlUpstream: string
+  /** Original upstream URL for the detail page (for reference). Null when the platform
+   *  has no lot-specific detail page (enrichment is skipped for these lots). */
+  detailUrlUpstream: string | null
   /** All attachments scraped from the Detailansicht page. */
   attachments: Attachment[]
   /** Free-text description scraped from the detail page (Beschreibung field). */
