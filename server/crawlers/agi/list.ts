@@ -4,10 +4,6 @@ import { cleanTipologia, pickTerminIso, formatEur, formatTerminText } from './te
 
 interface MapEntry {
   idLotto: number
-  latitudine: number | null
-  longitudine: number | null
-  prezzoBase: number | null
-  dataPubblicazione: string | null
   dataUltimoAggiornamento: string | null
 }
 
@@ -45,6 +41,7 @@ export async function fetchSession(): Promise<string> {
         'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     },
     redirect: 'follow',
+    signal: AbortSignal.timeout(15_000),
   })
   const setCookieHeader = res.headers.getSetCookie?.() ?? []
   if (setCookieHeader.length === 0) {
@@ -84,6 +81,7 @@ export async function fetchMapData(
       Referer: `${AGI_BASE}/results`,
     },
     body,
+    signal: AbortSignal.timeout(30_000),
   })
   if (!res.ok) throw new Error(`[agi] search/map HTTP ${res.status}`)
   const data = (await res.json()) as MapEntry[]
@@ -103,6 +101,7 @@ async function fetchDetailBatch(ids: number[], cookies: string): Promise<DetailE
       Referer: `${AGI_BASE}/results`,
     },
     body: JSON.stringify(ids),
+    signal: AbortSignal.timeout(30_000),
   })
   if (!res.ok) throw new Error(`[agi] search/Data HTTP ${res.status}`)
   const data = (await res.json()) as DetailEntry[]
@@ -118,8 +117,12 @@ export async function fetchAllDetails(
   const results: DetailEntry[] = []
   for (let i = 0; i < ids.length; i += DETAIL_BATCH_SIZE) {
     const batch = ids.slice(i, i + DETAIL_BATCH_SIZE)
-    const entries = await fetchDetailBatch(batch, cookies)
-    results.push(...entries)
+    try {
+      const entries = await fetchDetailBatch(batch, cookies)
+      results.push(...entries)
+    } catch (err) {
+      console.warn(`[agi] fetchAllDetails: batch ${i}–${i + batch.length - 1} failed, skipping: ${(err as Error).message}`)
+    }
   }
   return results
 }
@@ -162,8 +165,7 @@ export function buildAuctions(
     const terminIso = pickTerminIso(d.dataVendita, d.dataFineGara, d.dataUdienza)
     const verkehrswertEur = d.prezzoBase ?? null
     const thumbnailUrl = d.urlPhoto ? `${AGI_BASE}${d.urlPhoto}` : null
-    const detailPath = d.urlSchedaDettagliata ?? `/immobili`
-    const detailUpstream = `${AGI_BASE}${detailPath}`
+    const detailUpstream = d.urlSchedaDettagliata ? `${AGI_BASE}${d.urlSchedaDettagliata}` : null
     const adresse = buildAdresse(d.indirizzo, d.comune, d.provincia)
 
     return {
@@ -179,10 +181,10 @@ export function buildAuctions(
       verkehrswertText: formatEur(verkehrswertEur),
       terminIso,
       terminText: formatTerminText(terminIso),
-      aufgehoben: false,
+      aufgehoben: Boolean(d.esito?.Sigla),
       letzteAktualisierungIso: map?.dataUltimoAggiornamento ?? null,
       pdfUrl: null,
-      detailUrl: detailUpstream,
+      detailUrl: detailUpstream ?? AGI_BASE,
       pdfUrlUpstream: null,
       detailUrlUpstream: detailUpstream,
       attachments: [],

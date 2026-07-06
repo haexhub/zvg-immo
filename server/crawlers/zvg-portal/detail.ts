@@ -1,20 +1,8 @@
 import { load } from 'cheerio'
-import type { Attachment, AttachmentKind } from '~/types/auction'
+import type { Attachment } from '~/types/auction'
 import { ZVG_BASE, UA } from './constants'
 import { decodeEntities, parseFileSize } from './text'
-
-const KIND_RULES: Array<[RegExp, AttachmentKind]> = [
-  [/bekanntmachung/i, 'bekanntmachung'],
-  [/foto|bild|photo/i, 'foto'],
-  [/expose/i, 'exposee'],
-  [/gutacht|verkehrswert/i, 'gutachten'],
-]
-
-function classifyAttachment(label: string, filename: string): AttachmentKind {
-  const text = `${label} ${filename}`
-  for (const [re, kind] of KIND_RULES) if (re.test(text)) return kind
-  return 'sonstiges'
-}
+import { classifyAttachment } from '~/server/utils/classify-attachment'
 
 export interface DetailInfo {
   attachments: Attachment[]

@@ -15,6 +15,7 @@ interface DetailInfo {
 async function fetchDetailInfo(detailUpstream: string): Promise<DetailInfo> {
   const res = await fetch(detailUpstream, {
     headers: { 'User-Agent': UA, Accept: 'text/html,*/*' },
+    signal: AbortSignal.timeout(15_000),
   })
   if (!res.ok) throw new Error(`[agi] detail page HTTP ${res.status}: ${detailUpstream}`)
   const html = await res.text()
@@ -46,14 +47,18 @@ async function fetchDetailInfo(detailUpstream: string): Promise<DetailInfo> {
         fileId: path,
         proxyUrl: upstreamUrl,
       })
-      if (kind === 'gutachten' && !pdfUpstream) pdfUpstream = upstreamUrl
-      if (!pdfUpstream) pdfUpstream = upstreamUrl
+      // Prefer gutachten as primary PDF; fall back to the first PDF found
+      if (kind === 'gutachten') {
+        pdfUpstream = upstreamUrl
+      } else if (!pdfUpstream) {
+        pdfUpstream = upstreamUrl
+      }
     }
   })
 
-  // Count photo attachments from /allegato/foto-* img src tags
+  // Count photo attachments from /allegato/foto-* img tags; prefer data-src for lazy-loaded images
   $('img[src^="/allegato/foto-"], img[data-src^="/allegato/foto-"]').each((_, el) => {
-    const src = $(el).attr('src') ?? $(el).attr('data-src') ?? ''
+    const src = $(el).attr('data-src') ?? $(el).attr('src') ?? ''
     if (!src.toLowerCase().includes('/allegato/foto-')) return
     if (!seenPaths.has(src)) {
       seenPaths.add(src)
@@ -68,6 +73,20 @@ async function fetchDetailInfo(detailUpstream: string): Promise<DetailInfo> {
     pdfUrlUpstream: pdfUpstream,
     fotoCount,
     thumbnailUrl,
+  }
+}
+
+function applyDetailInfo(auction: Auction, info: DetailInfo): void {
+  if (info.attachments.length > 0) auction.attachments = info.attachments
+  if (info.pdfUrl) {
+    auction.pdfUrl = info.pdfUrl
+    auction.pdfUrlUpstream = info.pdfUrlUpstream
+  }
+  if (info.fotoCount > 0) {
+    auction.fotoCount = info.fotoCount
+    if (info.thumbnailUrl && !auction.thumbnailUrl) {
+      auction.thumbnailUrl = info.thumbnailUrl
+    }
   }
 }
 
@@ -90,19 +109,10 @@ export async function enrichInBatches(
       const idx = cursor++
       const auction = auctions[idx]
       if (!auction) continue
+      if (!auction.detailUrlUpstream) { enriched++; continue }
       try {
         const info = await fetchDetailInfo(auction.detailUrlUpstream)
-        if (info.attachments.length > 0) auction.attachments = info.attachments
-        if (info.pdfUrl) {
-          auction.pdfUrl = info.pdfUrl
-          auction.pdfUrlUpstream = info.pdfUrlUpstream
-        }
-        if (info.fotoCount > 0) {
-          auction.fotoCount = info.fotoCount
-          if (info.thumbnailUrl && !auction.thumbnailUrl) {
-            auction.thumbnailUrl = info.thumbnailUrl
-          }
-        }
+        applyDetailInfo(auction, info)
         enriched++
       } catch (err) {
         errors++
@@ -117,16 +127,7 @@ export async function enrichInBatches(
 
 /** Enrich a single auction in place. Used by the enrich task. */
 export async function enrichSingle(auction: Auction): Promise<void> {
+  if (!auction.detailUrlUpstream) return
   const info = await fetchDetailInfo(auction.detailUrlUpstream)
-  if (info.attachments.length > 0) auction.attachments = info.attachments
-  if (info.pdfUrl) {
-    auction.pdfUrl = info.pdfUrl
-    auction.pdfUrlUpstream = info.pdfUrlUpstream
-  }
-  if (info.fotoCount > 0) {
-    auction.fotoCount = info.fotoCount
-    if (info.thumbnailUrl && !auction.thumbnailUrl) {
-      auction.thumbnailUrl = info.thumbnailUrl
-    }
-  }
+  applyDetailInfo(auction, info)
 }

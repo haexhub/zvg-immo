@@ -34,30 +34,9 @@ export const IT_REGIONS: readonly RegionInfo[] = [
   { code: 'veneto', name: 'Veneto' },
 ] as const
 
-/** Maps the canonical region code to the Italian region name used by the portal API. */
-export const PORTAL_REGION_NAMES: Record<string, string> = {
-  abruzzo: 'Abruzzo',
-  basilicata: 'Basilicata',
-  calabria: 'Calabria',
-  campania: 'Campania',
-  'emilia-romagna': 'Emilia-Romagna',
-  'friuli-venezia-giulia': 'Friuli-Venezia Giulia',
-  lazio: 'Lazio',
-  liguria: 'Liguria',
-  lombardia: 'Lombardia',
-  marche: 'Marche',
-  molise: 'Molise',
-  piemonte: 'Piemonte',
-  puglia: 'Puglia',
-  sardegna: 'Sardegna',
-  sicilia: 'Sicilia',
-  toscana: 'Toscana',
-  'trentino-alto-adige': 'Trentino-Alto Adige',
-  umbria: 'Umbria',
-  'valle-daosta': "Valle d'Aosta",
-  veneto: 'Veneto',
-}
-
 export const IT_REGION_NAMES: Record<string, string> = Object.fromEntries(
   IT_REGIONS.map((r) => [r.code, r.name]),
 )
+
+/** Maps the canonical region code to the Italian region name used by the portal API. */
+export const PORTAL_REGION_NAMES: Record<string, string> = IT_REGION_NAMES

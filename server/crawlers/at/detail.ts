@@ -1,7 +1,8 @@
 import { load } from 'cheerio'
-import type { Auction, Attachment, AttachmentKind } from '~/types/auction'
+import type { Auction, Attachment } from '~/types/auction'
 import { AT_BASE, UA } from './constants'
 import { parseEuroAt, stripHtml } from './text'
+import { classifyAttachment } from '~/server/utils/classify-attachment'
 
 export interface DetailInfo {
   aktenzeichen: string | null
@@ -62,26 +63,6 @@ function extractLabelPairs($: ReturnType<typeof load>): Map<string, string> {
   return pairs
 }
 
-/**
- * Section-label → AttachmentKind. Plans (Grundriss, Lageplan) stay as
- * 'sonstiges' even though they happen to ship as JPEGs: fotoCount and
- * thumbnailUrl downstream are meant for actual property photographs, not
- * floor-plan drawings. The Attachment is still preserved in the array — it
- * just doesn't claim photo semantics it doesn't have.
- */
-const KIND_BY_SECTION_LABEL: ReadonlyArray<[RegExp, AttachmentKind]> = [
-  [/edikt|bekanntmachung|verlautbarung/i, 'bekanntmachung'],
-  [/gutachten/i, 'gutachten'],
-  [/expos[ée]/i, 'exposee'],
-  [/foto|bild/i, 'foto'],
-]
-
-function classifyBySection(sectionLabel: string): AttachmentKind {
-  for (const [re, kind] of KIND_BY_SECTION_LABEL) {
-    if (re.test(sectionLabel)) return kind
-  }
-  return 'sonstiges'
-}
 
 interface ExtractedAttachments {
   attachments: Attachment[]
@@ -135,7 +116,7 @@ function buildAttachments(html: string): ExtractedAttachments {
       const sizeBytes = sizeMatch?.[1] ? parseInt(sizeMatch[1], 10) * 1024 : null
       const fileIdMatch = hrefRaw.match(/\/0\/([a-f0-9]+)/i)
       const fileId = fileIdMatch?.[1] ?? href
-      const kind = classifyBySection(sectionLabel)
+      const kind = classifyAttachment(sectionLabel)
       out.push({
         kind,
         label: linkLabel
@@ -258,6 +239,7 @@ export async function enrichInBatches(
       const idx = cursor++
       const item = auctions[idx]
       if (!item) continue
+      if (!item.detailUrlUpstream) continue
       try {
         const info = await fetchDetail(item.detailUrlUpstream)
         apply(item, info)

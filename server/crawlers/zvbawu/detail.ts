@@ -129,6 +129,7 @@ export async function enrichInBatches(
       // skipping spares 11 wasted requests and keeps the error count
       // meaningful — it then reflects only unexpected failures.
       if (item.aufgehoben) continue
+      if (!item.detailUrlUpstream) continue
       try {
         const info = await fetchDetailFor(item.detailUrlUpstream.replace(ZVBAWU_BASE, ''))
         if (info) {
