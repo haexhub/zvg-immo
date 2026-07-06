@@ -9,7 +9,7 @@ interface MapEntry {
 
 interface Esito {
   ID: number
-  Sigla: string
+  Sigla: string | null
 }
 
 export interface DetailEntry {
@@ -156,14 +156,24 @@ function buildAdresse(
   return suffix ? `${indirizzo}, ${suffix}` : indirizzo
 }
 
-/** Esito.Sigla codes that mark a lot as withdrawn/cancelled (aufgehoben).
- *  Conservative whitelist: only these flip aufgehoben=true; any other value
- *  (notably "AG" = aggiudicato/awarded, or an empty string = still active)
- *  is treated as NOT aufgehoben. The AGI web API is undocumented, so these
- *  codes are unverified guesses (RE/revocato, SO/sospeso, RV/revoca vendita,
- *  AN/annullato) — verify against real search/Data responses and extend as
- *  new codes surface, rather than defaulting unknown codes to withdrawn. */
-const AUFGEHOBEN_SIGLAS = new Set(['RE', 'SO', 'RV', 'AN'])
+/** esito.ID that marks a lot as a still-pending, live auction; every other
+ *  esito is a concluded/cancelled outcome and is flagged aufgehoben (hidden
+ *  from the default active view). A missing esito is treated as active.
+ *
+ *  Verified against ~4200 live lots on 2026-07-06 (search/Data esito.ID →
+ *  Descrizione), so the mapping is data-backed rather than guessed:
+ *    0  Sconosciuto      → active (shown)          — 77% of active lots
+ *    1  Aggiudicata      → aufgehoben (sold)
+ *    2  Non Aggiudicata  → aufgehoben (not awarded)
+ *    3  Rinviata         → aufgehoben (postponed)
+ *    4  Sospesa          → aufgehoben (suspended)
+ *    5  Estinta          → aufgehoben (extinguished)
+ *    8  Deserta          → aufgehoben (no bids)
+ *    10 Revocata         → aufgehoben (revoked; note Sigla is null here)
+ *  Sigla is NOT unique per outcome (NAGG covers 2/3/8, OFF covers 4/5) and is
+ *  null for Revocata, so we key on the numeric ID. Any unknown/new ID falls
+ *  through to aufgehoben — conservative for an "active auctions" listing. */
+const ACTIVE_ESITO_ID = 0
 
 /** Build Auction objects by merging map data (lat/lng) with detail data. */
 export function buildAuctions(
@@ -195,7 +205,7 @@ export function buildAuctions(
       verkehrswertText: formatEur(verkehrswertEur),
       terminIso,
       terminText: formatTerminText(terminIso),
-      aufgehoben: AUFGEHOBEN_SIGLAS.has(d.esito?.Sigla ?? ''),
+      aufgehoben: d.esito != null && d.esito.ID !== ACTIVE_ESITO_ID,
       letzteAktualisierungIso: map?.dataUltimoAggiornamento ?? null,
       pdfUrl: null,
       detailUrl: detailUpstream,
