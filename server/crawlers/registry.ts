@@ -6,6 +6,7 @@ import { zvbawuCrawler } from './zvbawu'
 import { atEdikteCrawler } from './at'
 import { bidditCrawler } from './biddit'
 import { agiCrawler } from './agi'
+import { plKomornikCrawler } from './pl'
 
 /**
  * All registered platform crawlers. Adding a new platform is purely additive:
@@ -22,6 +23,7 @@ export const platforms: readonly PlatformCrawler[] = [
   atEdikteCrawler,
   bidditCrawler,
   agiCrawler,
+  plKomornikCrawler,
 ] as const
 
 export interface RegionEntry extends RegionInfo {
