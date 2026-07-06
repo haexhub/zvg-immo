@@ -5,8 +5,12 @@ export const AGI_API_BASE = 'https://webapi.astegiudiziarie.it/api'
 export const COUNTRY = 'it'
 export const UA = 'Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0'
 
-/** Batch size for the search/Data API call. */
-export const DETAIL_BATCH_SIZE = 50
+/** Batch size for the search/Data API call. The endpoint hard-caps its
+ *  response at 20 records regardless of how many idLotto are posted (verified
+ *  2026-07-06: sending 21+ ids returns only the first 20, silently dropping
+ *  the rest). Sending exactly 20 returns all 20, so 20 is the largest value
+ *  that yields complete coverage. */
+export const DETAIL_BATCH_SIZE = 20
 
 /** idGenere=1 means Immobili (real estate) on the portal. */
 export const ID_GENERE_IMMOBILI = 1
