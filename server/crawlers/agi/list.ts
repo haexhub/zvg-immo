@@ -44,15 +44,20 @@ export async function fetchSession(): Promise<string> {
     signal: AbortSignal.timeout(15_000),
   })
   const setCookieHeader = res.headers.getSetCookie?.() ?? []
+  let cookie: string
   if (setCookieHeader.length === 0) {
     const raw = res.headers.get('set-cookie')
-    if (raw) return raw.split(';')[0] ?? ''
-    return ''
+    cookie = raw ? (raw.split(';')[0] ?? '') : ''
+  } else {
+    cookie = setCookieHeader
+      .map((c) => c.split(';')[0])
+      .filter(Boolean)
+      .join('; ')
   }
-  return setCookieHeader
-    .map((c) => c.split(';')[0])
-    .filter(Boolean)
-    .join('; ')
+  if (!cookie) {
+    throw new Error('[agi] fetchSession: no Set-Cookie header — session could not be established')
+  }
+  return cookie
 }
 
 /** Fetch all lot IDs + basic map data for the given portal region name. */
@@ -151,6 +156,15 @@ function buildAdresse(
   return suffix ? `${indirizzo}, ${suffix}` : indirizzo
 }
 
+/** Esito.Sigla codes that mark a lot as withdrawn/cancelled (aufgehoben).
+ *  Conservative whitelist: only these flip aufgehoben=true; any other value
+ *  (notably "AG" = aggiudicato/awarded, or an empty string = still active)
+ *  is treated as NOT aufgehoben. The AGI web API is undocumented, so these
+ *  codes are unverified guesses (RE/revocato, SO/sospeso, RV/revoca vendita,
+ *  AN/annullato) — verify against real search/Data responses and extend as
+ *  new codes surface, rather than defaulting unknown codes to withdrawn. */
+const AUFGEHOBEN_SIGLAS = new Set(['RE', 'SO', 'RV', 'AN'])
+
 /** Build Auction objects by merging map data (lat/lng) with detail data. */
 export function buildAuctions(
   mapEntries: MapEntry[],
@@ -181,10 +195,10 @@ export function buildAuctions(
       verkehrswertText: formatEur(verkehrswertEur),
       terminIso,
       terminText: formatTerminText(terminIso),
-      aufgehoben: Boolean(d.esito?.Sigla),
+      aufgehoben: AUFGEHOBEN_SIGLAS.has(d.esito?.Sigla ?? ''),
       letzteAktualisierungIso: map?.dataUltimoAggiornamento ?? null,
       pdfUrl: null,
-      detailUrl: detailUpstream ?? AGI_BASE,
+      detailUrl: detailUpstream,
       pdfUrlUpstream: null,
       detailUrlUpstream: detailUpstream,
       attachments: [],

@@ -688,7 +688,7 @@ function attachmentLabel(att: { kind: string; label: string }): string {
               rel="noopener"
               class="text-primary hover:underline"
             >{{ attachmentLabel(att) }}</a>
-            <a :href="a.detailUrl" target="_blank" rel="noopener" class="ml-auto text-primary hover:underline">
+            <a v-if="a.detailUrl" :href="a.detailUrl" target="_blank" rel="noopener" class="ml-auto text-primary hover:underline">
               Details →
             </a>
           </footer>

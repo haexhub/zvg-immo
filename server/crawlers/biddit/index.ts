@@ -33,7 +33,7 @@ function applyDetail(auction: AuctionDetailFields, info: DetailInfo): void {
     auction.pdfUrl = info.pdfUrl
     auction.pdfUrlUpstream = info.pdfUrlUpstream
   }
-  if (info.fotoCount > 0) auction.fotoCount = info.fotoCount
+  auction.fotoCount = info.fotoCount
   if (info.thumbnailUrl) auction.thumbnailUrl = info.thumbnailUrl
   // Listing already sets aufgehoben from `withdrawn`; the detail endpoint
   // may flip it between fetch and enrich (notary withdraws mid-crawl).
