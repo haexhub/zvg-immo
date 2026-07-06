@@ -1,6 +1,7 @@
 import type { Auction } from '~/types/auction'
 import { CZ_BASE, COUNTRY, UA } from './constants'
 import { parseCzDate, parseCzPrice, clean } from './text'
+import { getRates, toEur } from '~/server/utils/exchange-rate'
 
 interface CzItem {
   title?: string | null
@@ -37,17 +38,18 @@ interface CzAuction {
 
 export async function fetchEndpoint(path: string, platformId: string): Promise<Auction[]> {
   const url = `${CZ_BASE}${path}`
-  const res = await fetch(url, {
-    headers: { 'User-Agent': UA, Accept: 'application/json' },
-  })
+  const [res, rates] = await Promise.all([
+    fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/json' } }),
+    getRates(),
+  ])
   if (!res.ok) throw new Error(`CZ list fetch failed: ${res.status} ${url}`)
   const json = await res.json()
   if (!json || typeof json !== 'object' || Array.isArray(json))
     throw new Error(`CZ list unexpected response shape: ${url}`)
-  return parseData(json as Record<string, CzAuction>, platformId)
+  return parseData(json as Record<string, CzAuction>, platformId, rates)
 }
 
-function parseData(data: Record<string, CzAuction>, platformId: string): Auction[] {
+function parseData(data: Record<string, CzAuction>, platformId: string, rates: Record<string, number>): Auction[] {
   const auctions: Auction[] = []
   for (const raw of Object.values(data)) {
     if (raw.voluntary === true) continue
@@ -56,6 +58,7 @@ function parseData(data: Record<string, CzAuction>, platformId: string): Auction
 
     const district = extractDistrict(raw)
     const detailUrl = raw.link || null
+    const czk = parseCzPrice(raw.estimated_price)
 
     auctions.push({
       platform: platformId,
@@ -66,8 +69,8 @@ function parseData(data: Record<string, CzAuction>, platformId: string): Auction
       amtsgericht: clean(raw.auctioneer_office?.title),
       objekt: clean(raw.item?.title) || null,
       adresse: district ? `${district}, Tschechien` : 'Tschechien',
-      verkehrswertEur: parseCzPrice(raw.estimated_price),
-      verkehrswertText: raw.estimated_price != null ? `${raw.estimated_price} Kč` : null,
+      verkehrswertEur: czk != null ? toEur(czk, 'CZK', rates) : null,
+      verkehrswertText: czk != null ? `${czk.toLocaleString('de-DE', { maximumFractionDigits: 0 })} Kč` : null,
       terminIso: parseCzDate(raw.start_at),
       terminText: raw.start_at ?? null,
       aufgehoben: raw.enabled === false || raw.status === 'cancelled',

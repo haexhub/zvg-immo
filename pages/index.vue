@@ -671,7 +671,7 @@ function attachmentLabel(att: { kind: string; label: string }): string {
               </div>
               <div>
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">Verkehrswert</dt>
-                <dd class="font-medium tabular-nums">{{ formatEur(a.verkehrswertEur) }}</dd>
+                <dd class="font-medium tabular-nums">{{ a.verkehrswertText ?? formatEur(a.verkehrswertEur) }}</dd>
               </div>
             </dl>
           </div>

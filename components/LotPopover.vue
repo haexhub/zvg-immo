@@ -51,12 +51,9 @@ onMounted(async () => {
   }
 })
 
-const COUNTRY_CURRENCY: Record<string, string> = { cz: 'CZK', pl: 'PLN' }
-
-function formatPrice(n: number | null, country: string): string {
+function formatEur(n: number | null): string {
   if (n == null) return '–'
-  const currency = COUNTRY_CURRENCY[country] ?? 'EUR'
-  return n.toLocaleString('de-DE', { style: 'currency', currency, maximumFractionDigits: 0 })
+  return n.toLocaleString('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
 }
 
 function formatDate(iso: string | null, fallback: string | null): string {
@@ -107,7 +104,7 @@ const swiperModules = [Navigation, Pagination, Keyboard]
       </div>
       <div>
         <div class="lot-popover__grid-label">Verkehrswert</div>
-        {{ formatPrice(auction.verkehrswertEur, auction.country) }}
+        {{ auction.verkehrswertText ?? formatEur(auction.verkehrswertEur) }}
       </div>
     </div>
 

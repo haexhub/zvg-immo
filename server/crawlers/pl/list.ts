@@ -2,6 +2,7 @@ import { load } from 'cheerio'
 import type { Auction } from '~/types/auction'
 import { PL_BASE, COUNTRY, UA } from './constants'
 import { parsePlDate, parsePlPrice, clean } from './text'
+import { getRates, toEur } from '~/server/utils/exchange-rate'
 
 export interface ParseResult {
   auctions: Auction[]
@@ -24,9 +25,9 @@ export async function fetchFilterPage(
     headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml' },
   })
   if (!res.ok) throw new Error(`PL list fetch failed: ${res.status} ${url}`)
-  const html = await res.text()
+  const [html, rates] = await Promise.all([res.text(), getRates()])
 
-  return parseFilterHtml(html, platformId)
+  return parseFilterHtml(html, platformId, rates)
 }
 
 /**
@@ -37,7 +38,7 @@ export async function fetchFilterPage(
  *
  * TODO: verify selectors against a live page with actual listings.
  */
-export function parseFilterHtml(html: string, platformId: string): ParseResult {
+export function parseFilterHtml(html: string, platformId: string, rates: Record<string, number> = {}): ParseResult {
   const $ = load(html)
   const auctions: Auction[] = []
 
@@ -95,6 +96,7 @@ export function parseFilterHtml(html: string, platformId: string): ParseResult {
       : null
 
     const detailUrlUpstream = `${PL_BASE}/Notice/Details/${noticeId}`
+    const pln = parsePlPrice(cenaRaw)
 
     auctions.push({
       platform: platformId,
@@ -105,8 +107,8 @@ export function parseFilterHtml(html: string, platformId: string): ParseResult {
       amtsgericht: '',
       objekt: nazwa || null,
       adresse: adresse || null,
-      verkehrswertEur: parsePlPrice(cenaRaw),
-      verkehrswertText: cenaRaw || null,
+      verkehrswertEur: pln != null ? toEur(pln, 'PLN', rates) : null,
+      verkehrswertText: pln != null ? `${pln.toLocaleString('de-DE', { maximumFractionDigits: 0 })} zł` : null,
       terminIso,
       terminText: dateRaw || null,
       aufgehoben: false,
