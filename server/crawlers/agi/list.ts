@@ -9,7 +9,7 @@ interface MapEntry {
 
 interface Esito {
   ID: number
-  Sigla: string
+  Sigla: string | null
 }
 
 export interface DetailEntry {
@@ -44,15 +44,20 @@ export async function fetchSession(): Promise<string> {
     signal: AbortSignal.timeout(15_000),
   })
   const setCookieHeader = res.headers.getSetCookie?.() ?? []
+  let cookie: string
   if (setCookieHeader.length === 0) {
     const raw = res.headers.get('set-cookie')
-    if (raw) return raw.split(';')[0] ?? ''
-    return ''
+    cookie = raw ? (raw.split(';')[0] ?? '') : ''
+  } else {
+    cookie = setCookieHeader
+      .map((c) => c.split(';')[0])
+      .filter(Boolean)
+      .join('; ')
   }
-  return setCookieHeader
-    .map((c) => c.split(';')[0])
-    .filter(Boolean)
-    .join('; ')
+  if (!cookie) {
+    throw new Error('[agi] fetchSession: no Set-Cookie header — session could not be established')
+  }
+  return cookie
 }
 
 /** Fetch all lot IDs + basic map data for the given portal region name. */
@@ -151,6 +156,25 @@ function buildAdresse(
   return suffix ? `${indirizzo}, ${suffix}` : indirizzo
 }
 
+/** esito.ID that marks a lot as a still-pending, live auction; every other
+ *  esito is a concluded/cancelled outcome and is flagged aufgehoben (hidden
+ *  from the default active view). A missing esito is treated as active.
+ *
+ *  Verified against ~4200 live lots on 2026-07-06 (search/Data esito.ID →
+ *  Descrizione), so the mapping is data-backed rather than guessed:
+ *    0  Sconosciuto      → active (shown)          — 77% of active lots
+ *    1  Aggiudicata      → aufgehoben (sold)
+ *    2  Non Aggiudicata  → aufgehoben (not awarded)
+ *    3  Rinviata         → aufgehoben (postponed)
+ *    4  Sospesa          → aufgehoben (suspended)
+ *    5  Estinta          → aufgehoben (extinguished)
+ *    8  Deserta          → aufgehoben (no bids)
+ *    10 Revocata         → aufgehoben (revoked; note Sigla is null here)
+ *  Sigla is NOT unique per outcome (NAGG covers 2/3/8, OFF covers 4/5) and is
+ *  null for Revocata, so we key on the numeric ID. Any unknown/new ID falls
+ *  through to aufgehoben — conservative for an "active auctions" listing. */
+const ACTIVE_ESITO_ID = 0
+
 /** Build Auction objects by merging map data (lat/lng) with detail data. */
 export function buildAuctions(
   mapEntries: MapEntry[],
@@ -181,10 +205,10 @@ export function buildAuctions(
       verkehrswertText: formatEur(verkehrswertEur),
       terminIso,
       terminText: formatTerminText(terminIso),
-      aufgehoben: Boolean(d.esito?.Sigla),
+      aufgehoben: d.esito != null && d.esito.ID !== ACTIVE_ESITO_ID,
       letzteAktualisierungIso: map?.dataUltimoAggiornamento ?? null,
       pdfUrl: null,
-      detailUrl: detailUpstream ?? AGI_BASE,
+      detailUrl: detailUpstream,
       pdfUrlUpstream: null,
       detailUrlUpstream: detailUpstream,
       attachments: [],

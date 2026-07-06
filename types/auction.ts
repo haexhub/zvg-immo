@@ -35,8 +35,9 @@ export interface Auction {
   letzteAktualisierungIso: string | null
   /** Local proxy URL — direct upstream links may require a platform-specific Referer. */
   pdfUrl: string | null
-  /** Local proxy URL for the upstream Detailansicht. */
-  detailUrl: string
+  /** Local proxy URL for the upstream Detailansicht. Null when the platform
+   *  has no lot-specific detail page for this auction. */
+  detailUrl: string | null
   /** Original upstream URL for the PDF (for reference). */
   pdfUrlUpstream: string | null
   /** Original upstream URL for the detail page (for reference). Null when the platform

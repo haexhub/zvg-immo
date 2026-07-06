@@ -24,6 +24,7 @@ async function fetchDetailInfo(detailUpstream: string): Promise<DetailInfo> {
   const attachments: Attachment[] = []
   let pdfUpstream: string | null = null
   const seenPaths = new Set<string>()
+  const seenFotoPaths = new Set<string>()
   let fotoCount = 0
   let thumbnailUrl: string | null = null
 
@@ -31,13 +32,14 @@ async function fetchDetailInfo(detailUpstream: string): Promise<DetailInfo> {
   $('a[href^="/allegato/"]').each((_, el) => {
     const path = $(el).attr('href') ?? ''
     if (seenPaths.has(path)) return
-    seenPaths.add(path)
 
     const filename = path.split('/').find((seg) => seg.includes('.')) ?? path
     const lowerFile = filename.toLowerCase()
 
     if (lowerFile.endsWith('.pdf')) {
-      const kind = allegatoKind(filename)
+      seenPaths.add(path)
+      // A foto-*.pdf is an attachment, not a photo: keep it out of the foto kind
+      const kind = allegatoKind(filename) === 'foto' ? 'sonstiges' : allegatoKind(filename)
       const upstreamUrl = `${AGI_BASE}${path}`
       attachments.push({
         kind,
@@ -60,8 +62,8 @@ async function fetchDetailInfo(detailUpstream: string): Promise<DetailInfo> {
   $('img[src^="/allegato/foto-"], img[data-src^="/allegato/foto-"]').each((_, el) => {
     const src = $(el).attr('data-src') ?? $(el).attr('src') ?? ''
     if (!src.toLowerCase().includes('/allegato/foto-')) return
-    if (!seenPaths.has(src)) {
-      seenPaths.add(src)
+    if (!seenFotoPaths.has(src)) {
+      seenFotoPaths.add(src)
       fotoCount++
       if (!thumbnailUrl) thumbnailUrl = `${AGI_BASE}${src}`
     }
@@ -82,11 +84,9 @@ function applyDetailInfo(auction: Auction, info: DetailInfo): void {
     auction.pdfUrl = info.pdfUrl
     auction.pdfUrlUpstream = info.pdfUrlUpstream
   }
-  if (info.fotoCount > 0) {
-    auction.fotoCount = info.fotoCount
-    if (info.thumbnailUrl && !auction.thumbnailUrl) {
-      auction.thumbnailUrl = info.thumbnailUrl
-    }
+  auction.fotoCount = info.fotoCount
+  if (info.thumbnailUrl && !auction.thumbnailUrl) {
+    auction.thumbnailUrl = info.thumbnailUrl
   }
 }
 

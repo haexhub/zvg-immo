@@ -111,8 +111,8 @@ const swiperModules = [Navigation, Pagination, Keyboard]
     <div class="lot-popover__footer">
       <span class="lot-popover__source">{{ auction.amtsgericht }} · {{ auction.aktenzeichen }}</span><br>
       <a v-if="auction.pdfUrl" :href="auction.pdfUrl" target="_blank" rel="noopener">Bekanntmachung</a>
-      <span v-if="auction.pdfUrl"> · </span>
-      <a :href="auction.detailUrl" target="_blank" rel="noopener">Details</a>
+      <span v-if="auction.pdfUrl && auction.detailUrl"> · </span>
+      <a v-if="auction.detailUrl" :href="auction.detailUrl" target="_blank" rel="noopener">Details</a>
     </div>
   </div>
 </template>
