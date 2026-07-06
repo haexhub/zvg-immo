@@ -41,19 +41,21 @@ export async function fetchEndpoint(path: string, platformId: string): Promise<A
     headers: { 'User-Agent': UA, Accept: 'application/json' },
   })
   if (!res.ok) throw new Error(`CZ list fetch failed: ${res.status} ${url}`)
-  const data = (await res.json()) as Record<string, CzAuction>
-  return parseData(data, platformId)
+  const json = await res.json()
+  if (!json || typeof json !== 'object' || Array.isArray(json))
+    throw new Error(`CZ list unexpected response shape: ${url}`)
+  return parseData(json as Record<string, CzAuction>, platformId)
 }
 
 function parseData(data: Record<string, CzAuction>, platformId: string): Auction[] {
   const auctions: Auction[] = []
   for (const raw of Object.values(data)) {
-    if (raw.voluntary !== false) continue
+    if (raw.voluntary === true) continue
     if (raw.item?.category?.type !== 'real') continue
     if (!raw.hash) continue
 
     const district = extractDistrict(raw)
-    const detailUrl = raw.link ?? null
+    const detailUrl = raw.link || null
 
     auctions.push({
       platform: platformId,
@@ -86,7 +88,8 @@ function parseData(data: Record<string, CzAuction>, platformId: string): Auction
 function extractDistrict(raw: CzAuction): string {
   const loc = raw.location_district
   if (loc) {
-    return clean(loc.city?.city_name ?? loc.district_name ?? loc.county?.county_name)
+    const name = clean(loc.city?.city_name ?? loc.district_name ?? loc.county?.county_name)
+    if (name) return name
   }
   return clean(raw.auctioneer_office?.district)
 }
