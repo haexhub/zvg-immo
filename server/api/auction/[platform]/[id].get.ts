@@ -10,10 +10,13 @@ import { readAuctionSnapshot } from '../../../utils/auction-snapshot'
 import { geocodeAddress } from '../../../utils/geocode'
 import { isSafePathSegment } from '../../../utils/path-segment'
 import { cacheKey } from '../../../utils/verkehrswert-cache'
+import { readSummaryCache } from '../../../utils/summary-cache'
 
 export interface AuctionDetail extends Auction {
   lat: number | null
   lng: number | null
+  /** Pre-generated German AI summary, or null when not yet requested. */
+  summary: string | null
 }
 
 export default defineEventHandler(async (event): Promise<AuctionDetail> => {
@@ -22,13 +25,18 @@ export default defineEventHandler(async (event): Promise<AuctionDetail> => {
   if (!isSafePathSegment(platform) || !isSafePathSegment(id)) {
     throw createError({ statusCode: 400, statusMessage: 'invalid platform/id' })
   }
+  const key = cacheKey(platform, id)
   const snapshot = await readAuctionSnapshot()
-  const hit = snapshot[cacheKey(platform, id)]
+  const hit = snapshot[key]
   if (!hit) {
     throw createError({ statusCode: 404, statusMessage: 'auction not found' })
   }
   // Cache-only lookup: the geocode task fills coordinates ahead of time, so
   // serving a detail page never blocks on Nominatim.
-  const point = await geocodeAddress(hit.adresse, hit.country, { fetchMissing: false })
-  return { ...hit, lat: point?.lat ?? null, lng: point?.lng ?? null }
+  const [point, summaryCache] = await Promise.all([
+    geocodeAddress(hit.adresse, hit.country, { fetchMissing: false }),
+    readSummaryCache(),
+  ])
+  const summary = summaryCache[key]?.text ?? null
+  return { ...hit, lat: point?.lat ?? null, lng: point?.lng ?? null, summary }
 })
