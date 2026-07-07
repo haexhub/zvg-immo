@@ -2,7 +2,7 @@
 import { ALL_KATEGORIEN, classifyObjekt } from '~/lib/objektart'
 import type { AuctionDetail } from '~/server/api/auction/[platform]/[id].get'
 import type { Attachment } from '~/types/auction'
-import { ArrowLeft } from 'lucide-vue-next'
+import { ArrowLeft, Sparkles } from 'lucide-vue-next'
 
 const route = useRoute()
 const platform = String(route.params.platform)
@@ -12,6 +12,51 @@ const { data: a, error, pending } = await useFetch<AuctionDetail | null>(
   `/api/auction/${platform}/${id}`,
   { default: () => null },
 )
+
+// Lazy German AI summary — pre-filled from cache if already generated,
+// otherwise generated on button click.
+const summary = ref<string | null>(null)
+const summaryPending = ref(false)
+const summaryError = ref<string | null>(null)
+
+watch(a, (val) => {
+  summary.value = val?.summary ?? null
+  summaryError.value = null
+}, { immediate: true })
+
+// Minimal markdown → safe HTML: escape first, then apply bold/paragraph patterns.
+// Covers the `**Heading** — text` structure the LLM returns.
+const summaryHtml = computed(() => {
+  if (!summary.value) return ''
+  const escaped = summary.value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+  return escaped
+    .split(/\n\n+/)
+    .map((p) => `<p>${p.replace(/\n/g, '<br>')}</p>`)
+    .join('')
+})
+
+async function loadSummary() {
+  summaryPending.value = true
+  summaryError.value = null
+  try {
+    const res = await $fetch<{ summary: string }>(
+      `/api/auction/${encodeURIComponent(platform)}/${encodeURIComponent(id)}/summary`,
+      { method: 'POST' },
+    )
+    summary.value = res.summary
+  } catch (err: unknown) {
+    const msg = (err as { statusMessage?: string; message?: string })?.statusMessage
+      ?? (err as { message?: string })?.message
+      ?? 'Unbekannter Fehler'
+    summaryError.value = msg
+  } finally {
+    summaryPending.value = false
+  }
+}
 
 const KAT_LABEL = new Map(ALL_KATEGORIEN.map((k) => [k.id, k.label]))
 function kategorie(): { id: string; label: string } | null {
@@ -194,6 +239,34 @@ useHead(() => ({
           Eckdaten automatisch aus dem Gutachten/Exposé extrahiert
           ({{ a.extraction.confidence === 'high' ? 'hohe Konfidenz' : 'geringe Konfidenz' }}).
         </p>
+      </section>
+
+      <section class="mb-8 space-y-3">
+        <div class="flex items-center gap-2">
+          <h2 class="text-base font-semibold">KI-Zusammenfassung</h2>
+          <span class="text-xs text-muted-foreground">(Deutsch, automatisch übersetzt)</span>
+        </div>
+        <div
+          v-if="summary"
+          class="rounded-xl border bg-card p-5 text-sm leading-relaxed [&_p]:mb-3 [&_p:last-child]:mb-0 [&_strong]:font-semibold [&_strong]:text-foreground"
+          v-html="summaryHtml"
+        />
+        <p v-else-if="summaryError" class="text-sm text-destructive">
+          Zusammenfassung konnte nicht erstellt werden: {{ summaryError }}
+        </p>
+        <p v-else-if="summaryPending" class="text-sm text-muted-foreground animate-pulse">
+          Zusammenfassung wird erstellt … (ca. 10–30 Sekunden)
+        </p>
+        <button
+          v-else
+          type="button"
+          class="inline-flex items-center gap-2 rounded-md border px-4 py-2 text-sm hover:border-primary hover:text-primary transition-colors disabled:opacity-50"
+          :disabled="summaryPending"
+          @click="loadSummary"
+        >
+          <Sparkles class="h-4 w-4" />
+          Zusammenfassung auf Deutsch erstellen
+        </button>
       </section>
 
       <section v-if="a.lat != null && a.lng != null" class="mb-8 space-y-2">

@@ -45,7 +45,9 @@ const ENRICH_CONCURRENCY = 8
 const FLUSH_EVERY = 200
 // Cap LLM calls per run so a cold start spreads its load over several runs
 // instead of spawning thousands of proxy subprocesses at once.
-const MAX_LLM_PER_RUN = 250
+// Deliberately low: field extraction is best-effort; the detail page's on-demand
+// summary covers what background enrichment misses.
+const MAX_LLM_PER_RUN = 30
 
 function readLlmConfig(): LlmConfig | null {
   const c = useRuntimeConfig().extractLlm as { baseUrl?: string; model?: string } | undefined
