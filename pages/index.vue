@@ -688,7 +688,7 @@ function attachmentLabel(att: { kind: string; label: string }): string {
               rel="noopener"
               class="text-primary hover:underline"
             >{{ attachmentLabel(att) }}</a>
-            <NuxtLink :to="`/objekt/${a.platform}/${a.zvgId}`" class="ml-auto text-primary hover:underline">
+            <NuxtLink :to="`/objekt/${encodeURIComponent(a.platform)}/${encodeURIComponent(a.zvgId)}`" class="ml-auto text-primary hover:underline">
               Details →
             </NuxtLink>
           </footer>

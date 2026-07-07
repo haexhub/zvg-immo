@@ -14,6 +14,14 @@ import { pickBestPdf, pdfToText } from '../../../../utils/extract/pdf-text'
 
 const MAX_PDF_CHARS = 8_000
 
+// In-flight generations keyed by cache key: dedupes concurrent misses for the
+// same auction (one LLM call, not N) and caps total concurrent LLM work so a
+// burst of cache misses on distinct auctions can't fan out into unbounded paid
+// requests. The endpoint is public and generates only for auctions that exist
+// in the snapshot, so this in-process throttle is the proportionate guard.
+const inflight = new Map<string, Promise<string>>()
+const MAX_INFLIGHT = 4
+
 const SYSTEM_PROMPT =
   'Du fasst Immobilien-Zwangsversteigerungen prägnant auf Deutsch zusammen. ' +
   'Gliedere deine Antwort mit diesen Markdown-Überschriften (lass Abschnitte ohne Inhalt weg):\n' +
@@ -100,22 +108,43 @@ export default defineEventHandler(async (event) => {
     return { summary: cache[key]!.text }
   }
 
-  const snapshot = await readAuctionSnapshot()
-  const auction = snapshot[key]
-  if (!auction) {
-    throw createError({ statusCode: 404, statusMessage: 'auction not found' })
+  // Cache miss → generate. Reuse an in-flight generation for the same auction
+  // instead of paying for a second LLM call.
+  const existing = inflight.get(key)
+  if (existing) {
+    return { summary: await existing }
+  }
+  if (inflight.size >= MAX_INFLIGHT) {
+    throw createError({ statusCode: 429, statusMessage: 'summary generation busy, retry shortly' })
   }
 
-  const bestPdf = pickBestPdf(auction.attachments ?? [])
-  const pdfText = bestPdf ? await pdfToText(bestPdf.proxyUrl) : null
+  const gen = (async () => {
+    const snapshot = await readAuctionSnapshot()
+    const auction = snapshot[key]
+    if (!auction) {
+      throw createError({ statusCode: 404, statusMessage: 'auction not found' })
+    }
 
-  const summary = await callLlm(buildPrompt(auction as unknown as Record<string, unknown>), pdfText, config)
-  if (!summary) {
-    throw createError({ statusCode: 502, statusMessage: 'LLM did not return a summary' })
+    const bestPdf = pickBestPdf(auction.attachments ?? [])
+    const pdfText = bestPdf ? await pdfToText(bestPdf.proxyUrl) : null
+
+    const summary = await callLlm(buildPrompt(auction as unknown as Record<string, unknown>), pdfText, config)
+    if (!summary) {
+      throw createError({ statusCode: 502, statusMessage: 'LLM did not return a summary' })
+    }
+
+    // Re-read before writing so a concurrent generation for a *different*
+    // auction isn't clobbered by our stale snapshot.
+    const latest = await readSummaryCache()
+    latest[key] = { text: summary, at: new Date().toISOString() }
+    await writeSummaryCache(latest)
+    return summary
+  })()
+
+  inflight.set(key, gen)
+  try {
+    return { summary: await gen }
+  } finally {
+    inflight.delete(key)
   }
-
-  cache[key] = { text: summary, at: new Date().toISOString() }
-  await writeSummaryCache(cache)
-
-  return { summary }
 })

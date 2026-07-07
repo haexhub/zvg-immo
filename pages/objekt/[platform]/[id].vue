@@ -20,7 +20,8 @@ const summaryPending = ref(false)
 const summaryError = ref<string | null>(null)
 
 watch(a, (val) => {
-  if (val?.summary) summary.value = val.summary
+  summary.value = val?.summary ?? null
+  summaryError.value = null
 }, { immediate: true })
 
 // Minimal markdown → safe HTML: escape first, then apply bold/paragraph patterns.
@@ -43,7 +44,7 @@ async function loadSummary() {
   summaryError.value = null
   try {
     const res = await $fetch<{ summary: string }>(
-      `/api/auction/${platform}/${id}/summary`,
+      `/api/auction/${encodeURIComponent(platform)}/${encodeURIComponent(id)}/summary`,
       { method: 'POST' },
     )
     summary.value = res.summary
