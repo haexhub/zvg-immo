@@ -108,11 +108,15 @@ const swiperModules = [Navigation, Pagination, Keyboard]
       </div>
     </div>
 
+    <div class="lot-popover__cta">
+      <a :href="`/objekt/${encodeURIComponent(auction.platform)}/${encodeURIComponent(auction.zvgId)}`">Details ansehen →</a>
+    </div>
+
     <div class="lot-popover__footer">
       <span class="lot-popover__source">{{ auction.amtsgericht }} · {{ auction.aktenzeichen }}</span><br>
       <a v-if="auction.pdfUrl" :href="auction.pdfUrl" target="_blank" rel="noopener">Bekanntmachung</a>
       <span v-if="auction.pdfUrl && auction.detailUrl"> · </span>
-      <a v-if="auction.detailUrl" :href="auction.detailUrl" target="_blank" rel="noopener">Details</a>
+      <a v-if="auction.detailUrl" :href="auction.detailUrl" target="_blank" rel="noopener">Quelle</a>
     </div>
   </div>
 </template>
@@ -194,6 +198,22 @@ const swiperModules = [Navigation, Pagination, Keyboard]
   text-transform: uppercase;
   color: #6b7280;
   font-size: 10px;
+}
+.lot-popover__cta {
+  margin-bottom: 0.5rem;
+}
+.lot-popover__cta a {
+  display: block;
+  text-align: center;
+  background: #2563eb;
+  color: #fff;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  text-decoration: none;
+}
+.lot-popover__cta a:hover {
+  background: #1d4ed8;
 }
 .lot-popover__footer {
   font-size: 12px;
