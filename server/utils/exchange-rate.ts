@@ -42,7 +42,7 @@ async function fetchAndCache(): Promise<Record<string, number>> {
   if (!res.ok) throw new Error(`ECB rate fetch failed: ${res.status}`)
   const xml = await res.text()
   const rates: Record<string, number> = {}
-  const re = /currency="([A-Z]+)"\s+rate="([0-9.]+)"/g
+  const re = /currency='([A-Z]+)'\s+rate='([0-9.]+)'/g
   let m: RegExpExecArray | null
   while ((m = re.exec(xml)) !== null) {
     rates[m[1]] = parseFloat(m[2])
