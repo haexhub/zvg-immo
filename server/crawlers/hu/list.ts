@@ -33,7 +33,7 @@ function parsePage(html: string, platformId: string, rates: Record<string, numbe
 
   $('img.colAuctionImage').closest('tr').each((_, row) => {
     const tds = $(row).find('td')
-    if (tds.length < 10) return
+    if (tds.length < 11) return
 
     const imgSrc = tds.eq(0).find('img').attr('src') ?? null
     const thumbnailUrl = imgSrc ? `${HU_BASE}/${imgSrc}` : null
@@ -104,8 +104,10 @@ export async function fetchAllListings(platformId: string): Promise<{ auctions: 
   let nextUrl: string | null = `${HU_BASE}${LIST_PATH}`
   // Forward session cookies so the Java framework can track pagination state
   let cookies = ''
+  const MAX_PAGES = 50
+  let pageCount = 0
 
-  while (nextUrl) {
+  while (nextUrl && pageCount++ < MAX_PAGES) {
     const headers: Record<string, string> = {
       'User-Agent': UA,
       'Accept': 'text/html,application/xhtml+xml',
@@ -117,15 +119,15 @@ export async function fetchAllListings(platformId: string): Promise<{ auctions: 
     if (!res.ok) throw new Error(`MNV fetch failed: ${res.status} ${nextUrl}`)
 
     // Maintain session cookies for subsequent pagination requests
-    const setCookie = res.headers.get('set-cookie')
-    if (setCookie) {
+    const setCookieHeaders = res.headers.getSetCookie()
+    if (setCookieHeaders.length > 0) {
       const jar = new Map<string, string>(
         cookies.split('; ').filter(Boolean).map((c) => {
           const eq = c.indexOf('=')
           return [c.slice(0, eq), c.slice(eq + 1)] as [string, string]
         }),
       )
-      for (const entry of setCookie.split(/,(?=\s*\w+=)/)) {
+      for (const entry of setCookieHeaders) {
         const pair = (entry.split(';')[0] ?? '').trim()
         const eq = pair.indexOf('=')
         if (eq > 0) jar.set(pair.slice(0, eq), pair.slice(eq + 1))

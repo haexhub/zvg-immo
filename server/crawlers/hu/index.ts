@@ -9,7 +9,7 @@ async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
     platform: PLATFORM_ID,
     source: HU_BASE,
     countries: [COUNTRY],
-    regions: ['Ungarn'],
+    regions: HU_REGIONS.map((r) => r.name),
     fetchedAt: new Date().toISOString(),
     totalReported: total,
     auctions,
