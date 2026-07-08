@@ -8,6 +8,7 @@ import { bidditCrawler } from './biddit'
 import { agiCrawler } from './agi'
 import { plKomornikCrawler } from './pl'
 import { czPortaldrazebCrawler } from './cz'
+import { mnvCrawler } from './hu'
 
 /**
  * All registered platform crawlers. Adding a new platform is purely additive:
@@ -26,6 +27,7 @@ export const platforms: readonly PlatformCrawler[] = [
   agiCrawler,
   plKomornikCrawler,
   czPortaldrazebCrawler,
+  mnvCrawler,
 ] as const
 
 export interface RegionEntry extends RegionInfo {
@@ -51,6 +53,7 @@ const COUNTRY_NAMES: Record<string, string> = {
   cz: 'Tschechien',
   pl: 'Polen',
   be: 'Belgien',
+  hu: 'Ungarn',
 }
 
 export function listRegions(): RegionEntry[] {
