@@ -21,7 +21,7 @@ function parsePage(html: string, platformId: string): { auctions: Auction[]; has
     const href = $li.find('.top_block h2.no a').attr('href') ?? ''
     const id = href.match(/[?&]id=(\d+)/)?.[1]
     const number = href.match(/[?&]number=(\d+)/)?.[1]
-    if (!id) return
+    if (!id || !number) return
 
     const imgSrc = $li.find('a.foto img').attr('src') ?? null
     const thumbnailUrl = imgSrc ? `${LT_BASE}${imgSrc}` : null
@@ -33,7 +33,9 @@ function parsePage(html: string, platformId: string): { auctions: Auction[]; has
       }
     })
 
-    const priceEur = parseLtPrice($li.find('ul.desc li.sep').text())
+    const priceEur = parseLtPrice(
+      $li.find('ul.desc li.sep').contents().filter((_, n) => n.type === 'text').text(),
+    )
 
     const $firstItem = $li.find('.list_box ul.list li').first()
     const adresse = clean($firstItem.find('span.small').first().text()) || null
@@ -81,7 +83,12 @@ export async function fetchAllListings(
     const res = await fetch(url, {
       headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml', 'Accept-Language': 'lt,en;q=0.9' },
     })
-    if (!res.ok) throw new Error(`eaukcionai.lt fetch failed: ${res.status} ${url}`)
+    if (!res.ok) {
+      // Treat failure on a probe request (we have data, just checking if there's more)
+      // as end-of-pages rather than discarding all already-collected auctions.
+      if (allAuctions.length > 0) break
+      throw new Error(`eaukcionai.lt fetch failed: ${res.status} ${url}`)
+    }
 
     const { auctions, hasMore } = parsePage(await res.text(), platformId)
     allAuctions.push(...auctions)

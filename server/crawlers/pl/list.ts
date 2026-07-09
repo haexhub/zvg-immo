@@ -44,7 +44,7 @@ export function parseFilterHtml(html: string, platformId: string, rates: Record<
 
   // Total count — Nuxt app may render a string like "Znaleziono: 123 ogłoszeń"
   const totalMatch = html.match(/(\d+)\s+og[łl]oszeń/i) ?? html.match(/Znaleziono[^0-9]*(\d+)/i)
-  const totalReported = totalMatch ? parseInt(totalMatch[1], 10) : null
+  const totalReported = totalMatch ? parseInt(totalMatch[1]!, 10) : null
 
   // Vuetify SSR table: look for tbody rows inside .v-data-table, fallback to any table.
   const rows = $('.v-data-table table tbody tr, table.notice-list tbody tr, table tbody tr').filter(

@@ -45,7 +45,7 @@ async function fetchAndCache(): Promise<Record<string, number>> {
   const re = /currency='([A-Z]+)'\s+rate='([0-9.]+)'/g
   let m: RegExpExecArray | null
   while ((m = re.exec(xml)) !== null) {
-    rates[m[1]] = parseFloat(m[2])
+    rates[m[1]!] = parseFloat(m[2]!)
   }
   const entry: RateCache = { fetchedAt: new Date().toISOString(), rates }
   memory = entry

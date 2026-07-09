@@ -20,10 +20,21 @@ import { refDebounced } from '@vueuse/core'
 const route = useRoute()
 const router = useRouter()
 
+function queryStr(key: string, fallback = ''): string {
+  const v = route.query[key]
+  return (Array.isArray(v) ? (v[0] ?? '') : (v ?? '')) || fallback
+}
+function queryNum(key: string): number | null {
+  const v = queryStr(key)
+  if (!v) return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
+
 // Country/region cascade filter. Default 'all' = aggregate over every
 // registered platform across every country.
-const selectedCountry = ref<string>((route.query.country as string) || 'all')
-const selectedRegion = ref<string>((route.query.region as string) || 'all')
+const selectedCountry = ref<string>(queryStr('country', 'all'))
+const selectedRegion = ref<string>(queryStr('region', 'all'))
 
 const filtersOpen = ref(false)
 
@@ -171,20 +182,20 @@ onBeforeUnmount(() => {
   stopGeoPoll()
 })
 
-const search = ref((route.query.q as string) || '')
+const search = ref(queryStr('q'))
 // Every keystroke re-runs filteredGeo and rebuilds thousands of map markers —
 // debounce the search term so typing stays smooth. Selects/checkboxes keep
 // applying instantly.
 const debouncedSearch = refDebounced(search, 250)
 const includeAufgehoben = ref(route.query.aufgehoben === '1')
-const courtFilter = ref<string>((route.query.court as string) || 'all')
-const priceMin = ref<number | null>(route.query.priceMin ? Number(route.query.priceMin) : null)
-const priceMax = ref<number | null>(route.query.priceMax ? Number(route.query.priceMax) : null)
-const landAreaMin = ref<number | null>(route.query.landMin ? Number(route.query.landMin) : null)
-const landAreaMax = ref<number | null>(route.query.landMax ? Number(route.query.landMax) : null)
-const livingAreaMin = ref<number | null>(route.query.livMin ? Number(route.query.livMin) : null)
-const livingAreaMax = ref<number | null>(route.query.livMax ? Number(route.query.livMax) : null)
-const kategorieFilter = ref<string>((route.query.kat as string) || 'all')
+const courtFilter = ref<string>(queryStr('court', 'all'))
+const priceMin = ref<number | null>(queryNum('priceMin'))
+const priceMax = ref<number | null>(queryNum('priceMax'))
+const landAreaMin = ref<number | null>(queryNum('landMin'))
+const landAreaMax = ref<number | null>(queryNum('landMax'))
+const livingAreaMin = ref<number | null>(queryNum('livMin'))
+const livingAreaMax = ref<number | null>(queryNum('livMax'))
+const kategorieFilter = ref<string>(queryStr('kat', 'all'))
 const onlyWithPhotos = ref(route.query.photos === '1')
 
 // When the user switches country/region, the previously-selected court may
@@ -334,12 +345,12 @@ watch(
     if (selectedRegion.value !== 'all') query.region = selectedRegion.value
     if (debouncedSearch.value.trim()) query.q = debouncedSearch.value.trim()
     if (courtFilter.value !== 'all') query.court = courtFilter.value
-    if (numOrNull(priceMin.value) != null) query.priceMin = String(priceMin.value)
-    if (numOrNull(priceMax.value) != null) query.priceMax = String(priceMax.value)
-    if (numOrNull(landAreaMin.value) != null) query.landMin = String(landAreaMin.value)
-    if (numOrNull(landAreaMax.value) != null) query.landMax = String(landAreaMax.value)
-    if (numOrNull(livingAreaMin.value) != null) query.livMin = String(livingAreaMin.value)
-    if (numOrNull(livingAreaMax.value) != null) query.livMax = String(livingAreaMax.value)
+    if (numOrNull(priceMin.value) != null) query.priceMin = String(numOrNull(priceMin.value))
+    if (numOrNull(priceMax.value) != null) query.priceMax = String(numOrNull(priceMax.value))
+    if (numOrNull(landAreaMin.value) != null) query.landMin = String(numOrNull(landAreaMin.value))
+    if (numOrNull(landAreaMax.value) != null) query.landMax = String(numOrNull(landAreaMax.value))
+    if (numOrNull(livingAreaMin.value) != null) query.livMin = String(numOrNull(livingAreaMin.value))
+    if (numOrNull(livingAreaMax.value) != null) query.livMax = String(numOrNull(livingAreaMax.value))
     if (kategorieFilter.value !== 'all') query.kat = kategorieFilter.value
     if (onlyWithPhotos.value) query.photos = '1'
     if (includeAufgehoben.value) query.aufgehoben = '1'
@@ -347,6 +358,37 @@ watch(
     router.replace({ query })
   },
 )
+
+// Re-sync all filter refs when the user navigates with browser Back/Forward.
+// Without this watch, same-route history navigation updates route.query reactively
+// but refs are only initialized once at setup, so URL and UI would diverge.
+watch(() => route.query, (q) => {
+  selectedCountry.value = queryStr('country', 'all')
+  selectedRegion.value = queryStr('region', 'all')
+  search.value = queryStr('q')
+  includeAufgehoben.value = q.aufgehoben === '1'
+  courtFilter.value = queryStr('court', 'all')
+  priceMin.value = queryNum('priceMin')
+  priceMax.value = queryNum('priceMax')
+  landAreaMin.value = queryNum('landMin')
+  landAreaMax.value = queryNum('landMax')
+  livingAreaMin.value = queryNum('livMin')
+  livingAreaMax.value = queryNum('livMax')
+  kategorieFilter.value = queryStr('kat', 'all')
+  onlyWithPhotos.value = q.photos === '1'
+  view.value = q.view === 'list' ? 'list' : 'map'
+}, { deep: true })
+
+// Validate URL-restored courtFilter / kategorieFilter once data has loaded.
+// Invalid values produce silent 0-result filtering otherwise.
+watch(data, () => {
+  if (courtFilter.value !== 'all' && !courts.value.includes(courtFilter.value)) {
+    courtFilter.value = 'all'
+  }
+  if (kategorieFilter.value !== 'all' && !kategorienMitCount.value.some((k) => k.id === kategorieFilter.value)) {
+    kategorieFilter.value = 'all'
+  }
+})
 
 function formatEur(n: number | null): string {
   if (n == null) return '–'
