@@ -82,6 +82,7 @@ export async function fetchAllListings(
     const url = `${LT_BASE}${LIST_PATH}${page}`
     const res = await fetch(url, {
       headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml', 'Accept-Language': 'lt,en;q=0.9' },
+      signal: AbortSignal.timeout(15_000),
     })
     if (!res.ok) {
       // Treat failure on a probe request (we have data, just checking if there's more)
