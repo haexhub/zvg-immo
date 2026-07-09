@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { normalizeLtAddress } from './geocode'
 
 // eaukcionai.lt serves addresses as a chain of genitive administrative units
@@ -38,5 +38,35 @@ describe('normalizeLtAddress', () => {
 
   it('falls back to the raw address when it has no recognisable structure', () => {
     expect(normalizeLtAddress('Vilnius')).toEqual(['Vilnius'])
+  })
+})
+
+// The geocoder backend is chosen at module load from process.env, so these
+// tests re-import the module with the LocationIQ key set and a stubbed fetch.
+describe('geocodeOnce (LocationIQ backend)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.unstubAllGlobals()
+    vi.resetModules()
+  })
+
+  it('treats a LocationIQ HTTP 404 as a cacheable not-found (null, not undefined)', async () => {
+    vi.stubEnv('LOCATIONIQ_API_KEY', 'pk.test')
+    vi.resetModules()
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('{"error":"Unable to geocode"}', { status: 404 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { geocodeOnce } = await import('./geocode')
+    const result = await geocodeOnce('Nowhere 1, Vilnius', 'lt')
+
+    // null = "attempted, genuinely not found" (gets cached); undefined would be
+    // an upstream error that is retried and counts toward the failure cooldown.
+    expect(result).toBeNull()
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const requestedUrl = String(fetchMock.mock.calls[0]![0])
+    expect(requestedUrl).toContain('locationiq.com')
+    expect(requestedUrl).toContain('key=pk.test')
   })
 })

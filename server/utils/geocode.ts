@@ -97,7 +97,7 @@ async function rateLimitedFetch(url: string): Promise<Response> {
 
 /** Returns the geocode result, or null for "not found", or undefined when the
  *  upstream rejected/erred (don't cache this — retry next time). */
-async function geocodeOnce(query: string, country: string): Promise<GeoPoint | null | undefined> {
+export async function geocodeOnce(query: string, country: string): Promise<GeoPoint | null | undefined> {
   const params = `format=json&limit=1&countrycodes=${country}&q=${encodeURIComponent(query)}`
   const url = `${GEOCODER_BASE}?${params}${LOCATIONIQ_KEY ? `&key=${LOCATIONIQ_KEY}` : ''}`
   let res: Response
