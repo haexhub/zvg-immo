@@ -138,12 +138,63 @@ const STRIP_COUNTRY_SUFFIX: Record<string, string> = {
   hu: 'Ungarn',
 }
 
+// --- Lithuania (eaukcionai.lt) ---------------------------------------------
+// LT addresses come as a chain of genitive administrative units plus a street,
+// e.g. "Klaipėdos m. sav. Klaipėdos m. Naujakiemio g. 25-57". Nominatim can't
+// parse that, but it resolves the reduced form "<street> g. <house>, <city>"
+// (the genitive city name is fine; only the admin prefixes and the apartment
+// suffix need removing). Addresses without a street collapse to
+// "<locality>, <district>".
+const LT_ADMIN = new Set(['sav.', 'r.', 'raj.', 'm.', 'k.', 'mstl.', 'sen.', 'vs.', 'apskr.'])
+const LT_STREET = new Set(['g.', 'pr.', 'al.', 'pl.', 'skg.', 'kel.'])
+const LT_LOCALITY = new Set(['m.', 'k.', 'mstl.', 'vs.'])
+
+export function normalizeLtAddress(address: string): string[] {
+  const tokens = address.split(' ').filter(Boolean)
+  const streetIdx = tokens.findIndex((t) => LT_STREET.has(t))
+  const out: string[] = []
+
+  if (streetIdx > 0 && streetIdx < tokens.length - 1) {
+    // Drop the apartment part of the house number ("25-57" → "25").
+    const houseNr = tokens[streetIdx + 1]!.split('-')[0]!
+    // Street name = the words between the last admin marker and the street type.
+    let i = streetIdx - 1
+    const parts: string[] = []
+    while (i >= 0 && !LT_ADMIN.has(tokens[i]!)) parts.unshift(tokens[i--]!)
+    const street = `${parts.join(' ')} ${tokens[streetIdx]} ${houseNr}`.trim()
+    // The city is the place name right before that admin marker.
+    const city = i >= 1 ? tokens[i - 1] : ''
+    if (city) {
+      out.push(`${street}, ${city}`)
+      out.push(city) // fallback: at least land in the right city
+    } else {
+      out.push(street)
+    }
+  } else {
+    // No street — use the smallest locality plus the district for context.
+    let localityIdx = -1
+    for (let k = 0; k < tokens.length; k++) if (LT_LOCALITY.has(tokens[k]!)) localityIdx = k
+    const locality = localityIdx >= 1 ? tokens[localityIdx - 1] : ''
+    const district = tokens[0] && !LT_ADMIN.has(tokens[0]) ? tokens[0] : ''
+    if (locality && district) {
+      out.push(`${locality}, ${district}`)
+      out.push(locality)
+    } else if (locality) {
+      out.push(locality)
+    }
+  }
+
+  return out.length > 0 ? [...new Set(out)] : [address]
+}
+
 /**
  * Normalises an address into a Nominatim-friendly query, optionally falling
  * back to PLZ+city if the full address fails to resolve.
  */
 function buildQueries(address: string, country: string): string[] {
   const cleaned = address.replace(/\s+/g, ' ').replace(/\s*,\s*/g, ', ').trim()
+  // Lithuanian addresses need structural rewriting, not just suffix handling.
+  if (country === 'lt') return normalizeLtAddress(cleaned)
   // Strip trailing country name for countries where it confuses Nominatim.
   // countrycodes= already restricts the search, so the name is redundant.
   const suffix = STRIP_COUNTRY_SUFFIX[country]
