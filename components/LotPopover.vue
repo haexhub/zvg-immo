@@ -104,7 +104,7 @@ const swiperModules = [Navigation, Pagination, Keyboard]
       </div>
       <div>
         <div class="lot-popover__grid-label">Verkehrswert</div>
-        {{ auction.verkehrswertText ?? formatEur(auction.verkehrswertEur) }}
+        {{ auction.verkehrswertEur != null ? formatEur(auction.verkehrswertEur) : (auction.verkehrswertText ?? '–') }}
       </div>
     </div>
 

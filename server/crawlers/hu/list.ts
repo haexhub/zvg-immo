@@ -45,7 +45,10 @@ function parsePage(html: string, platformId: string, rates: Record<string, numbe
     if (!auctionId) return
 
     const objekt = clean(tds.eq(1).find('a').text()) || null
-    const zvgId = clean(tds.eq(2).text()) || auctionId
+    // The visible ID text (e.g. "49866/260702") contains a slash and can't be
+    // used as a URL path segment or cache key; use the numeric auctionId as the
+    // stable id and keep the slashed text as the human-readable Aktenzeichen.
+    const aktenzeichen = clean(tds.eq(2).text()) || auctionId
     const adresseRaw = clean(tds.eq(3).find('a').text() || tds.eq(3).text())
     const priceRaw = clean(tds.eq(6).text())
     const terminRaw = clean(tds.eq(10).text())
@@ -58,8 +61,8 @@ function parsePage(html: string, platformId: string, rates: Record<string, numbe
       platform: platformId,
       country: COUNTRY,
       region: '',
-      zvgId,
-      aktenzeichen: zvgId,
+      zvgId: auctionId,
+      aktenzeichen,
       amtsgericht: '',
       objekt,
       adresse: adresseRaw ? `${adresseRaw}, Ungarn` : null,
