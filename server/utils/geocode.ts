@@ -129,6 +129,13 @@ const POSTAL_PATTERNS: Record<string, RegExp> = {
   it: /(\d{5})\s+([^,]+?)(?:,|$)/,
   cz: /(\d{3}\s?\d{2})\s+([^,]+?)(?:,|$)/,
   pl: /(\d{2}-\d{3})\s+([^,]+?)(?:,|$)/,
+  hu: /(\d{4})\s+([^,]+?)(?:,|$)/,
+}
+
+// Country names appended to addresses that break Nominatim lookups despite
+// countrycodes= already restricting the search to the right country.
+const STRIP_COUNTRY_SUFFIX: Record<string, string> = {
+  hu: 'Ungarn',
 }
 
 /**
@@ -137,13 +144,17 @@ const POSTAL_PATTERNS: Record<string, RegExp> = {
  */
 function buildQueries(address: string, country: string): string[] {
   const cleaned = address.replace(/\s+/g, ' ').replace(/\s*,\s*/g, ', ').trim()
-  const queries = [cleaned]
+  // Strip trailing country name for countries where it confuses Nominatim.
+  // countrycodes= already restricts the search, so the name is redundant.
+  const suffix = STRIP_COUNTRY_SUFFIX[country]
+  const base = suffix ? cleaned.replace(new RegExp(`,\\s*${suffix}\\s*$`), '').trim() : cleaned
+  const queries = [base]
   const pattern = POSTAL_PATTERNS[country]
   if (pattern) {
-    const m = cleaned.match(pattern)
+    const m = base.match(pattern)
     if (m) {
       const fallback = `${m[1]} ${m[2]}`.trim()
-      if (fallback !== cleaned) queries.push(fallback)
+      if (fallback !== base) queries.push(fallback)
     }
   }
   return queries
