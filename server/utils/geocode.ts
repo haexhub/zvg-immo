@@ -1,12 +1,20 @@
-// Geocodes addresses via OpenStreetMap Nominatim, with strict 1 req/s rate
-// limit (per Nominatim policy) and a disk-backed cache so repeat lookups are free.
+// Geocodes addresses via a Nominatim-compatible backend, with a ~1 req/s rate
+// limit and a disk-backed cache so repeat lookups are free.
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 
 const CACHE_DIR = join(process.cwd(), '.cache_zvg', 'geocode')
-const NOMINATIM_BASE = 'https://nominatim.openstreetmap.org/search'
+
+// Geocoder backend. Defaults to the public Nominatim (fine for local dev and
+// light use). Set LOCATIONIQ_API_KEY in production to route through LocationIQ,
+// which serves the same Nominatim-format JSON but with a proper request quota
+// and no shared-IP bans. Optionally override LOCATIONIQ_ENDPOINT (default EU).
+const LOCATIONIQ_KEY = process.env.LOCATIONIQ_API_KEY ?? ''
+const GEOCODER_BASE = LOCATIONIQ_KEY
+  ? (process.env.LOCATIONIQ_ENDPOINT ?? 'https://eu1.locationiq.com/v1/search')
+  : 'https://nominatim.openstreetmap.org/search'
 // Nominatim policy requires an identifying UA, not a browser imitation.
 const UA = 'zvg-immo/1.0 (self-hosted; github.com/haexhub)'
 
@@ -89,15 +97,23 @@ async function rateLimitedFetch(url: string): Promise<Response> {
 
 /** Returns the geocode result, or null for "not found", or undefined when the
  *  upstream rejected/erred (don't cache this — retry next time). */
-async function geocodeOnce(query: string, country: string): Promise<GeoPoint | null | undefined> {
-  const url = `${NOMINATIM_BASE}?format=json&limit=1&countrycodes=${country}&q=${encodeURIComponent(query)}`
+export async function geocodeOnce(query: string, country: string): Promise<GeoPoint | null | undefined> {
+  const params = `format=json&limit=1&countrycodes=${country}&q=${encodeURIComponent(query)}`
+  const url = `${GEOCODER_BASE}?${params}${LOCATIONIQ_KEY ? `&key=${LOCATIONIQ_KEY}` : ''}`
   let res: Response
   try {
     res = await rateLimitedFetch(url)
   } catch {
     return undefined
   }
-  if (!res.ok) return undefined
+  if (!res.ok) {
+    // LocationIQ reports "no match" as HTTP 404 with {"error":"Unable to
+    // geocode"}, unlike Nominatim's empty 200 array. Treat that as a genuine
+    // not-found so it gets cached instead of retried forever (and doesn't count
+    // toward the failure cooldown). Any other status is a real upstream error.
+    if (LOCATIONIQ_KEY && res.status === 404) return null
+    return undefined
+  }
   const text = await res.text()
   if (!text.trimStart().startsWith('[')) {
     // Likely an error page like "Access denied" — don't cache.

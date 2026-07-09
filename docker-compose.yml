@@ -10,6 +10,10 @@ services:
       - geocode-cache:/app/.cache_zvg
     environment:
       NODE_ENV: production
+      # Geocoder: with a LocationIQ API key, geocoding routes through LocationIQ
+      # (Nominatim-compatible JSON, proper quota, no shared-IP 429 bans) instead
+      # of the public Nominatim. Unset → public Nominatim. See server/utils/geocode.ts.
+      LOCATIONIQ_API_KEY: ${LOCATIONIQ_API_KEY:-}
       # LLM extractor points at the sibling proxy service via the compose
       # network. Leaving these unset falls back to rules-only extraction.
       NUXT_EXTRACT_LLM_BASE_URL: http://haex-claude-proxy:8080
