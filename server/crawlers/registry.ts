@@ -9,6 +9,7 @@ import { agiCrawler } from './agi'
 import { plKomornikCrawler } from './pl'
 import { czPortaldrazebCrawler } from './cz'
 import { mnvCrawler } from './hu'
+import { eaukcionaiCrawler } from './lt'
 
 /**
  * All registered platform crawlers. Adding a new platform is purely additive:
@@ -28,6 +29,7 @@ export const platforms: readonly PlatformCrawler[] = [
   plKomornikCrawler,
   czPortaldrazebCrawler,
   mnvCrawler,
+  eaukcionaiCrawler,
 ] as const
 
 export interface RegionEntry extends RegionInfo {
@@ -54,6 +56,7 @@ const COUNTRY_NAMES: Record<string, string> = {
   pl: 'Polen',
   be: 'Belgien',
   hu: 'Ungarn',
+  lt: 'Litauen',
 }
 
 export function listRegions(): RegionEntry[] {
