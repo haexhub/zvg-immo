@@ -75,7 +75,7 @@ function mapItem(item: ListItem, detail: DetailResponse | null, platformId: stri
     pdfUrlUpstream,
     detailUrlUpstream,
     attachments: [],
-    beschreibung: null,
+    beschreibung: bodyText,
     fotoCount: 0,
     thumbnailUrl: null,
   }
