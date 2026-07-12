@@ -119,6 +119,51 @@ describe('findRooms', () => {
   })
 })
 
+describe('findLivingAreaSqm — multilingual', () => {
+  it('finds Czech podlahová plocha', () => {
+    expect(findLivingAreaSqm('podlahová plocha 65 m²')).toBe(65)
+  })
+  it('finds Czech užitná plocha', () => {
+    expect(findLivingAreaSqm('užitná plocha: 78 m²')).toBe(78)
+  })
+  it('finds Polish powierzchnia użytkowa', () => {
+    expect(findLivingAreaSqm('powierzchnia użytkowa 56 m²')).toBe(56)
+  })
+  it('finds Bosnian stambena površina', () => {
+    expect(findLivingAreaSqm('stambena površina 48 m²')).toBe(48)
+  })
+  it('finds Hungarian alapterület', () => {
+    expect(findLivingAreaSqm('alapterület: 92 m²')).toBe(92)
+  })
+  it('finds Lithuanian gyvenamasis plotas', () => {
+    expect(findLivingAreaSqm('gyvenamasis plotas 110 m²')).toBe(110)
+  })
+})
+
+describe('findLandAreaSqm — multilingual', () => {
+  it('finds Czech výměra pozemku', () => {
+    expect(findLandAreaSqm('výměra pozemku: 450 m²')).toBe(450)
+  })
+  it('finds Czech výměra alone', () => {
+    expect(findLandAreaSqm('výměra 820 m²')).toBe(820)
+  })
+  it('finds Polish powierzchnia działki', () => {
+    expect(findLandAreaSqm('powierzchnia działki 1200 m²')).toBe(1200)
+  })
+  it('finds Bosnian površina parcele', () => {
+    expect(findLandAreaSqm('površina parcele 600 m²')).toBe(600)
+  })
+  it('finds Hungarian telekterület', () => {
+    expect(findLandAreaSqm('telekterület: 350 m²')).toBe(350)
+  })
+  it('finds Lithuanian sklypo plotas', () => {
+    expect(findLandAreaSqm('sklypo plotas 2 ha')).toBe(20000)
+  })
+  it('does not read multilingual living label as land', () => {
+    expect(findLandAreaSqm('alapterület: 92 m²')).toBeNull()
+  })
+})
+
 describe('findUnits', () => {
   it('finds Wohneinheiten', () => {
     expect(findUnits('3 Wohneinheiten')).toBe(3)

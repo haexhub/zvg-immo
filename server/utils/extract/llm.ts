@@ -37,8 +37,9 @@ const MAX_PDF_CHARS = 12_000
 
 const SYSTEM_PROMPT =
   'Du extrahierst strukturierte Eckdaten aus Anzeigen für Immobilien-' +
-  'Zwangsversteigerungen (Texte können deutsch, spanisch, französisch oder ' +
-  'niederländisch sein). Gib die Objektart als eine der erlaubten Kategorien ' +
+  'Zwangsversteigerungen (Texte können deutsch, spanisch, französisch, ' +
+  'niederländisch, tschechisch, polnisch, bosnisch, ungarisch oder litauisch sein). ' +
+  'Gib die Objektart als eine der erlaubten Kategorien ' +
   'zurück und Flächen in Quadratmetern (Hektar in m² umrechnen: 1 ha = 10000 m²). ' +
   'Wohnfläche und Grundstücksfläche strikt getrennt halten. Wenn ein Wert nicht ' +
   'eindeutig im Text steht, gib null zurück — niemals raten.'

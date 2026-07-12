@@ -44,9 +44,31 @@ function findLabeledArea(text: string, labelAlternation: string): number | null 
   return m && m[1] ? parseAreaValue(m[1]) : null
 }
 
-const LIVING_LABELS = 'wohnfläche|wohnnutzfläche|wohn-?/?nutzfläche|wohnfl\\.?|wfl\\.?'
+const LIVING_LABELS =
+  'wohnfläche|wohnnutzfläche|wohn-?/?nutzfläche|wohnfl\\.?|wfl\\.?' +
+  // Czech
+  '|podlahová plocha|užitná plocha|obytná plocha|plocha bytu' +
+  // Polish
+  '|powierzchnia użytkowa|powierzchnia mieszkalna' +
+  // Bosnian/Croatian/Serbian
+  '|stambena površina|korisna površina|površina stana' +
+  // Hungarian
+  '|lakóterület|alapterület|hasznos alapterület' +
+  // Lithuanian
+  '|gyvenamasis plotas|naudingasis plotas'
+
 const LAND_LABELS =
-  'grundstücksgröße|grundstücksfläche|grundstück|bodenfläche|grundfläche|flurstück'
+  'grundstücksgröße|grundstücksfläche|grundstück|bodenfläche|grundfläche|flurstück' +
+  // Czech
+  '|výměra pozemku|plocha pozemku|výměra' +
+  // Polish
+  '|powierzchnia działki|powierzchnia gruntu|działka' +
+  // Bosnian/Croatian/Serbian
+  '|površina parcele|površina zemljišta' +
+  // Hungarian
+  '|telekterület|telek nagysága' +
+  // Lithuanian
+  '|sklypo plotas|žemės plotas'
 
 export function findLivingAreaSqm(text: string): number | null {
   return findLabeledArea(text, LIVING_LABELS)
