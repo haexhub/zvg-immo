@@ -2,25 +2,17 @@ import type { CrawlResult } from '~/types/auction'
 import { crawlAll, crawlSingle } from '../crawlers/registry'
 import { cacheKey, readVerkehrswertCache } from '../utils/verkehrswert-cache'
 import { applyExtractionToAuctions, readExtractionCache } from '../utils/extraction-cache'
+import { readListCache, readMergedListCache, writeListCache } from '../utils/list-cache'
 
-// Caching lives here (defineCachedFunction) instead of an SWR route rule:
-// Nitro's route-rule cache stores the handler response regardless of any
-// cache-control header the handler sets, so the graceful empty result below
-// used to get pinned for the full SWR window. cachedFunction only persists
-// successful results — a rate-limited crawl throws, is caught below, and the
-// very next request retries the upstream.
+// Live-crawl fallback — only used on cold cache (startup before first refresh
+// completes) or for immo=false requests which aren't cached. Short in-memory
+// SWR prevents a thundering herd when the disk cache is not yet warm.
 const cachedCrawl = defineCachedFunction(
   async (country: string, region: string, immobilienOnly: boolean): Promise<CrawlResult> => {
     if (country === 'all') {
-      // All countries, all regions. Detail enrichment off — a country-wide
-      // crawl across every platform would otherwise issue thousands of
-      // detail fetches and time out behind Traefik. Missing Verkehrswerte
-      // (currently only AT) are filled from the disk cache populated by the
-      // geocode task, see overlayCachedVerkehrswert below.
       return crawlAll({ immobilienOnly, enrichDetails: false })
     }
     if (region === 'all') {
-      // One country, all its regions. Same reasoning as above.
       return crawlAll({ immobilienOnly, country, enrichDetails: false })
     }
     return crawlSingle({ country, region, immobilienOnly })
@@ -40,10 +32,36 @@ export default defineEventHandler(async (event): Promise<CrawlResult> => {
   const region = typeof query.region === 'string' ? query.region.toLowerCase() : 'all'
   const immobilienOnly = query.immo !== '0'
   try {
-    const result = await cachedCrawl(country, region, immobilienOnly)
-    // The overlays mutate the cached object; that's safe (they only fill
-    // nulls, synchronously) and wanted — newly cached Verkehrswerte and
-    // extractions show up without waiting for the crawl cache to expire.
+    let result: CrawlResult | null = null
+
+    // Serve immo=true requests from the persistent disk cache written by the
+    // refresh task. immo=false falls through to the live-crawl path below.
+    if (immobilienOnly) {
+      if (country === 'all') {
+        result = await readMergedListCache()
+      } else if (region === 'all') {
+        result = await readMergedListCache(country)
+      } else {
+        result = await readListCache(country, region)
+      }
+    }
+
+    if (!result) {
+      // Cold cache (startup), unknown region, or immo=false: live crawl.
+      result = await cachedCrawl(country, region, immobilienOnly)
+      // Warm the disk cache for individual regions so the next immo=true
+      // request is served instantly without waiting for the refresh task.
+      if (immobilienOnly && country !== 'all' && region !== 'all') {
+        writeListCache(country, region, result).catch((err: unknown) => {
+          console.warn(
+            `[api/auctions] list-cache write ${country}/${region}: ${(err as Error).message}`,
+          )
+        })
+      }
+    }
+
+    // The overlays mutate the result in-place (fill nulls only) — safe for
+    // both the cached and live-crawl paths.
     await overlayCachedVerkehrswert(result)
     await overlayExtraction(result)
     return result
