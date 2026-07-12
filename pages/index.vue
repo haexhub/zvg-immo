@@ -178,9 +178,11 @@ onMounted(() => {
   view.value = route.query.view === 'list' ? 'list' : 'map'
 })
 
-onBeforeUnmount(() => {
-  stopGeoPoll()
+onDeactivated(() => stopGeoPoll())
+onActivated(() => {
+  if (geocodingInProgress.value && view.value === 'map') startGeoPoll()
 })
+onBeforeUnmount(() => stopGeoPoll())
 
 const search = ref(queryStr('q'))
 // Every keystroke re-runs filteredGeo and rebuilds thousands of map markers —

@@ -1,3 +1,3 @@
 <template>
-  <NuxtPage />
+  <NuxtPage :keepalive="true" />
 </template>
