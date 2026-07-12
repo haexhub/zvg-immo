@@ -37,16 +37,27 @@ export default defineEventHandler(async (event): Promise<GeoCrawlResult> => {
     query: { country, region, immo: immobilienOnly ? '1' : '0' },
   })
 
-  const enriched: GeoAuction[] = []
+  // Cache reads dominate this loop (thousands of auctions on the "all
+  // countries" view), so resolve them concurrently instead of one at a time.
+  // Actual Nominatim/LocationIQ requests stay safely throttled regardless of
+  // concurrency here — geocodeOnce serialises them through a shared queue.
+  const enriched: GeoAuction[] = new Array(result.auctions.length)
   let unresolvableCount = 0
-  for (const a of result.auctions) {
-    const point = await geocodeAddress(a.adresse, a.country, { fetchMissing })
-    enriched.push({ ...a, lat: point?.lat ?? null, lng: point?.lng ?? null })
-    if (point == null) {
-      const status = await geocodeStatus(a.adresse, a.country)
-      if (status === 'unresolvable') unresolvableCount++
+  const CONCURRENCY = 16
+  let cursor = 0
+  async function worker(): Promise<void> {
+    while (cursor < result.auctions.length) {
+      const idx = cursor++
+      const a = result.auctions[idx]!
+      const point = await geocodeAddress(a.adresse, a.country, { fetchMissing })
+      enriched[idx] = { ...a, lat: point?.lat ?? null, lng: point?.lng ?? null }
+      if (point == null) {
+        const status = await geocodeStatus(a.adresse, a.country)
+        if (status === 'unresolvable') unresolvableCount++
+      }
     }
   }
+  await Promise.all(Array.from({ length: CONCURRENCY }, worker))
 
   return {
     ...result,

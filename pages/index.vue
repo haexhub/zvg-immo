@@ -474,15 +474,20 @@ function attachmentLabel(att: { kind: string; label: string }): string {
       Fehler beim Laden: {{ error.statusMessage || error.message }}
     </p>
 
-    <section v-if="view === 'map'" class="flex-1 min-h-0 flex flex-col">
-      <p v-if="geoPending && !geoData" class="py-12 text-center text-muted-foreground">
-        Lade geokodierte Daten …
-      </p>
-      <p v-else-if="geoError" class="py-12 text-center text-destructive">
+    <section v-if="view === 'map'" class="relative flex-1 min-h-0 flex flex-col">
+      <p v-if="geoError" class="py-12 text-center text-destructive">
         Fehler beim Geokodieren: {{ geoError.statusMessage || geoError.message }}
       </p>
-      <template v-else-if="geoData">
+      <template v-else>
+        <!-- Mount immediately so tiles render right away; markers stream in
+             as geoData arrives instead of gating the whole map behind it. -->
         <AuctionMap :auctions="filteredGeo" :fit-key="`${selectedCountry}:${selectedRegion}`" />
+        <p
+          v-if="geoPending && !geoData"
+          class="absolute top-3 left-1/2 -translate-x-1/2 rounded-md border bg-card px-3 py-1 text-xs text-muted-foreground shadow-sm"
+        >
+          Lade Standorte …
+        </p>
       </template>
     </section>
 
