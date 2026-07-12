@@ -23,8 +23,8 @@ function parseBamNum(raw: string): number | null {
 
 /** Find a BAM price in a text block, return { eur, text } or null */
 export function parseBamPrice(text: string): { eur: number; text: string } | null {
-  // Prefer an amount that follows a price/value label
-  const labeled = text.match(/(?:cijena|vrijednost)[^KM\n]{0,80}([\d.,]+)\s*KM/i)
+  // Prefer an amount that follows a price/value label (lazy gap so k/m in words don't block match)
+  const labeled = text.match(/(?:cijena|vrijednost)[^\n]{0,80}?([\d.,]+)\s*KM/i)
   let bam: number | null = labeled?.[1] ? parseBamNum(labeled[1]) : null
 
   // Fall back to the first KM amount that is ≥ 1000
@@ -45,7 +45,7 @@ export function parseBamPrice(text: string): { eur: number; text: string } | nul
 /** Try to find an address/location hint in body text */
 export function extractLocation(text: string): string | null {
   // Cadastral municipality: "KO Sarajevo-Centar", "KO Banja Luka"
-  const ko = text.match(/\bKO\s+([A-ZČĆŠŽĐ][a-zA-ZčćšžđČĆŠŽĐ\s\-]{1,30})/u)
+  const ko = text.match(/\bKO\s+([A-ZČĆŠŽĐ][a-zA-ZčćšžđČĆŠŽĐ \-]{1,30})/u)
   if (ko) return ko[1]!.replace(/\s+/g, ' ').trim() + ', Bosnien-Herzegowina'
 
   // Street address: "ul. Ferhadija 12" / "Ulica Maršala Tita"
@@ -53,7 +53,7 @@ export function extractLocation(text: string): string | null {
   if (ul) return ul[1]!.replace(/\s+/g, ' ').trim() + ', Bosnien-Herzegowina'
 
   // Municipality: "općina/opština [Name]"
-  const op = text.match(/op[cć]in[ae]\s+([A-ZČĆŠŽĐ][a-zA-ZčćšžđČĆŠŽĐ\s]{2,30})/iu)
+  const op = text.match(/op[cć]in[ae]\s+([A-ZČĆŠŽĐ][a-zA-ZčćšžđČĆŠŽĐ ]{2,30})/iu)
   if (op) return op[1]!.replace(/\s+/g, ' ').trim() + ', Bosnien-Herzegowina'
 
   return null
@@ -64,11 +64,11 @@ export function stripHtml(html: string): string {
   return html
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<\/p>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
+    .replace(/<[^>]+>/g, '')
     .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
     .replace(/[ \t]+/g, ' ')
     .replace(/\n +/g, '\n')
     .replace(/\n{3,}/g, '\n\n')

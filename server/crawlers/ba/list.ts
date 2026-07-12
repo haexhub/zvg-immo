@@ -41,8 +41,7 @@ async function apiFetch<T>(path: string): Promise<T> {
 function mapItem(item: ListItem, detail: DetailResponse | null, platformId: string): Auction {
   // Strip "Zaključak o prodaji nekretnina " / "Zaključak o prodaji " prefix to get case number
   const aktenzeichen = (detail?.naslov ?? item.naslov)
-    .replace(/^Zaklju[cč]ak\s+o\s+prodaji\s+nekretnin[ae]\s*/i, '')
-    .replace(/^Zaklju[cč]ak\s+o\s+prodaji\s*/i, '')
+    .replace(/^Zaklju[cč]ak\s+o\s+prodaji(?:\s+nekretnin[ae])?\s*/i, '')
     .trim() || String(item.id)
 
   const bodyText = detail?.sadrzaj ? stripHtml(detail.sadrzaj) : null
