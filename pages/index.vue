@@ -304,6 +304,20 @@ const filtered = computed<Auction[]>(() => {
   return applyFilters(data.value.auctions)
 })
 
+// The list view used to render every filtered auction as a full card in one
+// go — with the "all countries" default that's ~14.7k cards (~45MB of SSR
+// HTML) before the client even hydrates and switches to the map. Page it
+// instead: render a bounded slice and grow it on demand.
+const LIST_PAGE_SIZE = 30
+const visibleCount = ref(LIST_PAGE_SIZE)
+watch(filtered, () => {
+  visibleCount.value = LIST_PAGE_SIZE
+})
+const visibleAuctions = computed<Auction[]>(() => filtered.value.slice(0, visibleCount.value))
+function loadMore(): void {
+  visibleCount.value += LIST_PAGE_SIZE
+}
+
 const filteredGeo = computed<GeoAuction[]>(() => {
   if (!geoData.value) return []
   return applyFilters<GeoAuction>(geoData.value.auctions).filter((a) => a.lat != null && a.lng != null)
@@ -695,7 +709,7 @@ function attachmentLabel(att: { kind: string; label: string }): string {
     </p>
 
     <ul v-if="filtered.length" class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-      <li v-for="a in filtered" :key="`${a.platform}:${a.zvgId}`">
+      <li v-for="a in visibleAuctions" :key="`${a.platform}:${a.zvgId}`">
         <article
           class="h-full flex flex-col rounded-xl border bg-card text-card-foreground shadow-sm overflow-hidden"
           :class="{ 'opacity-60': a.aufgehoben }"
@@ -767,6 +781,17 @@ function attachmentLabel(att: { kind: string; label: string }): string {
         </article>
       </li>
     </ul>
+
+    <div v-if="visibleCount < filtered.length" class="flex flex-col items-center gap-2 pt-2 pb-4">
+      <p class="text-xs text-muted-foreground">{{ visibleAuctions.length }} von {{ filtered.length }} angezeigt</p>
+      <button
+        type="button"
+        class="h-9 rounded-md border bg-card px-4 text-sm shadow-xs hover:border-primary hover:text-primary transition-colors"
+        @click="loadMore"
+      >
+        Mehr laden
+      </button>
+    </div>
     </section>
   </main>
 </template>
