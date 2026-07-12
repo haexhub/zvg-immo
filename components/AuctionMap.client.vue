@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import 'leaflet/dist/leaflet.css'
+import 'leaflet.markercluster/dist/MarkerCluster.css'
+import 'leaflet.markercluster/dist/MarkerCluster.Default.css'
 import L from 'leaflet'
+import 'leaflet.markercluster'
 import { createApp, type App as VueApp } from 'vue'
 import iconUrl from 'leaflet/dist/images/marker-icon.png'
 import iconRetinaUrl from 'leaflet/dist/images/marker-icon-2x.png'
@@ -32,7 +35,7 @@ const props = defineProps<{
 
 const mapEl = ref<HTMLDivElement | null>(null)
 let map: L.Map | null = null
-let markersLayer: L.LayerGroup | null = null
+let markersLayer: L.MarkerClusterGroup | null = null
 
 const GERMANY_CENTER: [number, number] = [51.1657, 10.4515]
 
@@ -137,7 +140,15 @@ onMounted(() => {
       { position: 'topright' },
     )
     .addTo(map)
-  markersLayer = L.layerGroup().addTo(map)
+  // Cluster markers so only a bounded number of DOM pins render per zoom
+  // level — thousands of individual markers made pan/zoom janky. Clusters
+  // break apart on zoom-in; chunkedLoading keeps the initial add off the
+  // main thread; at close zoom (>=16) individual pins show without clustering.
+  markersLayer = L.markerClusterGroup({
+    chunkedLoading: true,
+    maxClusterRadius: 60,
+    disableClusteringAtZoom: 16,
+  }).addTo(map)
   refreshMarkers()
 })
 
