@@ -114,7 +114,13 @@ function refreshMarkers(): void {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
+  // AuctionMap is a .client.vue component that only ever mounts in response
+  // to a client-side reactive change (view flips to 'map' post-hydration;
+  // there's no SSR placeholder). Being an async-loaded chunk, its template
+  // ref isn't attached yet on the tick onMounted first fires — Leaflet would
+  // silently no-op against a null container. Await a tick so the ref is set.
+  await nextTick()
   if (!mapEl.value) return
   map = L.map(mapEl.value, { scrollWheelZoom: true }).setView(GERMANY_CENTER, 6)
   const streets = L.tileLayer('https://{s}.tile.openstreetmap.de/{z}/{x}/{y}.png', {
