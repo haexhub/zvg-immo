@@ -20,8 +20,8 @@ function parseGermanNumber(raw: string): number | null {
 // A number immediately followed by an area unit. The negative lookahead stops
 // "m2" matching "m2x" and "ha" matching "haus".
 const NUM = '\\d[\\d.]*(?:,\\d+)?'
-const AREA_TOKEN = `${NUM}\\s*(?:m²|m2|qm|ha)`
-const AREA_RE = new RegExp(`(${NUM})\\s*(m²|m2|qm|ha)(?![a-z\\d])`, 'i')
+const AREA_TOKEN = `${NUM}\\s*(?:m²|m2|qm|kvm|ha)`
+const AREA_RE = new RegExp(`(${NUM})\\s*(m²|m2|qm|kvm|ha)(?![a-z\\d])`, 'i')
 
 /** "140 m²" → 140, "2,5 ha" → 25000, "214.000,00 Euro" → null. */
 export function parseAreaValue(text: string): number | null {
@@ -55,7 +55,9 @@ const LIVING_LABELS =
   // Hungarian
   '|lakóterület|alapterület|hasznos alapterület' +
   // Lithuanian
-  '|gyvenamasis plotas|naudingasis plotas'
+  '|gyvenamasis plotas|naudingasis plotas' +
+  // Swedish
+  '|boarea|bostadsyta|boyta|lägenhetsyta|storlek'
 
 const LAND_LABELS =
   'grundstücksgröße|grundstücksfläche|grundstück|bodenfläche|grundfläche|flurstück' +
@@ -68,7 +70,9 @@ const LAND_LABELS =
   // Hungarian
   '|telekterület|telek nagysága' +
   // Lithuanian
-  '|sklypo plotas|žemės plotas'
+  '|sklypo plotas|žemės plotas' +
+  // Swedish
+  '|tomtmark|tomtyta|tomtareal|fastighetens areal|tomtstorlek'
 
 export function findLivingAreaSqm(text: string): number | null {
   return findLabeledArea(text, LIVING_LABELS)
