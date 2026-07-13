@@ -146,6 +146,7 @@ const POSTAL_PATTERNS: Record<string, RegExp> = {
   cz: /(\d{3}\s?\d{2})\s+([^,]+?)(?:,|$)/,
   pl: /(\d{2}-\d{3})\s+([^,]+?)(?:,|$)/,
   hu: /(\d{4})\s+([^,]+?)(?:,|$)/,
+  se: /(\d{3}\s?\d{2})\s+([^,]+?)(?:,|$)/,
 }
 
 // Country names appended to addresses that break Nominatim lookups despite
