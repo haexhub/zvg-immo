@@ -42,13 +42,30 @@ interface ListPage {
   limit: number
 }
 
+const FETCH_RETRIES = 2
+
+/** Retries transient failures (timeout, network error, 5xx) so a single blip
+ *  doesn't zero out a whole "grande région" until the next crawl cycle. 4xx
+ *  responses are not retried — they won't succeed on a second attempt. */
 async function htmlFetch(url: string): Promise<string> {
-  const res = await fetch(url, {
-    headers: { Accept: 'text/html', 'Accept-Language': 'fr,en;q=0.9', 'User-Agent': UA },
-    signal: AbortSignal.timeout(20_000),
-  })
-  if (!res.ok) throw new Error(`licitor.com ${url}: HTTP ${res.status}`)
-  return res.text()
+  for (let attempt = 0; ; attempt++) {
+    let res: Response | undefined
+    try {
+      res = await fetch(url, {
+        headers: { Accept: 'text/html', 'Accept-Language': 'fr,en;q=0.9', 'User-Agent': UA },
+        signal: AbortSignal.timeout(20_000),
+      })
+      if (res.ok) return await res.text()
+    } catch (err) {
+      if (attempt >= FETCH_RETRIES) throw err
+    }
+    if (res && !res.ok) {
+      if (res.status < 500) throw new Error(`licitor.com ${url}: HTTP ${res.status}`)
+      if (attempt >= FETCH_RETRIES) throw new Error(`licitor.com ${url}: HTTP ${res.status}`)
+      await res.arrayBuffer().catch(() => {}) // drain body to avoid socket leak on retried 5xx
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** attempt))
+  }
 }
 
 function parseListPage(html: string): ListPage {

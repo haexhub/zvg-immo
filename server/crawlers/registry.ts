@@ -142,11 +142,6 @@ export async function crawlSingle(
       `Kein Crawler für ${opts.country}/${opts.region} registriert`,
     )
   }
-  if (crawlers.length === 1) {
-    const crawler = crawlers[0]
-    if (!crawler) throw new Error('unreachable')
-    return await crawler.crawl(opts)
-  }
   const settled = await Promise.allSettled(crawlers.map((c) => c.crawl(opts)))
   const results: CrawlResult[] = []
   for (const [i, s] of settled.entries()) {
