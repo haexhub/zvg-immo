@@ -1,6 +1,6 @@
 import { load } from 'cheerio'
 import type { Attachment, Auction } from '~/types/auction'
-import { FR_BASE, FR_LIST_REGIONS, UA, COUNTRY } from './constants'
+import { FR_BASE, FR_LIST_REGIONS, UA, COUNTRY, DISALLOWED_DATA_PATHS } from './constants'
 
 const DETAIL_CONCURRENCY = 4
 const DEFAULT_LIMIT = 5
@@ -88,15 +88,22 @@ function parseListPage(html: string): ListPage {
 async function discoverListItems(): Promise<Map<string, ListItem>> {
   const byHref = new Map<string, ListItem>()
 
+  // Isolate failures per region: a transient error on one "grande région"
+  // (timeout, HTTP 5xx) must not discard the listings already collected from
+  // the others.
   for (const region of FR_LIST_REGIONS) {
     const baseUrl = `${FR_BASE}/ventes-aux-encheres-immobilieres/${region}/prochaines-ventes.html`
-    const firstPage = parseListPage(await htmlFetch(baseUrl))
-    for (const item of firstPage.items) byHref.set(item.href, item)
+    try {
+      const firstPage = parseListPage(await htmlFetch(baseUrl))
+      for (const item of firstPage.items) byHref.set(item.href, item)
 
-    const totalPages = firstPage.total != null ? Math.ceil(firstPage.total / firstPage.limit) : 1
-    for (let page = 2; page <= totalPages; page++) {
-      const page_ = parseListPage(await htmlFetch(`${baseUrl}?p=${page}`))
-      for (const item of page_.items) byHref.set(item.href, item)
+      const totalPages = firstPage.total != null ? Math.ceil(firstPage.total / firstPage.limit) : 1
+      for (let page = 2; page <= totalPages; page++) {
+        const page_ = parseListPage(await htmlFetch(`${baseUrl}?p=${page}`))
+        for (const item of page_.items) byHref.set(item.href, item)
+      }
+    } catch (err) {
+      console.error(`licitor.com: failed to fetch region "${region}"`, err)
     }
   }
 
@@ -161,6 +168,9 @@ function parseDetailPage(html: string, href: string): DetailInfo {
     .get()
     .filter((href): href is string => Boolean(href))
     .map(absoluteUrl)
+    // Enforce the robots.txt boundary: never surface an asset from a
+    // disallowed path, even if a future selector change matches one.
+    .filter((url) => !DISALLOWED_DATA_PATHS.some((p) => url.includes(p)))
 
   return {
     zvgId,
@@ -197,7 +207,10 @@ function mapItem(item: ListItem, detail: DetailInfo | null, platformId: string):
   return {
     platform: platformId,
     country: COUNTRY,
-    region: 'all',
+    // Licitor exposes no sub-regions; the "grande région" split is internal
+    // paging only. Empty string per the Auction.region contract (a code like
+    // 'all' would render as a literal badge in the UI).
+    region: '',
     zvgId,
     // Licitor never publishes the court's own case number (no "RG n°" /
     // "répertoire général" anywhere on listing or detail pages) — the visible
