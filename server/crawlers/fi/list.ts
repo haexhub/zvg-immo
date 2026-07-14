@@ -86,11 +86,6 @@ function stripHtml(html: string): string | null {
   return text.length > 0 ? text : null
 }
 
-function extractKiinteistotunnus(description: string): string {
-  const m = description.match(/Kiinteist[öo]tunnus\s+([\d-]+)/i)
-  return m?.[1] ?? ''
-}
-
 function formatTerminText(iso: string | null | undefined): string | null {
   if (!iso) return null
   const date = new Date(iso)
@@ -145,7 +140,7 @@ function mapDetail(id: string, data: ApiResponse, platformId: string): Auction {
     country: COUNTRY,
     region: 'all',
     zvgId: id,
-    aktenzeichen: description ? extractKiinteistotunnus(description) : '',
+    aktenzeichen: '',
     amtsgericht: seller.displayName ?? 'Ulosottolaitos',
     objekt: entry.categoryName ?? null,
     adresse: entry.location ?? null,

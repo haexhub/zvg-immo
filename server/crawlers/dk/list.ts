@@ -49,7 +49,10 @@ async function fetchListItems(): Promise<ListItem[]> {
   })
   if (!res.ok) throw new Error(`tvangsauktioner.dk ajax: HTTP ${res.status}`)
   const data = (await res.json()) as ListResponse
-  return data.data?.response ?? []
+  if (!data.success || !Array.isArray(data.data?.response)) {
+    throw new Error('tvangsauktioner.dk ajax returned an unsuccessful response')
+  }
+  return data.data.response
 }
 
 /** DKK amounts are formatted like "Kr. 1.030.000" / "210.000 Kr." — dot as
@@ -116,7 +119,11 @@ function extractPhotos(html: string): string[] {
 }
 
 async function fetchDetail(url: string): Promise<DetailInfo> {
-  const res = await fetch(url, {
+  const parsedUrl = new URL(url, DK_BASE)
+  if (parsedUrl.origin !== new URL(DK_BASE).origin) {
+    throw new Error(`Unexpected detail URL origin: ${parsedUrl.origin}`)
+  }
+  const res = await fetch(parsedUrl, {
     headers: { Accept: 'text/html', 'Accept-Language': 'da,en;q=0.9', 'User-Agent': UA },
     signal: AbortSignal.timeout(20_000),
   })
@@ -218,13 +225,14 @@ export async function fetchAllListings(
   }
   await Promise.all(Array.from({ length: DETAIL_CONCURRENCY }, worker))
 
-  const auctions = items
-    .map((item, i) => {
-      const detail = details[i]
-      if (!detail) return null
-      return mapItem(item, detail, platformId, rates)
-    })
-    .filter((a): a is Auction => a !== null)
+  const emptyDetail: DetailInfo = {
+    amtsgericht: null,
+    aktenzeichen: null,
+    beschreibung: null,
+    pdfUrl: null,
+    photos: [],
+  }
+  const auctions = items.map((item, i) => mapItem(item, details[i] ?? emptyDetail, platformId, rates))
 
   return { auctions, total: auctions.length }
 }
