@@ -14,6 +14,7 @@ import { pravosudijeCrawler } from './ba'
 import { kronofogdenCrawler } from './se'
 import { huutokaupatCrawler } from './fi'
 import { tvangsauktionerCrawler } from './dk'
+import { licitorCrawler } from './fr'
 
 /**
  * All registered platform crawlers. Adding a new platform is purely additive:
@@ -38,6 +39,7 @@ export const platforms: readonly PlatformCrawler[] = [
   kronofogdenCrawler,
   huutokaupatCrawler,
   tvangsauktionerCrawler,
+  licitorCrawler,
 ] as const
 
 export interface RegionEntry extends RegionInfo {
@@ -69,6 +71,7 @@ const COUNTRY_NAMES: Record<string, string> = {
   se: 'Schweden',
   fi: 'Finnland',
   dk: 'Dänemark',
+  fr: 'Frankreich',
 }
 
 export function listRegions(): RegionEntry[] {
