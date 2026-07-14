@@ -72,7 +72,7 @@ function clean(text: string | null | undefined): string | null {
   return t && t.length > 0 ? t : null
 }
 
-function mapItem(item: SyslumennAuction, platformId: string, index: number): Auction {
+function mapItem(item: SyslumennAuction, platformId: string): Auction {
   const { iso: terminIso, label: terminText } = parseAuctionDateTime(
     item.auctionDate,
     item.auctionTime,
@@ -87,15 +87,27 @@ function mapItem(item: SyslumennAuction, platformId: string, index: number): Auc
     .filter(Boolean)
     .join('\n') || null
 
+  // lotId is the commissioner's internal case id. When it is missing, derive a
+  // deterministic key from stable lot attributes — the feed is a rolling
+  // window, so a positional index would shift between crawls and break the
+  // platform:zvgId snapshot merge.
+  const lotId = clean(item.lotId)
+  const zvgId =
+    lotId ??
+    ['is', clean(item.office), clean(item.lotName), clean(item.auctionDate)]
+      .filter(Boolean)
+      .join(':')
+
   return {
     platform: platformId,
     country: COUNTRY,
-    region: 'all',
-    zvgId: clean(item.lotId) ?? `is-${index}`,
+    // The feed exposes no sub-regions — empty string per the Auction.region
+    // contract ('all' is a code, not a name).
+    region: '',
+    zvgId,
     // Iceland's forced-sale feed exposes no court case number ("mál nr.") —
-    // lotId is the commissioner's internal case id, so it doubles as zvgId
-    // above; there is no separate Aktenzeichen.
-    aktenzeichen: '',
+    // the commissioner's case id is the closest analogue to an Aktenzeichen.
+    aktenzeichen: lotId ?? '',
     amtsgericht: clean(item.office) ?? 'Sýslumenn',
     objekt: clean(item.auctionType),
     adresse: clean(item.lotName),
@@ -127,6 +139,6 @@ export async function fetchAllListings(
       a.lotType === REAL_ESTATE_LOT_TYPE &&
       !(a.auctionType ?? '').toLowerCase().includes(COMPLETED_STAGE_MARKER),
   )
-  const auctions = relevant.map((item, i) => mapItem(item, platformId, i))
+  const auctions = relevant.map((item) => mapItem(item, platformId))
   return { auctions, total: auctions.length }
 }

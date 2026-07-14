@@ -73,12 +73,17 @@ function parseLegalBlocks(pageText: string): Map<string, LegalInfo> {
   const byFileNo = new Map<string, LegalInfo>()
   const chunks = pageText.split(/Roll No\.?/i).slice(1)
   for (const chunk of chunks) {
-    const fileNo = clean(chunk.match(/File No\.?\s*([\w-]+)/i)?.[1])
+    // Most pages write "File No. 24-06"; some municipalities instead embed a
+    // prefixed variant like "FILE YKRH26-002" in the legal description.
+    const fileNo = clean(
+      chunk.match(/File No\.?\s*([\w-]+)/i)?.[1] ??
+        chunk.match(/\bFILE\s+([A-Z]{2,}[\w-]*\d[\w-]*)/)?.[1],
+    )
     if (!fileNo) continue
     const rollNo = clean(chunk.match(/^\s*([\d ]{10,40})/)?.[1])
     const pin = clean(chunk.match(/PIN\s*([\d-]+)/i)?.[1])
     const assessedCad = parseCadAmount(
-      chunk.match(/assessed value of the land[^$]*\$([\d,]+)/i)?.[1],
+      chunk.match(/assessed value of the land[^$]*\$\s*([\d,]+)/i)?.[1],
     )
     // Legal description: between the PIN and the trailing "File No." marker.
     const legal = clean(
@@ -89,6 +94,16 @@ function parseLegalBlocks(pageText: string): Map<string, LegalInfo> {
     byFileNo.set(fileNo, { rollNo, pin, legal, assessedCad })
   }
   return byFileNo
+}
+
+/** The legal block's file number may carry a municipality prefix
+ *  ("YKRH26-002") that the summary card omits ("26-002") — fall back to a
+ *  suffix match when it is unambiguous. */
+function findLegal(byFileNo: Map<string, LegalInfo>, fileNo: string): LegalInfo | null {
+  const exact = byFileNo.get(fileNo)
+  if (exact) return exact
+  const candidates = [...byFileNo.entries()].filter(([key]) => key.endsWith(fileNo))
+  return candidates.length === 1 ? candidates[0]![1] : null
 }
 
 interface Property {
@@ -150,10 +165,23 @@ function parseSalePage(html: string, pageUrl: string): { properties: Property[];
     })
     // "File Number: Fort Erie 2026-07-15 24-06" -> the trailing token is the
     // municipality's tax-sale file number, the join key to the legal block.
-    const fileNo = clean((fileNoRaw ?? '').match(/([\w]+-[\w]+)\s*$/)?.[1])
+    // Capture all dash-joined segments so keys like "24-06-01" still match
+    // the legal block's File No.
+    const fileNo = clean((fileNoRaw ?? '').match(/([\w]+(?:-[\w]+)+)\s*$/)?.[1])
 
-    const detailHref = $s.find('a:contains("more details")').attr('href')
-    const detailUrl = detailHref ? clean(detailHref) : null
+    const detailHref = $s
+      .find('a')
+      .filter((_k, a) => /more details/i.test($(a).text()))
+      .first()
+      .attr('href')
+    let detailUrl: string | null = null
+    if (detailHref) {
+      try {
+        detailUrl = new URL(detailHref, pageUrl).href
+      } catch {
+        detailUrl = null
+      }
+    }
 
     const captionText = $s.find('.caption').text()
     const fotoCount = Number(captionText.match(/(\d+)\s+aerial photos?/i)?.[1] ?? 0)
@@ -168,7 +196,7 @@ function parseSalePage(html: string, pageUrl: string): { properties: Property[];
       detailUrl,
       fotoCount: Number.isFinite(fotoCount) ? fotoCount : 0,
       thumbnailUrl,
-      legal: fileNo ? legalByFileNo.get(fileNo) ?? null : null,
+      legal: fileNo ? findLegal(legalByFileNo, fileNo) : null,
     })
   })
 
@@ -260,8 +288,9 @@ export async function fetchAllListings(
       if (!url) continue
       try {
         html[i] = await htmlFetch(url)
-      } catch {
+      } catch (err) {
         html[i] = null
+        console.warn(`ontariotaxsales.ca: fetch failed for ${url}`, err)
       }
     }
   }
@@ -274,7 +303,8 @@ export async function fetchAllListings(
     let parsedPage: ReturnType<typeof parseSalePage>
     try {
       parsedPage = parseSalePage(page, url)
-    } catch {
+    } catch (err) {
+      console.warn(`ontariotaxsales.ca: parse failed for ${url}`, err)
       continue
     }
     const municipality = municipalityFromUrl(url)
