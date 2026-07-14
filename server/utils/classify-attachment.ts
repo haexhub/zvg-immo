@@ -1,9 +1,9 @@
 import type { AttachmentKind } from '~/types/auction'
 
 const RULES: ReadonlyArray<[RegExp, AttachmentKind]> = [
-  [/edikt|bekanntmachung|verlautbarung|tac|cahier|terms|conditions|verkoopsvoorwaarden/i, 'bekanntmachung'],
+  [/edikt|bekanntmachung|verlautbarung|tac|cahier|terms|conditions|verkoopsvoorwaarden|huutokauppaehdot|auktionsvillkor|salgsopstilling/i, 'bekanntmachung'],
   [/gutacht|verkehrswert|expert|expertise|estim|sch[aä]tz/i, 'gutachten'],
-  [/expos[ée]|brochure|prospect/i, 'exposee'],
+  [/expos[ée]|brochure|prospect|myyntiesite/i, 'exposee'],
   [/foto|bild|photo|picture|image/i, 'foto'],
 ]
 
