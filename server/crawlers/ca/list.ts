@@ -1,0 +1,286 @@
+import { load } from 'cheerio'
+import type { Auction } from '~/types/auction'
+import { getRates, toEur } from '~/server/utils/exchange-rate'
+import { CA_BASE, INDEX_URL, UA, COUNTRY } from './constants'
+
+const DETAIL_CONCURRENCY = 4
+
+function clean(text: string | null | undefined): string | null {
+  const t = text?.replace(/\s+/g, ' ').trim()
+  return t && t.length > 0 ? t : null
+}
+
+/** CAD amounts are formatted like "$42,092.73" / "$143,000" — comma thousands
+ *  separator, optional cents. */
+function parseCadAmount(text: string | null | undefined): number | null {
+  if (!text) return null
+  const m = text.match(/\$?\s*([\d,]+(?:\.\d+)?)/)
+  if (!m) return null
+  const n = Number(m[1]!.replace(/,/g, ''))
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : null
+}
+
+async function htmlFetch(url: string): Promise<string> {
+  const res = await fetch(url, {
+    headers: { Accept: 'text/html', 'Accept-Language': 'en-CA,en;q=0.9', 'User-Agent': UA },
+    redirect: 'follow',
+    // ontariotaxsales.ca serves large Divi pages slowly (6–16 s each observed),
+    // so allow a generous per-request budget.
+    signal: AbortSignal.timeout(30_000),
+  })
+  if (!res.ok) throw new Error(`ontariotaxsales.ca ${url}: HTTP ${res.status}`)
+  return res.text()
+}
+
+/** Collects the dated municipality sale-page URLs from the upcoming-sales index.
+ *  Slugs look like /tax-sales/fort-erie-2026-07-15/. */
+async function discoverSalePages(): Promise<string[]> {
+  const $ = load(await htmlFetch(INDEX_URL))
+  const base = new URL(CA_BASE).origin
+  const urls = new Set<string>()
+  $('a[href*="/tax-sales/"]').each((_i, el) => {
+    const href = $(el).attr('href')
+    if (!href) return
+    const abs = href.startsWith('http') ? href : `${CA_BASE}${href.startsWith('/') ? '' : '/'}${href}`
+    let u: URL
+    try {
+      u = new URL(abs)
+    } catch {
+      return
+    }
+    if (u.origin !== base) return
+    if (/\/tax-sales\/[a-z0-9-]+-\d{4}-\d{2}-\d{2}\/?$/i.test(u.pathname)) {
+      urls.add(`${u.origin}${u.pathname.endsWith('/') ? u.pathname : `${u.pathname}/`}`)
+    }
+  })
+  return [...urls]
+}
+
+interface LegalInfo {
+  rollNo: string | null
+  pin: string | null
+  legal: string | null
+  assessedCad: number | null
+}
+
+/** The sale page repeats, once per property, a legal block of the form
+ *  "Roll No. <n>; <address>; PIN <pin> (LT); <legal desc>; <municipality>;
+ *  File No. <fileNo>" immediately followed by "…the assessed value of the land
+ *  … is $<amount>". Splitting the page text on "Roll No." yields one chunk per
+ *  property; each is keyed by its File No. so it can be joined to the matching
+ *  property-summary card. */
+function parseLegalBlocks(pageText: string): Map<string, LegalInfo> {
+  const byFileNo = new Map<string, LegalInfo>()
+  const chunks = pageText.split(/Roll No\.?/i).slice(1)
+  for (const chunk of chunks) {
+    const fileNo = clean(chunk.match(/File No\.?\s*([\w-]+)/i)?.[1])
+    if (!fileNo) continue
+    const rollNo = clean(chunk.match(/^\s*([\d ]{10,40})/)?.[1])
+    const pin = clean(chunk.match(/PIN\s*([\d-]+)/i)?.[1])
+    const assessedCad = parseCadAmount(
+      chunk.match(/assessed value of the land[^$]*\$([\d,]+)/i)?.[1],
+    )
+    // Legal description: between the PIN and the trailing "File No." marker.
+    const legal = clean(
+      chunk
+        .match(/PIN\s*[\d-]+\s*(?:\([^)]*\))?;([\s\S]*?);\s*[^;]*;\s*File No\.?/i)?.[1]
+        ?.replace(/;/g, '; '),
+    )
+    byFileNo.set(fileNo, { rollNo, pin, legal, assessedCad })
+  }
+  return byFileNo
+}
+
+interface Property {
+  address: string | null
+  minTenderCad: number | null
+  fileNo: string | null
+  detailUrl: string | null
+  fotoCount: number
+  thumbnailUrl: string | null
+  legal: LegalInfo | null
+}
+
+/** Sale date comes from the slug (…-YYYY-MM-DD). Tenders on a given page close
+ *  at a single stated time ("…will be received until 3:00 p.m."). */
+function parseSaleDateTime(
+  slugDate: string,
+  closeText: string | null,
+): { iso: string | null; label: string | null } {
+  const dm = slugDate.match(/(\d{4})-(\d{2})-(\d{2})/)
+  if (!dm) return { iso: null, label: null }
+  const [, y, mo, d] = dm
+  let hh = '00'
+  let mm = '00'
+  const tm = closeText?.match(/(\d{1,2}):(\d{2})\s*([ap])\.?m/i)
+  if (tm) {
+    let h = Number(tm[1])
+    const meridiem = tm[3]!.toLowerCase()
+    if (meridiem === 'p' && h !== 12) h += 12
+    if (meridiem === 'a' && h === 12) h = 0
+    hh = String(h).padStart(2, '0')
+    mm = tm[2]!
+  }
+  return {
+    iso: `${y}-${mo}-${d}T${hh}:${mm}:00`,
+    label: `${d}.${mo}.${y}${tm ? `, ${hh}:${mm} Uhr` : ''}`,
+  }
+}
+
+function parseSalePage(html: string, pageUrl: string): { properties: Property[]; dateTime: { iso: string | null; label: string | null } } {
+  const $ = load(html)
+  const pageText = $('body').text().replace(/\s+/g, ' ')
+  const legalByFileNo = parseLegalBlocks(pageText)
+  const slugDate = pageUrl.match(/(\d{4}-\d{2}-\d{2})/)?.[1] ?? ''
+  const closeText = pageText.match(/received until[^.]*?\d{1,2}:\d{2}\s*[ap]\.?m/i)?.[0] ?? null
+  const dateTime = parseSaleDateTime(slugDate, closeText)
+
+  const properties: Property[] = []
+  $('.property-summary').each((_i, section) => {
+    const $s = $(section)
+    const address = clean($s.find('.p-header .et_pb_text_inner').first().text())
+    if (!address) return
+
+    let minTenderCad: number | null = null
+    let fileNoRaw: string | null = null
+    $s.find('.et_pb_text_inner').each((_j, t) => {
+      const txt = clean($(t).text()) ?? ''
+      if (/Minimum Tender Amount/i.test(txt)) minTenderCad = parseCadAmount(txt)
+      if (/File Number/i.test(txt)) fileNoRaw = txt
+    })
+    // "File Number: Fort Erie 2026-07-15 24-06" -> the trailing token is the
+    // municipality's tax-sale file number, the join key to the legal block.
+    const fileNo = clean((fileNoRaw ?? '').match(/([\w]+-[\w]+)\s*$/)?.[1])
+
+    const detailHref = $s.find('a:contains("more details")').attr('href')
+    const detailUrl = detailHref ? clean(detailHref) : null
+
+    const captionText = $s.find('.caption').text()
+    const fotoCount = Number(captionText.match(/(\d+)\s+aerial photos?/i)?.[1] ?? 0)
+
+    const thumbnailUrl =
+      clean($s.find('img[src*="/wp-content/uploads/"]').first().attr('src')) ?? null
+
+    properties.push({
+      address,
+      minTenderCad,
+      fileNo,
+      detailUrl,
+      fotoCount: Number.isFinite(fotoCount) ? fotoCount : 0,
+      thumbnailUrl,
+      legal: fileNo ? legalByFileNo.get(fileNo) ?? null : null,
+    })
+  })
+
+  return { properties, dateTime }
+}
+
+function municipalityFromUrl(pageUrl: string): string {
+  const slug = pageUrl.match(/\/tax-sales\/([a-z0-9-]+)-\d{4}-\d{2}-\d{2}/i)?.[1] ?? ''
+  return (
+    slug
+      .split('-')
+      .map((w) => (w ? w[0]!.toUpperCase() + w.slice(1) : w))
+      .join(' ') || 'Ontario'
+  )
+}
+
+function mapProperty(
+  prop: Property,
+  pageUrl: string,
+  municipality: string,
+  dateTime: { iso: string | null; label: string | null },
+  platformId: string,
+  rates: Record<string, number>,
+): Auction {
+  const assessedCad = prop.legal?.assessedCad ?? null
+  const verkehrswertEur = assessedCad != null ? toEur(assessedCad, 'CAD', rates) : null
+
+  const zvgId =
+    clean(prop.detailUrl?.match(/\/property\/([a-z0-9-]+)\/?/i)?.[1]) ??
+    (prop.fileNo ? `${municipality}-${prop.fileNo}` : `${municipality}-${prop.address}`)
+
+  const beschreibung = [
+    prop.minTenderCad != null
+      ? `Mindestgebot: ${prop.minTenderCad.toLocaleString('de-DE')} CAD`
+      : null,
+    prop.legal?.rollNo ? `Roll No.: ${prop.legal.rollNo}` : null,
+    prop.legal?.pin ? `PIN: ${prop.legal.pin}` : null,
+    prop.legal?.legal,
+  ]
+    .filter(Boolean)
+    .join('\n') || null
+
+  return {
+    platform: platformId,
+    country: COUNTRY,
+    region: 'Ontario',
+    zvgId,
+    aktenzeichen: prop.fileNo ?? '',
+    // Municipal tax sales have no court — the selling authority is the
+    // municipality itself.
+    amtsgericht: municipality,
+    objekt: null,
+    adresse: prop.address,
+    // The published "assessed value" is the closest analogue to a Verkehrswert;
+    // the minimum tender (tax arrears owed) is kept in beschreibung.
+    verkehrswertEur,
+    verkehrswertText: assessedCad != null ? `${assessedCad.toLocaleString('de-DE')} CAD (Assessed Value)` : null,
+    terminIso: dateTime.iso,
+    terminText: dateTime.label,
+    aufgehoben: false,
+    letzteAktualisierungIso: null,
+    pdfUrl: null,
+    detailUrl: prop.detailUrl,
+    pdfUrlUpstream: null,
+    detailUrlUpstream: prop.detailUrl,
+    attachments: [],
+    beschreibung,
+    fotoCount: prop.fotoCount,
+    thumbnailUrl: prop.thumbnailUrl,
+  }
+}
+
+export async function fetchAllListings(
+  platformId: string,
+): Promise<{ auctions: Auction[]; total: number | null }> {
+  const [rates, salePages] = await Promise.all([getRates(), discoverSalePages()])
+  if (salePages.length === 0) return { auctions: [], total: 0 }
+
+  // Fetch first, parse afterwards. The sale pages are large (up to ~650 KB of
+  // Divi markup) and cheerio's synchronous parse would otherwise block the
+  // event loop mid-crawl, delaying the other workers' in-flight fetches enough
+  // to trip their abort timers.
+  const html: (string | null)[] = new Array(salePages.length).fill(null)
+  let cursor = 0
+  async function worker() {
+    while (cursor < salePages.length) {
+      const i = cursor++
+      const url = salePages[i]
+      if (!url) continue
+      try {
+        html[i] = await htmlFetch(url)
+      } catch {
+        html[i] = null
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: DETAIL_CONCURRENCY }, worker))
+
+  const auctions: Auction[] = []
+  for (const [i, url] of salePages.entries()) {
+    const page = html[i]
+    if (!page || !url) continue
+    let parsedPage: ReturnType<typeof parseSalePage>
+    try {
+      parsedPage = parseSalePage(page, url)
+    } catch {
+      continue
+    }
+    const municipality = municipalityFromUrl(url)
+    for (const prop of parsedPage.properties) {
+      auctions.push(mapProperty(prop, url, municipality, parsedPage.dateTime, platformId, rates))
+    }
+  }
+  return { auctions, total: auctions.length }
+}
