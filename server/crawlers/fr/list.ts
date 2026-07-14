@@ -55,13 +55,14 @@ async function htmlFetch(url: string): Promise<string> {
         headers: { Accept: 'text/html', 'Accept-Language': 'fr,en;q=0.9', 'User-Agent': UA },
         signal: AbortSignal.timeout(20_000),
       })
+      if (res.ok) return await res.text()
     } catch (err) {
       if (attempt >= FETCH_RETRIES) throw err
     }
-    if (res) {
-      if (res.ok) return await res.text()
+    if (res && !res.ok) {
       if (res.status < 500) throw new Error(`licitor.com ${url}: HTTP ${res.status}`)
       if (attempt >= FETCH_RETRIES) throw new Error(`licitor.com ${url}: HTTP ${res.status}`)
+      await res.arrayBuffer().catch(() => {}) // drain body to avoid socket leak on retried 5xx
     }
     await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** attempt))
   }
