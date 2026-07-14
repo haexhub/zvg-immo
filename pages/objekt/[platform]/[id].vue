@@ -271,7 +271,7 @@ useHead(() => ({
 
       <section v-if="a.lat != null && a.lng != null" class="mb-8 space-y-2">
         <h2 class="text-base font-semibold">Lage</h2>
-        <AuctionDetailMap :lat="a.lat" :lng="a.lng" :label="a.adresse ?? undefined" />
+        <AuctionDetailMap :lat="a.lat" :lng="a.lng" :label="a.adresse ?? undefined" :country="a.country" />
       </section>
 
       <section class="mb-8 space-y-2">

@@ -4,11 +4,13 @@ import L from 'leaflet'
 import iconUrl from 'leaflet/dist/images/marker-icon.png'
 import iconRetinaUrl from 'leaflet/dist/images/marker-icon-2x.png'
 import shadowUrl from 'leaflet/dist/images/marker-shadow.png'
+import { createCountryImageryLayer } from '~/lib/countryImagery'
 
 const props = defineProps<{
   lat: number
   lng: number
   label?: string
+  country?: string
 }>()
 
 const markerIcon = L.icon({
@@ -24,6 +26,12 @@ const markerIcon = L.icon({
 
 const mapEl = ref<HTMLDivElement | null>(null)
 let map: L.Map | null = null
+
+const runtimeConfig = useRuntimeConfig()
+const countryImageryKeys = {
+  fi: runtimeConfig.public.mmlApiKey,
+  dk: runtimeConfig.public.datafordelerApiKey,
+}
 
 onMounted(async () => {
   // The parent gates this component behind v-if="a.lat != null && a.lng != null".
@@ -43,14 +51,21 @@ onMounted(async () => {
       maxZoom: 19,
     },
   )
+  // A handful of countries publish free, keyless orthophotos sharper than
+  // Esri World Imagery for their own territory — layer that over Esri when
+  // available (not instead of it: the national layer stops at its country's
+  // bounds/minZoom, so Esri has to stay underneath for panning and zooming
+  // beyond them).
+  const countryImagery = createCountryImageryLayer(props.country, countryImageryKeys)
+  const imagery = countryImagery ? L.layerGroup([esriImagery, countryImagery]) : esriImagery
   const deLabels = L.tileLayer('https://{s}.tile.openstreetmap.de/{z}/{x}/{y}.png', {
     maxZoom: 18,
     opacity: 0.55,
   })
-  const satelliteLabeled = L.layerGroup([esriImagery, deLabels])
+  const satelliteLabeled = L.layerGroup([imagery, deLabels])
   L.control
     .layers(
-      { Straße: streets, 'Satellit + Beschriftung': satelliteLabeled, 'Satellit (nur Bild)': esriImagery },
+      { Straße: streets, 'Satellit + Beschriftung': satelliteLabeled, 'Satellit (nur Bild)': imagery },
       undefined,
       { position: 'topright' },
     )

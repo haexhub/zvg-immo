@@ -10,6 +10,7 @@ import iconRetinaUrl from 'leaflet/dist/images/marker-icon-2x.png'
 import shadowUrl from 'leaflet/dist/images/marker-shadow.png'
 import type { GeoAuction } from '~/server/api/auctions-geo.get'
 import LotPopover from '~/components/LotPopover.vue'
+import { createAllCountryImageryLayers } from '~/lib/countryImagery'
 
 // Pass an explicit Icon to every marker. Mutating L.Icon.Default at module
 // top level was tree-shaken by the production build, so the markers fell
@@ -38,6 +39,12 @@ let map: L.Map | null = null
 let markersLayer: L.MarkerClusterGroup | null = null
 
 const GERMANY_CENTER: [number, number] = [51.1657, 10.4515]
+
+const runtimeConfig = useRuntimeConfig()
+const countryImageryKeys = {
+  fi: runtimeConfig.public.mmlApiKey,
+  dk: runtimeConfig.public.datafordelerApiKey,
+}
 
 /** Mount LotPopover.vue into a fresh container that Leaflet will inject into
  *  its popup DOM. We mount lazily on popupopen (see refreshMarkers) so the
@@ -134,14 +141,19 @@ onMounted(async () => {
       maxZoom: 19,
     },
   )
+  // Free, keyless national orthophotos layered on top of Esri — each only
+  // requests tiles inside its own country's bounds, so it's safe to stack
+  // all of them even though this map spans many countries at once.
+  const countryImagery = createAllCountryImageryLayers(countryImageryKeys)
+  const satelliteOnly = L.layerGroup([esriImagery, ...countryImagery])
   const deLabels = L.tileLayer('https://{s}.tile.openstreetmap.de/{z}/{x}/{y}.png', {
     maxZoom: 18,
     opacity: 0.55,
   })
-  const satelliteLabeled = L.layerGroup([esriImagery, deLabels])
+  const satelliteLabeled = L.layerGroup([esriImagery, ...countryImagery, deLabels])
   L.control
     .layers(
-      { Straße: streets, 'Satellit + Beschriftung': satelliteLabeled, 'Satellit (nur Bild)': esriImagery },
+      { Straße: streets, 'Satellit + Beschriftung': satelliteLabeled, 'Satellit (nur Bild)': satelliteOnly },
       undefined,
       { position: 'topright' },
     )
