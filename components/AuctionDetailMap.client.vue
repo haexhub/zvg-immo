@@ -52,8 +52,12 @@ onMounted(async () => {
     },
   )
   // A handful of countries publish free, keyless orthophotos sharper than
-  // Esri World Imagery for their own territory — use that when available.
-  const imagery = createCountryImageryLayer(props.country, countryImageryKeys) ?? esriImagery
+  // Esri World Imagery for their own territory — layer that over Esri when
+  // available (not instead of it: the national layer stops at its country's
+  // bounds/minZoom, so Esri has to stay underneath for panning and zooming
+  // beyond them).
+  const countryImagery = createCountryImageryLayer(props.country, countryImageryKeys)
+  const imagery = countryImagery ? L.layerGroup([esriImagery, countryImagery]) : esriImagery
   const deLabels = L.tileLayer('https://{s}.tile.openstreetmap.de/{z}/{x}/{y}.png', {
     maxZoom: 18,
     opacity: 0.55,

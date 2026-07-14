@@ -62,8 +62,11 @@ const COUNTRY_IMAGERY: Partial<Record<string, CountryImagery>> = {
   cz: {
     kind: 'xyz',
     url: 'https://ags.cuzk.gov.cz/arcgis1/rest/services/ORTOFOTO_WM/MapServer/tile/{z}/{y}/{x}',
-    maxNativeZoom: 19,
-    maxZoom: 20,
+    // Cap at Esri's 19 even though the service natively serves 19+overzoom:
+    // a single layer with a higher maxZoom raises the whole map's zoom
+    // ceiling, and at zoom 20 Leaflet unloads every other imagery layer
+    // (all maxZoom 19), leaving a blank map outside Czechia.
+    maxZoom: 19,
     attribution: '&copy; &Ccaron;&Uacute;ZK',
     bounds: [
       [48.55, 12.09],
@@ -74,6 +77,10 @@ const COUNTRY_IMAGERY: Partial<Record<string, CountryImagery>> = {
     kind: 'wms',
     url: 'https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/StandardResolution',
     layers: 'Raster',
+    // png, not jpeg: the bounds box unavoidably includes a strip of eastern
+    // Germany (Cottbus, Görlitz), where this WMS paints opaque white with
+    // jpeg — png + transparent lets Esri show through there instead.
+    format: 'image/png',
     maxZoom: 19,
     attribution: '&copy; GUGiK &ndash; geoportal.gov.pl',
     bounds: [
@@ -136,6 +143,9 @@ const COUNTRY_IMAGERY: Partial<Record<string, CountryImagery>> = {
     kind: 'wms',
     url: 'https://wms.datafordeler.dk/GeoDanmarkOrto/orto_foraar/1.0.0/WMS?apikey={apiKey}',
     layers: 'orto_foraar',
+    // png, not jpeg: the bounds box includes Flensburg/Kiel and Skåne, where
+    // an opaque no-data fill would cover Esri (see the pl entry).
+    format: 'image/png',
     maxZoom: 19,
     attribution: '&copy; Klimadatastyrelsen (SDFI)',
     bounds: [
@@ -165,16 +175,22 @@ export function createCountryImageryLayer(
   country: string | null | undefined,
   apiKeys: CountryImageryKeys = {},
 ): L.Layer | null {
-  const config = country ? COUNTRY_IMAGERY[country] : undefined
+  if (!country) return null
+  const config = COUNTRY_IMAGERY[country]
   if (!config) return null
-  const url = resolveUrl(config, apiKeys, country as string)
+  const url = resolveUrl(config, apiKeys, country)
   if (url == null) return null
   const bounds = L.latLngBounds(config.bounds)
   if (config.kind === 'wms') {
+    const format = config.format ?? 'image/jpeg'
     return L.tileLayer.wms(url, {
       layers: config.layers,
       styles: '',
-      format: config.format ?? 'image/jpeg',
+      format,
+      // png entries chose png precisely because their bounds box overlaps
+      // neighbouring countries — request transparent no-data fill so the
+      // Esri layer underneath shows through there.
+      transparent: format === 'image/png',
       version: '1.3.0',
       crs: L.CRS.EPSG3857,
       maxZoom: config.maxZoom,
