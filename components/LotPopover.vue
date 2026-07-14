@@ -109,7 +109,11 @@ const swiperModules = [Navigation, Pagination, Keyboard]
     </div>
 
     <div class="lot-popover__cta">
-      <a :href="`/objekt/${encodeURIComponent(auction.platform)}/${encodeURIComponent(auction.zvgId)}`">Details ansehen →</a>
+      <a
+        v-if="auction.detailAvailable"
+        :href="`/objekt/${encodeURIComponent(auction.platform)}/${encodeURIComponent(auction.zvgId)}`"
+      >Details ansehen →</a>
+      <span v-else class="lot-popover__cta-disabled" title="Detailseite wird noch verarbeitet">Details noch nicht verfügbar</span>
     </div>
 
     <div class="lot-popover__footer">
@@ -214,6 +218,16 @@ const swiperModules = [Navigation, Pagination, Keyboard]
 }
 .lot-popover__cta a:hover {
   background: #1d4ed8;
+}
+.lot-popover__cta-disabled {
+  display: block;
+  text-align: center;
+  background: #9ca3af;
+  color: #f3f4f6;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  cursor: not-allowed;
 }
 .lot-popover__footer {
   font-size: 12px;

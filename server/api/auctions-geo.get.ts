@@ -4,11 +4,17 @@
 // of minutes due to Nominatim's 1 req/s rate limit.
 
 import { geocodeAddress, geocodeStatus } from '../utils/geocode'
+import { readAuctionSnapshot } from '../utils/auction-snapshot'
+import { cacheKey } from '../utils/verkehrswert-cache'
 import type { Auction, CrawlResult } from '~/types/auction'
 
 export interface GeoAuction extends Auction {
   lat: number | null
   lng: number | null
+  /** Whether /api/auction/[platform]/[id] can serve this auction yet — false
+   *  for listings crawled since the last enrich run, before they land in the
+   *  snapshot the detail page reads from. */
+  detailAvailable: boolean
 }
 
 export interface GeoCrawlResult extends Omit<CrawlResult, 'auctions'> {
@@ -33,9 +39,12 @@ export default defineEventHandler(async (event): Promise<GeoCrawlResult> => {
   // That route is SWR-cached (see nuxt.config.ts), so a hot cache returns in
   // a few ms. Calling crawlAll here would re-run the full multi-state crawl
   // on every request and time out behind Traefik in production.
-  const result = await $fetch<CrawlResult>('/api/auctions', {
-    query: { country, region, immo: immobilienOnly ? '1' : '0' },
-  })
+  const [result, snapshot] = await Promise.all([
+    $fetch<CrawlResult>('/api/auctions', {
+      query: { country, region, immo: immobilienOnly ? '1' : '0' },
+    }),
+    readAuctionSnapshot(),
+  ])
 
   // Cache reads dominate this loop (thousands of auctions on the "all
   // countries" view), so resolve them concurrently instead of one at a time.
@@ -50,7 +59,8 @@ export default defineEventHandler(async (event): Promise<GeoCrawlResult> => {
       const idx = cursor++
       const a = result.auctions[idx]!
       const point = await geocodeAddress(a.adresse, a.country, { fetchMissing })
-      enriched[idx] = { ...a, lat: point?.lat ?? null, lng: point?.lng ?? null }
+      const detailAvailable = cacheKey(a.platform, a.zvgId) in snapshot
+      enriched[idx] = { ...a, lat: point?.lat ?? null, lng: point?.lng ?? null, detailAvailable }
       if (point == null) {
         const status = await geocodeStatus(a.adresse, a.country)
         if (status === 'unresolvable') unresolvableCount++
