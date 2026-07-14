@@ -47,6 +47,15 @@ export default defineNuxtConfig({
     // have its rate-limit buckets rotated by a spoofed header.
     //   NUXT_TRUST_FORWARDED_FOR=1
     trustForwardedFor: '',
+    public: {
+      // Free, instant self-service keys for the per-country satellite
+      // imagery layers in lib/countryImagery.ts that require one (Finland,
+      // Denmark) — that country's layer just falls back to Esri until set.
+      //   NUXT_PUBLIC_MML_API_KEY=<from omatili.maanmittauslaitos.fi>
+      mmlApiKey: '',
+      //   NUXT_PUBLIC_DATAFORDELER_API_KEY=<from datafordeler.dk>
+      datafordelerApiKey: '',
+    },
   },
   nitro: {
     experimental: {
