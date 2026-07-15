@@ -16,6 +16,11 @@ type XyzImagery = {
   minZoom?: number
   attribution: string
   bounds: L.LatLngBoundsLiteral
+  /** Server paints solid white (no alpha channel) outside its actual
+   *  coverage instead of returning a transparent/no-data pixel — treat
+   *  near-white pixels as no-data client-side so Esri shows through the
+   *  bbox's spillover into neighbouring countries. */
+  chromaKeyWhite?: boolean
 }
 
 type WmsImagery = {
@@ -94,6 +99,13 @@ const COUNTRY_IMAGERY: Partial<Record<string, CountryImagery>> = {
     minZoom: 6,
     maxZoom: 19,
     attribution: '&copy; IGN-F/G&eacute;oportail',
+    // Same spillover as the pl/dk bboxes (this one reaches into Belgium,
+    // Luxembourg, Switzerland and northern Spain), but IGN only serves this
+    // layer as opaque jpeg — GetTile with FORMAT=image/png 400s ("Format
+    // image/png unknown") — so png+transparent isn't an option. Chroma-key
+    // instead: IGN already clips to France's real border and fills outside
+    // it solid white, so treating white as no-data recovers the same effect.
+    chromaKeyWhite: true,
     bounds: [
       [41.3, -5.2],
       [51.1, 9.6],
@@ -161,6 +173,41 @@ export const COUNTRY_IMAGERY_CODES = Object.keys(COUNTRY_IMAGERY)
  *  just make that country's layer skip itself — never an error. */
 export type CountryImageryKeys = Partial<Record<string, string>>
 
+/** Renders each tile onto a canvas and makes near-white pixels transparent,
+ *  so a source that only offers opaque no-data fill still lets the layer
+ *  underneath (Esri) show through outside its actual coverage. */
+const ChromaKeyWhiteTileLayer = L.TileLayer.extend({
+  createTile(coords: L.Coords, done: L.DoneCallback): HTMLElement {
+    const tile = document.createElement('canvas')
+    const size = this.getTileSize()
+    tile.width = size.x
+    tile.height = size.y
+    const ctx = tile.getContext('2d')!
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => {
+      ctx.drawImage(img, 0, 0, size.x, size.y)
+      try {
+        const frame = ctx.getImageData(0, 0, size.x, size.y)
+        const px = frame.data
+        for (let i = 0; i < px.length; i += 4) {
+          const r = px[i] as number
+          const g = px[i + 1] as number
+          const b = px[i + 2] as number
+          if (r > 250 && g > 250 && b > 250) px[i + 3] = 0
+        }
+        ctx.putImageData(frame, 0, 0)
+      } catch {
+        // Canvas tainted (response missing CORS headers) — leave it opaque.
+      }
+      done(undefined, tile)
+    }
+    img.onerror = () => done(new Error('tile load failed'), tile)
+    img.src = this.getTileUrl(coords)
+    return tile
+  },
+}) as unknown as typeof L.TileLayer
+
 function resolveUrl(config: CountryImagery, apiKeys: CountryImageryKeys, code: string): string | null {
   if (!config.url.includes('{apiKey}')) return config.url
   const key = apiKeys[code]
@@ -198,7 +245,8 @@ export function createCountryImageryLayer(
       bounds,
     })
   }
-  return L.tileLayer(url, {
+  const TileLayerClass = config.chromaKeyWhite ? ChromaKeyWhiteTileLayer : L.TileLayer
+  return new TileLayerClass(url, {
     subdomains: config.subdomains ?? 'abc',
     minZoom: config.minZoom,
     maxZoom: config.maxZoom,
