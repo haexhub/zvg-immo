@@ -54,8 +54,21 @@ export default defineEventHandler(async (event): Promise<GeoCrawlResult> => {
   let unresolvableCount = 0
   const CONCURRENCY = 16
   let cursor = 0
+
+  // A client that gives up (tab closed, request aborted, load-balancer
+  // timeout) still leaves this loop running server-side — with fetch=1 and a
+  // large cold backlog it can otherwise keep churning through the shared
+  // geocode rate limiter for minutes after nobody's listening. Stop
+  // dispatching new lookups once the connection drops; whatever's already
+  // in flight still finishes and gets cached.
+  let aborted = false
+  event.node.req.on('close', () => {
+    aborted = true
+  })
+
   async function worker(): Promise<void> {
     while (cursor < result.auctions.length) {
+      if (aborted) return
       const idx = cursor++
       const a = result.auctions[idx]!
       const point = await geocodeAddress(a.adresse, a.country, { fetchMissing })
