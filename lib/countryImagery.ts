@@ -173,17 +173,20 @@ export const COUNTRY_IMAGERY_CODES = Object.keys(COUNTRY_IMAGERY)
  *  just make that country's layer skip itself — never an error. */
 export type CountryImageryKeys = Partial<Record<string, string>>
 
+type ChromaKeyTile = HTMLCanvasElement & { _img?: HTMLImageElement }
+
 /** Renders each tile onto a canvas and makes near-white pixels transparent,
  *  so a source that only offers opaque no-data fill still lets the layer
  *  underneath (Esri) show through outside its actual coverage. */
 const ChromaKeyWhiteTileLayer = L.TileLayer.extend({
   createTile(coords: L.Coords, done: L.DoneCallback): HTMLElement {
-    const tile = document.createElement('canvas')
+    const tile: ChromaKeyTile = document.createElement('canvas')
     const size = this.getTileSize()
     tile.width = size.x
     tile.height = size.y
     const ctx = tile.getContext('2d')!
     const img = new Image()
+    tile._img = img
     img.crossOrigin = 'anonymous'
     img.onload = () => {
       ctx.drawImage(img, 0, 0, size.x, size.y)
@@ -202,9 +205,35 @@ const ChromaKeyWhiteTileLayer = L.TileLayer.extend({
       }
       done(undefined, tile)
     }
-    img.onerror = () => done(new Error('tile load failed'), tile)
+    img.onerror = () => {
+      if (img.crossOrigin) {
+        // Some servers don't send CORS headers — retry without crossOrigin so
+        // the tile still renders (opaque, un-keyed) instead of not at all.
+        img.removeAttribute('crossOrigin')
+        img.src = this.getTileUrl(coords)
+        return
+      }
+      done(new Error('tile load failed'), tile)
+    }
     img.src = this.getTileUrl(coords)
     return tile
+  },
+  // The base implementation aborts stale in-flight tiles by reassigning
+  // `tile.el.src`, which no-ops on a <canvas>. Without this the underlying
+  // Image keeps downloading in the background on every fast pan/zoom.
+  _abortLoading(this: L.TileLayer) {
+    for (const key in (this as any)._tiles) {
+      const t = (this as any)._tiles[key]
+      if (t.coords.z !== (this as any)._tileZoom) {
+        const img = (t.el as ChromaKeyTile)._img
+        if (img && !img.complete) {
+          img.onload = null
+          img.onerror = null
+          img.src = L.Util.emptyImageUrl
+        }
+      }
+    }
+    L.TileLayer.prototype._abortLoading.call(this)
   },
 }) as unknown as typeof L.TileLayer
 
