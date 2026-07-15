@@ -171,8 +171,9 @@ function mapItem(item: ListItem, detail: DetailInfo | null, platformId: string):
     // an internal id (see licitor's PR #53 review lesson).
     aktenzeichen: '',
     // No court/tribunal name is exposed either (only the "cabinet
-    // d'avocats" handling the sale, which isn't the court).
-    amtsgericht: 'Avoventes',
+    // d'avocats" handling the sale, which isn't the court) — 'Avoventes' is
+    // the platform, not a court, and must not be stored here.
+    amtsgericht: '',
     objekt: item.objekt,
     adresse: item.adresse,
     verkehrswertEur: item.priceEur,
@@ -206,9 +207,15 @@ export async function fetchAllListings(
   // sales with ones already past their audience date (still listed during
   // the ~10-day post-sale "surenchère" window). Keep only future/unknown-date
   // rows so this source behaves like every other crawler's "prochaines
-  // ventes" list. Compared as plain date strings to sidestep timezone drift
-  // around midnight.
-  const todayStr = new Date().toISOString().slice(0, 10)
+  // ventes" list. terminIso is French local time, so "today" must be derived
+  // in Europe/Paris too — UTC would keep yesterday's already-past auctions
+  // for a couple of hours after midnight in France.
+  const todayStr = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Paris',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date())
   const items = allItems.filter((item) => !item.terminIso || item.terminIso.slice(0, 10) >= todayStr)
 
   if (items.length === 0) return { auctions: [], total: 0 }

@@ -149,7 +149,14 @@ function frAddressDateKey(a: Auction): string | null {
   if (a.country !== 'fr' || !a.adresse || !a.terminIso) return null
   const postal = a.adresse.match(/\b\d{5}\b/)?.[0]
   if (!postal) return null
-  const houseNumber = a.adresse.match(/\d+/)?.[0] ?? postal
+  // Strip the postal code before looking for a house number — otherwise a
+  // postal-code-only address (no street number, e.g. a rural lieu-dit) would
+  // match the postal code itself as "the house number", degenerating to a
+  // {postal, postal, date} key that can falsely merge two distinct auctions
+  // that only share a postal code and a sale date.
+  const addressWithoutPostal = a.adresse.replace(new RegExp(`\\b${postal}\\b`), '')
+  const houseNumber = addressWithoutPostal.match(/\b\d+[a-z]?(?:\s*(?:bis|ter|quater))?\b/i)?.[0]
+  if (!houseNumber) return null
   return `fr-addr|${postal}|${houseNumber}|${a.terminIso.slice(0, 10)}`
 }
 
