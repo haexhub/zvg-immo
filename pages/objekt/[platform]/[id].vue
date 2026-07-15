@@ -274,7 +274,10 @@ useHead(() => ({
         <AuctionDetailMap :lat="a.lat" :lng="a.lng" :label="a.adresse ?? undefined" :country="a.country" />
       </section>
 
-      <section class="mb-8 space-y-2">
+      <section
+        v-if="groupedAttachments.length > 0 || a.detailUrlUpstream || a.pdfUrlUpstream"
+        class="mb-8 space-y-2"
+      >
         <h2 class="text-base font-semibold">Offizielle Quellen</h2>
         <ul class="space-y-2">
           <li v-for="group in groupedAttachments" :key="group.kind" class="text-sm">
@@ -292,10 +295,11 @@ useHead(() => ({
               </a>
             </div>
           </li>
-          <li class="text-sm">
+          <li v-if="a.detailUrlUpstream || a.pdfUrlUpstream" class="text-sm">
             <span class="text-xs uppercase tracking-wide text-muted-foreground">Quelle</span>
             <div class="flex flex-wrap gap-2 mt-1">
               <a
+                v-if="a.detailUrlUpstream"
                 :href="a.detailUrlUpstream"
                 target="_blank"
                 rel="noopener"
