@@ -16,11 +16,11 @@ type XyzImagery = {
   minZoom?: number
   attribution: string
   bounds: L.LatLngBoundsLiteral
-  /** Server paints solid white (no alpha channel) outside its actual
+  /** Server paints a solid fill color (no alpha channel) outside its actual
    *  coverage instead of returning a transparent/no-data pixel — treat
-   *  near-white pixels as no-data client-side so Esri shows through the
-   *  bbox's spillover into neighbouring countries. */
-  chromaKeyWhite?: boolean
+   *  near-matches to this color as no-data client-side so Esri shows through
+   *  the bbox's spillover into neighbouring territory. */
+  chromaKeyColor?: [number, number, number]
 }
 
 type WmsImagery = {
@@ -59,6 +59,11 @@ const COUNTRY_IMAGERY: Partial<Record<string, CountryImagery>> = {
     url: 'https://www.ign.es/wmts/pnoa-ma?service=WMTS&request=GetTile&version=1.0.0&layer=OI.OrthoimageCoverage&style=default&format=image/jpeg&TileMatrixSet=GoogleMapsCompatible&TileMatrix={z}&TileRow={y}&TileCol={x}',
     maxZoom: 19,
     attribution: 'PNOA cedido por &copy; Instituto Geogr&aacute;fico Nacional de Espa&ntilde;a',
+    // Same spillover as the fr bbox (this one reaches into the Atlantic,
+    // Morocco and southern France), but PNOA only serves opaque jpeg, filling
+    // outside its real Iberian coverage with a solid dark navy (rgb 32,26,38)
+    // instead of white or transparent — chroma-key that color out instead.
+    chromaKeyColor: [32, 26, 38],
     bounds: [
       [27.6, -18.4],
       [43.9, 4.4],
@@ -105,7 +110,7 @@ const COUNTRY_IMAGERY: Partial<Record<string, CountryImagery>> = {
     // image/png unknown") — so png+transparent isn't an option. Chroma-key
     // instead: IGN already clips to France's real border and fills outside
     // it solid white, so treating white as no-data recovers the same effect.
-    chromaKeyWhite: true,
+    chromaKeyColor: [255, 255, 255],
     bounds: [
       [41.3, -5.2],
       [51.1, 9.6],
@@ -174,17 +179,23 @@ export const COUNTRY_IMAGERY_CODES = Object.keys(COUNTRY_IMAGERY)
 export type CountryImageryKeys = Partial<Record<string, string>>
 
 type ChromaKeyTile = HTMLCanvasElement & { _img?: HTMLImageElement }
+type ChromaKeyOptions = L.TileLayerOptions & { chromaKeyColor: [number, number, number] }
 
-/** Renders each tile onto a canvas and makes near-white pixels transparent,
- *  so a source that only offers opaque no-data fill still lets the layer
- *  underneath (Esri) show through outside its actual coverage. */
-const ChromaKeyWhiteTileLayer = L.TileLayer.extend({
+// JPEG re-compresses the source's flat no-data fill with a bit of noise, so
+// match nearby colors rather than requiring an exact hit.
+const CHROMA_KEY_TOLERANCE = 10
+
+/** Renders each tile onto a canvas and makes pixels near `chromaKeyColor`
+ *  transparent, so a source that only offers opaque no-data fill still lets
+ *  the layer underneath (Esri) show through outside its actual coverage. */
+const ChromaKeyTileLayer = L.TileLayer.extend({
   createTile(coords: L.Coords, done: L.DoneCallback): HTMLElement {
     const tile: ChromaKeyTile = document.createElement('canvas')
     const size = this.getTileSize()
     tile.width = size.x
     tile.height = size.y
     const ctx = tile.getContext('2d')!
+    const [kr, kg, kb] = (this.options as ChromaKeyOptions).chromaKeyColor
     const img = new Image()
     tile._img = img
     img.crossOrigin = 'anonymous'
@@ -197,7 +208,12 @@ const ChromaKeyWhiteTileLayer = L.TileLayer.extend({
           const r = px[i] as number
           const g = px[i + 1] as number
           const b = px[i + 2] as number
-          if (r > 250 && g > 250 && b > 250) px[i + 3] = 0
+          if (
+            Math.abs(r - kr) <= CHROMA_KEY_TOLERANCE &&
+            Math.abs(g - kg) <= CHROMA_KEY_TOLERANCE &&
+            Math.abs(b - kb) <= CHROMA_KEY_TOLERANCE
+          )
+            px[i + 3] = 0
         }
         ctx.putImageData(frame, 0, 0)
       } catch {
@@ -274,7 +290,7 @@ export function createCountryImageryLayer(
       bounds,
     })
   }
-  const TileLayerClass = config.chromaKeyWhite ? ChromaKeyWhiteTileLayer : L.TileLayer
+  const TileLayerClass = config.chromaKeyColor ? ChromaKeyTileLayer : L.TileLayer
   return new TileLayerClass(url, {
     subdomains: config.subdomains ?? 'abc',
     minZoom: config.minZoom,
@@ -282,7 +298,8 @@ export function createCountryImageryLayer(
     maxNativeZoom: config.maxNativeZoom,
     attribution: config.attribution,
     bounds,
-  })
+    chromaKeyColor: config.chromaKeyColor,
+  } as L.TileLayerOptions)
 }
 
 /** All configured per-country layers stacked over Esri — each only ever
