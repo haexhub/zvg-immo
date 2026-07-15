@@ -55,9 +55,10 @@ onMounted(async () => {
   // Esri World Imagery for their own territory — layer that over Esri when
   // available (not instead of it: the national layer stops at its country's
   // bounds/minZoom, so Esri has to stay underneath for panning and zooming
-  // beyond them).
+  // beyond them). Some of these sources have tile-alignment bugs (opaque
+  // no-data spillover into neighbouring countries) that Esri alone doesn't
+  // have, so offer a plain Esri-only view as an escape hatch.
   const countryImagery = createCountryImageryLayer(props.country, countryImageryKeys)
-  const imagery = countryImagery ? L.layerGroup([esriImagery, countryImagery]) : esriImagery
   // A full opaque basemap (like the streets layer) blended at low opacity
   // over satellite tiles just looks washed out — this is a dedicated
   // labels/boundaries overlay with a transparent background instead.
@@ -68,14 +69,12 @@ onMounted(async () => {
       maxZoom: 19,
     },
   )
-  const satelliteLabeled = L.layerGroup([imagery, placeLabels])
-  L.control
-    .layers(
-      { Straße: streets, 'Satellit + Beschriftung': satelliteLabeled, 'Satellit (nur Bild)': imagery },
-      undefined,
-      { position: 'topright' },
-    )
-    .addTo(map)
+  const satelliteEsriOnly = L.layerGroup([esriImagery, placeLabels])
+  const layers: Record<string, L.Layer> = { Straße: streets, 'Satellit (nur Esri)': satelliteEsriOnly }
+  if (countryImagery) {
+    layers['Satellit (Länder-Tiles)'] = L.layerGroup([esriImagery, countryImagery, placeLabels])
+  }
+  L.control.layers(layers, undefined, { position: 'topright' }).addTo(map)
   const marker = L.marker([props.lat, props.lng], { icon: markerIcon })
   if (props.label) marker.bindTooltip(props.label)
   marker.addTo(map)

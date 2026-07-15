@@ -143,9 +143,11 @@ onMounted(async () => {
   )
   // Free, keyless national orthophotos layered on top of Esri — each only
   // requests tiles inside its own country's bounds, so it's safe to stack
-  // all of them even though this map spans many countries at once.
+  // all of them even though this map spans many countries at once. Some of
+  // these sources have tile-alignment bugs (opaque no-data spillover into
+  // neighbouring countries) that Esri alone doesn't have, so offer a plain
+  // Esri-only view as an escape hatch.
   const countryImagery = createAllCountryImageryLayers(countryImageryKeys)
-  const satelliteOnly = L.layerGroup([esriImagery, ...countryImagery])
   // A full opaque basemap (like the streets layer) blended at low opacity
   // over satellite tiles just looks washed out — this is a dedicated
   // labels/boundaries overlay with a transparent background instead.
@@ -156,10 +158,15 @@ onMounted(async () => {
       maxZoom: 19,
     },
   )
-  const satelliteLabeled = L.layerGroup([esriImagery, ...countryImagery, placeLabels])
+  const satelliteCountryTiles = L.layerGroup([esriImagery, ...countryImagery, placeLabels])
+  const satelliteEsriOnly = L.layerGroup([esriImagery, placeLabels])
   L.control
     .layers(
-      { Straße: streets, 'Satellit + Beschriftung': satelliteLabeled, 'Satellit (nur Bild)': satelliteOnly },
+      {
+        Straße: streets,
+        'Satellit (Länder-Tiles)': satelliteCountryTiles,
+        'Satellit (nur Esri)': satelliteEsriOnly,
+      },
       undefined,
       { position: 'topright' },
     )
