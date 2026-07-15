@@ -204,14 +204,206 @@ export function normalizeLtAddress(address: string): string[] {
   return out.length > 0 ? [...new Set(out)] : [address]
 }
 
+// --- Estonia (oksjonikeskus.ee) ---------------------------------------------
+// EE addresses chain admin units before the street, like LT — but unlike LT,
+// keeping the street-type abbreviation ("tn", "mnt", "pst") breaks the match;
+// OSM stores the bare street name. Streetless rural addresses put the specific
+// building/farm name *after* the locality chain (comma-separated), not before it.
+const EE_STREET_TOKENS = new Set(['tn', 'mnt', 'pst', 'tee', 'tänav', 'puiestee', 'maantee', 'põik'])
+const EE_STREET_SUFFIXES = ['maantee', 'puiestee', 'tänav']
+const EE_LOCALITY_SUFFIXES = ['linnaosa', 'alevik', 'alev', 'küla', 'linn']
+const EE_ADMIN_SUFFIXES = ['vald', 'maakond']
+
+/** A street-type token is either its own word ("tn", "tee" — the street name
+ *  sits before it as separate words) or fused onto the street name itself
+ *  ("Keskpuiestee" = "Kesk" + "puiestee" — no separate street-name word). */
+function matchEeStreetToken(token: string): { exact: boolean; prefix: string } | null {
+  if (EE_STREET_TOKENS.has(token)) return { exact: true, prefix: '' }
+  const suffix = EE_STREET_SUFFIXES.find((s) => token.length > s.length && token.endsWith(s))
+  return suffix ? { exact: false, prefix: token.slice(0, token.length - suffix.length) } : null
+}
+
+/** Scans tokens[0..beforeIdx) backwards for the closest token matching one of
+ *  `suffixes`, either a standalone marker word (place name = preceding token)
+ *  or a compound ending in it (place name = the token itself, e.g. "Tallinn"
+ *  ends in "linn", "Mõisaküla" ends in "küla"). */
+function findEeMarker(
+  tokens: string[],
+  beforeIdx: number,
+  suffixes: string[],
+): { name: string; idx: number } | null {
+  for (let i = beforeIdx - 1; i >= 0; i--) {
+    const token = tokens[i]!
+    const suffix = suffixes.find((s) => token === s || (token.length > s.length && token.endsWith(s)))
+    if (!suffix) continue
+    if (token === suffix) return i > 0 ? { name: tokens[i - 1]!, idx: i } : null
+    return { name: token, idx: i }
+  }
+  return null
+}
+
+export function normalizeEeAddress(address: string): string[] {
+  const first = address.split(';')[0]!.trim()
+  const noCommas = first.replace(/,/g, '')
+  const tokens = noCommas.split(' ').filter(Boolean)
+  const streetIdx = tokens.findIndex((t) => matchEeStreetToken(t) !== null)
+  const streetMatch = streetIdx >= 0 ? matchEeStreetToken(tokens[streetIdx]!) : null
+  const out: string[] = []
+
+  if (streetMatch && streetIdx < tokens.length - 1) {
+    const houseNr = tokens[streetIdx + 1]!.split(/[-–]/)[0]!
+    // Exact street-type words ("tn") sit after a separate street-name word,
+    // which must not be mistaken for a locality — skip it in the marker search.
+    // Fused street types ("Keskpuiestee") have no such word to skip.
+    const searchBefore = streetMatch.exact ? streetIdx - 1 : streetIdx
+    const locality = findEeMarker(tokens, searchBefore, [...EE_LOCALITY_SUFFIXES, ...EE_ADMIN_SUFFIXES])
+    const outer = locality ? findEeMarker(tokens, locality.idx, EE_ADMIN_SUFFIXES) : null
+    const streetCandidates = streetMatch.exact
+      ? [tokens.slice(locality ? locality.idx + 1 : 0, streetIdx).join(' ')]
+      : [streetMatch.prefix, tokens[streetIdx]!].filter(Boolean)
+
+    for (const street of streetCandidates) {
+      if (!street) continue
+      if (locality) {
+        out.push(`${street} ${houseNr}, ${locality.name}`)
+        if (outer && outer.name !== locality.name) out.push(`${street} ${houseNr}, ${outer.name}`)
+      }
+      out.push(`${street} ${houseNr}`)
+    }
+  } else {
+    // No street: the last comma segment is the specific building/farm name,
+    // the locality is the nearest admin marker before it.
+    const commaIdx = first.lastIndexOf(',')
+    const place = commaIdx >= 0 ? first.slice(commaIdx + 1).trim() : ''
+    const chainTokens = (commaIdx >= 0 ? first.slice(0, commaIdx) : first)
+      .replace(/,/g, '')
+      .split(' ')
+      .filter(Boolean)
+    const locality = findEeMarker(chainTokens, chainTokens.length, [
+      ...EE_LOCALITY_SUFFIXES,
+      ...EE_ADMIN_SUFFIXES,
+    ])
+    if (place && locality) out.push(`${place}, ${locality.name}`)
+    if (locality) out.push(locality.name)
+    if (place) out.push(place)
+  }
+
+  return out.length > 0 ? [...new Set(out)] : [address]
+}
+
+// --- Latvia (izsoles.ta.gov.lv) ---------------------------------------------
+// LV street addresses are already close to Nominatim-friendly ("<street> iela
+// <house>, <city>, <district> novads"). The failures are legal/procedural
+// boilerplate wrapped around the address, quoted farmstead names, apartment
+// building-block suffixes ("- k-4-36"), and multi-property listings joined by ";".
+const LV_PREFIX_PATTERNS: RegExp[] = [
+  /^Apbūves tiesības uz zemes vienības daļu\s+/i,
+  /^\d+\/\d+\s+d\.d\.\s+no\s+/i,
+  /^\d+\/\d+\s+domājamā daļa\s+no\s+/i,
+  /^\d+\s+Nekustamo īpašumu kopums,?\s*kas atrodas\s+/i,
+  /^dzīvokļa īpašuma\s+/i,
+  /^dzīvokļa īpašums\s+/i,
+  /^Nekustamā īpašuma\s*[–-]?\s*/i,
+  /^Nekustamais īpašums\s*[–-]?\s*(?:dzīvoklis\s+Nr\.?\s*\d+\s*)?/i,
+  /^Neapbūvēta zemesgabala\s+/i,
+  /^Nomas tiesības uz nekustamo īpašumu\s+/i,
+  /^Talsu novada pašvaldība rīko nekustamā īpašuma\s*[–-]?\s*/i,
+  /^Savstarpēji saistīti nekustami īpašumu\s+/i,
+]
+
+// \w doesn't match Latvian diacritics (ā, š, ē, ...), so word-ending
+// alternations are spelled out explicitly instead of using \w*.
+const LV_SUFFIX_PATTERNS: RegExp[] = [
+  /,?\s*(?:nomas tiesīb[au]\s+)?(?:trešo\s+)?elektronisk[aāuo]\s+izsol[eiu]\.?$/i,
+  /\s+izsole\.?$/i,
+  /\s+atsavināšana\.?$/i,
+  // Cadastral reference numbers are internal IDs, not part of the address.
+  /,?\s*kadastra\s*(?:numurs|nr\.?)\s*[\d\s]+\.?$/i,
+]
+
+function stripLvBoilerplate(address: string): string {
+  let out = address
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const pattern of LV_PREFIX_PATTERNS) {
+      if (pattern.test(out)) {
+        out = out.replace(pattern, '')
+        changed = true
+      }
+    }
+  }
+  for (const pattern of LV_SUFFIX_PATTERNS) out = out.replace(pattern, '')
+  // Trailing ownership-share parenthetical, e.g. "(1/2 domājamā daļa)".
+  return out.replace(/\s*\([^)]*\)\s*$/, '').trim()
+}
+
+// Quotes wrap farmstead/property names ("Akoti", „Jaunkaņepjvērpji", ,,Jasmīni")
+// instead of a street — noise for Nominatim, strip them all. Spelled out as
+// explicit code points (not typed literals) since visually-similar smart
+// quotes are easy to collapse into duplicates when typed inline.
+const LV_QUOTE_CHARS = /["'`‘’“”„]/g
+function stripLvQuotes(address: string): string {
+  return address.replace(/,,(\S)/g, '$1').replace(LV_QUOTE_CHARS, '')
+}
+
+// Apartment/building-block suffixes after the house number confuse Nominatim's
+// house-number match; keep only the base number ("260- k-4-36" → "260").
+function stripLvUnitSuffix(core: string): string {
+  return core
+    .replace(/\s*[-–]?\s*k-\d+(?:[\s-–]*\d+)?/gi, '')
+    .replace(/(\d+[A-Za-zĀ-Žā-ž]?)\s*[-–]\s*\d+[A-Za-zĀ-Žā-ž]?\s*$/, '$1')
+    .trim()
+}
+
+// The dotted abbreviations ("pag.", "nov.") aren't just shorthand to Nominatim —
+// verified live that the literal abbreviated form fails to match while the full
+// word ("pagasts", "novads") resolves the same query, so expand unconditionally.
+function expandLvAdminAbbrev(s: string): string {
+  return s.replace(/\bpag\.(?=\s|,|$)/gi, 'pagasts').replace(/\bnov\.(?=\s|,|$)/gi, 'novads')
+}
+
+export function normalizeLvAddress(address: string): string[] {
+  // Usually every ";"-joined segment is a complete, independent address
+  // (a multi-property listing) — take the first. But some entries repeat the
+  // bare property name before the real, comma-structured address ("Meža
+  // Būmeistari; "Meža Būmeistari", Nīcas pag., ..."); prefer whichever segment
+  // actually carries locality context over a bare fragment.
+  const segments = address.split(';').map((s) => s.trim())
+  const first = (segments.find((s) => s.includes(',')) ?? segments[0]!).trim()
+  const cleaned = expandLvAdminAbbrev(stripLvQuotes(stripLvBoilerplate(first)))
+  if (!cleaned) return [address]
+
+  const commaIdx = cleaned.indexOf(',')
+  const core = commaIdx >= 0 ? cleaned.slice(0, commaIdx) : cleaned
+  const rest = commaIdx >= 0 ? cleaned.slice(commaIdx + 1).trim() : ''
+  const strippedCore = stripLvUnitSuffix(core)
+
+  const out: string[] = []
+  out.push(rest ? `${strippedCore}, ${rest}` : strippedCore)
+  if (strippedCore !== core) out.push(rest ? `${core}, ${rest}` : core)
+
+  // Locative case ("pagastā", "novadā") is left as-is — only the dotted
+  // abbreviation was confirmed broken, not the grammatical case.
+  const parishMatch = cleaned.match(/(\S+)\s+(pagast[sā])/i)
+  if (parishMatch) out.push(`${parishMatch[1]} ${parishMatch[2]}`)
+  const districtMatch = cleaned.match(/(\S+)\s+(novad[sā])/i)
+  if (districtMatch) out.push(`${districtMatch[1]} ${districtMatch[2]}`)
+
+  return out.length > 0 ? [...new Set(out)] : [address]
+}
+
 /**
  * Normalises an address into a Nominatim-friendly query, optionally falling
  * back to PLZ+city if the full address fails to resolve.
  */
 function buildQueries(address: string, country: string): string[] {
   const cleaned = address.replace(/\s+/g, ' ').replace(/\s*,\s*/g, ', ').trim()
-  // Lithuanian addresses need structural rewriting, not just suffix handling.
+  // Lithuanian and Estonian addresses need structural rewriting, not just
+  // suffix handling; Latvian addresses mostly need boilerplate/noise stripped.
   if (country === 'lt') return normalizeLtAddress(cleaned)
+  if (country === 'ee') return normalizeEeAddress(cleaned)
+  if (country === 'lv') return normalizeLvAddress(cleaned)
   // Strip trailing country name for countries where it confuses Nominatim.
   // countrycodes= already restricts the search, so the name is redundant.
   const suffix = STRIP_COUNTRY_SUFFIX[country]
