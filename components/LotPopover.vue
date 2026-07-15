@@ -89,7 +89,7 @@ const swiperModules = [Navigation, Pagination, Keyboard]
     </div>
     <div v-else-if="loading" class="lot-popover__placeholder">Lade Fotos …</div>
     <div v-else-if="thumbnailUrl" class="lot-popover__media">
-      <a :href="auction.detailUrl" target="_blank" rel="noopener">
+      <a :href="auction.detailUrl ?? undefined" target="_blank" rel="noopener">
         <img :src="thumbnailUrl" referrerpolicy="no-referrer" class="lot-popover__thumb">
       </a>
     </div>

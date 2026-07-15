@@ -718,7 +718,7 @@ function attachmentLabel(att: { kind: string; label: string }): string {
         >
           <a
             v-if="a.thumbnailUrl"
-            :href="a.attachments.find((x) => x.kind === 'foto')?.proxyUrl ?? a.detailUrl"
+            :href="a.attachments.find((x) => x.kind === 'foto')?.proxyUrl ?? a.detailUrl ?? undefined"
             target="_blank"
             rel="noopener"
             class="relative block overflow-hidden border-b group"
@@ -729,14 +729,14 @@ function attachmentLabel(att: { kind: string; label: string }): string {
               loading="lazy"
               alt=""
               referrerpolicy="no-referrer"
-              class="aspect-[16/10] w-full object-cover transition-transform duration-200 group-hover:scale-105"
+              class="aspect-16/10 w-full object-cover transition-transform duration-200 group-hover:scale-105"
             >
             <span
               v-if="a.fotoCount > 1"
               class="absolute bottom-2 right-2 rounded-full bg-black/70 px-2 py-0.5 text-xs text-white"
             >+{{ a.fotoCount - 1 }}</span>
           </a>
-          <div v-else-if="!a.aufgehoben" class="flex aspect-[16/10] items-center justify-center bg-muted text-muted-foreground text-sm border-b">
+          <div v-else-if="!a.aufgehoben" class="flex aspect-16/10 items-center justify-center bg-muted text-muted-foreground text-sm border-b">
             Kein Foto
           </div>
 
