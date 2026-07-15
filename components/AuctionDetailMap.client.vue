@@ -58,11 +58,17 @@ onMounted(async () => {
   // beyond them).
   const countryImagery = createCountryImageryLayer(props.country, countryImageryKeys)
   const imagery = countryImagery ? L.layerGroup([esriImagery, countryImagery]) : esriImagery
-  const deLabels = L.tileLayer('https://{s}.tile.openstreetmap.de/{z}/{x}/{y}.png', {
-    maxZoom: 18,
-    opacity: 0.55,
-  })
-  const satelliteLabeled = L.layerGroup([imagery, deLabels])
+  // A full opaque basemap (like the streets layer) blended at low opacity
+  // over satellite tiles just looks washed out — this is a dedicated
+  // labels/boundaries overlay with a transparent background instead.
+  const placeLabels = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+    {
+      attribution: 'Tiles &copy; Esri',
+      maxZoom: 19,
+    },
+  )
+  const satelliteLabeled = L.layerGroup([imagery, placeLabels])
   L.control
     .layers(
       { Straße: streets, 'Satellit + Beschriftung': satelliteLabeled, 'Satellit (nur Bild)': imagery },

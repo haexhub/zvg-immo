@@ -146,11 +146,17 @@ onMounted(async () => {
   // all of them even though this map spans many countries at once.
   const countryImagery = createAllCountryImageryLayers(countryImageryKeys)
   const satelliteOnly = L.layerGroup([esriImagery, ...countryImagery])
-  const deLabels = L.tileLayer('https://{s}.tile.openstreetmap.de/{z}/{x}/{y}.png', {
-    maxZoom: 18,
-    opacity: 0.55,
-  })
-  const satelliteLabeled = L.layerGroup([esriImagery, ...countryImagery, deLabels])
+  // A full opaque basemap (like the streets layer) blended at low opacity
+  // over satellite tiles just looks washed out — this is a dedicated
+  // labels/boundaries overlay with a transparent background instead.
+  const placeLabels = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+    {
+      attribution: 'Tiles &copy; Esri',
+      maxZoom: 19,
+    },
+  )
+  const satelliteLabeled = L.layerGroup([esriImagery, ...countryImagery, placeLabels])
   L.control
     .layers(
       { Straße: streets, 'Satellit + Beschriftung': satelliteLabeled, 'Satellit (nur Bild)': satelliteOnly },

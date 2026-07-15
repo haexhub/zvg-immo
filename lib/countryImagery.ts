@@ -31,6 +31,12 @@ type WmsImagery = {
   maxZoom: number
   attribution: string
   bounds: L.LatLngBoundsLiteral
+  /** Some WMS servers reject Leaflet's default lowercase request parameter
+   *  names (e.g. `request=GetMap`) with a 404 and only accept them uppercase. */
+  uppercase?: boolean
+  /** Same opaque no-data spillover as the xyz entries' chromaKeyColor, for a
+   *  WMS server that ignores `transparent=true` outside its real coverage. */
+  chromaKeyColor?: [number, number, number]
 }
 
 type CountryImagery = XyzImagery | WmsImagery
@@ -93,6 +99,14 @@ const COUNTRY_IMAGERY: Partial<Record<string, CountryImagery>> = {
     format: 'image/png',
     maxZoom: 19,
     attribution: '&copy; GUGiK &ndash; geoportal.gov.pl',
+    // This server 404s on Leaflet's default lowercase request params
+    // (?request=GetMap&...) — it only accepts them uppercase.
+    uppercase: true,
+    // It also ignores transparent=true far from real Polish coverage — e.g.
+    // over Czech territory, which the oversized bbox reaches — painting
+    // solid opaque black there instead. Chroma-key that out like the fr/es
+    // entries do for their own opaque no-data fills.
+    chromaKeyColor: [0, 0, 0],
     bounds: [
       [48.9, 14.0],
       [54.93, 24.78],
@@ -253,6 +267,14 @@ const ChromaKeyTileLayer = L.TileLayer.extend({
   },
 }) as unknown as typeof L.TileLayer
 
+// Same chroma-key behavior, but built on L.TileLayer.WMS so it still builds
+// WMS query URLs (createTile/_abortLoading only touch getTileUrl/getTileSize,
+// which both TileLayer flavors provide).
+const ChromaKeyWmsTileLayer = L.TileLayer.WMS.extend({
+  createTile: (ChromaKeyTileLayer.prototype as any).createTile,
+  _abortLoading: (ChromaKeyTileLayer.prototype as any)._abortLoading,
+}) as unknown as typeof L.TileLayer.WMS
+
 function resolveUrl(config: CountryImagery, apiKeys: CountryImageryKeys, code: string): string | null {
   if (!config.url.includes('{apiKey}')) return config.url
   const key = apiKeys[code]
@@ -275,7 +297,8 @@ export function createCountryImageryLayer(
   const bounds = L.latLngBounds(config.bounds)
   if (config.kind === 'wms') {
     const format = config.format ?? 'image/jpeg'
-    return L.tileLayer.wms(url, {
+    const WmsLayerClass = config.chromaKeyColor ? ChromaKeyWmsTileLayer : L.TileLayer.WMS
+    return new WmsLayerClass(url, {
       layers: config.layers,
       styles: '',
       format,
@@ -287,8 +310,10 @@ export function createCountryImageryLayer(
       crs: L.CRS.EPSG3857,
       maxZoom: config.maxZoom,
       attribution: config.attribution,
+      uppercase: config.uppercase,
       bounds,
-    })
+      chromaKeyColor: config.chromaKeyColor,
+    } as L.WMSOptions)
   }
   const TileLayerClass = config.chromaKeyColor ? ChromaKeyTileLayer : L.TileLayer
   return new TileLayerClass(url, {
