@@ -117,6 +117,7 @@ export async function fetchAllListings(
 ): Promise<{ auctions: Auction[]; total: number | null }> {
   const cookie = await establishFilterSession()
   const auctions: Auction[] = []
+  const seen = new Set<string>()
 
   for (let page = 1; page <= MAX_LIST_PAGES; page++) {
     const url = page === 1 ? `${LV_BASE}/` : `${LV_BASE}/${page}`
@@ -133,8 +134,13 @@ export async function fetchAllListings(
       if (auctions.length > 0) break
       throw new Error(`izsoles.ta.gov.lv fetch failed: ${res.status} ${url}`)
     }
-    const pageAuctions = parseListPage(await res.text(), platformId)
+    /** Out-of-range page numbers are clamped to the last page instead of
+     *  returning an empty list, so stop as soon as a page adds nothing new. */
+    const pageAuctions = parseListPage(await res.text(), platformId).filter(
+      (a) => !seen.has(a.zvgId),
+    )
     if (pageAuctions.length === 0) break
+    for (const a of pageAuctions) seen.add(a.zvgId)
     auctions.push(...pageAuctions)
   }
 
