@@ -18,5 +18,5 @@ export function parsePtPrice(raw: number | null | undefined): number | null {
 }
 
 export function formatPtPrice(value: number | null): string | null {
-  return value != null ? `${value.toLocaleString('de-DE', { maximumFractionDigits: 0 })} €` : null
+  return value != null ? `${value.toLocaleString('de-DE', { maximumFractionDigits: 2 })} €` : null
 }

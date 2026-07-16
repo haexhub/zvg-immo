@@ -49,6 +49,10 @@ describe('formatPtPrice', () => {
     expect(formatPtPrice(100000)).toBe('100.000 €')
   })
 
+  it('preserves cents instead of rounding to whole euros', () => {
+    expect(formatPtPrice(125176.47)).toBe('125.176,47 €')
+  })
+
   it('returns null for null input', () => {
     expect(formatPtPrice(null)).toBeNull()
   })

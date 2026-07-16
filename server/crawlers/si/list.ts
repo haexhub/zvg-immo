@@ -38,7 +38,7 @@ const MAX_PAGES = 30
 
 function buildAdresse(p: SiPublication): string | null {
   const a = p.address
-  if (a?.street) {
+  if (a && (a.street || a.city || a.zip)) {
     const line = [a.street, a.houseNumber].filter(Boolean).join(' ')
     const cityLine = [a.zip, a.city].filter(Boolean).join(' ')
     return clean(`${line}, ${cityLine}, Slowenien`)

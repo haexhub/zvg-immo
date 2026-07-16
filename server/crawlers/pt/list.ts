@@ -59,8 +59,9 @@ async function fetchAddressMap(): Promise<Map<number, PtMapaItem>> {
 async function fetchEventos(): Promise<PtEvento[]> {
   const all: PtEvento[] = []
   let first = 0
+  let total = Infinity
 
-  for (let page = 0; page < MAX_PAGES; page++) {
+  for (let page = 0; page < MAX_PAGES && first < total; page++) {
     const tableParams = {
       first,
       rows: PAGE_SIZE,
@@ -78,9 +79,14 @@ async function fetchEventos(): Promise<PtEvento[]> {
 
     const data = (await res.json()) as PtEventosResponse
     all.push(...data.list)
-
+    total = data.pagination.total
     first += PAGE_SIZE
-    if (first >= data.pagination.total) break
+  }
+
+  if (first < total) {
+    throw new Error(
+      `e-leiloes.pt Eventos: hit MAX_PAGES (${MAX_PAGES}) with ${total - all.length} records still unfetched`,
+    )
   }
 
   return all
