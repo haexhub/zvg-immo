@@ -1,4 +1,4 @@
-import type { CrawlResult } from '~/types/auction'
+import type { Auction, CrawlResult } from '~/types/auction'
 import type { CrawlOptions, PlatformCrawler, RegionInfo } from './types'
 import { zvgPortalCrawler } from './zvg-portal'
 import { boeCrawler } from './boe'
@@ -15,6 +15,7 @@ import { kronofogdenCrawler } from './se'
 import { huutokaupatCrawler } from './fi'
 import { tvangsauktionerCrawler } from './dk'
 import { licitorCrawler } from './fr'
+import { avoventesCrawler } from './fr-avoventes'
 import { syslumennCrawler } from './is'
 import { ontarioTaxSalesCrawler } from './ca'
 import { oksjonikeskusCrawler } from './ee'
@@ -44,6 +45,7 @@ export const platforms: readonly PlatformCrawler[] = [
   huutokaupatCrawler,
   tvangsauktionerCrawler,
   licitorCrawler,
+  avoventesCrawler,
   syslumennCrawler,
   ontarioTaxSalesCrawler,
   oksjonikeskusCrawler,
@@ -134,6 +136,31 @@ export function getCrawlersForRegion(country: string, regionCode: string): Platf
 }
 
 /**
+ * French judicial-sale sources (licitor.com, avoventes.fr) never publish the
+ * court's own case number, so both always have an empty {aktenzeichen}, yet
+ * they frequently cross-publish the exact same sale (the same avocat
+ * poursuivant submits to both platforms). Fall back to a normalized {postal
+ * code, house number, sale date} fingerprint so that pair collapses to one
+ * pin instead of showing twice. Scoped to country 'fr' only — other
+ * countries with an empty aktenzeichen (AT, EE, LV, FI) have exactly one
+ * registered platform each and must keep relying on {platform, zvgId}.
+ */
+function frAddressDateKey(a: Auction): string | null {
+  if (a.country !== 'fr' || !a.adresse || !a.terminIso) return null
+  const postal = a.adresse.match(/\b\d{5}\b/)?.[0]
+  if (!postal) return null
+  // Strip the postal code before looking for a house number — otherwise a
+  // postal-code-only address (no street number, e.g. a rural lieu-dit) would
+  // match the postal code itself as "the house number", degenerating to a
+  // {postal, postal, date} key that can falsely merge two distinct auctions
+  // that only share a postal code and a sale date.
+  const addressWithoutPostal = a.adresse.replace(new RegExp(`\\b${postal}\\b`), '')
+  const houseNumber = addressWithoutPostal.match(/\b\d+[a-z]?(?:\s*(?:bis|ter|quater))?\b/i)?.[0]
+  if (!houseNumber) return null
+  return `fr-addr|${postal}|${houseNumber}|${a.terminIso.slice(0, 10)}`
+}
+
+/**
  * Crawl one region via every platform that owns it. When multiple platforms
  * cover the same {country, region}, their results are merged into a single
  * CrawlResult. Per-platform failures are logged but do not abort the whole
@@ -175,7 +202,7 @@ export async function crawlSingle(
   const auctions = results.flatMap((r) => r.auctions).filter((a) => {
     const az = a.aktenzeichen.trim().toLowerCase().replace(/\s+/g, ' ')
     const ag = a.amtsgericht.trim().toLowerCase()
-    const key = az && ag ? `az|${ag}|${az}` : `pf|${a.platform}|${a.zvgId}`
+    const key = az && ag ? `az|${ag}|${az}` : frAddressDateKey(a) ?? `pf|${a.platform}|${a.zvgId}`
     if (seen.has(key)) return false
     seen.add(key)
     return true
