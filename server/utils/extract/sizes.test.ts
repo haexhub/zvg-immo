@@ -41,6 +41,15 @@ describe('parseAreaValue', () => {
   it('does not mistake a Euro amount for an area', () => {
     expect(parseAreaValue('Verkehrswert 214.000,00 Euro')).toBeNull()
   })
+
+  it('accepts the Greek "τ.μ." unit, with and without dots', () => {
+    expect(parseAreaValue('153.80 τ.μ.')).toBe(153.8)
+    expect(parseAreaValue('80 τμ')).toBe(80)
+  })
+
+  it('does not read "τμ" inside a Greek word as a unit', () => {
+    expect(parseAreaValue('2 τμήματα')).toBeNull()
+  })
 })
 
 describe('findLivingAreaSqm', () => {
@@ -159,6 +168,9 @@ describe('findLivingAreaSqm — multilingual', () => {
   it('finds Icelandic flatarmál íbúðar', () => {
     expect(findLivingAreaSqm('flatarmál íbúðar 70 m²')).toBe(70)
   })
+  it('finds Greek επιφάνεια κατοικίας with τ.μ.', () => {
+    expect(findLivingAreaSqm('επιφάνεια κατοικίας 95 τ.μ.')).toBe(95)
+  })
 })
 
 describe('findLandAreaSqm — multilingual', () => {
@@ -203,6 +215,12 @@ describe('findLandAreaSqm — multilingual', () => {
   })
   it('finds Icelandic lóðarstærð', () => {
     expect(findLandAreaSqm('lóðarstærð 550 m²')).toBe(550)
+  })
+  it('finds Greek εμβαδόν οικοπέδου with τ.μ.', () => {
+    expect(findLandAreaSqm('εμβαδόν οικοπέδου: 500 τ.μ.')).toBe(500)
+  })
+  it('does not read Greek "τμήματα" after a label as an area', () => {
+    expect(findLandAreaSqm('εμβαδόν οικοπέδου: 2 τμήματα')).toBeNull()
   })
 })
 

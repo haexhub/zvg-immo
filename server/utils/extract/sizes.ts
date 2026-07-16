@@ -38,9 +38,9 @@ export function parseAreaValue(text: string): number | null {
 /** Find the area value that directly follows one of the given labels. */
 function findLabeledArea(text: string, labelAlternation: string): number | null {
   // The lookahead stops the unit matching inside a word ("Grundstück mit
-  // 1 Haus" must not read "1 Ha" as one hectare).
+  // 1 Haus" must not read "1 Ha" as one hectare, "2 τμήματα" not as 2 τ.μ.).
   const re = new RegExp(
-    `(?:${labelAlternation})\\D{0,14}?(${AREA_TOKEN})(?![a-zäöü\\d])`,
+    `(?:${labelAlternation})\\D{0,14}?(${AREA_TOKEN})(?![a-zäöü\\d\\u0370-\\u03ff])`,
     'i',
   )
   const m = text.match(re)
