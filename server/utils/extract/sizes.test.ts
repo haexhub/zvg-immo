@@ -138,6 +138,27 @@ describe('findLivingAreaSqm — multilingual', () => {
   it('finds Lithuanian gyvenamasis plotas', () => {
     expect(findLivingAreaSqm('gyvenamasis plotas 110 m²')).toBe(110)
   })
+  it('finds Spanish superficie construida', () => {
+    expect(findLivingAreaSqm('superficie construida 85 m²')).toBe(85)
+  })
+  it('finds Italian superficie utile', () => {
+    expect(findLivingAreaSqm('superficie utile 72 m²')).toBe(72)
+  })
+  it('finds French surface habitable', () => {
+    expect(findLivingAreaSqm('surface habitable 95 m²')).toBe(95)
+  })
+  it('finds Dutch woonoppervlakte', () => {
+    expect(findLivingAreaSqm('woonoppervlakte 60 m²')).toBe(60)
+  })
+  it('finds Danish boligareal', () => {
+    expect(findLivingAreaSqm('boligareal 105 m²')).toBe(105)
+  })
+  it('finds Finnish asuinpinta-ala', () => {
+    expect(findLivingAreaSqm('asuinpinta-ala 88 m²')).toBe(88)
+  })
+  it('finds Icelandic flatarmál íbúðar', () => {
+    expect(findLivingAreaSqm('flatarmál íbúðar 70 m²')).toBe(70)
+  })
 })
 
 describe('findLandAreaSqm — multilingual', () => {
@@ -161,6 +182,27 @@ describe('findLandAreaSqm — multilingual', () => {
   })
   it('does not read multilingual living label as land', () => {
     expect(findLandAreaSqm('alapterület: 92 m²')).toBeNull()
+  })
+  it('finds Spanish superficie del solar', () => {
+    expect(findLandAreaSqm('superficie del solar 500 m²')).toBe(500)
+  })
+  it('finds Italian superficie del terreno', () => {
+    expect(findLandAreaSqm('superficie del terreno 900 m²')).toBe(900)
+  })
+  it('finds French surface du terrain', () => {
+    expect(findLandAreaSqm('surface du terrain 1100 m²')).toBe(1100)
+  })
+  it('finds Dutch perceelsoppervlakte', () => {
+    expect(findLandAreaSqm('perceelsoppervlakte 400 m²')).toBe(400)
+  })
+  it('finds Danish grundareal', () => {
+    expect(findLandAreaSqm('grundareal 700 m²')).toBe(700)
+  })
+  it('finds Finnish tontin pinta-ala', () => {
+    expect(findLandAreaSqm('tontin pinta-ala 950 m²')).toBe(950)
+  })
+  it('finds Icelandic lóðarstærð', () => {
+    expect(findLandAreaSqm('lóðarstærð 550 m²')).toBe(550)
   })
 })
 

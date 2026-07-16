@@ -102,8 +102,18 @@ async function runEnrich() {
       const prev = previousSnapshot[cacheKey(a.platform, a.zvgId)]
       return !prev?.detailFetchedAt
     }
+    // A prior run may have hit the per-run LLM cap before reaching this
+    // listing's turn and cached a rules-only 'low' result to avoid re-running
+    // rules forever (see the cacheable fallback below). Once the LLM has
+    // actually seen the text and still came up empty, don't retry — the text
+    // hasn't changed, so nothing would improve; only retry the ones the LLM
+    // never got to.
+    const needsLlmRetry = (a: Auction): boolean => {
+      const hit = cache[cacheKey(a.platform, a.zvgId)]
+      return hit?.source === 'rules' && hit.confidence === 'low'
+    }
     const todo = result.auctions.filter(
-      (a) => !cache[cacheKey(a.platform, a.zvgId)] || needsEnrich(a),
+      (a) => !cache[cacheKey(a.platform, a.zvgId)] || needsEnrich(a) || needsLlmRetry(a),
     )
     console.log(
       `[enrich] crawled ${result.auctions.length}, ${todo.length} to (re)enrich · llm=${llmConfig ? llmConfig.model : 'off'}`,
@@ -124,7 +134,7 @@ async function runEnrich() {
         if (!a) continue
         const crawler = byPlatform.get(a.platform)
         const key = cacheKey(a.platform, a.zvgId)
-        const extractionMissing = !cache[key]
+        const extractionMissing = !cache[key] || needsLlmRetry(a)
 
         // Detail fetch (beschreibung + attachments) so extraction has real text
         // and the snapshot writer has enrichOne-populated fields to persist.
@@ -186,9 +196,15 @@ async function runEnrich() {
             }
             cacheable = true
           }
+        } else if (llmConfig) {
+          // Per-run LLM cap hit: don't cache the rules-only result — that would
+          // mark this listing "done" and needsLlmRetry above would never see it
+          // again. Leave it uncached so it's retried (and gets its LLM shot)
+          // once a slot frees up on a later run.
+          cacheable = false
         } else {
-          // LLM disabled (or per-run cap hit): cache the rules result if we had
-          // real text to work with, else leave it for a later run to retry.
+          // LLM disabled entirely: cache the rules result if we had real text
+          // to work with, else leave it for a later run to retry.
           cacheable = detailOk
         }
 

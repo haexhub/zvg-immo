@@ -2,7 +2,7 @@
 import type { Auction, CrawlResult } from '~/types/auction'
 import type { GeoAuction, GeoCrawlResult } from '~/server/api/auctions-geo.get'
 import type { CountryEntry } from '~/server/crawlers/registry'
-import { classifyObjekt } from '~/lib/objektart'
+import { ALL_KATEGORIEN, classifyObjekt, type ObjektKategorie } from '~/lib/objektart'
 import Select from '~/components/ui/select/Select.vue'
 import SelectTrigger from '~/components/ui/select/SelectTrigger.vue'
 import SelectValue from '~/components/ui/select/SelectValue.vue'
@@ -30,11 +30,18 @@ function queryNum(key: string): number | null {
   const n = Number(v)
   return Number.isFinite(n) ? n : null
 }
+function queryList(key: string): string[] {
+  const v = route.query[key]
+  const raw = Array.isArray(v) ? v.join(',') : (v ?? '')
+  return raw ? raw.split(',').filter(Boolean) : []
+}
 
-// Country/region cascade filter. Default 'all' = aggregate over every
-// registered platform across every country.
-const selectedCountry = ref<string>(queryStr('country', 'all'))
-const selectedRegion = ref<string>(queryStr('region', 'all'))
+// Country/region multi-select filter. Empty array = aggregate over every
+// registered platform across every country. Region selections are stored as
+// `${countryCode}:${regionCode}` pairs (not bare region codes) since region
+// codes aren't unique across countries once several countries are selectable.
+const selectedCountries = ref<string[]>(queryList('country'))
+const selectedRegionKeys = ref<string[]>(queryList('region'))
 
 const filtersOpen = ref(false)
 
@@ -43,31 +50,56 @@ const { data: countries } = await useFetch<CountryEntry[]>('/api/regions', {
   default: () => [],
 })
 
-// Regions of the currently selected country (empty when "Alle Länder").
+// Regions of the currently selected countries (empty when none selected).
+// Each entry carries its country's display name so the checkbox list can
+// disambiguate identically-named regions once multiple countries are picked.
 const availableRegions = computed(() => {
-  if (selectedCountry.value === 'all') return []
-  return countries.value?.find((c) => c.code === selectedCountry.value)?.regions ?? []
+  if (selectedCountries.value.length === 0) return []
+  return (countries.value ?? [])
+    .filter((c) => selectedCountries.value.includes(c.code))
+    .flatMap((c) => c.regions.map((r) => ({ ...r, key: `${c.code}:${r.code}`, countryName: c.name })))
 })
 
-// Reset region when country changes — old region code is irrelevant.
-watch(selectedCountry, () => {
-  selectedRegion.value = 'all'
+function toggleCountry(code: string): void {
+  const set = new Set(selectedCountries.value)
+  if (set.has(code)) set.delete(code)
+  else set.add(code)
+  selectedCountries.value = [...set]
+}
+function toggleRegion(key: string): void {
+  const set = new Set(selectedRegionKeys.value)
+  if (set.has(key)) set.delete(key)
+  else set.add(key)
+  selectedRegionKeys.value = [...set]
+}
+
+// Drop region selections that no longer belong to a selected country — e.g.
+// deselecting a country should also drop its regions.
+watch(selectedCountries, () => {
+  const valid = new Set(availableRegions.value.map((r) => r.key))
+  selectedRegionKeys.value = selectedRegionKeys.value.filter((k) => valid.has(k))
 })
 
-// useFetch re-fetches synchronously on query changes, i.e. before the watcher
-// above resets selectedRegion — a country switch would briefly fire a request
-// with the old country's region. Self-correct: only pass the region through
-// when it actually exists for the currently selected country.
-const effectiveRegion = computed(() => {
-  if (selectedRegion.value === 'all') return 'all'
-  return availableRegions.value.some((r) => r.code === selectedRegion.value)
-    ? selectedRegion.value
-    : 'all'
+// The /api/auctions and /api/auctions-geo endpoints only understand a single
+// {country, region} pair (or 'all'). For an actual multi-select we fetch the
+// broadest dataset that still covers every selection and filter the rest
+// client-side in applyFilters() — exactly one country picked can still use
+// the fast region- or country-scoped disk cache; anything broader (0 or 2+
+// countries) falls back to the merged 'all' cache, which is itself disk-cached
+// and fast, just less scoped.
+const serverCountry = computed(() => (selectedCountries.value.length === 1 ? selectedCountries.value[0]! : 'all'))
+const serverRegion = computed(() => {
+  if (selectedCountries.value.length !== 1) return 'all'
+  const country = selectedCountries.value[0]!
+  const codes = selectedRegionKeys.value
+    .filter((k) => k.startsWith(`${country}:`))
+    .map((k) => k.slice(country.length + 1))
+  return codes.length === 1 ? codes[0]! : 'all'
 })
 
 const queryParams = computed(() => ({
-  country: selectedCountry.value,
-  region: effectiveRegion.value,
+  country: serverCountry.value,
+  region: serverRegion.value,
 }))
 
 // Lazy fetch so SSR doesn't block on a cold multi-region crawl.
@@ -94,8 +126,8 @@ const {
   refresh: refreshGeo,
 } = useFetch<GeoCrawlResult | null>('/api/auctions-geo', {
   query: {
-    country: selectedCountry,
-    region: effectiveRegion,
+    country: serverCountry,
+    region: serverRegion,
     fetch: computed(() => (fetchMissing.value ? '1' : '0')),
   },
   default: () => null,
@@ -124,8 +156,8 @@ async function pollGeoOnce(): Promise<void> {
   // hydration snapshot — refresh() alone keeps returning the stale value.
   // Snapshot the selection so a stale response never overwrites data the
   // user requested for a different country/region mid-flight.
-  const country = selectedCountry.value
-  const region = effectiveRegion.value
+  const country = serverCountry.value
+  const region = serverRegion.value
   const fetchParam = fetchMissing.value ? '1' : '0'
   pollInFlight = true
   try {
@@ -139,8 +171,8 @@ async function pollGeoOnce(): Promise<void> {
       cache: 'no-store',
     })
     if (
-      country === selectedCountry.value
-      && region === effectiveRegion.value
+      country === serverCountry.value
+      && region === serverRegion.value
       && fetchParam === (fetchMissing.value ? '1' : '0')
     ) {
       geoData.value = fresh
@@ -202,19 +234,26 @@ const onlyWithPhotos = ref(route.query.photos === '1')
 
 // When the user switches country/region, the previously-selected court may
 // no longer exist. Reset filters that depend on the dataset.
-watch([selectedCountry, selectedRegion], () => {
+watch([selectedCountries, selectedRegionKeys], () => {
   courtFilter.value = 'all'
   kategorieFilter.value = 'all'
 })
 
 const selectedCountryLabel = computed(() => {
-  if (selectedCountry.value === 'all') return 'Europa'
-  return countries.value?.find((c) => c.code === selectedCountry.value)?.name ?? selectedCountry.value
+  if (selectedCountries.value.length === 0) return 'Europa'
+  if (selectedCountries.value.length === 1) {
+    const code = selectedCountries.value[0]!
+    return countries.value?.find((c) => c.code === code)?.name ?? code
+  }
+  return `${selectedCountries.value.length} Länder`
 })
 
 const selectedRegionLabel = computed(() => {
-  if (selectedRegion.value === 'all') return null
-  return availableRegions.value.find((r) => r.code === selectedRegion.value)?.name ?? null
+  if (selectedRegionKeys.value.length === 0) return null
+  if (selectedRegionKeys.value.length === 1) {
+    return availableRegions.value.find((r) => r.key === selectedRegionKeys.value[0])?.name ?? null
+  }
+  return `${selectedRegionKeys.value.length} Regionen`
 })
 
 const headerLabel = computed(() => {
@@ -223,19 +262,60 @@ const headerLabel = computed(() => {
     : selectedCountryLabel.value
 })
 
-const courts = computed<string[]>(() => {
-  if (!data.value) return []
-  return [...new Set(data.value.auctions.map((a) => a.amtsgericht).filter(Boolean))].sort()
+// Matches the fetched data's `region` field (a display name, e.g. "Sachsen")
+// against the selected region keys (`${countryCode}:${regionCode}` pairs) —
+// needed because the API/cache only scope by a single country+region and
+// selecting several regions (or several countries) requires filtering the
+// broader fetch client-side.
+const selectedRegionNameKeys = computed<Set<string> | null>(() => {
+  if (selectedRegionKeys.value.length === 0) return null
+  const set = new Set<string>()
+  for (const key of selectedRegionKeys.value) {
+    const r = availableRegions.value.find((r) => r.key === key)
+    if (r) set.add(`${r.country}:${r.name}`)
+  }
+  return set
 })
+
+// Restricts to the selected countries/regions only — needed because a
+// multi-select (or "all") fetch returns a broader dataset than the current
+// selection. Used both as the base for the full applyFilters() pass and for
+// deriving the court/Objektart filter options, which must reflect only the
+// selected countries/regions, not everything that happened to be fetched.
+function scopeByCountryRegion<T extends Auction>(items: T[]): T[] {
+  const countrySet = selectedCountries.value.length ? new Set(selectedCountries.value) : null
+  const regionSet = selectedRegionNameKeys.value
+  if (!countrySet && !regionSet) return items
+  return items.filter((a) => {
+    if (countrySet && !countrySet.has(a.country)) return false
+    if (regionSet && !regionSet.has(`${a.country}:${a.region}`)) return false
+    return true
+  })
+}
+
+const scopedAuctions = computed<Auction[]>(() => (data.value ? scopeByCountryRegion(data.value.auctions) : []))
+
+const courts = computed<string[]>(() => {
+  return [...new Set(scopedAuctions.value.map((a) => a.amtsgericht).filter(Boolean))].sort()
+})
+
+// Prefer the extraction pipeline's propertyType (rules + LLM, understands
+// every crawled language) over classifyObjekt(a.objekt), which only matches
+// German keywords — falling back to it only when extraction found nothing.
+const KATEGORIE_LABEL = new Map(ALL_KATEGORIEN.map((k) => [k.id, k.label]))
+function auctionKategorie(a: Auction): ObjektKategorie {
+  const pt = a.extraction?.propertyType
+  if (pt) return { id: pt, label: KATEGORIE_LABEL.get(pt) ?? pt }
+  return classifyObjekt(a.objekt)
+}
 
 // Counts of normalized Objektart categories. Sorted by descending count so
 // the most common categories show up first in the dropdown.
 const kategorienMitCount = computed<{ id: string; label: string; count: number }[]>(() => {
-  if (!data.value) return []
   const counts = new Map<string, { label: string; count: number }>()
-  for (const a of data.value.auctions) {
+  for (const a of scopedAuctions.value) {
     if (a.aufgehoben) continue
-    const k = classifyObjekt(a.objekt)
+    const k = auctionKategorie(a)
     const entry = counts.get(k.id)
     if (entry) entry.count++
     else counts.set(k.id, { label: k.label, count: 1 })
@@ -246,8 +326,8 @@ const kategorienMitCount = computed<{ id: string; label: string; count: number }
 })
 
 function clearAllFilters(): void {
-  selectedCountry.value = 'all'
-  selectedRegion.value = 'all'
+  selectedCountries.value = []
+  selectedRegionKeys.value = []
   search.value = ''
   courtFilter.value = 'all'
   priceMin.value = null
@@ -276,10 +356,10 @@ function applyFilters<T extends Auction>(items: T[]): T[] {
   const landMax = numOrNull(landAreaMax.value)
   const livMin = numOrNull(livingAreaMin.value)
   const livMax = numOrNull(livingAreaMax.value)
-  return items.filter((a) => {
+  return scopeByCountryRegion(items).filter((a) => {
     if (!includeAufgehoben.value && a.aufgehoben) return false
     if (courtFilter.value !== 'all' && a.amtsgericht !== courtFilter.value) return false
-    if (kat !== 'all' && classifyObjekt(a.objekt).id !== kat) return false
+    if (kat !== 'all' && auctionKategorie(a).id !== kat) return false
     if (onlyWithPhotos.value && a.fotoCount === 0) return false
     if (min != null && (a.verkehrswertEur == null || a.verkehrswertEur < min)) return false
     if (max != null && (a.verkehrswertEur == null || a.verkehrswertEur > max)) return false
@@ -337,8 +417,8 @@ const totals = computed(() => {
 
 const activeFilterCount = computed(() => {
   let n = 0
-  if (selectedCountry.value !== 'all') n++
-  if (selectedRegion.value !== 'all') n++
+  if (selectedCountries.value.length) n++
+  if (selectedRegionKeys.value.length) n++
   if (search.value.trim()) n++
   if (courtFilter.value !== 'all') n++
   if (numOrNull(priceMin.value) != null) n++
@@ -354,11 +434,11 @@ const activeFilterCount = computed(() => {
 })
 
 watch(
-  [selectedCountry, selectedRegion, debouncedSearch, courtFilter, priceMin, priceMax, landAreaMin, landAreaMax, livingAreaMin, livingAreaMax, kategorieFilter, onlyWithPhotos, includeAufgehoben, view],
+  [selectedCountries, selectedRegionKeys, debouncedSearch, courtFilter, priceMin, priceMax, landAreaMin, landAreaMax, livingAreaMin, livingAreaMax, kategorieFilter, onlyWithPhotos, includeAufgehoben, view],
   () => {
     const query: Record<string, string> = {}
-    if (selectedCountry.value !== 'all') query.country = selectedCountry.value
-    if (selectedRegion.value !== 'all') query.region = selectedRegion.value
+    if (selectedCountries.value.length) query.country = selectedCountries.value.join(',')
+    if (selectedRegionKeys.value.length) query.region = selectedRegionKeys.value.join(',')
     if (debouncedSearch.value.trim()) query.q = debouncedSearch.value.trim()
     if (courtFilter.value !== 'all') query.court = courtFilter.value
     if (numOrNull(priceMin.value) != null) query.priceMin = String(numOrNull(priceMin.value))
@@ -379,8 +459,8 @@ watch(
 // Without this watch, same-route history navigation updates route.query reactively
 // but refs are only initialized once at setup, so URL and UI would diverge.
 watch(() => route.query, (q) => {
-  selectedCountry.value = queryStr('country', 'all')
-  selectedRegion.value = queryStr('region', 'all')
+  selectedCountries.value = queryList('country')
+  selectedRegionKeys.value = queryList('region')
   search.value = queryStr('q')
   includeAufgehoben.value = q.aufgehoben === '1'
   courtFilter.value = queryStr('court', 'all')
@@ -497,7 +577,7 @@ function attachmentLabel(att: { kind: string; label: string }): string {
       <template v-else>
         <!-- Mount immediately so tiles render right away; markers stream in
              as geoData arrives instead of gating the whole map behind it. -->
-        <AuctionMap :auctions="filteredGeo" :fit-key="`${selectedCountry}:${selectedRegion}`" />
+        <AuctionMap :auctions="filteredGeo" :fit-key="`${selectedCountries.join(',')}:${selectedRegionKeys.join(',')}`" />
         <p
           v-if="geoPending && !geoData"
           class="absolute top-3 left-1/2 -translate-x-1/2 rounded-md border bg-card px-3 py-1 text-xs text-muted-foreground shadow-sm"
@@ -519,29 +599,41 @@ function attachmentLabel(att: { kind: string; label: string }): string {
         <div class="flex-1 overflow-y-auto px-5 py-4 space-y-5">
           <div class="space-y-2">
             <label class="block text-sm font-medium">Land</label>
-            <Select v-model="selectedCountry">
-              <SelectTrigger class="w-full">
-                <SelectValue placeholder="Land wählen" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Alle Länder</SelectItem>
-                <SelectItem v-for="c in countries" :key="c.code" :value="c.code">{{ c.name }}</SelectItem>
-              </SelectContent>
-            </Select>
+            <div class="max-h-48 overflow-y-auto rounded-md border divide-y">
+              <label
+                v-for="c in countries"
+                :key="c.code"
+                class="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-muted/50"
+              >
+                <input
+                  type="checkbox"
+                  class="h-4 w-4 rounded border-input accent-primary"
+                  :checked="selectedCountries.includes(c.code)"
+                  @change="toggleCountry(c.code)"
+                >
+                {{ c.name }}
+              </label>
+            </div>
           </div>
 
           <div class="space-y-2">
             <label class="block text-sm font-medium">Region</label>
-            <Select v-model="selectedRegion" :disabled="selectedCountry === 'all' || availableRegions.length === 0">
-              <SelectTrigger class="w-full">
-                <SelectValue placeholder="Region wählen" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Alle Regionen</SelectItem>
-                <SelectItem v-for="r in availableRegions" :key="r.code" :value="r.code">{{ r.name }}</SelectItem>
-              </SelectContent>
-            </Select>
-            <p v-if="selectedCountry === 'all'" class="text-xs text-muted-foreground">
+            <div v-if="availableRegions.length" class="max-h-48 overflow-y-auto rounded-md border divide-y">
+              <label
+                v-for="r in availableRegions"
+                :key="r.key"
+                class="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-muted/50"
+              >
+                <input
+                  type="checkbox"
+                  class="h-4 w-4 rounded border-input accent-primary"
+                  :checked="selectedRegionKeys.includes(r.key)"
+                  @change="toggleRegion(r.key)"
+                >
+                {{ r.name }}<span v-if="selectedCountries.length > 1" class="text-muted-foreground"> ({{ r.countryName }})</span>
+              </label>
+            </div>
+            <p v-else class="text-xs text-muted-foreground">
               Wähle zuerst ein Land, um Regionen zu filtern.
             </p>
           </div>
@@ -699,7 +791,7 @@ function attachmentLabel(att: { kind: string; label: string }): string {
     </Sheet>
 
     <p
-      v-if="selectedCountry === 'all' && pending"
+      v-if="selectedCountries.length === 0 && pending"
       class="mb-4 text-xs text-muted-foreground text-center"
     >
       Erstaufruf kann mehrere Minuten dauern (alle registrierten Quellen parallel)

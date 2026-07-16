@@ -57,7 +57,25 @@ const LIVING_LABELS =
   // Lithuanian
   '|gyvenamasis plotas|naudingasis plotas' +
   // Swedish
-  '|boarea|bostadsyta|boyta|lägenhetsyta|storlek'
+  '|boarea|bostadsyta|boyta|lägenhetsyta|storlek' +
+  // Spanish
+  '|superficie construida|superficie útil|superficie habitable' +
+  // Italian
+  '|superficie commerciale|superficie utile|superficie catastale' +
+  // French
+  '|surface habitable|surface utile' +
+  // Dutch (Belgium)
+  '|bewoonbare oppervlakte|woonoppervlakte' +
+  // Danish
+  '|boligareal|beboelsesareal' +
+  // Finnish
+  '|asuinpinta-ala|huoneistoala|asuntoala' +
+  // Icelandic
+  '|flatarmál íbúðar|stærð íbúðar' +
+  // Latvian
+  '|dzīvojamā platība' +
+  // Estonian
+  '|eluruumi pind|elamispind'
 
 const LAND_LABELS =
   'grundstücksgröße|grundstücksfläche|grundstück|bodenfläche|grundfläche|flurstück' +
@@ -72,7 +90,25 @@ const LAND_LABELS =
   // Lithuanian
   '|sklypo plotas|žemės plotas' +
   // Swedish
-  '|tomtmark|tomtyta|tomtareal|fastighetens areal|tomtstorlek'
+  '|tomtmark|tomtyta|tomtareal|fastighetens areal|tomtstorlek' +
+  // Spanish
+  '|superficie del solar|superficie de la parcela|extensión superficial|superficie de la finca' +
+  // Italian
+  '|superficie del terreno|superficie fondiaria' +
+  // French
+  '|surface du terrain|surface de la parcelle|contenance cadastrale' +
+  // Dutch (Belgium)
+  '|perceelsoppervlakte|grondoppervlakte|kadastrale oppervlakte' +
+  // Danish
+  '|grundareal|grundstørrelse' +
+  // Finnish
+  '|tontin pinta-ala|maapinta-ala|kiinteistön pinta-ala' +
+  // Icelandic
+  '|lóðarstærð|flatarmál lóðar' +
+  // Latvian
+  '|zemes gabala platība' +
+  // Estonian
+  '|maatüki pind|krundi pind'
 
 export function findLivingAreaSqm(text: string): number | null {
   return findLabeledArea(text, LIVING_LABELS)
