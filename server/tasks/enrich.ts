@@ -36,6 +36,7 @@ import {
   readExtractionCache,
   writeExtractionCache,
 } from '../utils/extraction-cache'
+import { interleaveByPlatform } from '../utils/interleave-by-platform'
 import { isSafePathSegment } from '../utils/path-segment'
 import { cacheKey, readVerkehrswertCache } from '../utils/verkehrswert-cache'
 
@@ -44,10 +45,9 @@ const IMAGES_DIR = join(process.cwd(), '.cache_zvg', 'images')
 const ENRICH_CONCURRENCY = 8
 const FLUSH_EVERY = 200
 // Cap LLM calls per run so a cold start spreads its load over several runs
-// instead of spawning thousands of proxy subprocesses at once.
-// Deliberately low: field extraction is best-effort; the detail page's on-demand
-// summary covers what background enrichment misses.
-const MAX_LLM_PER_RUN = 30
+// instead of spawning thousands of proxy subprocesses at once. ENRICH_CONCURRENCY
+// already bounds how many run *at once*; this just bounds the total per run.
+const MAX_LLM_PER_RUN = 300
 
 function readLlmConfig(): LlmConfig | null {
   const c = useRuntimeConfig().extractLlm as { baseUrl?: string; model?: string } | undefined
@@ -112,9 +112,10 @@ async function runEnrich() {
       const hit = cache[cacheKey(a.platform, a.zvgId)]
       return hit?.source === 'rules' && hit.confidence === 'low'
     }
-    const todo = result.auctions.filter(
+    const eligible = result.auctions.filter(
       (a) => !cache[cacheKey(a.platform, a.zvgId)] || needsEnrich(a) || needsLlmRetry(a),
     )
+    const todo = interleaveByPlatform(eligible)
     console.log(
       `[enrich] crawled ${result.auctions.length}, ${todo.length} to (re)enrich · llm=${llmConfig ? llmConfig.model : 'off'}`,
     )
