@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Auction } from '~/types/auction'
-import { frAddressDateKey } from './registry'
+import { completenessScore, frAddressDateKey } from './registry'
 
 function auction(overrides: Partial<Auction>): Auction {
   return {
@@ -62,5 +62,33 @@ describe('frAddressDateKey', () => {
   it('returns null when adresse or terminIso is missing', () => {
     expect(frAddressDateKey(auction({ adresse: null, terminIso: '2026-07-07T14:00:00' }))).toBeNull()
     expect(frAddressDateKey(auction({ adresse: '12 Rue de la Paix, 75001 Paris', terminIso: null }))).toBeNull()
+  })
+})
+
+describe('completenessScore', () => {
+  it('scores a fuller record higher than a bare-bones one', () => {
+    const bare = auction({})
+    const full = auction({
+      verkehrswertEur: 100_000,
+      objekt: 'Maison',
+      adresse: '12 Rue de la Paix, 75001 Paris',
+      terminIso: '2026-07-07T14:00:00',
+      beschreibung: 'Une belle maison.',
+      fotoCount: 3,
+    })
+    expect(completenessScore(full)).toBeGreaterThan(completenessScore(bare))
+  })
+
+  it('caps the photo-count contribution so a photo-only record cannot outscore a described one', () => {
+    const manyPhotosNoText = auction({ fotoCount: 50 })
+    const describedFewPhotos = auction({
+      verkehrswertEur: 100_000,
+      objekt: 'Maison',
+      adresse: '12 Rue de la Paix, 75001 Paris',
+      terminIso: '2026-07-07T14:00:00',
+      beschreibung: 'Une belle maison.',
+      fotoCount: 1,
+    })
+    expect(completenessScore(describedFewPhotos)).toBeGreaterThan(completenessScore(manyPhotosNoText))
   })
 })
