@@ -46,22 +46,26 @@ interface KategorieRule extends ObjektKategorie {
 // More specific / dominant types come first, accessory types last.
 //
 // Non-German terms cover the other crawled countries' listing languages (ES,
-// IT, FR, NL for Belgium, CZ, PL, HU, LT, LV, EE, BA/HR/SR, SE, FI, DK, IS).
+// IT, FR, NL for Belgium, CZ, PL, HU, LT, LV, EE, BA/HR/SR, SE, FI, DK, IS, GR).
 // Kept conservative like the sizes.ts labels: only added terms unambiguous
 // enough to trust without cross-checking context — a miss falls through to
 // the LLM fallback, a wrong match doesn't.
+//
+// Greek terms skip the \b word-boundary convention used elsewhere: JS regexes
+// without the /u flag treat \w as ASCII-only, so \b never matches around
+// Greek letters (both sides read as "non-word", meaning no boundary at all).
 const RULES: KategorieRule[] = [
   {
     id: 'mehrfamilienhaus',
     label: 'Mehrfamilienhaus',
-    test: /mehrfamilienhaus|dreifamilienhaus|edificio (?:plurifamiliar|de viviendas)|vivienda plurifamiliar|edificio plurifamiliare|immeuble (?:collectif|de rapport|d'habitation)|meergezinswoning|appartementsgebouw|bytový dům|budynek wielorodzinny|kamienica|daugiabutis|daudzdzīvokļu māja|korterelamu|flerbostadshus|kerrostalo|etageejendom|flerfamiliehus|fjölbýlishús/i,
+    test: /mehrfamilienhaus|dreifamilienhaus|edificio (?:plurifamiliar|de viviendas)|vivienda plurifamiliar|edificio plurifamiliare|immeuble (?:collectif|de rapport|d'habitation)|meergezinswoning|appartementsgebouw|bytový dům|budynek wielorodzinny|kamienica|daugiabutis|daudzdzīvokļu māja|korterelamu|flerbostadshus|kerrostalo|etageejendom|flerfamiliehus|fjölbýlishús|πολυκατοικία/i,
   },
   { id: 'zweifamilienhaus', label: 'Zweifamilienhaus', test: /zweifamilienhaus|casa bifamiliare|maison bifamiliale/i },
   // Matches "Wohn- und Geschäftshaus", "Wohn-/Geschäftshaus", "Wohn/Geschäftshaus".
   {
     id: 'wohn-geschaefts',
     label: 'Wohn-/Geschäftshaus',
-    test: /wohn-?\s*(?:und\s+|\/\s*)?geschäftshaus|stambeno-poslovni objekat/i,
+    test: /wohn-?\s*(?:und\s+|\/\s*)?geschäftshaus|stambeno-poslovni objekat|κτίριο μικτής χρήσης/i,
   },
   {
     id: 'doppelhaushaelfte',
@@ -76,34 +80,34 @@ const RULES: KategorieRule[] = [
   {
     id: 'einfamilienhaus',
     label: 'Einfamilienhaus',
-    test: /einfamilienhaus|vivienda unifamiliar|casa unifamiliar|casa unifamiliare|villetta|maison individuelle|eengezinswoning|rodinný dům|dom jednorodzinny|családi ház|vienbutis namas|savrupmāja|eramu|villa|enfamiljshus|omakotitalo|enfamiliehus|parcelhus|einbýlishús|porodična kuća/i,
+    test: /einfamilienhaus|vivienda unifamiliar|casa unifamiliar|casa unifamiliare|villetta|maison individuelle|eengezinswoning|rodinný dům|dom jednorodzinny|családi ház|vienbutis namas|savrupmāja|eramu|villa|enfamiljshus|omakotitalo|enfamiliehus|parcelhus|einbýlishús|porodična kuća|μονοκατοικία/i,
   },
   {
     id: 'eigentumswohnung',
     label: 'Eigentumswohnung',
-    test: /eigentumswohnung|sonstiges teileigentum|wohnung und anteil|\bpiso\b|apartamento|appartamento|appartement|mieszkanie|\blakás\b|\bbutas\b|dzīvoklis|\bkorter\b|lägenhet|bostadsrätt|asunto-osake|huoneisto|ejerlejlighed|lejlighed|\bíbúð\b|\bstan\b/i,
+    test: /eigentumswohnung|sonstiges teileigentum|wohnung und anteil|\bpiso\b|apartamento|appartamento|appartement|mieszkanie|\blakás\b|\bbutas\b|dzīvoklis|\bkorter\b|lägenhet|bostadsrätt|asunto-osake|huoneisto|ejerlejlighed|lejlighed|\bíbúð\b|\bstan\b|διαμέρισμα/i,
   },
   {
     id: 'gewerbe',
     label: 'Gewerbe',
-    test: /gewerb|local comercial|nave industrial|immobile commerciale|capannone industriale|local commercial|local professionnel|bedrijfspand|kantoorruimte|komerční prostor|lokal użytkowy|lokal usługowy|üzlethelyiség|komercinės paskirties|komercplatības|äripind|kommersiell fastighet|affärslokal|liikehuoneisto|toimitila|erhvervsejendom|atvinnuhúsnæði|poslovni prostor/i,
+    test: /gewerb|local comercial|nave industrial|immobile commerciale|capannone industriale|local commercial|local professionnel|bedrijfspand|kantoorruimte|komerční prostor|lokal użytkowy|lokal usługowy|üzlethelyiség|komercinės paskirties|komercplatības|äripind|kommersiell fastighet|affärslokal|liikehuoneisto|toimitila|erhvervsejendom|atvinnuhúsnæði|poslovni prostor|κατάστημα|επαγγελματικ(?:ός|οί) χώρος|γραφείο/i,
   },
   {
     id: 'land-forst',
     label: 'Land-/Forstwirtschaft',
-    test: /forstwirtschaft|landwirt|ackerland|terreno rústico|finca rústica|terreno agricolo|fondo rustico|terrain agricole|terres agricoles|landbouwgrond|zemědělská půda|grunt rolny|ziemia rolna|mezőgazdasági terület|žemės ūkio paskirties|lauksaimniecības zeme|põllumajandusmaa|jordbruksmark|skogsmark|maatalousmaa|metsämaa|landbrugsjord|poljoprivredno zemljište/i,
+    test: /forstwirtschaft|landwirt|ackerland|terreno rústico|finca rústica|terreno agricolo|fondo rustico|terrain agricole|terres agricoles|landbouwgrond|zemědělská půda|grunt rolny|ziemia rolna|mezőgazdasági terület|žemės ūkio paskirties|lauksaimniecības zeme|põllumajandusmaa|jordbruksmark|skogsmark|maatalousmaa|metsämaa|landbrugsjord|poljoprivredno zemljište|αγροτεμάχιο|δασική έκταση/i,
   },
   {
     id: 'unbebaut',
     label: 'Unbebautes Grundstück',
-    test: /unbebautes grundstück|baugrundstück|\bsolar\b|terreno edificable|terreno edificabile|area edificabile|terrain à bâtir|terrain constructible|bouwgrond|stavební pozemek|działka budowlana|építési telek|byggklar tomt|obebyggd tomt|byggegrund/i,
+    test: /unbebautes grundstück|baugrundstück|\bsolar\b|terreno edificable|terreno edificabile|area edificabile|terrain à bâtir|terrain constructible|bouwgrond|stavební pozemek|działka budowlana|építési telek|byggklar tomt|obebyggd tomt|byggegrund|οικόπεδο/i,
   },
   {
     id: 'garage-stellplatz',
     label: 'Garage / Stellplatz',
     // Substring match on purpose: compounds and plurals ("Tiefgaragenstellplatz",
     // "Doppelgarage", "Garagen", "Stellplätze") must classify as garage too.
-    test: /garage|stellpl(?:atz|ätze)|garaje|plaza de aparcamiento|posto auto|place de parking|parkeerplaats|garáž|parkovací stání|garaż|miejsce postojowe|garázs|garažas|garāža|garaaž|parkeringsplats|autotalli|autopaikka|parkeringsplads|bílskúr/i,
+    test: /garage|stellpl(?:atz|ätze)|garaje|plaza de aparcamiento|posto auto|place de parking|parkeerplaats|garáž|parkovací stání|garaż|miejsce postojowe|garázs|garažas|garāža|garaaž|parkeringsplats|autotalli|autopaikka|parkeringsplads|bílskúr|θέση στάθμευσης|γκαράζ/i,
   },
 ]
 
