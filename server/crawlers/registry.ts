@@ -145,7 +145,7 @@ export function getCrawlersForRegion(country: string, regionCode: string): Platf
  * countries with an empty aktenzeichen (AT, EE, LV, FI) have exactly one
  * registered platform each and must keep relying on {platform, zvgId}.
  */
-function frAddressDateKey(a: Auction): string | null {
+export function frAddressDateKey(a: Auction): string | null {
   if (a.country !== 'fr' || !a.adresse || !a.terminIso) return null
   const postal = a.adresse.match(/\b\d{5}\b/)?.[0]
   if (!postal) return null
@@ -158,6 +158,23 @@ function frAddressDateKey(a: Auction): string | null {
   const houseNumber = addressWithoutPostal.match(/\b\d+[a-z]?(?:\s*(?:bis|ter|quater))?\b/i)?.[0]
   if (!houseNumber) return null
   return `fr-addr|${postal}|${houseNumber}|${a.terminIso.slice(0, 10)}`
+}
+
+/**
+ * Rough completeness score used to pick a winner when two platforms publish
+ * the same real-world sale. Higher is richer — so when e.g. avoventes.fr has
+ * a fuller record for a sale than licitor.com (or vice versa), the fuller one
+ * survives instead of whichever platform happens to be registered first.
+ */
+export function completenessScore(a: Auction): number {
+  return (
+    (a.verkehrswertEur != null ? 1 : 0) +
+    (a.objekt ? 1 : 0) +
+    (a.adresse ? 1 : 0) +
+    (a.terminIso ? 1 : 0) +
+    (a.beschreibung ? 1 : 0) +
+    Math.min(a.fotoCount, 5)
+  )
 }
 
 /**
@@ -195,18 +212,59 @@ export async function crawlSingle(
   // Overlapping platforms (e.g. zvg-portal + zvbawü both list the same BW
   // property) would otherwise produce duplicate pins and list rows. Dedup by
   // a normalized {amtsgericht, aktenzeichen} key — the Aktenzeichen is the
-  // court's own case number and is stable across portals. When that key isn't
-  // available, fall back to {platform, zvgId} so platform-internal uniqueness
-  // is preserved.
-  const seen = new Set<string>()
-  const auctions = results.flatMap((r) => r.auctions).filter((a) => {
+  // court's own case number and is stable across portals. Among auctions
+  // sharing a key, keep the one with the richer record (completenessScore)
+  // rather than whichever platform happens to be registered/crawled first.
+  const azWinners = new Map<string, Auction>()
+  const pfSeen = new Set<string>()
+  const noAzAuctions: Auction[] = []
+  for (const a of results.flatMap((r) => r.auctions)) {
     const az = a.aktenzeichen.trim().toLowerCase().replace(/\s+/g, ' ')
     const ag = a.amtsgericht.trim().toLowerCase()
-    const key = az && ag ? `az|${ag}|${az}` : frAddressDateKey(a) ?? `pf|${a.platform}|${a.zvgId}`
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
+    if (az && ag) {
+      const key = `az|${ag}|${az}`
+      const existing = azWinners.get(key)
+      if (!existing || completenessScore(a) > completenessScore(existing)) {
+        azWinners.set(key, a)
+      }
+      continue
+    }
+    // No court case number available — {platform, zvgId} is checked
+    // unconditionally so platform-internal uniqueness is always preserved,
+    // independently of the cross-platform address+date matching below.
+    const pfKey = `pf|${a.platform}|${a.zvgId}`
+    if (pfSeen.has(pfKey)) continue
+    pfSeen.add(pfKey)
+    noAzAuctions.push(a)
+  }
+
+  // French judicial-sale sources never publish the court's own case number,
+  // yet frequently cross-publish the exact same sale — collapse auctions
+  // sharing a {postal code, house number, date} fingerprint (frAddressDateKey)
+  // to whichever has the richer record, but ONLY across different platforms.
+  // Two same-platform auctions sharing that fingerprint are distinct lots
+  // (e.g. two apartments in one seized building sold the same day) and must
+  // both survive — grouping by platform first guards that.
+  const addrGroups = new Map<string, Auction[]>()
+  const auctions: Auction[] = []
+  for (const a of noAzAuctions) {
+    const key = frAddressDateKey(a)
+    if (!key) {
+      auctions.push(a)
+      continue
+    }
+    const group = addrGroups.get(key)
+    if (group) group.push(a)
+    else addrGroups.set(key, [a])
+  }
+  for (const group of addrGroups.values()) {
+    if (new Set(group.map((a) => a.platform)).size === 1) {
+      auctions.push(...group)
+    } else {
+      auctions.push(group.reduce((best, a) => (completenessScore(a) > completenessScore(best) ? a : best)))
+    }
+  }
+  auctions.push(...azWinners.values())
   return {
     platform: results.length === 1 ? (results[0] as CrawlResult).platform : 'multi',
     source: [...new Set(results.map((r) => r.source))].join(', '),
