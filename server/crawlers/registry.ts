@@ -145,7 +145,7 @@ export function getCrawlersForRegion(country: string, regionCode: string): Platf
  * countries with an empty aktenzeichen (AT, EE, LV, FI) have exactly one
  * registered platform each and must keep relying on {platform, zvgId}.
  */
-function frAddressDateKey(a: Auction): string | null {
+export function frAddressDateKey(a: Auction): string | null {
   if (a.country !== 'fr' || !a.adresse || !a.terminIso) return null
   const postal = a.adresse.match(/\b\d{5}\b/)?.[0]
   if (!postal) return null
@@ -196,15 +196,35 @@ export async function crawlSingle(
   // property) would otherwise produce duplicate pins and list rows. Dedup by
   // a normalized {amtsgericht, aktenzeichen} key — the Aktenzeichen is the
   // court's own case number and is stable across portals. When that key isn't
-  // available, fall back to {platform, zvgId} so platform-internal uniqueness
-  // is preserved.
-  const seen = new Set<string>()
+  // available, {platform, zvgId} is checked unconditionally so platform-
+  // internal uniqueness is always preserved — the frAddressDateKey fallback
+  // below only ever suppresses a SECOND platform's entry for an address+date
+  // already claimed by a different platform. Without that platform check, two
+  // genuinely distinct same-platform lots at the same street address on the
+  // same audience date (e.g. two apartments in one seized building sold the
+  // same day) would collide on the address key and one would silently vanish.
+  const seenAz = new Set<string>()
+  const seenPf = new Set<string>()
+  const addrOwner = new Map<string, string>()
   const auctions = results.flatMap((r) => r.auctions).filter((a) => {
     const az = a.aktenzeichen.trim().toLowerCase().replace(/\s+/g, ' ')
     const ag = a.amtsgericht.trim().toLowerCase()
-    const key = az && ag ? `az|${ag}|${az}` : frAddressDateKey(a) ?? `pf|${a.platform}|${a.zvgId}`
-    if (seen.has(key)) return false
-    seen.add(key)
+    if (az && ag) {
+      const key = `az|${ag}|${az}`
+      if (seenAz.has(key)) return false
+      seenAz.add(key)
+      return true
+    }
+    const pfKey = `pf|${a.platform}|${a.zvgId}`
+    if (seenPf.has(pfKey)) return false
+    seenPf.add(pfKey)
+
+    const addrKey = frAddressDateKey(a)
+    if (addrKey) {
+      const owner = addrOwner.get(addrKey)
+      if (owner && owner !== a.platform) return false
+      if (!owner) addrOwner.set(addrKey, a.platform)
+    }
     return true
   })
   return {
