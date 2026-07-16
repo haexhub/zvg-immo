@@ -3,6 +3,7 @@ import type { CrawlOptions, PlatformCrawler, RegionInfo } from './types'
 import { zvgPortalCrawler } from './zvg-portal'
 import { boeCrawler } from './boe'
 import { zvbawuCrawler } from './zvbawu'
+import { mvZvgcomCrawler } from './mv-zvgcom'
 import { atEdikteCrawler } from './at'
 import { bidditCrawler } from './biddit'
 import { agiCrawler } from './agi'
@@ -33,6 +34,7 @@ export const platforms: readonly PlatformCrawler[] = [
   zvgPortalCrawler,
   boeCrawler,
   zvbawuCrawler,
+  mvZvgcomCrawler,
   atEdikteCrawler,
   bidditCrawler,
   agiCrawler,

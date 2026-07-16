@@ -6,9 +6,13 @@ export const UA = 'Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101 Firefox/130.0'
 export const COUNTRY = 'de'
 
 /**
- * The joint federal-state portal serves all 16 Bundesländer through a single
- * `land_abk` query parameter. Order matches the typical Bundesland sort.
- * The `code` is the upstream's `land_abk` value.
+ * The joint federal-state portal serves all Bundesländer that opted into it
+ * through a single `land_abk` query parameter. Order matches the typical
+ * Bundesland sort. The `code` is the upstream's `land_abk` value.
+ *
+ * Mecklenburg-Vorpommern is deliberately absent: its Amtsgerichte never opted
+ * into this portal (land_abk=mv is selectable but returns zero results) — see
+ * server/crawlers/mv-zvgcom for the portal MV actually publishes on.
  */
 export const DE_REGIONS: readonly RegionInfo[] = [
   { code: 'bw', name: 'Baden-Württemberg' },
@@ -18,7 +22,6 @@ export const DE_REGIONS: readonly RegionInfo[] = [
   { code: 'hb', name: 'Bremen' },
   { code: 'hh', name: 'Hamburg' },
   { code: 'he', name: 'Hessen' },
-  { code: 'mv', name: 'Mecklenburg-Vorpommern' },
   { code: 'ni', name: 'Niedersachsen' },
   { code: 'nw', name: 'Nordrhein-Westfalen' },
   { code: 'rp', name: 'Rheinland-Pfalz' },
