@@ -102,3 +102,18 @@ describe('classifyObjekt — Bosnian/Croatian/Serbian', () => {
     expect(classifyObjekt('Poslovni prostor u centru').id).toBe('gewerbe')
   })
 })
+
+describe('classifyObjekt — Greek', () => {
+  it('classifies διαμέρισμα', () => {
+    expect(classifyObjekt('Διαμέρισμα 85 τ.μ. στον 2ο όροφο').id).toBe('eigentumswohnung')
+  })
+  it('classifies μονοκατοικία', () => {
+    expect(classifyObjekt('Μονοκατοικία με αυλή').id).toBe('einfamilienhaus')
+  })
+  it('classifies κατάστημα', () => {
+    expect(classifyObjekt('Κατάστημα 153.80 τ.μ. Δήμος Πηνειού σε πλειστηριασμό').id).toBe('gewerbe')
+  })
+  it('classifies οικόπεδο', () => {
+    expect(classifyObjekt('Οικόπεδο 500 τ.μ.').id).toBe('unbebaut')
+  })
+})

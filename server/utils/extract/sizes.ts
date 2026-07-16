@@ -18,10 +18,13 @@ function parseGermanNumber(raw: string): number | null {
 }
 
 // A number immediately followed by an area unit. The negative lookahead stops
-// "m2" matching "m2x" and "ha" matching "haus".
+// "m2" matching "m2x", "ha" matching "haus", and (Greek) "τμ" matching the
+// start of "τμήμα" (a common word meaning "section/part" — Ͱ-Ͽ
+// covers Greek letters, which plain [a-z] doesn't).
 const NUM = '\\d[\\d.]*(?:,\\d+)?'
-const AREA_TOKEN = `${NUM}\\s*(?:m²|m2|qm|kvm|ha)`
-const AREA_RE = new RegExp(`(${NUM})\\s*(m²|m2|qm|kvm|ha)(?![a-z\\d])`, 'i')
+// Greek listings write m² as "τ.μ." (τετραγωνικά μέτρα), sometimes without dots.
+const AREA_TOKEN = `${NUM}\\s*(?:m²|m2|qm|kvm|ha|τ\\.?μ\\.?)`
+const AREA_RE = new RegExp(`(${NUM})\\s*(m²|m2|qm|kvm|ha|τ\\.?μ\\.?)(?![a-z\\d\\u0370-\\u03ff])`, 'i')
 
 /** "140 m²" → 140, "2,5 ha" → 25000, "214.000,00 Euro" → null. */
 export function parseAreaValue(text: string): number | null {
@@ -35,9 +38,9 @@ export function parseAreaValue(text: string): number | null {
 /** Find the area value that directly follows one of the given labels. */
 function findLabeledArea(text: string, labelAlternation: string): number | null {
   // The lookahead stops the unit matching inside a word ("Grundstück mit
-  // 1 Haus" must not read "1 Ha" as one hectare).
+  // 1 Haus" must not read "1 Ha" as one hectare, "2 τμήματα" not as 2 τ.μ.).
   const re = new RegExp(
-    `(?:${labelAlternation})\\D{0,14}?(${AREA_TOKEN})(?![a-zäöü\\d])`,
+    `(?:${labelAlternation})\\D{0,14}?(${AREA_TOKEN})(?![a-zäöü\\d\\u0370-\\u03ff])`,
     'i',
   )
   const m = text.match(re)
@@ -75,7 +78,9 @@ const LIVING_LABELS =
   // Latvian
   '|dzīvojamā platība' +
   // Estonian
-  '|eluruumi pind|elamispind'
+  '|eluruumi pind|elamispind' +
+  // Greek
+  '|επιφάνεια κατοικίας|επιφάνεια διαμερίσματος|εμβαδόν κατοικίας'
 
 const LAND_LABELS =
   'grundstücksgröße|grundstücksfläche|grundstück|bodenfläche|grundfläche|flurstück' +
@@ -108,7 +113,9 @@ const LAND_LABELS =
   // Latvian
   '|zemes gabala platība' +
   // Estonian
-  '|maatüki pind|krundi pind'
+  '|maatüki pind|krundi pind' +
+  // Greek
+  '|έκταση οικοπέδου|επιφάνεια οικοπέδου|εμβαδόν οικοπέδου'
 
 export function findLivingAreaSqm(text: string): number | null {
   return findLabeledArea(text, LIVING_LABELS)
