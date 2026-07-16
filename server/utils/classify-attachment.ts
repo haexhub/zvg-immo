@@ -1,8 +1,12 @@
 import type { AttachmentKind } from '~/types/auction'
 
 const RULES: ReadonlyArray<[RegExp, AttachmentKind]> = [
-  [/edikt|bekanntmachung|verlautbarung|tac|cahier|terms|conditions|verkoopsvoorwaarden|huutokauppaehdot|auktionsvillkor/i, 'bekanntmachung'],
+  // Checked before 'bekanntmachung': "tac" in that rule is a substring of the
+  // German word "Gutachten", so checking it first would mis-tag every
+  // Gutachten attachment (label or filename containing "Gutachten") as a
+  // Bekanntmachung instead.
   [/gutacht|verkehrswert|expert|expertise|estim|sch[aä]tz/i, 'gutachten'],
+  [/edikt|bekanntmachung|verlautbarung|tac|cahier|terms|conditions|verkoopsvoorwaarden|huutokauppaehdot|auktionsvillkor/i, 'bekanntmachung'],
   [/expos[ée]|brochure|prospect|myyntiesite|salgsopstilling/i, 'exposee'],
   [/foto|bild|photo|picture|image/i, 'foto'],
 ]
