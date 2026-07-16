@@ -4,6 +4,7 @@ import { AV_BASE, UA, COUNTRY } from './constants'
 
 const DETAIL_CONCURRENCY = 4
 const FETCH_RETRIES = 2
+const AV_ORIGIN = new URL(AV_BASE).origin
 
 /** Unfiltered search covers "Ventes amiables" (privately negotiated, court-
  *  supervised sales) too, which aren't public-bid Zwangsversteigerungen —
@@ -93,36 +94,54 @@ interface ListItem {
   terminText: string | null
 }
 
-function parseListPage(html: string): { items: ListItem[]; totalReported: number | null } {
+function parseListPage(html: string): { items: ListItem[]; rawCount: number; totalReported: number | null } {
   const $ = load(html)
   const items: ListItem[] = []
+  let rawCount = 0
 
   $('[data-link^="https://avoventes.fr/enchere/"]').each((_i, el) => {
     const $card = $(el)
     const href = $card.attr('data-link')
     if (!href) return
+    rawCount++
+    // The `type_vente=encheres` query param doesn't fully exclude "Vente
+    // amiable" (privately negotiated, non-auction) rows — a few still slip
+    // in, badged "Vente amiable" instead of "Vente aux enchères" and with no
+    // "Date de la vente" field at all. Those aren't Zwangsversteigerungen, so
+    // skip them here rather than relying on the upstream filter. Counted via
+    // rawCount above (not `items.length`) so the totalReported sanity check
+    // below isn't tripped by this deliberate exclusion.
+    const badge = clean($card.find('.badge').first().text())
+    if (!/vente aux enchères/i.test(badge)) return
     const text = clean($card.text())
     // A re-auction after a "surenchère" (overbid) drops the "initiale" and
     // shows the new starting price as plain "Mise à prix : X €".
     const priceM = text.match(/Mise à prix(?:\s+initiale)?\s*:\s*([\d\s.,]+)\s*€/)
-    const dateM = text.match(/Date de la vente\s*:\s*(.+?)\s*Date des visites/)
+    // Non-greedy up to "Date des visites" when present, but a listing with no
+    // scheduled visit wouldn't have that label at all — fall back to the end
+    // of the (already single-line, whitespace-collapsed) card text instead of
+    // failing the match outright, which would otherwise leave terminIso null
+    // and keep the row forever (an unknown-date row is always kept, see the
+    // date filter in fetchAllListings below).
+    const dateM = text.match(/Date de la vente\s*:\s*(.+?)(?:\s*Date des visites|$)/)
     const terminText = dateM ? clean(dateM[1]!) : null
+    const priceText = priceM ? clean(priceM[1]!) : null
     const adresse = clean($card.find('.mt-2.d-flex div.inline-block').last().text()) || null
 
     items.push({
       href,
       objekt: clean($card.find('.font-bold.text-16.mb-2').first().text()) || null,
       // Drop the trailing ", France" — every row is French, it's just noise.
-      adresse: adresse ? adresse.replace(/,\s*France\s*$/i, '') : null,
-      priceEur: priceM ? parseEurAmount(priceM[0]) : null,
-      priceText: priceM ? `${clean(priceM[1]!)} €` : null,
+      adresse: adresse ? adresse.replace(/,?\s*France\.?\s*$/i, '') : null,
+      priceEur: priceText ? parseEurAmount(`${priceText} €`) : null,
+      priceText: priceText ? `${priceText} €` : null,
       terminIso: parseFrDateTime(terminText),
       terminText,
     })
   })
 
   const totalM = $('.font-light.text-16.text-muted').first().text().match(/(\d+)/)
-  return { items, totalReported: totalM ? Number(totalM[1]) : null }
+  return { items, rawCount, totalReported: totalM ? Number(totalM[1]) : null }
 }
 
 interface DetailInfo {
@@ -141,11 +160,14 @@ function parseDetailPage(html: string): DetailInfo {
 }
 
 async function fetchDetail(href: string): Promise<DetailInfo | null> {
-  const url = new URL(href)
-  if (url.origin !== new URL(AV_BASE).origin) {
-    throw new Error(`Unexpected detail URL origin: ${url.origin}`)
-  }
+  // The origin check must stay inside the try — thrown outside it, it would
+  // reject the calling worker's Promise.all in fetchAllListings and zero out
+  // every listing for one malformed href instead of just skipping that row.
   try {
+    const url = new URL(href)
+    if (url.origin !== AV_ORIGIN) {
+      throw new Error(`Unexpected detail URL origin: ${url.origin}`)
+    }
     return parseDetailPage(await htmlFetch(url.toString()))
   } catch {
     return null
@@ -196,10 +218,10 @@ function mapItem(item: ListItem, detail: DetailInfo | null, platformId: string):
 export async function fetchAllListings(
   platformId: string,
 ): Promise<{ auctions: Auction[]; total: number | null }> {
-  const { items: allItems, totalReported } = parseListPage(await htmlFetch(SEARCH_URL))
-  if (totalReported != null && totalReported !== allItems.length) {
+  const { items: allItems, rawCount, totalReported } = parseListPage(await htmlFetch(SEARCH_URL))
+  if (totalReported != null && totalReported !== rawCount) {
     console.warn(
-      `avoventes.fr: page reports ${totalReported} résultats but parsed ${allItems.length} — selector may be stale`,
+      `avoventes.fr: page reports ${totalReported} résultats but parsed ${rawCount} cards — selector may be stale`,
     )
   }
 
