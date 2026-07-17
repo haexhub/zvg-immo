@@ -530,6 +530,7 @@ function attachmentLabel(att: { kind: string; label: string }): string {
           <span><span class="font-semibold">{{ totals.aufgehoben }}</span> aufgehoben</span>
           <span v-if="data">Stand: {{ new Date(data.fetchedAt).toLocaleString('de-DE') }}</span>
         </div>
+        <AuthStatus class="ml-auto" />
       </div>
     </header>
 
