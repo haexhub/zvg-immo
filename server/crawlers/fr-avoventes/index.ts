@@ -1,19 +1,18 @@
 import type { CrawlResult } from '~/types/auction'
-import type { CrawlOptions, PlatformCrawler } from '../types'
-import { PLATFORM_ID, AV_BASE, COUNTRY, AV_REGIONS, REGION_NAME } from './constants'
+import { createCrawlResult, type CrawlOptions, type PlatformCrawler } from '../types'
+import { PLATFORM_ID, AV_BASE, COUNTRY, AV_REGIONS } from './constants'
 import { fetchAllListings } from './list'
 
 async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
   const { auctions, total } = await fetchAllListings(PLATFORM_ID)
-  return {
+  return createCrawlResult({
     platform: PLATFORM_ID,
     source: AV_BASE,
-    countries: [COUNTRY],
-    regions: [REGION_NAME],
-    fetchedAt: new Date().toISOString(),
+    country: COUNTRY,
+    regions: AV_REGIONS,
     totalReported: total,
     auctions,
-  }
+  })
 }
 
 export const avoventesCrawler: PlatformCrawler = {

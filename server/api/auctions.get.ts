@@ -3,16 +3,17 @@ import { crawlAll, crawlSingle } from '../crawlers/registry'
 import { cacheKey, readVerkehrswertCache } from '../utils/verkehrswert-cache'
 import { applyExtractionToAuctions, readExtractionCache } from '../utils/extraction-cache'
 import { readListCache, readMergedListCache, writeListCache } from '../utils/list-cache'
+import { MULTI_PLATFORM, isAllScope, isValidScopeParam, scopeParam } from '~/lib/auction-constants'
 
 // Live-crawl fallback — only used on cold cache (startup before first refresh
 // completes) or for immo=false requests which aren't cached. Short in-memory
 // SWR prevents a thundering herd when the disk cache is not yet warm.
 const cachedCrawl = defineCachedFunction(
   async (country: string, region: string, immobilienOnly: boolean): Promise<CrawlResult> => {
-    if (country === 'all') {
+    if (isAllScope(country)) {
       return crawlAll({ immobilienOnly, enrichDetails: false })
     }
-    if (region === 'all') {
+    if (isAllScope(region)) {
       return crawlAll({ immobilienOnly, country, enrichDetails: false })
     }
     return crawlSingle({ country, region, immobilienOnly })
@@ -28,8 +29,11 @@ const cachedCrawl = defineCachedFunction(
 
 export default defineEventHandler(async (event): Promise<CrawlResult> => {
   const query = getQuery(event)
-  const country = typeof query.country === 'string' ? query.country.toLowerCase() : 'all'
-  const region = typeof query.region === 'string' ? query.region.toLowerCase() : 'all'
+  const country = scopeParam(query.country)
+  const region = scopeParam(query.region)
+  if (!isValidScopeParam(country) || !isValidScopeParam(region)) {
+    throw createError({ statusCode: 400, statusMessage: 'invalid country/region' })
+  }
   const immobilienOnly = query.immo !== '0'
   try {
     let result: CrawlResult | null = null
@@ -37,9 +41,9 @@ export default defineEventHandler(async (event): Promise<CrawlResult> => {
     // Serve immo=true requests from the persistent disk cache written by the
     // refresh task. immo=false falls through to the live-crawl path below.
     if (immobilienOnly) {
-      if (country === 'all') {
+      if (isAllScope(country)) {
         result = await readMergedListCache()
-      } else if (region === 'all') {
+      } else if (isAllScope(region)) {
         result = await readMergedListCache(country)
       } else {
         result = await readListCache(country, region)
@@ -51,7 +55,7 @@ export default defineEventHandler(async (event): Promise<CrawlResult> => {
       result = await cachedCrawl(country, region, immobilienOnly)
       // Warm the disk cache for individual regions so the next immo=true
       // request is served instantly without waiting for the refresh task.
-      if (immobilienOnly && country !== 'all' && region !== 'all') {
+      if (immobilienOnly && !isAllScope(country) && !isAllScope(region)) {
         writeListCache(country, region, result).catch((err: unknown) => {
           console.warn(
             `[api/auctions] list-cache write ${country}/${region}: ${(err as Error).message}`,
@@ -87,7 +91,7 @@ export default defineEventHandler(async (event): Promise<CrawlResult> => {
       // header keeps browsers/proxies from holding on to the empty response.
       setResponseHeader(event, 'cache-control', 'no-store, max-age=0')
       return {
-        platform: 'multi',
+        platform: MULTI_PLATFORM,
         source: '',
         countries: [country],
         regions: [region],

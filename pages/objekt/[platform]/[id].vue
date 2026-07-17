@@ -2,6 +2,7 @@
 import { ALL_KATEGORIEN, classifyObjekt } from '~/lib/objektart'
 import type { AuctionDetail } from '~/server/api/auction/[platform]/[id].get'
 import type { Attachment } from '~/types/auction'
+import { ATTACHMENT_KIND_ORDER, attachmentKindLabel } from '~/lib/auction-constants'
 import { ArrowLeft, Sparkles } from 'lucide-vue-next'
 
 const route = useRoute()
@@ -111,15 +112,6 @@ watch(photoUrls, () => {
   activePhotoIndex.value = 0
 })
 
-const KIND_LABEL: Record<string, string> = {
-  bekanntmachung: 'Bekanntmachung',
-  foto: 'Fotos',
-  exposee: 'Exposé',
-  gutachten: 'Gutachten',
-  sonstiges: 'Anhang',
-}
-const KIND_ORDER = ['bekanntmachung', 'gutachten', 'exposee', 'foto', 'sonstiges']
-
 const groupedAttachments = computed<Array<{ kind: string; label: string; items: Attachment[] }>>(() => {
   if (!a.value) return []
   const byKind = new Map<string, Attachment[]>()
@@ -128,9 +120,9 @@ const groupedAttachments = computed<Array<{ kind: string; label: string; items: 
     list.push(att)
     byKind.set(att.kind, list)
   }
-  return KIND_ORDER
+  return ATTACHMENT_KIND_ORDER
     .filter((k) => byKind.has(k))
-    .map((k) => ({ kind: k, label: KIND_LABEL[k] ?? k, items: byKind.get(k)! }))
+    .map((k) => ({ kind: k, label: attachmentKindLabel(k, k), items: byKind.get(k)! }))
 })
 
 useHead(() => ({

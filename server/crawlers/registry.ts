@@ -1,4 +1,5 @@
 import type { Auction, CrawlResult } from '~/types/auction'
+import { MULTI_PLATFORM } from '~/lib/auction-constants'
 import type { CrawlOptions, PlatformCrawler, RegionInfo } from './types'
 import { zvgPortalCrawler } from './zvg-portal'
 import { boeCrawler } from './boe'
@@ -286,7 +287,7 @@ export async function crawlSingle(
   }
   auctions.push(...azWinners.values())
   return {
-    platform: results.length === 1 ? (results[0] as CrawlResult).platform : 'multi',
+    platform: results.length === 1 ? (results[0] as CrawlResult).platform : MULTI_PLATFORM,
     source: [...new Set(results.map((r) => r.source))].join(', '),
     countries: [opts.country],
     regions: [...new Set(results.flatMap((r) => r.regions))],
@@ -359,7 +360,7 @@ export async function crawlAll(
   )
 
   return {
-    platform: 'multi',
+    platform: MULTI_PLATFORM,
     source: [...new Set(results.map((r) => r.source))].join(', '),
     // Reflect the requested scope, not just the successful subset — failed
     // regions still belong to the run and reappear in `errors`.

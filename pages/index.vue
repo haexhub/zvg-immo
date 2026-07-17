@@ -2,6 +2,7 @@
 import type { Auction, CrawlResult } from '~/types/auction'
 import type { GeoAuction, GeoCrawlResult } from '~/server/api/auctions-geo.get'
 import type { CountryEntry } from '~/server/crawlers/registry'
+import { ALL_SCOPE, attachmentKindLabel, isAllScope } from '~/lib/auction-constants'
 import { ALL_KATEGORIEN, classifyObjekt, type ObjektKategorie } from '~/lib/objektart'
 import Select from '~/components/ui/select/Select.vue'
 import SelectTrigger from '~/components/ui/select/SelectTrigger.vue'
@@ -81,20 +82,20 @@ watch(selectedCountries, () => {
 })
 
 // The /api/auctions and /api/auctions-geo endpoints only understand a single
-// {country, region} pair (or 'all'). For an actual multi-select we fetch the
+// {country, region} pair (or ALL_SCOPE). For an actual multi-select we fetch the
 // broadest dataset that still covers every selection and filter the rest
 // client-side in applyFilters() — exactly one country picked can still use
 // the fast region- or country-scoped disk cache; anything broader (0 or 2+
-// countries) falls back to the merged 'all' cache, which is itself disk-cached
+// countries) falls back to the merged ALL_SCOPE cache, which is itself disk-cached
 // and fast, just less scoped.
-const serverCountry = computed(() => (selectedCountries.value.length === 1 ? selectedCountries.value[0]! : 'all'))
+const serverCountry = computed(() => (selectedCountries.value.length === 1 ? selectedCountries.value[0]! : ALL_SCOPE))
 const serverRegion = computed(() => {
-  if (selectedCountries.value.length !== 1) return 'all'
+  if (selectedCountries.value.length !== 1) return ALL_SCOPE
   const country = selectedCountries.value[0]!
   const codes = selectedRegionKeys.value
     .filter((k) => k.startsWith(`${country}:`))
     .map((k) => k.slice(country.length + 1))
-  return codes.length === 1 ? codes[0]! : 'all'
+  return codes.length === 1 ? codes[0]! : ALL_SCOPE
 })
 
 const queryParams = computed(() => ({
@@ -222,21 +223,21 @@ const search = ref(queryStr('q'))
 // applying instantly.
 const debouncedSearch = refDebounced(search, 250)
 const includeAufgehoben = ref(route.query.aufgehoben === '1')
-const courtFilter = ref<string>(queryStr('court', 'all'))
+const courtFilter = ref<string>(queryStr('court', ALL_SCOPE))
 const priceMin = ref<number | null>(queryNum('priceMin'))
 const priceMax = ref<number | null>(queryNum('priceMax'))
 const landAreaMin = ref<number | null>(queryNum('landMin'))
 const landAreaMax = ref<number | null>(queryNum('landMax'))
 const livingAreaMin = ref<number | null>(queryNum('livMin'))
 const livingAreaMax = ref<number | null>(queryNum('livMax'))
-const kategorieFilter = ref<string>(queryStr('kat', 'all'))
+const kategorieFilter = ref<string>(queryStr('kat', ALL_SCOPE))
 const onlyWithPhotos = ref(route.query.photos === '1')
 
 // When the user switches country/region, the previously-selected court may
 // no longer exist. Reset filters that depend on the dataset.
 watch([selectedCountries, selectedRegionKeys], () => {
-  courtFilter.value = 'all'
-  kategorieFilter.value = 'all'
+  courtFilter.value = ALL_SCOPE
+  kategorieFilter.value = ALL_SCOPE
 })
 
 const selectedCountryLabel = computed(() => {
@@ -329,14 +330,14 @@ function clearAllFilters(): void {
   selectedCountries.value = []
   selectedRegionKeys.value = []
   search.value = ''
-  courtFilter.value = 'all'
+  courtFilter.value = ALL_SCOPE
   priceMin.value = null
   priceMax.value = null
   landAreaMin.value = null
   landAreaMax.value = null
   livingAreaMin.value = null
   livingAreaMax.value = null
-  kategorieFilter.value = 'all'
+  kategorieFilter.value = ALL_SCOPE
   onlyWithPhotos.value = false
   includeAufgehoben.value = false
 }
@@ -358,8 +359,8 @@ function applyFilters<T extends Auction>(items: T[]): T[] {
   const livMax = numOrNull(livingAreaMax.value)
   return scopeByCountryRegion(items).filter((a) => {
     if (!includeAufgehoben.value && a.aufgehoben) return false
-    if (courtFilter.value !== 'all' && a.amtsgericht !== courtFilter.value) return false
-    if (kat !== 'all' && auctionKategorie(a).id !== kat) return false
+    if (!isAllScope(courtFilter.value) && a.amtsgericht !== courtFilter.value) return false
+    if (!isAllScope(kat) && auctionKategorie(a).id !== kat) return false
     if (onlyWithPhotos.value && a.fotoCount === 0) return false
     if (min != null && (a.verkehrswertEur == null || a.verkehrswertEur < min)) return false
     if (max != null && (a.verkehrswertEur == null || a.verkehrswertEur > max)) return false
@@ -420,14 +421,14 @@ const activeFilterCount = computed(() => {
   if (selectedCountries.value.length) n++
   if (selectedRegionKeys.value.length) n++
   if (search.value.trim()) n++
-  if (courtFilter.value !== 'all') n++
+  if (!isAllScope(courtFilter.value)) n++
   if (numOrNull(priceMin.value) != null) n++
   if (numOrNull(priceMax.value) != null) n++
   if (numOrNull(landAreaMin.value) != null) n++
   if (numOrNull(landAreaMax.value) != null) n++
   if (numOrNull(livingAreaMin.value) != null) n++
   if (numOrNull(livingAreaMax.value) != null) n++
-  if (kategorieFilter.value !== 'all') n++
+  if (!isAllScope(kategorieFilter.value)) n++
   if (onlyWithPhotos.value) n++
   if (includeAufgehoben.value) n++
   return n
@@ -440,14 +441,14 @@ watch(
     if (selectedCountries.value.length) query.country = selectedCountries.value.join(',')
     if (selectedRegionKeys.value.length) query.region = selectedRegionKeys.value.join(',')
     if (debouncedSearch.value.trim()) query.q = debouncedSearch.value.trim()
-    if (courtFilter.value !== 'all') query.court = courtFilter.value
+    if (!isAllScope(courtFilter.value)) query.court = courtFilter.value
     if (numOrNull(priceMin.value) != null) query.priceMin = String(numOrNull(priceMin.value))
     if (numOrNull(priceMax.value) != null) query.priceMax = String(numOrNull(priceMax.value))
     if (numOrNull(landAreaMin.value) != null) query.landMin = String(numOrNull(landAreaMin.value))
     if (numOrNull(landAreaMax.value) != null) query.landMax = String(numOrNull(landAreaMax.value))
     if (numOrNull(livingAreaMin.value) != null) query.livMin = String(numOrNull(livingAreaMin.value))
     if (numOrNull(livingAreaMax.value) != null) query.livMax = String(numOrNull(livingAreaMax.value))
-    if (kategorieFilter.value !== 'all') query.kat = kategorieFilter.value
+    if (!isAllScope(kategorieFilter.value)) query.kat = kategorieFilter.value
     if (onlyWithPhotos.value) query.photos = '1'
     if (includeAufgehoben.value) query.aufgehoben = '1'
     if (view.value === 'list') query.view = 'list'
@@ -463,14 +464,14 @@ watch(() => route.query, (q) => {
   selectedRegionKeys.value = queryList('region')
   search.value = queryStr('q')
   includeAufgehoben.value = q.aufgehoben === '1'
-  courtFilter.value = queryStr('court', 'all')
+  courtFilter.value = queryStr('court', ALL_SCOPE)
   priceMin.value = queryNum('priceMin')
   priceMax.value = queryNum('priceMax')
   landAreaMin.value = queryNum('landMin')
   landAreaMax.value = queryNum('landMax')
   livingAreaMin.value = queryNum('livMin')
   livingAreaMax.value = queryNum('livMax')
-  kategorieFilter.value = queryStr('kat', 'all')
+  kategorieFilter.value = queryStr('kat', ALL_SCOPE)
   onlyWithPhotos.value = q.photos === '1'
   view.value = q.view === 'list' ? 'list' : 'map'
 }, { deep: true })
@@ -478,11 +479,11 @@ watch(() => route.query, (q) => {
 // Validate URL-restored courtFilter / kategorieFilter once data has loaded.
 // Invalid values produce silent 0-result filtering otherwise.
 watch(data, () => {
-  if (courtFilter.value !== 'all' && !courts.value.includes(courtFilter.value)) {
-    courtFilter.value = 'all'
+  if (!isAllScope(courtFilter.value) && !courts.value.includes(courtFilter.value)) {
+    courtFilter.value = ALL_SCOPE
   }
-  if (kategorieFilter.value !== 'all' && !kategorienMitCount.value.some((k) => k.id === kategorieFilter.value)) {
-    kategorieFilter.value = 'all'
+  if (!isAllScope(kategorieFilter.value) && !kategorienMitCount.value.some((k) => k.id === kategorieFilter.value)) {
+    kategorieFilter.value = ALL_SCOPE
   }
 })
 
@@ -506,16 +507,8 @@ function truncate(text: string, max: number): string {
   return text.slice(0, max).replace(/\s+\S*$/, '') + '…'
 }
 
-const KIND_LABEL: Record<string, string> = {
-  bekanntmachung: 'Bekanntmachung',
-  foto: 'Fotos',
-  exposee: 'Exposé',
-  gutachten: 'Gutachten',
-  sonstiges: 'Anhang',
-}
-
 function attachmentLabel(att: { kind: string; label: string }): string {
-  return KIND_LABEL[att.kind] ?? att.label ?? 'Anhang'
+  return attachmentKindLabel(att.kind, att.label || 'Anhang')
 }
 </script>
 
@@ -655,7 +648,7 @@ function attachmentLabel(att: { kind: string; label: string }): string {
                 <SelectValue placeholder="Gericht wählen" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Alle Gerichte</SelectItem>
+                <SelectItem :value="ALL_SCOPE">Alle Gerichte</SelectItem>
                 <SelectItem v-for="c in courts" :key="c" :value="c">{{ c }}</SelectItem>
               </SelectContent>
             </Select>
@@ -751,7 +744,7 @@ function attachmentLabel(att: { kind: string; label: string }): string {
                 <SelectValue placeholder="Objektart wählen" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Alle Objektarten</SelectItem>
+                <SelectItem :value="ALL_SCOPE">Alle Objektarten</SelectItem>
                 <SelectItem v-for="k in kategorienMitCount" :key="k.id" :value="k.id">
                   {{ k.label }} ({{ k.count }})
                 </SelectItem>

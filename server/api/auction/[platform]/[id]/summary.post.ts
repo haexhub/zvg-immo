@@ -6,11 +6,17 @@
 // areas, rooms). It produces a human-readable German overview regardless of the
 // source language (CZ/PL/IT/BE content is translated on the fly).
 
+import type { H3Event } from 'h3'
 import { readAuctionSnapshot } from '../../../../utils/auction-snapshot'
 import { readSummaryCache, writeSummaryCache } from '../../../../utils/summary-cache'
 import { isSafePathSegment } from '../../../../utils/path-segment'
 import { cacheKey } from '../../../../utils/verkehrswert-cache'
 import { pickBestPdf, pdfToText } from '../../../../utils/extract/pdf-text'
+import {
+  checkInMemoryRateLimit,
+  createInMemoryRateLimitState,
+  recordInMemoryRateLimitHit,
+} from '../../../../utils/in-memory-rate-limit'
 
 const MAX_PDF_CHARS = 8_000
 
@@ -21,6 +27,8 @@ const MAX_PDF_CHARS = 8_000
 // in the snapshot, so this in-process throttle is the proportionate guard.
 const inflight = new Map<string, Promise<string>>()
 const MAX_INFLIGHT = 4
+const SUMMARY_RATE_LIMIT = { max: 20, windowMs: 60 * 60 * 1000, maxKeys: 10_000 }
+const summaryRateLimit = createInMemoryRateLimitState()
 
 const SYSTEM_PROMPT =
   'Du fasst Immobilien-Zwangsversteigerungen prägnant auf Deutsch zusammen. ' +
@@ -51,6 +59,18 @@ function buildPrompt(a: Record<string, unknown>): string {
   if (ext?.units != null) lines.push(`Wohneinheiten: ${ext.units}`)
   if (a.beschreibung) lines.push(`\nBeschreibung:\n${a.beschreibung}`)
   return lines.join('\n')
+}
+
+function clientKey(event: H3Event): string {
+  const trustForwardedFor = String(useRuntimeConfig().trustForwardedFor ?? '') === '1'
+  if (trustForwardedFor) {
+    const forwarded = getRequestHeader(event, 'x-forwarded-for')
+    const first = forwarded?.split(',')[0]?.trim()
+    if (first) return first
+    const realIp = getRequestHeader(event, 'x-real-ip')?.trim()
+    if (realIp) return realIp
+  }
+  return event.node.req.socket.remoteAddress ?? 'unknown'
 }
 
 async function callLlm(
@@ -118,13 +138,20 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 429, statusMessage: 'summary generation busy, retry shortly' })
   }
 
-  const gen = (async () => {
-    const snapshot = await readAuctionSnapshot()
-    const auction = snapshot[key]
-    if (!auction) {
-      throw createError({ statusCode: 404, statusMessage: 'auction not found' })
-    }
+  const snapshot = await readAuctionSnapshot()
+  const auction = snapshot[key]
+  if (!auction) {
+    throw createError({ statusCode: 404, statusMessage: 'auction not found' })
+  }
 
+  const now = Date.now()
+  const requester = clientKey(event)
+  if (!checkInMemoryRateLimit(summaryRateLimit, requester, now, SUMMARY_RATE_LIMIT)) {
+    throw createError({ statusCode: 429, statusMessage: 'summary generation rate limit exceeded' })
+  }
+  recordInMemoryRateLimitHit(summaryRateLimit, requester, now, SUMMARY_RATE_LIMIT)
+
+  const gen = (async () => {
     const bestPdf = pickBestPdf(auction.attachments ?? [])
     const pdfText = bestPdf ? await pdfToText(bestPdf.proxyUrl) : null
 
