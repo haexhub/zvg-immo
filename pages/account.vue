@@ -2,6 +2,7 @@
 import { getSupabaseClient } from '~/lib/supabase-client'
 import type { SavedSearch } from '~/server/api/saved-searches/index.get'
 import type { WatchlistItem } from '~/server/api/watchlist/index.get'
+import type { LawyerInquiry } from '~/server/api/lawyer-inquiries/index.post'
 import { Trash2 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -19,7 +20,7 @@ onMounted(async () => {
     return
   }
   checked.value = true
-  await Promise.all([loadSavedSearches(), loadWatchlist()])
+  await Promise.all([loadSavedSearches(), loadWatchlist(), loadLawyerInquiries()])
 })
 
 // Redirect if the user logs out while already on this page.
@@ -29,12 +30,23 @@ watch(user, (u) => {
 
 const savedSearches = ref<SavedSearch[]>([])
 const watchlist = ref<WatchlistItem[]>([])
+const lawyerInquiries = ref<LawyerInquiry[]>([])
 
 async function loadSavedSearches(): Promise<void> {
   savedSearches.value = await authFetch<SavedSearch[]>('/api/saved-searches')
 }
 async function loadWatchlist(): Promise<void> {
   watchlist.value = await authFetch<WatchlistItem[]>('/api/watchlist')
+}
+async function loadLawyerInquiries(): Promise<void> {
+  lawyerInquiries.value = await authFetch<LawyerInquiry[]>('/api/lawyer-inquiries')
+}
+
+const COMMISSION_STATUS_LABEL: Record<string, string> = {
+  pending: 'Ausstehend',
+  invoiced: 'In Rechnung gestellt',
+  paid: 'Bezahlt',
+  waived: 'Erlassen',
 }
 
 async function deleteSavedSearch(id: string): Promise<void> {
@@ -141,6 +153,33 @@ function formatDate(iso: string): string {
               >
                 <Trash2 class="h-4 w-4" />
               </button>
+            </li>
+          </ul>
+        </section>
+
+        <section class="space-y-3">
+          <h2 class="text-base font-semibold">Meine Anwalts-Anfragen</h2>
+          <p v-if="lawyerInquiries.length === 0" class="text-sm text-muted-foreground">
+            Noch keine Anfragen gesendet.
+          </p>
+          <ul v-else class="space-y-2">
+            <li
+              v-for="i in lawyerInquiries"
+              :key="i.id"
+              class="rounded-md border bg-card px-4 py-3 space-y-1"
+            >
+              <div class="flex items-center justify-between gap-3">
+                <NuxtLink
+                  v-if="i.platform && i.zvgId"
+                  :to="`/objekt/${encodeURIComponent(i.platform)}/${encodeURIComponent(i.zvgId)}`"
+                  class="font-medium hover:underline"
+                >Auktion ansehen</NuxtLink>
+                <span class="text-xs text-muted-foreground">{{ formatDate(i.createdAt) }}</span>
+              </div>
+              <p class="text-sm text-muted-foreground truncate">{{ i.message }}</p>
+              <p class="text-xs text-muted-foreground">
+                Provisionsstatus: {{ COMMISSION_STATUS_LABEL[i.commissionStatus] ?? i.commissionStatus }}
+              </p>
             </li>
           </ul>
         </section>

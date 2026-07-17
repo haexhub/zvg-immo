@@ -89,3 +89,55 @@ CREATE TABLE IF NOT EXISTS notified_matches (
   UNIQUE (alert_subscription_id, platform, zvg_id)
 );
 -- notified_matches: no RLS — server-internal only, never exposed to a client.
+
+-- Phase 4: lawyer referral (pay-per-lead, the lawyer pays a commission per
+-- inquiry). `lawyers` is an admin-maintained catalog (CRUD under
+-- server/api/settings/lawyers/*, guarded by the existing settings-auth
+-- middleware) — public reads go through server/api/lawyers.get.ts, which
+-- filters to `active` rows and strips `email` before returning JSON; the
+-- column itself carries no extra protection here since this table has no
+-- RLS (see below). `countries` holds lowercase ISO-2 codes matching
+-- Auction.country (types/auction.ts), so `countries @> ARRAY[auction.country]`
+-- needs no case conversion.
+CREATE TABLE IF NOT EXISTS lawyers (
+  id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name              text NOT NULL,
+  firm              text,
+  email             text NOT NULL,
+  phone             text,
+  countries         text[] NOT NULL,
+  specialization    text,
+  languages         text[],
+  website           text,
+  commission_cents  integer,
+  active            boolean NOT NULL DEFAULT true,
+  created_at        timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_lawyers_countries ON lawyers USING gin (countries);
+
+-- One row per inquiry a logged-in user sends to a lawyer via
+-- server/api/lawyer-inquiries/index.post.ts — the billing record for that
+-- lawyer's pay-per-lead commission. `commission_cents` is snapshotted from
+-- `lawyers.commission_cents` at insert time so a later tariff change doesn't
+-- rewrite historical amounts. `lawyer_id` is ON DELETE RESTRICT: lawyers with
+-- existing inquiries can't be deleted, only deactivated (`active = false`) —
+-- the inquiry rows are billing records, not disposable.
+CREATE TABLE IF NOT EXISTS lawyer_inquiries (
+  id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id           uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  lawyer_id         uuid NOT NULL REFERENCES lawyers(id) ON DELETE RESTRICT,
+  platform          text,
+  zvg_id            text,
+  message           text NOT NULL,
+  commission_cents  integer,
+  commission_status text NOT NULL DEFAULT 'pending',
+  created_at        timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_inquiries_lawyer_time ON lawyer_inquiries (lawyer_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_inquiries_user_time ON lawyer_inquiries (user_id, created_at DESC);
+
+ALTER TABLE lawyer_inquiries ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS own_rows ON lawyer_inquiries;
+CREATE POLICY own_rows ON lawyer_inquiries FOR ALL USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+-- lawyers: no RLS — catalog/config table, public read is server-filtered
+-- (active + public-safe fields only), writes are admin-only (settings-auth).
