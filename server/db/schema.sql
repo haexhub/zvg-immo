@@ -89,3 +89,32 @@ CREATE TABLE IF NOT EXISTS notified_matches (
   UNIQUE (alert_subscription_id, platform, zvg_id)
 );
 -- notified_matches: no RLS — server-internal only, never exposed to a client.
+
+-- Phase 5: self-service API keys for the Daten-API (/api/data/v1/*, see
+-- server/utils/api-key.ts + server/middleware/data-api-auth.ts). Plaintext
+-- keys are never stored — only a SHA-256 hash (unique-indexed lookup) and a
+-- short prefix for display survive the request that created them.
+CREATE TABLE IF NOT EXISTS api_keys (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id      uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  label        text NOT NULL,
+  key_hash     text NOT NULL UNIQUE,
+  key_prefix   text NOT NULL,
+  active       boolean NOT NULL DEFAULT true,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  last_used_at timestamptz
+);
+ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS own_rows ON api_keys;
+CREATE POLICY own_rows ON api_keys FOR ALL USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+-- Phase 5: per-day request counter per key, for a later billing phase (see
+-- server/middleware/data-api-auth.ts). Burst protection itself runs on the
+-- existing in-memory rate limiter, not on this table.
+CREATE TABLE IF NOT EXISTS api_usage (
+  api_key_id  uuid NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+  day         date NOT NULL,
+  count       bigint NOT NULL DEFAULT 0,
+  PRIMARY KEY (api_key_id, day)
+);
+-- api_usage: no RLS — server-internal counting, never exposed directly to a client.
