@@ -20,29 +20,39 @@ async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
 }
 
 async function enrichOne(auction: Auction): Promise<void> {
-  // pravosudje.ba attaches 42/49 documents as DOCX rather than PDF; fall back
-  // to extracting from the DOCX attachment when there's no PDF.
-  const docx = auction.attachments.find((a) => a.filename.toLowerCase().endsWith('.docx'))
-  const text = auction.pdfUrlUpstream
-    ? await pdfToText(auction.pdfUrlUpstream)
-    : docx
-      ? await docxToText(docx.proxyUrl)
-      : null
-  if (!text) return
+  const applyText = (text: string | null): void => {
+    if (!text) return
 
-  if (!auction.verkehrswertEur) {
-    const price = parseBamPrice(text)
-    if (price) {
-      auction.verkehrswertEur = price.eur
-      auction.verkehrswertText = price.text
+    if (auction.verkehrswertEur == null) {
+      const price = parseBamPrice(text)
+      if (price) {
+        auction.verkehrswertEur = price.eur
+        auction.verkehrswertText = price.text
+      }
+    }
+    if (!auction.adresse) {
+      const loc = extractLocation(text)
+      if (loc) auction.adresse = loc
+    }
+    if (!auction.beschreibung) {
+      auction.beschreibung = text.slice(0, 2000).trim()
     }
   }
-  if (!auction.adresse) {
-    const loc = extractLocation(text)
-    if (loc) auction.adresse = loc
+  const needsMoreText = () =>
+    auction.verkehrswertEur == null || !auction.adresse || !auction.beschreibung
+
+  if (auction.pdfUrlUpstream) {
+    applyText(await pdfToText(auction.pdfUrlUpstream))
+    if (!needsMoreText()) return
   }
-  if (!auction.beschreibung) {
-    auction.beschreibung = text.slice(0, 2000).trim()
+
+  // pravosudje.ba attaches most documents as DOCX rather than PDF. Try them
+  // even after a PDF, because a present PDF can still be an unhelpful notice
+  // while the DOCX carries the valuation/address text.
+  const docxAttachments = auction.attachments.filter((a) => a.filename.toLowerCase().endsWith('.docx'))
+  for (const docx of docxAttachments) {
+    applyText(await docxToText(docx.proxyUrl))
+    if (!needsMoreText()) return
   }
 }
 

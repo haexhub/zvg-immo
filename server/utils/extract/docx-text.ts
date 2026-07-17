@@ -15,40 +15,53 @@ const CENTRAL_DIR_SIGNATURE = 0x02014b50
 
 /** Read one named entry out of a ZIP buffer, or null if absent/unreadable. */
 function readZipEntry(buf: Buffer, entryName: string): Buffer | null {
-  let eocd = -1
-  for (let i = buf.length - 22; i >= 0; i--) {
-    if (buf.readUInt32LE(i) === EOCD_SIGNATURE) {
-      eocd = i
-      break
+  try {
+    if (buf.length < 22) return null
+
+    let eocd = -1
+    for (let i = buf.length - 22; i >= 0; i--) {
+      if (buf.readUInt32LE(i) === EOCD_SIGNATURE) {
+        eocd = i
+        break
+      }
     }
-  }
-  if (eocd < 0) return null
+    if (eocd < 0) return null
 
-  const entryCount = buf.readUInt16LE(eocd + 10)
-  let offset = buf.readUInt32LE(eocd + 16)
+    const entryCount = buf.readUInt16LE(eocd + 10)
+    let offset = buf.readUInt32LE(eocd + 16)
 
-  for (let i = 0; i < entryCount; i++) {
-    if (buf.readUInt32LE(offset) !== CENTRAL_DIR_SIGNATURE) break
-    const compressionMethod = buf.readUInt16LE(offset + 10)
-    const compressedSize = buf.readUInt32LE(offset + 20)
-    const nameLength = buf.readUInt16LE(offset + 28)
-    const extraLength = buf.readUInt16LE(offset + 30)
-    const commentLength = buf.readUInt16LE(offset + 32)
-    const localHeaderOffset = buf.readUInt32LE(offset + 42)
-    const name = buf.toString('utf8', offset + 46, offset + 46 + nameLength)
+    for (let i = 0; i < entryCount; i++) {
+      if (offset < 0 || offset + 46 > buf.length) return null
+      if (buf.readUInt32LE(offset) !== CENTRAL_DIR_SIGNATURE) break
+      const compressionMethod = buf.readUInt16LE(offset + 10)
+      const compressedSize = buf.readUInt32LE(offset + 20)
+      const nameLength = buf.readUInt16LE(offset + 28)
+      const extraLength = buf.readUInt16LE(offset + 30)
+      const commentLength = buf.readUInt16LE(offset + 32)
+      const localHeaderOffset = buf.readUInt32LE(offset + 42)
+      const nameStart = offset + 46
+      const nameEnd = nameStart + nameLength
+      if (nameEnd > buf.length) return null
+      const name = buf.toString('utf8', nameStart, nameEnd)
 
-    if (name === entryName) {
-      const localNameLength = buf.readUInt16LE(localHeaderOffset + 26)
-      const localExtraLength = buf.readUInt16LE(localHeaderOffset + 28)
-      const dataStart = localHeaderOffset + 30 + localNameLength + localExtraLength
-      const data = buf.subarray(dataStart, dataStart + compressedSize)
-      if (compressionMethod === 0) return data
-      if (compressionMethod === 8) return inflateRawSync(data)
-      return null
+      if (name === entryName) {
+        if (localHeaderOffset + 30 > buf.length) return null
+        const localNameLength = buf.readUInt16LE(localHeaderOffset + 26)
+        const localExtraLength = buf.readUInt16LE(localHeaderOffset + 28)
+        const dataStart = localHeaderOffset + 30 + localNameLength + localExtraLength
+        const dataEnd = dataStart + compressedSize
+        if (dataStart < 0 || dataEnd > buf.length) return null
+        const data = buf.subarray(dataStart, dataEnd)
+        if (compressionMethod === 0) return data
+        if (compressionMethod === 8) return inflateRawSync(data)
+        return null
+      }
+      offset += 46 + nameLength + extraLength + commentLength
     }
-    offset += 46 + nameLength + extraLength + commentLength
+    return null
+  } catch {
+    return null
   }
-  return null
 }
 
 /** Strip WordprocessingML markup to plain text, keeping paragraph/tab breaks. */
@@ -88,16 +101,20 @@ export async function docxToText(url: string): Promise<string | null> {
   } catch {
     return null
   }
-  if (buf.readUInt32LE(0) !== 0x04034b50) return null
+  if (buf.length < 4 || buf.readUInt32LE(0) !== 0x04034b50) return null
 
   const xml = readZipEntry(buf, 'word/document.xml')
   if (!xml) return null
   const text = documentXmlToText(xml.toString('utf8'))
   if (!text) return null
 
-  await mkdir(CACHE_DIR, { recursive: true })
-  const tmp = `${cachePath}.${randomUUID()}.tmp`
-  await writeFile(tmp, text)
-  await rename(tmp, cachePath)
+  try {
+    await mkdir(CACHE_DIR, { recursive: true })
+    const tmp = `${cachePath}.${randomUUID()}.tmp`
+    await writeFile(tmp, text)
+    await rename(tmp, cachePath)
+  } catch {
+    // Cache failures must not turn a successful extraction into a failed one.
+  }
   return text
 }
