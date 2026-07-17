@@ -1,5 +1,6 @@
 import { load } from 'cheerio'
 import type { Auction } from '~/types/auction'
+import { getRates, toEur } from '~/server/utils/exchange-rate'
 import { GB_BASE, GB_LIST_REGIONS, UA, COUNTRY } from './constants'
 
 function clean(text: string): string {
@@ -31,7 +32,7 @@ interface ListItem {
   href: string
   adresse: string | null
   objekt: string | null
-  priceEur: number | null
+  priceGbp: number | null
   priceText: string | null
   thumbnailUrl: string | null
   branchName: string
@@ -93,7 +94,7 @@ export function parseListPage(html: string): ListItem[] {
       href,
       adresse: clean($a.find('.grid-address').first().text()) || null,
       objekt: clean($a.find('.summary-info-wrapper p.fw-bold').first().text()) || null,
-      priceEur: parseGbpAmount(priceText),
+      priceGbp: parseGbpAmount(priceText),
       priceText,
       thumbnailUrl: imgSrc ? absoluteUrl(imgSrc) : null,
       branchName,
@@ -127,9 +128,10 @@ async function discoverListItems(): Promise<Map<string, ListItem>> {
   return byHref
 }
 
-function mapItem(item: ListItem, platformId: string): Auction {
+function mapItem(item: ListItem, platformId: string, rates: Record<string, number>): Auction {
   const zvgId = idFromHref(item.href)
   const detailUrl = absoluteUrl(item.href)
+  const verkehrswertEur = item.priceGbp != null ? toEur(item.priceGbp, 'GBP', rates) : null
 
   return {
     platform: platformId,
@@ -146,7 +148,7 @@ function mapItem(item: ListItem, platformId: string): Auction {
     amtsgericht: item.branchName,
     objekt: item.objekt,
     adresse: item.adresse,
-    verkehrswertEur: item.priceEur,
+    verkehrswertEur,
     verkehrswertText: item.priceText,
     // Not shown on the list card at all (only on the detail page) — filled
     // in lazily by enrichOne (detail.ts) instead of eagerly fetching every
@@ -170,7 +172,7 @@ function mapItem(item: ListItem, platformId: string): Auction {
 export async function fetchAllListings(
   platformId: string,
 ): Promise<{ auctions: Auction[]; total: number | null }> {
-  const byHref = await discoverListItems()
-  const auctions = [...byHref.values()].map((item) => mapItem(item, platformId))
+  const [byHref, rates] = await Promise.all([discoverListItems(), getRates()])
+  const auctions = [...byHref.values()].map((item) => mapItem(item, platformId, rates))
   return { auctions, total: auctions.length }
 }

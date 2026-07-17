@@ -65,7 +65,7 @@ const ONLINE_FIXTURE = `
     <div class="item"><img src="https://cdn.eigpropertyauctions.co.uk/ams/images/96/auction/0/2770098_web_medium" alt="Lot Image" /></div>
   </div>
 </div>
-<iframe id="gMap" src="" data-src="https://www.google.com/maps/embed/v1/place?q=54.766552,-1.340293&amp;key=AIzaSyC8w_khP7qIg5bw5yrSyS1V0NGkw9iA534"></iframe>`
+<iframe id="gMap" src="" data-src="https://www.google.com/maps/embed/v1/place?q=54.766552,-1.340293&amp;key=AIzaSyDUMMYKEY0000000000000000000"></iframe>`
 
 describe('parseOwnDetail', () => {
   it('extracts date/time, the description (excluding the boilerplate notice), and the gallery only', () => {

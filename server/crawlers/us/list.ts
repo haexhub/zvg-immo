@@ -1,7 +1,6 @@
 import { load } from 'cheerio'
 import type { Attachment, Auction } from '~/types/auction'
 import { classifyAttachment } from '~/server/utils/classify-attachment'
-import { getRates, toEur } from '~/server/utils/exchange-rate'
 import { US_BASE, US_CHANNELS, US_STATE_NAMES, UA, COUNTRY } from './constants'
 
 // Be polite: bid4assets.com does some UA/rate-based bot mitigation (a bare
@@ -94,13 +93,26 @@ interface ChannelResult {
 function extractGridRows(html: string): RawRow[] {
   const marker = '"data":{"Data":['
   const markerIdx = html.indexOf(marker)
-  if (markerIdx === -1) return []
+  if (markerIdx === -1) throw new Error('Bid4Assets listings grid marker not found')
   const objStart = markerIdx + '"data":'.length
   let depth = 0
   let end = -1
+  // String-aware: a listing field (e.g. an address) could itself contain a
+  // literal '{' or '}', which would desync a naive brace counter and either
+  // truncate the object early or never find its end.
+  let inString = false
+  let escaped = false
   for (let i = objStart; i < html.length; i++) {
-    if (html[i] === '{') depth++
-    else if (html[i] === '}') {
+    const char = html[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (char === '\\') escaped = true
+      else if (char === '"') inString = false
+      continue
+    }
+    if (char === '"') inString = true
+    else if (char === '{') depth++
+    else if (char === '}') {
       depth--
       if (depth === 0) {
         end = i + 1
@@ -108,13 +120,10 @@ function extractGridRows(html: string): RawRow[] {
       }
     }
   }
-  if (end === -1) return []
-  try {
-    const parsed = JSON.parse(html.slice(objStart, end)) as { Data?: RawRow[] }
-    return Array.isArray(parsed.Data) ? parsed.Data : []
-  } catch {
-    return []
-  }
+  if (end === -1) throw new Error('Bid4Assets listings grid is incomplete')
+  const parsed = JSON.parse(html.slice(objStart, end)) as { Data?: unknown }
+  if (!Array.isArray(parsed.Data)) throw new Error('Bid4Assets listings grid has invalid data')
+  return parsed.Data as RawRow[]
 }
 
 /** Each channel page links its general sale-conditions PDF (e.g. "Franklin
@@ -137,9 +146,6 @@ async function fetchChannel(slug: string): Promise<ChannelResult | null> {
   try {
     const html = await htmlFetch(`${US_BASE}/${slug}`)
     const rows = extractGridRows(html)
-    if (rows.length === 0) {
-      console.warn(`[us-bid4assets] no listings grid found on channel "${slug}" — page structure may differ`)
-    }
     return { rows, docs: extractDocs(html) }
   } catch (err) {
     console.error(`[us-bid4assets] failed to fetch channel "${slug}"`, err)
@@ -191,29 +197,28 @@ function extractPhotoUrls(images: unknown[] | null | undefined): string[] {
     .map(absoluteUrl)
 }
 
-function mapRow(row: RawRow, docs: ChannelDoc[], platformId: string, rates: Record<string, number>): Auction {
+function mapRow(row: RawRow, docs: ChannelDoc[], platformId: string): Auction {
   const zvgId = String(row.AuctionID)
   const { county, state } = parseCountyState(row.Asset_Title)
   const region = state ? (US_STATE_NAMES[state] ?? state) : ''
   const amtsgericht = county ? `${county} Sheriff` : 'Bid4Assets Sheriff Sale'
   const { terminIso, terminText } = parseTermin(row.ActualCloseTime)
 
-  // The opening/minimum bid is usually a nominal $1 placeholder (see
-  // Franklin PA samples) rather than a real value indicator — prefer the
-  // judgment/debt amount when present, falling back to the minimum bid only
-  // when it looks like an actual attorney-set figure (> $1).
-  const usdValue =
-    row.DebtAmount && row.DebtAmount > 0
-      ? row.DebtAmount
-      : row.MinimumBid && row.MinimumBid > 1
-        ? row.MinimumBid
-        : null
-  const verkehrswertEur = usdValue != null ? toEur(usdValue, 'USD', rates) : null
-  const verkehrswertText =
-    usdValue != null ? `$${usdValue.toLocaleString('en-US', { maximumFractionDigits: 0 })}` : null
+  const formatUsd = (n: number) => `$${n.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+
+  // Neither field is a property valuation — DebtAmount is the judgment/debt
+  // balance and MinimumBid is the opening bid, not an appraised value. Unlike
+  // DK/SE/HU/GB (where the source publishes an actual valuation), Bid4Assets
+  // exposes no such field, so verkehrswertEur stays null rather than
+  // mislabeling debt/bid as a property value; both amounts are still surfaced
+  // as explicitly labeled figures in the description.
+  const verkehrswertEur = null
+  const verkehrswertText = null
 
   const beschreibung =
     [
+      row.DebtAmount && row.DebtAmount > 0 ? `Debt amount: ${formatUsd(row.DebtAmount)}` : null,
+      row.MinimumBid && row.MinimumBid > 1 ? `Minimum bid: ${formatUsd(row.MinimumBid)}` : null,
       row.Defendant ? `Defendant: ${row.Defendant}` : null,
       row.Plaintiff ? `Plaintiff: ${row.Plaintiff}` : null,
       row.Township ? `Township: ${row.Township}` : null,
@@ -266,7 +271,6 @@ function mapRow(row: RawRow, docs: ChannelDoc[], platformId: string, rates: Reco
 export async function fetchAllListings(
   platformId: string,
 ): Promise<{ auctions: Auction[]; total: number | null }> {
-  const rates = await getRates()
   const results: (ChannelResult | null)[] = new Array(US_CHANNELS.length).fill(null)
 
   let cursor = 0
@@ -287,7 +291,7 @@ export async function fetchAllListings(
       const zvgId = String(row.AuctionID)
       if (seen.has(zvgId)) continue
       seen.add(zvgId)
-      auctions.push(mapRow(row, result.docs, platformId, rates))
+      auctions.push(mapRow(row, result.docs, platformId))
     }
   }
 
