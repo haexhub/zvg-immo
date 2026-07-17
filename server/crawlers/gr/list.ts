@@ -110,7 +110,7 @@ function mapDetail(url: string, html: string, platformId: string): Auction | nul
 
   const photoUrls = [
     ...new Set(
-      (Array.isArray(ld.image) ? ld.image : []).filter(
+      (Array.isArray(ld.image) ? ld.image : typeof ld.image === 'string' ? [ld.image] : []).filter(
         (src): src is string => typeof src === 'string',
       ),
     ),

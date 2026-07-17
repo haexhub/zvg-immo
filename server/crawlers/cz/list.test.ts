@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest'
-import { parseData, type CzAuction } from './list'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { fetchEndpoint, parseData, type CzAuction } from './list'
+
+vi.mock('~/server/utils/exchange-rate', () => ({
+  getRates: vi.fn(async () => ({ CZK: 25 })),
+  toEur: (amount: number, currency: string, rates: Record<string, number>) =>
+    Math.round(amount / (rates[currency] ?? 1)),
+}))
 
 const RATES = { CZK: 25 }
 
@@ -35,6 +41,10 @@ function parseOne(overrides: Partial<CzAuction> = {}) {
 }
 
 describe('parseData', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
   it('builds photoUrls sorted by priority from the images object map', () => {
     const a = parseOne({
       images: {
@@ -174,5 +184,30 @@ describe('parseData', () => {
       RATES,
     )
     expect(auctions).toEqual([])
+  })
+
+  it('throws when every paginated fetch is full up to the safety cap', async () => {
+    const fullPage = Object.fromEntries(
+      Array.from({ length: 1000 }, (_, i) => [String(i), { hash: `h${i}` }]),
+    )
+    const fetchMock = vi.fn(async (_input: unknown, init?: RequestInit) => {
+      if (init?.method === 'PUT') {
+        return new Response(JSON.stringify(fullPage), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      return {
+        ok: true,
+        text: async (): Promise<string> => '<html><meta name="csrf-token" content="csrf"></html>',
+        headers: { getSetCookie: () => ['PHPSESSID=abc; path=/'] },
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(fetchEndpoint('/drazby/pripravovane.json', 'cz-portaldrazeb')).rejects.toThrow(
+      /safety cap/,
+    )
+    expect(fetchMock).toHaveBeenCalledTimes(21)
   })
 })

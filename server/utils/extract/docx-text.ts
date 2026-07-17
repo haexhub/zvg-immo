@@ -12,6 +12,8 @@ const CACHE_DIR = join(process.cwd(), '.cache_zvg', 'docxtext')
 
 const EOCD_SIGNATURE = 0x06054b50
 const CENTRAL_DIR_SIGNATURE = 0x02014b50
+const ZIP_MAX_COMMENT_BYTES = 0xffff
+const MAX_DOCX_BYTES = 20 * 1024 * 1024
 
 /** Read one named entry out of a ZIP buffer, or null if absent/unreadable. */
 function readZipEntry(buf: Buffer, entryName: string): Buffer | null {
@@ -19,7 +21,8 @@ function readZipEntry(buf: Buffer, entryName: string): Buffer | null {
     if (buf.length < 22) return null
 
     let eocd = -1
-    for (let i = buf.length - 22; i >= 0; i--) {
+    const eocdSearchStart = Math.max(0, buf.length - 22 - ZIP_MAX_COMMENT_BYTES)
+    for (let i = buf.length - 22; i >= eocdSearchStart; i--) {
       if (buf.readUInt32LE(i) === EOCD_SIGNATURE) {
         eocd = i
         break
@@ -67,7 +70,8 @@ function readZipEntry(buf: Buffer, entryName: string): Buffer | null {
 /** Strip WordprocessingML markup to plain text, keeping paragraph/tab breaks. */
 function documentXmlToText(xml: string): string {
   return xml
-    .replace(/<w:tab\/>/g, '\t')
+    .replace(/<w:tab\s*\/>/g, '\t')
+    .replace(/<w:br\s*\/>/g, '\n')
     .replace(/<\/w:p>/g, '\n')
     .replace(/<[^>]+>/g, '')
     .replace(/&amp;/g, '&')
@@ -97,10 +101,13 @@ export async function docxToText(url: string): Promise<string | null> {
       signal: AbortSignal.timeout(30_000),
     })
     if (!res.ok) return null
+    const contentLength = Number(res.headers.get('content-length') ?? '')
+    if (Number.isFinite(contentLength) && contentLength > MAX_DOCX_BYTES) return null
     buf = Buffer.from(await res.arrayBuffer())
   } catch {
     return null
   }
+  if (buf.length > MAX_DOCX_BYTES) return null
   if (buf.length < 4 || buf.readUInt32LE(0) !== 0x04034b50) return null
 
   const xml = readZipEntry(buf, 'word/document.xml')

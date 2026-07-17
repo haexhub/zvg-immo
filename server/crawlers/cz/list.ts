@@ -114,6 +114,7 @@ export async function fetchEndpoint(path: string, platformId: string): Promise<A
   const [{ cookie, token }, rates] = await Promise.all([establishSession(path), getRates()])
 
   const merged: Record<string, CzAuction> = {}
+  let reachedShortPage = false
   for (let page = 0; page < CZ_MAX_LIST_PAGES; page++) {
     const offset = page * CZ_LIST_LIMIT
     const res = await fetch(url, {
@@ -140,7 +141,15 @@ export async function fetchEndpoint(path: string, platformId: string): Promise<A
       merged[`${offset}:${key}`] = raw as CzAuction
       pageCount++
     }
-    if (pageCount < CZ_LIST_LIMIT) break
+    if (pageCount < CZ_LIST_LIMIT) {
+      reachedShortPage = true
+      break
+    }
+  }
+  if (!reachedShortPage) {
+    throw new Error(
+      `CZ list pagination reached safety cap (${CZ_MAX_LIST_PAGES} pages) without a short page: ${url}`,
+    )
   }
 
   return parseData(merged, platformId, rates)
