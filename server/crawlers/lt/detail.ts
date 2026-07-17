@@ -1,7 +1,18 @@
 import { load } from 'cheerio'
 import type { Auction } from '~/types/auction'
+import type { PropertyType } from '~/lib/objektart'
 import { LT_BASE, UA } from './constants'
 import { clean, parseLtArea } from './text'
+import { areaBucketForPropertyType } from '~/server/utils/extract/rules'
+
+/** Maps the potipis/objekt type hint to a representative PropertyType for
+ *  areaBucketForPropertyType (its Lithuanian vocabulary isn't covered by
+ *  objektart.ts's conservative cross-language regexes). */
+function typeHintPropertyType(typeHint: string): PropertyType | null {
+  if (/sklyp|žem/i.test(typeHint)) return 'unbebaut'
+  if (/but|patalp/i.test(typeHint)) return 'eigentumswohnung'
+  return null
+}
 
 export interface LtDetail {
   /** "Aprašymas:" free text, line breaks preserved. */
@@ -74,9 +85,10 @@ export async function enrichOne(auction: Auction): Promise<void> {
   // land/floor split) only goes into the description text.
   const typeHint = `${detail.potipis ?? ''} ${auction.objekt ?? ''}`
   if (detail.areaSqm != null) {
-    if (/sklyp|žem/i.test(typeHint)) {
+    const bucket = areaBucketForPropertyType(typeHintPropertyType(typeHint))
+    if (bucket === 'land') {
       auction.sourceLandAreaSqm = detail.areaSqm
-    } else if (/but|patalp/i.test(typeHint)) {
+    } else if (bucket === 'living') {
       auction.sourceLivingAreaSqm = detail.areaSqm
     } else if (detail.areaRaw) {
       auction.beschreibung = [auction.beschreibung, `Bendras turto plotas: ${detail.areaRaw}`]

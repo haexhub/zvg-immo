@@ -77,6 +77,7 @@ describe('buildDetailInfo', () => {
     expect(b).toContain('unterkellertes Einfamilienhaus')
     expect(b).toContain('Objekttyp: Reihenhaus')
     expect(b).toContain('Wohnfläche: 179.95 m²')
+    expect(b).toContain('Merkmale: Balkon, Keller')
     expect(b).toContain('Ausstattung:\nSatteldach, Holzkonstruktion')
     expect(b).toContain('Lage:\nOrt gemäß Gutachten: Karlsbad - Langensteinbach')
     expect(b).toContain('Mittlere bis gute Wohnlage.')

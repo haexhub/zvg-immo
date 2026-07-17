@@ -101,9 +101,9 @@ function mapItem(item: SyslumennAuction, platformId: string): Auction {
   return {
     platform: platformId,
     country: COUNTRY,
-    // The feed exposes no sub-regions — empty string per the Auction.region
-    // contract ('all' is a code, not a name).
-    region: '',
+    // `location` is the auction venue's town (e.g. "Akranes", "Keflavík") —
+    // the closest thing to a sub-region the feed exposes.
+    region: clean(item.location) ?? '',
     zvgId,
     // Iceland's forced-sale feed exposes no court case number ("mál nr.") —
     // the commissioner's case id is the closest analogue to an Aktenzeichen.

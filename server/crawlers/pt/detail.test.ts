@@ -38,6 +38,8 @@ function item(overrides: Partial<PtEventoDetail>): PtEventoDetail {
     fotos: null,
     coordenadasLAT: null,
     coordenadasLON: null,
+    processoNumero: null,
+    processoTribunal: null,
     ...overrides,
   }
 }
@@ -96,5 +98,14 @@ describe('applyDetail', () => {
     expect(a.fotoCount).toBe(1)
     expect(a.lat).toBeUndefined()
     expect(a.photoUrls).toBeUndefined()
+    expect(a.aktenzeichen).toBe('NP1201552026')
+    expect(a.amtsgericht).toBe('')
+  })
+
+  it('replaces the referencia placeholder with the real case number/court', () => {
+    const a = auction()
+    applyDetail(a, item({ processoNumero: '1201/11.1TBCTB', processoTribunal: 'C.Branco - JC Cível - Juiz 2' }))
+    expect(a.aktenzeichen).toBe('1201/11.1TBCTB')
+    expect(a.amtsgericht).toBe('C.Branco - JC Cível - Juiz 2')
   })
 })

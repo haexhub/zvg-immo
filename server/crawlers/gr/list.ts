@@ -98,13 +98,19 @@ function mapDetail(url: string, html: string, platformId: string): Auction | nul
   const dateRaw = clean($('.auction-date strong').first().text())
   const { iso: terminIso, label: terminText } = parseGrDateTime(dateRaw)
 
+  // "Η ημερομηνία πλειστηριασμού έχει παρέλθει" ("the auction date has
+  // passed") is shown on lots still linked from the sitemap after their date
+  // elapsed without being taken down — the closest signal to "no longer an
+  // active auction" this source exposes.
+  const aufgehoben = /έχει παρέλθει/.test($.text())
+
   const verkehrswertEur = parseGrPrice(
     typeof ld.offers?.price === 'number' ? ld.offers.price : null,
   )
 
   const photoUrls = [
     ...new Set(
-      (Array.isArray(ld.image) ? ld.image : []).filter(
+      (Array.isArray(ld.image) ? ld.image : typeof ld.image === 'string' ? [ld.image] : []).filter(
         (src): src is string => typeof src === 'string',
       ),
     ),
@@ -115,16 +121,17 @@ function mapDetail(url: string, html: string, platformId: string): Auction | nul
     country: COUNTRY,
     region,
     zvgId: id,
-    // eauction24.gr never publishes the notary/officer's own case number.
+    // eauction24.gr never publishes the notary/officer's own case number or
+    // court/notary name.
     aktenzeichen: '',
-    amtsgericht: 'eAuction24.gr',
+    amtsgericht: '',
     objekt: clean(ld.name),
     adresse,
     verkehrswertEur,
     verkehrswertText: formatGrPrice(verkehrswertEur),
     terminIso,
     terminText,
-    aufgehoben: false,
+    aufgehoben,
     letzteAktualisierungIso: null,
     pdfUrl: null,
     detailUrl: url,
@@ -134,6 +141,7 @@ function mapDetail(url: string, html: string, platformId: string): Auction | nul
     beschreibung: clean(ld.description),
     fotoCount: photoUrls.length,
     thumbnailUrl: photoUrls[0] ?? null,
+    photoUrls,
   }
 }
 

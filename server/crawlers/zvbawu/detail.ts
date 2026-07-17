@@ -17,6 +17,9 @@ interface DetailFact {
 interface DetailSection {
   facts?: DetailFact[]
   content?: string
+  /** Short amenity tags shown as badges on the page (e.g. "Balkon", "Keller",
+   *  "Garage") — only present on `features`. */
+  badges?: string[]
 }
 
 interface DetailPage {
@@ -120,6 +123,8 @@ function factValue(facts: DetailFact[], keyRe: RegExp): string | null {
 export function buildDetailInfo(a: DetailPage['props']['auction']): DetailInfo {
   const facts = a.features?.facts ?? []
   const factLines = facts.map((f) => `${f.key}: ${f.value}`).join('\n')
+  const badges = a.features?.badges ?? []
+  const badgeLine = badges.length > 0 ? `Merkmale: ${badges.join(', ')}` : ''
   const locationFactLines = (a.location?.facts ?? []).map((f) => `${f.key}: ${f.value}`).join('\n')
   const facilities = stripHtml(a.facilities?.content)
   // `interior` mirrors facilities.content on most listings — only include it
@@ -135,6 +140,7 @@ export function buildDetailInfo(a: DetailPage['props']['auction']): DetailInfo {
       stripHtml(a.summary),
       stripHtml(a.description),
       factLines,
+      badgeLine,
       facilities && `Ausstattung:\n${facilities}`,
       interior && `Innenausstattung:\n${interior}`,
       accessories && `Zubehör:\n${accessories}`,
