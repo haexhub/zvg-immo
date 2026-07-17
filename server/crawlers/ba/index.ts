@@ -4,6 +4,7 @@ import { PLATFORM_ID, BA_WEB_BASE, COUNTRY, BA_REGIONS } from './constants'
 import { fetchAllListings } from './list'
 import { parseBamPrice, extractLocation } from './text'
 import { pdfToText } from '~/server/utils/extract/pdf-text'
+import { docxToText } from '~/server/utils/extract/docx-text'
 
 async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
   const { auctions, total } = await fetchAllListings(PLATFORM_ID)
@@ -19,8 +20,14 @@ async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
 }
 
 async function enrichOne(auction: Auction): Promise<void> {
-  if (!auction.pdfUrlUpstream) return
-  const text = await pdfToText(auction.pdfUrlUpstream)
+  // pravosudje.ba attaches 42/49 documents as DOCX rather than PDF; fall back
+  // to extracting from the DOCX attachment when there's no PDF.
+  const docx = auction.attachments.find((a) => a.filename.toLowerCase().endsWith('.docx'))
+  const text = auction.pdfUrlUpstream
+    ? await pdfToText(auction.pdfUrlUpstream)
+    : docx
+      ? await docxToText(docx.proxyUrl)
+      : null
   if (!text) return
 
   if (!auction.verkehrswertEur) {
