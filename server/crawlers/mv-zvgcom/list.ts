@@ -24,6 +24,8 @@ interface ListItem {
   date: string
   time: string
   ag: string
+  /** "16.07.2026" — when the listing was added/last touched on zvg.com. */
+  dateAdded: string
   gutachten: string
   gericht: GerichtInfo
 }
@@ -76,7 +78,7 @@ function mapItem(item: ListItem, platformId: string): Auction {
     terminIso,
     terminText,
     aufgehoben: item.terminAufgehoben === 1,
-    letzteAktualisierungIso: null,
+    letzteAktualisierungIso: parseMvDateTime(item.dateAdded, null).iso,
     pdfUrl: attachments[0]?.proxyUrl ?? null,
     detailUrl,
     pdfUrlUpstream: attachments[0]?.proxyUrl ?? null,

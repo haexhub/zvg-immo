@@ -227,3 +227,66 @@ describe('findUnits', () => {
     expect(findUnits('Wohneinheit Nr. 5')).toBeNull()
   })
 })
+
+describe('parseAreaValue — locale formats and units', () => {
+  it('parses Anglo thousands grouping', () => {
+    expect(parseAreaValue('1,234 m²')).toBe(1234)
+  })
+  it('parses Anglo decimal with thousands', () => {
+    expect(parseAreaValue('1,234.56 m²')).toBe(1234.56)
+  })
+  it('parses comma decimal', () => {
+    expect(parseAreaValue('70,80 m2')).toBe(70.8)
+  })
+  it('parses German thousands with comma decimal', () => {
+    expect(parseAreaValue('1.234,56 m²')).toBe(1234.56)
+  })
+  it('parses the Italian mq unit', () => {
+    expect(parseAreaValue('153 mq')).toBe(153)
+  })
+  it('does not read mq inside a word', () => {
+    expect(parseAreaValue('153 mqx')).toBeNull()
+  })
+  it('parses the Greek τ.μ. unit', () => {
+    expect(parseAreaValue('153.80 τ.μ.')).toBe(153.8)
+  })
+})
+
+describe('findRooms — multilingual', () => {
+  it('finds Swedish rum', () => {
+    expect(findRooms('6 rum, 175 kvm')).toBe(6)
+  })
+  it('does not match rum inside a word', () => {
+    expect(findRooms('Centrum 6')).toBeNull()
+  })
+  it('finds Italian vani label-first', () => {
+    expect(findRooms('vani 4,5')).toBe(4.5)
+  })
+  it('finds Polish pokoi', () => {
+    expect(findRooms('mieszkanie, 3 pokoje')).toBe(3)
+  })
+  it('finds Estonian -toaline', () => {
+    expect(findRooms('3-toaline korter')).toBe(3)
+  })
+  it('finds French pièces', () => {
+    expect(findRooms('appartement de 4 pièces')).toBe(4)
+  })
+})
+
+describe('parseAreaValue — space-grouped thousands', () => {
+  it('parses Swedish space grouping', () => {
+    expect(parseAreaValue('1 331 kvm')).toBe(1331)
+  })
+  it('parses space grouping with comma decimal', () => {
+    expect(parseAreaValue('12 500,50 m²')).toBe(12500.5)
+  })
+  it('does not glue an enumeration into one number', () => {
+    expect(parseAreaValue('Nr. 5, 175 m²')).toBe(175)
+  })
+})
+
+describe('findLandAreaSqm — Tomtbeskrivning', () => {
+  it('finds the plot size behind the Swedish label', () => {
+    expect(findLandAreaSqm('Tomtbeskrivning: ca 1 331 kvm tomtmark')).toBe(1331)
+  })
+})

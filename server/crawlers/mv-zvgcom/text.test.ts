@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseMvDateTime, stripAzPrefix, stripDivHtml } from './text'
+import { extractSingleVerkehrswert, parseMvDateTime, stripAzPrefix, stripDivHtml } from './text'
 
 describe('parseMvDateTime', () => {
   it('combines German date + time into iso + label', () => {
@@ -48,5 +48,29 @@ describe('stripDivHtml', () => {
 
   it('collapses runs of blank lines to one blank line', () => {
     expect(stripDivHtml('<div>A</div><div></div><div></div><div>B</div>')).toBe('A\n\nB')
+  })
+})
+
+describe('extractSingleVerkehrswert', () => {
+  it('extracts a single value from the free text', () => {
+    expect(
+      extractSingleVerkehrswert('Grundstück, Größe: 618 m²\n\nVerkehrswert: 75.500,00 €\n\nDer Versteigerungsvermerk...'),
+    ).toEqual({ eur: 75500, text: '75.500,00 €' })
+  })
+
+  it('tolerates a repeated identical value', () => {
+    expect(
+      extractSingleVerkehrswert('Verkehrswert: 88.000,00 €\nHinweis: Verkehrswert: 88.000,00 €'),
+    ).toEqual({ eur: 88000, text: '88.000,00 €' })
+  })
+
+  it('returns null for multi-lot texts with several per-lot values', () => {
+    expect(
+      extractSingleVerkehrswert('Verkehrswert: 75.500,00 €\n...\nVerkehrswert: 66.500,00 €'),
+    ).toBeNull()
+  })
+
+  it('returns null when no value is present', () => {
+    expect(extractSingleVerkehrswert('Grundstück in Warin, Größe: 618 m²')).toBeNull()
   })
 })

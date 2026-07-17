@@ -1,4 +1,5 @@
-import type { Auction } from '~/types/auction'
+import type { Attachment, Auction } from '~/types/auction'
+import { classifyAttachment } from '~/server/utils/classify-attachment'
 import { BA_API_BASE, BA_WEB_BASE, COUNTRY, entityCode } from './constants'
 import { parseBaDate, parseBamPrice, extractLocation, stripHtml } from './text'
 
@@ -19,6 +20,9 @@ interface ListItem {
 interface DetailDoc {
   id: number
   tipDoc: string
+  naziv?: string | null
+  nazivFajla?: string | null
+  opis?: string | null
 }
 
 interface DetailResponse {
@@ -48,6 +52,27 @@ function mapItem(item: ListItem, detail: DetailResponse | null, platformId: stri
   const price = bodyText ? parseBamPrice(bodyText) : null
   const adresse = bodyText ? extractLocation(bodyText) : null
 
+  const attachments: Attachment[] = (detail?.dokumenti ?? []).map((d) => {
+    const label = d.naziv || d.nazivFajla || `Dokument ${d.id}`
+    let kind = classifyAttachment(d.naziv, d.nazivFajla, d.opis)
+    // The Zaključak o prodaji / oglas IS the auction announcement
+    if (kind === 'sonstiges' && /zaklju[cč]|oglas/i.test(label)) kind = 'bekanntmachung'
+    return {
+      kind,
+      label,
+      filename: d.nazivFajla || label,
+      sizeBytes: null,
+      fileId: String(d.id),
+      proxyUrl: `${BA_API_BASE}/vijest/download/${d.id}`,
+    }
+  })
+  // Documents are often named by bare case number ("46 0 I 120389 25 I") — if
+  // nothing was recognized as the announcement, the first non-notice document is it.
+  if (!attachments.some((a) => a.kind === 'bekanntmachung')) {
+    const main = attachments.find((a) => !/obavje|odgod/i.test(a.label))
+    if (main) main.kind = 'bekanntmachung'
+  }
+
   const pdfDoc = detail?.dokumenti?.find((d) => d.tipDoc === 'PDF') ?? null
   const pdfUrlUpstream = pdfDoc ? `${BA_API_BASE}/vijest/download/${pdfDoc.id}` : null
 
@@ -74,7 +99,7 @@ function mapItem(item: ListItem, detail: DetailResponse | null, platformId: stri
     detailUrl: detailUrlUpstream,
     pdfUrlUpstream,
     detailUrlUpstream,
-    attachments: [],
+    attachments,
     beschreibung: bodyText,
     fotoCount: 0,
     thumbnailUrl: null,

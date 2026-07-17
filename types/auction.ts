@@ -8,7 +8,9 @@ export interface Attachment {
   filename: string
   sizeBytes: number | null
   fileId: string
-  /** Local proxy URL serving the file with the correct upstream Referer. */
+  /** URL the app fetches the file from: either a local proxy path (platforms
+   *  whose upstream requires a specific Referer, e.g. /api/zvg-proxy?…) or the
+   *  direct upstream URL when the file is publicly fetchable without one. */
   proxyUrl: string
 }
 
@@ -51,6 +53,21 @@ export interface Auction {
   fotoCount: number
   /** Local URL for a JPEG thumbnail of the first photo, if any. */
   thumbnailUrl: string | null
+  /** Structured values provided directly by the source platform (JSON field,
+   *  key/value table on the detail page). The enrich task prefers these over
+   *  text/PDF extraction — set them whenever the upstream exposes them. */
+  sourceLivingAreaSqm?: number | null
+  sourceLandAreaSqm?: number | null
+  sourceRooms?: number | null
+  /** Direct upstream image URLs (the full gallery, not just the thumbnail).
+   *  Mirrored into the local image cache by the enrich task, which turns them
+   *  into `extraction.photos`. Crawlers setting this should also set
+   *  `fotoCount` accordingly. */
+  photoUrls?: string[]
+  /** Coordinates provided by the source platform — spares a geocoder lookup.
+   *  Overlaid as-is by /api/auctions-geo. */
+  lat?: number | null
+  lng?: number | null
   /** ISO timestamp of the last successful (non-throwing) `enrichOne` call.
    *  Absent on the fresh listing crawl; set on the auction-snapshot side and
    *  preserved across snapshot merges. Used by the enrich task to distinguish

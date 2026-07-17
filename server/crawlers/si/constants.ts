@@ -14,4 +14,10 @@ export const LIST_PATH = '/public/publication/list'
  *  "Pravica" (rights) and "Premičnina" (movables). */
 export const REAL_ESTATE_SALE_SUBJECT = '2ee072ab-7833-48e6-9e83-d9cf8d7b92f0'
 
+/** property_kind valueCodes: "01" Zemljiška parcela (Grundstück) → land area;
+ *  "02" Stavba (Gebäude) and "03" Posamezni del stavbe (Wohnung/Gebäudeteil)
+ *  → living area. "04" Stavbna pravica (Baurecht) is deliberately unmapped. */
+export const LAND_PROPERTY_KINDS: readonly string[] = ['01']
+export const LIVING_PROPERTY_KINDS: readonly string[] = ['02', '03']
+
 export const PAGE_SIZE = 100

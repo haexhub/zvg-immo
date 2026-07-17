@@ -1,3 +1,5 @@
+import { load } from 'cheerio'
+
 /**
  * ISO-8859-2 lookup for bytes 0xA0–0xFF (96 chars, indexed by byte - 0xA0).
  * Bytes 0x00–0x7F are ASCII (identical to Unicode).
@@ -37,4 +39,40 @@ export function parseMnvPrice(raw: string): number | null {
 
 export function clean(s: string): string {
   return s.replace(/\s+/g, ' ').trim()
+}
+
+/** Rich-text table cell → plain text: <br>/<p> become line breaks, remaining
+ *  tags are dropped, entities (&#x151; etc.) are decoded by the HTML parse. */
+export function htmlToText(html: string): string {
+  const withBreaks = html.replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n')
+  return load(withBreaks)
+    .root()
+    .text()
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+/**
+ * The "Árverezett tétel adatok" property sheet renders its values via inline
+ * JS instead of markup:
+ *   var selVal = '141/6';                                  // text fields
+ *   var selVal = formattedNumber(parseFloat('9 643'...));  // numeric fields
+ *   var itemId = 'place_num_34997';
+ * Returns the raw captured string ('141/6', '9 643'), null when absent.
+ */
+export function jsFieldValue(html: string, field: string): string | null {
+  const re = new RegExp(
+    `var selVal = (?:formattedNumber\\(parseFloat\\()?'([^']*)'[^;]*;\\s*var itemId = '${field}_\\d+';`,
+  )
+  const v = html.match(re)?.[1]?.trim()
+  return v || null
+}
+
+/** Unit suffix of a numeric property-sheet field (var selVal2 = 'm2';),
+ *  looked up within the same <script> block as the field's itemId. */
+export function jsFieldUnit(html: string, field: string): string | null {
+  const block = html.match(new RegExp(`var itemId = '${field}_\\d+';([\\s\\S]*?)</script>`))?.[1]
+  const v = block?.match(/var selVal2 = '([^']*)';/)?.[1]?.trim()
+  return v || null
 }

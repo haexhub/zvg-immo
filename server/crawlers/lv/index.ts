@@ -2,6 +2,7 @@ import type { CrawlResult } from '~/types/auction'
 import type { CrawlOptions, PlatformCrawler } from '../types'
 import { PLATFORM_ID, LV_BASE, COUNTRY, LV_REGIONS } from './constants'
 import { fetchAllListings } from './list'
+import { enrichOne } from './detail'
 
 async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
   const { auctions, total } = await fetchAllListings(PLATFORM_ID)
@@ -23,4 +24,5 @@ export const eizsolesCrawler: PlatformCrawler = {
   country: COUNTRY,
   regions: LV_REGIONS,
   crawl,
+  enrichOne,
 }

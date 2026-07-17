@@ -2,7 +2,7 @@ import type { Auction, CrawlResult } from '~/types/auction'
 import type { CrawlOptions, PlatformCrawler } from '../types'
 import { BOE_BASE, COUNTRY, ES_REGIONS, ES_REGION_NAMES } from './constants'
 import { boeFetch, looksLikeCaptcha, markBoeCaptcha } from './fetch'
-import { buildSearchUrl, parseListingHtml } from './list'
+import { buildSearchUrl, buildPageUrl, extractBusquedaToken, parseListingHtml, PAGE_HITS } from './list'
 import { enrichInBatches, type DetailInfo } from './detail'
 
 type AuctionDetailFields = Pick<
@@ -12,8 +12,8 @@ type AuctionDetailFields = Pick<
 
 const PLATFORM_ID = 'boe'
 
-async function fetchListHtml(provincia: string): Promise<string> {
-  const html = await boeFetch(buildSearchUrl(provincia))
+async function fetchListHtml(url: string, provincia: string): Promise<string> {
+  const html = await boeFetch(url)
   // BOE shows a CAPTCHA when an IP makes too many requests in a short window
   // — the response is still 200 but the result body is the empty search form
   // wrapped around a captcha image. Detecting it lets crawlAll record the
@@ -28,10 +28,20 @@ async function fetchListHtml(provincia: string): Promise<string> {
   return html
 }
 
-function applyDetail(auction: AuctionDetailFields, info: DetailInfo): void {
+export function applyDetail(auction: AuctionDetailFields, info: DetailInfo): void {
   if (info.tasacionEur != null) auction.verkehrswertEur = info.tasacionEur
   if (info.tasacionText) auction.verkehrswertText = info.tasacionText
-  if (info.beschreibung) auction.beschreibung = info.beschreibung
+  // Verkehrswert stays the Tasación; the minimum bid ("Valor subasta") and
+  // the cadastral reference only exist on the detail tabs — surface them as
+  // labelled lines in the beschreibung.
+  const beschreibung = [
+    info.beschreibung,
+    info.valorSubastaText ? `Valor subasta: ${info.valorSubastaText}` : null,
+    info.referenciaCatastral ? `Referencia catastral: ${info.referenciaCatastral}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n')
+  if (beschreibung) auction.beschreibung = beschreibung
   // ver=3 has the structured address; trust it over the listing's best-effort.
   if (info.adresse) auction.adresse = info.adresse
   // Construct the official BOE-Boletín document URL from its id. Only
@@ -55,17 +65,42 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
   const provincia = opts.region
   const enrichDetails = opts.enrichDetails ?? true
 
-  const html = await fetchListHtml(provincia)
+  const html = await fetchListHtml(buildSearchUrl(provincia), provincia)
   const { totalReported, auctions } = parseListingHtml(html, provincia, PLATFORM_ID)
 
-  // page_hits=500 is the largest the form allows. A provincia with more than
-  // 500 active inmuebles would silently lose the tail. Pagination is not
-  // implemented yet — log loudly so we notice in production telemetry, and
-  // ship the partial set so the rest of the crawl still succeeds.
+  // page_hits=500 is the largest the form allows — a provincia with more
+  // active inmuebles continues on follow-up pages addressed via the search-
+  // session token embedded in the first page. Errors mid-pagination (captcha
+  // cooldown, 5xx) keep the pages fetched so far instead of failing the
+  // provincia outright.
   if (totalReported != null && totalReported > auctions.length) {
-    console.warn(
-      `[boe] provincia ${provincia}: ${totalReported} results reported, only ${auctions.length} parsed — pagination NYI`,
-    )
+    const token = extractBusquedaToken(html)
+    if (!token) {
+      console.warn(
+        `[boe] provincia ${provincia}: ${totalReported} results reported, only ${auctions.length} parsed — no pagination token found`,
+      )
+    } else {
+      const seen = new Set(auctions.map((a) => a.zvgId))
+      try {
+        for (let start = PAGE_HITS; start < totalReported; start += PAGE_HITS) {
+          const pageHtml = await fetchListHtml(buildPageUrl(token, start), provincia)
+          const page = parseListingHtml(pageHtml, provincia, PLATFORM_ID)
+          const fresh = page.auctions.filter((a) => !seen.has(a.zvgId))
+          // BOE clamps an out-of-range start to the last valid page instead
+          // of returning an empty one, and an expired token falls back to the
+          // bare search form — either way, no new ids means we're done.
+          if (fresh.length === 0) break
+          for (const a of fresh) {
+            seen.add(a.zvgId)
+            auctions.push(a)
+          }
+        }
+      } catch (err) {
+        console.warn(
+          `[boe] provincia ${provincia}: pagination stopped after ${auctions.length}/${totalReported} results: ${(err as Error).message}`,
+        )
+      }
+    }
   }
 
   if (enrichDetails && auctions.length > 0) {

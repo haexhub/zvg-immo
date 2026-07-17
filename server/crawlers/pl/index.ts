@@ -1,21 +1,25 @@
 import type { CrawlResult } from '~/types/auction'
 import type { CrawlOptions, PlatformCrawler } from '../types'
-import { PL_BASE, COUNTRY, PLATFORM_ID, FILTER_REAL_ESTATE, PL_REGIONS } from './constants'
-import { fetchFilterPage } from './list'
+import { PL_BASE, COUNTRY, PLATFORM_ID, LIST_PAGE_SIZE, PL_REGIONS } from './constants'
+import { fetchListPage } from './list'
+import { enrichOne } from './detail'
 
-const MAX_PAGES = 50 // safety cap — each page typically holds 20 listings
+const MAX_PAGES = 50 // safety cap — 100 listings per page
 
 async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
   const auctions = []
-  let totalReported: number | null = null
-  let page = 1
+  let page = 0
 
-  while (page <= MAX_PAGES) {
-    const result = await fetchFilterPage(FILTER_REAL_ESTATE, page, PLATFORM_ID)
-
-    if (page === 1) totalReported = result.totalReported
+  while (page < MAX_PAGES) {
+    const result = await fetchListPage(page * LIST_PAGE_SIZE, PLATFORM_ID)
     auctions.push(...result.auctions)
 
+    // hasNextPage relies on the SSR pagination widget — if its selectors stop
+    // matching after another site change, the crawl would silently stop at one
+    // page. Make that failure mode visible.
+    if (result.auctions.length > 0 && (result.currentPage == null || result.lastPage == null)) {
+      console.warn('[pl-komornik] pagination widget not found — crawl may be truncated to one page')
+    }
     if (!result.hasNextPage || result.auctions.length === 0) break
     page++
   }
@@ -34,7 +38,7 @@ async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
     countries: [COUNTRY],
     regions: [],
     fetchedAt: new Date().toISOString(),
-    totalReported,
+    totalReported: null,
     auctions: unique,
   }
 }
@@ -46,4 +50,5 @@ export const plKomornikCrawler: PlatformCrawler = {
   country: COUNTRY,
   regions: PL_REGIONS,
   crawl,
+  enrichOne,
 }

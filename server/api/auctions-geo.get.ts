@@ -71,8 +71,19 @@ export default defineEventHandler(async (event): Promise<GeoCrawlResult> => {
       if (aborted) return
       const idx = cursor++
       const a = result.auctions[idx]!
+      const snapshotHit = snapshot[cacheKey(a.platform, a.zvgId)]
+      const detailAvailable = snapshotHit != null
+      // Source-provided coordinates beat a geocoder guess — and cost nothing.
+      // List-crawl coords sit on the auction itself; enrichOne-provided ones
+      // only exist in the snapshot (the /api/auctions list cache is built
+      // without detail fetches).
+      const srcLat = a.lat ?? snapshotHit?.lat
+      const srcLng = a.lng ?? snapshotHit?.lng
+      if (srcLat != null && srcLng != null) {
+        enriched[idx] = { ...a, lat: srcLat, lng: srcLng, detailAvailable }
+        continue
+      }
       const point = await geocodeAddress(a.adresse, a.country, { fetchMissing })
-      const detailAvailable = cacheKey(a.platform, a.zvgId) in snapshot
       enriched[idx] = { ...a, lat: point?.lat ?? null, lng: point?.lng ?? null, detailAvailable }
       if (point == null) {
         const status = await geocodeStatus(a.adresse, a.country)

@@ -20,6 +20,9 @@ interface ListItem {
   status?: string | null
   title?: string | null
   property_link: string
+  /** Coordinates come as decimal strings, e.g. "56.577023530507". */
+  lat?: string | number | null
+  lng?: string | number | null
   type?: Array<{ name?: string | null }> | null
   content?: ListContent | null
 }
@@ -68,16 +71,25 @@ function parseDkkAmount(text: string | null | undefined): number | null {
 }
 
 /** "17.08.2026, 13.30" -> "2026-08-17T13:30:00" (naive local time, matching
- *  how the other crawlers store court-published times without a UTC offset). */
-function parseAuctionDate(text: string | null | undefined): { iso: string | null; label: string | null } {
+ *  how the other crawlers store court-published times without a UTC offset).
+ *  Morning slots omit the leading zero on the hour ("19.08.2026, 9.30");
+ *  day/month/minute are always two digits in the live feed. */
+export function parseAuctionDate(text: string | null | undefined): { iso: string | null; label: string | null } {
   if (!text) return { iso: null, label: null }
-  const m = text.match(/(\d{2})\.(\d{2})\.(\d{4}),\s*(\d{2})\.(\d{2})/)
+  const m = text.match(/(\d{2})\.(\d{2})\.(\d{4}),\s*(\d{1,2})\.(\d{2})/)
   if (!m) return { iso: null, label: null }
-  const [, d, mo, y, hh, mm] = m
+  const [, d, mo, y, h, mm] = m
+  const hh = h!.padStart(2, '0')
   return {
     iso: `${y}-${mo}-${d}T${hh}:${mm}:00`,
     label: `${d}.${mo}.${y}, ${hh}:${mm} Uhr`,
   }
+}
+
+function parseCoord(value: string | number | null | undefined): number | null {
+  if (value == null || value === '') return null
+  const n = Number(value)
+  return Number.isFinite(n) && n !== 0 ? n : null
 }
 
 function extractRow(html: string, label: string): string | null {
@@ -200,6 +212,9 @@ function mapItem(
     beschreibung,
     fotoCount: detail.photos.length,
     thumbnailUrl: detail.photos[0] ?? content.image ?? null,
+    photoUrls: detail.photos.length > 0 ? detail.photos : undefined,
+    lat: parseCoord(item.lat),
+    lng: parseCoord(item.lng),
   }
 }
 

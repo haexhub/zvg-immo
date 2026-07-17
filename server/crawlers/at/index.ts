@@ -23,6 +23,8 @@ type AuctionDetailFields = Pick<
   | 'pdfUrlUpstream'
   | 'fotoCount'
   | 'thumbnailUrl'
+  | 'sourceLivingAreaSqm'
+  | 'sourceLandAreaSqm'
 >
 
 function applyDetail(auction: AuctionDetailFields, info: DetailInfo): void {
@@ -31,6 +33,8 @@ function applyDetail(auction: AuctionDetailFields, info: DetailInfo): void {
   if (info.adresse) auction.adresse = info.adresse
   if (info.schaetzwertEur != null) auction.verkehrswertEur = info.schaetzwertEur
   if (info.schaetzwertText) auction.verkehrswertText = info.schaetzwertText
+  if (info.sourceLivingAreaSqm != null) auction.sourceLivingAreaSqm = info.sourceLivingAreaSqm
+  if (info.sourceLandAreaSqm != null) auction.sourceLandAreaSqm = info.sourceLandAreaSqm
   if (info.beschreibung) auction.beschreibung = info.beschreibung
   if (info.attachments.length > 0) auction.attachments = info.attachments
   if (info.pdfUrl) {

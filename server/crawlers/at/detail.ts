@@ -1,7 +1,7 @@
 import { load } from 'cheerio'
 import type { Auction, Attachment } from '~/types/auction'
 import { AT_BASE, UA } from './constants'
-import { parseEuroAt, stripHtml } from './text'
+import { parseEuroAt, parseSqmAt, stripHtml } from './text'
 import { classifyAttachment } from '~/server/utils/classify-attachment'
 
 export interface DetailInfo {
@@ -14,6 +14,10 @@ export interface DetailInfo {
   schaetzwertText: string | null
   vadiumText: string | null
   geringstesGebotText: string | null
+  /** "Objektgröße" mapped by Kategorie(n): Wohnung/Haus → living area. */
+  sourceLivingAreaSqm: number | null
+  /** "Grundstücksgröße", or "Objektgröße" when the Kategorie is a plot type. */
+  sourceLandAreaSqm: number | null
   beschreibung: string | null
   attachments: Attachment[]
   pdfUrl: string | null
@@ -157,8 +161,17 @@ function parseTitle2(title: string): { amtsgericht: string | null; aktenzeichen:
   return { amtsgericht: m[1].trim(), aktenzeichen: m[2].trim() }
 }
 
+/** Kategorie(n) values that make "Objektgröße" a living area (Wohnung/Haus). */
+const LIVING_KATEGORIE_RE = /wohnung|haus|villa/i
+/** Kategorie(n) values that make "Objektgröße" a plot area. */
+const LAND_KATEGORIE_RE = /grundstück|grund\b|wald|acker|wiese|feld|weingarten|landwirtschaft/i
+
 export async function fetchDetail(detailUrl: string): Promise<DetailInfo> {
-  const html = await fetchDetailHtml(detailUrl)
+  return parseDetail(await fetchDetailHtml(detailUrl))
+}
+
+/** Pure HTML → DetailInfo mapping — exported for tests. */
+export function parseDetail(html: string): DetailInfo {
   const $ = load(html)
   const pairs = extractLabelPairs($)
 
@@ -183,13 +196,45 @@ export async function fetchDetail(detailUrl: string): Promise<DetailInfo> {
   const vadiumText = pairs.get('vadium') ?? null
   const geringstesGebotText = pairs.get('geringstes gebot') ?? null
 
-  // Compose a description from the most informative free-text rows.
+  const kategorie = pairs.get('kategorie(n)') ?? pairs.get('kategorie') ?? null
+  const objektgroesseText = pairs.get('objektgröße') ?? null
+  const grundstuecksgroesseText = pairs.get('grundstücksgröße') ?? null
+
+  // "Objektgröße" is the building/unit size for Wohnung/Haus categories but
+  // the plot size for Grundstück-type categories. Ambiguous or unknown
+  // categories keep the value as labeled text in the beschreibung only.
+  const isLiving = kategorie != null && LIVING_KATEGORIE_RE.test(kategorie)
+  const isLand = kategorie != null && LAND_KATEGORIE_RE.test(kategorie)
+  const objektgroesseSqm = parseSqmAt(objektgroesseText)
+  const sourceLivingAreaSqm = isLiving && !isLand ? objektgroesseSqm : null
+  const sourceLandAreaSqm =
+    parseSqmAt(grundstuecksgroesseText) ?? (isLand && !isLiving ? objektgroesseSqm : null)
+
+  const grundbuch = pairs.get('grundbuch') ?? null
+  const ez = pairs.get('ez') ?? null
+
+  // Compose a description from the most informative free-text rows, followed
+  // by a compact "Label: Wert" block with the structured rows the parser
+  // would otherwise drop (feeds display + extraction).
   const descParts = [
     pairs.get('beschreibung (we)'),
     pairs.get('beschreibung'),
     pairs.get('sonstige hinweise'),
   ].filter((s): s is string => Boolean(s))
-  const beschreibung = descParts.join('\n\n') || null
+  const infoLines = [
+    kategorie && `Kategorie: ${kategorie}`,
+    objektgroesseText && `Objektgröße: ${objektgroesseText}`,
+    grundstuecksgroesseText && `Grundstücksgröße: ${grundstuecksgroesseText}`,
+    versteigerungsOrt && `Versteigerungsort: ${versteigerungsOrt}`,
+    vadiumText && `Vadium: ${vadiumText}`,
+    geringstesGebotText && `Geringstes Gebot: ${geringstesGebotText}`,
+    // Grundbuch/EZ only when they are the usual short "12345 Ort" / number
+    // forms — some Edikte stuff whole paragraphs into these rows.
+    grundbuch &&
+      grundbuch.length <= 60 &&
+      `Grundbuch: ${grundbuch}${ez && ez.length <= 20 ? `, EZ ${ez}` : ''}`,
+  ].filter((s): s is string => Boolean(s))
+  const beschreibung = [...descParts, infoLines.join('\n')].filter(Boolean).join('\n\n') || null
 
   const { attachments, thumbnailUrl: explicitThumb } = buildAttachments(html)
   // Headline PDF: prefer the official notice (matches zvbawü's `bulletin`
@@ -214,6 +259,8 @@ export async function fetchDetail(detailUrl: string): Promise<DetailInfo> {
     schaetzwertText,
     vadiumText,
     geringstesGebotText,
+    sourceLivingAreaSqm,
+    sourceLandAreaSqm,
     beschreibung,
     attachments,
     pdfUrl: headlinePdf?.proxyUrl ?? null,

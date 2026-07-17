@@ -5,6 +5,12 @@ import { cleanTipologia, pickTerminIso, formatEur, formatTerminText } from './te
 interface MapEntry {
   idLotto: number
   dataUltimoAggiornamento: string | null
+  latitudine: number | null
+  longitudine: number | null
+  /** false when the portal could not geolocate the lot — latitudine/longitudine
+   *  then hold an untrustworthy fallback (e.g. comune centroid), so coordinates
+   *  are only used when this is true. */
+  geolocalizzato: boolean
 }
 
 interface Esito {
@@ -186,6 +192,10 @@ export function buildAuctions(
 
   return details.map((d): Auction => {
     const map = mapByLot.get(d.idLotto)
+    const geo =
+      map?.geolocalizzato && map.latitudine != null && map.longitudine != null
+        ? { lat: map.latitudine, lng: map.longitudine }
+        : null
     const terminIso = pickTerminIso(d.dataVendita, d.dataFineGara, d.dataUdienza)
     const verkehrswertEur = d.prezzoBase ?? null
     const thumbnailUrl = d.urlPhoto ? `${AGI_BASE}${d.urlPhoto}` : null
@@ -215,6 +225,8 @@ export function buildAuctions(
       beschreibung: d.descrizione ?? null,
       fotoCount: d.hasFoto ? 1 : 0,
       thumbnailUrl,
+      lat: geo?.lat ?? null,
+      lng: geo?.lng ?? null,
     }
   })
 }

@@ -76,17 +76,17 @@ const RULES: KategorieRule[] = [
   {
     id: 'einfamilienhaus',
     label: 'Einfamilienhaus',
-    test: /einfamilienhaus|vivienda unifamiliar|casa unifamiliar|casa unifamiliare|villetta|maison individuelle|eengezinswoning|rodinný dům|dom jednorodzinny|családi ház|vienbutis namas|savrupmāja|eramu|villa|enfamiljshus|omakotitalo|enfamiliehus|parcelhus|einbýlishús|porodična kuća/i,
+    test: /einfamilienhaus|vivienda unifamiliar|casa unifamiliar|casa unifamiliare|villetta|maison individuelle|eengezinswoning|rodinný dům|dom jednorodzinny|családi ház|vienbutis namas|savrupmāja|eramu|villa|enfamiljshus|omakotitalo|enfamiliehus|parcelhus|einbýlishús|porodična kuća|stanovanjska hiša|μονοκατοικία/i,
   },
   {
     id: 'eigentumswohnung',
     label: 'Eigentumswohnung',
-    test: /eigentumswohnung|sonstiges teileigentum|wohnung und anteil|\bpiso\b|apartamento|appartamento|appartement|mieszkanie|\blakás\b|\bbutas\b|dzīvoklis|\bkorter\b|lägenhet|bostadsrätt|asunto-osake|huoneisto|ejerlejlighed|lejlighed|\bíbúð\b|\bstan\b/i,
+    test: /eigentumswohnung|sonstiges teileigentum|wohnung und anteil|\bpiso\b|apartamento|appartamento|appartement|mieszkanie|\blakás\b|\bbutas\b|dzīvoklis|\bkorter\b|lägenhet|bostadsrätt|asunto-osake|huoneisto|ejerlejlighed|lejlighed|\bíbúð\b|\bstan\b|stanovanje|διαμέρισμα/i,
   },
   {
     id: 'gewerbe',
     label: 'Gewerbe',
-    test: /gewerb|local comercial|nave industrial|immobile commerciale|capannone industriale|local commercial|local professionnel|bedrijfspand|kantoorruimte|komerční prostor|lokal użytkowy|lokal usługowy|üzlethelyiség|komercinės paskirties|komercplatības|äripind|kommersiell fastighet|affärslokal|liikehuoneisto|toimitila|erhvervsejendom|atvinnuhúsnæði|poslovni prostor/i,
+    test: /gewerb|local comercial|nave industrial|immobile commerciale|capannone industriale|local commercial|local professionnel|bedrijfspand|kantoorruimte|komerční prostor|lokal użytkowy|lokal usługowy|üzlethelyiség|komercinės paskirties|komercplatības|äripind|kommersiell fastighet|affärslokal|liikehuoneisto|toimitila|erhvervsejendom|atvinnuhúsnæði|poslovni prostor|κατάστημα|επαγγελματικ/i,
   },
   {
     id: 'land-forst',
@@ -96,7 +96,7 @@ const RULES: KategorieRule[] = [
   {
     id: 'unbebaut',
     label: 'Unbebautes Grundstück',
-    test: /unbebautes grundstück|baugrundstück|\bsolar\b|terreno edificable|terreno edificabile|area edificabile|terrain à bâtir|terrain constructible|bouwgrond|stavební pozemek|działka budowlana|építési telek|byggklar tomt|obebyggd tomt|byggegrund/i,
+    test: /unbebautes grundstück|baugrundstück|\bsolar\b|terreno edificable|terreno edificabile|area edificabile|terrain à bâtir|terrain constructible|bouwgrond|stavební pozemek|działka budowlana|építési telek|byggklar tomt|obebyggd tomt|byggegrund|nezazidano stavbno zemljišče|οικόπεδο/i,
   },
   {
     id: 'garage-stellplatz',

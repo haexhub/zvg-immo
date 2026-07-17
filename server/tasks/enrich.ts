@@ -146,7 +146,16 @@ async function runEnrich() {
         if (crawler?.enrichOne) {
           try {
             await crawler.enrichOne(a)
-            enriched = a.beschreibung != null || a.attachments.length > 0
+            // Any enrichOne-populated field counts — some platforms yield only
+            // structured values or a photo gallery, no beschreibung/attachments.
+            enriched =
+              a.beschreibung != null ||
+              a.attachments.length > 0 ||
+              a.sourceLivingAreaSqm != null ||
+              a.sourceLandAreaSqm != null ||
+              a.sourceRooms != null ||
+              (a.photoUrls?.length ?? 0) > 0 ||
+              a.lat != null
             a.detailFetchedAt = at
           } catch {
             // Transient (network / BOE captcha): leave detailFetchedAt unset so
@@ -163,18 +172,26 @@ async function runEnrich() {
         if (!extractionMissing) continue
 
         const rules = extractByRules({ objekt: a.objekt, beschreibung: a.beschreibung })
+        // Structured values straight from the source platform beat anything
+        // parsed out of free text — they are the platform's own data, not a
+        // regex guess.
         let fields = {
           propertyType: rules.propertyType,
-          landAreaSqm: rules.landAreaSqm,
-          livingAreaSqm: rules.livingAreaSqm,
-          rooms: rules.rooms,
+          landAreaSqm: a.sourceLandAreaSqm ?? rules.landAreaSqm,
+          livingAreaSqm: a.sourceLivingAreaSqm ?? rules.livingAreaSqm,
+          rooms: a.sourceRooms ?? rules.rooms,
           units: rules.units,
         }
+        const mergedConfident =
+          rules.confident ||
+          (fields.propertyType != null &&
+            fields.propertyType !== 'sonstiges' &&
+            (fields.landAreaSqm != null || fields.livingAreaSqm != null))
         let source: 'rules' | 'llm' = 'rules'
         let cacheable: boolean
         const bestPdf = pickBestPdf(a.attachments)
 
-        if (rules.confident) {
+        if (mergedConfident) {
           cacheable = true
         } else if (llmConfig && llmCalls < MAX_LLM_PER_RUN) {
           llmCalls++
@@ -187,22 +204,24 @@ async function runEnrich() {
             cacheable = false // LLM call failed → leave for a later run
           } else {
             source = 'llm'
-            // Prefer the precise rules values; fill the gaps from the LLM.
+            // Prefer the precise structured/rules values; fill the gaps from the LLM.
             fields = {
-              propertyType: rules.propertyType ?? llm.propertyType,
-              landAreaSqm: rules.landAreaSqm ?? llm.landAreaSqm,
-              livingAreaSqm: rules.livingAreaSqm ?? llm.livingAreaSqm,
-              rooms: rules.rooms ?? llm.rooms,
-              units: rules.units ?? llm.units,
+              propertyType: fields.propertyType ?? llm.propertyType,
+              landAreaSqm: fields.landAreaSqm ?? llm.landAreaSqm,
+              livingAreaSqm: fields.livingAreaSqm ?? llm.livingAreaSqm,
+              rooms: fields.rooms ?? llm.rooms,
+              units: fields.units ?? llm.units,
             }
             cacheable = true
           }
         } else if (llmConfig) {
-          // Per-run LLM cap hit: don't cache the rules-only result — that would
-          // mark this listing "done" and needsLlmRetry above would never see it
-          // again. Leave it uncached so it's retried (and gets its LLM shot)
-          // once a slot frees up on a later run.
-          cacheable = false
+          // Per-run LLM cap hit: cache the rules-only result anyway so the
+          // listing shows *something* immediately. Its source stays 'rules'
+          // with confidence 'low', so needsLlmRetry picks it up again once an
+          // LLM slot frees up on a later run. Leaving it uncached instead
+          // starved huge platforms (IT: 14k listings ÷ 300 calls/run) of any
+          // extraction data for months.
+          cacheable = detailOk
         } else {
           // LLM disabled entirely: cache the rules result if we had real text
           // to work with, else leave it for a later run to retry.
@@ -214,10 +233,11 @@ async function runEnrich() {
         // Two-way photo pipeline (platform/zvgId guard applies to both — the
         // API endpoint enforces the same shape, so files under an unsafe path
         // would be unreachable anyway):
-        //   a) Native image URLs from the crawler's foto attachments — AT
-        //      (edikte.justiz.gv.at JPGs) and Biddit (biddit.be JPEGs) publish
-        //      photos directly. We mirror them into the local image cache so
-        //      the browser fetches from us, not the upstream on every card.
+        //   a) Native image URLs — from the crawler's foto attachments (AT
+        //      edikte.justiz.gv.at JPGs, Biddit JPEGs) and from `photoUrls`
+        //      (gallery URLs crawlers collect beyond the thumbnail). We mirror
+        //      them into the local image cache so the browser fetches from us,
+        //      not the upstream on every card.
         //   b) When (a) yields nothing (no native URLs, or all downloads
         //      failed), mine the best PDF for embedded rasters — but only if
         //      the listing didn't already declare foto attachments, since
@@ -229,16 +249,19 @@ async function runEnrich() {
         let photos: string[] = []
         if (isSafePathSegment(a.platform) && isSafePathSegment(a.zvgId)) {
           const destDir = join(IMAGES_DIR, a.platform, a.zvgId)
-          const nativeFotoUrls = a.attachments
-            .filter(
-              (att) =>
-                att.kind === 'foto' &&
-                /^https?:\/\/.*\.(?:jpe?g|png|webp)(?:[?#]|$)/i.test(att.proxyUrl),
-            )
-            .map((att) => att.proxyUrl)
+          const nativeFotoUrls = [
+            ...a.attachments
+              .filter(
+                (att) =>
+                  att.kind === 'foto' &&
+                  /^https?:\/\/.*\.(?:jpe?g|png|webp)(?:[?#]|$)/i.test(att.proxyUrl),
+              )
+              .map((att) => att.proxyUrl),
+            ...(a.photoUrls ?? []),
+          ]
           try {
             if (nativeFotoUrls.length > 0) {
-              photos = await downloadNativeImages(nativeFotoUrls, { destDir })
+              photos = await downloadNativeImages([...new Set(nativeFotoUrls)], { destDir })
             }
             if (photos.length === 0 && bestPdf && a.fotoCount === 0) {
               photoExtractions++

@@ -17,6 +17,8 @@ export interface DetailInfo {
   anuncioBoeId: string | null
   /** Long descripción from ver=3. Falls back to null. */
   beschreibung: string | null
+  /** From ver=3 "Referencia catastral" — the cadastral parcel reference. */
+  referenciaCatastral: string | null
   /** Best-effort formatted street address from ver=3 columns. */
   adresse: string | null
 }
@@ -59,13 +61,14 @@ function parseVer1(html: string): Pick<DetailInfo, 'tasacionEur' | 'tasacionText
   }
 }
 
-function parseVer3(html: string): Pick<DetailInfo, 'beschreibung' | 'adresse'> {
+function parseVer3(html: string): Pick<DetailInfo, 'beschreibung' | 'referenciaCatastral' | 'adresse'> {
   const p = extractTablePairs(html)
   const beschreibung = p.get('descripción') ?? p.get('descripcion') ?? null
   // Skip "no consta" placeholders per-field BEFORE composing — otherwise a
   // valid CP would be dropped together with a "no consta" localidad.
   const drop = (s: string | null | undefined): string | null =>
     s && !/no consta/i.test(s) ? s : null
+  const referenciaCatastral = drop(p.get('referencia catastral'))
   const street = drop(p.get('dirección') ?? p.get('direccion'))
   const cp = drop(p.get('código postal') ?? p.get('codigo postal'))
   const localidad = drop(p.get('localidad'))
@@ -75,7 +78,7 @@ function parseVer3(html: string): Pick<DetailInfo, 'beschreibung' | 'adresse'> {
     (s): s is string => Boolean(s),
   )
   const adresse = parts.length >= 2 ? parts.join(', ') : null
-  return { beschreibung, adresse }
+  return { beschreibung, referenciaCatastral, adresse }
 }
 
 /** Fetches both relevant detail tabs for one subasta and merges them. */

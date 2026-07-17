@@ -1,3 +1,5 @@
+import { parseAreaValue } from '~/server/utils/extract/sizes'
+
 export function parseEuro(text: string | null | undefined): number | null {
   if (!text) return null
   // "130.000,00 €" / "1.234,56 EUR" — German formatting; some lines look like
@@ -7,6 +9,15 @@ export function parseEuro(text: string | null | undefined): number | null {
   const normalized = m[1].replace(/\./g, '').replace(',', '.')
   const value = parseFloat(normalized)
   return Number.isFinite(value) ? value : null
+}
+
+/** "63 m²" / "179.95 m²" / "1.438 m²" — the detail facts mix dot-decimal
+ *  ("179.95") with German thousands-dot ("1.438") formats. Delegates to the
+ *  central area parser so the locale heuristics live in one place. */
+export function parseSqm(text: string | null | undefined): number | null {
+  if (!text) return null
+  const value = parseAreaValue(text)
+  return value != null && value > 0 ? value : null
 }
 
 export function parseGermanDateTimeString(text: string | null | undefined): string | null {

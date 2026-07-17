@@ -87,3 +87,29 @@ describe('extractByRules', () => {
     expect(r.confident).toBe(false)
   })
 })
+
+describe('extractByRules — unlabeled area fallback', () => {
+  it('assigns a bare objekt area to living space for a flat', () => {
+    const r = extractByRules({ objekt: 'Stanovanje 13,50 m2', beschreibung: null })
+    expect(r.livingAreaSqm).toBe(13.5)
+    expect(r.landAreaSqm).toBeNull()
+  })
+  it('assigns a bare objekt area to land for farmland', () => {
+    const r = extractByRules({ objekt: 'Land- und Forstwirtschaft 2,5 ha', beschreibung: null })
+    expect(r.landAreaSqm).toBe(25000)
+    expect(r.livingAreaSqm).toBeNull()
+  })
+  it('leaves ambiguous types unassigned', () => {
+    const r = extractByRules({ objekt: 'Garage 18 m²', beschreibung: null })
+    expect(r.livingAreaSqm).toBeNull()
+    expect(r.landAreaSqm).toBeNull()
+  })
+  it('prefers the labeled area over the bare fallback', () => {
+    const r = extractByRules({
+      objekt: 'Einfamilienhaus 200 m²',
+      beschreibung: 'Wohnfläche: 120 m², Grundstück 500 m²',
+    })
+    expect(r.livingAreaSqm).toBe(120)
+    expect(r.landAreaSqm).toBe(500)
+  })
+})

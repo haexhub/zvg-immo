@@ -69,6 +69,22 @@ function mergePreservedDetail(next: Auction, prev: Auction): Auction {
   if (next.detailFetchedAt == null && prev.detailFetchedAt != null) {
     next.detailFetchedAt = prev.detailFetchedAt
   }
+  if (next.sourceLivingAreaSqm == null && prev.sourceLivingAreaSqm != null) {
+    next.sourceLivingAreaSqm = prev.sourceLivingAreaSqm
+  }
+  if (next.sourceLandAreaSqm == null && prev.sourceLandAreaSqm != null) {
+    next.sourceLandAreaSqm = prev.sourceLandAreaSqm
+  }
+  if (next.sourceRooms == null && prev.sourceRooms != null) {
+    next.sourceRooms = prev.sourceRooms
+  }
+  if ((next.photoUrls == null || next.photoUrls.length === 0) && Array.isArray(prev.photoUrls) && prev.photoUrls.length > 0) {
+    next.photoUrls = prev.photoUrls
+  }
+  if (next.lat == null && prev.lat != null && prev.lng != null) {
+    next.lat = prev.lat
+    next.lng = prev.lng
+  }
   return next
 }
 

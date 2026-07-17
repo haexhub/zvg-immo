@@ -147,16 +147,50 @@ function parseListPage(html: string): { items: ListItem[]; rawCount: number; tot
 interface DetailInfo {
   beschreibung: string | null
   photos: string[]
+  /** "Type de bien" badge next to the "Vente aux enchères" one. */
+  typeDeBien: string | null
+  /** Stat tiles under the price block: "pièces" / "m² superficie" (the
+   *  superficie is the surface habitable — land-with-house listings show the
+   *  house's living area there, not the plot). For bare-land types ("Terrain",
+   *  "Terrain à bâtir") the tile carries the plot size instead, so the value
+   *  is bucketed into landAreaSqm. */
+  rooms: number | null
+  livingAreaSqm: number | null
+  landAreaSqm: number | null
 }
 
-function parseDetailPage(html: string): DetailInfo {
+export function parseDetailPage(html: string): DetailInfo {
   const $ = load(html)
   const beschreibung = clean($('.font-light.mb-4').first().text()) || null
   const photos = $('#lightSliderDetails .selector')
     .map((_i, el) => $(el).attr('data-src'))
     .get()
     .filter((src): src is string => Boolean(src))
-  return { beschreibung, photos }
+
+  // First badge is the sale type ("Vente aux enchères"), the secondary badge
+  // carries the type de bien ("Appartement", "Maison", …).
+  const typeDeBien = clean($('.badge.badge-secondary').first().text()) || null
+
+  let rooms: number | null = null
+  let superficie: number | null = null
+  $('span.font-weight-bold.h4').each((_i, el) => {
+    const $el = $(el)
+    const value = Number(clean($el.text()).replace(',', '.'))
+    if (!Number.isFinite(value) || value <= 0) return
+    const label = clean($el.parent().find('.small.text-muted').first().text()).toLowerCase()
+    if (label === 'pièces') rooms = value
+    else if (label.includes('superficie')) superficie = value
+  })
+  const isBareLand = typeDeBien != null && /terrain/i.test(typeDeBien)
+
+  return {
+    beschreibung,
+    photos,
+    typeDeBien,
+    rooms,
+    livingAreaSqm: isBareLand ? null : superficie,
+    landAreaSqm: isBareLand ? superficie : null,
+  }
 }
 
 async function fetchDetail(href: string): Promise<DetailInfo | null> {
@@ -181,6 +215,16 @@ function idFromHref(href: string): string {
 function mapItem(item: ListItem, detail: DetailInfo | null, platformId: string): Auction {
   const photos = detail?.photos ?? []
   const attachments: Attachment[] = []
+
+  // Surface the structured detail facts as labelled lines ahead of the
+  // free-text description.
+  const facts = [
+    detail?.typeDeBien ? `Type de bien : ${detail.typeDeBien}` : null,
+    detail?.rooms != null ? `Pièces : ${detail.rooms}` : null,
+    detail?.livingAreaSqm != null ? `Superficie : ${detail.livingAreaSqm} m²` : null,
+  ].filter(Boolean)
+  const beschreibung =
+    [facts.join('\n'), detail?.beschreibung].filter(Boolean).join('\n\n') || null
 
   return {
     platform: platformId,
@@ -209,9 +253,13 @@ function mapItem(item: ListItem, detail: DetailInfo | null, platformId: string):
     pdfUrlUpstream: null,
     detailUrlUpstream: item.href,
     attachments,
-    beschreibung: detail?.beschreibung ?? null,
+    beschreibung,
     fotoCount: photos.length,
     thumbnailUrl: photos[0] ?? null,
+    ...(photos.length > 0 ? { photoUrls: photos } : {}),
+    ...(detail?.rooms != null ? { sourceRooms: detail.rooms } : {}),
+    ...(detail?.livingAreaSqm != null ? { sourceLivingAreaSqm: detail.livingAreaSqm } : {}),
+    ...(detail?.landAreaSqm != null ? { sourceLandAreaSqm: detail.landAreaSqm } : {}),
   }
 }
 

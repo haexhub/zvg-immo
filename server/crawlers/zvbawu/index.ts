@@ -15,6 +15,16 @@ function applyDetail(auction: Auction, info: DetailInfo): void {
   auction.pdfUrl = info.pdfUrl
   auction.pdfUrlUpstream = info.pdfUrlUpstream
   auction.aufgehoben = info.aufgehoben
+  // Guarded like at/biddit: a re-run whose detail payload lacks the facts must
+  // not wipe values a previous run extracted (the snapshot preserves them).
+  if (info.sourceLivingAreaSqm != null) auction.sourceLivingAreaSqm = info.sourceLivingAreaSqm
+  if (info.sourceLandAreaSqm != null) auction.sourceLandAreaSqm = info.sourceLandAreaSqm
+  if (info.sourceRooms != null) auction.sourceRooms = info.sourceRooms
+  const [lat, lng] = info.latlng ?? []
+  if (typeof lat === 'number' && typeof lng === 'number') {
+    auction.lat = lat
+    auction.lng = lng
+  }
   // Detail page exposes the file number as a dedicated field; the list view
   // derives it from facts[0]. Prefer the structured value when set.
   if (info.aktenzeichen) auction.aktenzeichen = info.aktenzeichen

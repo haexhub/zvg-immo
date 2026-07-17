@@ -1,15 +1,17 @@
 import type { Auction } from '~/types/auction'
-import { SI_API_BASE, SI_BASE, LIST_PATH, COUNTRY, UA, REAL_ESTATE_SALE_SUBJECT, PAGE_SIZE } from './constants'
-import { clean, parseSiDateTime, parseSiPrice, formatSiPrice } from './text'
+import { SI_API_BASE, SI_BASE, LIST_PATH, COUNTRY, UA, REAL_ESTATE_SALE_SUBJECT, PAGE_SIZE, LAND_PROPERTY_KINDS, LIVING_PROPERTY_KINDS } from './constants'
+import { clean, parseSiDateTime, parseSiPrice, formatSiPrice, parseSiRooms, parseSiCoord } from './text'
 
 interface SiAddress {
   street: string | null
   houseNumber: string | null
   zip: string | null
   city: string | null
+  latitude: string | null
+  longitude: string | null
 }
 
-interface SiPublication {
+export interface SiPublication {
   id: string
   caseNumber: number | null
   caseYear: number | null
@@ -19,8 +21,13 @@ interface SiPublication {
   saleEndAt: string | null
   status: string
   description: string | null
-  propertyKindRelation: { valueContent: string } | null
+  propertyKindRelation: { valueCode: string; valueContent: string } | null
   area: string | null
+  roomsRelation: { valueContent: string } | null
+  floorRelation: { valueContent: string } | null
+  constructionYear: number | null
+  energyCertificateRelation: { valueContent: string } | null
+  securityPrice: string | number | null
   cadastralMunicipalityName: string | null
   startingPrice: string | number | null
   estimatedPrice: string | number | null
@@ -59,7 +66,22 @@ function buildObjekt(p: SiPublication): string | null {
   return p.area ? `${kind}, ${p.area} m²` : kind
 }
 
-function mapPublication(p: SiPublication, platformId: string): Auction {
+function buildBeschreibung(p: SiPublication): string | null {
+  const kaution = formatSiPrice(parseSiPrice(p.securityPrice))
+  const extras = [
+    p.floorRelation?.valueContent ? `Etage: ${p.floorRelation.valueContent}` : null,
+    p.constructionYear ? `Baujahr: ${p.constructionYear}` : null,
+    p.energyCertificateRelation?.valueContent
+      ? `Energieausweis: ${p.energyCertificateRelation.valueContent}`
+      : null,
+    kaution ? `Kaution: ${kaution}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  return [clean(p.description), extras || null].filter(Boolean).join('\n') || null
+}
+
+export function mapPublication(p: SiPublication, platformId: string): Auction {
   const { iso: terminIso, label: terminText } = parseSiDateTime(p.saleEndAt)
   const price = parseSiPrice(p.estimatedPrice ?? p.startingPrice)
   const detailUrl = `${SI_BASE}/single/${p.id}`
@@ -67,6 +89,9 @@ function mapPublication(p: SiPublication, platformId: string): Auction {
     p.pictureFileId && p.pictureFileIdRelation
       ? `${SI_API_BASE}/public/download${p.pictureFileIdRelation.urlQuery}`
       : null
+
+  const kindCode = p.propertyKindRelation?.valueCode ?? ''
+  const areaSqm = parseSiPrice(p.area)
 
   return {
     platform: platformId,
@@ -88,9 +113,14 @@ function mapPublication(p: SiPublication, platformId: string): Auction {
     pdfUrlUpstream: null,
     detailUrlUpstream: detailUrl,
     attachments: [],
-    beschreibung: clean(p.description),
+    beschreibung: buildBeschreibung(p),
     fotoCount: thumbnailUrl ? 1 : 0,
     thumbnailUrl,
+    sourceLivingAreaSqm: LIVING_PROPERTY_KINDS.includes(kindCode) ? areaSqm : null,
+    sourceLandAreaSqm: LAND_PROPERTY_KINDS.includes(kindCode) ? areaSqm : null,
+    sourceRooms: parseSiRooms(p.roomsRelation?.valueContent),
+    lat: parseSiCoord(p.address?.latitude),
+    lng: parseSiCoord(p.address?.longitude),
   }
 }
 
