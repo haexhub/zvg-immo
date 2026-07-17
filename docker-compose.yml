@@ -23,11 +23,10 @@ services:
       NUXT_PROXY_SETUP_TOKEN: ${PROXY_SETUP_TOKEN}
       NUXT_SETTINGS_PASSWORD: ${SETTINGS_PASSWORD}
       NUXT_SETTINGS_SESSION_SECRET: ${SETTINGS_SESSION_SECRET}
-      # Self-hosted Supabase stack (auth skeleton, see supabase/ + the `db`/
-      # `auth`/`rest`/`kong`/`meta`/`studio` services below).
-      # NUXT_SUPABASE_URL/NUXT_SUPABASE_SERVICE_ROLE_KEY aren't consumed by
-      # the app yet (no server/utils/supabase.ts until Phase 2) — set now so
-      # the compose wiring doesn't need to change again when that lands.
+      # Self-hosted Supabase stack (see supabase/ + the `db`/`auth`/`rest`/
+      # `kong`/`meta`/`studio` services below). NUXT_SUPABASE_URL/
+      # NUXT_SUPABASE_SERVICE_ROLE_KEY are consumed by
+      # server/utils/supabase.ts (Phase 2: saved-searches/watchlist routes).
       NUXT_SUPABASE_URL: http://kong:8000
       NUXT_SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
       NUXT_PUBLIC_SUPABASE_URL: ${SUPABASE_PUBLIC_URL}
