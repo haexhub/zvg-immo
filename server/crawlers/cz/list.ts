@@ -1,5 +1,5 @@
 import type { Attachment, AttachmentKind, Auction } from '~/types/auction'
-import { CZ_BASE, COUNTRY, UA } from './constants'
+import { CZ_BASE, COUNTRY, UA, CZ_LIST_LIMIT, CZ_MAX_LIST_PAGES } from './constants'
 import { parseCzDate, parseCzPrice, clean } from './text'
 import { getRates, toEur } from '~/server/utils/exchange-rate'
 
@@ -86,17 +86,64 @@ function documentKind(type: string | null | undefined): AttachmentKind {
   return 'sonstiges'
 }
 
+/** The .json endpoints under GET always render the same fixed first page
+ *  (a static export for widgets); the real listing widget submits the search
+ *  form as a CSRF-protected PUT with `{filter: {limit, offset}}` — reverse
+ *  engineered from the "Nemovitosti" search page's Vue bundle. Establish a
+ *  session by loading the HTML page once to grab the PHPSESSID cookie and the
+ *  csrf-token meta tag, then reuse both for the PUT request(s). */
+async function establishSession(jsonPath: string): Promise<{ cookie: string; token: string }> {
+  const htmlUrl = `${CZ_BASE}${jsonPath.replace(/\.json$/, '')}`
+  const res = await fetch(htmlUrl, {
+    headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml' },
+    signal: AbortSignal.timeout(20_000),
+  })
+  if (!res.ok) throw new Error(`CZ session fetch failed: ${res.status} ${htmlUrl}`)
+  const html = await res.text()
+  const token = html.match(/<meta name="csrf-token" content="([^"]+)"/)?.[1]
+  const cookie = (res.headers.getSetCookie?.() ?? [])
+    .map((c) => c.split(';')[0])
+    .filter(Boolean)
+    .join('; ')
+  if (!token || !cookie) throw new Error(`CZ session missing csrf-token/cookie: ${htmlUrl}`)
+  return { cookie, token }
+}
+
 export async function fetchEndpoint(path: string, platformId: string): Promise<Auction[]> {
   const url = `${CZ_BASE}${path}`
-  const [res, rates] = await Promise.all([
-    fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/json' } }),
-    getRates(),
-  ])
-  if (!res.ok) throw new Error(`CZ list fetch failed: ${res.status} ${url}`)
-  const json = await res.json()
-  if (!json || typeof json !== 'object' || Array.isArray(json))
-    throw new Error(`CZ list unexpected response shape: ${url}`)
-  return parseData(json as Record<string, CzAuction>, platformId, rates)
+  const [{ cookie, token }, rates] = await Promise.all([establishSession(path), getRates()])
+
+  const merged: Record<string, CzAuction> = {}
+  for (let page = 0; page < CZ_MAX_LIST_PAGES; page++) {
+    const offset = page * CZ_LIST_LIMIT
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        'User-Agent': UA,
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+        'X-CSRF-TOKEN': token,
+        Cookie: cookie,
+      },
+      body: JSON.stringify({ filter: { limit: CZ_LIST_LIMIT, offset } }),
+      signal: AbortSignal.timeout(30_000),
+    })
+    if (!res.ok) throw new Error(`CZ list fetch failed: ${res.status} ${url}`)
+    const json = await res.json()
+    if (!json || typeof json !== 'object' || Array.isArray(json))
+      throw new Error(`CZ list unexpected response shape: ${url}`)
+
+    let pageCount = 0
+    for (const [key, raw] of Object.entries(json as Record<string, unknown>)) {
+      if (key === '@count') continue
+      merged[`${offset}:${key}`] = raw as CzAuction
+      pageCount++
+    }
+    if (pageCount < CZ_LIST_LIMIT) break
+  }
+
+  return parseData(merged, platformId, rates)
 }
 
 export function parseData(data: Record<string, CzAuction>, platformId: string, rates: Record<string, number>): Auction[] {

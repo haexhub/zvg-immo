@@ -12,3 +12,10 @@ export const LIST_ENDPOINTS = [
   '/drazby/pripravovane.json',
   '/drazby/online.json',
 ] as const
+
+/** The .json endpoints only serve the CSRF-authenticated PUT/filter request
+ *  (a plain GET always returns the same fixed first page); a large limit
+ *  covers today's volumes (~700) in one request, with the loop in list.ts
+ *  paginating further if a response ever comes back full. */
+export const CZ_LIST_LIMIT = 1000
+export const CZ_MAX_LIST_PAGES = 20
