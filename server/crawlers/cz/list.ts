@@ -121,15 +121,23 @@ export function parseData(data: Record<string, CzAuction>, platformId: string, r
      *  the upstream URL doubles as proxyUrl (same pattern as dk/ee). */
     const attachments: Attachment[] = collectionValues(raw.documents)
       .filter((doc) => doc.hash)
-      .map((doc) => ({
-        kind: documentKind(doc.document_type),
-        label: clean(doc.original_name) || 'Dokument',
-        filename: clean(doc.original_name) || `${doc.hash}.pdf`,
-        sizeBytes: doc.size ?? null,
-        fileId: doc.hash!,
-        proxyUrl: `${CZ_BASE}/upload/auction-document/${doc.hash}`,
-      }))
-    const pdf = attachments.find((a) => a.kind === 'bekanntmachung') ?? attachments[0] ?? null
+      .map((doc) => {
+        const isPdf = doc.mime_type === 'application/pdf' || /\.pdf$/i.test(doc.original_name ?? '')
+        return {
+          kind: documentKind(doc.document_type),
+          label: clean(doc.original_name) || 'Dokument',
+          filename: clean(doc.original_name) || (isPdf ? `${doc.hash}.pdf` : doc.hash!),
+          sizeBytes: doc.size ?? null,
+          fileId: doc.hash!,
+          proxyUrl: `${CZ_BASE}/upload/auction-document/${doc.hash}`,
+        }
+      })
+    // Only a confirmed PDF may become the primary PDF; never fall back to an
+    // arbitrary attachment of unknown type.
+    const pdf =
+      attachments.find((a) => a.kind === 'bekanntmachung' && /\.pdf$/i.test(a.filename)) ??
+      attachments.find((a) => /\.pdf$/i.test(a.filename)) ??
+      null
 
     const coords =
       raw.item?.location_coords ??

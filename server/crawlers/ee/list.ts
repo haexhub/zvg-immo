@@ -139,7 +139,7 @@ export function mapDetail(id: string, html: string, platformId: string): Auction
     terminText,
     aufgehoben,
     letzteAktualisierungIso: null,
-    pdfUrl: null,
+    pdfUrl: pdfUrlUpstream,
     detailUrl,
     pdfUrlUpstream,
     detailUrlUpstream: detailUrl,

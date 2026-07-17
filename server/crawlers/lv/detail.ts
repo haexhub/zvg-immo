@@ -110,8 +110,12 @@ export async function enrichOne(auction: Auction): Promise<void> {
   if (d.kadastraNumurs) lines.push(`Kadastra numurs: ${d.kadastraNumurs}`)
   if (d.domajamasDalas) lines.push(`Domājamās daļas no īpašuma: ${d.domajamasDalas}`)
   if (lines.length > 0) {
-    // Enrich the notice text from the list crawl — never replace it.
-    auction.beschreibung = [auction.beschreibung, lines.join('\n')].filter(Boolean).join('\n\n')
+    // Enrich the notice text from the list crawl — never replace it. Skip
+    // lines already present so reruns don't stack duplicate cadastral blocks.
+    const missing = lines.filter((line) => !auction.beschreibung?.includes(line))
+    if (missing.length > 0) {
+      auction.beschreibung = [auction.beschreibung, missing.join('\n')].filter(Boolean).join('\n\n')
+    }
   }
 
   if (d.lat != null && d.lng != null) {

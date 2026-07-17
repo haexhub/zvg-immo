@@ -57,7 +57,7 @@ export async function enrichOne(auction: Auction): Promise<void> {
   const [html, links, galleryPics] = await Promise.all([
     fetchText(auction.zvgId, 'getText'),
     fetchPdfLinks(auction.zvgId),
-    fetchGalleryPics(auction.zvgId),
+    fetchGalleryPics(auction.zvgId).catch(() => []),
   ])
 
   const text = stripDivHtml(html)

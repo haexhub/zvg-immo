@@ -139,10 +139,12 @@ export function applyDetailInfo(auction: Auction, info: DetailInfo): void {
     auction.pdfUrl = info.pdfUrl
     auction.pdfUrlUpstream = info.pdfUrlUpstream
   }
-  auction.fotoCount = info.fotoCount
-  if (info.photoUrls.length > 0) auction.photoUrls = info.photoUrls
-  if (info.thumbnailUrl && !auction.thumbnailUrl) {
-    auction.thumbnailUrl = info.thumbnailUrl
+  if (info.photoUrls.length > 0) {
+    auction.photoUrls = info.photoUrls
+    auction.fotoCount = info.photoUrls.length
+    if (info.thumbnailUrl && !auction.thumbnailUrl) {
+      auction.thumbnailUrl = info.thumbnailUrl
+    }
   }
   if (info.livingAreaSqm != null) auction.sourceLivingAreaSqm = info.livingAreaSqm
   if (info.landAreaSqm != null) auction.sourceLandAreaSqm = info.landAreaSqm

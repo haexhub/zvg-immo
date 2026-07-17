@@ -24,6 +24,11 @@ export async function fetchListPage(offset: number, platformId: string): Promise
   })
   if (!res.ok) throw new Error(`PL list fetch failed: ${res.status} ${url}`)
   const html = await res.text()
+  // A WAF/error page can still answer HTTP 200 — without this check it would
+  // parse into a silent, successful empty page and suppress retries.
+  if (!html.includes('id="item-list-container"')) {
+    throw new Error(`PL list fetch returned unexpected page (WAF/error?): ${url}`)
+  }
 
   return parseListHtml(html, platformId)
 }

@@ -7,6 +7,8 @@ import { getRates, toEur } from '~/server/utils/exchange-rate'
 export interface DetailData {
   beschreibung: string | null
   aktenzeichen: string | null
+  /** "Sąd Rejonowy w <Miasto>" — the executing court, independent of the Sygnatura. */
+  amtsgericht: string | null
   /** "Suma oszacowania" — the court-appraised value (= Verkehrswert), in PLN. */
   sumaOszacowaniaPln: number | null
   /** "Cena wywołania" — the opening bid, in PLN. Fallback when no Suma is given. */
@@ -51,10 +53,14 @@ export function parseDetailHtml(html: string): DetailData {
 
   // "Sygnatura: Km 314/18" (or "Sygnatury: Km 1022/19, KM 489/19; …") in the notice header.
   const sygMatch = $.text().match(/Sygnatur(?:a|y):\s*([A-Za-zŻżŹź]{1,5}\s?[A-Za-z]{0,4}\s?\d+\/\d+)/)
+  // "przy Sądzie Rejonowym w Zgorzelcu" — the city stays in its locative form,
+  // matching the conventional court name ("Sąd Rejonowy w Zgorzelcu").
+  const courtMatch = $.text().match(/Sądzie\s+Rejonowym\s+w\s+([\p{Lu}][\p{Ll}]+)/u)
 
   return {
     beschreibung,
     aktenzeichen: sygMatch ? clean(sygMatch[1]!) : null,
+    amtsgericht: courtMatch ? `Sąd Rejonowy w ${courtMatch[1]}` : null,
     sumaOszacowaniaPln: !multiLot && suma ? parsePlPrice(suma.split('(')[0]!) : null,
     cenaWywolaniaPln: !multiLot && cena ? parsePlPrice(cena.split('(')[0]!) : null,
     livingAreaSqm: !multiLot && beschreibung ? parseLivingAreaSqm(beschreibung) : null,
@@ -70,10 +76,17 @@ export async function enrichOne(auction: Auction): Promise<void> {
     signal: AbortSignal.timeout(30_000),
   })
   if (!res.ok) throw new Error(`PL detail fetch failed: ${res.status} ${auction.detailUrlUpstream}`)
-  const detail = parseDetailHtml(await res.text())
+  const html = await res.text()
+  // A WAF/error page can still answer HTTP 200 — without this check it would
+  // parse into a silent, successful no-op and suppress retries.
+  if (!html.includes('notice-template-wrapper')) {
+    throw new Error(`PL detail fetch returned unexpected page (WAF/error?): ${auction.detailUrlUpstream}`)
+  }
+  const detail = parseDetailHtml(html)
 
   if (detail.beschreibung) auction.beschreibung = detail.beschreibung
   if (detail.aktenzeichen) auction.aktenzeichen = detail.aktenzeichen
+  if (detail.amtsgericht) auction.amtsgericht = detail.amtsgericht
   if (detail.livingAreaSqm != null) auction.sourceLivingAreaSqm = detail.livingAreaSqm
 
   const pln = detail.sumaOszacowaniaPln ?? (auction.verkehrswertEur ? null : detail.cenaWywolaniaPln)

@@ -35,6 +35,6 @@ export function parseSiRooms(content: string | null | undefined): number | null 
 /** Coordinate strings from address.latitude/longitude ("46.076706") → number. */
 export function parseSiCoord(raw: string | null | undefined): number | null {
   if (!raw) return null
-  const n = parseFloat(raw)
+  const n = Number(raw.trim())
   return Number.isFinite(n) ? n : null
 }

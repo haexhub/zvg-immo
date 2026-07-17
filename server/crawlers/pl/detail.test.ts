@@ -85,6 +85,10 @@ describe('parseDetailHtml', () => {
     expect(detail.aktenzeichen).toBe('Km 314/18')
   })
 
+  it('extracts the court independently from the Sygnatura', () => {
+    expect(detail.amtsgericht).toBe('Sąd Rejonowy w Zgorzelcu')
+  })
+
   it('extracts Suma oszacowania and Cena wywołania in PLN', () => {
     expect(detail.sumaOszacowaniaPln).toBe(130000)
     expect(detail.cenaWywolaniaPln).toBe(86667)
@@ -115,6 +119,7 @@ describe('parseDetailHtml', () => {
     expect(parseDetailHtml('<div>błąd</div>')).toEqual({
       beschreibung: null,
       aktenzeichen: null,
+      amtsgericht: null,
       sumaOszacowaniaPln: null,
       cenaWywolaniaPln: null,
       livingAreaSqm: null,
@@ -187,6 +192,7 @@ describe('enrichOne', () => {
     await enrichOne(a)
     expect(a.beschreibung).toMatch(/^lokal mieszkalny nr 13, umieszczony/)
     expect(a.aktenzeichen).toBe('Km 314/18')
+    expect(a.amtsgericht).toBe('Sąd Rejonowy w Zgorzelcu')
     expect(a.sourceLivingAreaSqm).toBe(70.8)
     // 130 000 zł Suma oszacowania at 4 PLN per EUR — not the Cena wywołania.
     expect(a.verkehrswertEur).toBe(32500)
@@ -195,9 +201,11 @@ describe('enrichOne', () => {
 
   it('falls back to the Cena wywołania when no Suma oszacowania is published', async () => {
     const html = `
-      <div class="template-item-attribute">
-        <div class="template-item-label">Cena wywołania</div>
-        <div class="template-item-value">100 000,00 zł</div>
+      <div class="notice-template-wrapper">
+        <div class="template-item-attribute">
+          <div class="template-item-label">Cena wywołania</div>
+          <div class="template-item-value">100 000,00 zł</div>
+        </div>
       </div>`
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(html)))
     const a = makeAuction()
@@ -209,6 +217,11 @@ describe('enrichOne', () => {
   it('throws on upstream errors so the enrich task retries', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 500 })))
     await expect(enrichOne(makeAuction())).rejects.toThrow('500')
+  })
+
+  it('throws on a WAF/error page instead of silently succeeding', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<div>Access denied</div>')))
+    await expect(enrichOne(makeAuction())).rejects.toThrow('unexpected page')
   })
 })
 

@@ -143,9 +143,11 @@ async function runEnrich() {
         // if the listing legitimately has no attachments/beschreibung — so we
         // don't re-fetch the same empty response on every future run.
         let enriched = false
+        let detailOk = !crawler?.enrichOne
         if (crawler?.enrichOne) {
           try {
             await crawler.enrichOne(a)
+            detailOk = true
             // Any enrichOne-populated field counts — some platforms yield only
             // structured values or a photo gallery, no beschreibung/attachments.
             enriched =
@@ -163,7 +165,6 @@ async function runEnrich() {
           }
         }
         if (enriched) enrichedCount++
-        const detailOk = enriched || !crawler?.enrichOne
 
         // Skip the rules/LLM/photo extraction pipeline when we already have a
         // cached result — this loop iteration may only be here to backfill
@@ -205,8 +206,13 @@ async function runEnrich() {
           } else {
             source = 'llm'
             // Prefer the precise structured/rules values; fill the gaps from the LLM.
+            // "sonstiges" counts as absent for propertyType (see mergedConfident
+            // above) — let a more specific LLM classification replace it.
             fields = {
-              propertyType: fields.propertyType ?? llm.propertyType,
+              propertyType:
+                fields.propertyType != null && fields.propertyType !== 'sonstiges'
+                  ? fields.propertyType
+                  : llm.propertyType,
               landAreaSqm: fields.landAreaSqm ?? llm.landAreaSqm,
               livingAreaSqm: fields.livingAreaSqm ?? llm.livingAreaSqm,
               rooms: fields.rooms ?? llm.rooms,
