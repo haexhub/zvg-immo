@@ -8,6 +8,11 @@ const RULES: ReadonlyArray<[RegExp, AttachmentKind]> = [
   [/gutacht|verkehrswert|expert|expertise|estim|sch[aä]tz/i, 'gutachten'],
   [/edikt|bekanntmachung|verlautbarung|tac|cahier|terms|conditions|verkoopsvoorwaarden|huutokauppaehdot|auktionsvillkor/i, 'bekanntmachung'],
   [/expos[ée]|brochure|prospect|myyntiesite|salgsopstilling/i, 'exposee'],
+  // Checked before 'foto': zvg-portal sometimes labels administrative PDFs
+  // (bank-details sheets, registration forms) "Foto" — seen live as
+  // "Kontoverbindung-Sicherheitsleistung" tagged Foto, which would inflate
+  // fotoCount and get picked as a thumbnail.
+  [/kontoverbindung|sicherheitsleistung|merkblatt|anmeldeformular/i, 'sonstiges'],
   [/foto|bild|photo|picture|image/i, 'foto'],
 ]
 

@@ -24,3 +24,17 @@ export function parseSiPrice(raw: string | number | null | undefined): number | 
 export function formatSiPrice(value: number | null): string | null {
   return value != null ? `${value.toLocaleString('de-DE', { maximumFractionDigits: 0 })} €` : null
 }
+
+/** roomsRelation valueContent like "2-sobno" → 2. Non-numeric categories
+ *  ("Garsonjera") and half-room variants ("1,5-sobno") stay null. */
+export function parseSiRooms(content: string | null | undefined): number | null {
+  const m = content?.match(/^(\d+)-sobno$/)
+  return m ? parseInt(m[1]!, 10) : null
+}
+
+/** Coordinate strings from address.latitude/longitude ("46.076706") → number. */
+export function parseSiCoord(raw: string | null | undefined): number | null {
+  if (!raw) return null
+  const n = Number(raw.trim())
+  return Number.isFinite(n) ? n : null
+}

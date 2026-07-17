@@ -2,7 +2,7 @@ import type { Auction, CrawlResult } from '~/types/auction'
 import type { CrawlOptions, PlatformCrawler } from '../types'
 import { BE_REGIONS, BIDDIT_BASE, COUNTRY, REGION_NAME } from './constants'
 import { fetchAllPublicSales } from './list'
-import { enrichInBatches, type DetailInfo } from './detail'
+import { enrichInBatches, formatVerkehrswertText, type DetailInfo } from './detail'
 import { fetchOrganisationNames } from './organisation'
 
 const PLATFORM_ID = 'biddit'
@@ -19,12 +19,16 @@ type AuctionDetailFields = Pick<
   | 'fotoCount'
   | 'thumbnailUrl'
   | 'aufgehoben'
+  | 'lat'
+  | 'lng'
+  | 'sourceLivingAreaSqm'
+  | 'sourceLandAreaSqm'
 >
 
-function applyDetail(auction: AuctionDetailFields, info: DetailInfo): void {
+export function applyDetail(auction: AuctionDetailFields, info: DetailInfo): void {
   if (info.estimatedPrice != null) {
     auction.verkehrswertEur = info.estimatedPrice
-    auction.verkehrswertText = `${info.estimatedPrice.toLocaleString('de-DE')} €`
+    auction.verkehrswertText = formatVerkehrswertText(info)
   }
   if (info.beschreibung) auction.beschreibung = info.beschreibung
   if (info.adresse) auction.adresse = info.adresse
@@ -35,6 +39,12 @@ function applyDetail(auction: AuctionDetailFields, info: DetailInfo): void {
   }
   auction.fotoCount = info.fotoCount
   if (info.thumbnailUrl) auction.thumbnailUrl = info.thumbnailUrl
+  if (info.lat != null && info.lng != null) {
+    auction.lat = info.lat
+    auction.lng = info.lng
+  }
+  if (info.sourceLivingAreaSqm != null) auction.sourceLivingAreaSqm = info.sourceLivingAreaSqm
+  if (info.sourceLandAreaSqm != null) auction.sourceLandAreaSqm = info.sourceLandAreaSqm
   // Listing already sets aufgehoben from `withdrawn`; the detail endpoint
   // may flip it between fetch and enrich (notary withdraws mid-crawl).
   if (info.aufgehoben) auction.aufgehoben = true

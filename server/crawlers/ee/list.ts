@@ -1,5 +1,5 @@
 import { load } from 'cheerio'
-import type { Auction } from '~/types/auction'
+import type { Attachment, Auction } from '~/types/auction'
 import { EE_BASE, LIST_PATH, COUNTRY, UA, DETAIL_CONCURRENCY } from './constants'
 import { clean, parseEeDateTime, parseEePrice, stripAnnouncementHtml } from './text'
 
@@ -75,7 +75,7 @@ function extractInfoTable($: ReturnType<typeof load>): Map<string, string> {
   return info
 }
 
-function mapDetail(id: string, html: string, platformId: string): Auction | null {
+export function mapDetail(id: string, html: string, platformId: string): Auction | null {
   const $ = load(html)
   const info = extractInfoTable($)
 
@@ -95,24 +95,41 @@ function mapDetail(id: string, html: string, platformId: string): Auction | null
   const verkehrswertEur = parseEePrice(priceRaw ?? null)
 
   const announcementHtml = $('.announcement-body').first().html()
-  const beschreibung = announcementHtml ? stripAnnouncementHtml(announcementHtml) || null : null
+  const announcement = announcementHtml ? stripAnnouncementHtml(announcementHtml) || null : null
+  const kataster = info.get('katastritunnus')
+  const beschreibung =
+    [kataster ? `Katasternummer: ${kataster}` : null, announcement].filter(Boolean).join('\n') ||
+    null
 
   const photoUrls = [...new Set(
     $('img')
       .map((_, img) => $(img).attr('src'))
       .get()
       .filter((src): src is string => !!src && src.startsWith('/media/')),
-  )]
-  const thumbnailUrl = photoUrls[0] ? `${EE_BASE}${photoUrls[0]}` : null
+  )].map((src) => `${EE_BASE}${src}`)
+  const thumbnailUrl = photoUrls[0] ?? null
 
   const detailUrl = `${EE_BASE}/oksjon/view/?okid=${id}`
+  const pdfUrlUpstream = `${EE_BASE}/oksjon/dopdf/?okid=${id}`
+  /** dopdf serves the official notice PDF without cookies/Referer, so the
+   *  upstream URL doubles as proxyUrl (same pattern as dk/fi). */
+  const attachments: Attachment[] = [
+    {
+      kind: 'bekanntmachung',
+      label: 'Enampakkumise teade (PDF)',
+      filename: `oksjon-${id}.pdf`,
+      sizeBytes: null,
+      fileId: id,
+      proxyUrl: pdfUrlUpstream,
+    },
+  ]
 
   return {
     platform: platformId,
     country: COUNTRY,
     region: '',
     zvgId: id,
-    aktenzeichen: '',
+    aktenzeichen: info.get('reg. osa nr') ?? '',
     amtsgericht: info.get('oksjoni korraldaja') ?? '',
     objekt: title || null,
     adresse,
@@ -122,14 +139,15 @@ function mapDetail(id: string, html: string, platformId: string): Auction | null
     terminText,
     aufgehoben,
     letzteAktualisierungIso: null,
-    pdfUrl: null,
+    pdfUrl: pdfUrlUpstream,
     detailUrl,
-    pdfUrlUpstream: `${EE_BASE}/oksjon/dopdf/?okid=${id}`,
+    pdfUrlUpstream,
     detailUrlUpstream: detailUrl,
-    attachments: [],
+    attachments,
     beschreibung,
     fotoCount: photoUrls.length,
     thumbnailUrl,
+    photoUrls,
   }
 }
 

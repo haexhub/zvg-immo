@@ -3,12 +3,22 @@
 // leaving ambiguous text to the LLM fallback. Mis-extraction is worse than a
 // miss here, so the patterns forbid digits between a label and its value.
 
-/** Parse a German-formatted number ("1.234,56" → 1234.56, "1.500" → 1500). */
-function parseGermanNumber(raw: string): number | null {
-  let s = raw.trim()
-  if (s.includes(',')) {
-    s = s.replace(/\./g, '').replace(',', '.')
-  } else if (!/^\d+\.\d{1,2}$/.test(s)) {
+/** Parse a localized number. Handles German ("1.234,56", "1.500") and
+ *  English/Anglo grouping ("1,234.56", "1,234"): with both separators present
+ *  the rightmost one is the decimal mark; a lone comma is a thousands
+ *  separator only for exact 3-digit groups, else a decimal mark. */
+export function parseLocaleNumber(raw: string): number | null {
+  // Space-grouped thousands ("1 331", incl. NBSP) — Swedish/French style.
+  let s = raw.trim().replace(/[\s ]+/g, '')
+  const lastDot = s.lastIndexOf('.')
+  const lastComma = s.lastIndexOf(',')
+  if (lastDot !== -1 && lastComma !== -1) {
+    const thousands = lastDot > lastComma ? ',' : '.'
+    s = s.split(thousands).join('')
+    if (thousands === '.') s = s.replace(',', '.')
+  } else if (lastComma !== -1) {
+    s = /^\d{1,3}(?:,\d{3})+$/.test(s) ? s.replace(/,/g, '') : s.replace(',', '.')
+  } else if (lastDot !== -1 && !/^\d+\.\d{1,2}$/.test(s)) {
     // A single dot with a 1–2 digit fraction ("2.5") is a decimal point;
     // groups of 3 digits ("1.500", "1.234.567") are thousands separators.
     s = s.replace(/\./g, '')
@@ -18,33 +28,52 @@ function parseGermanNumber(raw: string): number | null {
 }
 
 // A number immediately followed by an area unit. The negative lookahead stops
-// "m2" matching "m2x", "ha" matching "haus", and (Greek) "τμ" matching the
-// start of "τμήμα" (a common word meaning "section/part" — Ͱ-Ͽ
-// covers Greek letters, which plain [a-z] doesn't).
-const NUM = '\\d[\\d.]*(?:,\\d+)?'
-// Greek listings write m² as "τ.μ." (τετραγωνικά μέτρα), sometimes without dots.
-const AREA_TOKEN = `${NUM}\\s*(?:m²|m2|qm|kvm|ha|τ\\.?μ\\.?)`
-const AREA_RE = new RegExp(`(${NUM})\\s*(m²|m2|qm|kvm|ha|τ\\.?μ\\.?)(?![a-z\\d\\u0370-\\u03ff])`, 'i')
+// "m2" matching "m2x", "mq" matching "mqx", "ha" matching "haus", and (Greek)
+// "τμ" matching the start of "τμήμα" (a common word meaning "section/part" —
+// Ͱ-Ͽ covers Greek letters, which plain [a-z] doesn't).
+// "mq" is the common Italian notation; Greek listings write m² as "τ.μ."
+// (τετραγωνικά μέτρα), sometimes without dots.
+// First alternative: space-grouped thousands ("1 331", "12 500,50" — Swedish/
+// French style, incl. NBSP). The space is only allowed between 3-digit groups
+// so enumerations ("Nr. 5, 175 m²") can't be glued into one number.
+const NUM = '(?:\\d{1,3}(?:[ \\u00a0]\\d{3})+(?:,\\d+)?|\\d(?:[\\d.,]*\\d)?)'
+const AREA_UNIT = 'm²|m2|qm|kvm|mq|ha|τ\\.?μ\\.?'
+const AREA_TOKEN = `${NUM}\\s*(?:${AREA_UNIT})`
+const AREA_RE = new RegExp(`(${NUM})\\s*(${AREA_UNIT})(?![a-z\\d\\u0370-\\u03ff])`, 'i')
 
 /** "140 m²" → 140, "2,5 ha" → 25000, "214.000,00 Euro" → null. */
 export function parseAreaValue(text: string): number | null {
   const m = text.match(AREA_RE)
   if (!m || !m[1] || !m[2]) return null
-  const value = parseGermanNumber(m[1])
+  const isHa = m[2].toLowerCase() === 'ha'
+  const raw = m[1].trim()
+  // Hectare values are small comma-decimal figures in cadastral prose
+  // ("2,575 ha" = 2.575 ha = 25.750 m²), never Anglo-grouped thousands —
+  // parseLocaleNumber's lone-comma heuristic would read 2575 ha here, a
+  // silent factor-1000 error. Treat the comma as a decimal mark for ha.
+  const value =
+    isHa && /^\d{1,3},\d{3}$/.test(raw)
+      ? Number(raw.replace(',', '.'))
+      : parseLocaleNumber(raw)
   if (value == null) return null
-  return m[2].toLowerCase() === 'ha' ? value * 10000 : value
+  return isHa ? value * 10000 : value
 }
 
-/** Find the area value that directly follows one of the given labels. */
-function findLabeledArea(text: string, labelAlternation: string): number | null {
-  // The lookahead stops the unit matching inside a word ("Grundstück mit
-  // 1 Haus" must not read "1 Ha" as one hectare, "2 τμήματα" not as 2 τ.μ.).
-  const re = new RegExp(
+/** Find the area value that directly follows one of the given labels.
+ *  Takes a precompiled regex — these run once per auction on the enrich hot
+ *  path, so the big label alternations are compiled once at module load. */
+function findLabeledArea(text: string, re: RegExp): number | null {
+  const m = text.match(re)
+  return m && m[1] ? parseAreaValue(m[1]) : null
+}
+
+// The lookahead stops the unit matching inside a word ("Grundstück mit
+// 1 Haus" must not read "1 Ha" as one hectare, "2 τμήματα" not as 2 τ.μ.).
+function compileLabeledAreaRe(labelAlternation: string): RegExp {
+  return new RegExp(
     `(?:${labelAlternation})\\D{0,14}?(${AREA_TOKEN})(?![a-zäöü\\d\\u0370-\\u03ff])`,
     'i',
   )
-  const m = text.match(re)
-  return m && m[1] ? parseAreaValue(m[1]) : null
 }
 
 const LIVING_LABELS =
@@ -52,7 +81,9 @@ const LIVING_LABELS =
   // Czech
   '|podlahová plocha|užitná plocha|obytná plocha|plocha bytu' +
   // Polish
-  '|powierzchnia użytkowa|powierzchnia mieszkalna' +
+  // \S* covers the declined forms (powierzchnię użytkową, powierzchni użytkowej)
+  // — \w misses Polish diacritics.
+  '|powierzchni\\S* użytkow\\S*|powierzchni\\S* mieszkaln\\S*' +
   // Bosnian/Croatian/Serbian
   '|stambena površina|korisna površina|površina stana' +
   // Hungarian
@@ -79,8 +110,10 @@ const LIVING_LABELS =
   '|dzīvojamā platība' +
   // Estonian
   '|eluruumi pind|elamispind' +
+  // Portuguese
+  '|área bruta privativa|área útil|área bruta|área de construção' +
   // Greek
-  '|επιφάνεια κατοικίας|επιφάνεια διαμερίσματος|εμβαδόν κατοικίας'
+  '|επιφάνεια κατοικίας|επιφάνεια διαμερίσματος|εμβαδόν κατοικίας|εμβαδόν διαμερίσματος'
 
 const LAND_LABELS =
   'grundstücksgröße|grundstücksfläche|grundstück|bodenfläche|grundfläche|flurstück' +
@@ -114,15 +147,22 @@ const LAND_LABELS =
   '|zemes gabala platība' +
   // Estonian
   '|maatüki pind|krundi pind' +
+  // Swedish (kronofogden labels the plot description "Tomtbeskrivning: ca 1 331 kvm tomtmark")
+  '|tomtbeskrivning' +
+  // Portuguese
+  '|área do terreno|área total do terreno' +
   // Greek
   '|έκταση οικοπέδου|επιφάνεια οικοπέδου|εμβαδόν οικοπέδου'
 
+const LIVING_AREA_RE = compileLabeledAreaRe(LIVING_LABELS)
+const LAND_AREA_RE = compileLabeledAreaRe(LAND_LABELS)
+
 export function findLivingAreaSqm(text: string): number | null {
-  return findLabeledArea(text, LIVING_LABELS)
+  return findLabeledArea(text, LIVING_AREA_RE)
 }
 
 export function findLandAreaSqm(text: string): number | null {
-  return findLabeledArea(text, LAND_LABELS)
+  return findLabeledArea(text, LAND_AREA_RE)
 }
 
 // The fallback patterns ("label then number") must not fire on compounds
@@ -131,11 +171,40 @@ export function findLandAreaSqm(text: string): number | null {
 // "Wohneinheit Nr. 5" isn't read as a count. The number-first patterns are
 // safe: NUM directly precedes the label, so a compound can't match.
 
+// Room-count words across the crawled languages. Number-first only ("6 rum",
+// "3 pokoje", "3-toaline") except where the label-first form is idiomatic
+// (German "Zimmer: 3", Italian "vani 4,5"). Word endings are matched loosely
+// where declension varies (pokoje/pokoi/pokojů, kambariai/kambarių).
+const ROOM_WORDS =
+  'zimmer|zi\\.' +
+  '|rum(?![a-zåäö])' + // Swedish
+  '|vani|locali' + // Italian
+  // French — "pièces" also means "documents" in legal prose ("les 3 pièces
+  // jointes", "pièces du dossier"); the lookaheads veto those readings. The
+  // (?![a-z]) stops backtracking into "pièce" + literal "s", which would
+  // sidestep the document lookahead.
+  '|pièces?(?![a-z])(?!\\s+(?:jointes?|annexées?|justificatives?|du\\s+dossier))' +
+  '|habitaciones' + // Spanish
+  '|pok[oó]j\\w*|pokoj\\w*|pokoi|pokoje' + // Polish/Czech
+  '|szob[aá]s?' + // Hungarian
+  '|kambar\\w*' + // Lithuanian
+  '|istab\\w*' + // Latvian
+  '|toaline|tuba' + // Estonian ("3-toaline", "3 tuba")
+  '|huonetta' + // Finnish
+  '|værelser' + // Danish
+  '|δωμάτι\\w*' // Greek
+
+const ROOMS_NUM_FIRST_RE = new RegExp(`(${NUM})[\\s-]*(?:${ROOM_WORDS})`, 'i')
+const ROOMS_LABEL_FIRST_RE = new RegExp(
+  `(?<![a-zäöüß])(?:zimmer|vani)[^a-zäöüß\\d]{0,6}?(${NUM})`,
+  'i',
+)
+
 export function findRooms(text: string): number | null {
-  let m = text.match(new RegExp(`(${NUM})\\s*(?:zimmer|zi\\.)`, 'i'))
-  if (m && m[1]) return parseGermanNumber(m[1])
-  m = text.match(new RegExp(`(?<![a-zäöüß])zimmer[^a-zäöüß\\d]{0,6}?(${NUM})`, 'i'))
-  if (m && m[1]) return parseGermanNumber(m[1])
+  let m = text.match(ROOMS_NUM_FIRST_RE)
+  if (m && m[1]) return parseLocaleNumber(m[1])
+  m = text.match(ROOMS_LABEL_FIRST_RE)
+  if (m && m[1]) return parseLocaleNumber(m[1])
   return null
 }
 

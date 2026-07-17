@@ -22,6 +22,25 @@ export function stripAzPrefix(title: string, az: string): string {
   return title.startsWith(prefix) ? title.slice(prefix.length).trim() : title.trim()
 }
 
+/** The grid's `vwert` is 0 for some auctions although the getText free text
+ *  carries "Verkehrswert: 75.500,00 €". Multi-lot auctions (Einzelausgebote)
+ *  list one value per lot with no overall figure, so a value is only returned
+ *  when exactly one distinct amount appears in the text. */
+export function extractSingleVerkehrswert(
+  text: string,
+): { eur: number; text: string } | null {
+  const matches = [...text.matchAll(/Verkehrswert:?\s*([\d.]+(?:,\d+)?)\s*€/gi)].map(
+    (m) => m[1]!,
+  )
+  // Compare parsed values, not raw strings — the same amount may appear twice
+  // with different formatting ("75.500" vs "75.500,00").
+  const distinct = [...new Set(matches.map((m) => parseFloat(m.replace(/\./g, '').replace(',', '.'))))]
+  if (distinct.length !== 1) return null
+  const eur = distinct[0]!
+  if (!Number.isFinite(eur) || eur <= 0) return null
+  return { eur, text: `${matches[0]} €` }
+}
+
 /** getText's response is a single `<div class="divHTML">...</div>` blob of
  *  loosely-closed HTML (<br>, <U>, <B>, <Font Color=red>). Strip tags, keep
  *  line breaks. The API already serves proper UTF-8 (no HTML entities seen in

@@ -9,7 +9,7 @@
 import type { Auction } from '~/types/auction'
 import { crawlAll } from '../crawlers/registry'
 import { enrichInBatches as enrichAtDetails } from '../crawlers/at/detail'
-import { enrichInBatches as enrichBidditDetails } from '../crawlers/biddit/detail'
+import { enrichInBatches as enrichBidditDetails, formatVerkehrswertText } from '../crawlers/biddit/detail'
 import { geocodeAddress } from '../utils/geocode'
 import {
   cacheKey,
@@ -47,7 +47,8 @@ async function runGeocode() {
     console.log('[geocode] start')
 
     const result = await crawlAll({ immobilienOnly: true, enrichDetails: false })
-    const withAddress = result.auctions.filter((a) => a.adresse)
+    // Listings whose crawler already supplied coordinates never need the geocoder.
+    const withAddress = result.auctions.filter((a) => a.adresse && (a.lat == null || a.lng == null))
     console.log(
       `[geocode] crawled ${result.auctions.length} auctions (${withAddress.length} with address)`,
     )
@@ -141,7 +142,15 @@ async function enrichBidditVerkehrswert(
   const beAuctions = auctions.filter((a) => a.platform === 'biddit')
   if (beAuctions.length === 0) return { added: 0, errors: 0 }
 
-  const toFetch = beAuctions.filter((a) => !(cacheKey(a.platform, a.zvgId) in cache))
+  // Also refetch cached nulls once: before the startingPrice fallback existed,
+  // every lot cached null (estimatedPrice is a placeholder platform-wide), and
+  // first-write-wins would keep those nulls forever. The `retried` marker keeps
+  // this a one-time backfill — lots that genuinely have no price don't get
+  // re-fetched on every run.
+  const toFetch = beAuctions.filter((a) => {
+    const hit = cache[cacheKey(a.platform, a.zvgId)]
+    return hit == null || (hit.verkehrswertEur == null && !hit.retried)
+  })
   if (toFetch.length === 0) {
     console.log(`[geocode] verkehrswert(be): ${beAuctions.length} entries, all cached`)
     return { added: 0, errors: 0 }
@@ -154,10 +163,8 @@ async function enrichBidditVerkehrswert(
   const result = await enrichBidditDetails(toFetch, (auction, info) => {
     cache[cacheKey('biddit', auction.zvgId)] = {
       verkehrswertEur: info.estimatedPrice,
-      verkehrswertText:
-        info.estimatedPrice != null
-          ? `${info.estimatedPrice.toLocaleString('de-DE')} €`
-          : null,
+      verkehrswertText: formatVerkehrswertText(info),
+      ...(info.estimatedPrice == null ? { retried: true } : {}),
     }
     added++
   })

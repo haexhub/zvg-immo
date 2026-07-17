@@ -38,5 +38,12 @@ export default defineEventHandler(async (event): Promise<AuctionDetail> => {
     readSummaryCache(),
   ])
   const summary = summaryCache[key]?.text ?? null
-  return { ...hit, lat: point?.lat ?? null, lng: point?.lng ?? null, summary }
+  // Source-provided coordinates (crawler-set, preserved in the snapshot) beat
+  // the geocoder guess — but only as a complete pair, never mixed with the
+  // geocoder's.
+  const sourcePoint =
+    hit.lat != null && hit.lng != null ? { lat: hit.lat, lng: hit.lng } : null
+  const lat = sourcePoint?.lat ?? point?.lat ?? null
+  const lng = sourcePoint?.lng ?? point?.lng ?? null
+  return { ...hit, lat, lng, summary }
 })

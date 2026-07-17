@@ -1,115 +1,83 @@
 import { load } from 'cheerio'
 import type { Auction } from '~/types/auction'
-import { PL_BASE, COUNTRY, UA } from './constants'
-import { parsePlDate, parsePlPrice, clean } from './text'
-import { getRates, toEur } from '~/server/utils/exchange-rate'
+import { PL_BASE, LIST_PATH, LIST_PAGE_SIZE, COUNTRY, UA } from './constants'
+import { parsePlDate, clean } from './text'
 
 export interface ParseResult {
   auctions: Auction[]
-  totalReported: number | null
+  /** 1-based page currently shown, taken from the pagination widget. */
+  currentPage: number | null
+  /** Last page number shown in the pagination widget. */
+  lastPage: number | null
   hasNextPage: boolean
 }
 
-/** Fetch one filter page. sortOrder keeps newest-first. */
-export async function fetchFilterPage(
-  filterId: number,
-  page: number,
-  platformId: string,
-): Promise<ParseResult> {
-  const params = new URLSearchParams()
-  params.set('sortOrder', 'DataLicytacji Desc')
-  if (page > 1) params.set('page', String(page))
+/** Fetch one SSR list page (sorted newest-first by publication date). */
+export async function fetchListPage(offset: number, platformId: string): Promise<ParseResult> {
+  const params = new URLSearchParams({ mainCategory: 'REAL_ESTATE', limit: String(LIST_PAGE_SIZE) })
+  if (offset > 0) params.set('offset', String(offset))
 
-  const url = `${PL_BASE}/Notice/Filter/${filterId}?${params}`
+  const url = `${PL_BASE}${LIST_PATH}?${params}`
   const res = await fetch(url, {
     headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml' },
+    signal: AbortSignal.timeout(30_000),
   })
   if (!res.ok) throw new Error(`PL list fetch failed: ${res.status} ${url}`)
-  const [html, rates] = await Promise.all([res.text(), getRates()])
+  const html = await res.text()
+  // A WAF/error page can still answer HTTP 200 — without this check it would
+  // parse into a silent, successful empty page and suppress retries.
+  if (!html.includes('id="item-list-container"')) {
+    throw new Error(`PL list fetch returned unexpected page (WAF/error?): ${url}`)
+  }
 
-  return parseFilterHtml(html, platformId, rates)
+  return parseListHtml(html, platformId)
 }
 
 /**
- * Parse a licytacje.komornik.pl filter page rendered by Nuxt+Vuetify.
+ * Parse a licytacje.komornik.pl search page (Nuxt SSR).
  *
- * The Vuetify v-data-table renders a standard <table> in SSR mode.
- * Column order (0-based): Lp. | Foto | Data licytacji | Nazwa | Miasto | Cena | Elektroniczna
- *
- * TODO: verify selectors against a live page with actual listings.
+ * Each listing is an <a class="notice" href="/wyszukiwarka/obwieszczenia-o-licytacji/<id>/<slug>">
+ * card with .notice__title / .notice__province / .notice__address / .notice__date children.
+ * Prices and photos are NOT part of the SSR list markup (they are lazy-loaded
+ * client-side) — verkehrswert is filled in by enrichOne from the detail page.
  */
-export function parseFilterHtml(html: string, platformId: string, rates: Record<string, number> = {}): ParseResult {
+export function parseListHtml(html: string, platformId: string): ParseResult {
   const $ = load(html)
   const auctions: Auction[] = []
 
-  // Total count — Nuxt app may render a string like "Znaleziono: 123 ogłoszeń"
-  const totalMatch = html.match(/(\d+)\s+og[łl]oszeń/i) ?? html.match(/Znaleziono[^0-9]*(\d+)/i)
-  const totalReported = totalMatch ? parseInt(totalMatch[1]!, 10) : null
-
-  // Vuetify SSR table: look for tbody rows inside .v-data-table, fallback to any table.
-  const rows = $('.v-data-table table tbody tr, table.notice-list tbody tr, table tbody tr').filter(
-    (_i, el) => $(el).find('td').length >= 4,
-  )
-
-  rows.each((_i, row) => {
-    const tds = $(row).find('td')
-
-    // Column mapping — adjust indices if the live page differs:
-    // 0: Lp. (row number — skip)
-    // 1: Foto (img tag — url for thumbnail)
-    // 2: Data licytacji
-    // 3: Nazwa (name + detail link)
-    // 4: Miasto / Województwo
-    // 5: Cena wywołania
-    // 6: Elektroniczna (bool — skip for now)
-
-    const dateRaw = clean(tds.eq(2).text())
-    const nazwaEl = tds.eq(3)
-    const nazwa = clean(nazwaEl.text())
-    const miastoRaw = clean(tds.eq(4).text())
-    const cenaRaw = clean(tds.eq(5).text())
-
-    // Detail link: <a href="/Notice/Details/12345"> inside the Nazwa cell.
-    const linkEl = nazwaEl.find('a[href*="/Notice/"]').first()
-    const href = linkEl.attr('href') ?? ''
-    // Extract numeric id from the href, e.g. /Notice/Details/12345
-    const idMatch = href.match(/\/(\d+)(?:[/?#]|$)/)
+  $('a.notice[href*="/wyszukiwarka/obwieszczenia-o-licytacji/"]').each((_i, card) => {
+    const c = $(card)
+    const href = c.attr('href') ?? ''
+    const idMatch = href.match(/obwieszczenia-o-licytacji\/(\d+)(?:[/?#]|$)/)
     const noticeId = idMatch?.[1] ?? null
-    if (!noticeId) return // skip rows without a parseable id
+    if (!noticeId) return
 
-    const terminIso = parsePlDate(dateRaw)
+    const titel = clean(c.find('.notice__title').text())
+    const province = clean(c.find('.notice__province div').text())
+    const address = clean(c.find('.notice__address div').text())
+    // "Początek: 10.09.2026 11:00" — strip the label, keep date + time
+    const dateRaw = clean(c.find('.notice__date div').first().text()).replace(/^Początek:\s*/i, '')
 
-    // "Kraków / Małopolskie" or "Kraków Małopolskie" — split on / or whitespace boundary
-    const [miasto, ...rest] = miastoRaw.split(/\s*\/\s*|\s{2,}/)
-    const wojewodztwo = rest.join(' ').trim() || null
-
-    const adresse = [nazwa && !nazwa.includes(miasto ?? '') ? nazwa : null, miasto, 'Polen']
-      .filter(Boolean)
-      .join(', ')
-
-    const thumbnailEl = tds.eq(1).find('img').first()
-    const thumbnailSrc = thumbnailEl.attr('src') ?? null
-    const thumbnailUrl = thumbnailSrc
-      ? thumbnailSrc.startsWith('http')
-        ? thumbnailSrc
-        : `${PL_BASE}${thumbnailSrc}`
-      : null
-
-    const detailUrlUpstream = `${PL_BASE}/Notice/Details/${noticeId}`
-    const pln = parsePlPrice(cenaRaw)
+    const detailUrlUpstream = `${PL_BASE}${href}`
 
     auctions.push({
       platform: platformId,
       country: COUNTRY,
-      region: wojewodztwo ?? miasto ?? '',
+      region: province ? province.charAt(0).toUpperCase() + province.slice(1) : '',
       zvgId: noticeId,
-      aktenzeichen: noticeId,
+      // The real Aktenzeichen (Sygnatura) only exists on the detail page and
+      // is filled in by enrichOne. Leave the list value empty — a non-empty
+      // placeholder (the notice id already lives in zvgId) would survive the
+      // snapshot merge and clobber the enriched Sygnatura on every re-crawl.
+      aktenzeichen: '',
       amtsgericht: '',
-      objekt: nazwa || null,
-      adresse: adresse || null,
-      verkehrswertEur: pln != null ? toEur(pln, 'PLN', rates) : null,
-      verkehrswertText: pln != null ? `${pln.toLocaleString('de-DE', { maximumFractionDigits: 0 })} zł` : null,
-      terminIso,
+      objekt: titel || null,
+      // Cards without an address line still carry the województwo — a
+      // region-level address keeps the listing geocodable/mappable.
+      adresse: address ? `${address}, Polen` : province ? `${province}, Polen` : null,
+      verkehrswertEur: null,
+      verkehrswertText: null,
+      terminIso: parsePlDate(dateRaw),
       terminText: dateRaw || null,
       aufgehoben: false,
       letzteAktualisierungIso: null,
@@ -119,15 +87,21 @@ export function parseFilterHtml(html: string, platformId: string, rates: Record<
       detailUrlUpstream,
       attachments: [],
       beschreibung: null,
-      fotoCount: thumbnailUrl ? 1 : 0,
-      thumbnailUrl,
+      fotoCount: 0,
+      thumbnailUrl: null,
     })
   })
 
-  // Next-page indicator: Vuetify pagination renders aria-label="Next page" or a disabled "next" btn.
-  const hasNextPage =
-    $('[aria-label="Next page"]:not([disabled])').length > 0 ||
-    $('a.next-page, .v-pagination__next:not(.v-btn--disabled)').length > 0
+  // Vuetify pagination: numbered items, the active one carries --is-active.
+  const pageNumbers = $('.v-pagination__item')
+    .map((_i, el) => parseInt($(el).text().trim(), 10))
+    .get()
+    .filter((n) => !isNaN(n))
+  const lastPage = pageNumbers.length ? Math.max(...pageNumbers) : null
+  const activeRaw = parseInt($('.v-pagination__item--is-active').first().text().trim(), 10)
+  const currentPage = isNaN(activeRaw) ? null : activeRaw
 
-  return { auctions, totalReported, hasNextPage }
+  const hasNextPage = currentPage != null && lastPage != null && currentPage < lastPage
+
+  return { auctions, currentPage, lastPage, hasNextPage }
 }

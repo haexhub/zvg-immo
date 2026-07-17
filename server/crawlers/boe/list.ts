@@ -8,6 +8,9 @@ export interface ParseResult {
   auctions: Auction[]
 }
 
+/** 500 hits/page is the largest the search form allows in the dropdown. */
+export const PAGE_HITS = 500
+
 /**
  * Builds a GET-style search URL for one provincia. Only the filters we
  * actually need are included — empty `campo[]/dato[]` pairs trigger the
@@ -26,12 +29,36 @@ export function buildSearchUrl(provincia: string): string {
   params.append('dato[3]', 'I')
   params.append('campo[8]', 'BIEN.COD_PROVINCIA')
   params.append('dato[8]', provincia)
-  // 500 hits/page is the largest the form allows in the dropdown.
-  params.append('page_hits', '500')
+  params.append('page_hits', String(PAGE_HITS))
   params.append('sort_field[0]', 'SUBASTA.FECHA_FIN')
   params.append('sort_order[0]', 'desc')
   params.append('accion', 'Buscar')
   return `${BOE_BASE}/subastas_ava.php?${params.toString()}`
+}
+
+/**
+ * Every results page embeds a server-side search-session token: the
+ * pagination/tab links carry `id_busqueda=<token>-<start>-<pageHits>` and the
+ * per-result detail links carry the same token as `idBus=<token>`. Requesting
+ * `subastas_ava.php?accion=Mas&id_busqueda=<token>-<start>-<pageHits>`
+ * returns the corresponding follow-up page of the same result set.
+ * (URL shape taken from archived BOE result pages — live verification is
+ * blocked by the BOE captcha; the caller must stop paging defensively when a
+ * page yields no new ids.)
+ */
+export function extractBusquedaToken(html: string): string | null {
+  // The token alphabet is base64-ish (incl. ',' padding and %-escapes) and
+  // never contains '-', so the trailing `-<start>-<hits>` is unambiguous.
+  const m =
+    html.match(/id_busqueda=([A-Za-z0-9_%+/=,]+)-\d+-\d+/) ??
+    html.match(/idBus=([A-Za-z0-9_%+/=,]+)/)
+  return m?.[1] ?? null
+}
+
+/** URL of the follow-up results page starting at offset `start`. The token is
+ *  kept exactly as found in the page's own links (already URL-encoded). */
+export function buildPageUrl(token: string, start: number): string {
+  return `${BOE_BASE}/subastas_ava.php?accion=Mas&id_busqueda=${token}-${start}-${PAGE_HITS}`
 }
 
 /**

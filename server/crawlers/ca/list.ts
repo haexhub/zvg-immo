@@ -20,7 +20,7 @@ function parseCadAmount(text: string | null | undefined): number | null {
   return Number.isFinite(n) && n > 0 ? Math.round(n) : null
 }
 
-async function htmlFetch(url: string): Promise<string> {
+export async function htmlFetch(url: string): Promise<string> {
   const res = await fetch(url, {
     headers: { Accept: 'text/html', 'Accept-Language': 'en-CA,en;q=0.9', 'User-Agent': UA },
     redirect: 'follow',
@@ -201,6 +201,108 @@ function parseSalePage(html: string, pageUrl: string): { properties: Property[];
   })
 
   return { properties, dateTime }
+}
+
+const SQM_PER_ACRE = 4046.86
+const SQM_PER_SQFT = 0.092903
+
+/** Fact labels already captured by the listing crawl (address, legal block)
+ *  or paywalled ("Available in the InfoPak") — not worth repeating in the
+ *  beschreibung. */
+const SKIPPED_FACT_LABELS = new Set([
+  'municipal address',
+  'legal description',
+  'pin',
+  'roll number',
+  'annual taxes',
+  'assessed value',
+  'map',
+])
+
+/** Yes/No facts whose label doubles as the property type when "Yes". */
+const TYPE_LABELS = new Set(['residential', 'vacant land', 'commercial', 'industrial', 'farmland'])
+
+export interface PropertyDetail {
+  objekt: string | null
+  landAreaSqm: number | null
+  photoUrls: string[]
+  /** Labelled facts ("Property Size: …", "Waterfront: No", …) for beschreibung. */
+  facts: string[]
+  lat: number | null
+  lng: number | null
+}
+
+/** "Area 0.07ac - Frontage 30ft - Depth 100ft" → m². Prefers the stated
+ *  acreage; falls back to frontage × depth when no area is given. */
+function parsePropertySize(text: string): number | null {
+  const acres = Number(text.match(/area\s*([\d.,]+)\s*ac/i)?.[1]?.replace(/,/g, ''))
+  if (Number.isFinite(acres) && acres > 0) return Math.round(acres * SQM_PER_ACRE)
+  const frontage = Number(text.match(/frontage\s*([\d.,]+)\s*ft/i)?.[1]?.replace(/,/g, ''))
+  const depth = Number(text.match(/depth\s*([\d.,]+)\s*ft/i)?.[1]?.replace(/,/g, ''))
+  if (Number.isFinite(frontage) && frontage > 0 && Number.isFinite(depth) && depth > 0) {
+    return Math.round(frontage * depth * SQM_PER_SQFT)
+  }
+  return null
+}
+
+/** Parses one /property/ detail page. Facts are rendered as
+ *  `<div class="tb-fields-and-text"><strong class="green">Label:</strong>value`
+ *  blocks, the photo/aerial gallery as a glide.js slider, and the map pin as a
+ *  hidden `<p class="googlemap">{lat,lng}</p>`. */
+export function parsePropertyPage(html: string): PropertyDetail {
+  const $ = load(html)
+
+  let objekt: string | null = null
+  let landAreaSqm: number | null = null
+  const facts: string[] = []
+  const objektParts: string[] = []
+
+  $('.tb-fields-and-text').each((_i, el) => {
+    const $el = $(el)
+    const labelRaw = clean($el.find('strong.green').first().text())
+    if (!labelRaw) return
+    const label = labelRaw.replace(/:\s*$/, '')
+    const value = clean($el.text().replace($el.find('strong.green').first().text(), ''))
+    if (!value) return
+    const key = label.toLowerCase()
+    if (SKIPPED_FACT_LABELS.has(key) || /InfoPak/i.test(value)) return
+
+    if (key === 'property size') {
+      landAreaSqm = parsePropertySize(value)
+    }
+    if (TYPE_LABELS.has(key) && /^yes$/i.test(value)) {
+      objektParts.push(label)
+    }
+    facts.push(`${label}: ${value}`)
+  })
+  if (objektParts.length > 0) objekt = objektParts.join(', ')
+
+  // Multi-photo pages render a glide.js slider; single-photo pages inline the
+  // one image as `img.main-image` instead.
+  const photoUrls = [
+    ...new Set(
+      $('.glide__slides img[src*="/wp-content/uploads/"], img.main-image[src*="/wp-content/uploads/"]')
+        .map((_i, el) => $(el).attr('src'))
+        .get()
+        .filter((src): src is string => Boolean(src)),
+    ),
+  ]
+
+  const coordMatch = $('p.googlemap')
+    .first()
+    .text()
+    .match(/\{\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\}/)
+  const lat = coordMatch ? Number(coordMatch[1]) : null
+  const lng = coordMatch ? Number(coordMatch[2]) : null
+
+  return {
+    objekt,
+    landAreaSqm,
+    photoUrls,
+    facts,
+    lat: lat != null && Number.isFinite(lat) ? lat : null,
+    lng: lng != null && Number.isFinite(lng) ? lng : null,
+  }
 }
 
 function municipalityFromUrl(pageUrl: string): string {

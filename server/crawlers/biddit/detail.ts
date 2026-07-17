@@ -23,7 +23,42 @@ interface DetailPicture {
   large?: string | null
 }
 
-interface DetailProperty {
+interface PropertyGeoLocation {
+  lat?: number | null
+  lng?: number | null
+}
+
+interface PropertyRooms {
+  numberOfBedrooms?: number | null
+  /** Wohnfläche in m² — lives under `rooms`, not `construction`. */
+  livingSurfaceArea?: number | null
+}
+
+interface PropertyFeatures {
+  /** Grundstücksfläche in m². */
+  terrainSurface?: number | null
+}
+
+interface PropertyConstruction {
+  constructionYear?: number | null
+}
+
+interface PropertyUtilities {
+  /** EPC class as "CLASS_A" … "CLASS_F". */
+  energeticClassRF?: string | null
+  /** EPC score in kWh/m² per year. */
+  pebScore?: number | null
+}
+
+interface PropertyFloodZone {
+  floodZoneType?: string | null
+}
+
+interface PropertyDestination {
+  isInvestmentProperty?: boolean | null
+}
+
+export interface DetailProperty {
   propertyId: string
   title?: LocalizedString | null
   description?: LocalizedString | null
@@ -31,6 +66,13 @@ interface DetailProperty {
   attachments?: DetailAttachment[] | null
   pictures?: DetailPicture[] | null
   attachmentZipBucketUrl?: string | null
+  geoLocation?: PropertyGeoLocation | null
+  rooms?: PropertyRooms | null
+  features?: PropertyFeatures | null
+  construction?: PropertyConstruction | null
+  utilities?: PropertyUtilities | null
+  floodZone?: PropertyFloodZone | null
+  destination?: PropertyDestination | null
 }
 
 interface DetailTac {
@@ -52,7 +94,14 @@ interface DetailResponse {
 }
 
 export interface DetailInfo {
+  /** The notary's appraisal when filled in — otherwise the Mindestgebot
+   *  (startingPrice), which is the only real price biddit publishes. The
+   *  fallback lives here (not in the consumer) because the geocode task's
+   *  verkehrswert cache reads exactly this field. */
   estimatedPrice: number | null
+  /** Raw Mindestgebot. `estimatedPrice === startingPrice` marks the price as
+   *  the Mindestgebot fallback rather than an appraisal. */
+  startingPrice: number | null
   beschreibung: string | null
   adresse: string | null
   attachments: Attachment[]
@@ -61,9 +110,29 @@ export interface DetailInfo {
   pdfUrl: string | null
   pdfUrlUpstream: string | null
   aufgehoben: boolean
+  lat: number | null
+  lng: number | null
+  sourceLivingAreaSqm: number | null
+  sourceLandAreaSqm: number | null
 }
 
 const FETCH_TIMEOUT_MS = 20_000
+
+function positive(n: number | null | undefined): number | null {
+  return n != null && Number.isFinite(n) && n > 0 ? n : null
+}
+
+/** Display text for the price: estimatedPrice falls back to the Mindestgebot
+ *  when biddit's appraisal holds its 1.00 placeholder — label that case so
+ *  users don't read a starting bid as an appraised value. Single source for
+ *  applyDetail and the geocode task's verkehrswert cache. */
+export function formatVerkehrswertText(
+  info: Pick<DetailInfo, 'estimatedPrice' | 'startingPrice'>,
+): string | null {
+  if (info.estimatedPrice == null) return null
+  const formatted = `${info.estimatedPrice.toLocaleString('de-DE')} €`
+  return info.estimatedPrice === info.startingPrice ? `ab ${formatted} (Mindestgebot)` : formatted
+}
 
 async function fetchDetailJson(referenceCode: string): Promise<DetailResponse | null> {
   const url = `${BIDDIT_BASE}/api/eco/biddit-bff/lot/${encodeURIComponent(referenceCode)}`
@@ -121,12 +190,53 @@ function toPictureAttachment(p: DetailPicture): Attachment | null {
   }
 }
 
+/** Renders the structured property facts that have no structured Auction
+ *  field into a compact "Label: Wert" line appended to the description.
+ *  Conservative: only unambiguous non-null values — flags and regional score
+ *  codes (G-/P-score, buildingState enums) whose meaning needs context are
+ *  left out. */
+export function formatPropertyFacts(p: DetailProperty): string | null {
+  const facts: string[] = []
+  if (p.construction?.constructionYear != null) {
+    facts.push(`Baujahr: ${p.construction.constructionYear}`)
+  }
+  // Biddit only publishes bedrooms (Schlafzimmer), which the extraction
+  // pipeline deliberately distinguishes from a total room count — so this
+  // stays text instead of feeding sourceRooms.
+  if (p.rooms?.numberOfBedrooms != null) {
+    facts.push(`Schlafzimmer: ${p.rooms.numberOfBedrooms}`)
+  }
+  const epcClass = p.utilities?.energeticClassRF?.replace(/^CLASS_/, '')
+  if (epcClass) {
+    const peb = p.utilities?.pebScore
+    facts.push(
+      peb != null
+        ? `Energieklasse: ${epcClass} (${peb} kWh/m²·Jahr)`
+        : `Energieklasse: ${epcClass}`,
+    )
+  }
+  if (p.floodZone?.floodZoneType) {
+    facts.push(`Überschwemmungsgebiet: ${p.floodZone.floodZoneType}`)
+  }
+  if (p.destination?.isInvestmentProperty) facts.push('Investmentobjekt')
+  return facts.length > 0 ? facts.join(' · ') : null
+}
+
 export async function fetchDetail(referenceCode: string): Promise<DetailInfo | null> {
   const d = await fetchDetailJson(referenceCode)
   if (!d) return null
-  const prop = d.properties?.[0] ?? null
+  const props = d.properties ?? []
+  const prop = props[0] ?? null
 
-  const beschreibung = pickLocalized(prop?.description) ?? pickLocalized(prop?.title) ?? null
+  // Multi-property sales are rare but supported by the API: descriptions,
+  // attachments and photos come from every property; address, structured
+  // sizes and coordinates stay first-property-only (mixing several lots'
+  // areas or pins would be meaningless).
+  const descs = props
+    .map((p) => pickLocalized(p.description) ?? pickLocalized(p.title))
+    .filter((s): s is string => Boolean(s))
+  const facts = prop ? formatPropertyFacts(prop) : null
+  const beschreibung = [descs.join('\n\n'), facts].filter(Boolean).join('\n\n') || null
   const adresse = formatAddress(prop?.address)
 
   const attachments: Attachment[] = []
@@ -134,9 +244,11 @@ export async function fetchDetail(referenceCode: string): Promise<DetailInfo | n
     const m = toAttachment(a)
     if (m) attachments.push(m)
   }
-  for (const a of prop?.attachments ?? []) {
-    const m = toAttachment(a)
-    if (m) attachments.push(m)
+  for (const p of props) {
+    for (const a of p.attachments ?? []) {
+      const m = toAttachment(a)
+      if (m) attachments.push(m)
+    }
   }
   if (d.termsAndConditions?.bucketUrl) {
     attachments.push({
@@ -151,9 +263,15 @@ export async function fetchDetail(referenceCode: string): Promise<DetailInfo | n
     })
   }
   const photos: Attachment[] = []
-  for (const p of prop?.pictures ?? []) {
-    const m = toPictureAttachment(p)
-    if (m) photos.push(m)
+  const seenPhotoIds = new Set<string>()
+  for (const p of props) {
+    for (const pic of p.pictures ?? []) {
+      const m = toPictureAttachment(pic)
+      if (m && !seenPhotoIds.has(m.fileId)) {
+        seenPhotoIds.add(m.fileId)
+        photos.push(m)
+      }
+    }
   }
 
   // Pictures appear in the listing JSON only as a single thumbnail per
@@ -171,12 +289,17 @@ export async function fetchDetail(referenceCode: string): Promise<DetailInfo | n
 
   // Biddit uses estimatedPrice = 1 as a "not filled in" placeholder (the field
   // is non-nullable in their DB). Real appraisals are always well above the
-  // Mindestgebot, so anything ≤ 1 is treated as absent.
-  const estimatedPrice =
+  // Mindestgebot, so anything ≤ 1 is treated as absent — in practice that is
+  // nearly every lot, making the Mindestgebot the only price biddit actually
+  // publishes. Fall back to it so the value reaches the map/list at all.
+  const appraisal =
     d.estimatedPrice != null && d.estimatedPrice > 1 ? d.estimatedPrice : null
+  const startingPrice =
+    d.startingPrice != null && d.startingPrice > 1 ? d.startingPrice : null
 
   return {
-    estimatedPrice,
+    estimatedPrice: appraisal ?? startingPrice,
+    startingPrice,
     beschreibung,
     adresse,
     attachments: [...attachments, ...photos],
@@ -185,6 +308,14 @@ export async function fetchDetail(referenceCode: string): Promise<DetailInfo | n
     pdfUrl: headlinePdf?.proxyUrl ?? null,
     pdfUrlUpstream: headlinePdf?.proxyUrl ?? null,
     aufgehoben: Boolean(d.withdrawn) || d.publicSaleStatus === 'WITHDRAWN',
+    // Biddit uses 0 as its "absent" sentinel on non-nullable DB fields (same
+    // pattern as the estimatedPrice=1 placeholder) — treat non-positive as
+    // null. That also guards the coordinates: 0/0 is the Atlantic, and all
+    // real Belgian lat/lng values are positive.
+    lat: positive(prop?.geoLocation?.lat),
+    lng: positive(prop?.geoLocation?.lng),
+    sourceLivingAreaSqm: positive(prop?.rooms?.livingSurfaceArea),
+    sourceLandAreaSqm: positive(prop?.features?.terrainSurface),
   }
 }
 

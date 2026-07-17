@@ -1,3 +1,5 @@
+import { parseLocaleNumber } from '~/server/utils/extract/sizes'
+
 /** Clean up the portal's tipologia string.
  *  E.g. "IMMOBILI-IMMOBILE RESIDENZIALE" → "Immobile residenziale". */
 export function cleanTipologia(raw: string | null | undefined): string | null {
@@ -41,6 +43,18 @@ export function formatTerminText(iso: string | null): string | null {
   })
   const time = d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
   return `${date} ${time} Uhr`
+}
+
+/** Parse an Italian-formatted decimal like "5.545,00" or "51,00" (also plain
+ *  "5545,00"). Returns null for "-", empty or non-numeric input. Delegates the
+ *  separator heuristics to the central parseLocaleNumber; the shape check
+ *  keeps garbage cell values ("3+2") out. */
+export function parseItNumber(raw: string | null | undefined): number | null {
+  if (!raw) return null
+  const trimmed = raw.trim()
+  if (!/^[\d.,\s ]+$/.test(trimmed)) return null
+  const n = parseLocaleNumber(trimmed)
+  return n != null && n > 0 ? n : null
 }
 
 /** Derive the `kind` of an allegato attachment from its filename prefix.

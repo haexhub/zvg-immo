@@ -1,3 +1,5 @@
+import { parseAreaValue } from '~/server/utils/extract/sizes'
+
 export function parseEuroAt(text: string | null | undefined): number | null {
   if (!text) return null
   // "171.400,00 EUR" / "30.000,00&nbsp;EUR" — Austrian formatting matches German.
@@ -6,6 +8,14 @@ export function parseEuroAt(text: string | null | undefined): number | null {
   const normalized = m[1].replace(/\./g, '').replace(',', '.')
   const value = parseFloat(normalized)
   return Number.isFinite(value) ? value : null
+}
+
+/** "17.219 m²" / "320,00 m²" / "876 m²" — Austrian formatting (thousands dot,
+ *  decimal comma), same convention as parseEuroAt. */
+export function parseSqmAt(text: string | null | undefined): number | null {
+  if (!text) return null
+  const value = parseAreaValue(text.replace(/ /g, ' '))
+  return value != null && value > 0 ? value : null
 }
 
 /**

@@ -31,6 +31,9 @@ interface ApiEntry {
   bidCount?: number | null
   isCancelled?: boolean
   fundsAreCanceled?: boolean
+  /** Viewing appointment, plain text, e.g. "08.07.2026 klo 14:00 - 15:00". */
+  exhibit?: string | null
+  geocode?: { latitude?: number | null; longitude?: number | null } | null
   metadata?: { category?: string | null } | null
   medias?: ApiMedia[] | null
   attachments?: ApiAttachment[] | null
@@ -131,7 +134,17 @@ function mapDetail(id: string, data: ApiResponse, platformId: string): Auction {
     attachments.find((a) => /\.pdf$/i.test(a.filename))
 
   const photos = (entry.medias ?? []).filter((m) => !m.videoId && (m.thumbnail || m.largeImage))
+  // Fall back to the thumbnail for medias without a largeImage so fotoCount
+  // (= photoUrls.length) matches the gallery actually served.
+  const photoUrls = photos
+    .map((m) => m.largeImage ?? m.thumbnail)
+    .filter((u): u is string => Boolean(u))
   const thumbnailUrl = photos[0]?.thumbnail ?? photos[0]?.largeImage ?? null
+
+  const exhibit = entry.exhibit?.trim() || null
+  const beschreibung = [description, exhibit ? `Besichtigung: ${exhibit}` : null]
+    .filter(Boolean)
+    .join('\n') || null
 
   const detailUrl = `${FI_BASE}/kohde/${entry.id}/${entry.slug}`
 
@@ -155,9 +168,12 @@ function mapDetail(id: string, data: ApiResponse, platformId: string): Auction {
     pdfUrlUpstream: pdfHeadline?.proxyUrl ?? null,
     detailUrlUpstream: detailUrl,
     attachments,
-    beschreibung: description,
-    fotoCount: photos.length,
+    beschreibung,
+    fotoCount: photoUrls.length,
     thumbnailUrl,
+    photoUrls,
+    lat: typeof entry.geocode?.latitude === 'number' ? entry.geocode.latitude : null,
+    lng: typeof entry.geocode?.longitude === 'number' ? entry.geocode.longitude : null,
   }
 }
 

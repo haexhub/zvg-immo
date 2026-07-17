@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clean, parseSiDateTime, parseSiPrice, formatSiPrice } from './text'
+import { clean, parseSiDateTime, parseSiPrice, formatSiPrice, parseSiRooms, parseSiCoord } from './text'
 
 describe('clean', () => {
   it('collapses whitespace runs to single spaces', () => {
@@ -56,5 +56,31 @@ describe('formatSiPrice', () => {
 
   it('returns null for null input', () => {
     expect(formatSiPrice(null)).toBeNull()
+  })
+})
+
+describe('parseSiRooms', () => {
+  it('parses "N-sobno" room categories', () => {
+    expect(parseSiRooms('1-sobno')).toBe(1)
+    expect(parseSiRooms('3-sobno')).toBe(3)
+  })
+
+  it('returns null for non-numeric or half-room categories', () => {
+    expect(parseSiRooms('Garsonjera')).toBeNull()
+    expect(parseSiRooms('1,5-sobno')).toBeNull()
+    expect(parseSiRooms(null)).toBeNull()
+    expect(parseSiRooms(undefined)).toBeNull()
+  })
+})
+
+describe('parseSiCoord', () => {
+  it('parses coordinate strings', () => {
+    expect(parseSiCoord('46.076706')).toBe(46.076706)
+  })
+
+  it('returns null for empty or unparseable input', () => {
+    expect(parseSiCoord('')).toBeNull()
+    expect(parseSiCoord(null)).toBeNull()
+    expect(parseSiCoord('n/a')).toBeNull()
   })
 })

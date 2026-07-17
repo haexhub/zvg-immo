@@ -184,6 +184,9 @@ export function completenessScore(a: Auction): number {
     (a.adresse ? 1 : 0) +
     (a.terminIso ? 1 : 0) +
     (a.beschreibung ? 1 : 0) +
+    (a.sourceLivingAreaSqm != null || a.sourceLandAreaSqm != null ? 1 : 0) +
+    (a.sourceRooms != null ? 1 : 0) +
+    (a.lat != null ? 1 : 0) +
     Math.min(a.fotoCount, 5)
   )
 }

@@ -16,6 +16,10 @@ const CACHE_PATH = join(process.cwd(), '.cache_zvg', 'verkehrswert.json')
 export interface VerkehrswertEntry {
   verkehrswertEur: number | null
   verkehrswertText: string | null
+  /** Set on null entries written after the biddit startingPrice fallback
+   *  existed — marks "re-checked, genuinely no price" so the geocode task's
+   *  one-time null backfill doesn't refetch the same lot on every run. */
+  retried?: boolean
 }
 
 export type VerkehrswertCache = Record<string, VerkehrswertEntry>

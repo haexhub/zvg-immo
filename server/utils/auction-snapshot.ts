@@ -43,14 +43,31 @@ export async function readAuctionSnapshot(): Promise<AuctionSnapshot> {
  * empty so a run that didn't re-enrich doesn't wipe out the detail data.
  * Snapshot JSON is loaded untyped, so guard against malformed / legacy entries
  * where fields might be missing or the wrong shape.
+ *
+ * Exported for tests.
  */
-function mergePreservedDetail(next: Auction, prev: Auction): Auction {
+export function mergePreservedDetail(next: Auction, prev: Auction): Auction {
   const prevAttachments = Array.isArray(prev.attachments) ? prev.attachments : []
   if (next.attachments.length === 0 && prevAttachments.length > 0) {
     next.attachments = prevAttachments
   }
   if (next.beschreibung == null && prev.beschreibung != null) {
     next.beschreibung = prev.beschreibung
+  } else if (
+    next.beschreibung != null &&
+    prev.beschreibung != null &&
+    prev.detailFetchedAt != null &&
+    prev.beschreibung.startsWith(next.beschreibung)
+  ) {
+    // enrichOne extends the list text in place (e.g. LV appends Kadastra
+    // lines), so the enriched beschreibung starts with the fresh list text.
+    // A crawl that didn't re-enrich must not truncate it back down.
+    next.beschreibung = prev.beschreibung
+  }
+  // `aktenzeichen` is typed as plain string but crawlers emit ''/null when a
+  // re-crawl couldn't resolve it — restore the previously known value then.
+  if (!next.aktenzeichen && prev.aktenzeichen) {
+    next.aktenzeichen = prev.aktenzeichen
   }
   if (next.pdfUrl == null && prev.pdfUrl != null) {
     next.pdfUrl = prev.pdfUrl
@@ -68,6 +85,28 @@ function mergePreservedDetail(next: Auction, prev: Auction): Auction {
   }
   if (next.detailFetchedAt == null && prev.detailFetchedAt != null) {
     next.detailFetchedAt = prev.detailFetchedAt
+  }
+  if (next.sourceLivingAreaSqm == null && prev.sourceLivingAreaSqm != null) {
+    next.sourceLivingAreaSqm = prev.sourceLivingAreaSqm
+  }
+  if (next.sourceLandAreaSqm == null && prev.sourceLandAreaSqm != null) {
+    next.sourceLandAreaSqm = prev.sourceLandAreaSqm
+  }
+  if (next.sourceRooms == null && prev.sourceRooms != null) {
+    next.sourceRooms = prev.sourceRooms
+  }
+  if ((next.photoUrls == null || next.photoUrls.length === 0) && Array.isArray(prev.photoUrls) && prev.photoUrls.length > 0) {
+    next.photoUrls = prev.photoUrls
+    // Crawlers keep fotoCount in sync with photoUrls (see types/auction.ts);
+    // restoring the gallery without the count would leave e.g. fotoCount=1
+    // from the list crawl next to a 5-image gallery.
+    if (!(typeof next.fotoCount === 'number') || next.fotoCount < prev.photoUrls.length) {
+      next.fotoCount = prev.photoUrls.length
+    }
+  }
+  if (next.lat == null && prev.lat != null && prev.lng != null) {
+    next.lat = prev.lat
+    next.lng = prev.lng
   }
   return next
 }

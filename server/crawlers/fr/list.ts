@@ -251,6 +251,7 @@ function mapItem(item: ListItem, detail: DetailInfo | null, platformId: string):
     beschreibung: detail?.beschreibung ?? item.descSnippet,
     fotoCount: photos.length,
     thumbnailUrl: photos[0] ?? null,
+    ...(photos.length > 0 ? { photoUrls: photos } : {}),
   }
 }
 

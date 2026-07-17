@@ -25,3 +25,9 @@ describe('classifyAttachment', () => {
     expect(classifyAttachment('sonstige unterlagen')).toBe('sonstiges')
   })
 })
+
+describe('classifyAttachment — mislabeled administrative PDFs', () => {
+  it('does not tag a bank-details sheet labeled Foto as foto', () => {
+    expect(classifyAttachment('Foto', 'Kontoverbindung-Sicherheitsleistung.pdf')).toBe('sonstiges')
+  })
+})

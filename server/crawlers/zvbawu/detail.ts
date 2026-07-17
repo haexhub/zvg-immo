@@ -1,12 +1,22 @@
 import type { Auction, Attachment } from '~/types/auction'
 import { ZVBAWU_BASE, UA } from './constants'
-import { extractInertiaPage, stripHtml } from './text'
+import { extractInertiaPage, parseSqm, stripHtml } from './text'
 
 interface DetailImage {
   id: number
   thumbnail: string
   url: string
   caption?: string
+}
+
+interface DetailFact {
+  key: string
+  value: string
+}
+
+interface DetailSection {
+  facts?: DetailFact[]
+  content?: string
 }
 
 interface DetailPage {
@@ -20,6 +30,12 @@ interface DetailPage {
       fileNumber: string | null
       summary: string | null
       description: string | null
+      teaser: string | null
+      interior: string | null
+      features: DetailSection | null
+      facilities: DetailSection | null
+      accessories: DetailSection | null
+      location: DetailSection | null
       bulletin: string | null
       latlng: [number, number] | null
       firstImage: DetailImage | null
@@ -39,6 +55,9 @@ export interface DetailInfo {
   latlng: [number, number] | null
   aufgehoben: boolean
   aktenzeichen: string | null
+  sourceLivingAreaSqm: number | null
+  sourceLandAreaSqm: number | null
+  sourceRooms: number | null
 }
 
 const FETCH_TIMEOUT_MS = 15_000
@@ -93,11 +112,40 @@ function buildAttachments(d: DetailPage['props']['auction']): Attachment[] {
   return out
 }
 
-export async function fetchDetailFor(link: string): Promise<DetailInfo | null> {
-  const page = await fetchDetail(link)
-  if (!page) return null
-  const a = page.props.auction
-  const beschreibung = stripHtml([a.summary, a.description].filter(Boolean).join('\n\n')) || null
+function factValue(facts: DetailFact[], keyRe: RegExp): string | null {
+  return facts.find((f) => keyRe.test(f.key.trim()))?.value ?? null
+}
+
+/** Pure mapping from the Inertia auction payload — exported for tests. */
+export function buildDetailInfo(a: DetailPage['props']['auction']): DetailInfo {
+  const facts = a.features?.facts ?? []
+  const factLines = facts.map((f) => `${f.key}: ${f.value}`).join('\n')
+  const locationFactLines = (a.location?.facts ?? []).map((f) => `${f.key}: ${f.value}`).join('\n')
+  const facilities = stripHtml(a.facilities?.content)
+  // `interior` mirrors facilities.content on most listings — only include it
+  // when it actually differs.
+  const interior =
+    a.interior && a.interior !== a.facilities?.content ? stripHtml(a.interior) : ''
+  const accessories = stripHtml(a.accessories?.content)
+  const locationContent = stripHtml(a.location?.content)
+  const location = [locationFactLines, locationContent].filter(Boolean).join('\n')
+  const beschreibung =
+    [
+      a.teaser?.trim(),
+      stripHtml(a.summary),
+      stripHtml(a.description),
+      factLines,
+      facilities && `Ausstattung:\n${facilities}`,
+      interior && `Innenausstattung:\n${interior}`,
+      accessories && `Zubehör:\n${accessories}`,
+      location && `Lage:\n${location}`,
+    ]
+      .filter(Boolean)
+      .join('\n\n') || null
+
+  const roomsRaw = factValue(facts, /^(anzahl\s+)?zimmer\b/i)
+  const rooms = roomsRaw ? parseFloat(roomsRaw.replace(',', '.')) : NaN
+
   return {
     beschreibung,
     attachments: buildAttachments(a),
@@ -108,7 +156,16 @@ export async function fetchDetailFor(link: string): Promise<DetailInfo | null> {
     latlng: a.latlng ?? null,
     aufgehoben: Boolean(a.cancelled),
     aktenzeichen: a.fileNumber || null,
+    sourceLivingAreaSqm: parseSqm(factValue(facts, /^wohnfläche/i)),
+    sourceLandAreaSqm: parseSqm(factValue(facts, /^grundstücks(fläche|größe)/i)),
+    sourceRooms: Number.isFinite(rooms) && rooms > 0 ? rooms : null,
   }
+}
+
+export async function fetchDetailFor(link: string): Promise<DetailInfo | null> {
+  const page = await fetchDetail(link)
+  if (!page) return null
+  return buildDetailInfo(page.props.auction)
 }
 
 export async function enrichInBatches(

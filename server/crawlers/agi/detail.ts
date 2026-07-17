@@ -1,7 +1,7 @@
 import * as cheerio from 'cheerio'
 import type { Attachment, Auction } from '~/types/auction'
 import { AGI_BASE, UA } from './constants'
-import { allegatoKind } from './text'
+import { allegatoKind, parseItNumber } from './text'
 
 interface DetailInfo {
   attachments: Attachment[]
@@ -9,24 +9,43 @@ interface DetailInfo {
   pdfUrlUpstream: string | null
   fotoCount: number
   thumbnailUrl: string | null
+  photoUrls: string[]
+  livingAreaSqm: number | null
+  landAreaSqm: number | null
+  /** "Metri quadri" whose bene category is neither clearly residential nor
+   *  plain land — surfaced as a labeled note in the beschreibung instead of a
+   *  structured field, so the extraction pipeline can still classify it. */
+  unclassifiedAreaSqm: number | null
+  rooms: number | null
 }
 
-/** Fetch the detail page HTML and extract attachments and photo count. */
+/** Bene categories (p.titoloBene, e.g. "Appartamento", "Terreno") that map the
+ *  bene's "Metri quadri" unambiguously to living resp. land area. Everything
+ *  else (commerciale, magazzino, "altra categoria", …) stays unclassified —
+ *  conservative, mis-assignment is worse than a miss. */
+const RESIDENTIAL_BENE_RE =
+  /\b(?:appartament\w*|abitazion\w*|residenzial\w*|villa|villetta|villino|attico|mansard\w*|monolocale|bilocale|trilocale|quadrilocale|casa|casale)\b/i
+const LAND_BENE_RE = /\bterren\w*/i
+
+/** Fetch the detail page HTML and extract attachments, photos and bene data. */
 async function fetchDetailInfo(detailUpstream: string): Promise<DetailInfo> {
   const res = await fetch(detailUpstream, {
     headers: { 'User-Agent': UA, Accept: 'text/html,*/*' },
     signal: AbortSignal.timeout(15_000),
   })
   if (!res.ok) throw new Error(`[agi] detail page HTTP ${res.status}: ${detailUpstream}`)
-  const html = await res.text()
+  return parseDetailHtml(await res.text())
+}
+
+/** Parse a detail page's HTML. Exported for tests. */
+export function parseDetailHtml(html: string): DetailInfo {
   const $ = cheerio.load(html)
 
   const attachments: Attachment[] = []
   let pdfUpstream: string | null = null
   const seenPaths = new Set<string>()
   const seenFotoPaths = new Set<string>()
-  let fotoCount = 0
-  let thumbnailUrl: string | null = null
+  const photoUrls: string[] = []
 
   // Collect all /allegato/ hrefs (PDF and image files)
   $('a[href^="/allegato/"]').each((_, el) => {
@@ -58,35 +77,89 @@ async function fetchDetailInfo(detailUpstream: string): Promise<DetailInfo> {
     }
   })
 
-  // Count photo attachments from /allegato/foto-* img tags; prefer data-src for lazy-loaded images
+  // Collect gallery photos from /allegato/foto-* img tags (swiper main slides
+  // and thumbnails repeat the same path — dedupe); prefer data-src for
+  // lazy-loaded images
   $('img[src^="/allegato/foto-"], img[data-src^="/allegato/foto-"]').each((_, el) => {
     const src = $(el).attr('data-src') ?? $(el).attr('src') ?? ''
     if (!src.toLowerCase().includes('/allegato/foto-')) return
     if (!seenFotoPaths.has(src)) {
       seenFotoPaths.add(src)
-      fotoCount++
-      if (!thumbnailUrl) thumbnailUrl = `${AGI_BASE}${src}`
+      photoUrls.push(`${AGI_BASE}${src}`)
     }
   })
+
+  // "Dati dei beni": one div[data-pvp-bene-area] block per bene, each with
+  // .dettagliLotto__item cells of the form <strong>Label</strong><br><span>value</span>.
+  // Only a single bene is unambiguous — with several beni per lot the values
+  // cannot be attributed, so they are skipped.
+  let livingAreaSqm: number | null = null
+  let landAreaSqm: number | null = null
+  let unclassifiedAreaSqm: number | null = null
+  let rooms: number | null = null
+  const beni = $('[data-pvp-bene-area]')
+  if (beni.length === 1) {
+    const bene = beni.first()
+    const categoria = bene.find('.titoloBene').first().text().trim()
+    let areaSqm: number | null = null
+    bene.find('.dettagliLotto__item strong').each((_, el) => {
+      const label = $(el).text().trim().toLowerCase()
+      const value = $(el).parent().text().replace($(el).text(), '').trim()
+      if (label === 'metri quadri' || label === 'superficie') {
+        areaSqm ??= parseItNumber(value)
+      } else if (label === 'vani') {
+        rooms ??= parseItNumber(value)
+      }
+    })
+    if (areaSqm != null) {
+      if (LAND_BENE_RE.test(categoria)) landAreaSqm = areaSqm
+      else if (RESIDENTIAL_BENE_RE.test(categoria)) livingAreaSqm = areaSqm
+      else unclassifiedAreaSqm = areaSqm
+    }
+  }
 
   return {
     attachments,
     pdfUrl: pdfUpstream,
     pdfUrlUpstream: pdfUpstream,
-    fotoCount,
-    thumbnailUrl,
+    fotoCount: photoUrls.length,
+    thumbnailUrl: photoUrls[0] ?? null,
+    photoUrls,
+    livingAreaSqm,
+    landAreaSqm,
+    unclassifiedAreaSqm,
+    rooms,
   }
 }
 
-function applyDetailInfo(auction: Auction, info: DetailInfo): void {
+/** Apply parsed detail info to an auction in place. Exported for tests. */
+export function applyDetailInfo(auction: Auction, info: DetailInfo): void {
   if (info.attachments.length > 0) auction.attachments = info.attachments
   if (info.pdfUrl) {
     auction.pdfUrl = info.pdfUrl
     auction.pdfUrlUpstream = info.pdfUrlUpstream
   }
-  auction.fotoCount = info.fotoCount
-  if (info.thumbnailUrl && !auction.thumbnailUrl) {
-    auction.thumbnailUrl = info.thumbnailUrl
+  if (info.photoUrls.length > 0) {
+    auction.photoUrls = info.photoUrls
+    auction.fotoCount = info.photoUrls.length
+    if (info.thumbnailUrl && !auction.thumbnailUrl) {
+      auction.thumbnailUrl = info.thumbnailUrl
+    }
+  }
+  if (info.livingAreaSqm != null) auction.sourceLivingAreaSqm = info.livingAreaSqm
+  if (info.landAreaSqm != null) auction.sourceLandAreaSqm = info.landAreaSqm
+  if (info.rooms != null) auction.sourceRooms = info.rooms
+  if (info.unclassifiedAreaSqm != null) {
+    // Not confidently living or land area: surface it as a labeled note so the
+    // extraction pipeline (LLM pass) can classify it with full context.
+    // "Superficie:" is deliberately not one of the rules-pass labels. The
+    // includes-guard keeps repeated enrich runs from stacking the note.
+    const note = `Superficie: ${info.unclassifiedAreaSqm} mq`
+    if (!auction.beschreibung?.includes(note)) {
+      auction.beschreibung = auction.beschreibung
+        ? `${auction.beschreibung}\n${note}`
+        : note
+    }
   }
 }
 

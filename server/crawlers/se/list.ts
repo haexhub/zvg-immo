@@ -1,7 +1,7 @@
-import type { Auction } from '~/types/auction'
+import type { Attachment, Auction } from '~/types/auction'
 import { getRates, toEur } from '~/server/utils/exchange-rate'
 import { SE_BASE, COUNTRY } from './constants'
-import { extractFact, parseSekAmount, extractBody } from './text'
+import { extractFact, parseSekAmount, extractBody, parseStorlek, cleanCategory } from './text'
 
 const DETAIL_CONCURRENCY = 4
 const LIST_URL = `${SE_BASE}/Sokfastigheterbostadsratter.html?query=*`
@@ -29,7 +29,7 @@ function mapDetail(
   html: string,
   platformId: string,
   rates: Record<string, number>,
-): Auction {
+): Auction | null {
   const adresse = extractFact(html, 'Adress')
   const kommun = extractFact(html, 'Kommun')
   const marknadsvardRaw = extractFact(html, 'Marknadsvarde')
@@ -39,6 +39,11 @@ function mapDetail(
   // Auction date: <div id="datumet" ...>2026-08-27</div>
   const datumM = html.match(/<div id="datumet"[^>]*>(\d{4}-\d{2}-\d{2})<\/div>/)
   const terminIso = datumM?.[1] ?? null
+
+  // The list page's href="/<id>.html" pattern also matches static info pages
+  // (cookie notice, Visningsinformation, …). Those have neither an auction
+  // date nor an address fact — drop them instead of emitting empty auctions.
+  if (!terminIso && !adresse) return null
 
   // First downloadable PDF attached to the listing
   const pdfM = html.match(/href="(\/download\/[^"]+\.pdf)"/)
@@ -60,11 +65,50 @@ function mapDetail(
   const sekAmount = marknadsvardRaw ? parseSekAmount(marknadsvardRaw) : null
   const verkehrswertEur = sekAmount != null ? toEur(sekAmount, 'SEK', rates) : null
 
-  // Build description: prepend Storlek so area pipeline can extract living area
+  // Structured size: "6 rum, 175 kvm" → rooms + living area
+  const { rooms: sourceRooms, livingAreaSqm: sourceLivingAreaSqm } = parseStorlek(storlek)
+
+  // Object type from the tax category ("Småhusenhet, bebyggd (220).") or,
+  // failing that, the tenure form ("Äganderätt.").
+  const objekt =
+    cleanCategory(extractFact(html, 'Taxeringskod')) ??
+    cleanCategory(extractFact(html, 'Upplatelseform'))
+
+  // Build description: labelled facts first (more food for the central
+  // extraction), then the body text.
+  const byggar = extractFact(html, 'Byggar')
+  const taxeringsvarde = extractFact(html, 'Taxeringsvarde')
+  const fastighetsbeteckning = extractFact(html, 'Fastighetsbeteckning')
+  const tomtbeskrivning = extractFact(html, 'Tomtbeskrivning')
+  const beskrivningFact = extractFact(html, 'Beskrivning')
   const body = extractBody(html)
-  const beschreibung = [storlek ? `Storlek: ${storlek}` : null, body]
+  const beschreibung = [
+    storlek ? `Storlek: ${storlek}` : null,
+    byggar && byggar !== '0' ? `Byggår: ${byggar}` : null,
+    taxeringsvarde ? `Taxeringsvärde: ${taxeringsvarde}` : null,
+    fastighetsbeteckning ? `Fastighetsbeteckning: ${fastighetsbeteckning}` : null,
+    tomtbeskrivning ? `Tomtbeskrivning: ${tomtbeskrivning}` : null,
+    beskrivningFact ? `Beskrivning: ${beskrivningFact}` : null,
+    body,
+  ]
     .filter(Boolean)
     .join('\n') || null
+
+  const attachments: Attachment[] = pdfUrl
+    ? [
+        {
+          // "Beskrivning och värdering" — the bailiff's description-and-
+          // valuation report; classifyAttachment has no Swedish terms, so
+          // tag the kind directly.
+          kind: 'gutachten',
+          label: 'Beskrivning och värdering',
+          filename: pdfUrl.split('/').pop() ?? 'beskrivning-och-vardering.pdf',
+          sizeBytes: null,
+          fileId: pdfUrl,
+          proxyUrl: pdfUrl,
+        },
+      ]
+    : []
 
   return {
     platform: platformId,
@@ -73,7 +117,7 @@ function mapDetail(
     zvgId: id,
     aktenzeichen: arendenummer,
     amtsgericht: 'Kronofogden',
-    objekt: null,
+    objekt,
     adresse: fullAddress,
     verkehrswertEur,
     verkehrswertText: marknadsvardRaw ? `${marknadsvardRaw} SEK` : null,
@@ -85,10 +129,12 @@ function mapDetail(
     detailUrl: `${SE_BASE}/${id}.html`,
     pdfUrlUpstream: pdfUrl,
     detailUrlUpstream: `${SE_BASE}/${id}.html`,
-    attachments: [],
+    attachments,
     beschreibung,
     fotoCount,
     thumbnailUrl,
+    sourceRooms,
+    sourceLivingAreaSqm,
   }
 }
 
