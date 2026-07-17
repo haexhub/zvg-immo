@@ -1,15 +1,22 @@
-// Guards /api/saved-searches/*, /api/watchlist/*, /api/alerts/* and
-// /api/lawyer-inquiries/* (Phase 4 adds the last one; api-keys comes later,
-// in its own worktree, and adds its own prefix here then). Modeled on
+// Guards /api/saved-searches/*, /api/watchlist/*, /api/alerts/*,
+// /api/lawyer-inquiries/* and /api/api-keys/*. Modeled on
 // server/middleware/settings-auth.ts but per-user instead of a shared secret:
 // verifies the caller's Supabase access token and sets event.context.user,
 // 401s otherwise. Unrelated routes (/api/auctions, /api/settings/*,
-// /api/lawyers, ...) are untouched — /api/lawyers.get.ts is intentionally
-// public (catalog browsing needs no login, only sending an inquiry does).
+// /api/lawyers, /api/data/* — guarded separately by
+// server/middleware/data-api-auth.ts — ...) are untouched — /api/lawyers.get.ts
+// is intentionally public (catalog browsing needs no login, only sending an
+// inquiry does).
 
 import { getUserFromEvent } from '../utils/supabase'
 
-const GUARDED_PREFIXES = ['/api/saved-searches/', '/api/watchlist/', '/api/alerts/', '/api/lawyer-inquiries/']
+const GUARDED_PREFIXES = [
+  '/api/saved-searches/',
+  '/api/watchlist/',
+  '/api/alerts/',
+  '/api/lawyer-inquiries/',
+  '/api/api-keys/',
+]
 
 export default defineEventHandler(async (event) => {
   let path = (event.node.req.url ?? '').split('?')[0]!

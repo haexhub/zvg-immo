@@ -3,6 +3,8 @@ import { getSupabaseClient } from '~/lib/supabase-client'
 import type { SavedSearch } from '~/server/api/saved-searches/index.get'
 import type { WatchlistItem } from '~/server/api/watchlist/index.get'
 import type { LawyerInquiry } from '~/server/api/lawyer-inquiries/index.post'
+import type { ApiKeySummary } from '~/server/api/api-keys/index.get'
+import type { CreatedApiKey } from '~/server/api/api-keys/index.post'
 import { Trash2 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -20,7 +22,7 @@ onMounted(async () => {
     return
   }
   checked.value = true
-  await Promise.all([loadSavedSearches(), loadWatchlist(), loadLawyerInquiries()])
+  await Promise.all([loadSavedSearches(), loadWatchlist(), loadLawyerInquiries(), loadApiKeys()])
 })
 
 // Redirect if the user logs out while already on this page.
@@ -56,6 +58,42 @@ async function deleteSavedSearch(id: string): Promise<void> {
 async function removeWatchlistItem(id: string): Promise<void> {
   await authFetch(`/api/watchlist/${id}`, { method: 'DELETE' })
   watchlist.value = watchlist.value.filter((w) => w.id !== id)
+}
+
+// API-Keys (Phase 5, Daten-API unter /api/data/v1/*). The plaintext key is
+// only ever present in the POST response — justCreatedKey holds it purely
+// client-side for this one page render, never persisted, never re-fetchable.
+const apiKeys = ref<ApiKeySummary[]>([])
+const newKeyLabel = ref('')
+const justCreatedKey = ref<CreatedApiKey | null>(null)
+const keyCopied = ref(false)
+
+async function loadApiKeys(): Promise<void> {
+  apiKeys.value = await authFetch<ApiKeySummary[]>('/api/api-keys')
+}
+
+async function createApiKey(): Promise<void> {
+  const label = newKeyLabel.value.trim()
+  if (!label) return
+  const created = await authFetch<CreatedApiKey>('/api/api-keys', {
+    method: 'POST',
+    body: { label },
+  })
+  justCreatedKey.value = created
+  keyCopied.value = false
+  newKeyLabel.value = ''
+  await loadApiKeys()
+}
+
+async function revokeApiKey(id: string): Promise<void> {
+  await authFetch(`/api/api-keys/${id}`, { method: 'DELETE' })
+  apiKeys.value = apiKeys.value.map((k) => (k.id === id ? { ...k, active: false } : k))
+}
+
+async function copyKey(): Promise<void> {
+  if (!justCreatedKey.value) return
+  await navigator.clipboard.writeText(justCreatedKey.value.plaintext)
+  keyCopied.value = true
 }
 
 // Human-readable summary of a saved search's filters (the route.query shape —
@@ -180,6 +218,92 @@ function formatDate(iso: string): string {
               <p class="text-xs text-muted-foreground">
                 Provisionsstatus: {{ COMMISSION_STATUS_LABEL[i.commissionStatus] ?? i.commissionStatus }}
               </p>
+            </li>
+          </ul>
+        </section>
+
+        <section class="space-y-3">
+          <h2 class="text-base font-semibold">API-Keys</h2>
+          <div class="space-y-1 text-sm text-muted-foreground">
+            <p>
+              Programmatischer Lesezugriff (Snapshot + Historie) unter <code>/api/data/v1/*</code>,
+              authentifiziert per <code>Authorization: Bearer &lt;key&gt;</code>:
+            </p>
+            <ul class="list-disc space-y-0.5 pl-5">
+              <li><code>GET /api/data/v1/auctions</code> — aktueller Bestand, filter- und paginierbar</li>
+              <li><code>GET /api/data/v1/auctions/:platform/:id</code> — einzelne Auktion</li>
+              <li><code>GET /api/data/v1/observations</code> — Zeitreihe je Auktion (Quoten-/Preistrends)</li>
+            </ul>
+            <p>
+              Beispiel: <code>curl -H "Authorization: Bearer &lt;key&gt;" https://…/api/data/v1/auctions</code>
+            </p>
+          </div>
+
+          <form class="flex gap-2" @submit.prevent="createApiKey">
+            <input
+              v-model="newKeyLabel"
+              type="text"
+              placeholder="Label, z. B. „Analyse-Skript“"
+              class="flex-1 rounded-md border bg-background px-3 py-2 text-sm"
+            />
+            <button
+              type="submit"
+              class="shrink-0 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground"
+            >
+              Key erzeugen
+            </button>
+          </form>
+
+          <div
+            v-if="justCreatedKey"
+            class="space-y-2 rounded-md border border-amber-500/50 bg-amber-500/10 px-4 py-3"
+          >
+            <p class="text-sm font-medium">
+              Neuer Key „{{ justCreatedKey.label }}“ — wird nur jetzt angezeigt, danach nicht mehr abrufbar:
+            </p>
+            <div class="flex items-center gap-2">
+              <code class="flex-1 truncate rounded bg-background px-2 py-1 text-xs">{{ justCreatedKey.plaintext }}</code>
+              <button
+                type="button"
+                class="shrink-0 rounded-md border px-2 py-1 text-xs"
+                @click="copyKey"
+              >
+                {{ keyCopied ? 'Kopiert!' : 'Kopieren' }}
+              </button>
+            </div>
+            <p class="text-xs text-muted-foreground">
+              Jetzt sichern — dieser Key wird aus Sicherheitsgründen nie wieder angezeigt.
+            </p>
+          </div>
+
+          <p v-if="apiKeys.length === 0" class="text-sm text-muted-foreground">
+            Noch keine API-Keys.
+          </p>
+          <ul v-else class="space-y-2">
+            <li
+              v-for="k in apiKeys"
+              :key="k.id"
+              class="flex items-center justify-between gap-3 rounded-md border bg-card px-4 py-3"
+            >
+              <div class="min-w-0">
+                <p class="font-medium">
+                  {{ k.label }}
+                  <span v-if="!k.active" class="text-xs font-normal text-muted-foreground">(widerrufen)</span>
+                </p>
+                <p class="text-xs text-muted-foreground">
+                  {{ k.keyPrefix }}… · erzeugt {{ formatDate(k.createdAt) }}
+                  · zuletzt genutzt {{ k.lastUsedAt ? formatDate(k.lastUsedAt) : 'nie' }}
+                </p>
+              </div>
+              <button
+                v-if="k.active"
+                type="button"
+                class="shrink-0 text-muted-foreground hover:text-destructive"
+                title="Widerrufen"
+                @click="revokeApiKey(k.id)"
+              >
+                <Trash2 class="h-4 w-4" />
+              </button>
             </li>
           </ul>
         </section>
