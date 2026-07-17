@@ -236,6 +236,8 @@ useHead(() => ({
         </p>
       </section>
 
+      <LawyerContact :platform="a.platform" :zvg-id="a.zvgId" :country="a.country" />
+
       <section class="mb-8 space-y-3">
         <div class="flex items-center gap-2">
           <h2 class="text-base font-semibold">KI-Zusammenfassung</h2>
