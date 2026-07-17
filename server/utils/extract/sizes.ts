@@ -28,15 +28,18 @@ export function parseLocaleNumber(raw: string): number | null {
 }
 
 // A number immediately followed by an area unit. The negative lookahead stops
-// "m2" matching "m2x", "mq" matching "mqx" and "ha" matching "haus".
-// "mq" is the common Italian notation, "τ.μ." the Greek one.
+// "m2" matching "m2x", "mq" matching "mqx", "ha" matching "haus", and (Greek)
+// "τμ" matching the start of "τμήμα" (a common word meaning "section/part" —
+// Ͱ-Ͽ covers Greek letters, which plain [a-z] doesn't).
+// "mq" is the common Italian notation; Greek listings write m² as "τ.μ."
+// (τετραγωνικά μέτρα), sometimes without dots.
 // First alternative: space-grouped thousands ("1 331", "12 500,50" — Swedish/
 // French style, incl. NBSP). The space is only allowed between 3-digit groups
 // so enumerations ("Nr. 5, 175 m²") can't be glued into one number.
 const NUM = '(?:\\d{1,3}(?:[ \\u00a0]\\d{3})+(?:,\\d+)?|\\d(?:[\\d.,]*\\d)?)'
-const AREA_UNIT = 'm²|m2|qm|kvm|mq|ha|τ\\.μ\\.'
+const AREA_UNIT = 'm²|m2|qm|kvm|mq|ha|τ\\.?μ\\.?'
 const AREA_TOKEN = `${NUM}\\s*(?:${AREA_UNIT})`
-const AREA_RE = new RegExp(`(${NUM})\\s*(${AREA_UNIT})(?![a-z\\d])`, 'i')
+const AREA_RE = new RegExp(`(${NUM})\\s*(${AREA_UNIT})(?![a-z\\d\\u0370-\\u03ff])`, 'i')
 
 /** "140 m²" → 140, "2,5 ha" → 25000, "214.000,00 Euro" → null. */
 export function parseAreaValue(text: string): number | null {
@@ -56,9 +59,12 @@ function findLabeledArea(text: string, re: RegExp): number | null {
 }
 
 // The lookahead stops the unit matching inside a word ("Grundstück mit
-// 1 Haus" must not read "1 Ha" as one hectare).
+// 1 Haus" must not read "1 Ha" as one hectare, "2 τμήματα" not as 2 τ.μ.).
 function compileLabeledAreaRe(labelAlternation: string): RegExp {
-  return new RegExp(`(?:${labelAlternation})\\D{0,14}?(${AREA_TOKEN})(?![a-zäöü\\d])`, 'i')
+  return new RegExp(
+    `(?:${labelAlternation})\\D{0,14}?(${AREA_TOKEN})(?![a-zäöü\\d\\u0370-\\u03ff])`,
+    'i',
+  )
 }
 
 const LIVING_LABELS =
@@ -98,7 +104,7 @@ const LIVING_LABELS =
   // Portuguese
   '|área bruta privativa|área útil|área bruta|área de construção' +
   // Greek
-  '|επιφάνεια κατοικίας|εμβαδόν διαμερίσματος'
+  '|επιφάνεια κατοικίας|επιφάνεια διαμερίσματος|εμβαδόν κατοικίας|εμβαδόν διαμερίσματος'
 
 const LAND_LABELS =
   'grundstücksgröße|grundstücksfläche|grundstück|bodenfläche|grundfläche|flurstück' +
@@ -137,7 +143,7 @@ const LAND_LABELS =
   // Portuguese
   '|área do terreno|área total do terreno' +
   // Greek
-  '|εμβαδόν οικοπέδου|επιφάνεια οικοπέδου'
+  '|έκταση οικοπέδου|επιφάνεια οικοπέδου|εμβαδόν οικοπέδου'
 
 const LIVING_AREA_RE = compileLabeledAreaRe(LIVING_LABELS)
 const LAND_AREA_RE = compileLabeledAreaRe(LAND_LABELS)
