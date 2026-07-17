@@ -16,6 +16,10 @@ export interface PtEventoDetail {
   /** Decimal-degree coordinates, serialised as strings by the API. */
   coordenadasLAT: string | null
   coordenadasLON: string | null
+  /** Real court case number/court, absent from the list response (which only
+   *  has the e-leilões `referencia`). */
+  processoNumero: string | null
+  processoTribunal: string | null
 }
 
 export async function fetchEventoDetail(referencia: string): Promise<PtEventoDetail> {
@@ -43,6 +47,13 @@ function positive(n: number | null | undefined): number | null {
 export function applyDetail(auction: Auction, item: PtEventoDetail): void {
   const beschreibung = [text(item.descricao), text(item.observacoes)].filter(Boolean).join('\n\n')
   if (beschreibung) auction.beschreibung = beschreibung
+
+  // Replace the e-leilões referencia (already used above it as the fetch key
+  // in enrichOne) with the real court case number/court once known.
+  const processoNumero = text(item.processoNumero)
+  if (processoNumero) auction.aktenzeichen = processoNumero
+  const processoTribunal = text(item.processoTribunal)
+  if (processoTribunal) auction.amtsgericht = processoTribunal
 
   // areaUtilPrivativa is the usable/living area of the built unit; pure land
   // lots (Rústico/Terreno) carry 0 there and the plot size in areaTotal.
