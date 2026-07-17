@@ -116,4 +116,19 @@ describe('classifyObjekt — Greek', () => {
   it('classifies οικόπεδο', () => {
     expect(classifyObjekt('Οικόπεδο 500 τ.μ.').id).toBe('unbebaut')
   })
+  // Uppercase Greek conventionally drops the tonos — the common casing on
+  // auction portals. Plain /i matching can't bridge ί vs Ι, so these go
+  // through the foldGreek normalization.
+  it('classifies all-caps ΔΙΑΜΕΡΙΣΜΑ without tonos', () => {
+    expect(classifyObjekt('ΔΙΑΜΕΡΙΣΜΑ 88,17 Τ.Μ. ΣΤΟΝ 2Ο ΟΡΟΦΟ').id).toBe('eigentumswohnung')
+  })
+  it('classifies all-caps ΜΟΝΟΚΑΤΟΙΚΙΑ without tonos', () => {
+    expect(classifyObjekt('ΜΟΝΟΚΑΤΟΙΚΙΑ ΜΕ ΑΥΛΗ').id).toBe('einfamilienhaus')
+  })
+  it('classifies all-caps ΟΙΚΟΠΕΔΟ without tonos', () => {
+    expect(classifyObjekt('ΟΙΚΟΠΕΔΟ 500 Τ.Μ.').id).toBe('unbebaut')
+  })
+  it('handles the final sigma in all-caps ΚΤΙΡΙΟ ΜΙΚΤΗΣ ΧΡΗΣΗΣ', () => {
+    expect(classifyObjekt('ΚΤΙΡΙΟ ΜΙΚΤΗΣ ΧΡΗΣΗΣ').id).toBe('wohn-geschaefts')
+  })
 })

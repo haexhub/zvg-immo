@@ -175,10 +175,13 @@ export function parseDetailPage(html: string): DetailInfo {
   let superficie: number | null = null
   $('span.font-weight-bold.h4').each((_i, el) => {
     const $el = $(el)
-    const value = Number(clean($el.text()).replace(',', '.'))
+    // Values may group thousands with spaces ("1 200" m² plots) — strip them
+    // before parsing.
+    const value = Number(clean($el.text()).replace(/\s/g, '').replace(',', '.'))
     if (!Number.isFinite(value) || value <= 0) return
     const label = clean($el.parent().find('.small.text-muted').first().text()).toLowerCase()
-    if (label === 'pièces') rooms = value
+    // "pièces", or singular "pièce" on one-room lots.
+    if (label.startsWith('pièce')) rooms = value
     else if (label.includes('superficie')) superficie = value
   })
   const isBareLand = typeDeBien != null && /terrain/i.test(typeDeBien)

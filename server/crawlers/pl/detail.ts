@@ -41,15 +41,23 @@ export function parseDetailHtml(html: string): DetailData {
   const suma = attr('Suma oszacowania')
   const cena = attr('Cena wywołania')
 
+  // Multi-lot notices (several .template-item blocks in one obwieszczenie)
+  // carry one price/area per lot and no overall figure. Presenting the first
+  // lot's value as the auction's Verkehrswert would be misleading — take no
+  // structured price/area at all then (same idea as mv-zvgcom's
+  // extractSingleVerkehrswert). The description (first lot) and the Sygnatura
+  // apply to the notice as a whole and are kept.
+  const multiLot = $('.template-item').length > 1
+
   // "Sygnatura: Km 314/18" (or "Sygnatury: Km 1022/19, KM 489/19; …") in the notice header.
   const sygMatch = $.text().match(/Sygnatur(?:a|y):\s*([A-Za-zŻżŹź]{1,5}\s?[A-Za-z]{0,4}\s?\d+\/\d+)/)
 
   return {
     beschreibung,
     aktenzeichen: sygMatch ? clean(sygMatch[1]!) : null,
-    sumaOszacowaniaPln: suma ? parsePlPrice(suma.split('(')[0]!) : null,
-    cenaWywolaniaPln: cena ? parsePlPrice(cena.split('(')[0]!) : null,
-    livingAreaSqm: beschreibung ? parseLivingAreaSqm(beschreibung) : null,
+    sumaOszacowaniaPln: !multiLot && suma ? parsePlPrice(suma.split('(')[0]!) : null,
+    cenaWywolaniaPln: !multiLot && cena ? parsePlPrice(cena.split('(')[0]!) : null,
+    livingAreaSqm: !multiLot && beschreibung ? parseLivingAreaSqm(beschreibung) : null,
   }
 }
 

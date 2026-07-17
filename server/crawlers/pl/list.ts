@@ -60,7 +60,11 @@ export function parseListHtml(html: string, platformId: string): ParseResult {
       country: COUNTRY,
       region: province ? province.charAt(0).toUpperCase() + province.slice(1) : '',
       zvgId: noticeId,
-      aktenzeichen: noticeId,
+      // The real Aktenzeichen (Sygnatura) only exists on the detail page and
+      // is filled in by enrichOne. Leave the list value empty — a non-empty
+      // placeholder (the notice id already lives in zvgId) would survive the
+      // snapshot merge and clobber the enriched Sygnatura on every re-crawl.
+      aktenzeichen: '',
       amtsgericht: '',
       objekt: titel || null,
       // Cards without an address line still carry the województwo — a

@@ -76,11 +76,16 @@ export default defineEventHandler(async (event): Promise<GeoCrawlResult> => {
       // Source-provided coordinates beat a geocoder guess — and cost nothing.
       // List-crawl coords sit on the auction itself; enrichOne-provided ones
       // only exist in the snapshot (the /api/auctions list cache is built
-      // without detail fetches).
-      const srcLat = a.lat ?? snapshotHit?.lat
-      const srcLng = a.lng ?? snapshotHit?.lng
-      if (srcLat != null && srcLng != null) {
-        enriched[idx] = { ...a, lat: srcLat, lng: srcLng, detailAvailable }
+      // without detail fetches). Resolved as a pair from ONE source — mixing
+      // a fresh lat with a snapshot lng could pair mismatched coordinates.
+      const src =
+        a.lat != null && a.lng != null
+          ? { lat: a.lat, lng: a.lng }
+          : snapshotHit?.lat != null && snapshotHit.lng != null
+            ? { lat: snapshotHit.lat, lng: snapshotHit.lng }
+            : null
+      if (src) {
+        enriched[idx] = { ...a, lat: src.lat, lng: src.lng, detailAvailable }
         continue
       }
       const point = await geocodeAddress(a.adresse, a.country, { fetchMissing })

@@ -247,7 +247,17 @@ async function runEnrich() {
         // listing can't reject the whole Promise.all — mirrors the enrichOne
         // pattern above.
         let photos: string[] = []
-        if (isSafePathSegment(a.platform) && isSafePathSegment(a.zvgId)) {
+        const prevEntry = cache[key]
+        if (prevEntry) {
+          // needsLlmRetry re-run (a cache entry here means exactly that): the
+          // photo pipeline already ran when the rules-only entry was cached.
+          // The mirrored files are content-addressed and still on disk — reuse
+          // the result instead of re-downloading every gallery / re-mining the
+          // PDF on every capped run (with the LLM cap at 300/run, large
+          // platforms stay in retry for many runs). First runs and entries
+          // never cached before still go through the full pipeline below.
+          photos = prevEntry.photos ?? []
+        } else if (isSafePathSegment(a.platform) && isSafePathSegment(a.zvgId)) {
           const destDir = join(IMAGES_DIR, a.platform, a.zvgId)
           const nativeFotoUrls = [
             ...a.attachments

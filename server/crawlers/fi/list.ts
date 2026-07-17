@@ -134,7 +134,11 @@ function mapDetail(id: string, data: ApiResponse, platformId: string): Auction {
     attachments.find((a) => /\.pdf$/i.test(a.filename))
 
   const photos = (entry.medias ?? []).filter((m) => !m.videoId && (m.thumbnail || m.largeImage))
-  const photoUrls = photos.map((m) => m.largeImage).filter((u): u is string => Boolean(u))
+  // Fall back to the thumbnail for medias without a largeImage so fotoCount
+  // (= photoUrls.length) matches the gallery actually served.
+  const photoUrls = photos
+    .map((m) => m.largeImage ?? m.thumbnail)
+    .filter((u): u is string => Boolean(u))
   const thumbnailUrl = photos[0]?.thumbnail ?? photos[0]?.largeImage ?? null
 
   const exhibit = entry.exhibit?.trim() || null
@@ -165,7 +169,7 @@ function mapDetail(id: string, data: ApiResponse, platformId: string): Auction {
     detailUrlUpstream: detailUrl,
     attachments,
     beschreibung,
-    fotoCount: photoUrls.length > 0 ? photoUrls.length : photos.length,
+    fotoCount: photoUrls.length,
     thumbnailUrl,
     photoUrls,
     lat: typeof entry.geocode?.latitude === 'number' ? entry.geocode.latitude : null,

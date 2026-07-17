@@ -8,10 +8,10 @@ const MAX_PAGES = 50 // safety cap — 100 listings per page
 
 async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
   const auctions = []
-  let page = 0
+  let offset = 0
 
-  while (page < MAX_PAGES) {
-    const result = await fetchListPage(page * LIST_PAGE_SIZE, PLATFORM_ID)
+  for (let pages = 1; ; pages++) {
+    const result = await fetchListPage(offset, PLATFORM_ID)
     auctions.push(...result.auctions)
 
     // hasNextPage relies on the SSR pagination widget — if its selectors stop
@@ -21,7 +21,22 @@ async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
       console.warn('[pl-komornik] pagination widget not found — crawl may be truncated to one page')
     }
     if (!result.hasNextPage || result.auctions.length === 0) break
-    page++
+    if (pages >= MAX_PAGES) {
+      console.warn(
+        `[pl-komornik] safety cap of ${MAX_PAGES} pages hit at page ${result.currentPage}/${result.lastPage} — crawl truncated`,
+      )
+      break
+    }
+    // Advance by the number of cards actually delivered: if the server ever
+    // stops honouring ?limit=100 (e.g. falls back to its 20-per-page default),
+    // fixed LIST_PAGE_SIZE steps would silently skip most listings. Overlapping
+    // windows this may produce are deduped below.
+    if (result.auctions.length !== LIST_PAGE_SIZE) {
+      console.warn(
+        `[pl-komornik] page delivered ${result.auctions.length} cards (limit=${LIST_PAGE_SIZE}) — advancing offset by the delivered count`,
+      )
+    }
+    offset += result.auctions.length
   }
 
   // Deduplicate by zvgId (defensive — pages can overlap near boundaries).

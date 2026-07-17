@@ -1,6 +1,13 @@
-import { describe, expect, it } from 'vitest'
-import { parseDetailHtml } from './detail'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { Auction } from '~/types/auction'
+import { parseDetailHtml, enrichOne } from './detail'
 import { parseLivingAreaSqm } from './text'
+
+// enrichOne converts PLN → EUR; pin the rate so the assertions are stable.
+vi.mock('~/server/utils/exchange-rate', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/server/utils/exchange-rate')>()),
+  getRates: vi.fn().mockResolvedValue({ PLN: 4 }),
+}))
 
 /** Trimmed-down detail page mirroring the live SSR markup (notice 45036, Juli 2026). */
 const DETAIL_HTML = `
@@ -112,6 +119,96 @@ describe('parseDetailHtml', () => {
       cenaWywolaniaPln: null,
       livingAreaSqm: null,
     })
+  })
+
+  it('takes no structured price/area from multi-lot notices', () => {
+    const multi = parseDetailHtml(`
+      <p> Sygnatura: Km 1/20</p>
+      <div class="template-items">
+        <div class="template-item">
+          <div class="template-item-title"><div class="template-item-value">
+            <h4>lokal mieszkalny</h4>lokal nr 1 o powierzchni użytkowej 50,00 m kw
+          </div></div>
+          <div class="template-item-attribute">
+            <div class="template-item-label">Suma oszacowania</div>
+            <div class="template-item-value">100 000,00 zł</div>
+          </div>
+        </div>
+        <div class="template-item">
+          <div class="template-item-attribute">
+            <div class="template-item-label">Suma oszacowania</div>
+            <div class="template-item-value">50 000,00 zł</div>
+          </div>
+        </div>
+      </div>`)
+    expect(multi.sumaOszacowaniaPln).toBeNull()
+    expect(multi.cenaWywolaniaPln).toBeNull()
+    expect(multi.livingAreaSqm).toBeNull()
+    // Notice-level fields still apply to the auction as a whole.
+    expect(multi.aktenzeichen).toBe('Km 1/20')
+    expect(multi.beschreibung).toMatch(/^lokal nr 1/)
+  })
+})
+
+function makeAuction(overrides: Partial<Auction> = {}): Auction {
+  return {
+    platform: 'pl-komornik',
+    country: 'pl',
+    region: 'Dolnośląskie',
+    zvgId: '45036',
+    aktenzeichen: '',
+    amtsgericht: '',
+    objekt: 'Licytacja nieruchomości lokal mieszkalny',
+    adresse: 'Żołnierzy II AWP 20/13, 59-916 Bogatynia, Polen',
+    verkehrswertEur: null,
+    verkehrswertText: null,
+    terminIso: '2026-08-10',
+    terminText: '10.08.2026 13:00',
+    aufgehoben: false,
+    letzteAktualisierungIso: null,
+    pdfUrl: null,
+    detailUrl: 'https://licytacje.komornik.pl/wyszukiwarka/obwieszczenia-o-licytacji/45036/licytacja-nieruchomosci-lokal-mieszkalny',
+    pdfUrlUpstream: null,
+    detailUrlUpstream: 'https://licytacje.komornik.pl/wyszukiwarka/obwieszczenia-o-licytacji/45036/licytacja-nieruchomosci-lokal-mieszkalny',
+    attachments: [],
+    beschreibung: null,
+    fotoCount: 0,
+    thumbnailUrl: null,
+    ...overrides,
+  }
+}
+
+afterEach(() => vi.unstubAllGlobals())
+
+describe('enrichOne', () => {
+  it('fills beschreibung, Sygnatura, Wohnfläche and converts the Suma oszacowania to EUR', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(DETAIL_HTML)))
+    const a = makeAuction()
+    await enrichOne(a)
+    expect(a.beschreibung).toMatch(/^lokal mieszkalny nr 13, umieszczony/)
+    expect(a.aktenzeichen).toBe('Km 314/18')
+    expect(a.sourceLivingAreaSqm).toBe(70.8)
+    // 130 000 zł Suma oszacowania at 4 PLN per EUR — not the Cena wywołania.
+    expect(a.verkehrswertEur).toBe(32500)
+    expect(a.verkehrswertText).toBe('130.000 zł')
+  })
+
+  it('falls back to the Cena wywołania when no Suma oszacowania is published', async () => {
+    const html = `
+      <div class="template-item-attribute">
+        <div class="template-item-label">Cena wywołania</div>
+        <div class="template-item-value">100 000,00 zł</div>
+      </div>`
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(html)))
+    const a = makeAuction()
+    await enrichOne(a)
+    expect(a.verkehrswertEur).toBe(25000)
+    expect(a.verkehrswertText).toBe('100.000 zł')
+  })
+
+  it('throws on upstream errors so the enrich task retries', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 500 })))
+    await expect(enrichOne(makeAuction())).rejects.toThrow('500')
   })
 })
 

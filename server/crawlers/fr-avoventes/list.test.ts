@@ -70,4 +70,16 @@ describe('parseDetailPage', () => {
     expect(detail.landAreaSqm).toBe(512)
     expect(detail.livingAreaSqm).toBeNull()
   })
+
+  it('parses space-grouped thousands and the singular pièce label', () => {
+    const html = `
+      <span class="badge badge-secondary">Terrain à bâtir</span>
+      <div><span class="font-weight-bold h4">1</span>
+        <div class="small text-muted">pièce</div></div>
+      <div><span class="font-weight-bold h4">1 200</span>
+        <div class="small text-muted">m² superficie</div></div>`
+    const detail = parseDetailPage(html)
+    expect(detail.rooms).toBe(1)
+    expect(detail.landAreaSqm).toBe(1200)
+  })
 })
