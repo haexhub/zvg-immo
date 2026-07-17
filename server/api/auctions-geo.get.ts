@@ -7,6 +7,7 @@ import { geocodeAddress, geocodeStatus } from '../utils/geocode'
 import { readAuctionSnapshot } from '../utils/auction-snapshot'
 import { cacheKey } from '../utils/verkehrswert-cache'
 import type { Auction, CrawlResult } from '~/types/auction'
+import { isValidScopeParam, scopeParam } from '~/lib/auction-constants'
 
 export interface GeoAuction extends Auction {
   lat: number | null
@@ -28,8 +29,11 @@ export interface GeoCrawlResult extends Omit<CrawlResult, 'auctions'> {
 
 export default defineEventHandler(async (event): Promise<GeoCrawlResult> => {
   const query = getQuery(event)
-  const country = typeof query.country === 'string' ? query.country.toLowerCase() : 'all'
-  const region = typeof query.region === 'string' ? query.region.toLowerCase() : 'all'
+  const country = scopeParam(query.country)
+  const region = scopeParam(query.region)
+  if (!isValidScopeParam(country) || !isValidScopeParam(region)) {
+    throw createError({ statusCode: 400, statusMessage: 'invalid country/region' })
+  }
   const immobilienOnly = query.immo !== '0'
   // ?fetch=0 → use only cached geocodes (instant). ?fetch=1 (default) → fall back to Nominatim
   // for missing addresses (subject to 1 req/s rate limit, slow on cold start).

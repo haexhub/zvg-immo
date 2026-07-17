@@ -9,10 +9,9 @@
 // subsequent runs those fields are empty on the fresh crawl, so we merge with
 // the previous snapshot to keep the enriched values from the first crawl.
 
-import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import type { Auction } from '~/types/auction'
+import { readJsonCache, writeJsonCache } from './json-cache'
 import { cacheKey } from './verkehrswert-cache'
 
 const SNAPSHOT_PATH = join(process.cwd(), '.cache_zvg', 'auctions.json')
@@ -20,21 +19,7 @@ const SNAPSHOT_PATH = join(process.cwd(), '.cache_zvg', 'auctions.json')
 export type AuctionSnapshot = Record<string, Auction>
 
 export async function readAuctionSnapshot(): Promise<AuctionSnapshot> {
-  let buf: string
-  try {
-    buf = await readFile(SNAPSHOT_PATH, 'utf8')
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {}
-    console.warn(`[auction-snapshot] failed to read: ${(err as Error).message}`)
-    return {}
-  }
-  try {
-    const parsed = JSON.parse(buf) as unknown
-    if (parsed && typeof parsed === 'object') return parsed as AuctionSnapshot
-  } catch (err) {
-    console.warn(`[auction-snapshot] corrupt JSON: ${(err as Error).message}`)
-  }
-  return {}
+  return readJsonCache<AuctionSnapshot>(SNAPSHOT_PATH, () => ({}), 'auction-snapshot')
 }
 
 /**
@@ -130,8 +115,5 @@ export async function writeAuctionSnapshot(auctions: Auction[]): Promise<void> {
     const platform = key.split(':')[0]!
     if (!platformsSeen.has(platform)) map[key] = prev
   }
-  await mkdir(dirname(SNAPSHOT_PATH), { recursive: true })
-  const tmp = `${SNAPSHOT_PATH}.${randomUUID()}.tmp`
-  await writeFile(tmp, JSON.stringify(map))
-  await rename(tmp, SNAPSHOT_PATH)
+  await writeJsonCache(SNAPSHOT_PATH, map)
 }
