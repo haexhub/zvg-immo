@@ -60,6 +60,14 @@ export default defineNuxtConfig({
     supabaseUrl: '',
     //   NUXT_SUPABASE_SERVICE_ROLE_KEY=<from scripts/generate-supabase-keys.mjs>
     supabaseServiceRoleKey: '',
+    // App-level mailer for alert emails (server/utils/mailer.ts, nodemailer
+    // over this connection string), used by server/utils/alert-matching.ts.
+    // Distinct from GoTrue's own separate SMTP config (docker-compose.yml's
+    // `auth` service, GOTRUE_SMTP_*) for GoTrue's own transactional mail.
+    // Empty → sendMail() logs instead of sending (dev fallback, same
+    // graceful-degrade pattern as extractLlm.baseUrl).
+    //   NUXT_SMTP_URL=smtps://user:pass@smtp.example.com:465
+    smtpUrl: '',
     public: {
       // Free, instant self-service keys for the per-country satellite
       // imagery layers in lib/countryImagery.ts that require one (Finland,
