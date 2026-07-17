@@ -4,13 +4,14 @@ import { findLandAreaSqm, findLivingAreaSqm, findRooms, findUnits, parseAreaValu
 // Which area bucket an unlabeled "153.80 m²" in the objekt string belongs to,
 // by property type. Commercial/garage/sonstiges stay unassigned — their bare
 // areas are too ambiguous (hall floor? plot?) for a deterministic pass.
+// House types (einfamilienhaus, zweifamilienhaus, doppelhaushaelfte,
+// reihenhaus) are deliberately excluded too: the bare figure in a house
+// listing's short title ("Einfamilienhaus, 850 m²") is at least as often the
+// plot size as the living area, and a wrong bucket here would be cached as
+// confident and never corrected by the LLM.
 const LIVING_AREA_TYPES = new Set<PropertyType>([
   'eigentumswohnung',
-  'einfamilienhaus',
-  'zweifamilienhaus',
   'mehrfamilienhaus',
-  'doppelhaushaelfte',
-  'reihenhaus',
   'wohn-geschaefts',
 ])
 const LAND_AREA_TYPES = new Set<PropertyType>(['land-forst', 'unbebaut'])

@@ -176,7 +176,7 @@ function kategoriePropertyType(kategorie: string | null): PropertyType | null {
   if (kategorie == null) return null
   const isLiving = LIVING_KATEGORIE_RE.test(kategorie)
   const isLand = LAND_KATEGORIE_RE.test(kategorie)
-  if (isLiving && !isLand) return 'einfamilienhaus'
+  if (isLiving && !isLand) return 'eigentumswohnung'
   if (isLand && !isLiving) return 'unbebaut'
   return null
 }

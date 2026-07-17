@@ -18,8 +18,9 @@ async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
 
 async function enrichOne(auction: Auction): Promise<void> {
   // Only dedicated /property/ pages carry the fact table + gallery; some lots
-  // have no detail link at all.
-  if (!auction.detailUrlUpstream?.includes('/property/')) return
+  // have no detail link at all. Host-anchored: detail URLs are resolved from
+  // anchors on crawled pages, and only ontariotaxsales.ca must be fetched.
+  if (!auction.detailUrlUpstream?.startsWith(`${CA_BASE}/property/`)) return
   const detail = parsePropertyPage(await htmlFetch(auction.detailUrlUpstream))
 
   if (detail.objekt && !auction.objekt) auction.objekt = detail.objekt

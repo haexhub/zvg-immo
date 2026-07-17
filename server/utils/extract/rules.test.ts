@@ -104,6 +104,12 @@ describe('extractByRules — unlabeled area fallback', () => {
     expect(r.livingAreaSqm).toBeNull()
     expect(r.landAreaSqm).toBeNull()
   })
+  it('does not bucket a bare house area (could be the plot size)', () => {
+    const r = extractByRules({ objekt: 'Einfamilienhaus, 850 m²', beschreibung: null })
+    expect(r.livingAreaSqm).toBeNull()
+    expect(r.landAreaSqm).toBeNull()
+    expect(r.confident).toBe(false)
+  })
   it('prefers the labeled area over the bare fallback', () => {
     const r = extractByRules({
       objekt: 'Einfamilienhaus 200 m²',

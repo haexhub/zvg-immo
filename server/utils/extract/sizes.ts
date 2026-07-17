@@ -45,9 +45,18 @@ const AREA_RE = new RegExp(`(${NUM})\\s*(${AREA_UNIT})(?![a-z\\d\\u0370-\\u03ff]
 export function parseAreaValue(text: string): number | null {
   const m = text.match(AREA_RE)
   if (!m || !m[1] || !m[2]) return null
-  const value = parseLocaleNumber(m[1])
+  const isHa = m[2].toLowerCase() === 'ha'
+  const raw = m[1].trim()
+  // Hectare values are small comma-decimal figures in cadastral prose
+  // ("2,575 ha" = 2.575 ha = 25.750 m²), never Anglo-grouped thousands —
+  // parseLocaleNumber's lone-comma heuristic would read 2575 ha here, a
+  // silent factor-1000 error. Treat the comma as a decimal mark for ha.
+  const value =
+    isHa && /^\d{1,3},\d{3}$/.test(raw)
+      ? Number(raw.replace(',', '.'))
+      : parseLocaleNumber(raw)
   if (value == null) return null
-  return m[2].toLowerCase() === 'ha' ? value * 10000 : value
+  return isHa ? value * 10000 : value
 }
 
 /** Find the area value that directly follows one of the given labels.
@@ -170,7 +179,11 @@ const ROOM_WORDS =
   'zimmer|zi\\.' +
   '|rum(?![a-zåäö])' + // Swedish
   '|vani|locali' + // Italian
-  '|pièces?' + // French
+  // French — "pièces" also means "documents" in legal prose ("les 3 pièces
+  // jointes", "pièces du dossier"); the lookaheads veto those readings. The
+  // (?![a-z]) stops backtracking into "pièce" + literal "s", which would
+  // sidestep the document lookahead.
+  '|pièces?(?![a-z])(?!\\s+(?:jointes?|annexées?|justificatives?|du\\s+dossier))' +
   '|habitaciones' + // Spanish
   '|pok[oó]j\\w*|pokoj\\w*|pokoi|pokoje' + // Polish/Czech
   '|szob[aá]s?' + // Hungarian

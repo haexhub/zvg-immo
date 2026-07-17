@@ -95,6 +95,14 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
             auctions.push(a)
           }
         }
+        // The defensive break above ends paging silently — surface a partial
+        // result (truncated token, expired session, shifted result set) so it
+        // shows up in production telemetry like the old pagination-NYI warning.
+        if (auctions.length < totalReported) {
+          console.warn(
+            `[boe] provincia ${provincia}: pagination ended early with ${auctions.length}/${totalReported} results`,
+          )
+        }
       } catch (err) {
         console.warn(
           `[boe] provincia ${provincia}: pagination stopped after ${auctions.length}/${totalReported} results: ${(err as Error).message}`,

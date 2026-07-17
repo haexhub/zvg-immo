@@ -67,9 +67,11 @@ function mapItem(item: ListItem, detail: DetailResponse | null, platformId: stri
     }
   })
   // Documents are often named by bare case number ("46 0 I 120389 25 I") — if
-  // nothing was recognized as the announcement, the first non-notice document is it.
+  // nothing was recognized as the announcement, the first unclassified
+  // non-notice document is it. Documents classifyAttachment DID recognize
+  // (gutachten, foto, …) keep their kind.
   if (!attachments.some((a) => a.kind === 'bekanntmachung')) {
-    const main = attachments.find((a) => !/obavje|odgod/i.test(a.label))
+    const main = attachments.find((a) => a.kind === 'sonstiges' && !/obavje|odgod/i.test(a.label))
     if (main) main.kind = 'bekanntmachung'
   }
 

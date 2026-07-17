@@ -69,6 +69,10 @@ describe('parseLtArea', () => {
     expect(parseLtArea('2,5 ha')).toBe(25000)
   })
 
+  it('parses space-grouped thousands', () => {
+    expect(parseLtArea('1 234,56 kv. m')).toBe(1234.56)
+  })
+
   it('returns null for text without a recognised unit', () => {
     expect(parseLtArea('nenurodyta')).toBeNull()
   })

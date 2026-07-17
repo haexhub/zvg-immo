@@ -134,6 +134,15 @@ describe('fetchDetail', () => {
     expect(info?.sourceLandAreaSqm).toBe(888)
   })
 
+  it('treats the 0/0 geoLocation sentinel as absent coordinates', async () => {
+    const fixture = detailFixture()
+    ;(fixture.properties as Record<string, unknown>[])[0]!.geoLocation = { lat: 0, lng: 0 }
+    stubDetail(fixture)
+    const info = await fetchDetail('297841')
+    expect(info?.lat).toBeNull()
+    expect(info?.lng).toBeNull()
+  })
+
   it('appends the facts line to the description', async () => {
     stubDetail(detailFixture())
     const info = await fetchDetail('297841')

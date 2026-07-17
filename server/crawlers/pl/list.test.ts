@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { parseListHtml } from './list'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { fetchListPage, parseListHtml } from './list'
 
 /** Trimmed-down search page mirroring the live SSR markup (Juli 2026). */
 const LIST_HTML = `
@@ -55,6 +55,9 @@ describe('parseListHtml', () => {
   it('maps the card fields', () => {
     const a = result.auctions[0]!
     expect(a.zvgId).toBe('45040')
+    // Empty on purpose: the Sygnatura comes from enrichOne, and the snapshot
+    // merge only restores it when the fresh crawl leaves the field unset.
+    expect(a.aktenzeichen).toBe('')
     expect(a.objekt).toBe('Licytacja nieruchomości nieruchomość gruntowa zabudowana')
     expect(a.region).toBe('Mazowieckie')
     expect(a.adresse).toBe('Łękawica Stara, 26-902 Grabów nad Pilicą, Polen')
@@ -80,5 +83,14 @@ describe('parseListHtml', () => {
     const single = parseListHtml('<div class="notice-cards-list"></div>', 'pl-komornik')
     expect(single.auctions).toHaveLength(0)
     expect(single.hasNextPage).toBe(false)
+  })
+})
+
+describe('fetchListPage', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('throws on a WAF/error page instead of silently succeeding with zero auctions', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<div>Access denied</div>')))
+    await expect(fetchListPage(0, 'pl-komornik')).rejects.toThrow('unexpected page')
   })
 })

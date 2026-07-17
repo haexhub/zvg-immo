@@ -24,6 +24,11 @@ export async function fetchListPage(offset: number, platformId: string): Promise
   })
   if (!res.ok) throw new Error(`PL list fetch failed: ${res.status} ${url}`)
   const html = await res.text()
+  // A WAF/error page can still answer HTTP 200 — without this check it would
+  // parse into a silent, successful empty page and suppress retries.
+  if (!html.includes('id="item-list-container"')) {
+    throw new Error(`PL list fetch returned unexpected page (WAF/error?): ${url}`)
+  }
 
   return parseListHtml(html, platformId)
 }
@@ -60,7 +65,11 @@ export function parseListHtml(html: string, platformId: string): ParseResult {
       country: COUNTRY,
       region: province ? province.charAt(0).toUpperCase() + province.slice(1) : '',
       zvgId: noticeId,
-      aktenzeichen: noticeId,
+      // The real Aktenzeichen (Sygnatura) only exists on the detail page and
+      // is filled in by enrichOne. Leave the list value empty — a non-empty
+      // placeholder (the notice id already lives in zvgId) would survive the
+      // snapshot merge and clobber the enriched Sygnatura on every re-crawl.
+      aktenzeichen: '',
       amtsgericht: '',
       objekt: titel || null,
       // Cards without an address line still carry the województwo — a

@@ -308,10 +308,12 @@ export async function fetchDetail(referenceCode: string): Promise<DetailInfo | n
     pdfUrl: headlinePdf?.proxyUrl ?? null,
     pdfUrlUpstream: headlinePdf?.proxyUrl ?? null,
     aufgehoben: Boolean(d.withdrawn) || d.publicSaleStatus === 'WITHDRAWN',
-    lat: prop?.geoLocation?.lat ?? null,
-    lng: prop?.geoLocation?.lng ?? null,
     // Biddit uses 0 as its "absent" sentinel on non-nullable DB fields (same
-    // pattern as the estimatedPrice=1 placeholder) — treat non-positive as null.
+    // pattern as the estimatedPrice=1 placeholder) — treat non-positive as
+    // null. That also guards the coordinates: 0/0 is the Atlantic, and all
+    // real Belgian lat/lng values are positive.
+    lat: positive(prop?.geoLocation?.lat),
+    lng: positive(prop?.geoLocation?.lng),
     sourceLivingAreaSqm: positive(prop?.rooms?.livingSurfaceArea),
     sourceLandAreaSqm: positive(prop?.features?.terrainSurface),
   }

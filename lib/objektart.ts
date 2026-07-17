@@ -54,18 +54,22 @@ interface KategorieRule extends ObjektKategorie {
 // Greek terms skip the \b word-boundary convention used elsewhere: JS regexes
 // without the /u flag treat \w as ASCII-only, so \b never matches around
 // Greek letters (both sides read as "non-word", meaning no boundary at all).
+// They are also spelled lowercase WITHOUT tonos ("διαμερισμα"): Greek portals
+// often write ALL-CAPS, which by convention drops the accents ("ΔΙΑΜΕΡΙΣΜΑ"),
+// and /i can't bridge that (ί and Ι differ even case-folded) — foldGreek
+// below normalizes the input to the same unaccented lowercase form.
 const RULES: KategorieRule[] = [
   {
     id: 'mehrfamilienhaus',
     label: 'Mehrfamilienhaus',
-    test: /mehrfamilienhaus|dreifamilienhaus|edificio (?:plurifamiliar|de viviendas)|vivienda plurifamiliar|edificio plurifamiliare|immeuble (?:collectif|de rapport|d'habitation)|meergezinswoning|appartementsgebouw|bytový dům|budynek wielorodzinny|kamienica|daugiabutis|daudzdzīvokļu māja|korterelamu|flerbostadshus|kerrostalo|etageejendom|flerfamiliehus|fjölbýlishús|πολυκατοικία/i,
+    test: /mehrfamilienhaus|dreifamilienhaus|edificio (?:plurifamiliar|de viviendas)|vivienda plurifamiliar|edificio plurifamiliare|immeuble (?:collectif|de rapport|d'habitation)|meergezinswoning|appartementsgebouw|bytový dům|budynek wielorodzinny|kamienica|daugiabutis|daudzdzīvokļu māja|korterelamu|flerbostadshus|kerrostalo|etageejendom|flerfamiliehus|fjölbýlishús|πολυκατοικια/i,
   },
   { id: 'zweifamilienhaus', label: 'Zweifamilienhaus', test: /zweifamilienhaus|casa bifamiliare|maison bifamiliale/i },
   // Matches "Wohn- und Geschäftshaus", "Wohn-/Geschäftshaus", "Wohn/Geschäftshaus".
   {
     id: 'wohn-geschaefts',
     label: 'Wohn-/Geschäftshaus',
-    test: /wohn-?\s*(?:und\s+|\/\s*)?geschäftshaus|stambeno-poslovni objekat|κτίριο μικτής χρήσης/i,
+    test: /wohn-?\s*(?:und\s+|\/\s*)?geschäftshaus|stambeno-poslovni objekat|κτιριο μικτης χρησης/i,
   },
   {
     id: 'doppelhaushaelfte',
@@ -80,44 +84,60 @@ const RULES: KategorieRule[] = [
   {
     id: 'einfamilienhaus',
     label: 'Einfamilienhaus',
-    test: /einfamilienhaus|vivienda unifamiliar|casa unifamiliar|casa unifamiliare|villetta|maison individuelle|eengezinswoning|rodinný dům|dom jednorodzinny|családi ház|vienbutis namas|savrupmāja|eramu|villa|enfamiljshus|omakotitalo|enfamiliehus|parcelhus|einbýlishús|porodična kuća|stanovanjska hiša|μονοκατοικία/i,
+    test: /einfamilienhaus|vivienda unifamiliar|casa unifamiliar|casa unifamiliare|villetta|maison individuelle|eengezinswoning|rodinný dům|dom jednorodzinny|családi ház|vienbutis namas|savrupmāja|eramu|villa|enfamiljshus|omakotitalo|enfamiliehus|parcelhus|einbýlishús|porodična kuća|stanovanjska hiša|μονοκατοικια/i,
   },
   {
     id: 'eigentumswohnung',
     label: 'Eigentumswohnung',
-    test: /eigentumswohnung|sonstiges teileigentum|wohnung und anteil|\bpiso\b|apartamento|appartamento|appartement|mieszkanie|\blakás\b|\bbutas\b|dzīvoklis|\bkorter\b|lägenhet|bostadsrätt|asunto-osake|huoneisto|ejerlejlighed|lejlighed|\bíbúð\b|\bstan\b|stanovanje|διαμέρισμα/i,
+    test: /eigentumswohnung|sonstiges teileigentum|wohnung und anteil|\bpiso\b|apartamento|appartamento|appartement|mieszkanie|\blakás\b|\bbutas\b|dzīvoklis|\bkorter\b|lägenhet|bostadsrätt|asunto-osake|huoneisto|ejerlejlighed|lejlighed|\bíbúð\b|\bstan\b|stanovanje|διαμερισμα/i,
   },
   {
     id: 'gewerbe',
     label: 'Gewerbe',
-    test: /gewerb|local comercial|nave industrial|immobile commerciale|capannone industriale|local commercial|local professionnel|bedrijfspand|kantoorruimte|komerční prostor|lokal użytkowy|lokal usługowy|üzlethelyiség|komercinės paskirties|komercplatības|äripind|kommersiell fastighet|affärslokal|liikehuoneisto|toimitila|erhvervsejendom|atvinnuhúsnæði|poslovni prostor|κατάστημα|επαγγελματικ|γραφείο/i,
+    test: /gewerb|local comercial|nave industrial|immobile commerciale|capannone industriale|local commercial|local professionnel|bedrijfspand|kantoorruimte|komerční prostor|lokal użytkowy|lokal usługowy|üzlethelyiség|komercinės paskirties|komercplatības|äripind|kommersiell fastighet|affärslokal|liikehuoneisto|toimitila|erhvervsejendom|atvinnuhúsnæði|poslovni prostor|καταστημα|επαγγελματικ|γραφειο/i,
   },
   {
     id: 'land-forst',
     label: 'Land-/Forstwirtschaft',
-    test: /forstwirtschaft|landwirt|ackerland|terreno rústico|finca rústica|terreno agricolo|fondo rustico|terrain agricole|terres agricoles|landbouwgrond|zemědělská půda|grunt rolny|ziemia rolna|mezőgazdasági terület|žemės ūkio paskirties|lauksaimniecības zeme|põllumajandusmaa|jordbruksmark|skogsmark|maatalousmaa|metsämaa|landbrugsjord|poljoprivredno zemljište|αγροτεμάχιο|δασική έκταση/i,
+    test: /forstwirtschaft|landwirt|ackerland|terreno rústico|finca rústica|terreno agricolo|fondo rustico|terrain agricole|terres agricoles|landbouwgrond|zemědělská půda|grunt rolny|ziemia rolna|mezőgazdasági terület|žemės ūkio paskirties|lauksaimniecības zeme|põllumajandusmaa|jordbruksmark|skogsmark|maatalousmaa|metsämaa|landbrugsjord|poljoprivredno zemljište|αγροτεμαχιο|δασικη εκταση/i,
   },
   {
     id: 'unbebaut',
     label: 'Unbebautes Grundstück',
-    test: /unbebautes grundstück|baugrundstück|\bsolar\b|terreno edificable|terreno edificabile|area edificabile|terrain à bâtir|terrain constructible|bouwgrond|stavební pozemek|działka budowlana|építési telek|byggklar tomt|obebyggd tomt|byggegrund|nezazidano stavbno zemljišče|οικόπεδο/i,
+    test: /unbebautes grundstück|baugrundstück|\bsolar\b|terreno edificable|terreno edificabile|area edificabile|terrain à bâtir|terrain constructible|bouwgrond|stavební pozemek|działka budowlana|építési telek|byggklar tomt|obebyggd tomt|byggegrund|nezazidano stavbno zemljišče|οικοπεδο/i,
   },
   {
     id: 'garage-stellplatz',
     label: 'Garage / Stellplatz',
     // Substring match on purpose: compounds and plurals ("Tiefgaragenstellplatz",
     // "Doppelgarage", "Garagen", "Stellplätze") must classify as garage too.
-    test: /garage|stellpl(?:atz|ätze)|garaje|plaza de aparcamiento|posto auto|place de parking|parkeerplaats|garáž|parkovací stání|garaż|miejsce postojowe|garázs|garažas|garāža|garaaž|parkeringsplats|autotalli|autopaikka|parkeringsplads|bílskúr|θέση στάθμευσης|γκαράζ/i,
+    test: /garage|stellpl(?:atz|ätze)|garaje|plaza de aparcamiento|posto auto|place de parking|parkeerplaats|garáž|parkovací stání|garaż|miejsce postojowe|garázs|garažas|garāža|garaaž|parkeringsplats|autotalli|autopaikka|parkeringsplads|bílskúr|θεση σταθμευσης|γκαραζ/i,
   },
 ]
 
 const SONSTIGES: ObjektKategorie = { id: 'sonstiges', label: 'Sonstiges' }
 const UNBEKANNT: ObjektKategorie = { id: 'unbekannt', label: 'Unbekannt' }
 
+const GREEK_TONOS: Record<string, string> = {
+  ά: 'α', έ: 'ε', ή: 'η', ί: 'ι', ό: 'ο', ύ: 'υ', ώ: 'ω', ϊ: 'ι', ϋ: 'υ', ΐ: 'ι', ΰ: 'υ',
+}
+
+/** Lowercase Greek input and strip the tonos/dialytika so the unaccented rule
+ *  spellings match both "Διαμέρισμα" and all-caps "ΔΙΑΜΕΡΙΣΜΑ" (uppercase
+ *  Greek conventionally drops the accents). toLowerCase handles the final
+ *  sigma (ΧΡΗΣΗΣ → χρησης), matching how the rules are written. Deliberately
+ *  Greek-only — a blanket accent strip would break the Latin-diacritic terms
+ *  (grundstück, řadový, savrupmāja, …). */
+function foldGreek(s: string): string {
+  if (!/[Ͱ-Ͽ]/.test(s)) return s
+  return s.toLowerCase().replace(/[άέήίόύώϊϋΐΰ]/g, (c) => GREEK_TONOS[c]!)
+}
+
 export function classifyObjekt(objekt: string | null | undefined): ObjektKategorie {
   if (!objekt) return UNBEKANNT
+  const folded = foldGreek(objekt)
   for (const r of RULES) {
-    if (r.test.test(objekt)) return { id: r.id, label: r.label }
+    if (r.test.test(folded)) return { id: r.id, label: r.label }
   }
   return SONSTIGES
 }

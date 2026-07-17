@@ -268,6 +268,13 @@ describe('parseAreaValue — locale formats and units', () => {
   it('parses the Greek τ.μ. unit', () => {
     expect(parseAreaValue('153.80 τ.μ.')).toBe(153.8)
   })
+  it('reads a lone comma before 3 digits as decimal for hectares', () => {
+    // Cadastral comma-decimal ("2,575 ha" = 2.575 ha), not 2575 ha.
+    expect(parseAreaValue('2,575 ha')).toBe(25750)
+  })
+  it('still reads short comma decimals for hectares', () => {
+    expect(parseAreaValue('2,5 ha')).toBe(25000)
+  })
 })
 
 describe('findRooms — multilingual', () => {
@@ -288,6 +295,12 @@ describe('findRooms — multilingual', () => {
   })
   it('finds French pièces', () => {
     expect(findRooms('appartement de 4 pièces')).toBe(4)
+  })
+  it('does not read French document "pièces" as rooms', () => {
+    expect(findRooms('voir les 3 pièces jointes')).toBeNull()
+    expect(findRooms('les 2 pièces du dossier')).toBeNull()
+    expect(findRooms('avec 1 pièce jointe')).toBeNull()
+    expect(findRooms('4 pièces justificatives')).toBeNull()
   })
 })
 

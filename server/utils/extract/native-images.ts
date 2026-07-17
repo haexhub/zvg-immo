@@ -73,8 +73,11 @@ export interface DownloadNativeImagesOptions {
 /**
  * Fetch each URL, verify it's a real JPEG/PNG, write to `destDir` under a
  * content-addressable `<md5-16>.<ext>` name. Returns the filenames in the
- * order given (deduped by hash). Existing files with the same hash are
- * reused without re-downloading — safe to re-run against the same URLs.
+ * order given (deduped by hash). Re-running against the same URLs is safe
+ * for the files on disk (same hash → no rewrite), but every URL is still
+ * fetched: the hash is derived from the downloaded bytes, so it isn't known
+ * before the fetch. Callers who want to avoid re-downloads must skip the
+ * call themselves (see the enrich task's cached-photos reuse).
  */
 export async function downloadNativeImages(
   urls: readonly string[],
@@ -84,8 +87,9 @@ export async function downloadNativeImages(
   const cap = opts.maxImages ?? DEFAULT_MAX_IMAGES
   await mkdir(opts.destDir, { recursive: true })
 
-  // Existing files: <hash>.<ext>. Their basenames-without-extension ARE the
-  // hash prefixes, so a hash-hit can short-circuit the fetch entirely. Bulk
+  // Existing files: <hash>.<ext>. The hash comes from the downloaded bytes,
+  // so this set can only skip the re-write of a file we already have — the
+  // fetch itself has already happened by the time we know the hash. Bulk
   // read once per call.
   const existing = new Set<string>()
   try {
