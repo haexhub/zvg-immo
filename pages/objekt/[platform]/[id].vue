@@ -135,9 +135,12 @@ useHead(() => ({
 <template>
   <main class="h-full overflow-y-auto px-4 py-6">
     <div class="max-w-5xl mx-auto">
-    <NuxtLink to="/" class="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-4">
-      <ArrowLeft class="h-4 w-4" /> Zurück zur Übersicht
-    </NuxtLink>
+    <div class="flex items-center justify-between mb-4">
+      <NuxtLink to="/" class="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+        <ArrowLeft class="h-4 w-4" /> Zurück zur Übersicht
+      </NuxtLink>
+      <AuthStatus />
+    </div>
 
     <p v-if="pending" class="py-12 text-center text-muted-foreground">Lade …</p>
     <p v-else-if="error || !a" class="py-12 text-center text-destructive">
