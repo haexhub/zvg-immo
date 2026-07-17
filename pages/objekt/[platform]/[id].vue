@@ -241,6 +241,8 @@ useHead(() => ({
         </p>
       </section>
 
+      <CostCalculator v-if="a.country === 'de'" :verkehrswert-eur="a.verkehrswertEur" :region="a.region" />
+
       <section class="mb-8 space-y-3">
         <div class="flex items-center gap-2">
           <h2 class="text-base font-semibold">KI-Zusammenfassung</h2>
