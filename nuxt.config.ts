@@ -52,6 +52,14 @@ export default defineNuxtConfig({
     // migrations are skipped (see db.ts) rather than failing hard.
     //   NUXT_DATABASE_URL=postgres://postgres:<pw>@db:5432/postgres
     databaseUrl: '',
+    // Internal Kong URL + service-role key for server/utils/supabase.ts
+    // (getServiceClient()/getUserFromEvent()) — used by the saved-searches/
+    // watchlist API routes. Server-only, unlike public.supabaseUrl below
+    // (which the browser uses to talk to GoTrue directly).
+    //   NUXT_SUPABASE_URL=http://kong:8000
+    supabaseUrl: '',
+    //   NUXT_SUPABASE_SERVICE_ROLE_KEY=<from scripts/generate-supabase-keys.mjs>
+    supabaseServiceRoleKey: '',
     public: {
       // Free, instant self-service keys for the per-country satellite
       // imagery layers in lib/countryImagery.ts that require one (Finland,
