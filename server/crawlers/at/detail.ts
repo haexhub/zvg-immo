@@ -1,8 +1,10 @@
 import { load } from 'cheerio'
 import type { Auction, Attachment } from '~/types/auction'
+import type { PropertyType } from '~/lib/objektart'
 import { AT_BASE, UA } from './constants'
 import { parseEuroAt, parseSqmAt, stripHtml } from './text'
 import { classifyAttachment } from '~/server/utils/classify-attachment'
+import { areaBucketForPropertyType } from '~/server/utils/extract/rules'
 
 export interface DetailInfo {
   aktenzeichen: string | null
@@ -166,6 +168,19 @@ const LIVING_KATEGORIE_RE = /wohnung|haus|villa/i
 /** Kategorie(n) values that make "Objektgröße" a plot area. */
 const LAND_KATEGORIE_RE = /grundstück|grund\b|wald|acker|wiese|feld|weingarten|landwirtschaft/i
 
+/** Maps a Kategorie to a representative PropertyType for areaBucketForPropertyType
+ *  (edikte's Kategorie text is a bare AT-specific label, not covered by
+ *  objektart.ts's conservative cross-language regexes). Ambiguous values that
+ *  match both keep the "no area" behaviour objektgroesse text-only. */
+function kategoriePropertyType(kategorie: string | null): PropertyType | null {
+  if (kategorie == null) return null
+  const isLiving = LIVING_KATEGORIE_RE.test(kategorie)
+  const isLand = LAND_KATEGORIE_RE.test(kategorie)
+  if (isLiving && !isLand) return 'einfamilienhaus'
+  if (isLand && !isLiving) return 'unbebaut'
+  return null
+}
+
 export async function fetchDetail(detailUrl: string): Promise<DetailInfo> {
   return parseDetail(await fetchDetailHtml(detailUrl))
 }
@@ -203,12 +218,11 @@ export function parseDetail(html: string): DetailInfo {
   // "Objektgröße" is the building/unit size for Wohnung/Haus categories but
   // the plot size for Grundstück-type categories. Ambiguous or unknown
   // categories keep the value as labeled text in the beschreibung only.
-  const isLiving = kategorie != null && LIVING_KATEGORIE_RE.test(kategorie)
-  const isLand = kategorie != null && LAND_KATEGORIE_RE.test(kategorie)
+  const bucket = areaBucketForPropertyType(kategoriePropertyType(kategorie))
   const objektgroesseSqm = parseSqmAt(objektgroesseText)
-  const sourceLivingAreaSqm = isLiving && !isLand ? objektgroesseSqm : null
+  const sourceLivingAreaSqm = bucket === 'living' ? objektgroesseSqm : null
   const sourceLandAreaSqm =
-    parseSqmAt(grundstuecksgroesseText) ?? (isLand && !isLiving ? objektgroesseSqm : null)
+    parseSqmAt(grundstuecksgroesseText) ?? (bucket === 'land' ? objektgroesseSqm : null)
 
   const grundbuch = pairs.get('grundbuch') ?? null
   const ez = pairs.get('ez') ?? null

@@ -1,7 +1,9 @@
 import * as cheerio from 'cheerio'
 import type { Attachment, Auction } from '~/types/auction'
+import type { PropertyType } from '~/lib/objektart'
 import { AGI_BASE, UA } from './constants'
 import { allegatoKind, parseItNumber } from './text'
+import { areaBucketForPropertyType } from '~/server/utils/extract/rules'
 
 interface DetailInfo {
   attachments: Attachment[]
@@ -26,6 +28,15 @@ interface DetailInfo {
 const RESIDENTIAL_BENE_RE =
   /\b(?:appartament\w*|abitazion\w*|residenzial\w*|villa|villetta|villino|attico|mansard\w*|monolocale|bilocale|trilocale|quadrilocale|casa|casale)\b/i
 const LAND_BENE_RE = /\bterren\w*/i
+
+/** Maps a bene categoria to a representative PropertyType for
+ *  areaBucketForPropertyType (agi's Italian categoria text isn't covered by
+ *  objektart.ts's conservative cross-language regexes). */
+function categoriaPropertyType(categoria: string): PropertyType | null {
+  if (LAND_BENE_RE.test(categoria)) return 'unbebaut'
+  if (RESIDENTIAL_BENE_RE.test(categoria)) return 'eigentumswohnung'
+  return null
+}
 
 /** Fetch the detail page HTML and extract attachments, photos and bene data. */
 async function fetchDetailInfo(detailUpstream: string): Promise<DetailInfo> {
@@ -112,8 +123,9 @@ export function parseDetailHtml(html: string): DetailInfo {
       }
     })
     if (areaSqm != null) {
-      if (LAND_BENE_RE.test(categoria)) landAreaSqm = areaSqm
-      else if (RESIDENTIAL_BENE_RE.test(categoria)) livingAreaSqm = areaSqm
+      const bucket = areaBucketForPropertyType(categoriaPropertyType(categoria))
+      if (bucket === 'land') landAreaSqm = areaSqm
+      else if (bucket === 'living') livingAreaSqm = areaSqm
       else unclassifiedAreaSqm = areaSqm
     }
   }

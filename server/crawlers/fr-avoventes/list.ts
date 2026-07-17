@@ -1,6 +1,17 @@
 import { load } from 'cheerio'
 import type { Attachment, Auction } from '~/types/auction'
+import type { PropertyType } from '~/lib/objektart'
 import { AV_BASE, UA, COUNTRY } from './constants'
+import { areaBucketForPropertyType } from '~/server/utils/extract/rules'
+
+/** Maps the "Type de bien" badge to a representative PropertyType for
+ *  areaBucketForPropertyType (its French vocabulary isn't covered by
+ *  objektart.ts's conservative cross-language regexes). Defaults to a
+ *  residential type — AVOVENTES types are almost always built units, and a
+ *  non-land badge should still surface the tile as a living area. */
+function typeDeBienPropertyType(typeDeBien: string | null): PropertyType {
+  return typeDeBien != null && /terrain/i.test(typeDeBien) ? 'unbebaut' : 'einfamilienhaus'
+}
 
 const DETAIL_CONCURRENCY = 4
 const FETCH_RETRIES = 2
@@ -181,15 +192,15 @@ export function parseDetailPage(html: string): DetailInfo {
     if (label === 'pièces') rooms = value
     else if (label.includes('superficie')) superficie = value
   })
-  const isBareLand = typeDeBien != null && /terrain/i.test(typeDeBien)
+  const bucket = areaBucketForPropertyType(typeDeBienPropertyType(typeDeBien))
 
   return {
     beschreibung,
     photos,
     typeDeBien,
     rooms,
-    livingAreaSqm: isBareLand ? null : superficie,
-    landAreaSqm: isBareLand ? superficie : null,
+    livingAreaSqm: bucket === 'living' ? superficie : null,
+    landAreaSqm: bucket === 'land' ? superficie : null,
   }
 }
 

@@ -15,6 +15,24 @@ const LIVING_AREA_TYPES = new Set<PropertyType>([
 ])
 const LAND_AREA_TYPES = new Set<PropertyType>(['land-forst', 'unbebaut'])
 
+export type AreaBucket = 'living' | 'land' | null
+
+/**
+ * Which area bucket a property type belongs to. Shared by crawlers whose
+ * source exposes a free-text category (agi/at/lt/hu/fr-avoventes) instead of
+ * a labeled area — each maps its own vocabulary to a representative
+ * PropertyType (its source's category text doesn't share objektart.ts's
+ * conservative bare-word-free regexes, so classifyObjekt isn't a drop-in
+ * replacement there) and calls this to decide the bucket. Source-specific
+ * *code* mappings (e.g. si's numeric propertyKind codes) stay local.
+ */
+export function areaBucketForPropertyType(propertyType: PropertyType | null): AreaBucket {
+  if (propertyType == null) return null
+  if (LIVING_AREA_TYPES.has(propertyType)) return 'living'
+  if (LAND_AREA_TYPES.has(propertyType)) return 'land'
+  return null
+}
+
 export interface ExtractionInput {
   objekt: string | null
   beschreibung: string | null
@@ -63,8 +81,9 @@ export function extractByRules(input: ExtractionInput): RulesExtraction {
   if (livingAreaSqm == null && landAreaSqm == null && input.objekt && propertyType) {
     const bare = parseAreaValue(input.objekt)
     if (bare != null) {
-      if (LIVING_AREA_TYPES.has(propertyType)) livingAreaSqm = bare
-      else if (LAND_AREA_TYPES.has(propertyType)) landAreaSqm = bare
+      const bucket = areaBucketForPropertyType(propertyType)
+      if (bucket === 'living') livingAreaSqm = bare
+      else if (bucket === 'land') landAreaSqm = bare
     }
   }
 

@@ -1,8 +1,17 @@
 import { load } from 'cheerio'
 import type { Auction } from '~/types/auction'
+import type { PropertyType } from '~/lib/objektart'
 import { HU_BASE, UA } from './constants'
 import { decodeIso8859_2, parseMnvPrice, clean, htmlToText, jsFieldValue, jsFieldUnit } from './text'
 import { getRates, toEur } from '~/server/utils/exchange-rate'
+import { areaBucketForPropertyType } from '~/server/utils/extract/rules'
+
+/** Maps the MNV objekt text to a representative PropertyType for
+ *  areaBucketForPropertyType (its Hungarian vocabulary isn't covered by
+ *  objektart.ts's conservative cross-language regexes). */
+function objektPropertyType(objekt: string | null): PropertyType | null {
+  return objekt != null && /terület|telek|föld/i.test(objekt) ? 'unbebaut' : null
+}
 
 export interface HuDetail {
   /** "Egyéb infó:" free text (tr#description). */
@@ -102,7 +111,7 @@ export async function enrichOne(auction: Auction): Promise<void> {
   // "Terület" is the parcel area from the land register — structured land
   // area for plots; for built-up lots it may mix parcel/floor semantics, so
   // it stays description-only there.
-  if (d.areaSqm != null && /terület|telek|föld/i.test(auction.objekt ?? '')) {
+  if (d.areaSqm != null && areaBucketForPropertyType(objektPropertyType(auction.objekt)) === 'land') {
     auction.sourceLandAreaSqm = d.areaSqm
   }
 
