@@ -1,11 +1,20 @@
-import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { CrawlResult } from '~/types/auction'
+import { MULTI_PLATFORM, SCOPE_PARAM_RE } from '~/lib/auction-constants'
+import { writeJsonCache } from './json-cache'
 
 const CACHE_DIR = join(process.cwd(), '.cache_zvg', 'list')
 
+function assertCacheSegment(name: string, value: string): void {
+  if (!SCOPE_PARAM_RE.test(value)) {
+    throw new Error(`Invalid list-cache ${name}: ${value}`)
+  }
+}
+
 function cacheFile(country: string, region: string): string {
+  assertCacheSegment('country', country)
+  assertCacheSegment('region', region)
   return join(CACHE_DIR, `${country}-${region}.json`)
 }
 
@@ -25,11 +34,7 @@ export async function writeListCache(
   region: string,
   result: CrawlResult,
 ): Promise<void> {
-  await mkdir(CACHE_DIR, { recursive: true })
-  const path = cacheFile(country, region)
-  const tmp = `${path}.${randomUUID()}.tmp`
-  await writeFile(tmp, JSON.stringify(result))
-  await rename(tmp, path)
+  await writeJsonCache(cacheFile(country, region), result)
 }
 
 /**
@@ -37,6 +42,7 @@ export async function writeListCache(
  * Returns null when the cache directory doesn't exist or is empty.
  */
 export async function readMergedListCache(country?: string): Promise<CrawlResult | null> {
+  if (country) assertCacheSegment('country', country)
   let entries: string[]
   try {
     entries = await readdir(CACHE_DIR)
@@ -59,7 +65,7 @@ export async function readMergedListCache(country?: string): Promise<CrawlResult
   if (results.length === 0) return null
 
   return {
-    platform: 'multi',
+    platform: MULTI_PLATFORM,
     source: [...new Set(results.map((r) => r.source))].join(', '),
     countries: [...new Set(results.flatMap((r) => r.countries))],
     regions: [...new Set(results.flatMap((r) => r.regions))],

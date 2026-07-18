@@ -2,6 +2,7 @@
 import { ALL_KATEGORIEN, classifyObjekt } from '~/lib/objektart'
 import type { AuctionDetail } from '~/server/api/auction/[platform]/[id].get'
 import type { Attachment } from '~/types/auction'
+import { ATTACHMENT_KIND_ORDER, attachmentKindLabel } from '~/lib/auction-constants'
 import { ArrowLeft, Sparkles } from 'lucide-vue-next'
 
 const route = useRoute()
@@ -111,15 +112,6 @@ watch(photoUrls, () => {
   activePhotoIndex.value = 0
 })
 
-const KIND_LABEL: Record<string, string> = {
-  bekanntmachung: 'Bekanntmachung',
-  foto: 'Fotos',
-  exposee: 'Exposé',
-  gutachten: 'Gutachten',
-  sonstiges: 'Anhang',
-}
-const KIND_ORDER = ['bekanntmachung', 'gutachten', 'exposee', 'foto', 'sonstiges']
-
 const groupedAttachments = computed<Array<{ kind: string; label: string; items: Attachment[] }>>(() => {
   if (!a.value) return []
   const byKind = new Map<string, Attachment[]>()
@@ -128,9 +120,9 @@ const groupedAttachments = computed<Array<{ kind: string; label: string; items: 
     list.push(att)
     byKind.set(att.kind, list)
   }
-  return KIND_ORDER
+  return ATTACHMENT_KIND_ORDER
     .filter((k) => byKind.has(k))
-    .map((k) => ({ kind: k, label: KIND_LABEL[k] ?? k, items: byKind.get(k)! }))
+    .map((k) => ({ kind: k, label: attachmentKindLabel(k, k), items: byKind.get(k)! }))
 })
 
 useHead(() => ({
@@ -143,9 +135,12 @@ useHead(() => ({
 <template>
   <main class="h-full overflow-y-auto px-4 py-6">
     <div class="max-w-5xl mx-auto">
-    <NuxtLink to="/" class="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-4">
-      <ArrowLeft class="h-4 w-4" /> Zurück zur Übersicht
-    </NuxtLink>
+    <div class="flex items-center justify-between mb-4">
+      <NuxtLink to="/" class="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+        <ArrowLeft class="h-4 w-4" /> Zurück zur Übersicht
+      </NuxtLink>
+      <AuthStatus />
+    </div>
 
     <p v-if="pending" class="py-12 text-center text-muted-foreground">Lade …</p>
     <p v-else-if="error || !a" class="py-12 text-center text-destructive">
@@ -242,6 +237,8 @@ useHead(() => ({
       </section>
 
       <CostCalculator v-if="a.country === 'de'" :verkehrswert-eur="a.verkehrswertEur" :region="a.region" />
+
+      <LawyerContact :platform="a.platform" :zvg-id="a.zvgId" :country="a.country" />
 
       <section class="mb-8 space-y-3">
         <div class="flex items-center gap-2">

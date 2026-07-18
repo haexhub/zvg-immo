@@ -23,8 +23,28 @@ services:
       NUXT_PROXY_SETUP_TOKEN: ${PROXY_SETUP_TOKEN}
       NUXT_SETTINGS_PASSWORD: ${SETTINGS_PASSWORD}
       NUXT_SETTINGS_SESSION_SECRET: ${SETTINGS_SESSION_SECRET}
+      # Self-hosted Supabase stack (see supabase/ + the `db`/`auth`/`rest`/
+      # `kong`/`meta`/`studio` services below). NUXT_SUPABASE_URL/
+      # NUXT_SUPABASE_SERVICE_ROLE_KEY are consumed by
+      # server/utils/supabase.ts (Phase 2: saved-searches/watchlist routes).
+      NUXT_SUPABASE_URL: http://kong:8000
+      NUXT_SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      NUXT_PUBLIC_SUPABASE_URL: ${SUPABASE_PUBLIC_URL}
+      NUXT_PUBLIC_SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
+      NUXT_DATABASE_URL: postgres://postgres:${SUPABASE_DB_PASSWORD}@db:5432/postgres
+      # App-level mailer for alert emails (Phase 3: server/utils/mailer.ts).
+      # Empty → sendMail() logs instead of sending.
+      NUXT_SMTP_URL: ${SMTP_URL:-}
     depends_on:
-      - haex-claude-proxy
+      haex-claude-proxy:
+        condition: service_started
+      db:
+        condition: service_healthy
+      # auth.users must exist before later phases' FK-referencing tables can
+      # be migrated by db-bootstrap — depend on auth's healthcheck now so a
+      # fast `app` boot can never race GoTrue's own migrations.
+      auth:
+        condition: service_healthy
 
   # Per-project proxy so each project's Claude credentials stay isolated.
   # The proxy spawns a `claude` subprocess per LLM request against the
@@ -42,6 +62,201 @@ services:
       # NUXT_PROXY_SETUP_TOKEN above.
       PROXY_SETUP_TOKEN: ${PROXY_SETUP_TOKEN}
 
+  ###
+  ### Self-hosted Supabase — auth-only subset (Phase 1). Deliberately just
+  ### 6 services: db, auth (GoTrue), rest (PostgREST), kong (gateway), meta +
+  ### studio (admin UI). No realtime/storage/imgproxy/functions/analytics —
+  ### unneeded ops overhead for the current feature set. Image tags pinned
+  ### to a verified-compatible set; upgrade all six together, not piecemeal.
+  ###
+
+  db:
+    image: supabase/postgres:17.6.1.136
+    container_name: zvg-immo-supabase-db
+    restart: unless-stopped
+    volumes:
+      - supabase-db-data:/var/lib/postgresql/data
+      - ./supabase/db/init/01-roles.sql:/docker-entrypoint-initdb.d/init-scripts/01-roles.sql:ro
+      - ./supabase/db/init/02-jwt.sql:/docker-entrypoint-initdb.d/init-scripts/02-jwt.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    environment:
+      POSTGRES_HOST: /var/run/postgresql
+      POSTGRES_PORT: 5432
+      PGPORT: 5432
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: ${SUPABASE_DB_PASSWORD}
+      JWT_SECRET: ${SUPABASE_JWT_SECRET}
+      JWT_EXP: 3600
+
+  auth:
+    image: supabase/gotrue:v2.189.0
+    container_name: zvg-immo-supabase-auth
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9999/health"]
+      timeout: 5s
+      interval: 5s
+      retries: 3
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: ${SUPABASE_PUBLIC_URL}/auth/v1
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${SUPABASE_DB_PASSWORD}@db:5432/postgres
+      GOTRUE_SITE_URL: ${SUPABASE_PUBLIC_URL}
+      GOTRUE_URI_ALLOW_LIST: "*"
+      GOTRUE_DISABLE_SIGNUP: "false"
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_EXP: 3600
+      GOTRUE_JWT_SECRET: ${SUPABASE_JWT_SECRET}
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
+      # Autoconfirm skips the confirmation-mail step entirely so signup works
+      # end-to-end without it — stays "true" even now that SMTP is wired
+      # (Phase 3): no real anti-abuse gain for a solo-operator app, and it
+      # spares a friction step at signup.
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      # GoTrue's own SMTP (separate from the app mailer's NUXT_SMTP_URL
+      # above) — for GoTrue's own transactional mail, e.g. a future
+      # "Passwort vergessen" flow. Not exercised while
+      # GOTRUE_MAILER_AUTOCONFIRM stays "true"; wired now because Phase 3
+      # makes SMTP a real dependency either way.
+      GOTRUE_SMTP_HOST: ${GOTRUE_SMTP_HOST:-}
+      GOTRUE_SMTP_PORT: ${GOTRUE_SMTP_PORT:-587}
+      GOTRUE_SMTP_USER: ${GOTRUE_SMTP_USER:-}
+      GOTRUE_SMTP_PASS: ${GOTRUE_SMTP_PASS:-}
+      GOTRUE_SMTP_SENDER_NAME: ${GOTRUE_SMTP_SENDER_NAME:-zvg-immo}
+      GOTRUE_SMTP_ADMIN_EMAIL: ${GOTRUE_SMTP_ADMIN_EMAIL:-}
+
+  rest:
+    image: postgrest/postgrest:v14.12
+    container_name: zvg-immo-supabase-rest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${SUPABASE_DB_PASSWORD}@db:5432/postgres
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${SUPABASE_JWT_SECRET}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+
+  kong:
+    image: kong/kong:3.9.1
+    container_name: zvg-immo-supabase-kong
+    restart: unless-stopped
+    # TODO(traefik): the plan calls for Docker-label Traefik routing here
+    # (public HTTPS hostname for Kong, since the browser talks to GoTrue
+    # directly) "the same convention as other services on haex.cloud" — but
+    # the *existing* app/haex-claude-proxy services in this file carry zero
+    # Traefik labels despite reportedly being live on that host, and prod
+    # Traefik's actual provider config isn't reachable from a dev session to
+    # verify against. Add `traefik.http.routers.*` labels (proxy port 8000)
+    # once that convention is confirmed — guessing risks misrouting prod
+    # traffic.
+    ports:
+      - "8000:8000"
+    depends_on:
+      auth:
+        condition: service_healthy
+      rest:
+        condition: service_started
+    volumes:
+      - ./supabase/kong/kong.yml:/home/kong/temp.yml:ro
+      - ./supabase/kong/kong-entrypoint.sh:/home/kong/kong-entrypoint.sh:ro
+    environment:
+      KONG_DATABASE: "off"
+      # /home/kong isn't writable by the image's non-root `kong` user (uid
+      # 1001) — only /usr/local/kong is. The entrypoint renders the
+      # substituted config there, not into /home/kong alongside the
+      # read-only mounted template.
+      KONG_DECLARATIVE_CONFIG: /usr/local/kong/kong.yml
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_PLUGINS: cors,key-auth,acl
+      KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
+      KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+    entrypoint: ["/bin/sh", "/home/kong/kong-entrypoint.sh"]
+
+  meta:
+    image: supabase/postgres-meta:v0.96.6
+    container_name: zvg-immo-supabase-meta
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PG_META_PORT: 8080
+      PG_META_DB_HOST: db
+      PG_META_DB_PORT: 5432
+      PG_META_DB_NAME: postgres
+      PG_META_DB_USER: postgres
+      PG_META_DB_PASSWORD: ${SUPABASE_DB_PASSWORD}
+
+  studio:
+    image: supabase/studio:2026.07.07-sha-a6a04f2
+    container_name: zvg-immo-supabase-studio
+    restart: unless-stopped
+    # Admin UI — reachable only via SSH tunnel (ssh -L 8082:localhost:8082
+    # <host>), never exposed on the public interface.
+    ports:
+      - "127.0.0.1:8082:3000"
+    depends_on:
+      meta:
+        condition: service_started
+      kong:
+        condition: service_started
+    environment:
+      HOSTNAME: "0.0.0.0"
+      STUDIO_PG_META_URL: http://meta:8080
+      DEFAULT_ORGANIZATION_NAME: zvg-immo
+      DEFAULT_PROJECT_NAME: zvg-immo
+      SUPABASE_URL: http://kong:8000
+      SUPABASE_PUBLIC_URL: ${SUPABASE_PUBLIC_URL}
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
+      SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      AUTH_JWT_SECRET: ${SUPABASE_JWT_SECRET}
+
+  ###
+  ### Grafana (Phase 3) — dashboards over auction_observations. Points at the
+  ### `db` service above (not a separate Postgres/Timescale container —
+  ### current row volumes don't justify one). Datasource is auto-provisioned,
+  ### see grafana/provisioning/datasources/postgres.yml.
+  ###
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: zvg-immo-grafana
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      # Read by the provisioned datasource config's ${SUPABASE_DB_PASSWORD}
+      # expansion — Grafana expands env vars from its own process
+      # environment, docker-compose's ${...} substitution only applies to
+      # this file itself, not to the mounted provisioning YAML.
+      SUPABASE_DB_PASSWORD: ${SUPABASE_DB_PASSWORD}
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   geocode-cache:
   claude-creds:
+  supabase-db-data:
+  grafana-data:

@@ -1,5 +1,26 @@
 import type { Auction, CrawlResult } from '~/types/auction'
 
+interface CrawlResultInput {
+  platform: string
+  source: string
+  country: string
+  regions: readonly RegionInfo[]
+  totalReported: number | null
+  auctions: Auction[]
+}
+
+export function createCrawlResult(input: CrawlResultInput): CrawlResult {
+  return {
+    platform: input.platform,
+    source: input.source,
+    countries: [input.country],
+    regions: input.regions.map((r) => r.name),
+    fetchedAt: new Date().toISOString(),
+    totalReported: input.totalReported,
+    auctions: input.auctions,
+  }
+}
+
 export interface RegionInfo {
   /** Internal region code as used by the platform (e.g. 'sn' for Sachsen).
    *  Use 'all' when the platform does not expose a sub-region filter. */

@@ -47,6 +47,27 @@ export default defineNuxtConfig({
     // have its rate-limit buckets rotated by a spoofed header.
     //   NUXT_TRUST_FORWARDED_FOR=1
     trustForwardedFor: '',
+    // Direct `pg` connection to the self-hosted Supabase `db` service, used
+    // by server/utils/db.ts to run server/db/schema.sql on boot. Empty →
+    // migrations are skipped (see db.ts) rather than failing hard.
+    //   NUXT_DATABASE_URL=postgres://postgres:<pw>@db:5432/postgres
+    databaseUrl: '',
+    // Internal Kong URL + service-role key for server/utils/supabase.ts
+    // (getServiceClient()/getUserFromEvent()) — used by the saved-searches/
+    // watchlist API routes. Server-only, unlike public.supabaseUrl below
+    // (which the browser uses to talk to GoTrue directly).
+    //   NUXT_SUPABASE_URL=http://kong:8000
+    supabaseUrl: '',
+    //   NUXT_SUPABASE_SERVICE_ROLE_KEY=<from scripts/generate-supabase-keys.mjs>
+    supabaseServiceRoleKey: '',
+    // App-level mailer for alert emails (server/utils/mailer.ts, nodemailer
+    // over this connection string), used by server/utils/alert-matching.ts.
+    // Distinct from GoTrue's own separate SMTP config (docker-compose.yml's
+    // `auth` service, GOTRUE_SMTP_*) for GoTrue's own transactional mail.
+    // Empty → sendMail() logs instead of sending (dev fallback, same
+    // graceful-degrade pattern as extractLlm.baseUrl).
+    //   NUXT_SMTP_URL=smtps://user:pass@smtp.example.com:465
+    smtpUrl: '',
     public: {
       // Free, instant self-service keys for the per-country satellite
       // imagery layers in lib/countryImagery.ts that require one (Finland,
@@ -55,6 +76,13 @@ export default defineNuxtConfig({
       mmlApiKey: '',
       //   NUXT_PUBLIC_DATAFORDELER_API_KEY=<from datafordeler.dk>
       datafordelerApiKey: '',
+      // Browser-side Supabase Auth (GoTrue via Kong). Empty → useAuth()'s
+      // client is never created and the login/signup pages show a
+      // "not configured" state instead of throwing.
+      //   NUXT_PUBLIC_SUPABASE_URL=http://localhost:8000
+      supabaseUrl: '',
+      //   NUXT_PUBLIC_SUPABASE_ANON_KEY=<from scripts/generate-supabase-keys.mjs>
+      supabaseAnonKey: '',
     },
   },
   nitro: {

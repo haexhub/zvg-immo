@@ -9,10 +9,9 @@
 // published. A later run may still re-process entries whose `confidence` is
 // 'low' to upgrade them with the LLM (see the enrich task).
 
-import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import type { Auction, AuctionExtraction } from '~/types/auction'
+import { readJsonCache, writeJsonCache } from './json-cache'
 import { cacheKey } from './verkehrswert-cache'
 
 const CACHE_PATH = join(process.cwd(), '.cache_zvg', 'extraction.json')
@@ -40,33 +39,9 @@ export function applyExtractionToAuctions(auctions: Auction[], cache: Extraction
 }
 
 export async function readExtractionCache(): Promise<ExtractionCache> {
-  let buf: string
-  try {
-    buf = await readFile(CACHE_PATH, 'utf8')
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {}
-    console.warn(
-      `[extraction-cache] failed to read ${CACHE_PATH}: ${(err as Error).message}`,
-    )
-    return {}
-  }
-  try {
-    const parsed = JSON.parse(buf) as unknown
-    if (parsed && typeof parsed === 'object') return parsed as ExtractionCache
-  } catch (err) {
-    console.warn(
-      `[extraction-cache] corrupt JSON at ${CACHE_PATH}: ${(err as Error).message}`,
-    )
-  }
-  return {}
+  return readJsonCache<ExtractionCache>(CACHE_PATH, () => ({}), 'extraction-cache')
 }
 
 export async function writeExtractionCache(cache: ExtractionCache): Promise<void> {
-  await mkdir(dirname(CACHE_PATH), { recursive: true })
-  // Atomic write: unique tmp path (concurrent workers in the enrich task flush
-  // in parallel — a shared `${CACHE_PATH}.tmp` would race, so one writer's
-  // rename could ENOENT another's mid-write file).
-  const tmp = `${CACHE_PATH}.${randomUUID()}.tmp`
-  await writeFile(tmp, JSON.stringify(cache))
-  await rename(tmp, CACHE_PATH)
+  await writeJsonCache(CACHE_PATH, cache)
 }

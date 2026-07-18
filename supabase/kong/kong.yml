@@ -1,0 +1,102 @@
+_format_version: '2.1'
+_transform: true
+
+###
+### Consumers — one per API key. $SUPABASE_ANON_KEY / $SUPABASE_SERVICE_ROLE_KEY
+### are placeholders substituted at container start by kong-entrypoint.sh —
+### Kong's declarative config loader does not expand env vars itself.
+###
+consumers:
+  - username: anon
+    keyauth_credentials:
+      - key: $SUPABASE_ANON_KEY
+  - username: service_role
+    keyauth_credentials:
+      - key: $SUPABASE_SERVICE_ROLE_KEY
+
+acls:
+  - consumer: anon
+    group: anon
+  - consumer: service_role
+    group: admin
+
+###
+### Routes — only what Phase 1 needs: GoTrue (auth) + PostgREST (rest).
+### No storage/realtime/functions/dashboard routes — those services aren't
+### part of this stack (see docker-compose.yml). Studio/meta are reached
+### directly over the compose network, not proxied through Kong.
+###
+services:
+  # Open GoTrue routes — no apikey required (these carry their own
+  # credentials, e.g. the confirmation token in /verify).
+  - name: auth-v1-open
+    url: http://auth:9999/verify
+    routes:
+      - name: auth-v1-open
+        strip_path: true
+        paths:
+          - /auth/v1/verify
+    plugins:
+      - name: cors
+  - name: auth-v1-open-callback
+    url: http://auth:9999/callback
+    routes:
+      - name: auth-v1-open-callback
+        strip_path: true
+        paths:
+          - /auth/v1/callback
+    plugins:
+      - name: cors
+  - name: auth-v1-open-authorize
+    url: http://auth:9999/authorize
+    routes:
+      - name: auth-v1-open-authorize
+        strip_path: true
+        paths:
+          - /auth/v1/authorize
+    plugins:
+      - name: cors
+
+  # Secure GoTrue routes (signup/token/logout/user/...) — require a valid
+  # apikey (anon or service_role).
+  - name: auth-v1
+    url: http://auth:9999/
+    routes:
+      - name: auth-v1-all
+        strip_path: true
+        paths:
+          - /auth/v1/
+    plugins:
+      - name: cors
+      - name: key-auth
+        config:
+          hide_credentials: false
+      - name: acl
+        config:
+          hide_groups_header: true
+          allow:
+            - admin
+            - anon
+
+  # PostgREST — not used as a client-side data path in Phase 1 (see plan:
+  # the Nuxt server is the trust boundary), routed anyway so the standard
+  # apikey-gated /rest/v1 surface exists for later phases and for Studio's
+  # table/SQL editor via meta.
+  - name: rest-v1
+    url: http://rest:3000/
+    routes:
+      - name: rest-v1-all
+        strip_path: true
+        paths:
+          - /rest/v1/
+    plugins:
+      - name: cors
+      - name: key-auth
+        config:
+          hide_credentials: false
+      - name: acl
+        config:
+          hide_groups_header: true
+          allow:
+            - admin
+            - anon

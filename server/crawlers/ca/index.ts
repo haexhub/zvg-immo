@@ -1,19 +1,18 @@
 import type { Auction, CrawlResult } from '~/types/auction'
-import type { CrawlOptions, PlatformCrawler } from '../types'
-import { PLATFORM_ID, CA_BASE, COUNTRY, CA_REGIONS, REGION_NAME } from './constants'
+import { createCrawlResult, type CrawlOptions, type PlatformCrawler } from '../types'
+import { PLATFORM_ID, CA_BASE, COUNTRY, CA_REGIONS } from './constants'
 import { fetchAllListings, htmlFetch, parsePropertyPage } from './list'
 
 async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
   const { auctions, total } = await fetchAllListings(PLATFORM_ID)
-  return {
+  return createCrawlResult({
     platform: PLATFORM_ID,
     source: CA_BASE,
-    countries: [COUNTRY],
-    regions: [REGION_NAME],
-    fetchedAt: new Date().toISOString(),
+    country: COUNTRY,
+    regions: CA_REGIONS,
     totalReported: total,
     auctions,
-  }
+  })
 }
 
 async function enrichOne(auction: Auction): Promise<void> {
