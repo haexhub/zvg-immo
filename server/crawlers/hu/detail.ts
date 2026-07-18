@@ -3,7 +3,6 @@ import type { Auction } from '~/types/auction'
 import type { PropertyType } from '~/lib/property-type'
 import { HU_BASE, UA } from './constants'
 import { decodeIso8859_2, parseMnvPrice, clean, htmlToText, jsFieldValue, jsFieldUnit } from './text'
-import { getRates, toEur } from '~/server/utils/exchange-rate'
 import { areaBucketForPropertyType } from '~/server/utils/extract/rules'
 
 /** Maps the MNV title text to a representative PropertyType for
@@ -100,8 +99,8 @@ export async function enrichOne(auction: Auction): Promise<void> {
   // publishes a real valuation ("Becsérték"), prefer it as marketValue and
   // keep the starting price as a labelled description line.
   if (d.becsertekHuf != null) {
-    const rates = await getRates()
-    auction.marketValueEur = toEur(d.becsertekHuf, 'HUF', rates)
+    auction.marketValue = d.becsertekHuf
+    auction.currency = 'HUF'
     auction.marketValueText = `${d.becsertekHuf.toLocaleString('de-DE', { maximumFractionDigits: 0 })} Ft`
     if (d.kikialtasiRaw) lines.push(`Kikiáltási ár (Startpreis): ${d.kikialtasiRaw}`)
   }

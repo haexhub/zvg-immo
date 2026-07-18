@@ -25,6 +25,11 @@ export interface PublicAuction {
   title: string | null
   address: string | null
   marketValueEur: number | null
+  /** Original value in `currency` (source of truth for non-EUR platforms);
+   *  null when the platform doesn't expose a native value. */
+  marketValue: number | null
+  /** ISO 4217 code of `marketValue`, or null for EUR-native platforms/unknown values. */
+  currency: string | null
   /** ISO 8601 auction date/time, or null if unknown. */
   auctionDate: string | null
   /** True if the auction has been withdrawn/cancelled (aufgehoben). */
@@ -52,6 +57,8 @@ export function toPublicAuction(a: Auction): PublicAuction {
     title: a.title,
     address: a.address,
     marketValueEur: a.marketValueEur,
+    marketValue: a.marketValue ?? null,
+    currency: a.currency ?? null,
     auctionDate: a.auctionDateIso,
     withdrawn: a.cancelled,
     propertyType: a.extraction?.propertyType ?? null,
@@ -79,6 +86,11 @@ export interface PublicObservation {
   rooms: number | null
   units: number | null
   marketValueEur: number | null
+  /** Original value in `currency` as captured at the time; null when the
+   *  platform didn't expose a native value. */
+  marketValue: number | null
+  /** ISO 4217 code of `marketValue`, or null for EUR-native platforms/unknown values. */
+  currency: string | null
   auctionDate: string | null
   withdrawn: boolean
   /** ISO 8601 timestamp this row was captured at (one row per auction per
@@ -106,6 +118,8 @@ export function toPublicObservation(row: Record<string, unknown>): PublicObserva
     rooms: num(row.rooms),
     units: num(row.units),
     marketValueEur: num(row.market_value_eur),
+    marketValue: num(row.market_value),
+    currency: (row.currency as string | null) ?? null,
     auctionDate: iso(row.auction_date_iso),
     withdrawn: row.cancelled as boolean,
     capturedAt: iso(row.captured_at) as string,

@@ -42,6 +42,8 @@ describe('toPublicAuction', () => {
       title: 'Einfamilienhaus',
       address: 'Musterstraße 1',
       marketValueEur: 250000,
+      marketValue: null,
+      currency: null,
       auctionDate: '2026-08-01T09:00:00.000Z',
       withdrawn: false,
       propertyType: null,
@@ -80,6 +82,12 @@ describe('toPublicAuction', () => {
     const result = toPublicAuction(auction({ platform: 'a b', externalId: 'c/d' }))
     expect(result.appUrl).toBe('/objekt/a%20b/c%2Fd')
   })
+
+  it('carries marketValue/currency through when the crawler set them', () => {
+    const result = toPublicAuction(auction({ marketValue: 6_500_000, currency: 'CZK' }))
+    expect(result.marketValue).toBe(6_500_000)
+    expect(result.currency).toBe('CZK')
+  })
 })
 
 describe('toPublicObservation', () => {
@@ -98,6 +106,8 @@ describe('toPublicObservation', () => {
       rooms: '4',
       units: '1',
       market_value_eur: '250000',
+      market_value: '6500000',
+      currency: 'CZK',
       auction_date_iso: '2026-08-01T09:00:00.000Z',
       cancelled: false,
       captured_at: '2026-07-17T00:00:00.000Z',
@@ -116,6 +126,8 @@ describe('toPublicObservation', () => {
       rooms: 4,
       units: 1,
       marketValueEur: 250000,
+      marketValue: 6500000,
+      currency: 'CZK',
       auctionDate: '2026-08-01T09:00:00.000Z',
       withdrawn: false,
       capturedAt: '2026-07-17T00:00:00.000Z',
@@ -137,6 +149,8 @@ describe('toPublicObservation', () => {
       rooms: null,
       units: null,
       market_value_eur: null,
+      market_value: null,
+      currency: null,
       auction_date_iso: null,
       cancelled: true,
       captured_at: '2026-07-17T00:00:00.000Z',
@@ -149,6 +163,8 @@ describe('toPublicObservation', () => {
     expect(result.rooms).toBeNull()
     expect(result.units).toBeNull()
     expect(result.marketValueEur).toBeNull()
+    expect(result.marketValue).toBeNull()
+    expect(result.currency).toBeNull()
     expect(result.auctionDate).toBeNull()
     expect(result.withdrawn).toBe(true)
   })

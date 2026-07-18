@@ -48,9 +48,20 @@ describe('auctionToObservationRow', () => {
       rooms: null,
       units: null,
       market_value_eur: 250000,
+      market_value: null,
+      currency: null,
       auction_date_iso: '2026-08-01T09:00:00.000Z',
       cancelled: false,
     })
+  })
+
+  it('carries marketValue/currency through when the crawler set them', () => {
+    const row = auctionToObservationRow(
+      auction({ marketValue: 6_500_000, currency: 'CZK' }),
+      '2026-07-17T00:00:00.000Z',
+    )
+    expect(row.market_value).toBe(6_500_000)
+    expect(row.currency).toBe('CZK')
   })
 
   it('pulls property type + sizes from extraction when present', () => {

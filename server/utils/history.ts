@@ -23,6 +23,8 @@ const COLUMNS = [
   'rooms',
   'units',
   'market_value_eur',
+  'market_value',
+  'currency',
   'auction_date_iso',
   'cancelled',
 ] as const
@@ -42,6 +44,8 @@ export type ObservationRow = {
   rooms: number | null
   units: number | null
   market_value_eur: number | null
+  market_value: number | null
+  currency: string | null
   auction_date_iso: string | null
   cancelled: boolean
 }
@@ -62,6 +66,8 @@ export function auctionToObservationRow(a: Auction, capturedAt: string): Observa
     rooms: a.extraction?.rooms ?? null,
     units: a.extraction?.units ?? null,
     market_value_eur: a.marketValueEur,
+    market_value: a.marketValue ?? null,
+    currency: a.currency ?? null,
     auction_date_iso: a.auctionDateIso,
     cancelled: a.cancelled,
   }

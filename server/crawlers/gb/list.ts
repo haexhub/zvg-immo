@@ -1,6 +1,5 @@
 import { load } from 'cheerio'
 import type { Auction } from '~/types/auction'
-import { getRates, toEur } from '~/server/utils/exchange-rate'
 import { GB_BASE, GB_LIST_REGIONS, UA, COUNTRY } from './constants'
 
 function clean(text: string): string {
@@ -128,10 +127,9 @@ async function discoverListItems(): Promise<Map<string, ListItem>> {
   return byHref
 }
 
-function mapItem(item: ListItem, platformId: string, rates: Record<string, number>): Auction {
+function mapItem(item: ListItem, platformId: string): Auction {
   const externalId = idFromHref(item.href)
   const detailUrl = absoluteUrl(item.href)
-  const marketValueEur = item.priceGbp != null ? toEur(item.priceGbp, 'GBP', rates) : null
 
   return {
     platform: platformId,
@@ -148,7 +146,9 @@ function mapItem(item: ListItem, platformId: string, rates: Record<string, numbe
     authority: item.branchName,
     title: item.title,
     address: item.address,
-    marketValueEur,
+    marketValueEur: null,
+    marketValue: item.priceGbp,
+    currency: item.priceGbp != null ? 'GBP' : null,
     marketValueText: item.priceText,
     // Not shown on the list card at all (only on the detail page) — filled
     // in lazily by enrichOne (detail.ts) instead of eagerly fetching every
@@ -172,7 +172,7 @@ function mapItem(item: ListItem, platformId: string, rates: Record<string, numbe
 export async function fetchAllListings(
   platformId: string,
 ): Promise<{ auctions: Auction[]; total: number | null }> {
-  const [byHref, rates] = await Promise.all([discoverListItems(), getRates()])
-  const auctions = [...byHref.values()].map((item) => mapItem(item, platformId, rates))
+  const byHref = await discoverListItems()
+  const auctions = [...byHref.values()].map((item) => mapItem(item, platformId))
   return { auctions, total: auctions.length }
 }

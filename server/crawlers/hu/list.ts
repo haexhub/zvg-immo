@@ -2,7 +2,6 @@ import { load } from 'cheerio'
 import type { Auction } from '~/types/auction'
 import { HU_BASE, LIST_PATH, COUNTRY, UA } from './constants'
 import { decodeIso8859_2, parseMnvDate, parseMnvPrice, clean } from './text'
-import { getRates, toEur } from '~/server/utils/exchange-rate'
 
 /**
  * Column layout of the MNV property auction table (0-indexed):
@@ -27,7 +26,7 @@ interface PageResult {
   totalReported: number | null
 }
 
-function parsePage(html: string, platformId: string, rates: Record<string, number>): PageResult {
+function parsePage(html: string, platformId: string): PageResult {
   const $ = load(html)
   const auctions: Auction[] = []
 
@@ -66,7 +65,9 @@ function parsePage(html: string, platformId: string, rates: Record<string, numbe
       authority: '',
       title,
       address: addressRaw ? `${addressRaw}, Ungarn` : null,
-      marketValueEur: huf != null ? toEur(huf, 'HUF', rates) : null,
+      marketValueEur: null,
+      marketValue: huf,
+      currency: huf != null ? 'HUF' : null,
       marketValueText: huf != null ? `${huf.toLocaleString('de-DE', { maximumFractionDigits: 0 })} Ft` : null,
       auctionDateIso: parseMnvDate(auctionDateRaw),
       auctionDateText: auctionDateRaw || null,
@@ -100,7 +101,6 @@ function parsePage(html: string, platformId: string, rates: Record<string, numbe
 }
 
 export async function fetchAllListings(platformId: string): Promise<{ auctions: Auction[]; total: number | null }> {
-  const rates = await getRates()
   const allAuctions: Auction[] = []
   let totalReported: number | null = null
 
@@ -141,7 +141,7 @@ export async function fetchAllListings(platformId: string): Promise<{ auctions: 
     // MNV serves ISO-8859-2 — decode explicitly to preserve Hungarian characters
     const html = decodeIso8859_2(await res.arrayBuffer())
 
-    const result = parsePage(html, platformId, rates)
+    const result = parsePage(html, platformId)
     allAuctions.push(...result.auctions)
     if (result.totalReported != null) totalReported = result.totalReported
     nextUrl = result.nextPagePath ? `${HU_BASE}${result.nextPagePath}` : null

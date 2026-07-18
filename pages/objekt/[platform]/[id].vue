@@ -197,6 +197,12 @@ useHead(() => ({
           <div>
             <dt class="text-xs uppercase tracking-wide text-muted-foreground">Verkehrswert</dt>
             <dd class="text-lg font-semibold tabular-nums">{{ formatEur(a.marketValueEur) }}</dd>
+            <dd
+              v-if="a.currency && a.currency !== 'EUR' && a.marketValueText"
+              class="text-xs text-muted-foreground"
+            >
+              Original: {{ a.marketValueText }}
+            </dd>
           </div>
           <div>
             <dt class="text-xs uppercase tracking-wide text-muted-foreground">Termin</dt>

@@ -26,6 +26,7 @@ import { join } from 'node:path'
 import type { Auction, AuctionExtraction } from '~/types/auction'
 import { crawlAll, platforms } from '../crawlers/registry'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
+import { deriveMarketValueEur, getRates } from '../utils/exchange-rate'
 import { extractByRules } from '../utils/extract/rules'
 import { extractByLlm, type LlmConfig } from '../utils/extract/llm'
 import { downloadNativeImages } from '../utils/extract/native-images'
@@ -89,6 +90,7 @@ async function runEnrich() {
     const previousSnapshot = await readAuctionSnapshot()
     const byPlatform = new Map(platforms.map((p) => [p.id, p]))
     const llmConfig = readLlmConfig()
+    const rates = await getRates()
 
     // Two independent reasons to enrich: no extraction yet, OR the previous
     // snapshot never recorded a detail fetch (`detailFetchedAt` absent) —
@@ -147,6 +149,7 @@ async function runEnrich() {
         if (crawler?.enrichOne) {
           try {
             await crawler.enrichOne(a)
+            deriveMarketValueEur(a, rates)
             detailOk = true
             // Any enrichOne-populated field counts — some platforms yield only
             // structured values or a photo gallery, no description/attachments.

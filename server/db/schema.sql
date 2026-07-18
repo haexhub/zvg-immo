@@ -57,6 +57,10 @@ CREATE TABLE IF NOT EXISTS auction_observations (
   rooms             numeric,
   units             integer,
   market_value_eur  numeric,
+  -- WP-2: native value + ISO-4217 currency (source of truth); market_value_eur
+  -- is derived from these (deriveMarketValueEur, server/utils/exchange-rate.ts).
+  market_value      numeric,
+  currency          text,
   auction_date_iso  timestamptz,
   cancelled         boolean NOT NULL
 );
@@ -236,3 +240,17 @@ SET filters = (filters - 'court' - 'kat' - 'aufgehoben')
        'cancelled', filters->'aufgehoben'
      ))
 WHERE filters ?| array['court', 'kat', 'aufgehoben'];
+
+-- WP-2: Wert-Modell market_value+currency (Originalwert/-währung, Source of
+-- Truth); market_value_eur bleibt, wird aber ab jetzt aus beiden abgeleitet
+-- (deriveMarketValueEur, server/utils/exchange-rate.ts) statt direkt befüllt.
+-- ADD COLUMN IF NOT EXISTS ist idempotent von Haus aus, kein DO-Block nötig.
+ALTER TABLE auction_observations ADD COLUMN IF NOT EXISTS market_value numeric;
+ALTER TABLE auction_observations ADD COLUMN IF NOT EXISTS currency text;
+
+-- Bestehende Historie wurde ausschließlich in EUR erfasst — der Wert *war*
+-- schon EUR, also verlustfrei genug, das als currency='EUR' zu annehmen.
+-- Idempotent: die WHERE-Klausel greift nur, solange currency noch nicht gesetzt ist.
+UPDATE auction_observations
+SET market_value = market_value_eur, currency = 'EUR'
+WHERE market_value_eur IS NOT NULL AND currency IS NULL;

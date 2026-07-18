@@ -1,6 +1,5 @@
 import type { Attachment, Auction } from '~/types/auction'
 import { classifyAttachment } from '~/server/utils/classify-attachment'
-import { getRates, toEur } from '~/server/utils/exchange-rate'
 import { AJAX_URL, DK_BASE, UA, COUNTRY } from './constants'
 
 const DETAIL_CONCURRENCY = 4
@@ -154,18 +153,12 @@ function extractId(propertyLink: string): string {
   return propertyLink.match(/\/tvangsauktion\/(\d+)\//)?.[1] ?? propertyLink
 }
 
-function mapItem(
-  item: ListItem,
-  detail: DetailInfo,
-  platformId: string,
-  rates: Record<string, number>,
-): Auction {
+function mapItem(item: ListItem, detail: DetailInfo, platformId: string): Auction {
   const id = extractId(item.property_link)
   const content = item.content ?? {}
   const { iso: auctionDateIso, label: auctionDateText } = parseAuctionDate(content.start_date)
 
   const valueDkk = parseDkkAmount(content.value)
-  const marketValueEur = valueDkk != null ? toEur(valueDkk, 'DKK', rates) : null
 
   const areaParts = [
     content.residence ? `Bolig: ${content.residence}` : null,
@@ -198,7 +191,9 @@ function mapItem(
     authority: detail.authority ?? 'Tvangsauktioner.dk',
     title: item.type?.[0]?.name ?? null,
     address: item.title ?? null,
-    marketValueEur,
+    marketValueEur: null,
+    marketValue: valueDkk,
+    currency: valueDkk != null ? 'DKK' : null,
     marketValueText: valueDkk != null ? `${valueDkk.toLocaleString('de-DE')} DKK` : null,
     auctionDateIso,
     auctionDateText,
@@ -221,7 +216,7 @@ function mapItem(
 export async function fetchAllListings(
   platformId: string,
 ): Promise<{ auctions: Auction[]; total: number | null }> {
-  const [rates, items] = await Promise.all([getRates(), fetchListItems()])
+  const items = await fetchListItems()
   if (items.length === 0) return { auctions: [], total: 0 }
 
   const details: (DetailInfo | null)[] = new Array(items.length).fill(null)
@@ -247,7 +242,7 @@ export async function fetchAllListings(
     pdfUrl: null,
     photos: [],
   }
-  const auctions = items.map((item, i) => mapItem(item, details[i] ?? emptyDetail, platformId, rates))
+  const auctions = items.map((item, i) => mapItem(item, details[i] ?? emptyDetail, platformId))
 
   return { auctions, total: auctions.length }
 }

@@ -1,5 +1,4 @@
 import type { Attachment, Auction } from '~/types/auction'
-import { getRates, toEur } from '~/server/utils/exchange-rate'
 import { SE_BASE, COUNTRY } from './constants'
 import { extractFact, parseSekAmount, extractBody, parseStorlek, cleanCategory } from './text'
 
@@ -24,12 +23,7 @@ function extractListingIds(html: string): string[] {
   return [...new Set(raw.map((m) => m.match(/\/(\d+)\.html/)![1]!))]
 }
 
-function mapDetail(
-  id: string,
-  html: string,
-  platformId: string,
-  rates: Record<string, number>,
-): Auction | null {
+function mapDetail(id: string, html: string, platformId: string): Auction | null {
   const address = extractFact(html, 'Adress')
   const kommun = extractFact(html, 'Kommun')
   const marknadsvardRaw = extractFact(html, 'Marknadsvarde')
@@ -61,9 +55,7 @@ function mapDetail(
   const addressParts = [address, kommun].filter(Boolean)
   const fullAddress = addressParts.length > 0 ? addressParts.join(', ') : null
 
-  // Convert SEK to EUR via ECB rate
   const sekAmount = marknadsvardRaw ? parseSekAmount(marknadsvardRaw) : null
-  const marketValueEur = sekAmount != null ? toEur(sekAmount, 'SEK', rates) : null
 
   // Structured size: "6 rum, 175 kvm" → rooms + living area
   const { rooms: sourceRooms, livingAreaSqm: sourceLivingAreaSqm } = parseStorlek(storlek)
@@ -119,7 +111,9 @@ function mapDetail(
     authority: 'Kronofogden',
     title,
     address: fullAddress,
-    marketValueEur,
+    marketValueEur: null,
+    marketValue: sekAmount,
+    currency: sekAmount != null ? 'SEK' : null,
     marketValueText: marknadsvardRaw ? `${marknadsvardRaw} SEK` : null,
     auctionDateIso,
     auctionDateText: auctionDateIso,
@@ -141,7 +135,7 @@ function mapDetail(
 export async function fetchAllListings(
   platformId: string,
 ): Promise<{ auctions: Auction[]; total: number | null }> {
-  const [rates, listHtml] = await Promise.all([getRates(), htmlFetch(LIST_URL)])
+  const listHtml = await htmlFetch(LIST_URL)
   const ids = extractListingIds(listHtml)
   if (ids.length === 0) return { auctions: [], total: 0 }
 
@@ -163,7 +157,7 @@ export async function fetchAllListings(
   await Promise.all(Array.from({ length: DETAIL_CONCURRENCY }, worker))
 
   const auctions = ids
-    .map((id, i) => (htmls[i] ? mapDetail(id, htmls[i]!, platformId, rates) : null))
+    .map((id, i) => (htmls[i] ? mapDetail(id, htmls[i]!, platformId) : null))
     .filter((a): a is Auction => a !== null)
 
   return { auctions, total: auctions.length }
