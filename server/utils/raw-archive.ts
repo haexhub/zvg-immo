@@ -75,14 +75,23 @@ export function canonicalize(value: unknown): unknown {
 
 /**
  * Canonical auction content for hashing: stable key order, and stripped of
- * fields that are per-run bookkeeping rather than source content —
- * `detailFetchedAt` (a timestamp, not data) and `extraction` (derived,
- * layered on read by /api/auctions, never present on the crawled object
- * itself). Without this, `detailFetchedAt` alone would mint a new blob on
- * every single run even when nothing about the auction actually changed.
+ * fields that are per-run bookkeeping or derived rather than source content —
+ * `detailFetchedAt` (a timestamp, not data), `extraction` (derived, layered on
+ * read by /api/auctions, never present on the crawled object itself), and
+ * `marketValueEur` (derived from `marketValue`+`currency` via *live* ECB rates
+ * in `deriveMarketValueEur`, so it drifts every run for non-EUR auctions). The
+ * source of truth for the price — `marketValue`+`currency` — stays in the hash,
+ * so real price changes are still detected. Without these strips, a mere FX
+ * tick or timestamp would mint a new blob on every run even when nothing about
+ * the auction actually changed.
  */
 export function canonicalizeAuction(auction: Auction): unknown {
-  const { detailFetchedAt: _detailFetchedAt, extraction: _extraction, ...rest } = auction
+  const {
+    detailFetchedAt: _detailFetchedAt,
+    extraction: _extraction,
+    marketValueEur: _marketValueEur,
+    ...rest
+  } = auction
   return canonicalize(rest)
 }
 

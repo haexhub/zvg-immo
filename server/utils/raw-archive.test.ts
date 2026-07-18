@@ -113,6 +113,25 @@ describe('canonicalizeAuction', () => {
     const b = canonicalizeAuction(auction({ description: null }))
     expect(JSON.stringify(a)).not.toBe(JSON.stringify(b))
   })
+
+  it('ignores marketValueEur FX drift (same source value, different EUR)', () => {
+    // deriveMarketValueEur recomputes marketValueEur from live ECB rates every
+    // run, so a non-EUR auction's EUR figure moves daily even when the source
+    // price is unchanged. The canonical form must key on marketValue+currency.
+    const a = canonicalizeAuction(
+      auction({ marketValue: 100000, currency: 'GBP', marketValueEur: 118000 }),
+    )
+    const b = canonicalizeAuction(
+      auction({ marketValue: 100000, currency: 'GBP', marketValueEur: 119500 }),
+    )
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b))
+  })
+
+  it('still detects a real price change (marketValue differs)', () => {
+    const a = canonicalizeAuction(auction({ marketValue: 100000, currency: 'GBP' }))
+    const b = canonicalizeAuction(auction({ marketValue: 120000, currency: 'GBP' }))
+    expect(JSON.stringify(a)).not.toBe(JSON.stringify(b))
+  })
 })
 
 describe('sha256Hex', () => {

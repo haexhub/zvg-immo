@@ -297,7 +297,10 @@ services:
     command:
       - |
         while true; do
-          rclone copy "primary:$$PRIMARY_BUCKET" "backup:$$BACKUP_BUCKET" --checksum
+          if [ -n "$$RCLONE_CONFIG_PRIMARY_ENDPOINT" ] && [ -n "$$PRIMARY_BUCKET" ] && \
+             [ -n "$$RCLONE_CONFIG_BACKUP_ENDPOINT" ] && [ -n "$$BACKUP_BUCKET" ]; then
+            rclone copy "primary:$$PRIMARY_BUCKET" "backup:$$BACKUP_BUCKET" --checksum
+          fi
           sleep 3600
         done
 
