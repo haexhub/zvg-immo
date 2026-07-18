@@ -254,3 +254,33 @@ ALTER TABLE auction_observations ADD COLUMN IF NOT EXISTS currency text;
 UPDATE auction_observations
 SET market_value = market_value_eur, currency = 'EUR'
 WHERE market_value_eur IS NOT NULL AND currency IS NULL;
+
+-- WP-3: G1 Roh-Archiv Schicht 1. raw_blobs = deduplizierte Bytes (S3-Key =
+-- content_hash, sha256), raw_captures = append-only Log "wann zeigte welche
+-- Auktions-Identität auf welchen Blob" (server/utils/raw-archive.ts). Muster
+-- wie auction_observations: append-only, kein RLS, server-intern.
+CREATE TABLE IF NOT EXISTS raw_blobs (
+  content_hash  text PRIMARY KEY,          -- sha256 der kanonisierten Bytes
+  s3_key        text NOT NULL,             -- sharded Key im Primary-Bucket, z.B. 'ab/abcd….json.gz'
+  content_type  text NOT NULL,             -- 'application/json+gzip' | 'text/html+gzip' | 'application/pdf' | 'application/vnd.docx'
+  byte_size     bigint NOT NULL,           -- Größe wie in der Outbox/S3 abgelegt (nach Kompression)
+  first_seen_at timestamptz NOT NULL,
+  uploaded_at   timestamptz                -- gesetzt, sobald Primary-Upload bestätigt (null = noch in Outbox)
+);
+
+CREATE TABLE IF NOT EXISTS raw_captures (
+  id            bigserial PRIMARY KEY,
+  captured_at   timestamptz NOT NULL,
+  kind          text NOT NULL,             -- 'auction' | 'document' | 'detail_html'
+  platform      text NOT NULL,
+  country       text NOT NULL,
+  external_id   text NOT NULL,             -- Auktions-Identität (immer vorhanden)
+  case_number   text,                      -- stabilere Cross-Run-Identität
+  authority     text,
+  content_hash  text NOT NULL REFERENCES raw_blobs(content_hash),
+  source_url    text                       -- Upstream-URL (Provenienz)
+);
+CREATE INDEX IF NOT EXISTS idx_capt_identity_time ON raw_captures (platform, external_id, captured_at DESC);
+CREATE INDEX IF NOT EXISTS idx_capt_az_time       ON raw_captures (authority, case_number, captured_at DESC);
+CREATE INDEX IF NOT EXISTS idx_capt_hash          ON raw_captures (content_hash);
+-- Kein RLS: server-intern, nie clientseitig exponiert (wie auction_observations).

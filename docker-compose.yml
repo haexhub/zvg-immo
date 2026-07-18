@@ -8,6 +8,7 @@ services:
       - "3000:3000"
     volumes:
       - geocode-cache:/app/.cache_zvg
+      - raw-outbox:/app/.raw_outbox
     environment:
       NODE_ENV: production
       # Geocoder: with a LocationIQ API key, geocoding routes through LocationIQ
@@ -35,6 +36,15 @@ services:
       # App-level mailer for alert emails (Phase 3: server/utils/mailer.ts).
       # Empty → sendMail() logs instead of sending.
       NUXT_SMTP_URL: ${SMTP_URL:-}
+      # G1 Roh-Archiv (WP-3): primary S3-compatible bucket for archived crawl
+      # snapshots (server/utils/raw-archive.ts, s3-uploader.ts). Empty →
+      # archiving stays local-only (outbox fills up, nothing uploads).
+      NUXT_S3_ENDPOINT: ${S3_ENDPOINT:-}
+      NUXT_S3_BUCKET: ${S3_BUCKET:-}
+      NUXT_S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      NUXT_S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      NUXT_S3_REGION: ${S3_REGION:-}
+      NUXT_RAW_OUTBOX_DIR: /app/.raw_outbox
     depends_on:
       haex-claude-proxy:
         condition: service_started
@@ -255,8 +265,48 @@ services:
       db:
         condition: service_healthy
 
+  ###
+  ### G1 Roh-Archiv Backup (WP-3) — periodic `rclone copy` from the primary
+  ### S3 bucket to a second S3-compatible bucket at a different provider.
+  ### `copy` only, never `sync` — sync would empty the backup the moment the
+  ### primary bucket is ever wiped or misconfigured. Blobs are immutable and
+  ### content-hash-named, so `copy` is naturally idempotent (nothing to
+  ### re-transfer once both sides agree). Enable Object Lock (WORM) on the
+  ### backup bucket at the provider console — that's a bucket setting, not
+  ### something rclone/compose can configure from here.
+  ###
+
+  raw-archive-backup:
+    image: rclone/rclone:latest
+    container_name: zvg-immo-raw-archive-backup
+    restart: unless-stopped
+    environment:
+      RCLONE_CONFIG_PRIMARY_TYPE: s3
+      RCLONE_CONFIG_PRIMARY_PROVIDER: Other
+      RCLONE_CONFIG_PRIMARY_ENDPOINT: ${S3_ENDPOINT:-}
+      RCLONE_CONFIG_PRIMARY_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-}
+      RCLONE_CONFIG_PRIMARY_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-}
+      RCLONE_CONFIG_BACKUP_TYPE: s3
+      RCLONE_CONFIG_BACKUP_PROVIDER: Other
+      RCLONE_CONFIG_BACKUP_ENDPOINT: ${S3_BACKUP_ENDPOINT:-}
+      RCLONE_CONFIG_BACKUP_ACCESS_KEY_ID: ${S3_BACKUP_ACCESS_KEY:-}
+      RCLONE_CONFIG_BACKUP_SECRET_ACCESS_KEY: ${S3_BACKUP_SECRET_KEY:-}
+      PRIMARY_BUCKET: ${S3_BUCKET:-}
+      BACKUP_BUCKET: ${S3_BACKUP_BUCKET:-}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          if [ -n "$$RCLONE_CONFIG_PRIMARY_ENDPOINT" ] && [ -n "$$PRIMARY_BUCKET" ] && \
+             [ -n "$$RCLONE_CONFIG_BACKUP_ENDPOINT" ] && [ -n "$$BACKUP_BUCKET" ]; then
+            rclone copy "primary:$$PRIMARY_BUCKET" "backup:$$BACKUP_BUCKET" --checksum
+          fi
+          sleep 3600
+        done
+
 volumes:
   geocode-cache:
+  raw-outbox:
   claude-creds:
   supabase-db-data:
   grafana-data:
