@@ -22,10 +22,11 @@ async function enrichOne(auction: Auction): Promise<void> {
   const applyText = (text: string | null): void => {
     if (!text) return
 
-    if (auction.marketValueEur == null) {
+    if (auction.marketValue == null) {
       const price = parseBamPrice(text)
       if (price) {
-        auction.marketValueEur = price.eur
+        auction.marketValue = price.bam
+        auction.currency = 'BAM'
         auction.marketValueText = price.text
       }
     }
@@ -38,7 +39,7 @@ async function enrichOne(auction: Auction): Promise<void> {
     }
   }
   const needsMoreText = () =>
-    auction.marketValueEur == null || !auction.address || !auction.description
+    auction.marketValue == null || !auction.address || !auction.description
 
   if (auction.pdfUrlUpstream) {
     applyText(await pdfToText(auction.pdfUrlUpstream))

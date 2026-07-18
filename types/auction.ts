@@ -29,6 +29,18 @@ export interface Auction {
   authority: string
   title: string | null
   address: string | null
+  /** Original value in `currency` — source of truth for non-EUR platforms.
+   *  Absent/null for EUR-native crawlers, which keep assigning
+   *  `marketValueEur` directly; `deriveMarketValueEur`
+   *  (server/utils/exchange-rate.ts) backfills this field from it. */
+  marketValue?: number | null
+  /** ISO 4217 code of `marketValue` ('GBP', 'HUF', 'CZK', ...). Absent/null
+   *  for EUR-native crawlers. */
+  currency?: string | null
+  /** Derived: `marketValue` converted to EUR via `deriveMarketValueEur`
+   *  (server/utils/exchange-rate.ts), which every crawl/enrich run applies
+   *  after the crawler/enrichOne sets `marketValue`+`currency`. Kept as the
+   *  cross-country sort/filter field (priceMin/priceMax). */
   marketValueEur: number | null
   marketValueText: string | null
   auctionDateIso: string | null

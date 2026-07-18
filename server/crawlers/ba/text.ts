@@ -1,5 +1,3 @@
-import { BAM_PER_EUR } from './constants'
-
 /** "21.08.2026" → "2026-08-21" */
 export function parseBaDate(raw: string): string | null {
   const m = raw.match(/(\d{2})\.(\d{2})\.(\d{4})/)
@@ -21,8 +19,10 @@ function parseBamNum(raw: string): number | null {
   return Number.isFinite(n) && n >= 1000 ? n : null
 }
 
-/** Find a BAM price in a text block, return { eur, text } or null */
-export function parseBamPrice(text: string): { eur: number; text: string } | null {
+/** Find a BAM price in a text block, return { bam, text } or null. The
+ *  native amount — conversion to EUR happens centrally via `deriveMarketValueEur`
+ *  (server/utils/exchange-rate.ts), using the BAM peg registered there. */
+export function parseBamPrice(text: string): { bam: number; text: string } | null {
   // Prefer an amount that follows a price/value label. Stem matching covers the
   // inflected variants ("procijenjena/utvrđena/početna/tržišna vrijednost",
   // "cijene", "vrijednosti", …); the gap may span line breaks (court documents
@@ -46,7 +46,7 @@ export function parseBamPrice(text: string): { eur: number; text: string } | nul
 
   if (bam === null) return null
   return {
-    eur: Math.round(bam / BAM_PER_EUR),
+    bam,
     text: `${bam.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} KM`,
   }
 }

@@ -1,7 +1,6 @@
 import type { Attachment, AttachmentKind, Auction } from '~/types/auction'
 import { CZ_BASE, COUNTRY, UA, CZ_LIST_LIMIT, CZ_MAX_LIST_PAGES } from './constants'
 import { parseCzDate, parseCzPrice, clean } from './text'
-import { getRates, toEur } from '~/server/utils/exchange-rate'
 
 interface CzCoords {
   latitude?: number | null
@@ -111,7 +110,7 @@ async function establishSession(jsonPath: string): Promise<{ cookie: string; tok
 
 export async function fetchEndpoint(path: string, platformId: string): Promise<Auction[]> {
   const url = `${CZ_BASE}${path}`
-  const [{ cookie, token }, rates] = await Promise.all([establishSession(path), getRates()])
+  const { cookie, token } = await establishSession(path)
 
   const merged: Record<string, CzAuction> = {}
   let reachedShortPage = false
@@ -152,10 +151,10 @@ export async function fetchEndpoint(path: string, platformId: string): Promise<A
     )
   }
 
-  return parseData(merged, platformId, rates)
+  return parseData(merged, platformId)
 }
 
-export function parseData(data: Record<string, CzAuction>, platformId: string, rates: Record<string, number>): Auction[] {
+export function parseData(data: Record<string, CzAuction>, platformId: string): Auction[] {
   const auctions: Auction[] = []
   for (const raw of Object.values(data)) {
     // The response carries scalar metadata entries like "@count".
@@ -211,7 +210,9 @@ export function parseData(data: Record<string, CzAuction>, platformId: string, r
       authority: clean(raw.auctioneer_office?.title),
       title: clean(raw.item?.title) || null,
       address: extractAddress(raw, district),
-      marketValueEur: czk != null ? toEur(czk, 'CZK', rates) : null,
+      marketValueEur: null,
+      marketValue: czk,
+      currency: czk != null ? 'CZK' : null,
       marketValueText: czk != null ? `${czk.toLocaleString('de-DE', { maximumFractionDigits: 0 })} Kč` : null,
       auctionDateIso: parseCzDate(raw.start_at),
       auctionDateText: raw.start_at ?? null,

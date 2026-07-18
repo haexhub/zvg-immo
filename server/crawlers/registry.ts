@@ -1,5 +1,6 @@
 import type { Auction, CrawlResult } from '~/types/auction'
 import { MULTI_PLATFORM } from '~/lib/auction-constants'
+import { deriveMarketValueEur, getRates } from '../utils/exchange-rate'
 import type { CrawlOptions, PlatformCrawler, RegionInfo } from './types'
 import { zvgPortalCrawler } from './zvg-portal'
 import { boeCrawler } from './boe'
@@ -286,6 +287,8 @@ export async function crawlSingle(
     }
   }
   auctions.push(...azWinners.values())
+  const rates = await getRates()
+  for (const a of auctions) deriveMarketValueEur(a, rates)
   return {
     platform: results.length === 1 ? (results[0] as CrawlResult).platform : MULTI_PLATFORM,
     source: [...new Set(results.map((r) => r.source))].join(', '),

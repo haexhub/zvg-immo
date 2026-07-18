@@ -2,7 +2,6 @@ import { load } from 'cheerio'
 import type { Auction } from '~/types/auction'
 import { UA } from './constants'
 import { parsePlPrice, parseLivingAreaSqm, formatPln, clean } from './text'
-import { getRates, toEur } from '~/server/utils/exchange-rate'
 
 export interface DetailData {
   beschreibung: string | null
@@ -89,10 +88,10 @@ export async function enrichOne(auction: Auction): Promise<void> {
   if (detail.amtsgericht) auction.authority = detail.amtsgericht
   if (detail.livingAreaSqm != null) auction.sourceLivingAreaSqm = detail.livingAreaSqm
 
-  const pln = detail.sumaOszacowaniaPln ?? (auction.marketValueEur ? null : detail.cenaWywolaniaPln)
+  const pln = detail.sumaOszacowaniaPln ?? (auction.marketValue ? null : detail.cenaWywolaniaPln)
   if (pln != null) {
-    const rates = await getRates()
-    auction.marketValueEur = toEur(pln, 'PLN', rates)
+    auction.marketValue = pln
+    auction.currency = 'PLN'
     auction.marketValueText = formatPln(pln)
   }
 }

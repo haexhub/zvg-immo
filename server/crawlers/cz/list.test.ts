@@ -1,14 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fetchEndpoint, parseData, type CzAuction } from './list'
 
-vi.mock('~/server/utils/exchange-rate', () => ({
-  getRates: vi.fn(async () => ({ CZK: 25 })),
-  toEur: (amount: number, currency: string, rates: Record<string, number>) =>
-    Math.round(amount / (rates[currency] ?? 1)),
-}))
-
-const RATES = { CZK: 25 }
-
 function makeCzAuction(overrides: Partial<CzAuction> = {}): CzAuction {
   return {
     hash: 'JkW5K',
@@ -35,7 +27,7 @@ function makeCzAuction(overrides: Partial<CzAuction> = {}): CzAuction {
 }
 
 function parseOne(overrides: Partial<CzAuction> = {}) {
-  const auctions = parseData({ '0': makeCzAuction(overrides), '@count': 1 } as never, 'cz-portaldrazeb', RATES)
+  const auctions = parseData({ '0': makeCzAuction(overrides), '@count': 1 } as never, 'cz-portaldrazeb')
   expect(auctions).toHaveLength(1)
   return auctions[0]!
 }
@@ -168,9 +160,11 @@ describe('parseData', () => {
     expect(bare.lat).toBe(49.4364394)
   })
 
-  it('converts the CZK estimate to EUR', () => {
+  it('emits the native CZK estimate and currency (EUR conversion happens centrally)', () => {
     const a = parseOne()
-    expect(a.marketValueEur).toBe(70512)
+    expect(a.marketValueEur).toBeNull()
+    expect(a.marketValue).toBe(1762800)
+    expect(a.currency).toBe('CZK')
     expect(a.marketValueText).toBe('1.762.800 Kč')
   })
 
@@ -181,7 +175,6 @@ describe('parseData', () => {
         '1': makeCzAuction({ hash: 'mjn8e', item: { title: 'Auto', category: { type: 'movable' } } }),
       },
       'cz-portaldrazeb',
-      RATES,
     )
     expect(auctions).toEqual([])
   })

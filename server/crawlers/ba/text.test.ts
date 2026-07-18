@@ -12,9 +12,9 @@ describe('parseBaDate', () => {
 })
 
 describe('parseBamPrice', () => {
-  it('parses a labeled amount and converts to EUR', () => {
+  it('parses a labeled amount, returning the native BAM figure', () => {
     expect(parseBamPrice('Ukupna cijena iznosi 150.000,00 KM')).toEqual({
-      eur: Math.round(150000 / 1.95583),
+      bam: 150000,
       text: '150.000,00 KM',
     })
   })

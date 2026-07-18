@@ -3,12 +3,6 @@ import type { Auction } from '~/types/auction'
 import { parseDetailHtml, enrichOne } from './detail'
 import { parseLivingAreaSqm } from './text'
 
-// enrichOne converts PLN → EUR; pin the rate so the assertions are stable.
-vi.mock('~/server/utils/exchange-rate', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/server/utils/exchange-rate')>()),
-  getRates: vi.fn().mockResolvedValue({ PLN: 4 }),
-}))
-
 /** Trimmed-down detail page mirroring the live SSR markup (notice 45036, Juli 2026). */
 const DETAIL_HTML = `
 <div class="notice-template-wrapper notice-template-wrapper--auctions">
@@ -186,7 +180,7 @@ function makeAuction(overrides: Partial<Auction> = {}): Auction {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('enrichOne', () => {
-  it('fills beschreibung, Sygnatura, Wohnfläche and converts the Suma oszacowania to EUR', async () => {
+  it('fills beschreibung, Sygnatura, Wohnfläche and the native Suma oszacowania + currency', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(DETAIL_HTML)))
     const a = makeAuction()
     await enrichOne(a)
@@ -194,8 +188,10 @@ describe('enrichOne', () => {
     expect(a.caseNumber).toBe('Km 314/18')
     expect(a.authority).toBe('Sąd Rejonowy w Zgorzelcu')
     expect(a.sourceLivingAreaSqm).toBe(70.8)
-    // 130 000 zł Suma oszacowania at 4 PLN per EUR — not the Cena wywołania.
-    expect(a.marketValueEur).toBe(32500)
+    // 130 000 zł Suma oszacowania — not the Cena wywołania. EUR conversion
+    // happens centrally (deriveMarketValueEur), not in enrichOne itself.
+    expect(a.marketValue).toBe(130000)
+    expect(a.currency).toBe('PLN')
     expect(a.marketValueText).toBe('130.000 zł')
   })
 
@@ -210,7 +206,8 @@ describe('enrichOne', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(html)))
     const a = makeAuction()
     await enrichOne(a)
-    expect(a.marketValueEur).toBe(25000)
+    expect(a.marketValue).toBe(100000)
+    expect(a.currency).toBe('PLN')
     expect(a.marketValueText).toBe('100.000 zł')
   })
 

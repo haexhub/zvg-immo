@@ -1,6 +1,5 @@
 import { load } from 'cheerio'
 import type { Auction } from '~/types/auction'
-import { getRates, toEur } from '~/server/utils/exchange-rate'
 import { CA_BASE, INDEX_URL, UA, COUNTRY } from './constants'
 
 const DETAIL_CONCURRENCY = 4
@@ -321,10 +320,8 @@ function mapProperty(
   municipality: string,
   dateTime: { iso: string | null; label: string | null },
   platformId: string,
-  rates: Record<string, number>,
 ): Auction {
   const assessedCad = prop.legal?.assessedCad ?? null
-  const marketValueEur = assessedCad != null ? toEur(assessedCad, 'CAD', rates) : null
 
   const externalId =
     clean(prop.detailUrl?.match(/\/property\/([a-z0-9-]+)\/?/i)?.[1]) ??
@@ -354,7 +351,9 @@ function mapProperty(
     address: prop.address,
     // The published "assessed value" is the closest analogue to a Verkehrswert;
     // the minimum tender (tax arrears owed) is kept in description.
-    marketValueEur,
+    marketValueEur: null,
+    marketValue: assessedCad,
+    currency: assessedCad != null ? 'CAD' : null,
     marketValueText: assessedCad != null ? `${assessedCad.toLocaleString('de-DE')} CAD (Assessed Value)` : null,
     auctionDateIso: dateTime.iso,
     auctionDateText: dateTime.label,
@@ -374,7 +373,7 @@ function mapProperty(
 export async function fetchAllListings(
   platformId: string,
 ): Promise<{ auctions: Auction[]; total: number | null }> {
-  const [rates, salePages] = await Promise.all([getRates(), discoverSalePages()])
+  const salePages = await discoverSalePages()
   if (salePages.length === 0) return { auctions: [], total: 0 }
 
   // Fetch first, parse afterwards. The sale pages are large (up to ~650 KB of
@@ -411,7 +410,7 @@ export async function fetchAllListings(
     }
     const municipality = municipalityFromUrl(url)
     for (const prop of parsedPage.properties) {
-      auctions.push(mapProperty(prop, url, municipality, parsedPage.dateTime, platformId, rates))
+      auctions.push(mapProperty(prop, url, municipality, parsedPage.dateTime, platformId))
     }
   }
   return { auctions, total: auctions.length }
