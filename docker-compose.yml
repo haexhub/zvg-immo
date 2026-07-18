@@ -32,6 +32,9 @@ services:
       NUXT_PUBLIC_SUPABASE_URL: ${SUPABASE_PUBLIC_URL}
       NUXT_PUBLIC_SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
       NUXT_DATABASE_URL: postgres://postgres:${SUPABASE_DB_PASSWORD}@db:5432/postgres
+      # App-level mailer for alert emails (Phase 3: server/utils/mailer.ts).
+      # Empty → sendMail() logs instead of sending.
+      NUXT_SMTP_URL: ${SMTP_URL:-}
     depends_on:
       haex-claude-proxy:
         condition: service_started
@@ -117,10 +120,22 @@ services:
       GOTRUE_JWT_SECRET: ${SUPABASE_JWT_SECRET}
       GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
       GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
-      # No SMTP dependency in Phase 1 (see plan: SMTP is a Phase 3 core
-      # dependency for alert mails). Autoconfirm skips the confirmation-mail
-      # step entirely so signup works end-to-end without it.
+      # Autoconfirm skips the confirmation-mail step entirely so signup works
+      # end-to-end without it — stays "true" even now that SMTP is wired
+      # (Phase 3): no real anti-abuse gain for a solo-operator app, and it
+      # spares a friction step at signup.
       GOTRUE_MAILER_AUTOCONFIRM: "true"
+      # GoTrue's own SMTP (separate from the app mailer's NUXT_SMTP_URL
+      # above) — for GoTrue's own transactional mail, e.g. a future
+      # "Passwort vergessen" flow. Not exercised while
+      # GOTRUE_MAILER_AUTOCONFIRM stays "true"; wired now because Phase 3
+      # makes SMTP a real dependency either way.
+      GOTRUE_SMTP_HOST: ${GOTRUE_SMTP_HOST:-}
+      GOTRUE_SMTP_PORT: ${GOTRUE_SMTP_PORT:-587}
+      GOTRUE_SMTP_USER: ${GOTRUE_SMTP_USER:-}
+      GOTRUE_SMTP_PASS: ${GOTRUE_SMTP_PASS:-}
+      GOTRUE_SMTP_SENDER_NAME: ${GOTRUE_SMTP_SENDER_NAME:-zvg-immo}
+      GOTRUE_SMTP_ADMIN_EMAIL: ${GOTRUE_SMTP_ADMIN_EMAIL:-}
 
   rest:
     image: postgrest/postgrest:v14.12
@@ -213,7 +228,35 @@ services:
       SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
       AUTH_JWT_SECRET: ${SUPABASE_JWT_SECRET}
 
+  ###
+  ### Grafana (Phase 3) — dashboards over auction_observations. Points at the
+  ### `db` service above (not a separate Postgres/Timescale container —
+  ### current row volumes don't justify one). Datasource is auto-provisioned,
+  ### see grafana/provisioning/datasources/postgres.yml.
+  ###
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: zvg-immo-grafana
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      # Read by the provisioned datasource config's ${SUPABASE_DB_PASSWORD}
+      # expansion — Grafana expands env vars from its own process
+      # environment, docker-compose's ${...} substitution only applies to
+      # this file itself, not to the mounted provisioning YAML.
+      SUPABASE_DB_PASSWORD: ${SUPABASE_DB_PASSWORD}
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   geocode-cache:
   claude-creds:
   supabase-db-data:
+  grafana-data:

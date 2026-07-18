@@ -1,0 +1,21 @@
+# Auto-provisions the Postgres datasource so Grafana is ready to query
+# auction_observations right after `docker compose up` — no manual UI setup.
+# Points at the self-hosted Supabase `db` service (Phase 1) — not a separate
+# Postgres/Timescale container: current row volumes don't justify a
+# hypertable, so this is a plain table with three indexes (see
+# server/db/schema.sql), no `timescaledb` jsonData flag needed either.
+apiVersion: 1
+
+datasources:
+  - name: zvg-immo
+    type: postgres
+    access: proxy
+    url: db:5432
+    database: postgres
+    user: postgres
+    secureJsonData:
+      password: ${SUPABASE_DB_PASSWORD}
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1700
+    isDefault: true

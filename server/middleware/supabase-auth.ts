@@ -1,14 +1,13 @@
-// Guards /api/saved-searches/* and /api/watchlist/* — the only routes that
-// exist after Phase 2 (alerts/lawyers/api-keys come later, in their own
-// worktrees, and add their own prefixes here then). Modeled on
-// server/middleware/settings-auth.ts but per-user instead of a shared
-// secret: verifies the caller's Supabase access token and sets
-// event.context.user, 401s otherwise. Unrelated routes (/api/auctions,
-// /api/settings/*, ...) are untouched.
+// Guards /api/saved-searches/*, /api/watchlist/* and /api/alerts/* (Phase 3
+// adds alerts; lawyers/api-keys come later, in their own worktrees, and add
+// their own prefixes here then). Modeled on server/middleware/settings-auth.ts
+// but per-user instead of a shared secret: verifies the caller's Supabase
+// access token and sets event.context.user, 401s otherwise. Unrelated routes
+// (/api/auctions, /api/settings/*, ...) are untouched.
 
 import { getUserFromEvent } from '../utils/supabase'
 
-const GUARDED_PREFIXES = ['/api/saved-searches/', '/api/watchlist/']
+const GUARDED_PREFIXES = ['/api/saved-searches/', '/api/watchlist/', '/api/alerts/']
 
 export default defineEventHandler(async (event) => {
   let path = (event.node.req.url ?? '').split('?')[0]!

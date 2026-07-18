@@ -5,6 +5,8 @@
 // once on server startup via server/plugins/refresh-bootstrap.ts.
 
 import { crawlSingle, listRegions } from '../crawlers/registry'
+import { matchAlerts } from '../utils/alert-matching'
+import { recordObservations } from '../utils/history'
 import { writeListCache } from '../utils/list-cache'
 
 let running = false
@@ -30,6 +32,7 @@ export default defineTask({
 
 async function runRefresh() {
   const startedAt = Date.now()
+  const capturedAt = new Date(startedAt).toISOString()
   const regions = listRegions()
   console.log(`[refresh] start — ${regions.length} regions`)
 
@@ -50,6 +53,11 @@ async function runRefresh() {
           enrichDetails: false,
         })
         await writeListCache(r.country, r.code, result)
+        // Best-effort history + alert-matching writes for analytics/email
+        // alerts — must never fail the crawl (both already swallow their
+        // own errors internally).
+        await recordObservations(result, capturedAt)
+        await matchAlerts(r.country, r.code, result)
         ok++
       } catch (err) {
         console.warn(`[refresh] ${r.country}/${r.code}: ${(err as Error).message}`)
