@@ -7,7 +7,9 @@
 import { crawlSingle, listRegions } from '../crawlers/registry'
 import { matchAlerts } from '../utils/alert-matching'
 import { recordObservations } from '../utils/history'
+import { archiveAuction } from '../utils/raw-archive'
 import { writeListCache } from '../utils/list-cache'
+import { drainOutbox } from '../utils/s3-uploader'
 
 let running = false
 
@@ -53,11 +55,14 @@ async function runRefresh() {
           enrichDetails: false,
         })
         await writeListCache(r.country, r.code, result)
-        // Best-effort history + alert-matching writes for analytics/email
-        // alerts — must never fail the crawl (both already swallow their
-        // own errors internally).
+        // Best-effort history + alert-matching + raw-archive writes — must
+        // never fail the crawl (all three already swallow their own errors
+        // internally).
         await recordObservations(result, capturedAt)
         await matchAlerts(r.country, r.code, result)
+        for (const a of result.auctions) {
+          await archiveAuction(a, capturedAt)
+        }
         ok++
       } catch (err) {
         console.warn(`[refresh] ${r.country}/${r.code}: ${(err as Error).message}`)
@@ -67,6 +72,14 @@ async function runRefresh() {
   }
 
   await Promise.all(Array.from({ length: 4 }, worker))
+
+  // Drain the raw-archive outbox to Primary S3 once per run (best-effort,
+  // never throws) — this is the single scheduled trigger point for the
+  // uploader (see server/utils/s3-uploader.ts).
+  const upload = await drainOutbox()
+  if (upload.uploaded > 0 || upload.failed > 0) {
+    console.log(`[refresh] archive upload: ${upload.uploaded} ok, ${upload.failed} failed`)
+  }
 
   const durationMs = Date.now() - startedAt
   console.log(`[refresh] done in ${(durationMs / 1000).toFixed(0)}s — ${ok} ok, ${failed} failed`)

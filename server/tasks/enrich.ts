@@ -39,6 +39,7 @@ import {
 } from '../utils/extraction-cache'
 import { interleaveByPlatform } from '../utils/interleave-by-platform'
 import { isSafePathSegment } from '../utils/path-segment'
+import { archiveAuction } from '../utils/raw-archive'
 import { cacheKey, readVerkehrswertCache } from '../utils/verkehrswert-cache'
 
 const IMAGES_DIR = join(process.cwd(), '.cache_zvg', 'images')
@@ -162,6 +163,10 @@ async function runEnrich() {
               (a.photoUrls?.length ?? 0) > 0 ||
               a.lat != null
             a.detailFetchedAt = at
+            // Re-archive now that detail data (description/attachments/
+            // source*) is on the auction — a new content hash whenever
+            // enrichment actually added something (see raw-archive.ts).
+            await archiveAuction(a, at)
           } catch {
             // Transient (network / BOE captcha): leave detailFetchedAt unset so
             // this listing is retried on the next run.
