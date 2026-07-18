@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { bundeslandFromRegion, calculateAuctionCosts, GRUNDERWERBSTEUER_SATZ, volleGebuehr } from './auction-costs'
+import { bundeslandFromRegion, calculateAuctionCosts, GRUNDERWERBSTEUER_SATZ, volleGebuehr, volleGebuehrB } from './auction-costs'
 
 describe('calculateAuctionCosts — Sachsen example', () => {
   // Bargebot 200.000 € liegt exakt auf einer Tabellenstufe (bis 200.000 € → 2038,00 €),
@@ -19,8 +19,9 @@ describe('calculateAuctionCosts — Sachsen example', () => {
     expect(result.gerichtskostenZuschlagEur).toBeCloseTo(0.5 * 2038.0, 2) // 1.019,00 €
   })
 
-  it('computes Grundbuchkosten as 1,0 Gebühr on the Bargebot', () => {
-    expect(result.grundbuchkostenEur).toBeCloseTo(2038.0, 2)
+  it('computes Grundbuchkosten as 1,0 Gebühr (GNotKG Tabelle B) on the Bargebot', () => {
+    // Grundbuchsachen rechnen nach Tabelle B: bei 200.000 € → 435,00 €, nicht 2.038,00 € (Tabelle A).
+    expect(result.grundbuchkostenEur).toBeCloseTo(435.0, 2)
   })
 
   it('computes Zinsen at 4% p.a. for the given number of days', () => {
@@ -77,9 +78,21 @@ describe('volleGebuehr — Gebührentabelle lookup', () => {
     expect(volleGebuehr(12_000)).toBeCloseTo(313.5, 2)
   })
 
-  it('extrapolates above the tabulated range instead of throwing', () => {
-    const gebuehr = volleGebuehr(600_000)
-    expect(gebuehr).toBeGreaterThan(4_138.0)
+  it('extrapolates above the tabulated range in 50.000-€ steps of 210 €', () => {
+    // 600.000 € = 2 angefangene 50.000-€-Schritte über 500.000 € → 4.138 + 2×210.
+    expect(volleGebuehr(600_000)).toBeCloseTo(4_138.0 + 2 * 210.0, 2)
+  })
+})
+
+describe('volleGebuehrB — GNotKG Tabelle B lookup', () => {
+  it('matches known Tabelle B brackets exactly', () => {
+    expect(volleGebuehrB(500)).toBeCloseTo(15.0, 2)
+    expect(volleGebuehrB(200_000)).toBeCloseTo(435.0, 2)
+    expect(volleGebuehrB(500_000)).toBeCloseTo(935.0, 2)
+  })
+
+  it('extrapolates above 500.000 € in 50.000-€ steps of 80 €', () => {
+    expect(volleGebuehrB(600_000)).toBeCloseTo(935.0 + 2 * 80.0, 2)
   })
 })
 

@@ -62,17 +62,17 @@ export const GRUNDERWERBSTEUER_SATZ: Record<Bundesland, number> = {
 const ZINSSATZ_PA = 0.04
 
 /**
- * Gebührentabelle für eine "1,0 Gebühr" nach Anlage 2 GKG / Anlage 2 Tabelle A
+ * Gebührentabelle A für eine "1,0 Gebühr" nach Anlage 2 GKG / Anlage 2 Tabelle A
  * GNotKG. Beide Tabellen sind seit der Kostenrechtsreform wertidentisch —
  * verifiziert gegen dejure.org (Anlage 2 GKG) und gesetze-im-internet.de
- * (Anlage 2 GNotKG), Stand der Tabelle: 01.06.2025.
+ * (Anlage 2 GNotKG), Stand der Tabelle: 01.06.2025. Gilt für Gerichtsgebühren
+ * (hier: Zuschlagsbeschluss).
  *
  * Deckt Geschäftswerte bis 500.000 € exakt ab (die weit überwiegende Mehrheit
  * der ZVG-Bargebote für Wohnimmobilien). Für höhere Werte siehe
- * `volleGebuehr()` unten — dort wird linear extrapoliert, das ist NICHT
- * gegen den Gesetzestext verifiziert.
+ * `gebuehrAusTabelle()` unten.
  */
-const GEBUEHRENTABELLE: ReadonlyArray<{ bis: number; gebuehr: number }> = [
+const GEBUEHRENTABELLE_A: ReadonlyArray<{ bis: number; gebuehr: number }> = [
   { bis: 500, gebuehr: 40.0 },
   { bis: 1_000, gebuehr: 61.0 },
   { bis: 1_500, gebuehr: 82.0 },
@@ -117,26 +117,90 @@ const GEBUEHRENTABELLE: ReadonlyArray<{ bis: number; gebuehr: number }> = [
   { bis: 500_000, gebuehr: 4138.0 },
 ]
 
-const MAX_TABELLE_WERT = 500_000
-const MAX_TABELLE_GEBUEHR = 4138.0
-// Ab 500.000 € ist die Tabelle hier nicht mehr hinterlegt (Werte darüber sind
-// bei ZVG-Wohnimmobilien selten). Als Näherung wird die Steigung des letzten
-// bekannten Segments (200.000 € → 500.000 €, 30.000-€-Schritte à 210 €)
-// fortgeschrieben. PLATZHALTER — vor Produktiveinsatz für hochpreisige Fälle
-// gegen die aktuelle Anlage 2 GKG/GNotKG verifizieren.
-const EXTRAPOLATION_SCHRITT_WERT = 30_000
-const EXTRAPOLATION_SCHRITT_GEBUEHR = 210.0
+/**
+ * Gebührentabelle B nach GNotKG Anlage 2. Gilt in Grundbuchsachen (§ 3 Abs. 2
+ * GNotKG, hier: Eigentumsumschreibung KV 14110) und ist deutlich günstiger als
+ * Tabelle A. Gleiche Geschäftswert-Stufen wie Tabelle A. Verifiziert gegen
+ * gesetze-im-internet.de (Anlage 2 GNotKG), Stand der Tabelle: 01.06.2025.
+ */
+const GEBUEHRENTABELLE_B: ReadonlyArray<{ bis: number; gebuehr: number }> = [
+  { bis: 500, gebuehr: 15.0 },
+  { bis: 1_000, gebuehr: 19.0 },
+  { bis: 1_500, gebuehr: 23.0 },
+  { bis: 2_000, gebuehr: 27.0 },
+  { bis: 3_000, gebuehr: 33.0 },
+  { bis: 4_000, gebuehr: 39.0 },
+  { bis: 5_000, gebuehr: 45.0 },
+  { bis: 6_000, gebuehr: 51.0 },
+  { bis: 7_000, gebuehr: 57.0 },
+  { bis: 8_000, gebuehr: 63.0 },
+  { bis: 9_000, gebuehr: 69.0 },
+  { bis: 10_000, gebuehr: 75.0 },
+  { bis: 13_000, gebuehr: 83.0 },
+  { bis: 16_000, gebuehr: 91.0 },
+  { bis: 19_000, gebuehr: 99.0 },
+  { bis: 22_000, gebuehr: 107.0 },
+  { bis: 25_000, gebuehr: 115.0 },
+  { bis: 30_000, gebuehr: 125.0 },
+  { bis: 35_000, gebuehr: 135.0 },
+  { bis: 40_000, gebuehr: 145.0 },
+  { bis: 45_000, gebuehr: 155.0 },
+  { bis: 50_000, gebuehr: 165.0 },
+  { bis: 65_000, gebuehr: 192.0 },
+  { bis: 80_000, gebuehr: 219.0 },
+  { bis: 95_000, gebuehr: 246.0 },
+  { bis: 110_000, gebuehr: 273.0 },
+  { bis: 125_000, gebuehr: 300.0 },
+  { bis: 140_000, gebuehr: 327.0 },
+  { bis: 155_000, gebuehr: 354.0 },
+  { bis: 170_000, gebuehr: 381.0 },
+  { bis: 185_000, gebuehr: 408.0 },
+  { bis: 200_000, gebuehr: 435.0 },
+  { bis: 230_000, gebuehr: 485.0 },
+  { bis: 260_000, gebuehr: 535.0 },
+  { bis: 290_000, gebuehr: 585.0 },
+  { bis: 320_000, gebuehr: 635.0 },
+  { bis: 350_000, gebuehr: 685.0 },
+  { bis: 380_000, gebuehr: 735.0 },
+  { bis: 410_000, gebuehr: 785.0 },
+  { bis: 440_000, gebuehr: 835.0 },
+  { bis: 470_000, gebuehr: 885.0 },
+  { bis: 500_000, gebuehr: 935.0 },
+]
 
-/** "1,0 Gebühr" für einen gegebenen Geschäftswert nach der GKG/GNotKG-Tabelle. */
-export function volleGebuehr(geschaeftswert: number): number {
+const MAX_TABELLE_WERT = 500_000
+const MAX_GEBUEHR_A = 4138.0
+const MAX_GEBUEHR_B = 935.0
+// Für Geschäftswerte über 500.000 € erhöht sich die 1,0-Gebühr je angefangene
+// 50.000 € um einen festen Betrag (§ 34 Abs. 1 GKG bzw. Anlage 2 GNotKG):
+// Tabelle A um 210 €, Tabelle B um 80 €. Solche Werte sind bei ZVG-
+// Wohnimmobilien selten.
+const EXTRAPOLATION_SCHRITT_WERT = 50_000
+const EXTRAPOLATION_SCHRITT_GEBUEHR_A = 210.0
+const EXTRAPOLATION_SCHRITT_GEBUEHR_B = 80.0
+
+function gebuehrAusTabelle(
+  geschaeftswert: number,
+  tabelle: ReadonlyArray<{ bis: number; gebuehr: number }>,
+  maxGebuehr: number,
+  schrittGebuehr: number,
+): number {
   const wert = Math.max(0, geschaeftswert)
   if (wert > MAX_TABELLE_WERT) {
-    const mehrwert = wert - MAX_TABELLE_WERT
-    const schritte = Math.ceil(mehrwert / EXTRAPOLATION_SCHRITT_WERT)
-    return round2(MAX_TABELLE_GEBUEHR + schritte * EXTRAPOLATION_SCHRITT_GEBUEHR)
+    const schritte = Math.ceil((wert - MAX_TABELLE_WERT) / EXTRAPOLATION_SCHRITT_WERT)
+    return round2(maxGebuehr + schritte * schrittGebuehr)
   }
-  const treffer = GEBUEHRENTABELLE.find((row) => wert <= row.bis)
-  return treffer?.gebuehr ?? MAX_TABELLE_GEBUEHR
+  return tabelle.find((row) => wert <= row.bis)?.gebuehr ?? maxGebuehr
+}
+
+/** "1,0 Gebühr" nach GKG § 34 / GNotKG Tabelle A (Gerichtsgebühren, z. B. Zuschlag). */
+export function volleGebuehr(geschaeftswert: number): number {
+  return gebuehrAusTabelle(geschaeftswert, GEBUEHRENTABELLE_A, MAX_GEBUEHR_A, EXTRAPOLATION_SCHRITT_GEBUEHR_A)
+}
+
+/** "1,0 Gebühr" nach GNotKG Anlage 2 Tabelle B (Grundbuchsachen, § 3 Abs. 2 GNotKG). */
+export function volleGebuehrB(geschaeftswert: number): number {
+  return gebuehrAusTabelle(geschaeftswert, GEBUEHRENTABELLE_B, MAX_GEBUEHR_B, EXTRAPOLATION_SCHRITT_GEBUEHR_B)
 }
 
 function round2(n: number): number {
@@ -191,7 +255,8 @@ export interface AuctionCostResult {
  * - Gerichtskosten für den Zuschlagsbeschluss: 0,5 Gebühr nach GKG-Kostenverzeichnis
  *   Nr. 2214 ("Erteilung des Zuschlags"), Geschäftswert = Bargebot.
  * - Grundbuchkosten für die Eigentumsumschreibung: 1,0 Gebühr nach GNotKG-Kostenverzeichnis
- *   Nr. 14110 ("Eintragung eines Eigentümers"), Geschäftswert = Bargebot.
+ *   Nr. 14110 ("Eintragung eines Eigentümers"), Geschäftswert = Bargebot. Grundbuchsachen
+ *   rechnen nach Tabelle B (§ 3 Abs. 2 GNotKG), nicht nach der teureren Tabelle A.
  * - Zinsen ab Zuschlag: 4 % p.a. auf das Bargebot, taggenau (§ 49 ZVG).
  * - Maklerprovision und Notarkosten: immer 0 € — bei einer ZVG entfällt der
  *   Kaufvertrag (der Zuschlagsbeschluss ersetzt ihn), damit auch die dafür
@@ -205,7 +270,7 @@ export function calculateAuctionCosts(input: AuctionCostInput): AuctionCostResul
 
   const grunderwerbsteuerEur = round2(bargebot * satz)
   const gerichtskostenZuschlagEur = round2(0.5 * volleGebuehr(bargebot))
-  const grundbuchkostenEur = round2(1.0 * volleGebuehr(bargebot))
+  const grundbuchkostenEur = round2(1.0 * volleGebuehrB(bargebot))
   const zinsenEur = round2((bargebot * ZINSSATZ_PA * tage) / 365)
   const maklerprovisionEur = 0
   const notarkostenEur = 0

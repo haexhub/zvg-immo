@@ -8,7 +8,7 @@ const props = defineProps<{
   /** Startwert fürs Bargebot-Feld — der tatsächliche Verkehrswert der Auktion. */
   verkehrswertEur: number | null
   /** `Auction.region` — bei DE-Crawlern exakt der Bundesland-Name, dient als Default. */
-  region: string
+  region?: string | null
 }>()
 
 const bargebot = ref<number>(props.verkehrswertEur ?? 0)
