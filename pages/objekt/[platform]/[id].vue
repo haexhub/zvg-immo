@@ -236,6 +236,8 @@ useHead(() => ({
         </p>
       </section>
 
+      <CostCalculator v-if="a.country === 'de'" :verkehrswert-eur="a.verkehrswertEur" :region="a.region" />
+
       <LawyerContact :platform="a.platform" :zvg-id="a.zvgId" :country="a.country" />
 
       <section class="mb-8 space-y-3">
