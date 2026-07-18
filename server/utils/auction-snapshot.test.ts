@@ -102,6 +102,34 @@ describe('mergePreservedDetail — coordinates', () => {
   })
 })
 
+describe('mergePreservedDetail — value bundle', () => {
+  it('restores the whole value bundle when a re-crawl lost it (detail-page value)', () => {
+    const next = mergePreservedDetail(
+      auction(),
+      auction({
+        marketValueEur: 70512,
+        marketValue: 1_762_800,
+        currency: 'CZK',
+        marketValueText: '1.762.800 Kč',
+      }),
+    )
+    expect(next.marketValueEur).toBe(70512)
+    expect(next.marketValue).toBe(1_762_800)
+    expect(next.currency).toBe('CZK')
+    expect(next.marketValueText).toBe('1.762.800 Kč')
+  })
+
+  it('keeps a fresh native value that only lacks a EUR conversion (missing rate)', () => {
+    const next = mergePreservedDetail(
+      auction({ marketValue: 500, currency: 'XYZ', marketValueText: '500 XYZ' }),
+      auction({ marketValueEur: 70512, marketValue: 1_762_800, currency: 'CZK' }),
+    )
+    expect(next.marketValue).toBe(500)
+    expect(next.currency).toBe('XYZ')
+    expect(next.marketValueEur).toBeNull()
+  })
+})
+
 describe('mergePreservedDetail — caseNumber', () => {
   it('restores a previously known caseNumber when the re-crawl lost it', () => {
     expect(mergePreservedDetail(auction({ caseNumber: '' }), auction()).caseNumber).toBe(
