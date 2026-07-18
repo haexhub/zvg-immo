@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Auction } from '~/types/auction'
-import { mergePreservedDetail } from './auction-snapshot'
+import { mergePreservedDetail, normalizeLegacyAuction } from './auction-snapshot'
 
 function auction(overrides: Partial<Auction> = {}): Auction {
   return {
@@ -150,5 +150,65 @@ describe('mergePreservedDetail — description', () => {
       }),
     )
     expect(next.description).toBe('Neuer Text')
+  })
+})
+
+describe('normalizeLegacyAuction — pre-WP-1 snapshot field names', () => {
+  it('maps every renamed field to its new name and drops the old key', () => {
+    const legacy: Record<string, unknown> = {
+      platform: 'zvg-portal',
+      zvgId: '99',
+      aktenzeichen: '1 K 5/25',
+      amtsgericht: 'AG Musterstadt',
+      objekt: 'Reihenhaus',
+      adresse: 'Musterweg 1',
+      verkehrswertEur: 250000,
+      verkehrswertText: '250.000 €',
+      terminIso: '2026-08-01T09:00:00.000Z',
+      terminText: '01.08.2026 09:00',
+      aufgehoben: false,
+      letzteAktualisierungIso: '2026-07-01T00:00:00.000Z',
+      beschreibung: 'Alte Beschreibung',
+      fotoCount: 3,
+      detailFetchedAt: '2026-07-01T00:00:00.000Z',
+    }
+    normalizeLegacyAuction(legacy)
+
+    expect(legacy.externalId).toBe('99')
+    expect(legacy.caseNumber).toBe('1 K 5/25')
+    expect(legacy.authority).toBe('AG Musterstadt')
+    expect(legacy.title).toBe('Reihenhaus')
+    expect(legacy.address).toBe('Musterweg 1')
+    expect(legacy.marketValueEur).toBe(250000)
+    expect(legacy.marketValueText).toBe('250.000 €')
+    expect(legacy.auctionDateIso).toBe('2026-08-01T09:00:00.000Z')
+    expect(legacy.auctionDateText).toBe('01.08.2026 09:00')
+    expect(legacy.cancelled).toBe(false)
+    expect(legacy.sourceUpdatedIso).toBe('2026-07-01T00:00:00.000Z')
+    expect(legacy.description).toBe('Alte Beschreibung')
+    expect(legacy.photoCount).toBe(3)
+    // detailFetchedAt is preserved (unchanged name), which is exactly why the
+    // renamed fields must be mapped: it suppresses re-enrichment.
+    expect(legacy.detailFetchedAt).toBe('2026-07-01T00:00:00.000Z')
+
+    for (const oldKey of [
+      'zvgId', 'aktenzeichen', 'amtsgericht', 'objekt', 'adresse',
+      'verkehrswertEur', 'verkehrswertText', 'terminIso', 'terminText',
+      'aufgehoben', 'letzteAktualisierungIso', 'beschreibung', 'fotoCount',
+    ]) {
+      expect(legacy[oldKey]).toBeUndefined()
+    }
+  })
+
+  it('leaves an already-migrated entry untouched (no-op after re-crawl)', () => {
+    const current: Record<string, unknown> = { externalId: '7', description: 'Neu', photoCount: 2 }
+    normalizeLegacyAuction(current)
+    expect(current).toEqual({ externalId: '7', description: 'Neu', photoCount: 2 })
+  })
+
+  it('does not clobber a present new value with a stale legacy one', () => {
+    const mixed: Record<string, unknown> = { description: 'Neu', beschreibung: 'Alt' }
+    normalizeLegacyAuction(mixed)
+    expect(mixed.description).toBe('Neu')
   })
 })

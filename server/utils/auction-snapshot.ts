@@ -18,8 +18,47 @@ const SNAPSHOT_PATH = join(process.cwd(), '.cache_zvg', 'auctions.json')
 
 export type AuctionSnapshot = Record<string, Auction>
 
+// WP-1 renamed the Auction fields (DE/ZVG -> neutral English), but the snapshot
+// lives on a persisted volume (docker-compose: geocode-cache:/app/.cache_zvg),
+// so entries written before the rename survive the deploy with the old names.
+// Consumers (detail endpoint, summary, enrich merge) read the new names and
+// would otherwise see `undefined` — and since `detailFetchedAt` (unchanged
+// name) is preserved, the enrich task won't re-fetch, so lost detail data
+// (description, …) wouldn't self-heal. Map the old names on read; a full crawl
+// cycle rewrites entries with the new names and this becomes a no-op. Safe to
+// drop once no pre-WP-1 snapshot can still be in play.
+const LEGACY_FIELD_MAP: Record<string, keyof Auction> = {
+  zvgId: 'externalId',
+  aktenzeichen: 'caseNumber',
+  amtsgericht: 'authority',
+  objekt: 'title',
+  adresse: 'address',
+  verkehrswertEur: 'marketValueEur',
+  verkehrswertText: 'marketValueText',
+  terminIso: 'auctionDateIso',
+  terminText: 'auctionDateText',
+  aufgehoben: 'cancelled',
+  letzteAktualisierungIso: 'sourceUpdatedIso',
+  beschreibung: 'description',
+  fotoCount: 'photoCount',
+}
+
+/** Exported for tests. */
+export function normalizeLegacyAuction(entry: Record<string, unknown>): void {
+  for (const [oldKey, newKey] of Object.entries(LEGACY_FIELD_MAP)) {
+    if (entry[newKey] === undefined && entry[oldKey] !== undefined) {
+      entry[newKey] = entry[oldKey]
+      delete entry[oldKey]
+    }
+  }
+}
+
 export async function readAuctionSnapshot(): Promise<AuctionSnapshot> {
-  return readJsonCache<AuctionSnapshot>(SNAPSHOT_PATH, () => ({}), 'auction-snapshot')
+  const snapshot = await readJsonCache<AuctionSnapshot>(SNAPSHOT_PATH, () => ({}), 'auction-snapshot')
+  for (const entry of Object.values(snapshot)) {
+    normalizeLegacyAuction(entry as unknown as Record<string, unknown>)
+  }
+  return snapshot
 }
 
 /**
