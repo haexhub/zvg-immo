@@ -108,7 +108,11 @@ export function mergePreservedDetail(next: Auction, prev: Auction): Auction {
   // value entirely (e.g. GB/HU/PL learn it only on the detail page). The extra
   // `next.marketValue == null` guard leaves a fresh native value in place when
   // it merely couldn't be converted to EUR (currency missing from the rates).
-  if (next.marketValueEur == null && next.marketValue == null && prev.marketValueEur != null) {
+  if (
+    next.marketValueEur == null &&
+    next.marketValue == null &&
+    (prev.marketValueEur != null || prev.marketValue != null)
+  ) {
     next.marketValueEur = prev.marketValueEur
     next.marketValueText = prev.marketValueText
     next.marketValue = prev.marketValue ?? null

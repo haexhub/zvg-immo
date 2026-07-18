@@ -128,6 +128,17 @@ describe('mergePreservedDetail — value bundle', () => {
     expect(next.currency).toBe('XYZ')
     expect(next.marketValueEur).toBeNull()
   })
+
+  it('restores a native value bundle even if the previous snapshot lacked a EUR conversion', () => {
+    const next = mergePreservedDetail(
+      auction({ marketValueEur: null, marketValue: null }),
+      auction({ marketValueEur: null, marketValue: 500, currency: 'XYZ', marketValueText: '500 XYZ' }),
+    )
+    expect(next.marketValue).toBe(500)
+    expect(next.currency).toBe('XYZ')
+    expect(next.marketValueText).toBe('500 XYZ')
+    expect(next.marketValueEur).toBeNull()
+  })
 })
 
 describe('mergePreservedDetail — caseNumber', () => {
