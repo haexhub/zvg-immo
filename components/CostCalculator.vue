@@ -6,12 +6,12 @@ import { BUNDESLAENDER, bundeslandFromRegion, calculateAuctionCosts, type Bundes
 
 const props = defineProps<{
   /** Startwert fürs Bargebot-Feld — der tatsächliche Verkehrswert der Auktion. */
-  verkehrswertEur: number | null
+  marketValueEur: number | null
   /** `Auction.region` — bei DE-Crawlern exakt der Bundesland-Name, dient als Default. */
   region?: string | null
 }>()
 
-const bargebot = ref<number>(props.verkehrswertEur ?? 0)
+const bargebot = ref<number>(props.marketValueEur ?? 0)
 const bundesland = ref<Bundesland>(bundeslandFromRegion(props.region) ?? 'Nordrhein-Westfalen')
 const tageBisZahlung = ref<number>(30)
 

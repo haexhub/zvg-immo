@@ -13,8 +13,8 @@ import { readJsonCache, writeJsonCache } from './json-cache'
 const CACHE_PATH = join(process.cwd(), '.cache_zvg', 'verkehrswert.json')
 
 export interface VerkehrswertEntry {
-  verkehrswertEur: number | null
-  verkehrswertText: string | null
+  marketValueEur: number | null
+  marketValueText: string | null
   /** Set on null entries written after the biddit startingPrice fallback
    *  existed — marks "re-checked, genuinely no price" so the geocode task's
    *  one-time null backfill doesn't refetch the same lot on every run. */
@@ -23,12 +23,29 @@ export interface VerkehrswertEntry {
 
 export type VerkehrswertCache = Record<string, VerkehrswertEntry>
 
-export function cacheKey(platform: string, zvgId: string): string {
-  return `${platform}:${zvgId}`
+export function cacheKey(platform: string, externalId: string): string {
+  return `${platform}:${externalId}`
+}
+
+// Field-name-only migration (WP-1): entries written before this rename still
+// have the old `verkehrswertEur`/`verkehrswertText` keys on disk. Remap them
+// on read so existing cache entries aren't silently orphaned (which would
+// also stop them from ever being re-fetched, since the geocode task's
+// toFetch filter only checks key *existence*, not field shape).
+function migrateEntry(raw: unknown): VerkehrswertEntry {
+  const e = raw as Record<string, unknown>
+  return {
+    marketValueEur: (e.marketValueEur ?? e.verkehrswertEur ?? null) as number | null,
+    marketValueText: (e.marketValueText ?? e.verkehrswertText ?? null) as string | null,
+    ...(e.retried ? { retried: true } : {}),
+  }
 }
 
 export async function readVerkehrswertCache(): Promise<VerkehrswertCache> {
-  return readJsonCache<VerkehrswertCache>(CACHE_PATH, () => ({}), 'verkehrswert-cache')
+  const cache = await readJsonCache<Record<string, unknown>>(CACHE_PATH, () => ({}), 'verkehrswert-cache')
+  const migrated: VerkehrswertCache = {}
+  for (const [key, entry] of Object.entries(cache)) migrated[key] = migrateEntry(entry)
+  return migrated
 }
 
 export async function writeVerkehrswertCache(cache: VerkehrswertCache): Promise<void> {

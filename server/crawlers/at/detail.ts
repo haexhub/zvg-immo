@@ -1,17 +1,17 @@
 import { load } from 'cheerio'
 import type { Auction, Attachment } from '~/types/auction'
-import type { PropertyType } from '~/lib/objektart'
+import type { PropertyType } from '~/lib/property-type'
 import { AT_BASE, UA } from './constants'
 import { parseEuroAt, parseSqmAt, stripHtml } from './text'
 import { classifyAttachment } from '~/server/utils/classify-attachment'
 import { areaBucketForPropertyType } from '~/server/utils/extract/rules'
 
 export interface DetailInfo {
-  aktenzeichen: string | null
-  amtsgericht: string | null
+  caseNumber: string | null
+  authority: string | null
   /** Court name + room (e.g. "Bezirksgericht Vöcklabruck, Saal Nr. 1") */
   versteigerungsOrt: string | null
-  adresse: string | null
+  address: string | null
   schaetzwertEur: number | null
   schaetzwertText: string | null
   vadiumText: string | null
@@ -20,11 +20,11 @@ export interface DetailInfo {
   sourceLivingAreaSqm: number | null
   /** "Grundstücksgröße", or "Objektgröße" when the Kategorie is a plot type. */
   sourceLandAreaSqm: number | null
-  beschreibung: string | null
+  description: string | null
   attachments: Attachment[]
   pdfUrl: string | null
   pdfUrlUpstream: string | null
-  fotoCount: number
+  photoCount: number
   thumbnailUrl: string | null
 }
 
@@ -137,7 +137,7 @@ function buildAttachments(html: string): ExtractedAttachments {
 
       // Foto rows wrap each thumbnail in <a><img src="…th1…jpg"/></a>. Grab
       // the first one we see as the auction's thumbnail.
-      if (kind === 'foto' && thumbnailUrl == null) {
+      if (kind === 'photo' && thumbnailUrl == null) {
         const thumbSrcRaw = $a.find('img').attr('src') ?? ''
         if (thumbSrcRaw) {
           thumbnailUrl = thumbSrcRaw.startsWith('http') ? thumbSrcRaw : `${AT_BASE}${thumbSrcRaw}`
@@ -157,10 +157,10 @@ function buildAttachments(html: string): ExtractedAttachments {
 }
 
 /** "BG Vöcklabruck, 503 8 E 8/25h" → court "BG Vöcklabruck", AZ "503 8 E 8/25h". */
-function parseTitle2(title: string): { amtsgericht: string | null; aktenzeichen: string | null } {
+function parseTitle2(title: string): { authority: string | null; caseNumber: string | null } {
   const m = title.match(/^([^,]+?),\s*(.+)$/)
-  if (!m || !m[1] || !m[2]) return { amtsgericht: null, aktenzeichen: null }
-  return { amtsgericht: m[1].trim(), aktenzeichen: m[2].trim() }
+  if (!m || !m[1] || !m[2]) return { authority: null, caseNumber: null }
+  return { authority: m[1].trim(), caseNumber: m[2].trim() }
 }
 
 /** Kategorie(n) values that make "Objektgröße" a living area (Wohnung/Haus). */
@@ -170,7 +170,7 @@ const LAND_KATEGORIE_RE = /grundstück|grund\b|wald|acker|wiese|feld|weingarten|
 
 /** Maps a Kategorie to a representative PropertyType for areaBucketForPropertyType
  *  (edikte's Kategorie text is a bare AT-specific label, not covered by
- *  objektart.ts's conservative cross-language regexes). Ambiguous values that
+ *  property-type.ts's conservative cross-language regexes). Ambiguous values that
  *  match both keep the "no area" behaviour objektgroesse text-only. */
 function kategoriePropertyType(kategorie: string | null): PropertyType | null {
   if (kategorie == null) return null
@@ -196,15 +196,15 @@ export function parseDetail(html: string): DetailInfo {
 
   // Aktenzeichen exists as a labeled row too, but it lacks the court prefix.
   // We keep both so callers can pick the more verbose one.
-  const aktenzeichenRow = pairs.get('aktenzeichen') ?? null
-  const aktenzeichen = fromTitle.aktenzeichen ?? aktenzeichenRow
+  const caseNumberRow = pairs.get('aktenzeichen') ?? null
+  const caseNumber = fromTitle.caseNumber ?? caseNumberRow
 
-  const amtsgericht = fromTitle.amtsgericht ?? pairs.get('dienststelle') ?? null
+  const authority = fromTitle.authority ?? pairs.get('dienststelle') ?? null
 
   const versteigerungsOrt = pairs.get('versteigerungsort') ?? pairs.get('verhandlungsort') ?? null
   const liegenschaft = pairs.get('liegenschaftsadresse') ?? null
   const plzOrt = pairs.get('plz/ort') ?? null
-  const adresse = [liegenschaft, plzOrt].filter(Boolean).join(', ') || null
+  const address = [liegenschaft, plzOrt].filter(Boolean).join(', ') || null
 
   const schaetzwertText = pairs.get('schätzwert') ?? pairs.get('schaetzwert') ?? null
   const schaetzwertEur = parseEuroAt(schaetzwertText)
@@ -217,7 +217,7 @@ export function parseDetail(html: string): DetailInfo {
 
   // "Objektgröße" is the building/unit size for Wohnung/Haus categories but
   // the plot size for Grundstück-type categories. Ambiguous or unknown
-  // categories keep the value as labeled text in the beschreibung only.
+  // categories keep the value as labeled text in the description only.
   const bucket = areaBucketForPropertyType(kategoriePropertyType(kategorie))
   const objektgroesseSqm = parseSqmAt(objektgroesseText)
   const sourceLivingAreaSqm = bucket === 'living' ? objektgroesseSqm : null
@@ -248,7 +248,7 @@ export function parseDetail(html: string): DetailInfo {
       grundbuch.length <= 60 &&
       `Grundbuch: ${grundbuch}${ez && ez.length <= 20 ? `, EZ ${ez}` : ''}`,
   ].filter((s): s is string => Boolean(s))
-  const beschreibung = [...descParts, infoLines.join('\n')].filter(Boolean).join('\n\n') || null
+  const description = [...descParts, infoLines.join('\n')].filter(Boolean).join('\n\n') || null
 
   const { attachments, thumbnailUrl: explicitThumb } = buildAttachments(html)
   // Headline PDF: prefer the official notice (matches zvbawü's `bulletin`
@@ -258,28 +258,28 @@ export function parseDetail(html: string): DetailInfo {
   // Exposé-only Edikt shows up.
   const isPdf = (a: Attachment): boolean => /\.pdf(?:[?#]|$)/i.test(a.proxyUrl)
   const headlinePdf =
-    attachments.find((a) => a.kind === 'bekanntmachung' && isPdf(a)) ??
-    attachments.find((a) => a.kind === 'gutachten' && isPdf(a)) ??
+    attachments.find((a) => a.kind === 'announcement' && isPdf(a)) ??
+    attachments.find((a) => a.kind === 'appraisal' && isPdf(a)) ??
     attachments.find(isPdf)
-  const firstPhoto = attachments.find((a) => a.kind === 'foto')
-  const photos = attachments.filter((a) => a.kind === 'foto')
+  const firstPhoto = attachments.find((a) => a.kind === 'photo')
+  const photos = attachments.filter((a) => a.kind === 'photo')
 
   return {
-    aktenzeichen: aktenzeichen ?? null,
-    amtsgericht: amtsgericht ?? null,
+    caseNumber: caseNumber ?? null,
+    authority: authority ?? null,
     versteigerungsOrt,
-    adresse,
+    address,
     schaetzwertEur,
     schaetzwertText,
     vadiumText,
     geringstesGebotText,
     sourceLivingAreaSqm,
     sourceLandAreaSqm,
-    beschreibung,
+    description,
     attachments,
     pdfUrl: headlinePdf?.proxyUrl ?? null,
     pdfUrlUpstream: headlinePdf?.proxyUrl ?? null,
-    fotoCount: photos.length,
+    photoCount: photos.length,
     // Prefer the inline thumbnail (~55x80px) over the full-size photo URL;
     // both lead to the same image, but the thumbnail saves bandwidth in the
     // map/list views.
@@ -307,7 +307,7 @@ export async function enrichInBatches(
         enriched++
       } catch (err) {
         console.debug(
-          `[at] detail enrichment failed for ${item.zvgId}: ${(err as Error).message}`,
+          `[at] detail enrichment failed for ${item.externalId}: ${(err as Error).message}`,
         )
         errors++
       }

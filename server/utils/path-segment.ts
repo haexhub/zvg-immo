@@ -1,5 +1,5 @@
 // Central definition of what qualifies as a "safe" path segment for a
-// platform id or zvgId. Used by both writers (enrich task creating image
+// platform id or externalId. Used by both writers (enrich task creating image
 // directories) and readers (/api/auction-image, /api/auction) so both sides
 // agree — an unsafe id gets rejected at write time, and the read endpoint
 // enforces the same shape defensively.

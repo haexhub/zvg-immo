@@ -71,6 +71,6 @@ export const ES_REGION_NAMES: Record<string, string> = Object.fromEntries(
 )
 
 /** SUBASTA.ESTADO.CODIGO values that should be treated as cancelled/closed
- *  and surfaced as `aufgehoben: true` on the Auction. The active states
+ *  and surfaced as `cancelled: true` on the Auction. The active states
  *  (PU = próx. apertura, EJ = ejecutándose) stay false. */
-export const ES_ESTADO_AUFGEHOBEN = new Set(['CA', 'SU', 'FS'])
+export const ES_ESTADO_CANCELLED = new Set(['CA', 'SU', 'FS'])

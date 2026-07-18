@@ -43,8 +43,8 @@ describe('parseListPage', () => {
   it('parses the online-auction lot card (redirect link, absolute CDN thumbnail)', () => {
     const [item] = parseListPage(LIST_FIXTURE)
     expect(item?.href).toBe('https://online.auctionhouse.co.uk/lot/redirect/356054')
-    expect(item?.adresse).toBe('Apartment 34 Sledmere Close, Peterlee, County Durham, SR8 5JN')
-    expect(item?.objekt).toBe('3 Bed Apartment')
+    expect(item?.address).toBe('Apartment 34 Sledmere Close, Peterlee, County Durham, SR8 5JN')
+    expect(item?.title).toBe('3 Bed Apartment')
     expect(item?.priceGbp).toBe(5000)
     expect(item?.priceText).toContain('£5,000 - £15,000')
     expect(item?.thumbnailUrl).toBe('https://cdn.eigpropertyauctions.co.uk/ams/images/96/auction/0/2770097_web_medium')
@@ -55,8 +55,8 @@ describe('parseListPage', () => {
     const items = parseListPage(LIST_FIXTURE)
     const item = items[1]
     expect(item?.href).toBe('/london/auction/lot/150748')
-    expect(item?.adresse).toBe('31 Lansdowne Road, Stanmore, Middlesex, HA7 2RZ')
-    expect(item?.objekt).toBe('4 Bed Semi-Detached House')
+    expect(item?.address).toBe('31 Lansdowne Road, Stanmore, Middlesex, HA7 2RZ')
+    expect(item?.title).toBe('4 Bed Semi-Detached House')
     expect(item?.priceGbp).toBe(475_000)
     expect(item?.thumbnailUrl).toBe('https://www.auctionhouse.co.uk/lot-image/906416')
   })

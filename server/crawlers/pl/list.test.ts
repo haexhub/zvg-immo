@@ -54,23 +54,23 @@ describe('parseListHtml', () => {
 
   it('maps the card fields', () => {
     const a = result.auctions[0]!
-    expect(a.zvgId).toBe('45040')
+    expect(a.externalId).toBe('45040')
     // Empty on purpose: the Sygnatura comes from enrichOne, and the snapshot
     // merge only restores it when the fresh crawl leaves the field unset.
-    expect(a.aktenzeichen).toBe('')
-    expect(a.objekt).toBe('Licytacja nieruchomości nieruchomość gruntowa zabudowana')
+    expect(a.caseNumber).toBe('')
+    expect(a.title).toBe('Licytacja nieruchomości nieruchomość gruntowa zabudowana')
     expect(a.region).toBe('Mazowieckie')
-    expect(a.adresse).toBe('Łękawica Stara, 26-902 Grabów nad Pilicą, Polen')
-    expect(a.terminIso).toBe('2026-09-10')
-    expect(a.terminText).toBe('10.09.2026 11:00')
+    expect(a.address).toBe('Łękawica Stara, 26-902 Grabów nad Pilicą, Polen')
+    expect(a.auctionDateIso).toBe('2026-09-10')
+    expect(a.auctionDateText).toBe('10.09.2026 11:00')
     expect(a.detailUrlUpstream).toBe(
       'https://licytacje.komornik.pl/wyszukiwarka/obwieszczenia-o-licytacji/45040/licytacja-nieruchomosci-nieruchomosc-gruntowa-zabudowana',
     )
   })
 
   it('leaves price empty — the SSR list has none; enrichOne fills it', () => {
-    expect(result.auctions[0]!.verkehrswertEur).toBeNull()
-    expect(result.auctions[0]!.verkehrswertText).toBeNull()
+    expect(result.auctions[0]!.marketValueEur).toBeNull()
+    expect(result.auctions[0]!.marketValueText).toBeNull()
   })
 
   it('reads the pagination state', () => {

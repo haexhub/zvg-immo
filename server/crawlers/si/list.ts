@@ -43,7 +43,7 @@ interface SiListResponse {
 
 const MAX_PAGES = 30
 
-function buildAdresse(p: SiPublication): string | null {
+function buildAddress(p: SiPublication): string | null {
   const a = p.address
   if (a && (a.street || a.city || a.zip)) {
     const line = [a.street, a.houseNumber].filter(Boolean).join(' ')
@@ -54,19 +54,19 @@ function buildAdresse(p: SiPublication): string | null {
   return null
 }
 
-function buildAktenzeichen(p: SiPublication): string {
+function buildCaseNumber(p: SiPublication): string {
   const kind = p.registerTypeRelation?.valueContent
   if (!p.caseNumber || !p.caseYear) return ''
   return clean(`${kind ?? ''} ${p.caseNumber}/${p.caseYear}`) ?? ''
 }
 
-function buildObjekt(p: SiPublication): string | null {
+function buildTitle(p: SiPublication): string | null {
   const kind = p.propertyKindRelation?.valueContent
   if (!kind) return null
   return p.area ? `${kind}, ${p.area} m²` : kind
 }
 
-function buildBeschreibung(p: SiPublication): string | null {
+function buildDescription(p: SiPublication): string | null {
   const kaution = formatSiPrice(parseSiPrice(p.securityPrice))
   const extras = [
     p.floorRelation?.valueContent ? `Etage: ${p.floorRelation.valueContent}` : null,
@@ -82,7 +82,7 @@ function buildBeschreibung(p: SiPublication): string | null {
 }
 
 export function mapPublication(p: SiPublication, platformId: string): Auction {
-  const { iso: terminIso, label: terminText } = parseSiDateTime(p.saleEndAt)
+  const { iso: auctionDateIso, label: auctionDateText } = parseSiDateTime(p.saleEndAt)
   const price = parseSiPrice(p.estimatedPrice ?? p.startingPrice)
   const detailUrl = `${SI_BASE}/single/${p.id}`
   const thumbnailUrl =
@@ -97,24 +97,24 @@ export function mapPublication(p: SiPublication, platformId: string): Auction {
     platform: platformId,
     country: COUNTRY,
     region: '',
-    zvgId: p.id,
-    aktenzeichen: buildAktenzeichen(p),
-    amtsgericht: p.courtRelation?.valueContent ?? '',
-    objekt: buildObjekt(p),
-    adresse: buildAdresse(p),
-    verkehrswertEur: price,
-    verkehrswertText: formatSiPrice(price),
-    terminIso,
-    terminText,
-    aufgehoben: p.status === 'canceled',
-    letzteAktualisierungIso: null,
+    externalId: p.id,
+    caseNumber: buildCaseNumber(p),
+    authority: p.courtRelation?.valueContent ?? '',
+    title: buildTitle(p),
+    address: buildAddress(p),
+    marketValueEur: price,
+    marketValueText: formatSiPrice(price),
+    auctionDateIso,
+    auctionDateText,
+    cancelled: p.status === 'canceled',
+    sourceUpdatedIso: null,
     pdfUrl: null,
     detailUrl,
     pdfUrlUpstream: null,
     detailUrlUpstream: detailUrl,
     attachments: [],
-    beschreibung: buildBeschreibung(p),
-    fotoCount: thumbnailUrl ? 1 : 0,
+    description: buildDescription(p),
+    photoCount: thumbnailUrl ? 1 : 0,
     thumbnailUrl,
     sourceLivingAreaSqm: LIVING_PROPERTY_KINDS.includes(kindCode) ? areaSqm : null,
     sourceLandAreaSqm: LAND_PROPERTY_KINDS.includes(kindCode) ? areaSqm : null,

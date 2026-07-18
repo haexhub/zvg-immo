@@ -22,41 +22,41 @@ export function parseAuctionsHtml(html: string, landAbk: string, platformId: str
     const chunk = endMarker >= 0 ? rawChunk.slice(0, endMarker) : rawChunk
     const $$ = load(`<table>${chunk}</table>`)
 
-    // Termin first — we need to know if it's aufgehoben before deciding on ID strategy.
-    let terminText: string | null = null
-    let terminIso: string | null = null
-    let aufgehoben = false
+    // Termin first — we need to know if it's cancelled before deciding on ID strategy.
+    let auctionDateText: string | null = null
+    let auctionDateIso: string | null = null
+    let cancelled = false
     // <TR[^>]*> — live HTML sometimes renders "<TR >" with a stray space.
     const terminMatch = chunk.match(/<TR[^>]*>\s*<TD[^>]*>\s*Termin\s*<\/[Tt][Dd]>([\s\S]*?)<\/[Tt][Rr]>/i)
     if (terminMatch?.[1]) {
       const inner = terminMatch[1].replace(/<[^>]+>/g, ' ')
       const decoded = clean(inner)
-      aufgehoben = /aufgehoben/i.test(decoded)
-      terminText = decoded || null
-      terminIso = parseGermanDateTime(decoded)
+      cancelled = /aufgehoben/i.test(decoded)
+      auctionDateText = decoded || null
+      auctionDateIso = parseGermanDateTime(decoded)
     }
 
     // ID extraction
-    const aktenzeichenA = $$('a[href*="showZvg"]').first()
-    const detailHref = aktenzeichenA.attr('href') || ''
+    const caseNumberAnchor = $$('a[href*="showZvg"]').first()
+    const detailHref = caseNumberAnchor.attr('href') || ''
     const zvgIdMatch = (chunk.match(/zvg_id=(\d+)/) || [])[1] || null
 
-    let aktenzeichen = ''
-    if (aktenzeichenA.length) {
-      aktenzeichen = aktenzeichenA.text().replace(/\(Detailansicht\)/i, '').trim()
+    let caseNumber = ''
+    if (caseNumberAnchor.length) {
+      caseNumber = caseNumberAnchor.text().replace(/\(Detailansicht\)/i, '').trim()
     } else {
       const azMatch = chunk.match(/<nobr>\s*(\d+\s+K\s+\d+\/\d+)\s*(?:&nbsp;)?\s*(?:\(Detailansicht\))?\s*<\/nobr>/i)
-      if (azMatch?.[1]) aktenzeichen = azMatch[1].trim()
+      if (azMatch?.[1]) caseNumber = azMatch[1].trim()
     }
-    aktenzeichen = clean(aktenzeichen)
-    if (!aktenzeichen && !zvgIdMatch) continue
+    caseNumber = clean(caseNumber)
+    if (!caseNumber && !zvgIdMatch) continue
 
-    const zvgId = zvgIdMatch || `az:${aktenzeichen}`
+    const externalId = zvgIdMatch || `az:${caseNumber}`
 
     const updateMatch = chunk.match(/letzte Aktualisierung\s+([\d-]+\s+[\d:]+)/)
-    const letzteAktualisierungIso = updateMatch?.[1] ? parseGermanTimestamp(updateMatch[1]) : null
+    const sourceUpdatedIso = updateMatch?.[1] ? parseGermanTimestamp(updateMatch[1]) : null
 
-    let amtsgericht = ''
+    let authority = ''
     // Region name comes from landAbk (canonical), not from the HTML.
     // Upstream is inconsistent — e.g. BW renders as "Baden-Wuerttemberg" without
     // umlaut. landAbk is what we asked for and DE_REGION_NAMES is canonical.
@@ -72,24 +72,24 @@ export function parseAuctionsHtml(html: string, landAbk: string, platformId: str
     if (amtMatch?.[1]) {
       const inner = clean(amtMatch[1])
       const sep = inner.lastIndexOf(' in ')
-      amtsgericht = sep >= 0 ? inner.slice(0, sep) : inner
+      authority = sep >= 0 ? inner.slice(0, sep) : inner
     }
 
-    let objekt: string | null = null
-    let adresse: string | null = null
+    let title: string | null = null
+    let address: string | null = null
     const lageMatch = chunk.match(/<b>([^<]+?)<!--Lage--->\s*:?\s*<\/b>\s*([^<\n]+)/)
     if (lageMatch?.[1] && lageMatch[2]) {
-      objekt = clean(lageMatch[1])
-      adresse = clean(lageMatch[2])
+      title = clean(lageMatch[1])
+      address = clean(lageMatch[2])
     }
 
-    let verkehrswertEur: number | null = null
-    let verkehrswertText: string | null = null
+    let marketValueEur: number | null = null
+    let marketValueText: string | null = null
     const vwMatch = chunk.match(/Verkehrswert in[\s\S]*?<b>([\s\S]*?)<\/b>/)
     if (vwMatch?.[1]) {
       const inner = vwMatch[1].replace(/<[^>]+>/g, ' ')
-      verkehrswertText = clean(inner) || null
-      verkehrswertEur = parseEuro(inner)
+      marketValueText = clean(inner) || null
+      marketValueEur = parseEuro(inner)
     }
 
     let pdfUrl: string | null = null
@@ -118,33 +118,33 @@ export function parseAuctionsHtml(html: string, landAbk: string, platformId: str
       platform: platformId,
       country: COUNTRY,
       region: regionName,
-      zvgId,
-      aktenzeichen,
-      amtsgericht,
-      objekt,
-      adresse,
-      verkehrswertEur,
-      verkehrswertText,
-      terminIso,
-      terminText,
-      aufgehoben,
-      letzteAktualisierungIso,
+      externalId,
+      caseNumber,
+      authority,
+      title,
+      address,
+      marketValueEur,
+      marketValueText,
+      auctionDateIso,
+      auctionDateText,
+      cancelled,
+      sourceUpdatedIso,
       pdfUrl,
       detailUrl,
       pdfUrlUpstream,
       detailUrlUpstream,
       attachments: [],
-      beschreibung: null,
-      fotoCount: 0,
+      description: null,
+      photoCount: 0,
       thumbnailUrl: null,
     })
   }
 
-  // Deduplicate by zvgId (keep first occurrence)
+  // Deduplicate by externalId (keep first occurrence)
   const seen = new Set<string>()
   const unique = auctions.filter((a) => {
-    if (seen.has(a.zvgId)) return false
-    seen.add(a.zvgId)
+    if (seen.has(a.externalId)) return false
+    seen.add(a.externalId)
     return true
   })
 

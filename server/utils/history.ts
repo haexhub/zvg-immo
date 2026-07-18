@@ -13,18 +13,18 @@ const COLUMNS = [
   'platform',
   'country',
   'region',
-  'zvg_id',
-  'amtsgericht',
-  'aktenzeichen',
-  'objekt',
+  'external_id',
+  'authority',
+  'case_number',
+  'title',
   'property_type',
   'land_area_sqm',
   'living_area_sqm',
   'rooms',
   'units',
-  'verkehrswert_eur',
-  'termin_iso',
-  'aufgehoben',
+  'market_value_eur',
+  'auction_date_iso',
+  'cancelled',
 ] as const
 
 export type ObservationRow = {
@@ -32,18 +32,18 @@ export type ObservationRow = {
   platform: string
   country: string
   region: string
-  zvg_id: string
-  amtsgericht: string
-  aktenzeichen: string
-  objekt: string | null
+  external_id: string
+  authority: string
+  case_number: string
+  title: string | null
   property_type: string | null
   land_area_sqm: number | null
   living_area_sqm: number | null
   rooms: number | null
   units: number | null
-  verkehrswert_eur: number | null
-  termin_iso: string | null
-  aufgehoben: boolean
+  market_value_eur: number | null
+  auction_date_iso: string | null
+  cancelled: boolean
 }
 
 export function auctionToObservationRow(a: Auction, capturedAt: string): ObservationRow {
@@ -52,18 +52,18 @@ export function auctionToObservationRow(a: Auction, capturedAt: string): Observa
     platform: a.platform,
     country: a.country,
     region: a.region,
-    zvg_id: a.zvgId,
-    amtsgericht: a.amtsgericht,
-    aktenzeichen: a.aktenzeichen,
-    objekt: a.objekt,
+    external_id: a.externalId,
+    authority: a.authority,
+    case_number: a.caseNumber,
+    title: a.title,
     property_type: a.extraction?.propertyType ?? null,
     land_area_sqm: a.extraction?.landAreaSqm ?? null,
     living_area_sqm: a.extraction?.livingAreaSqm ?? null,
     rooms: a.extraction?.rooms ?? null,
     units: a.extraction?.units ?? null,
-    verkehrswert_eur: a.verkehrswertEur,
-    termin_iso: a.terminIso,
-    aufgehoben: a.aufgehoben,
+    market_value_eur: a.marketValueEur,
+    auction_date_iso: a.auctionDateIso,
+    cancelled: a.cancelled,
   }
 }
 

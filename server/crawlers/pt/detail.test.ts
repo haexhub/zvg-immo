@@ -7,24 +7,24 @@ function auction(): Auction {
     platform: 'pt-eleiloes',
     country: 'pt',
     region: '',
-    zvgId: '191921',
-    aktenzeichen: 'NP1201552026',
-    amtsgericht: '',
-    objekt: 'Moradia sita em Alter do Chão',
-    adresse: null,
-    verkehrswertEur: null,
-    verkehrswertText: null,
-    terminIso: null,
-    terminText: null,
-    aufgehoben: false,
-    letzteAktualisierungIso: null,
+    externalId: '191921',
+    caseNumber: 'NP1201552026',
+    authority: '',
+    title: 'Moradia sita em Alter do Chão',
+    address: null,
+    marketValueEur: null,
+    marketValueText: null,
+    auctionDateIso: null,
+    auctionDateText: null,
+    cancelled: false,
+    sourceUpdatedIso: null,
     pdfUrl: null,
     detailUrl: null,
     pdfUrlUpstream: null,
     detailUrlUpstream: null,
     attachments: [],
-    beschreibung: null,
-    fotoCount: 1,
+    description: null,
+    photoCount: 1,
     thumbnailUrl: 'https://www.e-leiloes.pt/files/x_800sm.jpg',
   }
 }
@@ -45,10 +45,10 @@ function item(overrides: Partial<PtEventoDetail>): PtEventoDetail {
 }
 
 describe('applyDetail', () => {
-  it('joins descrição and observações into beschreibung', () => {
+  it('joins descrição and observações into description', () => {
     const a = auction()
     applyDetail(a, item({ descricao: ' Prédio urbano … ', observacoes: 'Imóvel ocupado.' }))
-    expect(a.beschreibung).toBe('Prédio urbano …\n\nImóvel ocupado.')
+    expect(a.description).toBe('Prédio urbano …\n\nImóvel ocupado.')
   })
 
   it('maps areaUtilPrivativa to the living area for built units', () => {
@@ -65,7 +65,7 @@ describe('applyDetail', () => {
     expect(a.sourceLandAreaSqm).toBe(3750)
   })
 
-  it('collects the full gallery as absolute photo urls and updates fotoCount', () => {
+  it('collects the full gallery as absolute photo urls and updates photoCount', () => {
     const a = auction()
     applyDetail(
       a,
@@ -81,7 +81,7 @@ describe('applyDetail', () => {
       'https://www.e-leiloes.pt/files/Verbas_Fotos/verba_110927/a_800.jpg',
       'https://www.e-leiloes.pt/files/Verbas_Fotos/verba_110927/b_800.jpg',
     ])
-    expect(a.fotoCount).toBe(2)
+    expect(a.photoCount).toBe(2)
   })
 
   it('parses the string-typed coordinates', () => {
@@ -94,18 +94,18 @@ describe('applyDetail', () => {
   it('leaves the auction untouched on an empty detail payload', () => {
     const a = auction()
     applyDetail(a, item({ coordenadasLAT: '0', coordenadasLON: '0' }))
-    expect(a.beschreibung).toBeNull()
-    expect(a.fotoCount).toBe(1)
+    expect(a.description).toBeNull()
+    expect(a.photoCount).toBe(1)
     expect(a.lat).toBeUndefined()
     expect(a.photoUrls).toBeUndefined()
-    expect(a.aktenzeichen).toBe('NP1201552026')
-    expect(a.amtsgericht).toBe('')
+    expect(a.caseNumber).toBe('NP1201552026')
+    expect(a.authority).toBe('')
   })
 
   it('replaces the referencia placeholder with the real case number/court', () => {
     const a = auction()
     applyDetail(a, item({ processoNumero: '1201/11.1TBCTB', processoTribunal: 'C.Branco - JC Cível - Juiz 2' }))
-    expect(a.aktenzeichen).toBe('1201/11.1TBCTB')
-    expect(a.amtsgericht).toBe('C.Branco - JC Cível - Juiz 2')
+    expect(a.caseNumber).toBe('1201/11.1TBCTB')
+    expect(a.authority).toBe('C.Branco - JC Cível - Juiz 2')
   })
 })

@@ -1,12 +1,12 @@
 import { load } from 'cheerio'
 import type { Attachment, Auction } from '~/types/auction'
-import type { PropertyType } from '~/lib/objektart'
+import type { PropertyType } from '~/lib/property-type'
 import { AV_BASE, UA, COUNTRY } from './constants'
 import { areaBucketForPropertyType } from '~/server/utils/extract/rules'
 
 /** Maps the "Type de bien" badge to a representative PropertyType for
  *  areaBucketForPropertyType (its French vocabulary isn't covered by
- *  objektart.ts's conservative cross-language regexes). Defaults to a
+ *  property-type.ts's conservative cross-language regexes). Defaults to a
  *  residential type — AVOVENTES types are almost always built units, and a
  *  non-land badge should still surface the tile as a living area. */
 function typeDeBienPropertyType(typeDeBien: string | null): PropertyType {
@@ -97,12 +97,12 @@ async function htmlFetch(url: string): Promise<string> {
 
 interface ListItem {
   href: string
-  objekt: string | null
-  adresse: string | null
+  title: string | null
+  address: string | null
   priceEur: number | null
   priceText: string | null
-  terminIso: string | null
-  terminText: string | null
+  auctionDateIso: string | null
+  auctionDateText: string | null
 }
 
 function parseListPage(html: string): { items: ListItem[]; rawCount: number; totalReported: number | null } {
@@ -131,23 +131,23 @@ function parseListPage(html: string): { items: ListItem[]; rawCount: number; tot
     // Non-greedy up to "Date des visites" when present, but a listing with no
     // scheduled visit wouldn't have that label at all — fall back to the end
     // of the (already single-line, whitespace-collapsed) card text instead of
-    // failing the match outright, which would otherwise leave terminIso null
+    // failing the match outright, which would otherwise leave auctionDateIso null
     // and keep the row forever (an unknown-date row is always kept, see the
     // date filter in fetchAllListings below).
     const dateM = text.match(/Date de la vente\s*:\s*(.+?)(?:\s*Date des visites|$)/)
-    const terminText = dateM ? clean(dateM[1]!) : null
+    const auctionDateText = dateM ? clean(dateM[1]!) : null
     const priceText = priceM ? clean(priceM[1]!) : null
-    const adresse = clean($card.find('.mt-2.d-flex div.inline-block').last().text()) || null
+    const address = clean($card.find('.mt-2.d-flex div.inline-block').last().text()) || null
 
     items.push({
       href,
-      objekt: clean($card.find('.font-bold.text-16.mb-2').first().text()) || null,
+      title: clean($card.find('.font-bold.text-16.mb-2').first().text()) || null,
       // Drop the trailing ", France" — every row is French, it's just noise.
-      adresse: adresse ? adresse.replace(/,?\s*France\.?\s*$/i, '') : null,
+      address: address ? address.replace(/,?\s*France\.?\s*$/i, '') : null,
       priceEur: priceText ? parseEurAmount(`${priceText} €`) : null,
       priceText: priceText ? `${priceText} €` : null,
-      terminIso: parseFrDateTime(terminText),
-      terminText,
+      auctionDateIso: parseFrDateTime(auctionDateText),
+      auctionDateText,
     })
   })
 
@@ -156,7 +156,7 @@ function parseListPage(html: string): { items: ListItem[]; rawCount: number; tot
 }
 
 interface DetailInfo {
-  beschreibung: string | null
+  description: string | null
   photos: string[]
   /** "Type de bien" badge next to the "Vente aux enchères" one. */
   typeDeBien: string | null
@@ -172,7 +172,7 @@ interface DetailInfo {
 
 export function parseDetailPage(html: string): DetailInfo {
   const $ = load(html)
-  const beschreibung = clean($('.font-light.mb-4').first().text()) || null
+  const description = clean($('.font-light.mb-4').first().text()) || null
   const photos = $('#lightSliderDetails .selector')
     .map((_i, el) => $(el).attr('data-src'))
     .get()
@@ -198,7 +198,7 @@ export function parseDetailPage(html: string): DetailInfo {
   const bucket = areaBucketForPropertyType(typeDeBienPropertyType(typeDeBien))
 
   return {
-    beschreibung,
+    description,
     photos,
     typeDeBien,
     rooms,
@@ -237,38 +237,38 @@ function mapItem(item: ListItem, detail: DetailInfo | null, platformId: string):
     detail?.rooms != null ? `Pièces : ${detail.rooms}` : null,
     detail?.livingAreaSqm != null ? `Superficie : ${detail.livingAreaSqm} m²` : null,
   ].filter(Boolean)
-  const beschreibung =
-    [facts.join('\n'), detail?.beschreibung].filter(Boolean).join('\n\n') || null
+  const description =
+    [facts.join('\n'), detail?.description].filter(Boolean).join('\n\n') || null
 
   return {
     platform: platformId,
     country: COUNTRY,
     // AVOVENTES exposes no sub-region filter either — see FR_AVOVENTES_REGIONS.
     region: '',
-    zvgId: idFromHref(item.href),
+    externalId: idFromHref(item.href),
     // Like licitor, AVOVENTES never publishes the court's own case number
     // (no "RG n°") on the listing or detail page — must not be filled with
     // an internal id (see licitor's PR #53 review lesson).
-    aktenzeichen: '',
+    caseNumber: '',
     // No court/tribunal name is exposed either (only the "cabinet
     // d'avocats" handling the sale, which isn't the court) — 'Avoventes' is
     // the platform, not a court, and must not be stored here.
-    amtsgericht: '',
-    objekt: item.objekt,
-    adresse: item.adresse,
-    verkehrswertEur: item.priceEur,
-    verkehrswertText: item.priceText,
-    terminIso: item.terminIso,
-    terminText: item.terminText,
-    aufgehoben: false,
-    letzteAktualisierungIso: null,
+    authority: '',
+    title: item.title,
+    address: item.address,
+    marketValueEur: item.priceEur,
+    marketValueText: item.priceText,
+    auctionDateIso: item.auctionDateIso,
+    auctionDateText: item.auctionDateText,
+    cancelled: false,
+    sourceUpdatedIso: null,
     pdfUrl: null,
     detailUrl: item.href,
     pdfUrlUpstream: null,
     detailUrlUpstream: item.href,
     attachments,
-    beschreibung,
-    fotoCount: photos.length,
+    description,
+    photoCount: photos.length,
     thumbnailUrl: photos[0] ?? null,
     ...(photos.length > 0 ? { photoUrls: photos } : {}),
     ...(detail?.rooms != null ? { sourceRooms: detail.rooms } : {}),
@@ -291,16 +291,16 @@ export async function fetchAllListings(
   // sales with ones already past their audience date (still listed during
   // the ~10-day post-sale "surenchère" window). Keep only future/unknown-date
   // rows so this source behaves like every other crawler's "prochaines
-  // ventes" list. terminIso is French local time, so "today" must be derived
-  // in Europe/Paris too — UTC would keep yesterday's already-past auctions
-  // for a couple of hours after midnight in France.
+  // ventes" list. auctionDateIso is French local time, so "today" must be
+  // derived in Europe/Paris too — UTC would keep yesterday's already-past
+  // auctions for a couple of hours after midnight in France.
   const todayStr = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Europe/Paris',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
   }).format(new Date())
-  const items = allItems.filter((item) => !item.terminIso || item.terminIso.slice(0, 10) >= todayStr)
+  const items = allItems.filter((item) => !item.auctionDateIso || item.auctionDateIso.slice(0, 10) >= todayStr)
 
   if (items.length === 0) return { auctions: [], total: 0 }
 

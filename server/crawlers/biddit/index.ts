@@ -9,16 +9,16 @@ const PLATFORM_ID = 'biddit'
 
 type AuctionDetailFields = Pick<
   Auction,
-  | 'verkehrswertEur'
-  | 'verkehrswertText'
-  | 'beschreibung'
-  | 'adresse'
+  | 'marketValueEur'
+  | 'marketValueText'
+  | 'description'
+  | 'address'
   | 'attachments'
   | 'pdfUrl'
   | 'pdfUrlUpstream'
-  | 'fotoCount'
+  | 'photoCount'
   | 'thumbnailUrl'
-  | 'aufgehoben'
+  | 'cancelled'
   | 'lat'
   | 'lng'
   | 'sourceLivingAreaSqm'
@@ -27,17 +27,17 @@ type AuctionDetailFields = Pick<
 
 export function applyDetail(auction: AuctionDetailFields, info: DetailInfo): void {
   if (info.estimatedPrice != null) {
-    auction.verkehrswertEur = info.estimatedPrice
-    auction.verkehrswertText = formatVerkehrswertText(info)
+    auction.marketValueEur = info.estimatedPrice
+    auction.marketValueText = formatVerkehrswertText(info)
   }
-  if (info.beschreibung) auction.beschreibung = info.beschreibung
-  if (info.adresse) auction.adresse = info.adresse
+  if (info.description) auction.description = info.description
+  if (info.address) auction.address = info.address
   if (info.attachments.length > 0) auction.attachments = info.attachments
   if (info.pdfUrl) {
     auction.pdfUrl = info.pdfUrl
     auction.pdfUrlUpstream = info.pdfUrlUpstream
   }
-  auction.fotoCount = info.fotoCount
+  auction.photoCount = info.photoCount
   if (info.thumbnailUrl) auction.thumbnailUrl = info.thumbnailUrl
   if (info.lat != null && info.lng != null) {
     auction.lat = info.lat
@@ -45,9 +45,9 @@ export function applyDetail(auction: AuctionDetailFields, info: DetailInfo): voi
   }
   if (info.sourceLivingAreaSqm != null) auction.sourceLivingAreaSqm = info.sourceLivingAreaSqm
   if (info.sourceLandAreaSqm != null) auction.sourceLandAreaSqm = info.sourceLandAreaSqm
-  // Listing already sets aufgehoben from `withdrawn`; the detail endpoint
+  // Listing already sets cancelled from `withdrawn`; the detail endpoint
   // may flip it between fetch and enrich (notary withdraws mid-crawl).
-  if (info.aufgehoben) auction.aufgehoben = true
+  if (info.cancelled) auction.cancelled = true
 }
 
 async function enrichOne(auction: Auction): Promise<void> {
@@ -66,7 +66,7 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
   const { totalReported, auctions: mapped } = await fetchAllPublicSales(PLATFORM_ID)
   const auctions = mapped.map((m) => m.auction)
 
-  // Resolve notary names so `amtsgericht` carries the office label instead
+  // Resolve notary names so `authority` carries the office label instead
   // of the bare reference number. Cheap — there's usually <50 unique
   // organisations across the ~370 active lots.
   const orgIds = mapped
@@ -78,7 +78,7 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
       const item = auctions[i]
       if (!item || !m.organisationId) continue
       const name = names.get(m.organisationId)
-      if (name) item.amtsgericht = name
+      if (name) item.authority = name
     }
   }
 

@@ -37,8 +37,8 @@ describe('parseDetail', () => {
     expect(info.sourceLivingAreaSqm).toBe(536.02)
     expect(info.sourceLandAreaSqm).toBe(1438)
     expect(info.schaetzwertEur).toBe(350000)
-    expect(info.aktenzeichen).toBe('12 E 117/26m')
-    expect(info.adresse).toBe('Edelweißstraße 9, 4481 Asten')
+    expect(info.caseNumber).toBe('12 E 117/26m')
+    expect(info.address).toBe('Edelweißstraße 9, 4481 Asten')
   })
 
   it('maps Objektgröße to land area for Grundstück categories', () => {
@@ -54,12 +54,12 @@ describe('parseDetail', () => {
     const info = parseDetail(detailHtml(rows))
     expect(info.sourceLivingAreaSqm).toBeNull()
     expect(info.sourceLandAreaSqm).toBeNull()
-    expect(info.beschreibung).toContain('Objektgröße: 536,02 m²')
+    expect(info.description).toContain('Objektgröße: 536,02 m²')
   })
 
-  it('adds the labeled info block to the beschreibung', () => {
+  it('adds the labeled info block to the description', () => {
     const info = parseDetail(detailHtml(BASE_ROWS))
-    const b = info.beschreibung ?? ''
+    const b = info.description ?? ''
     expect(b).toContain('Teilunterkellertes Wohnhaus')
     expect(b).toContain('Kategorie: Einfamilienhaus')
     expect(b).toContain('Objektgröße: 536,02 m²')
@@ -70,10 +70,10 @@ describe('parseDetail', () => {
     expect(b).toContain('Grundbuch: 45101 Asten, EZ 159')
   })
 
-  it('omits Grundbuch from the beschreibung when the row is not the short form', () => {
+  it('omits Grundbuch from the description when the row is not the short form', () => {
     const rows = BASE_ROWS.filter(([l]) => l !== 'Grundbuch')
     rows.push(['Grundbuch', 'x'.repeat(80)])
-    expect(parseDetail(detailHtml(rows)).beschreibung).not.toContain('Grundbuch:')
+    expect(parseDetail(detailHtml(rows)).description).not.toContain('Grundbuch:')
   })
 
   it('still exposes vadium/geringstes Gebot/versteigerungsOrt as fields', () => {

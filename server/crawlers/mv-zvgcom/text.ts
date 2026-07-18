@@ -16,7 +16,7 @@ export function parseMvDateTime(
 }
 
 /** The API's title is "<Aktenzeichen>: <Objektbeschreibung>" — strip the
- *  redundant leading case number so `objekt` isn't a duplicate of `aktenzeichen`. */
+ *  redundant leading case number so `title` isn't a duplicate of `caseNumber`. */
 export function stripAzPrefix(title: string, az: string): string {
   const prefix = `${az}:`
   return title.startsWith(prefix) ? title.slice(prefix.length).trim() : title.trim()

@@ -80,24 +80,24 @@ export function mapDetail(id: string, html: string, platformId: string): Auction
   const info = extractInfoTable($)
 
   const title = clean($('h2.bigTitle').first().text()) ?? ''
-  const aufgehoben = title.toLowerCase().includes('peatatud')
+  const cancelled = title.toLowerCase().includes('peatatud')
 
-  const { iso: terminIso, label: terminText } = parseEeDateTime(info.get('oksjoni lõpp') ?? null)
+  const { iso: auctionDateIso, label: auctionDateText } = parseEeDateTime(info.get('oksjoni lõpp') ?? null)
 
   const linnVald = info.get('linn / vald')
   const aadressRaw = info.get('aadress')
-  const adresse =
+  const address =
     aadressRaw && linnVald && !aadressRaw.includes(linnVald)
       ? `${linnVald}, ${aadressRaw}`
       : (aadressRaw ?? linnVald ?? null)
 
   const priceRaw = info.get('alghind oksjonil')
-  const verkehrswertEur = parseEePrice(priceRaw ?? null)
+  const marketValueEur = parseEePrice(priceRaw ?? null)
 
   const announcementHtml = $('.announcement-body').first().html()
   const announcement = announcementHtml ? stripAnnouncementHtml(announcementHtml) || null : null
   const kataster = info.get('katastritunnus')
-  const beschreibung =
+  const description =
     [kataster ? `Katasternummer: ${kataster}` : null, announcement].filter(Boolean).join('\n') ||
     null
 
@@ -115,7 +115,7 @@ export function mapDetail(id: string, html: string, platformId: string): Auction
    *  upstream URL doubles as proxyUrl (same pattern as dk/fi). */
   const attachments: Attachment[] = [
     {
-      kind: 'bekanntmachung',
+      kind: 'announcement',
       label: 'Enampakkumise teade (PDF)',
       filename: `oksjon-${id}.pdf`,
       sizeBytes: null,
@@ -128,24 +128,24 @@ export function mapDetail(id: string, html: string, platformId: string): Auction
     platform: platformId,
     country: COUNTRY,
     region: '',
-    zvgId: id,
-    aktenzeichen: info.get('reg. osa nr') ?? '',
-    amtsgericht: info.get('oksjoni korraldaja') ?? '',
-    objekt: title || null,
-    adresse,
-    verkehrswertEur,
-    verkehrswertText: priceRaw ?? null,
-    terminIso,
-    terminText,
-    aufgehoben,
-    letzteAktualisierungIso: null,
+    externalId: id,
+    caseNumber: info.get('reg. osa nr') ?? '',
+    authority: info.get('oksjoni korraldaja') ?? '',
+    title: title || null,
+    address,
+    marketValueEur,
+    marketValueText: priceRaw ?? null,
+    auctionDateIso,
+    auctionDateText,
+    cancelled,
+    sourceUpdatedIso: null,
     pdfUrl: pdfUrlUpstream,
     detailUrl,
     pdfUrlUpstream,
     detailUrlUpstream: detailUrl,
     attachments,
-    beschreibung,
-    fotoCount: photoUrls.length,
+    description,
+    photoCount: photoUrls.length,
     thumbnailUrl,
     photoUrls,
   }

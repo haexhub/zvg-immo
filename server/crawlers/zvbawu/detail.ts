@@ -49,15 +49,15 @@ interface DetailPage {
 }
 
 export interface DetailInfo {
-  beschreibung: string | null
+  description: string | null
   attachments: Attachment[]
-  fotoCount: number
+  photoCount: number
   thumbnailUrl: string | null
   pdfUrl: string | null
   pdfUrlUpstream: string | null
   latlng: [number, number] | null
-  aufgehoben: boolean
-  aktenzeichen: string | null
+  cancelled: boolean
+  caseNumber: string | null
   sourceLivingAreaSqm: number | null
   sourceLandAreaSqm: number | null
   sourceRooms: number | null
@@ -92,7 +92,7 @@ function buildAttachments(d: DetailPage['props']['auction']): Attachment[] {
   if (d.bulletin) {
     const filename = d.bulletin.split('/').pop() || 'bekanntmachung.pdf'
     out.push({
-      kind: 'bekanntmachung',
+      kind: 'announcement',
       label: 'Terminsbekanntmachung',
       filename,
       sizeBytes: null,
@@ -104,7 +104,7 @@ function buildAttachments(d: DetailPage['props']['auction']): Attachment[] {
   }
   for (const img of d.images || []) {
     out.push({
-      kind: 'foto',
+      kind: 'photo',
       label: img.caption || `Foto ${img.id}`,
       filename: img.url.split('/').pop() || `${img.id}.jpg`,
       sizeBytes: null,
@@ -134,7 +134,7 @@ export function buildDetailInfo(a: DetailPage['props']['auction']): DetailInfo {
   const accessories = stripHtml(a.accessories?.content)
   const locationContent = stripHtml(a.location?.content)
   const location = [locationFactLines, locationContent].filter(Boolean).join('\n')
-  const beschreibung =
+  const description =
     [
       a.teaser?.trim(),
       stripHtml(a.summary),
@@ -153,15 +153,15 @@ export function buildDetailInfo(a: DetailPage['props']['auction']): DetailInfo {
   const rooms = roomsRaw ? parseFloat(roomsRaw.replace(',', '.')) : NaN
 
   return {
-    beschreibung,
+    description,
     attachments: buildAttachments(a),
-    fotoCount: (a.images || []).length || (a.firstImage ? 1 : 0),
+    photoCount: (a.images || []).length || (a.firstImage ? 1 : 0),
     thumbnailUrl: a.firstImage?.thumbnail ?? null,
     pdfUrl: a.bulletin || null,
     pdfUrlUpstream: a.bulletin || null,
     latlng: a.latlng ?? null,
-    aufgehoben: Boolean(a.cancelled),
-    aktenzeichen: a.fileNumber || null,
+    cancelled: Boolean(a.cancelled),
+    caseNumber: a.fileNumber || null,
     sourceLivingAreaSqm: parseSqm(factValue(facts, /^wohnfläche/i)),
     sourceLandAreaSqm: parseSqm(factValue(facts, /^grundstücks(fläche|größe)/i)),
     sourceRooms: Number.isFinite(rooms) && rooms > 0 ? rooms : null,
@@ -188,10 +188,10 @@ export async function enrichInBatches(
       const item = items[idx]
       if (!item) continue
       // Cancelled auctions consistently return HTTP 410 from the detail
-      // endpoint. We already know they're aufgehoben from the list view, so
+      // endpoint. We already know they're cancelled from the list view, so
       // skipping spares 11 wasted requests and keeps the error count
       // meaningful — it then reflects only unexpected failures.
-      if (item.aufgehoben) continue
+      if (item.cancelled) continue
       if (!item.detailUrlUpstream) continue
       try {
         const info = await fetchDetailFor(item.detailUrlUpstream.replace(ZVBAWU_BASE, ''))

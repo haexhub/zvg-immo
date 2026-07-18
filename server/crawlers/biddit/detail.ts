@@ -102,14 +102,14 @@ export interface DetailInfo {
   /** Raw Mindestgebot. `estimatedPrice === startingPrice` marks the price as
    *  the Mindestgebot fallback rather than an appraisal. */
   startingPrice: number | null
-  beschreibung: string | null
-  adresse: string | null
+  description: string | null
+  address: string | null
   attachments: Attachment[]
-  fotoCount: number
+  photoCount: number
   thumbnailUrl: string | null
   pdfUrl: string | null
   pdfUrlUpstream: string | null
-  aufgehoben: boolean
+  cancelled: boolean
   lat: number | null
   lng: number | null
   sourceLivingAreaSqm: number | null
@@ -160,7 +160,7 @@ async function fetchDetailJson(referenceCode: string): Promise<DetailResponse | 
 
 /** Biddit's `type` is a stable enum (SOIL_CERTIFICATE, FLOOD_ZONE, etc.).
  *  Most of these are mandatory legal disclosures rather than the sale
- *  notice or appraisal, so the natural fallback is 'sonstiges'. The
+ *  notice or appraisal, so the natural fallback is 'other'. The
  *  Cahier des charges / Verkoopsvoorwaarden (TAC) and any expert
  *  appraisal report are the two that map cleanly to existing kinds. */
 
@@ -181,7 +181,7 @@ function toPictureAttachment(p: DetailPicture): Attachment | null {
   const url = p.large ?? p.medium ?? p.small
   if (!url) return null
   return {
-    kind: 'foto',
+    kind: 'photo',
     label: p.name ?? 'Foto',
     filename: p.name ?? `${p.pictureId ?? 'photo'}.jpg`,
     sizeBytes: null,
@@ -236,8 +236,8 @@ export async function fetchDetail(referenceCode: string): Promise<DetailInfo | n
     .map((p) => pickLocalized(p.description) ?? pickLocalized(p.title))
     .filter((s): s is string => Boolean(s))
   const facts = prop ? formatPropertyFacts(prop) : null
-  const beschreibung = [descs.join('\n\n'), facts].filter(Boolean).join('\n\n') || null
-  const adresse = formatAddress(prop?.address)
+  const description = [descs.join('\n\n'), facts].filter(Boolean).join('\n\n') || null
+  const address = formatAddress(prop?.address)
 
   const attachments: Attachment[] = []
   for (const a of d.attachments ?? []) {
@@ -252,7 +252,7 @@ export async function fetchDetail(referenceCode: string): Promise<DetailInfo | n
   }
   if (d.termsAndConditions?.bucketUrl) {
     attachments.push({
-      kind: 'bekanntmachung',
+      kind: 'announcement',
       label: d.termsAndConditions.name ?? 'Cahier des charges',
       filename: d.termsAndConditions.name ?? 'cahier-des-charges.pdf',
       sizeBytes: null,
@@ -283,8 +283,8 @@ export async function fetchDetail(referenceCode: string): Promise<DetailInfo | n
   const firstPic = sortedPics[0]
   const thumbnailUrl = firstPic?.medium ?? firstPic?.small ?? firstPic?.large ?? null
 
-  const tacPdf = attachments.find((a) => a.kind === 'bekanntmachung')
-  const expertPdf = attachments.find((a) => a.kind === 'gutachten')
+  const tacPdf = attachments.find((a) => a.kind === 'announcement')
+  const expertPdf = attachments.find((a) => a.kind === 'appraisal')
   const headlinePdf = tacPdf ?? expertPdf ?? attachments.find((a) => /\.pdf$/i.test(a.proxyUrl))
 
   // Biddit uses estimatedPrice = 1 as a "not filled in" placeholder (the field
@@ -300,14 +300,14 @@ export async function fetchDetail(referenceCode: string): Promise<DetailInfo | n
   return {
     estimatedPrice: appraisal ?? startingPrice,
     startingPrice,
-    beschreibung,
-    adresse,
+    description,
+    address,
     attachments: [...attachments, ...photos],
-    fotoCount: photos.length,
+    photoCount: photos.length,
     thumbnailUrl,
     pdfUrl: headlinePdf?.proxyUrl ?? null,
     pdfUrlUpstream: headlinePdf?.proxyUrl ?? null,
-    aufgehoben: Boolean(d.withdrawn) || d.publicSaleStatus === 'WITHDRAWN',
+    cancelled: Boolean(d.withdrawn) || d.publicSaleStatus === 'WITHDRAWN',
     // Biddit uses 0 as its "absent" sentinel on non-nullable DB fields (same
     // pattern as the estimatedPrice=1 placeholder) — treat non-positive as
     // null. That also guards the coordinates: 0/0 is the Atlantic, and all
@@ -333,16 +333,16 @@ export async function enrichInBatches(
       const item = auctions[idx]
       if (!item) continue
       try {
-        const info = await fetchDetail(item.zvgId)
+        const info = await fetchDetail(item.externalId)
         if (info) {
           apply(item, info)
           enriched++
         } else {
           // Lot vanished upstream (404) — permanent, not an error.
-          console.debug(`[biddit] lot ${item.zvgId} gone upstream — skipping enrichment`)
+          console.debug(`[biddit] lot ${item.externalId} gone upstream — skipping enrichment`)
         }
       } catch (err) {
-        console.debug(`[biddit] detail enrich failed for ${item.zvgId}: ${(err as Error).message}`)
+        console.debug(`[biddit] detail enrich failed for ${item.externalId}: ${(err as Error).message}`)
         errors++
       }
     }

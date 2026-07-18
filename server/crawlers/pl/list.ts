@@ -64,30 +64,30 @@ export function parseListHtml(html: string, platformId: string): ParseResult {
       platform: platformId,
       country: COUNTRY,
       region: province ? province.charAt(0).toUpperCase() + province.slice(1) : '',
-      zvgId: noticeId,
+      externalId: noticeId,
       // The real Aktenzeichen (Sygnatura) only exists on the detail page and
       // is filled in by enrichOne. Leave the list value empty — a non-empty
-      // placeholder (the notice id already lives in zvgId) would survive the
-      // snapshot merge and clobber the enriched Sygnatura on every re-crawl.
-      aktenzeichen: '',
-      amtsgericht: '',
-      objekt: titel || null,
+      // placeholder (the notice id already lives in externalId) would survive
+      // the snapshot merge and clobber the enriched Sygnatura on every re-crawl.
+      caseNumber: '',
+      authority: '',
+      title: titel || null,
       // Cards without an address line still carry the województwo — a
       // region-level address keeps the listing geocodable/mappable.
-      adresse: address ? `${address}, Polen` : province ? `${province}, Polen` : null,
-      verkehrswertEur: null,
-      verkehrswertText: null,
-      terminIso: parsePlDate(dateRaw),
-      terminText: dateRaw || null,
-      aufgehoben: false,
-      letzteAktualisierungIso: null,
+      address: address ? `${address}, Polen` : province ? `${province}, Polen` : null,
+      marketValueEur: null,
+      marketValueText: null,
+      auctionDateIso: parsePlDate(dateRaw),
+      auctionDateText: dateRaw || null,
+      cancelled: false,
+      sourceUpdatedIso: null,
       pdfUrl: null,
       detailUrl: detailUrlUpstream,
       pdfUrlUpstream: null,
       detailUrlUpstream,
       attachments: [],
-      beschreibung: null,
-      fotoCount: 0,
+      description: null,
+      photoCount: 0,
       thumbnailUrl: null,
     })
   })

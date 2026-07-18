@@ -96,26 +96,26 @@ export function parseListingHtml(
 
     // Extract estado code (e.g. "Celebrándose" → EJ). The HTML doesn't carry
     // the code directly, so we match on the localised label.
-    const aufgehoben = /(?:cancelada|suspendida|finalizada)/i.test(estadoLine)
+    const cancelled = /(?:cancelada|suspendida|finalizada)/i.test(estadoLine)
 
     // "Conclusión prevista: 25/05/2026 a las 18:00:00"
     const terminMatch = estadoLine.match(/Conclusión[^:]*:\s*([^\]]+)/i)
-    const terminText = terminMatch?.[1]?.trim() ?? null
-    const terminIso = terminText ? parseSpanishDateTime(terminText) : null
+    const auctionDateText = terminMatch?.[1]?.trim() ?? null
+    const auctionDateIso = auctionDateText ? parseSpanishDateTime(auctionDateText) : null
 
     // Estado prefix before the bracket: "Estado: Celebrándose" → "Celebrándose"
     const estadoMatch = estadoLine.match(/Estado:\s*([^\-\[]+)/i)
     const estadoLabel = estadoMatch?.[1]?.trim() ?? null
 
     // Description and address are merged in the listing. Take the whole
-    // string as `objekt` for now and let detail enrichment split it later.
-    const objekt = descLine || null
+    // string as `title` for now and let detail enrichment split it later.
+    const title = descLine || null
 
     // Best-effort address: trailing fragment that starts with a 5-digit CP.
-    let adresse: string | null = null
+    let address: string | null = null
     if (descLine) {
       const cp = descLine.match(/(\d{5}\s+[^,]+?)(?:\s*\(|$)/)
-      if (cp?.[1]) adresse = `${cp[1].trim()}, España`
+      if (cp?.[1]) address = `${cp[1].trim()}, España`
     }
 
     const detailUrlUpstream = `${BOE_BASE}/detalleSubasta.php?idSub=${encodeURIComponent(idSub)}`
@@ -124,24 +124,24 @@ export function parseListingHtml(
       platform: platformId,
       country: COUNTRY,
       region: provinciaName,
-      zvgId: idSub,
-      aktenzeichen: idSub,
-      amtsgericht: gestora || estadoLabel || '',
-      objekt,
-      adresse,
-      verkehrswertEur: null,
-      verkehrswertText: null,
-      terminIso,
-      terminText,
-      aufgehoben,
-      letzteAktualisierungIso: null,
+      externalId: idSub,
+      caseNumber: idSub,
+      authority: gestora || estadoLabel || '',
+      title,
+      address,
+      marketValueEur: null,
+      marketValueText: null,
+      auctionDateIso,
+      auctionDateText,
+      cancelled,
+      sourceUpdatedIso: null,
       pdfUrl: null,
       detailUrl: detailUrlUpstream, // BOE detail pages need no special Referer.
       pdfUrlUpstream: null,
       detailUrlUpstream,
       attachments: [],
-      beschreibung: null,
-      fotoCount: 0,
+      description: null,
+      photoCount: 0,
       thumbnailUrl: null,
     })
   })
@@ -149,8 +149,8 @@ export function parseListingHtml(
   // Deduplicate by id (defensive — listings sometimes repeat lots).
   const seen = new Set<string>()
   const unique = auctions.filter((a) => {
-    if (seen.has(a.zvgId)) return false
-    seen.add(a.zvgId)
+    if (seen.has(a.externalId)) return false
+    seen.add(a.externalId)
     return true
   })
 

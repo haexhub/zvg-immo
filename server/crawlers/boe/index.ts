@@ -7,7 +7,7 @@ import { enrichInBatches, type DetailInfo } from './detail'
 
 type AuctionDetailFields = Pick<
   Auction,
-  'verkehrswertEur' | 'verkehrswertText' | 'beschreibung' | 'adresse' | 'pdfUrl' | 'pdfUrlUpstream'
+  'marketValueEur' | 'marketValueText' | 'description' | 'address' | 'pdfUrl' | 'pdfUrlUpstream'
 >
 
 const PLATFORM_ID = 'boe'
@@ -29,21 +29,21 @@ async function fetchListHtml(url: string, provincia: string): Promise<string> {
 }
 
 export function applyDetail(auction: AuctionDetailFields, info: DetailInfo): void {
-  if (info.tasacionEur != null) auction.verkehrswertEur = info.tasacionEur
-  if (info.tasacionText) auction.verkehrswertText = info.tasacionText
+  if (info.tasacionEur != null) auction.marketValueEur = info.tasacionEur
+  if (info.tasacionText) auction.marketValueText = info.tasacionText
   // Verkehrswert stays the Tasación; the minimum bid ("Valor subasta") and
   // the cadastral reference only exist on the detail tabs — surface them as
-  // labelled lines in the beschreibung.
-  const beschreibung = [
-    info.beschreibung,
+  // labelled lines in the description.
+  const description = [
+    info.description,
     info.valorSubastaText ? `Valor subasta: ${info.valorSubastaText}` : null,
     info.referenciaCatastral ? `Referencia catastral: ${info.referenciaCatastral}` : null,
   ]
     .filter(Boolean)
     .join('\n')
-  if (beschreibung) auction.beschreibung = beschreibung
+  if (description) auction.description = description
   // ver=3 has the structured address; trust it over the listing's best-effort.
-  if (info.adresse) auction.adresse = info.adresse
+  if (info.address) auction.address = info.address
   // Construct the official BOE-Boletín document URL from its id. Only
   // extract the canonical `BOE-B-yyyy-N+` shape so noisy upstream text can
   // never produce a malformed pdfUrl.
@@ -80,18 +80,18 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
         `[boe] provincia ${provincia}: ${totalReported} results reported, only ${auctions.length} parsed — no pagination token found`,
       )
     } else {
-      const seen = new Set(auctions.map((a) => a.zvgId))
+      const seen = new Set(auctions.map((a) => a.externalId))
       try {
         for (let start = PAGE_HITS; start < totalReported; start += PAGE_HITS) {
           const pageHtml = await fetchListHtml(buildPageUrl(token, start), provincia)
           const page = parseListingHtml(pageHtml, provincia, PLATFORM_ID)
-          const fresh = page.auctions.filter((a) => !seen.has(a.zvgId))
+          const fresh = page.auctions.filter((a) => !seen.has(a.externalId))
           // BOE clamps an out-of-range start to the last valid page instead
           // of returning an empty one, and an expired token falls back to the
           // bare search form — either way, no new ids means we're done.
           if (fresh.length === 0) break
           for (const a of fresh) {
-            seen.add(a.zvgId)
+            seen.add(a.externalId)
             auctions.push(a)
           }
         }

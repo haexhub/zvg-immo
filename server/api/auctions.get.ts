@@ -109,15 +109,15 @@ export default defineEventHandler(async (event): Promise<CrawlResult> => {
 })
 
 async function overlayCachedVerkehrswert(result: CrawlResult): Promise<void> {
-  const needsOverlay = result.auctions.some((a) => a.verkehrswertEur == null)
+  const needsOverlay = result.auctions.some((a) => a.marketValueEur == null)
   if (!needsOverlay) return
   const cache = await readVerkehrswertCache()
   for (const a of result.auctions) {
-    if (a.verkehrswertEur != null) continue
-    const hit = cache[cacheKey(a.platform, a.zvgId)]
+    if (a.marketValueEur != null) continue
+    const hit = cache[cacheKey(a.platform, a.externalId)]
     if (!hit) continue
-    a.verkehrswertEur = hit.verkehrswertEur
-    a.verkehrswertText = hit.verkehrswertText
+    a.marketValueEur = hit.marketValueEur
+    a.marketValueText = hit.marketValueText
   }
 }
 

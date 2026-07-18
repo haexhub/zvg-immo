@@ -45,13 +45,13 @@ describe('parseDetailPage', () => {
   })
 
   it('still extracts the free-text description', () => {
-    expect(detail.beschreibung).toBe('Dans un ensemble immobilier sis à LE BLANC-MESNIL (93)')
+    expect(detail.description).toBe('Dans un ensemble immobilier sis à LE BLANC-MESNIL (93)')
   })
 
   it('returns nulls for a page without structured fields', () => {
     const empty = parseDetailPage('<html><body></body></html>')
     expect(empty).toEqual({
-      beschreibung: null,
+      description: null,
       photos: [],
       typeDeBien: null,
       rooms: null,

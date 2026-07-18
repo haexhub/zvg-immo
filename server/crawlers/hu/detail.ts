@@ -1,21 +1,21 @@
 import { load } from 'cheerio'
 import type { Auction } from '~/types/auction'
-import type { PropertyType } from '~/lib/objektart'
+import type { PropertyType } from '~/lib/property-type'
 import { HU_BASE, UA } from './constants'
 import { decodeIso8859_2, parseMnvPrice, clean, htmlToText, jsFieldValue, jsFieldUnit } from './text'
 import { getRates, toEur } from '~/server/utils/exchange-rate'
 import { areaBucketForPropertyType } from '~/server/utils/extract/rules'
 
-/** Maps the MNV objekt text to a representative PropertyType for
+/** Maps the MNV title text to a representative PropertyType for
  *  areaBucketForPropertyType (its Hungarian vocabulary isn't covered by
- *  objektart.ts's conservative cross-language regexes). */
-function objektPropertyType(objekt: string | null): PropertyType | null {
-  return objekt != null && /terület|telek|föld/i.test(objekt) ? 'unbebaut' : null
+ *  property-type.ts's conservative cross-language regexes). */
+function titlePropertyType(title: string | null): PropertyType | null {
+  return title != null && /terület|telek|föld/i.test(title) ? 'unbebaut' : null
 }
 
 export interface HuDetail {
   /** "Egyéb infó:" free text (tr#description). */
-  beschreibung: string | null
+  description: string | null
   /** "Becsérték:" in HUF — the actual valuation. Absent on most MNV lots,
    *  which only publish the "Kikiáltási ár" (reserve/starting price). */
   becsertekHuf: number | null
@@ -37,7 +37,7 @@ export function parseDetailPage(html: string): HuDetail {
   const $ = load(html)
 
   const descHtml = $('tr#description td').first().html()
-  const beschreibung = descHtml ? htmlToText(descHtml) || null : null
+  const description = descHtml ? htmlToText(descHtml) || null : null
 
   let becsertekRaw: string | null = null
   let kikialtasiRaw: string | null = null
@@ -69,7 +69,7 @@ export function parseDetailPage(html: string): HuDetail {
   const coords = html.match(/markers=(?:[^&"'\s]*?[|:])?\s*(\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?)/)
 
   return {
-    beschreibung,
+    description,
     becsertekHuf: becsertekRaw != null ? parseMnvPrice(becsertekRaw) : null,
     kikialtasiRaw,
     helyrajziSzam: jsFieldValue(html, 'place_num'),
@@ -92,32 +92,32 @@ export async function enrichOne(auction: Auction): Promise<void> {
   const d = parseDetailPage(html)
 
   const lines: string[] = []
-  if (d.beschreibung) lines.push(d.beschreibung)
+  if (d.description) lines.push(d.description)
   if (d.helyrajziSzam) lines.push(`Helyrajzi szám: ${d.helyrajziSzam}`)
   if (d.areaRaw) lines.push(`Terület: ${d.areaRaw}`)
 
   // The list value ("Kikiáltási ár") is only the starting price. When the lot
-  // publishes a real valuation ("Becsérték"), prefer it as Verkehrswert and
+  // publishes a real valuation ("Becsérték"), prefer it as marketValue and
   // keep the starting price as a labelled description line.
   if (d.becsertekHuf != null) {
     const rates = await getRates()
-    auction.verkehrswertEur = toEur(d.becsertekHuf, 'HUF', rates)
-    auction.verkehrswertText = `${d.becsertekHuf.toLocaleString('de-DE', { maximumFractionDigits: 0 })} Ft`
+    auction.marketValueEur = toEur(d.becsertekHuf, 'HUF', rates)
+    auction.marketValueText = `${d.becsertekHuf.toLocaleString('de-DE', { maximumFractionDigits: 0 })} Ft`
     if (d.kikialtasiRaw) lines.push(`Kikiáltási ár (Startpreis): ${d.kikialtasiRaw}`)
   }
 
-  if (lines.length > 0) auction.beschreibung = lines.join('\n\n')
+  if (lines.length > 0) auction.description = lines.join('\n\n')
 
   // "Terület" is the parcel area from the land register — structured land
   // area for plots; for built-up lots it may mix parcel/floor semantics, so
   // it stays description-only there.
-  if (d.areaSqm != null && areaBucketForPropertyType(objektPropertyType(auction.objekt)) === 'land') {
+  if (d.areaSqm != null && areaBucketForPropertyType(titlePropertyType(auction.title)) === 'land') {
     auction.sourceLandAreaSqm = d.areaSqm
   }
 
   if (d.photoUrls.length > 0) {
     auction.photoUrls = d.photoUrls
-    auction.fotoCount = d.photoUrls.length
+    auction.photoCount = d.photoUrls.length
   }
 
   if (d.lat != null && d.lng != null) {

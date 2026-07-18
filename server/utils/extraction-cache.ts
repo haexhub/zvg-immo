@@ -1,7 +1,7 @@
 // Persistent disk cache of extracted structured fields (property type + sizes)
-// keyed by `${platform}:${zvgId}`. Populated by the enrich task; the
+// keyed by `${platform}:${externalId}`. Populated by the enrich task; the
 // /api/auctions overlay reads it read-only so requests never block on
-// extraction. Mirrors verkehrswert-cache.ts (same `${platform}:${zvgId}` key
+// extraction. Mirrors verkehrswert-cache.ts (same `${platform}:${externalId}` key
 // — via the shared cacheKey helper — and the same atomic-write and
 // resilient-read semantics).
 //
@@ -20,21 +20,21 @@ export type ExtractionCache = Record<string, AuctionExtraction>
 
 /**
  * Apply the extraction cache to a set of auctions (mutates in place). Synthesises
- * a `thumbnailUrl` and bumps `fotoCount` from `extraction.photos` when the
+ * a `thumbnailUrl` and bumps `photoCount` from `extraction.photos` when the
  * listing didn't bring its own photo attachment. Shared by the /api/auctions
  * overlay and the enrich-task snapshot writer so they stay consistent.
  */
 export function applyExtractionToAuctions(auctions: Auction[], cache: ExtractionCache): void {
   for (const a of auctions) {
-    const hit = cache[cacheKey(a.platform, a.zvgId)]
+    const hit = cache[cacheKey(a.platform, a.externalId)]
     if (!hit) continue
     a.extraction = hit
     const photos = hit.photos ?? []
     if (photos.length === 0) continue
     if (!a.thumbnailUrl) {
-      a.thumbnailUrl = `/api/auction-image/${a.platform}/${a.zvgId}/${photos[0]}`
+      a.thumbnailUrl = `/api/auction-image/${a.platform}/${a.externalId}/${photos[0]}`
     }
-    if (a.fotoCount < photos.length) a.fotoCount = photos.length
+    if (a.photoCount < photos.length) a.photoCount = photos.length
   }
 }
 

@@ -92,12 +92,12 @@ export async function enrichOne(auction: Auction): Promise<void> {
 
   if (d.photoUrls.length > 0) {
     auction.photoUrls = d.photoUrls
-    auction.fotoCount = d.photoUrls.length
+    auction.photoCount = d.photoUrls.length
   }
 
   if (d.gutachten && !auction.attachments.some((a) => a.fileId === d.gutachten!.fileId)) {
     auction.attachments.push({
-      kind: 'gutachten',
+      kind: 'appraisal',
       label: 'Īpašuma novērtējums',
       filename: d.gutachten.filename,
       sizeBytes: null,
@@ -112,9 +112,9 @@ export async function enrichOne(auction: Auction): Promise<void> {
   if (lines.length > 0) {
     // Enrich the notice text from the list crawl — never replace it. Skip
     // lines already present so reruns don't stack duplicate cadastral blocks.
-    const missing = lines.filter((line) => !auction.beschreibung?.includes(line))
+    const missing = lines.filter((line) => !auction.description?.includes(line))
     if (missing.length > 0) {
-      auction.beschreibung = [auction.beschreibung, missing.join('\n')].filter(Boolean).join('\n\n')
+      auction.description = [auction.description, missing.join('\n')].filter(Boolean).join('\n\n')
     }
   }
 

@@ -161,7 +161,7 @@ const TITLE_RE = /^(.+?),\s*([A-Z]{2})\s+Sheriff Sale:/
 
 /** Some titles carry a leading status marker before the county name, e.g.
  *  "***STAYED***Adams County, PA Sheriff Sale: …" — that status is already
- *  captured separately via `row.IsPostponedOrStayed` (see `aufgehoben`), so
+ *  captured separately via `row.IsPostponedOrStayed` (see `cancelled`), so
  *  strip it here rather than let it leak into the county name. */
 function parseCountyState(title: string | null): { county: string | null; state: string | null } {
   if (!title) return { county: null, state: null }
@@ -173,12 +173,12 @@ function parseCountyState(title: string | null): { county: string | null; state:
  *  the other crawlers store court-published times without a UTC offset,
  *  since the actual zone varies by county/channel) plus a German-labelled
  *  display string, consistent with dk/is. */
-function parseTermin(actualCloseTime: string | null): { terminIso: string | null; terminText: string | null } {
-  if (!actualCloseTime) return { terminIso: null, terminText: null }
+function parseTermin(actualCloseTime: string | null): { auctionDateIso: string | null; auctionDateText: string | null } {
+  if (!actualCloseTime) return { auctionDateIso: null, auctionDateText: null }
   const m = actualCloseTime.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/)
-  if (!m) return { terminIso: null, terminText: null }
+  if (!m) return { auctionDateIso: null, auctionDateText: null }
   const [, y, mo, d, hh, mm] = m
-  return { terminIso: `${y}-${mo}-${d}T${hh}:${mm}:00`, terminText: `${d}.${mo}.${y}, ${hh}:${mm} Uhr` }
+  return { auctionDateIso: `${y}-${mo}-${d}T${hh}:${mm}:00`, auctionDateText: `${d}.${mo}.${y}, ${hh}:${mm} Uhr` }
 }
 
 function extractPhotoUrls(images: unknown[] | null | undefined): string[] {
@@ -198,24 +198,24 @@ function extractPhotoUrls(images: unknown[] | null | undefined): string[] {
 }
 
 function mapRow(row: RawRow, docs: ChannelDoc[], platformId: string): Auction {
-  const zvgId = String(row.AuctionID)
+  const externalId = String(row.AuctionID)
   const { county, state } = parseCountyState(row.Asset_Title)
   const region = state ? (US_STATE_NAMES[state] ?? state) : ''
-  const amtsgericht = county ? `${county} Sheriff` : 'Bid4Assets Sheriff Sale'
-  const { terminIso, terminText } = parseTermin(row.ActualCloseTime)
+  const authority = county ? `${county} Sheriff` : 'Bid4Assets Sheriff Sale'
+  const { auctionDateIso, auctionDateText } = parseTermin(row.ActualCloseTime)
 
   const formatUsd = (n: number) => `$${n.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
 
   // Neither field is a property valuation — DebtAmount is the judgment/debt
   // balance and MinimumBid is the opening bid, not an appraised value. Unlike
   // DK/SE/HU/GB (where the source publishes an actual valuation), Bid4Assets
-  // exposes no such field, so verkehrswertEur stays null rather than
+  // exposes no such field, so marketValueEur stays null rather than
   // mislabeling debt/bid as a property value; both amounts are still surfaced
   // as explicitly labeled figures in the description.
-  const verkehrswertEur = null
-  const verkehrswertText = null
+  const marketValueEur = null
+  const marketValueText = null
 
-  const beschreibung =
+  const description =
     [
       row.DebtAmount && row.DebtAmount > 0 ? `Debt amount: ${formatUsd(row.DebtAmount)}` : null,
       row.MinimumBid && row.MinimumBid > 1 ? `Minimum bid: ${formatUsd(row.MinimumBid)}` : null,
@@ -243,26 +243,26 @@ function mapRow(row: RawRow, docs: ChannelDoc[], platformId: string): Auction {
     platform: platformId,
     country: COUNTRY,
     region,
-    zvgId,
+    externalId,
     // Unlike FR (which never publishes a real court reference), many US
     // judicial sheriff sales do — use it when present.
-    aktenzeichen: row.CourtCase || row.SheriffNumber || '',
-    amtsgericht,
-    objekt: null,
-    adresse: row.Address || null,
-    verkehrswertEur,
-    verkehrswertText,
-    terminIso,
-    terminText,
-    aufgehoben: row.IsPostponedOrStayed === true,
-    letzteAktualisierungIso: null,
+    caseNumber: row.CourtCase || row.SheriffNumber || '',
+    authority,
+    title: null,
+    address: row.Address || null,
+    marketValueEur,
+    marketValueText,
+    auctionDateIso,
+    auctionDateText,
+    cancelled: row.IsPostponedOrStayed === true,
+    sourceUpdatedIso: null,
     pdfUrl: attachments[0]?.proxyUrl ?? null,
     detailUrl,
     pdfUrlUpstream: attachments[0]?.proxyUrl ?? null,
     detailUrlUpstream: detailUrl,
     attachments,
-    beschreibung,
-    fotoCount: photos.length,
+    description,
+    photoCount: photos.length,
     thumbnailUrl: photos[0] ?? null,
     ...(photos.length > 0 ? { photoUrls: photos } : {}),
   }
@@ -288,9 +288,9 @@ export async function fetchAllListings(
   for (const result of results) {
     if (!result) continue
     for (const row of result.rows) {
-      const zvgId = String(row.AuctionID)
-      if (seen.has(zvgId)) continue
-      seen.add(zvgId)
+      const externalId = String(row.AuctionID)
+      if (seen.has(externalId)) continue
+      seen.add(externalId)
       auctions.push(mapRow(row, result.docs, platformId))
     }
   }

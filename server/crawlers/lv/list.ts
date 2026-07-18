@@ -60,13 +60,13 @@ function parseListPage(html: string, platformId: string): Auction[] {
     const type = clean($tr.find('td.__type').first().text())
     if (type && !type.toLowerCase().includes('nekustam')) return
 
-    const adresse = clean($link.text())
+    const address = clean($link.text())
     const thumbnailUrl = $tr.find('img.thumb').first().attr('src') ?? null
 
     const numberCells = $tr.find('td.number')
     const valuationCell = numberCells.filter((_, el) => !$(el).hasClass('__start_price')).first()
     const startPriceCell = numberCells.filter((_, el) => $(el).hasClass('__start_price')).first()
-    const verkehrswertText = clean(valuationCell.text())
+    const marketValueText = clean(valuationCell.text())
     const startPriceText = clean(startPriceCell.text())
 
     const state = clean($tr.find('td.__state').first().text()) ?? ''
@@ -74,10 +74,10 @@ function parseListPage(html: string, platformId: string): Auction[] {
 
     const startRaw = cellText($tr.find('td.__start_time').first().html())
     const endRaw = cellText($tr.find('td.__end_time').first().html())
-    const { iso: terminIso, label: terminText } = parseLvDateTime(endRaw)
+    const { iso: auctionDateIso, label: auctionDateText } = parseLvDateTime(endRaw)
 
     const descHtml = $tr.find('.auction-info .hidden').first().text()
-    const beschreibung = descHtml
+    const description = descHtml
       ? [startPriceText ? `Sākumcena: ${startPriceText}` : null, htmlToText(descHtml)]
           .filter(Boolean)
           .join('\n\n') || null
@@ -87,24 +87,24 @@ function parseListPage(html: string, platformId: string): Auction[] {
       platform: platformId,
       country: COUNTRY,
       region: '',
-      zvgId: uuid,
-      aktenzeichen: '',
-      amtsgericht: bailiff ?? '',
-      objekt: null,
-      adresse,
-      verkehrswertEur: parseLvPrice(verkehrswertText),
-      verkehrswertText,
-      terminIso,
-      terminText: terminText ?? (startRaw ? `Beginn: ${startRaw}` : null),
-      aufgehoben: !state.toLowerCase().includes('notiek'),
-      letzteAktualisierungIso: null,
+      externalId: uuid,
+      caseNumber: '',
+      authority: bailiff ?? '',
+      title: null,
+      address,
+      marketValueEur: parseLvPrice(marketValueText),
+      marketValueText,
+      auctionDateIso,
+      auctionDateText: auctionDateText ?? (startRaw ? `Beginn: ${startRaw}` : null),
+      cancelled: !state.toLowerCase().includes('notiek'),
+      sourceUpdatedIso: null,
       pdfUrl: null,
       detailUrl: `${LV_BASE}/izsole/${uuid}`,
       pdfUrlUpstream: null,
       detailUrlUpstream: `${LV_BASE}/izsole/${uuid}`,
       attachments: [],
-      beschreibung,
-      fotoCount: thumbnailUrl ? 1 : 0,
+      description,
+      photoCount: thumbnailUrl ? 1 : 0,
       thumbnailUrl,
     })
   })
@@ -137,10 +137,10 @@ export async function fetchAllListings(
     /** Out-of-range page numbers are clamped to the last page instead of
      *  returning an empty list, so stop as soon as a page adds nothing new. */
     const pageAuctions = parseListPage(await res.text(), platformId).filter(
-      (a) => !seen.has(a.zvgId),
+      (a) => !seen.has(a.externalId),
     )
     if (pageAuctions.length === 0) break
-    for (const a of pageAuctions) seen.add(a.zvgId)
+    for (const a of pageAuctions) seen.add(a.externalId)
     auctions.push(...pageAuctions)
   }
 

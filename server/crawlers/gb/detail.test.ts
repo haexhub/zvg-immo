@@ -70,11 +70,11 @@ const ONLINE_FIXTURE = `
 describe('parseOwnDetail', () => {
   it('extracts date/time, the description (excluding the boilerplate notice), and the gallery only', () => {
     const d = parseOwnDetail(OWN_FIXTURE)
-    expect(d.terminIso).toBe('2026-07-29T09:30:00')
-    expect(d.terminText).toBe('Wed 29/07/2026 09:30')
-    expect(d.beschreibung).toContain('A Vacant Four Bedroom Semi Detached House')
-    expect(d.beschreibung).toContain('Tenure\nFreehold')
-    expect(d.beschreibung).not.toContain('Special Conditions of Sale')
+    expect(d.auctionDateIso).toBe('2026-07-29T09:30:00')
+    expect(d.auctionDateText).toBe('Wed 29/07/2026 09:30')
+    expect(d.description).toContain('A Vacant Four Bedroom Semi Detached House')
+    expect(d.description).toContain('Tenure\nFreehold')
+    expect(d.description).not.toContain('Special Conditions of Sale')
     expect(d.photoUrls).toEqual([
       'https://www.auctionhouse.co.uk/lot-image/906416?w=670',
       'https://www.auctionhouse.co.uk/lot-image/909733?w=670',
@@ -87,13 +87,13 @@ describe('parseOwnDetail', () => {
 describe('parseOnlineDetail', () => {
   it('extracts the closing date, description sections up to the boilerplate notice, gallery and lat/lng', () => {
     const d = parseOnlineDetail(ONLINE_FIXTURE)
-    expect(d.terminIso).toBe('2026-07-28')
-    expect(d.terminText).toContain('Bidding Opens 27/07/2026 13:00')
-    expect(d.terminText).toContain('Closes 28/07/2026')
-    expect(d.beschreibung).toContain('Location\nThe property is situated')
-    expect(d.beschreibung).toContain('Description\nThe property comprises')
-    expect(d.beschreibung).not.toContain('Administration Charge')
-    expect(d.beschreibung).not.toContain('Special Conditions of Sale')
+    expect(d.auctionDateIso).toBe('2026-07-28')
+    expect(d.auctionDateText).toContain('Bidding Opens 27/07/2026 13:00')
+    expect(d.auctionDateText).toContain('Closes 28/07/2026')
+    expect(d.description).toContain('Location\nThe property is situated')
+    expect(d.description).toContain('Description\nThe property comprises')
+    expect(d.description).not.toContain('Administration Charge')
+    expect(d.description).not.toContain('Special Conditions of Sale')
     expect(d.photoUrls).toEqual([
       'https://cdn.eigpropertyauctions.co.uk/ams/images/96/auction/0/2770097_web_medium',
       'https://cdn.eigpropertyauctions.co.uk/ams/images/96/auction/0/2770098_web_medium',

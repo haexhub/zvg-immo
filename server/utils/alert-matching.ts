@@ -61,10 +61,10 @@ export function toAuctionFilters(stored: Record<string, unknown>): AuctionFilter
     countries,
     regionNameKeys,
     search: str('q'),
-    court: str('court') || 'all',
-    kategorie: str('kat') || 'all',
+    authority: str('authority') || 'all',
+    category: str('category') || 'all',
     onlyWithPhotos: str('photos') === '1',
-    includeAufgehoben: str('aufgehoben') === '1',
+    includeCancelled: str('cancelled') === '1',
     priceMin: num('priceMin'),
     priceMax: num('priceMax'),
     landMin: num('landMin'),
@@ -125,19 +125,19 @@ async function processSubscription(
 
   const { data: existing, error: existingError } = await supabase
     .from('notified_matches')
-    .select('platform, zvg_id')
+    .select('platform, external_id')
     .eq('alert_subscription_id', subscriptionId)
   if (existingError) {
     console.warn(`[alert-matching] load notified_matches failed: ${existingError.message}`)
     return
   }
-  const notified = new Set((existing ?? []).map((r) => `${r.platform}:${r.zvg_id}`))
-  const fresh = matched.filter((a) => !notified.has(`${a.platform}:${a.zvgId}`))
+  const notified = new Set((existing ?? []).map((r) => `${r.platform}:${r.external_id}`))
+  const fresh = matched.filter((a) => !notified.has(`${a.platform}:${a.externalId}`))
   if (fresh.length === 0) return
 
   const { error: insertError } = await supabase
     .from('notified_matches')
-    .insert(fresh.map((a) => ({ alert_subscription_id: subscriptionId, platform: a.platform, zvg_id: a.zvgId })))
+    .insert(fresh.map((a) => ({ alert_subscription_id: subscriptionId, platform: a.platform, external_id: a.externalId })))
   if (insertError) {
     console.warn(`[alert-matching] insert notified_matches failed: ${insertError.message}`)
     return
@@ -154,19 +154,19 @@ async function processSubscription(
     try {
       await sendMail({
         to: email,
-        subject: `Neue Auktion: ${a.objekt ?? a.aktenzeichen}`,
+        subject: `Neue Auktion: ${a.title ?? a.caseNumber}`,
         text: buildMailBody(a),
       })
     } catch (err) {
-      console.warn(`[alert-matching] mail send failed for ${a.platform}/${a.zvgId}: ${(err as Error).message}`)
+      console.warn(`[alert-matching] mail send failed for ${a.platform}/${a.externalId}: ${(err as Error).message}`)
     }
   }
 }
 
 function buildMailBody(a: Auction): string {
-  const lines = [`Amtsgericht: ${a.amtsgericht}`, `Aktenzeichen: ${a.aktenzeichen}`]
-  if (a.verkehrswertEur != null) lines.push(`Verkehrswert: ${a.verkehrswertEur.toLocaleString('de-DE')} €`)
-  if (a.terminText) lines.push(`Termin: ${a.terminText}`)
+  const lines = [`Amtsgericht: ${a.authority}`, `Aktenzeichen: ${a.caseNumber}`]
+  if (a.marketValueEur != null) lines.push(`Verkehrswert: ${a.marketValueEur.toLocaleString('de-DE')} €`)
+  if (a.auctionDateText) lines.push(`Termin: ${a.auctionDateText}`)
   if (a.detailUrl) lines.push(`Details: ${a.detailUrl}`)
   return lines.join('\n')
 }

@@ -11,7 +11,7 @@
 // therefore fetched at most once, ever.
 //
 // Extraction is two-tier:
-//   1. Deterministic rules over objekt + beschreibung (free, precise). If they
+//   1. Deterministic rules over title + description (free, precise). If they
 //      yield a confident result we stop there.
 //   2. Otherwise, when the LLM is configured (runtimeConfig.extractLlm.baseUrl),
 //      fall back to Claude-via-haex-claude-proxy with the best Gutachten/Exposé
@@ -95,11 +95,11 @@ async function runEnrich() {
     // meaning enrichOne either never ran or ran before the marker existed and
     // is due for a one-shot backfill. Once the marker is set, the listing
     // drops out of the todo list even if it legitimately has no attachments /
-    // beschreibung (which would otherwise cause endless retries).
+    // description (which would otherwise cause endless retries).
     const needsEnrich = (a: Auction): boolean => {
       const crawler = byPlatform.get(a.platform)
       if (!crawler?.enrichOne) return false
-      const prev = previousSnapshot[cacheKey(a.platform, a.zvgId)]
+      const prev = previousSnapshot[cacheKey(a.platform, a.externalId)]
       return !prev?.detailFetchedAt
     }
     // A prior run may have hit the per-run LLM cap before reaching this
@@ -109,11 +109,11 @@ async function runEnrich() {
     // hasn't changed, so nothing would improve; only retry the ones the LLM
     // never got to.
     const needsLlmRetry = (a: Auction): boolean => {
-      const hit = cache[cacheKey(a.platform, a.zvgId)]
+      const hit = cache[cacheKey(a.platform, a.externalId)]
       return hit?.source === 'rules' && hit.confidence === 'low'
     }
     const eligible = result.auctions.filter(
-      (a) => !cache[cacheKey(a.platform, a.zvgId)] || needsEnrich(a) || needsLlmRetry(a),
+      (a) => !cache[cacheKey(a.platform, a.externalId)] || needsEnrich(a) || needsLlmRetry(a),
     )
     const todo = interleaveByPlatform(eligible)
     console.log(
@@ -134,13 +134,13 @@ async function runEnrich() {
         const a = todo[cursor++]
         if (!a) continue
         const crawler = byPlatform.get(a.platform)
-        const key = cacheKey(a.platform, a.zvgId)
+        const key = cacheKey(a.platform, a.externalId)
         const extractionMissing = !cache[key] || needsLlmRetry(a)
 
-        // Detail fetch (beschreibung + attachments) so extraction has real text
+        // Detail fetch (description + attachments) so extraction has real text
         // and the snapshot writer has enrichOne-populated fields to persist.
         // Stamp detailFetchedAt when enrichOne returned without throwing — even
-        // if the listing legitimately has no attachments/beschreibung — so we
+        // if the listing legitimately has no attachments/description — so we
         // don't re-fetch the same empty response on every future run.
         let enriched = false
         let detailOk = !crawler?.enrichOne
@@ -149,9 +149,9 @@ async function runEnrich() {
             await crawler.enrichOne(a)
             detailOk = true
             // Any enrichOne-populated field counts — some platforms yield only
-            // structured values or a photo gallery, no beschreibung/attachments.
+            // structured values or a photo gallery, no description/attachments.
             enriched =
-              a.beschreibung != null ||
+              a.description != null ||
               a.attachments.length > 0 ||
               a.sourceLivingAreaSqm != null ||
               a.sourceLandAreaSqm != null ||
@@ -172,7 +172,7 @@ async function runEnrich() {
         // would clobber a prior LLM extraction with a downgraded rules-only one.
         if (!extractionMissing) continue
 
-        const rules = extractByRules({ objekt: a.objekt, beschreibung: a.beschreibung })
+        const rules = extractByRules({ title: a.title, description: a.description })
         // Structured values straight from the source platform beat anything
         // parsed out of free text — they are the platform's own data, not a
         // regex guess.
@@ -198,7 +198,7 @@ async function runEnrich() {
           llmCalls++
           const pdfText = bestPdf ? await pdfToText(bestPdf.proxyUrl) : null
           const llm = await extractByLlm(
-            { objekt: a.objekt, beschreibung: a.beschreibung, pdfText },
+            { title: a.title, description: a.description, pdfText },
             llmConfig,
           )
           if (llm === null) {
@@ -236,7 +236,7 @@ async function runEnrich() {
 
         if (!cacheable) continue
 
-        // Two-way photo pipeline (platform/zvgId guard applies to both — the
+        // Two-way photo pipeline (platform/externalId guard applies to both — the
         // API endpoint enforces the same shape, so files under an unsafe path
         // would be unreachable anyway):
         //   a) Native image URLs — from the crawler's foto attachments (AT
@@ -263,13 +263,13 @@ async function runEnrich() {
           // platforms stay in retry for many runs). First runs and entries
           // never cached before still go through the full pipeline below.
           photos = prevEntry.photos ?? []
-        } else if (isSafePathSegment(a.platform) && isSafePathSegment(a.zvgId)) {
-          const destDir = join(IMAGES_DIR, a.platform, a.zvgId)
+        } else if (isSafePathSegment(a.platform) && isSafePathSegment(a.externalId)) {
+          const destDir = join(IMAGES_DIR, a.platform, a.externalId)
           const nativeFotoUrls = [
             ...a.attachments
               .filter(
                 (att) =>
-                  att.kind === 'foto' &&
+                  att.kind === 'photo' &&
                   /^https?:\/\/.*\.(?:jpe?g|png|webp)(?:[?#]|$)/i.test(att.proxyUrl),
               )
               .map((att) => att.proxyUrl),
@@ -279,14 +279,14 @@ async function runEnrich() {
             if (nativeFotoUrls.length > 0) {
               photos = await downloadNativeImages([...new Set(nativeFotoUrls)], { destDir })
             }
-            if (photos.length === 0 && bestPdf && a.fotoCount === 0) {
+            if (photos.length === 0 && bestPdf && a.photoCount === 0) {
               photoExtractions++
               photos = await extractPdfPhotos(bestPdf.proxyUrl, { destDir })
             }
             photosTotal += photos.length
           } catch (err) {
             console.warn(
-              `[enrich] photo extraction failed for ${a.platform}:${a.zvgId}: ${(err as Error).message}`,
+              `[enrich] photo extraction failed for ${a.platform}:${a.externalId}: ${(err as Error).message}`,
             )
           }
         }
@@ -316,11 +316,11 @@ async function runEnrich() {
     // are applied here so the snapshot matches what the list view sees.
     const vwCache = await readVerkehrswertCache()
     for (const a of result.auctions) {
-      if (a.verkehrswertEur != null) continue
-      const hit = vwCache[cacheKey(a.platform, a.zvgId)]
+      if (a.marketValueEur != null) continue
+      const hit = vwCache[cacheKey(a.platform, a.externalId)]
       if (!hit) continue
-      a.verkehrswertEur = hit.verkehrswertEur
-      a.verkehrswertText = hit.verkehrswertText
+      a.marketValueEur = hit.marketValueEur
+      a.marketValueText = hit.marketValueText
     }
     applyExtractionToAuctions(result.auctions, cache)
     await writeAuctionSnapshot(result.auctions)

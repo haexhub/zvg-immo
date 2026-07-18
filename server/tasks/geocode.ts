@@ -48,7 +48,7 @@ async function runGeocode() {
 
     const result = await crawlAll({ immobilienOnly: true, enrichDetails: false })
     // Listings whose crawler already supplied coordinates never need the geocoder.
-    const withAddress = result.auctions.filter((a) => a.adresse && (a.lat == null || a.lng == null))
+    const withAddress = result.auctions.filter((a) => a.address && (a.lat == null || a.lng == null))
     console.log(
       `[geocode] crawled ${result.auctions.length} auctions (${withAddress.length} with address)`,
     )
@@ -60,7 +60,7 @@ async function runGeocode() {
     for (const a of withAddress) {
       processed++
       try {
-        const point = await geocodeAddress(a.adresse, a.country, { fetchMissing: true })
+        const point = await geocodeAddress(a.address, a.country, { fetchMissing: true })
         if (point) geocoded++
       } catch {
         failed++
@@ -111,7 +111,7 @@ async function enrichAtVerkehrswert(
   const atAuctions = auctions.filter((a) => a.platform === 'at-edikte')
   if (atAuctions.length === 0) return { added: 0, errors: 0 }
 
-  const toFetch = atAuctions.filter((a) => !(cacheKey(a.platform, a.zvgId) in cache))
+  const toFetch = atAuctions.filter((a) => !(cacheKey(a.platform, a.externalId) in cache))
   if (toFetch.length === 0) {
     console.log(`[geocode] verkehrswert(at): ${atAuctions.length} entries, all cached`)
     return { added: 0, errors: 0 }
@@ -122,9 +122,9 @@ async function enrichAtVerkehrswert(
 
   let added = 0
   const result = await enrichAtDetails(toFetch, (auction, info) => {
-    cache[cacheKey('at-edikte', auction.zvgId)] = {
-      verkehrswertEur: info.schaetzwertEur,
-      verkehrswertText: info.schaetzwertText,
+    cache[cacheKey('at-edikte', auction.externalId)] = {
+      marketValueEur: info.schaetzwertEur,
+      marketValueText: info.schaetzwertText,
     }
     added++
   })
@@ -148,8 +148,8 @@ async function enrichBidditVerkehrswert(
   // this a one-time backfill — lots that genuinely have no price don't get
   // re-fetched on every run.
   const toFetch = beAuctions.filter((a) => {
-    const hit = cache[cacheKey(a.platform, a.zvgId)]
-    return hit == null || (hit.verkehrswertEur == null && !hit.retried)
+    const hit = cache[cacheKey(a.platform, a.externalId)]
+    return hit == null || (hit.marketValueEur == null && !hit.retried)
   })
   if (toFetch.length === 0) {
     console.log(`[geocode] verkehrswert(be): ${beAuctions.length} entries, all cached`)
@@ -161,9 +161,9 @@ async function enrichBidditVerkehrswert(
 
   let added = 0
   const result = await enrichBidditDetails(toFetch, (auction, info) => {
-    cache[cacheKey('biddit', auction.zvgId)] = {
-      verkehrswertEur: info.estimatedPrice,
-      verkehrswertText: formatVerkehrswertText(info),
+    cache[cacheKey('biddit', auction.externalId)] = {
+      marketValueEur: info.estimatedPrice,
+      marketValueText: formatVerkehrswertText(info),
       ...(info.estimatedPrice == null ? { retried: true } : {}),
     }
     added++

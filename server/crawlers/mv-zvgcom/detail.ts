@@ -55,27 +55,27 @@ async function fetchGalleryPics(id: string): Promise<string[]> {
  *  is already attached at list time — see list.ts. */
 export async function enrichOne(auction: Auction): Promise<void> {
   const [html, links, galleryPics] = await Promise.all([
-    fetchText(auction.zvgId, 'getText'),
-    fetchPdfLinks(auction.zvgId),
-    fetchGalleryPics(auction.zvgId).catch(() => []),
+    fetchText(auction.externalId, 'getText'),
+    fetchPdfLinks(auction.externalId),
+    fetchGalleryPics(auction.externalId).catch(() => []),
   ])
 
   const text = stripDivHtml(html)
-  if (text) auction.beschreibung = text
+  if (text) auction.description = text
 
   // The grid reports vwert=0 for some auctions although the free text names
   // the value — pull it from there, but never override a structured value.
-  if (auction.verkehrswertEur == null && text) {
+  if (auction.marketValueEur == null && text) {
     const vw = extractSingleVerkehrswert(text)
     if (vw) {
-      auction.verkehrswertEur = vw.eur
-      auction.verkehrswertText = vw.text
+      auction.marketValueEur = vw.eur
+      auction.marketValueText = vw.text
     }
   }
 
   if (galleryPics.length > 0) {
     auction.photoUrls = galleryPics.map((p) => (p.startsWith('http') ? p : `${ZVGCOM_BASE}${p}`))
-    auction.fotoCount = auction.photoUrls.length
+    auction.photoCount = auction.photoUrls.length
   }
 
   const extra: Attachment[] = []
@@ -104,7 +104,7 @@ export async function enrichOne(auction: Auction): Promise<void> {
   if (links.hinweis) {
     const filename = links.hinweis.split('/').pop() || 'Biethinweise.pdf'
     extra.push({
-      kind: 'sonstiges',
+      kind: 'other',
       label: 'Biethinweise',
       filename,
       sizeBytes: null,

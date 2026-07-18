@@ -89,22 +89,22 @@ function mapDetail(url: string, html: string, platformId: string): Auction | nul
   const ld = extractRealEstateLd($)
   if (!ld) return null
 
-  const address = ld.mainEntity?.address
-  const adresse =
-    clean(address?.streetAddress) ??
-    clean([address?.addressLocality, address?.addressRegion].filter(Boolean).join(', '))
-  const region = clean(address?.addressRegion) ?? ''
+  const address_ = ld.mainEntity?.address
+  const address =
+    clean(address_?.streetAddress) ??
+    clean([address_?.addressLocality, address_?.addressRegion].filter(Boolean).join(', '))
+  const region = clean(address_?.addressRegion) ?? ''
 
   const dateRaw = clean($('.auction-date strong').first().text())
-  const { iso: terminIso, label: terminText } = parseGrDateTime(dateRaw)
+  const { iso: auctionDateIso, label: auctionDateText } = parseGrDateTime(dateRaw)
 
   // "Η ημερομηνία πλειστηριασμού έχει παρέλθει" ("the auction date has
   // passed") is shown on lots still linked from the sitemap after their date
   // elapsed without being taken down — the closest signal to "no longer an
   // active auction" this source exposes.
-  const aufgehoben = /έχει παρέλθει/.test($.text())
+  const cancelled = /έχει παρέλθει/.test($.text())
 
-  const verkehrswertEur = parseGrPrice(
+  const marketValueEur = parseGrPrice(
     typeof ld.offers?.price === 'number' ? ld.offers.price : null,
   )
 
@@ -120,26 +120,26 @@ function mapDetail(url: string, html: string, platformId: string): Auction | nul
     platform: platformId,
     country: COUNTRY,
     region,
-    zvgId: id,
+    externalId: id,
     // eauction24.gr never publishes the notary/officer's own case number or
     // court/notary name.
-    aktenzeichen: '',
-    amtsgericht: '',
-    objekt: clean(ld.name),
-    adresse,
-    verkehrswertEur,
-    verkehrswertText: formatGrPrice(verkehrswertEur),
-    terminIso,
-    terminText,
-    aufgehoben,
-    letzteAktualisierungIso: null,
+    caseNumber: '',
+    authority: '',
+    title: clean(ld.name),
+    address,
+    marketValueEur,
+    marketValueText: formatGrPrice(marketValueEur),
+    auctionDateIso,
+    auctionDateText,
+    cancelled,
+    sourceUpdatedIso: null,
     pdfUrl: null,
     detailUrl: url,
     pdfUrlUpstream: null,
     detailUrlUpstream: url,
     attachments: [],
-    beschreibung: clean(ld.description),
-    fotoCount: photoUrls.length,
+    description: clean(ld.description),
+    photoCount: photoUrls.length,
     thumbnailUrl: photoUrls[0] ?? null,
     photoUrls,
   }

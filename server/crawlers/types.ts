@@ -55,7 +55,7 @@ export interface PlatformCrawler {
   regions: readonly RegionInfo[]
   crawl(opts: CrawlOptions): Promise<CrawlResult>
   /** Enrich a single already-listed auction in place with its detail-page data
-   *  (beschreibung, attachments, …). Lets the enrich task fetch detail only for
+   *  (description, attachments, …). Lets the enrich task fetch detail only for
    *  auctions not yet in the extraction cache, instead of re-enriching every
    *  listing on every run (which would hammer the upstream portals). Optional —
    *  a crawler that can't enrich one item in isolation omits it. */

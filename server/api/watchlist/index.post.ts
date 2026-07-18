@@ -1,5 +1,5 @@
 // Favorites an auction. Idempotent: favoriting something already on the
-// watchlist (UNIQUE (user_id, platform, zvg_id)) returns the existing row
+// watchlist (UNIQUE (user_id, platform, external_id)) returns the existing row
 // instead of a 500 — the UI's star toggle can fire this without first
 // checking whether the item is already there.
 
@@ -11,17 +11,17 @@ const UNIQUE_VIOLATION = '23505'
 export default defineEventHandler(async (event): Promise<WatchlistItem> => {
   const body = await readBody<{
     platform?: unknown
-    zvgId?: unknown
-    amtsgericht?: unknown
-    aktenzeichen?: unknown
+    externalId?: unknown
+    authority?: unknown
+    caseNumber?: unknown
   }>(event).catch(() => ({}) as Record<string, unknown>)
   const platform = typeof body.platform === 'string' ? body.platform.trim() : ''
-  const zvgId = typeof body.zvgId === 'string' ? body.zvgId.trim() : ''
-  if (!platform || !zvgId) {
-    throw createError({ statusCode: 400, statusMessage: 'platform/zvgId fehlt.' })
+  const externalId = typeof body.externalId === 'string' ? body.externalId.trim() : ''
+  if (!platform || !externalId) {
+    throw createError({ statusCode: 400, statusMessage: 'platform/externalId fehlt.' })
   }
-  const amtsgericht = typeof body.amtsgericht === 'string' ? body.amtsgericht : null
-  const aktenzeichen = typeof body.aktenzeichen === 'string' ? body.aktenzeichen : null
+  const authority = typeof body.authority === 'string' ? body.authority : null
+  const caseNumber = typeof body.caseNumber === 'string' ? body.caseNumber : null
 
   const supabase = getServiceClient()
   if (!supabase) {
@@ -30,17 +30,17 @@ export default defineEventHandler(async (event): Promise<WatchlistItem> => {
   const userId = event.context.user!.id
   const { data, error } = await supabase
     .from('watchlist_items')
-    .insert({ user_id: userId, platform, zvg_id: zvgId, amtsgericht, aktenzeichen })
-    .select('id, platform, zvg_id, amtsgericht, aktenzeichen, created_at')
+    .insert({ user_id: userId, platform, external_id: externalId, authority, case_number: caseNumber })
+    .select('id, platform, external_id, authority, case_number, created_at')
     .single()
 
   if (error?.code === UNIQUE_VIOLATION) {
     const existing = await supabase
       .from('watchlist_items')
-      .select('id, platform, zvg_id, amtsgericht, aktenzeichen, created_at')
+      .select('id, platform, external_id, authority, case_number, created_at')
       .eq('user_id', userId)
       .eq('platform', platform)
-      .eq('zvg_id', zvgId)
+      .eq('external_id', externalId)
       .single()
     if (existing.error || !existing.data) {
       throw createError({ statusCode: 500, statusMessage: existing.error?.message ?? 'Speichern fehlgeschlagen.' })
@@ -57,9 +57,9 @@ function toWatchlistItem(row: Record<string, unknown>): WatchlistItem {
   return {
     id: row.id as string,
     platform: row.platform as string,
-    zvgId: row.zvg_id as string,
-    amtsgericht: row.amtsgericht as string | null,
-    aktenzeichen: row.aktenzeichen as string | null,
+    externalId: row.external_id as string,
+    authority: row.authority as string | null,
+    caseNumber: row.case_number as string | null,
     createdAt: row.created_at as string,
   }
 }

@@ -14,7 +14,7 @@ export default defineEventHandler(async (event): Promise<PublicAuction> => {
   }
 
   const result = await readMergedListCache()
-  const auction = result?.auctions.find((a) => a.platform === platform && a.zvgId === id)
+  const auction = result?.auctions.find((a) => a.platform === platform && a.externalId === id)
   if (!auction) {
     throw createError({ statusCode: 404, statusMessage: 'Auktion nicht gefunden.' })
   }

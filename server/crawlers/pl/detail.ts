@@ -67,7 +67,7 @@ export function parseDetailHtml(html: string): DetailData {
   }
 }
 
-/** Fetch the detail page and fill in beschreibung, Verkehrswert (Suma
+/** Fetch the detail page and fill in the description, Verkehrswert (Suma
  *  oszacowania; Cena wywołania only as fallback), Wohnfläche and Sygnatura. */
 export async function enrichOne(auction: Auction): Promise<void> {
   if (!auction.detailUrlUpstream) return
@@ -84,15 +84,15 @@ export async function enrichOne(auction: Auction): Promise<void> {
   }
   const detail = parseDetailHtml(html)
 
-  if (detail.beschreibung) auction.beschreibung = detail.beschreibung
-  if (detail.aktenzeichen) auction.aktenzeichen = detail.aktenzeichen
-  if (detail.amtsgericht) auction.amtsgericht = detail.amtsgericht
+  if (detail.beschreibung) auction.description = detail.beschreibung
+  if (detail.aktenzeichen) auction.caseNumber = detail.aktenzeichen
+  if (detail.amtsgericht) auction.authority = detail.amtsgericht
   if (detail.livingAreaSqm != null) auction.sourceLivingAreaSqm = detail.livingAreaSqm
 
-  const pln = detail.sumaOszacowaniaPln ?? (auction.verkehrswertEur ? null : detail.cenaWywolaniaPln)
+  const pln = detail.sumaOszacowaniaPln ?? (auction.marketValueEur ? null : detail.cenaWywolaniaPln)
   if (pln != null) {
     const rates = await getRates()
-    auction.verkehrswertEur = toEur(pln, 'PLN', rates)
-    auction.verkehrswertText = formatPln(pln)
+    auction.marketValueEur = toEur(pln, 'PLN', rates)
+    auction.marketValueText = formatPln(pln)
   }
 }

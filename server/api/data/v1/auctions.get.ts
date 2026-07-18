@@ -39,7 +39,7 @@ export default defineEventHandler(async (event): Promise<PaginatedResponse<Publi
     if (region && a.region !== region) return false
     if (platform && a.platform !== platform) return false
     if (propertyType && a.extraction?.propertyType !== propertyType) return false
-    if (!includeWithdrawn && a.aufgehoben) return false
+    if (!includeWithdrawn && a.cancelled) return false
     return true
   })
 

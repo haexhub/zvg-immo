@@ -23,11 +23,11 @@ CREATE TABLE IF NOT EXISTS watchlist_items (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id       uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   platform      text NOT NULL,
-  zvg_id        text NOT NULL,
-  amtsgericht   text,
-  aktenzeichen  text,
+  external_id   text NOT NULL,
+  authority     text,
+  case_number   text,
   created_at    timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (user_id, platform, zvg_id)
+  UNIQUE (user_id, platform, external_id)
 );
 
 ALTER TABLE saved_searches ENABLE ROW LEVEL SECURITY;
@@ -47,22 +47,22 @@ CREATE TABLE IF NOT EXISTS auction_observations (
   platform          text NOT NULL,
   country           text NOT NULL,
   region            text NOT NULL,
-  zvg_id            text NOT NULL,
-  amtsgericht       text NOT NULL,
-  aktenzeichen      text NOT NULL,
-  objekt            text,
+  external_id       text NOT NULL,
+  authority         text NOT NULL,
+  case_number       text NOT NULL,
+  title             text,
   property_type     text,
   land_area_sqm     numeric,
   living_area_sqm   numeric,
   rooms             numeric,
   units             integer,
-  verkehrswert_eur  numeric,
-  termin_iso        timestamptz,
-  aufgehoben        boolean NOT NULL
+  market_value_eur  numeric,
+  auction_date_iso  timestamptz,
+  cancelled         boolean NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_obs_country_region_time ON auction_observations (country, region, captured_at DESC);
-CREATE INDEX IF NOT EXISTS idx_obs_platform_zvgid_time ON auction_observations (platform, zvg_id, captured_at DESC);
-CREATE INDEX IF NOT EXISTS idx_obs_az_time ON auction_observations (amtsgericht, aktenzeichen, captured_at DESC);
+CREATE INDEX IF NOT EXISTS idx_obs_platform_zvgid_time ON auction_observations (platform, external_id, captured_at DESC);
+CREATE INDEX IF NOT EXISTS idx_obs_az_time ON auction_observations (authority, case_number, captured_at DESC);
 
 -- Phase 3: alert subscriptions (one enabled saved search = one subscription,
 -- toggled via server/api/alerts/[savedSearchId].put.ts) + the dedup ledger
@@ -84,9 +84,9 @@ CREATE TABLE IF NOT EXISTS notified_matches (
   id                      bigserial PRIMARY KEY,
   alert_subscription_id   uuid NOT NULL REFERENCES alert_subscriptions(id) ON DELETE CASCADE,
   platform                text NOT NULL,
-  zvg_id                  text NOT NULL,
+  external_id             text NOT NULL,
   notified_at             timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (alert_subscription_id, platform, zvg_id)
+  UNIQUE (alert_subscription_id, platform, external_id)
 );
 -- notified_matches: no RLS — server-internal only, never exposed to a client.
 
@@ -127,7 +127,7 @@ CREATE TABLE IF NOT EXISTS lawyer_inquiries (
   user_id           uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   lawyer_id         uuid NOT NULL REFERENCES lawyers(id) ON DELETE RESTRICT,
   platform          text,
-  zvg_id            text,
+  external_id       text,
   message           text NOT NULL,
   commission_cents  integer,
   commission_status text NOT NULL DEFAULT 'pending',
@@ -170,3 +170,69 @@ CREATE TABLE IF NOT EXISTS api_usage (
   PRIMARY KEY (api_key_id, day)
 );
 -- api_usage: no RLS — server-internal counting, never exposed directly to a client.
+
+-- WP-1: Terminologie-Rename (DE/ZVG-Feldnamen -> neutrales Englisch). Reiner
+-- Rename, keine Verhaltensänderung — betrifft nur bereits existierende
+-- Prod-Tabellen; die CREATE TABLE-Blöcke oben legen neue Installationen schon
+-- mit den neuen Spaltennamen an, daher genügt hier ein einmaliges RENAME pro
+-- Spalte (idempotent: nach dem ersten Lauf existiert die alte Spalte nicht
+-- mehr, der jeweilige IF EXISTS-Check greift dann nicht mehr).
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'watchlist_items' AND column_name = 'zvg_id') THEN
+    ALTER TABLE watchlist_items RENAME COLUMN zvg_id TO external_id;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'watchlist_items' AND column_name = 'amtsgericht') THEN
+    ALTER TABLE watchlist_items RENAME COLUMN amtsgericht TO authority;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'watchlist_items' AND column_name = 'aktenzeichen') THEN
+    ALTER TABLE watchlist_items RENAME COLUMN aktenzeichen TO case_number;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'auction_observations' AND column_name = 'zvg_id') THEN
+    ALTER TABLE auction_observations RENAME COLUMN zvg_id TO external_id;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'auction_observations' AND column_name = 'amtsgericht') THEN
+    ALTER TABLE auction_observations RENAME COLUMN amtsgericht TO authority;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'auction_observations' AND column_name = 'aktenzeichen') THEN
+    ALTER TABLE auction_observations RENAME COLUMN aktenzeichen TO case_number;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'auction_observations' AND column_name = 'objekt') THEN
+    ALTER TABLE auction_observations RENAME COLUMN objekt TO title;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'auction_observations' AND column_name = 'verkehrswert_eur') THEN
+    ALTER TABLE auction_observations RENAME COLUMN verkehrswert_eur TO market_value_eur;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'auction_observations' AND column_name = 'termin_iso') THEN
+    ALTER TABLE auction_observations RENAME COLUMN termin_iso TO auction_date_iso;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'auction_observations' AND column_name = 'aufgehoben') THEN
+    ALTER TABLE auction_observations RENAME COLUMN aufgehoben TO cancelled;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'lawyer_inquiries' AND column_name = 'zvg_id') THEN
+    ALTER TABLE lawyer_inquiries RENAME COLUMN zvg_id TO external_id;
+  END IF;
+
+  -- Nicht im ursprünglichen Mapping-Dokument gelistet, aber derselbe
+  -- (platform, zvg_id)-Spaltentyp wie die drei Tabellen oben — der Konsistenz
+  -- halber gleich mit umbenannt.
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'notified_matches' AND column_name = 'zvg_id') THEN
+    ALTER TABLE notified_matches RENAME COLUMN zvg_id TO external_id;
+  END IF;
+END $$;
+
+-- saved_searches.filters (jsonb) spiegelt die Query-Param-Namen aus
+-- lib/auction-filters.ts / pages/index.vue 1:1 — court/kat/aufgehoben sind
+-- jetzt authority/category/cancelled. Bestehende gespeicherte Suchen mit den
+-- alten Keys würden sonst still leerlaufen (Key wird nie gelesen). Idempotent:
+-- die WHERE-Klausel greift nur, solange noch ein alter Key vorhanden ist.
+UPDATE saved_searches
+SET filters = (filters - 'court' - 'kat' - 'aufgehoben')
+  || jsonb_strip_nulls(jsonb_build_object(
+       'authority', filters->'court',
+       'category', filters->'kat',
+       'cancelled', filters->'aufgehoben'
+     ))
+WHERE filters ?| array['court', 'kat', 'aufgehoben'];

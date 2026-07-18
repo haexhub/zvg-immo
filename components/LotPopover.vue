@@ -13,7 +13,7 @@ const props = defineProps<{ auction: GeoAuction }>()
 const LAZY_PLATFORMS = new Set(['at-edikte', 'biddit', 'zvg-portal'])
 
 function extractPhotos(atts: Attachment[]): Attachment[] {
-  return atts.filter((a) => a.kind === 'foto')
+  return atts.filter((a) => a.kind === 'photo')
 }
 
 // AT-Edikte and zvg-portal publish "Foto" attachments as PDFs (one photo per
@@ -38,7 +38,7 @@ onMounted(async () => {
     const detail = await $fetch<AuctionPhotoDetail>('/api/auction-detail', {
       query: {
         platform: props.auction.platform,
-        zvgId: props.auction.zvgId,
+        externalId: props.auction.externalId,
         region: props.auction.region,
       },
     })
@@ -82,7 +82,7 @@ const swiperModules = [Navigation, Pagination, Keyboard]
       >
         <SwiperSlide v-for="(p, i) in photos" :key="p.fileId || i">
           <a :href="p.proxyUrl" target="_blank" rel="noopener">
-            <img :src="slideSrc(p)" referrerpolicy="no-referrer" loading="lazy" :alt="`Foto ${i + 1} – ${auction.objekt ?? 'Objekt'}`">
+            <img :src="slideSrc(p)" referrerpolicy="no-referrer" loading="lazy" :alt="`Foto ${i + 1} – ${auction.title ?? 'Objekt'}`">
           </a>
         </SwiperSlide>
       </Swiper>
@@ -94,30 +94,30 @@ const swiperModules = [Navigation, Pagination, Keyboard]
       </a>
     </div>
 
-    <div class="lot-popover__title">{{ auction.objekt ?? 'Objekt' }}</div>
-    <div class="lot-popover__address">{{ auction.adresse ?? '' }}</div>
+    <div class="lot-popover__title">{{ auction.title ?? 'Objekt' }}</div>
+    <div class="lot-popover__address">{{ auction.address ?? '' }}</div>
 
     <div class="lot-popover__grid">
       <div>
         <div class="lot-popover__grid-label">Termin</div>
-        {{ formatDate(auction.terminIso, auction.terminText) }}
+        {{ formatDate(auction.auctionDateIso, auction.auctionDateText) }}
       </div>
       <div>
         <div class="lot-popover__grid-label">Verkehrswert</div>
-        {{ auction.verkehrswertEur != null ? formatEur(auction.verkehrswertEur) : (auction.verkehrswertText ?? '–') }}
+        {{ auction.marketValueEur != null ? formatEur(auction.marketValueEur) : (auction.marketValueText ?? '–') }}
       </div>
     </div>
 
     <div class="lot-popover__cta">
       <a
         v-if="auction.detailAvailable"
-        :href="`/objekt/${encodeURIComponent(auction.platform)}/${encodeURIComponent(auction.zvgId)}`"
+        :href="`/objekt/${encodeURIComponent(auction.platform)}/${encodeURIComponent(auction.externalId)}`"
       >Details ansehen →</a>
       <span v-else class="lot-popover__cta-disabled" title="Detailseite wird noch verarbeitet">Details noch nicht verfügbar</span>
     </div>
 
     <div class="lot-popover__footer">
-      <span class="lot-popover__source">{{ auction.amtsgericht }} · {{ auction.aktenzeichen }}</span><br>
+      <span class="lot-popover__source">{{ auction.authority }} · {{ auction.caseNumber }}</span><br>
       <a v-if="auction.pdfUrl" :href="auction.pdfUrl" target="_blank" rel="noopener">Bekanntmachung</a>
       <span v-if="auction.pdfUrl && auction.detailUrl"> · </span>
       <a v-if="auction.detailUrl" :href="auction.detailUrl" target="_blank" rel="noopener">Quelle</a>

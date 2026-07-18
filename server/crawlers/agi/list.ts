@@ -141,7 +141,7 @@ export async function fetchAllDetails(
 /** Italian CAP: exactly 5 digits — when present the indirizzo already contains the city. */
 const CAP_RE = /\b\d{5}\b/
 
-function buildAdresse(
+function buildAddress(
   indirizzo: string | null,
   comune: string | null,
   provincia: string | null,
@@ -163,22 +163,22 @@ function buildAdresse(
 }
 
 /** esito.ID that marks a lot as a still-pending, live auction; every other
- *  esito is a concluded/cancelled outcome and is flagged aufgehoben (hidden
+ *  esito is a concluded/cancelled outcome and is flagged cancelled (hidden
  *  from the default active view). A missing esito is treated as active.
  *
  *  Verified against ~4200 live lots on 2026-07-06 (search/Data esito.ID →
  *  Descrizione), so the mapping is data-backed rather than guessed:
  *    0  Sconosciuto      → active (shown)          — 77% of active lots
- *    1  Aggiudicata      → aufgehoben (sold)
- *    2  Non Aggiudicata  → aufgehoben (not awarded)
- *    3  Rinviata         → aufgehoben (postponed)
- *    4  Sospesa          → aufgehoben (suspended)
- *    5  Estinta          → aufgehoben (extinguished)
- *    8  Deserta          → aufgehoben (no bids)
- *    10 Revocata         → aufgehoben (revoked; note Sigla is null here)
+ *    1  Aggiudicata      → cancelled (sold)
+ *    2  Non Aggiudicata  → cancelled (not awarded)
+ *    3  Rinviata         → cancelled (postponed)
+ *    4  Sospesa          → cancelled (suspended)
+ *    5  Estinta          → cancelled (extinguished)
+ *    8  Deserta          → cancelled (no bids)
+ *    10 Revocata         → cancelled (revoked; note Sigla is null here)
  *  Sigla is NOT unique per outcome (NAGG covers 2/3/8, OFF covers 4/5) and is
  *  null for Revocata, so we key on the numeric ID. Any unknown/new ID falls
- *  through to aufgehoben — conservative for an "active auctions" listing. */
+ *  through to cancelled — conservative for an "active auctions" listing. */
 const ACTIVE_ESITO_ID = 0
 
 /** Build Auction objects by merging map data (lat/lng) with detail data. */
@@ -196,34 +196,34 @@ export function buildAuctions(
       map?.geolocalizzato && map.latitudine != null && map.longitudine != null
         ? { lat: map.latitudine, lng: map.longitudine }
         : null
-    const terminIso = pickTerminIso(d.dataVendita, d.dataFineGara, d.dataUdienza)
-    const verkehrswertEur = d.prezzoBase ?? null
+    const auctionDateIso = pickTerminIso(d.dataVendita, d.dataFineGara, d.dataUdienza)
+    const marketValueEur = d.prezzoBase ?? null
     const thumbnailUrl = d.urlPhoto ? `${AGI_BASE}${d.urlPhoto}` : null
     const detailUpstream = d.urlSchedaDettagliata ? `${AGI_BASE}${d.urlSchedaDettagliata}` : null
-    const adresse = buildAdresse(d.indirizzo, d.comune, d.provincia)
+    const address = buildAddress(d.indirizzo, d.comune, d.provincia)
 
     return {
       platform,
       country: 'it',
       region: regionName,
-      zvgId: String(d.idLotto),
-      aktenzeichen: d.ruolo ?? '',
-      amtsgericht: d.tribunale ?? '',
-      objekt: cleanTipologia(d.tipologia),
-      adresse,
-      verkehrswertEur,
-      verkehrswertText: formatEur(verkehrswertEur),
-      terminIso,
-      terminText: formatTerminText(terminIso),
-      aufgehoben: d.esito != null && d.esito.ID !== ACTIVE_ESITO_ID,
-      letzteAktualisierungIso: map?.dataUltimoAggiornamento ?? null,
+      externalId: String(d.idLotto),
+      caseNumber: d.ruolo ?? '',
+      authority: d.tribunale ?? '',
+      title: cleanTipologia(d.tipologia),
+      address,
+      marketValueEur,
+      marketValueText: formatEur(marketValueEur),
+      auctionDateIso,
+      auctionDateText: formatTerminText(auctionDateIso),
+      cancelled: d.esito != null && d.esito.ID !== ACTIVE_ESITO_ID,
+      sourceUpdatedIso: map?.dataUltimoAggiornamento ?? null,
       pdfUrl: null,
       detailUrl: detailUpstream,
       pdfUrlUpstream: null,
       detailUrlUpstream: detailUpstream,
       attachments: [],
-      beschreibung: d.descrizione ?? null,
-      fotoCount: d.hasFoto ? 1 : 0,
+      description: d.descrizione ?? null,
+      photoCount: d.hasFoto ? 1 : 0,
       thumbnailUrl,
       lat: geo?.lat ?? null,
       lng: geo?.lng ?? null,

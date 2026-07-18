@@ -88,7 +88,7 @@ describe('mapPublication', () => {
     expect(a.lng).toBe(14.483842)
   })
 
-  it('builds a labeled beschreibung from floor, year, energy certificate and deposit', () => {
+  it('builds a labeled description from floor, year, energy certificate and deposit', () => {
     const a = mapPublication(
       makePublication({
         description: 'Prodaja stanovanja.',
@@ -99,13 +99,13 @@ describe('mapPublication', () => {
       }),
       'si-sodnedrazbe',
     )
-    expect(a.beschreibung).toBe(
+    expect(a.description).toBe(
       'Prodaja stanovanja.\nEtage: 7. nadstropje · Baujahr: 2009 · Energieausweis: Razred C: od 35 do 60 kWh/m2a · Kaution: 1.269 €',
     )
   })
 
-  it('leaves beschreibung null when neither description nor extras exist', () => {
+  it('leaves description null when neither description nor extras exist', () => {
     const a = mapPublication(makePublication(), 'si-sodnedrazbe')
-    expect(a.beschreibung).toBeNull()
+    expect(a.description).toBeNull()
   })
 })

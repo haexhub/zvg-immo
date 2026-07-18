@@ -30,7 +30,7 @@ function parseEurAmount(text: string | null | undefined): number | null {
 interface ListItem {
   href: string
   city: string | null
-  objekt: string | null
+  title: string | null
   descSnippet: string | null
   priceEur: number | null
   priceText: string | null
@@ -80,7 +80,7 @@ function parseListPage(html: string): ListPage {
     items.push({
       href,
       city: clean($a.find('.Location .City').first().text()) || null,
-      objekt: clean($a.find('.Description .Name').first().text()) || null,
+      title: clean($a.find('.Description .Name').first().text()) || null,
       descSnippet: clean($a.find('.Description .Text').first().text()) || null,
       priceEur: parseEurAmount(priceText),
       priceText,
@@ -128,26 +128,26 @@ async function discoverListItems(): Promise<Map<string, ListItem>> {
 }
 
 interface DetailInfo {
-  zvgId: string
-  amtsgericht: string | null
-  terminIso: string | null
-  terminText: string | null
-  objekt: string | null
-  beschreibung: string | null
-  verkehrswertEur: number | null
-  verkehrswertText: string | null
-  adresse: string | null
+  externalId: string
+  authority: string | null
+  auctionDateIso: string | null
+  auctionDateText: string | null
+  title: string | null
+  description: string | null
+  marketValueEur: number | null
+  marketValueText: string | null
+  address: string | null
   photos: string[]
 }
 
 function parseDetailPage(html: string, href: string): DetailInfo {
   const $ = load(html)
-  const zvgId = clean($('.AdContent .Number').first().text()) || idFromHref(href)
-  const amtsgericht = clean($('.AdContent .Court').first().text()) || null
+  const externalId = clean($('.AdContent .Number').first().text()) || idFromHref(href)
+  const authority = clean($('.AdContent .Court').first().text()) || null
 
   const $time = $('.AdContent .Date time').first()
-  const terminIso = $time.attr('datetime') ?? null
-  const terminText = clean($time.text()) || null
+  const auctionDateIso = $time.attr('datetime') ?? null
+  const auctionDateText = clean($time.text()) || null
 
   const lots = $('.AddressBlock .Lot > div[class*="SousLot"]')
   const titles: string[] = []
@@ -162,23 +162,23 @@ function parseDetailPage(html: string, href: string): DetailInfo {
   })
 
   const priceTexts: string[] = []
-  let verkehrswertEur: number | null = null
+  let marketValueEur: number | null = null
   $('.AddressBlock .Lot h3').each((_i, el) => {
     const text = clean($(el).text())
     if (!text) return
     priceTexts.push(text)
     const amount = parseEurAmount(text)
-    if (amount != null) verkehrswertEur = (verkehrswertEur ?? 0) + amount
+    if (amount != null) marketValueEur = (marketValueEur ?? 0) + amount
   })
 
   const visits = clean($('.AddressBlock .Visits').first().text()) || null
-  const beschreibung = [...lotTexts, visits].filter(Boolean).join('\n') || null
+  const description = [...lotTexts, visits].filter(Boolean).join('\n') || null
 
   const city = clean($('.Location .City').first().text()) || null
   const $street = $('.Location .Street').first()
   $street.find('br').replaceWith(', ')
   const street = clean($street.text()) || null
-  const adresse = [street, city].filter(Boolean).join(', ') || null
+  const address = [street, city].filter(Boolean).join(', ') || null
 
   const photos = $('.Pictures a[rel^="lightbox"]')
     .map((_i, el) => $(el).attr('href'))
@@ -190,15 +190,15 @@ function parseDetailPage(html: string, href: string): DetailInfo {
     .filter((url) => !DISALLOWED_DATA_PATHS.some((p) => url.includes(p)))
 
   return {
-    zvgId,
-    amtsgericht,
-    terminIso,
-    terminText,
-    objekt: titles.join('; ') || null,
-    beschreibung,
-    verkehrswertEur,
-    verkehrswertText: priceTexts.join('; ') || null,
-    adresse,
+    externalId,
+    authority,
+    auctionDateIso,
+    auctionDateText,
+    title: titles.join('; ') || null,
+    description,
+    marketValueEur,
+    marketValueText: priceTexts.join('; ') || null,
+    address,
     photos,
   }
 }
@@ -216,7 +216,7 @@ async function fetchDetail(href: string): Promise<DetailInfo | null> {
 }
 
 function mapItem(item: ListItem, detail: DetailInfo | null, platformId: string): Auction {
-  const zvgId = detail?.zvgId ?? idFromHref(item.href)
+  const externalId = detail?.externalId ?? idFromHref(item.href)
   const detailUrl = absoluteUrl(item.href)
   const photos = detail?.photos ?? []
   const attachments: Attachment[] = []
@@ -228,28 +228,28 @@ function mapItem(item: ListItem, detail: DetailInfo | null, platformId: string):
     // paging only. Empty string per the Auction.region contract (a code like
     // 'all' would render as a literal badge in the UI).
     region: '',
-    zvgId,
+    externalId,
     // Licitor never publishes the court's own case number (no "RG n°" /
     // "répertoire général" anywhere on listing or detail pages) — the visible
     // "Annonce n°" is Licitor's own internal ad id, not a court reference, so
-    // it must not be used as aktenzeichen (see PR #53 review lesson).
-    aktenzeichen: '',
-    amtsgericht: detail?.amtsgericht ?? 'Licitor',
-    objekt: detail?.objekt ?? item.objekt,
-    adresse: detail?.adresse ?? item.city,
-    verkehrswertEur: detail?.verkehrswertEur ?? item.priceEur,
-    verkehrswertText: detail?.verkehrswertText ?? item.priceText,
-    terminIso: detail?.terminIso ?? null,
-    terminText: detail?.terminText ?? null,
-    aufgehoben: false,
-    letzteAktualisierungIso: null,
+    // it must not be used as caseNumber (see PR #53 review lesson).
+    caseNumber: '',
+    authority: detail?.authority ?? 'Licitor',
+    title: detail?.title ?? item.title,
+    address: detail?.address ?? item.city,
+    marketValueEur: detail?.marketValueEur ?? item.priceEur,
+    marketValueText: detail?.marketValueText ?? item.priceText,
+    auctionDateIso: detail?.auctionDateIso ?? null,
+    auctionDateText: detail?.auctionDateText ?? null,
+    cancelled: false,
+    sourceUpdatedIso: null,
     pdfUrl: null,
     detailUrl,
     pdfUrlUpstream: null,
     detailUrlUpstream: detailUrl,
     attachments,
-    beschreibung: detail?.beschreibung ?? item.descSnippet,
-    fotoCount: photos.length,
+    description: detail?.description ?? item.descSnippet,
+    photoCount: photos.length,
     thumbnailUrl: photos[0] ?? null,
     ...(photos.length > 0 ? { photoUrls: photos } : {}),
   }

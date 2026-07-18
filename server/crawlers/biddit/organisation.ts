@@ -28,7 +28,7 @@ async function fetchOrgJson(orgId: string): Promise<OrganisationResponse | null>
 
 /** Fetches each unique organisation id once and returns a lookup table
  *  from id → display name. Used to resolve the placeholder
- *  `organisationReference` (numeric id) we put into `amtsgericht` during
+ *  `organisationReference` (numeric id) we put into `authority` during
  *  listing into the actual notary office name. */
 export async function fetchOrganisationNames(
   ids: ReadonlyArray<string>,

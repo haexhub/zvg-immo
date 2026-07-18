@@ -25,7 +25,7 @@ export function parseEePrice(raw: string | null): number | null {
 }
 
 /** Strips the announcement's inline-styled HTML down to plain text, keeping
- *  paragraph breaks so the free-text notice stays readable as beschreibung. */
+ *  paragraph breaks so the free-text notice stays readable as description. */
 export function stripAnnouncementHtml(html: string): string {
   return html
     .replace(/<br\s*\/?>/gi, '\n')

@@ -16,7 +16,7 @@ export interface PublicAuction {
   country: string
   /** Human-readable region/state name; empty string if the platform has none. */
   region: string
-  /** Stable per-platform identifier (called `zvgId` internally). */
+  /** Stable per-platform identifier (called `externalId` internally). */
   id: string
   /** Court/authority running the auction (Amtsgericht or equivalent). */
   court: string
@@ -46,22 +46,22 @@ export function toPublicAuction(a: Auction): PublicAuction {
     platform: a.platform,
     country: a.country,
     region: a.region,
-    id: a.zvgId,
-    court: a.amtsgericht,
-    caseNumber: a.aktenzeichen,
-    title: a.objekt,
-    address: a.adresse,
-    marketValueEur: a.verkehrswertEur,
-    auctionDate: a.terminIso,
-    withdrawn: a.aufgehoben,
+    id: a.externalId,
+    court: a.authority,
+    caseNumber: a.caseNumber,
+    title: a.title,
+    address: a.address,
+    marketValueEur: a.marketValueEur,
+    auctionDate: a.auctionDateIso,
+    withdrawn: a.cancelled,
     propertyType: a.extraction?.propertyType ?? null,
     landAreaSqm: a.extraction?.landAreaSqm ?? null,
     livingAreaSqm: a.extraction?.livingAreaSqm ?? null,
     rooms: a.extraction?.rooms ?? null,
     units: a.extraction?.units ?? null,
-    photoCount: a.fotoCount,
-    lastUpdated: a.letzteAktualisierungIso,
-    appUrl: `/objekt/${encodeURIComponent(a.platform)}/${encodeURIComponent(a.zvgId)}`,
+    photoCount: a.photoCount,
+    lastUpdated: a.sourceUpdatedIso,
+    appUrl: `/objekt/${encodeURIComponent(a.platform)}/${encodeURIComponent(a.externalId)}`,
   }
 }
 
@@ -96,18 +96,18 @@ export function toPublicObservation(row: Record<string, unknown>): PublicObserva
     platform: row.platform as string,
     country: row.country as string,
     region: row.region as string,
-    id: row.zvg_id as string,
-    court: row.amtsgericht as string,
-    caseNumber: row.aktenzeichen as string,
-    title: (row.objekt as string | null) ?? null,
+    id: row.external_id as string,
+    court: row.authority as string,
+    caseNumber: row.case_number as string,
+    title: (row.title as string | null) ?? null,
     propertyType: (row.property_type as string | null) ?? null,
     landAreaSqm: num(row.land_area_sqm),
     livingAreaSqm: num(row.living_area_sqm),
     rooms: num(row.rooms),
     units: num(row.units),
-    marketValueEur: num(row.verkehrswert_eur),
-    auctionDate: iso(row.termin_iso),
-    withdrawn: row.aufgehoben as boolean,
+    marketValueEur: num(row.market_value_eur),
+    auctionDate: iso(row.auction_date_iso),
+    withdrawn: row.cancelled as boolean,
     capturedAt: iso(row.captured_at) as string,
   }
 }

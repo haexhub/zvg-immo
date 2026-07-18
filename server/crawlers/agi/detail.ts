@@ -1,6 +1,6 @@
 import * as cheerio from 'cheerio'
 import type { Attachment, Auction } from '~/types/auction'
-import type { PropertyType } from '~/lib/objektart'
+import type { PropertyType } from '~/lib/property-type'
 import { AGI_BASE, UA } from './constants'
 import { allegatoKind, parseItNumber } from './text'
 import { areaBucketForPropertyType } from '~/server/utils/extract/rules'
@@ -9,13 +9,13 @@ interface DetailInfo {
   attachments: Attachment[]
   pdfUrl: string | null
   pdfUrlUpstream: string | null
-  fotoCount: number
+  photoCount: number
   thumbnailUrl: string | null
   photoUrls: string[]
   livingAreaSqm: number | null
   landAreaSqm: number | null
   /** "Metri quadri" whose bene category is neither clearly residential nor
-   *  plain land — surfaced as a labeled note in the beschreibung instead of a
+   *  plain land — surfaced as a labeled note in the description instead of a
    *  structured field, so the extraction pipeline can still classify it. */
   unclassifiedAreaSqm: number | null
   rooms: number | null
@@ -31,7 +31,7 @@ const LAND_BENE_RE = /\bterren\w*/i
 
 /** Maps a bene categoria to a representative PropertyType for
  *  areaBucketForPropertyType (agi's Italian categoria text isn't covered by
- *  objektart.ts's conservative cross-language regexes). */
+ *  property-type.ts's conservative cross-language regexes). */
 function categoriaPropertyType(categoria: string): PropertyType | null {
   if (LAND_BENE_RE.test(categoria)) return 'unbebaut'
   if (RESIDENTIAL_BENE_RE.test(categoria)) return 'eigentumswohnung'
@@ -68,8 +68,8 @@ export function parseDetailHtml(html: string): DetailInfo {
 
     if (lowerFile.endsWith('.pdf')) {
       seenPaths.add(path)
-      // A foto-*.pdf is an attachment, not a photo: keep it out of the foto kind
-      const kind = allegatoKind(filename) === 'foto' ? 'sonstiges' : allegatoKind(filename)
+      // A foto-*.pdf is an attachment, not a photo: keep it out of the photo kind
+      const kind = allegatoKind(filename) === 'photo' ? 'other' : allegatoKind(filename)
       const upstreamUrl = `${AGI_BASE}${path}`
       attachments.push({
         kind,
@@ -79,8 +79,8 @@ export function parseDetailHtml(html: string): DetailInfo {
         fileId: path,
         proxyUrl: upstreamUrl,
       })
-      // Prefer gutachten as primary PDF; fall back to the first PDF found
-      if (kind === 'gutachten') {
+      // Prefer appraisal as primary PDF; fall back to the first PDF found
+      if (kind === 'appraisal') {
         pdfUpstream = upstreamUrl
       } else if (!pdfUpstream) {
         pdfUpstream = upstreamUrl
@@ -134,7 +134,7 @@ export function parseDetailHtml(html: string): DetailInfo {
     attachments,
     pdfUrl: pdfUpstream,
     pdfUrlUpstream: pdfUpstream,
-    fotoCount: photoUrls.length,
+    photoCount: photoUrls.length,
     thumbnailUrl: photoUrls[0] ?? null,
     photoUrls,
     livingAreaSqm,
@@ -153,7 +153,7 @@ export function applyDetailInfo(auction: Auction, info: DetailInfo): void {
   }
   if (info.photoUrls.length > 0) {
     auction.photoUrls = info.photoUrls
-    auction.fotoCount = info.photoUrls.length
+    auction.photoCount = info.photoUrls.length
     if (info.thumbnailUrl && !auction.thumbnailUrl) {
       auction.thumbnailUrl = info.thumbnailUrl
     }
@@ -167,9 +167,9 @@ export function applyDetailInfo(auction: Auction, info: DetailInfo): void {
     // "Superficie:" is deliberately not one of the rules-pass labels. The
     // includes-guard keeps repeated enrich runs from stacking the note.
     const note = `Superficie: ${info.unclassifiedAreaSqm} mq`
-    if (!auction.beschreibung?.includes(note)) {
-      auction.beschreibung = auction.beschreibung
-        ? `${auction.beschreibung}\n${note}`
+    if (!auction.description?.includes(note)) {
+      auction.description = auction.description
+        ? `${auction.description}\n${note}`
         : note
     }
   }
@@ -201,7 +201,7 @@ export async function enrichInBatches(
         enriched++
       } catch (err) {
         errors++
-        console.warn(`[agi] enrichOne failed for ${auction.zvgId}: ${(err as Error).message}`)
+        console.warn(`[agi] enrichOne failed for ${auction.externalId}: ${(err as Error).message}`)
       }
     }
   }

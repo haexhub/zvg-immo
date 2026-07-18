@@ -61,14 +61,14 @@ function mountLotPopover(el: HTMLElement, a: GeoAuction): VueApp {
 // the user's zoom/pan.
 let shouldFitNext = true
 
-// Markers keyed by `platform:zvgId` so refreshMarkers can diff instead of
+// Markers keyed by `platform:externalId` so refreshMarkers can diff instead of
 // rebuilding — existing markers (and an open popup) survive poll updates.
 const markersByKey = new Map<string, L.Marker>()
 
 function createMarker(a: GeoAuction, lat: number, lng: number): L.Marker {
   const marker = L.marker([lat, lng], {
     icon: markerIcon,
-    title: `${a.objekt ?? ''} · ${a.adresse ?? ''}`,
+    title: `${a.title ?? ''} · ${a.address ?? ''}`,
   })
   // Empty container; the Vue app is mounted lazily on popupopen so the
   // /api/auction-detail fetch only fires when the popup is actually opened.
@@ -94,7 +94,7 @@ function refreshMarkers(): void {
   const points: [number, number][] = []
   for (const a of props.auctions) {
     if (a.lat == null || a.lng == null) continue
-    const key = `${a.platform}:${a.zvgId}`
+    const key = `${a.platform}:${a.externalId}`
     seen.add(key)
     if (!markersByKey.has(key)) {
       const marker = createMarker(a, a.lat, a.lng)

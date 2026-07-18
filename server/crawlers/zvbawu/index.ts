@@ -8,13 +8,13 @@ const PLATFORM_ID = 'zvbawu'
 const REGION_NAME = 'Baden-Württemberg'
 
 function applyDetail(auction: Auction, info: DetailInfo): void {
-  auction.beschreibung = info.beschreibung
+  auction.description = info.description
   auction.attachments = info.attachments
-  auction.fotoCount = info.fotoCount
+  auction.photoCount = info.photoCount
   auction.thumbnailUrl = info.thumbnailUrl
   auction.pdfUrl = info.pdfUrl
   auction.pdfUrlUpstream = info.pdfUrlUpstream
-  auction.aufgehoben = info.aufgehoben
+  auction.cancelled = info.cancelled
   // Guarded like at/biddit: a re-run whose detail payload lacks the facts must
   // not wipe values a previous run extracted (the snapshot preserves them).
   if (info.sourceLivingAreaSqm != null) auction.sourceLivingAreaSqm = info.sourceLivingAreaSqm
@@ -27,7 +27,7 @@ function applyDetail(auction: Auction, info: DetailInfo): void {
   }
   // Detail page exposes the file number as a dedicated field; the list view
   // derives it from facts[0]. Prefer the structured value when set.
-  if (info.aktenzeichen) auction.aktenzeichen = info.aktenzeichen
+  if (info.caseNumber) auction.caseNumber = info.caseNumber
 }
 
 async function enrichOne(auction: Auction): Promise<void> {

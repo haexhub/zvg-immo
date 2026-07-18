@@ -70,9 +70,9 @@ describe('buildDetailInfo', () => {
     expect(buildDetailInfo(a).sourceRooms).toBe(4.5)
   })
 
-  it('composes teaser, summary/description, facts and sections into the beschreibung', () => {
+  it('composes teaser, summary/description, facts and sections into the description', () => {
     const info = buildDetailInfo(auctionPayload())
-    const b = info.beschreibung ?? ''
+    const b = info.description ?? ''
     expect(b.startsWith('Im Wege der Zwangsvollstreckung')).toBe(true)
     expect(b).toContain('unterkellertes Einfamilienhaus')
     expect(b).toContain('Objekttyp: Reihenhaus')
@@ -88,16 +88,16 @@ describe('buildDetailInfo', () => {
   it('includes interior when it differs from facilities.content', () => {
     const a = auctionPayload()
     a.interior = '<p>Parkettböden in allen Räumen</p>'
-    const b = buildDetailInfo(a).beschreibung ?? ''
+    const b = buildDetailInfo(a).description ?? ''
     expect(b).toContain('Innenausstattung:\nParkettböden in allen Räumen')
   })
 
   it('keeps latlng, attachments and basics intact', () => {
     const info = buildDetailInfo(auctionPayload())
     expect(info.latlng).toEqual([48.907211, 8.505511])
-    expect(info.aktenzeichen).toBe('1 K 66/24')
-    expect(info.aufgehoben).toBe(false)
-    expect(info.fotoCount).toBe(1)
-    expect(info.attachments.map((x) => x.kind)).toEqual(['bekanntmachung', 'foto'])
+    expect(info.caseNumber).toBe('1 K 66/24')
+    expect(info.cancelled).toBe(false)
+    expect(info.photoCount).toBe(1)
+    expect(info.attachments.map((x) => x.kind)).toEqual(['announcement', 'photo'])
   })
 })

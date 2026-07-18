@@ -33,9 +33,9 @@ interface ListResponse {
 }
 
 interface DetailInfo {
-  amtsgericht: string | null
-  aktenzeichen: string | null
-  beschreibung: string | null
+  authority: string | null
+  caseNumber: string | null
+  description: string | null
   pdfUrl: string | null
   photos: string[]
 }
@@ -142,9 +142,9 @@ async function fetchDetail(url: string): Promise<DetailInfo> {
   if (!res.ok) throw new Error(`tvangsauktioner.dk ${url}: HTTP ${res.status}`)
   const html = await res.text()
   return {
-    amtsgericht: extractRow(html, 'Retskreds'),
-    aktenzeichen: extractRow(html, 'Sags nr'),
-    beschreibung: extractDescription(html),
+    authority: extractRow(html, 'Retskreds'),
+    caseNumber: extractRow(html, 'Sags nr'),
+    description: extractDescription(html),
     pdfUrl: extractPdfUrl(html),
     photos: extractPhotos(html),
   }
@@ -162,17 +162,17 @@ function mapItem(
 ): Auction {
   const id = extractId(item.property_link)
   const content = item.content ?? {}
-  const { iso: terminIso, label: terminText } = parseAuctionDate(content.start_date)
+  const { iso: auctionDateIso, label: auctionDateText } = parseAuctionDate(content.start_date)
 
   const valueDkk = parseDkkAmount(content.value)
-  const verkehrswertEur = valueDkk != null ? toEur(valueDkk, 'DKK', rates) : null
+  const marketValueEur = valueDkk != null ? toEur(valueDkk, 'DKK', rates) : null
 
   const areaParts = [
     content.residence ? `Bolig: ${content.residence}` : null,
     content.profession && content.profession !== '0 m²' ? `Erhverv: ${content.profession}` : null,
     content.reason ? `Grund: ${content.reason}` : null,
   ].filter(Boolean)
-  const beschreibung = [areaParts.join(', ') || null, detail.beschreibung]
+  const description = [areaParts.join(', ') || null, detail.description]
     .filter(Boolean)
     .join('\n') || null
 
@@ -193,24 +193,24 @@ function mapItem(
     platform: platformId,
     country: COUNTRY,
     region: 'all',
-    zvgId: id,
-    aktenzeichen: detail.aktenzeichen ?? '',
-    amtsgericht: detail.amtsgericht ?? 'Tvangsauktioner.dk',
-    objekt: item.type?.[0]?.name ?? null,
-    adresse: item.title ?? null,
-    verkehrswertEur,
-    verkehrswertText: valueDkk != null ? `${valueDkk.toLocaleString('de-DE')} DKK` : null,
-    terminIso,
-    terminText,
-    aufgehoben: item.status != null && item.status !== 'active',
-    letzteAktualisierungIso: null,
+    externalId: id,
+    caseNumber: detail.caseNumber ?? '',
+    authority: detail.authority ?? 'Tvangsauktioner.dk',
+    title: item.type?.[0]?.name ?? null,
+    address: item.title ?? null,
+    marketValueEur,
+    marketValueText: valueDkk != null ? `${valueDkk.toLocaleString('de-DE')} DKK` : null,
+    auctionDateIso,
+    auctionDateText,
+    cancelled: item.status != null && item.status !== 'active',
+    sourceUpdatedIso: null,
     pdfUrl: detail.pdfUrl,
     detailUrl: item.property_link,
     pdfUrlUpstream: detail.pdfUrl,
     detailUrlUpstream: item.property_link,
     attachments,
-    beschreibung,
-    fotoCount: detail.photos.length,
+    description,
+    photoCount: detail.photos.length,
     thumbnailUrl: detail.photos[0] ?? content.image ?? null,
     photoUrls: detail.photos.length > 0 ? detail.photos : undefined,
     lat: parseCoord(item.lat),
@@ -241,9 +241,9 @@ export async function fetchAllListings(
   await Promise.all(Array.from({ length: DETAIL_CONCURRENCY }, worker))
 
   const emptyDetail: DetailInfo = {
-    amtsgericht: null,
-    aktenzeichen: null,
-    beschreibung: null,
+    authority: null,
+    caseNumber: null,
+    description: null,
     pdfUrl: null,
     photos: [],
   }
