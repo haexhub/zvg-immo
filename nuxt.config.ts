@@ -47,6 +47,11 @@ export default defineNuxtConfig({
     // have its rate-limit buckets rotated by a spoofed header.
     //   NUXT_TRUST_FORWARDED_FOR=1
     trustForwardedFor: '',
+    // Direct `pg` connection to the self-hosted Supabase `db` service, used
+    // by server/utils/db.ts to run server/db/schema.sql on boot. Empty →
+    // migrations are skipped (see db.ts) rather than failing hard.
+    //   NUXT_DATABASE_URL=postgres://postgres:<pw>@db:5432/postgres
+    databaseUrl: '',
     public: {
       // Free, instant self-service keys for the per-country satellite
       // imagery layers in lib/countryImagery.ts that require one (Finland,
@@ -55,6 +60,13 @@ export default defineNuxtConfig({
       mmlApiKey: '',
       //   NUXT_PUBLIC_DATAFORDELER_API_KEY=<from datafordeler.dk>
       datafordelerApiKey: '',
+      // Browser-side Supabase Auth (GoTrue via Kong). Empty → useAuth()'s
+      // client is never created and the login/signup pages show a
+      // "not configured" state instead of throwing.
+      //   NUXT_PUBLIC_SUPABASE_URL=http://localhost:8000
+      supabaseUrl: '',
+      //   NUXT_PUBLIC_SUPABASE_ANON_KEY=<from scripts/generate-supabase-keys.mjs>
+      supabaseAnonKey: '',
     },
   },
   nitro: {
