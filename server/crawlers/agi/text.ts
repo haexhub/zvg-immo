@@ -61,10 +61,10 @@ export function parseItNumber(raw: string | null | undefined): number | null {
  *  Known prefixes: perizia, avviso, ordinanza, planimetria, foto, virtuale. */
 export function allegatoKind(
   filename: string,
-): 'bekanntmachung' | 'gutachten' | 'sonstiges' | 'foto' {
+): 'announcement' | 'appraisal' | 'other' | 'photo' {
   const lower = filename.toLowerCase()
-  if (lower.startsWith('avviso')) return 'bekanntmachung'
-  if (lower.startsWith('perizia')) return 'gutachten'
-  if (lower.startsWith('foto')) return 'foto'
-  return 'sonstiges'
+  if (lower.startsWith('avviso')) return 'announcement'
+  if (lower.startsWith('perizia')) return 'appraisal'
+  if (lower.startsWith('foto')) return 'photo'
+  return 'other'
 }

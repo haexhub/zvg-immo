@@ -104,16 +104,16 @@ const FIELD_LABEL: Record<string, string> = {
   country: 'Land',
   region: 'Region',
   q: 'Suche',
-  court: 'Gericht',
+  authority: 'Gericht',
   priceMin: 'Preis ab',
   priceMax: 'Preis bis',
   landMin: 'Grundstück ab',
   landMax: 'Grundstück bis',
   livMin: 'Wohnfläche ab',
   livMax: 'Wohnfläche bis',
-  kat: 'Objektart',
+  category: 'Objektart',
   photos: 'Nur mit Fotos',
-  aufgehoben: 'inkl. aufgehobene',
+  cancelled: 'inkl. aufgehobene',
 }
 function summarize(filters: Record<string, string>): string {
   const parts = Object.entries(filters)
@@ -178,10 +178,10 @@ function formatDate(iso: string): string {
             >
               <div class="min-w-0">
                 <NuxtLink
-                  :to="`/objekt/${encodeURIComponent(w.platform)}/${encodeURIComponent(w.zvgId)}`"
+                  :to="`/objekt/${encodeURIComponent(w.platform)}/${encodeURIComponent(w.externalId)}`"
                   class="font-medium hover:underline"
                 >
-                  {{ w.amtsgericht || w.platform }} · {{ w.aktenzeichen || w.zvgId }}
+                  {{ w.authority || w.platform }} · {{ w.caseNumber || w.externalId }}
                 </NuxtLink>
                 <p class="text-xs text-muted-foreground">Hinzugefügt {{ formatDate(w.createdAt) }}</p>
               </div>
@@ -210,8 +210,8 @@ function formatDate(iso: string): string {
             >
               <div class="flex items-center justify-between gap-3">
                 <NuxtLink
-                  v-if="i.platform && i.zvgId"
-                  :to="`/objekt/${encodeURIComponent(i.platform)}/${encodeURIComponent(i.zvgId)}`"
+                  v-if="i.platform && i.externalId"
+                  :to="`/objekt/${encodeURIComponent(i.platform)}/${encodeURIComponent(i.externalId)}`"
                   class="font-medium hover:underline"
                 >Auktion ansehen</NuxtLink>
                 <span class="text-xs text-muted-foreground">{{ formatDate(i.createdAt) }}</span>

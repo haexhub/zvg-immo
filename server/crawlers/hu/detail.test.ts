@@ -57,24 +57,24 @@ function makeAuction(overrides: Partial<Auction> = {}): Auction {
     platform: 'hu-mnv',
     country: 'hu',
     region: '',
-    zvgId: '48407',
-    aktenzeichen: '49866/260702',
-    amtsgericht: '',
-    objekt: 'Beépitetlen terület',
-    adresse: 'Révleányvár, Ungarn',
-    verkehrswertEur: 9800,
-    verkehrswertText: '3.900.000 Ft',
-    terminIso: '2026-07-27',
-    terminText: '2026.07.27. 21:00',
-    aufgehoben: false,
-    letzteAktualisierungIso: null,
+    externalId: '48407',
+    caseNumber: '49866/260702',
+    authority: '',
+    title: 'Beépitetlen terület',
+    address: 'Révleányvár, Ungarn',
+    marketValueEur: 9800,
+    marketValueText: '3.900.000 Ft',
+    auctionDateIso: '2026-07-27',
+    auctionDateText: '2026.07.27. 21:00',
+    cancelled: false,
+    sourceUpdatedIso: null,
     pdfUrl: null,
     detailUrl: 'https://e-arveres.mnv.hu/index-meghirdetesek-ingatlan.html?.actionId=action.auction.AuctionSummaryAction&auctionId=48407',
     pdfUrlUpstream: null,
     detailUrlUpstream: 'https://e-arveres.mnv.hu/index-meghirdetesek-ingatlan.html?.actionId=action.auction.AuctionSummaryAction&auctionId=48407',
     attachments: [],
-    beschreibung: null,
-    fotoCount: 1,
+    description: null,
+    photoCount: 1,
     thumbnailUrl: 'https://e-arveres.mnv.hu/pictures/thumb.jpg',
     ...overrides,
   }
@@ -101,7 +101,7 @@ describe('jsFieldValue / jsFieldUnit', () => {
 describe('parseDetailPage', () => {
   it('extracts description, cadastral number, area, photos and coordinates', () => {
     const d = parseDetailPage(DETAIL_FIXTURE)
-    expect(d.beschreibung).toBe(
+    expect(d.description).toBe(
       'Az ingatlan felépítmény nélküli, kivett beépítetlen terület.\n\nBővebb információkat az árverési hirdetmény tartalmaz.',
     )
     expect(d.helyrajziSzam).toBe('141/6')
@@ -128,28 +128,28 @@ describe('parseDetailPage', () => {
 })
 
 describe('enrichOne', () => {
-  it('fills beschreibung with labelled cadastre/area lines, land area, photos and coords', async () => {
+  it('fills description with labelled cadastre/area lines, land area, photos and coords', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(DETAIL_FIXTURE)))
     const a = makeAuction()
     await enrichOne(a)
-    expect(a.beschreibung).toContain('kivett beépítetlen terület')
-    expect(a.beschreibung).toContain('Helyrajzi szám: 141/6')
-    expect(a.beschreibung).toContain('Terület: 9 643 m2')
+    expect(a.description).toContain('kivett beépítetlen terület')
+    expect(a.description).toContain('Helyrajzi szám: 141/6')
+    expect(a.description).toContain('Terület: 9 643 m2')
     expect(a.sourceLandAreaSqm).toBe(9643)
     expect(a.photoUrls).toHaveLength(2)
-    expect(a.fotoCount).toBe(2)
+    expect(a.photoCount).toBe(2)
     expect(a.lat).toBe(48.323043)
     expect(a.lng).toBe(22.04167)
     // No Becsérték on the page → the list price stays untouched.
-    expect(a.verkehrswertEur).toBe(9800)
+    expect(a.marketValueEur).toBe(9800)
   })
 
   it('keeps the area out of the structured fields for built-up lots', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(DETAIL_FIXTURE)))
-    const a = makeAuction({ objekt: 'Lakóház' })
+    const a = makeAuction({ title: 'Lakóház' })
     await enrichOne(a)
     expect(a.sourceLandAreaSqm).toBeUndefined()
-    expect(a.beschreibung).toContain('Terület: 9 643 m2')
+    expect(a.description).toContain('Terület: 9 643 m2')
   })
 
   it('throws on upstream errors so the enrich task retries', async () => {

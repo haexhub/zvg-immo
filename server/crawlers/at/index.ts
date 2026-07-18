@@ -12,36 +12,36 @@ const RANGE_MONTHS_FORWARD = 18
 
 type AuctionDetailFields = Pick<
   Auction,
-  | 'aktenzeichen'
-  | 'amtsgericht'
-  | 'adresse'
-  | 'verkehrswertEur'
-  | 'verkehrswertText'
-  | 'beschreibung'
+  | 'caseNumber'
+  | 'authority'
+  | 'address'
+  | 'marketValueEur'
+  | 'marketValueText'
+  | 'description'
   | 'attachments'
   | 'pdfUrl'
   | 'pdfUrlUpstream'
-  | 'fotoCount'
+  | 'photoCount'
   | 'thumbnailUrl'
   | 'sourceLivingAreaSqm'
   | 'sourceLandAreaSqm'
 >
 
 function applyDetail(auction: AuctionDetailFields, info: DetailInfo): void {
-  if (info.aktenzeichen) auction.aktenzeichen = info.aktenzeichen
-  if (info.amtsgericht) auction.amtsgericht = info.amtsgericht
-  if (info.adresse) auction.adresse = info.adresse
-  if (info.schaetzwertEur != null) auction.verkehrswertEur = info.schaetzwertEur
-  if (info.schaetzwertText) auction.verkehrswertText = info.schaetzwertText
+  if (info.caseNumber) auction.caseNumber = info.caseNumber
+  if (info.authority) auction.authority = info.authority
+  if (info.address) auction.address = info.address
+  if (info.schaetzwertEur != null) auction.marketValueEur = info.schaetzwertEur
+  if (info.schaetzwertText) auction.marketValueText = info.schaetzwertText
   if (info.sourceLivingAreaSqm != null) auction.sourceLivingAreaSqm = info.sourceLivingAreaSqm
   if (info.sourceLandAreaSqm != null) auction.sourceLandAreaSqm = info.sourceLandAreaSqm
-  if (info.beschreibung) auction.beschreibung = info.beschreibung
+  if (info.description) auction.description = info.description
   if (info.attachments.length > 0) auction.attachments = info.attachments
   if (info.pdfUrl) {
     auction.pdfUrl = info.pdfUrl
     auction.pdfUrlUpstream = info.pdfUrlUpstream
   }
-  auction.fotoCount = info.fotoCount
+  auction.photoCount = info.photoCount
   if (info.thumbnailUrl) auction.thumbnailUrl = info.thumbnailUrl
 }
 

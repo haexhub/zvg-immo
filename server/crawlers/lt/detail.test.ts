@@ -31,24 +31,24 @@ function makeAuction(overrides: Partial<Auction> = {}): Auction {
     platform: 'lt-eaukcionai',
     country: 'lt',
     region: '',
-    zvgId: '333292',
-    aktenzeichen: '329744',
-    amtsgericht: '',
-    objekt: 'Žemės sklypas',
-    adresse: null,
-    verkehrswertEur: 39168,
-    verkehrswertText: '39.168 €',
-    terminIso: null,
-    terminText: null,
-    aufgehoben: false,
-    letzteAktualisierungIso: null,
+    externalId: '333292',
+    caseNumber: '329744',
+    authority: '',
+    title: 'Žemės sklypas',
+    address: null,
+    marketValueEur: 39168,
+    marketValueText: '39.168 €',
+    auctionDateIso: null,
+    auctionDateText: null,
+    cancelled: false,
+    sourceUpdatedIso: null,
     pdfUrl: null,
     detailUrl: 'https://www.eaukcionai.lt/evs/pages/auction.do?id=333292&number=329744',
     pdfUrlUpstream: null,
     detailUrlUpstream: 'https://www.eaukcionai.lt/evs/pages/auction.do?id=333292&number=329744',
     attachments: [],
-    beschreibung: null,
-    fotoCount: 0,
+    description: null,
+    photoCount: 0,
     thumbnailUrl: null,
     ...overrides,
   }
@@ -105,21 +105,21 @@ describe('enrichOne', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(PLOT_FIXTURE)))
     const a = makeAuction()
     await enrichOne(a)
-    expect(a.beschreibung).toContain('Parduodamas 0.13 ha žemės sklypas')
+    expect(a.description).toContain('Parduodamas 0.13 ha žemės sklypas')
     expect(a.sourceLandAreaSqm).toBe(1300)
     expect(a.sourceLivingAreaSqm).toBeUndefined()
     expect(a.photoUrls).toBeUndefined()
-    expect(a.fotoCount).toBe(0)
+    expect(a.photoCount).toBe(0)
   })
 
   it('fills living area and photos for a flat/premises lot', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(FLAT_FIXTURE)))
-    const a = makeAuction({ objekt: 'Sandėliavimo patalpos' })
+    const a = makeAuction({ title: 'Sandėliavimo patalpos' })
     await enrichOne(a)
     expect(a.sourceLivingAreaSqm).toBe(10.68)
     expect(a.sourceLandAreaSqm).toBeUndefined()
     expect(a.photoUrls).toHaveLength(2)
-    expect(a.fotoCount).toBe(2)
+    expect(a.photoCount).toBe(2)
   })
 
   it('throws on upstream errors so the enrich task retries', async () => {

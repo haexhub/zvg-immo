@@ -36,9 +36,9 @@ async function onlineFetch(url: string): Promise<Response> {
 }
 
 interface DetailInfo {
-  terminIso: string | null
-  terminText: string | null
-  beschreibung: string | null
+  auctionDateIso: string | null
+  auctionDateText: string | null
+  description: string | null
   photoUrls: string[]
   lat: number | null
   lng: number | null
@@ -55,8 +55,8 @@ export function parseOwnDetail(html: string): DetailInfo {
   const timeText = clean($('.auction-info-header:contains("Auction Time")').first().next('p').text())
   const dm = dateText.match(/(\d{2})\/(\d{2})\/(\d{4})/)
   const tm = timeText.match(/^(\d{2}):(\d{2})/)
-  const terminIso = dm ? `${dm[3]}-${dm[2]}-${dm[1]}T${tm ? `${tm[1]}:${tm[2]}` : '00:00'}:00` : null
-  const terminText = [dateText, timeText].filter(Boolean).join(' ') || null
+  const auctionDateIso = dm ? `${dm[3]}-${dm[2]}-${dm[1]}T${tm ? `${tm[1]}:${tm[2]}` : '00:00'}:00` : null
+  const auctionDateText = [dateText, timeText].filter(Boolean).join(' ') || null
 
   // .preline's direct <p> children alternate a bold "label" paragraph
   // (Tenure, Location, Accommodation, Exterior, Services, ...) and the free
@@ -72,7 +72,7 @@ export function parseOwnDetail(html: string): DetailInfo {
     if ($p.hasClass('auction-info-header') || sections.length === 0) sections.push(text)
     else sections[sections.length - 1] += `\n${text}`
   })
-  const beschreibung = sections.join('\n\n') || null
+  const description = sections.join('\n\n') || null
 
   const photoUrls = [
     ...new Set(
@@ -84,7 +84,7 @@ export function parseOwnDetail(html: string): DetailInfo {
     ),
   ]
 
-  return { terminIso, terminText, beschreibung, photoUrls, lat: null, lng: null }
+  return { auctionDateIso, auctionDateText, description, photoUrls, lat: null, lng: null }
 }
 
 const STOP_HEADINGS = /^(important notice|administration charge|note\b|additional fees|disbursements)/i
@@ -100,9 +100,9 @@ export function parseOnlineDetail(html: string): DetailInfo {
 
   const metaDescription = $('meta[name="description"]').attr('content') ?? ''
   const closingDate = metaDescription.match(/closing on (\d{2})\/(\d{2})\/(\d{4})/)
-  const terminIso = closingDate ? `${closingDate[3]}-${closingDate[2]}-${closingDate[1]}` : null
+  const auctionDateIso = closingDate ? `${closingDate[3]}-${closingDate[2]}-${closingDate[1]}` : null
   const opensText = clean($('.lot-highlights li:contains("Bidding Opens")').first().text())
-  const terminText = [opensText, closingDate ? `Closes ${closingDate[0].replace('closing on ', '')}` : null]
+  const auctionDateText = [opensText, closingDate ? `Closes ${closingDate[0].replace('closing on ', '')}` : null]
     .filter(Boolean)
     .join(' · ') || null
 
@@ -126,7 +126,7 @@ export function parseOnlineDetail(html: string): DetailInfo {
     )
     sections.push(text ? `${label}\n${text}` : label)
   }
-  const beschreibung = sections.join('\n\n') || null
+  const description = sections.join('\n\n') || null
 
   const photoUrls = [
     ...new Set(
@@ -142,9 +142,9 @@ export function parseOnlineDetail(html: string): DetailInfo {
   const lng = latLng ? Number(latLng[2]) : NaN
 
   return {
-    terminIso,
-    terminText,
-    beschreibung,
+    auctionDateIso,
+    auctionDateText,
+    description,
     photoUrls,
     lat: Number.isFinite(lat) ? lat : null,
     lng: Number.isFinite(lng) ? lng : null,
@@ -184,14 +184,14 @@ export async function enrichOne(auction: Auction): Promise<void> {
     return
   }
 
-  if (detail.terminIso) {
-    auction.terminIso = detail.terminIso
-    auction.terminText = detail.terminText
+  if (detail.auctionDateIso) {
+    auction.auctionDateIso = detail.auctionDateIso
+    auction.auctionDateText = detail.auctionDateText
   }
-  if (detail.beschreibung) auction.beschreibung = detail.beschreibung
+  if (detail.description) auction.description = detail.description
   if (detail.photoUrls.length > 0) {
     auction.photoUrls = detail.photoUrls
-    auction.fotoCount = detail.photoUrls.length
+    auction.photoCount = detail.photoUrls.length
     auction.thumbnailUrl = detail.photoUrls[0] ?? auction.thumbnailUrl
   }
   if (detail.lat != null && detail.lng != null) {

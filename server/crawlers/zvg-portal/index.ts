@@ -8,19 +8,19 @@ const PLATFORM_ID = 'zvg-portal'
 
 function applyDetail(auction: Auction, info: DetailInfo, landAbk: string): void {
   auction.attachments = info.attachments
-  auction.beschreibung = info.beschreibung
-  const fotos = info.attachments.filter((a) => a.kind === 'foto')
-  auction.fotoCount = fotos.length
-  const firstFoto = fotos[0]
+  auction.description = info.description
+  const photos = info.attachments.filter((a) => a.kind === 'photo')
+  auction.photoCount = photos.length
+  const firstFoto = photos[0]
   if (firstFoto) {
-    auction.thumbnailUrl = `/api/zvg-thumb?file_id=${firstFoto.fileId}&zvg_id=${auction.zvgId}&land_abk=${landAbk}`
+    auction.thumbnailUrl = `/api/zvg-thumb?file_id=${firstFoto.fileId}&zvg_id=${auction.externalId}&land_abk=${landAbk}`
   }
 }
 
 async function enrichOne(auction: Auction): Promise<void> {
   const landAbk = new URLSearchParams((auction.detailUrl ?? '').split('?')[1] ?? '').get('land_abk')
-  // Missing land_abk / non-numeric zvgId is permanent — nothing to fetch, ever.
-  if (!landAbk || !/^\d+$/.test(auction.zvgId)) return
+  // Missing land_abk / non-numeric externalId is permanent — nothing to fetch, ever.
+  if (!landAbk || !/^\d+$/.test(auction.externalId)) return
   const r = await enrichInBatches([auction], landAbk, (a, info) => applyDetail(a, info, landAbk))
   if (r.errors > 0) throw new Error('zvg-portal detail fetch failed')
 }

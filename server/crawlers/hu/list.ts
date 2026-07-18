@@ -7,16 +7,16 @@ import { getRates, toEur } from '~/server/utils/exchange-rate'
 /**
  * Column layout of the MNV property auction table (0-indexed):
  *   0  thumbnail image
- *   1  property type link  (objekt)
- *   2  auction ID text     (zvgId / aktenzeichen)
- *   3  address link        (adresse)
+ *   1  property type link  (title)
+ *   2  auction ID text     (externalId / caseNumber)
+ *   3  address link        (address)
  *   4  ownership share     (skipped)
  *   5  pre-emption right   (checkbox, skipped)
- *   6  reserve price HUF   (verkehrswert)
+ *   6  reserve price HUF   (marketValue)
  *   7  deposit             (skipped)
  *   8  registration deadline (may be empty, skipped)
  *   9  bidding start       (skipped)
- *  10  bidding end         (terminIso / terminText)
+ *  10  bidding end         (auctionDateIso / auctionDateText)
  */
 
 interface PageResult {
@@ -44,14 +44,14 @@ function parsePage(html: string, platformId: string, rates: Record<string, numbe
     const auctionId = auctionIdMatch?.[1] ?? null
     if (!auctionId) return
 
-    const objekt = clean(tds.eq(1).find('a').text()) || null
+    const title = clean(tds.eq(1).find('a').text()) || null
     // The visible ID text (e.g. "49866/260702") contains a slash and can't be
     // used as a URL path segment or cache key; use the numeric auctionId as the
-    // stable id and keep the slashed text as the human-readable Aktenzeichen.
-    const aktenzeichen = clean(tds.eq(2).text()) || auctionId
-    const adresseRaw = clean(tds.eq(3).find('a').text() || tds.eq(3).text())
+    // stable id and keep the slashed text as the human-readable case number.
+    const caseNumber = clean(tds.eq(2).text()) || auctionId
+    const addressRaw = clean(tds.eq(3).find('a').text() || tds.eq(3).text())
     const priceRaw = clean(tds.eq(6).text())
-    const terminRaw = clean(tds.eq(10).text())
+    const auctionDateRaw = clean(tds.eq(10).text())
 
     const detailUrl = `${HU_BASE}/index-meghirdetesek-ingatlan.html?.actionId=action.auction.AuctionSummaryAction&auctionId=${auctionId}`
 
@@ -61,24 +61,24 @@ function parsePage(html: string, platformId: string, rates: Record<string, numbe
       platform: platformId,
       country: COUNTRY,
       region: '',
-      zvgId: auctionId,
-      aktenzeichen,
-      amtsgericht: '',
-      objekt,
-      adresse: adresseRaw ? `${adresseRaw}, Ungarn` : null,
-      verkehrswertEur: huf != null ? toEur(huf, 'HUF', rates) : null,
-      verkehrswertText: huf != null ? `${huf.toLocaleString('de-DE', { maximumFractionDigits: 0 })} Ft` : null,
-      terminIso: parseMnvDate(terminRaw),
-      terminText: terminRaw || null,
-      aufgehoben: false,
-      letzteAktualisierungIso: null,
+      externalId: auctionId,
+      caseNumber,
+      authority: '',
+      title,
+      address: addressRaw ? `${addressRaw}, Ungarn` : null,
+      marketValueEur: huf != null ? toEur(huf, 'HUF', rates) : null,
+      marketValueText: huf != null ? `${huf.toLocaleString('de-DE', { maximumFractionDigits: 0 })} Ft` : null,
+      auctionDateIso: parseMnvDate(auctionDateRaw),
+      auctionDateText: auctionDateRaw || null,
+      cancelled: false,
+      sourceUpdatedIso: null,
       pdfUrl: null,
       detailUrl,
       pdfUrlUpstream: null,
       detailUrlUpstream: detailUrl,
       attachments: [],
-      beschreibung: null,
-      fotoCount: thumbnailUrl ? 1 : 0,
+      description: null,
+      photoCount: thumbnailUrl ? 1 : 0,
       thumbnailUrl,
     })
   })

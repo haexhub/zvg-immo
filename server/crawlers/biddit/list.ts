@@ -41,7 +41,7 @@ interface SearchPage {
 const FETCH_TIMEOUT_MS = 20_000
 
 /** "2026-07-15T14:00:00.000Z" → "15.07.2026, 16:00 Uhr" (Belgian local time),
- *  matching the human-readable terminText the other platforms provide. */
+ *  matching the human-readable auctionDateText the other platforms provide. */
 function formatTerminText(iso: string | null | undefined): string | null {
   if (!iso) return null
   const date = new Date(iso)
@@ -97,8 +97,8 @@ function mapItem(inner: SearchItemInner, platformId: string): MappedAuction | nu
   // publicSaleStatus values seen on the API: CURRENT (active), WITHDRAWN
   // (lot pulled), CLOSED (bidding done). The `withdrawn` boolean is a more
   // robust signal because the status string also flips after the auction
-  // closes successfully — which is not the same as "aufgehoben".
-  const aufgehoben = Boolean(inner.withdrawn) || inner.publicSaleStatus === 'WITHDRAWN'
+  // closes successfully — which is not the same as "cancelled".
+  const cancelled = Boolean(inner.withdrawn) || inner.publicSaleStatus === 'WITHDRAWN'
 
   // Listing exposes startingPrice (the Mindestgebot), not the appraised
   // value. estimatedPrice — the Verkehrswert equivalent — is detail-only,
@@ -107,24 +107,24 @@ function mapItem(inner: SearchItemInner, platformId: string): MappedAuction | nu
     platform: platformId,
     country: COUNTRY,
     region: REGION_NAME,
-    zvgId: inner.referenceCode,
-    aktenzeichen: inner.referenceCode,
-    amtsgericht: inner.organisationReference ?? '',
-    objekt: pickLocalized(prop?.title) ?? prop?.propertyType ?? null,
-    adresse: formatAddress(prop?.address),
-    verkehrswertEur: null,
-    verkehrswertText: null,
-    terminIso: inner.biddingEndDateTime ?? inner.biddingStartDateTime ?? null,
-    terminText: formatTerminText(inner.biddingEndDateTime),
-    aufgehoben,
-    letzteAktualisierungIso: inner.firstPublicationDateTime ?? null,
+    externalId: inner.referenceCode,
+    caseNumber: inner.referenceCode,
+    authority: inner.organisationReference ?? '',
+    title: pickLocalized(prop?.title) ?? prop?.propertyType ?? null,
+    address: formatAddress(prop?.address),
+    marketValueEur: null,
+    marketValueText: null,
+    auctionDateIso: inner.biddingEndDateTime ?? inner.biddingStartDateTime ?? null,
+    auctionDateText: formatTerminText(inner.biddingEndDateTime),
+    cancelled,
+    sourceUpdatedIso: inner.firstPublicationDateTime ?? null,
     pdfUrl: null,
     detailUrl: detailUrlUpstream,
     pdfUrlUpstream: null,
     detailUrlUpstream,
     attachments: [],
-    beschreibung: null,
-    fotoCount: 0,
+    description: null,
+    photoCount: 0,
     thumbnailUrl: null,
   }
   return { auction, organisationId: inner.organisationId ?? null }
@@ -180,7 +180,7 @@ export async function fetchAllPublicSales(platformId: string): Promise<ListResul
   // the same property gets two pins on the map.
   const seen = new Set<string>()
   const unique = mapped.filter((m) => {
-    const k = m.auction.zvgId
+    const k = m.auction.externalId
     if (seen.has(k)) return false
     seen.add(k)
     return true

@@ -73,12 +73,12 @@ function clean(text: string | null | undefined): string | null {
 }
 
 function mapItem(item: SyslumennAuction, platformId: string): Auction {
-  const { iso: terminIso, label: terminText } = parseAuctionDateTime(
+  const { iso: auctionDateIso, label: auctionDateText } = parseAuctionDateTime(
     item.auctionDate,
     item.auctionTime,
   )
 
-  const beschreibung = [
+  const description = [
     clean(item.petitioners) ? `Gläubiger: ${clean(item.petitioners)}` : null,
     clean(item.respondent) ? `Schuldner: ${clean(item.respondent)}` : null,
     clean(item.auctionTakesPlaceAt) ? `Ort: ${clean(item.auctionTakesPlaceAt)}` : null,
@@ -90,9 +90,9 @@ function mapItem(item: SyslumennAuction, platformId: string): Auction {
   // lotId is the commissioner's internal case id. When it is missing, derive a
   // deterministic key from stable lot attributes — the feed is a rolling
   // window, so a positional index would shift between crawls and break the
-  // platform:zvgId snapshot merge.
+  // platform:externalId snapshot merge.
   const lotId = clean(item.lotId)
-  const zvgId =
+  const externalId =
     lotId ??
     ['is', clean(item.office), clean(item.lotName), clean(item.auctionDate)]
       .filter(Boolean)
@@ -104,28 +104,28 @@ function mapItem(item: SyslumennAuction, platformId: string): Auction {
     // `location` is the auction venue's town (e.g. "Akranes", "Keflavík") —
     // the closest thing to a sub-region the feed exposes.
     region: clean(item.location) ?? '',
-    zvgId,
+    externalId,
     // Iceland's forced-sale feed exposes no court case number ("mál nr.") —
     // the commissioner's case id is the closest analogue to an Aktenzeichen.
-    aktenzeichen: lotId ?? '',
-    amtsgericht: clean(item.office) ?? 'Sýslumenn',
-    objekt: clean(item.auctionType),
-    adresse: clean(item.lotName),
+    caseNumber: lotId ?? '',
+    authority: clean(item.office) ?? 'Sýslumenn',
+    title: clean(item.auctionType),
+    address: clean(item.lotName),
     // No valuation is published for Icelandic forced sales (bids are taken at
     // the auction), so there is no Verkehrswert.
-    verkehrswertEur: null,
-    verkehrswertText: null,
-    terminIso,
-    terminText,
-    aufgehoben: false,
-    letzteAktualisierungIso: null,
+    marketValueEur: null,
+    marketValueText: null,
+    auctionDateIso,
+    auctionDateText,
+    cancelled: false,
+    sourceUpdatedIso: null,
     pdfUrl: null,
     detailUrl: null,
     pdfUrlUpstream: null,
     detailUrlUpstream: null,
     attachments: [],
-    beschreibung,
-    fotoCount: 0,
+    description,
+    photoCount: 0,
     thumbnailUrl: null,
   }
 }

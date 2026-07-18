@@ -31,24 +31,24 @@ function makeAuction(overrides: Partial<Auction> = {}): Auction {
     platform: 'lv-eizsoles',
     country: 'lv',
     region: '',
-    zvgId: '13304c32-5eb6-4cc5-9906-8ebbfa616ec2',
-    aktenzeichen: '',
-    amtsgericht: 'Dana Krūmiņa',
-    objekt: null,
-    adresse: 'Augusta Dombrovska iela 9B - 1A, Rīga',
-    verkehrswertEur: 2500,
-    verkehrswertText: '€ 2 500.00',
-    terminIso: '2026-07-17T13:00:00',
-    terminText: '17.07.2026, 13:00 Uhr',
-    aufgehoben: false,
-    letzteAktualisierungIso: null,
+    externalId: '13304c32-5eb6-4cc5-9906-8ebbfa616ec2',
+    caseNumber: '',
+    authority: 'Dana Krūmiņa',
+    title: null,
+    address: 'Augusta Dombrovska iela 9B - 1A, Rīga',
+    marketValueEur: 2500,
+    marketValueText: '€ 2 500.00',
+    auctionDateIso: '2026-07-17T13:00:00',
+    auctionDateText: '17.07.2026, 13:00 Uhr',
+    cancelled: false,
+    sourceUpdatedIso: null,
     pdfUrl: null,
     detailUrl: 'https://izsoles.ta.gov.lv/izsole/13304c32-5eb6-4cc5-9906-8ebbfa616ec2',
     pdfUrlUpstream: null,
     detailUrlUpstream: 'https://izsoles.ta.gov.lv/izsole/13304c32-5eb6-4cc5-9906-8ebbfa616ec2',
     attachments: [],
-    beschreibung: 'Sākumcena: € 1 875.00\n\nRīgas apgabaltiesas iecirkņa Nr.47 ...',
-    fotoCount: 1,
+    description: 'Sākumcena: € 1 875.00\n\nRīgas apgabaltiesas iecirkņa Nr.47 ...',
+    photoCount: 1,
     thumbnailUrl: 'https://izsoles.ta.gov.lv/gallery-thumbnail/attachments/x/y/a.jpg',
     ...overrides,
   }
@@ -94,13 +94,13 @@ describe('enrichOne', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(DETAIL_FIXTURE)))
     const a = makeAuction()
     await enrichOne(a)
-    expect(a.beschreibung).toContain('Sākumcena: € 1 875.00')
-    expect(a.beschreibung).toContain('Kadastra numurs: 0100 916 4396')
-    expect(a.beschreibung).toContain('Domājamās daļas no īpašuma: 1/1')
+    expect(a.description).toContain('Sākumcena: € 1 875.00')
+    expect(a.description).toContain('Kadastra numurs: 0100 916 4396')
+    expect(a.description).toContain('Domājamās daļas no īpašuma: 1/1')
     expect(a.photoUrls).toHaveLength(2)
-    expect(a.fotoCount).toBe(2)
+    expect(a.photoCount).toBe(2)
     expect(a.attachments).toHaveLength(1)
-    expect(a.attachments[0]).toMatchObject({ kind: 'gutachten', label: 'Īpašuma novērtējums' })
+    expect(a.attachments[0]).toMatchObject({ kind: 'appraisal', label: 'Īpašuma novērtējums' })
     expect(a.lat).toBe(57.028469)
     expect(a.lng).toBe(24.113494)
   })

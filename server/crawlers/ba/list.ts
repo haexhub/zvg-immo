@@ -44,19 +44,19 @@ async function apiFetch<T>(path: string): Promise<T> {
 
 function mapItem(item: ListItem, detail: DetailResponse | null, platformId: string): Auction {
   // Strip "Zaključak o prodaji nekretnina " / "Zaključak o prodaji " prefix to get case number
-  const aktenzeichen = (detail?.naslov ?? item.naslov)
+  const caseNumber = (detail?.naslov ?? item.naslov)
     .replace(/^Zaklju[cč]ak\s+o\s+prodaji(?:\s+nekretnin[ae])?\s*/i, '')
     .trim() || String(item.id)
 
   const bodyText = detail?.sadrzaj ? stripHtml(detail.sadrzaj) : null
   const price = bodyText ? parseBamPrice(bodyText) : null
-  const adresse = bodyText ? extractLocation(bodyText) : null
+  const address = bodyText ? extractLocation(bodyText) : null
 
   const attachments: Attachment[] = (detail?.dokumenti ?? []).map((d) => {
     const label = d.naziv || d.nazivFajla || `Dokument ${d.id}`
     let kind = classifyAttachment(d.naziv, d.nazivFajla, d.opis)
     // The Zaključak o prodaji / oglas IS the auction announcement
-    if (kind === 'sonstiges' && /zaklju[cč]|oglas/i.test(label)) kind = 'bekanntmachung'
+    if (kind === 'other' && /zaklju[cč]|oglas/i.test(label)) kind = 'announcement'
     return {
       kind,
       label,
@@ -70,9 +70,9 @@ function mapItem(item: ListItem, detail: DetailResponse | null, platformId: stri
   // nothing was recognized as the announcement, the first unclassified
   // non-notice document is it. Documents classifyAttachment DID recognize
   // (gutachten, foto, …) keep their kind.
-  if (!attachments.some((a) => a.kind === 'bekanntmachung')) {
-    const main = attachments.find((a) => a.kind === 'sonstiges' && !/obavje|odgod/i.test(a.label))
-    if (main) main.kind = 'bekanntmachung'
+  if (!attachments.some((a) => a.kind === 'announcement')) {
+    const main = attachments.find((a) => a.kind === 'other' && !/obavje|odgod/i.test(a.label))
+    if (main) main.kind = 'announcement'
   }
 
   const pdfDoc = detail?.dokumenti?.find((d) => d.tipDoc === 'PDF') ?? null
@@ -86,24 +86,24 @@ function mapItem(item: ListItem, detail: DetailResponse | null, platformId: stri
     platform: platformId,
     country: COUNTRY,
     region: '',
-    zvgId: String(item.id),
-    aktenzeichen,
-    amtsgericht: item.institucija,
-    objekt: 'Nekretnina',
-    adresse,
-    verkehrswertEur: price?.eur ?? null,
-    verkehrswertText: price?.text ?? null,
-    terminIso: parseBaDate(terminRaw),
-    terminText: terminRaw || null,
-    aufgehoben: false,
-    letzteAktualisierungIso: null,
+    externalId: String(item.id),
+    caseNumber,
+    authority: item.institucija,
+    title: 'Nekretnina',
+    address,
+    marketValueEur: price?.eur ?? null,
+    marketValueText: price?.text ?? null,
+    auctionDateIso: parseBaDate(terminRaw),
+    auctionDateText: terminRaw || null,
+    cancelled: false,
+    sourceUpdatedIso: null,
     pdfUrl: pdfUrlUpstream,
     detailUrl: detailUrlUpstream,
     pdfUrlUpstream,
     detailUrlUpstream,
     attachments,
-    beschreibung: bodyText,
-    fotoCount: 0,
+    description: bodyText,
+    photoCount: 0,
     thumbnailUrl: null,
   }
 }

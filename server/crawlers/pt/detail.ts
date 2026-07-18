@@ -45,15 +45,15 @@ function positive(n: number | null | undefined): number | null {
 }
 
 export function applyDetail(auction: Auction, item: PtEventoDetail): void {
-  const beschreibung = [text(item.descricao), text(item.observacoes)].filter(Boolean).join('\n\n')
-  if (beschreibung) auction.beschreibung = beschreibung
+  const description = [text(item.descricao), text(item.observacoes)].filter(Boolean).join('\n\n')
+  if (description) auction.description = description
 
   // Replace the e-leilões referencia (already used above it as the fetch key
   // in enrichOne) with the real court case number/court once known.
   const processoNumero = text(item.processoNumero)
-  if (processoNumero) auction.aktenzeichen = processoNumero
+  if (processoNumero) auction.caseNumber = processoNumero
   const processoTribunal = text(item.processoTribunal)
-  if (processoTribunal) auction.amtsgericht = processoTribunal
+  if (processoTribunal) auction.authority = processoTribunal
 
   // areaUtilPrivativa is the usable/living area of the built unit; pure land
   // lots (Rústico/Terreno) carry 0 there and the plot size in areaTotal.
@@ -68,7 +68,7 @@ export function applyDetail(auction: Auction, item: PtEventoDetail): void {
     .map((p) => `${PT_BASE}/${p}`)
   if (photoUrls.length > 0) {
     auction.photoUrls = photoUrls
-    auction.fotoCount = photoUrls.length
+    auction.photoCount = photoUrls.length
   }
 
   const lat = Number(item.coordenadasLAT)

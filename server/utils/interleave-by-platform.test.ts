@@ -3,7 +3,7 @@ import type { Auction } from '~/types/auction'
 import { interleaveByPlatform } from './interleave-by-platform'
 
 function auction(platform: string, id: string): Auction {
-  return { platform, zvgId: id } as Auction
+  return { platform, externalId: id } as Auction
 }
 
 describe('interleaveByPlatform', () => {
@@ -25,7 +25,7 @@ describe('interleaveByPlatform', () => {
 
   it('preserves within-platform order', () => {
     const items = [auction('agi', 'a'), auction('agi', 'b'), auction('agi', 'c')]
-    expect(interleaveByPlatform(items).map((a) => a.zvgId)).toEqual(['a', 'b', 'c'])
+    expect(interleaveByPlatform(items).map((a) => a.externalId)).toEqual(['a', 'b', 'c'])
   })
 
   it('handles an empty list', () => {

@@ -30,8 +30,8 @@ const PAGE = `
 describe('parsePropertyPage', () => {
   const detail = parsePropertyPage(PAGE)
 
-  it('derives objekt from the Yes-flagged type facts', () => {
-    expect(detail.objekt).toBe('Vacant land')
+  it('derives title from the Yes-flagged type facts', () => {
+    expect(detail.title).toBe('Vacant land')
   })
 
   it('converts the stated acreage to m²', () => {
@@ -77,7 +77,7 @@ describe('parsePropertyPage', () => {
 
   it('returns empty defaults on a page without the fact blocks', () => {
     expect(parsePropertyPage('<html><body><p>nothing here</p></body></html>')).toEqual({
-      objekt: null,
+      title: null,
       landAreaSqm: null,
       photoUrls: [],
       facts: [],

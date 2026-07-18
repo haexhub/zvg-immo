@@ -17,7 +17,7 @@ export const UA =
  *  collapsed region — the same convention used by FR/PL/CZ/HU/SI/… for
  *  platforms without a real sub-region filter — is the honest choice here.
  *  The real per-listing county/state is still preserved on each Auction via
- *  `region` and `amtsgericht`, parsed from that listing's own
+ *  `region` and `authority`, parsed from that listing's own
  *  "<County>, <ST> Sheriff Sale: …" title (see parseCountyState in list.ts). */
 export const US_REGIONS: readonly RegionInfo[] = [{ code: 'all', name: 'USA' }] as const
 
@@ -34,7 +34,7 @@ export const US_REGIONS: readonly RegionInfo[] = [{ code: 'all', name: 'USA' }] 
  * - Tax lien/tax deed sales (`/county-tax-sales`) and HUD homes
  *   (`berkshudpa`, `chesterhudpa`, `phillyhudpa`) — different legal
  *   instrument than a judicial foreclosure sale; mixing them into the same
- *   Auction shape (aktenzeichen = court case number, amtsgericht = sheriff)
+ *   Auction shape (caseNumber = court case number, authority = sheriff)
  *   would misrepresent what's actually being sold.
  * - `/philadelphia`: unlike every channel below, it doesn't embed a single
  *   listings grid directly — it fans out into several `/channel/<id>`

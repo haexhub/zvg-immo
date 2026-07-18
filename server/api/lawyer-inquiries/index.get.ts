@@ -12,7 +12,7 @@ export default defineEventHandler(async (event): Promise<LawyerInquiry[]> => {
   }
   const { data, error } = await supabase
     .from('lawyer_inquiries')
-    .select('id, lawyer_id, platform, zvg_id, message, commission_cents, commission_status, created_at')
+    .select('id, lawyer_id, platform, external_id, message, commission_cents, commission_status, created_at')
     .eq('user_id', event.context.user!.id)
     .order('created_at', { ascending: false })
   if (error) {
@@ -22,7 +22,7 @@ export default defineEventHandler(async (event): Promise<LawyerInquiry[]> => {
     id: row.id as string,
     lawyerId: row.lawyer_id as string,
     platform: row.platform as string | null,
-    zvgId: row.zvg_id as string | null,
+    externalId: row.external_id as string | null,
     message: row.message as string,
     commissionCents: row.commission_cents as number | null,
     commissionStatus: row.commission_status as string,

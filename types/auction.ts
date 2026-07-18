@@ -1,6 +1,6 @@
-import type { PropertyType } from '~/lib/objektart'
+import type { PropertyType } from '~/lib/property-type'
 
-export type AttachmentKind = 'bekanntmachung' | 'foto' | 'exposee' | 'gutachten' | 'sonstiges'
+export type AttachmentKind = 'announcement' | 'photo' | 'brochure' | 'appraisal' | 'other'
 
 export interface Attachment {
   kind: AttachmentKind
@@ -22,19 +22,19 @@ export interface Auction {
   /** Human-readable region name within the country (e.g. 'Sachsen', 'Madrid').
    *  Empty string when the source platform does not expose sub-regions. */
   region: string
-  /** Stable per-platform id for the auction (kept as 'zvgId' for historical
-   *  reasons; non-DE crawlers fill it with their own native identifier). */
-  zvgId: string
-  aktenzeichen: string
-  amtsgericht: string
-  objekt: string | null
-  adresse: string | null
-  verkehrswertEur: number | null
-  verkehrswertText: string | null
-  terminIso: string | null
-  terminText: string | null
-  aufgehoben: boolean
-  letzteAktualisierungIso: string | null
+  /** Stable per-platform id for the auction (native identifier in the source
+   *  platform; non-DE crawlers fill it with their own native identifier). */
+  externalId: string
+  caseNumber: string
+  authority: string
+  title: string | null
+  address: string | null
+  marketValueEur: number | null
+  marketValueText: string | null
+  auctionDateIso: string | null
+  auctionDateText: string | null
+  cancelled: boolean
+  sourceUpdatedIso: string | null
   /** Local proxy URL — direct upstream links may require a platform-specific Referer. */
   pdfUrl: string | null
   /** Local proxy URL for the upstream Detailansicht. Null when the platform
@@ -48,9 +48,9 @@ export interface Auction {
   /** All attachments scraped from the Detailansicht page. */
   attachments: Attachment[]
   /** Free-text description scraped from the detail page (Beschreibung field). */
-  beschreibung: string | null
+  description: string | null
   /** Number of photos available (counted from Foto attachments and embedded JPEGs). */
-  fotoCount: number
+  photoCount: number
   /** Local URL for a JPEG thumbnail of the first photo, if any. */
   thumbnailUrl: string | null
   /** Structured values provided directly by the source platform (JSON field,
@@ -62,7 +62,7 @@ export interface Auction {
   /** Direct upstream image URLs (the full gallery, not just the thumbnail).
    *  Mirrored into the local image cache by the enrich task, which turns them
    *  into `extraction.photos`. Crawlers setting this should also set
-   *  `fotoCount` accordingly. */
+   *  `photoCount` accordingly. */
   photoUrls?: string[]
   /** Coordinates provided by the source platform — spares a geocoder lookup.
    *  Overlaid as-is by /api/auctions-geo. */
@@ -72,12 +72,12 @@ export interface Auction {
    *  Absent on the fresh listing crawl; set on the auction-snapshot side and
    *  preserved across snapshot merges. Used by the enrich task to distinguish
    *  "detail never fetched" from "fetched, and the listing legitimately has no
-   *  attachments/beschreibung" — the latter would otherwise be retried on every
+   *  attachments/description" — the latter would otherwise be retried on every
    *  run. */
   detailFetchedAt?: string | null
   /** Structured fields extracted from the listing text/documents. Always absent
    *  at crawl time — populated read-only from the extraction cache by the
-   *  /api/auctions overlay (mirrors how verkehrswertEur is filled). */
+   *  /api/auctions overlay (mirrors how marketValueEur is filled). */
   extraction?: AuctionExtraction | null
 }
 
@@ -95,7 +95,7 @@ export interface AuctionExtraction {
   source: 'rules' | 'llm'
   confidence: 'high' | 'low'
   /** Filenames of photos extracted from the best PDF attachment, relative to
-   *  `.cache_zvg/images/<platform>/<zvgId>/`. Empty when the PDF held no
+   *  `.cache_zvg/images/<platform>/<externalId>/`. Empty when the PDF held no
    *  usable photos or no PDF was available. Served via /api/auction-image. */
   photos?: string[]
   /** ISO timestamp of when this extraction was produced. */

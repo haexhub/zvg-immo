@@ -61,7 +61,7 @@ async function fetchPage(courtSlug: string, page: number): Promise<ListPage | nu
   }
 }
 
-function deriveAmtsgericht(facts: ListFact[], courtName: string): string {
+function deriveAuthority(facts: ListFact[], courtName: string): string {
   // Listing always renders the fact key as "Amtsgericht <Name>:" — but we
   // also have the static court name from constants, which is canonical.
   for (const f of facts) {
@@ -71,7 +71,7 @@ function deriveAmtsgericht(facts: ListFact[], courtName: string): string {
   return courtName
 }
 
-function deriveAktenzeichen(facts: ListFact[]): string {
+function deriveCaseNumber(facts: ListFact[]): string {
   // The first fact's value is the Aktenzeichen ("1 K 13/24").
   const first = facts[0]
   return first?.value?.trim() || ''
@@ -89,24 +89,24 @@ function mapAuction(
     platform: platformId,
     country: COUNTRY,
     region: REGION_NAME,
-    zvgId: String(raw.id),
-    aktenzeichen: deriveAktenzeichen(facts),
-    amtsgericht: deriveAmtsgericht(facts, courtName),
-    objekt: raw.title || null,
-    adresse: raw.address || raw.city || null,
-    verkehrswertEur: parseEuro(raw.price),
-    verkehrswertText: raw.price || null,
-    terminIso: parseGermanDateTimeString(raw.auctionDate),
-    terminText: raw.auctionDate || null,
-    aufgehoben: Boolean(raw.cancelled),
-    letzteAktualisierungIso: raw.timestamp || null,
+    externalId: String(raw.id),
+    caseNumber: deriveCaseNumber(facts),
+    authority: deriveAuthority(facts, courtName),
+    title: raw.title || null,
+    address: raw.address || raw.city || null,
+    marketValueEur: parseEuro(raw.price),
+    marketValueText: raw.price || null,
+    auctionDateIso: parseGermanDateTimeString(raw.auctionDate),
+    auctionDateText: raw.auctionDate || null,
+    cancelled: Boolean(raw.cancelled),
+    sourceUpdatedIso: raw.timestamp || null,
     pdfUrl: null,
     detailUrl: detailUrlUpstream,
     pdfUrlUpstream: null,
     detailUrlUpstream,
     attachments: [],
-    beschreibung: null,
-    fotoCount: raw.firstImage ? 1 : 0,
+    description: null,
+    photoCount: raw.firstImage ? 1 : 0,
     thumbnailUrl: raw.firstImage?.thumbnail ?? null,
   }
 }

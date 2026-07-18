@@ -3,7 +3,7 @@ import type { Auction, CrawlResult } from '~/types/auction'
 import type { GeoAuction, GeoCrawlResult } from '~/server/api/auctions-geo.get'
 import type { CountryEntry } from '~/server/crawlers/registry'
 import { ALL_SCOPE, attachmentKindLabel, isAllScope } from '~/lib/auction-constants'
-import { filterAuctions, scopeByCountryRegion, auctionKategorie, type AuctionFilters } from '~/lib/auction-filters'
+import { filterAuctions, scopeByCountryRegion, auctionCategory, type AuctionFilters } from '~/lib/auction-filters'
 import type { SavedSearch } from '~/server/api/saved-searches/index.get'
 import type { WatchlistItem } from '~/server/api/watchlist/index.get'
 import Select from '~/components/ui/select/Select.vue'
@@ -225,22 +225,22 @@ const search = ref(queryStr('q'))
 // debounce the search term so typing stays smooth. Selects/checkboxes keep
 // applying instantly.
 const debouncedSearch = refDebounced(search, 250)
-const includeAufgehoben = ref(route.query.aufgehoben === '1')
-const courtFilter = ref<string>(queryStr('court', ALL_SCOPE))
+const includeCancelled = ref(route.query.cancelled === '1')
+const authorityFilter = ref<string>(queryStr('authority', ALL_SCOPE))
 const priceMin = ref<number | null>(queryNum('priceMin'))
 const priceMax = ref<number | null>(queryNum('priceMax'))
 const landAreaMin = ref<number | null>(queryNum('landMin'))
 const landAreaMax = ref<number | null>(queryNum('landMax'))
 const livingAreaMin = ref<number | null>(queryNum('livMin'))
 const livingAreaMax = ref<number | null>(queryNum('livMax'))
-const kategorieFilter = ref<string>(queryStr('kat', ALL_SCOPE))
+const categoryFilter = ref<string>(queryStr('category', ALL_SCOPE))
 const onlyWithPhotos = ref(route.query.photos === '1')
 
 // When the user switches country/region, the previously-selected court may
 // no longer exist. Reset filters that depend on the dataset.
 watch([selectedCountries, selectedRegionKeys], () => {
-  courtFilter.value = ALL_SCOPE
-  kategorieFilter.value = ALL_SCOPE
+  authorityFilter.value = ALL_SCOPE
+  categoryFilter.value = ALL_SCOPE
 })
 
 const selectedCountryLabel = computed(() => {
@@ -291,7 +291,7 @@ const scopedAuctions = computed<Auction[]>(() => (
 ))
 
 const courts = computed<string[]>(() => {
-  return [...new Set(scopedAuctions.value.map((a) => a.amtsgericht).filter(Boolean))].sort()
+  return [...new Set(scopedAuctions.value.map((a) => a.authority).filter(Boolean))].sort()
 })
 
 // Counts of normalized Objektart categories. Sorted by descending count so
@@ -299,8 +299,8 @@ const courts = computed<string[]>(() => {
 const kategorienMitCount = computed<{ id: string; label: string; count: number }[]>(() => {
   const counts = new Map<string, { label: string; count: number }>()
   for (const a of scopedAuctions.value) {
-    if (a.aufgehoben) continue
-    const k = auctionKategorie(a)
+    if (a.cancelled) continue
+    const k = auctionCategory(a)
     const entry = counts.get(k.id)
     if (entry) entry.count++
     else counts.set(k.id, { label: k.label, count: 1 })
@@ -314,16 +314,16 @@ function clearAllFilters(): void {
   selectedCountries.value = []
   selectedRegionKeys.value = []
   search.value = ''
-  courtFilter.value = ALL_SCOPE
+  authorityFilter.value = ALL_SCOPE
   priceMin.value = null
   priceMax.value = null
   landAreaMin.value = null
   landAreaMax.value = null
   livingAreaMin.value = null
   livingAreaMax.value = null
-  kategorieFilter.value = ALL_SCOPE
+  categoryFilter.value = ALL_SCOPE
   onlyWithPhotos.value = false
-  includeAufgehoben.value = false
+  includeCancelled.value = false
 }
 
 // v-model.number yields '' (empty string) when the input is cleared; treat
@@ -338,10 +338,10 @@ const currentFilters = computed<AuctionFilters>(() => ({
   countries: selectedCountries.value,
   regionNameKeys: selectedRegionNameKeys.value,
   search: debouncedSearch.value,
-  court: courtFilter.value,
-  kategorie: kategorieFilter.value,
+  authority: authorityFilter.value,
+  category: categoryFilter.value,
   onlyWithPhotos: onlyWithPhotos.value,
-  includeAufgehoben: includeAufgehoben.value,
+  includeCancelled: includeCancelled.value,
   priceMin: numOrNull(priceMin.value),
   priceMax: numOrNull(priceMax.value),
   landMin: numOrNull(landAreaMin.value),
@@ -375,12 +375,12 @@ const filteredGeo = computed<GeoAuction[]>(() => {
 })
 
 const totals = computed(() => {
-  if (!data.value) return { gesamt: 0, aktiv: 0, aufgehoben: 0 }
-  const aufgehoben = data.value.auctions.filter((a) => a.aufgehoben).length
+  if (!data.value) return { gesamt: 0, aktiv: 0, cancelled: 0 }
+  const cancelled = data.value.auctions.filter((a) => a.cancelled).length
   return {
     gesamt: data.value.auctions.length,
-    aktiv: data.value.auctions.length - aufgehoben,
-    aufgehoben,
+    aktiv: data.value.auctions.length - cancelled,
+    cancelled,
   }
 })
 
@@ -389,36 +389,36 @@ const activeFilterCount = computed(() => {
   if (selectedCountries.value.length) n++
   if (selectedRegionKeys.value.length) n++
   if (search.value.trim()) n++
-  if (!isAllScope(courtFilter.value)) n++
+  if (!isAllScope(authorityFilter.value)) n++
   if (numOrNull(priceMin.value) != null) n++
   if (numOrNull(priceMax.value) != null) n++
   if (numOrNull(landAreaMin.value) != null) n++
   if (numOrNull(landAreaMax.value) != null) n++
   if (numOrNull(livingAreaMin.value) != null) n++
   if (numOrNull(livingAreaMax.value) != null) n++
-  if (!isAllScope(kategorieFilter.value)) n++
+  if (!isAllScope(categoryFilter.value)) n++
   if (onlyWithPhotos.value) n++
-  if (includeAufgehoben.value) n++
+  if (includeCancelled.value) n++
   return n
 })
 
 watch(
-  [selectedCountries, selectedRegionKeys, debouncedSearch, courtFilter, priceMin, priceMax, landAreaMin, landAreaMax, livingAreaMin, livingAreaMax, kategorieFilter, onlyWithPhotos, includeAufgehoben, view],
+  [selectedCountries, selectedRegionKeys, debouncedSearch, authorityFilter, priceMin, priceMax, landAreaMin, landAreaMax, livingAreaMin, livingAreaMax, categoryFilter, onlyWithPhotos, includeCancelled, view],
   () => {
     const query: Record<string, string> = {}
     if (selectedCountries.value.length) query.country = selectedCountries.value.join(',')
     if (selectedRegionKeys.value.length) query.region = selectedRegionKeys.value.join(',')
     if (debouncedSearch.value.trim()) query.q = debouncedSearch.value.trim()
-    if (!isAllScope(courtFilter.value)) query.court = courtFilter.value
+    if (!isAllScope(authorityFilter.value)) query.authority = authorityFilter.value
     if (numOrNull(priceMin.value) != null) query.priceMin = String(numOrNull(priceMin.value))
     if (numOrNull(priceMax.value) != null) query.priceMax = String(numOrNull(priceMax.value))
     if (numOrNull(landAreaMin.value) != null) query.landMin = String(numOrNull(landAreaMin.value))
     if (numOrNull(landAreaMax.value) != null) query.landMax = String(numOrNull(landAreaMax.value))
     if (numOrNull(livingAreaMin.value) != null) query.livMin = String(numOrNull(livingAreaMin.value))
     if (numOrNull(livingAreaMax.value) != null) query.livMax = String(numOrNull(livingAreaMax.value))
-    if (!isAllScope(kategorieFilter.value)) query.kat = kategorieFilter.value
+    if (!isAllScope(categoryFilter.value)) query.category = categoryFilter.value
     if (onlyWithPhotos.value) query.photos = '1'
-    if (includeAufgehoben.value) query.aufgehoben = '1'
+    if (includeCancelled.value) query.cancelled = '1'
     if (view.value === 'list') query.view = 'list'
     router.replace({ query })
   },
@@ -431,27 +431,27 @@ watch(() => route.query, (q) => {
   selectedCountries.value = queryList('country')
   selectedRegionKeys.value = queryList('region')
   search.value = queryStr('q')
-  includeAufgehoben.value = q.aufgehoben === '1'
-  courtFilter.value = queryStr('court', ALL_SCOPE)
+  includeCancelled.value = q.cancelled === '1'
+  authorityFilter.value = queryStr('authority', ALL_SCOPE)
   priceMin.value = queryNum('priceMin')
   priceMax.value = queryNum('priceMax')
   landAreaMin.value = queryNum('landMin')
   landAreaMax.value = queryNum('landMax')
   livingAreaMin.value = queryNum('livMin')
   livingAreaMax.value = queryNum('livMax')
-  kategorieFilter.value = queryStr('kat', ALL_SCOPE)
+  categoryFilter.value = queryStr('category', ALL_SCOPE)
   onlyWithPhotos.value = q.photos === '1'
   view.value = q.view === 'list' ? 'list' : 'map'
 }, { deep: true })
 
-// Validate URL-restored courtFilter / kategorieFilter once data has loaded.
+// Validate URL-restored authorityFilter / categoryFilter once data has loaded.
 // Invalid values produce silent 0-result filtering otherwise.
 watch(data, () => {
-  if (!isAllScope(courtFilter.value) && !courts.value.includes(courtFilter.value)) {
-    courtFilter.value = ALL_SCOPE
+  if (!isAllScope(authorityFilter.value) && !courts.value.includes(authorityFilter.value)) {
+    authorityFilter.value = ALL_SCOPE
   }
-  if (!isAllScope(kategorieFilter.value) && !kategorienMitCount.value.some((k) => k.id === kategorieFilter.value)) {
-    kategorieFilter.value = ALL_SCOPE
+  if (!isAllScope(categoryFilter.value) && !kategorienMitCount.value.some((k) => k.id === categoryFilter.value)) {
+    categoryFilter.value = ALL_SCOPE
   }
 })
 
@@ -503,11 +503,11 @@ async function saveCurrentSearch(): Promise<void> {
   }
 }
 
-// Watchlist star toggle. Keyed by `${platform}:${zvgId}` → the watchlist
+// Watchlist star toggle. Keyed by `${platform}:${externalId}` → the watchlist
 // row's own id (needed for the DELETE call). Loaded once per login state.
 const watchlistIds = ref<Map<string, string>>(new Map())
-function watchlistKey(a: { platform: string; zvgId: string }): string {
-  return `${a.platform}:${a.zvgId}`
+function watchlistKey(a: { platform: string; externalId: string }): string {
+  return `${a.platform}:${a.externalId}`
 }
 async function loadWatchlist(): Promise<void> {
   if (!user.value) {
@@ -516,7 +516,7 @@ async function loadWatchlist(): Promise<void> {
   }
   try {
     const items = await authFetch<WatchlistItem[]>('/api/watchlist')
-    watchlistIds.value = new Map(items.map((i) => [`${i.platform}:${i.zvgId}`, i.id]))
+    watchlistIds.value = new Map(items.map((i) => [`${i.platform}:${i.externalId}`, i.id]))
   } catch {
     // Ignore transient load errors — the star just falls back to "off".
   }
@@ -536,7 +536,7 @@ async function toggleWatchlist(a: Auction): Promise<void> {
     } else {
       const item = await authFetch<WatchlistItem>('/api/watchlist', {
         method: 'POST',
-        body: { platform: a.platform, zvgId: a.zvgId, amtsgericht: a.amtsgericht, aktenzeichen: a.aktenzeichen },
+        body: { platform: a.platform, externalId: a.externalId, authority: a.authority, caseNumber: a.caseNumber },
       })
       const next = new Map(watchlistIds.value)
       next.set(key, item.id)
@@ -556,7 +556,7 @@ async function toggleWatchlist(a: Auction): Promise<void> {
         <div v-if="data" class="flex flex-wrap items-center gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
           <span><span class="font-semibold text-foreground">{{ totals.gesamt }}</span> gesamt</span>
           <span><span class="font-semibold text-emerald-600 dark:text-emerald-500">{{ totals.aktiv }}</span> aktiv</span>
-          <span><span class="font-semibold">{{ totals.aufgehoben }}</span> aufgehoben</span>
+          <span><span class="font-semibold">{{ totals.cancelled }}</span> cancelled</span>
           <span v-if="data">Stand: {{ new Date(data.fetchedAt).toLocaleString('de-DE') }}</span>
         </div>
         <AuthStatus class="ml-auto" />
@@ -689,7 +689,7 @@ async function toggleWatchlist(a: Auction): Promise<void> {
 
           <div class="space-y-2">
             <label class="block text-sm font-medium">Gericht</label>
-            <Select v-model="courtFilter">
+            <Select v-model="authorityFilter">
               <SelectTrigger class="w-full">
                 <SelectValue placeholder="Gericht wählen" />
               </SelectTrigger>
@@ -785,7 +785,7 @@ async function toggleWatchlist(a: Auction): Promise<void> {
 
           <div v-if="kategorienMitCount.length" class="space-y-2">
             <label class="block text-sm font-medium">Objektart</label>
-            <Select v-model="kategorieFilter">
+            <Select v-model="categoryFilter">
               <SelectTrigger class="w-full">
                 <SelectValue placeholder="Objektart wählen" />
               </SelectTrigger>
@@ -803,7 +803,7 @@ async function toggleWatchlist(a: Auction): Promise<void> {
               <input v-model="onlyWithPhotos" type="checkbox" class="h-4 w-4 rounded border-input accent-primary"> Nur mit Fotos
             </label>
             <label class="flex items-center gap-2 cursor-pointer text-sm">
-              <input v-model="includeAufgehoben" type="checkbox" class="h-4 w-4 rounded border-input accent-primary"> Aufgehobene anzeigen
+              <input v-model="includeCancelled" type="checkbox" class="h-4 w-4 rounded border-input accent-primary"> Aufgehobene anzeigen
             </label>
           </div>
         </div>
@@ -842,18 +842,18 @@ async function toggleWatchlist(a: Auction): Promise<void> {
     </p>
 
     <ul v-if="filtered.length" class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-      <li v-for="a in visibleAuctions" :key="`${a.platform}:${a.zvgId}`">
+      <li v-for="a in visibleAuctions" :key="`${a.platform}:${a.externalId}`">
         <article
           class="h-full flex flex-col rounded-xl border bg-card text-card-foreground shadow-sm overflow-hidden"
-          :class="{ 'opacity-60': a.aufgehoben }"
+          :class="{ 'opacity-60': a.cancelled }"
         >
           <a
             v-if="a.thumbnailUrl"
-            :href="a.attachments.find((x) => x.kind === 'foto')?.proxyUrl ?? a.detailUrl ?? undefined"
+            :href="a.attachments.find((x) => x.kind === 'photo')?.proxyUrl ?? a.detailUrl ?? undefined"
             target="_blank"
             rel="noopener"
             class="relative block overflow-hidden border-b group"
-            :title="`${a.fotoCount} Foto${a.fotoCount === 1 ? '' : 's'} öffnen`"
+            :title="`${a.photoCount} Foto${a.photoCount === 1 ? '' : 's'} öffnen`"
           >
             <img
               :src="a.thumbnailUrl"
@@ -863,34 +863,34 @@ async function toggleWatchlist(a: Auction): Promise<void> {
               class="aspect-16/10 w-full object-cover transition-transform duration-200 group-hover:scale-105"
             >
             <span
-              v-if="a.fotoCount > 1"
+              v-if="a.photoCount > 1"
               class="absolute bottom-2 right-2 rounded-full bg-black/70 px-2 py-0.5 text-xs text-white"
-            >+{{ a.fotoCount - 1 }}</span>
+            >+{{ a.photoCount - 1 }}</span>
           </a>
-          <div v-else-if="!a.aufgehoben" class="flex aspect-16/10 items-center justify-center bg-muted text-muted-foreground text-sm border-b">
+          <div v-else-if="!a.cancelled" class="flex aspect-16/10 items-center justify-center bg-muted text-muted-foreground text-sm border-b">
             Kein Foto
           </div>
 
           <div class="p-4 flex-1 flex flex-col gap-2">
             <div class="flex flex-wrap items-center gap-2 text-xs">
-              <span class="rounded-md bg-secondary text-secondary-foreground px-2 py-0.5 font-medium">{{ a.amtsgericht }}</span>
+              <span class="rounded-md bg-secondary text-secondary-foreground px-2 py-0.5 font-medium">{{ a.authority }}</span>
               <span v-if="a.region" class="rounded-md bg-muted text-muted-foreground px-2 py-0.5">{{ a.region }}</span>
-              <span v-if="a.aufgehoben" class="rounded-md bg-destructive/15 text-destructive px-2 py-0.5 font-medium">Aufgehoben</span>
-              <span class="font-mono text-muted-foreground">{{ a.aktenzeichen }}</span>
+              <span v-if="a.cancelled" class="rounded-md bg-destructive/15 text-destructive px-2 py-0.5 font-medium">Aufgehoben</span>
+              <span class="font-mono text-muted-foreground">{{ a.caseNumber }}</span>
             </div>
-            <h2 class="text-base font-semibold leading-tight mt-1">{{ a.objekt || 'Objektart unbekannt' }}</h2>
-            <p v-if="a.adresse" class="text-sm text-muted-foreground">{{ a.adresse }}</p>
-            <p v-if="a.beschreibung" class="text-sm text-muted-foreground leading-relaxed mt-1">
-              {{ truncate(a.beschreibung, 220) }}
+            <h2 class="text-base font-semibold leading-tight mt-1">{{ a.title || 'Objektart unbekannt' }}</h2>
+            <p v-if="a.address" class="text-sm text-muted-foreground">{{ a.address }}</p>
+            <p v-if="a.description" class="text-sm text-muted-foreground leading-relaxed mt-1">
+              {{ truncate(a.description, 220) }}
             </p>
             <dl class="grid grid-cols-2 gap-3 text-sm mt-2">
               <div>
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">Termin</dt>
-                <dd class="font-medium">{{ formatDate(a.terminIso, a.terminText) }}</dd>
+                <dd class="font-medium">{{ formatDate(a.auctionDateIso, a.auctionDateText) }}</dd>
               </div>
               <div>
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">Verkehrswert</dt>
-                <dd class="font-medium tabular-nums">{{ a.verkehrswertText ?? formatEur(a.verkehrswertEur) }}</dd>
+                <dd class="font-medium tabular-nums">{{ a.marketValueText ?? formatEur(a.marketValueEur) }}</dd>
               </div>
             </dl>
           </div>
@@ -900,7 +900,7 @@ async function toggleWatchlist(a: Auction): Promise<void> {
               Bekanntmachung
             </a>
             <a
-              v-for="att in a.attachments.filter((x) => x.kind !== 'bekanntmachung')"
+              v-for="att in a.attachments.filter((x) => x.kind !== 'announcement')"
               :key="att.fileId"
               :href="att.proxyUrl"
               target="_blank"
@@ -917,7 +917,7 @@ async function toggleWatchlist(a: Auction): Promise<void> {
             >
               <Star class="h-4 w-4" :class="{ 'fill-current': watchlistIds.has(watchlistKey(a)) }" />
             </button>
-            <NuxtLink :to="`/objekt/${encodeURIComponent(a.platform)}/${encodeURIComponent(a.zvgId)}`" :class="user ? '' : 'ml-auto'" class="text-primary hover:underline">
+            <NuxtLink :to="`/objekt/${encodeURIComponent(a.platform)}/${encodeURIComponent(a.externalId)}`" :class="user ? '' : 'ml-auto'" class="text-primary hover:underline">
               Details →
             </NuxtLink>
           </footer>

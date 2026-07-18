@@ -5,7 +5,7 @@
 // share without duplicating the rules.
 
 import type { Auction } from '~/types/auction'
-import { ALL_KATEGORIEN, classifyObjekt, type ObjektKategorie } from '~/lib/objektart'
+import { ALL_PROPERTY_TYPE_CATEGORIES, classifyPropertyType, type PropertyTypeCategory } from '~/lib/property-type'
 
 export interface AuctionFilters {
   /** ISO country codes to restrict to; empty = no restriction (every country). */
@@ -19,11 +19,11 @@ export interface AuctionFilters {
    *  Amtsgericht, Objekt, Adresse and Beschreibung. Empty = no restriction. */
   search: string
   /** Amtsgericht name, or 'all'. */
-  court: string
-  /** Objektart id (see lib/objektart.ts), or 'all'. */
-  kategorie: string
+  authority: string
+  /** Property-type category id (see lib/property-type.ts), or 'all'. */
+  category: string
   onlyWithPhotos: boolean
-  includeAufgehoben: boolean
+  includeCancelled: boolean
   priceMin: number | null
   priceMax: number | null
   landMin: number | null
@@ -51,24 +51,24 @@ export function scopeByCountryRegion<T extends Auction>(
 }
 
 // Prefer the extraction pipeline's propertyType (rules + LLM, understands
-// every crawled language) over classifyObjekt(a.objekt), which only matches
-// German keywords — falling back to it only when extraction found nothing.
-const KATEGORIE_LABEL = new Map(ALL_KATEGORIEN.map((k) => [k.id, k.label]))
-export function auctionKategorie(a: Auction): ObjektKategorie {
+// every crawled language) over classifyPropertyType(a.title), which only
+// matches German keywords — falling back to it only when extraction found nothing.
+const CATEGORY_LABEL = new Map(ALL_PROPERTY_TYPE_CATEGORIES.map((k) => [k.id, k.label]))
+export function auctionCategory(a: Auction): PropertyTypeCategory {
   const pt = a.extraction?.propertyType
-  if (pt) return { id: pt, label: KATEGORIE_LABEL.get(pt) ?? pt }
-  return classifyObjekt(a.objekt)
+  if (pt) return { id: pt, label: CATEGORY_LABEL.get(pt) ?? pt }
+  return classifyPropertyType(a.title)
 }
 
 export function filterAuctions<T extends Auction>(items: T[], filters: AuctionFilters): T[] {
   const q = filters.search.trim().toLowerCase()
   return scopeByCountryRegion(items, filters.countries, filters.regionNameKeys).filter((a) => {
-    if (!filters.includeAufgehoben && a.aufgehoben) return false
-    if (filters.court !== 'all' && a.amtsgericht !== filters.court) return false
-    if (filters.kategorie !== 'all' && auctionKategorie(a).id !== filters.kategorie) return false
-    if (filters.onlyWithPhotos && a.fotoCount === 0) return false
-    if (filters.priceMin != null && (a.verkehrswertEur == null || a.verkehrswertEur < filters.priceMin)) return false
-    if (filters.priceMax != null && (a.verkehrswertEur == null || a.verkehrswertEur > filters.priceMax)) return false
+    if (!filters.includeCancelled && a.cancelled) return false
+    if (filters.authority !== 'all' && a.authority !== filters.authority) return false
+    if (filters.category !== 'all' && auctionCategory(a).id !== filters.category) return false
+    if (filters.onlyWithPhotos && a.photoCount === 0) return false
+    if (filters.priceMin != null && (a.marketValueEur == null || a.marketValueEur < filters.priceMin)) return false
+    if (filters.priceMax != null && (a.marketValueEur == null || a.marketValueEur > filters.priceMax)) return false
     if (filters.landMin != null || filters.landMax != null) {
       const v = a.extraction?.landAreaSqm ?? null
       if (v == null) return false
@@ -82,7 +82,7 @@ export function filterAuctions<T extends Auction>(items: T[], filters: AuctionFi
       if (filters.livMax != null && v > filters.livMax) return false
     }
     if (!q) return true
-    const hay = `${a.aktenzeichen} ${a.amtsgericht} ${a.objekt ?? ''} ${a.adresse ?? ''} ${a.beschreibung ?? ''}`.toLowerCase()
+    const hay = `${a.caseNumber} ${a.authority} ${a.title ?? ''} ${a.address ?? ''} ${a.description ?? ''}`.toLowerCase()
     return hay.includes(q)
   })
 }

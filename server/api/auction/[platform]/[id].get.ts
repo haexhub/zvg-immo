@@ -34,7 +34,7 @@ export default defineEventHandler(async (event): Promise<AuctionDetail> => {
   // Cache-only lookup: the geocode task fills coordinates ahead of time, so
   // serving a detail page never blocks on Nominatim.
   const [point, summaryCache] = await Promise.all([
-    geocodeAddress(hit.adresse, hit.country, { fetchMissing: false }),
+    geocodeAddress(hit.address, hit.country, { fetchMissing: false }),
     readSummaryCache(),
   ])
   const summary = summaryCache[key]?.text ?? null

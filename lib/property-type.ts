@@ -1,4 +1,4 @@
-export interface ObjektKategorie {
+export interface PropertyTypeCategory {
   id: string
   label: string
 }
@@ -36,11 +36,11 @@ export const PROPERTY_TYPES: readonly PropertyType[] = [
   'sonstiges',
 ]
 
-interface KategorieRule extends ObjektKategorie {
+interface PropertyTypeRule extends PropertyTypeCategory {
   test: RegExp
 }
 
-// Priority order: the first rule whose test matches the raw `objekt` string
+// Priority order: the first rule whose test matches the raw `title` string
 // wins. Compound entries like "Einfamilienhaus, Garage" classify as
 // Einfamilienhaus because that rule fires before the standalone-garage rule.
 // More specific / dominant types come first, accessory types last.
@@ -58,7 +58,7 @@ interface KategorieRule extends ObjektKategorie {
 // often write ALL-CAPS, which by convention drops the accents ("ΔΙΑΜΕΡΙΣΜΑ"),
 // and /i can't bridge that (ί and Ι differ even case-folded) — foldGreek
 // below normalizes the input to the same unaccented lowercase form.
-const RULES: KategorieRule[] = [
+const RULES: PropertyTypeRule[] = [
   {
     id: 'mehrfamilienhaus',
     label: 'Mehrfamilienhaus',
@@ -115,8 +115,8 @@ const RULES: KategorieRule[] = [
   },
 ]
 
-const SONSTIGES: ObjektKategorie = { id: 'sonstiges', label: 'Sonstiges' }
-const UNBEKANNT: ObjektKategorie = { id: 'unbekannt', label: 'Unbekannt' }
+const SONSTIGES: PropertyTypeCategory = { id: 'sonstiges', label: 'Sonstiges' }
+const UNBEKANNT: PropertyTypeCategory = { id: 'unbekannt', label: 'Unbekannt' }
 
 const GREEK_TONOS: Record<string, string> = {
   ά: 'α', έ: 'ε', ή: 'η', ί: 'ι', ό: 'ο', ύ: 'υ', ώ: 'ω', ϊ: 'ι', ϋ: 'υ', ΐ: 'ι', ΰ: 'υ',
@@ -133,17 +133,17 @@ function foldGreek(s: string): string {
   return s.toLowerCase().replace(/[άέήίόύώϊϋΐΰ]/g, (c) => GREEK_TONOS[c]!)
 }
 
-export function classifyObjekt(objekt: string | null | undefined): ObjektKategorie {
-  if (!objekt) return UNBEKANNT
-  const folded = foldGreek(objekt)
+export function classifyPropertyType(title: string | null | undefined): PropertyTypeCategory {
+  if (!title) return UNBEKANNT
+  const folded = foldGreek(title)
   for (const r of RULES) {
     if (r.test.test(folded)) return { id: r.id, label: r.label }
   }
   return SONSTIGES
 }
 
-/** All categories classifyObjekt can return, in display order. */
-export const ALL_KATEGORIEN: readonly ObjektKategorie[] = [
+/** All categories classifyPropertyType can return, in display order. */
+export const ALL_PROPERTY_TYPE_CATEGORIES: readonly PropertyTypeCategory[] = [
   ...RULES.map((r) => ({ id: r.id, label: r.label })),
   SONSTIGES,
   UNBEKANNT,

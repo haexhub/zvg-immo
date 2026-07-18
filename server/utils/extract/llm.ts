@@ -1,19 +1,19 @@
-// LLM fallback extractor. Sends the listing text (objekt + beschreibung +
+// LLM fallback extractor. Sends the listing text (title + description +
 // optional Gutachten/Exposé PDF text) to a Claude model via haex-claude-proxy
 // and gets back structured fields through the proxy's `final_result` output
 // tool (it forwards the tool's input_schema to `claude --json-schema`). Used
 // for what the deterministic rules can't resolve: sizes buried in PDF prose,
-// and property types for non-German sources the objektart classifier misses.
+// and property types for non-German sources the property-type classifier misses.
 //
 // Text-only by design — the proxy flattens content to text, so this never sees
 // images. parseExtractionResponse/clampExtraction are pure and unit-tested; the
 // network call is a thin wrapper.
 
-import { PROPERTY_TYPES, type PropertyType } from '~/lib/objektart'
+import { PROPERTY_TYPES, type PropertyType } from '~/lib/property-type'
 
 export interface LlmInput {
-  objekt: string | null
-  beschreibung: string | null
+  title: string | null
+  description: string | null
   pdfText?: string | null
 }
 
@@ -103,8 +103,8 @@ export function clampExtraction(raw: Record<string, unknown>): ClampedExtraction
 
 function buildPrompt(input: LlmInput): string {
   const parts: string[] = []
-  if (input.objekt) parts.push(`Objektbezeichnung: ${input.objekt}`)
-  if (input.beschreibung) parts.push(`Beschreibung:\n${input.beschreibung}`)
+  if (input.title) parts.push(`Objektbezeichnung: ${input.title}`)
+  if (input.description) parts.push(`Beschreibung:\n${input.description}`)
   if (input.pdfText) {
     parts.push(`Auszug aus Gutachten/Exposé (PDF):\n${input.pdfText.slice(0, MAX_PDF_CHARS)}`)
   }

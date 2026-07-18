@@ -10,7 +10,7 @@ import type { PublicLawyer } from '~/server/api/lawyers.get'
 
 const props = defineProps<{
   platform: string
-  zvgId: string
+  externalId: string
   country: string
 }>()
 
@@ -54,7 +54,7 @@ async function submit(): Promise<void> {
       body: {
         lawyerId: selectedLawyerId.value,
         platform: props.platform,
-        zvgId: props.zvgId,
+        externalId: props.externalId,
         message: message.value.trim(),
       },
     })

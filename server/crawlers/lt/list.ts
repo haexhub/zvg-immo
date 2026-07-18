@@ -38,8 +38,8 @@ function parsePage(html: string, platformId: string): { auctions: Auction[]; has
     )
 
     const $firstItem = $li.find('.list_box ul.list li').first()
-    const adresse = clean($firstItem.find('span.small').first().text()) || null
-    const objekt = clean($firstItem.clone().find('span, br').remove().end().text()) || null
+    const address = clean($firstItem.find('span.small').first().text()) || null
+    const title = clean($firstItem.clone().find('span, br').remove().end().text()) || null
 
     const detailUrl = `${LT_BASE}/evs/pages/auction.do?id=${id}&number=${number}`
 
@@ -47,24 +47,24 @@ function parsePage(html: string, platformId: string): { auctions: Auction[]; has
       platform: platformId,
       country: COUNTRY,
       region: '',
-      zvgId: id,
-      aktenzeichen: number ?? id,
-      amtsgericht: '',
-      objekt,
-      adresse,
-      verkehrswertEur: priceEur,
-      verkehrswertText: priceEur != null ? `${priceEur.toLocaleString('de-DE')} €` : null,
-      terminIso: parseLtDate(terminRaw),
-      terminText: terminRaw || null,
-      aufgehoben: false,
-      letzteAktualisierungIso: null,
+      externalId: id,
+      caseNumber: number ?? id,
+      authority: '',
+      title,
+      address,
+      marketValueEur: priceEur,
+      marketValueText: priceEur != null ? `${priceEur.toLocaleString('de-DE')} €` : null,
+      auctionDateIso: parseLtDate(terminRaw),
+      auctionDateText: terminRaw || null,
+      cancelled: false,
+      sourceUpdatedIso: null,
       pdfUrl: null,
       detailUrl,
       pdfUrlUpstream: null,
       detailUrlUpstream: detailUrl,
       attachments: [],
-      beschreibung: null,
-      fotoCount: thumbnailUrl ? 1 : 0,
+      description: null,
+      photoCount: thumbnailUrl ? 1 : 0,
       thumbnailUrl,
     })
   })

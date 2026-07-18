@@ -5,9 +5,9 @@ import { getServiceClient } from '../../utils/supabase'
 export interface WatchlistItem {
   id: string
   platform: string
-  zvgId: string
-  amtsgericht: string | null
-  aktenzeichen: string | null
+  externalId: string
+  authority: string | null
+  caseNumber: string | null
   createdAt: string
 }
 
@@ -18,7 +18,7 @@ export default defineEventHandler(async (event): Promise<WatchlistItem[]> => {
   }
   const { data, error } = await supabase
     .from('watchlist_items')
-    .select('id, platform, zvg_id, amtsgericht, aktenzeichen, created_at')
+    .select('id, platform, external_id, authority, case_number, created_at')
     .eq('user_id', event.context.user!.id)
     .order('created_at', { ascending: false })
   if (error) {
@@ -27,9 +27,9 @@ export default defineEventHandler(async (event): Promise<WatchlistItem[]> => {
   return (data ?? []).map((row) => ({
     id: row.id as string,
     platform: row.platform as string,
-    zvgId: row.zvg_id as string,
-    amtsgericht: row.amtsgericht as string | null,
-    aktenzeichen: row.aktenzeichen as string | null,
+    externalId: row.external_id as string,
+    authority: row.authority as string | null,
+    caseNumber: row.case_number as string | null,
     createdAt: row.created_at as string,
   }))
 })

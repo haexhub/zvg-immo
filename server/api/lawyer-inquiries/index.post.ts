@@ -19,7 +19,7 @@ export interface LawyerInquiry {
   id: string
   lawyerId: string
   platform: string | null
-  zvgId: string | null
+  externalId: string | null
   message: string
   commissionCents: number | null
   commissionStatus: string
@@ -30,19 +30,19 @@ export default defineEventHandler(async (event): Promise<LawyerInquiry> => {
   const body = await readBody<{
     lawyerId?: unknown
     platform?: unknown
-    zvgId?: unknown
+    externalId?: unknown
     message?: unknown
   }>(event).catch(() => ({}) as Record<string, unknown>)
   const lawyerId = typeof body.lawyerId === 'string' ? body.lawyerId.trim() : ''
   const platform = typeof body.platform === 'string' ? body.platform.trim() : ''
-  const zvgId = typeof body.zvgId === 'string' ? body.zvgId.trim() : ''
+  const externalId = typeof body.externalId === 'string' ? body.externalId.trim() : ''
   const message = typeof body.message === 'string' ? body.message.trim() : ''
-  if (!lawyerId || !platform || !zvgId || !message) {
-    throw createError({ statusCode: 400, statusMessage: 'lawyerId, platform, zvgId und message sind erforderlich.' })
+  if (!lawyerId || !platform || !externalId || !message) {
+    throw createError({ statusCode: 400, statusMessage: 'lawyerId, platform, externalId und message sind erforderlich.' })
   }
 
   const snapshot = await readAuctionSnapshot()
-  const auction = snapshot[cacheKey(platform, zvgId)]
+  const auction = snapshot[cacheKey(platform, externalId)]
   if (!auction) {
     throw createError({ statusCode: 404, statusMessage: 'Auktion nicht gefunden.' })
   }
@@ -80,19 +80,19 @@ export default defineEventHandler(async (event): Promise<LawyerInquiry> => {
       user_id: userId,
       lawyer_id: lawyerId,
       platform,
-      zvg_id: zvgId,
+      external_id: externalId,
       message,
       commission_cents: commissionCents,
     })
-    .select('id, lawyer_id, platform, zvg_id, message, commission_cents, commission_status, created_at')
+    .select('id, lawyer_id, platform, external_id, message, commission_cents, commission_status, created_at')
     .single()
   if (insertError || !inserted) {
     throw createError({ statusCode: 500, statusMessage: insertError?.message ?? 'Anfrage konnte nicht gespeichert werden.' })
   }
 
-  const auctionLabel = `${auction.amtsgericht} · ${auction.aktenzeichen}`
+  const auctionLabel = `${auction.authority} · ${auction.caseNumber}`
   const origin = getRequestURL(event).origin
-  const auctionLink = `${origin}/objekt/${encodeURIComponent(platform)}/${encodeURIComponent(zvgId)}`
+  const auctionLink = `${origin}/objekt/${encodeURIComponent(platform)}/${encodeURIComponent(externalId)}`
   try {
     await sendMail({
       to: lawyer.email as string,
@@ -117,7 +117,7 @@ export default defineEventHandler(async (event): Promise<LawyerInquiry> => {
     id: inserted.id as string,
     lawyerId: inserted.lawyer_id as string,
     platform: inserted.platform as string | null,
-    zvgId: inserted.zvg_id as string | null,
+    externalId: inserted.external_id as string | null,
     message: inserted.message as string,
     commissionCents: inserted.commission_cents as number | null,
     commissionStatus: inserted.commission_status as string,

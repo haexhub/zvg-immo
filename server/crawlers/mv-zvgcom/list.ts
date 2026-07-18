@@ -40,9 +40,9 @@ async function fetchJson<T>(path: string): Promise<T> {
 }
 
 function mapItem(item: ListItem, platformId: string): Auction {
-  const { iso: terminIso, label: terminText } = parseMvDateTime(item.date, item.time)
-  const objekt = stripAzPrefix(item.title, item.az) || null
-  const adresse = [item.street, [item.plz, item.city].filter(Boolean).join(' ')]
+  const { iso: auctionDateIso, label: auctionDateText } = parseMvDateTime(item.date, item.time)
+  const title = stripAzPrefix(item.title, item.az) || null
+  const address = [item.street, [item.plz, item.city].filter(Boolean).join(' ')]
     .filter(Boolean)
     .join(', ') || null
 
@@ -68,24 +68,24 @@ function mapItem(item: ListItem, platformId: string): Auction {
     platform: platformId,
     country: COUNTRY,
     region: 'Mecklenburg-Vorpommern',
-    zvgId: String(item.id),
-    aktenzeichen: item.az,
-    amtsgericht: item.ag,
-    objekt,
-    adresse,
-    verkehrswertEur: item.vwert > 0 ? item.vwert : null,
-    verkehrswertText: item.vwert > 0 ? `${item.vwert.toLocaleString('de-DE')} €` : null,
-    terminIso,
-    terminText,
-    aufgehoben: item.terminAufgehoben === 1,
-    letzteAktualisierungIso: parseMvDateTime(item.dateAdded, null).iso,
+    externalId: String(item.id),
+    caseNumber: item.az,
+    authority: item.ag,
+    title,
+    address,
+    marketValueEur: item.vwert > 0 ? item.vwert : null,
+    marketValueText: item.vwert > 0 ? `${item.vwert.toLocaleString('de-DE')} €` : null,
+    auctionDateIso,
+    auctionDateText,
+    cancelled: item.terminAufgehoben === 1,
+    sourceUpdatedIso: parseMvDateTime(item.dateAdded, null).iso,
     pdfUrl: attachments[0]?.proxyUrl ?? null,
     detailUrl,
     pdfUrlUpstream: attachments[0]?.proxyUrl ?? null,
     detailUrlUpstream: detailUrl,
     attachments,
-    beschreibung: null,
-    fotoCount: thumbnailUrl ? 1 : 0,
+    description: null,
+    photoCount: thumbnailUrl ? 1 : 0,
     thumbnailUrl,
   }
 }

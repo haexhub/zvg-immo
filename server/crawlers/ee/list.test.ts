@@ -28,20 +28,20 @@ const DETAIL_HTML = `
 describe('mapDetail', () => {
   const auction = mapDetail('100001', DETAIL_HTML, 'ee-oksjonikeskus')!
 
-  it('takes the aktenzeichen from the reg. osa nr row', () => {
-    expect(auction.aktenzeichen).toBe('1219008')
+  it('takes the caseNumber from the reg. osa nr row', () => {
+    expect(auction.caseNumber).toBe('1219008')
   })
 
-  it('prepends the katastritunnus to the beschreibung', () => {
-    expect(auction.beschreibung).toBe(
+  it('prepends the katastritunnus to the description', () => {
+    expect(auction.description).toBe(
       'Katasternummer: 25301:008:0015\nKohtutäitur müüb korteriomandi.',
     )
   })
 
-  it('exposes the dopdf notice as a bekanntmachung attachment', () => {
+  it('exposes the dopdf notice as an announcement attachment', () => {
     expect(auction.attachments).toEqual([
       {
-        kind: 'bekanntmachung',
+        kind: 'announcement',
         label: 'Enampakkumise teade (PDF)',
         filename: 'oksjon-100001.pdf',
         sizeBytes: null,
@@ -57,16 +57,16 @@ describe('mapDetail', () => {
       'https://www.oksjonikeskus.ee/media/5/ad/5ad107311d4f4c20aa8bebcdaeb39d60.jpg',
       'https://www.oksjonikeskus.ee/media/6/c4/6c41ce01bb810800c0bdc26177ddf094.jpg',
     ])
-    expect(auction.fotoCount).toBe(2)
+    expect(auction.photoCount).toBe(2)
     expect(auction.thumbnailUrl).toBe(
       'https://www.oksjonikeskus.ee/media/5/ad/5ad107311d4f4c20aa8bebcdaeb39d60.jpg',
     )
   })
 
   it('keeps mapping the pre-existing fields', () => {
-    expect(auction.adresse).toBe('Tallinn, Näituse 5-2')
-    expect(auction.verkehrswertEur).toBe(1700)
-    expect(auction.terminIso).toBe('2026-07-14T10:00:00')
-    expect(auction.aufgehoben).toBe(false)
+    expect(auction.address).toBe('Tallinn, Näituse 5-2')
+    expect(auction.marketValueEur).toBe(1700)
+    expect(auction.auctionDateIso).toBe('2026-07-14T10:00:00')
+    expect(auction.cancelled).toBe(false)
   })
 })

@@ -16,8 +16,8 @@ async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
       continue
     }
     for (const a of r.value) {
-      if (!seen.has(a.zvgId)) {
-        seen.add(a.zvgId)
+      if (!seen.has(a.externalId)) {
+        seen.add(a.externalId)
         auctions.push(a)
       }
     }

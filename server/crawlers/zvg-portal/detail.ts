@@ -6,7 +6,7 @@ import { classifyAttachment } from '~/server/utils/classify-attachment'
 
 export interface DetailInfo {
   attachments: Attachment[]
-  beschreibung: string | null
+  description: string | null
 }
 
 const FETCH_TIMEOUT_MS = 20_000
@@ -32,7 +32,7 @@ export async function fetchDetailPage(zvgId: string, landAbk: string): Promise<D
     clearTimeout(timer)
   }
   if (html.length < 64 && html.trim() === 'error') {
-    return { attachments: [], beschreibung: null }
+    return { attachments: [], description: null }
   }
 
   // Each attachment row: <td>Label:</td><td><a href="?button=showAnhang...">filename.pdf</a> <img...> <span>NN.NN kB</span></td>
@@ -72,18 +72,18 @@ export async function fetchDetailPage(zvgId: string, landAbk: string): Promise<D
   })
 
   // Beschreibung is in the same column as Objekt/Lage. Extract the full block.
-  let beschreibung: string | null = null
+  let description: string | null = null
   const beschrMatch = html.match(/Beschreibung[^<]*<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/i)
   if (beschrMatch?.[1]) {
     const text = beschrMatch[1].replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, ' ')
     const cleaned = decodeEntities(text).replace(/[ \t]+/g, ' ').replace(/\n[ \t]+/g, '\n').trim()
-    if (cleaned.length > 0) beschreibung = cleaned
+    if (cleaned.length > 0) description = cleaned
   }
 
-  return { attachments, beschreibung }
+  return { attachments, description }
 }
 
-export async function enrichInBatches<T extends { zvgId: string }>(
+export async function enrichInBatches<T extends { externalId: string }>(
   items: T[],
   landAbk: string,
   enricher: (item: T, info: DetailInfo) => void,
@@ -96,14 +96,14 @@ export async function enrichInBatches<T extends { zvgId: string }>(
     while (cursor < items.length) {
       const idx = cursor++
       const item = items[idx]
-      if (!item || !/^\d+$/.test(item.zvgId)) continue
+      if (!item || !/^\d+$/.test(item.externalId)) continue
       try {
-        const info = await fetchDetailPage(item.zvgId, landAbk)
+        const info = await fetchDetailPage(item.externalId, landAbk)
         enricher(item, info)
         enriched++
       } catch (err) {
         console.debug(
-          `[zvg-portal] detail enrichment failed for ${item.zvgId}: ${(err as Error).message}`,
+          `[zvg-portal] detail enrichment failed for ${item.externalId}: ${(err as Error).message}`,
         )
         errors++
       }

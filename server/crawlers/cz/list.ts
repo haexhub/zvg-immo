@@ -81,9 +81,9 @@ function collectionValues<T>(v: Record<string, T> | T[] | null | undefined): T[]
 }
 
 function documentKind(type: string | null | undefined): AttachmentKind {
-  if (type === 'auction_decree') return 'bekanntmachung'
-  if (type === 'expert_report' || type === 'expert_report_appendix') return 'gutachten'
-  return 'sonstiges'
+  if (type === 'auction_decree') return 'announcement'
+  if (type === 'expert_report' || type === 'expert_report_appendix') return 'appraisal'
+  return 'other'
 }
 
 /** The .json endpoints under GET always render the same fixed first page
@@ -191,7 +191,7 @@ export function parseData(data: Record<string, CzAuction>, platformId: string, r
     // Only a confirmed PDF may become the primary PDF; never fall back to an
     // arbitrary attachment of unknown type.
     const pdf =
-      attachments.find((a) => a.kind === 'bekanntmachung' && /\.pdf$/i.test(a.filename)) ??
+      attachments.find((a) => a.kind === 'announcement' && /\.pdf$/i.test(a.filename)) ??
       attachments.find((a) => /\.pdf$/i.test(a.filename)) ??
       null
 
@@ -206,24 +206,24 @@ export function parseData(data: Record<string, CzAuction>, platformId: string, r
       platform: platformId,
       country: COUNTRY,
       region: district,
-      zvgId: raw.hash,
-      aktenzeichen: raw.number ?? '',
-      amtsgericht: clean(raw.auctioneer_office?.title),
-      objekt: clean(raw.item?.title) || null,
-      adresse: extractAdresse(raw, district),
-      verkehrswertEur: czk != null ? toEur(czk, 'CZK', rates) : null,
-      verkehrswertText: czk != null ? `${czk.toLocaleString('de-DE', { maximumFractionDigits: 0 })} Kč` : null,
-      terminIso: parseCzDate(raw.start_at),
-      terminText: raw.start_at ?? null,
-      aufgehoben: raw.enabled === false || raw.status === 'cancelled',
-      letzteAktualisierungIso: parseCzDate(raw.updated_at),
+      externalId: raw.hash,
+      caseNumber: raw.number ?? '',
+      authority: clean(raw.auctioneer_office?.title),
+      title: clean(raw.item?.title) || null,
+      address: extractAddress(raw, district),
+      marketValueEur: czk != null ? toEur(czk, 'CZK', rates) : null,
+      marketValueText: czk != null ? `${czk.toLocaleString('de-DE', { maximumFractionDigits: 0 })} Kč` : null,
+      auctionDateIso: parseCzDate(raw.start_at),
+      auctionDateText: raw.start_at ?? null,
+      cancelled: raw.enabled === false || raw.status === 'cancelled',
+      sourceUpdatedIso: parseCzDate(raw.updated_at),
       pdfUrl: pdf?.proxyUrl ?? null,
       detailUrl,
       pdfUrlUpstream: pdf?.proxyUrl ?? null,
       detailUrlUpstream: detailUrl,
       attachments,
-      beschreibung: clean(raw.item?.description_plaintext) || null,
-      fotoCount: photoUrls.length,
+      description: clean(raw.item?.description_plaintext) || null,
+      photoCount: photoUrls.length,
       thumbnailUrl: photoUrls[0] ?? null,
       photoUrls,
       lat: typeof coords?.latitude === 'number' ? coords.latitude : null,
@@ -244,7 +244,7 @@ function extractDistrict(raw: CzAuction): string {
 
 /** Prefer the RUIAN cadastre address ("Zámecká 230/31, Přerov" — or
  *  "Jestřebí 72" for villages without street names) over the bare district. */
-function extractAdresse(raw: CzAuction, district: string): string {
+function extractAddress(raw: CzAuction, district: string): string {
   const ruian = raw.item?.ruian ?? raw.ruian
   if (ruian) {
     const city = clean(ruian.city_name)

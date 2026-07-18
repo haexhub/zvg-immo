@@ -30,8 +30,8 @@ function parseGbpAmount(text: string | null | undefined): number | null {
 
 interface ListItem {
   href: string
-  adresse: string | null
-  objekt: string | null
+  address: string | null
+  title: string | null
   priceGbp: number | null
   priceText: string | null
   thumbnailUrl: string | null
@@ -69,7 +69,7 @@ async function htmlFetch(url: string): Promise<string> {
 
 /** <title>Auction House London | Property Auctioneers in London</title> gives
  *  the branch's display name to attribute a lot to (there's no court, so this
- *  fills the amtsgericht slot instead). Falls back to the generic franchise
+ *  fills the authority slot instead). Falls back to the generic franchise
  *  name for any page whose title doesn't follow that pattern. */
 function branchNameFromTitle(html: string): string {
   const m = html.match(/<title>\s*Auction House (.+?)\s*\|/i)
@@ -92,8 +92,8 @@ export function parseListPage(html: string): ListItem[] {
     const imgSrc = $a.find('img.lot-image').first().attr('src')
     items.push({
       href,
-      adresse: clean($a.find('.grid-address').first().text()) || null,
-      objekt: clean($a.find('.summary-info-wrapper p.fw-bold').first().text()) || null,
+      address: clean($a.find('.grid-address').first().text()) || null,
+      title: clean($a.find('.summary-info-wrapper p.fw-bold').first().text()) || null,
       priceGbp: parseGbpAmount(priceText),
       priceText,
       thumbnailUrl: imgSrc ? absoluteUrl(imgSrc) : null,
@@ -129,9 +129,9 @@ async function discoverListItems(): Promise<Map<string, ListItem>> {
 }
 
 function mapItem(item: ListItem, platformId: string, rates: Record<string, number>): Auction {
-  const zvgId = idFromHref(item.href)
+  const externalId = idFromHref(item.href)
   const detailUrl = absoluteUrl(item.href)
-  const verkehrswertEur = item.priceGbp != null ? toEur(item.priceGbp, 'GBP', rates) : null
+  const marketValueEur = item.priceGbp != null ? toEur(item.priceGbp, 'GBP', rates) : null
 
   return {
     platform: platformId,
@@ -140,31 +140,31 @@ function mapItem(item: ListItem, platformId: string, rates: Record<string, numbe
     // ~30 branch pages are purely an internal listing split (see
     // GB_LIST_REGIONS in constants.ts), same as Licitor's "grande région".
     region: '',
-    zvgId,
+    externalId,
     // Not a court/government registry — there is no case number to publish.
     // See the caveat in constants.ts: this is a general auction-lots feed,
     // not a pure forced-sale source.
-    aktenzeichen: '',
-    amtsgericht: item.branchName,
-    objekt: item.objekt,
-    adresse: item.adresse,
-    verkehrswertEur,
-    verkehrswertText: item.priceText,
+    caseNumber: '',
+    authority: item.branchName,
+    title: item.title,
+    address: item.address,
+    marketValueEur,
+    marketValueText: item.priceText,
     // Not shown on the list card at all (only on the detail page) — filled
     // in lazily by enrichOne (detail.ts) instead of eagerly fetching every
     // lot's detail page here, which at AH's nationwide lot volume would mean
     // thousands of requests per crawl cycle (see detail.ts for the rationale).
-    terminIso: null,
-    terminText: null,
-    aufgehoben: false,
-    letzteAktualisierungIso: null,
+    auctionDateIso: null,
+    auctionDateText: null,
+    cancelled: false,
+    sourceUpdatedIso: null,
     pdfUrl: null,
     detailUrl,
     pdfUrlUpstream: null,
     detailUrlUpstream: detailUrl,
     attachments: [],
-    beschreibung: null,
-    fotoCount: item.thumbnailUrl ? 1 : 0,
+    description: null,
+    photoCount: item.thumbnailUrl ? 1 : 0,
     thumbnailUrl: item.thumbnailUrl,
   }
 }

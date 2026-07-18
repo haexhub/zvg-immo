@@ -75,14 +75,14 @@ const COMMERCIALE_HTML = `<html><body>
 </body></html>`
 
 describe('parseDetailHtml', () => {
-  it('collects deduplicated gallery photo URLs and derives fotoCount/thumbnail', () => {
+  it('collects deduplicated gallery photo URLs and derives photoCount/thumbnail', () => {
     const info = parseDetailHtml(APARTMENT_HTML)
     expect(info.photoUrls).toEqual([
       'https://www.astegiudiziarie.it/allegato/foto-pv-ei-414-2024-1.jpg/2311839',
       'https://www.astegiudiziarie.it/allegato/foto-pv-ei-414-2024-2.jpg/2311839',
       'https://www.astegiudiziarie.it/allegato/foto-pv-ei-414-2024-3.jpg/2311839',
     ])
-    expect(info.fotoCount).toBe(3)
+    expect(info.photoCount).toBe(3)
     expect(info.thumbnailUrl).toBe(info.photoUrls[0])
   })
 
@@ -123,7 +123,7 @@ describe('parseDetailHtml', () => {
   it('still extracts PDF attachments', () => {
     const info = parseDetailHtml(APARTMENT_HTML)
     expect(info.attachments).toHaveLength(1)
-    expect(info.attachments[0]?.kind).toBe('gutachten')
+    expect(info.attachments[0]?.kind).toBe('appraisal')
     expect(info.pdfUrl).toBe(
       'https://www.astegiudiziarie.it/allegato/perizia-pv-ei-414-2024-c-1.pdf/2311839',
     )
@@ -135,46 +135,46 @@ function baseAuction(): Auction {
     platform: 'agi',
     country: 'it',
     region: 'Molise',
-    zvgId: '1',
-    aktenzeichen: '',
-    amtsgericht: '',
-    objekt: null,
-    adresse: null,
-    verkehrswertEur: null,
-    verkehrswertText: null,
-    terminIso: null,
-    terminText: null,
-    aufgehoben: false,
-    letzteAktualisierungIso: null,
+    externalId: '1',
+    caseNumber: '',
+    authority: '',
+    title: null,
+    address: null,
+    marketValueEur: null,
+    marketValueText: null,
+    auctionDateIso: null,
+    auctionDateText: null,
+    cancelled: false,
+    sourceUpdatedIso: null,
     pdfUrl: null,
     detailUrl: null,
     pdfUrlUpstream: null,
     detailUrlUpstream: null,
     attachments: [],
-    beschreibung: null,
-    fotoCount: 0,
+    description: null,
+    photoCount: 0,
     thumbnailUrl: null,
   }
 }
 
 describe('applyDetailInfo', () => {
-  it('sets photoUrls, source fields and fotoCount on the auction', () => {
+  it('sets photoUrls, source fields and photoCount on the auction', () => {
     const auction = baseAuction()
     applyDetailInfo(auction, parseDetailHtml(APARTMENT_HTML))
     expect(auction.photoUrls).toHaveLength(3)
-    expect(auction.fotoCount).toBe(3)
+    expect(auction.photoCount).toBe(3)
     expect(auction.sourceLivingAreaSqm).toBe(51)
     expect(auction.sourceRooms).toBe(3)
     expect(auction.sourceLandAreaSqm).toBeUndefined()
   })
 
-  it('appends an unclassified area as beschreibung note, without stacking on re-runs', () => {
+  it('appends an unclassified area as description note, without stacking on re-runs', () => {
     const auction = baseAuction()
-    auction.beschreibung = 'Locale commerciale al piano terra.'
+    auction.description = 'Locale commerciale al piano terra.'
     const info = parseDetailHtml(COMMERCIALE_HTML)
     applyDetailInfo(auction, info)
     applyDetailInfo(auction, info)
-    expect(auction.beschreibung).toBe(
+    expect(auction.description).toBe(
       'Locale commerciale al piano terra.\nSuperficie: 173 mq',
     )
     expect(auction.sourceLivingAreaSqm).toBeUndefined()

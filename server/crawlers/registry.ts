@@ -155,27 +155,27 @@ export function getCrawlersForRegion(country: string, regionCode: string): Platf
 
 /**
  * French judicial-sale sources (licitor.com, avoventes.fr) never publish the
- * court's own case number, so both always have an empty {aktenzeichen}, yet
+ * court's own case number, so both always have an empty {caseNumber}, yet
  * they frequently cross-publish the exact same sale (the same avocat
  * poursuivant submits to both platforms). Fall back to a normalized {postal
  * code, house number, sale date} fingerprint so that pair collapses to one
  * pin instead of showing twice. Scoped to country 'fr' only — other
- * countries with an empty aktenzeichen (AT, EE, LV, FI) have exactly one
- * registered platform each and must keep relying on {platform, zvgId}.
+ * countries with an empty caseNumber (AT, EE, LV, FI) have exactly one
+ * registered platform each and must keep relying on {platform, externalId}.
  */
 export function frAddressDateKey(a: Auction): string | null {
-  if (a.country !== 'fr' || !a.adresse || !a.terminIso) return null
-  const postal = a.adresse.match(/\b\d{5}\b/)?.[0]
+  if (a.country !== 'fr' || !a.address || !a.auctionDateIso) return null
+  const postal = a.address.match(/\b\d{5}\b/)?.[0]
   if (!postal) return null
   // Strip the postal code before looking for a house number — otherwise a
   // postal-code-only address (no street number, e.g. a rural lieu-dit) would
   // match the postal code itself as "the house number", degenerating to a
   // {postal, postal, date} key that can falsely merge two distinct auctions
   // that only share a postal code and a sale date.
-  const addressWithoutPostal = a.adresse.replace(new RegExp(`\\b${postal}\\b`), '')
+  const addressWithoutPostal = a.address.replace(new RegExp(`\\b${postal}\\b`), '')
   const houseNumber = addressWithoutPostal.match(/\b\d+[a-z]?(?:\s*(?:bis|ter|quater))?\b/i)?.[0]
   if (!houseNumber) return null
-  return `fr-addr|${postal}|${houseNumber}|${a.terminIso.slice(0, 10)}`
+  return `fr-addr|${postal}|${houseNumber}|${a.auctionDateIso.slice(0, 10)}`
 }
 
 /**
@@ -186,15 +186,15 @@ export function frAddressDateKey(a: Auction): string | null {
  */
 export function completenessScore(a: Auction): number {
   return (
-    (a.verkehrswertEur != null ? 1 : 0) +
-    (a.objekt ? 1 : 0) +
-    (a.adresse ? 1 : 0) +
-    (a.terminIso ? 1 : 0) +
-    (a.beschreibung ? 1 : 0) +
+    (a.marketValueEur != null ? 1 : 0) +
+    (a.title ? 1 : 0) +
+    (a.address ? 1 : 0) +
+    (a.auctionDateIso ? 1 : 0) +
+    (a.description ? 1 : 0) +
     (a.sourceLivingAreaSqm != null || a.sourceLandAreaSqm != null ? 1 : 0) +
     (a.sourceRooms != null ? 1 : 0) +
     (a.lat != null ? 1 : 0) +
-    Math.min(a.fotoCount, 5)
+    Math.min(a.photoCount, 5)
   )
 }
 
@@ -232,7 +232,7 @@ export async function crawlSingle(
   }
   // Overlapping platforms (e.g. zvg-portal + zvbawü both list the same BW
   // property) would otherwise produce duplicate pins and list rows. Dedup by
-  // a normalized {amtsgericht, aktenzeichen} key — the Aktenzeichen is the
+  // a normalized {authority, caseNumber} key — the Aktenzeichen is the
   // court's own case number and is stable across portals. Among auctions
   // sharing a key, keep the one with the richer record (completenessScore)
   // rather than whichever platform happens to be registered/crawled first.
@@ -240,8 +240,8 @@ export async function crawlSingle(
   const pfSeen = new Set<string>()
   const noAzAuctions: Auction[] = []
   for (const a of results.flatMap((r) => r.auctions)) {
-    const az = a.aktenzeichen.trim().toLowerCase().replace(/\s+/g, ' ')
-    const ag = a.amtsgericht.trim().toLowerCase()
+    const az = a.caseNumber.trim().toLowerCase().replace(/\s+/g, ' ')
+    const ag = a.authority.trim().toLowerCase()
     if (az && ag) {
       const key = `az|${ag}|${az}`
       const existing = azWinners.get(key)
@@ -250,10 +250,10 @@ export async function crawlSingle(
       }
       continue
     }
-    // No court case number available — {platform, zvgId} is checked
+    // No court case number available — {platform, externalId} is checked
     // unconditionally so platform-internal uniqueness is always preserved,
     // independently of the cross-platform address+date matching below.
-    const pfKey = `pf|${a.platform}|${a.zvgId}`
+    const pfKey = `pf|${a.platform}|${a.externalId}`
     if (pfSeen.has(pfKey)) continue
     pfSeen.add(pfKey)
     noAzAuctions.push(a)

@@ -39,11 +39,11 @@ async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
     offset += result.auctions.length
   }
 
-  // Deduplicate by zvgId (defensive — pages can overlap near boundaries).
+  // Deduplicate by externalId (defensive — pages can overlap near boundaries).
   const seen = new Set<string>()
   const unique = auctions.filter((a) => {
-    if (seen.has(a.zvgId)) return false
-    seen.add(a.zvgId)
+    if (seen.has(a.externalId)) return false
+    seen.add(a.externalId)
     return true
   })
 

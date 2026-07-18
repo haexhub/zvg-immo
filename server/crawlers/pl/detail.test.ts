@@ -160,24 +160,24 @@ function makeAuction(overrides: Partial<Auction> = {}): Auction {
     platform: 'pl-komornik',
     country: 'pl',
     region: 'Dolnośląskie',
-    zvgId: '45036',
-    aktenzeichen: '',
-    amtsgericht: '',
-    objekt: 'Licytacja nieruchomości lokal mieszkalny',
-    adresse: 'Żołnierzy II AWP 20/13, 59-916 Bogatynia, Polen',
-    verkehrswertEur: null,
-    verkehrswertText: null,
-    terminIso: '2026-08-10',
-    terminText: '10.08.2026 13:00',
-    aufgehoben: false,
-    letzteAktualisierungIso: null,
+    externalId: '45036',
+    caseNumber: '',
+    authority: '',
+    title: 'Licytacja nieruchomości lokal mieszkalny',
+    address: 'Żołnierzy II AWP 20/13, 59-916 Bogatynia, Polen',
+    marketValueEur: null,
+    marketValueText: null,
+    auctionDateIso: '2026-08-10',
+    auctionDateText: '10.08.2026 13:00',
+    cancelled: false,
+    sourceUpdatedIso: null,
     pdfUrl: null,
     detailUrl: 'https://licytacje.komornik.pl/wyszukiwarka/obwieszczenia-o-licytacji/45036/licytacja-nieruchomosci-lokal-mieszkalny',
     pdfUrlUpstream: null,
     detailUrlUpstream: 'https://licytacje.komornik.pl/wyszukiwarka/obwieszczenia-o-licytacji/45036/licytacja-nieruchomosci-lokal-mieszkalny',
     attachments: [],
-    beschreibung: null,
-    fotoCount: 0,
+    description: null,
+    photoCount: 0,
     thumbnailUrl: null,
     ...overrides,
   }
@@ -190,13 +190,13 @@ describe('enrichOne', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(DETAIL_HTML)))
     const a = makeAuction()
     await enrichOne(a)
-    expect(a.beschreibung).toMatch(/^lokal mieszkalny nr 13, umieszczony/)
-    expect(a.aktenzeichen).toBe('Km 314/18')
-    expect(a.amtsgericht).toBe('Sąd Rejonowy w Zgorzelcu')
+    expect(a.description).toMatch(/^lokal mieszkalny nr 13, umieszczony/)
+    expect(a.caseNumber).toBe('Km 314/18')
+    expect(a.authority).toBe('Sąd Rejonowy w Zgorzelcu')
     expect(a.sourceLivingAreaSqm).toBe(70.8)
     // 130 000 zł Suma oszacowania at 4 PLN per EUR — not the Cena wywołania.
-    expect(a.verkehrswertEur).toBe(32500)
-    expect(a.verkehrswertText).toBe('130.000 zł')
+    expect(a.marketValueEur).toBe(32500)
+    expect(a.marketValueText).toBe('130.000 zł')
   })
 
   it('falls back to the Cena wywołania when no Suma oszacowania is published', async () => {
@@ -210,8 +210,8 @@ describe('enrichOne', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(html)))
     const a = makeAuction()
     await enrichOne(a)
-    expect(a.verkehrswertEur).toBe(25000)
-    expect(a.verkehrswertText).toBe('100.000 zł')
+    expect(a.marketValueEur).toBe(25000)
+    expect(a.marketValueText).toBe('100.000 zł')
   })
 
   it('throws on upstream errors so the enrich task retries', async () => {

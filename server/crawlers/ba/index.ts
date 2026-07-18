@@ -22,23 +22,23 @@ async function enrichOne(auction: Auction): Promise<void> {
   const applyText = (text: string | null): void => {
     if (!text) return
 
-    if (auction.verkehrswertEur == null) {
+    if (auction.marketValueEur == null) {
       const price = parseBamPrice(text)
       if (price) {
-        auction.verkehrswertEur = price.eur
-        auction.verkehrswertText = price.text
+        auction.marketValueEur = price.eur
+        auction.marketValueText = price.text
       }
     }
-    if (!auction.adresse) {
+    if (!auction.address) {
       const loc = extractLocation(text)
-      if (loc) auction.adresse = loc
+      if (loc) auction.address = loc
     }
-    if (!auction.beschreibung) {
-      auction.beschreibung = text.slice(0, 2000).trim()
+    if (!auction.description) {
+      auction.description = text.slice(0, 2000).trim()
     }
   }
   const needsMoreText = () =>
-    auction.verkehrswertEur == null || !auction.adresse || !auction.beschreibung
+    auction.marketValueEur == null || !auction.address || !auction.description
 
   if (auction.pdfUrlUpstream) {
     applyText(await pdfToText(auction.pdfUrlUpstream))

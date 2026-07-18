@@ -5,19 +5,19 @@ export const MULTI_PLATFORM = 'multi'
 export const SCOPE_PARAM_RE = /^[a-z0-9_-]{1,64}$/i
 
 export const ATTACHMENT_KIND_LABELS: Record<AttachmentKind, string> = {
-  bekanntmachung: 'Bekanntmachung',
-  foto: 'Fotos',
-  exposee: 'Exposé',
-  gutachten: 'Gutachten',
-  sonstiges: 'Anhang',
+  announcement: 'Bekanntmachung',
+  photo: 'Fotos',
+  brochure: 'Exposé',
+  appraisal: 'Gutachten',
+  other: 'Anhang',
 }
 
 export const ATTACHMENT_KIND_ORDER = [
-  'bekanntmachung',
-  'gutachten',
-  'exposee',
-  'foto',
-  'sonstiges',
+  'announcement',
+  'appraisal',
+  'brochure',
+  'photo',
+  'other',
 ] as const satisfies readonly AttachmentKind[]
 
 export function scopeParam(value: unknown, fallback = ALL_SCOPE): string {

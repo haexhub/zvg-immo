@@ -92,7 +92,7 @@ async function fetchEventos(): Promise<PtEvento[]> {
   return all
 }
 
-function buildAdresse(evento: PtEvento, mapa: PtMapaItem | undefined): string | null {
+function buildAddress(evento: PtEvento, mapa: PtMapaItem | undefined): string | null {
   if (mapa?.morada) {
     const line = [mapa.morada, mapa.moradaNumero].filter(Boolean).join(' ')
     const cityLine = [mapa.moradaCP, mapa.moradaConcelho].filter(Boolean).join(' ')
@@ -104,7 +104,7 @@ function buildAdresse(evento: PtEvento, mapa: PtMapaItem | undefined): string | 
 }
 
 function mapEvento(evento: PtEvento, mapa: PtMapaItem | undefined, platformId: string): Auction {
-  const { iso: terminIso, label: terminText } = parsePtDateTime(evento.dataFim)
+  const { iso: auctionDateIso, label: auctionDateText } = parsePtDateTime(evento.dataFim)
   const price = parsePtPrice(evento.valorBase)
   const detailUrl = `${PT_BASE}/evento/${evento.referencia}`
   const thumbnailUrl = evento.capa ? `${PT_BASE}/${evento.capa}` : null
@@ -113,24 +113,24 @@ function mapEvento(evento: PtEvento, mapa: PtMapaItem | undefined, platformId: s
     platform: platformId,
     country: COUNTRY,
     region: '',
-    zvgId: String(evento.id),
-    aktenzeichen: evento.referencia,
-    amtsgericht: '',
-    objekt: clean(evento.titulo),
-    adresse: buildAdresse(evento, mapa),
-    verkehrswertEur: price,
-    verkehrswertText: formatPtPrice(price),
-    terminIso,
-    terminText,
-    aufgehoben: evento.cancelado,
-    letzteAktualisierungIso: null,
+    externalId: String(evento.id),
+    caseNumber: evento.referencia,
+    authority: '',
+    title: clean(evento.titulo),
+    address: buildAddress(evento, mapa),
+    marketValueEur: price,
+    marketValueText: formatPtPrice(price),
+    auctionDateIso,
+    auctionDateText,
+    cancelled: evento.cancelado,
+    sourceUpdatedIso: null,
     pdfUrl: null,
     detailUrl,
     pdfUrlUpstream: null,
     detailUrlUpstream: detailUrl,
     attachments: [],
-    beschreibung: null,
-    fotoCount: thumbnailUrl ? 1 : 0,
+    description: null,
+    photoCount: thumbnailUrl ? 1 : 0,
     thumbnailUrl,
   }
 }

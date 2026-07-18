@@ -20,7 +20,7 @@ const exec = promisify(execFile)
 const CACHE_DIR = join(process.cwd(), '.cache_zvg', 'pdftext')
 
 /** Attachment kinds whose PDF most likely carries the size/type facts, best first. */
-const PDF_KIND_PRIORITY = ['gutachten', 'exposee', 'bekanntmachung', 'sonstiges'] as const
+const PDF_KIND_PRIORITY = ['appraisal', 'brochure', 'announcement', 'other'] as const
 
 /** Pick the attachment whose PDF is most likely to describe the property. */
 export function pickBestPdf(attachments: Attachment[]): Attachment | null {

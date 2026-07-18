@@ -64,7 +64,7 @@ export default defineEventHandler(async (event): Promise<PaginatedResponse<Publi
       `SELECT *
        FROM auction_observations
        ${where}
-       ORDER BY captured_at DESC, platform, zvg_id
+       ORDER BY captured_at DESC, platform, external_id
        LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
       pageParams,
     ),

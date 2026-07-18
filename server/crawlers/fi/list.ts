@@ -89,7 +89,7 @@ function stripHtml(html: string): string | null {
   return text.length > 0 ? text : null
 }
 
-function formatTerminText(iso: string | null | undefined): string | null {
+function formatAuctionDateText(iso: string | null | undefined): string | null {
   if (!iso) return null
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return null
@@ -116,7 +116,7 @@ async function fetchDetail(id: string): Promise<ApiResponse | null> {
 
 function mapDetail(id: string, data: ApiResponse, platformId: string): Auction {
   const { entry, seller } = data
-  const description = entry.description ? stripHtml(entry.description) : null
+  const upstreamDescription = entry.description ? stripHtml(entry.description) : null
   const bid = entry.highestBid ?? 0
   const price = bid > 0 ? bid : (entry.startPrice ?? null)
   const priceLabel = bid > 0 ? 'korkein tarjous' : 'lähtöhinta'
@@ -130,11 +130,11 @@ function mapDetail(id: string, data: ApiResponse, platformId: string): Auction {
     proxyUrl: `${FI_BASE}${a.url}`,
   }))
   const pdfHeadline =
-    attachments.find((a) => a.kind === 'exposee') ??
+    attachments.find((a) => a.kind === 'brochure') ??
     attachments.find((a) => /\.pdf$/i.test(a.filename))
 
   const photos = (entry.medias ?? []).filter((m) => !m.videoId && (m.thumbnail || m.largeImage))
-  // Fall back to the thumbnail for medias without a largeImage so fotoCount
+  // Fall back to the thumbnail for medias without a largeImage so photoCount
   // (= photoUrls.length) matches the gallery actually served.
   const photoUrls = photos
     .map((m) => m.largeImage ?? m.thumbnail)
@@ -142,7 +142,7 @@ function mapDetail(id: string, data: ApiResponse, platformId: string): Auction {
   const thumbnailUrl = photos[0]?.thumbnail ?? photos[0]?.largeImage ?? null
 
   const exhibit = entry.exhibit?.trim() || null
-  const beschreibung = [description, exhibit ? `Besichtigung: ${exhibit}` : null]
+  const description = [upstreamDescription, exhibit ? `Besichtigung: ${exhibit}` : null]
     .filter(Boolean)
     .join('\n') || null
 
@@ -152,24 +152,24 @@ function mapDetail(id: string, data: ApiResponse, platformId: string): Auction {
     platform: platformId,
     country: COUNTRY,
     region: 'all',
-    zvgId: id,
-    aktenzeichen: '',
-    amtsgericht: seller.displayName ?? 'Ulosottolaitos',
-    objekt: entry.categoryName ?? null,
-    adresse: entry.location ?? null,
-    verkehrswertEur: price,
-    verkehrswertText: price != null ? `${price.toLocaleString('de-DE')} € (${priceLabel})` : null,
-    terminIso: entry.auctionEnd ?? null,
-    terminText: formatTerminText(entry.auctionEnd),
-    aufgehoben: Boolean(entry.isCancelled) || Boolean(entry.fundsAreCanceled),
-    letzteAktualisierungIso: null,
+    externalId: id,
+    caseNumber: '',
+    authority: seller.displayName ?? 'Ulosottolaitos',
+    title: entry.categoryName ?? null,
+    address: entry.location ?? null,
+    marketValueEur: price,
+    marketValueText: price != null ? `${price.toLocaleString('de-DE')} € (${priceLabel})` : null,
+    auctionDateIso: entry.auctionEnd ?? null,
+    auctionDateText: formatAuctionDateText(entry.auctionEnd),
+    cancelled: Boolean(entry.isCancelled) || Boolean(entry.fundsAreCanceled),
+    sourceUpdatedIso: null,
     pdfUrl: pdfHeadline?.proxyUrl ?? null,
     detailUrl,
     pdfUrlUpstream: pdfHeadline?.proxyUrl ?? null,
     detailUrlUpstream: detailUrl,
     attachments,
-    beschreibung,
-    fotoCount: photoUrls.length,
+    description,
+    photoCount: photoUrls.length,
     thumbnailUrl,
     photoUrls,
     lat: typeof entry.geocode?.latitude === 'number' ? entry.geocode.latitude : null,

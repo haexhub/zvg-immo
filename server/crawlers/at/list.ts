@@ -107,16 +107,16 @@ export function parseListingHtml(
     // Status prefix decides whether we treat the appointment as cancelled.
     // "Entfall des Termins" is the portal's wording for a cancelled date;
     // "Verschiebung" just rescheduled — data-sort already reflects the new
-    // date, so we keep aufgehoben=false there.
-    const aufgehoben = /^Entfall/i.test(statusText)
+    // date, so we keep cancelled=false there.
+    const cancelled = /^Entfall/i.test(statusText)
 
     // Cell 3: "PLZ Ort Strasse<br>Kategorie" (Kategorie is the second line).
     const addrCellHtml = cells.eq(2).html() ?? ''
     const [addrPart = '', kategoriePart = ''] = addrCellHtml
       .split(/<br\s*\/?>/i)
       .map((s) => stripHtml(s))
-    const adresse = formatAddressLine(addrPart)
-    const objekt = (cells.eq(3).text().trim() || kategoriePart.trim()) || null
+    const address = formatAddressLine(addrPart)
+    const title = (cells.eq(3).text().trim() || kategoriePart.trim()) || null
 
     const detailUrlUpstream = `${AT_BASE}/edikte/ex/exedi3.nsf/alldoc/${unid}!OpenDocument`
 
@@ -124,25 +124,25 @@ export function parseListingHtml(
       platform: platformId,
       country: COUNTRY,
       region: regionName,
-      zvgId: unid,
+      externalId: unid,
       // Listing has no structured Aktenzeichen; detail enrichment fills it.
-      aktenzeichen: '',
-      amtsgericht: '',
-      objekt,
-      adresse,
-      verkehrswertEur: null,
-      verkehrswertText: null,
-      terminIso: parseAustrianDateTime(effectiveDate),
-      terminText: statusText || dataSort || null,
-      aufgehoben,
-      letzteAktualisierungIso: null,
+      caseNumber: '',
+      authority: '',
+      title,
+      address,
+      marketValueEur: null,
+      marketValueText: null,
+      auctionDateIso: parseAustrianDateTime(effectiveDate),
+      auctionDateText: statusText || dataSort || null,
+      cancelled,
+      sourceUpdatedIso: null,
       pdfUrl: null,
       detailUrl: detailUrlUpstream,
       pdfUrlUpstream: null,
       detailUrlUpstream,
       attachments: [],
-      beschreibung: null,
-      fotoCount: 0,
+      description: null,
+      photoCount: 0,
       thumbnailUrl: null,
     })
   })
@@ -151,8 +151,8 @@ export function parseListingHtml(
   // Edikt is amended (the new and old revisions briefly coexist).
   const seen = new Set<string>()
   const unique = auctions.filter((a) => {
-    if (seen.has(a.zvgId)) return false
-    seen.add(a.zvgId)
+    if (seen.has(a.externalId)) return false
+    seen.add(a.externalId)
     return true
   })
 

@@ -1,13 +1,13 @@
 import { load } from 'cheerio'
 import type { Auction } from '~/types/auction'
-import type { PropertyType } from '~/lib/objektart'
+import type { PropertyType } from '~/lib/property-type'
 import { LT_BASE, UA } from './constants'
 import { clean, parseLtArea } from './text'
 import { areaBucketForPropertyType } from '~/server/utils/extract/rules'
 
-/** Maps the potipis/objekt type hint to a representative PropertyType for
+/** Maps the potipis/title type hint to a representative PropertyType for
  *  areaBucketForPropertyType (its Lithuanian vocabulary isn't covered by
- *  objektart.ts's conservative cross-language regexes). */
+ *  property-type.ts's conservative cross-language regexes). */
 function typeHintPropertyType(typeHint: string): PropertyType | null {
   if (/sklyp|žem/i.test(typeHint)) return 'unbebaut'
   if (/but|patalp/i.test(typeHint)) return 'eigentumswohnung'
@@ -78,12 +78,12 @@ export async function enrichOne(auction: Auction): Promise<void> {
   if (!res.ok) throw new Error(`eaukcionai.lt detail: HTTP ${res.status}`)
   const detail = parseDetailPage(await res.text())
 
-  if (detail.beschreibung) auction.beschreibung = detail.beschreibung
+  if (detail.beschreibung) auction.description = detail.beschreibung
 
   // "Bendras turto plotas" is the lot's total area — land area for plots,
   // floor area for flats/premises. Anything else (buildings with unknown
   // land/floor split) only goes into the description text.
-  const typeHint = `${detail.potipis ?? ''} ${auction.objekt ?? ''}`
+  const typeHint = `${detail.potipis ?? ''} ${auction.title ?? ''}`
   if (detail.areaSqm != null) {
     const bucket = areaBucketForPropertyType(typeHintPropertyType(typeHint))
     if (bucket === 'land') {
@@ -91,7 +91,7 @@ export async function enrichOne(auction: Auction): Promise<void> {
     } else if (bucket === 'living') {
       auction.sourceLivingAreaSqm = detail.areaSqm
     } else if (detail.areaRaw) {
-      auction.beschreibung = [auction.beschreibung, `Bendras turto plotas: ${detail.areaRaw}`]
+      auction.description = [auction.description, `Bendras turto plotas: ${detail.areaRaw}`]
         .filter(Boolean)
         .join('\n\n')
     }
@@ -99,6 +99,6 @@ export async function enrichOne(auction: Auction): Promise<void> {
 
   if (detail.photoUrls.length > 0) {
     auction.photoUrls = detail.photoUrls
-    auction.fotoCount = detail.photoUrls.length
+    auction.photoCount = detail.photoUrls.length
   }
 }

@@ -58,14 +58,14 @@ describe('parseData', () => {
       'https://www.portaldrazeb.cz/upload/auction-image/1187l',
       'https://www.portaldrazeb.cz/upload/auction-image/WlD8l',
     ])
-    expect(a.fotoCount).toBe(3)
+    expect(a.photoCount).toBe(3)
     expect(a.thumbnailUrl).toBe('https://www.portaldrazeb.cz/upload/auction-image/7vxdb')
   })
 
   it('handles the empty-array serialisation of images/documents', () => {
     const a = parseOne({ images: [], documents: [] })
     expect(a.photoUrls).toEqual([])
-    expect(a.fotoCount).toBe(0)
+    expect(a.photoCount).toBe(0)
     expect(a.thumbnailUrl).toBeNull()
     expect(a.attachments).toEqual([])
     expect(a.pdfUrl).toBeNull()
@@ -99,7 +99,7 @@ describe('parseData', () => {
     })
     expect(a.attachments).toEqual([
       {
-        kind: 'gutachten',
+        kind: 'appraisal',
         label: 'znalecký posudek.pdf',
         filename: 'znalecký posudek.pdf',
         sizeBytes: 1400092,
@@ -107,7 +107,7 @@ describe('parseData', () => {
         proxyUrl: 'https://www.portaldrazeb.cz/upload/auction-document/pe7Ad',
       },
       {
-        kind: 'bekanntmachung',
+        kind: 'announcement',
         label: 'dv1.pdf',
         filename: 'dv1.pdf',
         sizeBytes: 329297,
@@ -115,7 +115,7 @@ describe('parseData', () => {
         proxyUrl: 'https://www.portaldrazeb.cz/upload/auction-document/JlQ4p',
       },
       {
-        kind: 'sonstiges',
+        kind: 'other',
         label: 'podmínky.pdf',
         filename: 'podmínky.pdf',
         sizeBytes: 71197,
@@ -150,7 +150,7 @@ describe('parseData', () => {
     })
     expect(a.lat).toBe(49.4899232)
     expect(a.lng).toBe(17.426161)
-    expect(a.adresse).toBe('Zámecká 230/31, Přerov, Tschechien')
+    expect(a.address).toBe('Zámecká 230/31, Přerov, Tschechien')
   })
 
   it('builds a village address without street name and keeps the district fallback otherwise', () => {
@@ -161,17 +161,17 @@ describe('parseData', () => {
         ruian: { city_name: 'Jestřebí', street_name: null, house_number: '72', street_number: null },
       },
     })
-    expect(village.adresse).toBe('Jestřebí 72, Tschechien')
+    expect(village.address).toBe('Jestřebí 72, Tschechien')
 
     const bare = parseOne()
-    expect(bare.adresse).toBe('Strakonice, Tschechien')
+    expect(bare.address).toBe('Strakonice, Tschechien')
     expect(bare.lat).toBe(49.4364394)
   })
 
   it('converts the CZK estimate to EUR', () => {
     const a = parseOne()
-    expect(a.verkehrswertEur).toBe(70512)
-    expect(a.verkehrswertText).toBe('1.762.800 Kč')
+    expect(a.marketValueEur).toBe(70512)
+    expect(a.marketValueText).toBe('1.762.800 Kč')
   })
 
   it('skips voluntary and non-real auctions', () => {

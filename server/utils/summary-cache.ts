@@ -1,4 +1,4 @@
-// Disk cache for AI-generated German summaries, keyed by `${platform}:${zvgId}`.
+// Disk cache for AI-generated German summaries, keyed by `${platform}:${externalId}`.
 // Written by the /api/auction/:platform/:id/summary endpoint on first request.
 // Atomic-write semantics match extraction-cache.ts and verkehrswert-cache.ts.
 

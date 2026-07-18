@@ -42,22 +42,22 @@ const SYSTEM_PROMPT =
 
 function buildPrompt(a: Record<string, unknown>): string {
   const lines: string[] = []
-  if (a.objekt) lines.push(`Objektbezeichnung: ${a.objekt}`)
-  if (a.adresse) lines.push(`Adresse: ${a.adresse}`)
-  if (a.amtsgericht) lines.push(`Amtsgericht: ${a.amtsgericht}`)
-  if (a.aktenzeichen) lines.push(`Aktenzeichen: ${a.aktenzeichen}`)
-  if (a.verkehrswertText) {
-    lines.push(`Verkehrswert: ${a.verkehrswertText}`)
-  } else if (typeof a.verkehrswertEur === 'number') {
-    lines.push(`Verkehrswert: ${(a.verkehrswertEur as number).toLocaleString('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })}`)
+  if (a.title) lines.push(`Objektbezeichnung: ${a.title}`)
+  if (a.address) lines.push(`Adresse: ${a.address}`)
+  if (a.authority) lines.push(`Amtsgericht: ${a.authority}`)
+  if (a.caseNumber) lines.push(`Aktenzeichen: ${a.caseNumber}`)
+  if (a.marketValueText) {
+    lines.push(`Verkehrswert: ${a.marketValueText}`)
+  } else if (typeof a.marketValueEur === 'number') {
+    lines.push(`Verkehrswert: ${(a.marketValueEur as number).toLocaleString('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })}`)
   }
-  if (a.terminText) lines.push(`Termin: ${a.terminText}`)
+  if (a.auctionDateText) lines.push(`Termin: ${a.auctionDateText}`)
   const ext = a.extraction as Record<string, unknown> | undefined
   if (ext?.landAreaSqm != null) lines.push(`Grundstücksfläche: ${ext.landAreaSqm} m²`)
   if (ext?.livingAreaSqm != null) lines.push(`Wohnfläche: ${ext.livingAreaSqm} m²`)
   if (ext?.rooms != null) lines.push(`Zimmer: ${ext.rooms}`)
   if (ext?.units != null) lines.push(`Wohneinheiten: ${ext.units}`)
-  if (a.beschreibung) lines.push(`\nBeschreibung:\n${a.beschreibung}`)
+  if (a.description) lines.push(`\nBeschreibung:\n${a.description}`)
   return lines.join('\n')
 }
 

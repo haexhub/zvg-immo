@@ -111,7 +111,7 @@ interface Property {
   minTenderCad: number | null
   fileNo: string | null
   detailUrl: string | null
-  fotoCount: number
+  photoCount: number
   thumbnailUrl: string | null
   legal: LegalInfo | null
 }
@@ -184,7 +184,7 @@ function parseSalePage(html: string, pageUrl: string): { properties: Property[];
     }
 
     const captionText = $s.find('.caption').text()
-    const fotoCount = Number(captionText.match(/(\d+)\s+aerial photos?/i)?.[1] ?? 0)
+    const photoCount = Number(captionText.match(/(\d+)\s+aerial photos?/i)?.[1] ?? 0)
 
     const thumbnailUrl =
       clean($s.find('img[src*="/wp-content/uploads/"]').first().attr('src')) ?? null
@@ -194,7 +194,7 @@ function parseSalePage(html: string, pageUrl: string): { properties: Property[];
       minTenderCad,
       fileNo,
       detailUrl,
-      fotoCount: Number.isFinite(fotoCount) ? fotoCount : 0,
+      photoCount: Number.isFinite(photoCount) ? photoCount : 0,
       thumbnailUrl,
       legal: fileNo ? findLegal(legalByFileNo, fileNo) : null,
     })
@@ -208,7 +208,7 @@ const SQM_PER_SQFT = 0.092903
 
 /** Fact labels already captured by the listing crawl (address, legal block)
  *  or paywalled ("Available in the InfoPak") — not worth repeating in the
- *  beschreibung. */
+ *  description. */
 const SKIPPED_FACT_LABELS = new Set([
   'municipal address',
   'legal description',
@@ -223,10 +223,10 @@ const SKIPPED_FACT_LABELS = new Set([
 const TYPE_LABELS = new Set(['residential', 'vacant land', 'commercial', 'industrial', 'farmland'])
 
 export interface PropertyDetail {
-  objekt: string | null
+  title: string | null
   landAreaSqm: number | null
   photoUrls: string[]
-  /** Labelled facts ("Property Size: …", "Waterfront: No", …) for beschreibung. */
+  /** Labelled facts ("Property Size: …", "Waterfront: No", …) for description. */
   facts: string[]
   lat: number | null
   lng: number | null
@@ -252,10 +252,10 @@ function parsePropertySize(text: string): number | null {
 export function parsePropertyPage(html: string): PropertyDetail {
   const $ = load(html)
 
-  let objekt: string | null = null
+  let title: string | null = null
   let landAreaSqm: number | null = null
   const facts: string[] = []
-  const objektParts: string[] = []
+  const titleParts: string[] = []
 
   $('.tb-fields-and-text').each((_i, el) => {
     const $el = $(el)
@@ -271,11 +271,11 @@ export function parsePropertyPage(html: string): PropertyDetail {
       landAreaSqm = parsePropertySize(value)
     }
     if (TYPE_LABELS.has(key) && /^yes$/i.test(value)) {
-      objektParts.push(label)
+      titleParts.push(label)
     }
     facts.push(`${label}: ${value}`)
   })
-  if (objektParts.length > 0) objekt = objektParts.join(', ')
+  if (titleParts.length > 0) title = titleParts.join(', ')
 
   // Multi-photo pages render a glide.js slider; single-photo pages inline the
   // one image as `img.main-image` instead.
@@ -296,7 +296,7 @@ export function parsePropertyPage(html: string): PropertyDetail {
   const lng = coordMatch ? Number(coordMatch[2]) : null
 
   return {
-    objekt,
+    title,
     landAreaSqm,
     photoUrls,
     facts,
@@ -324,13 +324,13 @@ function mapProperty(
   rates: Record<string, number>,
 ): Auction {
   const assessedCad = prop.legal?.assessedCad ?? null
-  const verkehrswertEur = assessedCad != null ? toEur(assessedCad, 'CAD', rates) : null
+  const marketValueEur = assessedCad != null ? toEur(assessedCad, 'CAD', rates) : null
 
-  const zvgId =
+  const externalId =
     clean(prop.detailUrl?.match(/\/property\/([a-z0-9-]+)\/?/i)?.[1]) ??
     (prop.fileNo ? `${municipality}-${prop.fileNo}` : `${municipality}-${prop.address}`)
 
-  const beschreibung = [
+  const description = [
     prop.minTenderCad != null
       ? `Mindestgebot: ${prop.minTenderCad.toLocaleString('de-DE')} CAD`
       : null,
@@ -345,28 +345,28 @@ function mapProperty(
     platform: platformId,
     country: COUNTRY,
     region: 'Ontario',
-    zvgId,
-    aktenzeichen: prop.fileNo ?? '',
+    externalId,
+    caseNumber: prop.fileNo ?? '',
     // Municipal tax sales have no court — the selling authority is the
     // municipality itself.
-    amtsgericht: municipality,
-    objekt: null,
-    adresse: prop.address,
+    authority: municipality,
+    title: null,
+    address: prop.address,
     // The published "assessed value" is the closest analogue to a Verkehrswert;
-    // the minimum tender (tax arrears owed) is kept in beschreibung.
-    verkehrswertEur,
-    verkehrswertText: assessedCad != null ? `${assessedCad.toLocaleString('de-DE')} CAD (Assessed Value)` : null,
-    terminIso: dateTime.iso,
-    terminText: dateTime.label,
-    aufgehoben: false,
-    letzteAktualisierungIso: null,
+    // the minimum tender (tax arrears owed) is kept in description.
+    marketValueEur,
+    marketValueText: assessedCad != null ? `${assessedCad.toLocaleString('de-DE')} CAD (Assessed Value)` : null,
+    auctionDateIso: dateTime.iso,
+    auctionDateText: dateTime.label,
+    cancelled: false,
+    sourceUpdatedIso: null,
     pdfUrl: null,
     detailUrl: prop.detailUrl,
     pdfUrlUpstream: null,
     detailUrlUpstream: prop.detailUrl,
     attachments: [],
-    beschreibung,
-    fotoCount: prop.fotoCount,
+    description,
+    photoCount: prop.photoCount,
     thumbnailUrl: prop.thumbnailUrl,
   }
 }

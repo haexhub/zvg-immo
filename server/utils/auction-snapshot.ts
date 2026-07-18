@@ -4,7 +4,7 @@
 // the enrich task interval (cron `30 */6 * * *`) — fresh enough for a
 // listing whose key data doesn't change once published.
 //
-// Detail fields (attachments/beschreibung/pdfUrl/…) come from enrichOne, which
+// Detail fields (attachments/description/pdfUrl/…) come from enrichOne, which
 // the enrich task runs only for auctions not yet in the extraction cache. On
 // subsequent runs those fields are empty on the fresh crawl, so we merge with
 // the previous snapshot to keep the enriched values from the first crawl.
@@ -18,8 +18,47 @@ const SNAPSHOT_PATH = join(process.cwd(), '.cache_zvg', 'auctions.json')
 
 export type AuctionSnapshot = Record<string, Auction>
 
+// WP-1 renamed the Auction fields (DE/ZVG -> neutral English), but the snapshot
+// lives on a persisted volume (docker-compose: geocode-cache:/app/.cache_zvg),
+// so entries written before the rename survive the deploy with the old names.
+// Consumers (detail endpoint, summary, enrich merge) read the new names and
+// would otherwise see `undefined` — and since `detailFetchedAt` (unchanged
+// name) is preserved, the enrich task won't re-fetch, so lost detail data
+// (description, …) wouldn't self-heal. Map the old names on read; a full crawl
+// cycle rewrites entries with the new names and this becomes a no-op. Safe to
+// drop once no pre-WP-1 snapshot can still be in play.
+const LEGACY_FIELD_MAP: Record<string, keyof Auction> = {
+  zvgId: 'externalId',
+  aktenzeichen: 'caseNumber',
+  amtsgericht: 'authority',
+  objekt: 'title',
+  adresse: 'address',
+  verkehrswertEur: 'marketValueEur',
+  verkehrswertText: 'marketValueText',
+  terminIso: 'auctionDateIso',
+  terminText: 'auctionDateText',
+  aufgehoben: 'cancelled',
+  letzteAktualisierungIso: 'sourceUpdatedIso',
+  beschreibung: 'description',
+  fotoCount: 'photoCount',
+}
+
+/** Exported for tests. */
+export function normalizeLegacyAuction(entry: Record<string, unknown>): void {
+  for (const [oldKey, newKey] of Object.entries(LEGACY_FIELD_MAP)) {
+    if (entry[newKey] === undefined && entry[oldKey] !== undefined) {
+      entry[newKey] = entry[oldKey]
+      delete entry[oldKey]
+    }
+  }
+}
+
 export async function readAuctionSnapshot(): Promise<AuctionSnapshot> {
-  return readJsonCache<AuctionSnapshot>(SNAPSHOT_PATH, () => ({}), 'auction-snapshot')
+  const snapshot = await readJsonCache<AuctionSnapshot>(SNAPSHOT_PATH, () => ({}), 'auction-snapshot')
+  for (const entry of Object.values(snapshot)) {
+    normalizeLegacyAuction(entry as unknown as Record<string, unknown>)
+  }
+  return snapshot
 }
 
 /**
@@ -36,37 +75,37 @@ export function mergePreservedDetail(next: Auction, prev: Auction): Auction {
   if (next.attachments.length === 0 && prevAttachments.length > 0) {
     next.attachments = prevAttachments
   }
-  if (next.beschreibung == null && prev.beschreibung != null) {
-    next.beschreibung = prev.beschreibung
+  if (next.description == null && prev.description != null) {
+    next.description = prev.description
   } else if (
-    next.beschreibung != null &&
-    prev.beschreibung != null &&
+    next.description != null &&
+    prev.description != null &&
     prev.detailFetchedAt != null &&
-    prev.beschreibung.startsWith(next.beschreibung)
+    prev.description.startsWith(next.description)
   ) {
     // enrichOne extends the list text in place (e.g. LV appends Kadastra
-    // lines), so the enriched beschreibung starts with the fresh list text.
+    // lines), so the enriched description starts with the fresh list text.
     // A crawl that didn't re-enrich must not truncate it back down.
-    next.beschreibung = prev.beschreibung
+    next.description = prev.description
   }
-  // `aktenzeichen` is typed as plain string but crawlers emit ''/null when a
+  // `caseNumber` is typed as plain string but crawlers emit ''/null when a
   // re-crawl couldn't resolve it — restore the previously known value then.
-  if (!next.aktenzeichen && prev.aktenzeichen) {
-    next.aktenzeichen = prev.aktenzeichen
+  if (!next.caseNumber && prev.caseNumber) {
+    next.caseNumber = prev.caseNumber
   }
   if (next.pdfUrl == null && prev.pdfUrl != null) {
     next.pdfUrl = prev.pdfUrl
     next.pdfUrlUpstream = prev.pdfUrlUpstream
   }
-  if (next.fotoCount === 0 && typeof prev.fotoCount === 'number' && prev.fotoCount > 0) {
-    next.fotoCount = prev.fotoCount
+  if (next.photoCount === 0 && typeof prev.photoCount === 'number' && prev.photoCount > 0) {
+    next.photoCount = prev.photoCount
   }
   if (next.thumbnailUrl == null && prev.thumbnailUrl != null) {
     next.thumbnailUrl = prev.thumbnailUrl
   }
-  if (next.verkehrswertEur == null && prev.verkehrswertEur != null) {
-    next.verkehrswertEur = prev.verkehrswertEur
-    next.verkehrswertText = prev.verkehrswertText
+  if (next.marketValueEur == null && prev.marketValueEur != null) {
+    next.marketValueEur = prev.marketValueEur
+    next.marketValueText = prev.marketValueText
   }
   if (next.detailFetchedAt == null && prev.detailFetchedAt != null) {
     next.detailFetchedAt = prev.detailFetchedAt
@@ -82,11 +121,11 @@ export function mergePreservedDetail(next: Auction, prev: Auction): Auction {
   }
   if ((next.photoUrls == null || next.photoUrls.length === 0) && Array.isArray(prev.photoUrls) && prev.photoUrls.length > 0) {
     next.photoUrls = prev.photoUrls
-    // Crawlers keep fotoCount in sync with photoUrls (see types/auction.ts);
-    // restoring the gallery without the count would leave e.g. fotoCount=1
+    // Crawlers keep photoCount in sync with photoUrls (see types/auction.ts);
+    // restoring the gallery without the count would leave e.g. photoCount=1
     // from the list crawl next to a 5-image gallery.
-    if (!(typeof next.fotoCount === 'number') || next.fotoCount < prev.photoUrls.length) {
-      next.fotoCount = prev.photoUrls.length
+    if (!(typeof next.photoCount === 'number') || next.photoCount < prev.photoUrls.length) {
+      next.photoCount = prev.photoUrls.length
     }
   }
   if (next.lat == null && prev.lat != null && prev.lng != null) {
@@ -102,7 +141,7 @@ export async function writeAuctionSnapshot(auctions: Auction[]): Promise<void> {
   const platformsSeen = new Set<string>()
   for (const a of auctions) {
     platformsSeen.add(a.platform)
-    const key = cacheKey(a.platform, a.zvgId)
+    const key = cacheKey(a.platform, a.externalId)
     const prev = previous[key]
     map[key] = prev ? mergePreservedDetail(a, prev) : a
   }

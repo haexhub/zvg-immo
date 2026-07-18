@@ -35,19 +35,19 @@ function info(overrides: Partial<DetailInfo>): DetailInfo {
     tasacionText: null,
     valorSubastaText: null,
     anuncioBoeId: null,
-    beschreibung: null,
+    description: null,
     referenciaCatastral: null,
-    adresse: null,
+    address: null,
     ...overrides,
   }
 }
 
 function auctionFields() {
   return {
-    verkehrswertEur: null,
-    verkehrswertText: null,
-    beschreibung: null,
-    adresse: null,
+    marketValueEur: null,
+    marketValueText: null,
+    description: null,
+    address: null,
     pdfUrl: null,
     pdfUrlUpstream: null,
   }
@@ -59,12 +59,12 @@ describe('applyDetail', () => {
     applyDetail(
       auction,
       info({
-        beschreibung: 'Vivienda en Madrid',
+        description: 'Vivienda en Madrid',
         valorSubastaText: '117.000,00 €',
         referenciaCatastral: '9872023VH5797S0001WX',
       }),
     )
-    expect(auction.beschreibung).toBe(
+    expect(auction.description).toBe(
       'Vivienda en Madrid\nValor subasta: 117.000,00 €\nReferencia catastral: 9872023VH5797S0001WX',
     )
   })
@@ -72,12 +72,12 @@ describe('applyDetail', () => {
   it('keeps the labelled lines even without a descripción', () => {
     const auction = auctionFields()
     applyDetail(auction, info({ valorSubastaText: '50.000,00 €' }))
-    expect(auction.beschreibung).toBe('Valor subasta: 50.000,00 €')
+    expect(auction.description).toBe('Valor subasta: 50.000,00 €')
   })
 
-  it('leaves beschreibung untouched when the detail tabs held nothing', () => {
-    const auction = { ...auctionFields(), beschreibung: 'aus dem Listing' }
+  it('leaves description untouched when the detail tabs held nothing', () => {
+    const auction = { ...auctionFields(), description: 'aus dem Listing' }
     applyDetail(auction, info({}))
-    expect(auction.beschreibung).toBe('aus dem Listing')
+    expect(auction.description).toBe('aus dem Listing')
   })
 })

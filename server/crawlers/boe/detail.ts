@@ -8,7 +8,7 @@ import { clean, parseEuroEs } from './text'
  * Fields stay nullable because not every auction populates every row.
  */
 export interface DetailInfo {
-  /** From ver=1 "Tasación" — the appraised market value, mapped to verkehrswertEur. */
+  /** From ver=1 "Tasación" — the appraised market value, mapped to marketValueEur. */
   tasacionEur: number | null
   tasacionText: string | null
   /** From ver=1 "Valor subasta" — minimum acceptable bid amount. */
@@ -16,11 +16,11 @@ export interface DetailInfo {
   /** From ver=1 "Anuncio BOE" — BOE-B-yyyy-... id. */
   anuncioBoeId: string | null
   /** Long descripción from ver=3. Falls back to null. */
-  beschreibung: string | null
+  description: string | null
   /** From ver=3 "Referencia catastral" — the cadastral parcel reference. */
   referenciaCatastral: string | null
   /** Best-effort formatted street address from ver=3 columns. */
-  adresse: string | null
+  address: string | null
 }
 
 async function fetchTab(idSub: string, ver: 1 | 3): Promise<string> {
@@ -61,9 +61,9 @@ function parseVer1(html: string): Pick<DetailInfo, 'tasacionEur' | 'tasacionText
   }
 }
 
-function parseVer3(html: string): Pick<DetailInfo, 'beschreibung' | 'referenciaCatastral' | 'adresse'> {
+function parseVer3(html: string): Pick<DetailInfo, 'description' | 'referenciaCatastral' | 'address'> {
   const p = extractTablePairs(html)
-  const beschreibung = p.get('descripción') ?? p.get('descripcion') ?? null
+  const description = p.get('descripción') ?? p.get('descripcion') ?? null
   // Skip "no consta" placeholders per-field BEFORE composing — otherwise a
   // valid CP would be dropped together with a "no consta" localidad.
   const drop = (s: string | null | undefined): string | null =>
@@ -77,8 +77,8 @@ function parseVer3(html: string): Pick<DetailInfo, 'beschreibung' | 'referenciaC
   const parts = [street, cpLocalidad, provincia, 'España'].filter(
     (s): s is string => Boolean(s),
   )
-  const adresse = parts.length >= 2 ? parts.join(', ') : null
-  return { beschreibung, referenciaCatastral, adresse }
+  const address = parts.length >= 2 ? parts.join(', ') : null
+  return { description, referenciaCatastral, address }
 }
 
 /** Fetches both relevant detail tabs for one subasta and merges them. */
@@ -102,14 +102,14 @@ export async function enrichInBatches(
   let errors = 0
   for (const auction of auctions) {
     try {
-      const info = await fetchDetail(auction.zvgId)
+      const info = await fetchDetail(auction.externalId)
       apply(auction, info)
       enriched++
     } catch (err) {
       // Swallowed on purpose — partial enrichment is better than aborting
       // the whole batch — but emit at debug level so the rare BOE captcha
       // / 5xx is visible when investigating.
-      console.debug(`[boe] detail enrichment failed for ${auction.zvgId}: ${(err as Error).message}`)
+      console.debug(`[boe] detail enrichment failed for ${auction.externalId}: ${(err as Error).message}`)
       errors++
     }
   }

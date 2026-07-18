@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ALL_KATEGORIEN, classifyObjekt } from '~/lib/objektart'
+import { ALL_PROPERTY_TYPE_CATEGORIES, classifyPropertyType } from '~/lib/property-type'
 import type { AuctionDetail } from '~/server/api/auction/[platform]/[id].get'
 import type { Attachment } from '~/types/auction'
 import { ATTACHMENT_KIND_ORDER, attachmentKindLabel } from '~/lib/auction-constants'
@@ -59,12 +59,12 @@ async function loadSummary() {
   }
 }
 
-const KAT_LABEL = new Map(ALL_KATEGORIEN.map((k) => [k.id, k.label]))
-function kategorie(): { id: string; label: string } | null {
+const CATEGORY_LABEL = new Map(ALL_PROPERTY_TYPE_CATEGORIES.map((k) => [k.id, k.label]))
+function category(): { id: string; label: string } | null {
   if (!a.value) return null
   const pt = a.value.extraction?.propertyType
-  if (pt) return { id: pt, label: KAT_LABEL.get(pt) ?? pt }
-  const fallback = classifyObjekt(a.value.objekt)
+  if (pt) return { id: pt, label: CATEGORY_LABEL.get(pt) ?? pt }
+  const fallback = classifyPropertyType(a.value.title)
   return fallback.id === 'unbekannt' ? null : fallback
 }
 
@@ -96,13 +96,13 @@ const photoUrls = computed<string[]>(() => {
   if (!a.value) return []
   const urls: string[] = []
   for (const att of a.value.attachments) {
-    if (att.kind === 'foto') urls.push(att.proxyUrl)
+    if (att.kind === 'photo') urls.push(att.proxyUrl)
   }
   const extracted = a.value.extraction?.photos ?? []
   const platform = encodeURIComponent(a.value.platform)
-  const zvgId = encodeURIComponent(a.value.zvgId)
+  const externalId = encodeURIComponent(a.value.externalId)
   for (const name of extracted) {
-    urls.push(`/api/auction-image/${platform}/${zvgId}/${encodeURIComponent(name)}`)
+    urls.push(`/api/auction-image/${platform}/${externalId}/${encodeURIComponent(name)}`)
   }
   return urls
 })
@@ -126,8 +126,8 @@ const groupedAttachments = computed<Array<{ kind: string; label: string; items: 
 })
 
 useHead(() => ({
-  title: a.value?.objekt
-    ? `${a.value.objekt} · ${a.value.amtsgericht}`
+  title: a.value?.title
+    ? `${a.value.title} · ${a.value.authority}`
     : 'Zwangsversteigerung',
 }))
 </script>
@@ -151,23 +151,23 @@ useHead(() => ({
       <header class="mb-6 space-y-2">
         <div class="flex flex-wrap items-center gap-2 text-xs">
           <span
-            v-if="kategorie()"
+            v-if="category()"
             class="rounded-md bg-primary/10 text-primary px-2 py-0.5 font-semibold"
-          >{{ kategorie()?.label }}</span>
-          <span class="rounded-md bg-secondary text-secondary-foreground px-2 py-0.5 font-medium">{{ a.amtsgericht }}</span>
+          >{{ category()?.label }}</span>
+          <span class="rounded-md bg-secondary text-secondary-foreground px-2 py-0.5 font-medium">{{ a.authority }}</span>
           <span v-if="a.region" class="rounded-md bg-muted text-muted-foreground px-2 py-0.5">{{ a.region }}</span>
-          <span v-if="a.aufgehoben" class="rounded-md bg-destructive/15 text-destructive px-2 py-0.5 font-medium">Aufgehoben</span>
-          <span class="font-mono text-muted-foreground">{{ a.aktenzeichen }}</span>
+          <span v-if="a.cancelled" class="rounded-md bg-destructive/15 text-destructive px-2 py-0.5 font-medium">Aufgehoben</span>
+          <span class="font-mono text-muted-foreground">{{ a.caseNumber }}</span>
         </div>
-        <h1 class="text-2xl font-bold leading-tight">{{ a.objekt || 'Zwangsversteigerung' }}</h1>
-        <p v-if="a.adresse" class="text-muted-foreground">{{ a.adresse }}</p>
+        <h1 class="text-2xl font-bold leading-tight">{{ a.title || 'Zwangsversteigerung' }}</h1>
+        <p v-if="a.address" class="text-muted-foreground">{{ a.address }}</p>
       </header>
 
       <section v-if="photoUrls.length" class="mb-8 space-y-3">
         <div class="overflow-hidden rounded-xl border bg-muted">
           <img
             :src="photoUrls[activePhotoIndex]"
-            :alt="`Foto ${activePhotoIndex + 1} von ${photoUrls.length} — ${a.objekt || 'Immobilie'}`"
+            :alt="`Foto ${activePhotoIndex + 1} von ${photoUrls.length} — ${a.title || 'Immobilie'}`"
             referrerpolicy="no-referrer"
             class="block w-full max-h-[60vh] object-contain bg-black/5"
           >
@@ -196,11 +196,11 @@ useHead(() => ({
         <dl class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-4 rounded-xl border bg-card p-5">
           <div>
             <dt class="text-xs uppercase tracking-wide text-muted-foreground">Verkehrswert</dt>
-            <dd class="text-lg font-semibold tabular-nums">{{ formatEur(a.verkehrswertEur) }}</dd>
+            <dd class="text-lg font-semibold tabular-nums">{{ formatEur(a.marketValueEur) }}</dd>
           </div>
           <div>
             <dt class="text-xs uppercase tracking-wide text-muted-foreground">Termin</dt>
-            <dd class="text-sm font-medium">{{ formatDate(a.terminIso, a.terminText) }}</dd>
+            <dd class="text-sm font-medium">{{ formatDate(a.auctionDateIso, a.auctionDateText) }}</dd>
           </div>
           <div v-if="a.extraction?.landAreaSqm != null">
             <dt class="text-xs uppercase tracking-wide text-muted-foreground">Grundstücksfläche</dt>
@@ -220,11 +220,11 @@ useHead(() => ({
           </div>
           <div>
             <dt class="text-xs uppercase tracking-wide text-muted-foreground">Gericht</dt>
-            <dd class="text-sm font-medium">{{ a.amtsgericht }}</dd>
+            <dd class="text-sm font-medium">{{ a.authority }}</dd>
           </div>
           <div>
             <dt class="text-xs uppercase tracking-wide text-muted-foreground">Aktenzeichen</dt>
-            <dd class="text-sm font-mono">{{ a.aktenzeichen }}</dd>
+            <dd class="text-sm font-mono">{{ a.caseNumber }}</dd>
           </div>
         </dl>
         <p
@@ -236,9 +236,9 @@ useHead(() => ({
         </p>
       </section>
 
-      <CostCalculator v-if="a.country === 'de'" :verkehrswert-eur="a.verkehrswertEur" :region="a.region" />
+      <CostCalculator v-if="a.country === 'de'" :market-value-eur="a.marketValueEur" :region="a.region" />
 
-      <LawyerContact :platform="a.platform" :zvg-id="a.zvgId" :country="a.country" />
+      <LawyerContact :platform="a.platform" :external-id="a.externalId" :country="a.country" />
 
       <section class="mb-8 space-y-3">
         <div class="flex items-center gap-2">
@@ -270,7 +270,7 @@ useHead(() => ({
 
       <section v-if="a.lat != null && a.lng != null" class="mb-8 space-y-2">
         <h2 class="text-base font-semibold">Lage</h2>
-        <AuctionDetailMap :lat="a.lat" :lng="a.lng" :label="a.adresse ?? undefined" :country="a.country" />
+        <AuctionDetailMap :lat="a.lat" :lng="a.lng" :label="a.address ?? undefined" :country="a.country" />
       </section>
 
       <section
@@ -316,10 +316,10 @@ useHead(() => ({
         </ul>
       </section>
 
-      <section v-if="a.beschreibung" class="mb-8 space-y-2">
+      <section v-if="a.description" class="mb-8 space-y-2">
         <h2 class="text-base font-semibold">Beschreibung</h2>
         <p class="whitespace-pre-line text-sm text-foreground/90 leading-relaxed">
-          {{ a.beschreibung }}
+          {{ a.description }}
         </p>
       </section>
     </template>

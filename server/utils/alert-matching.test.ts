@@ -22,36 +22,36 @@ describe('toAuctionFilters', () => {
       country: 'de',
       region: 'de:sn',
       q: 'Wohnung',
-      court: 'AG Dresden',
+      authority: 'AG Dresden',
       priceMin: '100000',
       priceMax: '',
       landMin: '500',
-      kat: 'einfamilienhaus',
+      category: 'einfamilienhaus',
       photos: '1',
-      aufgehoben: '1',
+      cancelled: '1',
     })
 
     expect(filters.countries).toEqual(['de'])
     expect(filters.regionNameKeys).toEqual(new Set(['de:Sachsen']))
     expect(filters.search).toBe('Wohnung')
-    expect(filters.court).toBe('AG Dresden')
-    expect(filters.kategorie).toBe('einfamilienhaus')
+    expect(filters.authority).toBe('AG Dresden')
+    expect(filters.category).toBe('einfamilienhaus')
     expect(filters.onlyWithPhotos).toBe(true)
-    expect(filters.includeAufgehoben).toBe(true)
+    expect(filters.includeCancelled).toBe(true)
     expect(filters.priceMin).toBe(100000)
     expect(filters.priceMax).toBeNull()
     expect(filters.landMin).toBe(500)
     expect(filters.landMax).toBeNull()
   })
 
-  it('defaults to no restriction / court=all / kategorie=all on an empty stored object', () => {
+  it('defaults to no restriction / authority=all / category=all on an empty stored object', () => {
     const filters = toAuctionFilters({})
     expect(filters.countries).toEqual([])
     expect(filters.regionNameKeys).toBeNull()
-    expect(filters.court).toBe('all')
-    expect(filters.kategorie).toBe('all')
+    expect(filters.authority).toBe('all')
+    expect(filters.category).toBe('all')
     expect(filters.onlyWithPhotos).toBe(false)
-    expect(filters.includeAufgehoben).toBe(false)
+    expect(filters.includeCancelled).toBe(false)
     expect(filters.priceMin).toBeNull()
   })
 

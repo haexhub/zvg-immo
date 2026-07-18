@@ -22,21 +22,21 @@ async function enrichOne(auction: Auction): Promise<void> {
   if (!auction.detailUrlUpstream?.startsWith(`${CA_BASE}/property/`)) return
   const detail = parsePropertyPage(await htmlFetch(auction.detailUrlUpstream))
 
-  if (detail.objekt && !auction.objekt) auction.objekt = detail.objekt
+  if (detail.title && !auction.title) auction.title = detail.title
   if (detail.landAreaSqm != null) auction.sourceLandAreaSqm = detail.landAreaSqm
   if (detail.photoUrls.length > 0) {
     auction.photoUrls = detail.photoUrls
-    auction.fotoCount = detail.photoUrls.length
+    auction.photoCount = detail.photoUrls.length
   }
   if (detail.lat != null && detail.lng != null) {
     auction.lat = detail.lat
     auction.lng = detail.lng
   }
   // Append only facts not already present — enrichOne may run again on a
-  // beschreibung that was carried over from an earlier snapshot.
-  const newFacts = detail.facts.filter((f) => !auction.beschreibung?.includes(f))
+  // description that was carried over from an earlier snapshot.
+  const newFacts = detail.facts.filter((f) => !auction.description?.includes(f))
   if (newFacts.length > 0) {
-    auction.beschreibung = [auction.beschreibung, ...newFacts].filter(Boolean).join('\n')
+    auction.description = [auction.description, ...newFacts].filter(Boolean).join('\n')
   }
 }
 

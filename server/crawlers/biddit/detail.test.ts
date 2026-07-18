@@ -146,7 +146,7 @@ describe('fetchDetail', () => {
   it('appends the facts line to the description', async () => {
     stubDetail(detailFixture())
     const info = await fetchDetail('297841')
-    expect(info?.beschreibung).toBe(
+    expect(info?.description).toBe(
       'Ruime woning met tuin.\n\nBaujahr: 1968 · Schlafzimmer: 4 · Energieklasse: E (405 kWh/m²·Jahr)',
     )
   })
@@ -179,10 +179,10 @@ describe('fetchDetail', () => {
     ]
     stubDetail(fixture)
     const info = await fetchDetail('297841')
-    expect(info?.beschreibung).toContain('Ruime woning met tuin.')
-    expect(info?.beschreibung).toContain('Garage attenant')
-    expect(info?.fotoCount).toBe(3)
-    const photoIds = info?.attachments.filter((a) => a.kind === 'foto').map((a) => a.fileId)
+    expect(info?.description).toContain('Ruime woning met tuin.')
+    expect(info?.description).toContain('Garage attenant')
+    expect(info?.photoCount).toBe(3)
+    const photoIds = info?.attachments.filter((a) => a.kind === 'photo').map((a) => a.fileId)
     expect(photoIds).toEqual(['pp_a', 'pp_b', 'pp_c'])
     // Sizes stay first-property-only.
     expect(info?.sourceLandAreaSqm).toBe(888)
@@ -190,16 +190,16 @@ describe('fetchDetail', () => {
     expect(info?.thumbnailUrl).toBe('https://www.biddit.be/stg/m/pp_b.jpeg')
   })
 
-  it('turns every picture into a foto attachment', async () => {
+  it('turns every picture into a photo attachment', async () => {
     stubDetail(detailFixture())
     const info = await fetchDetail('297841')
-    const fotos = info?.attachments.filter((a) => a.kind === 'foto') ?? []
+    const fotos = info?.attachments.filter((a) => a.kind === 'photo') ?? []
     expect(fotos).toHaveLength(2)
     expect(fotos.map((f) => f.proxyUrl)).toEqual([
       'https://www.biddit.be/stg/l/pp_a.jpeg',
       'https://www.biddit.be/stg/l/pp_b.jpeg',
     ])
-    expect(info?.fotoCount).toBe(2)
+    expect(info?.photoCount).toBe(2)
   })
 
   it('returns null for vanished lots (404)', async () => {
@@ -211,16 +211,16 @@ describe('fetchDetail', () => {
 describe('applyDetail', () => {
   function baseAuction() {
     return {
-      verkehrswertEur: null as number | null,
-      verkehrswertText: null as string | null,
-      beschreibung: null as string | null,
-      adresse: null as string | null,
+      marketValueEur: null as number | null,
+      marketValueText: null as string | null,
+      description: null as string | null,
+      address: null as string | null,
       attachments: [],
       pdfUrl: null as string | null,
       pdfUrlUpstream: null as string | null,
-      fotoCount: 0,
+      photoCount: 0,
       thumbnailUrl: null as string | null,
-      aufgehoben: false,
+      cancelled: false,
     }
   }
 
@@ -228,14 +228,14 @@ describe('applyDetail', () => {
     return {
       estimatedPrice: null as number | null,
       startingPrice: null as number | null,
-      beschreibung: null,
-      adresse: null,
+      description: null,
+      address: null,
       attachments: [],
-      fotoCount: 0,
+      photoCount: 0,
       thumbnailUrl: null,
       pdfUrl: null,
       pdfUrlUpstream: null,
-      aufgehoben: false,
+      cancelled: false,
       lat: null as number | null,
       lng: null as number | null,
       sourceLivingAreaSqm: null as number | null,
@@ -246,14 +246,14 @@ describe('applyDetail', () => {
   it('labels the Mindestgebot fallback as such', () => {
     const auction = baseAuction()
     applyDetail(auction, { ...baseInfo(), estimatedPrice: 200000, startingPrice: 200000 })
-    expect(auction.verkehrswertEur).toBe(200000)
-    expect(auction.verkehrswertText).toBe('ab 200.000 € (Mindestgebot)')
+    expect(auction.marketValueEur).toBe(200000)
+    expect(auction.marketValueText).toBe('ab 200.000 € (Mindestgebot)')
   })
 
   it('renders a real appraisal without the Mindestgebot label', () => {
     const auction = baseAuction()
     applyDetail(auction, { ...baseInfo(), estimatedPrice: 250000, startingPrice: 200000 })
-    expect(auction.verkehrswertText).toBe('250.000 €')
+    expect(auction.marketValueText).toBe('250.000 €')
   })
 
   it('copies coordinates and structured sizes onto the auction', () => {
