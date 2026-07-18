@@ -14,6 +14,12 @@ function redirectQuery(): string {
   <div class="flex items-center gap-2 text-sm">
     <template v-if="user">
       <span class="text-muted-foreground truncate max-w-40" :title="user.email">{{ user.email }}</span>
+      <NuxtLink
+        to="/account"
+        class="h-9 inline-flex items-center rounded-md border bg-card px-3 shadow-xs hover:border-primary hover:text-primary transition-colors"
+      >
+        Mein Konto
+      </NuxtLink>
       <button
         type="button"
         class="h-9 rounded-md border bg-card px-3 shadow-xs hover:border-primary hover:text-primary transition-colors"

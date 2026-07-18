@@ -3,7 +3,9 @@ import type { Auction, CrawlResult } from '~/types/auction'
 import type { GeoAuction, GeoCrawlResult } from '~/server/api/auctions-geo.get'
 import type { CountryEntry } from '~/server/crawlers/registry'
 import { ALL_SCOPE, attachmentKindLabel, isAllScope } from '~/lib/auction-constants'
-import { ALL_KATEGORIEN, classifyObjekt, type ObjektKategorie } from '~/lib/objektart'
+import { filterAuctions, scopeByCountryRegion, auctionKategorie, type AuctionFilters } from '~/lib/auction-filters'
+import type { SavedSearch } from '~/server/api/saved-searches/index.get'
+import type { WatchlistItem } from '~/server/api/watchlist/index.get'
 import Select from '~/components/ui/select/Select.vue'
 import SelectTrigger from '~/components/ui/select/SelectTrigger.vue'
 import SelectValue from '~/components/ui/select/SelectValue.vue'
@@ -15,11 +17,12 @@ import SheetHeader from '~/components/ui/sheet/SheetHeader.vue'
 import SheetFooter from '~/components/ui/sheet/SheetFooter.vue'
 import SheetTitle from '~/components/ui/sheet/SheetTitle.vue'
 import SheetDescription from '~/components/ui/sheet/SheetDescription.vue'
-import { ListFilter } from 'lucide-vue-next'
+import { ListFilter, Star } from 'lucide-vue-next'
 import { refDebounced } from '@vueuse/core'
 
 const route = useRoute()
 const router = useRouter()
+const { user } = useAuth()
 
 function queryStr(key: string, fallback = ''): string {
   const v = route.query[key]
@@ -280,35 +283,16 @@ const selectedRegionNameKeys = computed<Set<string> | null>(() => {
 
 // Restricts to the selected countries/regions only — needed because a
 // multi-select (or "all") fetch returns a broader dataset than the current
-// selection. Used both as the base for the full applyFilters() pass and for
+// selection. Used both as the base for the full filterAuctions() pass and for
 // deriving the court/Objektart filter options, which must reflect only the
 // selected countries/regions, not everything that happened to be fetched.
-function scopeByCountryRegion<T extends Auction>(items: T[]): T[] {
-  const countrySet = selectedCountries.value.length ? new Set(selectedCountries.value) : null
-  const regionSet = selectedRegionNameKeys.value
-  if (!countrySet && !regionSet) return items
-  return items.filter((a) => {
-    if (countrySet && !countrySet.has(a.country)) return false
-    if (regionSet && !regionSet.has(`${a.country}:${a.region}`)) return false
-    return true
-  })
-}
-
-const scopedAuctions = computed<Auction[]>(() => (data.value ? scopeByCountryRegion(data.value.auctions) : []))
+const scopedAuctions = computed<Auction[]>(() => (
+  data.value ? scopeByCountryRegion(data.value.auctions, selectedCountries.value, selectedRegionNameKeys.value) : []
+))
 
 const courts = computed<string[]>(() => {
   return [...new Set(scopedAuctions.value.map((a) => a.amtsgericht).filter(Boolean))].sort()
 })
-
-// Prefer the extraction pipeline's propertyType (rules + LLM, understands
-// every crawled language) over classifyObjekt(a.objekt), which only matches
-// German keywords — falling back to it only when extraction found nothing.
-const KATEGORIE_LABEL = new Map(ALL_KATEGORIEN.map((k) => [k.id, k.label]))
-function auctionKategorie(a: Auction): ObjektKategorie {
-  const pt = a.extraction?.propertyType
-  if (pt) return { id: pt, label: KATEGORIE_LABEL.get(pt) ?? pt }
-  return classifyObjekt(a.objekt)
-}
 
 // Counts of normalized Objektart categories. Sorted by descending count so
 // the most common categories show up first in the dropdown.
@@ -348,43 +332,27 @@ function numOrNull(v: unknown): number | null {
   return typeof v === 'number' && !Number.isNaN(v) ? v : null
 }
 
-function applyFilters<T extends Auction>(items: T[]): T[] {
-  const q = debouncedSearch.value.trim().toLowerCase()
-  const kat = kategorieFilter.value
-  const min = numOrNull(priceMin.value)
-  const max = numOrNull(priceMax.value)
-  const landMin = numOrNull(landAreaMin.value)
-  const landMax = numOrNull(landAreaMax.value)
-  const livMin = numOrNull(livingAreaMin.value)
-  const livMax = numOrNull(livingAreaMax.value)
-  return scopeByCountryRegion(items).filter((a) => {
-    if (!includeAufgehoben.value && a.aufgehoben) return false
-    if (!isAllScope(courtFilter.value) && a.amtsgericht !== courtFilter.value) return false
-    if (!isAllScope(kat) && auctionKategorie(a).id !== kat) return false
-    if (onlyWithPhotos.value && a.fotoCount === 0) return false
-    if (min != null && (a.verkehrswertEur == null || a.verkehrswertEur < min)) return false
-    if (max != null && (a.verkehrswertEur == null || a.verkehrswertEur > max)) return false
-    if (landMin != null || landMax != null) {
-      const v = a.extraction?.landAreaSqm ?? null
-      if (v == null) return false
-      if (landMin != null && v < landMin) return false
-      if (landMax != null && v > landMax) return false
-    }
-    if (livMin != null || livMax != null) {
-      const v = a.extraction?.livingAreaSqm ?? null
-      if (v == null) return false
-      if (livMin != null && v < livMin) return false
-      if (livMax != null && v > livMax) return false
-    }
-    if (!q) return true
-    const hay = `${a.aktenzeichen} ${a.amtsgericht} ${a.objekt ?? ''} ${a.adresse ?? ''} ${a.beschreibung ?? ''}`.toLowerCase()
-    return hay.includes(q)
-  })
-}
+// Explicit filter object for lib/auction-filters.ts's pure filterAuctions() —
+// replaces the ~12 reactive refs applyFilters() used to close over directly.
+const currentFilters = computed<AuctionFilters>(() => ({
+  countries: selectedCountries.value,
+  regionNameKeys: selectedRegionNameKeys.value,
+  search: debouncedSearch.value,
+  court: courtFilter.value,
+  kategorie: kategorieFilter.value,
+  onlyWithPhotos: onlyWithPhotos.value,
+  includeAufgehoben: includeAufgehoben.value,
+  priceMin: numOrNull(priceMin.value),
+  priceMax: numOrNull(priceMax.value),
+  landMin: numOrNull(landAreaMin.value),
+  landMax: numOrNull(landAreaMax.value),
+  livMin: numOrNull(livingAreaMin.value),
+  livMax: numOrNull(livingAreaMax.value),
+}))
 
 const filtered = computed<Auction[]>(() => {
   if (!data.value) return []
-  return applyFilters(data.value.auctions)
+  return filterAuctions(data.value.auctions, currentFilters.value)
 })
 
 // The list view used to render every filtered auction as a full card in one
@@ -403,7 +371,7 @@ function loadMore(): void {
 
 const filteredGeo = computed<GeoAuction[]>(() => {
   if (!geoData.value) return []
-  return applyFilters<GeoAuction>(geoData.value.auctions).filter((a) => a.lat != null && a.lng != null)
+  return filterAuctions<GeoAuction>(geoData.value.auctions, currentFilters.value).filter((a) => a.lat != null && a.lng != null)
 })
 
 const totals = computed(() => {
@@ -510,6 +478,74 @@ function truncate(text: string, max: number): string {
 function attachmentLabel(att: { kind: string; label: string }): string {
   return attachmentKindLabel(att.kind, att.label || 'Anhang')
 }
+
+// "Suche speichern" — POSTs the current URL query params as-is (same shape
+// saved_searches.filters mirrors, see lib/auction-filters.ts) under a
+// user-chosen name.
+const savingSearch = ref(false)
+async function saveCurrentSearch(): Promise<void> {
+  if (!user.value) return
+  const name = window.prompt('Name für die gespeicherte Suche:')?.trim()
+  if (!name) return
+  savingSearch.value = true
+  try {
+    await authFetch<SavedSearch>('/api/saved-searches', {
+      method: 'POST',
+      body: { name, filters: route.query },
+    })
+  } catch (err: unknown) {
+    const msg = (err as { statusMessage?: string; message?: string })?.statusMessage
+      ?? (err as { message?: string })?.message
+      ?? 'Suche konnte nicht gespeichert werden.'
+    window.alert(msg)
+  } finally {
+    savingSearch.value = false
+  }
+}
+
+// Watchlist star toggle. Keyed by `${platform}:${zvgId}` → the watchlist
+// row's own id (needed for the DELETE call). Loaded once per login state.
+const watchlistIds = ref<Map<string, string>>(new Map())
+function watchlistKey(a: { platform: string; zvgId: string }): string {
+  return `${a.platform}:${a.zvgId}`
+}
+async function loadWatchlist(): Promise<void> {
+  if (!user.value) {
+    watchlistIds.value = new Map()
+    return
+  }
+  try {
+    const items = await authFetch<WatchlistItem[]>('/api/watchlist')
+    watchlistIds.value = new Map(items.map((i) => [`${i.platform}:${i.zvgId}`, i.id]))
+  } catch {
+    // Ignore transient load errors — the star just falls back to "off".
+  }
+}
+watch(user, () => loadWatchlist(), { immediate: true })
+
+async function toggleWatchlist(a: Auction): Promise<void> {
+  if (!user.value) return
+  const key = watchlistKey(a)
+  const existingId = watchlistIds.value.get(key)
+  try {
+    if (existingId) {
+      await authFetch(`/api/watchlist/${existingId}`, { method: 'DELETE' })
+      const next = new Map(watchlistIds.value)
+      next.delete(key)
+      watchlistIds.value = next
+    } else {
+      const item = await authFetch<WatchlistItem>('/api/watchlist', {
+        method: 'POST',
+        body: { platform: a.platform, zvgId: a.zvgId, amtsgericht: a.amtsgericht, aktenzeichen: a.aktenzeichen },
+      })
+      const next = new Map(watchlistIds.value)
+      next.set(key, item.id)
+      watchlistIds.value = next
+    }
+  } catch {
+    // Ignore transient errors; the star simply doesn't toggle this click.
+  }
+}
 </script>
 
 <template>
@@ -533,6 +569,15 @@ function attachmentLabel(att: { kind: string; label: string }): string {
           · {{ filteredGeo.length }} auf Karte ({{ geoData.geocodedCount }}/{{ geoData.auctions.length }} geokodiert<span v-if="geoData.unresolvableCount > 0">, {{ geoData.unresolvableCount }} unauffindbar</span><span v-if="geocodingInProgress">, läuft …</span>)
         </span>
       </div>
+      <button
+        v-if="user"
+        type="button"
+        :disabled="savingSearch"
+        class="h-9 inline-flex items-center rounded-md border bg-card px-3 text-sm shadow-xs hover:border-primary hover:text-primary transition-colors disabled:opacity-50"
+        @click="saveCurrentSearch"
+      >
+        {{ savingSearch ? 'Speichert …' : 'Suche speichern' }}
+      </button>
       <button
         type="button"
         class="relative h-9 inline-flex items-center gap-2 rounded-md border bg-card px-3 text-sm shadow-xs hover:border-primary hover:text-primary transition-colors"
@@ -862,7 +907,17 @@ function attachmentLabel(att: { kind: string; label: string }): string {
               rel="noopener"
               class="text-primary hover:underline"
             >{{ attachmentLabel(att) }}</a>
-            <NuxtLink :to="`/objekt/${encodeURIComponent(a.platform)}/${encodeURIComponent(a.zvgId)}`" class="ml-auto text-primary hover:underline">
+            <button
+              v-if="user"
+              type="button"
+              class="ml-auto text-muted-foreground hover:text-primary transition-colors"
+              :class="{ 'text-amber-500 hover:text-amber-500': watchlistIds.has(watchlistKey(a)) }"
+              :title="watchlistIds.has(watchlistKey(a)) ? 'Von Watchlist entfernen' : 'Zur Watchlist hinzufügen'"
+              @click="toggleWatchlist(a)"
+            >
+              <Star class="h-4 w-4" :class="{ 'fill-current': watchlistIds.has(watchlistKey(a)) }" />
+            </button>
+            <NuxtLink :to="`/objekt/${encodeURIComponent(a.platform)}/${encodeURIComponent(a.zvgId)}`" :class="user ? '' : 'ml-auto'" class="text-primary hover:underline">
               Details →
             </NuxtLink>
           </footer>
