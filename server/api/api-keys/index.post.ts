@@ -19,6 +19,9 @@ export default defineEventHandler(async (event): Promise<CreatedApiKey> => {
   if (!label) {
     throw createError({ statusCode: 400, statusMessage: 'Label fehlt.' })
   }
+  if (label.length > 100) {
+    throw createError({ statusCode: 400, statusMessage: 'Label ist zu lang (max. 100 Zeichen).' })
+  }
 
   const supabase = getServiceClient()
   if (!supabase) {

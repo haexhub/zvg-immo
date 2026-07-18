@@ -57,20 +57,25 @@ async function recordApiUsage(apiKeyId: string): Promise<void> {
   if (!supabase) return
   const day = new Date().toISOString().slice(0, 10)
   try {
-    const { data } = await supabase
+    const { data, error: selectError } = await supabase
       .from('api_usage')
       .select('count')
       .eq('api_key_id', apiKeyId)
       .eq('day', day)
       .maybeSingle()
+    if (selectError) throw selectError
     if (data) {
-      await supabase
+      const { error: updateError } = await supabase
         .from('api_usage')
         .update({ count: (data.count as number) + 1 })
         .eq('api_key_id', apiKeyId)
         .eq('day', day)
+      if (updateError) throw updateError
     } else {
-      await supabase.from('api_usage').insert({ api_key_id: apiKeyId, day, count: 1 })
+      const { error: insertError } = await supabase
+        .from('api_usage')
+        .insert({ api_key_id: apiKeyId, day, count: 1 })
+      if (insertError) throw insertError
     }
   } catch (err) {
     console.warn(`[data-api-auth] api_usage update failed: ${(err as Error).message}`)

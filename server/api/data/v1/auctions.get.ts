@@ -8,6 +8,7 @@
 import { applyExtractionToAuctions, readExtractionCache } from '../../../utils/extraction-cache'
 import { readMergedListCache } from '../../../utils/list-cache'
 import { toPublicAuction, type PublicAuction } from '../../../utils/data-api-shape'
+import { parsePagination } from '../../../utils/data-api-pagination'
 
 const DEFAULT_PAGE_SIZE = 50
 const MAX_PAGE_SIZE = 200
@@ -27,11 +28,7 @@ export default defineEventHandler(async (event): Promise<PaginatedResponse<Publi
   const platform = typeof query.platform === 'string' ? query.platform : undefined
   const propertyType = typeof query.propertyType === 'string' ? query.propertyType : undefined
   const includeWithdrawn = query.includeWithdrawn === '1'
-  const page = Math.max(1, Math.trunc(Number(query.page)) || 1)
-  const pageSize = Math.min(
-    MAX_PAGE_SIZE,
-    Math.max(1, Math.trunc(Number(query.pageSize)) || DEFAULT_PAGE_SIZE),
-  )
+  const { page, pageSize } = parsePagination(query, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
 
   const result = await readMergedListCache(country)
   const auctions = result?.auctions ?? []

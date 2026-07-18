@@ -86,6 +86,8 @@ async function createApiKey(): Promise<void> {
 }
 
 async function revokeApiKey(id: string): Promise<void> {
+  if (!confirm('Möchten Sie diesen API-Key wirklich widerrufen? Er kann danach nicht mehr verwendet werden.'))
+    return
   await authFetch(`/api/api-keys/${id}`, { method: 'DELETE' })
   apiKeys.value = apiKeys.value.map((k) => (k.id === id ? { ...k, active: false } : k))
 }

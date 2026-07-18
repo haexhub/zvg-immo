@@ -56,14 +56,16 @@ export async function getApiKeyRecord(event: H3Event): Promise<ApiKeyRecord | nu
   if (error || !data) return null
 
   const record: ApiKeyRecord = { id: data.id as string, user_id: data.user_id as string }
-  // Best-effort — a failed last_used_at touch shouldn't fail the request that
-  // triggered it.
-  const { error: touchError } = await supabase
+  // Best-effort, fire-and-forget — a failed or slow last_used_at touch
+  // shouldn't add latency to or fail the request that triggered it.
+  supabase
     .from('api_keys')
     .update({ last_used_at: new Date().toISOString() })
     .eq('id', record.id)
-  if (touchError) {
-    console.warn(`[api-key] last_used_at update failed: ${touchError.message}`)
-  }
+    .then(({ error: touchError }) => {
+      if (touchError) {
+        console.warn(`[api-key] last_used_at update failed: ${touchError.message}`)
+      }
+    })
   return record
 }

@@ -8,6 +8,7 @@
 
 import { getPool } from '../../../utils/db'
 import { toPublicObservation, type PublicObservation } from '../../../utils/data-api-shape'
+import { parsePagination } from '../../../utils/data-api-pagination'
 import type { PaginatedResponse } from './auctions.get'
 
 const DEFAULT_PAGE_SIZE = 100
@@ -24,11 +25,13 @@ export default defineEventHandler(async (event): Promise<PaginatedResponse<Publi
   const region = typeof query.region === 'string' ? query.region : undefined
   const from = typeof query.from === 'string' ? query.from : undefined
   const to = typeof query.to === 'string' ? query.to : undefined
-  const page = Math.max(1, Math.trunc(Number(query.page)) || 1)
-  const pageSize = Math.min(
-    MAX_PAGE_SIZE,
-    Math.max(1, Math.trunc(Number(query.pageSize)) || DEFAULT_PAGE_SIZE),
-  )
+  if (from !== undefined && Number.isNaN(Date.parse(from))) {
+    throw createError({ statusCode: 400, statusMessage: 'Ungültiges "from"-Datum.' })
+  }
+  if (to !== undefined && Number.isNaN(Date.parse(to))) {
+    throw createError({ statusCode: 400, statusMessage: 'Ungültiges "to"-Datum.' })
+  }
+  const { page, pageSize } = parsePagination(query, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
 
   const conditions: string[] = []
   const params: unknown[] = []
@@ -50,20 +53,23 @@ export default defineEventHandler(async (event): Promise<PaginatedResponse<Publi
   }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
 
-  params.push(pageSize)
-  const limitIdx = params.length
-  params.push((page - 1) * pageSize)
-  const offsetIdx = params.length
+  const countParams = [...params]
+  const pageParams = [...params, pageSize, (page - 1) * pageSize]
+  const limitIdx = pageParams.length - 1
+  const offsetIdx = pageParams.length
 
-  const { rows } = await db.query(
-    `SELECT *, count(*) OVER() AS full_count
-     FROM auction_observations
-     ${where}
-     ORDER BY captured_at DESC
-     LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
-    params,
-  )
-  const total = rows.length > 0 ? Number(rows[0].full_count) : 0
+  const [{ rows: countRows }, { rows }] = await Promise.all([
+    db.query(`SELECT count(*) AS total FROM auction_observations ${where}`, countParams),
+    db.query(
+      `SELECT *
+       FROM auction_observations
+       ${where}
+       ORDER BY captured_at DESC, platform, zvg_id
+       LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+      pageParams,
+    ),
+  ])
+  const total = Number(countRows[0].total)
 
   return {
     data: rows.map(toPublicObservation),
