@@ -16,7 +16,7 @@ const FETCH_TIMEOUT_MS = 20_000
 export async function fetchDetailPage(
   zvgId: string,
   landAbk: string,
-  identity: DocumentIdentity,
+  identity?: DocumentIdentity,
 ): Promise<DetailInfo> {
   const url = `${ZVG_BASE}/index.php?button=showZvg&zvg_id=${zvgId}&land_abk=${landAbk}`
   const controller = new AbortController()
@@ -43,7 +43,12 @@ export async function fetchDetailPage(
 
   // Gutachten-PDF is not present on every auction — HTML is archived
   // unconditionally rather than only as a fallback for lots without one.
-  await archiveDetailCapture(Buffer.from(html, 'utf8'), identity, url, new Date().toISOString())
+  // Archiving is crawl-only: the identity is supplied by enrichInBatches, but
+  // omitted by the user-facing photo endpoint (auction-detail.get.ts), whose
+  // captures the continuous crawl already covers — no writes on that read path.
+  if (identity) {
+    await archiveDetailCapture(Buffer.from(html, 'utf8'), identity, url, new Date().toISOString())
+  }
 
   // Each attachment row: <td>Label:</td><td><a href="?button=showAnhang...">filename.pdf</a> <img...> <span>NN.NN kB</span></td>
   // Each attachment lives in its own <tr> with two <td>s: label and link+size.
