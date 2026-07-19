@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Star } from 'lucide-vue-next'
 import type { Auction } from '~/types/auction'
+import { safeHref } from '~/lib/utils'
 
 const props = defineProps<{
   auctions: Auction[]
@@ -79,7 +80,7 @@ function attachmentLabel(att: { kind: string; label: string }): string {
         >
           <a
             v-if="a.thumbnailUrl"
-            :href="a.attachments.find((x) => x.kind === 'photo')?.proxyUrl ?? a.detailUrl ?? undefined"
+            :href="safeHref(a.attachments.find((x) => x.kind === 'photo')?.proxyUrl ?? a.detailUrl)"
             target="_blank"
             rel="noopener"
             class="relative block overflow-hidden border-b group"
@@ -131,13 +132,13 @@ function attachmentLabel(att: { kind: string; label: string }): string {
           </div>
 
           <footer class="border-t px-4 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-            <a v-if="a.pdfUrl" :href="a.pdfUrl" target="_blank" rel="noopener" class="text-primary hover:underline">
+            <a v-if="a.pdfUrl" :href="safeHref(a.pdfUrl)" target="_blank" rel="noopener" class="text-primary hover:underline">
               {{ $t('attachmentKind.announcement') }}
             </a>
             <a
               v-for="att in a.attachments.filter((x) => x.kind !== 'announcement')"
               :key="att.fileId"
-              :href="att.proxyUrl"
+              :href="safeHref(att.proxyUrl)"
               target="_blank"
               rel="noopener"
               class="text-primary hover:underline"

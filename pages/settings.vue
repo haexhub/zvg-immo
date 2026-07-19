@@ -442,7 +442,7 @@ onBeforeUnmount(stopPolling)
         </CardContent>
       </Card>
 
-      <Card>
+      <Card v-if="authed">
         <CardHeader>
           <CardTitle>{{ $t('settings.lawyers.title') }}</CardTitle>
           <CardAction>

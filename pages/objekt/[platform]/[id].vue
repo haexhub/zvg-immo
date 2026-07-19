@@ -4,6 +4,7 @@ import type { AuctionDetail } from '~/server/api/auction/[platform]/[id].get'
 import type { Attachment } from '~/types/auction'
 import { ATTACHMENT_KIND_ORDER } from '~/lib/auction-constants'
 import { isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
+import { safeHref } from '~/lib/utils'
 import { ArrowLeft, Sparkles } from 'lucide-vue-next'
 
 const route = useRoute()
@@ -336,7 +337,7 @@ useHead(() => ({
             <span class="text-xs uppercase tracking-wide text-muted-foreground">{{ group.label }}</span>
             <div class="flex flex-wrap gap-2 mt-1">
               <Button v-for="att in group.items" :key="att.fileId" as-child variant="outline" size="sm">
-                <a :href="att.proxyUrl" target="_blank" rel="noopener">
+                <a :href="safeHref(att.proxyUrl)" target="_blank" rel="noopener">
                   {{ att.label || att.filename || group.label }}
                 </a>
               </Button>
@@ -346,10 +347,10 @@ useHead(() => ({
             <span class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.source') }}</span>
             <div class="flex flex-wrap gap-2 mt-1">
               <Button v-if="a.detailUrlUpstream" as-child variant="outline" size="sm">
-                <a :href="a.detailUrlUpstream" target="_blank" rel="noopener">{{ $t('objektDetail.openDetailPage') }}</a>
+                <a :href="safeHref(a.detailUrlUpstream)" target="_blank" rel="noopener">{{ $t('objektDetail.openDetailPage') }}</a>
               </Button>
               <Button v-if="a.pdfUrlUpstream" as-child variant="outline" size="sm">
-                <a :href="a.pdfUrlUpstream" target="_blank" rel="noopener">{{ $t('objektDetail.announcementOriginal') }}</a>
+                <a :href="safeHref(a.pdfUrlUpstream)" target="_blank" rel="noopener">{{ $t('objektDetail.announcementOriginal') }}</a>
               </Button>
             </div>
           </li>
