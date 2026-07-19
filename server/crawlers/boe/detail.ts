@@ -1,4 +1,6 @@
 import type { Auction } from '~/types/auction'
+import { archiveDetailCapture } from '~/server/utils/fetch-archive'
+import type { DocumentIdentity } from '~/server/utils/raw-archive'
 import { BOE_BASE } from './constants'
 import { boeFetch, looksLikeCaptcha, markBoeCaptcha } from './fetch'
 import { clean, parseEuroEs } from './text'
@@ -23,7 +25,12 @@ export interface DetailInfo {
   address: string | null
 }
 
-async function fetchTab(idSub: string, ver: 1 | 3): Promise<string> {
+async function fetchTab(
+  idSub: string,
+  ver: 1 | 3,
+  identity: DocumentIdentity,
+  capturedAt: string,
+): Promise<string> {
   const url = `${BOE_BASE}/detalleSubasta.php?idSub=${encodeURIComponent(idSub)}&ver=${ver}`
   const html = await boeFetch(url)
   if (looksLikeCaptcha(html)) {
@@ -33,6 +40,10 @@ async function fetchTab(idSub: string, ver: 1 | 3): Promise<string> {
     await markBoeCaptcha()
     throw new Error(`BOE CAPTCHA on ${idSub} ver=${ver}`)
   }
+  // BOE never attaches a PDF/DOCX (auction.attachments stays empty, see
+  // list.ts) — this HTML is the only record of tasación/descripción/
+  // dirección/referencia catastral, so it's the G1 archive target here.
+  await archiveDetailCapture(Buffer.from(html, 'utf8'), identity, url, capturedAt)
   return html
 }
 
@@ -82,10 +93,21 @@ function parseVer3(html: string): Pick<DetailInfo, 'description' | 'referenciaCa
 }
 
 /** Fetches both relevant detail tabs for one subasta and merges them. */
-export async function fetchDetail(idSub: string): Promise<DetailInfo> {
+export async function fetchDetail(auction: Auction): Promise<DetailInfo> {
+  const identity: DocumentIdentity = {
+    platform: auction.platform,
+    country: auction.country,
+    externalId: auction.externalId,
+    caseNumber: auction.caseNumber,
+    authority: auction.authority,
+  }
+  const capturedAt = new Date().toISOString()
   // Promise.all is safe here — the shared rate gate in fetch.ts serializes
   // both requests internally, so the 800ms gap still applies between them.
-  const [v1, v3] = await Promise.all([fetchTab(idSub, 1), fetchTab(idSub, 3)])
+  const [v1, v3] = await Promise.all([
+    fetchTab(auction.externalId, 1, identity, capturedAt),
+    fetchTab(auction.externalId, 3, identity, capturedAt),
+  ])
   return { ...parseVer1(v1), ...parseVer3(v3) }
 }
 
@@ -102,7 +124,7 @@ export async function enrichInBatches(
   let errors = 0
   for (const auction of auctions) {
     try {
-      const info = await fetchDetail(auction.externalId)
+      const info = await fetchDetail(auction)
       apply(auction, info)
       enriched++
     } catch (err) {

@@ -1,4 +1,5 @@
 import type { Auction, CrawlResult } from '~/types/auction'
+import { archiveDetailCapture } from '~/server/utils/fetch-archive'
 import { createCrawlResult, type CrawlOptions, type PlatformCrawler } from '../types'
 import { PLATFORM_ID, CA_BASE, COUNTRY, CA_REGIONS } from './constants'
 import { fetchAllListings, htmlFetch, parsePropertyPage } from './list'
@@ -20,7 +21,23 @@ async function enrichOne(auction: Auction): Promise<void> {
   // have no detail link at all. Host-anchored: detail URLs are resolved from
   // anchors on crawled pages, and only ontariotaxsales.ca must be fetched.
   if (!auction.detailUrlUpstream?.startsWith(`${CA_BASE}/property/`)) return
-  const detail = parsePropertyPage(await htmlFetch(auction.detailUrlUpstream))
+  const html = await htmlFetch(auction.detailUrlUpstream)
+  // CA never produces a PDF/DOCX attachment (pdfUrl/pdfUrlUpstream are always
+  // null, see list.ts) — this property page is the sole source of the facts
+  // below, so it's the G1 archive target here.
+  await archiveDetailCapture(
+    Buffer.from(html, 'utf8'),
+    {
+      platform: auction.platform,
+      country: auction.country,
+      externalId: auction.externalId,
+      caseNumber: auction.caseNumber,
+      authority: auction.authority,
+    },
+    auction.detailUrlUpstream,
+    new Date().toISOString(),
+  )
+  const detail = parsePropertyPage(html)
 
   if (detail.title && !auction.title) auction.title = detail.title
   if (detail.landAreaSqm != null) auction.sourceLandAreaSqm = detail.landAreaSqm
