@@ -1,5 +1,7 @@
 import { load } from 'cheerio'
 import type { Attachment } from '~/types/auction'
+import { archiveDetailCapture } from '~/server/utils/fetch-archive'
+import type { DocumentIdentity } from '~/server/utils/raw-archive'
 import { ZVG_BASE, UA } from './constants'
 import { decodeEntities, parseFileSize } from './text'
 import { classifyAttachment } from '~/server/utils/classify-attachment'
@@ -11,7 +13,11 @@ export interface DetailInfo {
 
 const FETCH_TIMEOUT_MS = 20_000
 
-export async function fetchDetailPage(zvgId: string, landAbk: string): Promise<DetailInfo> {
+export async function fetchDetailPage(
+  zvgId: string,
+  landAbk: string,
+  identity: DocumentIdentity,
+): Promise<DetailInfo> {
   const url = `${ZVG_BASE}/index.php?button=showZvg&zvg_id=${zvgId}&land_abk=${landAbk}`
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
@@ -34,6 +40,10 @@ export async function fetchDetailPage(zvgId: string, landAbk: string): Promise<D
   if (html.length < 64 && html.trim() === 'error') {
     return { attachments: [], description: null }
   }
+
+  // Gutachten-PDF is not present on every auction — HTML is archived
+  // unconditionally rather than only as a fallback for lots without one.
+  await archiveDetailCapture(Buffer.from(html, 'utf8'), identity, url, new Date().toISOString())
 
   // Each attachment row: <td>Label:</td><td><a href="?button=showAnhang...">filename.pdf</a> <img...> <span>NN.NN kB</span></td>
   // Each attachment lives in its own <tr> with two <td>s: label and link+size.
@@ -83,7 +93,7 @@ export async function fetchDetailPage(zvgId: string, landAbk: string): Promise<D
   return { attachments, description }
 }
 
-export async function enrichInBatches<T extends { externalId: string }>(
+export async function enrichInBatches<T extends DocumentIdentity>(
   items: T[],
   landAbk: string,
   enricher: (item: T, info: DetailInfo) => void,
@@ -98,7 +108,7 @@ export async function enrichInBatches<T extends { externalId: string }>(
       const item = items[idx]
       if (!item || !/^\d+$/.test(item.externalId)) continue
       try {
-        const info = await fetchDetailPage(item.externalId, landAbk)
+        const info = await fetchDetailPage(item.externalId, landAbk, item)
         enricher(item, info)
         enriched++
       } catch (err) {

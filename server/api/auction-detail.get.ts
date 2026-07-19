@@ -4,11 +4,12 @@
 // user opens a marker popover.
 
 import type { Attachment } from '~/types/auction'
+import type { DocumentIdentity } from '~/server/utils/raw-archive'
 import { fetchDetail as fetchAtDetail } from '../crawlers/at/detail'
 import { fetchDetail as fetchBidditDetail } from '../crawlers/biddit/detail'
 import { fetchDetailPage as fetchZvgDetail } from '../crawlers/zvg-portal/detail'
 import { AT_BASE } from '../crawlers/at/constants'
-import { DE_REGIONS } from '../crawlers/zvg-portal/constants'
+import { DE_REGIONS, COUNTRY as ZVG_COUNTRY } from '../crawlers/zvg-portal/constants'
 
 export interface AuctionPhotoDetail {
   attachments: Attachment[]
@@ -60,7 +61,14 @@ export default defineEventHandler(async (event): Promise<AuctionPhotoDetail> => 
       case 'zvg-portal': {
         const landAbk = landAbkFromRegionName(region)
         if (!landAbk) return empty
-        const info = await fetchZvgDetail(externalId, landAbk)
+        const identity: DocumentIdentity = {
+          platform,
+          country: ZVG_COUNTRY,
+          externalId,
+          caseNumber: null,
+          authority: null,
+        }
+        const info = await fetchZvgDetail(externalId, landAbk, identity)
         const fotos = info.attachments.filter((a) => a.kind === 'photo')
         const firstFoto = fotos[0]
         return {
