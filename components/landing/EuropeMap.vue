@@ -19,7 +19,7 @@ function selectCountry(code: string) {
 <template>
   <svg
     :viewBox="europeMapData.viewBox"
-    class="h-auto w-full max-w-md mx-auto select-none"
+    class="h-auto w-full select-none"
     role="img"
     :aria-label="$t('landing.hero.mapLabel')"
   >
@@ -29,8 +29,8 @@ function selectCountry(code: string) {
       :d="c.path"
       class="stroke-background transition-colors"
       :class="isAvailable(c.code)
-        ? 'fill-blue-500 hover:fill-blue-600 cursor-pointer'
-        : 'fill-muted cursor-default'"
+        ? 'fill-amber-500 hover:fill-amber-600 cursor-pointer'
+        : 'fill-muted-foreground/15 cursor-default'"
       :tabindex="isAvailable(c.code) ? 0 : -1"
       :role="isAvailable(c.code) ? 'link' : undefined"
       @click="selectCountry(c.code)"
