@@ -53,7 +53,6 @@ const summaryHtml = computed(() => {
 // computed below) while pending or on error.
 const translatedTitle = ref<string | null>(null)
 const translatedDescription = ref<string | null>(null)
-const translationPending = ref(false)
 
 const displayTitle = computed(() => translatedTitle.value ?? a.value?.title ?? null)
 const displayDescription = computed(() => translatedDescription.value ?? a.value?.description ?? null)
@@ -66,7 +65,6 @@ watch([a, locale], async ([val, loc]) => {
   if (val.title == null && val.description == null) return
   if (isPassthroughLanguage(val.country, loc as ContentTargetLang)) return
 
-  translationPending.value = true
   try {
     const res = await $fetch<{ title: string | null; description: string | null }>(
       `/api/auction/${encodeURIComponent(platform)}/${encodeURIComponent(id)}/translation`,
@@ -76,8 +74,6 @@ watch([a, locale], async ([val, loc]) => {
     translatedDescription.value = res.description
   } catch {
     // Best-effort: keep showing the original text (see displayTitle/displayDescription).
-  } finally {
-    translationPending.value = false
   }
 }, { immediate: true })
 

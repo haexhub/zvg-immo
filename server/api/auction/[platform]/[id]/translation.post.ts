@@ -52,9 +52,13 @@ function buildPrompt(title: string | null, description: string | null, targetLan
   return lines.join('\n')
 }
 
-function parseResponse(text: string, title: string | null, description: string | null): TranslationResult {
+function parseResponse(text: string, title: string | null, description: string | null): TranslationResult | null {
   const match = /TITLE:\s*(.*?)\s*\nDESCRIPTION:\s*([\s\S]*)$/.exec(text)
-  if (!match) return { title, description }
+  // No usable format → signal failure instead of returning the untranslated
+  // original. The cache is immutable per (content_hash, lang), so caching the
+  // source text here would permanently serve untranslated text under an
+  // "auto-translated" label; a null lets the caller 502 and retry later.
+  if (!match) return null
   return {
     title: title == null ? null : (match[1] ?? '').trim() || title,
     description: description == null ? null : (match[2] ?? '').trim() || description,
@@ -86,7 +90,7 @@ async function callLlm(
       headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' },
       body: {
         model: config.model,
-        max_tokens: 2048,
+        max_tokens: 8192,
         messages: [{ role: 'user', content: buildPrompt(title, description, targetLang) }],
       },
       signal: AbortSignal.timeout(120_000),
@@ -96,6 +100,12 @@ async function callLlm(
     return null
   }
   if (!resp || typeof resp !== 'object') return null
+  // A truncated response (hit max_tokens) would yield a partial translation
+  // that the immutable cache would then serve forever — treat it as a failure.
+  if ((resp as { stop_reason?: string }).stop_reason === 'max_tokens') {
+    console.warn('[translation] LLM response truncated (max_tokens)')
+    return null
+  }
   const blocks = (resp as { content?: unknown }).content
   if (!Array.isArray(blocks)) return null
   const block = blocks.find(
