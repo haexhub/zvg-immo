@@ -6,6 +6,8 @@ import type { SiteStats } from '~/server/api/stats.get'
 const { data: countries } = await useFetch<CountryEntry[]>('/api/regions', { default: () => [] })
 const { data: stats } = await useFetch<SiteStats | null>('/api/stats', { default: () => null })
 
+const intlLocale = useIntlLocale()
+
 const countryCount = computed(() => stats.value?.countryCount ?? countries.value?.length ?? 0)
 const regionCount = computed(() => stats.value?.regionCount ?? 0)
 const hasLiveStats = computed(() => !!stats.value && stats.value.totalCount > 0)
@@ -27,7 +29,7 @@ const featureIcons = [Sparkles, Gauge, Coins, Languages]
         <p class="text-lg text-muted-foreground">{{ $t('landing.hero.subheadline') }}</p>
         <p class="text-sm text-muted-foreground">
           {{ hasLiveStats
-            ? $t('landing.hero.statLive', { total: stats!.totalCount.toLocaleString(), countries: countryCount, regions: regionCount })
+            ? $t('landing.hero.statLive', { total: stats!.totalCount.toLocaleString(intlLocale), countries: countryCount, regions: regionCount })
             : $t('landing.hero.statPlaceholder') }}
         </p>
         <div class="flex flex-wrap items-center justify-center gap-3 pt-2">
