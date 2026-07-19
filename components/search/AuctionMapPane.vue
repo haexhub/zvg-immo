@@ -8,6 +8,10 @@ defineProps<{
   hasGeoData: boolean
   geoError?: { statusMessage?: string; message?: string } | null
 }>()
+
+const emit = defineEmits<{
+  (e: 'bounds-change', bounds: { north: number; south: number; east: number; west: number }): void
+}>()
 </script>
 
 <template>
@@ -18,7 +22,7 @@ defineProps<{
     <template v-else>
       <!-- Mount immediately so tiles render right away; markers stream in
            as geoData arrives instead of gating the whole map behind it. -->
-      <AuctionMap :auctions="auctions" :fit-key="fitKey" />
+      <AuctionMap :auctions="auctions" :fit-key="fitKey" @bounds-change="emit('bounds-change', $event)" />
       <p
         v-if="geoPending && !hasGeoData"
         class="absolute top-3 left-1/2 -translate-x-1/2 rounded-md border bg-card px-3 py-1 text-xs text-muted-foreground shadow-sm"

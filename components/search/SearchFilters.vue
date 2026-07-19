@@ -22,7 +22,6 @@ const emit = defineEmits<{
   (e: 'reload'): void
 }>()
 
-const search = defineModel<string>('search', { required: true })
 const authorityFilter = defineModel<string>('authorityFilter', { required: true })
 const priceMinDisplay = defineModel<number | null>('priceMinDisplay', { required: true })
 const priceMaxDisplay = defineModel<number | null>('priceMaxDisplay', { required: true })
@@ -89,11 +88,6 @@ const priceBuckets = computed(() => [
       <p v-else class="text-xs text-muted-foreground">
         {{ $t('filters.regionHint') }}
       </p>
-    </div>
-
-    <div class="space-y-2">
-      <Label for="search-filter-q">{{ $t('filters.search') }}</Label>
-      <Input id="search-filter-q" v-model="search" type="search" :placeholder="$t('filters.searchPlaceholder')" />
     </div>
 
     <div class="space-y-2">

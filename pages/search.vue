@@ -385,26 +385,67 @@ const filtered = computed<Auction[]>(() => {
   return filterAuctions(data.value.auctions, currentFilters.value)
 })
 
+const filteredGeo = computed<GeoAuction[]>(() => {
+  if (!geoData.value) return []
+  return filterAuctions<GeoAuction>(geoData.value.auctions, currentFilters.value).filter((a) => a.lat != null && a.lng != null)
+})
+
+// "Kartenbereich": when on, the list is restricted to auctions whose
+// coordinates fall inside the map's visible viewport (emitted by AuctionMap on
+// moveend). Only geocoded auctions can be placed, so ungeocoded ones drop out
+// of the list while this is active.
+type MapBounds = { north: number; south: number; east: number; west: number }
+const mapBounds = ref<MapBounds | null>(null)
+const boundToMap = ref(false)
+const sortBy = ref<'default' | 'dateAsc' | 'priceAsc' | 'priceDesc'>('default')
+
+const listBase = computed<Auction[]>(() => {
+  if (boundToMap.value && mapBounds.value) {
+    const b = mapBounds.value
+    return filteredGeo.value.filter((a) =>
+      a.lat! >= b.south && a.lat! <= b.north && a.lng! >= b.west && a.lng! <= b.east)
+  }
+  return filtered.value
+})
+
+// Nulls sort last regardless of direction.
+function auctionDateKey(a: Auction): number {
+  if (!a.auctionDateIso) return Number.POSITIVE_INFINITY
+  const t = Date.parse(a.auctionDateIso)
+  return Number.isNaN(t) ? Number.POSITIVE_INFINITY : t
+}
+const sortedList = computed<Auction[]>(() => {
+  const arr = listBase.value
+  switch (sortBy.value) {
+    case 'dateAsc':
+      return [...arr].sort((a, b) => auctionDateKey(a) - auctionDateKey(b))
+    case 'priceAsc':
+      return [...arr].sort((a, b) => (a.marketValueEur ?? Number.POSITIVE_INFINITY) - (b.marketValueEur ?? Number.POSITIVE_INFINITY))
+    case 'priceDesc':
+      return [...arr].sort((a, b) => (b.marketValueEur ?? Number.NEGATIVE_INFINITY) - (a.marketValueEur ?? Number.NEGATIVE_INFINITY))
+    default:
+      return arr
+  }
+})
+
 // The list view used to render every filtered auction as a full card in one
 // go — with the "all countries" default that's ~14.7k cards (~45MB of SSR
 // HTML) before the client even hydrates and switches to the map. Page it
 // instead: render a bounded slice and grow it on demand.
 const LIST_PAGE_SIZE = 30
 const visibleCount = ref(LIST_PAGE_SIZE)
-watch(filtered, () => {
+watch(sortedList, () => {
   visibleCount.value = LIST_PAGE_SIZE
 })
-const visibleAuctions = computed<Auction[]>(() => filtered.value.slice(0, visibleCount.value))
+const visibleAuctions = computed<Auction[]>(() => sortedList.value.slice(0, visibleCount.value))
 function loadMore(): void {
   visibleCount.value += LIST_PAGE_SIZE
 }
 
-const filteredGeo = computed<GeoAuction[]>(() => {
-  if (!geoData.value) return []
-  return filterAuctions<GeoAuction>(geoData.value.auctions, currentFilters.value).filter((a) => a.lat != null && a.lng != null)
-})
-
-const geoFitKey = computed(() => `${selectedCountries.value.join(',')}:${selectedRegionKeys.value.join(',')}`)
+// The search term feeds the fit-key so the map re-centres on matching results —
+// searching "Chemnitz" zooms the map to Chemnitz, not just the country. Country
+// and region selections still recentre too.
+const geoFitKey = computed(() => `${selectedCountries.value.join(',')}:${selectedRegionKeys.value.join(',')}:${debouncedSearch.value}`)
 
 const totals = computed(() => {
   if (!data.value) return { gesamt: 0, aktiv: 0, cancelled: 0 }
@@ -571,7 +612,10 @@ async function toggleWatchlist(a: Auction): Promise<void> {
     </header>
 
     <SearchToolbar
-      :filtered-count="filtered.length"
+      v-model:search="search"
+      v-model:sort-by="sortBy"
+      v-model:bound-to-map="boundToMap"
+      :filtered-count="sortedList.length"
       :geo-data="geoData"
       :filtered-geo-count="filteredGeo.length"
       :geocoding-in-progress="geocodingInProgress"
@@ -595,30 +639,31 @@ async function toggleWatchlist(a: Auction): Promise<void> {
 
     <div class="flex-1 min-h-0">
       <div v-if="isDesktop" class="h-full flex gap-4">
+        <SearchAuctionMapPane
+          class="w-2/5 min-w-88 shrink-0 min-h-0"
+          :auctions="filteredGeo"
+          :fit-key="geoFitKey"
+          :geo-pending="geoPending"
+          :has-geo-data="!!geoData"
+          :geo-error="geoError"
+          @bounds-change="mapBounds = $event"
+        />
         <SearchAuctionListPane
-          class="w-[420px] lg:w-[480px] shrink-0"
+          class="flex-1 min-h-0"
           :auctions="visibleAuctions"
-          :total-count="filtered.length"
+          :total-count="sortedList.length"
           :pending="pending"
           :logged-in="!!user"
           :watchlist-ids="watchlistIds"
           @toggle-watchlist="toggleWatchlist"
           @load-more="loadMore"
         />
-        <SearchAuctionMapPane
-          class="flex-1 min-h-0"
-          :auctions="filteredGeo"
-          :fit-key="geoFitKey"
-          :geo-pending="geoPending"
-          :has-geo-data="!!geoData"
-          :geo-error="geoError"
-        />
       </div>
       <SearchTabs
         v-else
         v-model="view"
         :auctions="visibleAuctions"
-        :total-count="filtered.length"
+        :total-count="sortedList.length"
         :pending="pending"
         :logged-in="!!user"
         :watchlist-ids="watchlistIds"
@@ -629,13 +674,13 @@ async function toggleWatchlist(a: Auction): Promise<void> {
         :geo-error="geoError"
         @toggle-watchlist="toggleWatchlist"
         @load-more="loadMore"
+        @bounds-change="mapBounds = $event"
       />
     </div>
 
     <Sheet v-model:open="filtersOpen">
       <SheetContent side="right" class="flex flex-col gap-0 p-0 w-full sm:max-w-md">
         <SearchFilters
-          v-model:search="search"
           v-model:authority-filter="authorityFilter"
           v-model:price-min-display="priceMinDisplay"
           v-model:price-max-display="priceMaxDisplay"
