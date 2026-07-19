@@ -247,7 +247,8 @@
     "photoAlt": "Photo {n} of {total} — {title}",
     "photoAltShort": "Photo {n}",
     "showPhoto": "Show photo {n}",
-    "fallbackTitle": "Property"
+    "fallbackTitle": "Property",
+    "autoTranslatedHint": "Automatically translated"
   },
   "lotPopover": {
     "loadingPhotos": "Loading photos …",

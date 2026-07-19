@@ -3,12 +3,13 @@ import { classifyPropertyType } from '~/lib/property-type'
 import type { AuctionDetail } from '~/server/api/auction/[platform]/[id].get'
 import type { Attachment } from '~/types/auction'
 import { ATTACHMENT_KIND_ORDER } from '~/lib/auction-constants'
+import { isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
 import { ArrowLeft, Sparkles } from 'lucide-vue-next'
 
 const route = useRoute()
 const platform = String(route.params.platform)
 const id = String(route.params.id)
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const intlLocale = useIntlLocale()
 const { currency, eurToDisplay } = useCurrencyDisplay()
 const propertyTypeLabel = usePropertyTypeLabel()
@@ -44,6 +45,41 @@ const summaryHtml = computed(() => {
     .map((p) => `<p>${p.replace(/\n/g, '<br>')}</p>`)
     .join('')
 })
+
+// Auto-translated title/description (WP-8): loaded silently whenever the
+// viewer's locale differs from the auction's source language — unlike the
+// summary above, no manual button, since this replaces text the user would
+// otherwise see untranslated. Falls back to the original text (via the
+// computed below) while pending or on error.
+const translatedTitle = ref<string | null>(null)
+const translatedDescription = ref<string | null>(null)
+const translationPending = ref(false)
+
+const displayTitle = computed(() => translatedTitle.value ?? a.value?.title ?? null)
+const displayDescription = computed(() => translatedDescription.value ?? a.value?.description ?? null)
+const isTranslated = computed(() => translatedTitle.value != null || translatedDescription.value != null)
+
+watch([a, locale], async ([val, loc]) => {
+  translatedTitle.value = null
+  translatedDescription.value = null
+  if (!val) return
+  if (val.title == null && val.description == null) return
+  if (isPassthroughLanguage(val.country, loc as ContentTargetLang)) return
+
+  translationPending.value = true
+  try {
+    const res = await $fetch<{ title: string | null; description: string | null }>(
+      `/api/auction/${encodeURIComponent(platform)}/${encodeURIComponent(id)}/translation`,
+      { method: 'POST', query: { lang: loc } },
+    )
+    translatedTitle.value = res.title
+    translatedDescription.value = res.description
+  } catch {
+    // Best-effort: keep showing the original text (see displayTitle/displayDescription).
+  } finally {
+    translationPending.value = false
+  }
+}, { immediate: true })
 
 async function loadSummary() {
   summaryPending.value = true
@@ -138,8 +174,8 @@ const groupedAttachments = computed<Array<{ kind: string; label: string; items: 
 })
 
 useHead(() => ({
-  title: a.value?.title
-    ? `${a.value.title} · ${a.value.authority}`
+  title: displayTitle.value
+    ? `${displayTitle.value} · ${a.value?.authority}`
     : t('objektDetail.untitled'),
 }))
 </script>
@@ -171,7 +207,7 @@ useHead(() => ({
           <span v-if="a.cancelled" class="rounded-md bg-destructive/15 text-destructive px-2 py-0.5 font-medium">{{ $t('objektDetail.cancelled') }}</span>
           <span class="font-mono text-muted-foreground">{{ a.caseNumber }}</span>
         </div>
-        <h1 class="text-2xl font-bold leading-tight">{{ a.title || $t('objektDetail.untitled') }}</h1>
+        <h1 class="text-2xl font-bold leading-tight">{{ displayTitle || $t('objektDetail.untitled') }}</h1>
         <p v-if="a.address" class="text-muted-foreground">{{ a.address }}</p>
       </header>
 
@@ -179,7 +215,7 @@ useHead(() => ({
         <div class="overflow-hidden rounded-xl border bg-muted">
           <img
             :src="photoUrls[activePhotoIndex]"
-            :alt="$t('objektDetail.photoAlt', { n: activePhotoIndex + 1, total: photoUrls.length, title: a.title || $t('objektDetail.fallbackTitle') })"
+            :alt="$t('objektDetail.photoAlt', { n: activePhotoIndex + 1, total: photoUrls.length, title: displayTitle || $t('objektDetail.fallbackTitle') })"
             referrerpolicy="no-referrer"
             class="block w-full max-h-[60vh] object-contain bg-black/5"
           >
@@ -333,10 +369,13 @@ useHead(() => ({
         </ul>
       </section>
 
-      <section v-if="a.description" class="mb-8 space-y-2">
-        <h2 class="text-base font-semibold">{{ $t('objektDetail.description') }}</h2>
+      <section v-if="displayDescription" class="mb-8 space-y-2">
+        <div class="flex items-center gap-2">
+          <h2 class="text-base font-semibold">{{ $t('objektDetail.description') }}</h2>
+          <span v-if="isTranslated" class="text-xs text-muted-foreground">({{ $t('objektDetail.autoTranslatedHint') }})</span>
+        </div>
         <p class="whitespace-pre-line text-sm text-foreground/90 leading-relaxed">
-          {{ a.description }}
+          {{ displayDescription }}
         </p>
       </section>
     </template>

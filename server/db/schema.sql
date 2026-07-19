@@ -284,3 +284,19 @@ CREATE INDEX IF NOT EXISTS idx_capt_identity_time ON raw_captures (platform, ext
 CREATE INDEX IF NOT EXISTS idx_capt_az_time       ON raw_captures (authority, case_number, captured_at DESC);
 CREATE INDEX IF NOT EXISTS idx_capt_hash          ON raw_captures (content_hash);
 -- Kein RLS: server-intern, nie clientseitig exponiert (wie auction_observations).
+
+-- WP-8: i18n Baustein B (Content-Übersetzung). content_hash = sha256 über
+-- {title, description} (server/utils/raw-archive.ts's sha256Hex, siehe
+-- server/utils/content-translation.ts) — derselbe Änderungs-Schlüssel wie im
+-- G1-Archiv: unveränderter Inhalt -> Cache-Treffer, geänderter Inhalt -> neuer
+-- Hash -> neue Übersetzung. Immutabel pro (content_hash, lang), keine
+-- Invalidierung nötig. Kein RLS: öffentlich lesbarer, nicht nutzergebundener
+-- Übersetzungs-Cache (wie auction_observations server-intern verwaltet).
+CREATE TABLE IF NOT EXISTS content_translations (
+  content_hash  text NOT NULL,
+  lang          text NOT NULL,
+  title         text,
+  description   text,
+  at            timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (content_hash, lang)
+);

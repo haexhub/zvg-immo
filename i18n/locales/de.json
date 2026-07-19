@@ -247,7 +247,8 @@
     "photoAlt": "Foto {n} von {total} — {title}",
     "photoAltShort": "Foto {n}",
     "showPhoto": "Foto {n} anzeigen",
-    "fallbackTitle": "Immobilie"
+    "fallbackTitle": "Immobilie",
+    "autoTranslatedHint": "Automatisch übersetzt"
   },
   "lotPopover": {
     "loadingPhotos": "Lade Fotos …",
