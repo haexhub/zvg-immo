@@ -7,6 +7,7 @@ const { data: countries } = await useFetch<CountryEntry[]>('/api/regions', { def
 const { data: stats } = await useFetch<SiteStats | null>('/api/stats', { default: () => null })
 
 const intlLocale = useIntlLocale()
+const router = useRouter()
 
 const countryCount = computed(() => stats.value?.countryCount ?? countries.value?.length ?? 0)
 const regionCount = computed(() => stats.value?.regionCount ?? 0)
@@ -14,31 +15,47 @@ const hasLiveStats = computed(() => !!stats.value && stats.value.totalCount > 0)
 
 const valueIcons = [MapIcon, ListFilter, Ruler, Languages]
 const featureIcons = [Sparkles, Gauge, Coins, Languages]
+
+const heroSearch = ref('')
+function submitHeroSearch() {
+  const q = heroSearch.value.trim()
+  router.push({ path: '/search', query: q ? { q } : undefined })
+}
 </script>
 
 <template>
   <main>
     <!-- Hero -->
-    <section class="px-4 py-16 md:py-24 text-center">
-      <div class="mx-auto max-w-3xl space-y-6">
-        <h1 class="text-3xl md:text-5xl font-bold tracking-tight">
-          {{ $t('landing.hero.headline') }}
-          <span class="bg-linear-to-b from-blue-400 to-blue-600 bg-clip-text text-transparent">{{ $t('landing.hero.headlineHighlight') }}</span>
-          {{ $t('landing.hero.headlineSuffix') }}
-        </h1>
-        <p class="text-lg text-muted-foreground">{{ $t('landing.hero.subheadline') }}</p>
-        <p class="text-sm text-muted-foreground">
-          {{ hasLiveStats
-            ? $t('landing.hero.statLive', { total: stats!.totalCount.toLocaleString(intlLocale), countries: countryCount, regions: regionCount })
-            : $t('landing.hero.statPlaceholder') }}
-        </p>
-        <div class="flex flex-wrap items-center justify-center gap-3 pt-2">
-          <Button size="lg" as-child>
-            <NuxtLink to="/search">{{ $t('landing.hero.ctaPrimary') }}</NuxtLink>
-          </Button>
-          <Button size="lg" variant="outline" as-child>
-            <a href="#demo">{{ $t('landing.hero.ctaSecondary') }}</a>
-          </Button>
+    <section class="px-4 py-16 md:py-24">
+      <div class="mx-auto max-w-6xl grid md:grid-cols-2 gap-10 items-center">
+        <div class="text-center md:text-left space-y-6">
+          <h1 class="text-3xl md:text-5xl font-bold tracking-tight">
+            {{ $t('landing.hero.headline') }}
+            <span class="bg-linear-to-b from-blue-400 to-blue-600 bg-clip-text text-transparent">{{ $t('landing.hero.headlineHighlight') }}</span>
+            {{ $t('landing.hero.headlineSuffix') }}
+          </h1>
+          <p class="text-lg text-muted-foreground">{{ $t('landing.hero.subheadline') }}</p>
+          <p class="text-sm text-muted-foreground">
+            {{ hasLiveStats
+              ? $t('landing.hero.statLive', { total: stats!.totalCount.toLocaleString(intlLocale), countries: countryCount, regions: regionCount })
+              : $t('landing.hero.statPlaceholder') }}
+          </p>
+          <form class="flex gap-2 max-w-md mx-auto md:mx-0" @submit.prevent="submitHeroSearch">
+            <Input v-model="heroSearch" :placeholder="$t('landing.hero.searchPlaceholder')" />
+            <Button type="submit">{{ $t('landing.hero.searchCta') }}</Button>
+          </form>
+          <div class="flex flex-wrap items-center justify-center md:justify-start gap-3">
+            <Button size="lg" as-child>
+              <NuxtLink to="/search">{{ $t('landing.hero.ctaPrimary') }}</NuxtLink>
+            </Button>
+            <Button size="lg" variant="outline" as-child>
+              <a href="#demo">{{ $t('landing.hero.ctaSecondary') }}</a>
+            </Button>
+          </div>
+        </div>
+        <div>
+          <LandingEuropeMap :countries="countries ?? []" />
+          <p class="text-center text-xs text-muted-foreground mt-2">{{ $t('landing.hero.mapHint') }}</p>
         </div>
       </div>
     </section>
