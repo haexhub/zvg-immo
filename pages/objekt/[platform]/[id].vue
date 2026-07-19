@@ -10,6 +10,7 @@ const platform = String(route.params.platform)
 const id = String(route.params.id)
 const { t } = useI18n()
 const intlLocale = useIntlLocale()
+const { currency, eurToDisplay } = useCurrencyDisplay()
 const propertyTypeLabel = usePropertyTypeLabel()
 const attachmentKindLabelFn = useAttachmentKindLabel()
 
@@ -71,9 +72,17 @@ function category(): { id: string; label: string } | null {
   return fallback.id === 'unbekannt' ? null : { id: fallback.id, label: propertyTypeLabel(fallback.id, fallback.label) }
 }
 
-function formatEur(n: number | null): string {
-  if (n == null) return '–'
-  return n.toLocaleString(intlLocale.value, { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
+function formatPrice(marketValueEur: number | null): string {
+  const converted = eurToDisplay(marketValueEur)
+  if (converted == null) return '–'
+  return converted.toLocaleString(intlLocale.value, { style: 'currency', currency: currency.value, maximumFractionDigits: 0 })
+}
+
+// Shown whenever the auction's native currency differs from the viewer's
+// display currency — including a EUR-native (e.g. German) auction viewed by
+// a non-EUR user, which formatPrice() alone wouldn't make obvious.
+function showOriginalPrice(): boolean {
+  return !!a.value?.marketValueText && (a.value?.currency ?? 'EUR') !== currency.value
 }
 
 function formatDate(iso: string | null, fallback: string | null): string {
@@ -199,9 +208,9 @@ useHead(() => ({
         <dl class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-4 rounded-xl border bg-card p-5">
           <div>
             <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.marketValue') }}</dt>
-            <dd class="text-lg font-semibold tabular-nums">{{ formatEur(a.marketValueEur) }}</dd>
+            <dd class="text-lg font-semibold tabular-nums">{{ formatPrice(a.marketValueEur) }}</dd>
             <dd
-              v-if="a.currency && a.currency !== 'EUR' && a.marketValueText"
+              v-if="showOriginalPrice()"
               class="text-xs text-muted-foreground"
             >
               {{ $t('objektDetail.original', { value: a.marketValueText }) }}
