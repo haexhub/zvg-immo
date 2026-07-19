@@ -156,6 +156,9 @@ export default defineNuxtConfig({
       // WP-7: rate table refreshes at most every 24h anyway (exchange-rate.ts's
       // own TTL); swr avoids re-doing that disk-cache read on every request.
       '/api/exchange-rates': { swr: 86400 },
+      // Landing-page stats only need to be as fresh as the hourly refresh task
+      // above — swr avoids re-parsing every cached region file on each hit.
+      '/api/stats': { swr: 3600 },
     },
   },
 })

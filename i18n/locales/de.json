@@ -1,7 +1,7 @@
 {
   "site": {
-    "title": "Zwangsversteigerungen Deutschland",
-    "description": "Öffentliche Immobilien-Zwangsversteigerungen aller deutschen Bundesländer, gecrawlt aus den amtlichen Justizportalen."
+    "title": "ZVG Scout — Zwangsversteigerungen europaweit",
+    "description": "ZVG Scout durchsucht rund um die Uhr Amts- und Gerichtsportale in vielen europäischen Ländern und zeigt jede Zwangsversteigerung auf einer Karte."
   },
   "nav": {
     "brand": "ZVG Scout",
@@ -9,6 +9,90 @@
     "archive": "Archiv",
     "calculator": "Rechner",
     "menu": "Menü"
+  },
+  "landing": {
+    "hero": {
+      "headline": "Dein Scout für",
+      "headlineHighlight": "Zwangsversteigerungen",
+      "headlineSuffix": "— europaweit",
+      "subheadline": "ZVG Scout durchsucht rund um die Uhr Gerichte und Amtsportale in vielen europäischen Ländern und zeigt dir jede Zwangsversteigerung auf einer Karte.",
+      "statLive": "{total} Objekte im Bestand · {countries} Länder · {regions} Regionen",
+      "statPlaceholder": "Tausende Objekte · viele Länder europaweit",
+      "ctaPrimary": "Kostenlos Objekte durchsuchen",
+      "ctaSecondary": "So funktioniert's"
+    },
+    "value": {
+      "heading": "Kostenlos",
+      "headingSuffix": "alle Zwangsversteigerungen — europaweit",
+      "items": [
+        { "title": "Kartenansicht", "desc": "Alle Objekte auf einer interaktiven Karte, live geokodiert." },
+        { "title": "Listenansicht", "desc": "Fotos, Verkehrswert, Gericht und Termin auf einen Blick." },
+        { "title": "Erweiterte Filter", "desc": "Nach Preis, Fläche, Objektart, Gericht und mehr eingrenzen." },
+        { "title": "Automatische Übersetzung", "desc": "Inhalte aus jedem Land automatisch auf Deutsch." }
+      ]
+    },
+    "coverage": {
+      "heading": "Länder, ein Scout",
+      "subheadline": "Von den deutschen Amtsgerichtsportalen über Frankreich, Italien, Spanien und Polen bis zu kuratierten Quellen in Nordamerika — ZVG Scout crawlt kontinuierlich im Hintergrund, du musst nichts manuell aktualisieren.",
+      "stat": "{countries} Länder · {regions} Regionen/Bundesländer",
+      "statPlaceholder": "Viele Länder und Regionen",
+      "note": "Kontinuierliches Crawling im Hintergrund — neue Auktionen erscheinen automatisch, ohne dass du manuell aktualisierst.",
+      "cta": "Verfügbare Länder ansehen"
+    },
+    "features": {
+      "heading": "KI-gestützte Gutachten-Analyse & einzigartige Features",
+      "items": [
+        { "title": "KI-Zusammenfassung von Gutachten & Exposés", "desc": "Statt hundert Seiten PDF zu wälzen: ZVG Scout fasst Objektdaten, Lage und Zustand automatisch zusammen — auch wenn das Original nicht auf Deutsch ist." },
+        { "title": "Automatische Objekterkennung", "desc": "Objektart, Wohn- und Grundstücksfläche sowie Zimmerzahl werden automatisch aus Anzeige und Gutachten erkannt." },
+        { "title": "Mehrwährungs-Ansicht", "desc": "Verkehrswerte werden live in deine Wunschwährung umgerechnet — das Original bleibt daneben sichtbar." },
+        { "title": "Automatische Übersetzung", "desc": "Beschreibungen und Dokumente aus jedem Quellland werden automatisch übersetzt." }
+      ]
+    },
+    "demo": {
+      "heading": "Entdecke ZVG Scout in Aktion",
+      "subheadline": "Karte, Liste, Filter — probier's direkt aus, ganz ohne Anmeldung.",
+      "cta": "Jetzt live testen"
+    },
+    "archive": {
+      "heading": "Zwangsversteigerungs-Archiv",
+      "body": "Vergangene Termine bleiben recherchierbar — verfolge Preisverläufe und vergleiche abgeschlossene Verfahren mit aktuellen Angeboten.",
+      "note": "Das Archiv befindet sich im Aufbau.",
+      "cta": "Archiv durchsuchen"
+    },
+    "calculator": {
+      "heading": "Rechner: Erwerbskosten",
+      "body": "Berechne Grunderwerbsteuer, Gerichts- und Notarkosten sowie Zinsen nach § 49 ZVG für deutsche Zwangsversteigerungen — bundeslandgenau.",
+      "bullets": ["Grunderwerbsteuer je Bundesland", "Gerichtskosten (GKG) für den Zuschlagsbeschluss", "Zinsen ab Zuschlag bis Zahlung"],
+      "note": "Aktuell verfügbar für deutsche Zwangsversteigerungen.",
+      "cta": "Erwerbskosten berechnen"
+    },
+    "app": {
+      "heading": "iOS und Android App",
+      "body": "Eine native App für unterwegs ist in Entwicklung.",
+      "cta": "In der Suche weitermachen"
+    },
+    "ux": {
+      "heading": "Erstklassige User Experience",
+      "body": "Schnelle Kartenansicht, klare Filter, keine überladenen Formulare — gebaut für Vielrecherchierer, nicht für Gelegenheitsnutzer."
+    },
+    "faq": {
+      "heading": "Häufig gestellte Fragen",
+      "items": [
+        { "q": "Ist ZVG Scout kostenlos?", "a": "Ja — Suche, Kartenansicht und Filter sind komplett kostenlos, auch ohne Anmeldung. Ein Konto brauchst du nur für Zusatzfunktionen wie Watchlist und gespeicherte Suchen." },
+        { "q": "Aus welchen Ländern kommen die Daten?", "a": "ZVG Scout crawlt Amts- und Gerichtsportale in vielen europäischen Ländern sowie kuratierte Quellen in Nordamerika. Die genaue Länderliste siehst du im Filter der Suche." },
+        { "q": "Wie aktuell sind die Daten?", "a": "Ein Hintergrund-Crawler aktualisiert die Daten laufend — du musst nichts manuell anstoßen." },
+        { "q": "Ersetzt ZVG Scout eine Rechtsberatung?", "a": "Nein. ZVG Scout liefert Recherche-Daten, keine Rechtsberatung. Über die Objektseite kannst du bei Bedarf direkt einen vermittelten Anwalt kontaktieren." },
+        { "q": "Was macht die KI-Zusammenfassung?", "a": "Sie fasst Objektdaten, Lage und Zustand aus Gutachten und Exposés zusammen und übersetzt sie bei Bedarf — auf Knopfdruck, direkt auf der Objektseite." },
+        { "q": "Funktioniert der Erwerbskosten-Rechner für alle Länder?", "a": "Nein, aktuell nur für deutsche Zwangsversteigerungen." }
+      ]
+    },
+    "finalCta": {
+      "heading": "Jetzt kostenlos starten",
+      "cta": "Zur Suche"
+    },
+    "footer": {
+      "tagline": "Dein Scout für Zwangsversteigerungen — europaweit."
+    }
   },
   "search": {
     "titleWithLabel": "Zwangsversteigerungen {label}",
