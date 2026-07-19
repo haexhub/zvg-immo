@@ -2,7 +2,7 @@
 import type { Auction, CrawlResult } from '~/types/auction'
 import type { GeoAuction, GeoCrawlResult } from '~/server/api/auctions-geo.get'
 import type { CountryEntry } from '~/server/crawlers/registry'
-import { ALL_SCOPE, attachmentKindLabel, isAllScope } from '~/lib/auction-constants'
+import { ALL_SCOPE, isAllScope } from '~/lib/auction-constants'
 import { filterAuctions, scopeByCountryRegion, auctionCategory, type AuctionFilters } from '~/lib/auction-filters'
 import type { SavedSearch } from '~/server/api/saved-searches/index.get'
 import type { WatchlistItem } from '~/server/api/watchlist/index.get'
@@ -23,6 +23,11 @@ import { refDebounced } from '@vueuse/core'
 const route = useRoute()
 const router = useRouter()
 const { user } = useAuth()
+const { t, locale } = useI18n()
+const intlLocale = useIntlLocale()
+const propertyTypeLabel = usePropertyTypeLabel()
+const attachmentKindLabelFn = useAttachmentKindLabel()
+const countryLabel = useCountryLabel()
 
 function queryStr(key: string, fallback = ''): string {
   const v = route.query[key]
@@ -61,7 +66,7 @@ const availableRegions = computed(() => {
   if (selectedCountries.value.length === 0) return []
   return (countries.value ?? [])
     .filter((c) => selectedCountries.value.includes(c.code))
-    .flatMap((c) => c.regions.map((r) => ({ ...r, key: `${c.code}:${r.code}`, countryName: c.name })))
+    .flatMap((c) => c.regions.map((r) => ({ ...r, key: `${c.code}:${r.code}`, countryName: countryLabel(c.code, c.name) })))
 })
 
 function toggleCountry(code: string): void {
@@ -244,12 +249,12 @@ watch([selectedCountries, selectedRegionKeys], () => {
 })
 
 const selectedCountryLabel = computed(() => {
-  if (selectedCountries.value.length === 0) return 'Europa'
+  if (selectedCountries.value.length === 0) return t('home.europe')
   if (selectedCountries.value.length === 1) {
     const code = selectedCountries.value[0]!
-    return countries.value?.find((c) => c.code === code)?.name ?? code
+    return countryLabel(code, countries.value?.find((c) => c.code === code)?.name)
   }
-  return `${selectedCountries.value.length} Länder`
+  return t('home.countriesCount', { count: selectedCountries.value.length })
 })
 
 const selectedRegionLabel = computed(() => {
@@ -257,7 +262,7 @@ const selectedRegionLabel = computed(() => {
   if (selectedRegionKeys.value.length === 1) {
     return availableRegions.value.find((r) => r.key === selectedRegionKeys.value[0])?.name ?? null
   }
-  return `${selectedRegionKeys.value.length} Regionen`
+  return t('home.regionsCount', { count: selectedRegionKeys.value.length })
 })
 
 const headerLabel = computed(() => {
@@ -297,17 +302,15 @@ const courts = computed<string[]>(() => {
 // Counts of normalized Objektart categories. Sorted by descending count so
 // the most common categories show up first in the dropdown.
 const kategorienMitCount = computed<{ id: string; label: string; count: number }[]>(() => {
-  const counts = new Map<string, { label: string; count: number }>()
+  const counts = new Map<string, number>()
   for (const a of scopedAuctions.value) {
     if (a.cancelled) continue
-    const k = auctionCategory(a)
-    const entry = counts.get(k.id)
-    if (entry) entry.count++
-    else counts.set(k.id, { label: k.label, count: 1 })
+    const id = auctionCategory(a).id
+    counts.set(id, (counts.get(id) ?? 0) + 1)
   }
   return [...counts.entries()]
-    .map(([id, v]) => ({ id, ...v }))
-    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, 'de'))
+    .map(([id, count]) => ({ id, label: propertyTypeLabel(id), count }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, locale.value))
 })
 
 function clearAllFilters(): void {
@@ -457,14 +460,14 @@ watch(data, () => {
 
 function formatEur(n: number | null): string {
   if (n == null) return '–'
-  return n.toLocaleString('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
+  return n.toLocaleString(intlLocale.value, { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
 }
 
 function formatDate(iso: string | null, fallback: string | null): string {
   if (!iso) return fallback ?? '–'
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return fallback ?? iso
-  return d.toLocaleString('de-DE', {
+  return d.toLocaleString(intlLocale.value, {
     weekday: 'short', day: '2-digit', month: 'short', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
   })
@@ -476,7 +479,7 @@ function truncate(text: string, max: number): string {
 }
 
 function attachmentLabel(att: { kind: string; label: string }): string {
-  return attachmentKindLabel(att.kind, att.label || 'Anhang')
+  return attachmentKindLabelFn(att.kind, att.label || t('attachmentKind.other'))
 }
 
 // "Suche speichern" — POSTs the current URL query params as-is (same shape
@@ -485,7 +488,7 @@ function attachmentLabel(att: { kind: string; label: string }): string {
 const savingSearch = ref(false)
 async function saveCurrentSearch(): Promise<void> {
   if (!user.value) return
-  const name = window.prompt('Name für die gespeicherte Suche:')?.trim()
+  const name = window.prompt(t('home.saveSearchPrompt'))?.trim()
   if (!name) return
   savingSearch.value = true
   try {
@@ -496,7 +499,7 @@ async function saveCurrentSearch(): Promise<void> {
   } catch (err: unknown) {
     const msg = (err as { statusMessage?: string; message?: string })?.statusMessage
       ?? (err as { message?: string })?.message
-      ?? 'Suche konnte nicht gespeichert werden.'
+      ?? t('home.saveSearchError')
     window.alert(msg)
   } finally {
     savingSearch.value = false
@@ -552,12 +555,12 @@ async function toggleWatchlist(a: Auction): Promise<void> {
   <main class="h-screen flex flex-col px-4 py-3">
     <header class="shrink-0 mb-3">
       <div class="flex items-baseline gap-x-5 gap-y-1 flex-wrap">
-        <h1 class="text-2xl font-bold tracking-tight">Zwangsversteigerungen {{ headerLabel }}</h1>
+        <h1 class="text-2xl font-bold tracking-tight">{{ $t('home.titleWithLabel', { label: headerLabel }) }}</h1>
         <div v-if="data" class="flex flex-wrap items-center gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
-          <span><span class="font-semibold text-foreground">{{ totals.gesamt }}</span> gesamt</span>
-          <span><span class="font-semibold text-emerald-600 dark:text-emerald-500">{{ totals.aktiv }}</span> aktiv</span>
-          <span><span class="font-semibold">{{ totals.cancelled }}</span> cancelled</span>
-          <span v-if="data">Stand: {{ new Date(data.fetchedAt).toLocaleString('de-DE') }}</span>
+          <span><span class="font-semibold text-foreground">{{ totals.gesamt }}</span> {{ $t('home.total') }}</span>
+          <span><span class="font-semibold text-emerald-600 dark:text-emerald-500">{{ totals.aktiv }}</span> {{ $t('home.active') }}</span>
+          <span><span class="font-semibold">{{ totals.cancelled }}</span> {{ $t('home.cancelled') }}</span>
+          <span v-if="data">{{ $t('home.asOf', { date: new Date(data.fetchedAt).toLocaleString(intlLocale) }) }}</span>
         </div>
         <AuthStatus class="ml-auto" />
       </div>
@@ -565,8 +568,8 @@ async function toggleWatchlist(a: Auction): Promise<void> {
 
     <div class="shrink-0 mb-3 flex items-center justify-end gap-3">
       <div v-if="filtered.length" class="text-sm text-muted-foreground mr-auto">
-        {{ filtered.length }} Treffer<span v-if="view === 'map' && geoData">
-          · {{ filteredGeo.length }} auf Karte ({{ geoData.geocodedCount }}/{{ geoData.auctions.length }} geokodiert<span v-if="geoData.unresolvableCount > 0">, {{ geoData.unresolvableCount }} unauffindbar</span><span v-if="geocodingInProgress">, läuft …</span>)
+        {{ $t('home.resultsCount', { count: filtered.length }) }}<span v-if="view === 'map' && geoData">
+          · {{ filteredGeo.length }} {{ $t('home.onMap') }} ({{ $t('home.geocoded', { done: geoData.geocodedCount, total: geoData.auctions.length }) }}<span v-if="geoData.unresolvableCount > 0">, {{ $t('home.unresolvable', { count: geoData.unresolvableCount }) }}</span><span v-if="geocodingInProgress">, {{ $t('home.geocodingRunning') }}</span>)
         </span>
       </div>
       <button
@@ -576,7 +579,7 @@ async function toggleWatchlist(a: Auction): Promise<void> {
         class="h-9 inline-flex items-center rounded-md border bg-card px-3 text-sm shadow-xs hover:border-primary hover:text-primary transition-colors disabled:opacity-50"
         @click="saveCurrentSearch"
       >
-        {{ savingSearch ? 'Speichert …' : 'Suche speichern' }}
+        {{ savingSearch ? $t('home.savingSearch') : $t('home.saveSearch') }}
       </button>
       <button
         type="button"
@@ -584,7 +587,7 @@ async function toggleWatchlist(a: Auction): Promise<void> {
         @click="filtersOpen = true"
       >
         <ListFilter class="h-4 w-4" />
-        <span>Filter</span>
+        <span>{{ $t('home.filterButton') }}</span>
         <span
           v-if="activeFilterCount > 0"
           class="ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-xs font-medium text-primary-foreground"
@@ -595,23 +598,23 @@ async function toggleWatchlist(a: Auction): Promise<void> {
           class="h-7 rounded px-3 transition-colors"
           :class="view === 'map' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
           @click="view = 'map'"
-        >Karte</button>
+        >{{ $t('home.viewMap') }}</button>
         <button
           class="h-7 rounded px-3 transition-colors"
           :class="view === 'list' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
           @click="view = 'list'"
-        >Liste</button>
+        >{{ $t('home.viewList') }}</button>
       </div>
     </div>
 
-    <p v-if="pending && !data" class="py-12 text-center text-muted-foreground">Lade Daten …</p>
+    <p v-if="pending && !data" class="py-12 text-center text-muted-foreground">{{ $t('home.loadingData') }}</p>
     <p v-else-if="error" class="py-12 text-center text-destructive">
-      Fehler beim Laden: {{ error.statusMessage || error.message }}
+      {{ $t('home.loadError', { msg: error.statusMessage || error.message }) }}
     </p>
 
     <section v-if="view === 'map'" class="relative flex-1 min-h-0 flex flex-col">
       <p v-if="geoError" class="py-12 text-center text-destructive">
-        Fehler beim Geokodieren: {{ geoError.statusMessage || geoError.message }}
+        {{ $t('home.geoError', { msg: geoError.statusMessage || geoError.message }) }}
       </p>
       <template v-else>
         <!-- Mount immediately so tiles render right away; markers stream in
@@ -621,7 +624,7 @@ async function toggleWatchlist(a: Auction): Promise<void> {
           v-if="geoPending && !geoData"
           class="absolute top-3 left-1/2 -translate-x-1/2 rounded-md border bg-card px-3 py-1 text-xs text-muted-foreground shadow-sm"
         >
-          Lade Standorte …
+          {{ $t('home.loadingLocations') }}
         </p>
       </template>
     </section>
@@ -629,15 +632,15 @@ async function toggleWatchlist(a: Auction): Promise<void> {
     <Sheet v-model:open="filtersOpen">
       <SheetContent side="right" class="flex flex-col gap-0 p-0 w-full sm:max-w-md">
         <SheetHeader class="border-b px-5 py-3">
-          <SheetTitle>Filter</SheetTitle>
+          <SheetTitle>{{ $t('filters.title') }}</SheetTitle>
           <SheetDescription class="sr-only">
-            Versteigerungs-Inserate nach Land, Region und weiteren Kriterien einschränken.
+            {{ $t('filters.description') }}
           </SheetDescription>
         </SheetHeader>
 
         <div class="flex-1 overflow-y-auto px-5 py-4 space-y-5">
           <div class="space-y-2">
-            <label class="block text-sm font-medium">Land</label>
+            <label class="block text-sm font-medium">{{ $t('filters.country') }}</label>
             <div class="max-h-48 overflow-y-auto rounded-md border divide-y">
               <label
                 v-for="c in countries"
@@ -650,13 +653,13 @@ async function toggleWatchlist(a: Auction): Promise<void> {
                   :checked="selectedCountries.includes(c.code)"
                   @change="toggleCountry(c.code)"
                 >
-                {{ c.name }}
+                {{ countryLabel(c.code, c.name) }}
               </label>
             </div>
           </div>
 
           <div class="space-y-2">
-            <label class="block text-sm font-medium">Region</label>
+            <label class="block text-sm font-medium">{{ $t('filters.region') }}</label>
             <div v-if="availableRegions.length" class="max-h-48 overflow-y-auto rounded-md border divide-y">
               <label
                 v-for="r in availableRegions"
@@ -673,42 +676,42 @@ async function toggleWatchlist(a: Auction): Promise<void> {
               </label>
             </div>
             <p v-else class="text-xs text-muted-foreground">
-              Wähle zuerst ein Land, um Regionen zu filtern.
+              {{ $t('filters.regionHint') }}
             </p>
           </div>
 
           <div class="space-y-2">
-            <label class="block text-sm font-medium">Suche</label>
+            <label class="block text-sm font-medium">{{ $t('filters.search') }}</label>
             <input
               v-model="search"
               type="search"
-              placeholder="Ort, Aktenzeichen, Objekt, Beschreibung …"
+              :placeholder="$t('filters.searchPlaceholder')"
               class="w-full h-9 rounded-md border bg-background px-3 py-1 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             >
           </div>
 
           <div class="space-y-2">
-            <label class="block text-sm font-medium">Gericht</label>
+            <label class="block text-sm font-medium">{{ $t('filters.authority') }}</label>
             <Select v-model="authorityFilter">
               <SelectTrigger class="w-full">
-                <SelectValue placeholder="Gericht wählen" />
+                <SelectValue :placeholder="$t('filters.authorityPlaceholder')" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem :value="ALL_SCOPE">Alle Gerichte</SelectItem>
+                <SelectItem :value="ALL_SCOPE">{{ $t('filters.allCourts') }}</SelectItem>
                 <SelectItem v-for="c in courts" :key="c" :value="c">{{ c }}</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
           <div class="space-y-2">
-            <label class="block text-sm font-medium">Verkehrswert (€)</label>
+            <label class="block text-sm font-medium">{{ $t('filters.marketValue') }}</label>
             <div class="flex items-center gap-2">
               <input
                 v-model.number="priceMin"
                 type="number"
                 min="0"
                 step="10000"
-                placeholder="von"
+                :placeholder="$t('filters.from')"
                 class="h-9 flex-1 min-w-0 rounded-md border bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               >
               <span class="text-muted-foreground">–</span>
@@ -717,17 +720,17 @@ async function toggleWatchlist(a: Auction): Promise<void> {
                 type="number"
                 min="0"
                 step="10000"
-                placeholder="bis"
+                :placeholder="$t('filters.to')"
                 class="h-9 flex-1 min-w-0 rounded-md border bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               >
             </div>
             <div class="flex flex-wrap gap-1 pt-1">
               <button
                 v-for="(p, i) in [
-                  { label: '≤ 100k', min: null, max: 100_000 },
-                  { label: '100–300k', min: 100_000, max: 300_000 },
-                  { label: '300–600k', min: 300_000, max: 600_000 },
-                  { label: '≥ 600k', min: 600_000, max: null },
+                  { label: $t('home.priceBucket100k'), min: null, max: 100_000 },
+                  { label: $t('home.priceBucket100to300k'), min: 100_000, max: 300_000 },
+                  { label: $t('home.priceBucket300to600k'), min: 300_000, max: 600_000 },
+                  { label: $t('home.priceBucket600k'), min: 600_000, max: null },
                 ]"
                 :key="i"
                 type="button"
@@ -738,14 +741,14 @@ async function toggleWatchlist(a: Auction): Promise<void> {
           </div>
 
           <div class="space-y-2">
-            <label class="block text-sm font-medium">Grundstücksfläche (m²)</label>
+            <label class="block text-sm font-medium">{{ $t('filters.landArea') }}</label>
             <div class="flex items-center gap-2">
               <input
                 v-model.number="landAreaMin"
                 type="number"
                 min="0"
                 step="50"
-                placeholder="von"
+                :placeholder="$t('filters.from')"
                 class="h-9 flex-1 min-w-0 rounded-md border bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               >
               <span class="text-muted-foreground">–</span>
@@ -754,21 +757,21 @@ async function toggleWatchlist(a: Auction): Promise<void> {
                 type="number"
                 min="0"
                 step="50"
-                placeholder="bis"
+                :placeholder="$t('filters.to')"
                 class="h-9 flex-1 min-w-0 rounded-md border bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               >
             </div>
           </div>
 
           <div class="space-y-2">
-            <label class="block text-sm font-medium">Wohnfläche (m²)</label>
+            <label class="block text-sm font-medium">{{ $t('filters.livingArea') }}</label>
             <div class="flex items-center gap-2">
               <input
                 v-model.number="livingAreaMin"
                 type="number"
                 min="0"
                 step="10"
-                placeholder="von"
+                :placeholder="$t('filters.from')"
                 class="h-9 flex-1 min-w-0 rounded-md border bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               >
               <span class="text-muted-foreground">–</span>
@@ -777,20 +780,20 @@ async function toggleWatchlist(a: Auction): Promise<void> {
                 type="number"
                 min="0"
                 step="10"
-                placeholder="bis"
+                :placeholder="$t('filters.to')"
                 class="h-9 flex-1 min-w-0 rounded-md border bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               >
             </div>
           </div>
 
           <div v-if="kategorienMitCount.length" class="space-y-2">
-            <label class="block text-sm font-medium">Objektart</label>
+            <label class="block text-sm font-medium">{{ $t('filters.propertyType') }}</label>
             <Select v-model="categoryFilter">
               <SelectTrigger class="w-full">
-                <SelectValue placeholder="Objektart wählen" />
+                <SelectValue :placeholder="$t('filters.propertyTypePlaceholder')" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem :value="ALL_SCOPE">Alle Objektarten</SelectItem>
+                <SelectItem :value="ALL_SCOPE">{{ $t('filters.allPropertyTypes') }}</SelectItem>
                 <SelectItem v-for="k in kategorienMitCount" :key="k.id" :value="k.id">
                   {{ k.label }} ({{ k.count }})
                 </SelectItem>
@@ -800,10 +803,10 @@ async function toggleWatchlist(a: Auction): Promise<void> {
 
           <div class="space-y-2 pt-2 border-t">
             <label class="flex items-center gap-2 cursor-pointer text-sm">
-              <input v-model="onlyWithPhotos" type="checkbox" class="h-4 w-4 rounded border-input accent-primary"> Nur mit Fotos
+              <input v-model="onlyWithPhotos" type="checkbox" class="h-4 w-4 rounded border-input accent-primary"> {{ $t('filters.onlyWithPhotos') }}
             </label>
             <label class="flex items-center gap-2 cursor-pointer text-sm">
-              <input v-model="includeCancelled" type="checkbox" class="h-4 w-4 rounded border-input accent-primary"> Aufgehobene anzeigen
+              <input v-model="includeCancelled" type="checkbox" class="h-4 w-4 rounded border-input accent-primary"> {{ $t('filters.includeCancelled') }}
             </label>
           </div>
         </div>
@@ -815,7 +818,7 @@ async function toggleWatchlist(a: Auction): Promise<void> {
             :disabled="activeFilterCount === 0"
             @click="clearAllFilters"
           >
-            Zurücksetzen ({{ activeFilterCount }})
+            {{ $t('filters.reset', { count: activeFilterCount }) }}
           </button>
           <button
             type="button"
@@ -823,7 +826,7 @@ async function toggleWatchlist(a: Auction): Promise<void> {
             class="flex-1 h-9 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             @click="refresh()"
           >
-            {{ pending ? 'Lädt …' : 'Neu laden' }}
+            {{ pending ? $t('filters.reloading') : $t('filters.reload') }}
           </button>
         </SheetFooter>
       </SheetContent>
@@ -833,12 +836,12 @@ async function toggleWatchlist(a: Auction): Promise<void> {
       v-if="selectedCountries.length === 0 && pending"
       class="mb-4 text-xs text-muted-foreground text-center"
     >
-      Erstaufruf kann mehrere Minuten dauern (alle registrierten Quellen parallel)
+      {{ $t('home.initialLoadHint') }}
     </p>
 
     <section v-if="view === 'list'" class="flex-1 min-h-0 overflow-y-auto pb-4">
     <p v-if="filtered.length === 0 && !pending" class="py-12 text-center text-muted-foreground">
-      Keine Termine entsprechen den Filtern.
+      {{ $t('home.noResults') }}
     </p>
 
     <ul v-if="filtered.length" class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -853,7 +856,7 @@ async function toggleWatchlist(a: Auction): Promise<void> {
             target="_blank"
             rel="noopener"
             class="relative block overflow-hidden border-b group"
-            :title="`${a.photoCount} Foto${a.photoCount === 1 ? '' : 's'} öffnen`"
+            :title="$t('home.openPhotos', { count: a.photoCount, plural: a.photoCount === 1 ? '' : 's' })"
           >
             <img
               :src="a.thumbnailUrl"
@@ -868,28 +871,28 @@ async function toggleWatchlist(a: Auction): Promise<void> {
             >+{{ a.photoCount - 1 }}</span>
           </a>
           <div v-else-if="!a.cancelled" class="flex aspect-16/10 items-center justify-center bg-muted text-muted-foreground text-sm border-b">
-            Kein Foto
+            {{ $t('home.noPhoto') }}
           </div>
 
           <div class="p-4 flex-1 flex flex-col gap-2">
             <div class="flex flex-wrap items-center gap-2 text-xs">
               <span class="rounded-md bg-secondary text-secondary-foreground px-2 py-0.5 font-medium">{{ a.authority }}</span>
               <span v-if="a.region" class="rounded-md bg-muted text-muted-foreground px-2 py-0.5">{{ a.region }}</span>
-              <span v-if="a.cancelled" class="rounded-md bg-destructive/15 text-destructive px-2 py-0.5 font-medium">Aufgehoben</span>
+              <span v-if="a.cancelled" class="rounded-md bg-destructive/15 text-destructive px-2 py-0.5 font-medium">{{ $t('home.cancelledBadge') }}</span>
               <span class="font-mono text-muted-foreground">{{ a.caseNumber }}</span>
             </div>
-            <h2 class="text-base font-semibold leading-tight mt-1">{{ a.title || 'Objektart unbekannt' }}</h2>
+            <h2 class="text-base font-semibold leading-tight mt-1">{{ a.title || $t('home.unknownPropertyType') }}</h2>
             <p v-if="a.address" class="text-sm text-muted-foreground">{{ a.address }}</p>
             <p v-if="a.description" class="text-sm text-muted-foreground leading-relaxed mt-1">
               {{ truncate(a.description, 220) }}
             </p>
             <dl class="grid grid-cols-2 gap-3 text-sm mt-2">
               <div>
-                <dt class="text-xs uppercase tracking-wide text-muted-foreground">Termin</dt>
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('home.auctionDate') }}</dt>
                 <dd class="font-medium">{{ formatDate(a.auctionDateIso, a.auctionDateText) }}</dd>
               </div>
               <div>
-                <dt class="text-xs uppercase tracking-wide text-muted-foreground">Verkehrswert</dt>
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('home.marketValue') }}</dt>
                 <dd class="font-medium tabular-nums">{{ a.marketValueText ?? formatEur(a.marketValueEur) }}</dd>
               </div>
             </dl>
@@ -897,7 +900,7 @@ async function toggleWatchlist(a: Auction): Promise<void> {
 
           <footer class="border-t px-4 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
             <a v-if="a.pdfUrl" :href="a.pdfUrl" target="_blank" rel="noopener" class="text-primary hover:underline">
-              Bekanntmachung
+              {{ $t('attachmentKind.announcement') }}
             </a>
             <a
               v-for="att in a.attachments.filter((x) => x.kind !== 'announcement')"
@@ -912,13 +915,13 @@ async function toggleWatchlist(a: Auction): Promise<void> {
               type="button"
               class="ml-auto text-muted-foreground hover:text-primary transition-colors"
               :class="{ 'text-amber-500 hover:text-amber-500': watchlistIds.has(watchlistKey(a)) }"
-              :title="watchlistIds.has(watchlistKey(a)) ? 'Von Watchlist entfernen' : 'Zur Watchlist hinzufügen'"
+              :title="watchlistIds.has(watchlistKey(a)) ? $t('home.removeFromWatchlist') : $t('home.addToWatchlist')"
               @click="toggleWatchlist(a)"
             >
               <Star class="h-4 w-4" :class="{ 'fill-current': watchlistIds.has(watchlistKey(a)) }" />
             </button>
             <NuxtLink :to="`/objekt/${encodeURIComponent(a.platform)}/${encodeURIComponent(a.externalId)}`" :class="user ? '' : 'ml-auto'" class="text-primary hover:underline">
-              Details →
+              {{ $t('home.detailsLink') }}
             </NuxtLink>
           </footer>
         </article>
@@ -926,13 +929,13 @@ async function toggleWatchlist(a: Auction): Promise<void> {
     </ul>
 
     <div v-if="visibleCount < filtered.length" class="flex flex-col items-center gap-2 pt-2 pb-4">
-      <p class="text-xs text-muted-foreground">{{ visibleAuctions.length }} von {{ filtered.length }} angezeigt</p>
+      <p class="text-xs text-muted-foreground">{{ $t('home.loadMoreShown', { shown: visibleAuctions.length, total: filtered.length }) }}</p>
       <button
         type="button"
         class="h-9 rounded-md border bg-card px-4 text-sm shadow-xs hover:border-primary hover:text-primary transition-colors"
         @click="loadMore"
       >
-        Mehr laden
+        {{ $t('home.loadMore') }}
       </button>
     </div>
     </section>

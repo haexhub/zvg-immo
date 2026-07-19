@@ -34,9 +34,9 @@ async function onSubmit(): Promise<void> {
 <template>
   <main class="h-screen flex items-center justify-center px-4">
     <form class="w-full max-w-sm space-y-4" @submit.prevent="onSubmit">
-      <h1 class="text-2xl font-bold tracking-tight">Registrieren</h1>
+      <h1 class="text-2xl font-bold tracking-tight">{{ $t('auth.signup.title') }}</h1>
       <div class="space-y-1">
-        <label class="text-sm font-medium" for="email">E-Mail</label>
+        <label class="text-sm font-medium" for="email">{{ $t('auth.email') }}</label>
         <input
           id="email"
           v-model="email"
@@ -47,7 +47,7 @@ async function onSubmit(): Promise<void> {
         />
       </div>
       <div class="space-y-1">
-        <label class="text-sm font-medium" for="password">Passwort</label>
+        <label class="text-sm font-medium" for="password">{{ $t('auth.password') }}</label>
         <input
           id="password"
           v-model="password"
@@ -59,17 +59,17 @@ async function onSubmit(): Promise<void> {
         />
       </div>
       <p v-if="error" class="text-sm text-destructive">{{ error }}</p>
-      <p v-if="done" class="text-sm text-emerald-600 dark:text-emerald-500">Konto erstellt.</p>
+      <p v-if="done" class="text-sm text-emerald-600 dark:text-emerald-500">{{ $t('auth.signup.done') }}</p>
       <button
         type="submit"
         :disabled="pending"
         class="w-full h-9 rounded-md bg-primary text-primary-foreground text-sm font-medium shadow-xs hover:opacity-90 transition-opacity disabled:opacity-50"
       >
-        {{ pending ? 'Registrieren …' : 'Registrieren' }}
+        {{ pending ? $t('auth.signup.submitting') : $t('auth.signup.submit') }}
       </button>
       <p class="text-sm text-muted-foreground">
-        Bereits registriert?
-        <NuxtLink :to="`/login?redirect=${encodeURIComponent(redirectTarget())}`" class="text-primary hover:underline">Anmelden</NuxtLink>
+        {{ $t('auth.signup.hasAccount') }}
+        <NuxtLink :to="`/login?redirect=${encodeURIComponent(redirectTarget())}`" class="text-primary hover:underline">{{ $t('auth.signup.loginLink') }}</NuxtLink>
       </p>
     </form>
   </main>

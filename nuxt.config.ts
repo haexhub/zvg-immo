@@ -4,21 +4,37 @@ export default defineNuxtConfig({
   compatibilityDate: '2025-04-01',
   devtools: { enabled: true },
   ssr: true,
+  modules: ['@nuxtjs/i18n'],
   css: ['~/assets/css/tailwind.css'],
   vite: {
     plugins: [tailwindcss()],
   },
+  i18n: {
+    langDir: 'locales',
+    locales: [
+      { code: 'de', language: 'de-DE', name: 'Deutsch', file: 'de.json' },
+      { code: 'en', language: 'en-US', name: 'English', file: 'en.json' },
+    ],
+    defaultLocale: 'de',
+    // No URL prefix — locale is a cross-cutting preference (cookie/account),
+    // not a routable resource. Keeps every existing route/link unchanged.
+    strategy: 'no_prefix',
+    detectBrowserLanguage: {
+      useCookie: true,
+      cookieKey: 'zvg_locale',
+      // Persists the switcher choice; overridden after login by the account
+      // preference sync in composables/useLocalePreference.ts.
+      alwaysRedirect: false,
+    },
+  },
   app: {
     head: {
-      title: 'Zwangsversteigerungen Deutschland',
+      // Locale-aware title/description are set reactively in app.vue via
+      // useHead() (i18n's 'site.*' keys) — only the locale-independent meta
+      // stays here.
       meta: [
         { charset: 'utf-8' },
         { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-        {
-          name: 'description',
-          content:
-            'Öffentliche Immobilien-Zwangsversteigerungen aller deutschen Bundesländer, gecrawlt aus den amtlichen Justizportalen.',
-        },
       ],
     },
   },

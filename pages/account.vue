@@ -9,6 +9,8 @@ import { Trash2 } from 'lucide-vue-next'
 
 const router = useRouter()
 const { user } = useAuth()
+const { t, te } = useI18n()
+const intlLocale = useIntlLocale()
 
 // Auth state resolves asynchronously on the client (see composables/useAuth.ts) —
 // do a definitive one-time session check on mount before deciding whether to
@@ -44,11 +46,9 @@ async function loadLawyerInquiries(): Promise<void> {
   lawyerInquiries.value = await authFetch<LawyerInquiry[]>('/api/lawyer-inquiries')
 }
 
-const COMMISSION_STATUS_LABEL: Record<string, string> = {
-  pending: 'Ausstehend',
-  invoiced: 'In Rechnung gestellt',
-  paid: 'Bezahlt',
-  waived: 'Erlassen',
+function commissionStatusLabel(status: string): string {
+  const key = `account.lawyerInquiries.status.${status}`
+  return te(key) ? t(key) : status
 }
 
 async function deleteSavedSearch(id: string): Promise<void> {
@@ -86,7 +86,7 @@ async function createApiKey(): Promise<void> {
 }
 
 async function revokeApiKey(id: string): Promise<void> {
-  if (!confirm('Möchten Sie diesen API-Key wirklich widerrufen? Er kann danach nicht mehr verwendet werden.'))
+  if (!confirm(t('account.apiKeys.revokeConfirm')))
     return
   await authFetch(`/api/api-keys/${id}`, { method: 'DELETE' })
   apiKeys.value = apiKeys.value.map((k) => (k.id === id ? { ...k, active: false } : k))
@@ -100,30 +100,19 @@ async function copyKey(): Promise<void> {
 
 // Human-readable summary of a saved search's filters (the route.query shape —
 // see lib/auction-filters.ts for what the field names mean).
-const FIELD_LABEL: Record<string, string> = {
-  country: 'Land',
-  region: 'Region',
-  q: 'Suche',
-  authority: 'Gericht',
-  priceMin: 'Preis ab',
-  priceMax: 'Preis bis',
-  landMin: 'Grundstück ab',
-  landMax: 'Grundstück bis',
-  livMin: 'Wohnfläche ab',
-  livMax: 'Wohnfläche bis',
-  category: 'Objektart',
-  photos: 'Nur mit Fotos',
-  cancelled: 'inkl. aufgehobene',
+function fieldLabel(key: string): string {
+  const i18nKey = `filters.field.${key}`
+  return te(i18nKey) ? t(i18nKey) : key
 }
 function summarize(filters: Record<string, string>): string {
   const parts = Object.entries(filters)
     .filter(([, v]) => v != null && v !== '')
-    .map(([k, v]) => `${FIELD_LABEL[k] ?? k}: ${v}`)
-  return parts.length ? parts.join(' · ') : 'Alle Auktionen'
+    .map(([k, v]) => `${fieldLabel(k)}: ${v}`)
+  return parts.length ? parts.join(' · ') : t('account.savedSearches.allAuctions')
 }
 
 function formatDate(iso: string): string {
-  return new Date(iso).toLocaleString('de-DE')
+  return new Date(iso).toLocaleString(intlLocale.value)
 }
 </script>
 
@@ -131,15 +120,15 @@ function formatDate(iso: string): string {
   <main class="h-screen overflow-y-auto px-4 py-6">
     <div class="max-w-3xl mx-auto space-y-8">
       <div class="flex items-center justify-between">
-        <h1 class="text-2xl font-bold tracking-tight">Mein Konto</h1>
+        <h1 class="text-2xl font-bold tracking-tight">{{ $t('account.title') }}</h1>
         <AuthStatus />
       </div>
 
       <template v-if="checked">
         <section class="space-y-3">
-          <h2 class="text-base font-semibold">Gespeicherte Suchen</h2>
+          <h2 class="text-base font-semibold">{{ $t('account.savedSearches.title') }}</h2>
           <p v-if="savedSearches.length === 0" class="text-sm text-muted-foreground">
-            Noch keine gespeicherten Suchen.
+            {{ $t('account.savedSearches.empty') }}
           </p>
           <ul v-else class="space-y-2">
             <li
@@ -156,7 +145,7 @@ function formatDate(iso: string): string {
               <button
                 type="button"
                 class="shrink-0 text-muted-foreground hover:text-destructive"
-                title="Löschen"
+                :title="$t('account.savedSearches.delete')"
                 @click="deleteSavedSearch(s.id)"
               >
                 <Trash2 class="h-4 w-4" />
@@ -166,9 +155,9 @@ function formatDate(iso: string): string {
         </section>
 
         <section class="space-y-3">
-          <h2 class="text-base font-semibold">Watchlist</h2>
+          <h2 class="text-base font-semibold">{{ $t('account.watchlist.title') }}</h2>
           <p v-if="watchlist.length === 0" class="text-sm text-muted-foreground">
-            Noch keine Favoriten.
+            {{ $t('account.watchlist.empty') }}
           </p>
           <ul v-else class="space-y-2">
             <li
@@ -183,12 +172,12 @@ function formatDate(iso: string): string {
                 >
                   {{ w.authority || w.platform }} · {{ w.caseNumber || w.externalId }}
                 </NuxtLink>
-                <p class="text-xs text-muted-foreground">Hinzugefügt {{ formatDate(w.createdAt) }}</p>
+                <p class="text-xs text-muted-foreground">{{ $t('account.watchlist.added', { date: formatDate(w.createdAt) }) }}</p>
               </div>
               <button
                 type="button"
                 class="shrink-0 text-muted-foreground hover:text-destructive"
-                title="Entfernen"
+                :title="$t('account.watchlist.remove')"
                 @click="removeWatchlistItem(w.id)"
               >
                 <Trash2 class="h-4 w-4" />
@@ -198,9 +187,9 @@ function formatDate(iso: string): string {
         </section>
 
         <section class="space-y-3">
-          <h2 class="text-base font-semibold">Meine Anwalts-Anfragen</h2>
+          <h2 class="text-base font-semibold">{{ $t('account.lawyerInquiries.title') }}</h2>
           <p v-if="lawyerInquiries.length === 0" class="text-sm text-muted-foreground">
-            Noch keine Anfragen gesendet.
+            {{ $t('account.lawyerInquiries.empty') }}
           </p>
           <ul v-else class="space-y-2">
             <li
@@ -213,31 +202,31 @@ function formatDate(iso: string): string {
                   v-if="i.platform && i.externalId"
                   :to="`/objekt/${encodeURIComponent(i.platform)}/${encodeURIComponent(i.externalId)}`"
                   class="font-medium hover:underline"
-                >Auktion ansehen</NuxtLink>
+                >{{ $t('account.lawyerInquiries.viewAuction') }}</NuxtLink>
                 <span class="text-xs text-muted-foreground">{{ formatDate(i.createdAt) }}</span>
               </div>
               <p class="text-sm text-muted-foreground truncate">{{ i.message }}</p>
               <p class="text-xs text-muted-foreground">
-                Provisionsstatus: {{ COMMISSION_STATUS_LABEL[i.commissionStatus] ?? i.commissionStatus }}
+                {{ $t('account.lawyerInquiries.commissionStatus', { status: commissionStatusLabel(i.commissionStatus) }) }}
               </p>
             </li>
           </ul>
         </section>
 
         <section class="space-y-3">
-          <h2 class="text-base font-semibold">API-Keys</h2>
+          <h2 class="text-base font-semibold">{{ $t('account.apiKeys.title') }}</h2>
           <div class="space-y-1 text-sm text-muted-foreground">
-            <p>
-              Programmatischer Lesezugriff (Snapshot + Historie) unter <code>/api/data/v1/*</code>,
-              authentifiziert per <code>Authorization: Bearer &lt;key&gt;</code>:
-            </p>
+            <i18n-t keypath="account.apiKeys.intro" tag="p">
+              <template #path><code>/api/data/v1/*</code></template>
+              <template #header><code>Authorization: Bearer &lt;key&gt;</code></template>
+            </i18n-t>
             <ul class="list-disc space-y-0.5 pl-5">
-              <li><code>GET /api/data/v1/auctions</code> — aktueller Bestand, filter- und paginierbar</li>
-              <li><code>GET /api/data/v1/auctions/:platform/:id</code> — einzelne Auktion</li>
-              <li><code>GET /api/data/v1/observations</code> — Zeitreihe je Auktion (Quoten-/Preistrends)</li>
+              <li><code>GET /api/data/v1/auctions</code> — {{ $t('account.apiKeys.listAuctions') }}</li>
+              <li><code>GET /api/data/v1/auctions/:platform/:id</code> — {{ $t('account.apiKeys.getAuction') }}</li>
+              <li><code>GET /api/data/v1/observations</code> — {{ $t('account.apiKeys.observations') }}</li>
             </ul>
             <p>
-              Beispiel: <code>curl -H "Authorization: Bearer &lt;key&gt;" https://…/api/data/v1/auctions</code>
+              {{ $t('account.apiKeys.example') }} <code>curl -H "Authorization: Bearer &lt;key&gt;" https://…/api/data/v1/auctions</code>
             </p>
           </div>
 
@@ -245,14 +234,14 @@ function formatDate(iso: string): string {
             <input
               v-model="newKeyLabel"
               type="text"
-              placeholder="Label, z. B. „Analyse-Skript“"
+              :placeholder="$t('account.apiKeys.labelPlaceholder')"
               class="flex-1 rounded-md border bg-background px-3 py-2 text-sm"
             />
             <button
               type="submit"
               class="shrink-0 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground"
             >
-              Key erzeugen
+              {{ $t('account.apiKeys.create') }}
             </button>
           </form>
 
@@ -261,7 +250,7 @@ function formatDate(iso: string): string {
             class="space-y-2 rounded-md border border-amber-500/50 bg-amber-500/10 px-4 py-3"
           >
             <p class="text-sm font-medium">
-              Neuer Key „{{ justCreatedKey.label }}“ — wird nur jetzt angezeigt, danach nicht mehr abrufbar:
+              {{ $t('account.apiKeys.newKeyNotice', { label: justCreatedKey.label }) }}
             </p>
             <div class="flex items-center gap-2">
               <code class="flex-1 truncate rounded bg-background px-2 py-1 text-xs">{{ justCreatedKey.plaintext }}</code>
@@ -270,16 +259,16 @@ function formatDate(iso: string): string {
                 class="shrink-0 rounded-md border px-2 py-1 text-xs"
                 @click="copyKey"
               >
-                {{ keyCopied ? 'Kopiert!' : 'Kopieren' }}
+                {{ keyCopied ? $t('account.apiKeys.copied') : $t('account.apiKeys.copy') }}
               </button>
             </div>
             <p class="text-xs text-muted-foreground">
-              Jetzt sichern — dieser Key wird aus Sicherheitsgründen nie wieder angezeigt.
+              {{ $t('account.apiKeys.saveNowNotice') }}
             </p>
           </div>
 
           <p v-if="apiKeys.length === 0" class="text-sm text-muted-foreground">
-            Noch keine API-Keys.
+            {{ $t('account.apiKeys.empty') }}
           </p>
           <ul v-else class="space-y-2">
             <li
@@ -290,18 +279,18 @@ function formatDate(iso: string): string {
               <div class="min-w-0">
                 <p class="font-medium">
                   {{ k.label }}
-                  <span v-if="!k.active" class="text-xs font-normal text-muted-foreground">(widerrufen)</span>
+                  <span v-if="!k.active" class="text-xs font-normal text-muted-foreground">{{ $t('account.apiKeys.revoked') }}</span>
                 </p>
                 <p class="text-xs text-muted-foreground">
-                  {{ k.keyPrefix }}… · erzeugt {{ formatDate(k.createdAt) }}
-                  · zuletzt genutzt {{ k.lastUsedAt ? formatDate(k.lastUsedAt) : 'nie' }}
+                  {{ k.keyPrefix }}… · {{ $t('account.apiKeys.created', { date: formatDate(k.createdAt) }) }}
+                  · {{ $t('account.apiKeys.lastUsed', { date: k.lastUsedAt ? formatDate(k.lastUsedAt) : $t('account.apiKeys.neverUsed') }) }}
                 </p>
               </div>
               <button
                 v-if="k.active"
                 type="button"
                 class="shrink-0 text-muted-foreground hover:text-destructive"
-                title="Widerrufen"
+                :title="$t('account.apiKeys.revoke')"
                 @click="revokeApiKey(k.id)"
               >
                 <Trash2 class="h-4 w-4" />
@@ -310,7 +299,7 @@ function formatDate(iso: string): string {
           </ul>
         </section>
       </template>
-      <p v-else class="py-12 text-center text-muted-foreground">Lade …</p>
+      <p v-else class="py-12 text-center text-muted-foreground">{{ $t('account.loading') }}</p>
     </div>
   </main>
 </template>

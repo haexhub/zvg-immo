@@ -1,13 +1,17 @@
 <script setup lang="ts">
-import { ALL_PROPERTY_TYPE_CATEGORIES, classifyPropertyType } from '~/lib/property-type'
+import { classifyPropertyType } from '~/lib/property-type'
 import type { AuctionDetail } from '~/server/api/auction/[platform]/[id].get'
 import type { Attachment } from '~/types/auction'
-import { ATTACHMENT_KIND_ORDER, attachmentKindLabel } from '~/lib/auction-constants'
+import { ATTACHMENT_KIND_ORDER } from '~/lib/auction-constants'
 import { ArrowLeft, Sparkles } from 'lucide-vue-next'
 
 const route = useRoute()
 const platform = String(route.params.platform)
 const id = String(route.params.id)
+const { t } = useI18n()
+const intlLocale = useIntlLocale()
+const propertyTypeLabel = usePropertyTypeLabel()
+const attachmentKindLabelFn = useAttachmentKindLabel()
 
 const { data: a, error, pending } = await useFetch<AuctionDetail | null>(
   `/api/auction/${platform}/${id}`,
@@ -52,32 +56,31 @@ async function loadSummary() {
   } catch (err: unknown) {
     const msg = (err as { statusMessage?: string; message?: string })?.statusMessage
       ?? (err as { message?: string })?.message
-      ?? 'Unbekannter Fehler'
+      ?? t('objektDetail.aiSummaryErrorFallback')
     summaryError.value = msg
   } finally {
     summaryPending.value = false
   }
 }
 
-const CATEGORY_LABEL = new Map(ALL_PROPERTY_TYPE_CATEGORIES.map((k) => [k.id, k.label]))
 function category(): { id: string; label: string } | null {
   if (!a.value) return null
   const pt = a.value.extraction?.propertyType
-  if (pt) return { id: pt, label: CATEGORY_LABEL.get(pt) ?? pt }
+  if (pt) return { id: pt, label: propertyTypeLabel(pt) }
   const fallback = classifyPropertyType(a.value.title)
-  return fallback.id === 'unbekannt' ? null : fallback
+  return fallback.id === 'unbekannt' ? null : { id: fallback.id, label: propertyTypeLabel(fallback.id, fallback.label) }
 }
 
 function formatEur(n: number | null): string {
   if (n == null) return '–'
-  return n.toLocaleString('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
+  return n.toLocaleString(intlLocale.value, { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
 }
 
 function formatDate(iso: string | null, fallback: string | null): string {
   if (!iso) return fallback ?? '–'
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return fallback ?? iso
-  return d.toLocaleString('de-DE', {
+  return d.toLocaleString(intlLocale.value, {
     weekday: 'long', day: '2-digit', month: 'long', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
   })
@@ -85,7 +88,7 @@ function formatDate(iso: string | null, fallback: string | null): string {
 
 function formatArea(n: number | null): string {
   if (n == null) return '–'
-  return `${n.toLocaleString('de-DE', { maximumFractionDigits: 0 })} m²`
+  return `${n.toLocaleString(intlLocale.value, { maximumFractionDigits: 0 })} m²`
 }
 
 // Photo URLs: native foto attachments (when present) first, then extracted
@@ -122,13 +125,13 @@ const groupedAttachments = computed<Array<{ kind: string; label: string; items: 
   }
   return ATTACHMENT_KIND_ORDER
     .filter((k) => byKind.has(k))
-    .map((k) => ({ kind: k, label: attachmentKindLabel(k, k), items: byKind.get(k)! }))
+    .map((k) => ({ kind: k, label: attachmentKindLabelFn(k, k), items: byKind.get(k)! }))
 })
 
 useHead(() => ({
   title: a.value?.title
     ? `${a.value.title} · ${a.value.authority}`
-    : 'Zwangsversteigerung',
+    : t('objektDetail.untitled'),
 }))
 </script>
 
@@ -137,14 +140,14 @@ useHead(() => ({
     <div class="max-w-5xl mx-auto">
     <div class="flex items-center justify-between mb-4">
       <NuxtLink to="/" class="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-        <ArrowLeft class="h-4 w-4" /> Zurück zur Übersicht
+        <ArrowLeft class="h-4 w-4" /> {{ $t('objektDetail.back') }}
       </NuxtLink>
       <AuthStatus />
     </div>
 
-    <p v-if="pending" class="py-12 text-center text-muted-foreground">Lade …</p>
+    <p v-if="pending" class="py-12 text-center text-muted-foreground">{{ $t('objektDetail.loading') }}</p>
     <p v-else-if="error || !a" class="py-12 text-center text-destructive">
-      {{ error?.statusMessage || error?.message || 'Auktion nicht gefunden.' }}
+      {{ error?.statusMessage || error?.message || $t('objektDetail.notFound') }}
     </p>
 
     <template v-else>
@@ -156,10 +159,10 @@ useHead(() => ({
           >{{ category()?.label }}</span>
           <span class="rounded-md bg-secondary text-secondary-foreground px-2 py-0.5 font-medium">{{ a.authority }}</span>
           <span v-if="a.region" class="rounded-md bg-muted text-muted-foreground px-2 py-0.5">{{ a.region }}</span>
-          <span v-if="a.cancelled" class="rounded-md bg-destructive/15 text-destructive px-2 py-0.5 font-medium">Aufgehoben</span>
+          <span v-if="a.cancelled" class="rounded-md bg-destructive/15 text-destructive px-2 py-0.5 font-medium">{{ $t('objektDetail.cancelled') }}</span>
           <span class="font-mono text-muted-foreground">{{ a.caseNumber }}</span>
         </div>
-        <h1 class="text-2xl font-bold leading-tight">{{ a.title || 'Zwangsversteigerung' }}</h1>
+        <h1 class="text-2xl font-bold leading-tight">{{ a.title || $t('objektDetail.untitled') }}</h1>
         <p v-if="a.address" class="text-muted-foreground">{{ a.address }}</p>
       </header>
 
@@ -167,7 +170,7 @@ useHead(() => ({
         <div class="overflow-hidden rounded-xl border bg-muted">
           <img
             :src="photoUrls[activePhotoIndex]"
-            :alt="`Foto ${activePhotoIndex + 1} von ${photoUrls.length} — ${a.title || 'Immobilie'}`"
+            :alt="$t('objektDetail.photoAlt', { n: activePhotoIndex + 1, total: photoUrls.length, title: a.title || $t('objektDetail.fallbackTitle') })"
             referrerpolicy="no-referrer"
             class="block w-full max-h-[60vh] object-contain bg-black/5"
           >
@@ -179,12 +182,12 @@ useHead(() => ({
             type="button"
             class="relative shrink-0 overflow-hidden rounded-md border transition-all"
             :class="i === activePhotoIndex ? 'ring-2 ring-primary border-primary' : 'opacity-70 hover:opacity-100'"
-            :aria-label="`Foto ${i + 1} anzeigen`"
+            :aria-label="$t('objektDetail.showPhoto', { n: i + 1 })"
             @click="activePhotoIndex = i"
           >
             <img
               :src="url"
-              :alt="`Foto ${i + 1}`"
+              :alt="$t('objektDetail.photoAltShort', { n: i + 1 })"
               referrerpolicy="no-referrer"
               class="block h-16 w-24 object-cover"
             >
@@ -195,41 +198,41 @@ useHead(() => ({
       <section class="mb-8">
         <dl class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-4 rounded-xl border bg-card p-5">
           <div>
-            <dt class="text-xs uppercase tracking-wide text-muted-foreground">Verkehrswert</dt>
+            <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.marketValue') }}</dt>
             <dd class="text-lg font-semibold tabular-nums">{{ formatEur(a.marketValueEur) }}</dd>
             <dd
               v-if="a.currency && a.currency !== 'EUR' && a.marketValueText"
               class="text-xs text-muted-foreground"
             >
-              Original: {{ a.marketValueText }}
+              {{ $t('objektDetail.original', { value: a.marketValueText }) }}
             </dd>
           </div>
           <div>
-            <dt class="text-xs uppercase tracking-wide text-muted-foreground">Termin</dt>
+            <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.auctionDate') }}</dt>
             <dd class="text-sm font-medium">{{ formatDate(a.auctionDateIso, a.auctionDateText) }}</dd>
           </div>
           <div v-if="a.extraction?.landAreaSqm != null">
-            <dt class="text-xs uppercase tracking-wide text-muted-foreground">Grundstücksfläche</dt>
+            <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.landArea') }}</dt>
             <dd class="text-sm font-medium tabular-nums">{{ formatArea(a.extraction.landAreaSqm) }}</dd>
           </div>
           <div v-if="a.extraction?.livingAreaSqm != null">
-            <dt class="text-xs uppercase tracking-wide text-muted-foreground">Wohnfläche</dt>
+            <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.livingArea') }}</dt>
             <dd class="text-sm font-medium tabular-nums">{{ formatArea(a.extraction.livingAreaSqm) }}</dd>
           </div>
           <div v-if="a.extraction?.rooms != null">
-            <dt class="text-xs uppercase tracking-wide text-muted-foreground">Zimmer</dt>
+            <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.rooms') }}</dt>
             <dd class="text-sm font-medium">{{ a.extraction.rooms }}</dd>
           </div>
           <div v-if="a.extraction?.units != null && a.extraction.units > 1">
-            <dt class="text-xs uppercase tracking-wide text-muted-foreground">Wohneinheiten</dt>
+            <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.units') }}</dt>
             <dd class="text-sm font-medium">{{ a.extraction.units }}</dd>
           </div>
           <div>
-            <dt class="text-xs uppercase tracking-wide text-muted-foreground">Gericht</dt>
+            <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.authority') }}</dt>
             <dd class="text-sm font-medium">{{ a.authority }}</dd>
           </div>
           <div>
-            <dt class="text-xs uppercase tracking-wide text-muted-foreground">Aktenzeichen</dt>
+            <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.caseNumber') }}</dt>
             <dd class="text-sm font-mono">{{ a.caseNumber }}</dd>
           </div>
         </dl>
@@ -237,8 +240,7 @@ useHead(() => ({
           v-if="a.extraction?.source === 'llm'"
           class="mt-2 text-xs text-muted-foreground"
         >
-          Eckdaten automatisch aus dem Gutachten/Exposé extrahiert
-          ({{ a.extraction.confidence === 'high' ? 'hohe Konfidenz' : 'geringe Konfidenz' }}).
+          {{ $t('objektDetail.extractionNotice', { confidence: a.extraction.confidence === 'high' ? $t('objektDetail.confidenceHigh') : $t('objektDetail.confidenceLow') }) }}
         </p>
       </section>
 
@@ -248,8 +250,8 @@ useHead(() => ({
 
       <section class="mb-8 space-y-3">
         <div class="flex items-center gap-2">
-          <h2 class="text-base font-semibold">KI-Zusammenfassung</h2>
-          <span class="text-xs text-muted-foreground">(Deutsch, automatisch übersetzt)</span>
+          <h2 class="text-base font-semibold">{{ $t('objektDetail.aiSummaryTitle') }}</h2>
+          <span class="text-xs text-muted-foreground">{{ $t('objektDetail.aiSummaryHint') }}</span>
         </div>
         <div
           v-if="summary"
@@ -257,10 +259,10 @@ useHead(() => ({
           v-html="summaryHtml"
         />
         <p v-else-if="summaryError" class="text-sm text-destructive">
-          Zusammenfassung konnte nicht erstellt werden: {{ summaryError }}
+          {{ $t('objektDetail.aiSummaryError', { msg: summaryError }) }}
         </p>
         <p v-else-if="summaryPending" class="text-sm text-muted-foreground animate-pulse">
-          Zusammenfassung wird erstellt … (ca. 10–30 Sekunden)
+          {{ $t('objektDetail.aiSummaryPending') }}
         </p>
         <button
           v-else
@@ -270,12 +272,12 @@ useHead(() => ({
           @click="loadSummary"
         >
           <Sparkles class="h-4 w-4" />
-          Zusammenfassung auf Deutsch erstellen
+          {{ $t('objektDetail.aiSummaryGenerate') }}
         </button>
       </section>
 
       <section v-if="a.lat != null && a.lng != null" class="mb-8 space-y-2">
-        <h2 class="text-base font-semibold">Lage</h2>
+        <h2 class="text-base font-semibold">{{ $t('objektDetail.location') }}</h2>
         <AuctionDetailMap :lat="a.lat" :lng="a.lng" :label="a.address ?? undefined" :country="a.country" />
       </section>
 
@@ -283,7 +285,7 @@ useHead(() => ({
         v-if="groupedAttachments.length > 0 || a.detailUrlUpstream || a.pdfUrlUpstream"
         class="mb-8 space-y-2"
       >
-        <h2 class="text-base font-semibold">Offizielle Quellen</h2>
+        <h2 class="text-base font-semibold">{{ $t('objektDetail.officialSources') }}</h2>
         <ul class="space-y-2">
           <li v-for="group in groupedAttachments" :key="group.kind" class="text-sm">
             <span class="text-xs uppercase tracking-wide text-muted-foreground">{{ group.label }}</span>
@@ -301,7 +303,7 @@ useHead(() => ({
             </div>
           </li>
           <li v-if="a.detailUrlUpstream || a.pdfUrlUpstream" class="text-sm">
-            <span class="text-xs uppercase tracking-wide text-muted-foreground">Quelle</span>
+            <span class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.source') }}</span>
             <div class="flex flex-wrap gap-2 mt-1">
               <a
                 v-if="a.detailUrlUpstream"
@@ -309,21 +311,21 @@ useHead(() => ({
                 target="_blank"
                 rel="noopener"
                 class="rounded-md border bg-card px-3 py-1.5 hover:border-primary hover:text-primary transition-colors"
-              >Detailseite öffnen ↗</a>
+              >{{ $t('objektDetail.openDetailPage') }}</a>
               <a
                 v-if="a.pdfUrlUpstream"
                 :href="a.pdfUrlUpstream"
                 target="_blank"
                 rel="noopener"
                 class="rounded-md border bg-card px-3 py-1.5 hover:border-primary hover:text-primary transition-colors"
-              >Bekanntmachung (Original) ↗</a>
+              >{{ $t('objektDetail.announcementOriginal') }}</a>
             </div>
           </li>
         </ul>
       </section>
 
       <section v-if="a.description" class="mb-8 space-y-2">
-        <h2 class="text-base font-semibold">Beschreibung</h2>
+        <h2 class="text-base font-semibold">{{ $t('objektDetail.description') }}</h2>
         <p class="whitespace-pre-line text-sm text-foreground/90 leading-relaxed">
           {{ a.description }}
         </p>

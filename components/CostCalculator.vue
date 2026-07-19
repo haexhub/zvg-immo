@@ -11,6 +11,9 @@ const props = defineProps<{
   region?: string | null
 }>()
 
+const { t } = useI18n()
+const intlLocale = useIntlLocale()
+
 const bargebot = ref<number>(props.marketValueEur ?? 0)
 const bundesland = ref<Bundesland>(bundeslandFromRegion(props.region) ?? 'Nordrhein-Westfalen')
 const tageBisZahlung = ref<number>(30)
@@ -24,21 +27,21 @@ const result = computed(() =>
 )
 
 function formatEur(n: number): string {
-  return n.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })
+  return n.toLocaleString(intlLocale.value, { style: 'currency', currency: 'EUR' })
 }
 </script>
 
 <template>
   <section class="mb-8 space-y-3">
-    <h2 class="text-base font-semibold">Nebenkostenrechner</h2>
+    <h2 class="text-base font-semibold">{{ t('costCalculator.title') }}</h2>
     <p class="text-xs text-muted-foreground">
-      Schätzung der Erwerbsnebenkosten für den Zuschlag — ersetzt keine steuerliche/rechtliche Beratung.
+      {{ t('costCalculator.intro') }}
     </p>
 
     <div class="rounded-xl border bg-card p-5 space-y-5">
       <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div class="space-y-2">
-          <label class="block text-sm font-medium" for="cost-calc-bargebot">Bargebot (€)</label>
+          <label class="block text-sm font-medium" for="cost-calc-bargebot">{{ t('costCalculator.bargebot') }}</label>
           <input
             id="cost-calc-bargebot"
             v-model.number="bargebot"
@@ -50,7 +53,7 @@ function formatEur(n: number): string {
         </div>
 
         <div class="space-y-2">
-          <label class="block text-sm font-medium" for="cost-calc-bundesland">Bundesland</label>
+          <label class="block text-sm font-medium" for="cost-calc-bundesland">{{ t('costCalculator.bundesland') }}</label>
           <select
             id="cost-calc-bundesland"
             v-model="bundesland"
@@ -61,7 +64,7 @@ function formatEur(n: number): string {
         </div>
 
         <div class="space-y-2">
-          <label class="block text-sm font-medium" for="cost-calc-tage">Tage bis Zahlung</label>
+          <label class="block text-sm font-medium" for="cost-calc-tage">{{ t('costCalculator.daysUntilPayment') }}</label>
           <input
             id="cost-calc-tage"
             v-model.number="tageBisZahlung"
@@ -82,18 +85,17 @@ function formatEur(n: number): string {
           <dd class="tabular-nums font-medium shrink-0">{{ formatEur(item.amountEur) }}</dd>
         </div>
         <div class="flex items-center justify-between gap-4 py-2 font-semibold">
-          <dt>Gesamt-Erwerbsnebenkosten</dt>
+          <dt>{{ t('costCalculator.totalAncillaryCosts') }}</dt>
           <dd class="tabular-nums">{{ formatEur(result.nebenkostenGesamtEur) }}</dd>
         </div>
         <div class="flex items-center justify-between gap-4 py-2 text-base font-bold">
-          <dt>Gesamtkosten (Bargebot + Nebenkosten)</dt>
+          <dt>{{ t('costCalculator.totalCosts') }}</dt>
           <dd class="tabular-nums">{{ formatEur(result.gesamtkostenEur) }}</dd>
         </div>
       </dl>
 
       <p class="text-xs text-muted-foreground">
-        Kein Kaufvertrag nötig bei einer Zwangsversteigerung — daher entfallen Maklerprovision und Notarkosten,
-        anders als beim freihändigen Kauf.
+        {{ t('costCalculator.disclaimer') }}
       </p>
     </div>
   </section>
