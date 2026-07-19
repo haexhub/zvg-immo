@@ -17,8 +17,10 @@ function selectCountry(code: string) {
 </script>
 
 <template>
+  <!-- ViewBox auf Kerneuropa gecroppt (statt europeMapData.viewBox): Svalbard, Azoren
+       und Kanaren liegen außerhalb und werden geclippt, sonst schrumpft die Karte. -->
   <svg
-    :viewBox="europeMapData.viewBox"
+    viewBox="300 128 310 405"
     class="h-auto w-full select-none"
     role="img"
     :aria-label="$t('landing.hero.mapLabel')"
@@ -29,7 +31,7 @@ function selectCountry(code: string) {
       :d="c.path"
       class="stroke-background transition-colors"
       :class="isAvailable(c.code)
-        ? 'fill-amber-500 hover:fill-amber-600 cursor-pointer'
+        ? 'fill-amber-500 hover:fill-amber-400 cursor-pointer'
         : 'fill-muted-foreground/15 cursor-default'"
       :tabindex="isAvailable(c.code) ? 0 : -1"
       :role="isAvailable(c.code) ? 'link' : undefined"

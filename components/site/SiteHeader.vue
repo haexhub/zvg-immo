@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Gavel, Menu } from 'lucide-vue-next'
+import { Menu } from 'lucide-vue-next'
 
 const navItems = [
   { to: '/search', labelKey: 'nav.search' },
@@ -14,9 +14,7 @@ const mobileOpen = ref(false)
   <header class="sticky top-0 z-40 h-16 shrink-0 border-b bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/60">
     <div class="h-full flex items-center gap-6 px-4">
       <NuxtLink to="/" class="flex items-center gap-2 font-bold tracking-tight shrink-0">
-        <span class="flex h-7 w-7 items-center justify-center rounded-md bg-amber-500 text-white">
-          <Gavel class="h-4 w-4" />
-        </span>
+        <SitePropHammerLogo class="h-8 w-8 text-amber-500" />
         {{ $t('nav.brand') }}
       </NuxtLink>
 
