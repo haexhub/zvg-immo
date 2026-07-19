@@ -1,0 +1,56 @@
+<template>
+  <svg
+    viewBox="0 0 64 64"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    aria-hidden="true"
+  >
+    <g
+      transform="rotate(-45 37 14)"
+      stroke="currentColor"
+      stroke-width="3"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <path d="M22 8.5h18v11H22z" />
+      <path d="M10.5 7h8.5l4 4v6l-4 4h-8.5l-4-4v-6l4-4Z" />
+      <path d="M43 7h8.5l4 4v6l-4 4H43l-4-4v-6l4-4Z" />
+      <path d="M30.5 19.5h6v22a3 3 0 0 1-6 0v-22Z" />
+    </g>
+    <path
+      d="M13.5 45 32 32l18.5 13"
+      stroke="currentColor"
+      stroke-width="3"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <path
+      d="M18 44v14h28V44"
+      stroke="currentColor"
+      stroke-width="3"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <path
+      d="M13.5 58h37"
+      stroke="currentColor"
+      stroke-width="3"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <path
+      d="M29.5 58v-6.5h5V58"
+      stroke="currentColor"
+      stroke-width="2.2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <path
+      d="M22.5 46h5v5h-5zM37 46h5v5h-5z"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+  </svg>
+</template>
