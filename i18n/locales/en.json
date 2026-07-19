@@ -1,7 +1,225 @@
 {
   "site": {
-    "title": "Foreclosure Auctions Germany",
-    "description": "Public real-estate foreclosure auctions across all German states, crawled from the official court portals."
+    "title": "ZVG Scout — Foreclosure auctions across Europe",
+    "description": "ZVG Scout continuously crawls court and official portals across many European countries and shows every foreclosure auction on a map."
+  },
+  "nav": {
+    "brand": "ZVG Scout",
+    "search": "Search",
+    "archive": "Archive",
+    "calculator": "Calculator",
+    "menu": "Menu"
+  },
+  "landing": {
+    "hero": {
+      "headline": "Your scout for",
+      "headlineHighlight": "foreclosure auctions",
+      "headlineSuffix": "— across Europe",
+      "subheadline": "ZVG Scout continuously crawls courts and official portals across many European countries and shows every foreclosure auction on a map.",
+      "statLive": "{total} listings on record · {countries} countries · {regions} regions",
+      "statPlaceholder": "Thousands of listings · many countries across Europe",
+      "ctaPrimary": "Search listings for free",
+      "ctaSecondary": "See how it works"
+    },
+    "value": {
+      "heading": "Free",
+      "headingSuffix": "— every foreclosure auction, across Europe",
+      "items": [
+        { "title": "Map view", "desc": "Every listing on an interactive map, geocoded live." },
+        { "title": "List view", "desc": "Photos, market value, court and date at a glance." },
+        { "title": "Advanced filters", "desc": "Narrow down by price, area, property type, court and more." },
+        { "title": "Automatic translation", "desc": "Content from every country translated automatically." }
+      ]
+    },
+    "coverage": {
+      "heading": "countries, one scout",
+      "subheadline": "From German local court portals to France, Italy, Spain and Poland, to curated sources in North America — ZVG Scout crawls continuously in the background, no manual refresh needed.",
+      "stat": "{countries} countries · {regions} regions/states",
+      "statPlaceholder": "Many countries and regions",
+      "note": "Continuous background crawling — new auctions appear automatically without you having to refresh anything.",
+      "cta": "See available countries"
+    },
+    "features": {
+      "heading": "AI-powered appraisal analysis & unique features",
+      "items": [
+        { "title": "AI summary of appraisals & listings", "desc": "Instead of wading through a hundred-page PDF: ZVG Scout summarizes property data, location and condition automatically — even if the original isn't in your language." },
+        { "title": "Automatic property detection", "desc": "Property type, living and land area, and room count are detected automatically from the listing and appraisal." },
+        { "title": "Multi-currency view", "desc": "Market values are converted live into your preferred currency — the original stays visible alongside it." },
+        { "title": "Automatic translation", "desc": "Descriptions and documents from every source country are translated automatically." }
+      ]
+    },
+    "demo": {
+      "heading": "See ZVG Scout in action",
+      "subheadline": "Map, list, filters — try it yourself, no sign-up required.",
+      "cta": "Try it live now"
+    },
+    "archive": {
+      "heading": "Foreclosure auction archive",
+      "body": "Past auction dates stay searchable — track price history and compare closed cases with current listings.",
+      "note": "The archive is under construction.",
+      "cta": "Search the archive"
+    },
+    "calculator": {
+      "heading": "Calculator: acquisition costs",
+      "body": "Calculate real-estate transfer tax, court and notary fees, and interest under § 49 ZVG for German foreclosure auctions — down to the state.",
+      "bullets": ["Real-estate transfer tax by state", "Court fees (GKG) for the award decision", "Interest from the award until payment"],
+      "note": "Currently available for German foreclosure auctions.",
+      "cta": "Calculate acquisition costs"
+    },
+    "app": {
+      "heading": "iOS and Android app",
+      "body": "A native app for on the go is in development.",
+      "cta": "Keep browsing in search"
+    },
+    "ux": {
+      "heading": "Best-in-class user experience",
+      "body": "Fast map view, clear filters, no cluttered forms — built for power researchers, not casual browsing."
+    },
+    "faq": {
+      "heading": "Frequently asked questions",
+      "items": [
+        { "q": "Is ZVG Scout free?", "a": "Yes — search, map view and filters are completely free, even without an account. An account is only needed for extras like the watchlist and saved searches." },
+        { "q": "Which countries does the data come from?", "a": "ZVG Scout crawls court and official portals across many European countries as well as curated sources in North America. You can see the exact country list in the search filters." },
+        { "q": "How up to date is the data?", "a": "A background crawler updates the data continuously — you don't need to trigger anything manually." },
+        { "q": "Does ZVG Scout replace legal advice?", "a": "No. ZVG Scout provides research data, not legal advice. The listing page lets you contact a referred lawyer directly if you need one." },
+        { "q": "What does the AI summary do?", "a": "It summarizes property data, location and condition from appraisals and listings, translating them if needed — on demand, right on the listing page." },
+        { "q": "Does the acquisition-cost calculator work for every country?", "a": "No, it currently only covers German foreclosure auctions." }
+      ]
+    },
+    "finalCta": {
+      "heading": "Get started for free",
+      "cta": "Go to search"
+    },
+    "footer": {
+      "tagline": "Your scout for foreclosure auctions — across Europe."
+    }
+  },
+  "search": {
+    "titleWithLabel": "Foreclosure auctions {label}",
+    "europe": "Europe",
+    "countriesCount": "{count} countries",
+    "regionsCount": "{count} regions",
+    "total": "total",
+    "active": "active",
+    "cancelled": "cancelled",
+    "asOf": "As of: {date}",
+    "resultsCount": "{count} results",
+    "onMap": "on map",
+    "geocoded": "{done}/{total} geocoded",
+    "unresolvable": "{count} unresolvable",
+    "geocodingRunning": "running …",
+    "saveSearch": "Save search",
+    "savingSearch": "Saving …",
+    "saveSearchPrompt": "Name for the saved search:",
+    "saveSearchError": "Could not save search.",
+    "filterButton": "Filters",
+    "viewMap": "Map",
+    "viewList": "List",
+    "loadingData": "Loading data …",
+    "loadError": "Error loading data: {msg}",
+    "geoError": "Error geocoding: {msg}",
+    "loadingLocations": "Loading locations …",
+    "initialLoadHint": "The first load can take several minutes (every registered source runs in parallel)",
+    "noResults": "No listings match the filters.",
+    "noPhoto": "No photo",
+    "openPhotos": "Open {count} photo{plural}",
+    "cancelledBadge": "Cancelled",
+    "unknownPropertyType": "Unknown property type",
+    "auctionDate": "Auction date",
+    "marketValue": "Market value",
+    "original": "Original: {value}",
+    "detailsLink": "Details →",
+    "removeFromWatchlist": "Remove from watchlist",
+    "addToWatchlist": "Add to watchlist",
+    "loadMoreShown": "{shown} of {total} shown",
+    "loadMore": "Load more",
+    "priceBucket100k": "≤ 100k",
+    "priceBucket100to300k": "100–300k",
+    "priceBucket300to600k": "300–600k",
+    "priceBucket600k": "≥ 600k",
+    "tabAuctions": "Auctions",
+    "tabMap": "Map"
+  },
+  "settings": {
+    "title": "Settings — Foreclosure Auctions",
+    "back": "Back to overview",
+    "heading": "Settings",
+    "login": {
+      "title": "Sign in",
+      "protected": "This page is password-protected.",
+      "passwordPlaceholder": "Password",
+      "submitting": "Checking …",
+      "submit": "Sign in",
+      "error": "Login failed."
+    },
+    "claude": {
+      "title": "Claude AI login",
+      "logout": "Sign out",
+      "logoutError": "Sign out failed.",
+      "description": "Links your Claude Pro/Max subscription to the server so the enrich task can extract sizes from appraisal PDFs.",
+      "loadingStatus": "Loading status …",
+      "statusLabel": "Status:",
+      "notConnected": "Not connected",
+      "starting": "Starting …",
+      "startLogin": "Start login",
+      "connected": "✓ Already connected",
+      "reconnect": "Reconnect",
+      "openingLogin": "Opening Anthropic login …",
+      "step1": "1. Open the Anthropic login page and authorize access:",
+      "openOauth": "Open OAuth page",
+      "step2": "2. Copy the code and paste it here:",
+      "codePlaceholder": "Code from platform.claude.com",
+      "submittingCode": "Submitting …",
+      "confirm": "Confirm",
+      "cancel": "Cancel",
+      "checking": "Checking login …",
+      "success": "✓ Successfully connected",
+      "ok": "OK",
+      "genericError": "An error occurred.",
+      "retry": "Retry",
+      "sessionExpired": "Session expired.",
+      "statusUnreachable": "Status unreachable.",
+      "loginStartFailed": "Failed to start login.",
+      "codeSubmitFailed": "Failed to submit code.",
+      "resetFailed": "Failed to reset."
+    },
+    "lawyers": {
+      "title": "Lawyers",
+      "add": "+ Add lawyer",
+      "description": "Catalog of referred lawyers (pay-per-lead). Inquiries go through the listing page; the e-mail address is never sent to the client.",
+      "loadError": "Lawyers could not be loaded.",
+      "updateError": "Update failed.",
+      "hasInquiries": "This lawyer already has inquiries — deactivate instead of deleting.",
+      "deleteError": "Delete failed.",
+      "saveError": "Save failed.",
+      "colName": "Name",
+      "colCountries": "Countries",
+      "colCommission": "Commission",
+      "colStatus": "Status",
+      "colActions": "Actions",
+      "active": "Active",
+      "inactive": "Deactivated",
+      "edit": "Edit",
+      "activate": "Activate",
+      "deactivate": "Deactivate",
+      "delete": "Delete (only possible without inquiries)",
+      "empty": "No lawyers added yet.",
+      "editHeading": "Edit lawyer",
+      "createHeading": "Add new lawyer",
+      "namePlaceholder": "Name *",
+      "firmPlaceholder": "Firm",
+      "emailPlaceholder": "E-mail *",
+      "phonePlaceholder": "Phone",
+      "countriesPlaceholder": "Countries (e.g. de, at) *",
+      "specializationPlaceholder": "Specialization",
+      "languagesPlaceholder": "Languages (e.g. German, English)",
+      "websitePlaceholder": "Website",
+      "commissionPlaceholder": "Commission per lead (EUR)",
+      "activeLabel": "Active",
+      "saving": "Saving …",
+      "save": "Save",
+      "cancel": "Cancel"
+    }
   },
   "localeSwitcher": {
     "label": "Language"
@@ -95,50 +313,6 @@
       "photos": "Only with photos",
       "cancelled": "incl. cancelled"
     }
-  },
-  "home": {
-    "titleWithLabel": "Foreclosure auctions {label}",
-    "europe": "Europe",
-    "countriesCount": "{count} countries",
-    "regionsCount": "{count} regions",
-    "total": "total",
-    "active": "active",
-    "cancelled": "cancelled",
-    "asOf": "As of: {date}",
-    "resultsCount": "{count} results",
-    "onMap": "on map",
-    "geocoded": "{done}/{total} geocoded",
-    "unresolvable": "{count} unresolvable",
-    "geocodingRunning": "running …",
-    "saveSearch": "Save search",
-    "savingSearch": "Saving …",
-    "saveSearchPrompt": "Name for the saved search:",
-    "saveSearchError": "Could not save search.",
-    "filterButton": "Filters",
-    "viewMap": "Map",
-    "viewList": "List",
-    "loadingData": "Loading data …",
-    "loadError": "Error loading data: {msg}",
-    "geoError": "Error geocoding: {msg}",
-    "loadingLocations": "Loading locations …",
-    "initialLoadHint": "The first load can take several minutes (every registered source runs in parallel)",
-    "noResults": "No listings match the filters.",
-    "noPhoto": "No photo",
-    "openPhotos": "Open {count} photo{plural}",
-    "cancelledBadge": "Cancelled",
-    "unknownPropertyType": "Unknown property type",
-    "auctionDate": "Auction date",
-    "marketValue": "Market value",
-    "original": "Original: {value}",
-    "detailsLink": "Details →",
-    "removeFromWatchlist": "Remove from watchlist",
-    "addToWatchlist": "Add to watchlist",
-    "loadMoreShown": "{shown} of {total} shown",
-    "loadMore": "Load more",
-    "priceBucket100k": "≤ 100k",
-    "priceBucket100to300k": "100–300k",
-    "priceBucket300to600k": "300–600k",
-    "priceBucket600k": "≥ 600k"
   },
   "authStatus": {
     "logout": "Log out",

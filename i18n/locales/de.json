@@ -1,7 +1,225 @@
 {
   "site": {
-    "title": "Zwangsversteigerungen Deutschland",
-    "description": "Öffentliche Immobilien-Zwangsversteigerungen aller deutschen Bundesländer, gecrawlt aus den amtlichen Justizportalen."
+    "title": "ZVG Scout — Zwangsversteigerungen europaweit",
+    "description": "ZVG Scout durchsucht rund um die Uhr Amts- und Gerichtsportale in vielen europäischen Ländern und zeigt jede Zwangsversteigerung auf einer Karte."
+  },
+  "nav": {
+    "brand": "ZVG Scout",
+    "search": "Suche",
+    "archive": "Archiv",
+    "calculator": "Rechner",
+    "menu": "Menü"
+  },
+  "landing": {
+    "hero": {
+      "headline": "Dein Scout für",
+      "headlineHighlight": "Zwangsversteigerungen",
+      "headlineSuffix": "— europaweit",
+      "subheadline": "ZVG Scout durchsucht rund um die Uhr Gerichte und Amtsportale in vielen europäischen Ländern und zeigt dir jede Zwangsversteigerung auf einer Karte.",
+      "statLive": "{total} Objekte im Bestand · {countries} Länder · {regions} Regionen",
+      "statPlaceholder": "Tausende Objekte · viele Länder europaweit",
+      "ctaPrimary": "Kostenlos Objekte durchsuchen",
+      "ctaSecondary": "So funktioniert's"
+    },
+    "value": {
+      "heading": "Kostenlos",
+      "headingSuffix": "alle Zwangsversteigerungen — europaweit",
+      "items": [
+        { "title": "Kartenansicht", "desc": "Alle Objekte auf einer interaktiven Karte, live geokodiert." },
+        { "title": "Listenansicht", "desc": "Fotos, Verkehrswert, Gericht und Termin auf einen Blick." },
+        { "title": "Erweiterte Filter", "desc": "Nach Preis, Fläche, Objektart, Gericht und mehr eingrenzen." },
+        { "title": "Automatische Übersetzung", "desc": "Inhalte aus jedem Land automatisch auf Deutsch." }
+      ]
+    },
+    "coverage": {
+      "heading": "Länder, ein Scout",
+      "subheadline": "Von den deutschen Amtsgerichtsportalen über Frankreich, Italien, Spanien und Polen bis zu kuratierten Quellen in Nordamerika — ZVG Scout crawlt kontinuierlich im Hintergrund, du musst nichts manuell aktualisieren.",
+      "stat": "{countries} Länder · {regions} Regionen/Bundesländer",
+      "statPlaceholder": "Viele Länder und Regionen",
+      "note": "Kontinuierliches Crawling im Hintergrund — neue Auktionen erscheinen automatisch, ohne dass du manuell aktualisierst.",
+      "cta": "Verfügbare Länder ansehen"
+    },
+    "features": {
+      "heading": "KI-gestützte Gutachten-Analyse & einzigartige Features",
+      "items": [
+        { "title": "KI-Zusammenfassung von Gutachten & Exposés", "desc": "Statt hundert Seiten PDF zu wälzen: ZVG Scout fasst Objektdaten, Lage und Zustand automatisch zusammen — auch wenn das Original nicht auf Deutsch ist." },
+        { "title": "Automatische Objekterkennung", "desc": "Objektart, Wohn- und Grundstücksfläche sowie Zimmerzahl werden automatisch aus Anzeige und Gutachten erkannt." },
+        { "title": "Mehrwährungs-Ansicht", "desc": "Verkehrswerte werden live in deine Wunschwährung umgerechnet — das Original bleibt daneben sichtbar." },
+        { "title": "Automatische Übersetzung", "desc": "Beschreibungen und Dokumente aus jedem Quellland werden automatisch übersetzt." }
+      ]
+    },
+    "demo": {
+      "heading": "Entdecke ZVG Scout in Aktion",
+      "subheadline": "Karte, Liste, Filter — probier's direkt aus, ganz ohne Anmeldung.",
+      "cta": "Jetzt live testen"
+    },
+    "archive": {
+      "heading": "Zwangsversteigerungs-Archiv",
+      "body": "Vergangene Termine bleiben recherchierbar — verfolge Preisverläufe und vergleiche abgeschlossene Verfahren mit aktuellen Angeboten.",
+      "note": "Das Archiv befindet sich im Aufbau.",
+      "cta": "Archiv durchsuchen"
+    },
+    "calculator": {
+      "heading": "Rechner: Erwerbskosten",
+      "body": "Berechne Grunderwerbsteuer, Gerichts- und Notarkosten sowie Zinsen nach § 49 ZVG für deutsche Zwangsversteigerungen — bundeslandgenau.",
+      "bullets": ["Grunderwerbsteuer je Bundesland", "Gerichtskosten (GKG) für den Zuschlagsbeschluss", "Zinsen ab Zuschlag bis Zahlung"],
+      "note": "Aktuell verfügbar für deutsche Zwangsversteigerungen.",
+      "cta": "Erwerbskosten berechnen"
+    },
+    "app": {
+      "heading": "iOS und Android App",
+      "body": "Eine native App für unterwegs ist in Entwicklung.",
+      "cta": "In der Suche weitermachen"
+    },
+    "ux": {
+      "heading": "Erstklassige User Experience",
+      "body": "Schnelle Kartenansicht, klare Filter, keine überladenen Formulare — gebaut für Vielrecherchierer, nicht für Gelegenheitsnutzer."
+    },
+    "faq": {
+      "heading": "Häufig gestellte Fragen",
+      "items": [
+        { "q": "Ist ZVG Scout kostenlos?", "a": "Ja — Suche, Kartenansicht und Filter sind komplett kostenlos, auch ohne Anmeldung. Ein Konto brauchst du nur für Zusatzfunktionen wie Watchlist und gespeicherte Suchen." },
+        { "q": "Aus welchen Ländern kommen die Daten?", "a": "ZVG Scout crawlt Amts- und Gerichtsportale in vielen europäischen Ländern sowie kuratierte Quellen in Nordamerika. Die genaue Länderliste siehst du im Filter der Suche." },
+        { "q": "Wie aktuell sind die Daten?", "a": "Ein Hintergrund-Crawler aktualisiert die Daten laufend — du musst nichts manuell anstoßen." },
+        { "q": "Ersetzt ZVG Scout eine Rechtsberatung?", "a": "Nein. ZVG Scout liefert Recherche-Daten, keine Rechtsberatung. Über die Objektseite kannst du bei Bedarf direkt einen vermittelten Anwalt kontaktieren." },
+        { "q": "Was macht die KI-Zusammenfassung?", "a": "Sie fasst Objektdaten, Lage und Zustand aus Gutachten und Exposés zusammen und übersetzt sie bei Bedarf — auf Knopfdruck, direkt auf der Objektseite." },
+        { "q": "Funktioniert der Erwerbskosten-Rechner für alle Länder?", "a": "Nein, aktuell nur für deutsche Zwangsversteigerungen." }
+      ]
+    },
+    "finalCta": {
+      "heading": "Jetzt kostenlos starten",
+      "cta": "Zur Suche"
+    },
+    "footer": {
+      "tagline": "Dein Scout für Zwangsversteigerungen — europaweit."
+    }
+  },
+  "search": {
+    "titleWithLabel": "Zwangsversteigerungen {label}",
+    "europe": "Europa",
+    "countriesCount": "{count} Länder",
+    "regionsCount": "{count} Regionen",
+    "total": "gesamt",
+    "active": "aktiv",
+    "cancelled": "aufgehoben",
+    "asOf": "Stand: {date}",
+    "resultsCount": "{count} Treffer",
+    "onMap": "auf Karte",
+    "geocoded": "{done}/{total} geokodiert",
+    "unresolvable": "{count} unauffindbar",
+    "geocodingRunning": "läuft …",
+    "saveSearch": "Suche speichern",
+    "savingSearch": "Speichert …",
+    "saveSearchPrompt": "Name für die gespeicherte Suche:",
+    "saveSearchError": "Suche konnte nicht gespeichert werden.",
+    "filterButton": "Filter",
+    "viewMap": "Karte",
+    "viewList": "Liste",
+    "loadingData": "Lade Daten …",
+    "loadError": "Fehler beim Laden: {msg}",
+    "geoError": "Fehler beim Geokodieren: {msg}",
+    "loadingLocations": "Lade Standorte …",
+    "initialLoadHint": "Erstaufruf kann mehrere Minuten dauern (alle registrierten Quellen parallel)",
+    "noResults": "Keine Termine entsprechen den Filtern.",
+    "noPhoto": "Kein Foto",
+    "openPhotos": "{count} Foto{plural} öffnen",
+    "cancelledBadge": "Aufgehoben",
+    "unknownPropertyType": "Objektart unbekannt",
+    "auctionDate": "Termin",
+    "marketValue": "Verkehrswert",
+    "original": "Original: {value}",
+    "detailsLink": "Details →",
+    "removeFromWatchlist": "Von Watchlist entfernen",
+    "addToWatchlist": "Zur Watchlist hinzufügen",
+    "loadMoreShown": "{shown} von {total} angezeigt",
+    "loadMore": "Mehr laden",
+    "priceBucket100k": "≤ 100k",
+    "priceBucket100to300k": "100–300k",
+    "priceBucket300to600k": "300–600k",
+    "priceBucket600k": "≥ 600k",
+    "tabAuctions": "Auktionen",
+    "tabMap": "Karte"
+  },
+  "settings": {
+    "title": "Einstellungen — Zwangsversteigerungen",
+    "back": "Zurück zur Übersicht",
+    "heading": "Einstellungen",
+    "login": {
+      "title": "Anmeldung",
+      "protected": "Diese Seite ist passwortgeschützt.",
+      "passwordPlaceholder": "Passwort",
+      "submitting": "Prüfe …",
+      "submit": "Anmelden",
+      "error": "Login fehlgeschlagen."
+    },
+    "claude": {
+      "title": "Claude AI-Anmeldung",
+      "logout": "Abmelden",
+      "logoutError": "Abmelden fehlgeschlagen.",
+      "description": "Verknüpft dein Claude Pro/Max-Abo mit dem Server, damit der Enrich-Task Größen aus Gutachten-PDFs extrahieren kann.",
+      "loadingStatus": "Lade Status …",
+      "statusLabel": "Status:",
+      "notConnected": "Nicht verbunden",
+      "starting": "Starte …",
+      "startLogin": "Login starten",
+      "connected": "✓ Bereits angemeldet",
+      "reconnect": "Neu verknüpfen",
+      "openingLogin": "Öffne Anthropic-Login …",
+      "step1": "1. Öffne die Anthropic-Login-Seite und autorisiere den Zugriff:",
+      "openOauth": "OAuth-Seite öffnen",
+      "step2": "2. Kopiere den Code und füge ihn hier ein:",
+      "codePlaceholder": "Code aus platform.claude.com",
+      "submittingCode": "Übertrage …",
+      "confirm": "Bestätigen",
+      "cancel": "Abbrechen",
+      "checking": "Prüfe Anmeldung …",
+      "success": "✓ Erfolgreich verbunden",
+      "ok": "OK",
+      "genericError": "Ein Fehler ist aufgetreten.",
+      "retry": "Erneut versuchen",
+      "sessionExpired": "Sitzung abgelaufen.",
+      "statusUnreachable": "Status nicht erreichbar.",
+      "loginStartFailed": "Login-Start fehlgeschlagen.",
+      "codeSubmitFailed": "Code-Übermittlung fehlgeschlagen.",
+      "resetFailed": "Zurücksetzen fehlgeschlagen."
+    },
+    "lawyers": {
+      "title": "Anwälte",
+      "add": "+ Anwalt anlegen",
+      "description": "Katalog der vermittelten Anwälte (Pay-per-Lead). Anfragen laufen über die Objektseite; die E-Mail-Adresse wird nie an den Client ausgeliefert.",
+      "loadError": "Anwälte konnten nicht geladen werden.",
+      "updateError": "Aktualisieren fehlgeschlagen.",
+      "hasInquiries": "Anwalt hat bereits Anfragen — bitte deaktivieren statt löschen.",
+      "deleteError": "Löschen fehlgeschlagen.",
+      "saveError": "Speichern fehlgeschlagen.",
+      "colName": "Name",
+      "colCountries": "Länder",
+      "colCommission": "Provision",
+      "colStatus": "Status",
+      "colActions": "Aktionen",
+      "active": "Aktiv",
+      "inactive": "Deaktiviert",
+      "edit": "Bearbeiten",
+      "activate": "Aktivieren",
+      "deactivate": "Deaktivieren",
+      "delete": "Löschen (nur ohne Anfragen möglich)",
+      "empty": "Noch keine Anwälte angelegt.",
+      "editHeading": "Anwalt bearbeiten",
+      "createHeading": "Neuen Anwalt anlegen",
+      "namePlaceholder": "Name *",
+      "firmPlaceholder": "Kanzlei",
+      "emailPlaceholder": "E-Mail *",
+      "phonePlaceholder": "Telefon",
+      "countriesPlaceholder": "Länder (z.B. de, at) *",
+      "specializationPlaceholder": "Spezialisierung",
+      "languagesPlaceholder": "Sprachen (z.B. Deutsch, Englisch)",
+      "websitePlaceholder": "Website",
+      "commissionPlaceholder": "Provision pro Lead (EUR)",
+      "activeLabel": "Aktiv",
+      "saving": "Speichere …",
+      "save": "Speichern",
+      "cancel": "Abbrechen"
+    }
   },
   "localeSwitcher": {
     "label": "Sprache"
@@ -95,50 +313,6 @@
       "photos": "Nur mit Fotos",
       "cancelled": "inkl. aufgehobene"
     }
-  },
-  "home": {
-    "titleWithLabel": "Zwangsversteigerungen {label}",
-    "europe": "Europa",
-    "countriesCount": "{count} Länder",
-    "regionsCount": "{count} Regionen",
-    "total": "gesamt",
-    "active": "aktiv",
-    "cancelled": "cancelled",
-    "asOf": "Stand: {date}",
-    "resultsCount": "{count} Treffer",
-    "onMap": "auf Karte",
-    "geocoded": "{done}/{total} geokodiert",
-    "unresolvable": "{count} unauffindbar",
-    "geocodingRunning": "läuft …",
-    "saveSearch": "Suche speichern",
-    "savingSearch": "Speichert …",
-    "saveSearchPrompt": "Name für die gespeicherte Suche:",
-    "saveSearchError": "Suche konnte nicht gespeichert werden.",
-    "filterButton": "Filter",
-    "viewMap": "Karte",
-    "viewList": "Liste",
-    "loadingData": "Lade Daten …",
-    "loadError": "Fehler beim Laden: {msg}",
-    "geoError": "Fehler beim Geokodieren: {msg}",
-    "loadingLocations": "Lade Standorte …",
-    "initialLoadHint": "Erstaufruf kann mehrere Minuten dauern (alle registrierten Quellen parallel)",
-    "noResults": "Keine Termine entsprechen den Filtern.",
-    "noPhoto": "Kein Foto",
-    "openPhotos": "{count} Foto{plural} öffnen",
-    "cancelledBadge": "Aufgehoben",
-    "unknownPropertyType": "Objektart unbekannt",
-    "auctionDate": "Termin",
-    "marketValue": "Verkehrswert",
-    "original": "Original: {value}",
-    "detailsLink": "Details →",
-    "removeFromWatchlist": "Von Watchlist entfernen",
-    "addToWatchlist": "Zur Watchlist hinzufügen",
-    "loadMoreShown": "{shown} von {total} angezeigt",
-    "loadMore": "Mehr laden",
-    "priceBucket100k": "≤ 100k",
-    "priceBucket100to300k": "100–300k",
-    "priceBucket300to600k": "300–600k",
-    "priceBucket600k": "≥ 600k"
   },
   "authStatus": {
     "logout": "Abmelden",

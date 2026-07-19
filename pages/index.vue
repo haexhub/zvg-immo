@@ -1,990 +1,189 @@
 <script setup lang="ts">
-import type { Auction, CrawlResult } from '~/types/auction'
-import type { GeoAuction, GeoCrawlResult } from '~/server/api/auctions-geo.get'
+import { Globe2, ListFilter, Map as MapIcon, Languages, Sparkles, Ruler, Coins, Smartphone, Gauge } from 'lucide-vue-next'
 import type { CountryEntry } from '~/server/crawlers/registry'
-import { ALL_SCOPE, isAllScope } from '~/lib/auction-constants'
-import { filterAuctions, scopeByCountryRegion, auctionCategory, type AuctionFilters } from '~/lib/auction-filters'
-import type { SavedSearch } from '~/server/api/saved-searches/index.get'
-import type { WatchlistItem } from '~/server/api/watchlist/index.get'
-import Select from '~/components/ui/select/Select.vue'
-import SelectTrigger from '~/components/ui/select/SelectTrigger.vue'
-import SelectValue from '~/components/ui/select/SelectValue.vue'
-import SelectContent from '~/components/ui/select/SelectContent.vue'
-import SelectItem from '~/components/ui/select/SelectItem.vue'
-import Sheet from '~/components/ui/sheet/Sheet.vue'
-import SheetContent from '~/components/ui/sheet/SheetContent.vue'
-import SheetHeader from '~/components/ui/sheet/SheetHeader.vue'
-import SheetFooter from '~/components/ui/sheet/SheetFooter.vue'
-import SheetTitle from '~/components/ui/sheet/SheetTitle.vue'
-import SheetDescription from '~/components/ui/sheet/SheetDescription.vue'
-import { ListFilter, Star } from 'lucide-vue-next'
-import { refDebounced } from '@vueuse/core'
+import type { SiteStats } from '~/server/api/stats.get'
 
-const route = useRoute()
-const router = useRouter()
-const { user } = useAuth()
-const { t, locale } = useI18n()
+const { data: countries } = await useFetch<CountryEntry[]>('/api/regions', { default: () => [] })
+const { data: stats } = await useFetch<SiteStats | null>('/api/stats', { default: () => null })
+
 const intlLocale = useIntlLocale()
-const { currency, eurToDisplay, displayToEur } = useCurrencyDisplay()
-const propertyTypeLabel = usePropertyTypeLabel()
-const attachmentKindLabelFn = useAttachmentKindLabel()
-const countryLabel = useCountryLabel()
 
-function queryStr(key: string, fallback = ''): string {
-  const v = route.query[key]
-  return (Array.isArray(v) ? (v[0] ?? '') : (v ?? '')) || fallback
-}
-function queryNum(key: string): number | null {
-  const v = queryStr(key)
-  if (!v) return null
-  const n = Number(v)
-  return Number.isFinite(n) ? n : null
-}
-function queryList(key: string): string[] {
-  const v = route.query[key]
-  const raw = Array.isArray(v) ? v.join(',') : (v ?? '')
-  return raw ? raw.split(',').filter(Boolean) : []
-}
+const countryCount = computed(() => stats.value?.countryCount ?? countries.value?.length ?? 0)
+const regionCount = computed(() => stats.value?.regionCount ?? 0)
+const hasLiveStats = computed(() => !!stats.value && stats.value.totalCount > 0)
 
-// Country/region multi-select filter. Empty array = aggregate over every
-// registered platform across every country. Region selections are stored as
-// `${countryCode}:${regionCode}` pairs (not bare region codes) since region
-// codes aren't unique across countries once several countries are selectable.
-const selectedCountries = ref<string[]>(queryList('country'))
-const selectedRegionKeys = ref<string[]>(queryList('region'))
-
-const filtersOpen = ref(false)
-
-
-const { data: countries } = await useFetch<CountryEntry[]>('/api/regions', {
-  default: () => [],
-})
-
-// Regions of the currently selected countries (empty when none selected).
-// Each entry carries its country's display name so the checkbox list can
-// disambiguate identically-named regions once multiple countries are picked.
-const availableRegions = computed(() => {
-  if (selectedCountries.value.length === 0) return []
-  return (countries.value ?? [])
-    .filter((c) => selectedCountries.value.includes(c.code))
-    .flatMap((c) => c.regions.map((r) => ({ ...r, key: `${c.code}:${r.code}`, countryName: countryLabel(c.code, c.name) })))
-})
-
-function toggleCountry(code: string): void {
-  const set = new Set(selectedCountries.value)
-  if (set.has(code)) set.delete(code)
-  else set.add(code)
-  selectedCountries.value = [...set]
-}
-function toggleRegion(key: string): void {
-  const set = new Set(selectedRegionKeys.value)
-  if (set.has(key)) set.delete(key)
-  else set.add(key)
-  selectedRegionKeys.value = [...set]
-}
-
-// Drop region selections that no longer belong to a selected country — e.g.
-// deselecting a country should also drop its regions.
-watch(selectedCountries, () => {
-  const valid = new Set(availableRegions.value.map((r) => r.key))
-  selectedRegionKeys.value = selectedRegionKeys.value.filter((k) => valid.has(k))
-})
-
-// The /api/auctions and /api/auctions-geo endpoints only understand a single
-// {country, region} pair (or ALL_SCOPE). For an actual multi-select we fetch the
-// broadest dataset that still covers every selection and filter the rest
-// client-side in applyFilters() — exactly one country picked can still use
-// the fast region- or country-scoped disk cache; anything broader (0 or 2+
-// countries) falls back to the merged ALL_SCOPE cache, which is itself disk-cached
-// and fast, just less scoped.
-const serverCountry = computed(() => (selectedCountries.value.length === 1 ? selectedCountries.value[0]! : ALL_SCOPE))
-const serverRegion = computed(() => {
-  if (selectedCountries.value.length !== 1) return ALL_SCOPE
-  const country = selectedCountries.value[0]!
-  const codes = selectedRegionKeys.value
-    .filter((k) => k.startsWith(`${country}:`))
-    .map((k) => k.slice(country.length + 1))
-  return codes.length === 1 ? codes[0]! : ALL_SCOPE
-})
-
-const queryParams = computed(() => ({
-  country: serverCountry.value,
-  region: serverRegion.value,
-}))
-
-// Lazy fetch so SSR doesn't block on a cold multi-region crawl.
-const { data, pending, error, refresh } = useLazyFetch<CrawlResult | null>('/api/auctions', {
-  query: queryParams,
-  default: () => null,
-})
-
-// Initial 'list' so SSR doesn't try to mount AuctionMap.client.vue inside an
-// inactive v-if branch (which leaves the map div hollow). onMounted switches
-// to 'map' below; the user sees the map straight away.
-const view = ref<'list' | 'map'>('list')
-
-// Geo-fetch is gated behind the map view but reacts to country/region changes.
-// Cache-only mode loads instantly from already-geocoded addresses.
-// Switching the toggle to "frisch geokodieren" hits Nominatim for missing
-// addresses — slow on cold start (1 req/s) but caches future calls.
-const fetchMissing = ref(false)
-const {
-  data: geoData,
-  pending: geoPending,
-  error: geoError,
-  execute: loadGeo,
-  refresh: refreshGeo,
-} = useFetch<GeoCrawlResult | null>('/api/auctions-geo', {
-  query: {
-    country: serverCountry,
-    region: serverRegion,
-    fetch: computed(() => (fetchMissing.value ? '1' : '0')),
-  },
-  default: () => null,
-  immediate: false,
-})
-
-watch(view, (v) => {
-  if (v === 'map' && !geoData.value && !geoPending.value) loadGeo()
-})
-
-// While the geocode bootstrap task fills the cache server-side, the client's
-// snapshot of geocodedCount is stale. Poll until every address has either
-// been geocoded or definitively tried (cached-as-notFound). Ignoring
-// unresolvableCount here would keep the "läuft …" spinner running forever
-// against addresses Nominatim can't resolve.
-const geocodingInProgress = computed(() => {
-  if (!geoData.value) return false
-  const done = geoData.value.geocodedCount + geoData.value.unresolvableCount
-  return done < geoData.value.auctions.length
-})
-
-let geoPollTimer: ReturnType<typeof setInterval> | null = null
-let pollInFlight = false
-async function pollGeoOnce(): Promise<void> {
-  // Direct $fetch bypasses the useFetch payload cache that holds the first
-  // hydration snapshot — refresh() alone keeps returning the stale value.
-  // Snapshot the selection so a stale response never overwrites data the
-  // user requested for a different country/region mid-flight.
-  const country = serverCountry.value
-  const region = serverRegion.value
-  const fetchParam = fetchMissing.value ? '1' : '0'
-  pollInFlight = true
-  try {
-    const fresh = await $fetch<GeoCrawlResult>('/api/auctions-geo', {
-      query: {
-        country,
-        region,
-        fetch: fetchParam,
-      },
-      // Bypass the HTTP cache so each poll sees the growing geocode cache.
-      cache: 'no-store',
-    })
-    if (
-      country === serverCountry.value
-      && region === serverRegion.value
-      && fetchParam === (fetchMissing.value ? '1' : '0')
-    ) {
-      geoData.value = fresh
-    }
-  } catch {
-    // Ignore transient poll errors; the next tick will retry.
-  } finally {
-    pollInFlight = false
-  }
-}
-function startGeoPoll(): void {
-  if (geoPollTimer) return
-  geoPollTimer = setInterval(() => {
-    if (view.value !== 'map') return
-    if (!geocodingInProgress.value) {
-      stopGeoPoll()
-      return
-    }
-    if (geoPending.value || pollInFlight) return
-    pollGeoOnce()
-  }, 15_000)
-}
-function stopGeoPoll(): void {
-  if (geoPollTimer) {
-    clearInterval(geoPollTimer)
-    geoPollTimer = null
-  }
-}
-watch([geocodingInProgress, view], ([running, v]) => {
-  if (running && v === 'map') startGeoPoll()
-  else stopGeoPoll()
-}, { immediate: true })
-
-onMounted(() => {
-  view.value = route.query.view === 'list' ? 'list' : 'map'
-})
-
-onDeactivated(() => stopGeoPoll())
-onActivated(() => {
-  if (geocodingInProgress.value && view.value === 'map') startGeoPoll()
-})
-onBeforeUnmount(() => stopGeoPoll())
-
-const search = ref(queryStr('q'))
-// Every keystroke re-runs filteredGeo and rebuilds thousands of map markers —
-// debounce the search term so typing stays smooth. Selects/checkboxes keep
-// applying instantly.
-const debouncedSearch = refDebounced(search, 250)
-const includeCancelled = ref(route.query.cancelled === '1')
-const authorityFilter = ref<string>(queryStr('authority', ALL_SCOPE))
-// Canonical filter state stays in EUR (matches marketValueEur, and keeps
-// saved-search/URL query semantics stable regardless of the viewer's
-// currency preference) — priceMinDisplay/priceMaxDisplay below convert only
-// for the input fields the user actually types into.
-const priceMin = ref<number | null>(queryNum('priceMin'))
-const priceMax = ref<number | null>(queryNum('priceMax'))
-
-function toDisplayOrNull(eur: number | null): number | null {
-  if (eur == null) return null
-  const d = eurToDisplay(eur)
-  return d != null ? Math.round(d) : null
-}
-function toEurOrNull(v: unknown): number | null {
-  if (typeof v !== 'number' || Number.isNaN(v)) return null
-  const eur = displayToEur(v)
-  return eur != null ? Math.round(eur) : null
-}
-const priceMinDisplay = computed<number | null>({
-  get: () => toDisplayOrNull(priceMin.value),
-  set: (v) => { priceMin.value = toEurOrNull(v) },
-})
-const priceMaxDisplay = computed<number | null>({
-  get: () => toDisplayOrNull(priceMax.value),
-  set: (v) => { priceMax.value = toEurOrNull(v) },
-})
-const landAreaMin = ref<number | null>(queryNum('landMin'))
-const landAreaMax = ref<number | null>(queryNum('landMax'))
-const livingAreaMin = ref<number | null>(queryNum('livMin'))
-const livingAreaMax = ref<number | null>(queryNum('livMax'))
-const categoryFilter = ref<string>(queryStr('category', ALL_SCOPE))
-const onlyWithPhotos = ref(route.query.photos === '1')
-
-// When the user switches country/region, the previously-selected court may
-// no longer exist. Reset filters that depend on the dataset.
-watch([selectedCountries, selectedRegionKeys], () => {
-  authorityFilter.value = ALL_SCOPE
-  categoryFilter.value = ALL_SCOPE
-})
-
-const selectedCountryLabel = computed(() => {
-  if (selectedCountries.value.length === 0) return t('home.europe')
-  if (selectedCountries.value.length === 1) {
-    const code = selectedCountries.value[0]!
-    return countryLabel(code, countries.value?.find((c) => c.code === code)?.name)
-  }
-  return t('home.countriesCount', { count: selectedCountries.value.length })
-})
-
-const selectedRegionLabel = computed(() => {
-  if (selectedRegionKeys.value.length === 0) return null
-  if (selectedRegionKeys.value.length === 1) {
-    return availableRegions.value.find((r) => r.key === selectedRegionKeys.value[0])?.name ?? null
-  }
-  return t('home.regionsCount', { count: selectedRegionKeys.value.length })
-})
-
-const headerLabel = computed(() => {
-  return selectedRegionLabel.value
-    ? `${selectedRegionLabel.value}, ${selectedCountryLabel.value}`
-    : selectedCountryLabel.value
-})
-
-// Matches the fetched data's `region` field (a display name, e.g. "Sachsen")
-// against the selected region keys (`${countryCode}:${regionCode}` pairs) —
-// needed because the API/cache only scope by a single country+region and
-// selecting several regions (or several countries) requires filtering the
-// broader fetch client-side.
-const selectedRegionNameKeys = computed<Set<string> | null>(() => {
-  if (selectedRegionKeys.value.length === 0) return null
-  const set = new Set<string>()
-  for (const key of selectedRegionKeys.value) {
-    const r = availableRegions.value.find((r) => r.key === key)
-    if (r) set.add(`${r.country}:${r.name}`)
-  }
-  return set
-})
-
-// Restricts to the selected countries/regions only — needed because a
-// multi-select (or "all") fetch returns a broader dataset than the current
-// selection. Used both as the base for the full filterAuctions() pass and for
-// deriving the court/Objektart filter options, which must reflect only the
-// selected countries/regions, not everything that happened to be fetched.
-const scopedAuctions = computed<Auction[]>(() => (
-  data.value ? scopeByCountryRegion(data.value.auctions, selectedCountries.value, selectedRegionNameKeys.value) : []
-))
-
-const courts = computed<string[]>(() => {
-  return [...new Set(scopedAuctions.value.map((a) => a.authority).filter(Boolean))].sort()
-})
-
-// Counts of normalized Objektart categories. Sorted by descending count so
-// the most common categories show up first in the dropdown.
-const kategorienMitCount = computed<{ id: string; label: string; count: number }[]>(() => {
-  const counts = new Map<string, number>()
-  for (const a of scopedAuctions.value) {
-    if (a.cancelled) continue
-    const id = auctionCategory(a).id
-    counts.set(id, (counts.get(id) ?? 0) + 1)
-  }
-  return [...counts.entries()]
-    .map(([id, count]) => ({ id, label: propertyTypeLabel(id), count }))
-    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, locale.value))
-})
-
-function clearAllFilters(): void {
-  selectedCountries.value = []
-  selectedRegionKeys.value = []
-  search.value = ''
-  authorityFilter.value = ALL_SCOPE
-  priceMin.value = null
-  priceMax.value = null
-  landAreaMin.value = null
-  landAreaMax.value = null
-  livingAreaMin.value = null
-  livingAreaMax.value = null
-  categoryFilter.value = ALL_SCOPE
-  onlyWithPhotos.value = false
-  includeCancelled.value = false
-}
-
-// v-model.number yields '' (empty string) when the input is cleared; treat
-// anything that isn't a real number as "filter not set".
-function numOrNull(v: unknown): number | null {
-  return typeof v === 'number' && !Number.isNaN(v) ? v : null
-}
-
-// Explicit filter object for lib/auction-filters.ts's pure filterAuctions() —
-// replaces the ~12 reactive refs applyFilters() used to close over directly.
-const currentFilters = computed<AuctionFilters>(() => ({
-  countries: selectedCountries.value,
-  regionNameKeys: selectedRegionNameKeys.value,
-  search: debouncedSearch.value,
-  authority: authorityFilter.value,
-  category: categoryFilter.value,
-  onlyWithPhotos: onlyWithPhotos.value,
-  includeCancelled: includeCancelled.value,
-  priceMin: numOrNull(priceMin.value),
-  priceMax: numOrNull(priceMax.value),
-  landMin: numOrNull(landAreaMin.value),
-  landMax: numOrNull(landAreaMax.value),
-  livMin: numOrNull(livingAreaMin.value),
-  livMax: numOrNull(livingAreaMax.value),
-}))
-
-const filtered = computed<Auction[]>(() => {
-  if (!data.value) return []
-  return filterAuctions(data.value.auctions, currentFilters.value)
-})
-
-// The list view used to render every filtered auction as a full card in one
-// go — with the "all countries" default that's ~14.7k cards (~45MB of SSR
-// HTML) before the client even hydrates and switches to the map. Page it
-// instead: render a bounded slice and grow it on demand.
-const LIST_PAGE_SIZE = 30
-const visibleCount = ref(LIST_PAGE_SIZE)
-watch(filtered, () => {
-  visibleCount.value = LIST_PAGE_SIZE
-})
-const visibleAuctions = computed<Auction[]>(() => filtered.value.slice(0, visibleCount.value))
-function loadMore(): void {
-  visibleCount.value += LIST_PAGE_SIZE
-}
-
-const filteredGeo = computed<GeoAuction[]>(() => {
-  if (!geoData.value) return []
-  return filterAuctions<GeoAuction>(geoData.value.auctions, currentFilters.value).filter((a) => a.lat != null && a.lng != null)
-})
-
-const totals = computed(() => {
-  if (!data.value) return { gesamt: 0, aktiv: 0, cancelled: 0 }
-  const cancelled = data.value.auctions.filter((a) => a.cancelled).length
-  return {
-    gesamt: data.value.auctions.length,
-    aktiv: data.value.auctions.length - cancelled,
-    cancelled,
-  }
-})
-
-const activeFilterCount = computed(() => {
-  let n = 0
-  if (selectedCountries.value.length) n++
-  if (selectedRegionKeys.value.length) n++
-  if (search.value.trim()) n++
-  if (!isAllScope(authorityFilter.value)) n++
-  if (numOrNull(priceMin.value) != null) n++
-  if (numOrNull(priceMax.value) != null) n++
-  if (numOrNull(landAreaMin.value) != null) n++
-  if (numOrNull(landAreaMax.value) != null) n++
-  if (numOrNull(livingAreaMin.value) != null) n++
-  if (numOrNull(livingAreaMax.value) != null) n++
-  if (!isAllScope(categoryFilter.value)) n++
-  if (onlyWithPhotos.value) n++
-  if (includeCancelled.value) n++
-  return n
-})
-
-watch(
-  [selectedCountries, selectedRegionKeys, debouncedSearch, authorityFilter, priceMin, priceMax, landAreaMin, landAreaMax, livingAreaMin, livingAreaMax, categoryFilter, onlyWithPhotos, includeCancelled, view],
-  () => {
-    const query: Record<string, string> = {}
-    if (selectedCountries.value.length) query.country = selectedCountries.value.join(',')
-    if (selectedRegionKeys.value.length) query.region = selectedRegionKeys.value.join(',')
-    if (debouncedSearch.value.trim()) query.q = debouncedSearch.value.trim()
-    if (!isAllScope(authorityFilter.value)) query.authority = authorityFilter.value
-    if (numOrNull(priceMin.value) != null) query.priceMin = String(numOrNull(priceMin.value))
-    if (numOrNull(priceMax.value) != null) query.priceMax = String(numOrNull(priceMax.value))
-    if (numOrNull(landAreaMin.value) != null) query.landMin = String(numOrNull(landAreaMin.value))
-    if (numOrNull(landAreaMax.value) != null) query.landMax = String(numOrNull(landAreaMax.value))
-    if (numOrNull(livingAreaMin.value) != null) query.livMin = String(numOrNull(livingAreaMin.value))
-    if (numOrNull(livingAreaMax.value) != null) query.livMax = String(numOrNull(livingAreaMax.value))
-    if (!isAllScope(categoryFilter.value)) query.category = categoryFilter.value
-    if (onlyWithPhotos.value) query.photos = '1'
-    if (includeCancelled.value) query.cancelled = '1'
-    if (view.value === 'list') query.view = 'list'
-    router.replace({ query })
-  },
-)
-
-// Re-sync all filter refs when the user navigates with browser Back/Forward.
-// Without this watch, same-route history navigation updates route.query reactively
-// but refs are only initialized once at setup, so URL and UI would diverge.
-watch(() => route.query, (q) => {
-  selectedCountries.value = queryList('country')
-  selectedRegionKeys.value = queryList('region')
-  search.value = queryStr('q')
-  includeCancelled.value = q.cancelled === '1'
-  authorityFilter.value = queryStr('authority', ALL_SCOPE)
-  priceMin.value = queryNum('priceMin')
-  priceMax.value = queryNum('priceMax')
-  landAreaMin.value = queryNum('landMin')
-  landAreaMax.value = queryNum('landMax')
-  livingAreaMin.value = queryNum('livMin')
-  livingAreaMax.value = queryNum('livMax')
-  categoryFilter.value = queryStr('category', ALL_SCOPE)
-  onlyWithPhotos.value = q.photos === '1'
-  view.value = q.view === 'list' ? 'list' : 'map'
-}, { deep: true })
-
-// Validate URL-restored authorityFilter / categoryFilter once data has loaded.
-// Invalid values produce silent 0-result filtering otherwise.
-watch(data, () => {
-  if (!isAllScope(authorityFilter.value) && !courts.value.includes(authorityFilter.value)) {
-    authorityFilter.value = ALL_SCOPE
-  }
-  if (!isAllScope(categoryFilter.value) && !kategorienMitCount.value.some((k) => k.id === categoryFilter.value)) {
-    categoryFilter.value = ALL_SCOPE
-  }
-})
-
-function formatPrice(marketValueEur: number | null): string {
-  const converted = eurToDisplay(marketValueEur)
-  if (converted == null) return '–'
-  return converted.toLocaleString(intlLocale.value, { style: 'currency', currency: currency.value, maximumFractionDigits: 0 })
-}
-
-// Shown alongside the converted figure whenever the auction's native
-// currency differs from the viewer's display currency (including a
-// EUR-native auction viewed in a non-EUR currency) — see i18n design doc
-// Baustein C: "Original + konvertierter Nutzerwert, die Versteigerung läuft
-// in der Originalwährung".
-function originalPriceText(a: Auction): string | null {
-  return a.marketValueText ?? null
-}
-function showOriginalPrice(a: Auction): boolean {
-  // Only alongside a converted figure — when marketValueEur is unparseable
-  // the main line already falls back to marketValueText (see template), so
-  // repeating it as "Original:" would just duplicate it.
-  return originalPriceText(a) != null
-    && eurToDisplay(a.marketValueEur) != null
-    && (a.currency ?? 'EUR') !== currency.value
-}
-
-function formatDate(iso: string | null, fallback: string | null): string {
-  if (!iso) return fallback ?? '–'
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return fallback ?? iso
-  return d.toLocaleString(intlLocale.value, {
-    weekday: 'short', day: '2-digit', month: 'short', year: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  })
-}
-
-function truncate(text: string, max: number): string {
-  if (text.length <= max) return text
-  return text.slice(0, max).replace(/\s+\S*$/, '') + '…'
-}
-
-function attachmentLabel(att: { kind: string; label: string }): string {
-  return attachmentKindLabelFn(att.kind, att.label || t('attachmentKind.other'))
-}
-
-// "Suche speichern" — POSTs the current URL query params as-is (same shape
-// saved_searches.filters mirrors, see lib/auction-filters.ts) under a
-// user-chosen name.
-const savingSearch = ref(false)
-async function saveCurrentSearch(): Promise<void> {
-  if (!user.value) return
-  const name = window.prompt(t('home.saveSearchPrompt'))?.trim()
-  if (!name) return
-  savingSearch.value = true
-  try {
-    await authFetch<SavedSearch>('/api/saved-searches', {
-      method: 'POST',
-      body: { name, filters: route.query },
-    })
-  } catch (err: unknown) {
-    const msg = (err as { statusMessage?: string; message?: string })?.statusMessage
-      ?? (err as { message?: string })?.message
-      ?? t('home.saveSearchError')
-    window.alert(msg)
-  } finally {
-    savingSearch.value = false
-  }
-}
-
-// Watchlist star toggle. Keyed by `${platform}:${externalId}` → the watchlist
-// row's own id (needed for the DELETE call). Loaded once per login state.
-const watchlistIds = ref<Map<string, string>>(new Map())
-function watchlistKey(a: { platform: string; externalId: string }): string {
-  return `${a.platform}:${a.externalId}`
-}
-async function loadWatchlist(): Promise<void> {
-  if (!user.value) {
-    watchlistIds.value = new Map()
-    return
-  }
-  try {
-    const items = await authFetch<WatchlistItem[]>('/api/watchlist')
-    watchlistIds.value = new Map(items.map((i) => [`${i.platform}:${i.externalId}`, i.id]))
-  } catch {
-    // Ignore transient load errors — the star just falls back to "off".
-  }
-}
-watch(user, () => loadWatchlist(), { immediate: true })
-
-async function toggleWatchlist(a: Auction): Promise<void> {
-  if (!user.value) return
-  const key = watchlistKey(a)
-  const existingId = watchlistIds.value.get(key)
-  try {
-    if (existingId) {
-      await authFetch(`/api/watchlist/${existingId}`, { method: 'DELETE' })
-      const next = new Map(watchlistIds.value)
-      next.delete(key)
-      watchlistIds.value = next
-    } else {
-      const item = await authFetch<WatchlistItem>('/api/watchlist', {
-        method: 'POST',
-        body: { platform: a.platform, externalId: a.externalId, authority: a.authority, caseNumber: a.caseNumber },
-      })
-      const next = new Map(watchlistIds.value)
-      next.set(key, item.id)
-      watchlistIds.value = next
-    }
-  } catch {
-    // Ignore transient errors; the star simply doesn't toggle this click.
-  }
-}
+const valueIcons = [MapIcon, ListFilter, Ruler, Languages]
+const featureIcons = [Sparkles, Gauge, Coins, Languages]
 </script>
 
 <template>
-  <main class="h-screen flex flex-col px-4 py-3">
-    <header class="shrink-0 mb-3">
-      <div class="flex items-baseline gap-x-5 gap-y-1 flex-wrap">
-        <h1 class="text-2xl font-bold tracking-tight">{{ $t('home.titleWithLabel', { label: headerLabel }) }}</h1>
-        <div v-if="data" class="flex flex-wrap items-center gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
-          <span><span class="font-semibold text-foreground">{{ totals.gesamt }}</span> {{ $t('home.total') }}</span>
-          <span><span class="font-semibold text-emerald-600 dark:text-emerald-500">{{ totals.aktiv }}</span> {{ $t('home.active') }}</span>
-          <span><span class="font-semibold">{{ totals.cancelled }}</span> {{ $t('home.cancelled') }}</span>
-          <span v-if="data">{{ $t('home.asOf', { date: new Date(data.fetchedAt).toLocaleString(intlLocale) }) }}</span>
-        </div>
-        <AuthStatus class="ml-auto" />
-      </div>
-    </header>
-
-    <div class="shrink-0 mb-3 flex items-center justify-end gap-3">
-      <div v-if="filtered.length" class="text-sm text-muted-foreground mr-auto">
-        {{ $t('home.resultsCount', { count: filtered.length }) }}<span v-if="view === 'map' && geoData">
-          · {{ filteredGeo.length }} {{ $t('home.onMap') }} ({{ $t('home.geocoded', { done: geoData.geocodedCount, total: geoData.auctions.length }) }}<span v-if="geoData.unresolvableCount > 0">, {{ $t('home.unresolvable', { count: geoData.unresolvableCount }) }}</span><span v-if="geocodingInProgress">, {{ $t('home.geocodingRunning') }}</span>)
-        </span>
-      </div>
-      <button
-        v-if="user"
-        type="button"
-        :disabled="savingSearch"
-        class="h-9 inline-flex items-center rounded-md border bg-card px-3 text-sm shadow-xs hover:border-primary hover:text-primary transition-colors disabled:opacity-50"
-        @click="saveCurrentSearch"
-      >
-        {{ savingSearch ? $t('home.savingSearch') : $t('home.saveSearch') }}
-      </button>
-      <button
-        type="button"
-        class="relative h-9 inline-flex items-center gap-2 rounded-md border bg-card px-3 text-sm shadow-xs hover:border-primary hover:text-primary transition-colors"
-        @click="filtersOpen = true"
-      >
-        <ListFilter class="h-4 w-4" />
-        <span>{{ $t('home.filterButton') }}</span>
-        <span
-          v-if="activeFilterCount > 0"
-          class="ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-xs font-medium text-primary-foreground"
-        >{{ activeFilterCount }}</span>
-      </button>
-      <div class="inline-flex h-9 items-center rounded-md border bg-card p-1 text-sm shadow-xs">
-        <button
-          class="h-7 rounded px-3 transition-colors"
-          :class="view === 'map' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
-          @click="view = 'map'"
-        >{{ $t('home.viewMap') }}</button>
-        <button
-          class="h-7 rounded px-3 transition-colors"
-          :class="view === 'list' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
-          @click="view = 'list'"
-        >{{ $t('home.viewList') }}</button>
-      </div>
-    </div>
-
-    <p v-if="pending && !data" class="py-12 text-center text-muted-foreground">{{ $t('home.loadingData') }}</p>
-    <p v-else-if="error" class="py-12 text-center text-destructive">
-      {{ $t('home.loadError', { msg: error.statusMessage || error.message }) }}
-    </p>
-
-    <section v-if="view === 'map'" class="relative flex-1 min-h-0 flex flex-col">
-      <p v-if="geoError" class="py-12 text-center text-destructive">
-        {{ $t('home.geoError', { msg: geoError.statusMessage || geoError.message }) }}
-      </p>
-      <template v-else>
-        <!-- Mount immediately so tiles render right away; markers stream in
-             as geoData arrives instead of gating the whole map behind it. -->
-        <AuctionMap :auctions="filteredGeo" :fit-key="`${selectedCountries.join(',')}:${selectedRegionKeys.join(',')}`" />
-        <p
-          v-if="geoPending && !geoData"
-          class="absolute top-3 left-1/2 -translate-x-1/2 rounded-md border bg-card px-3 py-1 text-xs text-muted-foreground shadow-sm"
-        >
-          {{ $t('home.loadingLocations') }}
+  <main>
+    <!-- Hero -->
+    <section class="px-4 py-16 md:py-24 text-center">
+      <div class="mx-auto max-w-3xl space-y-6">
+        <h1 class="text-3xl md:text-5xl font-bold tracking-tight">
+          {{ $t('landing.hero.headline') }}
+          <span class="bg-linear-to-b from-blue-400 to-blue-600 bg-clip-text text-transparent">{{ $t('landing.hero.headlineHighlight') }}</span>
+          {{ $t('landing.hero.headlineSuffix') }}
+        </h1>
+        <p class="text-lg text-muted-foreground">{{ $t('landing.hero.subheadline') }}</p>
+        <p class="text-sm text-muted-foreground">
+          {{ hasLiveStats
+            ? $t('landing.hero.statLive', { total: stats!.totalCount.toLocaleString(intlLocale), countries: countryCount, regions: regionCount })
+            : $t('landing.hero.statPlaceholder') }}
         </p>
-      </template>
+        <div class="flex flex-wrap items-center justify-center gap-3 pt-2">
+          <Button size="lg" as-child>
+            <NuxtLink to="/search">{{ $t('landing.hero.ctaPrimary') }}</NuxtLink>
+          </Button>
+          <Button size="lg" variant="outline" as-child>
+            <a href="#demo">{{ $t('landing.hero.ctaSecondary') }}</a>
+          </Button>
+        </div>
+      </div>
     </section>
 
-    <Sheet v-model:open="filtersOpen">
-      <SheetContent side="right" class="flex flex-col gap-0 p-0 w-full sm:max-w-md">
-        <SheetHeader class="border-b px-5 py-3">
-          <SheetTitle>{{ $t('filters.title') }}</SheetTitle>
-          <SheetDescription class="sr-only">
-            {{ $t('filters.description') }}
-          </SheetDescription>
-        </SheetHeader>
-
-        <div class="flex-1 overflow-y-auto px-5 py-4 space-y-5">
-          <div class="space-y-2">
-            <label class="block text-sm font-medium">{{ $t('filters.country') }}</label>
-            <div class="max-h-48 overflow-y-auto rounded-md border divide-y">
-              <label
-                v-for="c in countries"
-                :key="c.code"
-                class="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-muted/50"
-              >
-                <input
-                  type="checkbox"
-                  class="h-4 w-4 rounded border-input accent-primary"
-                  :checked="selectedCountries.includes(c.code)"
-                  @change="toggleCountry(c.code)"
-                >
-                {{ countryLabel(c.code, c.name) }}
-              </label>
+    <!-- Value proposition -->
+    <section class="px-4 py-12 bg-muted/30">
+      <div class="mx-auto max-w-5xl">
+        <h2 class="text-center text-2xl md:text-3xl font-bold mb-8">
+          <span class="text-primary">{{ $t('landing.value.heading') }}</span> {{ $t('landing.value.headingSuffix') }}
+        </h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div v-for="(item, i) in $tm('landing.value.items')" :key="i" class="text-center space-y-2">
+            <div class="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
+              <component :is="valueIcons[i]" class="h-5 w-5" />
             </div>
-          </div>
-
-          <div class="space-y-2">
-            <label class="block text-sm font-medium">{{ $t('filters.region') }}</label>
-            <div v-if="availableRegions.length" class="max-h-48 overflow-y-auto rounded-md border divide-y">
-              <label
-                v-for="r in availableRegions"
-                :key="r.key"
-                class="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-muted/50"
-              >
-                <input
-                  type="checkbox"
-                  class="h-4 w-4 rounded border-input accent-primary"
-                  :checked="selectedRegionKeys.includes(r.key)"
-                  @change="toggleRegion(r.key)"
-                >
-                {{ r.name }}<span v-if="selectedCountries.length > 1" class="text-muted-foreground"> ({{ r.countryName }})</span>
-              </label>
-            </div>
-            <p v-else class="text-xs text-muted-foreground">
-              {{ $t('filters.regionHint') }}
-            </p>
-          </div>
-
-          <div class="space-y-2">
-            <label class="block text-sm font-medium">{{ $t('filters.search') }}</label>
-            <input
-              v-model="search"
-              type="search"
-              :placeholder="$t('filters.searchPlaceholder')"
-              class="w-full h-9 rounded-md border bg-background px-3 py-1 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            >
-          </div>
-
-          <div class="space-y-2">
-            <label class="block text-sm font-medium">{{ $t('filters.authority') }}</label>
-            <Select v-model="authorityFilter">
-              <SelectTrigger class="w-full">
-                <SelectValue :placeholder="$t('filters.authorityPlaceholder')" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem :value="ALL_SCOPE">{{ $t('filters.allCourts') }}</SelectItem>
-                <SelectItem v-for="c in courts" :key="c" :value="c">{{ c }}</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div class="space-y-2">
-            <label class="block text-sm font-medium">{{ $t('filters.marketValue') }} ({{ currency }})</label>
-            <div class="flex items-center gap-2">
-              <input
-                v-model.number="priceMinDisplay"
-                type="number"
-                min="0"
-                step="10000"
-                :placeholder="$t('filters.from')"
-                class="h-9 flex-1 min-w-0 rounded-md border bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              >
-              <span class="text-muted-foreground">–</span>
-              <input
-                v-model.number="priceMaxDisplay"
-                type="number"
-                min="0"
-                step="10000"
-                :placeholder="$t('filters.to')"
-                class="h-9 flex-1 min-w-0 rounded-md border bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              >
-            </div>
-            <div class="flex flex-wrap gap-1 pt-1">
-              <button
-                v-for="(p, i) in [
-                  { label: $t('home.priceBucket100k'), min: null, max: 100_000 },
-                  { label: $t('home.priceBucket100to300k'), min: 100_000, max: 300_000 },
-                  { label: $t('home.priceBucket300to600k'), min: 300_000, max: 600_000 },
-                  { label: $t('home.priceBucket600k'), min: 600_000, max: null },
-                ]"
-                :key="i"
-                type="button"
-                class="rounded-full border px-3 py-0.5 text-xs text-muted-foreground hover:border-primary hover:text-primary transition-colors"
-                @click="priceMin = p.min; priceMax = p.max"
-              >{{ p.label }}</button>
-            </div>
-          </div>
-
-          <div class="space-y-2">
-            <label class="block text-sm font-medium">{{ $t('filters.landArea') }}</label>
-            <div class="flex items-center gap-2">
-              <input
-                v-model.number="landAreaMin"
-                type="number"
-                min="0"
-                step="50"
-                :placeholder="$t('filters.from')"
-                class="h-9 flex-1 min-w-0 rounded-md border bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              >
-              <span class="text-muted-foreground">–</span>
-              <input
-                v-model.number="landAreaMax"
-                type="number"
-                min="0"
-                step="50"
-                :placeholder="$t('filters.to')"
-                class="h-9 flex-1 min-w-0 rounded-md border bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              >
-            </div>
-          </div>
-
-          <div class="space-y-2">
-            <label class="block text-sm font-medium">{{ $t('filters.livingArea') }}</label>
-            <div class="flex items-center gap-2">
-              <input
-                v-model.number="livingAreaMin"
-                type="number"
-                min="0"
-                step="10"
-                :placeholder="$t('filters.from')"
-                class="h-9 flex-1 min-w-0 rounded-md border bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              >
-              <span class="text-muted-foreground">–</span>
-              <input
-                v-model.number="livingAreaMax"
-                type="number"
-                min="0"
-                step="10"
-                :placeholder="$t('filters.to')"
-                class="h-9 flex-1 min-w-0 rounded-md border bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              >
-            </div>
-          </div>
-
-          <div v-if="kategorienMitCount.length" class="space-y-2">
-            <label class="block text-sm font-medium">{{ $t('filters.propertyType') }}</label>
-            <Select v-model="categoryFilter">
-              <SelectTrigger class="w-full">
-                <SelectValue :placeholder="$t('filters.propertyTypePlaceholder')" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem :value="ALL_SCOPE">{{ $t('filters.allPropertyTypes') }}</SelectItem>
-                <SelectItem v-for="k in kategorienMitCount" :key="k.id" :value="k.id">
-                  {{ k.label }} ({{ k.count }})
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div class="space-y-2 pt-2 border-t">
-            <label class="flex items-center gap-2 cursor-pointer text-sm">
-              <input v-model="onlyWithPhotos" type="checkbox" class="h-4 w-4 rounded border-input accent-primary"> {{ $t('filters.onlyWithPhotos') }}
-            </label>
-            <label class="flex items-center gap-2 cursor-pointer text-sm">
-              <input v-model="includeCancelled" type="checkbox" class="h-4 w-4 rounded border-input accent-primary"> {{ $t('filters.includeCancelled') }}
-            </label>
+            <h3 class="font-semibold">{{ $rt(item.title) }}</h3>
+            <p class="text-sm text-muted-foreground">{{ $rt(item.desc) }}</p>
           </div>
         </div>
-
-        <SheetFooter class="flex-row border-t px-5 py-3 sm:justify-stretch gap-2">
-          <button
-            type="button"
-            class="flex-1 h-9 rounded-md border border-destructive px-3 text-sm text-destructive hover:bg-destructive hover:text-white disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-destructive"
-            :disabled="activeFilterCount === 0"
-            @click="clearAllFilters"
-          >
-            {{ $t('filters.reset', { count: activeFilterCount }) }}
-          </button>
-          <button
-            type="button"
-            :disabled="pending"
-            class="flex-1 h-9 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-            @click="refresh()"
-          >
-            {{ pending ? $t('filters.reloading') : $t('filters.reload') }}
-          </button>
-        </SheetFooter>
-      </SheetContent>
-    </Sheet>
-
-    <p
-      v-if="selectedCountries.length === 0 && pending"
-      class="mb-4 text-xs text-muted-foreground text-center"
-    >
-      {{ $t('home.initialLoadHint') }}
-    </p>
-
-    <section v-if="view === 'list'" class="flex-1 min-h-0 overflow-y-auto pb-4">
-    <p v-if="filtered.length === 0 && !pending" class="py-12 text-center text-muted-foreground">
-      {{ $t('home.noResults') }}
-    </p>
-
-    <ul v-if="filtered.length" class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-      <li v-for="a in visibleAuctions" :key="`${a.platform}:${a.externalId}`">
-        <article
-          class="h-full flex flex-col rounded-xl border bg-card text-card-foreground shadow-sm overflow-hidden"
-          :class="{ 'opacity-60': a.cancelled }"
-        >
-          <a
-            v-if="a.thumbnailUrl"
-            :href="a.attachments.find((x) => x.kind === 'photo')?.proxyUrl ?? a.detailUrl ?? undefined"
-            target="_blank"
-            rel="noopener"
-            class="relative block overflow-hidden border-b group"
-            :title="$t('home.openPhotos', { count: a.photoCount, plural: a.photoCount === 1 ? '' : 's' })"
-          >
-            <img
-              :src="a.thumbnailUrl"
-              loading="lazy"
-              alt=""
-              referrerpolicy="no-referrer"
-              class="aspect-16/10 w-full object-cover transition-transform duration-200 group-hover:scale-105"
-            >
-            <span
-              v-if="a.photoCount > 1"
-              class="absolute bottom-2 right-2 rounded-full bg-black/70 px-2 py-0.5 text-xs text-white"
-            >+{{ a.photoCount - 1 }}</span>
-          </a>
-          <div v-else-if="!a.cancelled" class="flex aspect-16/10 items-center justify-center bg-muted text-muted-foreground text-sm border-b">
-            {{ $t('home.noPhoto') }}
-          </div>
-
-          <div class="p-4 flex-1 flex flex-col gap-2">
-            <div class="flex flex-wrap items-center gap-2 text-xs">
-              <span class="rounded-md bg-secondary text-secondary-foreground px-2 py-0.5 font-medium">{{ a.authority }}</span>
-              <span v-if="a.region" class="rounded-md bg-muted text-muted-foreground px-2 py-0.5">{{ a.region }}</span>
-              <span v-if="a.cancelled" class="rounded-md bg-destructive/15 text-destructive px-2 py-0.5 font-medium">{{ $t('home.cancelledBadge') }}</span>
-              <span class="font-mono text-muted-foreground">{{ a.caseNumber }}</span>
-            </div>
-            <h2 class="text-base font-semibold leading-tight mt-1">{{ a.title || $t('home.unknownPropertyType') }}</h2>
-            <p v-if="a.address" class="text-sm text-muted-foreground">{{ a.address }}</p>
-            <p v-if="a.description" class="text-sm text-muted-foreground leading-relaxed mt-1">
-              {{ truncate(a.description, 220) }}
-            </p>
-            <dl class="grid grid-cols-2 gap-3 text-sm mt-2">
-              <div>
-                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('home.auctionDate') }}</dt>
-                <dd class="font-medium">{{ formatDate(a.auctionDateIso, a.auctionDateText) }}</dd>
-              </div>
-              <div>
-                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('home.marketValue') }}</dt>
-                <dd class="font-medium tabular-nums">
-                  {{ eurToDisplay(a.marketValueEur) != null ? formatPrice(a.marketValueEur) : (a.marketValueText ?? '–') }}
-                  <span v-if="showOriginalPrice(a)" class="block text-xs font-normal text-muted-foreground">
-                    {{ $t('home.original', { value: originalPriceText(a) }) }}
-                  </span>
-                </dd>
-              </div>
-            </dl>
-          </div>
-
-          <footer class="border-t px-4 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-            <a v-if="a.pdfUrl" :href="a.pdfUrl" target="_blank" rel="noopener" class="text-primary hover:underline">
-              {{ $t('attachmentKind.announcement') }}
-            </a>
-            <a
-              v-for="att in a.attachments.filter((x) => x.kind !== 'announcement')"
-              :key="att.fileId"
-              :href="att.proxyUrl"
-              target="_blank"
-              rel="noopener"
-              class="text-primary hover:underline"
-            >{{ attachmentLabel(att) }}</a>
-            <button
-              v-if="user"
-              type="button"
-              class="ml-auto text-muted-foreground hover:text-primary transition-colors"
-              :class="{ 'text-amber-500 hover:text-amber-500': watchlistIds.has(watchlistKey(a)) }"
-              :title="watchlistIds.has(watchlistKey(a)) ? $t('home.removeFromWatchlist') : $t('home.addToWatchlist')"
-              @click="toggleWatchlist(a)"
-            >
-              <Star class="h-4 w-4" :class="{ 'fill-current': watchlistIds.has(watchlistKey(a)) }" />
-            </button>
-            <NuxtLink :to="`/objekt/${encodeURIComponent(a.platform)}/${encodeURIComponent(a.externalId)}`" :class="user ? '' : 'ml-auto'" class="text-primary hover:underline">
-              {{ $t('home.detailsLink') }}
-            </NuxtLink>
-          </footer>
-        </article>
-      </li>
-    </ul>
-
-    <div v-if="visibleCount < filtered.length" class="flex flex-col items-center gap-2 pt-2 pb-4">
-      <p class="text-xs text-muted-foreground">{{ $t('home.loadMoreShown', { shown: visibleAuctions.length, total: filtered.length }) }}</p>
-      <button
-        type="button"
-        class="h-9 rounded-md border bg-card px-4 text-sm shadow-xs hover:border-primary hover:text-primary transition-colors"
-        @click="loadMore"
-      >
-        {{ $t('home.loadMore') }}
-      </button>
-    </div>
+      </div>
     </section>
+
+    <!-- Coverage -->
+    <section class="px-4 py-12">
+      <div class="mx-auto max-w-5xl grid md:grid-cols-2 gap-8 items-center">
+        <div class="space-y-4">
+          <h2 class="text-2xl md:text-3xl font-bold">
+            {{ hasLiveStats ? countryCount : '' }} {{ $t('landing.coverage.heading') }}
+          </h2>
+          <p class="text-muted-foreground">{{ $t('landing.coverage.subheadline') }}</p>
+          <p class="text-sm font-medium">
+            {{ hasLiveStats
+              ? $t('landing.coverage.stat', { countries: countryCount, regions: regionCount })
+              : $t('landing.coverage.statPlaceholder') }}
+          </p>
+          <p class="text-xs text-muted-foreground">{{ $t('landing.coverage.note') }}</p>
+          <Button variant="outline" as-child>
+            <NuxtLink to="/search">{{ $t('landing.coverage.cta') }}</NuxtLink>
+          </Button>
+        </div>
+        <div class="flex flex-wrap gap-2 content-start">
+          <Badge v-for="c in countries" :key="c.code" variant="secondary" class="text-sm">
+            <Globe2 class="h-3 w-3" />{{ c.name }}
+          </Badge>
+        </div>
+      </div>
+    </section>
+
+    <!-- AI / unique features -->
+    <section class="px-4 py-12 bg-muted/30">
+      <div class="mx-auto max-w-5xl">
+        <h2 class="text-center text-2xl md:text-3xl font-bold mb-8">{{ $t('landing.features.heading') }}</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+          <Card v-for="(item, i) in $tm('landing.features.items')" :key="i">
+            <CardHeader>
+              <component :is="featureIcons[i]" class="h-6 w-6 text-primary mb-2" />
+              <CardTitle class="text-base">{{ $rt(item.title) }}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p class="text-sm text-muted-foreground">{{ $rt(item.desc) }}</p>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </section>
+
+    <!-- Product demo -->
+    <section id="demo" class="px-4 py-16 text-center">
+      <div class="mx-auto max-w-2xl space-y-4">
+        <h2 class="text-2xl md:text-3xl font-bold">{{ $t('landing.demo.heading') }}</h2>
+        <p class="text-muted-foreground">{{ $t('landing.demo.subheadline') }}</p>
+        <Button size="lg" as-child>
+          <NuxtLink to="/search">{{ $t('landing.demo.cta') }}</NuxtLink>
+        </Button>
+      </div>
+    </section>
+
+    <!-- Archive teaser -->
+    <section id="archive" class="px-4 py-12 bg-muted/30">
+      <div class="mx-auto max-w-3xl text-center space-y-3">
+        <h2 class="text-2xl md:text-3xl font-bold">{{ $t('landing.archive.heading') }}</h2>
+        <p class="text-muted-foreground">{{ $t('landing.archive.body') }}</p>
+        <p class="text-xs text-muted-foreground">{{ $t('landing.archive.note') }}</p>
+      </div>
+    </section>
+
+    <!-- Calculator teaser -->
+    <section id="calculator" class="px-4 py-12">
+      <div class="mx-auto max-w-3xl text-center space-y-3">
+        <h2 class="text-2xl md:text-3xl font-bold">{{ $t('landing.calculator.heading') }}</h2>
+        <p class="text-muted-foreground">{{ $t('landing.calculator.body') }}</p>
+        <ul class="text-sm text-muted-foreground space-y-1">
+          <li v-for="(b, i) in $tm('landing.calculator.bullets')" :key="i">{{ $rt(b) }}</li>
+        </ul>
+        <p class="text-xs text-muted-foreground">{{ $t('landing.calculator.note') }}</p>
+        <Button variant="outline" as-child>
+          <NuxtLink to="/search">{{ $t('landing.calculator.cta') }}</NuxtLink>
+        </Button>
+      </div>
+    </section>
+
+    <!-- App teaser -->
+    <section class="px-4 py-12 bg-muted/30">
+      <div class="mx-auto max-w-3xl text-center space-y-3">
+        <Smartphone class="mx-auto h-8 w-8 text-primary" />
+        <h2 class="text-2xl md:text-3xl font-bold">{{ $t('landing.app.heading') }}</h2>
+        <p class="text-muted-foreground">{{ $t('landing.app.body') }}</p>
+        <Button variant="outline" as-child>
+          <NuxtLink to="/search">{{ $t('landing.app.cta') }}</NuxtLink>
+        </Button>
+      </div>
+    </section>
+
+    <!-- UX callout -->
+    <section class="px-4 py-12 text-center">
+      <div class="mx-auto max-w-2xl space-y-3">
+        <h2 class="text-2xl md:text-3xl font-bold">{{ $t('landing.ux.heading') }}</h2>
+        <p class="text-muted-foreground">{{ $t('landing.ux.body') }}</p>
+      </div>
+    </section>
+
+    <!-- FAQ -->
+    <section class="px-4 py-12 bg-muted/30">
+      <div class="mx-auto max-w-2xl">
+        <h2 class="text-center text-2xl md:text-3xl font-bold mb-6">{{ $t('landing.faq.heading') }}</h2>
+        <Accordion type="single" collapsible>
+          <AccordionItem v-for="(item, i) in $tm('landing.faq.items')" :key="i" :value="`faq-${i}`">
+            <AccordionTrigger>{{ $rt(item.q) }}</AccordionTrigger>
+            <AccordionContent>{{ $rt(item.a) }}</AccordionContent>
+          </AccordionItem>
+        </Accordion>
+      </div>
+    </section>
+
+    <!-- Final CTA -->
+    <section class="px-4 py-16 text-center">
+      <h2 class="text-2xl md:text-3xl font-bold mb-4">{{ $t('landing.finalCta.heading') }}</h2>
+      <Button size="lg" as-child>
+        <NuxtLink to="/search">{{ $t('landing.finalCta.cta') }}</NuxtLink>
+      </Button>
+    </section>
+
+    <!-- Footer -->
+    <footer class="border-t px-4 py-8 text-center text-sm text-muted-foreground">
+      {{ $t('landing.footer.tagline') }}
+    </footer>
   </main>
 </template>

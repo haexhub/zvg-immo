@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { DialogTrigger, type DialogTriggerProps, useForwardProps } from 'reka-ui'
+import type { DialogTriggerProps } from "reka-ui"
+import { DialogTrigger } from "reka-ui"
 
 const props = defineProps<DialogTriggerProps>()
-const forwarded = useForwardProps(props)
 </script>
 
 <template>
-  <DialogTrigger v-bind="forwarded">
+  <DialogTrigger
+    data-slot="sheet-trigger"
+    v-bind="props"
+  >
     <slot />
   </DialogTrigger>
 </template>
