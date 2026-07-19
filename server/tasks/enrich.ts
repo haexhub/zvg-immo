@@ -131,6 +131,18 @@ async function runEnrich() {
     let photosTotal = 0
     const at = new Date().toISOString()
 
+    // MAX_LLM_PER_RUN is shared across all platforms, but which item reaches
+    // the check first depends on how fast its enrichOne/pdfToText preamble
+    // resolves — not on interleaveByPlatform's intended round-robin order. A
+    // platform whose detail fetch is consistently slower than others (e.g. it
+    // needs a live HTML page plus a PDF download+pdftotext on every retry)
+    // loses that race run after run and never gets its fair share of the
+    // budget. A per-platform cap makes the fairness hold regardless of
+    // completion order.
+    const llmPlatformCount = new Set(todo.map((a) => a.platform)).size || 1
+    const llmCapPerPlatform = Math.max(1, Math.ceil(MAX_LLM_PER_RUN / llmPlatformCount))
+    const llmCallsByPlatform = new Map<string, number>()
+
     let cursor = 0
     async function worker() {
       while (cursor < todo.length) {
@@ -218,10 +230,16 @@ async function runEnrich() {
             })
           : null
 
+        const platformLlmCalls = llmCallsByPlatform.get(a.platform) ?? 0
         if (mergedConfident) {
           cacheable = true
-        } else if (llmConfig && llmCalls < MAX_LLM_PER_RUN) {
+        } else if (
+          llmConfig &&
+          llmCalls < MAX_LLM_PER_RUN &&
+          platformLlmCalls < llmCapPerPlatform
+        ) {
           llmCalls++
+          llmCallsByPlatform.set(a.platform, platformLlmCalls + 1)
           const llm = await extractByLlm(
             { title: a.title, description: a.description, pdfText },
             llmConfig,
@@ -246,12 +264,12 @@ async function runEnrich() {
             cacheable = true
           }
         } else if (llmConfig) {
-          // Per-run LLM cap hit: cache the rules-only result anyway so the
-          // listing shows *something* immediately. Its source stays 'rules'
-          // with confidence 'low', so needsLlmRetry picks it up again once an
-          // LLM slot frees up on a later run. Leaving it uncached instead
-          // starved huge platforms (IT: 14k listings ÷ 300 calls/run) of any
-          // extraction data for months.
+          // Per-run or per-platform LLM cap hit: cache the rules-only result
+          // anyway so the listing shows *something* immediately. Its source
+          // stays 'rules' with confidence 'low', so needsLlmRetry picks it up
+          // again once an LLM slot frees up on a later run. Leaving it
+          // uncached instead starved huge platforms (IT: 14k listings ÷ 300
+          // calls/run) of any extraction data for months.
           cacheable = detailOk
         } else {
           // LLM disabled entirely: cache the rules result if we had real text
