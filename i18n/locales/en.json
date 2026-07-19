@@ -18,6 +18,10 @@
       "subheadline": "ZVG Scout continuously crawls courts and official portals across many European countries and shows every foreclosure auction on a map.",
       "statLive": "{total} listings on record · {countries} countries · {regions} regions",
       "statPlaceholder": "Thousands of listings · many countries across Europe",
+      "searchPlaceholder": "Location, property type or case number …",
+      "searchCta": "Search",
+      "mapLabel": "Map of Europe for country selection",
+      "mapHint": "Click a country to search there — highlighted countries are already covered.",
       "ctaPrimary": "Search listings for free",
       "ctaSecondary": "See how it works"
     },

@@ -18,6 +18,10 @@
       "subheadline": "ZVG Scout durchsucht rund um die Uhr Gerichte und Amtsportale in vielen europäischen Ländern und zeigt dir jede Zwangsversteigerung auf einer Karte.",
       "statLive": "{total} Objekte im Bestand · {countries} Länder · {regions} Regionen",
       "statPlaceholder": "Tausende Objekte · viele Länder europaweit",
+      "searchPlaceholder": "Ort, Objektart oder Aktenzeichen …",
+      "searchCta": "Suchen",
+      "mapLabel": "Europakarte zur Länderauswahl",
+      "mapHint": "Land anklicken, um dort zu suchen — farbig hinterlegte Länder sind bereits erfasst.",
       "ctaPrimary": "Kostenlos Objekte durchsuchen",
       "ctaSecondary": "So funktioniert's"
     },
