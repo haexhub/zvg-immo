@@ -60,6 +60,8 @@ export default defineEventHandler(async (event): Promise<AuctionPhotoDetail> => 
       case 'zvg-portal': {
         const landAbk = landAbkFromRegionName(region)
         if (!landAbk) return empty
+        // No identity passed → no G1 archiving on this user-facing read path;
+        // the continuous crawl already archives zvg-portal detail HTML.
         const info = await fetchZvgDetail(externalId, landAbk)
         const fotos = info.attachments.filter((a) => a.kind === 'photo')
         const firstFoto = fotos[0]

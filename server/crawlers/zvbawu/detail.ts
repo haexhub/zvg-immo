@@ -1,4 +1,6 @@
 import type { Auction, Attachment } from '~/types/auction'
+import { archiveDetailCapture } from '~/server/utils/fetch-archive'
+import type { DocumentIdentity } from '~/server/utils/raw-archive'
 import { ZVBAWU_BASE, UA } from './constants'
 import { extractInertiaPage, parseSqm, stripHtml } from './text'
 
@@ -65,7 +67,7 @@ export interface DetailInfo {
 
 const FETCH_TIMEOUT_MS = 15_000
 
-async function fetchDetail(link: string): Promise<DetailPage | null> {
+async function fetchDetail(link: string, identity: DocumentIdentity): Promise<DetailPage | null> {
   const url = `${ZVBAWU_BASE}${link.startsWith('/') ? link : `/${link}`}`
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
@@ -79,7 +81,12 @@ async function fetchDetail(link: string): Promise<DetailPage | null> {
       },
     })
     if (!res.ok) return null
-    return extractInertiaPage<DetailPage>(await res.text())
+    const body = await res.text()
+    // zvbawü is an Inertia.js SSR shell — the facts live in a `data-page` JSON
+    // attribute (extractInertiaPage below), not in prosaic HTML. Archived
+    // anyway: the raw response body still preserves the facts.
+    await archiveDetailCapture(Buffer.from(body, 'utf8'), identity, url, new Date().toISOString())
+    return extractInertiaPage<DetailPage>(body)
   } catch {
     return null
   } finally {
@@ -168,8 +175,8 @@ export function buildDetailInfo(a: DetailPage['props']['auction']): DetailInfo {
   }
 }
 
-export async function fetchDetailFor(link: string): Promise<DetailInfo | null> {
-  const page = await fetchDetail(link)
+export async function fetchDetailFor(link: string, identity: DocumentIdentity): Promise<DetailInfo | null> {
+  const page = await fetchDetail(link, identity)
   if (!page) return null
   return buildDetailInfo(page.props.auction)
 }
@@ -194,7 +201,14 @@ export async function enrichInBatches(
       if (item.cancelled) continue
       if (!item.detailUrlUpstream) continue
       try {
-        const info = await fetchDetailFor(item.detailUrlUpstream.replace(ZVBAWU_BASE, ''))
+        const identity: DocumentIdentity = {
+          platform: item.platform,
+          country: item.country,
+          externalId: item.externalId,
+          caseNumber: item.caseNumber,
+          authority: item.authority,
+        }
+        const info = await fetchDetailFor(item.detailUrlUpstream.replace(ZVBAWU_BASE, ''), identity)
         if (info) {
           onEnriched(item, info)
           enriched++

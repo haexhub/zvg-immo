@@ -1,6 +1,7 @@
 import { load } from 'cheerio'
 import type { Attachment, Auction } from '~/types/auction'
 import type { PropertyType } from '~/lib/property-type'
+import { archiveDetailCapture } from '~/server/utils/fetch-archive'
 import { AV_BASE, UA, COUNTRY } from './constants'
 import { areaBucketForPropertyType } from '~/server/utils/extract/rules'
 
@@ -207,7 +208,7 @@ export function parseDetailPage(html: string): DetailInfo {
   }
 }
 
-async function fetchDetail(href: string): Promise<DetailInfo | null> {
+async function fetchDetail(href: string, platformId: string): Promise<DetailInfo | null> {
   // The origin check must stay inside the try — thrown outside it, it would
   // reject the calling worker's Promise.all in fetchAllListings and zero out
   // every listing for one malformed href instead of just skipping that row.
@@ -216,7 +217,16 @@ async function fetchDetail(href: string): Promise<DetailInfo | null> {
     if (url.origin !== AV_ORIGIN) {
       throw new Error(`Unexpected detail URL origin: ${url.origin}`)
     }
-    return parseDetailPage(await htmlFetch(url.toString()))
+    const html = await htmlFetch(url.toString())
+    // AVOVENTES never publishes a real court case number (see mapItem below)
+    // — caseNumber stays '' here too, matching the auction this capture keys to.
+    await archiveDetailCapture(
+      Buffer.from(html, 'utf8'),
+      { platform: platformId, country: COUNTRY, externalId: idFromHref(href), caseNumber: '', authority: '' },
+      url.toString(),
+      new Date().toISOString(),
+    )
+    return parseDetailPage(html)
   } catch {
     return null
   }
@@ -311,7 +321,7 @@ export async function fetchAllListings(
       const i = cursor++
       const item = items[i]
       if (!item) continue
-      details[i] = await fetchDetail(item.href)
+      details[i] = await fetchDetail(item.href, platformId)
     }
   }
   await Promise.all(Array.from({ length: DETAIL_CONCURRENCY }, worker))

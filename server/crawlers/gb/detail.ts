@@ -1,5 +1,7 @@
 import { load } from 'cheerio'
 import type { Auction } from '~/types/auction'
+import { archiveDetailCapture } from '~/server/utils/fetch-archive'
+import type { DocumentIdentity } from '~/server/utils/raw-archive'
 import { GB_BASE, GB_ONLINE_BASE, UA, ONLINE_CRAWL_DELAY_MS } from './constants'
 
 function clean(text: string): string {
@@ -155,6 +157,14 @@ export async function enrichOne(auction: Auction): Promise<void> {
   const href = auction.detailUrlUpstream
   if (!href) return
   const url = new URL(href)
+  const identity: DocumentIdentity = {
+    platform: auction.platform,
+    country: auction.country,
+    externalId: auction.externalId,
+    caseNumber: auction.caseNumber,
+    authority: auction.authority,
+  }
+  const capturedAt = new Date().toISOString()
 
   let detail: DetailInfo
   if (url.origin === new URL(GB_ONLINE_BASE).origin) {
@@ -163,16 +173,21 @@ export async function enrichOne(auction: Auction): Promise<void> {
     // an account login for every lot sampled during development — the PDF
     // itself is never actually reachable without an account, so it's never
     // added as an attachment (would just be a login page behind our proxy).
+    // This HTML is the only G1 archive target for online lots as a result.
     const res = await onlineFetch(href)
     if (!res.ok) throw new Error(`online.auctionhouse.co.uk detail: HTTP ${res.status}`)
-    detail = parseOnlineDetail(await res.text())
+    const html = await res.text()
+    await archiveDetailCapture(Buffer.from(html, 'utf8'), identity, href, capturedAt)
+    detail = parseOnlineDetail(html)
   } else if (url.origin === new URL(GB_BASE).origin) {
     const res = await fetch(href, {
       headers: { Accept: 'text/html', 'Accept-Language': 'en-GB,en;q=0.9', 'User-Agent': UA },
       signal: AbortSignal.timeout(20_000),
     })
     if (!res.ok) throw new Error(`auctionhouse.co.uk detail: HTTP ${res.status}`)
-    detail = parseOwnDetail(await res.text())
+    const html = await res.text()
+    await archiveDetailCapture(Buffer.from(html, 'utf8'), identity, href, capturedAt)
+    detail = parseOwnDetail(html)
   } else {
     // A handful of branches host their online lots on their own
     // eigonlineauctions.com subdomain instead of online.auctionhouse.co.uk

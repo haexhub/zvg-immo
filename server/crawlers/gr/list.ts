@@ -1,5 +1,6 @@
 import { load } from 'cheerio'
 import type { Auction } from '~/types/auction'
+import { archiveDetailCapture } from '~/server/utils/fetch-archive'
 import { SITEMAP_URL, COUNTRY, UA, DETAIL_CONCURRENCY } from './constants'
 import { clean, formatGrPrice, parseGrDateTime, parseGrPrice } from './text'
 
@@ -81,9 +82,19 @@ function extractRealEstateLd($: ReturnType<typeof load>): RealEstateListingLd | 
   return found
 }
 
-function mapDetail(url: string, html: string, platformId: string): Auction | null {
+async function mapDetail(url: string, html: string, platformId: string): Promise<Auction | null> {
   const id = idFromUrl(url)
   if (!id) return null
+
+  // The facts live in the JSON-LD block parsed below, but the raw HTML is
+  // archived unconditionally — it's the G1 archive target regardless of
+  // whether JSON-LD extraction below succeeds.
+  await archiveDetailCapture(
+    Buffer.from(html, 'utf8'),
+    { platform: platformId, country: COUNTRY, externalId: id, caseNumber: '', authority: '' },
+    url,
+    new Date().toISOString(),
+  )
 
   const $ = load(html)
   const ld = extractRealEstateLd($)
@@ -159,7 +170,7 @@ export async function fetchAllListings(
       const url = urls[i]
       if (!url) continue
       try {
-        auctions[i] = mapDetail(url, await htmlFetch(url), platformId)
+        auctions[i] = await mapDetail(url, await htmlFetch(url), platformId)
       } catch {
         auctions[i] = null
       }
