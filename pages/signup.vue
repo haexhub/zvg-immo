@@ -12,7 +12,7 @@ const done = ref(false)
 function redirectTarget(): string {
   const target = route.query.redirect
   const raw = Array.isArray(target) ? target[0] : target
-  return raw && raw.startsWith('/') ? raw : '/'
+  return raw && raw.startsWith('/') ? raw : '/search'
 }
 
 async function onSubmit(): Promise<void> {

@@ -134,7 +134,7 @@ function formatDate(iso: string): string {
               class="flex items-center justify-between gap-3 rounded-md border bg-card px-4 py-3"
             >
               <div class="min-w-0">
-                <NuxtLink :to="{ path: '/', query: s.filters }" class="font-medium hover:underline">
+                <NuxtLink :to="{ path: '/search', query: s.filters }" class="font-medium hover:underline">
                   {{ s.name }}
                 </NuxtLink>
                 <p class="text-xs text-muted-foreground truncate">{{ summarize(s.filters) }}</p>

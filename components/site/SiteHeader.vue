@@ -2,9 +2,9 @@
 import { Gavel, Menu } from 'lucide-vue-next'
 
 const navItems = [
-  { to: '/suche', labelKey: 'nav.search' },
-  { to: '/#archiv', labelKey: 'nav.archive' },
-  { to: '/#rechner', labelKey: 'nav.calculator' },
+  { to: '/search', labelKey: 'nav.search' },
+  { to: '/#archive', labelKey: 'nav.archive' },
+  { to: '/#calculator', labelKey: 'nav.calculator' },
 ]
 
 const mobileOpen = ref(false)

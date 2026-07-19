@@ -186,7 +186,7 @@ useHead(() => ({
   <main class="px-4 py-6">
     <div class="max-w-5xl mx-auto">
     <div class="mb-4">
-      <NuxtLink to="/" class="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+      <NuxtLink to="/search" class="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
         <ArrowLeft class="h-4 w-4" /> {{ $t('objektDetail.back') }}
       </NuxtLink>
     </div>

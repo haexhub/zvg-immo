@@ -317,7 +317,7 @@ onBeforeUnmount(stopPolling)
 <template>
   <main class="px-4 py-6">
     <div class="max-w-2xl mx-auto space-y-6">
-      <NuxtLink to="/" class="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+      <NuxtLink to="/search" class="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
         <ArrowLeft class="h-4 w-4" /> {{ $t('settings.back') }}
       </NuxtLink>
       <h1 class="text-2xl font-bold tracking-tight">{{ $t('settings.heading') }}</h1>
