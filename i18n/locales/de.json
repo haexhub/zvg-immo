@@ -143,7 +143,14 @@
     "priceBucket300to600k": "300–600k",
     "priceBucket600k": "≥ 600k",
     "tabAuctions": "Auktionen",
-    "tabMap": "Karte"
+    "tabMap": "Karte",
+    "sortLabel": "Sortierung",
+    "sortDefault": "Standard",
+    "sortDateAsc": "Termin (nächste zuerst)",
+    "sortPriceAsc": "Preis aufsteigend",
+    "sortPriceDesc": "Preis absteigend",
+    "boundToMap": "Kartenbereich",
+    "boundToMapHint": "Nur Objekte im sichtbaren Kartenausschnitt anzeigen"
   },
   "settings": {
     "title": "Einstellungen — Zwangsversteigerungen",

@@ -143,7 +143,14 @@
     "priceBucket300to600k": "300–600k",
     "priceBucket600k": "≥ 600k",
     "tabAuctions": "Auctions",
-    "tabMap": "Map"
+    "tabMap": "Map",
+    "sortLabel": "Sort",
+    "sortDefault": "Default",
+    "sortDateAsc": "Date (soonest first)",
+    "sortPriceAsc": "Price low to high",
+    "sortPriceDesc": "Price high to low",
+    "boundToMap": "Map area",
+    "boundToMapHint": "Only show listings within the visible map area"
   },
   "settings": {
     "title": "Settings — Foreclosure Auctions",

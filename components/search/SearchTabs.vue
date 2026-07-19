@@ -18,6 +18,7 @@ defineProps<{
 const emit = defineEmits<{
   (e: 'toggle-watchlist', auction: Auction): void
   (e: 'load-more'): void
+  (e: 'bounds-change', bounds: { north: number; south: number; east: number; west: number }): void
 }>()
 
 const activeTab = defineModel<'list' | 'map'>({ required: true })
@@ -47,6 +48,7 @@ const activeTab = defineModel<'list' | 'map'>({ required: true })
         :geo-pending="geoPending"
         :has-geo-data="!!geoData"
         :geo-error="geoError"
+        @bounds-change="emit('bounds-change', $event)"
       />
     </TabsContent>
   </Tabs>

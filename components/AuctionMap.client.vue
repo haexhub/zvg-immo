@@ -34,6 +34,13 @@ const props = defineProps<{
   fitKey?: string
 }>()
 
+const emit = defineEmits<{
+  /** Current visible viewport (fired on moveend and after every programmatic
+   *  fit). The parent uses it to restrict the result list to the map area
+   *  when the "Kartenbereich" filter is on. */
+  (e: 'bounds-change', bounds: { north: number; south: number; east: number; west: number }): void
+}>()
+
 const mapEl = ref<HTMLDivElement | null>(null)
 let map: L.Map | null = null
 let markersLayer: L.MarkerClusterGroup | null = null
@@ -99,6 +106,12 @@ function createMarker(a: GeoAuction, lat: number, lng: number): L.Marker {
     }
   })
   return marker
+}
+
+function emitBounds(): void {
+  if (!map) return
+  const b = map.getBounds()
+  emit('bounds-change', { north: b.getNorth(), south: b.getSouth(), east: b.getEast(), west: b.getWest() })
 }
 
 function refreshMarkers(): void {
@@ -193,7 +206,11 @@ onMounted(async () => {
     maxClusterRadius: 60,
     disableClusteringAtZoom: 16,
   }).addTo(map)
+  // moveend fires for both user pan/zoom and programmatic fitBounds/setView,
+  // so this single hook covers the "search re-fit → new viewport" flow too.
+  map.on('moveend', emitBounds)
   refreshMarkers()
+  emitBounds()
 })
 
 onBeforeUnmount(() => {
