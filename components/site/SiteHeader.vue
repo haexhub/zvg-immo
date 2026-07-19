@@ -1,7 +1,5 @@
 <script setup lang="ts">
 import { Gavel, Menu } from 'lucide-vue-next'
-import { Button } from '~/components/ui/button'
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '~/components/ui/sheet'
 
 const navItems = [
   { to: '/suche', labelKey: 'nav.search' },
@@ -51,7 +49,7 @@ const mobileOpen = ref(false)
             </Button>
           </nav>
           <div class="mt-4 border-t px-4 pt-4">
-            <AuthStatus class="flex-col items-stretch gap-2 [&>*]:justify-center" />
+            <AuthStatus class="flex-col items-stretch gap-2 *:justify-center" />
           </div>
         </SheetContent>
       </Sheet>

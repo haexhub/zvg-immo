@@ -3,7 +3,8 @@ import { ArrowLeft, ExternalLink, Loader2, Pencil, Trash2 } from 'lucide-vue-nex
 import type { ClaudeSetupStatus } from '~/server/api/settings/claude/status.get'
 import type { AdminLawyer } from '~/server/api/settings/lawyers/index.get'
 
-useHead({ title: 'Einstellungen — Zwangsversteigerungen' })
+const { t } = useI18n()
+useHead({ title: t('settings.title') })
 
 // Auth state — probed on mount so a returning user with a valid cookie skips
 // the password form.
@@ -40,7 +41,7 @@ async function login(): Promise<void> {
   } catch (err) {
     authError.value = (err as { statusMessage?: string; message?: string }).statusMessage
       || (err as Error).message
-      || 'Login fehlgeschlagen.'
+      || t('settings.login.error')
   } finally {
     authPending.value = false
   }
@@ -67,7 +68,7 @@ async function logout(): Promise<void> {
     }
     claudeError.value = (err as { statusMessage?: string; message?: string }).statusMessage
       || (err as Error).message
-      || 'Abmelden fehlgeschlagen.'
+      || t('settings.claude.logoutError')
   }
 }
 
@@ -79,7 +80,7 @@ async function logout(): Promise<void> {
 function normalizeSettingsError(err: unknown, fallback: string): string {
   if ((err as { statusCode?: number }).statusCode === 401) {
     clearAuthState()
-    return 'Sitzung abgelaufen.'
+    return t('settings.claude.sessionExpired')
   }
   return (err as { statusMessage?: string; message?: string }).statusMessage
     || (err as Error).message
@@ -101,7 +102,7 @@ async function refreshStatus(): Promise<void> {
     status.value = await $fetch<ClaudeSetupStatus>('/api/settings/claude/status', { cache: 'no-store' })
     claudeError.value = null
   } catch (err) {
-    claudeError.value = normalizeSettingsError(err, 'Status nicht erreichbar.')
+    claudeError.value = normalizeSettingsError(err, t('settings.claude.statusUnreachable'))
   }
 }
 
@@ -112,7 +113,7 @@ async function startLogin(): Promise<void> {
     await $fetch('/api/settings/claude/login', { method: 'POST' })
     await refreshStatus()
   } catch (err) {
-    claudeError.value = normalizeSettingsError(err, 'Login-Start fehlgeschlagen.')
+    claudeError.value = normalizeSettingsError(err, t('settings.claude.loginStartFailed'))
   } finally {
     actionPending.value = false
   }
@@ -130,7 +131,7 @@ async function submitCode(): Promise<void> {
     codeInput.value = ''
     await refreshStatus()
   } catch (err) {
-    claudeError.value = normalizeSettingsError(err, 'Code-Übermittlung fehlgeschlagen.')
+    claudeError.value = normalizeSettingsError(err, t('settings.claude.codeSubmitFailed'))
   } finally {
     actionPending.value = false
   }
@@ -144,7 +145,7 @@ async function resetFlow(): Promise<void> {
     codeInput.value = ''
     await refreshStatus()
   } catch (err) {
-    claudeError.value = normalizeSettingsError(err, 'Zurücksetzen fehlgeschlagen.')
+    claudeError.value = normalizeSettingsError(err, t('settings.claude.resetFailed'))
   } finally {
     actionPending.value = false
   }
@@ -207,7 +208,7 @@ async function loadLawyers(): Promise<void> {
     lawyers.value = await $fetch<AdminLawyer[]>('/api/settings/lawyers')
     lawyersError.value = null
   } catch (err) {
-    lawyersError.value = normalizeSettingsError(err, 'Anwälte konnten nicht geladen werden.')
+    lawyersError.value = normalizeSettingsError(err, t('settings.lawyers.loadError'))
   }
 }
 
@@ -266,7 +267,7 @@ async function submitLawyerForm(): Promise<void> {
     await loadLawyers()
     cancelForm()
   } catch (err) {
-    lawyersError.value = normalizeSettingsError(err, 'Speichern fehlgeschlagen.')
+    lawyersError.value = normalizeSettingsError(err, t('settings.lawyers.saveError'))
   } finally {
     lawyersPending.value = false
   }
@@ -286,7 +287,7 @@ async function toggleActive(l: AdminLawyer): Promise<void> {
     })
     await loadLawyers()
   } catch (err) {
-    lawyersError.value = normalizeSettingsError(err, 'Aktualisieren fehlgeschlagen.')
+    lawyersError.value = normalizeSettingsError(err, t('settings.lawyers.updateError'))
   } finally {
     lawyersPending.value = false
   }
@@ -302,8 +303,8 @@ async function deleteLawyer(l: AdminLawyer): Promise<void> {
     // 409 = lawyer has dependent inquiries (FK RESTRICT) — steer towards
     // deactivating instead of deleting.
     lawyersError.value = (err as { statusCode?: number }).statusCode === 409
-      ? ((err as { statusMessage?: string }).statusMessage ?? 'Anwalt hat bereits Anfragen — bitte deaktivieren statt löschen.')
-      : normalizeSettingsError(err, 'Löschen fehlgeschlagen.')
+      ? ((err as { statusMessage?: string }).statusMessage ?? t('settings.lawyers.hasInquiries'))
+      : normalizeSettingsError(err, t('settings.lawyers.deleteError'))
   } finally {
     lawyersPending.value = false
   }
@@ -317,248 +318,216 @@ onBeforeUnmount(stopPolling)
   <main class="px-4 py-6">
     <div class="max-w-2xl mx-auto space-y-6">
       <NuxtLink to="/" class="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-        <ArrowLeft class="h-4 w-4" /> Zurück zur Übersicht
+        <ArrowLeft class="h-4 w-4" /> {{ $t('settings.back') }}
       </NuxtLink>
-      <h1 class="text-2xl font-bold tracking-tight">Einstellungen</h1>
+      <h1 class="text-2xl font-bold tracking-tight">{{ $t('settings.heading') }}</h1>
 
-      <section v-if="!authed" class="rounded-xl border bg-card p-5 space-y-4">
-        <h2 class="text-base font-semibold">Anmeldung</h2>
-        <p class="text-sm text-muted-foreground">
-          Diese Seite ist passwortgeschützt.
-        </p>
-        <form class="space-y-3" @submit.prevent="login">
-          <input
-            v-model="passwordInput"
-            type="password"
-            autocomplete="current-password"
-            placeholder="Passwort"
-            class="w-full h-10 rounded-md border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            :disabled="authPending"
-          >
-          <p v-if="authError" class="text-sm text-destructive">{{ authError }}</p>
-          <button
-            type="submit"
-            class="w-full h-10 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
-            :disabled="authPending || !passwordInput"
-          >{{ authPending ? 'Prüfe …' : 'Anmelden' }}</button>
-        </form>
-      </section>
+      <Card v-if="!authed">
+        <CardHeader>
+          <CardTitle>{{ $t('settings.login.title') }}</CardTitle>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          <p class="text-sm text-muted-foreground">
+            {{ $t('settings.login.protected') }}
+          </p>
+          <form class="space-y-3" @submit.prevent="login">
+            <Input
+              v-model="passwordInput"
+              type="password"
+              autocomplete="current-password"
+              :placeholder="$t('settings.login.passwordPlaceholder')"
+              :disabled="authPending"
+            />
+            <p v-if="authError" class="text-sm text-destructive">{{ authError }}</p>
+            <Button type="submit" class="w-full" :disabled="authPending || !passwordInput">
+              {{ authPending ? $t('settings.login.submitting') : $t('settings.login.submit') }}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
 
-      <section v-else class="rounded-xl border bg-card p-5 space-y-4">
-        <div class="flex items-baseline justify-between">
-          <h2 class="text-base font-semibold">Claude AI-Anmeldung</h2>
-          <button
-            type="button"
-            class="text-xs text-muted-foreground hover:text-foreground"
-            @click="logout"
-          >Abmelden</button>
-        </div>
-        <p class="text-sm text-muted-foreground">
-          Verknüpft dein Claude Pro/Max-Abo mit dem Server, damit der Enrich-Task Größen aus Gutachten-PDFs extrahieren kann.
-        </p>
+      <Card v-else>
+        <CardHeader>
+          <CardTitle>{{ $t('settings.claude.title') }}</CardTitle>
+          <CardAction>
+            <Button type="button" variant="ghost" size="sm" @click="logout">{{ $t('settings.claude.logout') }}</Button>
+          </CardAction>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          <p class="text-sm text-muted-foreground">
+            {{ $t('settings.claude.description') }}
+          </p>
 
-        <p v-if="!status" class="text-sm text-muted-foreground">Lade Status …</p>
+          <p v-if="!status" class="text-sm text-muted-foreground">{{ $t('settings.claude.loadingStatus') }}</p>
 
-        <template v-else>
-          <div
-            v-if="status.state === 'idle' && !status.credentialsExist"
-            class="space-y-3"
-          >
-            <p class="text-sm">Status: <span class="font-medium">Nicht verbunden</span></p>
-            <button
-              type="button"
-              class="h-9 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-              :disabled="actionPending"
-              @click="startLogin"
-            >{{ actionPending ? 'Starte …' : 'Login starten' }}</button>
-          </div>
-
-          <div
-            v-else-if="status.state === 'idle' && status.credentialsExist"
-            class="space-y-3"
-          >
-            <p class="text-sm text-emerald-600 dark:text-emerald-500">✓ Bereits angemeldet</p>
-            <div class="flex flex-wrap gap-2">
-              <button
-                type="button"
-                class="h-9 rounded-md border px-4 text-sm hover:border-primary hover:text-primary transition-colors disabled:opacity-50"
-                :disabled="actionPending"
-                @click="startLogin"
-              >Neu verknüpfen</button>
+          <template v-else>
+            <div
+              v-if="status.state === 'idle' && !status.credentialsExist"
+              class="space-y-3"
+            >
+              <p class="text-sm">{{ $t('settings.claude.statusLabel') }} <span class="font-medium">{{ $t('settings.claude.notConnected') }}</span></p>
+              <Button type="button" :disabled="actionPending" @click="startLogin">
+                {{ actionPending ? $t('settings.claude.starting') : $t('settings.claude.startLogin') }}
+              </Button>
             </div>
-          </div>
 
-          <div v-else-if="status.state === 'awaiting-url'" class="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 class="h-4 w-4 animate-spin" />
-            Öffne Anthropic-Login …
-          </div>
-
-          <div v-else-if="status.state === 'awaiting-code'" class="space-y-4">
-            <div>
-              <p class="text-sm mb-2">1. Öffne die Anthropic-Login-Seite und autorisiere den Zugriff:</p>
-              <a
-                v-if="status.oauthUrl"
-                :href="status.oauthUrl"
-                target="_blank"
-                rel="noopener"
-                class="inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-sm hover:border-primary hover:text-primary transition-colors"
-              >
-                <ExternalLink class="h-4 w-4" />
-                OAuth-Seite öffnen
-              </a>
+            <div
+              v-else-if="status.state === 'idle' && status.credentialsExist"
+              class="space-y-3"
+            >
+              <p class="text-sm text-emerald-600 dark:text-emerald-500">{{ $t('settings.claude.connected') }}</p>
+              <div class="flex flex-wrap gap-2">
+                <Button type="button" variant="outline" :disabled="actionPending" @click="startLogin">{{ $t('settings.claude.reconnect') }}</Button>
+              </div>
             </div>
-            <div>
-              <p class="text-sm mb-2">2. Kopiere den Code und füge ihn hier ein:</p>
-              <textarea
-                v-model="codeInput"
-                rows="2"
-                placeholder="Code aus platform.claude.com"
-                class="w-full rounded-md border bg-background px-3 py-2 text-sm font-mono focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                :disabled="actionPending"
-              />
+
+            <div v-else-if="status.state === 'awaiting-url'" class="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 class="h-4 w-4 animate-spin" />
+              {{ $t('settings.claude.openingLogin') }}
             </div>
-            <div class="flex flex-wrap gap-2">
-              <button
-                type="button"
-                class="h-9 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-                :disabled="actionPending || !codeInput.trim()"
-                @click="submitCode"
-              >{{ actionPending ? 'Übertrage …' : 'Bestätigen' }}</button>
-              <button
-                type="button"
-                class="h-9 rounded-md border border-destructive px-4 text-sm text-destructive hover:bg-destructive hover:text-white transition-colors disabled:opacity-50"
-                :disabled="actionPending"
-                @click="resetFlow"
-              >Abbrechen</button>
+
+            <div v-else-if="status.state === 'awaiting-code'" class="space-y-4">
+              <div>
+                <p class="text-sm mb-2">{{ $t('settings.claude.step1') }}</p>
+                <Button v-if="status.oauthUrl" as-child variant="outline" size="sm">
+                  <a :href="status.oauthUrl" target="_blank" rel="noopener">
+                    <ExternalLink class="h-4 w-4" />
+                    {{ $t('settings.claude.openOauth') }}
+                  </a>
+                </Button>
+              </div>
+              <div>
+                <p class="text-sm mb-2">{{ $t('settings.claude.step2') }}</p>
+                <Textarea
+                  v-model="codeInput"
+                  rows="2"
+                  :placeholder="$t('settings.claude.codePlaceholder')"
+                  class="font-mono"
+                  :disabled="actionPending"
+                />
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <Button type="button" :disabled="actionPending || !codeInput.trim()" @click="submitCode">
+                  {{ actionPending ? $t('settings.claude.submittingCode') : $t('settings.claude.confirm') }}
+                </Button>
+                <Button type="button" variant="outline" class="border-destructive text-destructive hover:bg-destructive hover:text-white" :disabled="actionPending" @click="resetFlow">
+                  {{ $t('settings.claude.cancel') }}
+                </Button>
+              </div>
             </div>
-          </div>
 
-          <div v-else-if="status.state === 'finishing'" class="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 class="h-4 w-4 animate-spin" />
-            Prüfe Anmeldung …
-          </div>
+            <div v-else-if="status.state === 'finishing'" class="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 class="h-4 w-4 animate-spin" />
+              {{ $t('settings.claude.checking') }}
+            </div>
 
-          <div v-else-if="status.state === 'done'" class="space-y-3">
-            <p class="text-sm text-emerald-600 dark:text-emerald-500">✓ Erfolgreich verbunden</p>
-            <button
-              type="button"
-              class="h-9 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-              :disabled="actionPending"
-              @click="resetFlow"
-            >OK</button>
-          </div>
+            <div v-else-if="status.state === 'done'" class="space-y-3">
+              <p class="text-sm text-emerald-600 dark:text-emerald-500">{{ $t('settings.claude.success') }}</p>
+              <Button type="button" :disabled="actionPending" @click="resetFlow">{{ $t('settings.claude.ok') }}</Button>
+            </div>
 
-          <div v-else-if="status.state === 'error'" class="space-y-3">
-            <p class="text-sm text-destructive">
-              {{ status.errorMessage || 'Ein Fehler ist aufgetreten.' }}
-            </p>
-            <button
-              type="button"
-              class="h-9 rounded-md border border-destructive px-4 text-sm text-destructive hover:bg-destructive hover:text-white transition-colors disabled:opacity-50"
-              :disabled="actionPending"
-              @click="resetFlow"
-            >Erneut versuchen</button>
-          </div>
-        </template>
+            <div v-else-if="status.state === 'error'" class="space-y-3">
+              <p class="text-sm text-destructive">
+                {{ status.errorMessage || $t('settings.claude.genericError') }}
+              </p>
+              <Button type="button" variant="outline" class="border-destructive text-destructive hover:bg-destructive hover:text-white" :disabled="actionPending" @click="resetFlow">
+                {{ $t('settings.claude.retry') }}
+              </Button>
+            </div>
+          </template>
 
-        <p v-if="claudeError" class="text-sm text-destructive border-t pt-3">
-          {{ claudeError }}
-        </p>
-      </section>
+          <p v-if="claudeError" class="text-sm text-destructive border-t pt-3">
+            {{ claudeError }}
+          </p>
+        </CardContent>
+      </Card>
 
-      <section class="rounded-xl border bg-card p-5 space-y-4">
-        <div class="flex items-baseline justify-between">
-          <h2 class="text-base font-semibold">Anwälte</h2>
-          <button
-            type="button"
-            class="h-8 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90"
-            @click="startCreate"
-          >+ Anwalt anlegen</button>
-        </div>
-        <p class="text-sm text-muted-foreground">
-          Katalog der vermittelten Anwälte (Pay-per-Lead). Anfragen laufen über die Objektseite; die E-Mail-Adresse wird nie an den Client ausgeliefert.
-        </p>
+      <Card>
+        <CardHeader>
+          <CardTitle>{{ $t('settings.lawyers.title') }}</CardTitle>
+          <CardAction>
+            <Button type="button" size="sm" @click="startCreate">{{ $t('settings.lawyers.add') }}</Button>
+          </CardAction>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          <p class="text-sm text-muted-foreground">
+            {{ $t('settings.lawyers.description') }}
+          </p>
 
-        <p v-if="lawyersError" class="text-sm text-destructive">{{ lawyersError }}</p>
+          <p v-if="lawyersError" class="text-sm text-destructive">{{ lawyersError }}</p>
 
-        <div v-if="lawyers.length" class="overflow-x-auto -mx-5">
-          <table class="w-full text-sm min-w-[640px]">
-            <thead>
-              <tr class="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
-                <th class="px-5 py-2 font-medium">Name</th>
-                <th class="px-5 py-2 font-medium">Länder</th>
-                <th class="px-5 py-2 font-medium">Provision</th>
-                <th class="px-5 py-2 font-medium">Status</th>
-                <th class="px-5 py-2 font-medium text-right">Aktionen</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="l in lawyers" :key="l.id" class="border-b last:border-0">
-                <td class="px-5 py-2">
+          <Table v-if="lawyers.length" class="min-w-[640px]">
+            <TableHeader>
+              <TableRow>
+                <TableHead>{{ $t('settings.lawyers.colName') }}</TableHead>
+                <TableHead>{{ $t('settings.lawyers.colCountries') }}</TableHead>
+                <TableHead>{{ $t('settings.lawyers.colCommission') }}</TableHead>
+                <TableHead>{{ $t('settings.lawyers.colStatus') }}</TableHead>
+                <TableHead class="text-right">{{ $t('settings.lawyers.colActions') }}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <TableRow v-for="l in lawyers" :key="l.id">
+                <TableCell>
                   <div class="font-medium">{{ l.name }}</div>
                   <div v-if="l.firm" class="text-xs text-muted-foreground">{{ l.firm }}</div>
-                </td>
-                <td class="px-5 py-2 uppercase text-xs">{{ l.countries.join(', ') }}</td>
-                <td class="px-5 py-2 tabular-nums">{{ l.commissionCents != null ? (l.commissionCents / 100).toFixed(2) + ' €' : '–' }}</td>
-                <td class="px-5 py-2">
+                </TableCell>
+                <TableCell class="uppercase text-xs">{{ l.countries.join(', ') }}</TableCell>
+                <TableCell class="tabular-nums">{{ l.commissionCents != null ? (l.commissionCents / 100).toFixed(2) + ' €' : '–' }}</TableCell>
+                <TableCell>
                   <span :class="l.active ? 'text-emerald-600 dark:text-emerald-500' : 'text-muted-foreground'">
-                    {{ l.active ? 'Aktiv' : 'Deaktiviert' }}
+                    {{ l.active ? $t('settings.lawyers.active') : $t('settings.lawyers.inactive') }}
                   </span>
-                </td>
-                <td class="px-5 py-2">
+                </TableCell>
+                <TableCell>
                   <div class="flex items-center justify-end gap-2">
-                    <button type="button" title="Bearbeiten" class="text-muted-foreground hover:text-foreground" @click="startEdit(l)">
+                    <Button type="button" variant="ghost" size="icon" :title="$t('settings.lawyers.edit')" @click="startEdit(l)">
                       <Pencil class="h-4 w-4" />
-                    </button>
-                    <button
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" :disabled="lawyersPending" @click="toggleActive(l)">
+                      {{ l.active ? $t('settings.lawyers.deactivate') : $t('settings.lawyers.activate') }}
+                    </Button>
+                    <Button
                       type="button"
-                      class="text-xs rounded-md border px-2 py-1 hover:border-primary hover:text-primary"
-                      :disabled="lawyersPending"
-                      @click="toggleActive(l)"
-                    >{{ l.active ? 'Deaktivieren' : 'Aktivieren' }}</button>
-                    <button
-                      type="button"
-                      title="Löschen (nur ohne Anfragen möglich)"
-                      class="text-muted-foreground hover:text-destructive"
+                      variant="ghost"
+                      size="icon"
+                      :title="$t('settings.lawyers.delete')"
+                      class="hover:text-destructive"
                       :disabled="lawyersPending"
                       @click="deleteLawyer(l)"
                     >
                       <Trash2 class="h-4 w-4" />
-                    </button>
+                    </Button>
                   </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <p v-else class="text-sm text-muted-foreground">Noch keine Anwälte angelegt.</p>
+                </TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+          <p v-else class="text-sm text-muted-foreground">{{ $t('settings.lawyers.empty') }}</p>
 
-        <form v-if="showForm" class="border-t pt-4 space-y-3" @submit.prevent="submitLawyerForm">
-          <h3 class="text-sm font-semibold">{{ editingId ? 'Anwalt bearbeiten' : 'Neuen Anwalt anlegen' }}</h3>
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <input v-model="form.name" placeholder="Name *" required class="h-9 rounded-md border bg-background px-3 text-sm" />
-            <input v-model="form.firm" placeholder="Kanzlei" class="h-9 rounded-md border bg-background px-3 text-sm" />
-            <input v-model="form.email" type="email" placeholder="E-Mail *" required class="h-9 rounded-md border bg-background px-3 text-sm" />
-            <input v-model="form.phone" placeholder="Telefon" class="h-9 rounded-md border bg-background px-3 text-sm" />
-            <input v-model="form.countries" placeholder="Länder (z.B. de, at) *" required class="h-9 rounded-md border bg-background px-3 text-sm" />
-            <input v-model="form.specialization" placeholder="Spezialisierung" class="h-9 rounded-md border bg-background px-3 text-sm" />
-            <input v-model="form.languages" placeholder="Sprachen (z.B. Deutsch, Englisch)" class="h-9 rounded-md border bg-background px-3 text-sm" />
-            <input v-model="form.website" placeholder="Website" class="h-9 rounded-md border bg-background px-3 text-sm" />
-            <input v-model="form.commissionEur" type="number" step="0.01" min="0" placeholder="Provision pro Lead (EUR)" class="h-9 rounded-md border bg-background px-3 text-sm" />
-            <label class="flex items-center gap-2 text-sm">
-              <input v-model="form.active" type="checkbox" class="h-4 w-4" /> Aktiv
-            </label>
-          </div>
-          <div class="flex gap-2">
-            <button
-              type="submit"
-              class="h-9 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-              :disabled="lawyersPending"
-            >{{ lawyersPending ? 'Speichere …' : 'Speichern' }}</button>
-            <button type="button" class="h-9 rounded-md border px-4 text-sm" @click="cancelForm">Abbrechen</button>
-          </div>
-        </form>
-      </section>
+          <form v-if="showForm" class="border-t pt-4 space-y-3" @submit.prevent="submitLawyerForm">
+            <h3 class="text-sm font-semibold">{{ editingId ? $t('settings.lawyers.editHeading') : $t('settings.lawyers.createHeading') }}</h3>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Input v-model="form.name" :placeholder="$t('settings.lawyers.namePlaceholder')" required />
+              <Input v-model="form.firm" :placeholder="$t('settings.lawyers.firmPlaceholder')" />
+              <Input v-model="form.email" type="email" :placeholder="$t('settings.lawyers.emailPlaceholder')" required />
+              <Input v-model="form.phone" :placeholder="$t('settings.lawyers.phonePlaceholder')" />
+              <Input v-model="form.countries" :placeholder="$t('settings.lawyers.countriesPlaceholder')" required />
+              <Input v-model="form.specialization" :placeholder="$t('settings.lawyers.specializationPlaceholder')" />
+              <Input v-model="form.languages" :placeholder="$t('settings.lawyers.languagesPlaceholder')" />
+              <Input v-model="form.website" :placeholder="$t('settings.lawyers.websitePlaceholder')" />
+              <Input v-model="form.commissionEur" type="number" step="0.01" min="0" :placeholder="$t('settings.lawyers.commissionPlaceholder')" />
+              <Label class="flex items-center gap-2">
+                <Checkbox v-model="form.active" /> {{ $t('settings.lawyers.activeLabel') }}
+              </Label>
+            </div>
+            <div class="flex gap-2">
+              <Button type="submit" :disabled="lawyersPending">{{ lawyersPending ? $t('settings.lawyers.saving') : $t('settings.lawyers.save') }}</Button>
+              <Button type="button" variant="outline" @click="cancelForm">{{ $t('settings.lawyers.cancel') }}</Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   </main>
 </template>

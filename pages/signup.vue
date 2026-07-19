@@ -36,37 +36,31 @@ async function onSubmit(): Promise<void> {
     <form class="w-full max-w-sm space-y-4" @submit.prevent="onSubmit">
       <h1 class="text-2xl font-bold tracking-tight">{{ $t('auth.signup.title') }}</h1>
       <div class="space-y-1">
-        <label class="text-sm font-medium" for="email">{{ $t('auth.email') }}</label>
-        <input
+        <Label for="email">{{ $t('auth.email') }}</Label>
+        <Input
           id="email"
           v-model="email"
           type="email"
           required
           autocomplete="email"
-          class="w-full h-9 rounded-md border bg-card px-3 text-sm shadow-xs"
         />
       </div>
       <div class="space-y-1">
-        <label class="text-sm font-medium" for="password">{{ $t('auth.password') }}</label>
-        <input
+        <Label for="password">{{ $t('auth.password') }}</Label>
+        <Input
           id="password"
           v-model="password"
           type="password"
           required
           minlength="6"
           autocomplete="new-password"
-          class="w-full h-9 rounded-md border bg-card px-3 text-sm shadow-xs"
         />
       </div>
       <p v-if="error" class="text-sm text-destructive">{{ error }}</p>
       <p v-if="done" class="text-sm text-emerald-600 dark:text-emerald-500">{{ $t('auth.signup.done') }}</p>
-      <button
-        type="submit"
-        :disabled="pending"
-        class="w-full h-9 rounded-md bg-primary text-primary-foreground text-sm font-medium shadow-xs hover:opacity-90 transition-opacity disabled:opacity-50"
-      >
+      <Button type="submit" :disabled="pending" class="w-full">
         {{ pending ? $t('auth.signup.submitting') : $t('auth.signup.submit') }}
-      </button>
+      </Button>
       <p class="text-sm text-muted-foreground">
         {{ $t('auth.signup.hasAccount') }}
         <NuxtLink :to="`/login?redirect=${encodeURIComponent(redirectTarget())}`" class="text-primary hover:underline">{{ $t('auth.signup.loginLink') }}</NuxtLink>
