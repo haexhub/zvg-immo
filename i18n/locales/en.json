@@ -3,6 +3,13 @@
     "title": "Foreclosure Auctions Germany",
     "description": "Public real-estate foreclosure auctions across all German states, crawled from the official court portals."
   },
+  "nav": {
+    "brand": "ZVG Scout",
+    "search": "Search",
+    "archive": "Archive",
+    "calculator": "Calculator",
+    "menu": "Menu"
+  },
   "localeSwitcher": {
     "label": "Language"
   },

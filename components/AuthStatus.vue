@@ -1,7 +1,4 @@
 <script setup lang="ts">
-// Small login/account widget, embedded per-page since there's no shared
-// layout (app.vue is just <NuxtPage>).
-
 const { user, signOut } = useAuth()
 const route = useRoute()
 

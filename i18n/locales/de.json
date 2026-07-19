@@ -3,6 +3,13 @@
     "title": "Zwangsversteigerungen Deutschland",
     "description": "Öffentliche Immobilien-Zwangsversteigerungen aller deutschen Bundesländer, gecrawlt aus den amtlichen Justizportalen."
   },
+  "nav": {
+    "brand": "ZVG Scout",
+    "search": "Suche",
+    "archive": "Archiv",
+    "calculator": "Rechner",
+    "menu": "Menü"
+  },
   "localeSwitcher": {
     "label": "Sprache"
   },

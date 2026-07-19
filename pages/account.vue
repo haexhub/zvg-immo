@@ -117,12 +117,9 @@ function formatDate(iso: string): string {
 </script>
 
 <template>
-  <main class="h-screen overflow-y-auto px-4 py-6">
+  <main class="px-4 py-6">
     <div class="max-w-3xl mx-auto space-y-8">
-      <div class="flex items-center justify-between">
-        <h1 class="text-2xl font-bold tracking-tight">{{ $t('account.title') }}</h1>
-        <AuthStatus />
-      </div>
+      <h1 class="text-2xl font-bold tracking-tight">{{ $t('account.title') }}</h1>
 
       <template v-if="checked">
         <section class="space-y-3">

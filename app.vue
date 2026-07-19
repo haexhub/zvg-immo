@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// Bootstraps the account-locale sync once for the whole app (no shared
-// layout to hang this off — see AuthStatus.vue's header comment).
+// Bootstraps the account-locale sync once for the whole app.
 useLocalePreference()
 
 const { t } = useI18n()
@@ -13,5 +12,7 @@ useHead(() => ({
 </script>
 
 <template>
-  <NuxtPage :keepalive="true" />
+  <NuxtLayout>
+    <NuxtPage :keepalive="true" />
+  </NuxtLayout>
 </template>

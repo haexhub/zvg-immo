@@ -20,6 +20,8 @@ import SheetDescription from '~/components/ui/sheet/SheetDescription.vue'
 import { ListFilter, Star } from 'lucide-vue-next'
 import { refDebounced } from '@vueuse/core'
 
+definePageMeta({ layout: 'search' })
+
 const route = useRoute()
 const router = useRouter()
 const { user } = useAuth()
@@ -594,7 +596,7 @@ async function toggleWatchlist(a: Auction): Promise<void> {
 </script>
 
 <template>
-  <main class="h-screen flex flex-col px-4 py-3">
+  <main class="h-full flex flex-col px-4 py-3">
     <header class="shrink-0 mb-3">
       <div class="flex items-baseline gap-x-5 gap-y-1 flex-wrap">
         <h1 class="text-2xl font-bold tracking-tight">{{ $t('home.titleWithLabel', { label: headerLabel }) }}</h1>
@@ -604,7 +606,6 @@ async function toggleWatchlist(a: Auction): Promise<void> {
           <span><span class="font-semibold">{{ totals.cancelled }}</span> {{ $t('home.cancelled') }}</span>
           <span v-if="data">{{ $t('home.asOf', { date: new Date(data.fetchedAt).toLocaleString(intlLocale) }) }}</span>
         </div>
-        <AuthStatus class="ml-auto" />
       </div>
     </header>
 

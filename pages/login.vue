@@ -28,7 +28,7 @@ async function onSubmit(): Promise<void> {
 </script>
 
 <template>
-  <main class="h-screen flex items-center justify-center px-4">
+  <main class="min-h-[calc(100vh-4rem)] flex items-center justify-center px-4">
     <form class="w-full max-w-sm space-y-4" @submit.prevent="onSubmit">
       <h1 class="text-2xl font-bold tracking-tight">{{ $t('auth.login.title') }}</h1>
       <div class="space-y-1">
