@@ -25,12 +25,7 @@ export interface DetailInfo {
   address: string | null
 }
 
-async function fetchTab(
-  idSub: string,
-  ver: 1 | 3,
-  identity: DocumentIdentity,
-  capturedAt: string,
-): Promise<string> {
+async function fetchTab(idSub: string, ver: 1 | 3): Promise<string> {
   const url = `${BOE_BASE}/detalleSubasta.php?idSub=${encodeURIComponent(idSub)}&ver=${ver}`
   const html = await boeFetch(url)
   if (looksLikeCaptcha(html)) {
@@ -40,10 +35,6 @@ async function fetchTab(
     await markBoeCaptcha()
     throw new Error(`BOE CAPTCHA on ${idSub} ver=${ver}`)
   }
-  // BOE never attaches a PDF/DOCX (auction.attachments stays empty, see
-  // list.ts) — this HTML is the only record of tasación/descripción/
-  // dirección/referencia catastral, so it's the G1 archive target here.
-  await archiveDetailCapture(Buffer.from(html, 'utf8'), identity, url, capturedAt)
   return html
 }
 
@@ -105,9 +96,18 @@ export async function fetchDetail(auction: Auction): Promise<DetailInfo> {
   // Promise.all is safe here — the shared rate gate in fetch.ts serializes
   // both requests internally, so the 800ms gap still applies between them.
   const [v1, v3] = await Promise.all([
-    fetchTab(auction.externalId, 1, identity, capturedAt),
-    fetchTab(auction.externalId, 3, identity, capturedAt),
+    fetchTab(auction.externalId, 1),
+    fetchTab(auction.externalId, 3),
   ])
+  // BOE never attaches a PDF/DOCX (auction.attachments stays empty, see
+  // list.ts) — this HTML is the only record of tasación/descripción/
+  // dirección/referencia catastral, so it's the G1 archive target here.
+  // Both tabs are archived as one capture: recordCapture dedups on
+  // (kind, platform, externalId), so archiving them separately would make
+  // the two distinct docs ping-pong and mint a capture row every run.
+  const url = `${BOE_BASE}/detalleSubasta.php?idSub=${encodeURIComponent(auction.externalId)}`
+  const combined = Buffer.from(`${v1}\n<!-- boe:ver=3 -->\n${v3}`, 'utf8')
+  await archiveDetailCapture(combined, identity, url, capturedAt)
   return { ...parseVer1(v1), ...parseVer3(v3) }
 }
 
