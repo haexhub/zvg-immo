@@ -4,10 +4,14 @@ export default defineNuxtConfig({
   compatibilityDate: '2025-04-01',
   devtools: { enabled: true },
   ssr: true,
-  modules: ['@nuxtjs/i18n'],
+  modules: ['@nuxtjs/i18n', 'shadcn-nuxt'],
   css: ['~/assets/css/tailwind.css'],
   vite: {
     plugins: [tailwindcss()],
+  },
+  shadcn: {
+    prefix: '',
+    componentDir: '~/components/ui',
   },
   i18n: {
     langDir: 'locales',
