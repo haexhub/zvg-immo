@@ -1,5 +1,7 @@
 import { load } from 'cheerio'
 import type { Auction } from '~/types/auction'
+import { archiveDetailCapture } from '~/server/utils/fetch-archive'
+import type { DocumentIdentity } from '~/server/utils/raw-archive'
 import { UA } from './constants'
 import { parsePlPrice, parseLivingAreaSqm, formatPln, clean } from './text'
 
@@ -76,6 +78,18 @@ export async function enrichOne(auction: Auction): Promise<void> {
   })
   if (!res.ok) throw new Error(`PL detail fetch failed: ${res.status} ${auction.detailUrlUpstream}`)
   const html = await res.text()
+  await archiveDetailCapture(
+    Buffer.from(html, 'utf8'),
+    {
+      platform: auction.platform,
+      country: auction.country,
+      externalId: auction.externalId,
+      caseNumber: auction.caseNumber,
+      authority: auction.authority,
+    } satisfies DocumentIdentity,
+    auction.detailUrlUpstream,
+    new Date().toISOString(),
+  )
   // A WAF/error page can still answer HTTP 200 — without this check it would
   // parse into a silent, successful no-op and suppress retries.
   if (!html.includes('notice-template-wrapper')) {

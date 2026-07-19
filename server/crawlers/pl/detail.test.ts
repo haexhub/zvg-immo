@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Auction } from '~/types/auction'
 import { parseDetailHtml, enrichOne } from './detail'
 import { parseLivingAreaSqm } from './text'
@@ -177,6 +177,9 @@ function makeAuction(overrides: Partial<Auction> = {}): Auction {
   }
 }
 
+// archiveDetailCapture (called from enrichOne) goes through getPool(), which
+// reads useRuntimeConfig().databaseUrl — undefined here, so it safely no-ops.
+beforeEach(() => vi.stubGlobal('useRuntimeConfig', () => ({})))
 afterEach(() => vi.unstubAllGlobals())
 
 describe('enrichOne', () => {

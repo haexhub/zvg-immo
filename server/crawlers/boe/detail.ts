@@ -1,4 +1,6 @@
 import type { Auction } from '~/types/auction'
+import { archiveDetailCapture } from '~/server/utils/fetch-archive'
+import type { DocumentIdentity } from '~/server/utils/raw-archive'
 import { BOE_BASE } from './constants'
 import { boeFetch, looksLikeCaptcha, markBoeCaptcha } from './fetch'
 import { clean, parseEuroEs } from './text'
@@ -82,10 +84,30 @@ function parseVer3(html: string): Pick<DetailInfo, 'description' | 'referenciaCa
 }
 
 /** Fetches both relevant detail tabs for one subasta and merges them. */
-export async function fetchDetail(idSub: string): Promise<DetailInfo> {
+export async function fetchDetail(auction: Auction): Promise<DetailInfo> {
+  const identity: DocumentIdentity = {
+    platform: auction.platform,
+    country: auction.country,
+    externalId: auction.externalId,
+    caseNumber: auction.caseNumber,
+    authority: auction.authority,
+  }
+  const capturedAt = new Date().toISOString()
   // Promise.all is safe here — the shared rate gate in fetch.ts serializes
   // both requests internally, so the 800ms gap still applies between them.
-  const [v1, v3] = await Promise.all([fetchTab(idSub, 1), fetchTab(idSub, 3)])
+  const [v1, v3] = await Promise.all([
+    fetchTab(auction.externalId, 1),
+    fetchTab(auction.externalId, 3),
+  ])
+  // BOE never attaches a PDF/DOCX (auction.attachments stays empty, see
+  // list.ts) — this HTML is the only record of tasación/descripción/
+  // dirección/referencia catastral, so it's the G1 archive target here.
+  // Both tabs are archived as one capture: recordCapture dedups on
+  // (kind, platform, externalId), so archiving them separately would make
+  // the two distinct docs ping-pong and mint a capture row every run.
+  const url = `${BOE_BASE}/detalleSubasta.php?idSub=${encodeURIComponent(auction.externalId)}`
+  const combined = Buffer.from(`${v1}\n<!-- boe:ver=3 -->\n${v3}`, 'utf8')
+  await archiveDetailCapture(combined, identity, url, capturedAt)
   return { ...parseVer1(v1), ...parseVer3(v3) }
 }
 
@@ -102,7 +124,7 @@ export async function enrichInBatches(
   let errors = 0
   for (const auction of auctions) {
     try {
-      const info = await fetchDetail(auction.externalId)
+      const info = await fetchDetail(auction)
       apply(auction, info)
       enriched++
     } catch (err) {

@@ -1,6 +1,8 @@
 import { load } from 'cheerio'
 import type { Auction } from '~/types/auction'
 import type { PropertyType } from '~/lib/property-type'
+import { archiveDetailCapture } from '~/server/utils/fetch-archive'
+import type { DocumentIdentity } from '~/server/utils/raw-archive'
 import { LT_BASE, UA } from './constants'
 import { clean, parseLtArea } from './text'
 import { areaBucketForPropertyType } from '~/server/utils/extract/rules'
@@ -76,7 +78,20 @@ export async function enrichOne(auction: Auction): Promise<void> {
     signal: AbortSignal.timeout(20_000),
   })
   if (!res.ok) throw new Error(`eaukcionai.lt detail: HTTP ${res.status}`)
-  const detail = parseDetailPage(await res.text())
+  const html = await res.text()
+  await archiveDetailCapture(
+    Buffer.from(html, 'utf8'),
+    {
+      platform: auction.platform,
+      country: auction.country,
+      externalId: auction.externalId,
+      caseNumber: auction.caseNumber,
+      authority: auction.authority,
+    } satisfies DocumentIdentity,
+    auction.detailUrlUpstream,
+    new Date().toISOString(),
+  )
+  const detail = parseDetailPage(html)
 
   if (detail.beschreibung) auction.description = detail.beschreibung
 

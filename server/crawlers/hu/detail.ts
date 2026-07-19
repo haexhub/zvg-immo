@@ -1,6 +1,8 @@
 import { load } from 'cheerio'
 import type { Auction } from '~/types/auction'
 import type { PropertyType } from '~/lib/property-type'
+import { archiveDetailCapture } from '~/server/utils/fetch-archive'
+import type { DocumentIdentity } from '~/server/utils/raw-archive'
 import { HU_BASE, UA } from './constants'
 import { decodeIso8859_2, parseMnvPrice, clean, htmlToText, jsFieldValue, jsFieldUnit } from './text'
 import { areaBucketForPropertyType } from '~/server/utils/extract/rules'
@@ -87,7 +89,23 @@ export async function enrichOne(auction: Auction): Promise<void> {
     signal: AbortSignal.timeout(20_000),
   })
   if (!res.ok) throw new Error(`MNV detail: HTTP ${res.status}`)
-  const html = decodeIso8859_2(await res.arrayBuffer())
+  const rawBytes = await res.arrayBuffer()
+  // Archive the raw ISO-8859-2 bytes as fetched, not the UTF-16 decoded
+  // string used for parsing below — keeps the capture byte-identical to the
+  // upstream response.
+  await archiveDetailCapture(
+    Buffer.from(rawBytes),
+    {
+      platform: auction.platform,
+      country: auction.country,
+      externalId: auction.externalId,
+      caseNumber: auction.caseNumber,
+      authority: auction.authority,
+    } satisfies DocumentIdentity,
+    auction.detailUrlUpstream,
+    new Date().toISOString(),
+  )
+  const html = decodeIso8859_2(rawBytes)
   const d = parseDetailPage(html)
 
   const lines: string[] = []

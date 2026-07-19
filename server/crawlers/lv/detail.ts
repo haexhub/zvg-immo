@@ -1,5 +1,7 @@
 import { load } from 'cheerio'
 import type { Attachment, Auction } from '~/types/auction'
+import { archiveDetailCapture } from '~/server/utils/fetch-archive'
+import type { DocumentIdentity } from '~/server/utils/raw-archive'
 import { UA } from './constants'
 import { clean } from './text'
 
@@ -84,7 +86,23 @@ export async function enrichOne(auction: Auction): Promise<void> {
     signal: AbortSignal.timeout(20_000),
   })
   if (!res.ok) throw new Error(`izsoles.ta.gov.lv detail: HTTP ${res.status}`)
-  const d = parseDetailPage(await res.text())
+  const html = await res.text()
+  // Archived unconditionally, independent of the gutachten PDF (only
+  // sometimes published, and never covers the cadastre/coordinates below) —
+  // the HTML is the sole source for those regardless of PDF presence.
+  await archiveDetailCapture(
+    Buffer.from(html, 'utf8'),
+    {
+      platform: auction.platform,
+      country: auction.country,
+      externalId: auction.externalId,
+      caseNumber: auction.caseNumber,
+      authority: auction.authority,
+    } satisfies DocumentIdentity,
+    auction.detailUrlUpstream,
+    new Date().toISOString(),
+  )
+  const d = parseDetailPage(html)
   // Unlike the filtered list, /izsole/<uuid> is served without a session —
   // but if the portal ever answers with a non-detail page (redirect to the
   // search form, maintenance page), throw so the enrich task retries later.

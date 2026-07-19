@@ -1,5 +1,6 @@
 import { load } from 'cheerio'
 import type { Attachment, Auction } from '~/types/auction'
+import { archiveDetailCapture } from '~/server/utils/fetch-archive'
 import { FR_BASE, FR_LIST_REGIONS, UA, COUNTRY, DISALLOWED_DATA_PATHS } from './constants'
 
 const DETAIL_CONCURRENCY = 4
@@ -203,13 +204,23 @@ function parseDetailPage(html: string, href: string): DetailInfo {
   }
 }
 
-async function fetchDetail(href: string): Promise<DetailInfo | null> {
+async function fetchDetail(href: string, platformId: string): Promise<DetailInfo | null> {
   const url = new URL(absoluteUrl(href))
   if (url.origin !== new URL(FR_BASE).origin) {
     throw new Error(`Unexpected detail URL origin: ${url.origin}`)
   }
   try {
-    return parseDetailPage(await htmlFetch(url.toString()), href)
+    const html = await htmlFetch(url.toString())
+    const detail = parseDetailPage(html, href)
+    // Licitor never publishes a real court case number (see mapItem below) —
+    // caseNumber stays '' here too, matching the auction this capture keys to.
+    await archiveDetailCapture(
+      Buffer.from(html, 'utf8'),
+      { platform: platformId, country: COUNTRY, externalId: detail.externalId, caseNumber: '', authority: detail.authority },
+      url.toString(),
+      new Date().toISOString(),
+    )
+    return detail
   } catch {
     return null
   }
@@ -269,7 +280,7 @@ export async function fetchAllListings(
       const i = cursor++
       const entry = entries[i]
       if (!entry) continue
-      details[i] = await fetchDetail(entry[0])
+      details[i] = await fetchDetail(entry[0], platformId)
     }
   }
   await Promise.all(Array.from({ length: DETAIL_CONCURRENCY }, worker))
