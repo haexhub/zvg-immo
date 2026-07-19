@@ -67,6 +67,20 @@ export async function listCacheAgeMs(): Promise<number | null> {
 }
 
 /**
+ * Age (ms) of one region's list-cache file, or null when it doesn't exist yet.
+ * The hourly background refresh uses this to skip regions crawled recently
+ * enough for their portal's cadence (see server/crawlers/crawl-cadence.ts).
+ */
+export async function regionListCacheAgeMs(country: string, region: string): Promise<number | null> {
+  try {
+    const s = await stat(cacheFile(country, region))
+    return Date.now() - s.mtimeMs
+  } catch {
+    return null
+  }
+}
+
+/**
  * Merge all cached region results, optionally filtered to one country.
  * Returns null when the cache directory doesn't exist or is empty.
  */

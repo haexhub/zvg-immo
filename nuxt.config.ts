@@ -135,9 +135,12 @@ export default defineNuxtConfig({
       // Offset 30 min from geocode so the two full crawls don't overlap. Fills
       // the extraction cache (property type + sizes) for new listings.
       '30 */6 * * *': ['enrich'],
-      // Twice daily: crawl all regions and write the persistent list cache so
-      // /api/auctions serves from disk instead of hitting upstream on every call.
-      '0 */12 * * *': ['refresh'],
+      // Hourly: crawl regions due for a refresh and write the persistent list
+      // cache so /api/auctions serves from disk instead of hitting upstream on
+      // every call. The task self-throttles per portal (crawl-cadence.ts), so
+      // robust portals refresh hourly while rate-limited ones stay on a longer
+      // interval — an always-on background watch for new/updated auctions.
+      '0 * * * *': ['refresh'],
     },
     routeRules: {
       // /api/auctions caches inside the handler (defineCachedFunction) instead

@@ -1,14 +1,18 @@
 // Crawls every registered region and writes results to the persistent list cache
 // so /api/auctions can serve requests without hitting upstream portals on each call.
 //
-// Triggered by the scheduled task config in nuxt.config.ts (twice daily) and
-// once on server startup via server/plugins/refresh-bootstrap.ts.
+// Triggered hourly by the scheduled task config in nuxt.config.ts and once on
+// server startup via server/plugins/refresh-bootstrap.ts. Each region is only
+// re-crawled when its cache is older than its portal's interval
+// (server/crawlers/crawl-cadence.ts), so hourly ticks keep robust portals
+// fresh without over-polling rate-limited ones.
 
 import { crawlSingle, listRegions } from '../crawlers/registry'
+import { regionRefreshIntervalMs } from '../crawlers/crawl-cadence'
 import { matchAlerts } from '../utils/alert-matching'
 import { recordObservations } from '../utils/history'
 import { archiveAuction } from '../utils/raw-archive'
-import { writeListCache } from '../utils/list-cache'
+import { regionListCacheAgeMs, writeListCache } from '../utils/list-cache'
 import { drainOutbox } from '../utils/s3-uploader'
 
 let running = false
@@ -40,6 +44,7 @@ async function runRefresh() {
 
   let ok = 0
   let failed = 0
+  let skipped = 0
   let cursor = 0
 
   async function worker() {
@@ -47,6 +52,15 @@ async function runRefresh() {
       const idx = cursor++
       const r = regions[idx]
       if (!r) continue
+      // Background cadence: skip a region whose cache is still fresh enough for
+      // its portal's interval (rate-limit / IP-ban protection). A cold region
+      // (age === null) or one past its interval is crawled. The hourly cron
+      // thus keeps robust portals current while sparing sensitive ones.
+      const age = await regionListCacheAgeMs(r.country, r.code)
+      if (age !== null && age < regionRefreshIntervalMs(r.platforms.map((p) => p.id))) {
+        skipped++
+        continue
+      }
       try {
         const result = await crawlSingle({
           country: r.country,
@@ -82,6 +96,8 @@ async function runRefresh() {
   }
 
   const durationMs = Date.now() - startedAt
-  console.log(`[refresh] done in ${(durationMs / 1000).toFixed(0)}s — ${ok} ok, ${failed} failed`)
-  return { result: { ok, failed, durationMs } }
+  console.log(
+    `[refresh] done in ${(durationMs / 1000).toFixed(0)}s — ${ok} ok, ${failed} failed, ${skipped} skipped`,
+  )
+  return { result: { ok, failed, skipped, durationMs } }
 }
