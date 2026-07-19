@@ -139,14 +139,16 @@ function formatDate(iso: string): string {
                 </NuxtLink>
                 <p class="text-xs text-muted-foreground truncate">{{ summarize(s.filters) }}</p>
               </div>
-              <button
+              <Button
                 type="button"
-                class="shrink-0 text-muted-foreground hover:text-destructive"
+                variant="ghost"
+                size="icon"
+                class="shrink-0 hover:text-destructive"
                 :title="$t('account.savedSearches.delete')"
                 @click="deleteSavedSearch(s.id)"
               >
                 <Trash2 class="h-4 w-4" />
-              </button>
+              </Button>
             </li>
           </ul>
         </section>
@@ -171,14 +173,16 @@ function formatDate(iso: string): string {
                 </NuxtLink>
                 <p class="text-xs text-muted-foreground">{{ $t('account.watchlist.added', { date: formatDate(w.createdAt) }) }}</p>
               </div>
-              <button
+              <Button
                 type="button"
-                class="shrink-0 text-muted-foreground hover:text-destructive"
+                variant="ghost"
+                size="icon"
+                class="shrink-0 hover:text-destructive"
                 :title="$t('account.watchlist.remove')"
                 @click="removeWatchlistItem(w.id)"
               >
                 <Trash2 class="h-4 w-4" />
-              </button>
+              </Button>
             </li>
           </ul>
         </section>
@@ -228,18 +232,15 @@ function formatDate(iso: string): string {
           </div>
 
           <form class="flex gap-2" @submit.prevent="createApiKey">
-            <input
+            <Input
               v-model="newKeyLabel"
               type="text"
               :placeholder="$t('account.apiKeys.labelPlaceholder')"
-              class="flex-1 rounded-md border bg-background px-3 py-2 text-sm"
+              class="flex-1"
             />
-            <button
-              type="submit"
-              class="shrink-0 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground"
-            >
+            <Button type="submit" class="shrink-0">
               {{ $t('account.apiKeys.create') }}
-            </button>
+            </Button>
           </form>
 
           <div
@@ -251,13 +252,9 @@ function formatDate(iso: string): string {
             </p>
             <div class="flex items-center gap-2">
               <code class="flex-1 truncate rounded bg-background px-2 py-1 text-xs">{{ justCreatedKey.plaintext }}</code>
-              <button
-                type="button"
-                class="shrink-0 rounded-md border px-2 py-1 text-xs"
-                @click="copyKey"
-              >
+              <Button type="button" variant="outline" size="sm" class="shrink-0" @click="copyKey">
                 {{ keyCopied ? $t('account.apiKeys.copied') : $t('account.apiKeys.copy') }}
-              </button>
+              </Button>
             </div>
             <p class="text-xs text-muted-foreground">
               {{ $t('account.apiKeys.saveNowNotice') }}
@@ -283,15 +280,17 @@ function formatDate(iso: string): string {
                   · {{ $t('account.apiKeys.lastUsed', { date: k.lastUsedAt ? formatDate(k.lastUsedAt) : $t('account.apiKeys.neverUsed') }) }}
                 </p>
               </div>
-              <button
+              <Button
                 v-if="k.active"
                 type="button"
-                class="shrink-0 text-muted-foreground hover:text-destructive"
+                variant="ghost"
+                size="icon"
+                class="shrink-0 hover:text-destructive"
                 :title="$t('account.apiKeys.revoke')"
                 @click="revokeApiKey(k.id)"
               >
                 <Trash2 class="h-4 w-4" />
-              </button>
+              </Button>
             </li>
           </ul>
         </section>

@@ -199,13 +199,10 @@ useHead(() => ({
     <template v-else>
       <header class="mb-6 space-y-2">
         <div class="flex flex-wrap items-center gap-2 text-xs">
-          <span
-            v-if="category()"
-            class="rounded-md bg-primary/10 text-primary px-2 py-0.5 font-semibold"
-          >{{ category()?.label }}</span>
-          <span class="rounded-md bg-secondary text-secondary-foreground px-2 py-0.5 font-medium">{{ a.authority }}</span>
-          <span v-if="a.region" class="rounded-md bg-muted text-muted-foreground px-2 py-0.5">{{ a.region }}</span>
-          <span v-if="a.cancelled" class="rounded-md bg-destructive/15 text-destructive px-2 py-0.5 font-medium">{{ $t('objektDetail.cancelled') }}</span>
+          <Badge v-if="category()" class="bg-primary/10 text-primary hover:bg-primary/10">{{ category()?.label }}</Badge>
+          <Badge variant="secondary">{{ a.authority }}</Badge>
+          <Badge v-if="a.region" variant="outline">{{ a.region }}</Badge>
+          <Badge v-if="a.cancelled" variant="destructive">{{ $t('objektDetail.cancelled') }}</Badge>
           <span class="font-mono text-muted-foreground">{{ a.caseNumber }}</span>
         </div>
         <div class="flex flex-wrap items-baseline gap-2">
@@ -245,46 +242,50 @@ useHead(() => ({
       </section>
 
       <section class="mb-8">
-        <dl class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-4 rounded-xl border bg-card p-5">
-          <div>
-            <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.marketValue') }}</dt>
-            <dd class="text-lg font-semibold tabular-nums">{{ formatPrice(a.marketValueEur) }}</dd>
-            <dd
-              v-if="showOriginalPrice()"
-              class="text-xs text-muted-foreground"
-            >
-              {{ $t('objektDetail.original', { value: a.marketValueText }) }}
-            </dd>
-          </div>
-          <div>
-            <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.auctionDate') }}</dt>
-            <dd class="text-sm font-medium">{{ formatDate(a.auctionDateIso, a.auctionDateText) }}</dd>
-          </div>
-          <div v-if="a.extraction?.landAreaSqm != null">
-            <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.landArea') }}</dt>
-            <dd class="text-sm font-medium tabular-nums">{{ formatArea(a.extraction.landAreaSqm) }}</dd>
-          </div>
-          <div v-if="a.extraction?.livingAreaSqm != null">
-            <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.livingArea') }}</dt>
-            <dd class="text-sm font-medium tabular-nums">{{ formatArea(a.extraction.livingAreaSqm) }}</dd>
-          </div>
-          <div v-if="a.extraction?.rooms != null">
-            <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.rooms') }}</dt>
-            <dd class="text-sm font-medium">{{ a.extraction.rooms }}</dd>
-          </div>
-          <div v-if="a.extraction?.units != null && a.extraction.units > 1">
-            <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.units') }}</dt>
-            <dd class="text-sm font-medium">{{ a.extraction.units }}</dd>
-          </div>
-          <div>
-            <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.authority') }}</dt>
-            <dd class="text-sm font-medium">{{ a.authority }}</dd>
-          </div>
-          <div>
-            <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.caseNumber') }}</dt>
-            <dd class="text-sm font-mono">{{ a.caseNumber }}</dd>
-          </div>
-        </dl>
+        <Card>
+          <CardContent>
+            <dl class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-4">
+              <div>
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.marketValue') }}</dt>
+                <dd class="text-lg font-semibold tabular-nums">{{ formatPrice(a.marketValueEur) }}</dd>
+                <dd
+                  v-if="showOriginalPrice()"
+                  class="text-xs text-muted-foreground"
+                >
+                  {{ $t('objektDetail.original', { value: a.marketValueText }) }}
+                </dd>
+              </div>
+              <div>
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.auctionDate') }}</dt>
+                <dd class="text-sm font-medium">{{ formatDate(a.auctionDateIso, a.auctionDateText) }}</dd>
+              </div>
+              <div v-if="a.extraction?.landAreaSqm != null">
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.landArea') }}</dt>
+                <dd class="text-sm font-medium tabular-nums">{{ formatArea(a.extraction.landAreaSqm) }}</dd>
+              </div>
+              <div v-if="a.extraction?.livingAreaSqm != null">
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.livingArea') }}</dt>
+                <dd class="text-sm font-medium tabular-nums">{{ formatArea(a.extraction.livingAreaSqm) }}</dd>
+              </div>
+              <div v-if="a.extraction?.rooms != null">
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.rooms') }}</dt>
+                <dd class="text-sm font-medium">{{ a.extraction.rooms }}</dd>
+              </div>
+              <div v-if="a.extraction?.units != null && a.extraction.units > 1">
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.units') }}</dt>
+                <dd class="text-sm font-medium">{{ a.extraction.units }}</dd>
+              </div>
+              <div>
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.authority') }}</dt>
+                <dd class="text-sm font-medium">{{ a.authority }}</dd>
+              </div>
+              <div>
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.caseNumber') }}</dt>
+                <dd class="text-sm font-mono">{{ a.caseNumber }}</dd>
+              </div>
+            </dl>
+          </CardContent>
+        </Card>
         <p
           v-if="a.extraction?.source === 'llm'"
           class="mt-2 text-xs text-muted-foreground"
@@ -302,27 +303,22 @@ useHead(() => ({
           <h2 class="text-base font-semibold">{{ $t('objektDetail.aiSummaryTitle') }}</h2>
           <span class="text-xs text-muted-foreground">{{ $t('objektDetail.aiSummaryHint') }}</span>
         </div>
-        <div
-          v-if="summary"
-          class="rounded-xl border bg-card p-5 text-sm leading-relaxed [&_p]:mb-3 [&_p:last-child]:mb-0 [&_strong]:font-semibold [&_strong]:text-foreground"
-          v-html="summaryHtml"
-        />
+        <Card v-if="summary">
+          <CardContent
+            class="text-sm leading-relaxed [&_p]:mb-3 [&_p:last-child]:mb-0 [&_strong]:font-semibold [&_strong]:text-foreground"
+            v-html="summaryHtml"
+          />
+        </Card>
         <p v-else-if="summaryError" class="text-sm text-destructive">
           {{ $t('objektDetail.aiSummaryError', { msg: summaryError }) }}
         </p>
         <p v-else-if="summaryPending" class="text-sm text-muted-foreground animate-pulse">
           {{ $t('objektDetail.aiSummaryPending') }}
         </p>
-        <button
-          v-else
-          type="button"
-          class="inline-flex items-center gap-2 rounded-md border px-4 py-2 text-sm hover:border-primary hover:text-primary transition-colors disabled:opacity-50"
-          :disabled="summaryPending"
-          @click="loadSummary"
-        >
+        <Button v-else type="button" variant="outline" :disabled="summaryPending" @click="loadSummary">
           <Sparkles class="h-4 w-4" />
           {{ $t('objektDetail.aiSummaryGenerate') }}
-        </button>
+        </Button>
       </section>
 
       <section v-if="a.lat != null && a.lng != null" class="mb-8 space-y-2">
@@ -339,35 +335,22 @@ useHead(() => ({
           <li v-for="group in groupedAttachments" :key="group.kind" class="text-sm">
             <span class="text-xs uppercase tracking-wide text-muted-foreground">{{ group.label }}</span>
             <div class="flex flex-wrap gap-2 mt-1">
-              <a
-                v-for="att in group.items"
-                :key="att.fileId"
-                :href="att.proxyUrl"
-                target="_blank"
-                rel="noopener"
-                class="rounded-md border bg-card px-3 py-1.5 hover:border-primary hover:text-primary transition-colors"
-              >
-                {{ att.label || att.filename || group.label }}
-              </a>
+              <Button v-for="att in group.items" :key="att.fileId" as-child variant="outline" size="sm">
+                <a :href="att.proxyUrl" target="_blank" rel="noopener">
+                  {{ att.label || att.filename || group.label }}
+                </a>
+              </Button>
             </div>
           </li>
           <li v-if="a.detailUrlUpstream || a.pdfUrlUpstream" class="text-sm">
             <span class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.source') }}</span>
             <div class="flex flex-wrap gap-2 mt-1">
-              <a
-                v-if="a.detailUrlUpstream"
-                :href="a.detailUrlUpstream"
-                target="_blank"
-                rel="noopener"
-                class="rounded-md border bg-card px-3 py-1.5 hover:border-primary hover:text-primary transition-colors"
-              >{{ $t('objektDetail.openDetailPage') }}</a>
-              <a
-                v-if="a.pdfUrlUpstream"
-                :href="a.pdfUrlUpstream"
-                target="_blank"
-                rel="noopener"
-                class="rounded-md border bg-card px-3 py-1.5 hover:border-primary hover:text-primary transition-colors"
-              >{{ $t('objektDetail.announcementOriginal') }}</a>
+              <Button v-if="a.detailUrlUpstream" as-child variant="outline" size="sm">
+                <a :href="a.detailUrlUpstream" target="_blank" rel="noopener">{{ $t('objektDetail.openDetailPage') }}</a>
+              </Button>
+              <Button v-if="a.pdfUrlUpstream" as-child variant="outline" size="sm">
+                <a :href="a.pdfUrlUpstream" target="_blank" rel="noopener">{{ $t('objektDetail.announcementOriginal') }}</a>
+              </Button>
             </div>
           </li>
         </ul>
