@@ -6,6 +6,9 @@
   "localeSwitcher": {
     "label": "Sprache"
   },
+  "currencySwitcher": {
+    "label": "Währung"
+  },
   "country": {
     "de": "Deutschland",
     "at": "Österreich",
@@ -64,7 +67,7 @@
     "authority": "Gericht",
     "authorityPlaceholder": "Gericht wählen",
     "allCourts": "Alle Gerichte",
-    "marketValue": "Verkehrswert (€)",
+    "marketValue": "Verkehrswert",
     "landArea": "Grundstücksfläche (m²)",
     "livingArea": "Wohnfläche (m²)",
     "from": "von",
@@ -126,6 +129,7 @@
     "unknownPropertyType": "Objektart unbekannt",
     "auctionDate": "Termin",
     "marketValue": "Verkehrswert",
+    "original": "Original: {value}",
     "detailsLink": "Details →",
     "removeFromWatchlist": "Von Watchlist entfernen",
     "addToWatchlist": "Zur Watchlist hinzufügen",

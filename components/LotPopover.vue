@@ -16,6 +16,11 @@ const props = defineProps<{
   auction: GeoAuction
   t: (key: string, params?: Record<string, unknown>) => string
   intlLocale: string
+  /** Viewer's display currency (WP-7) — pre-resolved by the parent since this
+   *  detached app has no Nuxt context to call useCurrencyDisplay() itself. */
+  currency: string
+  /** auction.marketValueEur already converted to `currency` by the parent. */
+  convertedMarketValue: number | null
 }>()
 
 const LAZY_PLATFORMS = new Set(['at-edikte', 'biddit', 'zvg-portal'])
@@ -59,9 +64,9 @@ onMounted(async () => {
   }
 })
 
-function formatEur(n: number | null): string {
+function formatPrice(n: number | null): string {
   if (n == null) return '–'
-  return n.toLocaleString(props.intlLocale, { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
+  return n.toLocaleString(props.intlLocale, { style: 'currency', currency: props.currency, maximumFractionDigits: 0 })
 }
 
 function formatDate(iso: string | null, fallback: string | null): string {
@@ -112,7 +117,7 @@ const swiperModules = [Navigation, Pagination, Keyboard]
       </div>
       <div>
         <div class="lot-popover__grid-label">{{ t('lotPopover.marketValue') }}</div>
-        {{ auction.marketValueEur != null ? formatEur(auction.marketValueEur) : (auction.marketValueText ?? '–') }}
+        {{ props.convertedMarketValue != null ? formatPrice(props.convertedMarketValue) : (auction.marketValueText ?? '–') }}
       </div>
     </div>
 

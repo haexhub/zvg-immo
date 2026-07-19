@@ -146,6 +146,9 @@ export default defineNuxtConfig({
       // decorates with cached lookups, so it must not be cached independently —
       // that would freeze geocodedCount after the first hit.
       '/api/regions': { swr: 86400 },
+      // WP-7: rate table refreshes at most every 24h anyway (exchange-rate.ts's
+      // own TTL); swr avoids re-doing that disk-cache read on every request.
+      '/api/exchange-rates': { swr: 86400 },
     },
   },
 })

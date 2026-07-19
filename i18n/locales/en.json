@@ -6,6 +6,9 @@
   "localeSwitcher": {
     "label": "Language"
   },
+  "currencySwitcher": {
+    "label": "Currency"
+  },
   "country": {
     "de": "Germany",
     "at": "Austria",
@@ -64,7 +67,7 @@
     "authority": "Court",
     "authorityPlaceholder": "Choose court",
     "allCourts": "All courts",
-    "marketValue": "Market value (€)",
+    "marketValue": "Market value",
     "landArea": "Land area (m²)",
     "livingArea": "Living area (m²)",
     "from": "from",
@@ -126,6 +129,7 @@
     "unknownPropertyType": "Unknown property type",
     "auctionDate": "Auction date",
     "marketValue": "Market value",
+    "original": "Original: {value}",
     "detailsLink": "Details →",
     "removeFromWatchlist": "Remove from watchlist",
     "addToWatchlist": "Add to watchlist",

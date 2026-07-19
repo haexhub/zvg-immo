@@ -25,6 +25,7 @@ const router = useRouter()
 const { user } = useAuth()
 const { t, locale } = useI18n()
 const intlLocale = useIntlLocale()
+const { currency, eurToDisplay, displayToEur } = useCurrencyDisplay()
 const propertyTypeLabel = usePropertyTypeLabel()
 const attachmentKindLabelFn = useAttachmentKindLabel()
 const countryLabel = useCountryLabel()
@@ -232,8 +233,31 @@ const search = ref(queryStr('q'))
 const debouncedSearch = refDebounced(search, 250)
 const includeCancelled = ref(route.query.cancelled === '1')
 const authorityFilter = ref<string>(queryStr('authority', ALL_SCOPE))
+// Canonical filter state stays in EUR (matches marketValueEur, and keeps
+// saved-search/URL query semantics stable regardless of the viewer's
+// currency preference) — priceMinDisplay/priceMaxDisplay below convert only
+// for the input fields the user actually types into.
 const priceMin = ref<number | null>(queryNum('priceMin'))
 const priceMax = ref<number | null>(queryNum('priceMax'))
+
+function toDisplayOrNull(eur: number | null): number | null {
+  if (eur == null) return null
+  const d = eurToDisplay(eur)
+  return d != null ? Math.round(d) : null
+}
+function toEurOrNull(v: unknown): number | null {
+  if (typeof v !== 'number' || Number.isNaN(v)) return null
+  const eur = displayToEur(v)
+  return eur != null ? Math.round(eur) : null
+}
+const priceMinDisplay = computed<number | null>({
+  get: () => toDisplayOrNull(priceMin.value),
+  set: (v) => { priceMin.value = toEurOrNull(v) },
+})
+const priceMaxDisplay = computed<number | null>({
+  get: () => toDisplayOrNull(priceMax.value),
+  set: (v) => { priceMax.value = toEurOrNull(v) },
+})
 const landAreaMin = ref<number | null>(queryNum('landMin'))
 const landAreaMax = ref<number | null>(queryNum('landMax'))
 const livingAreaMin = ref<number | null>(queryNum('livMin'))
@@ -458,9 +482,22 @@ watch(data, () => {
   }
 })
 
-function formatEur(n: number | null): string {
-  if (n == null) return '–'
-  return n.toLocaleString(intlLocale.value, { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
+function formatPrice(marketValueEur: number | null): string {
+  const converted = eurToDisplay(marketValueEur)
+  if (converted == null) return '–'
+  return converted.toLocaleString(intlLocale.value, { style: 'currency', currency: currency.value, maximumFractionDigits: 0 })
+}
+
+// Shown alongside the converted figure whenever the auction's native
+// currency differs from the viewer's display currency (including a
+// EUR-native auction viewed in a non-EUR currency) — see i18n design doc
+// Baustein C: "Original + konvertierter Nutzerwert, die Versteigerung läuft
+// in der Originalwährung".
+function originalPriceText(a: Auction): string | null {
+  return a.marketValueText ?? null
+}
+function showOriginalPrice(a: Auction): boolean {
+  return originalPriceText(a) != null && (a.currency ?? 'EUR') !== currency.value
 }
 
 function formatDate(iso: string | null, fallback: string | null): string {
@@ -704,10 +741,10 @@ async function toggleWatchlist(a: Auction): Promise<void> {
           </div>
 
           <div class="space-y-2">
-            <label class="block text-sm font-medium">{{ $t('filters.marketValue') }}</label>
+            <label class="block text-sm font-medium">{{ $t('filters.marketValue') }} ({{ currency }})</label>
             <div class="flex items-center gap-2">
               <input
-                v-model.number="priceMin"
+                v-model.number="priceMinDisplay"
                 type="number"
                 min="0"
                 step="10000"
@@ -716,7 +753,7 @@ async function toggleWatchlist(a: Auction): Promise<void> {
               >
               <span class="text-muted-foreground">–</span>
               <input
-                v-model.number="priceMax"
+                v-model.number="priceMaxDisplay"
                 type="number"
                 min="0"
                 step="10000"
@@ -893,7 +930,12 @@ async function toggleWatchlist(a: Auction): Promise<void> {
               </div>
               <div>
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('home.marketValue') }}</dt>
-                <dd class="font-medium tabular-nums">{{ a.marketValueText ?? formatEur(a.marketValueEur) }}</dd>
+                <dd class="font-medium tabular-nums">
+                  {{ formatPrice(a.marketValueEur) }}
+                  <span v-if="showOriginalPrice(a)" class="block text-xs font-normal text-muted-foreground">
+                    {{ $t('home.original', { value: originalPriceText(a) }) }}
+                  </span>
+                </dd>
               </div>
             </dl>
           </div>
