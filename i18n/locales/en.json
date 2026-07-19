@@ -1,16 +1,7 @@
 {
-  "common": {
-    "loading": "Loading …"
-  },
   "site": {
     "title": "Foreclosure Auctions Germany",
     "description": "Public real-estate foreclosure auctions across all German states, crawled from the official court portals."
-  },
-  "nav": {
-    "myAccount": "My account",
-    "logout": "Log out",
-    "login": "Log in",
-    "signup": "Sign up"
   },
   "localeSwitcher": {
     "label": "Language"

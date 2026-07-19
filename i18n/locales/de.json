@@ -1,16 +1,7 @@
 {
-  "common": {
-    "loading": "Lädt …"
-  },
   "site": {
     "title": "Zwangsversteigerungen Deutschland",
     "description": "Öffentliche Immobilien-Zwangsversteigerungen aller deutschen Bundesländer, gecrawlt aus den amtlichen Justizportalen."
-  },
-  "nav": {
-    "myAccount": "Mein Konto",
-    "logout": "Abmelden",
-    "login": "Anmelden",
-    "signup": "Registrieren"
   },
   "localeSwitcher": {
     "label": "Sprache"
