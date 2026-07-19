@@ -56,9 +56,12 @@ const translatedDescription = ref<string | null>(null)
 
 const displayTitle = computed(() => translatedTitle.value ?? a.value?.title ?? null)
 const displayDescription = computed(() => translatedDescription.value ?? a.value?.description ?? null)
-const isTranslated = computed(() => translatedTitle.value != null || translatedDescription.value != null)
+const titleTranslated = computed(() => translatedTitle.value != null)
+const descriptionTranslated = computed(() => translatedDescription.value != null)
 
+const translationSeq = ref(0)
 watch([a, locale], async ([val, loc]) => {
+  const seq = ++translationSeq.value
   translatedTitle.value = null
   translatedDescription.value = null
   if (!val) return
@@ -70,6 +73,9 @@ watch([a, locale], async ([val, loc]) => {
       `/api/auction/${encodeURIComponent(platform)}/${encodeURIComponent(id)}/translation`,
       { method: 'POST', query: { lang: loc } },
     )
+    // A newer (a, locale) change already superseded this request; dropping the
+    // result avoids a slow earlier response overwriting fresher content.
+    if (seq !== translationSeq.value) return
     translatedTitle.value = res.title
     translatedDescription.value = res.description
   } catch {
@@ -203,7 +209,10 @@ useHead(() => ({
           <span v-if="a.cancelled" class="rounded-md bg-destructive/15 text-destructive px-2 py-0.5 font-medium">{{ $t('objektDetail.cancelled') }}</span>
           <span class="font-mono text-muted-foreground">{{ a.caseNumber }}</span>
         </div>
-        <h1 class="text-2xl font-bold leading-tight">{{ displayTitle || $t('objektDetail.untitled') }}</h1>
+        <div class="flex flex-wrap items-baseline gap-2">
+          <h1 class="text-2xl font-bold leading-tight">{{ displayTitle || $t('objektDetail.untitled') }}</h1>
+          <span v-if="titleTranslated" class="text-xs text-muted-foreground">({{ $t('objektDetail.autoTranslatedHint') }})</span>
+        </div>
         <p v-if="a.address" class="text-muted-foreground">{{ a.address }}</p>
       </header>
 
@@ -368,7 +377,7 @@ useHead(() => ({
       <section v-if="displayDescription" class="mb-8 space-y-2">
         <div class="flex items-center gap-2">
           <h2 class="text-base font-semibold">{{ $t('objektDetail.description') }}</h2>
-          <span v-if="isTranslated" class="text-xs text-muted-foreground">({{ $t('objektDetail.autoTranslatedHint') }})</span>
+          <span v-if="descriptionTranslated" class="text-xs text-muted-foreground">({{ $t('objektDetail.autoTranslatedHint') }})</span>
         </div>
         <p class="whitespace-pre-line text-sm text-foreground/90 leading-relaxed">
           {{ displayDescription }}

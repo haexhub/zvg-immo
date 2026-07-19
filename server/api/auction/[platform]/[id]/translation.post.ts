@@ -59,9 +59,17 @@ function parseResponse(text: string, title: string | null, description: string |
   // source text here would permanently serve untranslated text under an
   // "auto-translated" label; a null lets the caller 502 and retry later.
   if (!match) return null
+  const translatedTitle = (match[1] ?? '').trim()
+  const translatedDescription = (match[2] ?? '').trim()
+  // Same rationale as the !match case: an empty extracted field for a non-null
+  // source means the LLM didn't actually translate it. Falling back to the
+  // untranslated original would cache source text forever under an
+  // "auto-translated" label — signal failure so the caller 502s and retries.
+  if (title != null && !translatedTitle) return null
+  if (description != null && !translatedDescription) return null
   return {
-    title: title == null ? null : (match[1] ?? '').trim() || title,
-    description: description == null ? null : (match[2] ?? '').trim() || description,
+    title: title == null ? null : translatedTitle,
+    description: description == null ? null : translatedDescription,
   }
 }
 
