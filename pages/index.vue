@@ -497,7 +497,12 @@ function originalPriceText(a: Auction): string | null {
   return a.marketValueText ?? null
 }
 function showOriginalPrice(a: Auction): boolean {
-  return originalPriceText(a) != null && (a.currency ?? 'EUR') !== currency.value
+  // Only alongside a converted figure — when marketValueEur is unparseable
+  // the main line already falls back to marketValueText (see template), so
+  // repeating it as "Original:" would just duplicate it.
+  return originalPriceText(a) != null
+    && eurToDisplay(a.marketValueEur) != null
+    && (a.currency ?? 'EUR') !== currency.value
 }
 
 function formatDate(iso: string | null, fallback: string | null): string {
@@ -931,7 +936,7 @@ async function toggleWatchlist(a: Auction): Promise<void> {
               <div>
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('home.marketValue') }}</dt>
                 <dd class="font-medium tabular-nums">
-                  {{ formatPrice(a.marketValueEur) }}
+                  {{ eurToDisplay(a.marketValueEur) != null ? formatPrice(a.marketValueEur) : (a.marketValueText ?? '–') }}
                   <span v-if="showOriginalPrice(a)" class="block text-xs font-normal text-muted-foreground">
                     {{ $t('home.original', { value: originalPriceText(a) }) }}
                   </span>
