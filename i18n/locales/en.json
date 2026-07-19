@@ -1,10 +1,10 @@
 {
   "site": {
-    "title": "ZVG Scout — Foreclosure auctions across Europe",
-    "description": "ZVG Scout continuously crawls court and official portals across many European countries and shows every foreclosure auction on a map."
+    "title": "PropHammer — Foreclosure auctions across Europe",
+    "description": "PropHammer continuously crawls court and official portals across many European countries and shows every foreclosure auction on a map."
   },
   "nav": {
-    "brand": "ZVG Scout",
+    "brand": "PropHammer",
     "search": "Search",
     "archive": "Archive",
     "calculator": "Calculator",
@@ -12,90 +12,85 @@
   },
   "landing": {
     "hero": {
-      "headline": "Your scout for",
-      "headlineHighlight": "foreclosure auctions",
-      "headlineSuffix": "— across Europe",
-      "subheadline": "ZVG Scout continuously crawls courts and official portals across many European countries and shows every foreclosure auction on a map.",
-      "statLive": "{total} listings on record · {countries} countries · {regions} regions",
+      "eyebrow": "Foreclosure auctions · across Europe",
+      "headline": "Every property auction",
+      "headlineHighlight": "on one map",
+      "headlineSuffix": "— across Europe.",
+      "subheadline": "PropHammer continuously crawls court and official portals across many European countries and shows every foreclosure auction on an interactive map — with photos, market value and hearing date.",
+      "statLive": "{total} listings · {countries} countries · {regions} regions",
       "statPlaceholder": "Thousands of listings · many countries across Europe",
-      "searchPlaceholder": "Location, property type or case number …",
-      "searchCta": "Search",
-      "mapLabel": "Map of Europe for country selection",
-      "mapHint": "Click a country to search there — highlighted countries are already covered.",
-      "ctaPrimary": "Search listings for free",
-      "ctaSecondary": "See how it works"
+      "ctaPrimary": "Browse listings",
+      "ctaSecondary": "How it works",
+      "mapLabel": "Map by country",
+      "mapHint": "Click a country",
+      "legendAvailable": "Data available — click",
+      "legendSoon": "coming soon"
     },
-    "value": {
-      "heading": "Free",
-      "headingSuffix": "— every foreclosure auction, across Europe",
+    "how": {
+      "heading": "Research for free",
+      "headingSuffix": "— from the map to the appraisal",
+      "subheadline": "Search, map and filters are completely free — no account required.",
       "items": [
         { "title": "Map view", "desc": "Every listing on an interactive map, geocoded live." },
         { "title": "List view", "desc": "Photos, market value, court and date at a glance." },
-        { "title": "Advanced filters", "desc": "Narrow down by price, area, property type, court and more." },
-        { "title": "Automatic translation", "desc": "Content from every country translated automatically." }
+        { "title": "Advanced filters", "desc": "Narrow by price, area, property type, court and more." },
+        { "title": "Automatic translation", "desc": "Content from any country, automatically in your language." }
       ]
     },
     "coverage": {
-      "heading": "countries, one scout",
-      "subheadline": "From German local court portals to France, Italy, Spain and Poland, to curated sources in North America — ZVG Scout crawls continuously in the background, no manual refresh needed.",
+      "heading": "One portal for all of Europe",
+      "subheadline": "From German local court portals to France, Italy, Spain and Poland, to curated sources in North America — PropHammer crawls continuously in the background, no manual refresh needed.",
       "stat": "{countries} countries · {regions} regions/states",
       "statPlaceholder": "Many countries and regions",
-      "note": "Continuous background crawling — new auctions appear automatically without you having to refresh anything.",
+      "note": "New auctions appear automatically, with no manual refresh.",
       "cta": "See available countries"
     },
     "features": {
-      "heading": "AI-powered appraisal analysis & unique features",
+      "heading": "More than just a search",
+      "subheadline": "AI-powered analysis and features you won't find anywhere else.",
       "items": [
-        { "title": "AI summary of appraisals & listings", "desc": "Instead of wading through a hundred-page PDF: ZVG Scout summarizes property data, location and condition automatically — even if the original isn't in your language." },
-        { "title": "Automatic property detection", "desc": "Property type, living and land area, and room count are detected automatically from the listing and appraisal." },
-        { "title": "Multi-currency view", "desc": "Market values are converted live into your preferred currency — the original stays visible alongside it." },
+        { "title": "AI summary of appraisals & listings", "desc": "Instead of wading through a hundred-page PDF: PropHammer summarizes property data, location and condition automatically — even if the original isn't in your language." },
+        { "title": "Automatic property detection", "desc": "Property type, living and plot area, and room count are detected automatically from the listing and appraisal." },
+        { "title": "Multi-currency view", "desc": "Market values are converted live into your preferred currency — the original stays visible next to it." },
         { "title": "Automatic translation", "desc": "Descriptions and documents from every source country are translated automatically." }
       ]
     },
-    "demo": {
-      "heading": "See ZVG Scout in action",
-      "subheadline": "Map, list, filters — try it yourself, no sign-up required.",
-      "cta": "Try it live now"
-    },
     "archive": {
-      "heading": "Foreclosure auction archive",
-      "body": "Past auction dates stay searchable — track price history and compare closed cases with current listings.",
-      "note": "The archive is under construction.",
+      "heading": "Foreclosure archive",
+      "body": "Past hearings stay searchable — track price histories and compare completed proceedings with current listings.",
+      "note": "The archive is being built out.",
       "cta": "Search the archive"
     },
     "calculator": {
       "heading": "Calculator: acquisition costs",
-      "body": "Calculate real-estate transfer tax, court and notary fees, and interest under § 49 ZVG for German foreclosure auctions — down to the state.",
-      "bullets": ["Real-estate transfer tax by state", "Court fees (GKG) for the award decision", "Interest from the award until payment"],
+      "body": "Calculate transfer tax, court and notary fees, and interest under § 49 ZVG for German foreclosure auctions — state by state.",
+      "bullets": [
+        "Real-estate transfer tax per state",
+        "Court fees (GKG) for the award decision",
+        "Interest from award until payment"
+      ],
       "note": "Currently available for German foreclosure auctions.",
       "cta": "Calculate acquisition costs"
-    },
-    "app": {
-      "heading": "iOS and Android app",
-      "body": "A native app for on the go is in development.",
-      "cta": "Keep browsing in search"
-    },
-    "ux": {
-      "heading": "Best-in-class user experience",
-      "body": "Fast map view, clear filters, no cluttered forms — built for power researchers, not casual browsing."
     },
     "faq": {
       "heading": "Frequently asked questions",
       "items": [
-        { "q": "Is ZVG Scout free?", "a": "Yes — search, map view and filters are completely free, even without an account. An account is only needed for extras like the watchlist and saved searches." },
-        { "q": "Which countries does the data come from?", "a": "ZVG Scout crawls court and official portals across many European countries as well as curated sources in North America. You can see the exact country list in the search filters." },
-        { "q": "How up to date is the data?", "a": "A background crawler updates the data continuously — you don't need to trigger anything manually." },
-        { "q": "Does ZVG Scout replace legal advice?", "a": "No. ZVG Scout provides research data, not legal advice. The listing page lets you contact a referred lawyer directly if you need one." },
-        { "q": "What does the AI summary do?", "a": "It summarizes property data, location and condition from appraisals and listings, translating them if needed — on demand, right on the listing page." },
-        { "q": "Does the acquisition-cost calculator work for every country?", "a": "No, it currently only covers German foreclosure auctions." }
+        { "q": "Is PropHammer free?", "a": "Yes — search, map view and filters are completely free, even without an account. An account is only needed for extras like the watchlist and saved searches." },
+        { "q": "Which countries does the data come from?", "a": "PropHammer crawls court and official portals across many European countries as well as curated sources in North America. You can see the exact country list in the search filters." },
+        { "q": "How up to date is the data?", "a": "A background crawler keeps the data continuously updated — you never have to trigger anything manually." },
+        { "q": "Does PropHammer replace legal advice?", "a": "No. PropHammer provides research data, not legal advice. The listing page lets you contact a referred lawyer directly if you need one." },
+        { "q": "What does the AI summary do?", "a": "It summarizes property data, location and condition from appraisals and listings, and translates them on demand — at the push of a button, right on the listing page." },
+        { "q": "Does the acquisition-cost calculator work for all countries?", "a": "No, currently only for German foreclosure auctions." }
       ]
     },
     "finalCta": {
-      "heading": "Get started for free",
-      "cta": "Go to search"
+      "heading": "Find your next property under the hammer",
+      "subheadline": "Free, no account needed — start with the map search now.",
+      "cta": "Browse listings now"
     },
     "footer": {
-      "tagline": "Your scout for foreclosure auctions — across Europe."
+      "tagline": "Foreclosure auctions across Europe — on one map.",
+      "legal": "© 2026 PropHammer"
     }
   },
   "search": {
