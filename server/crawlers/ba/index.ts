@@ -41,8 +41,17 @@ async function enrichOne(auction: Auction): Promise<void> {
   const needsMoreText = () =>
     auction.marketValue == null || !auction.address || !auction.description
 
+  const identity = {
+    platform: auction.platform,
+    country: auction.country,
+    externalId: auction.externalId,
+    caseNumber: auction.caseNumber,
+    authority: auction.authority,
+  }
+  const capturedAt = new Date().toISOString()
+
   if (auction.pdfUrlUpstream) {
-    applyText(await pdfToText(auction.pdfUrlUpstream))
+    applyText(await pdfToText(auction.pdfUrlUpstream, { identity, capturedAt }))
     if (!needsMoreText()) return
   }
 
@@ -51,7 +60,7 @@ async function enrichOne(auction: Auction): Promise<void> {
   // while the DOCX carries the valuation/address text.
   const docxAttachments = auction.attachments.filter((a) => a.filename.toLowerCase().endsWith('.docx'))
   for (const docx of docxAttachments) {
-    applyText(await docxToText(docx.proxyUrl))
+    applyText(await docxToText(docx.proxyUrl, { identity, capturedAt }))
     if (!needsMoreText()) return
   }
 }

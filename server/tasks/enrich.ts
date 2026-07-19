@@ -199,12 +199,29 @@ async function runEnrich() {
         let source: 'rules' | 'llm' = 'rules'
         let cacheable: boolean
         const bestPdf = pickBestPdf(a.attachments)
+        // Fetching (and archiving) the best Gutachten PDF happens here
+        // regardless of whether rules already found a confident result — the
+        // archive's purpose is preserving the source document for
+        // re-processing, independent of today's extraction outcome. The
+        // on-disk text cache in pdfToText means this is a no-op fetch/archive
+        // on any run after the first for a given PDF.
+        const pdfText = bestPdf
+          ? await pdfToText(bestPdf.proxyUrl, {
+              identity: {
+                platform: a.platform,
+                country: a.country,
+                externalId: a.externalId,
+                caseNumber: a.caseNumber,
+                authority: a.authority,
+              },
+              capturedAt: at,
+            })
+          : null
 
         if (mergedConfident) {
           cacheable = true
         } else if (llmConfig && llmCalls < MAX_LLM_PER_RUN) {
           llmCalls++
-          const pdfText = bestPdf ? await pdfToText(bestPdf.proxyUrl) : null
           const llm = await extractByLlm(
             { title: a.title, description: a.description, pdfText },
             llmConfig,
