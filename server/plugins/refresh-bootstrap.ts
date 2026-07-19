@@ -7,20 +7,13 @@
 // (nuxt.config.ts) keeps the cache current; this bootstrap only covers a
 // genuinely cold or stale start.
 
-import { listCacheAgeMs } from '../utils/list-cache'
-
-// Skip the boot crawl when the persisted list cache is younger than this.
-const MAX_CACHE_AGE_MS = 6 * 60 * 60 * 1000
+import { shouldSkipBootCrawl } from '../utils/boot-crawl-gate'
 
 export default defineNitroPlugin(() => {
   if (process.env.ZVG_SKIP_BOOT_TASKS) return
   setTimeout(() => {
     void (async () => {
-      const age = await listCacheAgeMs()
-      if (age !== null && age < MAX_CACHE_AGE_MS) {
-        console.log(`[refresh-bootstrap] list cache is ${(age / 3_600_000).toFixed(1)}h old — skipping boot crawl`)
-        return
-      }
+      if (await shouldSkipBootCrawl('refresh-bootstrap')) return
       await runTask('refresh')
     })().catch((err: unknown) => {
       console.error('[refresh-bootstrap] failed:', (err as Error).message)

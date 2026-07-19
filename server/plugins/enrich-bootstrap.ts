@@ -8,19 +8,13 @@
 // portals, so re-running on every restart risks an IP ban). The 6h cron keeps
 // it current; a fresh/stale start still runs it.
 
-import { listCacheAgeMs } from '../utils/list-cache'
-
-const MAX_CACHE_AGE_MS = 6 * 60 * 60 * 1000
+import { shouldSkipBootCrawl } from '../utils/boot-crawl-gate'
 
 export default defineNitroPlugin(() => {
   if (process.env.ZVG_SKIP_BOOT_TASKS) return
   setTimeout(() => {
     void (async () => {
-      const age = await listCacheAgeMs()
-      if (age !== null && age < MAX_CACHE_AGE_MS) {
-        console.log(`[enrich-bootstrap] list cache is ${(age / 3_600_000).toFixed(1)}h old — skipping boot enrich`)
-        return
-      }
+      if (await shouldSkipBootCrawl('enrich-bootstrap')) return
       await runTask('enrich')
     })().catch((err: unknown) => {
       console.error('[enrich-bootstrap] failed:', (err as Error).message)

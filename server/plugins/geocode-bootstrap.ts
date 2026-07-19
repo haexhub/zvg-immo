@@ -7,20 +7,14 @@
 // and risks an IP ban. Skip when a restart lands on an already-warm cache;
 // the cron keeps it current, and Nominatim lookups stay cached regardless.
 
-import { listCacheAgeMs } from '../utils/list-cache'
-
-const MAX_CACHE_AGE_MS = 6 * 60 * 60 * 1000
+import { shouldSkipBootCrawl } from '../utils/boot-crawl-gate'
 
 export default defineNitroPlugin(() => {
   if (process.env.ZVG_SKIP_BOOT_TASKS) return
   // Defer so the HTTP listener is up before the long-running task starts.
   setTimeout(() => {
     void (async () => {
-      const age = await listCacheAgeMs()
-      if (age !== null && age < MAX_CACHE_AGE_MS) {
-        console.log(`[geocode-bootstrap] list cache is ${(age / 3_600_000).toFixed(1)}h old — skipping boot geocode`)
-        return
-      }
+      if (await shouldSkipBootCrawl('geocode-bootstrap')) return
       await runTask('geocode')
     })().catch((err: unknown) => {
       console.error('[geocode-bootstrap] failed:', (err as Error).message)
