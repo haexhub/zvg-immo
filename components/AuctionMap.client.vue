@@ -46,12 +46,17 @@ const countryImageryKeys = {
   dk: runtimeConfig.public.datafordelerApiKey,
 }
 
+const { t } = useI18n()
+const intlLocale = useIntlLocale()
+
 /** Mount LotPopover.vue into a fresh container that Leaflet will inject into
  *  its popup DOM. We mount lazily on popupopen (see refreshMarkers) so the
  *  lazy /api/auction-detail fetch only fires when the user actually opens
- *  the marker, not for all 2932 pins upfront. */
+ *  the marker, not for all 2932 pins upfront. This detached app never
+ *  installs the Nuxt i18n plugin, so LotPopover can't call useI18n() itself —
+ *  it gets our already-bound `t`/`intlLocale` as plain props instead. */
 function mountLotPopover(el: HTMLElement, a: GeoAuction): VueApp {
-  const app = createApp(LotPopover, { auction: a })
+  const app = createApp(LotPopover, { auction: a, t, intlLocale: intlLocale.value })
   app.mount(el)
   return app
 }

@@ -30,9 +30,9 @@ async function onSubmit(): Promise<void> {
 <template>
   <main class="h-screen flex items-center justify-center px-4">
     <form class="w-full max-w-sm space-y-4" @submit.prevent="onSubmit">
-      <h1 class="text-2xl font-bold tracking-tight">Anmelden</h1>
+      <h1 class="text-2xl font-bold tracking-tight">{{ $t('auth.login.title') }}</h1>
       <div class="space-y-1">
-        <label class="text-sm font-medium" for="email">E-Mail</label>
+        <label class="text-sm font-medium" for="email">{{ $t('auth.email') }}</label>
         <input
           id="email"
           v-model="email"
@@ -43,7 +43,7 @@ async function onSubmit(): Promise<void> {
         />
       </div>
       <div class="space-y-1">
-        <label class="text-sm font-medium" for="password">Passwort</label>
+        <label class="text-sm font-medium" for="password">{{ $t('auth.password') }}</label>
         <input
           id="password"
           v-model="password"
@@ -59,11 +59,11 @@ async function onSubmit(): Promise<void> {
         :disabled="pending"
         class="w-full h-9 rounded-md bg-primary text-primary-foreground text-sm font-medium shadow-xs hover:opacity-90 transition-opacity disabled:opacity-50"
       >
-        {{ pending ? 'Anmelden …' : 'Anmelden' }}
+        {{ pending ? $t('auth.login.submitting') : $t('auth.login.submit') }}
       </button>
       <p class="text-sm text-muted-foreground">
-        Noch kein Konto?
-        <NuxtLink :to="`/signup?redirect=${encodeURIComponent(redirectTarget())}`" class="text-primary hover:underline">Registrieren</NuxtLink>
+        {{ $t('auth.login.noAccount') }}
+        <NuxtLink :to="`/signup?redirect=${encodeURIComponent(redirectTarget())}`" class="text-primary hover:underline">{{ $t('auth.login.signupLink') }}</NuxtLink>
       </p>
     </form>
   </main>

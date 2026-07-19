@@ -16,6 +16,7 @@ const props = defineProps<{
 
 const { user } = useAuth()
 const route = useRoute()
+const { t } = useI18n()
 
 const lawyers = ref<PublicLawyer[]>([])
 const loaded = ref(false)
@@ -63,7 +64,7 @@ async function submit(): Promise<void> {
   } catch (err) {
     error.value = (err as { statusMessage?: string; message?: string }).statusMessage
       || (err as Error).message
-      || 'Anfrage konnte nicht gesendet werden.'
+      || t('lawyerContact.sendError')
   } finally {
     pending.value = false
   }
@@ -76,18 +77,18 @@ function loginLink(): string {
 
 <template>
   <section v-if="loaded && lawyers.length > 0" class="mb-8 space-y-3">
-    <h2 class="text-base font-semibold">Anwalt kontaktieren</h2>
+    <h2 class="text-base font-semibold">{{ t('lawyerContact.title') }}</h2>
 
     <div v-if="!user" class="rounded-xl border bg-card p-5 text-sm space-y-2">
       <p class="text-muted-foreground">
-        Melde dich an, um einen der spezialisierten Anwälte für dieses Land direkt über die Plattform anzuschreiben.
+        {{ t('lawyerContact.loginHint') }}
       </p>
-      <NuxtLink :to="loginLink()" class="text-primary hover:underline">Jetzt anmelden</NuxtLink>
+      <NuxtLink :to="loginLink()" class="text-primary hover:underline">{{ t('lawyerContact.loginNow') }}</NuxtLink>
     </div>
 
     <form v-else class="rounded-xl border bg-card p-5 space-y-4" @submit.prevent="submit">
       <div class="space-y-1">
-        <label class="text-sm font-medium" for="lawyer-select">Anwalt</label>
+        <label class="text-sm font-medium" for="lawyer-select">{{ t('lawyerContact.lawyer') }}</label>
         <select
           id="lawyer-select"
           v-model="selectedLawyerId"
@@ -99,32 +100,32 @@ function loginLink(): string {
         </select>
         <p v-if="selectedLawyerId" class="text-xs text-muted-foreground">
           <template v-for="l in lawyers.filter((x) => x.id === selectedLawyerId)" :key="l.id">
-            <span v-if="l.languages?.length">Sprachen: {{ l.languages.join(', ') }}</span>
-            <a v-if="l.website" :href="l.website" target="_blank" rel="noopener" class="ml-2 hover:underline">Website ↗</a>
+            <span v-if="l.languages?.length">{{ t('lawyerContact.languages', { languages: l.languages.join(', ') }) }}</span>
+            <a v-if="l.website" :href="l.website" target="_blank" rel="noopener" class="ml-2 hover:underline">{{ t('lawyerContact.website') }}</a>
           </template>
         </p>
       </div>
 
       <div class="space-y-1">
-        <label class="text-sm font-medium" for="lawyer-message">Nachricht</label>
+        <label class="text-sm font-medium" for="lawyer-message">{{ t('lawyerContact.message') }}</label>
         <textarea
           id="lawyer-message"
           v-model="message"
           rows="4"
-          placeholder="Beschreibe kurz dein Anliegen zu dieser Auktion …"
+          :placeholder="t('lawyerContact.messagePlaceholder')"
           class="w-full rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
           :disabled="pending"
         />
       </div>
 
       <p v-if="error" class="text-sm text-destructive">{{ error }}</p>
-      <p v-if="sent" class="text-sm text-emerald-600 dark:text-emerald-500">Anfrage gesendet.</p>
+      <p v-if="sent" class="text-sm text-emerald-600 dark:text-emerald-500">{{ t('lawyerContact.sent') }}</p>
 
       <button
         type="submit"
         class="h-9 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         :disabled="pending || !selectedLawyerId || !message.trim()"
-      >{{ pending ? 'Sende …' : 'Anfrage senden' }}</button>
+      >{{ pending ? t('lawyerContact.sending') : t('lawyerContact.send') }}</button>
     </form>
   </section>
 </template>
