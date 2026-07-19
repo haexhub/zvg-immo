@@ -7,6 +7,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { inflateRawSync } from 'node:zlib'
+import { archiveDocument, type DocumentIdentity } from '../raw-archive'
 
 const CACHE_DIR = join(process.cwd(), '.cache_zvg', 'docxtext')
 
@@ -84,8 +85,17 @@ function documentXmlToText(xml: string): string {
     .trim()
 }
 
-/** Fetch the DOCX at `url` and return its text, or null on any failure. */
-export async function docxToText(url: string): Promise<string | null> {
+/**
+ * Fetch the DOCX at `url` and return its text, or null on any failure. When
+ * `archive` is given, the raw DOCX bytes are captured into the G1 archive
+ * (kind='document') right after the fetch — a text-cache hit skips the fetch
+ * entirely, so it never re-archives an already-seen DOCX just to serve
+ * cached text.
+ */
+export async function docxToText(
+  url: string,
+  archive?: { identity: DocumentIdentity; capturedAt: string },
+): Promise<string | null> {
   const key = createHash('sha1').update(url).digest('hex')
   const cachePath = join(CACHE_DIR, `${key}.txt`)
   try {
@@ -109,6 +119,9 @@ export async function docxToText(url: string): Promise<string | null> {
   }
   if (buf.length > MAX_DOCX_BYTES) return null
   if (buf.length < 4 || buf.readUInt32LE(0) !== 0x04034b50) return null
+  if (archive) {
+    await archiveDocument(buf, 'application/vnd.docx', archive.identity, url, archive.capturedAt)
+  }
 
   const xml = readZipEntry(buf, 'word/document.xml')
   if (!xml) return null

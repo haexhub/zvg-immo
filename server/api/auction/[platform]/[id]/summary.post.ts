@@ -153,7 +153,18 @@ export default defineEventHandler(async (event) => {
 
   const gen = (async () => {
     const bestPdf = pickBestPdf(auction.attachments ?? [])
-    const pdfText = bestPdf ? await pdfToText(bestPdf.proxyUrl) : null
+    const pdfText = bestPdf
+      ? await pdfToText(bestPdf.proxyUrl, {
+          identity: {
+            platform: auction.platform,
+            country: auction.country,
+            externalId: auction.externalId,
+            caseNumber: auction.caseNumber,
+            authority: auction.authority,
+          },
+          capturedAt: new Date().toISOString(),
+        })
+      : null
 
     const summary = await callLlm(buildPrompt(auction as unknown as Record<string, unknown>), pdfText, config)
     if (!summary) {

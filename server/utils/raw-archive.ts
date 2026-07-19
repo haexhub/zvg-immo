@@ -193,6 +193,43 @@ export async function recordCapture(input: CaptureInput): Promise<void> {
   }
 }
 
+export interface DocumentIdentity {
+  platform: string
+  country: string
+  externalId: string
+  caseNumber?: string | null
+  authority?: string | null
+}
+
+/**
+ * Archives a PDF/DOCX attachment's raw bytes (`kind='document'`), keyed on
+ * the auction whose enrichment fetched it. Content-hash-dedup means the same
+ * Gutachten shared across multiple auctions (or re-fetched unchanged on a
+ * later run) is stored once, while each referencing auction still gets its
+ * own capture row. Never throws.
+ */
+export async function archiveDocument(
+  bytes: Buffer,
+  contentType: 'application/pdf' | 'application/vnd.docx',
+  identity: DocumentIdentity,
+  sourceUrl: string,
+  capturedAt: string,
+): Promise<void> {
+  const hash = await archiveBlob(bytes, contentType)
+  if (!hash) return
+  await recordCapture({
+    capturedAt,
+    kind: 'document',
+    platform: identity.platform,
+    country: identity.country,
+    externalId: identity.externalId,
+    caseNumber: identity.caseNumber ?? null,
+    authority: identity.authority ?? null,
+    contentHash: hash,
+    sourceUrl,
+  })
+}
+
 /**
  * Archives the full parsed auction state, keyed on `(platform, externalId)`.
  * Called once from `refresh.ts` per crawled auction (listing-level) and again

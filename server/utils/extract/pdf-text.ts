@@ -15,6 +15,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import type { Attachment } from '~/types/auction'
 import { UA, ZVG_BASE } from '~/server/crawlers/zvg-portal/constants'
+import { archiveDocument, type DocumentIdentity } from '../raw-archive'
 
 const exec = promisify(execFile)
 const CACHE_DIR = join(process.cwd(), '.cache_zvg', 'pdftext')
@@ -61,8 +62,17 @@ export async function fetchPdfBuffer(proxyUrl: string): Promise<Buffer | null> {
   return buf
 }
 
-/** Fetch the PDF at `proxyUrl` and return its text, or null on any failure. */
-export async function pdfToText(proxyUrl: string): Promise<string | null> {
+/**
+ * Fetch the PDF at `proxyUrl` and return its text, or null on any failure.
+ * When `archive` is given, the raw PDF bytes are captured into the G1 archive
+ * (kind='document') right at the point they're actually fetched — a cache
+ * hit on the text below skips the fetch entirely, so it never re-archives an
+ * already-seen PDF just to serve cached text.
+ */
+export async function pdfToText(
+  proxyUrl: string,
+  archive?: { identity: DocumentIdentity; capturedAt: string },
+): Promise<string | null> {
   const key = createHash('sha1').update(proxyUrl).digest('hex')
   const cachePath = join(CACHE_DIR, `${key}.txt`)
   try {
@@ -73,6 +83,9 @@ export async function pdfToText(proxyUrl: string): Promise<string | null> {
 
   const buf = await fetchPdfBuffer(proxyUrl)
   if (!buf) return null
+  if (archive) {
+    await archiveDocument(buf, 'application/pdf', archive.identity, proxyUrl, archive.capturedAt)
+  }
 
   const dir = await mkdtemp(join(tmpdir(), 'zvg-pdftext-'))
   const inputPath = join(dir, 'in.pdf')

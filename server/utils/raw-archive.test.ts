@@ -12,6 +12,7 @@ vi.mock('./db', () => ({ getPool: vi.fn() }))
 const {
   archiveAuction,
   archiveBlob,
+  archiveDocument,
   canonicalizeAuction,
   recordCapture,
   sha256Hex,
@@ -278,5 +279,48 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     expect(pool.captures.size).toBe(1) // same identity, latest capture overwritten
     const captureInserts = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO raw_captures'))
     expect(captureInserts).toHaveLength(2)
+  })
+
+  it('archiveDocument: same PDF referenced by two auctions dedups the blob but captures both', async () => {
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+
+    const pdfBytes = Buffer.from('%PDF-1.4 fake gutachten bytes')
+    await archiveDocument(
+      pdfBytes,
+      'application/pdf',
+      { platform: 'test', country: 'de', externalId: '1', caseNumber: '1 K 1/26', authority: 'AG Test' },
+      'https://example.test/gutachten.pdf',
+      '2026-07-19T00:00:00.000Z',
+    )
+    await archiveDocument(
+      pdfBytes,
+      'application/pdf',
+      { platform: 'test', country: 'de', externalId: '2' },
+      'https://example.test/gutachten.pdf',
+      '2026-07-19T00:05:00.000Z',
+    )
+
+    expect(pool.blobs.size).toBe(1) // hash-dedup: identical PDF bytes, one blob
+    expect(pool.captures.size).toBe(2) // two distinct auctions, two capture rows
+    const row = [...pool.blobs.values()][0]!
+    expect(row.content_type).toBe('application/pdf') // raw, not gzipped
+
+    const captureInserts = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO raw_captures'))
+    expect(captureInserts).toHaveLength(2)
+    expect(captureInserts[0]![1]).toContain('document')
+  })
+
+  it('archiveDocument no-ops without a DB pool', async () => {
+    vi.mocked(getPool).mockReturnValue(null)
+    await expect(
+      archiveDocument(
+        Buffer.from('%PDF-1.4'),
+        'application/pdf',
+        { platform: 'test', country: 'de', externalId: '1' },
+        'https://example.test/gutachten.pdf',
+        '2026-07-19T00:00:00.000Z',
+      ),
+    ).resolves.toBeUndefined()
   })
 })

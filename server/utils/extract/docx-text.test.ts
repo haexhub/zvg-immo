@@ -1,9 +1,15 @@
 import { createHash } from 'node:crypto'
-import { rm } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { deflateRawSync } from 'node:zlib'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { docxToText } from './docx-text'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { getPool } from '../db'
+
+vi.mock('../db', () => ({ getPool: vi.fn() }))
+
+// Imported after the mock so the module under test picks up the mocked getPool.
+const { docxToText } = await import('./docx-text')
 
 function writeUInt16(n: number): Buffer {
   const b = Buffer.alloc(2)
@@ -129,5 +135,120 @@ describe('docxToText', () => {
     await cleanup(url)
     await expect(docxToText(url)).resolves.toBeNull()
     await cleanup(url)
+  })
+})
+
+interface FakeBlobRow {
+  s3_key: string
+  content_type: string
+}
+
+/** Minimal in-memory stand-in for the `pg` Pool, matching raw-archive.ts's queries. */
+function makeFakePool() {
+  const blobs = new Map<string, FakeBlobRow>()
+  const captures: Array<{ kind: string; platform: string; externalId: string; sourceUrl: string | null }> = []
+
+  const query = vi.fn(async (sql: string, params: unknown[] = []) => {
+    if (sql.includes('SELECT 1 FROM raw_blobs')) {
+      const hash = params[0] as string
+      return { rows: [], rowCount: blobs.has(hash) ? 1 : 0 }
+    }
+    if (sql.includes('INSERT INTO raw_blobs')) {
+      const [hash, s3_key, content_type] = params as [string, string, string]
+      if (!blobs.has(hash)) blobs.set(hash, { s3_key, content_type })
+      return { rows: [], rowCount: 1 }
+    }
+    if (sql.includes('SELECT content_hash FROM raw_captures')) {
+      return { rows: [] }
+    }
+    if (sql.includes('INSERT INTO raw_captures')) {
+      const [, kind, platform, , externalId, , , , sourceUrl] = params as [
+        string, string, string, string, string, string | null, string | null, string, string | null,
+      ]
+      captures.push({ kind, platform, externalId, sourceUrl })
+      return { rows: [], rowCount: 1 }
+    }
+    throw new Error(`unexpected query: ${sql}`)
+  })
+
+  return { blobs, captures, query }
+}
+
+describe('docxToText document archiving', () => {
+  let outboxDir: string
+
+  beforeEach(async () => {
+    outboxDir = await mkdtemp(join(tmpdir(), 'docx-text-archive-test-'))
+    vi.stubGlobal('useRuntimeConfig', () => ({ rawOutboxDir: outboxDir }))
+  })
+
+  afterEach(async () => {
+    vi.unstubAllGlobals()
+    await rm(outboxDir, { recursive: true, force: true })
+  })
+
+  it('archives the fetched DOCX as a document capture when identity is passed', async () => {
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+
+    const url = dataUrl(zipWithDocumentXml('<w:document><w:body><w:p><w:r><w:t>Gutachten</w:t></w:r></w:p></w:body></w:document>'))
+    await cleanup(url)
+
+    await docxToText(url, {
+      identity: { platform: 'ba', country: 'ba', externalId: '7' },
+      capturedAt: '2026-07-19T00:00:00.000Z',
+    })
+
+    expect(pool.blobs.size).toBe(1)
+    expect(pool.captures).toHaveLength(1)
+    expect(pool.captures[0]).toMatchObject({ kind: 'document', platform: 'ba', externalId: '7', sourceUrl: url })
+    expect([...pool.blobs.values()][0]!.content_type).toBe('application/vnd.docx')
+
+    await cleanup(url)
+  })
+
+  it('does not archive when no identity is passed', async () => {
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+
+    const url = dataUrl(zipWithDocumentXml('<w:document><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>'))
+    await cleanup(url)
+
+    await docxToText(url)
+
+    expect(pool.blobs.size).toBe(0)
+    expect(pool.captures).toHaveLength(0)
+
+    await cleanup(url)
+  })
+
+  it('dedups the same DOCX referenced by two auctions (one blob, two captures)', async () => {
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+
+    const xml = '<w:document><w:body><w:p><w:r><w:t>Shared Gutachten</w:t></w:r></w:p></w:body></w:document>'
+    const urlA = dataUrl(zipWithDocumentXml(xml))
+    await cleanup(urlA)
+
+    await docxToText(urlA, {
+      identity: { platform: 'ba', country: 'ba', externalId: '1' },
+      capturedAt: '2026-07-19T00:00:00.000Z',
+    })
+    // Re-fetch the identical bytes for a second auction — the text cache is
+    // keyed by URL, so an identical-but-distinct URL is used to force a
+    // second real fetch (and thus a second archive attempt) rather than
+    // silently short-circuiting on the disk cache.
+    const urlB = `${urlA}#dup`
+    await cleanup(urlB)
+    await docxToText(urlB, {
+      identity: { platform: 'ba', country: 'ba', externalId: '2' },
+      capturedAt: '2026-07-19T00:00:00.000Z',
+    })
+
+    expect(pool.blobs.size).toBe(1)
+    expect(pool.captures).toHaveLength(2)
+
+    await cleanup(urlA)
+    await cleanup(urlB)
   })
 })
