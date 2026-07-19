@@ -78,6 +78,38 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.slug }}
           outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/zvg-immo,push-by-digest=true,name-canonical=true,push=true
 
+      # Gate on the failure mode that took the site down: a broken SSR render
+      # that returns 500 on "/" while /api/* stays healthy. Runs the freshly
+      # built (native-arch) image and requires "/" to return 200. A failure
+      # here fails the matrix job, which skips the `merge` job below — so a
+      # broken build never gets the `:latest` tag that podman auto-update pulls.
+      # ZVG_SKIP_BOOT_TASKS=1 keeps the container from crawling any upstream
+      # portal during the test.
+      - name: Smoke test — homepage SSR must render
+        run: |
+          set -euo pipefail
+          img="ghcr.io/${{ github.repository_owner }}/zvg-immo@${{ steps.build.outputs.digest }}"
+          docker pull "$img"
+          docker run -d --name smoke -e ZVG_SKIP_BOOT_TASKS=1 -p 3000:3000 "$img"
+          # Seed a minimal list cache so "/" renders against data instead of
+          # blocking on a cold-cache live crawl of every upstream portal — that
+          # would hang the test and needlessly hammer the portals from CI.
+          docker exec smoke sh -c 'mkdir -p /app/.cache_zvg/list && printf "%s" "{\"platform\":\"smoke\",\"source\":\"smoke\",\"countries\":[\"de\"],\"regions\":[\"Bayern\"],\"fetchedAt\":\"2026-01-01T00:00:00.000Z\",\"totalReported\":0,\"auctions\":[]}" > /app/.cache_zvg/list/de-by.json'
+          for i in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://localhost:3000/api/regions; then break; fi
+            if [ "$i" = 30 ]; then echo "::error::server never became ready"; docker logs smoke; exit 1; fi
+            sleep 2
+          done
+          code=$(curl -s -o /tmp/home.html -w '%{http_code}' --max-time 20 http://localhost:3000/)
+          echo "GET / -> $code"
+          if [ "$code" != "200" ]; then
+            echo "::error::homepage SSR did not return 200 (got $code)"
+            head -c 800 /tmp/home.html || true
+            docker logs smoke || true
+            exit 1
+          fi
+          docker rm -f smoke
+
       - name: Export digest
         run: |
           mkdir -p /tmp/digests

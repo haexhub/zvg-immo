@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises'
+import { readFile, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { CrawlResult } from '~/types/auction'
 import { MULTI_PLATFORM, SCOPE_PARAM_RE } from '~/lib/auction-constants'
@@ -35,6 +35,49 @@ export async function writeListCache(
   result: CrawlResult,
 ): Promise<void> {
   await writeJsonCache(cacheFile(country, region), result)
+}
+
+/**
+ * Age (ms) of the most recently written list-cache file, or null when the
+ * cache is empty/absent. The boot-time refresh/enrich plugins use this to skip
+ * a full re-crawl when a restart (crash or podman auto-update) lands on an
+ * already-warm cache — repeated cold crawls of every upstream portal otherwise
+ * risk getting the server IP banned.
+ */
+export async function listCacheAgeMs(): Promise<number | null> {
+  let entries: string[]
+  try {
+    entries = await readdir(CACHE_DIR)
+  } catch {
+    return null
+  }
+  const files = entries.filter((f) => f.endsWith('.json'))
+  if (files.length === 0) return null
+  let newest = 0
+  for (const file of files) {
+    try {
+      const s = await stat(join(CACHE_DIR, file))
+      if (s.mtimeMs > newest) newest = s.mtimeMs
+    } catch {
+      // skip unreadable entries
+    }
+  }
+  if (newest === 0) return null
+  return Date.now() - newest
+}
+
+/**
+ * Age (ms) of one region's list-cache file, or null when it doesn't exist yet.
+ * The hourly background refresh uses this to skip regions crawled recently
+ * enough for their portal's cadence (see server/crawlers/crawl-cadence.ts).
+ */
+export async function regionListCacheAgeMs(country: string, region: string): Promise<number | null> {
+  try {
+    const s = await stat(cacheFile(country, region))
+    return Date.now() - s.mtimeMs
+  } catch {
+    return null
+  }
 }
 
 /**

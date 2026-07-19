@@ -38,7 +38,15 @@ RUN mkdir -p /app/.cache_zvg/geocode /app/.cache_zvg/thumbs \
 USER node
 EXPOSE 3000
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
-    CMD wget -qO- http://localhost:3000/api/regions > /dev/null || exit 1
+# Verifies BOTH the API layer (/api/regions) and the Vue/i18n SSR pipeline. The
+# SSR check catches a broken server render — like the i18n regression that
+# 500'd every page — which the old /api-only healthcheck missed while reporting
+# "healthy". It probes /login (a tiny static SSR page) rather than "/" on
+# purpose: "/" serializes the full auction list (~35 MB) into its payload, and
+# rendering that every 30s would be wasteful. The CI smoke test still renders
+# the real "/" once per build (see build-image.yml).
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD wget -qO- http://localhost:3000/api/regions > /dev/null 2>&1 \
+        && wget -qO- http://localhost:3000/login > /dev/null 2>&1 || exit 1
 
 CMD ["node", ".output/server/index.mjs"]
