@@ -38,7 +38,13 @@ RUN mkdir -p /app/.cache_zvg/geocode /app/.cache_zvg/thumbs \
 USER node
 EXPOSE 3000
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
-    CMD wget -qO- http://localhost:3000/api/regions > /dev/null || exit 1
+# Verifies BOTH the API layer (/api/regions) and the server-rendered homepage
+# (/). The homepage check exists because a broken SSR render — like the i18n
+# regression that 500'd only "/" — left the old /api-only healthcheck reporting
+# "healthy" while the site was actually down. Timeout is generous: "/" does a
+# full SSR render.
+HEALTHCHECK --interval=30s --timeout=15s --start-period=40s --retries=3 \
+    CMD wget -qO- http://localhost:3000/api/regions > /dev/null 2>&1 \
+        && wget -qO- http://localhost:3000/ > /dev/null 2>&1 || exit 1
 
 CMD ["node", ".output/server/index.mjs"]
