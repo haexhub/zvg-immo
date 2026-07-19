@@ -191,7 +191,7 @@ describe('docxToText document archiving', () => {
     const pool = makeFakePool()
     vi.mocked(getPool).mockReturnValue(pool as never)
 
-    const url = dataUrl(zipWithDocumentXml('<w:document><w:body><w:p><w:r><w:t>Gutachten</w:t></w:r></w:p></w:body></w:document>'))
+    const url = dataUrl(zipWithDocumentXml('<w:document><w:body><w:p><w:r><w:t>Appraisal</w:t></w:r></w:p></w:body></w:document>'))
     await cleanup(url)
 
     await docxToText(url, {
@@ -226,7 +226,7 @@ describe('docxToText document archiving', () => {
     const pool = makeFakePool()
     vi.mocked(getPool).mockReturnValue(pool as never)
 
-    const xml = '<w:document><w:body><w:p><w:r><w:t>Shared Gutachten</w:t></w:r></w:p></w:body></w:document>'
+    const xml = '<w:document><w:body><w:p><w:r><w:t>Shared appraisal</w:t></w:r></w:p></w:body></w:document>'
     const urlA = dataUrl(zipWithDocumentXml(xml))
     await cleanup(urlA)
 

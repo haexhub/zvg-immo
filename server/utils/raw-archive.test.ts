@@ -285,19 +285,19 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     const pool = makeFakePool()
     vi.mocked(getPool).mockReturnValue(pool as never)
 
-    const pdfBytes = Buffer.from('%PDF-1.4 fake gutachten bytes')
+    const pdfBytes = Buffer.from('%PDF-1.4 fake appraisal bytes')
     await archiveDocument(
       pdfBytes,
       'application/pdf',
       { platform: 'test', country: 'de', externalId: '1', caseNumber: '1 K 1/26', authority: 'AG Test' },
-      'https://example.test/gutachten.pdf',
+      'https://example.test/appraisal.pdf',
       '2026-07-19T00:00:00.000Z',
     )
     await archiveDocument(
       pdfBytes,
       'application/pdf',
       { platform: 'test', country: 'de', externalId: '2' },
-      'https://example.test/gutachten.pdf',
+      'https://example.test/appraisal.pdf',
       '2026-07-19T00:05:00.000Z',
     )
 
@@ -318,7 +318,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
         Buffer.from('%PDF-1.4'),
         'application/pdf',
         { platform: 'test', country: 'de', externalId: '1' },
-        'https://example.test/gutachten.pdf',
+        'https://example.test/appraisal.pdf',
         '2026-07-19T00:00:00.000Z',
       ),
     ).resolves.toBeUndefined()

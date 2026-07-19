@@ -199,7 +199,7 @@ async function runEnrich() {
         let source: 'rules' | 'llm' = 'rules'
         let cacheable: boolean
         const bestPdf = pickBestPdf(a.attachments)
-        // Fetching (and archiving) the best Gutachten PDF happens here
+        // Fetching (and archiving) the best appraisal PDF happens here
         // regardless of whether rules already found a confident result — the
         // archive's purpose is preserving the source document for
         // re-processing, independent of today's extraction outcome. The

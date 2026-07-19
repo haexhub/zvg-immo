@@ -204,9 +204,9 @@ export interface DocumentIdentity {
 /**
  * Archives a PDF/DOCX attachment's raw bytes (`kind='document'`), keyed on
  * the auction whose enrichment fetched it. Content-hash-dedup means the same
- * Gutachten shared across multiple auctions (or re-fetched unchanged on a
- * later run) is stored once, while each referencing auction still gets its
- * own capture row. Never throws.
+ * appraisal document shared across multiple auctions (or re-fetched
+ * unchanged on a later run) is stored once, while each referencing auction
+ * still gets its own capture row. Never throws.
  */
 export async function archiveDocument(
   bytes: Buffer,

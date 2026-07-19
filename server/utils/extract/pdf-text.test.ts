@@ -72,7 +72,7 @@ describe('pdfToText document archiving', () => {
     const pool = makeFakePool()
     vi.mocked(getPool).mockReturnValue(pool as never)
 
-    const url = 'https://example.test/gutachten-a.pdf'
+    const url = 'https://example.test/appraisal-a.pdf'
     await cleanupTextCache(url)
 
     await pdfToText(url, {
@@ -92,7 +92,7 @@ describe('pdfToText document archiving', () => {
     const pool = makeFakePool()
     vi.mocked(getPool).mockReturnValue(pool as never)
 
-    const url = 'https://example.test/gutachten-b.pdf'
+    const url = 'https://example.test/appraisal-b.pdf'
     await cleanupTextCache(url)
 
     await pdfToText(url)
