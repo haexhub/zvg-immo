@@ -2,7 +2,8 @@
 import {
   Map as MapIcon, Languages,
   Sparkles, Images, FileText, Mail, Search, Check,
-  Calculator, ArrowRight,
+  Calculator, ArrowRight, BarChart3, Star, X, Layers,
+  Archive, Building2, Ruler, Crown,
 } from 'lucide-vue-next'
 import type { CountryEntry } from '~/server/crawlers/registry'
 import type { SiteStats } from '~/server/api/stats.get'
@@ -33,6 +34,20 @@ const featureColors = [
   'bg-teal-500/10 text-teal-600 dark:text-teal-400',
   'bg-rose-500/10 text-rose-600 dark:text-rose-400',
 ]
+
+const freeIcons = [MapIcon, FileText, Images, BarChart3]
+const premiumLeftIcons = [X, Star, Mail, Layers, Sparkles]
+const premiumRightIcons = [MapIcon, Archive, Building2, Ruler]
+
+const BASE_MONTHLY_EUR = 25.46875
+const billingCycle = ref<'monthly' | 'quarterly' | 'yearly'>('yearly')
+const cycleFactor = { monthly: 1, quarterly: 0.9, yearly: 0.8 } as const
+const cycleMonths = { monthly: 1, quarterly: 3, yearly: 12 } as const
+const pricePerMonth = computed(() => BASE_MONTHLY_EUR * cycleFactor[billingCycle.value])
+const billedTotal = computed(() => pricePerMonth.value * cycleMonths[billingCycle.value])
+function formatEur(value: number) {
+  return value.toLocaleString(intlLocale.value, { style: 'currency', currency: 'EUR' })
+}
 </script>
 
 <template>
@@ -109,6 +124,34 @@ const featureColors = [
       </div>
     </section>
 
+    <!-- AI / unique features -->
+    <section id="features" class="flex min-h-svh scroll-mt-16 items-center bg-muted/30 px-6 py-20">
+      <div class="mx-auto w-full max-w-6xl">
+        <div class="mb-14 text-center">
+          <h2 class="text-3xl font-bold tracking-tight sm:text-4xl">{{ $t('landing.features.heading') }}</h2>
+          <p class="mx-auto mt-3 max-w-2xl text-muted-foreground">{{ $t('landing.features.subheadline') }}</p>
+        </div>
+        <div class="flex flex-wrap justify-center gap-6">
+          <Card
+            v-for="(item, i) in ($tm('landing.features.items') as Array<{ title: string; desc: string; badge: string }>)"
+            :key="i"
+            class="w-full transition-shadow hover:shadow-md sm:w-[calc(50%_-_0.75rem)] lg:w-[calc(25%_-_1.125rem)]"
+          >
+            <CardHeader>
+              <div :class="['mb-2 flex h-11 w-11 items-center justify-center rounded-lg', featureColors[i]]">
+                <component :is="featureIcons[i]" class="h-5 w-5" />
+              </div>
+              <CardTitle class="text-lg">{{ $rt(item.title) }}</CardTitle>
+              <span :class="['w-fit rounded-full px-2.5 py-0.5 text-xs font-medium', featureColors[i]]">{{ $rt(item.badge) }}</span>
+            </CardHeader>
+            <CardContent>
+              <p class="text-sm text-muted-foreground">{{ $rt(item.desc) }}</p>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </section>
+
     <!-- Coverage -->
     <section class="flex min-h-svh items-center px-6 py-20">
       <div class="mx-auto w-full max-w-5xl">
@@ -150,28 +193,104 @@ const featureColors = [
       </div>
     </section>
 
-    <!-- AI / unique features -->
-    <section id="features" class="flex min-h-svh scroll-mt-16 items-center bg-muted/30 px-6 py-20">
-      <div class="mx-auto w-full max-w-6xl">
-        <div class="mb-14 text-center">
-          <h2 class="text-3xl font-bold tracking-tight sm:text-4xl">{{ $t('landing.features.heading') }}</h2>
-          <p class="mx-auto mt-3 max-w-2xl text-muted-foreground">{{ $t('landing.features.subheadline') }}</p>
+    <!-- Pricing -->
+    <section id="pricing" class="flex min-h-svh scroll-mt-16 items-center bg-muted/30 px-6 py-20">
+      <div class="mx-auto w-full max-w-5xl">
+        <div class="mb-12 text-center">
+          <h2 class="text-3xl font-bold tracking-tight sm:text-4xl">{{ $t('landing.pricing.heading') }}</h2>
+          <p class="mx-auto mt-3 max-w-2xl text-muted-foreground">{{ $t('landing.pricing.subheadline') }}</p>
         </div>
-        <div class="flex flex-wrap justify-center gap-6">
-          <Card
-            v-for="(item, i) in ($tm('landing.features.items') as Array<{ title: string; desc: string; badge: string }>)"
-            :key="i"
-            class="w-full transition-shadow hover:shadow-md sm:w-[calc(50%_-_0.75rem)] lg:w-[calc(25%_-_1.125rem)]"
-          >
+        <div class="grid gap-6 lg:grid-cols-[1fr_1.4fr] lg:items-start">
+          <!-- Free tier -->
+          <Card class="h-full">
             <CardHeader>
-              <div :class="['mb-2 flex h-11 w-11 items-center justify-center rounded-lg', featureColors[i]]">
-                <component :is="featureIcons[i]" class="h-5 w-5" />
-              </div>
-              <CardTitle class="text-lg">{{ $rt(item.title) }}</CardTitle>
-              <span :class="['w-fit rounded-full px-2.5 py-0.5 text-xs font-medium', featureColors[i]]">{{ $rt(item.badge) }}</span>
+              <CardTitle class="text-2xl">{{ $t('landing.pricing.free.name') }}</CardTitle>
+              <p class="text-muted-foreground">{{ $t('landing.pricing.free.tagline') }}</p>
             </CardHeader>
             <CardContent>
-              <p class="text-sm text-muted-foreground">{{ $rt(item.desc) }}</p>
+              <ul class="space-y-3">
+                <li
+                  v-for="(item, i) in ($tm('landing.pricing.free.features') as string[])"
+                  :key="i"
+                  class="flex items-center gap-3 text-sm"
+                >
+                  <component :is="freeIcons[i]" class="h-4 w-4 shrink-0 text-muted-foreground" />
+                  {{ $rt(item) }}
+                </li>
+              </ul>
+              <Button variant="outline" class="mt-6 w-full" as-child>
+                <NuxtLink to="/search">{{ $t('landing.pricing.free.cta') }}</NuxtLink>
+              </Button>
+            </CardContent>
+          </Card>
+
+          <!-- Premium tier -->
+          <Card class="relative h-full border-amber-500/40 shadow-sm">
+            <span class="absolute -top-3.5 left-1/2 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-amber-500 px-3 py-1 text-xs font-medium text-white">
+              <Crown class="h-3.5 w-3.5" />{{ $t('landing.pricing.premium.badge') }}
+            </span>
+            <CardHeader>
+              <div class="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <CardTitle class="text-2xl">
+                    {{ $t('landing.pricing.premium.name') }}
+                    <span class="text-amber-600 dark:text-amber-400">{{ $t('landing.pricing.premium.suffix') }}</span>
+                  </CardTitle>
+                  <p class="text-muted-foreground">{{ $t('landing.pricing.premium.tagline') }}</p>
+                </div>
+                <div class="text-right">
+                  <div class="text-3xl font-bold tracking-tight text-amber-600 dark:text-amber-400">{{ formatEur(pricePerMonth) }}</div>
+                  <div class="text-sm text-muted-foreground">{{ $t('landing.pricing.premium.perMonth') }}</div>
+                </div>
+              </div>
+
+              <Tabs v-model="billingCycle" class="mt-4">
+                <TabsList class="grid w-full grid-cols-3">
+                  <TabsTrigger value="monthly">{{ $t('landing.pricing.billingMonthly') }}</TabsTrigger>
+                  <TabsTrigger value="quarterly">
+                    {{ $t('landing.pricing.billingQuarterly') }}
+                    <Badge variant="destructive" class="ml-1.5 px-1.5 py-0 text-[10px]">{{ $t('landing.pricing.discountQuarterly') }}</Badge>
+                  </TabsTrigger>
+                  <TabsTrigger value="yearly">
+                    {{ $t('landing.pricing.billingYearly') }}
+                    <Badge variant="destructive" class="ml-1.5 px-1.5 py-0 text-[10px]">{{ $t('landing.pricing.discountYearly') }}</Badge>
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+
+              <p class="mt-4 rounded-lg bg-muted px-4 py-2.5 text-center text-sm text-muted-foreground">
+                {{ $t(`landing.pricing.premium.billed.${billingCycle}`, { price: formatEur(billedTotal) }) }}
+              </p>
+
+              <Button size="lg" class="mt-4 w-full" as-child>
+                <NuxtLink to="/search">
+                  <span>
+                    {{ $t('landing.pricing.premium.cta') }}
+                    <span class="block text-xs font-normal opacity-80">{{ $t('landing.pricing.premium.ctaNote') }}</span>
+                  </span>
+                </NuxtLink>
+              </Button>
+            </CardHeader>
+            <CardContent>
+              <div class="grid gap-x-8 gap-y-3 sm:grid-cols-2">
+                <div
+                  v-for="(item, i) in ($tm('landing.pricing.premium.featuresLeft') as string[])"
+                  :key="`l-${i}`"
+                  class="flex items-start gap-3 text-sm"
+                >
+                  <component :is="premiumLeftIcons[i]" class="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                  {{ $rt(item) }}
+                </div>
+                <div
+                  v-for="(item, i) in ($tm('landing.pricing.premium.featuresRight') as string[])"
+                  :key="`r-${i}`"
+                  class="flex items-start gap-3 text-sm"
+                >
+                  <component :is="premiumRightIcons[i]" class="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                  {{ $rt(item) }}
+                </div>
+              </div>
+              <p class="mt-4 text-xs text-muted-foreground">{{ $t('landing.pricing.premium.footnote') }}</p>
             </CardContent>
           </Card>
         </div>
