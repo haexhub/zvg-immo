@@ -55,10 +55,13 @@
       "heading": "More than just a search",
       "subheadline": "AI-powered analysis and features you won't find anywhere else.",
       "items": [
-        { "title": "AI summary of appraisals & listings", "desc": "Instead of wading through a hundred-page PDF: PropHammer summarizes property data, location and condition automatically — even if the original isn't in your language." },
-        { "title": "Automatic property detection", "desc": "Property type, living and plot area, and room count are detected automatically from the listing and appraisal." },
-        { "title": "Multi-currency view", "desc": "Market values are converted live into your preferred currency — the original stays visible next to it." },
-        { "title": "Automatic translation", "desc": "Descriptions and documents from every source country are translated automatically." }
+        { "title": "AI appraisal analysis", "badge": "AI-powered", "desc": "Instead of wading through a hundred-page PDF: PropHammer summarizes appraisals and listings and detects property type, area and room count automatically." },
+        { "title": "Map view", "badge": "Live", "desc": "Every auction in a country on one interactive map — filterable by property type, price and date." },
+        { "title": "Photo gallery", "badge": "Listing + Appraisal", "desc": "Photos from the listing and the appraisal in one place — no more digging through PDFs." },
+        { "title": "Appraisals & listings", "badge": "Direct access", "desc": "Every available document for the property — appraisal, listing and more — ready to download." },
+        { "title": "Cost calculator", "badge": "Germany", "desc": "Property transfer tax, court costs and interest for German foreclosure auctions at a glance." },
+        { "title": "Email alerts", "badge": "Automatic", "desc": "Save a search once — we'll email you as soon as a matching property shows up." },
+        { "title": "Multilingual & multi-currency", "badge": "20+ countries", "desc": "Descriptions translated automatically, market values converted live into your currency — the original stays visible next to it." }
       ]
     },
     "archive": {
