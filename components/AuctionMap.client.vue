@@ -49,8 +49,8 @@ const GERMANY_CENTER: [number, number] = [51.1657, 10.4515]
 
 const runtimeConfig = useRuntimeConfig()
 const countryImageryKeys = {
-  fi: runtimeConfig.public.mmlApiKey,
-  dk: runtimeConfig.public.datafordelerApiKey,
+  fi: runtimeConfig.public.mmlApiKey as string,
+  dk: runtimeConfig.public.datafordelerApiKey as string,
 }
 
 const { t } = useI18n()

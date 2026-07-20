@@ -36,7 +36,7 @@ const EXT: Record<BlobContentType, string> = {
 }
 
 function outboxDir(): string {
-  return useRuntimeConfig().rawOutboxDir || join(process.cwd(), '.raw_outbox')
+  return (useRuntimeConfig().rawOutboxDir as string | undefined) || join(process.cwd(), '.raw_outbox')
 }
 
 /** sha256 hex digest of `bytes`. */
