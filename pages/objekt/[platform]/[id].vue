@@ -5,7 +5,7 @@ import type { Attachment } from '~/types/auction'
 import { ATTACHMENT_KIND_ORDER } from '~/lib/auction-constants'
 import { isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
 import { safeHref } from '~/lib/utils'
-import { bundeslandFromRegion, calculateAuctionCosts } from '~/lib/auction-costs'
+import { bundeslandFromRegion, calculateAuctionCosts, formatEur as formatEurWithLocale } from '~/lib/auction-costs'
 import { googleCalendarUrl, icsDataUrl, outlookCalendarUrl } from '~/lib/calendar-links'
 import { ArrowLeft, CalendarPlus, Sparkles } from 'lucide-vue-next'
 
@@ -173,6 +173,28 @@ const groupedAttachments = computed<Array<{ kind: string; label: string; items: 
     .map((k) => ({ kind: k, label: attachmentKindLabelFn(k, k), items: byKind.get(k)! }))
 })
 
+// Flattened for the sidebar "Dateien" card, which lists every attachment as a
+// single row of buttons rather than grouping by kind — falls back to the
+// kind label (e.g. "Gutachten") when an attachment has neither its own label
+// nor filename.
+const flatAttachments = computed(() => groupedAttachments.value.flatMap(
+  (g) => g.items.map((att) => ({ att, groupLabel: g.label })),
+))
+
+// Premium-Platzhalter-Abschnitte ohne bestehende Datenbasis (siehe
+// PremiumFeatureLock.vue) — als Liste statt 7x copy-paste, damit ein Feld,
+// das später echte Daten bekommt, an einer Stelle aus der Liste entfernt
+// werden kann.
+const LOCKED_SECTIONS: Array<{ key: string; titleKey: string; rows?: number }> = [
+  { key: 'parcels', titleKey: 'objektDetail.parcelsTitle' },
+  { key: 'defects', titleKey: 'objektDetail.defectsTitle', rows: 2 },
+  { key: 'encumbrances', titleKey: 'objektDetail.encumbrancesTitle', rows: 2 },
+  { key: 'landValue', titleKey: 'objektDetail.landValueTitle', rows: 2 },
+  { key: 'condition', titleKey: 'objektDetail.conditionTitle', rows: 4 },
+  { key: 'construction', titleKey: 'objektDetail.constructionTitle', rows: 4 },
+  { key: 'neighborhood', titleKey: 'objektDetail.neighborhoodCharacter', rows: 4 },
+]
+
 // "Zu Kalender hinzufügen" (Gerichtsinformationen sidebar) — null while the
 // Versteigerungstermin isn't a parseable timestamp (announcement-only listings).
 const calendarEvent = computed(() => {
@@ -187,18 +209,28 @@ const calendarEvent = computed(() => {
 
 // Compact read-only preview of the full Nebenkostenrechner below (DE only,
 // matching CostCalculator's own gating) — uses the same defaults it starts
-// with (Verkehrswert as Bargebot, 30 Tage bis Zahlung).
+// with (Verkehrswert as Bargebot, 30 Tage bis Zahlung). Hidden (rather than
+// falling back to a 0 € Bargebot) when the Verkehrswert isn't known — a
+// missing value would otherwise still price out to the table's minimum-fee
+// row, showing a plausible-looking total for an auction whose actual costs
+// are unknown.
 const costsPreview = computed(() => {
-  if (!a.value || a.value.country !== 'de') return null
+  if (!a.value || a.value.country !== 'de' || a.value.marketValueEur == null) return null
   return calculateAuctionCosts({
-    bargebot: a.value.marketValueEur ?? 0,
+    bargebot: a.value.marketValueEur,
     bundesland: bundeslandFromRegion(a.value.region) ?? 'Nordrhein-Westfalen',
     tageBisZahlung: 30,
   })
 })
 
 function formatEur(n: number): string {
-  return n.toLocaleString(intlLocale.value, { style: 'currency', currency: 'EUR' })
+  return formatEurWithLocale(n, intlLocale.value)
+}
+
+// Aktenzeichen routinely contain "/" (e.g. "12 K 34/26"), which the `download`
+// attribute would otherwise treat as a path separator.
+function icsFilename(caseNumber: string): string {
+  return `${(caseNumber || 'termin').replace(/[/\\]/g, '-')}.ics`
 }
 
 useHead(() => ({
@@ -340,39 +372,9 @@ useHead(() => ({
             </Button>
           </section>
 
-          <section class="space-y-3">
-            <h2 class="text-base font-semibold">{{ $t('objektDetail.parcelsTitle') }}</h2>
-            <Card><CardContent><PremiumFeatureLock /></CardContent></Card>
-          </section>
-
-          <section class="space-y-3">
-            <h2 class="text-base font-semibold">{{ $t('objektDetail.defectsTitle') }}</h2>
-            <Card><CardContent><PremiumFeatureLock :rows="2" /></CardContent></Card>
-          </section>
-
-          <section class="space-y-3">
-            <h2 class="text-base font-semibold">{{ $t('objektDetail.encumbrancesTitle') }}</h2>
-            <Card><CardContent><PremiumFeatureLock :rows="2" /></CardContent></Card>
-          </section>
-
-          <section class="space-y-3">
-            <h2 class="text-base font-semibold">{{ $t('objektDetail.landValueTitle') }}</h2>
-            <Card><CardContent><PremiumFeatureLock :rows="2" /></CardContent></Card>
-          </section>
-
-          <section class="space-y-3">
-            <h2 class="text-base font-semibold">{{ $t('objektDetail.conditionTitle') }}</h2>
-            <Card><CardContent><PremiumFeatureLock :rows="4" /></CardContent></Card>
-          </section>
-
-          <section class="space-y-3">
-            <h2 class="text-base font-semibold">{{ $t('objektDetail.constructionTitle') }}</h2>
-            <Card><CardContent><PremiumFeatureLock :rows="4" /></CardContent></Card>
-          </section>
-
-          <section class="space-y-3">
-            <h2 class="text-base font-semibold">{{ $t('objektDetail.neighborhoodCharacter') }}</h2>
-            <Card><CardContent><PremiumFeatureLock :rows="4" /></CardContent></Card>
+          <section v-for="section in LOCKED_SECTIONS" :key="section.key" class="space-y-3">
+            <h2 class="text-base font-semibold">{{ $t(section.titleKey) }}</h2>
+            <Card><CardContent><PremiumFeatureLock :rows="section.rows" /></CardContent></Card>
           </section>
         </div>
 
@@ -402,7 +404,7 @@ useHead(() => ({
                   </a>
                 </Button>
                 <Button as-child variant="ghost" size="sm">
-                  <a :href="icsDataUrl(calendarEvent)" :download="`${a.caseNumber || 'termin'}.ics`">
+                  <a :href="icsDataUrl(calendarEvent)" :download="icsFilename(a.caseNumber)">
                     {{ $t('objektDetail.downloadIcs') }}
                   </a>
                 </Button>
@@ -434,9 +436,9 @@ useHead(() => ({
             <CardContent class="space-y-3">
               <h2 class="text-base font-semibold">{{ $t('objektDetail.filesTitle') }}</h2>
               <div class="flex flex-wrap gap-2">
-                <Button v-for="att in groupedAttachments.flatMap((g) => g.items)" :key="att.fileId" as-child variant="outline" size="sm">
+                <Button v-for="{ att, groupLabel } in flatAttachments" :key="att.fileId" as-child variant="outline" size="sm">
                   <a :href="safeHref(att.proxyUrl)" target="_blank" rel="noopener">
-                    {{ att.label || att.filename }}
+                    {{ att.label || att.filename || groupLabel }}
                   </a>
                 </Button>
               </div>

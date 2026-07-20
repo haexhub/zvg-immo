@@ -25,7 +25,6 @@ const remainingCount = computed(() => Math.max(0, props.photos.length - 1 - GRID
 
 const lightboxOpen = ref(false)
 const activeIndex = ref(0)
-const swiperRef = ref<{ slideToLoop: (i: number) => void } | null>(null)
 
 function openLightbox(index: number) {
   activeIndex.value = index
@@ -111,13 +110,13 @@ const swiperModules = [Navigation, Pagination, Keyboard]
           :loop="photos.length > 1"
           :initial-slide="activeIndex"
           class="auction-gallery-lightbox"
-          @swiper="(s) => (swiperRef = s)"
         >
           <SwiperSlide v-for="(url, i) in photos" :key="url" class="flex items-center justify-center">
             <img
               :src="url"
               :alt="t('objektDetail.photoAlt', { n: i + 1, total: photos.length, title: altBase })"
               referrerpolicy="no-referrer"
+              loading="lazy"
               class="max-h-[85vh] max-w-full object-contain"
             >
           </SwiperSlide>

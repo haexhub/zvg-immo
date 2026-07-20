@@ -8,9 +8,11 @@ export interface CalendarEvent {
   location?: string
   /** ISO 8601 start timestamp. */
   startIso: string
-  /** Duration of the event in hours (Versteigerungstermine don't carry an end time upstream). */
-  durationHours?: number
 }
+
+/** Versteigerungstermine don't carry an end time upstream — 2 hours covers the
+ *  typical hearing without under-blocking the calendar. */
+const DEFAULT_DURATION_HOURS = 2
 
 /** UTC basic format required by both Google Calendar and the .ics spec: YYYYMMDDTHHMMSSZ. */
 function toUtcBasic(d: Date): string {
@@ -19,7 +21,7 @@ function toUtcBasic(d: Date): string {
 
 function eventBounds(event: CalendarEvent): { start: Date; end: Date } {
   const start = new Date(event.startIso)
-  const end = new Date(start.getTime() + (event.durationHours ?? 2) * 3_600_000)
+  const end = new Date(start.getTime() + DEFAULT_DURATION_HOURS * 3_600_000)
   return { start, end }
 }
 
