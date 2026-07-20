@@ -115,7 +115,7 @@ const featureIcons = [Sparkles, ScanSearch, Coins, Languages]
         </div>
         <div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
           <div
-            v-for="(item, i) in $tm('landing.how.items')"
+            v-for="(item, i) in ($tm('landing.how.items') as Array<{ title: string; desc: string }>)"
             :key="i"
             class="relative rounded-xl border bg-card p-6 transition-shadow hover:shadow-md"
           >
@@ -179,7 +179,7 @@ const featureIcons = [Sparkles, ScanSearch, Coins, Languages]
           <p class="mx-auto mt-3 max-w-2xl text-muted-foreground">{{ $t('landing.features.subheadline') }}</p>
         </div>
         <div class="grid gap-6 sm:grid-cols-2">
-          <Card v-for="(item, i) in $tm('landing.features.items')" :key="i" class="transition-shadow hover:shadow-md">
+          <Card v-for="(item, i) in ($tm('landing.features.items') as Array<{ title: string; desc: string }>)" :key="i" class="transition-shadow hover:shadow-md">
             <CardHeader>
               <div class="mb-2 flex h-11 w-11 items-center justify-center rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">
                 <component :is="featureIcons[i]" class="h-5 w-5" />

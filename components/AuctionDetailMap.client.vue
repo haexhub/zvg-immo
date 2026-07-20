@@ -29,8 +29,8 @@ let map: L.Map | null = null
 
 const runtimeConfig = useRuntimeConfig()
 const countryImageryKeys = {
-  fi: runtimeConfig.public.mmlApiKey,
-  dk: runtimeConfig.public.datafordelerApiKey,
+  fi: runtimeConfig.public.mmlApiKey as string,
+  dk: runtimeConfig.public.datafordelerApiKey as string,
 }
 
 onMounted(async () => {

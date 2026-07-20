@@ -33,7 +33,7 @@ function readS3Config(): S3Config | null {
 }
 
 function outboxDir(): string {
-  return useRuntimeConfig().rawOutboxDir || join(process.cwd(), '.raw_outbox')
+  return (useRuntimeConfig().rawOutboxDir as string | undefined) || join(process.cwd(), '.raw_outbox')
 }
 
 function makeClient(cfg: S3Config): S3Client {
