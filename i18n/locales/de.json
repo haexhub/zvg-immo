@@ -6,6 +6,7 @@
   "nav": {
     "brand": "PropHammer",
     "search": "Suche",
+    "pricing": "Preise",
     "archive": "Archiv",
     "calculator": "Rechner",
     "menu": "Menü"
@@ -51,6 +52,54 @@
         { "title": "Email-Benachrichtigungen", "badge": "Automatisch", "desc": "Suche einmal speichern — wir informieren dich per E-Mail, sobald ein passendes Objekt neu auftaucht." },
         { "title": "Mehrsprachig & Multiwährung", "badge": "20+ Länder", "desc": "Beschreibungen automatisch übersetzt, Verkehrswerte live in deiner Wunschwährung — das Original bleibt daneben sichtbar." }
       ]
+    },
+    "pricing": {
+      "heading": "Für jeden das passende Abo",
+      "subheadline": "Suche und Karte bleiben für immer kostenlos. Premium schaltet KI-Analyse und alle Zusatzfunktionen frei.",
+      "billingMonthly": "Monatlich",
+      "billingQuarterly": "Quartalsweise",
+      "billingYearly": "Jährlich",
+      "discountQuarterly": "-10%",
+      "discountYearly": "-20%",
+      "free": {
+        "name": "Kostenlos",
+        "tagline": "Grundfunktionen entdecken",
+        "features": [
+          "OpenStreetMap Kartenansicht",
+          "Kostenlose Gutachten (wenn verfügbar)",
+          "Objektbilder im direkten Zugriff",
+          "Basis-Statistiken (letzter Monat)"
+        ],
+        "cta": "Kostenlos nutzen - ohne Registrierung"
+      },
+      "premium": {
+        "badge": "Empfohlen",
+        "name": "Premium",
+        "suffix": "+ KI",
+        "tagline": "KI-gestützte Analyse & alle Funktionen",
+        "perMonth": "/Monat",
+        "billed": {
+          "monthly": "monatlich abgerechnet ({price}), inkl. MwSt",
+          "quarterly": "vierteljährlich abgerechnet ({price}), inkl. MwSt",
+          "yearly": "jährlich abgerechnet ({price}), inkl. MwSt"
+        },
+        "cta": "7 Tage kostenlos testen",
+        "ctaNote": "(nur für Neukunden)",
+        "featuresLeft": [
+          "Werbefreie Nutzung - Keine störenden Anzeigen",
+          "Unbegrenzte Favoriten-Verwaltung",
+          "Automatische Email-Benachrichtigungen",
+          "Präzise Flurstück-Karten für alle Bundesländer (exklusive Bayern) **",
+          "KI-gestützte Objektbewertung & Markteinschätzung"
+        ],
+        "featuresRight": [
+          "Google Maps Integration mit StreetView",
+          "Vollständiges Archiv seit 2023 (25.000+ Objekte) **",
+          "Infrastruktur-Analyse (Schulen, Geschäfte, ÖPNV)",
+          "Abmessungs-Tools auf der Kartenansicht (Flächen & Distanzen)"
+        ],
+        "footnote": "** Zurzeit nur für Deutschland verfügbar"
+      }
     },
     "faq": {
       "heading": "Häufig gestellte Fragen",

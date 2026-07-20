@@ -6,6 +6,7 @@
   "nav": {
     "brand": "PropHammer",
     "search": "Search",
+    "pricing": "Pricing",
     "archive": "Archive",
     "calculator": "Calculator",
     "menu": "Menu"
@@ -51,6 +52,54 @@
         { "title": "Email alerts", "badge": "Automatic", "desc": "Save a search once — we'll email you as soon as a matching property shows up." },
         { "title": "Multilingual & multi-currency", "badge": "20+ countries", "desc": "Descriptions translated automatically, market values converted live into your currency — the original stays visible next to it." }
       ]
+    },
+    "pricing": {
+      "heading": "A plan for everyone",
+      "subheadline": "Search and map view stay free forever. Premium unlocks AI analysis and every extra feature.",
+      "billingMonthly": "Monthly",
+      "billingQuarterly": "Quarterly",
+      "billingYearly": "Yearly",
+      "discountQuarterly": "-10%",
+      "discountYearly": "-20%",
+      "free": {
+        "name": "Free",
+        "tagline": "Discover the basics",
+        "features": [
+          "OpenStreetMap map view",
+          "Free appraisals (when available)",
+          "Direct access to property photos",
+          "Basic statistics (last month)"
+        ],
+        "cta": "Use for free - no sign-up"
+      },
+      "premium": {
+        "badge": "Recommended",
+        "name": "Premium",
+        "suffix": "+ AI",
+        "tagline": "AI-powered analysis & every feature",
+        "perMonth": "/month",
+        "billed": {
+          "monthly": "billed monthly ({price}), incl. VAT",
+          "quarterly": "billed quarterly ({price}), incl. VAT",
+          "yearly": "billed yearly ({price}), incl. VAT"
+        },
+        "cta": "Try 7 days for free",
+        "ctaNote": "(new customers only)",
+        "featuresLeft": [
+          "Ad-free experience - no distracting ads",
+          "Unlimited watchlist management",
+          "Automatic email alerts",
+          "Precise parcel maps for every German state (except Bavaria) **",
+          "AI-powered property valuation & market estimate"
+        ],
+        "featuresRight": [
+          "Google Maps integration with Street View",
+          "Full archive since 2023 (25,000+ properties) **",
+          "Infrastructure analysis (schools, shops, transit)",
+          "Measurement tools on the map view (areas & distances)"
+        ],
+        "footnote": "** Currently available for Germany only"
+      }
     },
     "faq": {
       "heading": "Frequently asked questions",
