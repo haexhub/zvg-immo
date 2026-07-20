@@ -31,13 +31,27 @@ function openLightbox(index: number) {
   lightboxOpen.value = true
 }
 
+function handleKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && lightboxOpen.value) {
+    lightboxOpen.value = false
+  }
+}
+
 watch(lightboxOpen, (open) => {
   if (typeof document === 'undefined') return
   document.body.style.overflow = open ? 'hidden' : ''
+  if (open) {
+    document.addEventListener('keydown', handleKeydown)
+  } else {
+    document.removeEventListener('keydown', handleKeydown)
+  }
 })
 
 onUnmounted(() => {
-  if (typeof document !== 'undefined') document.body.style.overflow = ''
+  if (typeof document !== 'undefined') {
+    document.body.style.overflow = ''
+    document.removeEventListener('keydown', handleKeydown)
+  }
 })
 
 const swiperModules = [Navigation, Pagination, Keyboard]
@@ -48,7 +62,7 @@ const swiperModules = [Navigation, Pagination, Keyboard]
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 rounded-xl overflow-hidden">
       <button
         type="button"
-        class="relative block overflow-hidden bg-muted focus-visible:outline-none"
+        class="relative block overflow-hidden bg-muted"
         :aria-label="t('objektDetail.showPhoto', { n: 1 })"
         @click="openLightbox(0)"
       >
@@ -68,7 +82,7 @@ const swiperModules = [Navigation, Pagination, Keyboard]
           v-for="(url, i) in gridTiles"
           :key="url"
           type="button"
-          class="relative block overflow-hidden bg-muted focus-visible:outline-none"
+          class="relative block overflow-hidden bg-muted"
           :aria-label="t('objektDetail.showPhoto', { n: i + 2 })"
           @click="openLightbox(i + 1)"
         >
