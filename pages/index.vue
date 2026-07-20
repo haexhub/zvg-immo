@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
   Map as MapIcon, List, SlidersHorizontal, Languages,
-  Sparkles, ScanSearch, Coins, Search, Check,
+  Sparkles, Images, FileText, Mail, Search, Check,
   Archive as ArchiveIcon, Calculator, ArrowRight,
 } from 'lucide-vue-next'
 import type { CountryEntry } from '~/server/crawlers/registry'
@@ -24,7 +24,16 @@ function submitSearch() {
 }
 
 const howIcons = [MapIcon, List, SlidersHorizontal, Languages]
-const featureIcons = [Sparkles, ScanSearch, Coins, Languages]
+const featureIcons = [Sparkles, MapIcon, Images, FileText, Calculator, Mail, Languages]
+const featureColors = [
+  'bg-violet-500/10 text-violet-600 dark:text-violet-400',
+  'bg-blue-500/10 text-blue-600 dark:text-blue-400',
+  'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
+  'bg-orange-500/10 text-orange-600 dark:text-orange-400',
+  'bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400',
+  'bg-teal-500/10 text-teal-600 dark:text-teal-400',
+  'bg-rose-500/10 text-rose-600 dark:text-rose-400',
+]
 </script>
 
 <template>
@@ -178,13 +187,18 @@ const featureIcons = [Sparkles, ScanSearch, Coins, Languages]
           <h2 class="text-3xl font-bold tracking-tight sm:text-4xl">{{ $t('landing.features.heading') }}</h2>
           <p class="mx-auto mt-3 max-w-2xl text-muted-foreground">{{ $t('landing.features.subheadline') }}</p>
         </div>
-        <div class="grid gap-6 sm:grid-cols-2">
-          <Card v-for="(item, i) in ($tm('landing.features.items') as Array<{ title: string; desc: string }>)" :key="i" class="transition-shadow hover:shadow-md">
+        <div class="flex flex-wrap justify-center gap-6">
+          <Card
+            v-for="(item, i) in ($tm('landing.features.items') as Array<{ title: string; desc: string; badge: string }>)"
+            :key="i"
+            class="w-full transition-shadow hover:shadow-md sm:w-[calc(50%-0.75rem)] lg:w-[calc(25%-1.125rem)]"
+          >
             <CardHeader>
-              <div class="mb-2 flex h-11 w-11 items-center justify-center rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">
+              <div :class="['mb-2 flex h-11 w-11 items-center justify-center rounded-lg', featureColors[i]]">
                 <component :is="featureIcons[i]" class="h-5 w-5" />
               </div>
               <CardTitle class="text-lg">{{ $rt(item.title) }}</CardTitle>
+              <span :class="['w-fit rounded-full px-2.5 py-0.5 text-xs font-medium', featureColors[i]]">{{ $rt(item.badge) }}</span>
             </CardHeader>
             <CardContent>
               <p class="text-sm text-muted-foreground">{{ $rt(item.desc) }}</p>

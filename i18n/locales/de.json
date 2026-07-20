@@ -55,10 +55,13 @@
       "heading": "Mehr als nur eine Suche",
       "subheadline": "KI-gestützte Analyse und Funktionen, die es sonst nirgends gibt.",
       "items": [
-        { "title": "KI-Zusammenfassung von Gutachten & Exposés", "desc": "Statt hundert Seiten PDF zu wälzen: PropHammer fasst Objektdaten, Lage und Zustand automatisch zusammen — auch wenn das Original nicht in deiner Sprache ist." },
-        { "title": "Automatische Objekterkennung", "desc": "Objektart, Wohn- und Grundstücksfläche sowie Zimmerzahl werden automatisch aus Anzeige und Gutachten erkannt." },
-        { "title": "Mehrwährungs-Ansicht", "desc": "Verkehrswerte werden live in deine Wunschwährung umgerechnet — das Original bleibt daneben sichtbar." },
-        { "title": "Automatische Übersetzung", "desc": "Beschreibungen und Dokumente aus jedem Quellland werden automatisch übersetzt." }
+        { "title": "KI-Gutachten-Analyse", "badge": "KI-gestützt", "desc": "Statt hundert Seiten PDF zu wälzen: PropHammer fasst Gutachten und Exposés zusammen und erkennt automatisch Objektart, Fläche und Zimmerzahl." },
+        { "title": "Kartenansicht", "badge": "Live", "desc": "Alle Auktionen eines Landes auf einer interaktiven Karte — mit Filtern nach Objektart, Preis und Termin." },
+        { "title": "Bildergalerie", "badge": "Original + Gutachten", "desc": "Fotos aus Anzeige und Gutachten an einem Ort — kein Wälzen durch PDFs mehr." },
+        { "title": "Gutachten & Exposés", "badge": "Direktzugriff", "desc": "Alle verfügbaren Dokumente zum Objekt — Gutachten, Exposé und mehr — griffbereit zum Download." },
+        { "title": "Kostenrechner", "badge": "Deutschland", "desc": "Grunderwerbsteuer, Gerichtskosten und Zinsen für deutsche Zwangsversteigerungen auf einen Blick." },
+        { "title": "Email-Benachrichtigungen", "badge": "Automatisch", "desc": "Suche einmal speichern — wir informieren dich per E-Mail, sobald ein passendes Objekt neu auftaucht." },
+        { "title": "Mehrsprachig & Multiwährung", "badge": "20+ Länder", "desc": "Beschreibungen automatisch übersetzt, Verkehrswerte live in deiner Wunschwährung — das Original bleibt daneben sichtbar." }
       ]
     },
     "archive": {
