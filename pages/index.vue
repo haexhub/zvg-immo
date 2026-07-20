@@ -2,7 +2,7 @@
 import {
   Map as MapIcon, Languages,
   Sparkles, Images, FileText, Mail, Search, Check,
-  Calculator, ArrowRight, BarChart3, Star, X, Layers,
+  Calculator, ArrowRight, BarChart3, Star, Ban, Layers,
   Archive, Building2, Ruler, Crown,
 } from 'lucide-vue-next'
 import type { CountryEntry } from '~/server/crawlers/registry'
@@ -36,7 +36,7 @@ const featureColors = [
 ]
 
 const freeIcons = [MapIcon, FileText, Images, BarChart3]
-const premiumLeftIcons = [X, Star, Mail, Layers, Sparkles]
+const premiumLeftIcons = [Ban, Star, Mail, Layers, Sparkles]
 const premiumRightIcons = [MapIcon, Archive, Building2, Ruler]
 
 const BASE_MONTHLY_EUR = 25.46875
