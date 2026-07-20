@@ -2,7 +2,7 @@
 // Nebenkosten-/Kostenrechner für deutsche Zwangsversteigerungen (Phase 6 des
 // SaaS-Plans, unabhängig von Auth/DB). Rein client-seitig — ruft nur die
 // pure Funktion aus lib/auction-costs.ts auf.
-import { BUNDESLAENDER, bundeslandFromRegion, calculateAuctionCosts, type Bundesland } from '~/lib/auction-costs'
+import { BUNDESLAENDER, bundeslandFromRegion, calculateAuctionCosts, formatEur as formatEurWithLocale, type Bundesland } from '~/lib/auction-costs'
 
 const props = defineProps<{
   /** Startwert fürs Bargebot-Feld — der tatsächliche Verkehrswert der Auktion. */
@@ -27,7 +27,7 @@ const result = computed(() =>
 )
 
 function formatEur(n: number): string {
-  return n.toLocaleString(intlLocale.value, { style: 'currency', currency: 'EUR' })
+  return formatEurWithLocale(n, intlLocale.value)
 }
 </script>
 

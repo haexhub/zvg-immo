@@ -323,3 +323,11 @@ export function calculateAuctionCosts(input: AuctionCostInput): AuctionCostResul
     gesamtkostenEur,
   }
 }
+
+/** Shared by CostCalculator.vue and the auction detail page's sidebar preview
+ *  — the result of calculateAuctionCosts() is always EUR regardless of the
+ *  viewer's display-currency preference, so this stays independent of
+ *  useCurrencyDisplay(). */
+export function formatEur(n: number, locale: string): string {
+  return n.toLocaleString(locale, { style: 'currency', currency: 'EUR' })
+}
