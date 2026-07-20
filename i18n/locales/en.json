@@ -23,22 +23,10 @@
       "searchCta": "Search",
       "trust": ["100% free", "No sign-up needed", "Live from court portals"],
       "ctaPrimary": "Browse listings",
-      "ctaSecondary": "How it works",
       "mapLabel": "Map by country",
       "mapHint": "Click a country",
       "legendAvailable": "Data available — click",
       "legendSoon": "coming soon"
-    },
-    "how": {
-      "heading": "Research for free",
-      "headingSuffix": "— from the map to the appraisal",
-      "subheadline": "Search, map and filters are completely free — no account required.",
-      "items": [
-        { "title": "Map view", "desc": "Every listing on an interactive map, geocoded live." },
-        { "title": "List view", "desc": "Photos, market value, court and date at a glance." },
-        { "title": "Advanced filters", "desc": "Narrow by price, area, property type, court and more." },
-        { "title": "Automatic translation", "desc": "Content from any country, automatically in your language." }
-      ]
     },
     "coverage": {
       "heading": "One portal for all of Europe",
@@ -64,23 +52,6 @@
         { "title": "Multilingual & multi-currency", "badge": "20+ countries", "desc": "Descriptions translated automatically, market values converted live into your currency — the original stays visible next to it." }
       ]
     },
-    "archive": {
-      "heading": "Foreclosure archive",
-      "body": "Past hearings stay searchable — track price histories and compare completed proceedings with current listings.",
-      "note": "The archive is being built out.",
-      "cta": "Search the archive"
-    },
-    "calculator": {
-      "heading": "Calculator: acquisition costs",
-      "body": "Calculate transfer tax, court and notary fees, and interest under § 49 ZVG for German foreclosure auctions — state by state.",
-      "bullets": [
-        "Real-estate transfer tax per state",
-        "Court fees (GKG) for the award decision",
-        "Interest from award until payment"
-      ],
-      "note": "Currently available for German foreclosure auctions.",
-      "cta": "Calculate acquisition costs"
-    },
     "faq": {
       "heading": "Frequently asked questions",
       "items": [
@@ -91,11 +62,6 @@
         { "q": "What does the AI summary do?", "a": "It summarizes property data, location and condition from appraisals and listings, and translates them on demand — at the push of a button, right on the listing page." },
         { "q": "Does the acquisition-cost calculator work for all countries?", "a": "No, currently only for German foreclosure auctions." }
       ]
-    },
-    "finalCta": {
-      "heading": "Find your next property under the hammer",
-      "subheadline": "Free, no account needed — start with the map search now.",
-      "cta": "Browse listings now"
     },
     "footer": {
       "tagline": "Foreclosure auctions across Europe — on one map.",
