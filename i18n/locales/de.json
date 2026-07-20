@@ -23,22 +23,10 @@
       "searchCta": "Suchen",
       "trust": ["100 % kostenlos", "Ohne Anmeldung", "Live von Amts- & Gerichtsportalen"],
       "ctaPrimary": "Objekte durchsuchen",
-      "ctaSecondary": "So funktioniert's",
       "mapLabel": "Karte nach Land",
       "mapHint": "Land anklicken",
       "legendAvailable": "Daten verfügbar — anklicken",
       "legendSoon": "bald verfügbar"
-    },
-    "how": {
-      "heading": "Kostenlos recherchieren",
-      "headingSuffix": "— von der Karte bis zum Gutachten",
-      "subheadline": "Suche, Karte und Filter sind komplett kostenlos — ganz ohne Anmeldung.",
-      "items": [
-        { "title": "Kartenansicht", "desc": "Alle Objekte auf einer interaktiven Karte, live geokodiert." },
-        { "title": "Listenansicht", "desc": "Fotos, Verkehrswert, Gericht und Termin auf einen Blick." },
-        { "title": "Erweiterte Filter", "desc": "Nach Preis, Fläche, Objektart, Gericht und mehr eingrenzen." },
-        { "title": "Automatische Übersetzung", "desc": "Inhalte aus jedem Land automatisch in deiner Sprache." }
-      ]
     },
     "coverage": {
       "heading": "Ein Portal für ganz Europa",
@@ -64,23 +52,6 @@
         { "title": "Mehrsprachig & Multiwährung", "badge": "20+ Länder", "desc": "Beschreibungen automatisch übersetzt, Verkehrswerte live in deiner Wunschwährung — das Original bleibt daneben sichtbar." }
       ]
     },
-    "archive": {
-      "heading": "Zwangsversteigerungs-Archiv",
-      "body": "Vergangene Termine bleiben recherchierbar — verfolge Preisverläufe und vergleiche abgeschlossene Verfahren mit aktuellen Angeboten.",
-      "note": "Das Archiv befindet sich im Aufbau.",
-      "cta": "Archiv durchsuchen"
-    },
-    "calculator": {
-      "heading": "Rechner: Erwerbskosten",
-      "body": "Berechne Grunderwerbsteuer, Gerichts- und Notarkosten sowie Zinsen nach § 49 ZVG für deutsche Zwangsversteigerungen — bundeslandgenau.",
-      "bullets": [
-        "Grunderwerbsteuer je Bundesland",
-        "Gerichtskosten (GKG) für den Zuschlagsbeschluss",
-        "Zinsen ab Zuschlag bis Zahlung"
-      ],
-      "note": "Aktuell verfügbar für deutsche Zwangsversteigerungen.",
-      "cta": "Erwerbskosten berechnen"
-    },
     "faq": {
       "heading": "Häufig gestellte Fragen",
       "items": [
@@ -91,11 +62,6 @@
         { "q": "Was macht die KI-Zusammenfassung?", "a": "Sie fasst Objektdaten, Lage und Zustand aus Gutachten und Exposés zusammen und übersetzt sie bei Bedarf — auf Knopfdruck, direkt auf der Objektseite." },
         { "q": "Funktioniert der Erwerbskosten-Rechner für alle Länder?", "a": "Nein, aktuell nur für deutsche Zwangsversteigerungen." }
       ]
-    },
-    "finalCta": {
-      "heading": "Finde deine nächste Immobilie unter dem Hammer",
-      "subheadline": "Kostenlos, ohne Anmeldung — starte jetzt mit der Kartensuche.",
-      "cta": "Jetzt Objekte durchsuchen"
     },
     "footer": {
       "tagline": "Zwangsversteigerungen europaweit — auf einer Karte.",
