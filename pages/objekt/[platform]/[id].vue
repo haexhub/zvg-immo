@@ -242,7 +242,7 @@ useHead(() => ({
 
 <template>
   <main class="px-4 py-6">
-    <div class="max-w-5xl mx-auto">
+    <div class="max-w-7xl mx-auto">
     <div class="mb-4">
       <NuxtLink to="/search" class="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
         <ArrowLeft class="h-4 w-4" /> {{ $t('objektDetail.back') }}
@@ -272,8 +272,8 @@ useHead(() => ({
 
       <AuctionPhotoGallery :photos="photoUrls" :alt-base="displayTitle || $t('objektDetail.fallbackTitle')" />
 
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-        <div class="lg:col-span-2 space-y-8">
+      <div class="grid grid-cols-1 lg:grid-cols-5 gap-6 items-start">
+        <div class="lg:col-span-3 space-y-8">
           <section class="space-y-3">
             <h2 class="text-base font-semibold">{{ $t('objektDetail.generalInfoTitle') }}</h2>
             <Card>
@@ -372,13 +372,15 @@ useHead(() => ({
             </Button>
           </section>
 
-          <section v-for="section in LOCKED_SECTIONS" :key="section.key" class="space-y-3">
-            <h2 class="text-base font-semibold">{{ $t(section.titleKey) }}</h2>
-            <Card><CardContent><PremiumFeatureLock :rows="section.rows" /></CardContent></Card>
-          </section>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <section v-for="section in LOCKED_SECTIONS" :key="section.key" class="space-y-3">
+              <h2 class="text-base font-semibold">{{ $t(section.titleKey) }}</h2>
+              <Card><CardContent><PremiumFeatureLock :rows="section.rows" /></CardContent></Card>
+            </section>
+          </div>
         </div>
 
-        <aside class="space-y-6">
+        <aside class="lg:col-span-2 space-y-6">
           <Card>
             <CardContent class="space-y-3">
               <h2 class="text-base font-semibold">{{ $t('objektDetail.courtInfoTitle') }}</h2>
@@ -471,11 +473,11 @@ useHead(() => ({
 
       <section v-if="a.lat != null && a.lng != null" class="mt-8 space-y-2">
         <h2 class="text-base font-semibold">{{ $t('objektDetail.location') }}</h2>
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
-          <div class="lg:col-span-2">
+        <div class="grid grid-cols-1 lg:grid-cols-5 gap-4 items-start">
+          <div class="lg:col-span-3">
             <AuctionDetailMap :lat="a.lat" :lng="a.lng" :label="a.address ?? undefined" :country="a.country" />
           </div>
-          <Card>
+          <Card class="lg:col-span-2">
             <CardContent>
               <h3 class="text-sm font-semibold mb-3">{{ $t('objektDetail.nearbyPlaces') }}</h3>
               <PremiumFeatureLock :rows="3" />
