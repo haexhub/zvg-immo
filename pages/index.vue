@@ -191,7 +191,7 @@ const featureColors = [
           <Card
             v-for="(item, i) in ($tm('landing.features.items') as Array<{ title: string; desc: string; badge: string }>)"
             :key="i"
-            class="w-full transition-shadow hover:shadow-md sm:w-[calc(50%-0.75rem)] lg:w-[calc(25%-1.125rem)]"
+            class="w-full transition-shadow hover:shadow-md sm:w-[calc(50%_-_0.75rem)] lg:w-[calc(25%_-_1.125rem)]"
           >
             <CardHeader>
               <div :class="['mb-2 flex h-11 w-11 items-center justify-center rounded-lg', featureColors[i]]">
