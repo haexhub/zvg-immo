@@ -256,16 +256,51 @@ export const DE_PLACES: readonly DePlace[] = [
   { name: 'Altenburg', region: 'Thüringen' },
 ] as const
 
+// Diacritic folding. A German user may type an umlaut either by dropping it
+// ("koln", "munchen", "wurzburg") or by expanding it ("koeln", "muenchen"), so
+// each name is matched in both foldings; the query is always reduced to its
+// dropped, ASCII form.
+function foldDrop(s: string): string {
+  return s
+    .toLocaleLowerCase('de')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/ß/g, 'ss')
+}
+
+function foldExpand(s: string): string {
+  return s
+    .toLocaleLowerCase('de')
+    .replace(/ä/g, 'ae')
+    .replace(/ö/g, 'oe')
+    .replace(/ü/g, 'ue')
+    .replace(/ß/g, 'ss')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+}
+
 /** Case/diacritic-insensitive prefix+substring match, ranked prefix-first. */
 export function filterPlaces(query: string, limit = 8): DePlace[] {
-  const q = query.trim().toLocaleLowerCase('de')
+  const q = foldDrop(query.trim())
   if (q.length < 2) return []
   const starts: DePlace[] = []
   const contains: DePlace[] = []
   for (const place of DE_PLACES) {
-    const name = place.name.toLocaleLowerCase('de')
-    if (name.startsWith(q)) starts.push(place)
-    else if (name.includes(q)) contains.push(place)
+    const drop = foldDrop(place.name)
+    const expand = foldExpand(place.name)
+    if (drop.startsWith(q) || expand.startsWith(q)) starts.push(place)
+    else if (drop.includes(q) || expand.includes(q)) contains.push(place)
   }
   return [...starts, ...contains].slice(0, limit)
+}
+
+/**
+ * The value written into the search box when a suggestion is picked. The search
+ * (lib/auction-filters.ts) is a plain substring test over the auction address,
+ * which almost never contains a gazetteer qualifier like "(Allgäu)" or "(Oder)"
+ * — so searching the full display name would match nothing. Strip the
+ * parenthetical qualifier down to the bare place name the address contains.
+ */
+export function placeSearchTerm(name: string): string {
+  return name.replace(/\s*\(.*?\)\s*/g, ' ').trim()
 }

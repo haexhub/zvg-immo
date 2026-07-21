@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { filterPlaces } from './de-places'
+import { filterPlaces, placeSearchTerm } from './de-places'
 
 describe('filterPlaces', () => {
   it('returns nothing for queries under 2 characters', () => {
@@ -23,11 +23,31 @@ describe('filterPlaces', () => {
     expect(filterPlaces('münchen').map((r) => r.name)).toEqual(['München'])
   })
 
+  it('matches umlauts typed as plain ASCII (dropped or expanded)', () => {
+    // A user on an ASCII keyboard either drops the umlaut or expands it.
+    expect(filterPlaces('munchen').map((r) => r.name)).toEqual(['München'])
+    expect(filterPlaces('muenchen').map((r) => r.name)).toEqual(['München'])
+    expect(filterPlaces('koln').map((r) => r.name)).toEqual(['Köln'])
+    expect(filterPlaces('wurzburg').map((r) => r.name)).toEqual(['Würzburg'])
+  })
+
   it('caps results at the given limit', () => {
     expect(filterPlaces('er', 3)).toHaveLength(3)
   })
 
   it('returns [] when nothing matches', () => {
     expect(filterPlaces('xyzxyz')).toEqual([])
+  })
+})
+
+describe('placeSearchTerm', () => {
+  it('strips a parenthetical qualifier the auction address never contains', () => {
+    expect(placeSearchTerm('Kempten (Allgäu)')).toBe('Kempten')
+    expect(placeSearchTerm('Frankfurt (Oder)')).toBe('Frankfurt')
+    expect(placeSearchTerm('Halle (Saale)')).toBe('Halle')
+  })
+
+  it('leaves a plain place name unchanged', () => {
+    expect(placeSearchTerm('München')).toBe('München')
   })
 })

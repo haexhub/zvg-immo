@@ -6,7 +6,7 @@
 // v-model, which both call sites already feed into the existing substring
 // search (lib/auction-filters.ts's filterAuctions), so no new filter
 // dimension is introduced.
-import { filterPlaces } from '~/lib/de-places'
+import { filterPlaces, placeSearchTerm } from '~/lib/de-places'
 
 withDefaults(defineProps<{ placeholder?: string; inputClass?: string; type?: string }>(), {
   type: 'text',
@@ -19,7 +19,7 @@ const activeIndex = ref(-1)
 const suggestions = computed(() => filterPlaces(model.value))
 
 function pick(name: string) {
-  model.value = name
+  model.value = placeSearchTerm(name)
   open.value = false
   activeIndex.value = -1
 }
