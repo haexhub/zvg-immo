@@ -107,9 +107,29 @@ const COUNTRY_NAMES: Record<string, string> = {
   us: 'USA',
 }
 
+/**
+ * Countries actively crawled/shown while the data-quality push focuses on one
+ * country at a time (see docs/plans). Every other registered country's raw
+ * data stays put (crawl history, watchlists, saved searches, permalinks all
+ * keep working) — it just stops being scheduled or surfaced in country/region
+ * pickers until re-added here. `listRegions()` is the single place this is
+ * enforced; `refresh.ts`/`enrich.ts`'s `crawlAll()`/`listCountries()`/
+ * `stats.get.ts` all derive from it, so this one line is the whole switch.
+ */
+const ENABLED_COUNTRIES = new Set(['de'])
+
+/** Whether a country is currently in scope for scheduling/discovery — see
+ *  `ENABLED_COUNTRIES` above. Exported so callers outside the registry (e.g.
+ *  the list-cache aggregate) can apply the same scope to on-disk data that
+ *  predates a pause, without duplicating the allowlist. */
+export function isCountryEnabled(country: string): boolean {
+  return ENABLED_COUNTRIES.has(country.toLowerCase())
+}
+
 export function listRegions(): RegionEntry[] {
   const byKey = new Map<string, RegionEntry>()
   for (const p of platforms) {
+    if (!ENABLED_COUNTRIES.has(p.country)) continue
     for (const r of p.regions) {
       const key = `${p.country}:${r.code}`
       const existing = byKey.get(key)
