@@ -108,6 +108,29 @@ describe('upsertCurrentAuctions', () => {
     ])
   })
 
+  it('collapses duplicate (platform, external_id) rows to last-wins', async () => {
+    // crawlAll can emit the same auction twice (a platform registered for
+    // several regions). A duplicate conflict key in one VALUES list makes
+    // Postgres reject the whole statement, so they must be deduped first.
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+
+    await upsertCurrentAuctions(
+      [
+        makeAuction(),
+        makeAuction({ extraction: {
+          propertyType: null, landAreaSqm: null, livingAreaSqm: 250, rooms: null, units: null,
+          source: 'rules', confidence: 'low', at: '2026-07-21T00:00:00.000Z',
+        } }),
+      ],
+      '2026-07-21T00:00:00.000Z',
+    )
+
+    expect(pool.rows).toEqual([
+      { platform: 'zvg-portal', external_id: '7265', living_area_sqm: 250 },
+    ])
+  })
+
   it('never throws when the query fails', async () => {
     const pool = { query: vi.fn().mockRejectedValue(new Error('connection reset')) }
     vi.mocked(getPool).mockReturnValue(pool as never)
