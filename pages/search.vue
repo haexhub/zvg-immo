@@ -21,9 +21,14 @@ const countryLabel = useCountryLabel()
 
 // Desktop shows list + map side by side; below this breakpoint they collapse
 // into the two SearchTabs panes (see template) — matches SiteHeader's own
-// `md:` breakpoint. SSR-safe default (false) means the server always renders
-// the mobile/tab markup; the client flips reactively once matchMedia runs.
-const isDesktop = useMediaQuery('(min-width: 768px)')
+// `md:` breakpoint. useMediaQuery reads matchMedia synchronously during setup
+// on the client, i.e. before the first hydration pass — gating it behind
+// `mounted` keeps that first client render identical to the SSR-safe mobile
+// markup, so the desktop swap happens as a normal post-hydration update
+// instead of a hydration mismatch (which otherwise corrupts the DOM).
+const mediaIsDesktop = useMediaQuery('(min-width: 768px)')
+const mounted = ref(false)
+const isDesktop = computed(() => mounted.value && mediaIsDesktop.value)
 
 function queryStr(key: string, fallback = ''): string {
   const v = route.query[key]
@@ -216,6 +221,7 @@ watch([geocodingInProgress, mapVisible], ([running, visible]) => {
 
 onMounted(() => {
   view.value = route.query.view === 'list' ? 'list' : 'map'
+  mounted.value = true
 })
 
 onDeactivated(() => stopGeoPoll())
