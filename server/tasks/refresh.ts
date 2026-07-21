@@ -13,7 +13,7 @@ import { matchAlerts } from '../utils/alert-matching'
 import { recordObservations } from '../utils/history'
 import { archiveAuction } from '../utils/raw-archive'
 import { regionListCacheAgeMs, writeListCache } from '../utils/list-cache'
-import { drainOutbox } from '../utils/s3-uploader'
+import { drainOutbox } from '../utils/storage-uploader'
 
 let running = false
 
@@ -87,9 +87,9 @@ async function runRefresh() {
 
   await Promise.all(Array.from({ length: 4 }, worker))
 
-  // Drain the raw-archive outbox to Primary S3 once per run (best-effort,
-  // never throws) — this is the single scheduled trigger point for the
-  // uploader (see server/utils/s3-uploader.ts).
+  // Drain the raw-archive outbox to Supabase Storage once per run
+  // (best-effort, never throws) — this is the single scheduled trigger
+  // point for the uploader (see server/utils/storage-uploader.ts).
   const upload = await drainOutbox()
   if (upload.uploaded > 0 || upload.failed > 0) {
     console.log(`[refresh] archive upload: ${upload.uploaded} ok, ${upload.failed} failed`)
