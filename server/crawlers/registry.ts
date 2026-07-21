@@ -168,6 +168,11 @@ export function listCountries(): CountryEntry[] {
 
 export function getCrawlersForRegion(country: string, regionCode: string): PlatformCrawler[] {
   const c = country.toLowerCase()
+  // Paused countries must never be crawled, even on the direct crawlSingle path
+  // (e.g. a scoped /api/auctions request for a permalink to a paused country).
+  // listRegions/crawlAll already skip them; this is the choke point for the
+  // single-region path.
+  if (!ENABLED_COUNTRIES.has(c)) return []
   const r = regionCode.toLowerCase()
   return platforms.filter(
     (p) => p.country === c && p.regions.some((reg) => reg.code === r),
