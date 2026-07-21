@@ -30,8 +30,16 @@ const boundToMap = defineModel<boolean>('boundToMap', { required: true })
   <div class="shrink-0 mb-3 space-y-2">
     <div class="flex flex-wrap items-center gap-2">
       <div class="relative flex-1 min-w-48 max-w-md">
-        <Search class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input v-model="search" type="search" :placeholder="$t('filters.searchPlaceholder')" class="pl-9" />
+        <SearchLocationAutocomplete
+          v-model="search"
+          type="search"
+          :placeholder="$t('filters.searchPlaceholder')"
+          input-class="pl-9"
+        >
+          <template #icon>
+            <Search class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          </template>
+        </SearchLocationAutocomplete>
       </div>
 
       <Button type="button" variant="outline" class="relative" @click="emit('open-filters')">

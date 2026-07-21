@@ -83,11 +83,13 @@ function formatEur(value: number) {
           <p v-else class="text-base text-muted-foreground">{{ $t('landing.hero.statPlaceholder') }}</p>
 
           <form class="flex w-full max-w-lg items-center gap-2" @submit.prevent="submitSearch">
-            <Input
-              v-model="searchQuery"
-              :placeholder="$t('landing.hero.searchPlaceholder')"
-              class="h-12 flex-1 rounded-lg bg-background text-base shadow-sm"
-            />
+            <div class="relative flex-1">
+              <SearchLocationAutocomplete
+                v-model="searchQuery"
+                :placeholder="$t('landing.hero.searchPlaceholder')"
+                input-class="h-12 w-full rounded-lg bg-background text-base shadow-sm"
+              />
+            </div>
             <Button type="submit" size="lg" class="h-12 px-5">
               <Search class="h-4 w-4" />{{ $t('landing.hero.searchCta') }}
             </Button>
