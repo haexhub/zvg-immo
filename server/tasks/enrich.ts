@@ -26,6 +26,7 @@ import { join } from 'node:path'
 import type { Auction, AuctionExtraction } from '~/types/auction'
 import { crawlAll, platforms } from '../crawlers/registry'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
+import { upsertCurrentAuctions } from '../utils/current-auctions'
 import { deriveMarketValueEur, getRates } from '../utils/exchange-rate'
 import { extractByRules } from '../utils/extract/rules'
 import { extractByLlm, type LlmConfig } from '../utils/extract/llm'
@@ -378,6 +379,10 @@ async function runEnrich() {
     }
     applyExtractionToAuctions(result.auctions, cache)
     await writeAuctionSnapshot(result.auctions)
+    // Structured Postgres mirror for fast SQL filter queries (Daten-API, admin
+    // tooling) — additive, no-op without NUXT_DATABASE_URL. See
+    // server/utils/current-auctions.ts.
+    await upsertCurrentAuctions(result.auctions, at)
 
     const durationMs = Date.now() - startedAt
     console.log(
