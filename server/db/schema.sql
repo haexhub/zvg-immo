@@ -300,3 +300,52 @@ CREATE TABLE IF NOT EXISTS content_translations (
   at            timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (content_hash, lang)
 );
+
+-- Datenqualitäts-Offensive: strukturierte "aktueller Zustand pro Auktion"-
+-- Tabelle, additiv neben der bestehenden JSON-Snapshot-Pipeline
+-- (auction-snapshot.ts). auction_observations (oben) ist ein Append-only-
+-- Historienlog — kein Table, gegen das man "WHERE living_area_sqm BETWEEN …"
+-- schnell filtern könnte, ohne jeden Lauf mitzuzählen. Diese Tabelle wird pro
+-- Auktion upgeserted (server/utils/current-auctions.ts, aufgerufen aus
+-- server/tasks/enrich.ts direkt neben writeAuctionSnapshot) und dient
+-- zunächst als Parallel-Spiegel für schnelle SQL-Abfragen (Daten-API,
+-- Admin-Tooling, künftige serverseitige Suche) — /api/auctions liest weiterhin
+-- vom JSON-Snapshot, das umzustellen ist ein separater Folge-Schritt.
+CREATE TABLE IF NOT EXISTS auctions (
+  platform              text NOT NULL,
+  external_id           text NOT NULL,
+  country               text NOT NULL,
+  region                text NOT NULL,
+  authority             text NOT NULL,
+  case_number           text NOT NULL,
+  title                 text,
+  address               text,
+  description           text,
+  property_type         text,
+  land_area_sqm         numeric,
+  living_area_sqm       numeric,
+  rooms                 numeric,
+  units                 integer,
+  market_value          numeric,
+  currency              text,
+  market_value_eur      numeric,
+  auction_date_iso      timestamptz,
+  cancelled             boolean NOT NULL,
+  -- photoCount/thumbnailUrl (not a raw photoUrls array) mirror the fields
+  -- lib/auction-filters.ts's onlyWithPhotos filter actually checks today.
+  photo_count           integer NOT NULL DEFAULT 0,
+  thumbnail_url         text,
+  lat                   numeric,
+  lng                   numeric,
+  detail_fetched_at     timestamptz,
+  extraction_source     text,
+  extraction_confidence text,
+  updated_at            timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (platform, external_id)
+);
+CREATE INDEX IF NOT EXISTS idx_auctions_country_region ON auctions (country, region);
+CREATE INDEX IF NOT EXISTS idx_auctions_property_type ON auctions (property_type);
+CREATE INDEX IF NOT EXISTS idx_auctions_living_area ON auctions (living_area_sqm);
+CREATE INDEX IF NOT EXISTS idx_auctions_land_area ON auctions (land_area_sqm);
+-- Kein RLS: server-intern befüllt, gleiches Muster wie auction_observations
+-- (öffentliche Lese-APIs bleiben vorerst auf dem JSON-Snapshot).
