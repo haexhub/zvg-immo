@@ -1,5 +1,5 @@
 import type { CrawlResult } from '~/types/auction'
-import { crawlAll, crawlSingle } from '../crawlers/registry'
+import { crawlAll, crawlSingle, isCountryEnabled } from '../crawlers/registry'
 import { cacheKey, readVerkehrswertCache } from '../utils/verkehrswert-cache'
 import { applyExtractionToAuctions, readExtractionCache } from '../utils/extraction-cache'
 import { readListCache, readMergedListCache, writeListCache } from '../utils/list-cache'
@@ -35,6 +35,20 @@ export default defineEventHandler(async (event): Promise<CrawlResult> => {
     throw createError({ statusCode: 400, statusMessage: 'invalid country/region' })
   }
   const immobilienOnly = query.immo !== '0'
+  // Paused country requested directly (permalink, saved search, hand-typed URL):
+  // return an empty result instead of live-crawling it via the fallback below.
+  // The 'all' scope stays allowed — it only aggregates enabled countries.
+  if (!isAllScope(country) && !isCountryEnabled(country)) {
+    return {
+      platform: MULTI_PLATFORM,
+      source: '',
+      countries: [country],
+      regions: [region],
+      fetchedAt: new Date().toISOString(),
+      totalReported: null,
+      auctions: [],
+    }
+  }
   try {
     let result: CrawlResult | null = null
 

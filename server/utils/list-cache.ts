@@ -2,6 +2,7 @@ import { readFile, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { CrawlResult } from '~/types/auction'
 import { MULTI_PLATFORM, SCOPE_PARAM_RE } from '~/lib/auction-constants'
+import { isCountryEnabled } from '../crawlers/registry'
 import { writeJsonCache } from './json-cache'
 
 const CACHE_DIR = join(process.cwd(), '.cache_zvg', 'list')
@@ -19,6 +20,12 @@ function cacheFile(country: string, region: string): string {
 }
 
 export async function readListCache(country: string, region: string): Promise<CrawlResult | null> {
+  // A paused country's on-disk cache from before the pause must stop being
+  // served, not just stop being refreshed — otherwise stale non-enabled-
+  // country listings would keep showing up for anyone who still requests
+  // them by URL/saved search (see server/crawlers/registry.ts's
+  // ENABLED_COUNTRIES). Treat it like a cache miss.
+  if (!isCountryEnabled(country)) return null
   try {
     const raw = await readFile(cacheFile(country, region), 'utf8')
     return JSON.parse(raw) as CrawlResult
@@ -93,7 +100,12 @@ export async function readMergedListCache(country?: string): Promise<CrawlResult
     return null
   }
   const prefix = country ? `${country}-` : ''
-  const files = entries.filter((f) => f.endsWith('.json') && (!prefix || f.startsWith(prefix)))
+  const files = entries.filter((f) => {
+    if (!f.endsWith('.json') || (prefix && !f.startsWith(prefix))) return false
+    // Same pause-must-hide-not-just-stop-refreshing rationale as readListCache.
+    const fileCountry = f.slice(0, f.indexOf('-'))
+    return isCountryEnabled(fileCountry)
+  })
   if (files.length === 0) return null
 
   const results: CrawlResult[] = []

@@ -26,6 +26,7 @@ import { join } from 'node:path'
 import type { Auction, AuctionExtraction } from '~/types/auction'
 import { crawlAll, platforms } from '../crawlers/registry'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
+import { upsertCurrentAuctions } from '../utils/current-auctions'
 import { deriveMarketValueEur, getRates } from '../utils/exchange-rate'
 import { extractByRules } from '../utils/extract/rules'
 import { extractByLlm, type LlmConfig } from '../utils/extract/llm'
@@ -50,7 +51,10 @@ const FLUSH_EVERY = 200
 // Cap LLM calls per run so a cold start spreads its load over several runs
 // instead of spawning thousands of proxy subprocesses at once. ENRICH_CONCURRENCY
 // already bounds how many run *at once*; this just bounds the total per run.
-const MAX_LLM_PER_RUN = 300
+// Overridable via NUXT_EXTRACT_LLM_MAX_PER_RUN (see nuxt.config.ts) — meant to
+// be raised temporarily while only one country is being crawled, to clear its
+// backlog in a handful of runs instead of trickling in over weeks.
+const DEFAULT_MAX_LLM_PER_RUN = 300
 // Below this, pdftotext's output is almost certainly not the Gutachten's real
 // content but leftover header/footer noise from a scanned-image PDF (~12% of
 // sampled DE PDFs fall under this). Below the threshold, render the page and
@@ -58,9 +62,16 @@ const MAX_LLM_PER_RUN = 300
 const SCANNED_PDF_TEXT_THRESHOLD = 200
 
 function readLlmConfig(): LlmConfig | null {
-  const c = useRuntimeConfig().extractLlm as { baseUrl?: string; model?: string } | undefined
+  const c = useRuntimeConfig().extractLlm as
+    | { baseUrl?: string; model?: string; maxPerRun?: string }
+    | undefined
   if (!c?.baseUrl) return null
   return { baseUrl: c.baseUrl, model: c.model || 'claude-haiku-4-5' }
+}
+
+function readMaxLlmPerRun(): number {
+  const raw = Number((useRuntimeConfig().extractLlm as { maxPerRun?: string })?.maxPerRun)
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_MAX_LLM_PER_RUN
 }
 
 // Guards against overlapping runs: a cold-start bootstrap run (many detail
@@ -125,8 +136,9 @@ async function runEnrich() {
       (a) => !cache[cacheKey(a.platform, a.externalId)] || needsEnrich(a) || needsLlmRetry(a),
     )
     const todo = interleaveByPlatform(eligible)
+    const maxLlmPerRun = readMaxLlmPerRun()
     console.log(
-      `[enrich] crawled ${result.auctions.length}, ${todo.length} to (re)enrich · llm=${llmConfig ? llmConfig.model : 'off'}`,
+      `[enrich] crawled ${result.auctions.length}, ${todo.length} to (re)enrich · llm=${llmConfig ? llmConfig.model : 'off'} maxLlmPerRun=${maxLlmPerRun}`,
     )
 
     let cached = 0
@@ -137,7 +149,7 @@ async function runEnrich() {
     let photosTotal = 0
     const at = new Date().toISOString()
 
-    // MAX_LLM_PER_RUN is shared across all platforms, but which item reaches
+    // maxLlmPerRun is shared across all platforms, but which item reaches
     // the check first depends on how fast its enrichOne/pdfToText preamble
     // resolves — not on interleaveByPlatform's intended round-robin order. A
     // platform whose detail fetch is consistently slower than others (e.g. it
@@ -146,7 +158,7 @@ async function runEnrich() {
     // budget. A per-platform cap makes the fairness hold regardless of
     // completion order.
     const llmPlatformCount = new Set(todo.map((a) => a.platform)).size || 1
-    const llmCapPerPlatform = Math.max(1, Math.ceil(MAX_LLM_PER_RUN / llmPlatformCount))
+    const llmCapPerPlatform = Math.max(1, Math.ceil(maxLlmPerRun / llmPlatformCount))
     const llmCallsByPlatform = new Map<string, number>()
 
     let cursor = 0
@@ -241,7 +253,7 @@ async function runEnrich() {
           cacheable = true
         } else if (
           llmConfig &&
-          llmCalls < MAX_LLM_PER_RUN &&
+          llmCalls < maxLlmPerRun &&
           platformLlmCalls < llmCapPerPlatform
         ) {
           llmCalls++
@@ -380,6 +392,10 @@ async function runEnrich() {
     }
     applyExtractionToAuctions(result.auctions, cache)
     await writeAuctionSnapshot(result.auctions)
+    // Structured Postgres mirror for fast SQL filter queries (Daten-API, admin
+    // tooling) — additive, no-op without NUXT_DATABASE_URL. See
+    // server/utils/current-auctions.ts.
+    await upsertCurrentAuctions(result.auctions, at)
 
     const durationMs = Date.now() - startedAt
     console.log(
