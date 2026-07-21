@@ -51,6 +51,13 @@ export default defineNuxtConfig({
     extractLlm: {
       baseUrl: '',
       model: 'claude-haiku-4-5',
+      // Overrides enrich.ts's MAX_LLM_PER_RUN default (300). Meant to be
+      // bumped temporarily while only one country is being crawled (see
+      // server/crawlers/registry.ts's ENABLED_COUNTRIES) to clear its backlog
+      // in a handful of runs instead of trickling in over weeks, then lowered
+      // again once more countries are re-enabled and share the budget.
+      //   NUXT_EXTRACT_LLM_MAX_PER_RUN=2000
+      maxPerRun: '',
     },
     // Bearer token that authenticates zvg-immo against haex-claude-proxy's
     // /setup/* endpoints. Same value must be set on both containers.
