@@ -5,9 +5,11 @@
 // for what the deterministic rules can't resolve: sizes buried in PDF prose,
 // and property types for non-German sources the property-type classifier misses.
 //
-// Text-only by design — the proxy flattens content to text, so this never sees
-// images. parseExtractionResponse/clampExtraction are pure and unit-tested; the
-// network call is a thin wrapper.
+// Optionally vision: when `pdfImageBase64` is set (a scanned/image-only
+// Gutachten PDF where pdftotext returned nothing usable — see
+// server/tasks/enrich.ts), the rendered page image is sent alongside the
+// prompt instead of relying on text alone. parseExtractionResponse/
+// clampExtraction are pure and unit-tested; the network call is a thin wrapper.
 
 import { PROPERTY_TYPES, type PropertyType } from '~/lib/property-type'
 
@@ -15,6 +17,9 @@ export interface LlmInput {
   title: string | null
   description: string | null
   pdfText?: string | null
+  /** Base64 JPEG of a Gutachten page, used when pdfText is too sparse to be
+   *  the scanned PDF's real content (see pdfPageToBase64Jpeg). */
+  pdfImageBase64?: string | null
 }
 
 export interface LlmConfig {
@@ -108,6 +113,11 @@ function buildPrompt(input: LlmInput): string {
   if (input.pdfText) {
     parts.push(`Auszug aus Gutachten/Exposé (PDF):\n${input.pdfText.slice(0, MAX_PDF_CHARS)}`)
   }
+  if (input.pdfImageBase64) {
+    parts.push(
+      'Das Gutachten/Exposé liegt als eingescanntes Bild vor (siehe angehängtes Bild) — lies die Eckdaten daraus ab.',
+    )
+  }
   return parts.join('\n\n')
 }
 
@@ -117,12 +127,21 @@ export async function extractByLlm(
   config: LlmConfig,
 ): Promise<ClampedExtraction | null> {
   const prompt = buildPrompt(input)
-  if (!prompt.trim()) return null
+  if (!prompt.trim() && !input.pdfImageBase64) return null
+  const content = input.pdfImageBase64
+    ? [
+        { type: 'text', text: prompt },
+        {
+          type: 'image',
+          source: { type: 'base64', media_type: 'image/jpeg', data: input.pdfImageBase64 },
+        },
+      ]
+    : prompt
   const body = {
     model: config.model,
     max_tokens: config.maxTokens ?? 512,
     system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: prompt }],
+    messages: [{ role: 'user', content }],
     tools: [
       {
         name: 'final_result',

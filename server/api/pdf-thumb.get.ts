@@ -8,15 +8,12 @@
 // direct AT-Edikte / biddit URLs; the ALLOWED_HOSTS list is a defensive
 // allowlist against arbitrary SSRF via ?src=.
 
-import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { promisify } from 'node:util'
 import { fetchPdfBuffer } from '../utils/extract/pdf-text'
+import { renderPdfPageJpeg } from '../utils/extract/pdf-render'
 
-const exec = promisify(execFile)
 const CACHE_DIR = join(process.cwd(), '.cache_zvg', 'pdf-thumbs')
 
 const ALLOWED_HOSTS = new Set([
@@ -32,33 +29,6 @@ function isAllowedSource(src: string): boolean {
     return (u.protocol === 'https:' || u.protocol === 'http:') && ALLOWED_HOSTS.has(u.hostname)
   } catch {
     return false
-  }
-}
-
-async function renderFirstPage(pdfBuf: Buffer): Promise<Buffer> {
-  const base = join(tmpdir(), `pdf-thumb-${randomUUID()}`)
-  const inputPath = `${base}.pdf`
-  const outputPrefix = `${base}-out`
-  const outputPath = `${outputPrefix}.jpg`
-  await writeFile(inputPath, pdfBuf)
-  try {
-    await exec(
-      'pdftoppm',
-      [
-        '-jpeg', '-jpegopt', 'quality=80',
-        '-r', '90',
-        '-f', '1', '-l', '1',
-        '-singlefile',
-        inputPath, outputPrefix,
-      ],
-      { timeout: 30_000 },
-    )
-    return await readFile(outputPath)
-  } finally {
-    await Promise.all([
-      unlink(inputPath).catch(() => {}),
-      unlink(outputPath).catch(() => {}),
-    ])
   }
 }
 
@@ -81,7 +51,7 @@ export default defineEventHandler(async (event) => {
       throw createError({ statusCode: 502, statusMessage: 'PDF-Download fehlgeschlagen' })
     }
     try {
-      buf = await renderFirstPage(pdf)
+      buf = await renderPdfPageJpeg(pdf)
     } catch (err) {
       throw createError({
         statusCode: 502,

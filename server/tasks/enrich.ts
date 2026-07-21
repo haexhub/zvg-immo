@@ -31,6 +31,7 @@ import { extractByRules } from '../utils/extract/rules'
 import { extractByLlm, type LlmConfig } from '../utils/extract/llm'
 import { downloadNativeImages } from '../utils/extract/native-images'
 import { extractPdfPhotos } from '../utils/extract/pdf-images'
+import { pdfPageToBase64Jpeg } from '../utils/extract/pdf-render'
 import { pdfToText, pickBestPdf } from '../utils/extract/pdf-text'
 import {
   applyExtractionToAuctions,
@@ -50,6 +51,11 @@ const FLUSH_EVERY = 200
 // instead of spawning thousands of proxy subprocesses at once. ENRICH_CONCURRENCY
 // already bounds how many run *at once*; this just bounds the total per run.
 const MAX_LLM_PER_RUN = 300
+// Below this, pdftotext's output is almost certainly not the Gutachten's real
+// content but leftover header/footer noise from a scanned-image PDF (~12% of
+// sampled DE PDFs fall under this). Below the threshold, render the page and
+// let the LLM read it visually instead of failing to extract from noise.
+const SCANNED_PDF_TEXT_THRESHOLD = 200
 
 function readLlmConfig(): LlmConfig | null {
   const c = useRuntimeConfig().extractLlm as { baseUrl?: string; model?: string } | undefined
@@ -240,8 +246,15 @@ async function runEnrich() {
         ) {
           llmCalls++
           llmCallsByPlatform.set(a.platform, platformLlmCalls + 1)
+          // A short/empty pdftotext result on an actual attachment usually
+          // means the Gutachten PDF is a scanned image, not real text — render
+          // its first page and let the LLM read it visually instead.
+          const pdfImageBase64 =
+            bestPdf && (!pdfText || pdfText.trim().length < SCANNED_PDF_TEXT_THRESHOLD)
+              ? await pdfPageToBase64Jpeg(bestPdf.proxyUrl)
+              : null
           const llm = await extractByLlm(
-            { title: a.title, description: a.description, pdfText },
+            { title: a.title, description: a.description, pdfText, pdfImageBase64 },
             llmConfig,
           )
           if (llm === null) {
