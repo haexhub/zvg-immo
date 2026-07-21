@@ -106,6 +106,12 @@ export interface AuctionExtraction {
   units: number | null
   source: 'rules' | 'llm'
   confidence: 'high' | 'low'
+  /** How many times an LLM extraction was attempted for this listing and the
+   *  request itself failed (not "ran and returned empty" — that yields
+   *  source:'llm' and is never retried). Bounds retries so a listing whose
+   *  LLM call persistently errors can't re-spend an LLM slot every run
+   *  forever. Absent/0 on entries that never had a failed attempt. */
+  llmFailures?: number
   /** Filenames of photos extracted from the best PDF attachment, relative to
    *  `.cache_zvg/images/<platform>/<externalId>/`. Empty when the PDF held no
    *  usable photos or no PDF was available. Served via /api/auction-image. */

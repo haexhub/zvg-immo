@@ -32,6 +32,7 @@ import { extractByRules } from '../utils/extract/rules'
 import { extractByLlm, type LlmConfig } from '../utils/extract/llm'
 import { downloadNativeImages } from '../utils/extract/native-images'
 import { extractPdfPhotos } from '../utils/extract/pdf-images'
+import { pdfPageToBase64Jpeg } from '../utils/extract/pdf-render'
 import { pdfToText, pickBestPdf } from '../utils/extract/pdf-text'
 import {
   applyExtractionToAuctions,
@@ -54,6 +55,17 @@ const FLUSH_EVERY = 200
 // be raised temporarily while only one country is being crawled, to clear its
 // backlog in a handful of runs instead of trickling in over weeks.
 const DEFAULT_MAX_LLM_PER_RUN = 300
+// Below this, pdftotext's output is almost certainly not the Gutachten's real
+// content but leftover header/footer noise from a scanned-image PDF (~12% of
+// sampled DE PDFs fall under this). Below the threshold, render the page and
+// let the LLM read it visually instead of failing to extract from noise.
+const SCANNED_PDF_TEXT_THRESHOLD = 200
+// Give up retrying a listing whose LLM request keeps *failing* (network/proxy
+// error, timeout) after this many attempts. Without a bound, such a listing
+// never gets a cache entry and so re-consumes an LLM slot on every run forever,
+// starving healthy listings of the per-run budget. A few retries still absorb
+// transient proxy blips.
+const MAX_LLM_FAILURES = 3
 
 function readLlmConfig(): LlmConfig | null {
   const c = useRuntimeConfig().extractLlm as
@@ -124,7 +136,11 @@ async function runEnrich() {
     // never got to.
     const needsLlmRetry = (a: Auction): boolean => {
       const hit = cache[cacheKey(a.platform, a.externalId)]
-      return hit?.source === 'rules' && hit.confidence === 'low'
+      return (
+        hit?.source === 'rules' &&
+        hit.confidence === 'low' &&
+        (hit.llmFailures ?? 0) < MAX_LLM_FAILURES
+      )
     }
     const eligible = result.auctions.filter(
       (a) => !cache[cacheKey(a.platform, a.externalId)] || needsEnrich(a) || needsLlmRetry(a),
@@ -222,6 +238,9 @@ async function runEnrich() {
             (fields.landAreaSqm != null || fields.livingAreaSqm != null))
         let source: 'rules' | 'llm' = 'rules'
         let cacheable: boolean
+        // Set when an LLM request was made but failed (vs. ran and returned
+        // empty). Drives the persisted llmFailures counter so retries are bounded.
+        let llmFailed = false
         const bestPdf = pickBestPdf(a.attachments)
         // Fetching (and archiving) the best appraisal PDF happens here
         // regardless of whether rules already found a confident result — the
@@ -252,12 +271,24 @@ async function runEnrich() {
         ) {
           llmCalls++
           llmCallsByPlatform.set(a.platform, platformLlmCalls + 1)
+          // A short/empty pdftotext result on an actual attachment usually
+          // means the Gutachten PDF is a scanned image, not real text — render
+          // its first page and let the LLM read it visually instead.
+          const pdfImageBase64 =
+            bestPdf && (!pdfText || pdfText.trim().length < SCANNED_PDF_TEXT_THRESHOLD)
+              ? await pdfPageToBase64Jpeg(bestPdf.proxyUrl)
+              : null
           const llm = await extractByLlm(
-            { title: a.title, description: a.description, pdfText },
+            { title: a.title, description: a.description, pdfText, pdfImageBase64 },
             llmConfig,
           )
           if (llm === null) {
-            cacheable = false // LLM call failed → leave for a later run
+            // LLM request failed. Cache the rules-only result (if detail
+            // succeeded) so the listing still shows something and — via the
+            // bumped llmFailures counter below — retries stay bounded instead
+            // of re-spending an LLM slot every run forever.
+            llmFailed = true
+            cacheable = detailOk
           } else {
             source = 'llm'
             // Prefer the precise structured/rules values; fill the gaps from the LLM.
@@ -348,12 +379,19 @@ async function runEnrich() {
 
         const hasType = fields.propertyType != null && fields.propertyType !== 'sonstiges'
         const hasArea = fields.landAreaSqm != null || fields.livingAreaSqm != null
+        // Carry the failure counter across runs: bump it on a failed LLM
+        // request, preserve it while the item is only cap-deferred (source
+        // stays 'rules'), and drop it once the LLM actually produced a result
+        // (source 'llm' — no longer eligible for retry anyway).
+        const prevFailures = cache[key]?.llmFailures ?? 0
+        const llmFailures = llmFailed ? prevFailures + 1 : source === 'rules' ? prevFailures : 0
         const entry: AuctionExtraction = {
           ...fields,
           source,
           confidence: hasType && hasArea ? 'high' : 'low',
           photos: photos.length > 0 ? photos : undefined,
           at,
+          ...(llmFailures > 0 ? { llmFailures } : {}),
         }
         cache[key] = entry
         cached++
