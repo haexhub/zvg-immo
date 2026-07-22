@@ -5,7 +5,6 @@ import type { Attachment } from '~/types/auction'
 import { ATTACHMENT_KIND_ORDER } from '~/lib/auction-constants'
 import { isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
 import { safeHref } from '~/lib/utils'
-import { bundeslandFromRegion, calculateAuctionCosts, formatEur as formatEurWithLocale } from '~/lib/auction-costs'
 import { googleCalendarUrl, icsDataUrl, outlookCalendarUrl } from '~/lib/calendar-links'
 import { ArrowLeft, CalendarPlus, Sparkles } from 'lucide-vue-next'
 
@@ -219,26 +218,6 @@ const calendarEvent = computed(() => {
   }
 })
 
-// Compact read-only preview of the full Nebenkostenrechner below (DE only,
-// matching CostCalculator's own gating) — uses the same defaults it starts
-// with (Verkehrswert as Bargebot, 30 Tage bis Zahlung). Hidden (rather than
-// falling back to a 0 € Bargebot) when the Verkehrswert isn't known — a
-// missing value would otherwise still price out to the table's minimum-fee
-// row, showing a plausible-looking total for an auction whose actual costs
-// are unknown.
-const costsPreview = computed(() => {
-  if (!a.value || a.value.country !== 'de' || a.value.marketValueEur == null) return null
-  return calculateAuctionCosts({
-    bargebot: a.value.marketValueEur,
-    bundesland: bundeslandFromRegion(a.value.region) ?? 'Nordrhein-Westfalen',
-    tageBisZahlung: 30,
-  })
-})
-
-function formatEur(n: number): string {
-  return formatEurWithLocale(n, intlLocale.value)
-}
-
 // Aktenzeichen routinely contain "/" (e.g. "12 K 34/26"), which the `download`
 // attribute would otherwise treat as a path separator.
 function icsFilename(caseNumber: string): string {
@@ -286,117 +265,99 @@ useHead(() => ({
 
       <div class="grid grid-cols-1 lg:grid-cols-5 gap-6 items-start">
         <div class="lg:col-span-3 space-y-8">
-          <section class="space-y-3">
-            <h2 class="text-base font-semibold">{{ $t('objektDetail.generalInfoTitle') }}</h2>
-            <Card>
-              <CardContent>
-                <dl class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-4">
-                  <div>
-                    <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.marketValue') }}</dt>
-                    <dd class="text-lg font-semibold tabular-nums">{{ formatPrice(a.marketValueEur) }}</dd>
-                    <dd
-                      v-if="showOriginalPrice()"
-                      class="text-xs text-muted-foreground"
-                    >
-                      {{ $t('objektDetail.original', { value: a.marketValueText }) }}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.auctionDate') }}</dt>
-                    <dd class="text-sm font-medium">{{ formatDate(a.auctionDateIso, a.auctionDateText) }}</dd>
-                  </div>
-                  <div v-if="a.startingBid != null">
-                    <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.startingBid') }}</dt>
-                    <dd class="text-sm font-medium tabular-nums">{{ formatNative(a.startingBid, a.currency) }}</dd>
-                  </div>
-                  <div v-if="a.currentBid != null">
-                    <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.currentBid') }}</dt>
-                    <dd class="text-sm font-medium tabular-nums">{{ formatNative(a.currentBid, a.currency) }}</dd>
-                  </div>
-                  <div v-if="a.extraction?.securityDeposit != null">
-                    <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.securityDeposit') }}</dt>
-                    <dd class="text-sm font-medium tabular-nums">{{ formatNative(a.extraction.securityDeposit, a.currency) }}</dd>
-                  </div>
-                  <div v-if="a.extraction?.landAreaSqm != null">
-                    <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.landArea') }}</dt>
-                    <dd class="text-sm font-medium tabular-nums">{{ formatArea(a.extraction.landAreaSqm) }}</dd>
-                  </div>
-                  <div v-if="a.extraction?.livingAreaSqm != null">
-                    <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.livingArea') }}</dt>
-                    <dd class="text-sm font-medium tabular-nums">{{ formatArea(a.extraction.livingAreaSqm) }}</dd>
-                  </div>
-                  <div v-if="a.extraction?.rooms != null">
-                    <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.rooms') }}</dt>
-                    <dd class="text-sm font-medium">{{ a.extraction.rooms }}</dd>
-                  </div>
-                  <div v-if="a.extraction?.units != null && a.extraction.units > 1">
-                    <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.units') }}</dt>
-                    <dd class="text-sm font-medium">{{ a.extraction.units }}</dd>
-                  </div>
-                  <div v-if="a.extraction?.condition">
-                    <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.condition') }}</dt>
-                    <dd class="text-sm font-medium">{{ conditionLabel(a.extraction.condition) }}</dd>
-                  </div>
-                  <div>
-                    <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.authority') }}</dt>
-                    <dd class="text-sm font-medium">{{ a.authority }}</dd>
-                  </div>
-                  <div>
-                    <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.caseNumber') }}</dt>
-                    <dd class="text-sm font-mono">{{ a.caseNumber }}</dd>
-                  </div>
-                </dl>
-                <div v-if="a.extraction?.features?.length" class="mt-4 space-y-1.5">
-                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.features') }}</dt>
-                  <div class="flex flex-wrap gap-1.5">
-                    <Badge v-for="f in a.extraction.features" :key="f" variant="secondary">{{ featureLabel(f) }}</Badge>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+          <DetailSectionCard :title="$t('objektDetail.generalInfoTitle')">
+            <dl class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-4">
+              <div>
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.marketValue') }}</dt>
+                <dd class="text-lg font-semibold tabular-nums">{{ formatPrice(a.marketValueEur) }}</dd>
+                <dd
+                  v-if="showOriginalPrice()"
+                  class="text-xs text-muted-foreground"
+                >
+                  {{ $t('objektDetail.original', { value: a.marketValueText }) }}
+                </dd>
+              </div>
+              <div>
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.auctionDate') }}</dt>
+                <dd class="text-sm font-medium">{{ formatDate(a.auctionDateIso, a.auctionDateText) }}</dd>
+              </div>
+              <div v-if="a.startingBid != null">
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.startingBid') }}</dt>
+                <dd class="text-sm font-medium tabular-nums">{{ formatNative(a.startingBid, a.currency) }}</dd>
+              </div>
+              <div v-if="a.currentBid != null">
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.currentBid') }}</dt>
+                <dd class="text-sm font-medium tabular-nums">{{ formatNative(a.currentBid, a.currency) }}</dd>
+              </div>
+              <div v-if="a.extraction?.securityDeposit != null">
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.securityDeposit') }}</dt>
+                <dd class="text-sm font-medium tabular-nums">{{ formatNative(a.extraction.securityDeposit, a.currency) }}</dd>
+              </div>
+              <div v-if="a.extraction?.landAreaSqm != null">
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.landArea') }}</dt>
+                <dd class="text-sm font-medium tabular-nums">{{ formatArea(a.extraction.landAreaSqm) }}</dd>
+              </div>
+              <div v-if="a.extraction?.livingAreaSqm != null">
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.livingArea') }}</dt>
+                <dd class="text-sm font-medium tabular-nums">{{ formatArea(a.extraction.livingAreaSqm) }}</dd>
+              </div>
+              <div v-if="a.extraction?.rooms != null">
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.rooms') }}</dt>
+                <dd class="text-sm font-medium">{{ a.extraction.rooms }}</dd>
+              </div>
+              <div v-if="a.extraction?.units != null && a.extraction.units > 1">
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.units') }}</dt>
+                <dd class="text-sm font-medium">{{ a.extraction.units }}</dd>
+              </div>
+              <div v-if="a.extraction?.condition">
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.condition') }}</dt>
+                <dd class="text-sm font-medium">{{ conditionLabel(a.extraction.condition) }}</dd>
+              </div>
+              <div>
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.authority') }}</dt>
+                <dd class="text-sm font-medium">{{ a.authority }}</dd>
+              </div>
+              <div>
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.caseNumber') }}</dt>
+                <dd class="text-sm font-mono">{{ a.caseNumber }}</dd>
+              </div>
+            </dl>
+            <div v-if="a.extraction?.features?.length" class="mt-4 space-y-1.5">
+              <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.features') }}</dt>
+              <div class="flex flex-wrap gap-1.5">
+                <Badge v-for="f in a.extraction.features" :key="f" variant="secondary">{{ featureLabel(f) }}</Badge>
+              </div>
+            </div>
             <p
               v-if="a.extraction?.source === 'llm'"
-              class="text-xs text-muted-foreground"
+              class="mt-4 text-xs text-muted-foreground"
             >
               {{ $t('objektDetail.extractionNotice', { confidence: a.extraction.confidence === 'high' ? $t('objektDetail.confidenceHigh') : $t('objektDetail.confidenceLow') }) }}
             </p>
-            <p v-if="a.extraction?.biddingNotes" class="text-xs text-muted-foreground">
+            <p v-if="a.extraction?.biddingNotes" class="mt-1 text-xs text-muted-foreground">
               {{ $t('objektDetail.biddingNotes', { note: a.extraction.biddingNotes }) }}
             </p>
-          </section>
+          </DetailSectionCard>
 
-          <section class="space-y-3">
-            <h2 class="text-base font-semibold">{{ $t('objektDetail.grundbuchTitle') }}</h2>
-            <Card><CardContent><PremiumFeatureLock :rows="4" /></CardContent></Card>
-          </section>
+          <DetailSectionCard :title="$t('objektDetail.grundbuchTitle')">
+            <PremiumFeatureLock :rows="4" />
+          </DetailSectionCard>
 
-          <section v-if="displayDescription" class="space-y-2">
-            <div class="flex items-center gap-2">
-              <h2 class="text-base font-semibold">{{ $t('objektDetail.description') }}</h2>
-              <span v-if="descriptionTranslated" class="text-xs text-muted-foreground">({{ $t('objektDetail.autoTranslatedHint') }})</span>
-            </div>
+          <DetailSectionCard v-if="displayDescription" :title="$t('objektDetail.description')">
+            <template v-if="descriptionTranslated" #subtitle>{{ $t('objektDetail.autoTranslatedHint') }}</template>
             <p class="whitespace-pre-line text-sm text-foreground/90 leading-relaxed">
               {{ displayDescription }}
             </p>
-          </section>
-
-          <section id="kostenrechner">
-            <CostCalculator v-if="a.country === 'de'" :market-value-eur="a.marketValueEur" :region="a.region" />
-          </section>
+          </DetailSectionCard>
 
           <LawyerContact :platform="a.platform" :external-id="a.externalId" :country="a.country" />
 
-          <section class="space-y-3">
-            <div class="flex items-center gap-2">
-              <h2 class="text-base font-semibold">{{ $t('objektDetail.aiSummaryTitle') }}</h2>
-              <span class="text-xs text-muted-foreground">{{ $t('objektDetail.aiSummaryHint') }}</span>
-            </div>
-            <Card v-if="summary">
-              <CardContent
-                class="text-sm leading-relaxed [&_p]:mb-3 [&_p:last-child]:mb-0 [&_strong]:font-semibold [&_strong]:text-foreground"
-                v-html="summaryHtml"
-              />
-            </Card>
+          <DetailSectionCard :title="$t('objektDetail.aiSummaryTitle')" :subtitle="$t('objektDetail.aiSummaryHint')">
+            <div
+              v-if="summary"
+              class="text-sm leading-relaxed [&_p]:mb-3 [&_p:last-child]:mb-0 [&_strong]:font-semibold [&_strong]:text-foreground"
+              v-html="summaryHtml"
+            />
             <p v-else-if="summaryError" class="text-sm text-destructive">
               {{ $t('objektDetail.aiSummaryError', { msg: summaryError }) }}
             </p>
@@ -407,104 +368,73 @@ useHead(() => ({
               <Sparkles class="h-4 w-4" />
               {{ $t('objektDetail.aiSummaryGenerate') }}
             </Button>
-          </section>
+          </DetailSectionCard>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <section v-for="section in LOCKED_SECTIONS" :key="section.key" class="space-y-3">
-              <h2 class="text-base font-semibold">{{ $t(section.titleKey) }}</h2>
-              <Card><CardContent><PremiumFeatureLock :rows="section.rows" /></CardContent></Card>
-            </section>
+            <DetailSectionCard v-for="section in LOCKED_SECTIONS" :key="section.key" :title="$t(section.titleKey)">
+              <PremiumFeatureLock :rows="section.rows" />
+            </DetailSectionCard>
           </div>
         </div>
 
         <aside class="lg:col-span-2 space-y-6">
-          <Card>
-            <CardContent class="space-y-3">
-              <h2 class="text-base font-semibold">{{ $t('objektDetail.courtInfoTitle') }}</h2>
-              <dl class="space-y-3 text-sm">
-                <div>
-                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.authority') }}</dt>
-                  <dd class="font-medium">{{ a.authority }}</dd>
-                </div>
-                <div>
-                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.versteigerungstermin') }}</dt>
-                  <dd class="font-medium">{{ formatDate(a.auctionDateIso, a.auctionDateText) }}</dd>
-                </div>
-              </dl>
-              <div v-if="calendarEvent" class="flex flex-col gap-2 pt-1">
-                <Button as-child variant="outline" size="sm">
-                  <a :href="googleCalendarUrl(calendarEvent)" target="_blank" rel="noopener">
-                    <CalendarPlus class="h-4 w-4" /> {{ $t('objektDetail.addToGoogleCalendar') }}
-                  </a>
-                </Button>
-                <Button as-child variant="outline" size="sm">
-                  <a :href="outlookCalendarUrl(calendarEvent)" target="_blank" rel="noopener">
-                    <CalendarPlus class="h-4 w-4" /> {{ $t('objektDetail.addToOutlookCalendar') }}
-                  </a>
-                </Button>
-                <Button as-child variant="ghost" size="sm">
-                  <a :href="icsDataUrl(calendarEvent)" :download="icsFilename(a.caseNumber)">
-                    {{ $t('objektDetail.downloadIcs') }}
-                  </a>
-                </Button>
+          <DetailSectionCard :title="$t('objektDetail.courtInfoTitle')">
+            <dl class="space-y-3 text-sm">
+              <div>
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.authority') }}</dt>
+                <dd class="font-medium">{{ a.authority }}</dd>
               </div>
-            </CardContent>
-          </Card>
-
-          <Card v-if="costsPreview">
-            <CardContent class="space-y-3">
-              <h2 class="text-base font-semibold">{{ $t('objektDetail.costsSidebarTitle') }}</h2>
-              <p class="text-xs text-muted-foreground">{{ $t('objektDetail.costsSidebarSubtitle') }}</p>
-              <dl class="divide-y divide-border text-sm">
-                <div v-for="item in costsPreview.items" :key="item.label" class="flex items-center justify-between gap-4 py-1.5">
-                  <dt>{{ item.label }}</dt>
-                  <dd class="tabular-nums shrink-0">{{ formatEur(item.amountEur) }}</dd>
-                </div>
-                <div class="flex items-center justify-between gap-4 py-1.5 font-semibold">
-                  <dt>{{ $t('objektDetail.costsSidebarTotal') }}</dt>
-                  <dd class="tabular-nums">{{ formatEur(costsPreview.nebenkostenGesamtEur) }}</dd>
-                </div>
-              </dl>
-              <a href="#kostenrechner" class="inline-block text-sm text-primary hover:underline">
-                {{ $t('objektDetail.costsSidebarDetailButton') }} →
-              </a>
-            </CardContent>
-          </Card>
-
-          <Card v-if="groupedAttachments.length > 0">
-            <CardContent class="space-y-3">
-              <h2 class="text-base font-semibold">{{ $t('objektDetail.filesTitle') }}</h2>
-              <div class="flex flex-wrap gap-2">
-                <Button v-for="{ att, groupLabel } in flatAttachments" :key="att.fileId" as-child variant="outline" size="sm">
-                  <a :href="safeHref(att.proxyUrl)" target="_blank" rel="noopener">
-                    {{ att.label || att.filename || groupLabel }}
-                  </a>
-                </Button>
+              <div>
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.versteigerungstermin') }}</dt>
+                <dd class="font-medium">{{ formatDate(a.auctionDateIso, a.auctionDateText) }}</dd>
               </div>
-            </CardContent>
-          </Card>
+            </dl>
+            <div v-if="calendarEvent" class="flex flex-col gap-2 pt-4">
+              <Button as-child variant="outline" size="sm">
+                <a :href="googleCalendarUrl(calendarEvent)" target="_blank" rel="noopener">
+                  <CalendarPlus class="h-4 w-4" /> {{ $t('objektDetail.addToGoogleCalendar') }}
+                </a>
+              </Button>
+              <Button as-child variant="outline" size="sm">
+                <a :href="outlookCalendarUrl(calendarEvent)" target="_blank" rel="noopener">
+                  <CalendarPlus class="h-4 w-4" /> {{ $t('objektDetail.addToOutlookCalendar') }}
+                </a>
+              </Button>
+              <Button as-child variant="ghost" size="sm">
+                <a :href="icsDataUrl(calendarEvent)" :download="icsFilename(a.caseNumber)">
+                  {{ $t('objektDetail.downloadIcs') }}
+                </a>
+              </Button>
+            </div>
+          </DetailSectionCard>
 
-          <Card>
-            <CardContent class="space-y-2">
-              <h2 class="text-base font-semibold">{{ $t('objektDetail.sourcesDisclaimerTitle') }}</h2>
-              <div v-if="a.detailUrlUpstream || a.pdfUrlUpstream" class="flex flex-wrap gap-2">
-                <Button v-if="a.detailUrlUpstream" as-child variant="outline" size="sm">
-                  <a :href="safeHref(a.detailUrlUpstream)" target="_blank" rel="noopener">{{ $t('objektDetail.openDetailPage') }}</a>
-                </Button>
-                <Button v-if="a.pdfUrlUpstream" as-child variant="outline" size="sm">
-                  <a :href="safeHref(a.pdfUrlUpstream)" target="_blank" rel="noopener">{{ $t('objektDetail.announcementOriginal') }}</a>
-                </Button>
-              </div>
-              <p class="text-xs text-muted-foreground">{{ $t('objektDetail.sourcesDisclaimerText') }}</p>
-            </CardContent>
-          </Card>
+          <CostCalculator v-if="a.country === 'de'" :market-value-eur="a.marketValueEur" :region="a.region" />
 
-          <Card v-if="a.country === 'de'">
-            <CardContent class="space-y-2">
-              <h2 class="text-base font-semibold">{{ $t('objektDetail.safetyNoticeTitle') }}</h2>
-              <p class="text-xs text-muted-foreground leading-relaxed">{{ $t('objektDetail.safetyNoticeText') }}</p>
-            </CardContent>
-          </Card>
+          <DetailSectionCard v-if="groupedAttachments.length > 0" :title="$t('objektDetail.filesTitle')">
+            <div class="flex flex-wrap gap-2">
+              <Button v-for="{ att, groupLabel } in flatAttachments" :key="att.fileId" as-child variant="outline" size="sm">
+                <a :href="safeHref(att.proxyUrl)" target="_blank" rel="noopener">
+                  {{ att.label || att.filename || groupLabel }}
+                </a>
+              </Button>
+            </div>
+          </DetailSectionCard>
+
+          <DetailSectionCard :title="$t('objektDetail.sourcesDisclaimerTitle')">
+            <div v-if="a.detailUrlUpstream || a.pdfUrlUpstream" class="mb-2 flex flex-wrap gap-2">
+              <Button v-if="a.detailUrlUpstream" as-child variant="outline" size="sm">
+                <a :href="safeHref(a.detailUrlUpstream)" target="_blank" rel="noopener">{{ $t('objektDetail.openDetailPage') }}</a>
+              </Button>
+              <Button v-if="a.pdfUrlUpstream" as-child variant="outline" size="sm">
+                <a :href="safeHref(a.pdfUrlUpstream)" target="_blank" rel="noopener">{{ $t('objektDetail.announcementOriginal') }}</a>
+              </Button>
+            </div>
+            <p class="text-xs text-muted-foreground">{{ $t('objektDetail.sourcesDisclaimerText') }}</p>
+          </DetailSectionCard>
+
+          <DetailSectionCard v-if="a.country === 'de'" :title="$t('objektDetail.safetyNoticeTitle')">
+            <p class="text-xs text-muted-foreground leading-relaxed">{{ $t('objektDetail.safetyNoticeText') }}</p>
+          </DetailSectionCard>
         </aside>
       </div>
 
@@ -514,12 +444,9 @@ useHead(() => ({
           <div class="lg:col-span-3">
             <AuctionDetailMap :lat="a.lat" :lng="a.lng" :label="a.address ?? undefined" :country="a.country" />
           </div>
-          <Card class="lg:col-span-2">
-            <CardContent>
-              <h3 class="text-sm font-semibold mb-3">{{ $t('objektDetail.nearbyPlaces') }}</h3>
-              <PremiumFeatureLock :rows="3" />
-            </CardContent>
-          </Card>
+          <DetailSectionCard class="lg:col-span-2" :title="$t('objektDetail.nearbyPlaces')">
+            <PremiumFeatureLock :rows="3" />
+          </DetailSectionCard>
         </div>
       </section>
     </template>
