@@ -226,7 +226,7 @@ services:
       SERVICE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
       POSTGREST_URL: http://rest:3000
       PGRST_JWT_SECRET: ${SUPABASE_JWT_SECRET}
-      DATABASE_URL: postgres://postgres:${SUPABASE_DB_PASSWORD}@db:5432/postgres
+      DATABASE_URL: postgres://supabase_storage_admin:${SUPABASE_DB_PASSWORD}@db:5432/postgres
       # Hard ceiling for a single archived blob. Supabase's stock default
       # (50 MiB) is sized for image hosting; the raw archive stores full
       # scanned Gutachten PDFs (WP-2), which routinely run larger. Anything

@@ -67,6 +67,10 @@ CREATE TABLE IF NOT EXISTS auction_observations (
 CREATE INDEX IF NOT EXISTS idx_obs_country_region_time ON auction_observations (country, region, captured_at DESC);
 CREATE INDEX IF NOT EXISTS idx_obs_platform_zvgid_time ON auction_observations (platform, external_id, captured_at DESC);
 CREATE INDEX IF NOT EXISTS idx_obs_az_time ON auction_observations (authority, case_number, captured_at DESC);
+-- Server-intern befüllt, aber trotzdem RLS an (ohne Policies, Default-Deny) —
+-- sonst läse/schriebe PostgREST-anon/authenticated direkt mit; der
+-- Backend-Zugriff läuft als Table-Owner und umgeht RLS ohnehin.
+ALTER TABLE auction_observations ENABLE ROW LEVEL SECURITY;
 
 -- Phase 3: alert subscriptions (one enabled saved search = one subscription,
 -- toggled via server/api/alerts/[savedSearchId].put.ts) + the dedup ledger
@@ -92,7 +96,11 @@ CREATE TABLE IF NOT EXISTS notified_matches (
   notified_at             timestamptz NOT NULL DEFAULT now(),
   UNIQUE (alert_subscription_id, platform, external_id)
 );
--- notified_matches: no RLS — server-internal only, never exposed to a client.
+-- notified_matches: server-internal only, but still exposed to PostgREST's
+-- anon/authenticated roles by default while RLS is off. Enable it with no
+-- policies (default-deny for those roles); the backend connects as the
+-- table owner (postgres), which bypasses RLS, so app access is unaffected.
+ALTER TABLE notified_matches ENABLE ROW LEVEL SECURITY;
 
 -- Phase 4: lawyer referral (pay-per-lead, the lawyer pays a commission per
 -- inquiry). `lawyers` is an admin-maintained catalog (CRUD under
@@ -118,6 +126,10 @@ CREATE TABLE IF NOT EXISTS lawyers (
   created_at        timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_lawyers_countries ON lawyers USING gin (countries);
+-- No policies: PostgREST's anon/authenticated roles get default-deny; public
+-- reads keep going through the server-filtered server/api/lawyers.get.ts,
+-- which connects as the table owner (postgres) and so bypasses RLS.
+ALTER TABLE lawyers ENABLE ROW LEVEL SECURITY;
 
 -- One row per inquiry a logged-in user sends to a lawyer via
 -- server/api/lawyer-inquiries/index.post.ts — the billing record for that
@@ -143,8 +155,6 @@ CREATE INDEX IF NOT EXISTS idx_inquiries_user_time ON lawyer_inquiries (user_id,
 ALTER TABLE lawyer_inquiries ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS own_rows ON lawyer_inquiries;
 CREATE POLICY own_rows ON lawyer_inquiries FOR ALL USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
--- lawyers: no RLS — catalog/config table, public read is server-filtered
--- (active + public-safe fields only), writes are admin-only (settings-auth).
 
 -- Phase 5: self-service API keys for the Daten-API (/api/data/v1/*, see
 -- server/utils/api-key.ts + server/middleware/data-api-auth.ts). Plaintext
@@ -173,7 +183,10 @@ CREATE TABLE IF NOT EXISTS api_usage (
   count       bigint NOT NULL DEFAULT 0,
   PRIMARY KEY (api_key_id, day)
 );
--- api_usage: no RLS — server-internal counting, never exposed directly to a client.
+-- api_usage: server-internal counting, but still needs RLS enabled (no
+-- policies, default-deny) so PostgREST's anon/authenticated roles can't read
+-- or write it — the backend connects as the table owner and bypasses RLS.
+ALTER TABLE api_usage ENABLE ROW LEVEL SECURITY;
 
 -- WP-1: Terminologie-Rename (DE/ZVG-Feldnamen -> neutrales Englisch). Reiner
 -- Rename, keine Verhaltensänderung — betrifft nur bereits existierende
@@ -283,7 +296,11 @@ CREATE TABLE IF NOT EXISTS raw_captures (
 CREATE INDEX IF NOT EXISTS idx_capt_identity_time ON raw_captures (platform, external_id, captured_at DESC);
 CREATE INDEX IF NOT EXISTS idx_capt_az_time       ON raw_captures (authority, case_number, captured_at DESC);
 CREATE INDEX IF NOT EXISTS idx_capt_hash          ON raw_captures (content_hash);
--- Kein RLS: server-intern, nie clientseitig exponiert (wie auction_observations).
+-- Server-intern, nie clientseitig exponiert — trotzdem RLS aktivieren (ohne
+-- Policies, also Default-Deny), sonst liest/schreibt PostgREST-anon/authenticated
+-- munter mit; der Backend-Zugriff läuft als Table-Owner und umgeht RLS ohnehin.
+ALTER TABLE raw_blobs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE raw_captures ENABLE ROW LEVEL SECURITY;
 
 -- WP-8: i18n Baustein B (Content-Übersetzung). content_hash = sha256 über
 -- {title, description} (server/utils/raw-archive.ts's sha256Hex, siehe
@@ -300,6 +317,9 @@ CREATE TABLE IF NOT EXISTS content_translations (
   at            timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (content_hash, lang)
 );
+-- RLS ohne Policies (Default-Deny): sperrt PostgREST-anon/authenticated aus,
+-- der Backend-Zugriff läuft als Table-Owner und umgeht RLS ohnehin.
+ALTER TABLE content_translations ENABLE ROW LEVEL SECURITY;
 
 -- Datenqualitäts-Offensive: strukturierte "aktueller Zustand pro Auktion"-
 -- Tabelle, additiv neben der bestehenden JSON-Snapshot-Pipeline
@@ -347,5 +367,7 @@ CREATE INDEX IF NOT EXISTS idx_auctions_country_region ON auctions (country, reg
 CREATE INDEX IF NOT EXISTS idx_auctions_property_type ON auctions (property_type);
 CREATE INDEX IF NOT EXISTS idx_auctions_living_area ON auctions (living_area_sqm);
 CREATE INDEX IF NOT EXISTS idx_auctions_land_area ON auctions (land_area_sqm);
--- Kein RLS: server-intern befüllt, gleiches Muster wie auction_observations
--- (öffentliche Lese-APIs bleiben vorerst auf dem JSON-Snapshot).
+-- Server-intern befüllt (öffentliche Lese-APIs bleiben vorerst auf dem
+-- JSON-Snapshot) — RLS trotzdem an, ohne Policies (Default-Deny), sonst
+-- läse/schriebe PostgREST-anon/authenticated direkt mit.
+ALTER TABLE auctions ENABLE ROW LEVEL SECURITY;
