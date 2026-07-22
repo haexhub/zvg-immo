@@ -1,6 +1,7 @@
 import type { Auction, CrawlResult } from '~/types/auction'
 import { MULTI_PLATFORM } from '~/lib/auction-constants'
 import { deriveMarketValueEur, getRates } from '../utils/exchange-rate'
+import { COUNTRY_NAMES } from '../utils/countries'
 import type { CrawlOptions, PlatformCrawler, RegionInfo } from './types'
 import { zvgPortalCrawler } from './zvg-portal'
 import { boeCrawler } from './boe'
@@ -79,32 +80,6 @@ export interface CountryEntry {
   /** Localised display name (German). */
   name: string
   regions: RegionEntry[]
-}
-
-const COUNTRY_NAMES: Record<string, string> = {
-  de: 'Deutschland',
-  at: 'Österreich',
-  es: 'Spanien',
-  it: 'Italien',
-  cz: 'Tschechien',
-  pl: 'Polen',
-  be: 'Belgien',
-  hu: 'Ungarn',
-  lt: 'Litauen',
-  ba: 'Bosnien-Herzegowina',
-  se: 'Schweden',
-  fi: 'Finnland',
-  dk: 'Dänemark',
-  fr: 'Frankreich',
-  is: 'Island',
-  ca: 'Kanada',
-  ee: 'Estland',
-  lv: 'Lettland',
-  pt: 'Portugal',
-  si: 'Slowenien',
-  gr: 'Griechenland',
-  gb: 'Vereinigtes Königreich',
-  us: 'USA',
 }
 
 /**
