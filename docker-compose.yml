@@ -227,7 +227,13 @@ services:
       POSTGREST_URL: http://rest:3000
       PGRST_JWT_SECRET: ${SUPABASE_JWT_SECRET}
       DATABASE_URL: postgres://postgres:${SUPABASE_DB_PASSWORD}@db:5432/postgres
-      FILE_SIZE_LIMIT: 52428800
+      # Hard ceiling for a single archived blob. Supabase's stock default
+      # (50 MiB) is sized for image hosting; the raw archive stores full
+      # scanned Gutachten PDFs (WP-2), which routinely run larger. Anything
+      # over the limit is rejected by storage-api and re-fails on every
+      # refresh run, silently never entering the archive. Keep this in sync
+      # with the production value in ansible#61.
+      FILE_SIZE_LIMIT: 524288000
       STORAGE_BACKEND: file
       FILE_STORAGE_BACKEND_PATH: /var/lib/storage
       TENANT_ID: stub
