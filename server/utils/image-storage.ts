@@ -18,6 +18,15 @@ function bucketName(): string | null {
   return (useRuntimeConfig().imagesBucket as string | undefined) || null
 }
 
+/**
+ * Whether an images bucket is configured. Lets callers skip the work of
+ * reading files off disk just to hand them to a `uploadImage` that would
+ * no-op anyway (the default, until the infra step creates the bucket).
+ */
+export function imagesBucketConfigured(): boolean {
+  return bucketName() !== null
+}
+
 function extOf(key: string): string {
   return (key.split('.').pop() ?? '').toLowerCase()
 }

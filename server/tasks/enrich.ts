@@ -40,7 +40,7 @@ import {
   readExtractionCache,
   writeExtractionCache,
 } from '../utils/extraction-cache'
-import { uploadImage } from '../utils/image-storage'
+import { imagesBucketConfigured, uploadImage } from '../utils/image-storage'
 import { interleaveByPlatform } from '../utils/interleave-by-platform'
 import { isSafePathSegment } from '../utils/path-segment'
 import { archiveAuction } from '../utils/raw-archive'
@@ -415,10 +415,13 @@ async function runEnrich() {
             // Mirror the freshly written files into the images bucket (WP-4) so
             // /api/auction-image can fall back to Supabase once the local cache
             // is gone. Best-effort — uploadImage never throws and no-ops
-            // without a configured bucket.
-            for (const name of photos) {
-              const bytes = await readFile(join(destDir, name))
-              await uploadImage(bytes, `${a.platform}/${a.externalId}/${name}`)
+            // without a configured bucket; skip re-reading the files off disk
+            // entirely in that (default) case.
+            if (imagesBucketConfigured()) {
+              for (const name of photos) {
+                const bytes = await readFile(join(destDir, name))
+                await uploadImage(bytes, `${a.platform}/${a.externalId}/${name}`)
+              }
             }
           } catch (err) {
             console.warn(

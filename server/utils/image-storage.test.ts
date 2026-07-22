@@ -8,7 +8,21 @@ const uploadMock = vi.fn(async (..._args: unknown[]): Promise<{ error: { message
 }))
 const fakeSupabase = { storage: { from: vi.fn(() => ({ upload: uploadMock })) } }
 
-const { imagePublicUrl, uploadImage } = await import('./image-storage')
+const { imagePublicUrl, imagesBucketConfigured, uploadImage } = await import('./image-storage')
+
+describe('imagesBucketConfigured', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('is false without a bucket name', () => {
+    vi.stubGlobal('useRuntimeConfig', () => ({ imagesBucket: '' }))
+    expect(imagesBucketConfigured()).toBe(false)
+  })
+
+  it('is true with a bucket name', () => {
+    vi.stubGlobal('useRuntimeConfig', () => ({ imagesBucket: 'zvg-immo-images' }))
+    expect(imagesBucketConfigured()).toBe(true)
+  })
+})
 
 describe('imagePublicUrl', () => {
   afterEach(() => vi.unstubAllGlobals())
