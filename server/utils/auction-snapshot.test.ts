@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Auction } from '~/types/auction'
 import { mergePreservedDetail, normalizeLegacyAuction } from './auction-snapshot'
+
+vi.mock('./db', () => ({ getPool: vi.fn() }))
 
 function auction(overrides: Partial<Auction> = {}): Auction {
   return {
@@ -263,5 +265,114 @@ describe('normalizeLegacyAuction — pre-WP-1 snapshot field names', () => {
     const mixed: Record<string, unknown> = { description: 'Neu', beschreibung: 'Alt' }
     normalizeLegacyAuction(mixed)
     expect(mixed.description).toBe('Neu')
+  })
+})
+
+// readAuctionSnapshot()/writeAuctionSnapshot() are backed by Postgres
+// (`auction_snapshot` table, WP-5) with an in-process memoized cache, same
+// pattern as extraction-cache.ts. Each test re-imports the module fresh to
+// isolate that module-scope state.
+describe('readAuctionSnapshot / writeAuctionSnapshot (Postgres-backed)', () => {
+  afterEach(() => {
+    vi.resetModules()
+  })
+
+  function makeFakePool(rows: Array<{ platform: string; external_id: string; auction: Auction }> = []) {
+    const upserted: Array<{ platform: string; external_id: string; auction: Auction }> = []
+    const query = vi.fn(async (sql: string, params: unknown[] = []) => {
+      if (sql.includes('SELECT platform, external_id, auction FROM auction_snapshot')) {
+        return { rows, rowCount: rows.length }
+      }
+      if (sql.includes('INSERT INTO auction_snapshot')) {
+        for (let i = 0; i < params.length; i += 3) {
+          upserted.push({
+            platform: params[i] as string,
+            external_id: params[i + 1] as string,
+            auction: JSON.parse(params[i + 2] as string),
+          })
+        }
+        return { rows: [], rowCount: params.length / 3 }
+      }
+      throw new Error(`unexpected query: ${sql}`)
+    })
+    return { query, upserted }
+  }
+
+  it('returns an empty snapshot when Postgres is not configured', async () => {
+    const { getPool } = await import('./db')
+    vi.mocked(getPool).mockReturnValue(null)
+    const { readAuctionSnapshot } = await import('./auction-snapshot')
+
+    await expect(readAuctionSnapshot()).resolves.toEqual({})
+  })
+
+  it('loads every row from Postgres on first call', async () => {
+    const { getPool } = await import('./db')
+    const stored = auction({ description: 'Vom Vorlauf' })
+    const pool = makeFakePool([{ platform: 'zvg-portal', external_id: '7265', auction: stored }])
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { readAuctionSnapshot } = await import('./auction-snapshot')
+
+    const snapshot = await readAuctionSnapshot()
+    expect(snapshot['zvg-portal:7265']).toEqual(stored)
+  })
+
+  it('serves subsequent calls from memory without re-querying Postgres', async () => {
+    const { getPool } = await import('./db')
+    const pool = makeFakePool([{ platform: 'zvg-portal', external_id: '7265', auction: auction() }])
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { readAuctionSnapshot } = await import('./auction-snapshot')
+
+    await readAuctionSnapshot()
+    await readAuctionSnapshot()
+
+    expect(pool.query).toHaveBeenCalledTimes(1)
+  })
+
+  it('is a no-op towards Postgres without a configured pool, but still updates the in-process cache', async () => {
+    const { getPool } = await import('./db')
+    vi.mocked(getPool).mockReturnValue(null)
+    const { readAuctionSnapshot, writeAuctionSnapshot } = await import('./auction-snapshot')
+
+    const fresh = auction({ description: 'Frisch' })
+    await writeAuctionSnapshot([fresh])
+
+    const snapshot = await readAuctionSnapshot()
+    expect(snapshot['test:42']).toEqual(fresh)
+  })
+
+  it('merges the fresh auction with the previous snapshot entry (mergePreservedDetail)', async () => {
+    const { getPool } = await import('./db')
+    const prev = auction({ attachments: [{ kind: 'photo', label: 'Foto', filename: 'f.jpg', sizeBytes: null, fileId: '1', proxyUrl: '/x' }] })
+    const pool = makeFakePool([{ platform: 'test', external_id: '42', auction: prev }])
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { writeAuctionSnapshot } = await import('./auction-snapshot')
+
+    const fresh = auction() // no attachments on the fresh crawl
+    await writeAuctionSnapshot([fresh])
+
+    expect(pool.upserted[0]?.auction.attachments).toEqual(prev.attachments)
+  })
+
+  it('never throws when the upsert query fails', async () => {
+    const { getPool } = await import('./db')
+    vi.mocked(getPool).mockReturnValue({ query: vi.fn().mockRejectedValue(new Error('connection reset')) } as never)
+    const { writeAuctionSnapshot } = await import('./auction-snapshot')
+
+    await expect(writeAuctionSnapshot([auction()])).resolves.toBeUndefined()
+  })
+
+  it('leaves an untouched platform\'s previous entry in place (row-level upsert, no carry-forward needed)', async () => {
+    const { getPool } = await import('./db')
+    const otherPlatform = auction({ platform: 'other', externalId: '99' })
+    const pool = makeFakePool([{ platform: 'other', external_id: '99', auction: otherPlatform }])
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { readAuctionSnapshot, writeAuctionSnapshot } = await import('./auction-snapshot')
+
+    await writeAuctionSnapshot([auction()]) // only platform 'test' crawled this run
+
+    const snapshot = await readAuctionSnapshot()
+    expect(snapshot['other:99']).toEqual(otherPlatform)
+    expect(snapshot['test:42']).toBeDefined()
   })
 })

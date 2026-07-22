@@ -1,32 +1,29 @@
 // Persists the enrich task's final view of every crawled auction (already
-// decorated with extraction + Verkehrswert overlays) to disk so the detail
-// page can serve a shareable URL without re-crawling. Staleness is bounded by
-// the enrich task interval (cron `30 */6 * * *`) — fresh enough for a
-// listing whose key data doesn't change once published.
+// decorated with extraction + Verkehrswert overlays) to Postgres
+// (`auction_snapshot` table, WP-5: Postgres is the sole serving store, no
+// local JSON file) so the detail page can serve a shareable URL without
+// re-crawling. Staleness is bounded by the enrich task interval (cron
+// `30 */6 * * *`) — fresh enough for a listing whose key data doesn't change
+// once published. No-op without a configured pool, same graceful-degrade as
+// current-auctions.ts/extraction-cache.ts.
 //
 // Detail fields (attachments/description/pdfUrl/…) come from enrichOne, which
 // the enrich task runs only for auctions not yet in the extraction cache. On
 // subsequent runs those fields are empty on the fresh crawl, so we merge with
 // the previous snapshot to keep the enriched values from the first crawl.
 
-import { join } from 'node:path'
+import type { Pool } from 'pg'
 import type { Auction } from '~/types/auction'
-import { readJsonCache, writeJsonCache } from './json-cache'
+import { getPool } from './db'
 import { cacheKey } from './verkehrswert-cache'
-
-const SNAPSHOT_PATH = join(process.cwd(), '.cache_zvg', 'auctions.json')
 
 export type AuctionSnapshot = Record<string, Auction>
 
-// WP-1 renamed the Auction fields (DE/ZVG -> neutral English), but the snapshot
-// lives on a persisted volume (docker-compose: geocode-cache:/app/.cache_zvg),
-// so entries written before the rename survive the deploy with the old names.
-// Consumers (detail endpoint, summary, enrich merge) read the new names and
-// would otherwise see `undefined` — and since `detailFetchedAt` (unchanged
-// name) is preserved, the enrich task won't re-fetch, so lost detail data
-// (description, …) wouldn't self-heal. Map the old names on read; a full crawl
-// cycle rewrites entries with the new names and this becomes a no-op. Safe to
-// drop once no pre-WP-1 snapshot can still be in play.
+// WP-1 renamed the Auction fields (DE/ZVG -> neutral English) while the
+// snapshot still lived on the JSON volume, so an entry written before the
+// rename could carry the old names. Kept for any leftover entry migrated in
+// during the WP-5 cutover to Postgres; a full crawl cycle rewrites every
+// entry with the new names and this becomes a no-op.
 const LEGACY_FIELD_MAP: Record<string, keyof Auction> = {
   zvgId: 'externalId',
   aktenzeichen: 'caseNumber',
@@ -53,10 +50,34 @@ export function normalizeLegacyAuction(entry: Record<string, unknown>): void {
   }
 }
 
+// Memoized for the process's lifetime: the enrich task and every API request
+// share this same object, so a write (writeAuctionSnapshot below) is
+// immediately visible everywhere without re-querying Postgres. Reset to null
+// on a failed load so the next call retries instead of caching the failure.
+// Same pattern as extraction-cache.ts's readExtractionCache.
+let cachePromise: Promise<AuctionSnapshot> | null = null
+
 export async function readAuctionSnapshot(): Promise<AuctionSnapshot> {
-  const snapshot = await readJsonCache<AuctionSnapshot>(SNAPSHOT_PATH, () => ({}), 'auction-snapshot')
-  for (const entry of Object.values(snapshot)) {
-    normalizeLegacyAuction(entry as unknown as Record<string, unknown>)
+  if (!cachePromise) cachePromise = loadAuctionSnapshot()
+  try {
+    return await cachePromise
+  } catch (err) {
+    console.warn(`[auction-snapshot] read failed: ${(err as Error).message}`)
+    cachePromise = null
+    return {}
+  }
+}
+
+async function loadAuctionSnapshot(): Promise<AuctionSnapshot> {
+  const db = getPool()
+  if (!db) return {}
+  const { rows } = await db.query<{ platform: string; external_id: string; auction: Auction }>(
+    'SELECT platform, external_id, auction FROM auction_snapshot',
+  )
+  const snapshot: AuctionSnapshot = {}
+  for (const row of rows) {
+    normalizeLegacyAuction(row.auction as unknown as Record<string, unknown>)
+    snapshot[cacheKey(row.platform, row.external_id)] = row.auction
   }
   return snapshot
 }
@@ -158,23 +179,55 @@ export function mergePreservedDetail(next: Auction, prev: Auction): Auction {
 }
 
 export async function writeAuctionSnapshot(auctions: Auction[]): Promise<void> {
+  if (auctions.length === 0) return
   const previous = await readAuctionSnapshot()
-  const map: AuctionSnapshot = {}
-  const platformsSeen = new Set<string>()
+  const merged: AuctionSnapshot = {}
   for (const a of auctions) {
-    platformsSeen.add(a.platform)
     const key = cacheKey(a.platform, a.externalId)
     const prev = previous[key]
-    map[key] = prev ? mergePreservedDetail(a, prev) : a
+    merged[key] = prev ? mergePreservedDetail(a, prev) : a
   }
-  // A platform that is entirely absent from this crawl most likely failed
-  // (e.g. BOE captcha cooldown) — keep its previous entries instead of
-  // dropping them and losing the enrichOne detail data for good. Deliberate
-  // trade-off: a legitimately empty platform keeps stale entries, which is
-  // better than permanent data loss during an outage.
-  for (const [key, prev] of Object.entries(previous)) {
-    const platform = key.split(':')[0]!
-    if (!platformsSeen.has(platform)) map[key] = prev
+  // Update the shared in-process cache immediately, mirroring
+  // extraction-cache.ts's writeExtractionCache. A platform absent from this
+  // crawl (e.g. BOE captcha cooldown) simply isn't touched here or in
+  // Postgres (row-level upsert vs. the old whole-file overwrite), so its
+  // previous entry survives without any explicit carry-forward.
+  Object.assign(previous, merged)
+  await upsertAuctionSnapshot(Object.values(merged))
+}
+
+// 3 params per row (platform, external_id, auction jsonb) × 500 rows = 1500
+// params, well under Postgres' 65535-per-query limit — a smaller chunk than
+// extraction_cache's 5000 since a full Auction blob (attachments, photoUrls,
+// description) is much larger per row than an AuctionExtraction.
+const CHUNK_SIZE = 500
+
+async function upsertAuctionSnapshot(rows: Auction[]): Promise<void> {
+  const db = getPool()
+  if (!db) return
+  if (rows.length === 0) return
+  try {
+    for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+      await upsertChunk(db, rows.slice(i, i + CHUNK_SIZE))
+    }
+  } catch (err) {
+    console.warn(`[auction-snapshot] upsert failed: ${(err as Error).message}`)
   }
-  await writeJsonCache(SNAPSHOT_PATH, map)
+}
+
+async function upsertChunk(db: Pool, rows: Auction[]): Promise<void> {
+  const values: unknown[] = []
+  const tuples: string[] = []
+  for (const a of rows) {
+    const placeholders = [1, 2, 3].map((n) => `$${values.length + n}`)
+    tuples.push(`(${placeholders.join(', ')})`)
+    values.push(a.platform, a.externalId, JSON.stringify(a))
+  }
+  await db.query(
+    `
+    INSERT INTO auction_snapshot (platform, external_id, auction) VALUES ${tuples.join(', ')}
+    ON CONFLICT (platform, external_id) DO UPDATE SET auction = EXCLUDED.auction, updated_at = now()
+    `,
+    values,
+  )
 }

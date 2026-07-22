@@ -402,3 +402,34 @@ CREATE TABLE IF NOT EXISTS extraction_cache (
 -- RLS ohne Policies (Default-Deny): sperrt PostgREST-anon/authenticated aus,
 -- der Backend-Zugriff läuft als Table-Owner und umgeht RLS ohnehin.
 ALTER TABLE extraction_cache ENABLE ROW LEVEL SECURITY;
+
+-- WP-5: Read-Path auf Postgres. Ersetzt die beiden lokalen JSON-Caches
+-- (.cache_zvg/list/<country>-<region>.json, .cache_zvg/auctions.json) als
+-- alleinige Serving-Quelle (Design-Entscheidung E1) — Postgres ist jetzt der
+-- Serving-Store, nicht mehr nur ein Filter-Spiegel wie `auctions` oben.
+--
+-- list_cache: ein Blob pro Region, exakt wie die bisherige Datei — von
+-- refresh.ts in seiner bestehenden Pro-Portal-Cadence geschrieben (siehe
+-- crawl-cadence.ts), keine Aktualitäts-Regression gegenüber dem Datei-Stand.
+CREATE TABLE IF NOT EXISTS list_cache (
+  country     text NOT NULL,
+  region      text NOT NULL,
+  result      jsonb NOT NULL,
+  fetched_at  timestamptz NOT NULL,
+  PRIMARY KEY (country, region)
+);
+ALTER TABLE list_cache ENABLE ROW LEVEL SECURITY;
+
+-- auction_snapshot: ein vollständiger Auction-Blob pro (platform, external_id),
+-- analog extraction_cache — trägt mergePreservedDetail's Merge-Semantik über
+-- mehrere enrich-Läufe hinweg 1:1 weiter (die Funktion selbst ist unverändert,
+-- nur die Persistenz darunter wechselt). Geschrieben von enrich.ts genau dort,
+-- wo bisher writeAuctionSnapshot(result.auctions) lief.
+CREATE TABLE IF NOT EXISTS auction_snapshot (
+  platform      text NOT NULL,
+  external_id   text NOT NULL,
+  auction       jsonb NOT NULL,
+  updated_at    timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (platform, external_id)
+);
+ALTER TABLE auction_snapshot ENABLE ROW LEVEL SECURITY;
