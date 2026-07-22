@@ -371,3 +371,34 @@ CREATE INDEX IF NOT EXISTS idx_auctions_land_area ON auctions (land_area_sqm);
 -- JSON-Snapshot) — RLS trotzdem an, ohne Policies (Default-Deny), sonst
 -- läse/schriebe PostgREST-anon/authenticated direkt mit.
 ALTER TABLE auctions ENABLE ROW LEVEL SECURITY;
+
+-- WP-3: Zustand/Ausstattung (WP-1) + Preis-/Gebotsfelder (WP-2) additiv in den
+-- bestehenden Filter-Spiegel aufgenommen. ADD COLUMN IF NOT EXISTS statt die
+-- CREATE TABLE-Spaltenliste zu erweitern, da runMigrations() dieses schema.sql
+-- bei jedem Boot komplett ausführt und CREATE TABLE IF NOT EXISTS in einer
+-- bereits existierenden Prod-Tabelle keine Spalten nachträgt.
+ALTER TABLE auctions ADD COLUMN IF NOT EXISTS condition jsonb;
+ALTER TABLE auctions ADD COLUMN IF NOT EXISTS features text[];
+ALTER TABLE auctions ADD COLUMN IF NOT EXISTS starting_bid numeric;
+ALTER TABLE auctions ADD COLUMN IF NOT EXISTS current_bid numeric;
+ALTER TABLE auctions ADD COLUMN IF NOT EXISTS source_security_deposit numeric;
+ALTER TABLE auctions ADD COLUMN IF NOT EXISTS security_deposit numeric;
+ALTER TABLE auctions ADD COLUMN IF NOT EXISTS bidding_notes text;
+
+-- WP-3: vollständiger Extraktions-Cache-Blob (server/utils/extraction-cache.ts)
+-- — Postgres ist die einzige Persistenz, kein lokales JSON-File mehr. Eigene
+-- Tabelle statt einer weiteren Spalte auf `auctions`: writeExtractionCache()
+-- kennt nur platform+externalId+die AuctionExtraction, nicht das volle
+-- Auction-Objekt mit den NOT-NULL-Feldern (country/region/authority/
+-- case_number), die ein Insert in `auctions` bräuchte. Erstschreiber gewinnt
+-- — kein TTL, keine Historie nötig.
+CREATE TABLE IF NOT EXISTS extraction_cache (
+  platform      text NOT NULL,
+  external_id   text NOT NULL,
+  extraction    jsonb NOT NULL,
+  updated_at    timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (platform, external_id)
+);
+-- RLS ohne Policies (Default-Deny): sperrt PostgREST-anon/authenticated aus,
+-- der Backend-Zugriff läuft als Table-Owner und umgeht RLS ohnehin.
+ALTER TABLE extraction_cache ENABLE ROW LEVEL SECURITY;
