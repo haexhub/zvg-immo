@@ -81,25 +81,16 @@ export default defineNuxtConfig({
     // migrations are skipped (see db.ts) rather than failing hard.
     //   NUXT_DATABASE_URL=postgres://postgres:<pw>@db:5432/postgres
     databaseUrl: '',
-    // G1 Roh-Archiv (WP-3): S3-compatible primary bucket for archived crawl
-    // snapshots (server/utils/raw-archive.ts, s3-uploader.ts). Empty →
+    // G1 Roh-Archiv (WP-3): Supabase Storage bucket for archived crawl
+    // snapshots (server/utils/raw-archive.ts, storage-uploader.ts). Empty →
     // archiving stays local-only (blobs pile up in the outbox, nothing
     // uploads) — same graceful-degrade pattern as extractLlm.baseUrl above.
-    // Also requires databaseUrl (the raw_blobs/raw_captures index lives in
-    // Postgres, see server/db/schema.sql).
-    s3: {
-      //   NUXT_S3_ENDPOINT=https://s3.eu-central-003.backblazeb2.com
-      endpoint: '',
-      //   NUXT_S3_BUCKET=zvg-immo-raw-archive
-      bucket: '',
-      //   NUXT_S3_ACCESS_KEY=...
-      accessKey: '',
-      //   NUXT_S3_SECRET_KEY=...
-      secretKey: '',
-      // Some S3-compatible providers ignore this; pass anything non-empty.
-      //   NUXT_S3_REGION=eu-central-003
-      region: '',
-    },
+    // Uploads via the same service-role client as supabaseUrl/
+    // supabaseServiceRoleKey below (server/utils/supabase.ts). Also requires
+    // databaseUrl (the raw_blobs/raw_captures index lives in Postgres, see
+    // server/db/schema.sql).
+    //   NUXT_STORAGE_BUCKET=zvg-immo-raw-archive
+    storageBucket: '',
     // Local outbox for not-yet-uploaded archive blobs (docker-compose.yml
     // volume). Empty → defaults to .cache_zvg-style local dir under cwd.
     //   NUXT_RAW_OUTBOX_DIR=/app/.raw_outbox

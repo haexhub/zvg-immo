@@ -6,7 +6,7 @@
 // server/utils/db.ts) — Blobs bleiben dann ungeschrieben, kein halbes Archiv.
 //
 // Schreibpfad: Bytes zuerst in eine lokale Outbox (schnell, netzunabhängig);
-// server/utils/s3-uploader.ts drainiert sie später nach Primary-S3.
+// server/utils/storage-uploader.ts drainiert sie später nach Supabase Storage.
 
 import { createHash } from 'node:crypto'
 import { mkdir, rename, writeFile } from 'node:fs/promises'

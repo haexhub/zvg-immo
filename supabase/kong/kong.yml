@@ -21,10 +21,10 @@ acls:
     group: admin
 
 ###
-### Routes — only what Phase 1 needs: GoTrue (auth) + PostgREST (rest).
-### No storage/realtime/functions/dashboard routes — those services aren't
-### part of this stack (see docker-compose.yml). Studio/meta are reached
-### directly over the compose network, not proxied through Kong.
+### Routes — GoTrue (auth), PostgREST (rest) and storage-api (storage).
+### No realtime/functions/dashboard routes — those services aren't part of
+### this stack (see docker-compose.yml). Studio/meta are reached directly
+### over the compose network, not proxied through Kong.
 ###
 services:
   # Open GoTrue routes — no apikey required (these carry their own
@@ -89,6 +89,26 @@ services:
         strip_path: true
         paths:
           - /rest/v1/
+    plugins:
+      - name: cors
+      - name: key-auth
+        config:
+          hide_credentials: false
+      - name: acl
+        config:
+          hide_groups_header: true
+          allow:
+            - admin
+            - anon
+
+  # storage-api — buckets/objects, gated the same way as rest-v1.
+  - name: storage-v1
+    url: http://storage:5000/
+    routes:
+      - name: storage-v1-all
+        strip_path: true
+        paths:
+          - /storage/v1/
     plugins:
       - name: cors
       - name: key-auth
