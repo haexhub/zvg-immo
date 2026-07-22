@@ -150,7 +150,12 @@ async function runEnrich() {
     // an LLM slot every run forever.
     const needsConditionFeaturesBackfill = (a: Auction): boolean => {
       const hit = cache[cacheKey(a.platform, a.externalId)]
-      return hit != null && hit.condition === undefined && (hit.llmFailures ?? 0) < MAX_LLM_FAILURES
+      return (
+        llmConfig != null &&
+        hit != null &&
+        (hit.condition === undefined || hit.features === undefined) &&
+        (hit.llmFailures ?? 0) < MAX_LLM_FAILURES
+      )
     }
     const eligible = result.auctions.filter(
       (a) =>
@@ -193,9 +198,11 @@ async function runEnrich() {
         const crawler = byPlatform.get(a.platform)
         const key = cacheKey(a.platform, a.externalId)
         const priorEntry = cache[key]
-        const needsCF = priorEntry
-          ? priorEntry.condition === undefined && (priorEntry.llmFailures ?? 0) < MAX_LLM_FAILURES
-          : true
+        const needsCF =
+          llmConfig != null &&
+          priorEntry != null &&
+          (priorEntry.condition === undefined || priorEntry.features === undefined) &&
+          (priorEntry.llmFailures ?? 0) < MAX_LLM_FAILURES
         const extractionMissing = !priorEntry || needsLlmRetry(a) || needsCF
 
         // Detail fetch (description + attachments) so extraction has real text

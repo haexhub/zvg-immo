@@ -55,7 +55,7 @@ const SYSTEM_PROMPT =
   'eindeutig im Text steht, gib null zurück — niemals raten. ' +
   'Gib außerdem den Zustand als eine der erlaubten Kategorien zurück, nur wenn er ' +
   'eindeutig aus dem Text hervorgeht (z.B. "kernsaniert"/"neuwertig" → neuwertig, ' +
-  '"Sanierungsstau"/"renovierungsbedürftig" → sanierungsbeduerftig), sonst null. ' +
+  '"Sanierungsstau" → sanierungsbeduerftig, "renovierungsbedürftig" → renovierungsbeduerftig), sonst null. ' +
   'Gib eine Liste erkannter Ausstattungsmerkmale zurück — nur Merkmale, die explizit ' +
   'im Text genannt werden (Negation beachten, z.B. "kein Balkon" nicht aufnehmen), ' +
   'sonst eine leere Liste. Niemals raten.'
