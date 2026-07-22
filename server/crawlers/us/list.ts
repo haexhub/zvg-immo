@@ -49,7 +49,7 @@ async function htmlFetch(url: string): Promise<string> {
 /** Raw shape of one row of the Kendo grid's embedded data (see
  *  extractGridRows) — a subset of the fields the live page actually sends;
  *  unused fields (BidCount, CustomClosedStatusLabel, …) are omitted. */
-interface RawRow {
+export interface RawRow {
   AuctionID: number
   Asset_Title: string | null
   ActualCloseTime: string | null
@@ -197,7 +197,7 @@ function extractPhotoUrls(images: unknown[] | null | undefined): string[] {
     .map(absoluteUrl)
 }
 
-function mapRow(row: RawRow, docs: ChannelDoc[], platformId: string): Auction {
+export function mapRow(row: RawRow, docs: ChannelDoc[], platformId: string): Auction {
   const externalId = String(row.AuctionID)
   const { county, state } = parseCountyState(row.Asset_Title)
   const region = state ? (US_STATE_NAMES[state] ?? state) : ''
@@ -252,6 +252,7 @@ function mapRow(row: RawRow, docs: ChannelDoc[], platformId: string): Auction {
     address: row.Address || null,
     marketValueEur,
     marketValueText,
+    startingBid: row.MinimumBid ?? null,
     auctionDateIso,
     auctionDateText,
     cancelled: row.IsPostponedOrStayed === true,

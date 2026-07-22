@@ -17,7 +17,7 @@ interface ApiMedia {
   videoId?: string | null
 }
 
-interface ApiEntry {
+export interface ApiEntry {
   id: number
   slug: string
   title: string
@@ -39,11 +39,11 @@ interface ApiEntry {
   attachments?: ApiAttachment[] | null
 }
 
-interface ApiSeller {
+export interface ApiSeller {
   displayName?: string | null
 }
 
-interface ApiResponse {
+export interface ApiResponse {
   entry: ApiEntry
   seller: ApiSeller
 }
@@ -114,7 +114,7 @@ async function fetchDetail(id: string): Promise<ApiResponse | null> {
   return (await res.json()) as ApiResponse
 }
 
-function mapDetail(id: string, data: ApiResponse, platformId: string): Auction {
+export function mapDetail(id: string, data: ApiResponse, platformId: string): Auction {
   const { entry, seller } = data
   const upstreamDescription = entry.description ? stripHtml(entry.description) : null
   const bid = entry.highestBid ?? 0
@@ -159,6 +159,8 @@ function mapDetail(id: string, data: ApiResponse, platformId: string): Auction {
     address: entry.location ?? null,
     marketValueEur: price,
     marketValueText: price != null ? `${price.toLocaleString('de-DE')} € (${priceLabel})` : null,
+    startingBid: entry.startPrice ?? null,
+    currentBid: bid > 0 ? bid : null,
     auctionDateIso: entry.auctionEnd ?? null,
     auctionDateText: formatAuctionDateText(entry.auctionEnd),
     cancelled: Boolean(entry.isCancelled) || Boolean(entry.fundsAreCanceled),

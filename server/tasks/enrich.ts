@@ -230,6 +230,17 @@ async function runEnrich() {
           livingAreaSqm: a.sourceLivingAreaSqm ?? rules.livingAreaSqm,
           rooms: a.sourceRooms ?? rules.rooms,
           units: rules.units,
+          // Structured platform value (e.g. si's Kaution) beats a regex guess,
+          // same precedence as the source*Sqm fields above. Independent of the
+          // LLM branch below — an explicit amount stated in prose doesn't need
+          // an LLM call to find, so this fills in even for mergedConfident entries.
+          securityDeposit: a.sourceSecurityDeposit ?? rules.securityDeposit,
+          // LLM-only — stays undefined unless an LLM call runs below (which
+          // only happens when rules aren't confident about type/size; a
+          // confident entry never sees this field checked, same trade-off as
+          // not spending an extra LLM slot on it — biddingNotes is a rare
+          // catch-all, not a universal per-listing fact like condition/features).
+          biddingNotes: undefined as string | null | undefined,
         }
         const mergedConfident =
           rules.confident ||
@@ -303,6 +314,8 @@ async function runEnrich() {
               livingAreaSqm: fields.livingAreaSqm ?? llm.livingAreaSqm,
               rooms: fields.rooms ?? llm.rooms,
               units: fields.units ?? llm.units,
+              securityDeposit: fields.securityDeposit ?? llm.securityDeposit,
+              biddingNotes: llm.biddingNotes,
             }
             cacheable = true
           }

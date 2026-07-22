@@ -104,6 +104,8 @@ export function mapPublication(p: SiPublication, platformId: string): Auction {
     address: buildAddress(p),
     marketValueEur: price,
     marketValueText: formatSiPrice(price),
+    startingBid: parseSiPrice(p.startingPrice),
+    sourceSecurityDeposit: parseSiPrice(p.securityPrice),
     auctionDateIso,
     auctionDateText,
     cancelled: p.status === 'canceled',

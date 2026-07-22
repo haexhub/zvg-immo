@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parsePropertyPage } from './list'
+import { mapProperty, parsePropertyPage, type Property } from './list'
 
 /** Markup mirrors the live /property/ pages (Divi + Toolset blocks). */
 function fact(label: string, value: string): string {
@@ -84,5 +84,43 @@ describe('parsePropertyPage', () => {
       lat: null,
       lng: null,
     })
+  })
+})
+
+/** Mirrors a property card parsed off a /tax-sales/…/ summary page. */
+function makeProperty(overrides: Partial<Property> = {}): Property {
+  return {
+    address: '0 Douglas Rd, Richmond Hill',
+    minTenderCad: 12500,
+    fileNo: '26-006',
+    detailUrl: null,
+    photoCount: 0,
+    thumbnailUrl: null,
+    legal: { rollNo: '19 38 070 010 77900 0000', pin: '03202-0269', legal: 'PT LT 9 PL 163', assessedCad: 143000 },
+    ...overrides,
+  }
+}
+
+describe('mapProperty', () => {
+  const pageUrl = 'https://www.ontariotaxsales.ca/tax-sales/richmond-hill-2026-07-15/'
+  const dateTime = { iso: '2026-07-15T15:00:00', label: '15.07.2026, 15:00 Uhr' }
+
+  it('sets startingBid from minTenderCad, distinct from the assessed-value marketValue', () => {
+    const a = mapProperty(makeProperty(), pageUrl, 'Richmond Hill', dateTime, 'ca-ontariotaxsales')
+    expect(a.startingBid).toBe(12500)
+    expect(a.marketValue).toBe(143000)
+    expect(a.currency).toBe('CAD')
+    expect(a.description).toContain('Mindestgebot: 12.500 CAD')
+  })
+
+  it('sets startingBid to null when minTenderCad is absent', () => {
+    const a = mapProperty(
+      makeProperty({ minTenderCad: null }),
+      pageUrl,
+      'Richmond Hill',
+      dateTime,
+      'ca-ontariotaxsales',
+    )
+    expect(a.startingBid).toBeNull()
   })
 })

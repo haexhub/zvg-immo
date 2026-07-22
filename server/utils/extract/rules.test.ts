@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractByRules } from './rules'
+import { extractByRules, findSecurityDepositEur } from './rules'
 
 describe('extractByRules', () => {
   it('extracts type and both areas for a clearly described house', () => {
@@ -117,5 +117,23 @@ describe('extractByRules — unlabeled area fallback', () => {
     })
     expect(r.livingAreaSqm).toBe(120)
     expect(r.landAreaSqm).toBe(500)
+  })
+})
+
+describe('findSecurityDepositEur', () => {
+  it('extracts an explicit amount stated next to the label', () => {
+    expect(findSecurityDepositEur('Die Sicherheitsleistung beträgt 5.000,00 EUR.')).toBe(5000)
+    expect(findSecurityDepositEur('Abweichend wird eine Sicherheitsleistung von 3000 € festgesetzt.')).toBe(3000)
+  })
+
+  it('ignores payment-routing boilerplate without a stated amount', () => {
+    const text =
+      'Kontoverbindung Sicherheitsleistung: ZZJ Hamm IBAN: DE08 3005 0000 0001 4748 16 ' +
+      'LB Hessen-Thüringen, Verwendungszweck: AG Duisburg, Geschäftszeichen, Sicherheit, Datum der Versteigerung'
+    expect(findSecurityDepositEur(text)).toBeNull()
+  })
+
+  it('returns null when the label is absent', () => {
+    expect(findSecurityDepositEur('Verkehrswert 14.800,00 €')).toBeNull()
   })
 })

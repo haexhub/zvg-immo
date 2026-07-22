@@ -52,6 +52,16 @@ const PRICE_ROWS = `
 <tr><th>Kikiáltási ár ÁFA tartalma:</th><td>27%</td></tr>
 </table>`
 
+/** Same rows as PRICE_ROWS, entity-encoded (see DETAIL_FIXTURE comment) so
+ *  enrichOne's ISO-8859-2 round-trip doesn't garble the "Becsérték"/
+ *  "Kikiáltási ár" labels it matches on. */
+const PRICE_ROWS_ASCII_SAFE = `
+<table>
+<tr><th>Becs&#233;rt&#233;k:</th><td>5 000 000 HUF</td></tr>
+<tr><th>Kiki&#225;lt&#225;si &#225;r:</th><td>3 900 000 HUF
+                    </td></tr>
+</table>`
+
 function makeAuction(overrides: Partial<Auction> = {}): Auction {
   return {
     platform: 'hu-mnv',
@@ -64,6 +74,7 @@ function makeAuction(overrides: Partial<Auction> = {}): Auction {
     address: 'Révleányvár, Ungarn',
     marketValueEur: 9800,
     marketValueText: '3.900.000 Ft',
+    startingBid: 3_900_000,
     auctionDateIso: '2026-07-27',
     auctionDateText: '2026.07.27. 21:00',
     cancelled: false,
@@ -145,6 +156,16 @@ describe('enrichOne', () => {
     expect(a.lng).toBe(22.04167)
     // No Becsérték on the page → the list price stays untouched.
     expect(a.marketValueEur).toBe(9800)
+    // startingBid is set from the list page only; enrichOne never touches it.
+    expect(a.startingBid).toBe(3_900_000)
+  })
+
+  it('keeps startingBid unchanged when a Becsérték valuation overrides marketValue', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(PRICE_ROWS_ASCII_SAFE)))
+    const a = makeAuction()
+    await enrichOne(a)
+    expect(a.marketValue).toBe(5_000_000)
+    expect(a.startingBid).toBe(3_900_000)
   })
 
   it('keeps the area out of the structured fields for built-up lots', async () => {

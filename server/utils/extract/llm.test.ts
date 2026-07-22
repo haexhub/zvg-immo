@@ -31,6 +31,8 @@ describe('clampExtraction', () => {
         livingAreaSqm: 140,
         rooms: 5,
         units: 1,
+        securityDeposit: 5000,
+        biddingNotes: 'Abweichende Sicherheitsleistung von 5.000 EUR gefordert.',
       }),
     ).toEqual({
       propertyType: 'einfamilienhaus',
@@ -38,6 +40,8 @@ describe('clampExtraction', () => {
       livingAreaSqm: 140,
       rooms: 5,
       units: 1,
+      securityDeposit: 5000,
+      biddingNotes: 'Abweichende Sicherheitsleistung von 5.000 EUR gefordert.',
     })
   })
 
@@ -59,10 +63,29 @@ describe('clampExtraction', () => {
       livingAreaSqm: null,
       rooms: null,
       units: null,
+      securityDeposit: null,
+      biddingNotes: null,
     })
   })
 
   it('drops non-numeric junk', () => {
     expect(clampExtraction({ landAreaSqm: 'big' as unknown as number }).landAreaSqm).toBeNull()
+  })
+
+  it('rejects a non-positive or absurd securityDeposit', () => {
+    expect(clampExtraction({ securityDeposit: 0 }).securityDeposit).toBeNull()
+    expect(clampExtraction({ securityDeposit: -100 }).securityDeposit).toBeNull()
+    expect(clampExtraction({ securityDeposit: 999_999_999_999 }).securityDeposit).toBeNull()
+  })
+
+  it('keeps a plausible securityDeposit', () => {
+    expect(clampExtraction({ securityDeposit: 3000 }).securityDeposit).toBe(3000)
+  })
+
+  it('trims and caps biddingNotes, nulls blank/non-string values', () => {
+    expect(clampExtraction({ biddingNotes: '  ein Hinweis  ' }).biddingNotes).toBe('ein Hinweis')
+    expect(clampExtraction({ biddingNotes: '   ' }).biddingNotes).toBeNull()
+    expect(clampExtraction({ biddingNotes: 42 as unknown as string }).biddingNotes).toBeNull()
+    expect(clampExtraction({ biddingNotes: 'x'.repeat(500) }).biddingNotes).toHaveLength(300)
   })
 })
