@@ -14,6 +14,7 @@ export default defineNuxtConfig({
     componentDir: '~/components/ui',
   },
   i18n: {
+    baseUrl: 'https://zvg.haex.cloud',
     langDir: 'locales',
     locales: [
       { code: 'de', language: 'de-DE', name: 'Deutsch', file: 'de.json' },
