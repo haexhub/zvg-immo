@@ -1,4 +1,6 @@
 import type { PropertyType } from '~/lib/property-type'
+import type { Condition } from '~/lib/condition'
+import type { Feature } from '~/lib/features'
 
 export type AttachmentKind = 'announcement' | 'photo' | 'brochure' | 'appraisal' | 'other'
 
@@ -104,6 +106,14 @@ export interface AuctionExtraction {
   rooms: number | null
   /** Number of Wohneinheiten. */
   units: number | null
+  /** LLM-only field (no rules source). `undefined` = never checked yet (older
+   *  cache entries, or a run that hit the LLM cap before reaching this
+   *  listing); `null` = checked, nothing found. Distinguishing the two lets
+   *  enrich.ts backfill it once without re-checking forever. */
+  condition?: Condition | null
+  /** LLM-only field. `undefined` = never checked yet; `[]` = checked, no
+   *  features found. Same backfill semantics as `condition`. */
+  features?: Feature[]
   source: 'rules' | 'llm'
   confidence: 'high' | 'low'
   /** How many times an LLM extraction was attempted for this listing and the

@@ -267,6 +267,8 @@ const landAreaMax = ref<number | null>(queryNum('landMax'))
 const livingAreaMin = ref<number | null>(queryNum('livMin'))
 const livingAreaMax = ref<number | null>(queryNum('livMax'))
 const categoryFilter = ref<string>(queryStr('category', ALL_SCOPE))
+const conditionFilter = ref<string>(queryStr('condition', ALL_SCOPE))
+const featuresFilter = ref<string[]>(queryList('features'))
 const onlyWithPhotos = ref(route.query.photos === '1')
 
 function setPriceBucket(min: number | null, max: number | null): void {
@@ -358,6 +360,8 @@ function clearAllFilters(): void {
   livingAreaMin.value = null
   livingAreaMax.value = null
   categoryFilter.value = ALL_SCOPE
+  conditionFilter.value = ALL_SCOPE
+  featuresFilter.value = []
   onlyWithPhotos.value = false
   includeCancelled.value = false
 }
@@ -376,6 +380,8 @@ const currentFilters = computed<AuctionFilters>(() => ({
   search: debouncedSearch.value,
   authority: authorityFilter.value,
   category: categoryFilter.value,
+  condition: conditionFilter.value,
+  features: featuresFilter.value,
   onlyWithPhotos: onlyWithPhotos.value,
   includeCancelled: includeCancelled.value,
   priceMin: numOrNull(priceMin.value),
@@ -476,13 +482,15 @@ const activeFilterCount = computed(() => {
   if (numOrNull(livingAreaMin.value) != null) n++
   if (numOrNull(livingAreaMax.value) != null) n++
   if (!isAllScope(categoryFilter.value)) n++
+  if (!isAllScope(conditionFilter.value)) n++
+  if (featuresFilter.value.length) n++
   if (onlyWithPhotos.value) n++
   if (includeCancelled.value) n++
   return n
 })
 
 watch(
-  [selectedCountries, selectedRegionKeys, debouncedSearch, authorityFilter, priceMin, priceMax, landAreaMin, landAreaMax, livingAreaMin, livingAreaMax, categoryFilter, onlyWithPhotos, includeCancelled, view],
+  [selectedCountries, selectedRegionKeys, debouncedSearch, authorityFilter, priceMin, priceMax, landAreaMin, landAreaMax, livingAreaMin, livingAreaMax, categoryFilter, conditionFilter, featuresFilter, onlyWithPhotos, includeCancelled, view],
   () => {
     const query: Record<string, string> = {}
     if (selectedCountries.value.length) query.country = selectedCountries.value.join(',')
@@ -496,6 +504,8 @@ watch(
     if (numOrNull(livingAreaMin.value) != null) query.livMin = String(numOrNull(livingAreaMin.value))
     if (numOrNull(livingAreaMax.value) != null) query.livMax = String(numOrNull(livingAreaMax.value))
     if (!isAllScope(categoryFilter.value)) query.category = categoryFilter.value
+    if (!isAllScope(conditionFilter.value)) query.condition = conditionFilter.value
+    if (featuresFilter.value.length) query.features = featuresFilter.value.join(',')
     if (onlyWithPhotos.value) query.photos = '1'
     if (includeCancelled.value) query.cancelled = '1'
     if (view.value === 'list') query.view = 'list'
@@ -519,6 +529,8 @@ watch(() => route.query, (q) => {
   livingAreaMin.value = queryNum('livMin')
   livingAreaMax.value = queryNum('livMax')
   categoryFilter.value = queryStr('category', ALL_SCOPE)
+  conditionFilter.value = queryStr('condition', ALL_SCOPE)
+  featuresFilter.value = queryList('features')
   onlyWithPhotos.value = q.photos === '1'
   view.value = q.view === 'list' ? 'list' : 'map'
 }, { deep: true })
@@ -695,6 +707,8 @@ async function toggleWatchlist(a: Auction): Promise<void> {
           v-model:living-area-min="livingAreaMin"
           v-model:living-area-max="livingAreaMax"
           v-model:category-filter="categoryFilter"
+          v-model:condition-filter="conditionFilter"
+          v-model:features-filter="featuresFilter"
           v-model:only-with-photos="onlyWithPhotos"
           v-model:include-cancelled="includeCancelled"
           :countries="countries ?? []"

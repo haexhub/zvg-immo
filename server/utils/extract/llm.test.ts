@@ -31,6 +31,8 @@ describe('clampExtraction', () => {
         livingAreaSqm: 140,
         rooms: 5,
         units: 1,
+        condition: 'gepflegt',
+        features: ['balkon', 'garage'],
       }),
     ).toEqual({
       propertyType: 'einfamilienhaus',
@@ -38,6 +40,8 @@ describe('clampExtraction', () => {
       livingAreaSqm: 140,
       rooms: 5,
       units: 1,
+      condition: 'gepflegt',
+      features: ['balkon', 'garage'],
     })
   })
 
@@ -59,10 +63,31 @@ describe('clampExtraction', () => {
       livingAreaSqm: null,
       rooms: null,
       units: null,
+      condition: null,
+      features: [],
     })
   })
 
   it('drops non-numeric junk', () => {
     expect(clampExtraction({ landAreaSqm: 'big' as unknown as number }).landAreaSqm).toBeNull()
+  })
+
+  it('nulls an unknown condition', () => {
+    expect(clampExtraction({ condition: 'ruin' }).condition).toBeNull()
+  })
+
+  it('keeps a valid condition', () => {
+    expect(clampExtraction({ condition: 'baufaellig' }).condition).toBe('baufaellig')
+  })
+
+  it('filters unknown features and dedupes', () => {
+    expect(
+      clampExtraction({ features: ['balkon', 'balkon', 'unicorn-pool', 'garten'] }).features,
+    ).toEqual(['balkon', 'garten'])
+  })
+
+  it('defaults features to an empty array when missing or malformed', () => {
+    expect(clampExtraction({}).features).toEqual([])
+    expect(clampExtraction({ features: 'balkon' as unknown as string[] }).features).toEqual([])
   })
 })

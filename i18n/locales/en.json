@@ -297,6 +297,30 @@
     "sonstiges": "Other",
     "unbekannt": "Unknown"
   },
+  "condition": {
+    "neuwertig": "Like new",
+    "gepflegt": "Well maintained",
+    "renovierungsbeduerftig": "Needs renovation",
+    "sanierungsbeduerftig": "Needs refurbishment",
+    "baufaellig": "Derelict"
+  },
+  "feature": {
+    "balkon": "Balcony",
+    "terrasse": "Terrace",
+    "garten": "Garden",
+    "garage": "Garage",
+    "stellplatz": "Parking space",
+    "keller": "Cellar",
+    "dachgeschoss": "Attic",
+    "aufzug": "Elevator",
+    "einbaukueche": "Fitted kitchen",
+    "kamin": "Fireplace",
+    "barrierefrei": "Accessible",
+    "zentralheizung": "Central heating",
+    "fussbodenheizung": "Underfloor heating",
+    "denkmalschutz": "Listed building",
+    "vermietet": "Tenanted"
+  },
   "attachmentKind": {
     "announcement": "Announcement",
     "photo": "Photos",
@@ -323,6 +347,10 @@
     "propertyType": "Property type",
     "propertyTypePlaceholder": "Choose property type",
     "allPropertyTypes": "All property types",
+    "condition": "Minimum condition",
+    "conditionPlaceholder": "Choose minimum condition",
+    "allConditions": "All conditions",
+    "features": "Features",
     "onlyWithPhotos": "Only with photos",
     "includeCancelled": "Show cancelled",
     "reset": "Reset ({count})",
@@ -340,6 +368,8 @@
       "livMin": "Living area from",
       "livMax": "Living area to",
       "category": "Property type",
+      "condition": "Minimum condition",
+      "features": "Features",
       "photos": "Only with photos",
       "cancelled": "incl. cancelled"
     }
@@ -431,6 +461,8 @@
     "livingArea": "Living area",
     "rooms": "Rooms",
     "units": "Units",
+    "condition": "Condition",
+    "features": "Features",
     "authority": "Court",
     "caseNumber": "Case number",
     "extractionNotice": "Key facts automatically extracted from the appraisal/brochure ({confidence}).",
@@ -472,7 +504,6 @@
     "defectsTitle": "Defects",
     "encumbrancesTitle": "Encumbrances",
     "landValueTitle": "Official land value",
-    "conditionTitle": "Condition",
     "constructionTitle": "Construction & maintenance",
     "gallery": {
       "count": "{n} photos",
