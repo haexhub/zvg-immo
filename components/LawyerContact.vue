@@ -76,60 +76,52 @@ function loginLink(): string {
 </script>
 
 <template>
-  <section v-if="loaded && lawyers.length > 0" class="mb-8 space-y-3">
-    <h2 class="text-base font-semibold">{{ t('lawyerContact.title') }}</h2>
+  <DetailSectionCard v-if="loaded && lawyers.length > 0" :title="t('lawyerContact.title')">
+    <div v-if="!user" class="text-sm space-y-2">
+      <p class="text-muted-foreground">
+        {{ t('lawyerContact.loginHint') }}
+      </p>
+      <NuxtLink :to="loginLink()" class="text-primary hover:underline">{{ t('lawyerContact.loginNow') }}</NuxtLink>
+    </div>
 
-    <Card v-if="!user">
-      <CardContent class="text-sm space-y-2">
-        <p class="text-muted-foreground">
-          {{ t('lawyerContact.loginHint') }}
+    <form v-else class="space-y-4" @submit.prevent="submit">
+      <div class="space-y-1">
+        <Label for="lawyer-select">{{ t('lawyerContact.lawyer') }}</Label>
+        <Select v-model="selectedLawyerId">
+          <SelectTrigger id="lawyer-select" class="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem v-for="l in lawyers" :key="l.id" :value="l.id">
+              {{ l.name }}{{ l.firm ? ` (${l.firm})` : '' }}{{ l.specialization ? ` — ${l.specialization}` : '' }}
+            </SelectItem>
+          </SelectContent>
+        </Select>
+        <p v-if="selectedLawyerId" class="text-xs text-muted-foreground">
+          <template v-for="l in lawyers.filter((x) => x.id === selectedLawyerId)" :key="l.id">
+            <span v-if="l.languages?.length">{{ t('lawyerContact.languages', { languages: l.languages.join(', ') }) }}</span>
+            <a v-if="l.website" :href="l.website" target="_blank" rel="noopener" class="ml-2 hover:underline">{{ t('lawyerContact.website') }}</a>
+          </template>
         </p>
-        <NuxtLink :to="loginLink()" class="text-primary hover:underline">{{ t('lawyerContact.loginNow') }}</NuxtLink>
-      </CardContent>
-    </Card>
+      </div>
 
-    <Card v-else>
-      <form @submit.prevent="submit">
-        <CardContent class="space-y-4">
-          <div class="space-y-1">
-            <Label for="lawyer-select">{{ t('lawyerContact.lawyer') }}</Label>
-            <Select v-model="selectedLawyerId">
-              <SelectTrigger id="lawyer-select" class="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem v-for="l in lawyers" :key="l.id" :value="l.id">
-                  {{ l.name }}{{ l.firm ? ` (${l.firm})` : '' }}{{ l.specialization ? ` — ${l.specialization}` : '' }}
-                </SelectItem>
-              </SelectContent>
-            </Select>
-            <p v-if="selectedLawyerId" class="text-xs text-muted-foreground">
-              <template v-for="l in lawyers.filter((x) => x.id === selectedLawyerId)" :key="l.id">
-                <span v-if="l.languages?.length">{{ t('lawyerContact.languages', { languages: l.languages.join(', ') }) }}</span>
-                <a v-if="l.website" :href="l.website" target="_blank" rel="noopener" class="ml-2 hover:underline">{{ t('lawyerContact.website') }}</a>
-              </template>
-            </p>
-          </div>
+      <div class="space-y-1">
+        <Label for="lawyer-message">{{ t('lawyerContact.message') }}</Label>
+        <Textarea
+          id="lawyer-message"
+          v-model="message"
+          rows="4"
+          :placeholder="t('lawyerContact.messagePlaceholder')"
+          :disabled="pending"
+        />
+      </div>
 
-          <div class="space-y-1">
-            <Label for="lawyer-message">{{ t('lawyerContact.message') }}</Label>
-            <Textarea
-              id="lawyer-message"
-              v-model="message"
-              rows="4"
-              :placeholder="t('lawyerContact.messagePlaceholder')"
-              :disabled="pending"
-            />
-          </div>
+      <p v-if="error" class="text-sm text-destructive">{{ error }}</p>
+      <p v-if="sent" class="text-sm text-emerald-600 dark:text-emerald-500">{{ t('lawyerContact.sent') }}</p>
 
-          <p v-if="error" class="text-sm text-destructive">{{ error }}</p>
-          <p v-if="sent" class="text-sm text-emerald-600 dark:text-emerald-500">{{ t('lawyerContact.sent') }}</p>
-
-          <Button type="submit" :disabled="pending || !selectedLawyerId || !message.trim()">
-            {{ pending ? t('lawyerContact.sending') : t('lawyerContact.send') }}
-          </Button>
-        </CardContent>
-      </form>
-    </Card>
-  </section>
+      <Button type="submit" :disabled="pending || !selectedLawyerId || !message.trim()">
+        {{ pending ? t('lawyerContact.sending') : t('lawyerContact.send') }}
+      </Button>
+    </form>
+  </DetailSectionCard>
 </template>
