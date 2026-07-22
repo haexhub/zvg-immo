@@ -39,8 +39,8 @@ function makeFakePool() {
   const rows: Array<{ platform: string; external_id: string; living_area_sqm: number | null }> = []
   const query = vi.fn(async (sql: string, params: unknown[] = []) => {
     if (sql.includes('INSERT INTO auctions')) {
-      // 27 columns per row, in COLUMNS order: platform, external_id are first two.
-      for (let i = 0; i < params.length; i += 27) {
+      // 34 columns per row, in COLUMNS order: platform, external_id are first two.
+      for (let i = 0; i < params.length; i += 34) {
         rows.push({
           platform: params[i] as string,
           external_id: params[i + 1] as string,
@@ -81,6 +81,43 @@ describe('auctionToCurrentRow', () => {
     expect(row.property_type).toBeNull()
     expect(row.living_area_sqm).toBeNull()
     expect(row.extraction_source).toBeNull()
+    expect(row.condition).toBeNull()
+    expect(row.features).toBeNull()
+    expect(row.starting_bid).toBeNull()
+    expect(row.current_bid).toBeNull()
+    expect(row.source_security_deposit).toBeNull()
+    expect(row.security_deposit).toBeNull()
+    expect(row.bidding_notes).toBeNull()
+  })
+
+  it('flattens WP-1/WP-2 fields (condition, features, bid/security-deposit) onto the row', () => {
+    const a = makeAuction({
+      startingBid: 50000,
+      currentBid: 52000,
+      sourceSecurityDeposit: 5000,
+      extraction: {
+        propertyType: 'einfamilienhaus',
+        landAreaSqm: null,
+        livingAreaSqm: null,
+        rooms: null,
+        units: null,
+        securityDeposit: 5000,
+        biddingNotes: 'Zahlung binnen 14 Tagen',
+        condition: 'gepflegt',
+        features: ['balkon', 'keller'],
+        source: 'llm',
+        confidence: 'high',
+        at: '2026-07-21T00:00:00.000Z',
+      },
+    })
+    const row = auctionToCurrentRow(a, '2026-07-21T00:00:00.000Z')
+    expect(row.condition).toBe('"gepflegt"')
+    expect(row.features).toEqual(['balkon', 'keller'])
+    expect(row.starting_bid).toBe(50000)
+    expect(row.current_bid).toBe(52000)
+    expect(row.source_security_deposit).toBe(5000)
+    expect(row.security_deposit).toBe(5000)
+    expect(row.bidding_notes).toBe('Zahlung binnen 14 Tagen')
   })
 })
 
