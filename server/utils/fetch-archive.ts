@@ -25,7 +25,7 @@ export async function archiveDetailCapture(
   capturedAt: string,
   contentType: BlobContentType = 'text/html',
 ): Promise<void> {
-  const hash = await archiveBlob(bytes, contentType)
+  const hash = await archiveBlob(bytes, contentType, identity.country)
   if (!hash) return
   await recordCapture({
     capturedAt,

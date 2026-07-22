@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { gzipSync } from 'node:zlib'
 import type { Auction } from '~/types/auction'
+import { countryDisplayName } from './countries'
 import { getPool } from './db'
 
 export type BlobContentType =
@@ -44,12 +45,13 @@ export function sha256Hex(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex')
 }
 
-/** Sharded storage key, e.g. `ab/ab12…ef.json.gz` — spreads blobs across S3
- *  "directories" instead of one flat prefix with millions of keys. */
-export function shardedKey(hash: string, contentType: BlobContentType): string {
+/** Sharded storage key, e.g. `Deutschland/ab/ab12…ef.json.gz` — country
+ *  folder for manual browsing, then a hash-prefix shard so no single
+ *  "directory" ends up with millions of keys. */
+export function shardedKey(hash: string, contentType: BlobContentType, country: string): string {
   const gzip = TEXT_TYPES.has(contentType)
   const ext = EXT[contentType] + (gzip ? '.gz' : '')
-  return `${hash.slice(0, 2)}/${hash}${ext}`
+  return `${countryDisplayName(country)}/${hash.slice(0, 2)}/${hash}${ext}`
 }
 
 export function storedContentType(contentType: BlobContentType): string {
@@ -109,6 +111,7 @@ export function canonicalizeAuction(auction: Auction): unknown {
 export async function archiveBlob(
   bytes: Buffer,
   contentType: BlobContentType,
+  country: string,
   opts?: { canonicalBytesForHash?: Buffer },
 ): Promise<string | null> {
   const db = getPool()
@@ -121,7 +124,7 @@ export async function archiveBlob(
 
     const gzip = TEXT_TYPES.has(contentType)
     const stored = gzip ? gzipSync(bytes) : bytes
-    const key = shardedKey(hash, contentType)
+    const key = shardedKey(hash, contentType, country)
 
     const path = join(outboxDir(), key)
     await mkdir(dirname(path), { recursive: true })
@@ -215,7 +218,7 @@ export async function archiveDocument(
   sourceUrl: string,
   capturedAt: string,
 ): Promise<void> {
-  const hash = await archiveBlob(bytes, contentType)
+  const hash = await archiveBlob(bytes, contentType, identity.country)
   if (!hash) return
   await recordCapture({
     capturedAt,
@@ -242,7 +245,7 @@ export async function archiveAuction(auction: Auction, capturedAt: string): Prom
   try {
     const canonicalBytes = Buffer.from(JSON.stringify(canonicalizeAuction(auction)))
     const bytes = Buffer.from(JSON.stringify(auction))
-    const hash = await archiveBlob(bytes, 'application/json', { canonicalBytesForHash: canonicalBytes })
+    const hash = await archiveBlob(bytes, 'application/json', auction.country, { canonicalBytesForHash: canonicalBytes })
     if (!hash) return
 
     await recordCapture({

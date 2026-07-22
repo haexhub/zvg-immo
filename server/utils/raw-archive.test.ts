@@ -147,12 +147,17 @@ describe('sha256Hex', () => {
 })
 
 describe('shardedKey', () => {
-  it('gzips json/html but not pdf/docx, and shards by the first two hex chars', () => {
+  it('gzips json/html but not pdf/docx, and shards by the first two hex chars under a country folder', () => {
     const hash = 'ab'.padEnd(64, '0')
-    expect(shardedKey(hash, 'application/json')).toBe(`ab/${hash}.json.gz`)
-    expect(shardedKey(hash, 'text/html')).toBe(`ab/${hash}.html.gz`)
-    expect(shardedKey(hash, 'application/pdf')).toBe(`ab/${hash}.pdf`)
-    expect(shardedKey(hash, 'application/vnd.docx')).toBe(`ab/${hash}.docx`)
+    expect(shardedKey(hash, 'application/json', 'de')).toBe(`Deutschland/ab/${hash}.json.gz`)
+    expect(shardedKey(hash, 'text/html', 'de')).toBe(`Deutschland/ab/${hash}.html.gz`)
+    expect(shardedKey(hash, 'application/pdf', 'de')).toBe(`Deutschland/ab/${hash}.pdf`)
+    expect(shardedKey(hash, 'application/vnd.docx', 'de')).toBe(`Deutschland/ab/${hash}.docx`)
+  })
+
+  it('falls back to the uppercased code for an unmapped country', () => {
+    const hash = 'cd'.padEnd(64, '0')
+    expect(shardedKey(hash, 'application/pdf', 'xx')).toBe(`XX/cd/${hash}.pdf`)
   })
 })
 
@@ -171,7 +176,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
 
   it('archiveBlob no-ops without a DB pool', async () => {
     vi.mocked(getPool).mockReturnValue(null)
-    const hash = await archiveBlob(Buffer.from('{}'), 'application/json')
+    const hash = await archiveBlob(Buffer.from('{}'), 'application/json', 'de')
     expect(hash).toBeNull()
   })
 
@@ -194,8 +199,8 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     vi.mocked(getPool).mockReturnValue(pool as never)
 
     const bytes = Buffer.from(JSON.stringify({ a: 1 }))
-    const first = await archiveBlob(bytes, 'application/json')
-    const second = await archiveBlob(bytes, 'application/json')
+    const first = await archiveBlob(bytes, 'application/json', 'de')
+    const second = await archiveBlob(bytes, 'application/json', 'de')
 
     expect(first).not.toBeNull()
     expect(second).toBe(first)
@@ -210,7 +215,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     vi.mocked(getPool).mockReturnValue(pool as never)
 
     const original = Buffer.from(JSON.stringify({ hello: 'world' }))
-    const hash = await archiveBlob(original, 'application/json')
+    const hash = await archiveBlob(original, 'application/json', 'de')
     const row = pool.blobs.get(hash!)!
     const stored = await readFile(join(outboxDir, row.s3_key))
     expect(gunzipSync(stored)).toEqual(original)
