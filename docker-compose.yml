@@ -41,6 +41,10 @@ services:
       # archiving stays local-only (outbox fills up, nothing uploads).
       NUXT_STORAGE_BUCKET: ${STORAGE_BUCKET:-}
       NUXT_RAW_OUTBOX_DIR: /app/.raw_outbox
+      # WP-4: Supabase Storage bucket for extracted auction photos
+      # (public-read, server/utils/image-storage.ts). Empty → /api/auction-image
+      # serves only from the local cache (.cache_zvg/images).
+      NUXT_IMAGES_BUCKET: ${IMAGES_BUCKET:-}
     depends_on:
       haex-claude-proxy:
         condition: service_started

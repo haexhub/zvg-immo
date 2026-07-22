@@ -22,6 +22,7 @@
 // Triggered by the scheduled task config in nuxt.config.ts and once shortly
 // after server startup via server/plugins/enrich-bootstrap.ts.
 
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Auction, AuctionExtraction } from '~/types/auction'
 import { crawlAll, platforms } from '../crawlers/registry'
@@ -39,6 +40,7 @@ import {
   readExtractionCache,
   writeExtractionCache,
 } from '../utils/extraction-cache'
+import { imagesBucketConfigured, uploadImage } from '../utils/image-storage'
 import { interleaveByPlatform } from '../utils/interleave-by-platform'
 import { isSafePathSegment } from '../utils/path-segment'
 import { archiveAuction } from '../utils/raw-archive'
@@ -423,6 +425,17 @@ async function runEnrich() {
               photos = await extractPdfPhotos(bestPdf.proxyUrl, { destDir })
             }
             photosTotal += photos.length
+            // Mirror the freshly written files into the images bucket (WP-4) so
+            // /api/auction-image can fall back to Supabase once the local cache
+            // is gone. Best-effort — uploadImage never throws and no-ops
+            // without a configured bucket; skip re-reading the files off disk
+            // entirely in that (default) case.
+            if (imagesBucketConfigured()) {
+              for (const name of photos) {
+                const bytes = await readFile(join(destDir, name))
+                await uploadImage(bytes, `${a.platform}/${a.externalId}/${name}`)
+              }
+            }
           } catch (err) {
             console.warn(
               `[enrich] photo extraction failed for ${a.platform}:${a.externalId}: ${(err as Error).message}`,

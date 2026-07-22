@@ -91,6 +91,13 @@ export default defineNuxtConfig({
     // server/db/schema.sql).
     //   NUXT_STORAGE_BUCKET=zvg-immo-raw-archive
     storageBucket: '',
+    // WP-4: Supabase Storage bucket for extracted auction photos (public-read;
+    // server/utils/image-storage.ts). Separate from storageBucket above — a
+    // different lifecycle (photos can be re-extracted/replaced, the raw
+    // archive is immutable). Empty → /api/auction-image serves only from the
+    // local cache (.cache_zvg/images), same graceful-degrade pattern.
+    //   NUXT_IMAGES_BUCKET=zvg-immo-images
+    imagesBucket: '',
     // Local outbox for not-yet-uploaded archive blobs (docker-compose.yml
     // volume). Empty → defaults to .cache_zvg-style local dir under cwd.
     //   NUXT_RAW_OUTBOX_DIR=/app/.raw_outbox
