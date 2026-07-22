@@ -30,6 +30,9 @@ const DEFAULT_COUNTRY = 'de'
 // almost certainly scanned-image noise rather than the Gutachten's real text.
 const SCANNED_PDF_TEXT_THRESHOLD = 200
 const DEFAULT_MAX_LLM_PER_RUN = 300
+// Same bound as server/tasks/enrich.ts: stop retrying an auction's LLM call
+// after this many consecutive failures.
+const MAX_LLM_FAILURES = 3
 
 export interface ReprocessOptions {
   /** ISO-3166-1 alpha-2, lowercase. Defaults to 'de' (this WP's scope). */
@@ -122,7 +125,7 @@ export async function reprocessAuction(
     rooms: auction.sourceRooms ?? rules.rooms,
     units: rules.units,
     securityDeposit: auction.sourceSecurityDeposit ?? rules.securityDeposit,
-    biddingNotes: undefined as string | null | undefined,
+    biddingNotes: priorEntry?.biddingNotes,
     condition: priorEntry?.condition,
     features: priorEntry?.features,
   }
@@ -228,41 +231,47 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
   const dirty: ExtractionCache = {}
 
   for (const { platform, externalId } of candidates) {
-    const key = cacheKey(platform, externalId)
-    const priorEntry = cache[key]
-    const eligible =
-      opts.force ||
-      !priorEntry ||
-      (priorEntry.source === 'rules' && priorEntry.confidence === 'low') ||
-      priorEntry.condition === undefined ||
-      priorEntry.features === undefined
-    if (!eligible) {
+    try {
+      const key = cacheKey(platform, externalId)
+      const priorEntry = cache[key]
+      const eligible =
+        opts.force ||
+        ((!priorEntry ||
+          (priorEntry.source === 'rules' && priorEntry.confidence === 'low') ||
+          priorEntry.condition === undefined ||
+          priorEntry.features === undefined) &&
+          (priorEntry?.llmFailures ?? 0) < MAX_LLM_FAILURES)
+      if (!eligible) {
+        skipped++
+        continue
+      }
+
+      const useLlm = llmConfig && llmCalls < maxLlmPerRun ? llmConfig : null
+      const result = await reprocessAuction(platform, externalId, priorEntry, useLlm, at)
+      if (!result) {
+        skipped++
+        continue
+      }
+      if (result.llmCalled) llmCalls++
+
+      cache[key] = result.entry
+      dirty[key] = result.entry
+      processed++
+
+      // Keep the detail page (which reads auction_snapshot directly, not the
+      // extraction_cache overlay) in sync for auctions actually touched here —
+      // cheap since WP-5 made auction_snapshot a per-row Postgres upsert rather
+      // than a whole-crawl JSON rewrite.
+      const snapshot = await readAuctionSnapshot()
+      const snapshotEntry = snapshot[key]
+      if (snapshotEntry) {
+        const updated: Auction = { ...snapshotEntry }
+        applyExtractionToAuctions([updated], { [key]: result.entry })
+        await writeAuctionSnapshot([updated])
+      }
+    } catch (err) {
+      console.warn(`[reprocess] failed for ${platform}:${externalId}: ${(err as Error).message}`)
       skipped++
-      continue
-    }
-
-    const useLlm = llmConfig && llmCalls < maxLlmPerRun ? llmConfig : null
-    const result = await reprocessAuction(platform, externalId, priorEntry, useLlm, at)
-    if (!result) {
-      skipped++
-      continue
-    }
-    if (result.llmCalled) llmCalls++
-
-    cache[key] = result.entry
-    dirty[key] = result.entry
-    processed++
-
-    // Keep the detail page (which reads auction_snapshot directly, not the
-    // extraction_cache overlay) in sync for auctions actually touched here —
-    // cheap since WP-5 made auction_snapshot a per-row Postgres upsert rather
-    // than a whole-crawl JSON rewrite.
-    const snapshot = await readAuctionSnapshot()
-    const snapshotEntry = snapshot[key]
-    if (snapshotEntry) {
-      const updated: Auction = { ...snapshotEntry }
-      applyExtractionToAuctions([updated], { [key]: result.entry })
-      await writeAuctionSnapshot([updated])
     }
   }
 

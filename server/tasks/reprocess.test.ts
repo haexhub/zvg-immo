@@ -284,6 +284,60 @@ describe('runReprocess', () => {
     expect(written[0]!.extraction).toMatchObject({ propertyType: 'einfamilienhaus' })
   })
 
+  it('skips entries that already hit MAX_LLM_FAILURES unless forced', async () => {
+    const auction = makeAuction()
+    const query = vi.fn().mockResolvedValue({ rows: [{ platform: 'zvg-portal', external_id: '7265' }] })
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
+      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
+    )
+    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
+
+    const exhaustedEntry: AuctionExtraction = {
+      propertyType: null,
+      landAreaSqm: null,
+      livingAreaSqm: null,
+      rooms: null,
+      units: null,
+      source: 'rules',
+      confidence: 'low',
+      llmFailures: 3,
+      at: '2026-07-01T00:00:00.000Z',
+    }
+    vi.mocked(readExtractionCache).mockResolvedValue({ 'zvg-portal:7265': exhaustedEntry })
+
+    const skippedResult = await runReprocess({})
+    expect(skippedResult).toEqual({ candidates: 1, processed: 0, skipped: 1, llmCalls: 0 })
+    expect(writeExtractionCache).not.toHaveBeenCalled()
+
+    const forcedResult = await runReprocess({ platform: 'zvg-portal', force: true })
+    expect(forcedResult.processed).toBe(1)
+  })
+
+  it('isolates a per-candidate failure so one bad candidate does not drop already-processed results', async () => {
+    const auctionA = makeAuction({ externalId: '1' })
+    const query = vi.fn().mockResolvedValue({
+      rows: [
+        { platform: 'zvg-portal', external_id: '1' },
+        { platform: 'zvg-portal', external_id: '2' },
+      ],
+    })
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+    vi.mocked(findLatestCapture).mockImplementation(async (kind, _platform, externalId) => {
+      if (kind !== 'auction') return null
+      if (externalId === '2') throw new Error('boom')
+      return { contentHash: externalId, sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' }
+    })
+    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auctionA)))
+
+    const result = await runReprocess({})
+
+    expect(result).toEqual({ candidates: 2, processed: 1, skipped: 1, llmCalls: 0 })
+    expect(writeExtractionCache).toHaveBeenCalledWith({
+      'zvg-portal:1': expect.objectContaining({ propertyType: null }),
+    })
+  })
+
   it('caps LLM calls per run and still caches a rules-only result for candidates beyond the cap', async () => {
     const auctionA = makeAuction({ externalId: '1' })
     const auctionB = makeAuction({ externalId: '2' })

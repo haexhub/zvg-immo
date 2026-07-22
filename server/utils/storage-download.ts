@@ -86,7 +86,9 @@ export async function downloadBlob(contentHash: string): Promise<Buffer | null> 
       const bucket = bucketName()
       const supabase = getServiceClient()
       if (!bucket || !supabase) return null
-      const { data, error } = await supabase.storage.from(bucket).download(row.s3_key)
+      const { data, error } = await supabase.storage
+        .from(bucket)
+        .download(row.s3_key, {}, { signal: AbortSignal.timeout(30_000) })
       if (error || !data) return null
       stored = Buffer.from(await data.arrayBuffer())
     }

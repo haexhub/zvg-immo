@@ -139,7 +139,7 @@ describe('downloadBlob', () => {
     const result = await downloadBlob('ef0123')
     expect(result?.toString()).toBe(original)
     expect(fakeSupabase.storage.from).toHaveBeenCalledWith('zvg-immo-raw-archive')
-    expect(downloadMock).toHaveBeenCalledWith(key)
+    expect(downloadMock).toHaveBeenCalledWith(key, {}, { signal: expect.any(AbortSignal) })
   })
 
   it('returns null when the outbox is missing the file and no bucket is configured', async () => {
