@@ -142,8 +142,22 @@ async function runEnrich() {
         (hit.llmFailures ?? 0) < MAX_LLM_FAILURES
       )
     }
+    // condition/features are LLM-only fields added after this cache existed:
+    // `undefined` means "never checked" (an entry written before the field
+    // existed, or a mergedConfident entry from before this backfill shipped),
+    // `null`/`[]` means "checked, nothing found". Bounded by MAX_LLM_FAILURES
+    // like needsLlmRetry so a persistently-failing listing doesn't re-consume
+    // an LLM slot every run forever.
+    const needsConditionFeaturesBackfill = (a: Auction): boolean => {
+      const hit = cache[cacheKey(a.platform, a.externalId)]
+      return hit != null && hit.condition === undefined && (hit.llmFailures ?? 0) < MAX_LLM_FAILURES
+    }
     const eligible = result.auctions.filter(
-      (a) => !cache[cacheKey(a.platform, a.externalId)] || needsEnrich(a) || needsLlmRetry(a),
+      (a) =>
+        !cache[cacheKey(a.platform, a.externalId)] ||
+        needsEnrich(a) ||
+        needsLlmRetry(a) ||
+        needsConditionFeaturesBackfill(a),
     )
     const todo = interleaveByPlatform(eligible)
     const maxLlmPerRun = readMaxLlmPerRun()
@@ -178,7 +192,11 @@ async function runEnrich() {
         if (!a) continue
         const crawler = byPlatform.get(a.platform)
         const key = cacheKey(a.platform, a.externalId)
-        const extractionMissing = !cache[key] || needsLlmRetry(a)
+        const priorEntry = cache[key]
+        const needsCF = priorEntry
+          ? priorEntry.condition === undefined && (priorEntry.llmFailures ?? 0) < MAX_LLM_FAILURES
+          : true
+        const extractionMissing = !priorEntry || needsLlmRetry(a) || needsCF
 
         // Detail fetch (description + attachments) so extraction has real text
         // and the snapshot writer has enrichOne-populated fields to persist.
@@ -230,6 +248,11 @@ async function runEnrich() {
           livingAreaSqm: a.sourceLivingAreaSqm ?? rules.livingAreaSqm,
           rooms: a.sourceRooms ?? rules.rooms,
           units: rules.units,
+          // LLM-only — undefined until a successful LLM call below sets them;
+          // carries a prior partial result forward on a re-run (shouldn't
+          // normally happen since they're set together, but keeps this idempotent).
+          condition: priorEntry?.condition,
+          features: priorEntry?.features,
         }
         const mergedConfident =
           rules.confident ||
@@ -262,7 +285,7 @@ async function runEnrich() {
           : null
 
         const platformLlmCalls = llmCallsByPlatform.get(a.platform) ?? 0
-        if (mergedConfident) {
+        if (mergedConfident && !needsCF) {
           cacheable = true
         } else if (
           llmConfig &&
@@ -284,40 +307,51 @@ async function runEnrich() {
           )
           if (llm === null) {
             // LLM request failed. Cache the rules-only result (if detail
-            // succeeded) so the listing still shows something and — via the
-            // bumped llmFailures counter below — retries stay bounded instead
-            // of re-spending an LLM slot every run forever.
+            // succeeded, or rules were already confident) so the listing
+            // still shows something and — via the bumped llmFailures counter
+            // below — retries stay bounded instead of re-spending an LLM slot
+            // every run forever.
             llmFailed = true
-            cacheable = detailOk
+            cacheable = mergedConfident || detailOk
           } else {
-            source = 'llm'
-            // Prefer the precise structured/rules values; fill the gaps from the LLM.
-            // "sonstiges" counts as absent for propertyType (see mergedConfident
-            // above) — let a more specific LLM classification replace it.
-            fields = {
-              propertyType:
+            // Only let the LLM contribute propertyType/sizes when rules didn't
+            // already resolve them confidently — otherwise this call ran
+            // purely to backfill condition/features, and `source` must stay
+            // 'rules' so needsLlmRetry / the UI's low-confidence notice don't
+            // misfire on an otherwise-confident entry.
+            if (!mergedConfident) {
+              source = 'llm'
+              // Prefer the precise structured/rules values; fill the gaps from
+              // the LLM. "sonstiges" counts as absent for propertyType (see
+              // mergedConfident above) — let a more specific LLM
+              // classification replace it.
+              fields.propertyType =
                 fields.propertyType != null && fields.propertyType !== 'sonstiges'
                   ? fields.propertyType
-                  : llm.propertyType,
-              landAreaSqm: fields.landAreaSqm ?? llm.landAreaSqm,
-              livingAreaSqm: fields.livingAreaSqm ?? llm.livingAreaSqm,
-              rooms: fields.rooms ?? llm.rooms,
-              units: fields.units ?? llm.units,
+                  : llm.propertyType
+              fields.landAreaSqm = fields.landAreaSqm ?? llm.landAreaSqm
+              fields.livingAreaSqm = fields.livingAreaSqm ?? llm.livingAreaSqm
+              fields.rooms = fields.rooms ?? llm.rooms
+              fields.units = fields.units ?? llm.units
             }
+            fields.condition = llm.condition
+            fields.features = llm.features
             cacheable = true
           }
         } else if (llmConfig) {
-          // Per-run or per-platform LLM cap hit: cache the rules-only result
-          // anyway so the listing shows *something* immediately. Its source
-          // stays 'rules' with confidence 'low', so needsLlmRetry picks it up
-          // again once an LLM slot frees up on a later run. Leaving it
+          // Per-run or per-platform LLM cap hit: cache the rules result
+          // anyway so the listing shows *something* immediately. When rules
+          // aren't confident, source stays 'rules' with confidence 'low' so
+          // needsLlmRetry picks it up again once an LLM slot frees up;
+          // condition/features stay unset either way so
+          // needsConditionFeaturesBackfill retries them too. Leaving it
           // uncached instead starved huge platforms (IT: 14k listings ÷ 300
           // calls/run) of any extraction data for months.
-          cacheable = detailOk
+          cacheable = mergedConfident || detailOk
         } else {
           // LLM disabled entirely: cache the rules result if we had real text
           // to work with, else leave it for a later run to retry.
-          cacheable = detailOk
+          cacheable = mergedConfident || detailOk
         }
 
         if (!cacheable) continue
@@ -339,16 +373,15 @@ async function runEnrich() {
         // listing can't reject the whole Promise.all — mirrors the enrichOne
         // pattern above.
         let photos: string[] = []
-        const prevEntry = cache[key]
-        if (prevEntry) {
-          // needsLlmRetry re-run (a cache entry here means exactly that): the
-          // photo pipeline already ran when the rules-only entry was cached.
-          // The mirrored files are content-addressed and still on disk — reuse
-          // the result instead of re-downloading every gallery / re-mining the
-          // PDF on every capped run (with the LLM cap at 300/run, large
-          // platforms stay in retry for many runs). First runs and entries
-          // never cached before still go through the full pipeline below.
-          photos = prevEntry.photos ?? []
+        if (priorEntry) {
+          // A re-run (needsLlmRetry / needsConditionFeaturesBackfill — a cache
+          // entry here means exactly one of those): the photo pipeline already
+          // ran when this entry was first cached. The mirrored files are
+          // content-addressed and still on disk — reuse the result instead of
+          // re-downloading every gallery / re-mining the PDF on every retry
+          // pass. First runs and entries never cached before still go through
+          // the full pipeline below.
+          photos = priorEntry.photos ?? []
         } else if (isSafePathSegment(a.platform) && isSafePathSegment(a.externalId)) {
           const destDir = join(IMAGES_DIR, a.platform, a.externalId)
           const nativeFotoUrls = [

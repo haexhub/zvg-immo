@@ -29,3 +29,19 @@ export function useCountryLabel() {
     return te(key) ? t(key) : (fallback ?? code.toUpperCase())
   }
 }
+
+export function useConditionLabel() {
+  const { t, te } = useI18n()
+  return (id: string, fallback?: string): string => {
+    const key = `condition.${id}`
+    return te(key) ? t(key) : (fallback ?? id)
+  }
+}
+
+export function useFeatureLabel() {
+  const { t, te } = useI18n()
+  return (id: string, fallback?: string): string => {
+    const key = `feature.${id}`
+    return te(key) ? t(key) : (fallback ?? id)
+  }
+}

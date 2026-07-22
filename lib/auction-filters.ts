@@ -6,6 +6,7 @@
 
 import type { Auction } from '~/types/auction'
 import { ALL_PROPERTY_TYPE_CATEGORIES, classifyPropertyType, type PropertyTypeCategory } from '~/lib/property-type'
+import { CONDITIONS } from '~/lib/condition'
 
 export interface AuctionFilters {
   /** ISO country codes to restrict to; empty = no restriction (every country). */
@@ -22,6 +23,13 @@ export interface AuctionFilters {
   authority: string
   /** Property-type category id (see lib/property-type.ts), or 'all'. */
   category: string
+  /** Minimum acceptable condition id (see lib/condition.ts, best→worst order),
+   *  or 'all'. Auctions with no known condition are excluded when this is set —
+   *  same convention as landMin/livMin below. */
+  condition: string
+  /** Feature ids (see lib/features.ts) the auction must have at least one of;
+   *  empty = no restriction. */
+  features: string[]
   onlyWithPhotos: boolean
   includeCancelled: boolean
   priceMin: number | null
@@ -60,12 +68,23 @@ export function auctionCategory(a: Auction): PropertyTypeCategory {
   return classifyPropertyType(a.title)
 }
 
+const CONDITION_RANK = new Map<string, number>(CONDITIONS.map((c, i) => [c, i]))
+
 export function filterAuctions<T extends Auction>(items: T[], filters: AuctionFilters): T[] {
   const q = filters.search.trim().toLowerCase()
+  const minConditionRank = filters.condition !== 'all' ? CONDITION_RANK.get(filters.condition) : undefined
   return scopeByCountryRegion(items, filters.countries, filters.regionNameKeys).filter((a) => {
     if (!filters.includeCancelled && a.cancelled) return false
     if (filters.authority !== 'all' && a.authority !== filters.authority) return false
     if (filters.category !== 'all' && auctionCategory(a).id !== filters.category) return false
+    if (minConditionRank != null) {
+      const rank = a.extraction?.condition != null ? CONDITION_RANK.get(a.extraction.condition) : undefined
+      if (rank == null || rank > minConditionRank) return false
+    }
+    if (filters.features.length > 0) {
+      const have: string[] = a.extraction?.features ?? []
+      if (!filters.features.some((f) => have.includes(f))) return false
+    }
     if (filters.onlyWithPhotos && a.photoCount === 0) return false
     if (filters.priceMin != null && (a.marketValueEur == null || a.marketValueEur < filters.priceMin)) return false
     if (filters.priceMax != null && (a.marketValueEur == null || a.marketValueEur > filters.priceMax)) return false

@@ -36,6 +36,8 @@ const BASE_FILTERS: AuctionFilters = {
   search: '',
   authority: 'all',
   category: 'all',
+  condition: 'all',
+  features: [],
   onlyWithPhotos: false,
   includeCancelled: false,
   priceMin: null,
@@ -162,6 +164,29 @@ describe('filterAuctions', () => {
     ]
     const result = filterAuctions(items, { ...BASE_FILTERS, livMin: 100 })
     expect(result.map((a) => a.externalId)).toEqual(['2'])
+  })
+
+  it('filters by minimum condition, excluding auctions without a known condition once set', () => {
+    const items = [
+      makeAuction({ externalId: '1', extraction: { propertyType: null, landAreaSqm: null, livingAreaSqm: null, rooms: null, units: null, source: 'llm', confidence: 'low', condition: 'neuwertig', features: [], at: '' } }),
+      makeAuction({ externalId: '2', extraction: { propertyType: null, landAreaSqm: null, livingAreaSqm: null, rooms: null, units: null, source: 'llm', confidence: 'low', condition: 'gepflegt', features: [], at: '' } }),
+      makeAuction({ externalId: '3', extraction: { propertyType: null, landAreaSqm: null, livingAreaSqm: null, rooms: null, units: null, source: 'llm', confidence: 'low', condition: 'baufaellig', features: [], at: '' } }),
+      makeAuction({ externalId: '4', extraction: { propertyType: null, landAreaSqm: null, livingAreaSqm: null, rooms: null, units: null, source: 'llm', confidence: 'low', condition: null, features: [], at: '' } }),
+      makeAuction({ externalId: '5', extraction: null }),
+    ]
+    const result = filterAuctions(items, { ...BASE_FILTERS, condition: 'gepflegt' })
+    expect(result.map((a) => a.externalId)).toEqual(['1', '2'])
+  })
+
+  it('filters by features with OR semantics', () => {
+    const items = [
+      makeAuction({ externalId: '1', extraction: { propertyType: null, landAreaSqm: null, livingAreaSqm: null, rooms: null, units: null, source: 'llm', confidence: 'low', features: ['balkon'], at: '' } }),
+      makeAuction({ externalId: '2', extraction: { propertyType: null, landAreaSqm: null, livingAreaSqm: null, rooms: null, units: null, source: 'llm', confidence: 'low', features: ['garage'], at: '' } }),
+      makeAuction({ externalId: '3', extraction: { propertyType: null, landAreaSqm: null, livingAreaSqm: null, rooms: null, units: null, source: 'llm', confidence: 'low', features: ['keller'], at: '' } }),
+      makeAuction({ externalId: '4', extraction: null }),
+    ]
+    const result = filterAuctions(items, { ...BASE_FILTERS, features: ['balkon', 'garage'] })
+    expect(result.map((a) => a.externalId)).toEqual(['1', '2'])
   })
 
   it('matches free-text search case-insensitively across Aktenzeichen/Amtsgericht/Objekt/Adresse/Beschreibung', () => {
