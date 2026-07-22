@@ -385,14 +385,13 @@ ALTER TABLE auctions ADD COLUMN IF NOT EXISTS source_security_deposit numeric;
 ALTER TABLE auctions ADD COLUMN IF NOT EXISTS security_deposit numeric;
 ALTER TABLE auctions ADD COLUMN IF NOT EXISTS bidding_notes text;
 
--- WP-3: vollständiger Extraktions-Cache-Blob (server/utils/extraction-cache.ts),
--- damit ein Verlust des lokalen Volumes (.cache_zvg/extraction.json) keinen
--- kompletten LLM-Neulauf erzwingt. Eigene Tabelle statt einer weiteren Spalte
--- auf `auctions`: writeExtractionCache() kennt nur platform+externalId+die
--- AuctionExtraction, nicht das volle Auction-Objekt mit den NOT-NULL-Feldern
--- (country/region/authority/case_number), die ein Insert in `auctions`
--- bräuchte. Erstschreiber gewinnt wie beim bisherigen JSON-Cache — kein TTL,
--- keine Historie nötig.
+-- WP-3: vollständiger Extraktions-Cache-Blob (server/utils/extraction-cache.ts)
+-- — Postgres ist die einzige Persistenz, kein lokales JSON-File mehr. Eigene
+-- Tabelle statt einer weiteren Spalte auf `auctions`: writeExtractionCache()
+-- kennt nur platform+externalId+die AuctionExtraction, nicht das volle
+-- Auction-Objekt mit den NOT-NULL-Feldern (country/region/authority/
+-- case_number), die ein Insert in `auctions` bräuchte. Erstschreiber gewinnt
+-- — kein TTL, keine Historie nötig.
 CREATE TABLE IF NOT EXISTS extraction_cache (
   platform      text NOT NULL,
   external_id   text NOT NULL,

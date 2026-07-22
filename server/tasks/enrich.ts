@@ -1,7 +1,8 @@
 // Crawls every registered region and extracts structured fields (property type
-// + sizes) from each listing, caching the result to disk. Idempotent: ids
-// already in the cache are skipped, so the first run does the work and
-// subsequent runs only process newly-listed auctions.
+// + sizes) from each listing, persisting the result (Postgres, see
+// extraction-cache.ts). Idempotent: ids already in the cache are skipped, so
+// the first run does the work and subsequent runs only process newly-listed
+// auctions.
 //
 // Detail fetching: the list crawl is cheap (one request per region), but the
 // real text for extraction lives on each auction's detail page. So instead of
@@ -36,6 +37,7 @@ import { pdfPageToBase64Jpeg } from '../utils/extract/pdf-render'
 import { pdfToText, pickBestPdf } from '../utils/extract/pdf-text'
 import {
   applyExtractionToAuctions,
+  type ExtractionCache,
   readExtractionCache,
   writeExtractionCache,
 } from '../utils/extraction-cache'
@@ -177,6 +179,12 @@ async function runEnrich() {
     let photoExtractions = 0
     let photosTotal = 0
     const at = new Date().toISOString()
+    // Entries added/changed since the last flush. writeExtractionCache only
+    // upserts what's actually dirty, not the whole (ever-growing) cache — see
+    // extraction-cache.ts. Swapped out for a fresh object right before each
+    // flush call, synchronously (no `await` in between), so no writer can add
+    // to a batch that's already been handed off.
+    let dirty: ExtractionCache = {}
 
     // maxLlmPerRun is shared across all platforms, but which item reaches
     // the check first depends on how fast its enrichOne/pdfToText preamble
@@ -447,14 +455,19 @@ async function runEnrich() {
           ...(llmFailures > 0 ? { llmFailures } : {}),
         }
         cache[key] = entry
+        dirty[key] = entry
         cached++
         if (entry.confidence === 'high') confident++
-        if (cached % FLUSH_EVERY === 0) await writeExtractionCache(cache)
+        if (cached % FLUSH_EVERY === 0) {
+          const toFlush = dirty
+          dirty = {}
+          await writeExtractionCache(toFlush)
+        }
       }
     }
     await Promise.all(Array.from({ length: ENRICH_CONCURRENCY }, worker))
 
-    if (cached > 0) await writeExtractionCache(cache)
+    if (Object.keys(dirty).length > 0) await writeExtractionCache(dirty)
 
     // Snapshot the fully decorated crawl (extraction + photo URLs + cached
     // Verkehrswerte) so /api/auction/[platform]/[id] can serve detail pages

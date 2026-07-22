@@ -1,30 +1,26 @@
 // Persistent cache of extracted structured fields (property type + sizes +
 // WP-1/WP-2 fields) keyed by `${platform}:${externalId}`. Populated by the
 // enrich task; the /api/auctions overlay reads it read-only so requests never
-// block on extraction. Mirrors verkehrswert-cache.ts (same
-// `${platform}:${externalId}` key — via the shared cacheKey helper — and the
-// same atomic-write and resilient-read semantics).
+// block on extraction.
 //
 // First-write-wins, no TTL: a listing's text/documents don't change once
 // published. A later run may still re-process entries whose `confidence` is
 // 'low' to upgrade them with the LLM (see the enrich task).
 //
-// WP-3: Postgres (`extraction_cache` table) is the durable source — a local
-// volume loss must not force a full LLM re-run. The local JSON file stays the
-// primary fast path: readExtractionCache runs on every /api/auctions request
-// (via overlayExtraction), so it only falls back to a Postgres scan when the
-// local file is empty — the volume-loss case. A healthy box never round-trips
-// to the DB on read. No-op without a configured pool, same graceful-degrade as
-// current-auctions.ts/raw-archive.ts.
+// WP-3: Postgres (`extraction_cache` table) is the sole persistent store —
+// no local JSON file. Since this runs as a single Nitro instance, the full
+// table is loaded into an in-process cache on first read; every read for the
+// rest of the process's lifetime (enrich task and API requests alike) is
+// then served from memory, no round-trip. write* upserts only the entries
+// it's given — the caller (the enrich task's `dirty` tracking) decides what
+// actually changed since the last flush, so a run never re-upserts its whole
+// cache on every flush. No-op without a configured pool, same
+// graceful-degrade as current-auctions.ts/raw-archive.ts.
 
-import { join } from 'node:path'
 import type { Pool } from 'pg'
 import type { Auction, AuctionExtraction } from '~/types/auction'
 import { getPool } from './db'
-import { readJsonCache, writeJsonCache } from './json-cache'
 import { cacheKey } from './verkehrswert-cache'
-
-const CACHE_PATH = join(process.cwd(), '.cache_zvg', 'extraction.json')
 
 export type ExtractionCache = Record<string, AuctionExtraction>
 
@@ -48,36 +44,46 @@ export function applyExtractionToAuctions(auctions: Auction[], cache: Extraction
   }
 }
 
+// Memoized for the process's lifetime: the enrich task and every API request
+// share this same object, so a mutation (writeExtractionCache below) is
+// immediately visible everywhere without re-querying Postgres. Reset to null
+// on a failed load so the next call retries instead of caching the failure.
+let cachePromise: Promise<ExtractionCache> | null = null
+
 export async function readExtractionCache(): Promise<ExtractionCache> {
-  const local = await readJsonCache<ExtractionCache>(CACHE_PATH, () => ({}), 'extraction-cache')
-  // Fast path: on a healthy box the local file is complete, so serve it without
-  // touching Postgres — this runs on every /api/auctions request. Only when the
-  // local volume is gone (empty file) do we rebuild from the durable DB copy.
-  if (Object.keys(local).length > 0) return local
-  return readExtractionCacheFromDb()
-}
-
-export async function writeExtractionCache(cache: ExtractionCache): Promise<void> {
-  await writeJsonCache(CACHE_PATH, cache)
-  await writeExtractionCacheToDb(cache)
-}
-
-async function readExtractionCacheFromDb(): Promise<ExtractionCache> {
-  const db = getPool()
-  if (!db) return {}
+  if (!cachePromise) cachePromise = loadExtractionCache()
   try {
-    const { rows } = await db.query<{ platform: string; external_id: string; extraction: AuctionExtraction }>(
-      'SELECT platform, external_id, extraction FROM extraction_cache',
-    )
-    const cache: ExtractionCache = {}
-    for (const row of rows) {
-      cache[cacheKey(row.platform, row.external_id)] = row.extraction
-    }
-    return cache
+    return await cachePromise
   } catch (err) {
     console.warn(`[extraction-cache] read failed: ${(err as Error).message}`)
+    cachePromise = null
     return {}
   }
+}
+
+async function loadExtractionCache(): Promise<ExtractionCache> {
+  const db = getPool()
+  if (!db) return {}
+  const { rows } = await db.query<{ platform: string; external_id: string; extraction: AuctionExtraction }>(
+    'SELECT platform, external_id, extraction FROM extraction_cache',
+  )
+  const cache: ExtractionCache = {}
+  for (const row of rows) {
+    cache[cacheKey(row.platform, row.external_id)] = row.extraction
+  }
+  return cache
+}
+
+/**
+ * Persist `entries` to Postgres and merge them into the in-process cache.
+ * `entries` is expected to be only the keys that changed since the last
+ * flush (see the enrich task's `dirty` tracking) — passing the whole cache
+ * on every call would re-upsert unchanged rows and grow with every flush.
+ */
+export async function writeExtractionCache(entries: ExtractionCache): Promise<void> {
+  const cache = await readExtractionCache()
+  Object.assign(cache, entries)
+  await writeExtractionCacheToDb(entries)
 }
 
 // 3 params per row (platform, external_id, extraction) × 5000 rows = 15000
@@ -85,21 +91,21 @@ async function readExtractionCacheFromDb(): Promise<ExtractionCache> {
 // CHUNK_SIZE for the same rationale).
 const CHUNK_SIZE = 5000
 
-async function writeExtractionCacheToDb(cache: ExtractionCache): Promise<void> {
+async function writeExtractionCacheToDb(entries: ExtractionCache): Promise<void> {
   const db = getPool()
   if (!db) return
-  const keys = Object.keys(cache)
+  const keys = Object.keys(entries)
   if (keys.length === 0) return
   try {
     for (let i = 0; i < keys.length; i += CHUNK_SIZE) {
-      await upsertChunk(db, keys.slice(i, i + CHUNK_SIZE), cache)
+      await upsertChunk(db, keys.slice(i, i + CHUNK_SIZE), entries)
     }
   } catch (err) {
     console.warn(`[extraction-cache] upsert failed: ${(err as Error).message}`)
   }
 }
 
-async function upsertChunk(db: Pool, keys: string[], cache: ExtractionCache): Promise<void> {
+async function upsertChunk(db: Pool, keys: string[], entries: ExtractionCache): Promise<void> {
   const values: unknown[] = []
   const tuples: string[] = []
   for (const key of keys) {
@@ -108,7 +114,7 @@ async function upsertChunk(db: Pool, keys: string[], cache: ExtractionCache): Pr
     const externalId = key.slice(separator + 1)
     const placeholders = [1, 2, 3].map((n) => `$${values.length + n}`)
     tuples.push(`(${placeholders.join(', ')})`)
-    values.push(platform, externalId, JSON.stringify(cache[key]))
+    values.push(platform, externalId, JSON.stringify(entries[key]))
   }
   await db.query(
     `

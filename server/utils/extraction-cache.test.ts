@@ -1,12 +1,7 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AuctionExtraction } from '~/types/auction'
-import { getPool } from './db'
-import { readJsonCache, writeJsonCache } from './json-cache'
 
 vi.mock('./db', () => ({ getPool: vi.fn() }))
-vi.mock('./json-cache', () => ({ readJsonCache: vi.fn(), writeJsonCache: vi.fn() }))
-
-const { readExtractionCache, writeExtractionCache } = await import('./extraction-cache')
 
 const extraction: AuctionExtraction = {
   propertyType: 'einfamilienhaus',
@@ -41,87 +36,108 @@ function makeFakePool(rows: Array<{ platform: string; external_id: string; extra
   return { query, upserted }
 }
 
+// readExtractionCache() memoizes the loaded cache at module scope for the
+// process's lifetime, so each test re-imports the module fresh to isolate
+// that state (same pattern as geocode.test.ts's backend-selection tests).
+afterEach(() => {
+  vi.resetModules()
+})
+
 describe('readExtractionCache', () => {
-  it('returns the empty local cache when Postgres is not configured', async () => {
+  it('returns an empty cache when Postgres is not configured', async () => {
+    const { getPool } = await import('./db')
     vi.mocked(getPool).mockReturnValue(null)
-    vi.mocked(readJsonCache).mockResolvedValue({})
+    const { readExtractionCache } = await import('./extraction-cache')
 
     await expect(readExtractionCache()).resolves.toEqual({})
   })
 
-  it('reconstructs entries from Postgres when the local cache is empty (simulated volume loss)', async () => {
-    vi.mocked(readJsonCache).mockResolvedValue({})
+  it('loads every row from Postgres on first call', async () => {
+    const { getPool } = await import('./db')
     const pool = makeFakePool([{ platform: 'zvg-portal', external_id: '7265', extraction }])
     vi.mocked(getPool).mockReturnValue(pool as never)
+    const { readExtractionCache } = await import('./extraction-cache')
 
     const cache = await readExtractionCache()
 
     expect(cache['zvg-portal:7265']).toEqual(extraction)
   })
 
-  it('serves the local cache without touching Postgres when it is populated', async () => {
-    const staleExtraction = { ...extraction, confidence: 'low' as const }
-    vi.mocked(readJsonCache).mockResolvedValue({ 'zvg-portal:7265': extraction })
-    const pool = makeFakePool([{ platform: 'zvg-portal', external_id: '7265', extraction: staleExtraction }])
+  it('serves subsequent calls from memory without re-querying Postgres', async () => {
+    const { getPool } = await import('./db')
+    const pool = makeFakePool([{ platform: 'zvg-portal', external_id: '7265', extraction }])
     vi.mocked(getPool).mockReturnValue(pool as never)
+    const { readExtractionCache } = await import('./extraction-cache')
 
-    const cache = await readExtractionCache()
+    await readExtractionCache()
+    await readExtractionCache()
 
-    expect(cache['zvg-portal:7265']).toEqual(extraction)
-    // The DB scan runs on every /api/auctions request; skip it on the fast path.
-    expect(pool.query).not.toHaveBeenCalled()
+    expect(pool.query).toHaveBeenCalledTimes(1)
   })
 
-  it('never throws when the query fails', async () => {
-    vi.mocked(readJsonCache).mockResolvedValue({})
-    vi.mocked(getPool).mockReturnValue({ query: vi.fn().mockRejectedValue(new Error('connection reset')) } as never)
+  it('retries on the next call after a failed load, without caching the failure', async () => {
+    const { getPool } = await import('./db')
+    const failingPool = { query: vi.fn().mockRejectedValue(new Error('connection reset')) }
+    vi.mocked(getPool).mockReturnValue(failingPool as never)
+    const { readExtractionCache } = await import('./extraction-cache')
 
     await expect(readExtractionCache()).resolves.toEqual({})
+
+    const workingPool = makeFakePool([{ platform: 'zvg-portal', external_id: '7265', extraction }])
+    vi.mocked(getPool).mockReturnValue(workingPool as never)
+
+    const cache = await readExtractionCache()
+
+    expect(cache['zvg-portal:7265']).toEqual(extraction)
   })
 })
 
 describe('writeExtractionCache', () => {
-  it('is a no-op towards Postgres without a configured pool', async () => {
+  it('is a no-op towards Postgres without a configured pool, but still updates the in-process cache', async () => {
+    const { getPool } = await import('./db')
     vi.mocked(getPool).mockReturnValue(null)
-
-    await expect(writeExtractionCache({ 'zvg-portal:7265': extraction })).resolves.toBeUndefined()
-    expect(writeJsonCache).toHaveBeenCalledWith(expect.stringContaining('extraction.json'), {
-      'zvg-portal:7265': extraction,
-    })
-  })
-
-  it('upserts every entry into Postgres', async () => {
-    const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { readExtractionCache, writeExtractionCache } = await import('./extraction-cache')
 
     await writeExtractionCache({ 'zvg-portal:7265': extraction })
 
-    expect(pool.upserted).toEqual([{ platform: 'zvg-portal', external_id: '7265', extraction }])
+    const cache = await readExtractionCache()
+    expect(cache['zvg-portal:7265']).toEqual(extraction)
+  })
+
+  it('upserts only the given entries, not the full in-process cache', async () => {
+    const { getPool } = await import('./db')
+    const pool = makeFakePool([{ platform: 'zvg-portal', external_id: '1111', extraction }])
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { readExtractionCache, writeExtractionCache } = await import('./extraction-cache')
+
+    // Load the existing entry into the in-process cache first...
+    await readExtractionCache()
+    // ...then write only a second, unrelated entry.
+    const second: AuctionExtraction = { ...extraction, confidence: 'low' }
+    await writeExtractionCache({ 'zvg-portal:2222': second })
+
+    expect(pool.upserted).toEqual([{ platform: 'zvg-portal', external_id: '2222', extraction: second }])
+  })
+
+  it('merges written entries into the in-process cache for subsequent reads', async () => {
+    const { getPool } = await import('./db')
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { readExtractionCache, writeExtractionCache } = await import('./extraction-cache')
+
+    await writeExtractionCache({ 'zvg-portal:7265': extraction })
+    const cache = await readExtractionCache()
+
+    expect(cache['zvg-portal:7265']).toEqual(extraction)
+    // The merge is served from memory — no second SELECT round-trip.
+    expect(pool.query).not.toHaveBeenCalledWith(expect.stringContaining('SELECT'), expect.anything())
   })
 
   it('never throws when the query fails', async () => {
+    const { getPool } = await import('./db')
     vi.mocked(getPool).mockReturnValue({ query: vi.fn().mockRejectedValue(new Error('connection reset')) } as never)
+    const { writeExtractionCache } = await import('./extraction-cache')
 
     await expect(writeExtractionCache({ 'zvg-portal:7265': extraction })).resolves.toBeUndefined()
-  })
-})
-
-describe('volume-loss round trip', () => {
-  it('an extraction written to Postgres is read back after the local cache is wiped', async () => {
-    const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
-    vi.mocked(readJsonCache).mockResolvedValue({ 'zvg-portal:7265': extraction })
-
-    await writeExtractionCache({ 'zvg-portal:7265': extraction })
-
-    // Simulate the local volume being wiped: readJsonCache now returns empty,
-    // but Postgres still has what writeExtractionCache upserted above.
-    vi.mocked(readJsonCache).mockResolvedValue({})
-    const restoredPool = makeFakePool(pool.upserted)
-    vi.mocked(getPool).mockReturnValue(restoredPool as never)
-
-    const restored = await readExtractionCache()
-
-    expect(restored['zvg-portal:7265']).toEqual(extraction)
   })
 })
