@@ -252,6 +252,7 @@ export function mapRow(row: RawRow, docs: ChannelDoc[], platformId: string): Auc
     address: row.Address || null,
     marketValueEur,
     marketValueText,
+    currency: row.MinimumBid != null ? 'USD' : null,
     startingBid: row.MinimumBid ?? null,
     auctionDateIso,
     auctionDateText,

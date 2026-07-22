@@ -27,6 +27,8 @@ describe('toAuctionFilters', () => {
       priceMax: '',
       landMin: '500',
       category: 'einfamilienhaus',
+      condition: 'gepflegt',
+      features: 'balkon,garage',
       photos: '1',
       cancelled: '1',
     })
@@ -36,6 +38,8 @@ describe('toAuctionFilters', () => {
     expect(filters.search).toBe('Wohnung')
     expect(filters.authority).toBe('AG Dresden')
     expect(filters.category).toBe('einfamilienhaus')
+    expect(filters.condition).toBe('gepflegt')
+    expect(filters.features).toEqual(['balkon', 'garage'])
     expect(filters.onlyWithPhotos).toBe(true)
     expect(filters.includeCancelled).toBe(true)
     expect(filters.priceMin).toBe(100000)
@@ -50,6 +54,8 @@ describe('toAuctionFilters', () => {
     expect(filters.regionNameKeys).toBeNull()
     expect(filters.authority).toBe('all')
     expect(filters.category).toBe('all')
+    expect(filters.condition).toBe('all')
+    expect(filters.features).toEqual([])
     expect(filters.onlyWithPhotos).toBe(false)
     expect(filters.includeCancelled).toBe(false)
     expect(filters.priceMin).toBeNull()

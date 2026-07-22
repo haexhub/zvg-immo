@@ -17,6 +17,8 @@ const emit = defineEmits<{
 
 const intlLocale = useIntlLocale()
 const { currency, eurToDisplay, nativeToDisplay } = useCurrencyDisplay()
+const conditionLabel = useConditionLabel()
+const featureLabel = useFeatureLabel()
 
 function watchlistKey(a: Auction): string {
   return `${a.platform}:${a.externalId}`
@@ -87,6 +89,7 @@ function bidLine(a: Auction): string | null {
               {{ $t('search.noPhoto') }}
             </div>
             <Badge v-if="a.cancelled" variant="destructive" class="absolute left-2 top-2">{{ $t('search.cancelledBadge') }}</Badge>
+            <Badge v-else-if="a.extraction?.condition" variant="secondary" class="absolute left-2 top-2">{{ conditionLabel(a.extraction.condition) }}</Badge>
             <span
               v-if="a.photoCount > 1"
               class="absolute bottom-2 right-2 rounded-full bg-black/70 px-2 py-0.5 text-xs text-white"
@@ -106,6 +109,13 @@ function bidLine(a: Auction): string | null {
           <div class="p-3 flex-1 flex flex-col gap-1">
             <span class="font-mono text-xs text-muted-foreground">{{ a.caseNumber }}</span>
             <p class="text-sm font-medium leading-tight">{{ a.address || a.title || $t('search.unknownPropertyType') }}</p>
+            <div v-if="a.extraction?.features?.length" class="flex flex-wrap gap-1">
+              <span
+                v-for="f in a.extraction.features.slice(0, 3)"
+                :key="f"
+                class="rounded-md bg-muted/60 text-muted-foreground px-1.5 py-0.5 text-xs"
+              >{{ featureLabel(f) }}</span>
+            </div>
             <p class="mt-auto pt-1 font-semibold tabular-nums">
               {{ eurToDisplay(a.marketValueEur) != null ? formatPrice(a.marketValueEur) : (a.marketValueText ?? '–') }}
               <span v-if="showOriginalPrice(a)" class="block text-xs font-normal text-muted-foreground">

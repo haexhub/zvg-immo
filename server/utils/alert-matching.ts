@@ -63,6 +63,8 @@ export function toAuctionFilters(stored: Record<string, unknown>): AuctionFilter
     search: str('q'),
     authority: str('authority') || 'all',
     category: str('category') || 'all',
+    condition: str('condition') || 'all',
+    features: list('features'),
     onlyWithPhotos: str('photos') === '1',
     includeCancelled: str('cancelled') === '1',
     priceMin: num('priceMin'),

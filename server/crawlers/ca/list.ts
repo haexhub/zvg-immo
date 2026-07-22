@@ -353,7 +353,7 @@ export function mapProperty(
     // the minimum tender (tax arrears owed) is kept in description.
     marketValueEur: null,
     marketValue: assessedCad,
-    currency: assessedCad != null ? 'CAD' : null,
+    currency: assessedCad != null || prop.minTenderCad != null ? 'CAD' : null,
     marketValueText: assessedCad != null ? `${assessedCad.toLocaleString('de-DE')} CAD (Assessed Value)` : null,
     startingBid: prop.minTenderCad ?? null,
     auctionDateIso: dateTime.iso,

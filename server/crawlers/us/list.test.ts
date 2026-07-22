@@ -25,6 +25,7 @@ describe('mapRow', () => {
   it('sets startingBid from MinimumBid', () => {
     const a = mapRow(makeRow(), [], 'us-bid4assets')
     expect(a.startingBid).toBe(15000)
+    expect(a.currency).toBe('USD')
   })
 
   it('leaves startingBid null when MinimumBid is absent', () => {

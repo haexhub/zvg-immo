@@ -12,6 +12,8 @@
 // clampExtraction are pure and unit-tested; the network call is a thin wrapper.
 
 import { PROPERTY_TYPES, type PropertyType } from '~/lib/property-type'
+import { CONDITIONS, type Condition } from '~/lib/condition'
+import { FEATURES, type Feature } from '~/lib/features'
 
 export interface LlmInput {
   title: string | null
@@ -34,14 +36,17 @@ export interface ClampedExtraction {
   livingAreaSqm: number | null
   rooms: number | null
   units: number | null
-  /** Explicit security-deposit amount, only when the text states one
-   *  directly (e.g. a German court deviating from the unpublished 10%
-   *  default) — never derived from a percentage, since the LLM doesn't see
-   *  the auction's Verkehrswert to compute one. */
+  /** Explicit security-deposit amount in the auction's native currency, only
+   *  when the text states one directly (e.g. a German court deviating from
+   *  the unpublished 10% default) — never derived from a percentage or
+   *  converted, since the LLM doesn't see the auction's Verkehrswert or
+   *  exchange rate to compute one. */
   securityDeposit: number | null
   /** Short free-text note on anything unusual about the bidding process
    *  (a deviating deposit rule, an atypical payment deadline, ...), or null. */
   biddingNotes: string | null
+  condition: Condition | null
+  features: Feature[]
 }
 
 // Bound PDF prose so a 40-page Gutachten doesn't blow the token budget. The
@@ -57,12 +62,19 @@ const SYSTEM_PROMPT =
   'zurück und Flächen in Quadratmetern (Hektar in m² umrechnen: 1 ha = 10000 m²). ' +
   'Wohnfläche und Grundstücksfläche strikt getrennt halten. Wenn ein Wert nicht ' +
   'eindeutig im Text steht, gib null zurück — niemals raten. ' +
-  'Gib eine Sicherheitsleistung nur zurück, wenn ein konkreter Geldbetrag im Text ' +
-  'genannt wird (z. B. eine von der gesetzlichen 10%-Regel abweichende Festsetzung) ' +
-  '— niemals aus einem Prozentsatz berechnen, sonst null. ' +
+  'Gib eine Sicherheitsleistung nur zurück, wenn ein konkreter Geldbetrag in der ' +
+  'Landeswährung der Anzeige im Text genannt wird (z. B. eine von der gesetzlichen ' +
+  '10%-Regel abweichende Festsetzung) — niemals aus einem Prozentsatz berechnen ' +
+  'oder in eine andere Währung umrechnen, sonst null. ' +
   'Gib in biddingNotes einen kurzen Hinweis zurück, falls der Text etwas ' +
   'Ungewöhnliches zum Bietverfahren nennt (abweichende Sicherheitsleistung, ' +
-  'ungewöhnliche Zahlungsfrist o. Ä.), sonst null.'
+  'ungewöhnliche Zahlungsfrist o. Ä.), sonst null. ' +
+  'Gib außerdem den Zustand als eine der erlaubten Kategorien zurück, nur wenn er ' +
+  'eindeutig aus dem Text hervorgeht (z.B. "kernsaniert"/"neuwertig" → neuwertig, ' +
+  '"Sanierungsstau" → sanierungsbeduerftig, "renovierungsbedürftig" → renovierungsbeduerftig), sonst null. ' +
+  'Gib eine Liste erkannter Ausstattungsmerkmale zurück — nur Merkmale, die explizit ' +
+  'im Text genannt werden (Negation beachten, z.B. "kein Balkon" nicht aufnehmen), ' +
+  'sonst eine leere Liste. Niemals raten.'
 
 const EXTRACTION_SCHEMA = {
   type: 'object',
@@ -79,14 +91,34 @@ const EXTRACTION_SCHEMA = {
     units: { type: ['integer', 'null'], description: 'Anzahl Wohneinheiten.' },
     securityDeposit: {
       type: ['number', 'null'],
-      description: 'Explizit genannte Sicherheitsleistung in Euro, oder null.',
+      description: 'Explizit genannte Sicherheitsleistung in der Landeswährung der Anzeige, oder null.',
     },
     biddingNotes: {
       type: ['string', 'null'],
       description: 'Kurzer Hinweis zu Besonderheiten des Bietverfahrens, oder null.',
     },
+    condition: {
+      type: ['string', 'null'],
+      enum: [...CONDITIONS, null],
+      description: 'Zustand der Immobilie, oder null wenn unklar.',
+    },
+    features: {
+      type: 'array',
+      items: { type: 'string', enum: FEATURES },
+      description: 'Erkannte Ausstattungsmerkmale, leer wenn keine eindeutig genannt.',
+    },
   },
-  required: ['propertyType', 'landAreaSqm', 'livingAreaSqm', 'rooms', 'units', 'securityDeposit', 'biddingNotes'],
+  required: [
+    'propertyType',
+    'landAreaSqm',
+    'livingAreaSqm',
+    'rooms',
+    'units',
+    'securityDeposit',
+    'biddingNotes',
+    'condition',
+    'features',
+  ],
 } as const
 
 /** Pull the structured object out of the proxy's `final_result` tool_use block. */
@@ -104,6 +136,8 @@ export function parseExtractionResponse(resp: unknown): Record<string, unknown> 
 }
 
 const VALID_TYPES = new Set<string>(PROPERTY_TYPES)
+const VALID_CONDITIONS = new Set<string>(CONDITIONS)
+const VALID_FEATURES = new Set<string>(FEATURES)
 
 function plausibleArea(v: unknown, max: number): number | null {
   return typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= max ? v : null
@@ -123,6 +157,12 @@ export function clampExtraction(raw: Record<string, unknown>): ClampedExtraction
     typeof raw.biddingNotes === 'string' && raw.biddingNotes.trim()
       ? raw.biddingNotes.trim().slice(0, 300)
       : null
+  const condition = typeof raw.condition === 'string' && VALID_CONDITIONS.has(raw.condition)
+    ? (raw.condition as Condition)
+    : null
+  const features = Array.isArray(raw.features)
+    ? [...new Set(raw.features.filter((f): f is Feature => typeof f === 'string' && VALID_FEATURES.has(f)))]
+    : []
   return {
     propertyType: pt,
     landAreaSqm: plausibleArea(raw.landAreaSqm, 100_000_000),
@@ -134,6 +174,8 @@ export function clampExtraction(raw: Record<string, unknown>): ClampedExtraction
     // itself), not a real-world deposit ceiling.
     securityDeposit: plausibleArea(raw.securityDeposit, 100_000_000),
     biddingNotes,
+    condition,
+    features,
   }
 }
 

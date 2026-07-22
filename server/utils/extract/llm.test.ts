@@ -33,6 +33,8 @@ describe('clampExtraction', () => {
         units: 1,
         securityDeposit: 5000,
         biddingNotes: 'Abweichende Sicherheitsleistung von 5.000 EUR gefordert.',
+        condition: 'gepflegt',
+        features: ['balkon', 'garage'],
       }),
     ).toEqual({
       propertyType: 'einfamilienhaus',
@@ -42,6 +44,8 @@ describe('clampExtraction', () => {
       units: 1,
       securityDeposit: 5000,
       biddingNotes: 'Abweichende Sicherheitsleistung von 5.000 EUR gefordert.',
+      condition: 'gepflegt',
+      features: ['balkon', 'garage'],
     })
   })
 
@@ -65,6 +69,8 @@ describe('clampExtraction', () => {
       units: null,
       securityDeposit: null,
       biddingNotes: null,
+      condition: null,
+      features: [],
     })
   })
 
@@ -87,5 +93,24 @@ describe('clampExtraction', () => {
     expect(clampExtraction({ biddingNotes: '   ' }).biddingNotes).toBeNull()
     expect(clampExtraction({ biddingNotes: 42 as unknown as string }).biddingNotes).toBeNull()
     expect(clampExtraction({ biddingNotes: 'x'.repeat(500) }).biddingNotes).toHaveLength(300)
+  })
+
+  it('nulls an unknown condition', () => {
+    expect(clampExtraction({ condition: 'ruin' }).condition).toBeNull()
+  })
+
+  it('keeps a valid condition', () => {
+    expect(clampExtraction({ condition: 'baufaellig' }).condition).toBe('baufaellig')
+  })
+
+  it('filters unknown features and dedupes', () => {
+    expect(
+      clampExtraction({ features: ['balkon', 'balkon', 'unicorn-pool', 'garten'] }).features,
+    ).toEqual(['balkon', 'garten'])
+  })
+
+  it('defaults features to an empty array when missing or malformed', () => {
+    expect(clampExtraction({}).features).toEqual([])
+    expect(clampExtraction({ features: 'balkon' as unknown as string[] }).features).toEqual([])
   })
 })

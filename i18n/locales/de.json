@@ -299,6 +299,30 @@
     "sonstiges": "Sonstiges",
     "unbekannt": "Unbekannt"
   },
+  "condition": {
+    "neuwertig": "Neuwertig",
+    "gepflegt": "Gepflegt",
+    "renovierungsbeduerftig": "Renovierungsbedürftig",
+    "sanierungsbeduerftig": "Sanierungsbedürftig",
+    "baufaellig": "Baufällig"
+  },
+  "feature": {
+    "balkon": "Balkon",
+    "terrasse": "Terrasse",
+    "garten": "Garten",
+    "garage": "Garage",
+    "stellplatz": "Stellplatz",
+    "keller": "Keller",
+    "dachgeschoss": "Dachgeschoss",
+    "aufzug": "Aufzug",
+    "einbaukueche": "Einbauküche",
+    "kamin": "Kamin",
+    "barrierefrei": "Barrierefrei",
+    "zentralheizung": "Zentralheizung",
+    "fussbodenheizung": "Fußbodenheizung",
+    "denkmalschutz": "Denkmalschutz",
+    "vermietet": "Vermietet"
+  },
   "attachmentKind": {
     "announcement": "Bekanntmachung",
     "photo": "Fotos",
@@ -325,6 +349,10 @@
     "propertyType": "Objektart",
     "propertyTypePlaceholder": "Objektart wählen",
     "allPropertyTypes": "Alle Objektarten",
+    "condition": "Mindestzustand",
+    "conditionPlaceholder": "Mindestzustand wählen",
+    "allConditions": "Alle Zustände",
+    "features": "Ausstattung",
     "onlyWithPhotos": "Nur mit Fotos",
     "includeCancelled": "Aufgehobene anzeigen",
     "reset": "Zurücksetzen ({count})",
@@ -342,6 +370,8 @@
       "livMin": "Wohnfläche ab",
       "livMax": "Wohnfläche bis",
       "category": "Objektart",
+      "condition": "Mindestzustand",
+      "features": "Ausstattung",
       "photos": "Nur mit Fotos",
       "cancelled": "inkl. aufgehobene"
     }
@@ -436,6 +466,8 @@
     "livingArea": "Wohnfläche",
     "rooms": "Zimmer",
     "units": "Wohneinheiten",
+    "condition": "Zustand",
+    "features": "Ausstattung",
     "authority": "Gericht",
     "caseNumber": "Aktenzeichen",
     "extractionNotice": "Eckdaten automatisch aus dem Gutachten/Exposé extrahiert ({confidence}).",
@@ -478,7 +510,6 @@
     "defectsTitle": "Mängel",
     "encumbrancesTitle": "Belastungen",
     "landValueTitle": "Bodenrichtwert",
-    "conditionTitle": "Zustand",
     "constructionTitle": "Bau & Instandhaltung",
     "gallery": {
       "count": "{n} Bilder",

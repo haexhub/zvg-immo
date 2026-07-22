@@ -123,4 +123,17 @@ describe('mapProperty', () => {
     )
     expect(a.startingBid).toBeNull()
   })
+
+  it('keeps startingBid in CAD when only minTenderCad is present (no assessed value)', () => {
+    const a = mapProperty(
+      makeProperty({ legal: null }),
+      pageUrl,
+      'Richmond Hill',
+      dateTime,
+      'ca-ontariotaxsales',
+    )
+    expect(a.startingBid).toBe(12500)
+    expect(a.marketValue).toBeNull()
+    expect(a.currency).toBe('CAD')
+  })
 })

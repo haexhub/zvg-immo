@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { ALL_SCOPE } from '~/lib/auction-constants'
+import { CONDITIONS } from '~/lib/condition'
+import { FEATURES } from '~/lib/features'
 import type { CountryEntry } from '~/server/crawlers/registry'
 
 defineProps<{
@@ -30,11 +32,22 @@ const landAreaMax = defineModel<number | null>('landAreaMax', { required: true }
 const livingAreaMin = defineModel<number | null>('livingAreaMin', { required: true })
 const livingAreaMax = defineModel<number | null>('livingAreaMax', { required: true })
 const categoryFilter = defineModel<string>('categoryFilter', { required: true })
+const conditionFilter = defineModel<string>('conditionFilter', { required: true })
+const featuresFilter = defineModel<string[]>('featuresFilter', { required: true })
 const onlyWithPhotos = defineModel<boolean>('onlyWithPhotos', { required: true })
 const includeCancelled = defineModel<boolean>('includeCancelled', { required: true })
 
 const { t } = useI18n()
 const countryLabel = useCountryLabel()
+const conditionLabel = useConditionLabel()
+const featureLabel = useFeatureLabel()
+
+function toggleFeature(id: string): void {
+  const set = new Set(featuresFilter.value)
+  if (set.has(id)) set.delete(id)
+  else set.add(id)
+  featuresFilter.value = [...set]
+}
 
 const priceBuckets = computed(() => [
   { label: t('search.priceBucket100k'), min: null, max: 100_000 },
@@ -152,6 +165,34 @@ const priceBuckets = computed(() => [
           </SelectItem>
         </SelectContent>
       </Select>
+    </div>
+
+    <div class="space-y-2">
+      <Label>{{ $t('filters.condition') }}</Label>
+      <Select v-model="conditionFilter">
+        <SelectTrigger class="w-full">
+          <SelectValue :placeholder="$t('filters.conditionPlaceholder')" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem :value="ALL_SCOPE">{{ $t('filters.allConditions') }}</SelectItem>
+          <SelectItem v-for="c in CONDITIONS" :key="c" :value="c">
+            {{ conditionLabel(c) }}
+          </SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
+
+    <div class="space-y-2">
+      <Label>{{ $t('filters.features') }}</Label>
+      <div class="grid grid-cols-2 gap-x-2 gap-y-1">
+        <label v-for="f in FEATURES" :key="f" class="flex items-center gap-2 cursor-pointer text-sm">
+          <Checkbox
+            :model-value="featuresFilter.includes(f)"
+            @update:model-value="toggleFeature(f)"
+          />
+          {{ featureLabel(f) }}
+        </label>
+      </div>
     </div>
 
     <div class="space-y-2 pt-2 border-t">

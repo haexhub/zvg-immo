@@ -17,6 +17,8 @@ const intlLocale = useIntlLocale()
 const { currency, eurToDisplay, nativeToDisplay } = useCurrencyDisplay()
 const propertyTypeLabel = usePropertyTypeLabel()
 const attachmentKindLabelFn = useAttachmentKindLabel()
+const conditionLabel = useConditionLabel()
+const featureLabel = useFeatureLabel()
 
 const { data: a, error, pending } = await useFetch<AuctionDetail | null>(
   `/api/auction/${platform}/${id}`,
@@ -201,7 +203,6 @@ const LOCKED_SECTIONS: Array<{ key: string; titleKey: string; rows?: number }> =
   { key: 'defects', titleKey: 'objektDetail.defectsTitle', rows: 2 },
   { key: 'encumbrances', titleKey: 'objektDetail.encumbrancesTitle', rows: 2 },
   { key: 'landValue', titleKey: 'objektDetail.landValueTitle', rows: 2 },
-  { key: 'condition', titleKey: 'objektDetail.conditionTitle', rows: 4 },
   { key: 'construction', titleKey: 'objektDetail.constructionTitle', rows: 4 },
   { key: 'neighborhood', titleKey: 'objektDetail.neighborhoodCharacter', rows: 4 },
 ]
@@ -332,6 +333,10 @@ useHead(() => ({
                     <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.units') }}</dt>
                     <dd class="text-sm font-medium">{{ a.extraction.units }}</dd>
                   </div>
+                  <div v-if="a.extraction?.condition">
+                    <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.condition') }}</dt>
+                    <dd class="text-sm font-medium">{{ conditionLabel(a.extraction.condition) }}</dd>
+                  </div>
                   <div>
                     <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.authority') }}</dt>
                     <dd class="text-sm font-medium">{{ a.authority }}</dd>
@@ -341,6 +346,12 @@ useHead(() => ({
                     <dd class="text-sm font-mono">{{ a.caseNumber }}</dd>
                   </div>
                 </dl>
+                <div v-if="a.extraction?.features?.length" class="mt-4 space-y-1.5">
+                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.features') }}</dt>
+                  <div class="flex flex-wrap gap-1.5">
+                    <Badge v-for="f in a.extraction.features" :key="f" variant="secondary">{{ featureLabel(f) }}</Badge>
+                  </div>
+                </div>
               </CardContent>
             </Card>
             <p
