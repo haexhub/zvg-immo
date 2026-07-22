@@ -59,7 +59,7 @@ describe('readExtractionCache', () => {
     expect(cache['zvg-portal:7265']).toEqual(extraction)
   })
 
-  it('lets the local cache win over Postgres on a conflicting key', async () => {
+  it('serves the local cache without touching Postgres when it is populated', async () => {
     const staleExtraction = { ...extraction, confidence: 'low' as const }
     vi.mocked(readJsonCache).mockResolvedValue({ 'zvg-portal:7265': extraction })
     const pool = makeFakePool([{ platform: 'zvg-portal', external_id: '7265', extraction: staleExtraction }])
@@ -68,6 +68,8 @@ describe('readExtractionCache', () => {
     const cache = await readExtractionCache()
 
     expect(cache['zvg-portal:7265']).toEqual(extraction)
+    // The DB scan runs on every /api/auctions request; skip it on the fast path.
+    expect(pool.query).not.toHaveBeenCalled()
   })
 
   it('never throws when the query fails', async () => {

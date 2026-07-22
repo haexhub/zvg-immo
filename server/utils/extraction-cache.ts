@@ -10,11 +10,11 @@
 // 'low' to upgrade them with the LLM (see the enrich task).
 //
 // WP-3: Postgres (`extraction_cache` table) is the durable source — a local
-// volume loss must not force a full LLM re-run. The local JSON file remains a
-// best-effort fast path (no network round-trip on every /api/auctions
-// request); read merges Postgres as the base with the local file overlaid
-// (local wins on conflict, but Postgres fills in anything the local file lost).
-// No-op without a configured pool, same graceful-degrade as
+// volume loss must not force a full LLM re-run. The local JSON file stays the
+// primary fast path: readExtractionCache runs on every /api/auctions request
+// (via overlayExtraction), so it only falls back to a Postgres scan when the
+// local file is empty — the volume-loss case. A healthy box never round-trips
+// to the DB on read. No-op without a configured pool, same graceful-degrade as
 // current-auctions.ts/raw-archive.ts.
 
 import { join } from 'node:path'
@@ -50,8 +50,11 @@ export function applyExtractionToAuctions(auctions: Auction[], cache: Extraction
 
 export async function readExtractionCache(): Promise<ExtractionCache> {
   const local = await readJsonCache<ExtractionCache>(CACHE_PATH, () => ({}), 'extraction-cache')
-  const remote = await readExtractionCacheFromDb()
-  return { ...remote, ...local }
+  // Fast path: on a healthy box the local file is complete, so serve it without
+  // touching Postgres — this runs on every /api/auctions request. Only when the
+  // local volume is gone (empty file) do we rebuild from the durable DB copy.
+  if (Object.keys(local).length > 0) return local
+  return readExtractionCacheFromDb()
 }
 
 export async function writeExtractionCache(cache: ExtractionCache): Promise<void> {
