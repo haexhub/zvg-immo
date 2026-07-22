@@ -116,4 +116,7 @@ async function main() {
   await pool.end()
 }
 
-main()
+main().catch((err) => {
+  console.error(`[migrate] aborted: ${(err as Error).message}`)
+  process.exit(1)
+})
