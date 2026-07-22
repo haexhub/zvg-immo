@@ -80,10 +80,15 @@ async function loadExtractionCache(): Promise<ExtractionCache> {
  * flush (see the enrich task's `dirty` tracking) — passing the whole cache
  * on every call would re-upsert unchanged rows and grow with every flush.
  */
-export async function writeExtractionCache(entries: ExtractionCache): Promise<void> {
+/**
+ * Returns whether the Postgres write succeeded, so the caller (the enrich
+ * task's `dirty` tracking) can re-merge a failed batch for retry on the next
+ * flush instead of silently losing it.
+ */
+export async function writeExtractionCache(entries: ExtractionCache): Promise<boolean> {
   const cache = await readExtractionCache()
   Object.assign(cache, entries)
-  await writeExtractionCacheToDb(entries)
+  return writeExtractionCacheToDb(entries)
 }
 
 // 3 params per row (platform, external_id, extraction) × 5000 rows = 15000
@@ -91,17 +96,19 @@ export async function writeExtractionCache(entries: ExtractionCache): Promise<vo
 // CHUNK_SIZE for the same rationale).
 const CHUNK_SIZE = 5000
 
-async function writeExtractionCacheToDb(entries: ExtractionCache): Promise<void> {
+async function writeExtractionCacheToDb(entries: ExtractionCache): Promise<boolean> {
   const db = getPool()
-  if (!db) return
+  if (!db) return true
   const keys = Object.keys(entries)
-  if (keys.length === 0) return
+  if (keys.length === 0) return true
   try {
     for (let i = 0; i < keys.length; i += CHUNK_SIZE) {
       await upsertChunk(db, keys.slice(i, i + CHUNK_SIZE), entries)
     }
+    return true
   } catch (err) {
     console.warn(`[extraction-cache] upsert failed: ${(err as Error).message}`)
+    return false
   }
 }
 

@@ -130,7 +130,8 @@ describe('writeExtractionCache', () => {
 
     expect(cache['zvg-portal:7265']).toEqual(extraction)
     // The merge is served from memory — no second SELECT round-trip.
-    expect(pool.query).not.toHaveBeenCalledWith(expect.stringContaining('SELECT'), expect.anything())
+    const selectCalls = pool.query.mock.calls.filter(([sql]) => (sql as string).includes('SELECT'))
+    expect(selectCalls).toHaveLength(1)
   })
 
   it('never throws when the query fails', async () => {
@@ -138,6 +139,6 @@ describe('writeExtractionCache', () => {
     vi.mocked(getPool).mockReturnValue({ query: vi.fn().mockRejectedValue(new Error('connection reset')) } as never)
     const { writeExtractionCache } = await import('./extraction-cache')
 
-    await expect(writeExtractionCache({ 'zvg-portal:7265': extraction })).resolves.toBeUndefined()
+    await expect(writeExtractionCache({ 'zvg-portal:7265': extraction })).resolves.toBe(false)
   })
 })

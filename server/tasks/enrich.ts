@@ -461,7 +461,10 @@ async function runEnrich() {
         if (cached % FLUSH_EVERY === 0) {
           const toFlush = dirty
           dirty = {}
-          await writeExtractionCache(toFlush)
+          const ok = await writeExtractionCache(toFlush)
+          // On a failed upsert, re-merge the batch into dirty so the next
+          // flush retries it instead of silently losing it from Postgres.
+          if (!ok) dirty = { ...toFlush, ...dirty }
         }
       }
     }

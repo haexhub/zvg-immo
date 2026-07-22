@@ -19,7 +19,11 @@ function readDatabaseUrl(): string | null {
 export function getPool(): Pool | null {
   if (pool !== undefined) return pool
   const url = readDatabaseUrl()
-  pool = url ? new Pool({ connectionString: url }) : null
+  // query_timeout guards every query issued through this pool (e.g. the
+  // extraction-cache full-table load) against an indefinitely stalled
+  // Postgres — without it a stuck first read would hang every request that
+  // awaits the shared cache promise.
+  pool = url ? new Pool({ connectionString: url, query_timeout: 10_000 }) : null
   return pool
 }
 
