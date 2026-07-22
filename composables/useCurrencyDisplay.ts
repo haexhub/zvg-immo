@@ -34,7 +34,21 @@ export function useCurrencyDisplay() {
     return currencyToEur(amount, activeCurrency.value, rates.value) ?? amount
   }
 
+  /** Converts an amount already in its own native `sourceCurrency` (e.g.
+   *  Auction.startingBid/currentBid/sourceSecurityDeposit, which — unlike
+   *  marketValue — have no server-computed EUR counterpart) to the active
+   *  display currency, via EUR as the pivot. Returns null (rather than an
+   *  unconverted native amount) if a rate is missing anywhere along the way. */
+  function nativeToDisplay(amount: number | null, sourceCurrency: string | null | undefined): number | null {
+    if (amount == null) return null
+    const source = sourceCurrency ?? 'EUR'
+    if (source === activeCurrency.value) return amount
+    const eur = currencyToEur(amount, source, rates.value)
+    if (eur == null) return null
+    return eurToCurrency(eur, activeCurrency.value, rates.value) ?? null
+  }
+
   const availableCurrencies = computed(() => ['EUR', ...Object.keys(rates.value).sort()])
 
-  return { currency: activeCurrency, setPreferredCurrency, eurToDisplay, displayToEur, availableCurrencies }
+  return { currency: activeCurrency, setPreferredCurrency, eurToDisplay, displayToEur, nativeToDisplay, availableCurrencies }
 }

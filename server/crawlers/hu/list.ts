@@ -11,7 +11,7 @@ import { decodeIso8859_2, parseMnvDate, parseMnvPrice, clean } from './text'
  *   3  address link        (address)
  *   4  ownership share     (skipped)
  *   5  pre-emption right   (checkbox, skipped)
- *   6  reserve price HUF   (marketValue)
+ *   6  reserve price HUF   (marketValue, startingBid)
  *   7  deposit             (skipped)
  *   8  registration deadline (may be empty, skipped)
  *   9  bidding start       (skipped)
@@ -26,7 +26,7 @@ interface PageResult {
   totalReported: number | null
 }
 
-function parsePage(html: string, platformId: string): PageResult {
+export function parsePage(html: string, platformId: string): PageResult {
   const $ = load(html)
   const auctions: Auction[] = []
 
@@ -69,6 +69,11 @@ function parsePage(html: string, platformId: string): PageResult {
       marketValue: huf,
       currency: huf != null ? 'HUF' : null,
       marketValueText: huf != null ? `${huf.toLocaleString('de-DE', { maximumFractionDigits: 0 })} Ft` : null,
+      // The listing table only ever shows "Kikiáltási ár" (reserve/starting
+      // price) — the same value assigned to marketValue above. When the
+      // detail page later learns a real "Becsérték" valuation, it overrides
+      // marketValue but leaves startingBid untouched (see detail.ts).
+      startingBid: huf,
       auctionDateIso: parseMnvDate(auctionDateRaw),
       auctionDateText: auctionDateRaw || null,
       cancelled: false,

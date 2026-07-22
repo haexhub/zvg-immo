@@ -4,10 +4,17 @@ import { BOE_BASE, COUNTRY, ES_REGIONS, ES_REGION_NAMES } from './constants'
 import { boeFetch, looksLikeCaptcha, markBoeCaptcha } from './fetch'
 import { buildSearchUrl, buildPageUrl, extractBusquedaToken, parseListingHtml, PAGE_HITS } from './list'
 import { enrichInBatches, type DetailInfo } from './detail'
+import { parseEuroEs } from './text'
 
 type AuctionDetailFields = Pick<
   Auction,
-  'marketValueEur' | 'marketValueText' | 'description' | 'address' | 'pdfUrl' | 'pdfUrlUpstream'
+  | 'marketValueEur'
+  | 'marketValueText'
+  | 'description'
+  | 'address'
+  | 'pdfUrl'
+  | 'pdfUrlUpstream'
+  | 'startingBid'
 >
 
 const PLATFORM_ID = 'boe'
@@ -31,6 +38,9 @@ async function fetchListHtml(url: string, provincia: string): Promise<string> {
 export function applyDetail(auction: AuctionDetailFields, info: DetailInfo): void {
   if (info.tasacionEur != null) auction.marketValueEur = info.tasacionEur
   if (info.tasacionText) auction.marketValueText = info.tasacionText
+  // "Valor subasta" is the minimum acceptable bid, distinct from the
+  // Tasación (appraisal) mapped to marketValueEur above.
+  auction.startingBid = info.valorSubastaText ? parseEuroEs(info.valorSubastaText) : null
   // Verkehrswert stays the Tasación; the minimum bid ("Valor subasta") and
   // the cadastral reference only exist on the detail tabs — surface them as
   // labelled lines in the description.

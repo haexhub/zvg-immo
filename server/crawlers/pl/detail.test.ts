@@ -196,6 +196,9 @@ describe('enrichOne', () => {
     expect(a.marketValue).toBe(130000)
     expect(a.currency).toBe('PLN')
     expect(a.marketValueText).toBe('130.000 zł')
+    // Cena wywołania is preserved as startingBid alongside the Suma
+    // oszacowania-derived marketValue, even though they differ.
+    expect(a.startingBid).toBe(86667)
   })
 
   it('falls back to the Cena wywołania when no Suma oszacowania is published', async () => {
@@ -212,6 +215,23 @@ describe('enrichOne', () => {
     expect(a.marketValue).toBe(100000)
     expect(a.currency).toBe('PLN')
     expect(a.marketValueText).toBe('100.000 zł')
+    // No Suma oszacowania here, so startingBid coincides with marketValue.
+    expect(a.startingBid).toBe(100000)
+  })
+
+  it('preserves the list-level startingBid when the detail page has no Cena wywołania', async () => {
+    const html = `
+      <div class="notice-template-wrapper">
+        <div class="template-item-attribute">
+          <div class="template-item-label">Suma oszacowania</div>
+          <div class="template-item-value">130 000,00 zł</div>
+        </div>
+      </div>`
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(html)))
+    const a = makeAuction({ startingBid: 86667 })
+    await enrichOne(a)
+    expect(a.marketValue).toBe(130000)
+    expect(a.startingBid).toBe(86667)
   })
 
   it('throws on upstream errors so the enrich task retries', async () => {

@@ -55,7 +55,7 @@ async function discoverSalePages(): Promise<string[]> {
   return [...urls]
 }
 
-interface LegalInfo {
+export interface LegalInfo {
   rollNo: string | null
   pin: string | null
   legal: string | null
@@ -105,7 +105,7 @@ function findLegal(byFileNo: Map<string, LegalInfo>, fileNo: string): LegalInfo 
   return candidates.length === 1 ? candidates[0]![1] : null
 }
 
-interface Property {
+export interface Property {
   address: string | null
   minTenderCad: number | null
   fileNo: string | null
@@ -314,7 +314,7 @@ function municipalityFromUrl(pageUrl: string): string {
   )
 }
 
-function mapProperty(
+export function mapProperty(
   prop: Property,
   pageUrl: string,
   municipality: string,
@@ -353,8 +353,9 @@ function mapProperty(
     // the minimum tender (tax arrears owed) is kept in description.
     marketValueEur: null,
     marketValue: assessedCad,
-    currency: assessedCad != null ? 'CAD' : null,
+    currency: assessedCad != null || prop.minTenderCad != null ? 'CAD' : null,
     marketValueText: assessedCad != null ? `${assessedCad.toLocaleString('de-DE')} CAD (Assessed Value)` : null,
+    startingBid: prop.minTenderCad ?? null,
     auctionDateIso: dateTime.iso,
     auctionDateText: dateTime.label,
     cancelled: false,

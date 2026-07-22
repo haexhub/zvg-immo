@@ -50,6 +50,7 @@ function auctionFields() {
     address: null,
     pdfUrl: null,
     pdfUrlUpstream: null,
+    startingBid: null,
   }
 }
 
@@ -79,5 +80,17 @@ describe('applyDetail', () => {
     const auction = { ...auctionFields(), description: 'aus dem Listing' }
     applyDetail(auction, info({}))
     expect(auction.description).toBe('aus dem Listing')
+  })
+
+  it('parses valor subasta into startingBid', () => {
+    const auction = auctionFields()
+    applyDetail(auction, info({ valorSubastaText: '45.000,00 €' }))
+    expect(auction.startingBid).toBe(45000)
+  })
+
+  it('sets startingBid to null when no valor subasta is present', () => {
+    const auction = auctionFields()
+    applyDetail(auction, info({}))
+    expect(auction.startingBid).toBeNull()
   })
 })

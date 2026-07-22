@@ -108,4 +108,22 @@ describe('mapPublication', () => {
     const a = mapPublication(makePublication(), 'si-sodnedrazbe')
     expect(a.description).toBeNull()
   })
+
+  it('takes startingBid from startingPrice and sourceSecurityDeposit from securityPrice', () => {
+    const a = mapPublication(
+      makePublication({ startingPrice: '12690', securityPrice: '1269' }),
+      'si-sodnedrazbe',
+    )
+    expect(a.startingBid).toBe(12690)
+    expect(a.sourceSecurityDeposit).toBe(1269)
+  })
+
+  it('leaves startingBid and sourceSecurityDeposit null when the source has no values', () => {
+    const a = mapPublication(
+      makePublication({ startingPrice: null, securityPrice: null }),
+      'si-sodnedrazbe',
+    )
+    expect(a.startingBid).toBeNull()
+    expect(a.sourceSecurityDeposit).toBeNull()
+  })
 })

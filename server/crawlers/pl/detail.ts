@@ -101,6 +101,7 @@ export async function enrichOne(auction: Auction): Promise<void> {
   if (detail.aktenzeichen) auction.caseNumber = detail.aktenzeichen
   if (detail.amtsgericht) auction.authority = detail.amtsgericht
   if (detail.livingAreaSqm != null) auction.sourceLivingAreaSqm = detail.livingAreaSqm
+  if (detail.cenaWywolaniaPln != null) auction.startingBid = detail.cenaWywolaniaPln
 
   const pln = detail.sumaOszacowaniaPln ?? (auction.marketValue ? null : detail.cenaWywolaniaPln)
   if (pln != null) {

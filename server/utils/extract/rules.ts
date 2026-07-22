@@ -1,5 +1,5 @@
 import { classifyPropertyType, type PropertyType } from '~/lib/property-type'
-import { findLandAreaSqm, findLivingAreaSqm, findRooms, findUnits, parseAreaValue } from './sizes'
+import { findLandAreaSqm, findLivingAreaSqm, findRooms, findUnits, parseAreaValue, parseLocaleNumber } from './sizes'
 
 // Which area bucket an unlabeled "153.80 m²" in the title string belongs to,
 // by property type. Commercial/garage/sonstiges stay unassigned — their bare
@@ -45,9 +45,26 @@ export interface RulesExtraction {
   landAreaSqm: number | null
   rooms: number | null
   units: number | null
+  /** Explicit security-deposit amount, only when the announcement states an
+   *  absolute figure next to the label (see findSecurityDepositEur). */
+  securityDeposit: number | null
   /** True when a real type AND at least one area were found — i.e. good enough
    *  to skip the LLM fallback. */
   confident: boolean
+}
+
+// German ZVG announcements almost never restate a Sicherheitsleistung amount:
+// the statutory default (10% of Verkehrswert, § 68 Abs. 3 ZVG) is implicit
+// and unpublished — verified by sampling real zvg-portal Bekanntmachungen,
+// which mention "Sicherheitsleistung" only as payment-routing boilerplate
+// (IBAN, "Stichwort Sicherheit") with no amount attached. This only fires on
+// an explicit absolute figure immediately followed by a currency marker, so
+// it can't mistake IBAN digits or unrelated numbers nearby for the deposit.
+const SECURITY_DEPOSIT_RE = /Sicherheitsleistung\D{0,30}?([\d.,]+)\s*(?:€|EUR\b)/i
+
+export function findSecurityDepositEur(text: string): number | null {
+  const m = text.match(SECURITY_DEPOSIT_RE)
+  return m && m[1] ? parseLocaleNumber(m[1]) : null
 }
 
 /**
@@ -90,6 +107,7 @@ export function extractByRules(input: ExtractionInput): RulesExtraction {
 
   const hasArea = livingAreaSqm != null || landAreaSqm != null
   const hasRealType = propertyType != null && propertyType !== 'sonstiges'
+  const securityDeposit = findSecurityDepositEur(text)
 
   return {
     propertyType,
@@ -97,6 +115,7 @@ export function extractByRules(input: ExtractionInput): RulesExtraction {
     landAreaSqm,
     rooms,
     units,
+    securityDeposit,
     confident: hasRealType && hasArea,
   }
 }

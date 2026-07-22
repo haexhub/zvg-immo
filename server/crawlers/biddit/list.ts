@@ -114,6 +114,8 @@ function mapItem(inner: SearchItemInner, platformId: string): MappedAuction | nu
     address: formatAddress(prop?.address),
     marketValueEur: null,
     marketValueText: null,
+    startingBid: inner.startingPrice ?? null,
+    currentBid: inner.currentPrice ?? null,
     auctionDateIso: inner.biddingEndDateTime ?? inner.biddingStartDateTime ?? null,
     auctionDateText: formatTerminText(inner.biddingEndDateTime),
     cancelled,

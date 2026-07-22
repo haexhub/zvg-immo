@@ -49,6 +49,20 @@ describe('mergePreservedDetail — structured source fields', () => {
     expect(next.sourceLivingAreaSqm).toBe(99)
     expect(next.sourceRooms).toBe(3)
   })
+
+  it('preserves startingBid and sourceSecurityDeposit when the fresh crawl lacks them', () => {
+    const next = mergePreservedDetail(
+      auction(),
+      auction({ startingBid: 50_000, sourceSecurityDeposit: 5_000 }),
+    )
+    expect(next.startingBid).toBe(50_000)
+    expect(next.sourceSecurityDeposit).toBe(5_000)
+  })
+
+  it('does not preserve currentBid — it is live auction state, not a static fact', () => {
+    const next = mergePreservedDetail(auction(), auction({ currentBid: 60_000 }))
+    expect(next.currentBid).toBeUndefined()
+  })
 })
 
 describe('mergePreservedDetail — photoUrls and photoCount', () => {

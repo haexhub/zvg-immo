@@ -14,7 +14,7 @@ const platform = String(route.params.platform)
 const id = String(route.params.id)
 const { t, locale } = useI18n()
 const intlLocale = useIntlLocale()
-const { currency, eurToDisplay } = useCurrencyDisplay()
+const { currency, eurToDisplay, nativeToDisplay } = useCurrencyDisplay()
 const propertyTypeLabel = usePropertyTypeLabel()
 const attachmentKindLabelFn = useAttachmentKindLabel()
 const conditionLabel = useConditionLabel()
@@ -126,6 +126,17 @@ function formatPrice(marketValueEur: number | null): string {
 // a non-EUR user, which formatPrice() alone wouldn't make obvious.
 function showOriginalPrice(): boolean {
   return !!a.value?.marketValueText && (a.value?.currency ?? 'EUR') !== currency.value
+}
+
+// Online-bidding-style platforms (Biddit, si, fi, hu, pl, boe, ca,
+// us-bid4assets) additionally publish a starting bid and/or a live current
+// bid — German-court-style platforms never set these, so this card simply
+// gains no extra rows there (see Auction.startingBid/currentBid in
+// types/auction.ts for why "geringstes Gebot" itself can't be one of them).
+function formatNative(amount: number | null | undefined, sourceCurrency: string | null | undefined): string | null {
+  const converted = nativeToDisplay(amount ?? null, sourceCurrency)
+  if (converted == null) return null
+  return converted.toLocaleString(intlLocale.value, { style: 'currency', currency: currency.value, maximumFractionDigits: 0 })
 }
 
 function formatDate(iso: string | null, fallback: string | null): string {
@@ -294,6 +305,18 @@ useHead(() => ({
                     <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.auctionDate') }}</dt>
                     <dd class="text-sm font-medium">{{ formatDate(a.auctionDateIso, a.auctionDateText) }}</dd>
                   </div>
+                  <div v-if="a.startingBid != null">
+                    <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.startingBid') }}</dt>
+                    <dd class="text-sm font-medium tabular-nums">{{ formatNative(a.startingBid, a.currency) }}</dd>
+                  </div>
+                  <div v-if="a.currentBid != null">
+                    <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.currentBid') }}</dt>
+                    <dd class="text-sm font-medium tabular-nums">{{ formatNative(a.currentBid, a.currency) }}</dd>
+                  </div>
+                  <div v-if="a.extraction?.securityDeposit != null">
+                    <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.securityDeposit') }}</dt>
+                    <dd class="text-sm font-medium tabular-nums">{{ formatNative(a.extraction.securityDeposit, a.currency) }}</dd>
+                  </div>
                   <div v-if="a.extraction?.landAreaSqm != null">
                     <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.landArea') }}</dt>
                     <dd class="text-sm font-medium tabular-nums">{{ formatArea(a.extraction.landAreaSqm) }}</dd>
@@ -336,6 +359,9 @@ useHead(() => ({
               class="text-xs text-muted-foreground"
             >
               {{ $t('objektDetail.extractionNotice', { confidence: a.extraction.confidence === 'high' ? $t('objektDetail.confidenceHigh') : $t('objektDetail.confidenceLow') }) }}
+            </p>
+            <p v-if="a.extraction?.biddingNotes" class="text-xs text-muted-foreground">
+              {{ $t('objektDetail.biddingNotes', { note: a.extraction.biddingNotes }) }}
             </p>
           </section>
 

@@ -36,6 +36,15 @@ export interface ClampedExtraction {
   livingAreaSqm: number | null
   rooms: number | null
   units: number | null
+  /** Explicit security-deposit amount in the auction's native currency, only
+   *  when the text states one directly (e.g. a German court deviating from
+   *  the unpublished 10% default) — never derived from a percentage or
+   *  converted, since the LLM doesn't see the auction's Verkehrswert or
+   *  exchange rate to compute one. */
+  securityDeposit: number | null
+  /** Short free-text note on anything unusual about the bidding process
+   *  (a deviating deposit rule, an atypical payment deadline, ...), or null. */
+  biddingNotes: string | null
   condition: Condition | null
   features: Feature[]
 }
@@ -53,6 +62,13 @@ const SYSTEM_PROMPT =
   'zurück und Flächen in Quadratmetern (Hektar in m² umrechnen: 1 ha = 10000 m²). ' +
   'Wohnfläche und Grundstücksfläche strikt getrennt halten. Wenn ein Wert nicht ' +
   'eindeutig im Text steht, gib null zurück — niemals raten. ' +
+  'Gib eine Sicherheitsleistung nur zurück, wenn ein konkreter Geldbetrag in der ' +
+  'Landeswährung der Anzeige im Text genannt wird (z. B. eine von der gesetzlichen ' +
+  '10%-Regel abweichende Festsetzung) — niemals aus einem Prozentsatz berechnen ' +
+  'oder in eine andere Währung umrechnen, sonst null. ' +
+  'Gib in biddingNotes einen kurzen Hinweis zurück, falls der Text etwas ' +
+  'Ungewöhnliches zum Bietverfahren nennt (abweichende Sicherheitsleistung, ' +
+  'ungewöhnliche Zahlungsfrist o. Ä.), sonst null. ' +
   'Gib außerdem den Zustand als eine der erlaubten Kategorien zurück, nur wenn er ' +
   'eindeutig aus dem Text hervorgeht (z.B. "kernsaniert"/"neuwertig" → neuwertig, ' +
   '"Sanierungsstau" → sanierungsbeduerftig, "renovierungsbedürftig" → renovierungsbeduerftig), sonst null. ' +
@@ -73,6 +89,14 @@ const EXTRACTION_SCHEMA = {
     livingAreaSqm: { type: ['number', 'null'], description: 'Wohnfläche in m².' },
     rooms: { type: ['number', 'null'], description: 'Zimmeranzahl.' },
     units: { type: ['integer', 'null'], description: 'Anzahl Wohneinheiten.' },
+    securityDeposit: {
+      type: ['number', 'null'],
+      description: 'Explizit genannte Sicherheitsleistung in der Landeswährung der Anzeige, oder null.',
+    },
+    biddingNotes: {
+      type: ['string', 'null'],
+      description: 'Kurzer Hinweis zu Besonderheiten des Bietverfahrens, oder null.',
+    },
     condition: {
       type: ['string', 'null'],
       enum: [...CONDITIONS, null],
@@ -84,7 +108,17 @@ const EXTRACTION_SCHEMA = {
       description: 'Erkannte Ausstattungsmerkmale, leer wenn keine eindeutig genannt.',
     },
   },
-  required: ['propertyType', 'landAreaSqm', 'livingAreaSqm', 'rooms', 'units', 'condition', 'features'],
+  required: [
+    'propertyType',
+    'landAreaSqm',
+    'livingAreaSqm',
+    'rooms',
+    'units',
+    'securityDeposit',
+    'biddingNotes',
+    'condition',
+    'features',
+  ],
 } as const
 
 /** Pull the structured object out of the proxy's `final_result` tool_use block. */
@@ -119,6 +153,10 @@ export function clampExtraction(raw: Record<string, unknown>): ClampedExtraction
     ? (raw.propertyType as PropertyType)
     : null
   const units = plausibleArea(raw.units, 10_000)
+  const biddingNotes =
+    typeof raw.biddingNotes === 'string' && raw.biddingNotes.trim()
+      ? raw.biddingNotes.trim().slice(0, 300)
+      : null
   const condition = typeof raw.condition === 'string' && VALID_CONDITIONS.has(raw.condition)
     ? (raw.condition as Condition)
     : null
@@ -131,6 +169,11 @@ export function clampExtraction(raw: Record<string, unknown>): ClampedExtraction
     livingAreaSqm: plausibleArea(raw.livingAreaSqm, 1_000_000),
     rooms: plausibleArea(raw.rooms, 100),
     units: units == null ? null : Math.round(units),
+    // Upper bound generous but finite — a plausibility guard against the LLM
+    // accidentally echoing an unrelated large figure (e.g. the Verkehrswert
+    // itself), not a real-world deposit ceiling.
+    securityDeposit: plausibleArea(raw.securityDeposit, 100_000_000),
+    biddingNotes,
     condition,
     features,
   }

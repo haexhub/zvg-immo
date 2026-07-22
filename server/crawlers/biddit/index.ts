@@ -11,6 +11,7 @@ type AuctionDetailFields = Pick<
   Auction,
   | 'marketValueEur'
   | 'marketValueText'
+  | 'startingBid'
   | 'description'
   | 'address'
   | 'attachments'
@@ -30,6 +31,10 @@ export function applyDetail(auction: AuctionDetailFields, info: DetailInfo): voi
     auction.marketValueEur = info.estimatedPrice
     auction.marketValueText = formatVerkehrswertText(info)
   }
+  // Detail-level startingPrice is the same Mindestgebot the listing already
+  // carries, just refetched — only overwrite when it's actually present so a
+  // transient detail hiccup can't null out a good list-level startingBid.
+  if (info.startingPrice != null) auction.startingBid = info.startingPrice
   if (info.description) auction.description = info.description
   if (info.address) auction.address = info.address
   if (info.attachments.length > 0) auction.attachments = info.attachments

@@ -16,7 +16,7 @@ const emit = defineEmits<{
 }>()
 
 const intlLocale = useIntlLocale()
-const { currency, eurToDisplay } = useCurrencyDisplay()
+const { currency, eurToDisplay, nativeToDisplay } = useCurrencyDisplay()
 const conditionLabel = useConditionLabel()
 const featureLabel = useFeatureLabel()
 
@@ -46,6 +46,20 @@ function showOriginalPrice(a: Auction): boolean {
   return originalPriceText(a) != null
     && eurToDisplay(a.marketValueEur) != null
     && (a.currency ?? 'EUR') !== currency.value
+}
+
+// Online-bidding-style platforms (Biddit, si, fi, hu, pl, boe, ca,
+// us-bid4assets) additionally publish a starting/current bid — German-court-
+// style platforms (zvg-portal, at, ...) never set these, so this stays
+// null/false there and the card looks exactly as before. Prefer the live
+// currentBid over startingBid, matching the price row's own
+// marketValueEur-over-marketValueText precedence.
+function bidLine(a: Auction): string | null {
+  const amount = a.currentBid ?? a.startingBid
+  if (amount == null) return null
+  const converted = nativeToDisplay(amount, a.currency)
+  if (converted == null) return null
+  return converted.toLocaleString(intlLocale.value, { style: 'currency', currency: currency.value, maximumFractionDigits: 0 })
 }
 </script>
 
@@ -107,6 +121,9 @@ function showOriginalPrice(a: Auction): boolean {
               <span v-if="showOriginalPrice(a)" class="block text-xs font-normal text-muted-foreground">
                 {{ $t('search.original', { value: originalPriceText(a) }) }}
               </span>
+            </p>
+            <p v-if="bidLine(a)" class="text-xs font-normal text-muted-foreground">
+              {{ $t(a.currentBid != null ? 'search.currentBid' : 'search.startingBid', { value: bidLine(a) }) }}
             </p>
           </div>
         </NuxtLink>

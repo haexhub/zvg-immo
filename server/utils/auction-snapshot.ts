@@ -130,6 +130,17 @@ export function mergePreservedDetail(next: Auction, prev: Auction): Auction {
   if (next.sourceRooms == null && prev.sourceRooms != null) {
     next.sourceRooms = prev.sourceRooms
   }
+  if (next.startingBid == null && prev.startingBid != null) {
+    next.startingBid = prev.startingBid
+  }
+  if (next.sourceSecurityDeposit == null && prev.sourceSecurityDeposit != null) {
+    next.sourceSecurityDeposit = prev.sourceSecurityDeposit
+  }
+  // currentBid is deliberately NOT preserved here: it's genuinely live auction
+  // state (the currently-highest bid during an active online sale), not a
+  // static fact like the other source* fields above. A crawl that comes back
+  // without it most likely means the bidding period ended — showing a stale
+  // figure as if it were still current would be actively misleading.
   if ((next.photoUrls == null || next.photoUrls.length === 0) && Array.isArray(prev.photoUrls) && prev.photoUrls.length > 0) {
     next.photoUrls = prev.photoUrls
     // Crawlers keep photoCount in sync with photoUrls (see types/auction.ts);

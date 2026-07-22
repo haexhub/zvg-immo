@@ -45,6 +45,28 @@ export interface Auction {
    *  cross-country sort/filter field (priceMin/priceMax). */
   marketValueEur: number | null
   marketValueText: string | null
+  /** Opening/reserve bid for online-bidding-style platforms (Biddit, si, fi,
+   *  hu, pl, boe, ca, us-bid4assets) — the price bidding starts at, which
+   *  typically doubles as the reserve. Native value in `currency` (same
+   *  currency as `marketValue`). Absent for German-court-style platforms
+   *  (zvg-portal, at, ...), where the legally binding minimum ("geringstes
+   *  Gebot") is only determined live at the in-person Termin from liens
+   *  registered by then and is never pre-published. */
+  startingBid?: number | null
+  /** Live current highest bid during an active online bidding period —
+   *  genuinely time-varying (unlike startingBid/marketValue, which are set
+   *  once), refreshed on every crawl. Only a couple of platforms (Biddit,
+   *  fi) expose this. */
+  currentBid?: number | null
+  /** Security deposit the platform states directly as a structured field
+   *  (e.g. si's Kaution) — native value in `currency`. Distinct from
+   *  `AuctionExtraction.securityDeposit`, which is rules/LLM-extracted from
+   *  free text (the German case: the standard 10%-of-Verkehrswert rule is
+   *  implicit and unpublished, only an explicit court deviation is worth
+   *  extracting). enrich.ts merges both into `extraction.securityDeposit`,
+   *  preferring this structured value — same convention as
+   *  `sourceLivingAreaSqm` below. */
+  sourceSecurityDeposit?: number | null
   auctionDateIso: string | null
   auctionDateText: string | null
   cancelled: boolean
@@ -106,6 +128,17 @@ export interface AuctionExtraction {
   rooms: number | null
   /** Number of Wohneinheiten. */
   units: number | null
+  /** Merged security-deposit figure, in the auction's `currency`:
+   *  `Auction.sourceSecurityDeposit` when the platform states it directly,
+   *  else rules/LLM-extracted from free text (only ever set there for an
+   *  explicit deviation from a country's statutory default — e.g. German
+   *  Sicherheitsleistung is 10% of Verkehrswert by law and unpublished
+   *  unless a court deviates from it). */
+  securityDeposit?: number | null
+  /** LLM-only free text for anything unusual about the bidding process the
+   *  announcement calls out (a deviating security-deposit rule, an atypical
+   *  payment deadline, ...) — null when nothing stood out. */
+  biddingNotes?: string | null
   /** LLM-only field (no rules source). `undefined` = never checked yet (older
    *  cache entries, or a run that hit the LLM cap before reaching this
    *  listing); `null` = checked, nothing found. Distinguishing the two lets

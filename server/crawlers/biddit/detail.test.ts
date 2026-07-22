@@ -281,4 +281,21 @@ describe('applyDetail', () => {
     applyDetail(auction, { ...baseInfo(), lat: 50.99, lng: null })
     expect(auction.lat).toBeUndefined()
   })
+
+  it('copies the detail startingPrice onto startingBid', () => {
+    const auction = baseAuction() as ReturnType<typeof baseAuction> & {
+      startingBid?: number | null
+    }
+    applyDetail(auction, { ...baseInfo(), startingPrice: 200000 })
+    expect(auction.startingBid).toBe(200000)
+  })
+
+  it('does not overwrite a list-level startingBid when the detail value is null', () => {
+    const auction = baseAuction() as ReturnType<typeof baseAuction> & {
+      startingBid?: number | null
+    }
+    auction.startingBid = 200000
+    applyDetail(auction, { ...baseInfo(), startingPrice: null })
+    expect(auction.startingBid).toBe(200000)
+  })
 })
