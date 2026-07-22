@@ -63,6 +63,29 @@ export async function fetchPdfBuffer(proxyUrl: string): Promise<Buffer | null> {
 }
 
 /**
+ * Runs `pdftotext` directly on in-memory PDF bytes — no fetch, no disk cache.
+ * Used by `pdfToText` below (after its own fetch) and by the reprocessing
+ * task (server/tasks/reprocess.ts), which already has the bytes from the raw
+ * archive and must not re-fetch from the live portal.
+ */
+export async function extractPdfTextFromBuffer(buf: Buffer): Promise<string | null> {
+  const dir = await mkdtemp(join(tmpdir(), 'zvg-pdftext-'))
+  const inputPath = join(dir, 'in.pdf')
+  try {
+    await writeFile(inputPath, buf)
+    const { stdout } = await exec('pdftotext', ['-layout', inputPath, '-'], {
+      timeout: 30_000,
+      maxBuffer: 20 * 1024 * 1024,
+    })
+    return stdout
+  } catch {
+    return null
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+}
+
+/**
  * Fetch the PDF at `proxyUrl` and return its text, or null on any failure.
  * When `archive` is given, the raw PDF bytes are captured into the G1 archive
  * (kind='document') right at the point they're actually fetched — a cache
@@ -87,14 +110,9 @@ export async function pdfToText(
     await archiveDocument(buf, 'application/pdf', archive.identity, proxyUrl, archive.capturedAt)
   }
 
-  const dir = await mkdtemp(join(tmpdir(), 'zvg-pdftext-'))
-  const inputPath = join(dir, 'in.pdf')
+  const stdout = await extractPdfTextFromBuffer(buf)
+  if (stdout == null) return null
   try {
-    await writeFile(inputPath, buf)
-    const { stdout } = await exec('pdftotext', ['-layout', inputPath, '-'], {
-      timeout: 30_000,
-      maxBuffer: 20 * 1024 * 1024,
-    })
     await mkdir(CACHE_DIR, { recursive: true })
     const tmp = `${cachePath}.${randomUUID()}.tmp`
     await writeFile(tmp, stdout)
@@ -102,7 +120,5 @@ export async function pdfToText(
     return stdout
   } catch {
     return null
-  } finally {
-    await rm(dir, { recursive: true, force: true })
   }
 }
