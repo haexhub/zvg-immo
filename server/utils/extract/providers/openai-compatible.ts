@@ -47,6 +47,7 @@ export class OpenAiCompatibleProvider implements ExtractionProvider {
   async extract(req: ExtractionRequest): Promise<Record<string, unknown> | null> {
     const body = {
       model: this.config.model,
+      max_tokens: this.config.maxTokens ?? 512,
       messages: [
         { role: 'system', content: req.systemPrompt },
         { role: 'user', content: toOpenAiContent(req.parts) },
