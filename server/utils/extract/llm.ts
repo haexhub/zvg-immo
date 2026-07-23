@@ -14,6 +14,7 @@ import { PROPERTY_TYPES, type PropertyType } from '~/lib/property-type'
 import { CONDITIONS, type Condition } from '~/lib/condition'
 import { FEATURES, type Feature } from '~/lib/features'
 import { ClaudeProxyProvider } from './providers/claude-proxy'
+import { OpenAiCompatibleProvider } from './providers/openai-compatible'
 
 export interface LlmInput {
   title: string | null
@@ -36,11 +37,14 @@ export interface LlmInput {
 }
 
 export interface LlmConfig {
-  /** Which backend sends the extraction request. Only 'claude-proxy' exists
-   *  today; kept explicit so adding a provider (e.g. Gemini) is a config
-   *  change rather than a rewrite of extractByLlm's callers. */
-  provider?: 'claude-proxy'
+  /** Which backend sends the extraction request. Default 'openai-compatible'
+   *  — most providers (OpenAI, Kimi/Moonshot, DeepSeek, Groq, Gemini-via-
+   *  compat-layer) speak the same OpenAI chat-completions wire format, so
+   *  switching between them is a baseUrl/apiKey/model config change, not a
+   *  code change. 'claude-proxy' is the transitional Anthropic-format path. */
+  provider?: 'claude-proxy' | 'openai-compatible'
   baseUrl: string
+  apiKey?: string
   model: string
   maxTokens?: number
 }
@@ -250,9 +254,11 @@ export function buildParts(input: LlmInput): ContentPart[] {
 }
 
 function getProvider(config: LlmConfig): ExtractionProvider {
-  switch (config.provider ?? 'claude-proxy') {
+  switch (config.provider ?? 'openai-compatible') {
     case 'claude-proxy':
       return new ClaudeProxyProvider(config)
+    case 'openai-compatible':
+      return new OpenAiCompatibleProvider(config)
     default:
       throw new Error(`Unknown extraction provider: ${config.provider}`)
   }
