@@ -35,10 +35,12 @@ export function applyExtractionToAuctions(auctions: Auction[], cache: Extraction
   for (const a of auctions) {
     const hit = cache[cacheKey(a.platform, a.externalId)]
     if (!hit) continue
-    a.extraction = hit
     // Normalize on read: older cache rows hold bare filename strings, newer
-    // ones CuratedPhoto objects (see lib/photo.ts).
+    // ones CuratedPhoto objects (see lib/photo.ts). Expose the normalized array
+    // through `a.extraction` too, so consumers never see raw legacy strings
+    // behind the `CuratedPhoto[]` type.
     const photos = (hit.photos ?? []).map(normalizePhoto)
+    a.extraction = photos.length > 0 ? { ...hit, photos } : hit
     if (photos.length === 0) continue
     if (!a.thumbnailUrl) {
       a.thumbnailUrl = `/api/auction-image/${a.platform}/${a.externalId}/${photos[0]!.file}`

@@ -227,9 +227,9 @@ function clampStringList(v: unknown, maxItems: number, maxLen: number): string[]
 }
 
 function clampInsights(raw: unknown): AuctionInsights | null {
-  if (!raw || typeof raw !== 'object') return null
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const r = raw as Record<string, unknown>
-  return {
+  const insights: AuctionInsights = {
     defects: clampStringList(r.defects, 20, 200),
     encumbrances: clampStringList(r.encumbrances, 20, 200),
     landValueEurPerSqm: plausibleArea(r.landValueEurPerSqm, 1_000_000),
@@ -237,6 +237,16 @@ function clampInsights(raw: unknown): AuctionInsights | null {
     locationCharacter: trimmedString(r.locationCharacter, 200),
     summary: trimmedString(r.summary, 500),
   }
+  // `insights` is documented as null when no appraisal data survives clamping;
+  // an object of only empty lists/nulls would violate that contract.
+  const hasData =
+    insights.defects.length > 0 ||
+    insights.encumbrances.length > 0 ||
+    insights.landValueEurPerSqm != null ||
+    insights.construction != null ||
+    insights.locationCharacter != null ||
+    insights.summary != null
+  return hasData ? insights : null
 }
 
 /**

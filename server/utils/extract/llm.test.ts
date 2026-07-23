@@ -145,6 +145,13 @@ describe('clampExtraction', () => {
     expect(clampExtraction({ insights: 'nope' as unknown as object }).insights).toBeNull()
   })
 
+  it('nulls insights when array-shaped or every field clamps away to empty', () => {
+    expect(clampExtraction({ insights: [] as unknown as object }).insights).toBeNull()
+    expect(
+      clampExtraction({ insights: { defects: [], encumbrances: [], summary: '  ' } }).insights,
+    ).toBeNull()
+  })
+
   it('clamps insights fields: trims lists, caps counts/lengths, bounds land value', () => {
     const r = clampExtraction({
       insights: {
@@ -165,9 +172,15 @@ describe('clampExtraction', () => {
   })
 
   it('rejects a non-positive or absurd insights land value', () => {
-    expect(clampExtraction({ insights: { landValueEurPerSqm: 0 } }).insights!.landValueEurPerSqm).toBeNull()
+    // Pair the invalid land value with a surviving field so `insights` stays
+    // non-null and the land-value bounding itself is what's asserted.
     expect(
-      clampExtraction({ insights: { landValueEurPerSqm: 9_999_999 } }).insights!.landValueEurPerSqm,
+      clampExtraction({ insights: { landValueEurPerSqm: 0, construction: 'Massivbau' } }).insights!
+        .landValueEurPerSqm,
+    ).toBeNull()
+    expect(
+      clampExtraction({ insights: { landValueEurPerSqm: 9_999_999, construction: 'Massivbau' } })
+        .insights!.landValueEurPerSqm,
     ).toBeNull()
   })
 })

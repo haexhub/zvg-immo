@@ -417,8 +417,10 @@ async function runEnrich() {
           // content-addressed and still on disk — reuse the result instead of
           // re-downloading every gallery / re-mining the PDF on every retry
           // pass. First runs and entries never cached before still go through
-          // the full pipeline below.
-          curatedPhotos = priorEntry.photos
+          // the full pipeline below. Normalize while reusing: a legacy prior
+          // entry may hold bare filename strings, and re-persisting them raw
+          // would perpetuate the old shape instead of upgrading it.
+          curatedPhotos = priorEntry.photos?.map(normalizePhoto)
         } else if (isSafePathSegment(a.platform) && isSafePathSegment(a.externalId)) {
           const destDir = join(IMAGES_DIR, a.platform, a.externalId)
           // The deterministic pipeline yields bare filenames; they become
