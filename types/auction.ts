@@ -117,6 +117,42 @@ export interface Auction {
   extraction?: AuctionExtraction | null
 }
 
+/** Coarse bucket a curated photo falls into. Drives frontend
+ *  sorting/grouping only — it never filters a photo out. */
+export type PhotoCategory = 'aussen' | 'innen' | 'grundriss' | 'lageplan' | 'sonstiges'
+
+/** A single curated photo. Supersedes the old bare-filename `string` entries;
+ *  existing extraction_cache rows still hold plain strings, bridged at read
+ *  time by normalizePhoto (lib/photo.ts) — no migration. */
+export interface CuratedPhoto {
+  /** Filename relative to `.cache_zvg/images/<platform>/<externalId>/`,
+   *  served via /api/auction-image. */
+  file: string
+  category: PhotoCategory
+  caption: string | null
+  /** Whether this depicts the property itself (vs. a Grundriss/Lageplan).
+   *  Metadata only — all curated photos are kept regardless; this drives
+   *  frontend sorting/grouping, it does not filter. */
+  isPropertyPhoto: boolean
+}
+
+/** Richer LLM-only assessment pulled from the Gutachten/Exposé — the "why is
+ *  this listing interesting/risky" layer beyond the plain size/type facts. */
+export interface AuctionInsights {
+  /** Defects / damage / renovation backlog called out in the appraisal. */
+  defects: string[]
+  /** Encumbrances (Wohnrecht, Nießbrauch, Dienstbarkeiten, ...). */
+  encumbrances: string[]
+  /** Bodenrichtwert in EUR/m², or null. */
+  landValueEurPerSqm: number | null
+  /** Bauweise/Konstruktion, or null. */
+  construction: string | null
+  /** Lagecharakter, or null. */
+  locationCharacter: string | null
+  /** Short overall assessment, or null. */
+  summary: string | null
+}
+
 /** The "extracted layer": property type + sizes derived by the enrich task's
  *  rules pass (and later the LLM fallback). */
 export interface AuctionExtraction {
@@ -155,10 +191,22 @@ export interface AuctionExtraction {
    *  LLM call persistently errors can't re-spend an LLM slot every run
    *  forever. Absent/0 on entries that never had a failed attempt. */
   llmFailures?: number
-  /** Filenames of photos extracted from the best PDF attachment, relative to
-   *  `.cache_zvg/images/<platform>/<externalId>/`. Empty when the PDF held no
-   *  usable photos or no PDF was available. Served via /api/auction-image. */
-  photos?: string[]
+  /** LLM-only. `undefined` = never checked yet; `null` = checked, nothing
+   *  found. Same backfill semantics as `condition`. */
+  yearBuilt?: number | null
+  /** LLM-only. `undefined` = never checked yet; `null` = checked, nothing
+   *  found. Same backfill semantics as `condition`. */
+  lastRenovationYear?: number | null
+  /** LLM-only free text on any renovation/modernisation, or null. */
+  renovationNotes?: string | null
+  /** LLM-only richer assessment. `undefined` = never checked yet; `null` =
+   *  checked, nothing found. Same backfill semantics as `condition`. */
+  insights?: AuctionInsights | null
+  /** Curated photos, in display order. Older cache rows hold bare filename
+   *  strings (normalized on read by lib/photo.ts's normalizePhoto). Empty/
+   *  absent when the listing/PDF held no usable photos. Served via
+   *  /api/auction-image. */
+  photos?: CuratedPhoto[]
   /** ISO timestamp of when this extraction was produced. */
   at: string
 }

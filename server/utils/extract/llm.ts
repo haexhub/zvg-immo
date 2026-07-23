@@ -13,6 +13,7 @@
 import { PROPERTY_TYPES, type PropertyType } from '~/lib/property-type'
 import { CONDITIONS, type Condition } from '~/lib/condition'
 import { FEATURES, type Feature } from '~/lib/features'
+import type { AuctionInsights } from '~/types/auction'
 import { ClaudeProxyProvider } from './providers/claude-proxy'
 import { OpenAiCompatibleProvider } from './providers/openai-compatible'
 import { GeminiNativeProvider } from './providers/gemini-native'
@@ -95,6 +96,14 @@ export interface ClampedExtraction {
   biddingNotes: string | null
   condition: Condition | null
   features: Feature[]
+  /** Baujahr, or null. Clamped to a plausible calendar range. */
+  yearBuilt: number | null
+  /** Jahr der letzten Sanierung/Modernisierung, or null. */
+  lastRenovationYear: number | null
+  /** Short free-text note on renovation/modernisation, or null. */
+  renovationNotes: string | null
+  /** Richer assessment from the appraisal, or null when nothing stood out. */
+  insights: AuctionInsights | null
 }
 
 // Bound PDF prose so a 40-page Gutachten doesn't blow the token budget. The
@@ -191,6 +200,55 @@ function plausibleArea(v: unknown, max: number): number | null {
   return typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= max ? v : null
 }
 
+// Reject non-years and absurd values; upper bound is the current year (evaluated
+// at call time so a "built next year" hallucination is dropped rather than
+// hard-coding a cutoff that ages).
+function clampYear(v: unknown): number | null {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return null
+  const year = Math.round(v)
+  return year >= 1800 && year <= new Date().getFullYear() ? year : null
+}
+
+function trimmedString(v: unknown, maxLen: number): string | null {
+  return typeof v === 'string' && v.trim() ? v.trim().slice(0, maxLen) : null
+}
+
+// A bounded list of trimmed, non-empty strings — caps both count and per-item
+// length so a runaway appraisal enumeration can't bloat the cache row.
+function clampStringList(v: unknown, maxItems: number, maxLen: number): string[] {
+  if (!Array.isArray(v)) return []
+  const out: string[] = []
+  for (const item of v) {
+    const s = trimmedString(item, maxLen)
+    if (s) out.push(s)
+    if (out.length >= maxItems) break
+  }
+  return out
+}
+
+function clampInsights(raw: unknown): AuctionInsights | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const r = raw as Record<string, unknown>
+  const insights: AuctionInsights = {
+    defects: clampStringList(r.defects, 20, 200),
+    encumbrances: clampStringList(r.encumbrances, 20, 200),
+    landValueEurPerSqm: plausibleArea(r.landValueEurPerSqm, 1_000_000),
+    construction: trimmedString(r.construction, 200),
+    locationCharacter: trimmedString(r.locationCharacter, 200),
+    summary: trimmedString(r.summary, 500),
+  }
+  // `insights` is documented as null when no appraisal data survives clamping;
+  // an object of only empty lists/nulls would violate that contract.
+  const hasData =
+    insights.defects.length > 0 ||
+    insights.encumbrances.length > 0 ||
+    insights.landValueEurPerSqm != null ||
+    insights.construction != null ||
+    insights.locationCharacter != null ||
+    insights.summary != null
+  return hasData ? insights : null
+}
+
 /**
  * Per-field plausibility bounds only — reject negatives, non-numbers and absurd
  * magnitudes, and unknown property types. No cross-field rules (a multi-storey
@@ -224,6 +282,10 @@ export function clampExtraction(raw: Record<string, unknown>): ClampedExtraction
     biddingNotes,
     condition,
     features,
+    yearBuilt: clampYear(raw.yearBuilt),
+    lastRenovationYear: clampYear(raw.lastRenovationYear),
+    renovationNotes: trimmedString(raw.renovationNotes, 300),
+    insights: clampInsights(raw.insights),
   }
 }
 

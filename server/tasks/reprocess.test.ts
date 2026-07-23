@@ -137,6 +137,10 @@ describe('reprocessAuction', () => {
       biddingNotes: null,
       condition: 'gepflegt' as const,
       features: ['garage' as const],
+      yearBuilt: null,
+      lastRenovationYear: null,
+      renovationNotes: null,
+      insights: null,
     }
     vi.mocked(extractByLlm).mockResolvedValue(llmResult)
 
@@ -366,6 +370,10 @@ describe('runReprocess', () => {
       biddingNotes: null,
       condition: null,
       features: [],
+      yearBuilt: null,
+      lastRenovationYear: null,
+      renovationNotes: null,
+      insights: null,
     })
     vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { baseUrl: 'http://proxy', maxPerRun: '1' } }))
 

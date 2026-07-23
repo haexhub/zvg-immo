@@ -2,6 +2,7 @@
 import { classifyPropertyType } from '~/lib/property-type'
 import type { AuctionDetail } from '~/server/api/auction/[platform]/[id].get'
 import type { Attachment } from '~/types/auction'
+import { normalizePhoto } from '~/lib/photo'
 import { ATTACHMENT_KIND_ORDER } from '~/lib/auction-constants'
 import { isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
 import { safeHref } from '~/lib/utils'
@@ -163,11 +164,13 @@ const photoUrls = computed<string[]>(() => {
   for (const att of a.value.attachments) {
     if (att.kind === 'photo') urls.push(att.proxyUrl)
   }
-  const extracted = a.value.extraction?.photos ?? []
+  // Normalize on read: older cache rows hold bare filename strings, newer ones
+  // CuratedPhoto objects (see lib/photo.ts).
+  const extracted = (a.value.extraction?.photos ?? []).map(normalizePhoto)
   const platform = encodeURIComponent(a.value.platform)
   const externalId = encodeURIComponent(a.value.externalId)
-  for (const name of extracted) {
-    urls.push(`/api/auction-image/${platform}/${externalId}/${encodeURIComponent(name)}`)
+  for (const photo of extracted) {
+    urls.push(`/api/auction-image/${platform}/${externalId}/${encodeURIComponent(photo.file)}`)
   }
   return urls
 })
