@@ -15,7 +15,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import type { Attachment } from '~/types/auction'
 import { UA, ZVG_BASE } from '~/server/crawlers/zvg-portal/constants'
-import { archiveDocument, type DocumentIdentity } from '../raw-archive'
+import { archiveDocument, archiveDocumentText, type DocumentIdentity } from '../raw-archive'
 
 const exec = promisify(execFile)
 const CACHE_DIR = join(process.cwd(), '.cache_zvg', 'pdftext')
@@ -88,9 +88,12 @@ export async function extractPdfTextFromBuffer(buf: Buffer): Promise<string | nu
 /**
  * Fetch the PDF at `proxyUrl` and return its text, or null on any failure.
  * When `archive` is given, the raw PDF bytes are captured into the G1 archive
- * (kind='document') right at the point they're actually fetched — a cache
- * hit on the text below skips the fetch entirely, so it never re-archives an
- * already-seen PDF just to serve cached text.
+ * (kind='document') right at the point they're actually fetched, and — once
+ * pdftotext succeeds with non-blank output — the extracted text is captured
+ * too (kind='document_text'), so a later reprocess can read it back without
+ * re-running pdftotext. A cache hit on the text below skips the fetch
+ * entirely, so it never re-archives an already-seen PDF just to serve cached
+ * text.
  */
 export async function pdfToText(
   proxyUrl: string,
@@ -112,6 +115,9 @@ export async function pdfToText(
 
   const stdout = await extractPdfTextFromBuffer(buf)
   if (stdout == null) return null
+  if (archive && stdout.trim()) {
+    await archiveDocumentText(stdout, archive.identity, proxyUrl, archive.capturedAt)
+  }
   try {
     await mkdir(CACHE_DIR, { recursive: true })
     const tmp = `${cachePath}.${randomUUID()}.tmp`
