@@ -225,6 +225,53 @@ describe('reprocessAuction', () => {
     expect(Buffer.from(callArgs.pdfPageImages![0]!, 'base64').subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8]))
   })
 
+  it('feeds a gemini-native call the raw PDF bytes and skips pdftotext/vision rendering', async () => {
+    const auction = makeAuction({
+      attachments: [
+        { kind: 'appraisal', label: 'Gutachten', filename: 'gutachten.pdf', sizeBytes: 1000, fileId: '1', proxyUrl: '/api/zvg-proxy?file_id=1' },
+      ],
+    })
+    vi.mocked(findLatestCapture).mockImplementation(async (kind) => {
+      if (kind === 'auction') return { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' }
+      if (kind === 'document') return { contentHash: 'doc1', sourceUrl: '/api/zvg-proxy?file_id=1', capturedAt: '2026-07-01T00:00:00.000Z' }
+      return null
+    })
+    vi.mocked(downloadBlob).mockImplementation(async (hash) => {
+      if (hash === 'abc') return Buffer.from(JSON.stringify(auction))
+      if (hash === 'doc1') return SCANNED_LIKE_PDF
+      return null
+    })
+    vi.mocked(extractByLlm).mockResolvedValue({
+      propertyType: null,
+      landAreaSqm: null,
+      livingAreaSqm: null,
+      rooms: null,
+      units: null,
+      securityDeposit: null,
+      biddingNotes: null,
+      condition: null,
+      features: [],
+      yearBuilt: 1998,
+      lastRenovationYear: null,
+      renovationNotes: null,
+      insights: null,
+      photoCuration: [],
+    })
+
+    await reprocessAuction(
+      'zvg-portal',
+      '7265',
+      undefined,
+      { provider: 'gemini-native', baseUrl: 'http://gemini', model: 'gemini-flash-latest' },
+      '2026-07-22T00:00:00.000Z',
+    )
+
+    const callArgs = vi.mocked(extractByLlm).mock.calls[0]![0]
+    expect(callArgs.pdfText).toBeNull()
+    expect(callArgs.pdfPageImages).toBeNull()
+    expect(callArgs.pdfBytes).toEqual(SCANNED_LIKE_PDF.toString('base64'))
+  })
+
   it('bumps llmFailures and keeps the prior rules-only fields when the LLM request fails', async () => {
     const auction = makeAuction()
     vi.mocked(findLatestCapture).mockImplementation(async (kind) =>

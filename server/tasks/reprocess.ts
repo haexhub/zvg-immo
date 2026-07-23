@@ -100,9 +100,12 @@ async function findCandidates(opts: ReprocessOptions): Promise<Candidate[]> {
  * capture (title/description/attachments — the same shape enrichOne would
  * have produced) and, if needed, its archived 'document' capture (the best
  * appraisal PDF's raw bytes). Mirrors enrich.ts's rules → LLM(text) →
- * LLM(vision) cascade exactly, just against archived bytes instead of a live
- * fetch — no photo pipeline (out of scope for E2) and no detail-fetch
- * bookkeeping (the archived capture already *is* the fetched detail data).
+ * LLM(vision) cascade, just against archived bytes instead of a live fetch —
+ * no photo pipeline (out of scope for E2) and no detail-fetch bookkeeping
+ * (the archived capture already *is* the fetched detail data). Additionally
+ * feeds a gemini-native call the raw PDF bytes directly (native document
+ * understanding) instead of pdftotext/rendered pages — enrich.ts doesn't do
+ * this yet, see WP-E follow-up.
  * Returns null when the auction/PDF capture can't be found or read.
  */
 export async function reprocessAuction(
@@ -162,15 +165,22 @@ export async function reprocessAuction(
       const docCapture = await findLatestCapture('document', platform, externalId, bestPdf.proxyUrl)
       if (docCapture) pdfBytes = await downloadBlob(docCapture.contentHash)
     }
-    const pdfText = pdfBytes ? await extractPdfTextFromBuffer(pdfBytes) : null
+    // Native document understanding (GeminiNativeProvider) reads the PDF
+    // bytes directly and needs neither pdftotext nor rendered page images —
+    // skip both so a gemini-native run doesn't pay for pdftotext/rasterize
+    // work that buildParts would discard anyway (it prefers pdfBytes over
+    // pdfText/pdfPageImages once set).
+    const usingNativeDoc = llmConfig.provider === 'gemini-native'
+    const pdfText = pdfBytes && !usingNativeDoc ? await extractPdfTextFromBuffer(pdfBytes) : null
     const pdfPageImages =
-      pdfBytes && (!pdfText || pdfText.trim().length < SCANNED_PDF_TEXT_THRESHOLD)
+      pdfBytes && !usingNativeDoc && (!pdfText || pdfText.trim().length < SCANNED_PDF_TEXT_THRESHOLD)
         ? (await renderPdfPagesJpeg(pdfBytes)).map((buf) => buf.toString('base64'))
         : null
+    const nativeDocBytes = pdfBytes && usingNativeDoc ? pdfBytes.toString('base64') : null
 
     llmCalled = true
     const llm = await extractByLlm(
-      { title: auction.title, description: auction.description, pdfText, pdfPageImages },
+      { title: auction.title, description: auction.description, pdfText, pdfPageImages, pdfBytes: nativeDocBytes },
       llmConfig,
     )
     if (llm === null) {
