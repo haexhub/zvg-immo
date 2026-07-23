@@ -91,7 +91,9 @@ export default defineEventHandler(async (event) => {
   // cache is) — degrade to the hard-coded default instead of a 503 so
   // summary generation doesn't suddenly depend on Postgres.
   const db = getPool()
-  const maxTokens = db ? await getLlmMaxTokens(db, 'summary') : DEFAULT_LLM_MAX_TOKENS.summary
+  const maxTokens = db
+    ? await getLlmMaxTokens(db, 'summary').catch(() => DEFAULT_LLM_MAX_TOKENS.summary)
+    : DEFAULT_LLM_MAX_TOKENS.summary
   const config = resolveLlmConfig(llmCfg, { maxTokens })
   if (!config) {
     throw createError({ statusCode: 503, statusMessage: 'LLM not configured' })

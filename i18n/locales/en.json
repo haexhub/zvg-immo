@@ -259,6 +259,7 @@
       "summaryLabel": "Summary",
       "translationLabel": "Translation",
       "loadError": "Configuration could not be loaded.",
+      "invalidValue": "Please enter a valid number for every field.",
       "saveError": "Save failed.",
       "saved": "Saved.",
       "saving": "Saving …",

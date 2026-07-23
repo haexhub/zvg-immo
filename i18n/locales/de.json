@@ -259,6 +259,7 @@
       "summaryLabel": "Zusammenfassung",
       "translationLabel": "Übersetzung",
       "loadError": "Konfiguration konnte nicht geladen werden.",
+      "invalidValue": "Bitte für jedes Feld eine gültige Zahl eingeben.",
       "saveError": "Speichern fehlgeschlagen.",
       "saved": "Gespeichert.",
       "saving": "Speichere …",

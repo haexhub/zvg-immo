@@ -52,6 +52,28 @@ describe('getLlmMaxTokens', () => {
     }
     expect(await getLlmMaxTokens(db as unknown as Pool, 'extraction')).toBe(DEFAULT_LLM_MAX_TOKENS.extraction)
   })
+
+  it('clamps a stored out-of-range value that bypassed setLlmMaxTokens', async () => {
+    const db = makeFakePool()
+    ;(db as unknown as { query: (sql: string, params?: unknown[]) => Promise<unknown> }).query = async (
+      sql: string,
+    ) => {
+      if (sql.includes('SELECT value')) return { rows: [{ value: 1_000_000 }] }
+      throw new Error('unexpected')
+    }
+    expect(await getLlmMaxTokens(db as unknown as Pool, 'extraction')).toBe(32_768)
+  })
+
+  it('rounds a stored fractional value that bypassed setLlmMaxTokens', async () => {
+    const db = makeFakePool()
+    ;(db as unknown as { query: (sql: string, params?: unknown[]) => Promise<unknown> }).query = async (
+      sql: string,
+    ) => {
+      if (sql.includes('SELECT value')) return { rows: [{ value: 1024.6 }] }
+      throw new Error('unexpected')
+    }
+    expect(await getLlmMaxTokens(db as unknown as Pool, 'summary')).toBe(1025)
+  })
 })
 
 describe('getAllLlmMaxTokens', () => {

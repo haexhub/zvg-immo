@@ -14,8 +14,8 @@ export default defineEventHandler(async (event): Promise<Record<LlmMaxTokensKind
   }
   const body = await readBody<Record<string, unknown>>(event).catch(() => ({}) as Record<string, unknown>)
   for (const kind of KINDS) {
-    const value = Number(body[kind])
-    if (!Number.isFinite(value)) {
+    const value = body[kind]
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
       throw createError({ statusCode: 400, statusMessage: `${kind}: ungültiger Wert.` })
     }
     await setLlmMaxTokens(db, kind, value)

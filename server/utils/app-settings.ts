@@ -36,7 +36,7 @@ function clamp(value: number): number {
 }
 
 function coerce(value: unknown, kind: LlmMaxTokensKind): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : DEFAULT_LLM_MAX_TOKENS[kind]
+  return typeof value === 'number' && Number.isFinite(value) ? clamp(value) : DEFAULT_LLM_MAX_TOKENS[kind]
 }
 
 export async function getLlmMaxTokens(db: Pool, kind: LlmMaxTokensKind): Promise<number> {

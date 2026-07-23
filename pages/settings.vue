@@ -334,18 +334,28 @@ async function loadLlmConfig(): Promise<void> {
   }
 }
 
+function parseLlmMaxTokens(raw: string): number | null {
+  if (raw.trim() === '') return null
+  const value = Number(raw)
+  return Number.isFinite(value) ? value : null
+}
+
 async function saveLlmConfig(): Promise<void> {
+  const extraction = parseLlmMaxTokens(llmConfig.value.extraction)
+  const summary = parseLlmMaxTokens(llmConfig.value.summary)
+  const translation = parseLlmMaxTokens(llmConfig.value.translation)
+  if (extraction === null || summary === null || translation === null) {
+    llmConfigError.value = t('settings.llm.invalidValue')
+    return
+  }
+
   llmConfigPending.value = true
   llmConfigError.value = null
   llmConfigSaved.value = false
   try {
     const res = await $fetch<Record<LlmMaxTokensKind, number>>('/api/settings/llm-config', {
       method: 'PUT',
-      body: {
-        extraction: Number(llmConfig.value.extraction),
-        summary: Number(llmConfig.value.summary),
-        translation: Number(llmConfig.value.translation),
-      },
+      body: { extraction, summary, translation },
     })
     llmConfig.value = {
       extraction: String(res.extraction),

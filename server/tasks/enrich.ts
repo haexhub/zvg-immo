@@ -101,7 +101,9 @@ async function readLlmConfig(): Promise<ReturnType<typeof resolveLlmConfig>> {
     | { provider?: string; baseUrl?: string; apiKey?: string; model?: string; maxPerRun?: string }
     | undefined
   const db = getPool()
-  const maxTokens = db ? await getLlmMaxTokens(db, 'extraction') : DEFAULT_LLM_MAX_TOKENS.extraction
+  const maxTokens = db
+    ? await getLlmMaxTokens(db, 'extraction').catch(() => DEFAULT_LLM_MAX_TOKENS.extraction)
+    : DEFAULT_LLM_MAX_TOKENS.extraction
   return resolveLlmConfig(c, { maxTokens })
 }
 
