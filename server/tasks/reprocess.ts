@@ -24,6 +24,7 @@ import {
 import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
 import { downloadBlob, findLatestCapture } from '../utils/storage-download'
 import { cacheKey } from '../utils/verkehrswert-cache'
+import { normalizePhoto } from '~/lib/photo'
 
 const DEFAULT_COUNTRY = 'de'
 // Same heuristic as server/tasks/enrich.ts: below this, pdftotext's output is
@@ -199,8 +200,9 @@ export async function reprocessAuction(
     source,
     confidence: hasType && hasArea ? 'high' : 'low',
     // Photo re-extraction is out of scope for WP-6 (E2 is about rules/LLM
-    // prompt iteration) — carry the prior result forward unchanged.
-    photos: priorEntry?.photos,
+    // prompt iteration) — carry the prior result forward, but normalize so a
+    // legacy prior entry's bare filename strings aren't re-persisted raw.
+    photos: priorEntry?.photos?.map(normalizePhoto),
     at,
     ...(llmFailures > 0 ? { llmFailures } : {}),
   }
