@@ -15,6 +15,7 @@ import { CONDITIONS, type Condition } from '~/lib/condition'
 import { FEATURES, type Feature } from '~/lib/features'
 import { ClaudeProxyProvider } from './providers/claude-proxy'
 import { OpenAiCompatibleProvider } from './providers/openai-compatible'
+import { GeminiNativeProvider } from './providers/gemini-native'
 
 export interface LlmInput {
   title: string | null
@@ -41,8 +42,11 @@ export interface LlmConfig {
    *  — most providers (OpenAI, Kimi/Moonshot, DeepSeek, Groq, Gemini-via-
    *  compat-layer) speak the same OpenAI chat-completions wire format, so
    *  switching between them is a baseUrl/apiKey/model config change, not a
-   *  code change. 'claude-proxy' is the transitional Anthropic-format path. */
-  provider?: 'claude-proxy' | 'openai-compatible'
+   *  code change. 'claude-proxy' is the transitional Anthropic-format path.
+   *  'gemini-native' opts into Gemini's own API instead of its OpenAI-compat
+   *  layer, for its one genuine extra capability: native PDF understanding
+   *  (see `document` ContentPart below). */
+  provider?: 'claude-proxy' | 'openai-compatible' | 'gemini-native'
   baseUrl: string
   apiKey?: string
   model: string
@@ -259,6 +263,8 @@ function getProvider(config: LlmConfig): ExtractionProvider {
       return new ClaudeProxyProvider(config)
     case 'openai-compatible':
       return new OpenAiCompatibleProvider(config)
+    case 'gemini-native':
+      return new GeminiNativeProvider(config)
     default:
       throw new Error(`Unknown extraction provider: ${config.provider}`)
   }
