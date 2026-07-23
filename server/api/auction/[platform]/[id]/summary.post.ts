@@ -12,6 +12,8 @@ import { readSummaryCache, writeSummaryCache } from '../../../../utils/summary-c
 import { isSafePathSegment } from '../../../../utils/path-segment'
 import { cacheKey } from '../../../../utils/verkehrswert-cache'
 import { pickBestPdf, pdfToText } from '../../../../utils/extract/pdf-text'
+import { resolveLlmConfig } from '../../../../utils/extract/llm'
+import { callSummaryLlm } from '../../../../utils/extract/text-llm'
 import {
   checkInMemoryRateLimit,
   createInMemoryRateLimitState,
@@ -73,40 +75,6 @@ function clientKey(event: H3Event): string {
   return event.node.req.socket.remoteAddress ?? 'unknown'
 }
 
-async function callLlm(
-  userPrompt: string,
-  pdfText: string | null,
-  config: { baseUrl: string; model: string },
-): Promise<string | null> {
-  const content = pdfText
-    ? `${userPrompt}\n\nAuszug aus Gutachten/Exposé:\n${pdfText.slice(0, MAX_PDF_CHARS)}`
-    : userPrompt
-  let resp: unknown
-  try {
-    resp = await $fetch(`${config.baseUrl.replace(/\/$/, '')}/v1/messages`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' },
-      body: {
-        model: config.model,
-        max_tokens: 1024,
-        system: SYSTEM_PROMPT,
-        messages: [{ role: 'user', content }],
-      },
-      signal: AbortSignal.timeout(120_000),
-    })
-  } catch (err) {
-    console.warn(`[summary] LLM request failed: ${(err as Error).message}`)
-    return null
-  }
-  if (!resp || typeof resp !== 'object') return null
-  const blocks = (resp as { content?: unknown }).content
-  if (!Array.isArray(blocks)) return null
-  const text = blocks.find(
-    (b: unknown) => b && typeof b === 'object' && (b as { type?: string }).type === 'text',
-  )
-  return text ? ((text as { text: string }).text ?? '').trim() : null
-}
-
 export default defineEventHandler(async (event) => {
   const platform = String(event.context.params?.platform ?? '')
   const id = String(event.context.params?.id ?? '')
@@ -114,11 +82,13 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'invalid platform/id' })
   }
 
-  const llmCfg = useRuntimeConfig().extractLlm as { baseUrl?: string; model?: string } | undefined
-  if (!llmCfg?.baseUrl) {
+  const llmCfg = useRuntimeConfig().extractLlm as
+    | { provider?: string; baseUrl?: string; apiKey?: string; model?: string }
+    | undefined
+  const config = resolveLlmConfig(llmCfg, { maxTokens: 1024 })
+  if (!config) {
     throw createError({ statusCode: 503, statusMessage: 'LLM not configured' })
   }
-  const config = { baseUrl: llmCfg.baseUrl, model: llmCfg.model || 'claude-haiku-4-5' }
 
   const key = cacheKey(platform, id)
 
@@ -166,7 +136,11 @@ export default defineEventHandler(async (event) => {
         })
       : null
 
-    const summary = await callLlm(buildPrompt(auction as unknown as Record<string, unknown>), pdfText, config)
+    const prompt = buildPrompt(auction as unknown as Record<string, unknown>)
+    const content = pdfText
+      ? `${prompt}\n\nAuszug aus Gutachten/Exposé:\n${pdfText.slice(0, MAX_PDF_CHARS)}`
+      : prompt
+    const summary = await callSummaryLlm(SYSTEM_PROMPT, content, config)
     if (!summary) {
       throw createError({ statusCode: 502, statusMessage: 'LLM did not return a summary' })
     }

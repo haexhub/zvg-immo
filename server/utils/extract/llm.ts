@@ -460,7 +460,9 @@ export function buildParts(input: LlmInput): ContentPart[] {
   return parts
 }
 
-function getProvider(config: LlmConfig): ExtractionProvider {
+/** The provider switch that every caller of extractByLlm/text-llm.ts goes
+ *  through — the one place a new backend gets wired in. */
+export function getProvider(config: LlmConfig): ExtractionProvider {
   switch (config.provider ?? 'openai-compatible') {
     case 'claude-proxy':
       return new ClaudeProxyProvider(config)
@@ -470,6 +472,25 @@ function getProvider(config: LlmConfig): ExtractionProvider {
       return new GeminiNativeProvider(config)
     default:
       throw new Error(`Unknown extraction provider: ${config.provider}`)
+  }
+}
+
+/** Build an LlmConfig from the extractLlm runtime-config shape shared by
+ *  enrich.ts/reprocess.ts and the on-demand summary/translation endpoints.
+ *  Returns null when unconfigured (baseUrl unset) — same graceful-degrade
+ *  contract as those callers. */
+export function resolveLlmConfig(
+  c: { provider?: string; baseUrl?: string; apiKey?: string; model?: string } | undefined,
+  overrides?: { maxTokens?: number },
+): LlmConfig | null {
+  if (!c?.baseUrl) return null
+  const provider = c.provider === 'claude-proxy' || c.provider === 'gemini-native' ? c.provider : 'openai-compatible'
+  return {
+    provider,
+    baseUrl: c.baseUrl,
+    apiKey: c.apiKey || undefined,
+    model: c.model || (provider === 'gemini-native' ? 'gemini-flash-latest' : 'claude-haiku-4-5'),
+    maxTokens: overrides?.maxTokens,
   }
 }
 

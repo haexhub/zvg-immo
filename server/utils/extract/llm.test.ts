@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildParts, clampExtraction, parseExtractionResponse } from './llm'
+import { buildParts, clampExtraction, parseExtractionResponse, resolveLlmConfig } from './llm'
 
 describe('parseExtractionResponse', () => {
   it('returns the final_result tool_use input', () => {
@@ -303,5 +303,51 @@ describe('buildParts', () => {
       { type: 'text', text: 'Bild 0: Foto 1' },
       { type: 'image', mimeType: 'image/jpeg', data: 'photo' },
     ])
+  })
+})
+
+describe('resolveLlmConfig', () => {
+  it('returns null when unconfigured (no baseUrl)', () => {
+    expect(resolveLlmConfig(undefined)).toBeNull()
+    expect(resolveLlmConfig({})).toBeNull()
+  })
+
+  it('defaults to the openai-compatible provider and its default model', () => {
+    expect(resolveLlmConfig({ baseUrl: 'https://api.example' })).toEqual({
+      provider: 'openai-compatible',
+      baseUrl: 'https://api.example',
+      apiKey: undefined,
+      model: 'claude-haiku-4-5',
+      maxTokens: undefined,
+    })
+  })
+
+  it('picks the gemini-native default model when the provider is gemini-native and no model is set', () => {
+    expect(resolveLlmConfig({ provider: 'gemini-native', baseUrl: 'https://gemini.example', apiKey: 'k' })).toEqual({
+      provider: 'gemini-native',
+      baseUrl: 'https://gemini.example',
+      apiKey: 'k',
+      model: 'gemini-flash-latest',
+      maxTokens: undefined,
+    })
+  })
+
+  it('passes through an explicit model and applies the maxTokens override', () => {
+    expect(
+      resolveLlmConfig(
+        { provider: 'claude-proxy', baseUrl: 'https://proxy.example', model: 'claude-haiku-4-5' },
+        { maxTokens: 1024 },
+      ),
+    ).toEqual({
+      provider: 'claude-proxy',
+      baseUrl: 'https://proxy.example',
+      apiKey: undefined,
+      model: 'claude-haiku-4-5',
+      maxTokens: 1024,
+    })
+  })
+
+  it('treats an unknown provider string as openai-compatible', () => {
+    expect(resolveLlmConfig({ provider: 'bogus', baseUrl: 'https://api.example' })?.provider).toBe('openai-compatible')
   })
 })
