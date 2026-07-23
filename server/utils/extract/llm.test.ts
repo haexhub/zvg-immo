@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clampExtraction, parseExtractionResponse } from './llm'
+import { buildParts, clampExtraction, parseExtractionResponse } from './llm'
 
 describe('parseExtractionResponse', () => {
   it('returns the final_result tool_use input', () => {
@@ -112,5 +112,48 @@ describe('clampExtraction', () => {
   it('defaults features to an empty array when missing or malformed', () => {
     expect(clampExtraction({}).features).toEqual([])
     expect(clampExtraction({ features: 'balkon' as unknown as string[] }).features).toEqual([])
+  })
+})
+
+describe('buildParts', () => {
+  it('combines title/description/pdfText into a single text part', () => {
+    const parts = buildParts({
+      title: 'Einfamilienhaus',
+      description: 'Schöne Lage.',
+      pdfText: 'Wohnfläche: 140 m²',
+    })
+    expect(parts).toEqual([
+      {
+        type: 'text',
+        text: 'Objektbezeichnung: Einfamilienhaus\n\nBeschreibung:\nSchöne Lage.\n\nAuszug aus Gutachten/Exposé (PDF):\nWohnfläche: 140 m²',
+      },
+    ])
+  })
+
+  it('returns no parts for empty input', () => {
+    expect(buildParts({ title: null, description: null })).toEqual([])
+  })
+
+  it('appends one image part per page in pdfPageImages, in order', () => {
+    const parts = buildParts({ title: 'Haus', description: null, pdfPageImages: ['aaa', 'bbb'] })
+    expect(parts).toEqual([
+      { type: 'text', text: 'Objektbezeichnung: Haus\n\nDas Gutachten/Exposé liegt als eingescanntes Bild vor (siehe angehängte Bilder) — lies die Eckdaten daraus ab.' },
+      { type: 'image', mimeType: 'image/jpeg', data: 'aaa' },
+      { type: 'image', mimeType: 'image/jpeg', data: 'bbb' },
+    ])
+  })
+
+  it('prefers a document part over pdfText/pdfPageImages when pdfBytes is set', () => {
+    const parts = buildParts({
+      title: 'Haus',
+      description: null,
+      pdfText: 'sollte ignoriert werden',
+      pdfPageImages: ['ignored-too'],
+      pdfBytes: 'base64pdfbytes',
+    })
+    expect(parts).toEqual([
+      { type: 'text', text: 'Objektbezeichnung: Haus' },
+      { type: 'document', mimeType: 'application/pdf', data: 'base64pdfbytes' },
+    ])
   })
 })

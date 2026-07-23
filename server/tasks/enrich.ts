@@ -34,7 +34,7 @@ import { extractByRules } from '../utils/extract/rules'
 import { extractByLlm, type LlmConfig } from '../utils/extract/llm'
 import { downloadNativeImages } from '../utils/extract/native-images'
 import { extractPdfPhotos } from '../utils/extract/pdf-images'
-import { pdfPageToBase64Jpeg } from '../utils/extract/pdf-render'
+import { pdfPagesToBase64Jpeg } from '../utils/extract/pdf-render'
 import { pdfToText, pickBestPdf } from '../utils/extract/pdf-text'
 import {
   applyExtractionToAuctions,
@@ -325,12 +325,12 @@ async function runEnrich() {
           // A short/empty pdftotext result on an actual attachment usually
           // means the Gutachten PDF is a scanned image, not real text — render
           // its first page and let the LLM read it visually instead.
-          const pdfImageBase64 =
+          const pdfPageImages =
             bestPdf && (!pdfText || pdfText.trim().length < SCANNED_PDF_TEXT_THRESHOLD)
-              ? await pdfPageToBase64Jpeg(bestPdf.proxyUrl)
+              ? await pdfPagesToBase64Jpeg(bestPdf.proxyUrl)
               : null
           const llm = await extractByLlm(
-            { title: a.title, description: a.description, pdfText, pdfImageBase64 },
+            { title: a.title, description: a.description, pdfText, pdfPageImages },
             llmConfig,
           )
           if (llm === null) {

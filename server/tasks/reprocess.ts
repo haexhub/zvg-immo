@@ -12,7 +12,7 @@
 import type { Auction, AuctionExtraction } from '~/types/auction'
 import { getPool } from '../utils/db'
 import { pickBestPdf, extractPdfTextFromBuffer } from '../utils/extract/pdf-text'
-import { renderPdfPageJpeg } from '../utils/extract/pdf-render'
+import { renderPdfPagesJpeg } from '../utils/extract/pdf-render'
 import { extractByRules } from '../utils/extract/rules'
 import { extractByLlm, type LlmConfig } from '../utils/extract/llm'
 import {
@@ -149,14 +149,14 @@ export async function reprocessAuction(
       if (docCapture) pdfBytes = await downloadBlob(docCapture.contentHash)
     }
     const pdfText = pdfBytes ? await extractPdfTextFromBuffer(pdfBytes) : null
-    const pdfImageBase64 =
+    const pdfPageImages =
       pdfBytes && (!pdfText || pdfText.trim().length < SCANNED_PDF_TEXT_THRESHOLD)
-        ? (await renderPdfPageJpeg(pdfBytes)).toString('base64')
+        ? (await renderPdfPagesJpeg(pdfBytes)).map((buf) => buf.toString('base64'))
         : null
 
     llmCalled = true
     const llm = await extractByLlm(
-      { title: auction.title, description: auction.description, pdfText, pdfImageBase64 },
+      { title: auction.title, description: auction.description, pdfText, pdfPageImages },
       llmConfig,
     )
     if (llm === null) {

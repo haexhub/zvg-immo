@@ -1,0 +1,64 @@
+// Sends extraction requests through haex-claude-proxy's Anthropic-compatible
+// `/v1/messages` endpoint, using a forced tool call to get JSON back.
+// Transitional provider (Anthropic-Messages-Format, not OpenAI-compatible)
+// until the Claude path is retired in favor of OpenAiCompatibleProvider/
+// GeminiNativeProvider.
+
+import type { ContentPart, ExtractionProvider, ExtractionRequest, LlmConfig } from '../llm'
+import { parseExtractionResponse } from '../llm'
+
+type ClaudeContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
+
+/** Claude has no native PDF part — `document` parts are dropped, relying on
+ *  the caller having already put `pdfText`/`pdfPageImages` parts in `parts`
+ *  instead (see buildParts in ../llm.ts). */
+function toClaudeContent(parts: ContentPart[]): ClaudeContentBlock[] {
+  const blocks: ClaudeContentBlock[] = []
+  for (const part of parts) {
+    if (part.type === 'text') blocks.push({ type: 'text', text: part.text })
+    else if (part.type === 'image') {
+      blocks.push({ type: 'image', source: { type: 'base64', media_type: part.mimeType, data: part.data } })
+    }
+  }
+  return blocks
+}
+
+export class ClaudeProxyProvider implements ExtractionProvider {
+  constructor(private config: LlmConfig) {}
+
+  async extract(req: ExtractionRequest): Promise<Record<string, unknown> | null> {
+    const body = {
+      model: this.config.model,
+      max_tokens: this.config.maxTokens ?? 512,
+      system: req.systemPrompt,
+      messages: [{ role: 'user', content: toClaudeContent(req.parts) }],
+      tools: [
+        {
+          name: 'final_result',
+          description: 'Gib die extrahierten Eckdaten zurück.',
+          input_schema: req.schema,
+        },
+      ],
+      tool_choice: { type: 'tool', name: 'final_result' },
+    }
+    let resp: unknown
+    try {
+      // Bound the request: the proxy spawns a `claude` subprocess per call, so a
+      // stuck spawn (or upstream stall) would keep this promise pending forever
+      // and — because the enrich task awaits every worker via Promise.all — block
+      // the whole run.
+      resp = await $fetch(`${this.config.baseUrl.replace(/\/$/, '')}/v1/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' },
+        body,
+        signal: AbortSignal.timeout(60_000),
+      })
+    } catch (err) {
+      console.warn(`[extract/llm] request failed: ${(err as Error).message}`)
+      return null
+    }
+    return parseExtractionResponse(resp)
+  }
+}
