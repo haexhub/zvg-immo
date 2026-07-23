@@ -15,6 +15,8 @@ import { cacheKey } from '../../../../utils/verkehrswert-cache'
 import { getPool } from '../../../../utils/db'
 import { sha256Hex } from '../../../../utils/raw-archive'
 import { readContentTranslation, writeContentTranslation } from '../../../../utils/content-translation'
+import { resolveLlmConfig } from '../../../../utils/extract/llm'
+import { callTranslationLlm, type TranslationResult } from '../../../../utils/extract/text-llm'
 import { isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
 import {
   checkInMemoryRateLimit,
@@ -26,10 +28,10 @@ const SUPPORTED_TARGET_LANGS = new Set<ContentTargetLang>(['de', 'en'])
 
 const LANG_NAMES: Record<ContentTargetLang, string> = { de: 'German', en: 'English' }
 
-interface TranslationResult {
-  title: string | null
-  description: string | null
-}
+const SYSTEM_PROMPT =
+  'Du bist ein präziser Übersetzer für Anzeigen von Immobilien-Zwangsversteigerungen. ' +
+  'Übersetze wörtlich und originalgetreu — keine Ausschmückung, keine Zusammenfassung. ' +
+  'Fach- und Rechtsbegriffe unverändert lassen, wenn eine wörtliche Übersetzung den Sinn verfälschen würde.'
 
 // Same rationale as summary.post.ts: dedupe concurrent misses for the same
 // (auction, lang) and cap total concurrent LLM work.
@@ -41,36 +43,11 @@ const translationRateLimit = createInMemoryRateLimitState()
 function buildPrompt(title: string | null, description: string | null, targetLang: ContentTargetLang): string {
   const lines = [
     `Translate the following real-estate foreclosure auction text fields into ${LANG_NAMES[targetLang]}.`,
-    'Translate literally and faithfully — no embellishment, no summarizing. Preserve real-estate and legal terminology as-is where a literal translation would lose meaning.',
-    'Respond in exactly this format, nothing else (no preamble, no quotation marks):',
-    'TITLE: <translated title>',
-    'DESCRIPTION: <translated description>',
     '',
+    `TITLE: ${title ?? ''}`,
+    `DESCRIPTION:\n${description ?? ''}`,
   ]
-  lines.push(`TITLE_SOURCE: ${title ?? ''}`)
-  lines.push(`DESCRIPTION_SOURCE:\n${description ?? ''}`)
   return lines.join('\n')
-}
-
-function parseResponse(text: string, title: string | null, description: string | null): TranslationResult | null {
-  const match = /TITLE:\s*(.*?)\s*\nDESCRIPTION:\s*([\s\S]*)$/.exec(text)
-  // No usable format → signal failure instead of returning the untranslated
-  // original. The cache is immutable per (content_hash, lang), so caching the
-  // source text here would permanently serve untranslated text under an
-  // "auto-translated" label; a null lets the caller 502 and retry later.
-  if (!match) return null
-  const translatedTitle = (match[1] ?? '').trim()
-  const translatedDescription = (match[2] ?? '').trim()
-  // Same rationale as the !match case: an empty extracted field for a non-null
-  // source means the LLM didn't actually translate it. Falling back to the
-  // untranslated original would cache source text forever under an
-  // "auto-translated" label — signal failure so the caller 502s and retries.
-  if (title != null && !translatedTitle) return null
-  if (description != null && !translatedDescription) return null
-  return {
-    title: title == null ? null : translatedTitle,
-    description: description == null ? null : translatedDescription,
-  }
 }
 
 function clientKey(event: H3Event): string {
@@ -83,45 +60,6 @@ function clientKey(event: H3Event): string {
     if (realIp) return realIp
   }
   return event.node.req.socket.remoteAddress ?? 'unknown'
-}
-
-async function callLlm(
-  title: string | null,
-  description: string | null,
-  targetLang: ContentTargetLang,
-  config: { baseUrl: string; model: string },
-): Promise<TranslationResult | null> {
-  let resp: unknown
-  try {
-    resp = await $fetch(`${config.baseUrl.replace(/\/$/, '')}/v1/messages`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' },
-      body: {
-        model: config.model,
-        max_tokens: 8192,
-        messages: [{ role: 'user', content: buildPrompt(title, description, targetLang) }],
-      },
-      signal: AbortSignal.timeout(120_000),
-    })
-  } catch (err) {
-    console.warn(`[translation] LLM request failed: ${(err as Error).message}`)
-    return null
-  }
-  if (!resp || typeof resp !== 'object') return null
-  // A truncated response (hit max_tokens) would yield a partial translation
-  // that the immutable cache would then serve forever — treat it as a failure.
-  if ((resp as { stop_reason?: string }).stop_reason === 'max_tokens') {
-    console.warn('[translation] LLM response truncated (max_tokens)')
-    return null
-  }
-  const blocks = (resp as { content?: unknown }).content
-  if (!Array.isArray(blocks)) return null
-  const block = blocks.find(
-    (b: unknown) => b && typeof b === 'object' && (b as { type?: string }).type === 'text',
-  )
-  const text = block ? ((block as { text: string }).text ?? '') : ''
-  if (!text) return null
-  return parseResponse(text, title, description)
 }
 
 export default defineEventHandler(async (event) => {
@@ -174,11 +112,13 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 429, statusMessage: 'translation generation busy, retry shortly' })
   }
 
-  const llmCfg = useRuntimeConfig().extractLlm as { baseUrl?: string; model?: string } | undefined
-  if (!llmCfg?.baseUrl) {
+  const llmCfg = useRuntimeConfig().extractLlm as
+    | { provider?: string; baseUrl?: string; apiKey?: string; model?: string }
+    | undefined
+  const config = resolveLlmConfig(llmCfg, { maxTokens: 8192 })
+  if (!config) {
     throw createError({ statusCode: 503, statusMessage: 'LLM not configured' })
   }
-  const config = { baseUrl: llmCfg.baseUrl, model: llmCfg.model || 'claude-haiku-4-5' }
 
   const now = Date.now()
   const requester = clientKey(event)
@@ -188,7 +128,13 @@ export default defineEventHandler(async (event) => {
   recordInMemoryRateLimitHit(translationRateLimit, requester, now, TRANSLATION_RATE_LIMIT)
 
   const gen = (async () => {
-    const result = await callLlm(title, description, targetLang, config)
+    const result = await callTranslationLlm(
+      SYSTEM_PROMPT,
+      buildPrompt(title, description, targetLang),
+      title,
+      description,
+      config,
+    )
     if (!result) {
       throw createError({ statusCode: 502, statusMessage: 'LLM did not return a translation' })
     }
