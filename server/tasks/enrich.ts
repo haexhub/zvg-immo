@@ -32,7 +32,7 @@ import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snap
 import { upsertCurrentAuctions } from '../utils/current-auctions'
 import { deriveMarketValueEur, getRates } from '../utils/exchange-rate'
 import { extractByRules } from '../utils/extract/rules'
-import { extractByLlm, type LlmConfig } from '../utils/extract/llm'
+import { extractByLlm, type LlmConfig, type PhotoCuration } from '../utils/extract/llm'
 import { downloadNativeImages } from '../utils/extract/native-images'
 import { extractPdfPhotos } from '../utils/extract/pdf-images'
 import { pdfPagesToBase64Jpeg } from '../utils/extract/pdf-render'
@@ -43,7 +43,7 @@ import {
   readExtractionCache,
   writeExtractionCache,
 } from '../utils/extraction-cache'
-import { imagesBucketConfigured, uploadImage } from '../utils/image-storage'
+import { imagesBucketConfigured, mimeTypeFor, uploadImage } from '../utils/image-storage'
 import { interleaveByPlatform } from '../utils/interleave-by-platform'
 import { isSafePathSegment } from '../utils/path-segment'
 import { archiveAuction } from '../utils/raw-archive'
@@ -71,6 +71,26 @@ const SCANNED_PDF_TEXT_THRESHOLD = 200
 // starving healthy listings of the per-run budget. A few retries still absorb
 // transient proxy blips.
 const MAX_LLM_FAILURES = 3
+// Cap on candidate photos sent to the LLM for curation per document — a
+// Gutachten with dozens of embedded rasters would otherwise blow the token
+// budget for one extraction call.
+const MAX_CANDIDATE_PHOTOS = 8
+
+/** Overlays the LLM's index-based curation onto the default-categorized
+ *  photo list, keeping each entry's `file` — the LLM never sees real
+ *  filenames, only its position in the `candidateImages` that were sent
+ *  (see `LlmInput.candidateImages`). An index outside `base` (stale/
+ *  hallucinated) is ignored rather than throwing. */
+function applyPhotoCuration(base: CuratedPhoto[], curation: PhotoCuration[]): CuratedPhoto[] {
+  if (!curation.length) return base
+  const out = [...base]
+  for (const c of curation) {
+    const prior = out[c.photoIndex]
+    if (!prior) continue
+    out[c.photoIndex] = { file: prior.file, category: c.category, caption: c.caption, isPropertyPhoto: c.isPropertyPhoto }
+  }
+  return out
+}
 
 function readLlmConfig(): LlmConfig | null {
   const c = useRuntimeConfig().extractLlm as
@@ -153,18 +173,23 @@ async function runEnrich() {
         (hit.llmFailures ?? 0) < MAX_LLM_FAILURES
       )
     }
-    // condition/features are LLM-only fields added after this cache existed:
-    // `undefined` means "never checked" (an entry written before the field
-    // existed, or a mergedConfident entry from before this backfill shipped),
-    // `null`/`[]` means "checked, nothing found". Bounded by MAX_LLM_FAILURES
-    // like needsLlmRetry so a persistently-failing listing doesn't re-consume
-    // an LLM slot every run forever.
-    const needsConditionFeaturesBackfill = (a: Auction): boolean => {
+    // condition/features/yearBuilt/lastRenovationYear/insights are LLM-only
+    // fields added after this cache existed: `undefined` means "never
+    // checked" (an entry written before the field existed, or a
+    // mergedConfident entry from before this backfill shipped), `null`/`[]`
+    // means "checked, nothing found". Bounded by MAX_LLM_FAILURES like
+    // needsLlmRetry so a persistently-failing listing doesn't re-consume an
+    // LLM slot every run forever.
+    const needsLlmFieldsBackfill = (a: Auction): boolean => {
       const hit = cache[cacheKey(a.platform, a.externalId)]
       return (
         llmConfig != null &&
         hit != null &&
-        (hit.condition === undefined || hit.features === undefined) &&
+        (hit.condition === undefined ||
+          hit.features === undefined ||
+          hit.yearBuilt === undefined ||
+          hit.lastRenovationYear === undefined ||
+          hit.insights === undefined) &&
         (hit.llmFailures ?? 0) < MAX_LLM_FAILURES
       )
     }
@@ -173,7 +198,7 @@ async function runEnrich() {
         !cache[cacheKey(a.platform, a.externalId)] ||
         needsEnrich(a) ||
         needsLlmRetry(a) ||
-        needsConditionFeaturesBackfill(a),
+        needsLlmFieldsBackfill(a),
     )
     const todo = interleaveByPlatform(eligible)
     const maxLlmPerRun = readMaxLlmPerRun()
@@ -215,12 +240,7 @@ async function runEnrich() {
         const crawler = byPlatform.get(a.platform)
         const key = cacheKey(a.platform, a.externalId)
         const priorEntry = cache[key]
-        const needsCF =
-          llmConfig != null &&
-          priorEntry != null &&
-          (priorEntry.condition === undefined || priorEntry.features === undefined) &&
-          (priorEntry.llmFailures ?? 0) < MAX_LLM_FAILURES
-        const extractionMissing = !priorEntry || needsLlmRetry(a) || needsCF
+        const extractionMissing = !priorEntry || needsLlmRetry(a) || needsLlmFieldsBackfill(a)
 
         // Detail fetch (description + attachments) so extraction has real text
         // and the snapshot writer has enrichOne-populated fields to persist.
@@ -277,17 +297,22 @@ async function runEnrich() {
           // LLM branch below — an explicit amount stated in prose doesn't need
           // an LLM call to find, so this fills in even for mergedConfident entries.
           securityDeposit: a.sourceSecurityDeposit ?? rules.securityDeposit,
-          // LLM-only — stays undefined unless an LLM call runs below (which
-          // only happens when rules aren't confident about type/size; a
-          // confident entry never sees this field checked, same trade-off as
-          // not spending an extra LLM slot on it — biddingNotes is a rare
-          // catch-all, not a universal per-listing fact like condition/features).
+          // LLM-only — stays undefined unless a successful LLM call below
+          // finds rules/structured values NOT already confident (see the
+          // `!mergedConfident` branch): biddingNotes is a rare catch-all, not
+          // a universal per-listing fact like condition/features/insights, so
+          // a confident entry doesn't get it overwritten even though the LLM
+          // call itself still runs for those other fields.
           biddingNotes: undefined as string | null | undefined,
           // LLM-only — undefined until a successful LLM call below sets them;
           // carries a prior partial result forward on a re-run (shouldn't
           // normally happen since they're set together, but keeps this idempotent).
           condition: priorEntry?.condition,
           features: priorEntry?.features,
+          yearBuilt: priorEntry?.yearBuilt,
+          lastRenovationYear: priorEntry?.lastRenovationYear,
+          renovationNotes: priorEntry?.renovationNotes,
+          insights: priorEntry?.insights,
         }
         const mergedConfident =
           rules.confident ||
@@ -319,80 +344,6 @@ async function runEnrich() {
             })
           : null
 
-        const platformLlmCalls = llmCallsByPlatform.get(a.platform) ?? 0
-        if (mergedConfident && !needsCF) {
-          cacheable = true
-        } else if (
-          llmConfig &&
-          llmCalls < maxLlmPerRun &&
-          platformLlmCalls < llmCapPerPlatform
-        ) {
-          llmCalls++
-          llmCallsByPlatform.set(a.platform, platformLlmCalls + 1)
-          // A short/empty pdftotext result on an actual attachment usually
-          // means the Gutachten PDF is a scanned image, not real text — render
-          // its first page and let the LLM read it visually instead.
-          const pdfPageImages =
-            bestPdf && (!pdfText || pdfText.trim().length < SCANNED_PDF_TEXT_THRESHOLD)
-              ? await pdfPagesToBase64Jpeg(bestPdf.proxyUrl)
-              : null
-          const llm = await extractByLlm(
-            { title: a.title, description: a.description, pdfText, pdfPageImages },
-            llmConfig,
-          )
-          if (llm === null) {
-            // LLM request failed. Cache the rules-only result (if detail
-            // succeeded, or rules were already confident) so the listing
-            // still shows something and — via the bumped llmFailures counter
-            // below — retries stay bounded instead of re-spending an LLM slot
-            // every run forever.
-            llmFailed = true
-            cacheable = mergedConfident || detailOk
-          } else {
-            // Only let the LLM contribute propertyType/sizes when rules didn't
-            // already resolve them confidently — otherwise this call ran
-            // purely to backfill condition/features, and `source` must stay
-            // 'rules' so needsLlmRetry / the UI's low-confidence notice don't
-            // misfire on an otherwise-confident entry.
-            if (!mergedConfident) {
-              source = 'llm'
-              // Prefer the precise structured/rules values; fill the gaps from
-              // the LLM. "sonstiges" counts as absent for propertyType (see
-              // mergedConfident above) — let a more specific LLM
-              // classification replace it.
-              fields.propertyType =
-                fields.propertyType != null && fields.propertyType !== 'sonstiges'
-                  ? fields.propertyType
-                  : llm.propertyType
-              fields.landAreaSqm = fields.landAreaSqm ?? llm.landAreaSqm
-              fields.livingAreaSqm = fields.livingAreaSqm ?? llm.livingAreaSqm
-              fields.rooms = fields.rooms ?? llm.rooms
-              fields.units = fields.units ?? llm.units
-              fields.securityDeposit = fields.securityDeposit ?? llm.securityDeposit
-              fields.biddingNotes = llm.biddingNotes
-            }
-            fields.condition = llm.condition
-            fields.features = llm.features
-            cacheable = true
-          }
-        } else if (llmConfig) {
-          // Per-run or per-platform LLM cap hit: cache the rules result
-          // anyway so the listing shows *something* immediately. When rules
-          // aren't confident, source stays 'rules' with confidence 'low' so
-          // needsLlmRetry picks it up again once an LLM slot frees up;
-          // condition/features stay unset either way so
-          // needsConditionFeaturesBackfill retries them too. Leaving it
-          // uncached instead starved huge platforms (IT: 14k listings ÷ 300
-          // calls/run) of any extraction data for months.
-          cacheable = mergedConfident || detailOk
-        } else {
-          // LLM disabled entirely: cache the rules result if we had real text
-          // to work with, else leave it for a later run to retry.
-          cacheable = mergedConfident || detailOk
-        }
-
-        if (!cacheable) continue
-
         // Two-way photo pipeline (platform/externalId guard applies to both — the
         // API endpoint enforces the same shape, so files under an unsafe path
         // would be unreachable anyway):
@@ -409,11 +360,16 @@ async function runEnrich() {
         // Wrapped in try/catch so a disk-full or subprocess failure on one
         // listing can't reject the whole Promise.all — mirrors the enrichOne
         // pattern above.
+        // Runs *before* the LLM call below (unlike the pre-C.6 shape) so a
+        // freshly downloaded/extracted photo set can be offered to the LLM
+        // for curation in the same call — see freshPhotoFiles/candidateImages.
         let curatedPhotos: CuratedPhoto[] | undefined
+        let freshPhotoFiles: string[] | undefined
+        let freshPhotoDestDir: string | null = null
         if (priorEntry) {
-          // A re-run (needsLlmRetry / needsConditionFeaturesBackfill — a cache
-          // entry here means exactly one of those): the photo pipeline already
-          // ran when this entry was first cached. The mirrored files are
+          // A re-run (needsLlmRetry / needsLlmFieldsBackfill — a cache entry
+          // here means exactly one of those): the photo pipeline already ran
+          // when this entry was first cached. The mirrored files are
           // content-addressed and still on disk — reuse the result instead of
           // re-downloading every gallery / re-mining the PDF on every retry
           // pass. First runs and entries never cached before still go through
@@ -421,11 +377,25 @@ async function runEnrich() {
           // entry may hold bare filename strings, and re-persisting them raw
           // would perpetuate the old shape instead of upgrading it.
           curatedPhotos = priorEntry.photos?.map(normalizePhoto)
+          // Unlike a fully-curated prior entry, one whose LLM fields never got
+          // a successful call (cap hit / request failure on the run that
+          // downloaded these photos) never had a curation opportunity —
+          // offer the cached files again as candidateImages so this backfill
+          // can still curate them instead of leaving them uncategorized forever.
+          if (
+            needsLlmFieldsBackfill(a) &&
+            curatedPhotos?.length &&
+            isSafePathSegment(a.platform) &&
+            isSafePathSegment(a.externalId)
+          ) {
+            freshPhotoFiles = curatedPhotos.map((p) => p.file)
+            freshPhotoDestDir = join(IMAGES_DIR, a.platform, a.externalId)
+          }
         } else if (isSafePathSegment(a.platform) && isSafePathSegment(a.externalId)) {
           const destDir = join(IMAGES_DIR, a.platform, a.externalId)
           // The deterministic pipeline yields bare filenames; they become
-          // CuratedPhoto entries (category defaults to 'sonstiges' until LLM
-          // curation in a later step — see lib/photo.ts).
+          // CuratedPhoto entries (category defaults to 'sonstiges' unless the
+          // LLM call below curates them for real).
           let photos: string[] = []
           const nativeFotoUrls = [
             ...a.attachments
@@ -463,7 +433,117 @@ async function runEnrich() {
             )
           }
           curatedPhotos = photos.length > 0 ? photos.map(normalizePhoto) : undefined
+          if (photos.length > 0) {
+            freshPhotoFiles = photos
+            freshPhotoDestDir = destDir
+          }
         }
+
+        const platformLlmCalls = llmCallsByPlatform.get(a.platform) ?? 0
+        // Rules/structured values are a merge input, not a gate: even a
+        // mergedConfident listing still gets an LLM call (budget permitting)
+        // so it also picks up condition/features/yearBuilt/insights/photo
+        // curation — the earlier "confident → skip LLM entirely" fast path
+        // left those fields unset until a delayed backfill run.
+        if (llmConfig && llmCalls < maxLlmPerRun && platformLlmCalls < llmCapPerPlatform) {
+          llmCalls++
+          llmCallsByPlatform.set(a.platform, platformLlmCalls + 1)
+          // A short/empty pdftotext result on an actual attachment usually
+          // means the Gutachten PDF is a scanned image, not real text — render
+          // its first page and let the LLM read it visually instead.
+          const pdfPageImages =
+            bestPdf && (!pdfText || pdfText.trim().length < SCANNED_PDF_TEXT_THRESHOLD)
+              ? await pdfPagesToBase64Jpeg(bestPdf.proxyUrl)
+              : null
+          // Offer a capped subset of a freshly downloaded/extracted photo set
+          // for real curation — capped so a Gutachten with dozens of embedded
+          // rasters doesn't blow the token budget. Built lazily here (not
+          // above) so a cap-hit/no-LLM run never pays for the base64 encode.
+          let candidateImages: { label: string; mimeType: string; data: string }[] | undefined
+          if (freshPhotoFiles?.length && freshPhotoDestDir) {
+            const destDir = freshPhotoDestDir
+            const capped = freshPhotoFiles.slice(0, MAX_CANDIDATE_PHOTOS)
+            try {
+              candidateImages = await Promise.all(
+                capped.map(async (name) => ({
+                  label: name,
+                  mimeType: mimeTypeFor(name),
+                  data: (await readFile(join(destDir, name))).toString('base64'),
+                })),
+              )
+            } catch (err) {
+              console.warn(
+                `[enrich] candidate image read failed for ${a.platform}:${a.externalId}: ${(err as Error).message}`,
+              )
+            }
+          }
+          const llm = await extractByLlm(
+            { title: a.title, description: a.description, pdfText, pdfPageImages, candidateImages },
+            llmConfig,
+          )
+          if (llm === null) {
+            // LLM request failed. Cache the rules-only result (if detail
+            // succeeded, or rules were already confident) so the listing
+            // still shows something and — via the bumped llmFailures counter
+            // below — retries stay bounded instead of re-spending an LLM slot
+            // every run forever.
+            llmFailed = true
+            cacheable = mergedConfident || detailOk
+          } else {
+            // Only let the LLM contribute propertyType/sizes when rules didn't
+            // already resolve them confidently — otherwise this call ran
+            // purely to backfill condition/features/yearBuilt/insights, and
+            // `source` must stay 'rules' so needsLlmRetry / the UI's
+            // low-confidence notice don't misfire on an otherwise-confident entry.
+            if (!mergedConfident) {
+              source = 'llm'
+              // Prefer the precise structured/rules values; fill the gaps from
+              // the LLM. "sonstiges" counts as absent for propertyType (see
+              // mergedConfident above) — let a more specific LLM
+              // classification replace it.
+              fields.propertyType =
+                fields.propertyType != null && fields.propertyType !== 'sonstiges'
+                  ? fields.propertyType
+                  : llm.propertyType
+              fields.landAreaSqm = fields.landAreaSqm ?? llm.landAreaSqm
+              fields.livingAreaSqm = fields.livingAreaSqm ?? llm.livingAreaSqm
+              fields.rooms = fields.rooms ?? llm.rooms
+              fields.units = fields.units ?? llm.units
+              fields.securityDeposit = fields.securityDeposit ?? llm.securityDeposit
+              fields.biddingNotes = llm.biddingNotes
+            }
+            fields.condition = llm.condition
+            fields.features = llm.features
+            fields.yearBuilt = llm.yearBuilt
+            fields.lastRenovationYear = llm.lastRenovationYear
+            fields.renovationNotes = llm.renovationNotes
+            fields.insights = llm.insights
+            // Curation only applies to the photos actually offered this call
+            // (a fresh first-run download/extraction) — a re-run's
+            // curatedPhotos came from priorEntry and were never sent as
+            // candidateImages.
+            if (curatedPhotos && candidateImages?.length && llm.photoCuration.length) {
+              curatedPhotos = applyPhotoCuration(curatedPhotos, llm.photoCuration)
+            }
+            cacheable = true
+          }
+        } else if (llmConfig) {
+          // Per-run or per-platform LLM cap hit: cache the rules result
+          // anyway so the listing shows *something* immediately. When rules
+          // aren't confident, source stays 'rules' with confidence 'low' so
+          // needsLlmRetry picks it up again once an LLM slot frees up;
+          // condition/features/yearBuilt/insights stay unset either way so
+          // needsLlmFieldsBackfill retries them too. Leaving it uncached
+          // instead starved huge platforms (IT: 14k listings ÷ 300
+          // calls/run) of any extraction data for months.
+          cacheable = mergedConfident || detailOk
+        } else {
+          // LLM disabled entirely: cache the rules result if we had real text
+          // to work with, else leave it for a later run to retry.
+          cacheable = mergedConfident || detailOk
+        }
+
+        if (!cacheable) continue
 
         const hasType = fields.propertyType != null && fields.propertyType !== 'sonstiges'
         const hasArea = fields.landAreaSqm != null || fields.livingAreaSqm != null

@@ -135,20 +135,27 @@ export async function reprocessAuction(
     biddingNotes: priorEntry?.biddingNotes,
     condition: priorEntry?.condition,
     features: priorEntry?.features,
+    yearBuilt: priorEntry?.yearBuilt,
+    lastRenovationYear: priorEntry?.lastRenovationYear,
+    renovationNotes: priorEntry?.renovationNotes,
+    insights: priorEntry?.insights,
   }
   const mergedConfident =
     rules.confident ||
     (fields.propertyType != null &&
       fields.propertyType !== 'sonstiges' &&
       (fields.landAreaSqm != null || fields.livingAreaSqm != null))
-  const needsConditionFeatures =
-    llmConfig != null && (priorEntry?.condition === undefined || priorEntry?.features === undefined)
-
   let source: 'rules' | 'llm' = 'rules'
   let llmCalled = false
   let llmFailed = false
+  let llmSucceeded = false
 
-  if (llmConfig && (!mergedConfident || needsConditionFeatures)) {
+  // Rules/structured values are a merge input, not a gate: call the LLM
+  // whenever configured (findCandidates/runReprocess already bound how many
+  // auctions reach here) so even a mergedConfident entry still picks up
+  // condition/features/yearBuilt/insights instead of waiting for a later,
+  // separately-triggered backfill pass (mirrors the same change in enrich.ts).
+  if (llmConfig) {
     const bestPdf = pickBestPdf(auction.attachments)
     let pdfBytes: Buffer | null = null
     if (bestPdf) {
@@ -169,9 +176,10 @@ export async function reprocessAuction(
     if (llm === null) {
       llmFailed = true
     } else {
+      llmSucceeded = true
       // Only let the LLM contribute propertyType/sizes when rules didn't
       // already resolve them confidently — otherwise this call ran purely to
-      // backfill condition/features (same trade-off as enrich.ts).
+      // backfill condition/features/yearBuilt/insights (same trade-off as enrich.ts).
       if (!mergedConfident) {
         source = 'llm'
         fields.propertyType =
@@ -187,13 +195,17 @@ export async function reprocessAuction(
       }
       fields.condition = llm.condition
       fields.features = llm.features
+      fields.yearBuilt = llm.yearBuilt
+      fields.lastRenovationYear = llm.lastRenovationYear
+      fields.renovationNotes = llm.renovationNotes
+      fields.insights = llm.insights
     }
   }
 
   const hasType = fields.propertyType != null && fields.propertyType !== 'sonstiges'
   const hasArea = fields.landAreaSqm != null || fields.livingAreaSqm != null
   const prevFailures = priorEntry?.llmFailures ?? 0
-  const llmFailures = llmFailed ? prevFailures + 1 : source === 'llm' ? 0 : prevFailures
+  const llmFailures = llmFailed ? prevFailures + 1 : llmSucceeded ? 0 : prevFailures
 
   const entry: AuctionExtraction = {
     ...fields,
@@ -247,7 +259,11 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
         ((!priorEntry ||
           (priorEntry.source === 'rules' && priorEntry.confidence === 'low') ||
           priorEntry.condition === undefined ||
-          priorEntry.features === undefined) &&
+          priorEntry.features === undefined ||
+          priorEntry.yearBuilt === undefined ||
+          priorEntry.lastRenovationYear === undefined ||
+          priorEntry.renovationNotes === undefined ||
+          priorEntry.insights === undefined) &&
           (priorEntry?.llmFailures ?? 0) < MAX_LLM_FAILURES)
       if (!eligible) {
         skipped++

@@ -111,6 +111,72 @@ describe('reprocessAuction', () => {
     expect(vi.mocked(findLatestCapture)).toHaveBeenCalledTimes(1)
   })
 
+  it('calls the LLM even when rules and the prior entry are already confident, merging yearBuilt/insights without touching rules-derived fields (rules as merge, not gate)', async () => {
+    const auction = makeAuction({
+      title: 'Einfamilienhaus',
+      description: 'Einfamilienhaus mit Wohnfläche ca. 140 m² und Grundstücksfläche 850 m².',
+    })
+    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
+      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
+    )
+    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
+    const priorEntry: AuctionExtraction = {
+      propertyType: 'einfamilienhaus',
+      landAreaSqm: 850,
+      livingAreaSqm: 140,
+      rooms: 5,
+      units: 1,
+      condition: 'gepflegt',
+      features: [],
+      yearBuilt: null,
+      lastRenovationYear: null,
+      insights: null,
+      source: 'rules',
+      confidence: 'high',
+      at: '2026-07-01T00:00:00.000Z',
+    }
+    vi.mocked(extractByLlm).mockResolvedValue({
+      propertyType: null,
+      landAreaSqm: null,
+      livingAreaSqm: null,
+      rooms: null,
+      units: null,
+      securityDeposit: null,
+      biddingNotes: null,
+      condition: 'gepflegt',
+      features: [],
+      yearBuilt: 1998,
+      lastRenovationYear: 2015,
+      renovationNotes: 'Dach erneuert',
+      insights: {
+        defects: [],
+        encumbrances: [],
+        landValueEurPerSqm: null,
+        construction: null,
+        locationCharacter: null,
+        summary: 'Solide Bausubstanz.',
+      },
+      photoCuration: [],
+    })
+
+    const result = await reprocessAuction(
+      'zvg-portal',
+      '7265',
+      priorEntry,
+      { baseUrl: 'http://proxy', model: 'claude-haiku-4-5' },
+      '2026-07-22T00:00:00.000Z',
+    )
+
+    expect(extractByLlm).toHaveBeenCalledTimes(1)
+    expect(result!.entry.source).toBe('rules')
+    expect(result!.entry.propertyType).toBe('einfamilienhaus')
+    expect(result!.entry.livingAreaSqm).toBe(140)
+    expect(result!.entry.yearBuilt).toBe(1998)
+    expect(result!.entry.lastRenovationYear).toBe(2015)
+    expect(result!.entry.renovationNotes).toBe('Dach erneuert')
+    expect(result!.entry.insights?.summary).toBe('Solide Bausubstanz.')
+  })
+
   it('falls back to the vision path for a scanned appraisal PDF and merges the LLM result', async () => {
     const auction = makeAuction({
       attachments: [
@@ -255,6 +321,10 @@ describe('runReprocess', () => {
       units: 1,
       condition: 'gepflegt',
       features: [],
+      yearBuilt: null,
+      lastRenovationYear: null,
+      renovationNotes: null,
+      insights: null,
       source: 'llm',
       confidence: 'high',
       at: '2026-07-01T00:00:00.000Z',
@@ -268,6 +338,59 @@ describe('runReprocess', () => {
     const forcedResult = await runReprocess({ platform: 'zvg-portal', force: true })
     expect(forcedResult.processed).toBe(1)
     expect(writeExtractionCache).toHaveBeenCalledWith({ 'zvg-portal:7265': expect.objectContaining({ propertyType: 'einfamilienhaus' }) })
+  })
+
+  it('backfills an entry whose only missing LLM field is renovationNotes', async () => {
+    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { baseUrl: 'http://proxy' } }))
+    const auction = makeAuction({
+      title: 'Einfamilienhaus',
+      description: 'Einfamilienhaus mit Wohnfläche ca. 140 m² und Grundstücksfläche 850 m².',
+    })
+    const query = vi.fn().mockResolvedValue({ rows: [{ platform: 'zvg-portal', external_id: '7265' }] })
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
+      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
+    )
+    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
+    vi.mocked(extractByLlm).mockResolvedValue({
+      propertyType: null,
+      landAreaSqm: null,
+      livingAreaSqm: null,
+      rooms: null,
+      units: null,
+      securityDeposit: null,
+      biddingNotes: null,
+      condition: 'gepflegt',
+      features: [],
+      yearBuilt: null,
+      lastRenovationYear: null,
+      renovationNotes: 'Dach erneuert',
+      insights: null,
+      photoCuration: [],
+    })
+
+    const missingRenovationNotesEntry: AuctionExtraction = {
+      propertyType: 'einfamilienhaus',
+      landAreaSqm: 850,
+      livingAreaSqm: 140,
+      rooms: 5,
+      units: 1,
+      condition: 'gepflegt',
+      features: [],
+      yearBuilt: null,
+      lastRenovationYear: null,
+      insights: null,
+      source: 'llm',
+      confidence: 'high',
+      at: '2026-07-01T00:00:00.000Z',
+    }
+    vi.mocked(readExtractionCache).mockResolvedValue({ 'zvg-portal:7265': missingRenovationNotesEntry })
+
+    const result = await runReprocess({})
+    expect(result).toEqual({ candidates: 1, processed: 1, skipped: 0, llmCalls: 1 })
+    expect(writeExtractionCache).toHaveBeenCalledWith({
+      'zvg-portal:7265': expect.objectContaining({ renovationNotes: 'Dach erneuert' }),
+    })
   })
 
   it('syncs auction_snapshot only for auctions present in the snapshot', async () => {
