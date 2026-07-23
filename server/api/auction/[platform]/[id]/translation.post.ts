@@ -15,6 +15,7 @@ import { cacheKey } from '../../../../utils/verkehrswert-cache'
 import { getPool } from '../../../../utils/db'
 import { sha256Hex } from '../../../../utils/raw-archive'
 import { readContentTranslation, writeContentTranslation } from '../../../../utils/content-translation'
+import { getLlmMaxTokens } from '../../../../utils/app-settings'
 import { resolveLlmConfig } from '../../../../utils/extract/llm'
 import { callTranslationLlm, type TranslationResult } from '../../../../utils/extract/text-llm'
 import { isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
@@ -115,7 +116,7 @@ export default defineEventHandler(async (event) => {
   const llmCfg = useRuntimeConfig().extractLlm as
     | { provider?: string; baseUrl?: string; apiKey?: string; model?: string }
     | undefined
-  const config = resolveLlmConfig(llmCfg, { maxTokens: 8192 })
+  const config = resolveLlmConfig(llmCfg, { maxTokens: await getLlmMaxTokens(db, 'translation') })
   if (!config) {
     throw createError({ statusCode: 503, statusMessage: 'LLM not configured' })
   }

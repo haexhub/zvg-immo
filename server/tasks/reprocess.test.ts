@@ -10,7 +10,10 @@ import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snap
 
 vi.mock('../utils/db', () => ({ getPool: vi.fn() }))
 vi.mock('../utils/storage-download', () => ({ findLatestCapture: vi.fn(), downloadBlob: vi.fn() }))
-vi.mock('../utils/extract/llm', () => ({ extractByLlm: vi.fn() }))
+vi.mock('../utils/extract/llm', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/extract/llm')>()
+  return { ...actual, extractByLlm: vi.fn() }
+})
 // Spy on (not stub out) the real implementations — other tests here rely on
 // actual pdftotext/rendering output (e.g. the scanned-PDF vision-fallback
 // test below); the gemini-native test only needs to assert these were never

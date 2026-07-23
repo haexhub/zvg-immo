@@ -14,6 +14,8 @@ import { cacheKey } from '../../../../utils/verkehrswert-cache'
 import { pickBestPdf, pdfToText } from '../../../../utils/extract/pdf-text'
 import { resolveLlmConfig } from '../../../../utils/extract/llm'
 import { callSummaryLlm } from '../../../../utils/extract/text-llm'
+import { getPool } from '../../../../utils/db'
+import { DEFAULT_LLM_MAX_TOKENS, getLlmMaxTokens } from '../../../../utils/app-settings'
 import {
   checkInMemoryRateLimit,
   createInMemoryRateLimitState,
@@ -85,7 +87,12 @@ export default defineEventHandler(async (event) => {
   const llmCfg = useRuntimeConfig().extractLlm as
     | { provider?: string; baseUrl?: string; apiKey?: string; model?: string }
     | undefined
-  const config = resolveLlmConfig(llmCfg, { maxTokens: 1024 })
+  // Postgres is not a hard requirement here (only the disk-based summary
+  // cache is) — degrade to the hard-coded default instead of a 503 so
+  // summary generation doesn't suddenly depend on Postgres.
+  const db = getPool()
+  const maxTokens = db ? await getLlmMaxTokens(db, 'summary') : DEFAULT_LLM_MAX_TOKENS.summary
+  const config = resolveLlmConfig(llmCfg, { maxTokens })
   if (!config) {
     throw createError({ statusCode: 503, statusMessage: 'LLM not configured' })
   }

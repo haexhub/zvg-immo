@@ -75,6 +75,30 @@ describe('GeminiNativeProvider.extract — 429 pacing/retry', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  it('sends maxOutputTokens in generationConfig, falling back to 4096', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okResponse)
+    vi.stubGlobal('$fetch', fetchMock)
+    const provider = await freshProvider()
+    const promise = provider.extract(req)
+    await vi.runAllTimersAsync()
+    await promise
+    const [, options] = fetchMock.mock.calls[0]!
+    expect((options.body as { generationConfig: { maxOutputTokens: number } }).generationConfig.maxOutputTokens).toBe(4096)
+  })
+
+  it('respects an explicit maxTokens override', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okResponse)
+    vi.stubGlobal('$fetch', fetchMock)
+    vi.resetModules()
+    const mod = await import('./gemini-native')
+    const provider = new mod.GeminiNativeProvider({ ...config, maxTokens: 2048 })
+    const promise = provider.extract(req)
+    await vi.runAllTimersAsync()
+    await promise
+    const [, options] = fetchMock.mock.calls[0]!
+    expect((options.body as { generationConfig: { maxOutputTokens: number } }).generationConfig.maxOutputTokens).toBe(2048)
+  })
+
   it('retries on 429 and returns the result once it succeeds', async () => {
     const fetchMock = vi.fn()
       .mockRejectedValueOnce(error(429))

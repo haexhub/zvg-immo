@@ -251,6 +251,18 @@
       "saving": "Speichere …",
       "save": "Speichern",
       "cancel": "Abbrechen"
+    },
+    "llm": {
+      "title": "LLM-Konfiguration",
+      "description": "Max-Output-Tokens-Grenze pro Anwendungsfall — wirkt sofort für den nächsten LLM-Call, kein Redeploy nötig.",
+      "extractionLabel": "Extraktion",
+      "summaryLabel": "Zusammenfassung",
+      "translationLabel": "Übersetzung",
+      "loadError": "Konfiguration konnte nicht geladen werden.",
+      "saveError": "Speichern fehlgeschlagen.",
+      "saved": "Gespeichert.",
+      "saving": "Speichere …",
+      "save": "Speichern"
     }
   },
   "localeSwitcher": {

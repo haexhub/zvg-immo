@@ -2,6 +2,7 @@
 import { ArrowLeft, ExternalLink, Loader2, Pencil, Trash2 } from 'lucide-vue-next'
 import type { ClaudeSetupStatus } from '~/server/api/settings/claude/status.get'
 import type { AdminLawyer } from '~/server/api/settings/lawyers/index.get'
+import type { LlmMaxTokensKind } from '~/server/utils/app-settings'
 
 const { t } = useI18n()
 useHead({ title: t('settings.title') })
@@ -20,6 +21,7 @@ async function probeSession(): Promise<void> {
     if (authed.value) {
       await refreshStatus()
       await loadLawyers()
+      await loadLlmConfig()
     }
   } catch {
     authed.value = false
@@ -38,6 +40,7 @@ async function login(): Promise<void> {
     authed.value = true
     await refreshStatus()
     await loadLawyers()
+    await loadLlmConfig()
   } catch (err) {
     authError.value = (err as { statusMessage?: string; message?: string }).statusMessage
       || (err as Error).message
@@ -310,6 +313,53 @@ async function deleteLawyer(l: AdminLawyer): Promise<void> {
   }
 }
 
+// LLM-Konfiguration: Max-Output-Tokens pro Anwendungsfall, gegen
+// /api/settings/llm-config (gleiches settings-auth-Muster wie oben).
+const llmConfig = ref<Record<LlmMaxTokensKind, string>>({ extraction: '', summary: '', translation: '' })
+const llmConfigError = ref<string | null>(null)
+const llmConfigSaved = ref(false)
+const llmConfigPending = ref(false)
+
+async function loadLlmConfig(): Promise<void> {
+  try {
+    const res = await $fetch<Record<LlmMaxTokensKind, number>>('/api/settings/llm-config')
+    llmConfig.value = {
+      extraction: String(res.extraction),
+      summary: String(res.summary),
+      translation: String(res.translation),
+    }
+    llmConfigError.value = null
+  } catch (err) {
+    llmConfigError.value = normalizeSettingsError(err, t('settings.llm.loadError'))
+  }
+}
+
+async function saveLlmConfig(): Promise<void> {
+  llmConfigPending.value = true
+  llmConfigError.value = null
+  llmConfigSaved.value = false
+  try {
+    const res = await $fetch<Record<LlmMaxTokensKind, number>>('/api/settings/llm-config', {
+      method: 'PUT',
+      body: {
+        extraction: Number(llmConfig.value.extraction),
+        summary: Number(llmConfig.value.summary),
+        translation: Number(llmConfig.value.translation),
+      },
+    })
+    llmConfig.value = {
+      extraction: String(res.extraction),
+      summary: String(res.summary),
+      translation: String(res.translation),
+    }
+    llmConfigSaved.value = true
+  } catch (err) {
+    llmConfigError.value = normalizeSettingsError(err, t('settings.llm.saveError'))
+  } finally {
+    llmConfigPending.value = false
+  }
+}
+
 onMounted(probeSession)
 onBeforeUnmount(stopPolling)
 </script>
@@ -524,6 +574,40 @@ onBeforeUnmount(stopPolling)
             <div class="flex gap-2">
               <Button type="submit" :disabled="lawyersPending">{{ lawyersPending ? $t('settings.lawyers.saving') : $t('settings.lawyers.save') }}</Button>
               <Button type="button" variant="outline" @click="cancelForm">{{ $t('settings.lawyers.cancel') }}</Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+
+      <Card v-if="authed">
+        <CardHeader>
+          <CardTitle>{{ $t('settings.llm.title') }}</CardTitle>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          <p class="text-sm text-muted-foreground">
+            {{ $t('settings.llm.description') }}
+          </p>
+
+          <p v-if="llmConfigError" class="text-sm text-destructive">{{ llmConfigError }}</p>
+          <p v-if="llmConfigSaved" class="text-sm text-emerald-600 dark:text-emerald-500">{{ $t('settings.llm.saved') }}</p>
+
+          <form class="grid grid-cols-1 sm:grid-cols-3 gap-3" @submit.prevent="saveLlmConfig">
+            <div class="space-y-1">
+              <Label>{{ $t('settings.llm.extractionLabel') }}</Label>
+              <Input v-model="llmConfig.extraction" type="number" min="256" max="32768" step="1" />
+            </div>
+            <div class="space-y-1">
+              <Label>{{ $t('settings.llm.summaryLabel') }}</Label>
+              <Input v-model="llmConfig.summary" type="number" min="256" max="32768" step="1" />
+            </div>
+            <div class="space-y-1">
+              <Label>{{ $t('settings.llm.translationLabel') }}</Label>
+              <Input v-model="llmConfig.translation" type="number" min="256" max="32768" step="1" />
+            </div>
+            <div class="sm:col-span-3">
+              <Button type="submit" :disabled="llmConfigPending">
+                {{ llmConfigPending ? $t('settings.llm.saving') : $t('settings.llm.save') }}
+              </Button>
             </div>
           </form>
         </CardContent>
