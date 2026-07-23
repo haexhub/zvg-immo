@@ -148,6 +148,7 @@ export async function reprocessAuction(
   let source: 'rules' | 'llm' = 'rules'
   let llmCalled = false
   let llmFailed = false
+  let llmSucceeded = false
 
   // Rules/structured values are a merge input, not a gate: call the LLM
   // whenever configured (findCandidates/runReprocess already bound how many
@@ -175,6 +176,7 @@ export async function reprocessAuction(
     if (llm === null) {
       llmFailed = true
     } else {
+      llmSucceeded = true
       // Only let the LLM contribute propertyType/sizes when rules didn't
       // already resolve them confidently — otherwise this call ran purely to
       // backfill condition/features/yearBuilt/insights (same trade-off as enrich.ts).
@@ -203,7 +205,7 @@ export async function reprocessAuction(
   const hasType = fields.propertyType != null && fields.propertyType !== 'sonstiges'
   const hasArea = fields.landAreaSqm != null || fields.livingAreaSqm != null
   const prevFailures = priorEntry?.llmFailures ?? 0
-  const llmFailures = llmFailed ? prevFailures + 1 : source === 'llm' ? 0 : prevFailures
+  const llmFailures = llmFailed ? prevFailures + 1 : llmSucceeded ? 0 : prevFailures
 
   const entry: AuctionExtraction = {
     ...fields,
@@ -260,6 +262,7 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
           priorEntry.features === undefined ||
           priorEntry.yearBuilt === undefined ||
           priorEntry.lastRenovationYear === undefined ||
+          priorEntry.renovationNotes === undefined ||
           priorEntry.insights === undefined) &&
           (priorEntry?.llmFailures ?? 0) < MAX_LLM_FAILURES)
       if (!eligible) {

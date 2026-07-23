@@ -64,7 +64,7 @@ export async function uploadImage(bytes: Buffer, key: string): Promise<boolean> 
   try {
     const { error } = await supabase.storage
       .from(bucket)
-      .upload(key, bytes, { contentType: CONTENT_TYPE[extOf(key)] ?? 'application/octet-stream', upsert: true })
+      .upload(key, bytes, { contentType: mimeTypeFor(key), upsert: true })
     if (error) throw new Error(error.message)
     return true
   } catch (err) {

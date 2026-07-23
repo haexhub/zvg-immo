@@ -240,16 +240,7 @@ async function runEnrich() {
         const crawler = byPlatform.get(a.platform)
         const key = cacheKey(a.platform, a.externalId)
         const priorEntry = cache[key]
-        const needsLlmFields =
-          llmConfig != null &&
-          priorEntry != null &&
-          (priorEntry.condition === undefined ||
-            priorEntry.features === undefined ||
-            priorEntry.yearBuilt === undefined ||
-            priorEntry.lastRenovationYear === undefined ||
-            priorEntry.insights === undefined) &&
-          (priorEntry.llmFailures ?? 0) < MAX_LLM_FAILURES
-        const extractionMissing = !priorEntry || needsLlmRetry(a) || needsLlmFields
+        const extractionMissing = !priorEntry || needsLlmRetry(a) || needsLlmFieldsBackfill(a)
 
         // Detail fetch (description + attachments) so extraction has real text
         // and the snapshot writer has enrichOne-populated fields to persist.
@@ -381,13 +372,25 @@ async function runEnrich() {
           // when this entry was first cached. The mirrored files are
           // content-addressed and still on disk — reuse the result instead of
           // re-downloading every gallery / re-mining the PDF on every retry
-          // pass, and out of scope for re-curation (only a fresh download
-          // below is offered to the LLM). First runs and entries never cached
-          // before still go through the full pipeline below. Normalize while
-          // reusing: a legacy prior entry may hold bare filename strings, and
-          // re-persisting them raw would perpetuate the old shape instead of
-          // upgrading it.
+          // pass. First runs and entries never cached before still go through
+          // the full pipeline below. Normalize while reusing: a legacy prior
+          // entry may hold bare filename strings, and re-persisting them raw
+          // would perpetuate the old shape instead of upgrading it.
           curatedPhotos = priorEntry.photos?.map(normalizePhoto)
+          // Unlike a fully-curated prior entry, one whose LLM fields never got
+          // a successful call (cap hit / request failure on the run that
+          // downloaded these photos) never had a curation opportunity —
+          // offer the cached files again as candidateImages so this backfill
+          // can still curate them instead of leaving them uncategorized forever.
+          if (
+            needsLlmFieldsBackfill(a) &&
+            curatedPhotos?.length &&
+            isSafePathSegment(a.platform) &&
+            isSafePathSegment(a.externalId)
+          ) {
+            freshPhotoFiles = curatedPhotos.map((p) => p.file)
+            freshPhotoDestDir = join(IMAGES_DIR, a.platform, a.externalId)
+          }
         } else if (isSafePathSegment(a.platform) && isSafePathSegment(a.externalId)) {
           const destDir = join(IMAGES_DIR, a.platform, a.externalId)
           // The deterministic pipeline yields bare filenames; they become
@@ -460,13 +463,19 @@ async function runEnrich() {
           if (freshPhotoFiles?.length && freshPhotoDestDir) {
             const destDir = freshPhotoDestDir
             const capped = freshPhotoFiles.slice(0, MAX_CANDIDATE_PHOTOS)
-            candidateImages = await Promise.all(
-              capped.map(async (name) => ({
-                label: name,
-                mimeType: mimeTypeFor(name),
-                data: (await readFile(join(destDir, name))).toString('base64'),
-              })),
-            )
+            try {
+              candidateImages = await Promise.all(
+                capped.map(async (name) => ({
+                  label: name,
+                  mimeType: mimeTypeFor(name),
+                  data: (await readFile(join(destDir, name))).toString('base64'),
+                })),
+              )
+            } catch (err) {
+              console.warn(
+                `[enrich] candidate image read failed for ${a.platform}:${a.externalId}: ${(err as Error).message}`,
+              )
+            }
           }
           const llm = await extractByLlm(
             { title: a.title, description: a.description, pdfText, pdfPageImages, candidateImages },
