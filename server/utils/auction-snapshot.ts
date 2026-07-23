@@ -178,6 +178,30 @@ export function mergePreservedDetail(next: Auction, prev: Auction): Auction {
   return next
 }
 
+/**
+ * Apply snapshot photo data to list-crawl auctions (mutates in place) —
+ * analogous to extraction-cache.ts's applyExtractionToAuctions. The list
+ * crawl itself never carries thumbnailUrl/photoCount/photoUrls for platforms
+ * whose photos only surface on the detail page (e.g. zvg-portal's Foto.pdf
+ * render, see crawlers/zvg-portal/list.ts vs. index.ts's applyDetail); the
+ * enrich task's detail fetch found and persisted them to auction_snapshot.
+ * Skips auctions that already have a thumbnail and a positive photo count —
+ * a native photo already present (e.g. from a directly-fetchable JPG
+ * attachment) takes priority over anything mined later.
+ */
+export function applySnapshotPhotosToAuctions(auctions: Auction[], snapshot: AuctionSnapshot): void {
+  for (const a of auctions) {
+    if (a.thumbnailUrl && a.photoCount > 0) continue
+    const hit = snapshot[cacheKey(a.platform, a.externalId)]
+    if (!hit) continue
+    if (!a.thumbnailUrl && hit.thumbnailUrl) a.thumbnailUrl = hit.thumbnailUrl
+    if (a.photoCount < hit.photoCount) a.photoCount = hit.photoCount
+    if ((!a.photoUrls || a.photoUrls.length === 0) && hit.photoUrls && hit.photoUrls.length > 0) {
+      a.photoUrls = hit.photoUrls
+    }
+  }
+}
+
 export async function writeAuctionSnapshot(auctions: Auction[]): Promise<void> {
   if (auctions.length === 0) return
   const previous = await readAuctionSnapshot()

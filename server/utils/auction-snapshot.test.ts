@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Auction } from '~/types/auction'
-import { mergePreservedDetail, normalizeLegacyAuction } from './auction-snapshot'
+import { applySnapshotPhotosToAuctions, mergePreservedDetail, normalizeLegacyAuction } from './auction-snapshot'
+import type { AuctionSnapshot } from './auction-snapshot'
 
 vi.mock('./db', () => ({ getPool: vi.fn() }))
 
@@ -374,5 +375,43 @@ describe('readAuctionSnapshot / writeAuctionSnapshot (Postgres-backed)', () => {
     const snapshot = await readAuctionSnapshot()
     expect(snapshot['other:99']).toEqual(otherPlatform)
     expect(snapshot['test:42']).toBeDefined()
+  })
+})
+
+describe('applySnapshotPhotosToAuctions', () => {
+  function snapshotOf(a: Auction): AuctionSnapshot {
+    return { [`${a.platform}:${a.externalId}`]: a }
+  }
+
+  it('fills thumbnailUrl/photoCount from the snapshot when the list crawl has none', () => {
+    const listAuction = auction() // list crawl: photoCount 0, thumbnailUrl null
+    const snapshot = snapshotOf(
+      auction({ thumbnailUrl: '/api/zvg-thumb?file_id=1&zvg_id=42&land_abk=by', photoCount: 2 }),
+    )
+    applySnapshotPhotosToAuctions([listAuction], snapshot)
+    expect(listAuction.thumbnailUrl).toBe('/api/zvg-thumb?file_id=1&zvg_id=42&land_abk=by')
+    expect(listAuction.photoCount).toBe(2)
+  })
+
+  it('fills photoUrls from the snapshot when the list crawl has none', () => {
+    const listAuction = auction()
+    const snapshot = snapshotOf(auction({ photoUrls: ['/api/auction-image/test/42/1.jpg'], photoCount: 1 }))
+    applySnapshotPhotosToAuctions([listAuction], snapshot)
+    expect(listAuction.photoUrls).toEqual(['/api/auction-image/test/42/1.jpg'])
+  })
+
+  it('does not overwrite a native photo already present on the list crawl', () => {
+    const listAuction = auction({ thumbnailUrl: '/api/auction-image/test/42/native.jpg', photoCount: 1 })
+    const snapshot = snapshotOf(auction({ thumbnailUrl: '/api/zvg-thumb?file_id=9', photoCount: 5 }))
+    applySnapshotPhotosToAuctions([listAuction], snapshot)
+    expect(listAuction.thumbnailUrl).toBe('/api/auction-image/test/42/native.jpg')
+    expect(listAuction.photoCount).toBe(1)
+  })
+
+  it('leaves the auction untouched when no snapshot entry exists', () => {
+    const listAuction = auction()
+    applySnapshotPhotosToAuctions([listAuction], {})
+    expect(listAuction.thumbnailUrl).toBeNull()
+    expect(listAuction.photoCount).toBe(0)
   })
 })

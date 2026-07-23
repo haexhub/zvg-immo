@@ -2,6 +2,7 @@ import type { CrawlResult } from '~/types/auction'
 import { crawlAll, crawlSingle, isCountryEnabled } from '../crawlers/registry'
 import { cacheKey, readVerkehrswertCache } from '../utils/verkehrswert-cache'
 import { applyExtractionToAuctions, readExtractionCache } from '../utils/extraction-cache'
+import { applySnapshotPhotosToAuctions, readAuctionSnapshot } from '../utils/auction-snapshot'
 import { readListCache, readMergedListCache, writeListCache } from '../utils/list-cache'
 import { MULTI_PLATFORM, isAllScope, isValidScopeParam, scopeParam } from '~/lib/auction-constants'
 
@@ -79,8 +80,12 @@ export default defineEventHandler(async (event): Promise<CrawlResult> => {
     }
 
     // The overlays mutate the result in-place (fill nulls only) — safe for
-    // both the cached and live-crawl paths.
+    // both the cached and live-crawl paths. Snapshot photos run before the
+    // extraction overlay so a native photo (Foto.pdf render, gallery URL)
+    // takes priority over PDF-mined photos, matching the enrich task's own
+    // preference order (see server/tasks/enrich.ts's photo pipeline).
     await overlayCachedVerkehrswert(result)
+    await overlaySnapshotPhotos(result)
     await overlayExtraction(result)
     return result
   } catch (err) {
@@ -133,6 +138,19 @@ async function overlayCachedVerkehrswert(result: CrawlResult): Promise<void> {
     a.marketValueEur = hit.marketValueEur
     a.marketValueText = hit.marketValueText
   }
+}
+
+// Decorate list-crawl auctions with the thumbnailUrl/photoCount/photoUrls the
+// enrich task's detail fetch found and persisted to auction_snapshot — the
+// list crawl itself never carries these for platforms whose photos only
+// surface on the detail page (e.g. zvg-portal's Foto.pdf render, see
+// crawlers/zvg-portal/list.ts vs. index.ts's applyDetail). Read-only, like the
+// Verkehrswert overlay: a cache miss just leaves the list-crawl value in place.
+async function overlaySnapshotPhotos(result: CrawlResult): Promise<void> {
+  const needsOverlay = result.auctions.some((a) => !a.thumbnailUrl || a.photoCount === 0)
+  if (!needsOverlay) return
+  const snapshot = await readAuctionSnapshot()
+  applySnapshotPhotosToAuctions(result.auctions, snapshot)
 }
 
 // Decorate auctions with the structured fields (property type + sizes) produced

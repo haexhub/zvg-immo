@@ -426,6 +426,11 @@ function auctionDateKey(a: Auction): number {
   const t = Date.parse(a.auctionDateIso)
   return Number.isNaN(t) ? Number.POSITIVE_INFINITY : t
 }
+// "Fotos zuerst" only applies to the default sort — an explicit price/date
+// choice is the user overriding relevance ordering, so it stays untouched.
+function hasImages(a: Auction): boolean {
+  return a.photoCount > 0 || !!a.thumbnailUrl
+}
 const sortedList = computed<Auction[]>(() => {
   const arr = listBase.value
   switch (sortBy.value) {
@@ -436,7 +441,8 @@ const sortedList = computed<Auction[]>(() => {
     case 'priceDesc':
       return [...arr].sort((a, b) => (b.marketValueEur ?? Number.NEGATIVE_INFINITY) - (a.marketValueEur ?? Number.NEGATIVE_INFINITY))
     default:
-      return arr
+      // Stable sort: auctions keep their relative order within each group.
+      return [...arr].sort((a, b) => Number(hasImages(b)) - Number(hasImages(a)))
   }
 })
 
