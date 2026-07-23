@@ -31,6 +31,13 @@ function extOf(key: string): string {
   return (key.split('.').pop() ?? '').toLowerCase()
 }
 
+/** Content-type for a filename/key by its extension, or the generic binary
+ *  fallback for an unrecognized one. Shared with callers that need to label
+ *  bytes read off disk (e.g. sending a photo to an LLM as an image part). */
+export function mimeTypeFor(key: string): string {
+  return CONTENT_TYPE[extOf(key)] ?? 'application/octet-stream'
+}
+
 /**
  * Public URL for `key` (e.g. `<platform>/<externalId>/<filename>`) in the
  * images bucket, or null when the bucket or the browser-facing Supabase URL
