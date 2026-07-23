@@ -45,12 +45,24 @@ export default defineNuxtConfig({
     },
   },
   runtimeConfig: {
-    // LLM fallback for the enrich task, via haex-claude-proxy. Disabled when
-    // baseUrl is empty (rules-only). Override per env:
+    // LLM fallback for the enrich task. Disabled when baseUrl is empty
+    // (rules-only). Default provider is 'openai-compatible' — most backends
+    // (OpenAI, Kimi/Moonshot, DeepSeek, Groq, Gemini via its OpenAI-compat
+    // layer) speak the same wire format, so switching is a baseUrl/apiKey/
+    // model env-var change, not a deploy of new code. Override per env:
+    //   NUXT_EXTRACT_LLM_PROVIDER=openai-compatible
+    //   NUXT_EXTRACT_LLM_BASE_URL=https://api.moonshot.ai/v1
+    //   NUXT_EXTRACT_LLM_API_KEY=...
+    //   NUXT_EXTRACT_LLM_MODEL=kimi-k3
+    // 'claude-proxy' remains available (Anthropic-Messages-Format, via
+    // haex-claude-proxy) as the transitional path:
+    //   NUXT_EXTRACT_LLM_PROVIDER=claude-proxy
     //   NUXT_EXTRACT_LLM_BASE_URL=http://haex-claude-proxy:8080
     //   NUXT_EXTRACT_LLM_MODEL=claude-haiku-4-5
     extractLlm: {
+      provider: '',
       baseUrl: '',
+      apiKey: '',
       model: 'claude-haiku-4-5',
       // Overrides enrich.ts's MAX_LLM_PER_RUN default (300). Meant to be
       // bumped temporarily while only one country is being crawled (see

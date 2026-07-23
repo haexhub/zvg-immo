@@ -56,10 +56,15 @@ export interface ReprocessResult {
 
 function readLlmConfig(): LlmConfig | null {
   const c = useRuntimeConfig().extractLlm as
-    | { baseUrl?: string; model?: string; maxPerRun?: string }
+    | { provider?: string; baseUrl?: string; apiKey?: string; model?: string; maxPerRun?: string }
     | undefined
   if (!c?.baseUrl) return null
-  return { baseUrl: c.baseUrl, model: c.model || 'claude-haiku-4-5' }
+  return {
+    provider: c.provider === 'claude-proxy' ? 'claude-proxy' : 'openai-compatible',
+    baseUrl: c.baseUrl,
+    apiKey: c.apiKey || undefined,
+    model: c.model || 'claude-haiku-4-5',
+  }
 }
 
 function readMaxLlmPerRun(): number {
