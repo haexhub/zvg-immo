@@ -126,7 +126,7 @@ export interface PhotoCuration {
 // size/type facts are almost always in the first pages.
 const MAX_PDF_CHARS = 12_000
 
-const SYSTEM_PROMPT =
+export const SYSTEM_PROMPT =
   'Du extrahierst strukturierte Eckdaten aus Anzeigen für Immobilien-' +
   'Zwangsversteigerungen (Texte können deutsch, spanisch, italienisch, französisch, ' +
   'niederländisch, tschechisch, polnisch, bosnisch, ungarisch, litauisch, lettisch, ' +
@@ -164,7 +164,7 @@ const SYSTEM_PROMPT =
   'Immobilie; false bei Lageplan, Grundriss, Wappen, Deckblatt oder Textseite). Wurden keine ' +
   'Bilder mitgesendet, gib ein leeres photos-Array zurück.'
 
-const EXTRACTION_SCHEMA = {
+export const EXTRACTION_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {

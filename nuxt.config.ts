@@ -171,6 +171,11 @@ export default defineNuxtConfig({
       // robust portals refresh hourly while rate-limited ones stay on a longer
       // interval — an always-on background watch for new/updated auctions.
       '0 * * * *': ['refresh'],
+      // Every 30 minutes: check in-flight Gemini Batch API jobs submitted by
+      // enrich.ts (see server/utils/extract/gemini-batch.ts) and merge
+      // completed results — jobs often finish well under the 24h SLA, so a
+      // shorter tick than enrich's own 6h cadence gets results merged sooner.
+      '*/30 * * * *': ['llm-batch-poll'],
     },
     routeRules: {
       // /api/auctions caches inside the handler (defineCachedFunction) instead

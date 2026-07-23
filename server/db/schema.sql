@@ -441,3 +441,21 @@ CREATE TABLE IF NOT EXISTS auction_snapshot (
   PRIMARY KEY (platform, external_id)
 );
 ALTER TABLE auction_snapshot ENABLE ROW LEVEL SECURITY;
+
+-- llm_batch_jobs: tracks in-flight Gemini Batch API jobs submitted by
+-- enrich.ts/reprocess.ts (see server/utils/extract/gemini-batch.ts). No
+-- separate items table — correlation runs through the `key`
+-- (`platform:externalId`) embedded in the submitted JSONL and echoed back by
+-- Gemini in the results, so the JSONL file itself is the item list.
+CREATE TABLE IF NOT EXISTS llm_batch_jobs (
+  job_name     text PRIMARY KEY,
+  source       text NOT NULL,
+  status       text NOT NULL DEFAULT 'pending',
+  item_count   integer NOT NULL,
+  submitted_at timestamptz NOT NULL DEFAULT now(),
+  checked_at   timestamptz,
+  updated_at   timestamptz NOT NULL DEFAULT now()
+);
+-- RLS ohne Policies (Default-Deny), gleiches Muster wie oben: server-intern,
+-- Backend-Zugriff läuft als Table-Owner und umgeht RLS ohnehin.
+ALTER TABLE llm_batch_jobs ENABLE ROW LEVEL SECURITY;

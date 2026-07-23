@@ -209,6 +209,15 @@ export interface AuctionExtraction {
   photos?: CuratedPhoto[]
   /** ISO timestamp of when this extraction was produced. */
   at: string
+  /** Set when this entry was written as the immediate rules-only fallback
+   *  for an item submitted to the Gemini Batch API, to the job's resource
+   *  name (`batches/...`) — prevents re-submitting the same item to a new
+   *  batch job while this one is still in flight (Gemini job submission
+   *  isn't idempotent). Cleared once llm-batch-poll.ts merges that job's
+   *  result (success or definitive failure). A marker older than 48h (the
+   *  Gemini job's own expiry) is treated as orphaned and the item becomes
+   *  eligible again. */
+  llmBatchJob?: string
 }
 
 export interface CrawlResult {
