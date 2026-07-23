@@ -77,7 +77,7 @@ function readLlmConfig(): LlmConfig | null {
     | undefined
   if (!c?.baseUrl) return null
   return {
-    provider: c.provider === 'claude-proxy' ? 'claude-proxy' : 'openai-compatible',
+    provider: c.provider === 'claude-proxy' || c.provider === 'gemini-native' ? c.provider : 'openai-compatible',
     baseUrl: c.baseUrl,
     apiKey: c.apiKey || undefined,
     model: c.model || 'claude-haiku-4-5',

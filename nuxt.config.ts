@@ -59,6 +59,13 @@ export default defineNuxtConfig({
     //   NUXT_EXTRACT_LLM_PROVIDER=claude-proxy
     //   NUXT_EXTRACT_LLM_BASE_URL=http://haex-claude-proxy:8080
     //   NUXT_EXTRACT_LLM_MODEL=claude-haiku-4-5
+    // 'gemini-native' opts into Gemini's own API (not its OpenAI-compat layer)
+    // for its one genuine extra capability, native PDF understanding — reads
+    // scanned Gutachten correctly without a rasterize/OCR step:
+    //   NUXT_EXTRACT_LLM_PROVIDER=gemini-native
+    //   NUXT_EXTRACT_LLM_BASE_URL=https://generativelanguage.googleapis.com
+    //   NUXT_EXTRACT_LLM_API_KEY=...
+    //   NUXT_EXTRACT_LLM_MODEL=gemini-flash-latest (NOT gemini-2.5-flash — 404s for new keys)
     extractLlm: {
       provider: '',
       baseUrl: '',
