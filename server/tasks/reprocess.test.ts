@@ -3,12 +3,26 @@ import type { Auction, AuctionExtraction } from '~/types/auction'
 import { getPool } from '../utils/db'
 import { downloadBlob, findLatestCapture } from '../utils/storage-download'
 import { extractByLlm } from '../utils/extract/llm'
+import { extractPdfTextFromBuffer } from '../utils/extract/pdf-text'
+import { renderPdfPagesJpeg } from '../utils/extract/pdf-render'
 import { readExtractionCache, writeExtractionCache } from '../utils/extraction-cache'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
 
 vi.mock('../utils/db', () => ({ getPool: vi.fn() }))
 vi.mock('../utils/storage-download', () => ({ findLatestCapture: vi.fn(), downloadBlob: vi.fn() }))
 vi.mock('../utils/extract/llm', () => ({ extractByLlm: vi.fn() }))
+// Spy on (not stub out) the real implementations — other tests here rely on
+// actual pdftotext/rendering output (e.g. the scanned-PDF vision-fallback
+// test below); the gemini-native test only needs to assert these were never
+// invoked, not replace their behavior.
+vi.mock('../utils/extract/pdf-text', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/extract/pdf-text')>()
+  return { ...actual, extractPdfTextFromBuffer: vi.fn(actual.extractPdfTextFromBuffer) }
+})
+vi.mock('../utils/extract/pdf-render', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/extract/pdf-render')>()
+  return { ...actual, renderPdfPagesJpeg: vi.fn(actual.renderPdfPagesJpeg) }
+})
 vi.mock('../utils/extraction-cache', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/extraction-cache')>()
   return { ...actual, readExtractionCache: vi.fn(), writeExtractionCache: vi.fn() }
@@ -270,6 +284,8 @@ describe('reprocessAuction', () => {
     expect(callArgs.pdfText).toBeNull()
     expect(callArgs.pdfPageImages).toBeNull()
     expect(callArgs.pdfBytes).toEqual(SCANNED_LIKE_PDF.toString('base64'))
+    expect(extractPdfTextFromBuffer).not.toHaveBeenCalled()
+    expect(renderPdfPagesJpeg).not.toHaveBeenCalled()
   })
 
   it('bumps llmFailures and keeps the prior rules-only fields when the LLM request fails', async () => {
