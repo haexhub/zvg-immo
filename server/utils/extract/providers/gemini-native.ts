@@ -34,7 +34,9 @@ export function parseGeminiExtractionResponse(resp: unknown): Record<string, unk
 
 // Discovered in the WP-0 bake-off: 'gemini-2.5-flash' 404s for newly created
 // API keys. Not "nice to have" — the concrete default that actually works.
-const DEFAULT_MODEL = 'gemini-flash-latest'
+// Exported so gemini-batch.ts (same provider, batch mode) shares it instead
+// of duplicating the string.
+export const DEFAULT_MODEL = 'gemini-flash-latest'
 
 // The free tier hard-caps gemini-flash-latest at ~5 requests/minute (bake-off
 // finding) — enrich/reprocess's concurrent workers (ENRICH_CONCURRENCY=8, up

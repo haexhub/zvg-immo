@@ -9,12 +9,14 @@
 // triggered lever (`runTask('reprocess', { payload })` or Nitro's task-run
 // endpoint), not a standing background job.
 
-import type { Auction, AuctionExtraction } from '~/types/auction'
+import type { Auction, AuctionExtraction, CuratedPhoto } from '~/types/auction'
 import { getPool } from '../utils/db'
 import { pickBestPdf, extractPdfTextFromBuffer } from '../utils/extract/pdf-text'
 import { renderPdfPagesJpeg } from '../utils/extract/pdf-render'
 import { extractByRules } from '../utils/extract/rules'
-import { extractByLlm, type LlmConfig } from '../utils/extract/llm'
+import { extractByLlm, type LlmConfig, type LlmInput } from '../utils/extract/llm'
+import { isLlmBatchPending, submitGeminiBatch } from '../utils/extract/gemini-batch'
+import { mergeLlmResult, type MergeInputFields } from '../utils/extract/merge-llm-result'
 import {
   applyExtractionToAuctions,
   readExtractionCache,
@@ -46,6 +48,14 @@ export interface ReprocessOptions {
    *  auctions already extracted. Requires platform/externalId/caseNumber so
    *  an unbounded forced re-run of an entire country can't happen by accident. */
   force?: boolean
+  /** Submit eligible candidates to the Gemini Batch API (see gemini-batch.ts)
+   *  instead of extracting each one synchronously. Default false (unchanged
+   *  synchronous behavior) — this is a manually triggered debug/backfill
+   *  tool where an immediate result is usually wanted; opt in only for a
+   *  deliberate full-country batch run. Only takes effect when the
+   *  configured provider is 'gemini-native' (the only one with a Batch API
+   *  integration) — otherwise falls back to the synchronous path. */
+  batch?: boolean
 }
 
 export interface ReprocessResult {
@@ -96,25 +106,18 @@ async function findCandidates(opts: ReprocessOptions): Promise<Candidate[]> {
 }
 
 /**
- * Re-derives one auction's AuctionExtraction from its archived 'auction'
- * capture (title/description/attachments — the same shape enrichOne would
- * have produced) and, if needed, its archived 'document' capture (the best
- * appraisal PDF's raw bytes). Mirrors enrich.ts's rules → LLM(text) →
- * LLM(vision) cascade, just against archived bytes instead of a live fetch —
- * no photo pipeline (out of scope for E2) and no detail-fetch bookkeeping
- * (the archived capture already *is* the fetched detail data). Additionally
- * feeds a gemini-native call the raw PDF bytes directly (native document
- * understanding) instead of pdftotext/rendered pages — enrich.ts doesn't do
- * this yet, see WP-E follow-up.
- * Returns null when the auction/PDF capture can't be found or read.
+ * Re-derives one auction's rules/structured fields and (when an LLM is
+ * configured) its LLM request input from its archived captures — the
+ * fetch+rules step shared by both the synchronous path (reprocessAuction)
+ * and the Gemini Batch opt-in path (runReprocess) below. Returns null when
+ * the auction capture can't be found or read.
  */
-export async function reprocessAuction(
+async function buildReprocessInput(
   platform: string,
   externalId: string,
   priorEntry: AuctionExtraction | undefined,
   llmConfig: LlmConfig | null,
-  at: string,
-): Promise<{ entry: AuctionExtraction; llmCalled: boolean } | null> {
+): Promise<{ fields: MergeInputFields; input: LlmInput | null; photos: CuratedPhoto[] | undefined } | null> {
   const auctionCapture = await findLatestCapture('auction', platform, externalId)
   if (!auctionCapture) return null
   const auctionBytes = await downloadBlob(auctionCapture.contentHash)
@@ -128,36 +131,27 @@ export async function reprocessAuction(
   }
 
   const rules = extractByRules({ title: auction.title, description: auction.description })
-  const fields = {
-    propertyType: rules.propertyType,
-    landAreaSqm: auction.sourceLandAreaSqm ?? rules.landAreaSqm,
-    livingAreaSqm: auction.sourceLivingAreaSqm ?? rules.livingAreaSqm,
+  const propertyType = rules.propertyType
+  const landAreaSqm = auction.sourceLandAreaSqm ?? rules.landAreaSqm
+  const livingAreaSqm = auction.sourceLivingAreaSqm ?? rules.livingAreaSqm
+  const fields: MergeInputFields = {
+    propertyType,
+    landAreaSqm,
+    livingAreaSqm,
     rooms: auction.sourceRooms ?? rules.rooms,
     units: rules.units,
     securityDeposit: auction.sourceSecurityDeposit ?? rules.securityDeposit,
-    biddingNotes: priorEntry?.biddingNotes,
     condition: priorEntry?.condition,
     features: priorEntry?.features,
     yearBuilt: priorEntry?.yearBuilt,
     lastRenovationYear: priorEntry?.lastRenovationYear,
     renovationNotes: priorEntry?.renovationNotes,
     insights: priorEntry?.insights,
+    confident:
+      rules.confident || (propertyType != null && propertyType !== 'sonstiges' && (landAreaSqm != null || livingAreaSqm != null)),
   }
-  const mergedConfident =
-    rules.confident ||
-    (fields.propertyType != null &&
-      fields.propertyType !== 'sonstiges' &&
-      (fields.landAreaSqm != null || fields.livingAreaSqm != null))
-  let source: 'rules' | 'llm' = 'rules'
-  let llmCalled = false
-  let llmFailed = false
-  let llmSucceeded = false
 
-  // Rules/structured values are a merge input, not a gate: call the LLM
-  // whenever configured (findCandidates/runReprocess already bound how many
-  // auctions reach here) so even a mergedConfident entry still picks up
-  // condition/features/yearBuilt/insights instead of waiting for a later,
-  // separately-triggered backfill pass (mirrors the same change in enrich.ts).
+  let input: LlmInput | null = null
   if (llmConfig) {
     const bestPdf = pickBestPdf(auction.attachments)
     let pdfBytes: Buffer | null = null
@@ -177,58 +171,76 @@ export async function reprocessAuction(
         ? (await renderPdfPagesJpeg(pdfBytes)).map((buf) => buf.toString('base64'))
         : null
     const nativeDocBytes = pdfBytes && usingNativeDoc ? pdfBytes.toString('base64') : null
-
-    llmCalled = true
-    const llm = await extractByLlm(
-      { title: auction.title, description: auction.description, pdfText, pdfPageImages, pdfBytes: nativeDocBytes },
-      llmConfig,
-    )
-    if (llm === null) {
-      llmFailed = true
-    } else {
-      llmSucceeded = true
-      // Only let the LLM contribute propertyType/sizes when rules didn't
-      // already resolve them confidently — otherwise this call ran purely to
-      // backfill condition/features/yearBuilt/insights (same trade-off as enrich.ts).
-      if (!mergedConfident) {
-        source = 'llm'
-        fields.propertyType =
-          fields.propertyType != null && fields.propertyType !== 'sonstiges'
-            ? fields.propertyType
-            : llm.propertyType
-        fields.landAreaSqm = fields.landAreaSqm ?? llm.landAreaSqm
-        fields.livingAreaSqm = fields.livingAreaSqm ?? llm.livingAreaSqm
-        fields.rooms = fields.rooms ?? llm.rooms
-        fields.units = fields.units ?? llm.units
-        fields.securityDeposit = fields.securityDeposit ?? llm.securityDeposit
-        fields.biddingNotes = llm.biddingNotes
-      }
-      fields.condition = llm.condition
-      fields.features = llm.features
-      fields.yearBuilt = llm.yearBuilt
-      fields.lastRenovationYear = llm.lastRenovationYear
-      fields.renovationNotes = llm.renovationNotes
-      fields.insights = llm.insights
-    }
+    input = { title: auction.title, description: auction.description, pdfText, pdfPageImages, pdfBytes: nativeDocBytes }
   }
 
+  return { fields, input, photos: priorEntry?.photos?.map(normalizePhoto) }
+}
+
+/** Rules-only entry for a candidate no LLM attempt was made for (LLM
+ *  disabled, or — in batch mode — an attempt was only just submitted and not
+ *  yet resolved). Failure counter carried forward unchanged, since no
+ *  attempt happened. */
+function buildRulesOnlyEntry(
+  fields: MergeInputFields,
+  priorEntry: AuctionExtraction | undefined,
+  photos: CuratedPhoto[] | undefined,
+  at: string,
+): AuctionExtraction {
   const hasType = fields.propertyType != null && fields.propertyType !== 'sonstiges'
   const hasArea = fields.landAreaSqm != null || fields.livingAreaSqm != null
   const prevFailures = priorEntry?.llmFailures ?? 0
-  const llmFailures = llmFailed ? prevFailures + 1 : llmSucceeded ? 0 : prevFailures
-
-  const entry: AuctionExtraction = {
-    ...fields,
-    source,
+  return {
+    propertyType: fields.propertyType,
+    landAreaSqm: fields.landAreaSqm,
+    livingAreaSqm: fields.livingAreaSqm,
+    rooms: fields.rooms,
+    units: fields.units,
+    securityDeposit: fields.securityDeposit,
+    biddingNotes: priorEntry?.biddingNotes,
+    condition: fields.condition,
+    features: fields.features,
+    yearBuilt: fields.yearBuilt,
+    lastRenovationYear: fields.lastRenovationYear,
+    renovationNotes: fields.renovationNotes,
+    insights: fields.insights,
+    source: 'rules',
     confidence: hasType && hasArea ? 'high' : 'low',
-    // Photo re-extraction is out of scope for WP-6 (E2 is about rules/LLM
-    // prompt iteration) — carry the prior result forward, but normalize so a
-    // legacy prior entry's bare filename strings aren't re-persisted raw.
-    photos: priorEntry?.photos?.map(normalizePhoto),
+    photos,
     at,
-    ...(llmFailures > 0 ? { llmFailures } : {}),
+    ...(prevFailures > 0 ? { llmFailures: prevFailures } : {}),
   }
-  return { entry, llmCalled }
+}
+
+/**
+ * Re-derives one auction's AuctionExtraction from its archived 'auction'
+ * capture (title/description/attachments — the same shape enrichOne would
+ * have produced) and, if needed, its archived 'document' capture (the best
+ * appraisal PDF's raw bytes). Mirrors enrich.ts's rules → LLM(text) →
+ * LLM(vision) cascade, just against archived bytes instead of a live fetch —
+ * no photo pipeline (out of scope for E2) and no detail-fetch bookkeeping
+ * (the archived capture already *is* the fetched detail data). Additionally
+ * feeds a gemini-native call the raw PDF bytes directly (native document
+ * understanding) instead of pdftotext/rendered pages — enrich.ts doesn't do
+ * this yet, see WP-E follow-up.
+ * Returns null when the auction/PDF capture can't be found or read.
+ */
+export async function reprocessAuction(
+  platform: string,
+  externalId: string,
+  priorEntry: AuctionExtraction | undefined,
+  llmConfig: LlmConfig | null,
+  at: string,
+): Promise<{ entry: AuctionExtraction; llmCalled: boolean } | null> {
+  const base = await buildReprocessInput(platform, externalId, priorEntry, llmConfig)
+  if (!base) return null
+
+  if (!llmConfig) {
+    return { entry: buildRulesOnlyEntry(base.fields, priorEntry, base.photos, at), llmCalled: false }
+  }
+
+  const llm = await extractByLlm(base.input!, llmConfig)
+  return { entry: mergeLlmResult(priorEntry, base.fields, llm, at, base.photos), llmCalled: true }
 }
 
 export default defineTask({
@@ -254,11 +266,16 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
   const llmConfig = readLlmConfig()
   const maxLlmPerRun = readMaxLlmPerRun()
   const at = new Date().toISOString()
+  // Only meaningful with gemini-native — the only provider with a Batch API
+  // integration (see gemini-batch.ts). Any other configured provider falls
+  // back to the synchronous path even if `batch: true` was requested.
+  const useBatch = !!opts.batch && llmConfig?.provider === 'gemini-native'
 
   let processed = 0
   let skipped = 0
   let llmCalls = 0
   const dirty: ExtractionCache = {}
+  const batchItems: { key: string; input: LlmInput }[] = []
 
   for (const { platform, externalId } of candidates) {
     try {
@@ -274,9 +291,32 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
           priorEntry.lastRenovationYear === undefined ||
           priorEntry.renovationNotes === undefined ||
           priorEntry.insights === undefined) &&
-          (priorEntry?.llmFailures ?? 0) < MAX_LLM_FAILURES)
+          (priorEntry?.llmFailures ?? 0) < MAX_LLM_FAILURES &&
+          !isLlmBatchPending(priorEntry))
       if (!eligible) {
         skipped++
+        continue
+      }
+
+      if (useBatch) {
+        const base = await buildReprocessInput(platform, externalId, priorEntry, llmConfig)
+        if (!base || !base.input) {
+          skipped++
+          continue
+        }
+        batchItems.push({ key, input: base.input })
+        const entry = buildRulesOnlyEntry(base.fields, priorEntry, base.photos, at)
+        cache[key] = entry
+        dirty[key] = entry
+        processed++
+
+        const snapshot = await readAuctionSnapshot()
+        const snapshotEntry = snapshot[key]
+        if (snapshotEntry) {
+          const updated: Auction = { ...snapshotEntry }
+          applyExtractionToAuctions([updated], { [key]: entry })
+          await writeAuctionSnapshot([updated])
+        }
         continue
       }
 
@@ -306,6 +346,25 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
     } catch (err) {
       console.warn(`[reprocess] failed for ${platform}:${externalId}: ${(err as Error).message}`)
       skipped++
+    }
+  }
+
+  if (batchItems.length > 0 && llmConfig) {
+    const jobName = await submitGeminiBatch(batchItems, llmConfig, 'reprocess')
+    if (jobName) {
+      // Same rationale as enrich.ts: mark every submitted item so a second
+      // runReprocess({ batch: true }) call doesn't re-submit it to a new job
+      // while this one is still in flight (job submission isn't idempotent).
+      for (const item of batchItems) {
+        const priorItemEntry = cache[item.key]
+        if (!priorItemEntry) continue
+        const marked = { ...priorItemEntry, llmBatchJob: jobName }
+        cache[item.key] = marked
+        dirty[item.key] = marked
+      }
+      console.log(`[reprocess] submitted Gemini batch ${jobName} with ${batchItems.length} items`)
+    } else {
+      console.warn(`[reprocess] Gemini batch submission failed for ${batchItems.length} items`)
     }
   }
 

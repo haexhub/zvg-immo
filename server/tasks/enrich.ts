@@ -32,11 +32,13 @@ import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snap
 import { upsertCurrentAuctions } from '../utils/current-auctions'
 import { deriveMarketValueEur, getRates } from '../utils/exchange-rate'
 import { extractByRules } from '../utils/extract/rules'
-import { extractByLlm, type LlmConfig, type PhotoCuration } from '../utils/extract/llm'
+import { extractByLlm, type LlmConfig, type LlmInput, type PhotoCuration } from '../utils/extract/llm'
+import { isLlmBatchPending, submitGeminiBatch } from '../utils/extract/gemini-batch'
+import { mergeLlmResult } from '../utils/extract/merge-llm-result'
 import { downloadNativeImages } from '../utils/extract/native-images'
 import { extractPdfPhotos } from '../utils/extract/pdf-images'
 import { pdfPagesToBase64Jpeg } from '../utils/extract/pdf-render'
-import { pdfToText, pickBestPdf } from '../utils/extract/pdf-text'
+import { fetchPdfBuffer, pdfToText, pickBestPdf } from '../utils/extract/pdf-text'
 import {
   applyExtractionToAuctions,
   type ExtractionCache,
@@ -46,7 +48,7 @@ import {
 import { imagesBucketConfigured, mimeTypeFor, uploadImage } from '../utils/image-storage'
 import { interleaveByPlatform } from '../utils/interleave-by-platform'
 import { isSafePathSegment } from '../utils/path-segment'
-import { archiveAuction } from '../utils/raw-archive'
+import { archiveAuction, archiveDocument } from '../utils/raw-archive'
 import { cacheKey, readVerkehrswertCache } from '../utils/verkehrswert-cache'
 
 const IMAGES_DIR = join(process.cwd(), '.cache_zvg', 'images')
@@ -170,7 +172,8 @@ async function runEnrich() {
       return (
         hit?.source === 'rules' &&
         hit.confidence === 'low' &&
-        (hit.llmFailures ?? 0) < MAX_LLM_FAILURES
+        (hit.llmFailures ?? 0) < MAX_LLM_FAILURES &&
+        !isLlmBatchPending(hit)
       )
     }
     // condition/features/yearBuilt/lastRenovationYear/insights are LLM-only
@@ -190,7 +193,8 @@ async function runEnrich() {
           hit.yearBuilt === undefined ||
           hit.lastRenovationYear === undefined ||
           hit.insights === undefined) &&
-        (hit.llmFailures ?? 0) < MAX_LLM_FAILURES
+        (hit.llmFailures ?? 0) < MAX_LLM_FAILURES &&
+        !isLlmBatchPending(hit)
       )
     }
     const eligible = result.auctions.filter(
@@ -219,6 +223,11 @@ async function runEnrich() {
     // flush call, synchronously (no `await` in between), so no writer can add
     // to a batch that's already been handed off.
     let dirty: ExtractionCache = {}
+    // LLM inputs collected for gemini-native's batch submission (see
+    // gemini-batch.ts) — one submitGeminiBatch call for the whole run instead
+    // of a synchronous generateContent call per item. Unused (stays empty)
+    // for the other providers, which still call extractByLlm synchronously.
+    const batchItems: { key: string; input: LlmInput }[] = []
 
     // maxLlmPerRun is shared across all platforms, but which item reaches
     // the check first depends on how fast its enrichOne/pdfToText preamble
@@ -286,7 +295,7 @@ async function runEnrich() {
         // Structured values straight from the source platform beat anything
         // parsed out of free text — they are the platform's own data, not a
         // regex guess.
-        let fields = {
+        const fields = {
           propertyType: rules.propertyType,
           landAreaSqm: a.sourceLandAreaSqm ?? rules.landAreaSqm,
           livingAreaSqm: a.sourceLivingAreaSqm ?? rules.livingAreaSqm,
@@ -319,30 +328,28 @@ async function runEnrich() {
           (fields.propertyType != null &&
             fields.propertyType !== 'sonstiges' &&
             (fields.landAreaSqm != null || fields.livingAreaSqm != null))
-        let source: 'rules' | 'llm' = 'rules'
         let cacheable: boolean
-        // Set when an LLM request was made but failed (vs. ran and returned
-        // empty). Drives the persisted llmFailures counter so retries are bounded.
-        let llmFailed = false
         const bestPdf = pickBestPdf(a.attachments)
+        const pdfIdentity = {
+          platform: a.platform,
+          country: a.country,
+          externalId: a.externalId,
+          caseNumber: a.caseNumber,
+          authority: a.authority,
+        }
+        // gemini-native reads the PDF's raw bytes directly (native document
+        // understanding, see gemini-batch.ts) — skip pdftotext for it
+        // entirely, fetching bytes instead once this item is actually about
+        // to be batch-submitted (below, inside the LLM-budget-gated block).
+        const usingNativeDoc = llmConfig?.provider === 'gemini-native'
         // Fetching (and archiving) the best appraisal PDF happens here
         // regardless of whether rules already found a confident result — the
         // archive's purpose is preserving the source document for
         // re-processing, independent of today's extraction outcome. The
         // on-disk text cache in pdfToText means this is a no-op fetch/archive
         // on any run after the first for a given PDF.
-        const pdfText = bestPdf
-          ? await pdfToText(bestPdf.proxyUrl, {
-              identity: {
-                platform: a.platform,
-                country: a.country,
-                externalId: a.externalId,
-                caseNumber: a.caseNumber,
-                authority: a.authority,
-              },
-              capturedAt: at,
-            })
-          : null
+        const pdfText =
+          bestPdf && !usingNativeDoc ? await pdfToText(bestPdf.proxyUrl, { identity: pdfIdentity, capturedAt: at }) : null
 
         // Two-way photo pipeline (platform/externalId guard applies to both — the
         // API endpoint enforces the same shape, so files under an unsafe path
@@ -448,13 +455,6 @@ async function runEnrich() {
         if (llmConfig && llmCalls < maxLlmPerRun && platformLlmCalls < llmCapPerPlatform) {
           llmCalls++
           llmCallsByPlatform.set(a.platform, platformLlmCalls + 1)
-          // A short/empty pdftotext result on an actual attachment usually
-          // means the Gutachten PDF is a scanned image, not real text — render
-          // its first page and let the LLM read it visually instead.
-          const pdfPageImages =
-            bestPdf && (!pdfText || pdfText.trim().length < SCANNED_PDF_TEXT_THRESHOLD)
-              ? await pdfPagesToBase64Jpeg(bestPdf.proxyUrl)
-              : null
           // Offer a capped subset of a freshly downloaded/extracted photo set
           // for real curation — capped so a Gutachten with dozens of embedded
           // rasters doesn't blow the token budget. Built lazily here (not
@@ -477,55 +477,67 @@ async function runEnrich() {
               )
             }
           }
-          const llm = await extractByLlm(
-            { title: a.title, description: a.description, pdfText, pdfPageImages, candidateImages },
-            llmConfig,
-          )
-          if (llm === null) {
-            // LLM request failed. Cache the rules-only result (if detail
-            // succeeded, or rules were already confident) so the listing
-            // still shows something and — via the bumped llmFailures counter
-            // below — retries stay bounded instead of re-spending an LLM slot
-            // every run forever.
-            llmFailed = true
+
+          if (usingNativeDoc) {
+            // Batch mode (see gemini-batch.ts): collect this item's LLM
+            // input for one submitGeminiBatch call after the whole worker
+            // pool finishes instead of a synchronous generateContent call —
+            // the Free-Tier rate limit that motivated this migration can't
+            // sustain hundreds of synchronous calls in a couple of minutes.
+            // Fetch+archive the raw PDF bytes only now (not unconditionally
+            // like pdfText above) so a cap-skipped item under gemini-native
+            // doesn't re-hit the upstream every single run — it archives
+            // once it actually gets a slot.
+            let pdfBytes: string | null = null
+            if (bestPdf) {
+              const bytes = await fetchPdfBuffer(bestPdf.proxyUrl)
+              if (bytes) {
+                await archiveDocument(bytes, 'application/pdf', pdfIdentity, bestPdf.proxyUrl, at)
+                pdfBytes = bytes.toString('base64')
+              }
+            }
+            batchItems.push({ key, input: { title: a.title, description: a.description, pdfBytes, candidateImages } })
+            // Same fallback as the per-run/per-platform cap-hit branch below
+            // — cache the rules-only result now so the listing shows
+            // *something* immediately; llm-batch-poll.ts merges the LLM
+            // contribution once the submitted job completes.
             cacheable = mergedConfident || detailOk
           } else {
-            // Only let the LLM contribute propertyType/sizes when rules didn't
-            // already resolve them confidently — otherwise this call ran
-            // purely to backfill condition/features/yearBuilt/insights, and
-            // `source` must stay 'rules' so needsLlmRetry / the UI's
-            // low-confidence notice don't misfire on an otherwise-confident entry.
-            if (!mergedConfident) {
-              source = 'llm'
-              // Prefer the precise structured/rules values; fill the gaps from
-              // the LLM. "sonstiges" counts as absent for propertyType (see
-              // mergedConfident above) — let a more specific LLM
-              // classification replace it.
-              fields.propertyType =
-                fields.propertyType != null && fields.propertyType !== 'sonstiges'
-                  ? fields.propertyType
-                  : llm.propertyType
-              fields.landAreaSqm = fields.landAreaSqm ?? llm.landAreaSqm
-              fields.livingAreaSqm = fields.livingAreaSqm ?? llm.livingAreaSqm
-              fields.rooms = fields.rooms ?? llm.rooms
-              fields.units = fields.units ?? llm.units
-              fields.securityDeposit = fields.securityDeposit ?? llm.securityDeposit
-              fields.biddingNotes = llm.biddingNotes
-            }
-            fields.condition = llm.condition
-            fields.features = llm.features
-            fields.yearBuilt = llm.yearBuilt
-            fields.lastRenovationYear = llm.lastRenovationYear
-            fields.renovationNotes = llm.renovationNotes
-            fields.insights = llm.insights
+            // A short/empty pdftotext result on an actual attachment usually
+            // means the Gutachten PDF is a scanned image, not real text —
+            // render its first page and let the LLM read it visually instead.
+            const pdfPageImages =
+              bestPdf && (!pdfText || pdfText.trim().length < SCANNED_PDF_TEXT_THRESHOLD)
+                ? await pdfPagesToBase64Jpeg(bestPdf.proxyUrl)
+                : null
+            const llm = await extractByLlm(
+              { title: a.title, description: a.description, pdfText, pdfPageImages, candidateImages },
+              llmConfig,
+            )
             // Curation only applies to the photos actually offered this call
             // (a fresh first-run download/extraction) — a re-run's
             // curatedPhotos came from priorEntry and were never sent as
             // candidateImages.
-            if (curatedPhotos && candidateImages?.length && llm.photoCuration.length) {
+            if (llm && curatedPhotos && candidateImages?.length && llm.photoCuration.length) {
               curatedPhotos = applyPhotoCuration(curatedPhotos, llm.photoCuration)
             }
-            cacheable = true
+            const merged = mergeLlmResult(priorEntry, { ...fields, confident: mergedConfident }, llm, at, curatedPhotos)
+            // Same rationale as the cap-hit/disabled branches below: a failed
+            // request only caches when detail/rules already gave us something.
+            cacheable = llm !== null || mergedConfident || detailOk
+            if (cacheable) {
+              cache[key] = merged
+              dirty[key] = merged
+              cached++
+              if (merged.confidence === 'high') confident++
+              if (cached % FLUSH_EVERY === 0) {
+                const toFlush = dirty
+                dirty = {}
+                const ok = await writeExtractionCache(toFlush)
+                if (!ok) dirty = { ...toFlush, ...dirty }
+              }
+            }
+            continue
           }
         } else if (llmConfig) {
           // Per-run or per-platform LLM cap hit: cache the rules result
@@ -547,19 +559,16 @@ async function runEnrich() {
 
         const hasType = fields.propertyType != null && fields.propertyType !== 'sonstiges'
         const hasArea = fields.landAreaSqm != null || fields.livingAreaSqm != null
-        // Carry the failure counter across runs: bump it on a failed LLM
-        // request, preserve it while the item is only cap-deferred (source
-        // stays 'rules'), and drop it once the LLM actually produced a result
-        // (source 'llm' — no longer eligible for retry anyway).
+        // No LLM attempt was made on this path (batch-collect / cap-hit /
+        // disabled) — carry the failure counter forward unchanged.
         const prevFailures = cache[key]?.llmFailures ?? 0
-        const llmFailures = llmFailed ? prevFailures + 1 : source === 'rules' ? prevFailures : 0
         const entry: AuctionExtraction = {
           ...fields,
-          source,
+          source: 'rules',
           confidence: hasType && hasArea ? 'high' : 'low',
           photos: curatedPhotos,
           at,
-          ...(llmFailures > 0 ? { llmFailures } : {}),
+          ...(prevFailures > 0 ? { llmFailures: prevFailures } : {}),
         }
         cache[key] = entry
         dirty[key] = entry
@@ -576,6 +585,26 @@ async function runEnrich() {
       }
     }
     await Promise.all(Array.from({ length: ENRICH_CONCURRENCY }, worker))
+
+    if (batchItems.length > 0 && llmConfig) {
+      const jobName = await submitGeminiBatch(batchItems, llmConfig, 'enrich')
+      if (jobName) {
+        // Mark every submitted item's already-cached rules-only entry with
+        // the job name so needsLlmRetry/needsLlmFieldsBackfill don't
+        // re-submit it to a second job while this one is still in flight
+        // (see AuctionExtraction.llmBatchJob / isLlmBatchPending).
+        for (const item of batchItems) {
+          const priorItemEntry = cache[item.key]
+          if (!priorItemEntry) continue
+          const marked = { ...priorItemEntry, llmBatchJob: jobName }
+          cache[item.key] = marked
+          dirty[item.key] = marked
+        }
+        console.log(`[enrich] submitted Gemini batch ${jobName} with ${batchItems.length} items`)
+      } else {
+        console.warn(`[enrich] Gemini batch submission failed for ${batchItems.length} items — will retry next run`)
+      }
+    }
 
     if (Object.keys(dirty).length > 0) await writeExtractionCache(dirty)
 
