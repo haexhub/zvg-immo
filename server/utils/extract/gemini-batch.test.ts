@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { LlmConfig } from './llm'
 
-vi.mock('../llm-batch-jobs', () => ({ insertLlmBatchJob: vi.fn() }))
+vi.mock('../llm-batch-jobs', () => ({ insertLlmBatchJob: vi.fn().mockResolvedValue(true) }))
 
 const config: LlmConfig = {
   provider: 'gemini-native',
@@ -58,6 +58,29 @@ describe('submitGeminiBatch', () => {
 
     expect(jobName).toBe('batches/xyz')
     expect(insertLlmBatchJob).toHaveBeenCalledWith({ jobName: 'batches/xyz', source: 'enrich', itemCount: 1 })
+    const submitCall = vi.mocked($fetch).mock.calls.find(([url]) => (url as string).includes(':batchGenerateContent'))
+    expect((submitCall?.[1] as { body: unknown })?.body).toEqual({
+      batch: { display_name: 'zvg-immo-enrich', input_config: { file_name: 'files/abc' } },
+    })
+  })
+
+  it('returns null and does not record the job when insertLlmBatchJob fails to persist it', async () => {
+    stubOfetch([
+      { match: '/upload/v1beta/files', raw: { headers: { 'x-goog-upload-url': 'https://upload.example/session-1' } } },
+      { match: 'upload.example/session-1', data: { file: { name: 'files/abc' } } },
+      { match: ':batchGenerateContent', data: { name: 'batches/xyz' } },
+    ])
+    const { insertLlmBatchJob } = await import('../llm-batch-jobs')
+    vi.mocked(insertLlmBatchJob).mockResolvedValueOnce(false)
+    const { submitGeminiBatch } = await import('./gemini-batch')
+
+    const jobName = await submitGeminiBatch(
+      [{ key: 'zvg-portal:1', input: { title: 'Haus', description: 'schön', pdfText: null } }],
+      config,
+      'enrich',
+    )
+
+    expect(jobName).toBeNull()
   })
 
   it('returns null without submitting anything when no item has content', async () => {

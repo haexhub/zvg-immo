@@ -156,6 +156,41 @@ describe('runLlmBatchPoll', () => {
     expect(deleteLlmBatchJob).toHaveBeenCalledWith('batches/abc')
   })
 
+  it('leaves the job row in place when writing the cache fails, so the next tick retries', async () => {
+    const priorEntry = makeEntry({ propertyType: 'einfamilienhaus', landAreaSqm: 500, confidence: 'high' })
+    vi.mocked(readExtractionCache).mockResolvedValue({ 'zvg-portal:7265': priorEntry })
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([{ jobName: 'batches/abc', source: 'enrich', status: 'pending', itemCount: 1 }])
+    vi.mocked(pollGeminiBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/results' })
+    vi.mocked(fetchGeminiBatchResults).mockResolvedValue([
+      {
+        key: 'zvg-portal:7265',
+        extraction: {
+          propertyType: null,
+          landAreaSqm: null,
+          livingAreaSqm: null,
+          rooms: null,
+          units: null,
+          securityDeposit: null,
+          biddingNotes: null,
+          condition: 'gepflegt',
+          features: [],
+          yearBuilt: 1998,
+          lastRenovationYear: null,
+          renovationNotes: null,
+          insights: null,
+          photoCuration: [],
+        },
+      },
+    ])
+    vi.mocked(writeExtractionCache).mockResolvedValue(false)
+
+    const result = await runLlmBatchPoll()
+
+    expect(result).toEqual({ checked: 1, merged: 1 })
+    expect(writeAuctionSnapshot).not.toHaveBeenCalled()
+    expect(deleteLlmBatchJob).not.toHaveBeenCalled()
+  })
+
   it('skips a result whose key has no cached prior entry', async () => {
     vi.mocked(readExtractionCache).mockResolvedValue({})
     vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([{ jobName: 'batches/abc', source: 'enrich', status: 'pending', itemCount: 1 }])

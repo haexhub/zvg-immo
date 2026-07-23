@@ -17,20 +17,25 @@ export interface LlmBatchJob {
   itemCount: number
 }
 
+/** Returns whether the row was recorded, so the caller (submitGeminiBatch) can
+ *  treat a failed insert as a failed submission instead of returning a job
+ *  name the poller will never see. */
 export async function insertLlmBatchJob(job: {
   jobName: string
   source: 'enrich' | 'reprocess'
   itemCount: number
-}): Promise<void> {
+}): Promise<boolean> {
   const db = getPool()
-  if (!db) return
+  if (!db) return true
   try {
     await db.query(
       'INSERT INTO llm_batch_jobs (job_name, source, item_count) VALUES ($1, $2, $3)',
       [job.jobName, job.source, job.itemCount],
     )
+    return true
   } catch (err) {
     console.warn(`[llm-batch-jobs] insert failed for ${job.jobName}: ${(err as Error).message}`)
+    return false
   }
 }
 

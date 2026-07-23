@@ -128,7 +128,11 @@ export async function runLlmBatchPoll(): Promise<{ checked: number; merged: numb
         }
       }
 
-      if (Object.keys(dirty).length > 0) await writeExtractionCache(dirty)
+      const cacheWritten = Object.keys(dirty).length === 0 || (await writeExtractionCache(dirty))
+      if (!cacheWritten) {
+        console.warn(`[llm-batch-poll] cache write failed for job ${job.jobName} — leaving job for next tick`)
+        continue
+      }
       if (snapshotUpdates.length > 0) await writeAuctionSnapshot(snapshotUpdates)
       await deleteLlmBatchJob(job.jobName)
       console.log(`[llm-batch-poll] job ${job.jobName} succeeded — merged ${results.length} items`)

@@ -67,7 +67,7 @@ describe('llm-batch-jobs', () => {
     vi.mocked(getPool).mockReturnValue({ query: vi.fn().mockRejectedValue(new Error('connection reset')) } as never)
     const { insertLlmBatchJob, listPendingLlmBatchJobs, deleteLlmBatchJob } = await import('./llm-batch-jobs')
 
-    await expect(insertLlmBatchJob({ jobName: 'x', source: 'enrich', itemCount: 1 })).resolves.toBeUndefined()
+    await expect(insertLlmBatchJob({ jobName: 'x', source: 'enrich', itemCount: 1 })).resolves.toBe(false)
     await expect(listPendingLlmBatchJobs()).resolves.toEqual([])
     await expect(deleteLlmBatchJob('x')).resolves.toBeUndefined()
   })

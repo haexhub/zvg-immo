@@ -125,14 +125,18 @@ export async function submitGeminiBatch(
     const batch = await $fetch<{ name?: string }>(`${apiBase(config)}/v1beta/models/${model}:batchGenerateContent`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-goog-api-key': config.apiKey ?? '' },
-      body: { batch: { display_name: `zvg-immo-${source}`, input_config: { requests: { file_name: fileName } } } },
+      body: { batch: { display_name: `zvg-immo-${source}`, input_config: { file_name: fileName } } },
       signal: AbortSignal.timeout(30_000),
     })
     if (!batch.name) {
       console.warn('[gemini-batch] batchGenerateContent response had no job name')
       return null
     }
-    await insertLlmBatchJob({ jobName: batch.name, source, itemCount: lines.length })
+    const recorded = await insertLlmBatchJob({ jobName: batch.name, source, itemCount: lines.length })
+    if (!recorded) {
+      console.warn(`[gemini-batch] failed to record job ${batch.name} — treating submission as failed`)
+      return null
+    }
     return batch.name
   } catch (err) {
     console.warn(`[gemini-batch] submit failed: ${(err as Error).message}`)
