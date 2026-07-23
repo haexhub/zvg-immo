@@ -11,9 +11,10 @@ type ClaudeContentBlock =
   | { type: 'text'; text: string }
   | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
 
-/** Claude has no native PDF part — `document` parts are dropped, relying on
- *  the caller having already put `pdfText`/`pdfPageImages` parts in `parts`
- *  instead (see buildParts in ../llm.ts). */
+/** This proxy path forwards only text and image blocks: `document` parts are
+ *  intentionally dropped here — the transitional proxy doesn't relay native
+ *  PDF documents — so callers on this provider rely on the `pdfText`/
+ *  `pdfPageImages` parts buildParts already produced instead (see ../llm.ts). */
 function toClaudeContent(parts: ContentPart[]): ClaudeContentBlock[] {
   const blocks: ClaudeContentBlock[] = []
   for (const part of parts) {
