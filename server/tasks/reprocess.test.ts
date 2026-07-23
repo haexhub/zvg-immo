@@ -3,12 +3,26 @@ import type { Auction, AuctionExtraction } from '~/types/auction'
 import { getPool } from '../utils/db'
 import { downloadBlob, findLatestCapture } from '../utils/storage-download'
 import { extractByLlm } from '../utils/extract/llm'
+import { extractPdfTextFromBuffer } from '../utils/extract/pdf-text'
+import { renderPdfPagesJpeg } from '../utils/extract/pdf-render'
 import { readExtractionCache, writeExtractionCache } from '../utils/extraction-cache'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
 
 vi.mock('../utils/db', () => ({ getPool: vi.fn() }))
 vi.mock('../utils/storage-download', () => ({ findLatestCapture: vi.fn(), downloadBlob: vi.fn() }))
 vi.mock('../utils/extract/llm', () => ({ extractByLlm: vi.fn() }))
+// Spy on (not stub out) the real implementations — other tests here rely on
+// actual pdftotext/rendering output (e.g. the scanned-PDF vision-fallback
+// test below); the gemini-native test only needs to assert these were never
+// invoked, not replace their behavior.
+vi.mock('../utils/extract/pdf-text', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/extract/pdf-text')>()
+  return { ...actual, extractPdfTextFromBuffer: vi.fn(actual.extractPdfTextFromBuffer) }
+})
+vi.mock('../utils/extract/pdf-render', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/extract/pdf-render')>()
+  return { ...actual, renderPdfPagesJpeg: vi.fn(actual.renderPdfPagesJpeg) }
+})
 vi.mock('../utils/extraction-cache', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/extraction-cache')>()
   return { ...actual, readExtractionCache: vi.fn(), writeExtractionCache: vi.fn() }
@@ -223,6 +237,55 @@ describe('reprocessAuction', () => {
     expect(callArgs.pdfPageImages).not.toBeNull()
     expect(callArgs.pdfPageImages).toHaveLength(1)
     expect(Buffer.from(callArgs.pdfPageImages![0]!, 'base64').subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8]))
+  })
+
+  it('feeds a gemini-native call the raw PDF bytes and skips pdftotext/vision rendering', async () => {
+    const auction = makeAuction({
+      attachments: [
+        { kind: 'appraisal', label: 'Gutachten', filename: 'gutachten.pdf', sizeBytes: 1000, fileId: '1', proxyUrl: '/api/zvg-proxy?file_id=1' },
+      ],
+    })
+    vi.mocked(findLatestCapture).mockImplementation(async (kind) => {
+      if (kind === 'auction') return { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' }
+      if (kind === 'document') return { contentHash: 'doc1', sourceUrl: '/api/zvg-proxy?file_id=1', capturedAt: '2026-07-01T00:00:00.000Z' }
+      return null
+    })
+    vi.mocked(downloadBlob).mockImplementation(async (hash) => {
+      if (hash === 'abc') return Buffer.from(JSON.stringify(auction))
+      if (hash === 'doc1') return SCANNED_LIKE_PDF
+      return null
+    })
+    vi.mocked(extractByLlm).mockResolvedValue({
+      propertyType: null,
+      landAreaSqm: null,
+      livingAreaSqm: null,
+      rooms: null,
+      units: null,
+      securityDeposit: null,
+      biddingNotes: null,
+      condition: null,
+      features: [],
+      yearBuilt: 1998,
+      lastRenovationYear: null,
+      renovationNotes: null,
+      insights: null,
+      photoCuration: [],
+    })
+
+    await reprocessAuction(
+      'zvg-portal',
+      '7265',
+      undefined,
+      { provider: 'gemini-native', baseUrl: 'http://gemini', model: 'gemini-flash-latest' },
+      '2026-07-22T00:00:00.000Z',
+    )
+
+    const callArgs = vi.mocked(extractByLlm).mock.calls[0]![0]
+    expect(callArgs.pdfText).toBeNull()
+    expect(callArgs.pdfPageImages).toBeNull()
+    expect(callArgs.pdfBytes).toEqual(SCANNED_LIKE_PDF.toString('base64'))
+    expect(extractPdfTextFromBuffer).not.toHaveBeenCalled()
+    expect(renderPdfPagesJpeg).not.toHaveBeenCalled()
   })
 
   it('bumps llmFailures and keeps the prior rules-only fields when the LLM request fails', async () => {
