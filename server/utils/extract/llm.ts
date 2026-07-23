@@ -1,27 +1,38 @@
 // LLM fallback extractor. Sends the listing text (title + description +
-// optional Gutachten/Exposé PDF text) to a Claude model via haex-claude-proxy
-// and gets back structured fields through the proxy's `final_result` output
-// tool (it forwards the tool's input_schema to `claude --json-schema`). Used
+// optional Gutachten/Exposé PDF text) to an LLM provider and gets back
+// structured fields through a forced-schema tool/response-format call. Used
 // for what the deterministic rules can't resolve: sizes buried in PDF prose,
 // and property types for non-German sources the property-type classifier misses.
 //
-// Optionally vision: when `pdfImageBase64` is set (a scanned/image-only
+// Optionally vision: when `pdfPageImages` is set (a scanned/image-only
 // Gutachten PDF where pdftotext returned nothing usable — see
-// server/tasks/enrich.ts), the rendered page image is sent alongside the
+// server/tasks/enrich.ts), the rendered page images are sent alongside the
 // prompt instead of relying on text alone. parseExtractionResponse/
 // clampExtraction are pure and unit-tested; the network call is a thin wrapper.
 
 import { PROPERTY_TYPES, type PropertyType } from '~/lib/property-type'
 import { CONDITIONS, type Condition } from '~/lib/condition'
 import { FEATURES, type Feature } from '~/lib/features'
+import { ClaudeProxyProvider } from './providers/claude-proxy'
 
 export interface LlmInput {
   title: string | null
   description: string | null
   pdfText?: string | null
-  /** Base64 JPEG of a Gutachten page, used when pdfText is too sparse to be
-   *  the scanned PDF's real content (see pdfPageToBase64Jpeg). */
-  pdfImageBase64?: string | null
+  /** Base64 JPEGs of Gutachten pages 1..N, used when pdfText is too sparse to
+   *  be the scanned PDF's real content (see pdfPagesToBase64Jpeg). Page 1
+   *  alone isn't enough — it's almost always a cover page, the facts sought
+   *  are on later pages. */
+  pdfPageImages?: string[] | null
+  /** Raw PDF bytes (base64) for providers with native document understanding
+   *  (GeminiNativeProvider) — reads scans correctly without a rasterize/OCR
+   *  step. Providers that don't support it ignore this field and fall back
+   *  to pdfText/pdfPageImages instead. */
+  pdfBytes?: string | null
+  /** Candidate photos for LLM-driven curation. Referenced by index
+   *  (`photoIndex`) in the extraction response rather than by filename,
+   *  since a filename echoed back by the model is unreliable. */
+  candidateImages?: { label: string; mimeType: string; data: string }[]
 }
 
 export interface LlmConfig {
@@ -34,23 +45,27 @@ export interface LlmConfig {
   maxTokens?: number
 }
 
-type LlmContent =
-  | string
-  | Array<
-      | { type: 'text'; text: string }
-      | { type: 'image'; source: { type: 'base64'; media_type: 'image/jpeg'; data: string } }
-    >
+/** Provider-neutral request content — a specific backend's provider
+ *  implementation translates this into its own wire format (e.g. Claude's
+ *  content blocks, OpenAI's `image_url`, Gemini's `inlineData`).
+ *  `document` carries raw PDF bytes; only a provider with native document
+ *  understanding honors it, all others ignore that part type and rely on
+ *  `pdfText`/`pdfPageImages` parts instead. */
+export type ContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image'; mimeType: string; data: string }
+  | { type: 'document'; mimeType: 'application/pdf'; data: string }
 
-interface ExtractionRequest {
+export interface ExtractionRequest {
   systemPrompt: string
   schema: Record<string, unknown>
-  content: LlmContent
+  parts: ContentPart[]
 }
 
 /** Narrow seam between prompt/schema building (provider-agnostic) and the
  *  wire format a specific backend expects. Swapping or adding a provider
  *  means writing a new implementation of this interface, not touching
- *  buildPrompt/clampExtraction. */
+ *  buildParts/clampExtraction. */
 export interface ExtractionProvider {
   extract(req: ExtractionRequest): Promise<Record<string, unknown> | null>
 }
@@ -204,59 +219,34 @@ export function clampExtraction(raw: Record<string, unknown>): ClampedExtraction
   }
 }
 
-function buildPrompt(input: LlmInput): string {
-  const parts: string[] = []
-  if (input.title) parts.push(`Objektbezeichnung: ${input.title}`)
-  if (input.description) parts.push(`Beschreibung:\n${input.description}`)
-  if (input.pdfText) {
-    parts.push(`Auszug aus Gutachten/Exposé (PDF):\n${input.pdfText.slice(0, MAX_PDF_CHARS)}`)
+/**
+ * Assemble provider-neutral content parts from an LlmInput. When `pdfBytes`
+ * is set (a provider with native document understanding is in play),
+ * `pdfText`/`pdfPageImages` are left out — sending both would double the
+ * token cost for the same information.
+ */
+export function buildParts(input: LlmInput): ContentPart[] {
+  const text: string[] = []
+  if (input.title) text.push(`Objektbezeichnung: ${input.title}`)
+  if (input.description) text.push(`Beschreibung:\n${input.description}`)
+  const usingDocumentPart = !!input.pdfBytes
+  if (input.pdfText && !usingDocumentPart) {
+    text.push(`Auszug aus Gutachten/Exposé (PDF):\n${input.pdfText.slice(0, MAX_PDF_CHARS)}`)
   }
-  if (input.pdfImageBase64) {
-    parts.push(
-      'Das Gutachten/Exposé liegt als eingescanntes Bild vor (siehe angehängtes Bild) — lies die Eckdaten daraus ab.',
+  if (input.pdfPageImages?.length && !usingDocumentPart) {
+    text.push(
+      'Das Gutachten/Exposé liegt als eingescanntes Bild vor (siehe angehängte Bilder) — lies die Eckdaten daraus ab.',
     )
   }
-  return parts.join('\n\n')
-}
 
-/** Sends the request through haex-claude-proxy's Anthropic-compatible
- *  `/v1/messages` endpoint, using a forced tool call to get JSON back. */
-class ClaudeProxyProvider implements ExtractionProvider {
-  constructor(private config: LlmConfig) {}
-
-  async extract(req: ExtractionRequest): Promise<Record<string, unknown> | null> {
-    const body = {
-      model: this.config.model,
-      max_tokens: this.config.maxTokens ?? 512,
-      system: req.systemPrompt,
-      messages: [{ role: 'user', content: req.content }],
-      tools: [
-        {
-          name: 'final_result',
-          description: 'Gib die extrahierten Eckdaten zurück.',
-          input_schema: req.schema,
-        },
-      ],
-      tool_choice: { type: 'tool', name: 'final_result' },
-    }
-    let resp: unknown
-    try {
-      // Bound the request: the proxy spawns a `claude` subprocess per call, so a
-      // stuck spawn (or upstream stall) would keep this promise pending forever
-      // and — because the enrich task awaits every worker via Promise.all — block
-      // the whole run.
-      resp = await $fetch(`${this.config.baseUrl.replace(/\/$/, '')}/v1/messages`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' },
-        body,
-        signal: AbortSignal.timeout(60_000),
-      })
-    } catch (err) {
-      console.warn(`[extract/llm] request failed: ${(err as Error).message}`)
-      return null
-    }
-    return parseExtractionResponse(resp)
+  const parts: ContentPart[] = []
+  if (text.length) parts.push({ type: 'text', text: text.join('\n\n') })
+  if (usingDocumentPart) {
+    parts.push({ type: 'document', mimeType: 'application/pdf', data: input.pdfBytes! })
+  } else if (input.pdfPageImages?.length) {
+    for (const data of input.pdfPageImages) parts.push({ type: 'image', mimeType: 'image/jpeg', data })
   }
+  return parts
 }
 
 function getProvider(config: LlmConfig): ExtractionProvider {
@@ -273,21 +263,12 @@ export async function extractByLlm(
   input: LlmInput,
   config: LlmConfig,
 ): Promise<ClampedExtraction | null> {
-  const prompt = buildPrompt(input)
-  if (!prompt.trim() && !input.pdfImageBase64) return null
-  const content: LlmContent = input.pdfImageBase64
-    ? [
-        { type: 'text', text: prompt },
-        {
-          type: 'image',
-          source: { type: 'base64', media_type: 'image/jpeg', data: input.pdfImageBase64 },
-        },
-      ]
-    : prompt
+  const parts = buildParts(input)
+  if (parts.length === 0) return null
   const raw = await getProvider(config).extract({
     systemPrompt: SYSTEM_PROMPT,
     schema: EXTRACTION_SCHEMA,
-    content,
+    parts,
   })
   return raw ? clampExtraction(raw) : null
 }

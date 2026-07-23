@@ -149,8 +149,9 @@ describe('reprocessAuction', () => {
     expect(result!.entry.features).toEqual(['garage'])
 
     const callArgs = vi.mocked(extractByLlm).mock.calls[0]![0]
-    expect(callArgs.pdfImageBase64).not.toBeNull()
-    expect(Buffer.from(callArgs.pdfImageBase64!, 'base64').subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8]))
+    expect(callArgs.pdfPageImages).not.toBeNull()
+    expect(callArgs.pdfPageImages).toHaveLength(1)
+    expect(Buffer.from(callArgs.pdfPageImages![0]!, 'base64').subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8]))
   })
 
   it('bumps llmFailures and keeps the prior rules-only fields when the LLM request fails', async () => {
