@@ -400,9 +400,9 @@ useHead(() => ({
                   <CalendarPlus class="h-4 w-4" /> {{ $t('objektDetail.addToOutlookCalendar') }}
                 </a>
               </Button>
-              <Button as-child variant="ghost" size="sm">
+              <Button as-child variant="outline" size="sm">
                 <a :href="icsDataUrl(calendarEvent)" :download="icsFilename(a.caseNumber)">
-                  {{ $t('objektDetail.downloadIcs') }}
+                  <CalendarPlus class="h-4 w-4" /> {{ $t('objektDetail.downloadIcs') }}
                 </a>
               </Button>
             </div>
