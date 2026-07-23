@@ -46,6 +46,10 @@ describe('clampExtraction', () => {
       biddingNotes: 'Abweichende Sicherheitsleistung von 5.000 EUR gefordert.',
       condition: 'gepflegt',
       features: ['balkon', 'garage'],
+      yearBuilt: null,
+      lastRenovationYear: null,
+      renovationNotes: null,
+      insights: null,
     })
   })
 
@@ -71,6 +75,10 @@ describe('clampExtraction', () => {
       biddingNotes: null,
       condition: null,
       features: [],
+      yearBuilt: null,
+      lastRenovationYear: null,
+      renovationNotes: null,
+      insights: null,
     })
   })
 
@@ -112,6 +120,55 @@ describe('clampExtraction', () => {
   it('defaults features to an empty array when missing or malformed', () => {
     expect(clampExtraction({}).features).toEqual([])
     expect(clampExtraction({ features: 'balkon' as unknown as string[] }).features).toEqual([])
+  })
+
+  it('keeps in-range years and rounds them', () => {
+    expect(clampExtraction({ yearBuilt: 1965 }).yearBuilt).toBe(1965)
+    expect(clampExtraction({ yearBuilt: 1965.7 }).yearBuilt).toBe(1966)
+    expect(clampExtraction({ lastRenovationYear: 2018 }).lastRenovationYear).toBe(2018)
+  })
+
+  it('rejects out-of-range and non-numeric years', () => {
+    expect(clampExtraction({ yearBuilt: 1700 }).yearBuilt).toBeNull()
+    expect(clampExtraction({ yearBuilt: new Date().getFullYear() + 1 }).yearBuilt).toBeNull()
+    expect(clampExtraction({ yearBuilt: '1965' as unknown as number }).yearBuilt).toBeNull()
+  })
+
+  it('trims and caps renovationNotes, nulls blank/non-string values', () => {
+    expect(clampExtraction({ renovationNotes: '  Dach 2019 neu  ' }).renovationNotes).toBe('Dach 2019 neu')
+    expect(clampExtraction({ renovationNotes: '   ' }).renovationNotes).toBeNull()
+    expect(clampExtraction({ renovationNotes: 'x'.repeat(500) }).renovationNotes).toHaveLength(300)
+  })
+
+  it('nulls insights when missing or not an object', () => {
+    expect(clampExtraction({}).insights).toBeNull()
+    expect(clampExtraction({ insights: 'nope' as unknown as object }).insights).toBeNull()
+  })
+
+  it('clamps insights fields: trims lists, caps counts/lengths, bounds land value', () => {
+    const r = clampExtraction({
+      insights: {
+        defects: ['  Feuchtigkeit im Keller  ', '', 42, 'Dachschaden'],
+        encumbrances: Array.from({ length: 30 }, (_, i) => `Belastung ${i}`),
+        landValueEurPerSqm: 350,
+        construction: '  Massivbau  ',
+        locationCharacter: 'ruhige Wohnlage',
+        summary: 's'.repeat(800),
+      },
+    })
+    expect(r.insights).not.toBeNull()
+    expect(r.insights!.defects).toEqual(['Feuchtigkeit im Keller', 'Dachschaden'])
+    expect(r.insights!.encumbrances).toHaveLength(20)
+    expect(r.insights!.landValueEurPerSqm).toBe(350)
+    expect(r.insights!.construction).toBe('Massivbau')
+    expect(r.insights!.summary).toHaveLength(500)
+  })
+
+  it('rejects a non-positive or absurd insights land value', () => {
+    expect(clampExtraction({ insights: { landValueEurPerSqm: 0 } }).insights!.landValueEurPerSqm).toBeNull()
+    expect(
+      clampExtraction({ insights: { landValueEurPerSqm: 9_999_999 } }).insights!.landValueEurPerSqm,
+    ).toBeNull()
   })
 })
 

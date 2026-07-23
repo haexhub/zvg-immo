@@ -25,7 +25,8 @@
 
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { Auction, AuctionExtraction } from '~/types/auction'
+import type { Auction, AuctionExtraction, CuratedPhoto } from '~/types/auction'
+import { normalizePhoto } from '~/lib/photo'
 import { crawlAll, platforms } from '../crawlers/registry'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
 import { upsertCurrentAuctions } from '../utils/current-auctions'
@@ -408,7 +409,7 @@ async function runEnrich() {
         // Wrapped in try/catch so a disk-full or subprocess failure on one
         // listing can't reject the whole Promise.all — mirrors the enrichOne
         // pattern above.
-        let photos: string[] = []
+        let curatedPhotos: CuratedPhoto[] | undefined
         if (priorEntry) {
           // A re-run (needsLlmRetry / needsConditionFeaturesBackfill — a cache
           // entry here means exactly one of those): the photo pipeline already
@@ -417,9 +418,13 @@ async function runEnrich() {
           // re-downloading every gallery / re-mining the PDF on every retry
           // pass. First runs and entries never cached before still go through
           // the full pipeline below.
-          photos = priorEntry.photos ?? []
+          curatedPhotos = priorEntry.photos
         } else if (isSafePathSegment(a.platform) && isSafePathSegment(a.externalId)) {
           const destDir = join(IMAGES_DIR, a.platform, a.externalId)
+          // The deterministic pipeline yields bare filenames; they become
+          // CuratedPhoto entries (category defaults to 'sonstiges' until LLM
+          // curation in a later step — see lib/photo.ts).
+          let photos: string[] = []
           const nativeFotoUrls = [
             ...a.attachments
               .filter(
@@ -455,6 +460,7 @@ async function runEnrich() {
               `[enrich] photo extraction failed for ${a.platform}:${a.externalId}: ${(err as Error).message}`,
             )
           }
+          curatedPhotos = photos.length > 0 ? photos.map(normalizePhoto) : undefined
         }
 
         const hasType = fields.propertyType != null && fields.propertyType !== 'sonstiges'
@@ -469,7 +475,7 @@ async function runEnrich() {
           ...fields,
           source,
           confidence: hasType && hasArea ? 'high' : 'low',
-          photos: photos.length > 0 ? photos : undefined,
+          photos: curatedPhotos,
           at,
           ...(llmFailures > 0 ? { llmFailures } : {}),
         }

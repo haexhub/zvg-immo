@@ -21,6 +21,7 @@ import type { Pool } from 'pg'
 import type { Auction, AuctionExtraction } from '~/types/auction'
 import { getPool } from './db'
 import { cacheKey } from './verkehrswert-cache'
+import { normalizePhoto } from '~/lib/photo'
 
 export type ExtractionCache = Record<string, AuctionExtraction>
 
@@ -35,10 +36,12 @@ export function applyExtractionToAuctions(auctions: Auction[], cache: Extraction
     const hit = cache[cacheKey(a.platform, a.externalId)]
     if (!hit) continue
     a.extraction = hit
-    const photos = hit.photos ?? []
+    // Normalize on read: older cache rows hold bare filename strings, newer
+    // ones CuratedPhoto objects (see lib/photo.ts).
+    const photos = (hit.photos ?? []).map(normalizePhoto)
     if (photos.length === 0) continue
     if (!a.thumbnailUrl) {
-      a.thumbnailUrl = `/api/auction-image/${a.platform}/${a.externalId}/${photos[0]}`
+      a.thumbnailUrl = `/api/auction-image/${a.platform}/${a.externalId}/${photos[0]!.file}`
     }
     if (a.photoCount < photos.length) a.photoCount = photos.length
   }

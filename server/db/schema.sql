@@ -385,6 +385,14 @@ ALTER TABLE auctions ADD COLUMN IF NOT EXISTS source_security_deposit numeric;
 ALTER TABLE auctions ADD COLUMN IF NOT EXISTS security_deposit numeric;
 ALTER TABLE auctions ADD COLUMN IF NOT EXISTS bidding_notes text;
 
+-- WP-C.4: Baujahr/Sanierungsjahr in den Filter-Spiegel aufgenommen (eigene
+-- Spalten, da als SQL-Filterkriterium sinnvoll). renovationNotes/insights/
+-- photos bleiben bewusst nur im extraction_cache-JSONB — kein Filterbedarf,
+-- kein eigenes Spaltenschema. Additiv, wie die WP-3-Spalten oben.
+ALTER TABLE auctions ADD COLUMN IF NOT EXISTS year_built integer;
+ALTER TABLE auctions ADD COLUMN IF NOT EXISTS last_renovation_year integer;
+CREATE INDEX IF NOT EXISTS idx_auctions_year_built ON auctions (year_built);
+
 -- WP-3: vollständiger Extraktions-Cache-Blob (server/utils/extraction-cache.ts)
 -- — Postgres ist die einzige Persistenz, kein lokales JSON-File mehr. Eigene
 -- Tabelle statt einer weiteren Spalte auf `auctions`: writeExtractionCache()
