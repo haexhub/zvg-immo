@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ExtractionRequest } from '../llm'
 import { parseGeminiExtractionResponse, toGeminiParts } from './gemini-native'
 
 describe('toGeminiParts', () => {
@@ -34,5 +35,92 @@ describe('parseGeminiExtractionResponse', () => {
     expect(parseGeminiExtractionResponse({})).toBeNull()
     expect(parseGeminiExtractionResponse({ candidates: [] })).toBeNull()
     expect(parseGeminiExtractionResponse({ candidates: [{ content: { parts: [{ text: 'not json' }] } }] })).toBeNull()
+  })
+})
+
+describe('GeminiNativeProvider.extract — 429 pacing/retry', () => {
+  const config = { baseUrl: 'https://gemini.example', apiKey: 'k', model: 'gemini-flash-latest' }
+  const req: ExtractionRequest = { systemPrompt: 'p', schema: {}, parts: [{ type: 'text', text: 'hi' }] }
+  const okResponse = { candidates: [{ content: { parts: [{ text: '{"propertyType":"haus"}' }] } }] }
+
+  // Each test re-imports the module fresh so the module-level pacing queue/
+  // lastRequestAt (shared across all concurrent callers by design, see
+  // gemini-native.ts) doesn't leak state between tests.
+  async function freshProvider() {
+    vi.resetModules()
+    const mod = await import('./gemini-native')
+    return new mod.GeminiNativeProvider(config)
+  }
+
+  function error(status: number) {
+    return Object.assign(new Error(`http ${status}`), { response: { status } })
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('succeeds on the first attempt without retrying', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okResponse)
+    vi.stubGlobal('$fetch', fetchMock)
+    const provider = await freshProvider()
+    const promise = provider.extract(req)
+    await vi.runAllTimersAsync()
+    await expect(promise).resolves.toEqual({ propertyType: 'haus' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries on 429 and returns the result once it succeeds', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(error(429))
+      .mockRejectedValueOnce(error(429))
+      .mockResolvedValueOnce(okResponse)
+    vi.stubGlobal('$fetch', fetchMock)
+    const provider = await freshProvider()
+    const promise = provider.extract(req)
+    await vi.runAllTimersAsync()
+    await expect(promise).resolves.toEqual({ propertyType: 'haus' })
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('gives up after MAX_RETRIES consecutive 429s and returns null', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(error(429))
+    vi.stubGlobal('$fetch', fetchMock)
+    const provider = await freshProvider()
+    const promise = provider.extract(req)
+    await vi.runAllTimersAsync()
+    await expect(promise).resolves.toBeNull()
+    expect(fetchMock).toHaveBeenCalledTimes(4) // 1 initial attempt + 3 retries
+  })
+
+  it('does not retry a non-429 failure', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(error(500))
+    vi.stubGlobal('$fetch', fetchMock)
+    const provider = await freshProvider()
+    const promise = provider.extract(req)
+    await vi.runAllTimersAsync()
+    await expect(promise).resolves.toBeNull()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('paces concurrent calls at least MIN_REQUEST_GAP_MS apart', async () => {
+    const startTimes: number[] = []
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      startTimes.push(Date.now())
+      return okResponse
+    })
+    vi.stubGlobal('$fetch', fetchMock)
+    const provider = await freshProvider()
+    const p1 = provider.extract(req)
+    const p2 = provider.extract(req)
+    await vi.runAllTimersAsync()
+    await Promise.all([p1, p2])
+    expect(startTimes).toHaveLength(2)
+    expect(startTimes[1]! - startTimes[0]!).toBeGreaterThanOrEqual(12_500)
   })
 })
