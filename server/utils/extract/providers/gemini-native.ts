@@ -54,10 +54,11 @@ export class GeminiNativeProvider implements ExtractionProvider {
       // Same rationale as the other providers: bound the request so a stuck
       // upstream call can't hang the enrich task's Promise.all forever.
       const url = `${this.config.baseUrl.replace(/\/$/, '')}/v1beta/models/${model}:generateContent`
-        + `?key=${encodeURIComponent(this.config.apiKey ?? '')}`
       resp = await $fetch(url, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        // Key goes in a header, not the URL query string — avoids leaking it
+        // into server access logs and proxy request logs.
+        headers: { 'content-type': 'application/json', 'x-goog-api-key': this.config.apiKey ?? '' },
         body,
         signal: AbortSignal.timeout(60_000),
       })

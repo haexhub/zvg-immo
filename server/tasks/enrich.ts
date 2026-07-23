@@ -76,11 +76,12 @@ function readLlmConfig(): LlmConfig | null {
     | { provider?: string; baseUrl?: string; apiKey?: string; model?: string; maxPerRun?: string }
     | undefined
   if (!c?.baseUrl) return null
+  const provider = c.provider === 'claude-proxy' || c.provider === 'gemini-native' ? c.provider : 'openai-compatible'
   return {
-    provider: c.provider === 'claude-proxy' || c.provider === 'gemini-native' ? c.provider : 'openai-compatible',
+    provider,
     baseUrl: c.baseUrl,
     apiKey: c.apiKey || undefined,
-    model: c.model || 'claude-haiku-4-5',
+    model: c.model || (provider === 'gemini-native' ? 'gemini-flash-latest' : 'claude-haiku-4-5'),
   }
 }
 
