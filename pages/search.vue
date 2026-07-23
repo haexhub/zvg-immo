@@ -266,6 +266,10 @@ const landAreaMin = ref<number | null>(queryNum('landMin'))
 const landAreaMax = ref<number | null>(queryNum('landMax'))
 const livingAreaMin = ref<number | null>(queryNum('livMin'))
 const livingAreaMax = ref<number | null>(queryNum('livMax'))
+const yearBuiltMin = ref<number | null>(queryNum('yearBuiltMin'))
+const yearBuiltMax = ref<number | null>(queryNum('yearBuiltMax'))
+const renovationYearMin = ref<number | null>(queryNum('renovationYearMin'))
+const renovationYearMax = ref<number | null>(queryNum('renovationYearMax'))
 const categoryFilter = ref<string>(queryStr('category', ALL_SCOPE))
 const conditionFilter = ref<string>(queryStr('condition', ALL_SCOPE))
 const featuresFilter = ref<string[]>(queryList('features'))
@@ -359,6 +363,10 @@ function clearAllFilters(): void {
   landAreaMax.value = null
   livingAreaMin.value = null
   livingAreaMax.value = null
+  yearBuiltMin.value = null
+  yearBuiltMax.value = null
+  renovationYearMin.value = null
+  renovationYearMax.value = null
   categoryFilter.value = ALL_SCOPE
   conditionFilter.value = ALL_SCOPE
   featuresFilter.value = []
@@ -390,6 +398,10 @@ const currentFilters = computed<AuctionFilters>(() => ({
   landMax: numOrNull(landAreaMax.value),
   livMin: numOrNull(livingAreaMin.value),
   livMax: numOrNull(livingAreaMax.value),
+  yearBuiltMin: numOrNull(yearBuiltMin.value),
+  yearBuiltMax: numOrNull(yearBuiltMax.value),
+  renovationYearMin: numOrNull(renovationYearMin.value),
+  renovationYearMax: numOrNull(renovationYearMax.value),
 }))
 
 const filtered = computed<Auction[]>(() => {
@@ -487,6 +499,10 @@ const activeFilterCount = computed(() => {
   if (numOrNull(landAreaMax.value) != null) n++
   if (numOrNull(livingAreaMin.value) != null) n++
   if (numOrNull(livingAreaMax.value) != null) n++
+  if (numOrNull(yearBuiltMin.value) != null) n++
+  if (numOrNull(yearBuiltMax.value) != null) n++
+  if (numOrNull(renovationYearMin.value) != null) n++
+  if (numOrNull(renovationYearMax.value) != null) n++
   if (!isAllScope(categoryFilter.value)) n++
   if (!isAllScope(conditionFilter.value)) n++
   if (featuresFilter.value.length) n++
@@ -496,7 +512,7 @@ const activeFilterCount = computed(() => {
 })
 
 watch(
-  [selectedCountries, selectedRegionKeys, debouncedSearch, authorityFilter, priceMin, priceMax, landAreaMin, landAreaMax, livingAreaMin, livingAreaMax, categoryFilter, conditionFilter, featuresFilter, onlyWithPhotos, includeCancelled, view],
+  [selectedCountries, selectedRegionKeys, debouncedSearch, authorityFilter, priceMin, priceMax, landAreaMin, landAreaMax, livingAreaMin, livingAreaMax, yearBuiltMin, yearBuiltMax, renovationYearMin, renovationYearMax, categoryFilter, conditionFilter, featuresFilter, onlyWithPhotos, includeCancelled, view],
   () => {
     const query: Record<string, string> = {}
     if (selectedCountries.value.length) query.country = selectedCountries.value.join(',')
@@ -509,6 +525,10 @@ watch(
     if (numOrNull(landAreaMax.value) != null) query.landMax = String(numOrNull(landAreaMax.value))
     if (numOrNull(livingAreaMin.value) != null) query.livMin = String(numOrNull(livingAreaMin.value))
     if (numOrNull(livingAreaMax.value) != null) query.livMax = String(numOrNull(livingAreaMax.value))
+    if (numOrNull(yearBuiltMin.value) != null) query.yearBuiltMin = String(numOrNull(yearBuiltMin.value))
+    if (numOrNull(yearBuiltMax.value) != null) query.yearBuiltMax = String(numOrNull(yearBuiltMax.value))
+    if (numOrNull(renovationYearMin.value) != null) query.renovationYearMin = String(numOrNull(renovationYearMin.value))
+    if (numOrNull(renovationYearMax.value) != null) query.renovationYearMax = String(numOrNull(renovationYearMax.value))
     if (!isAllScope(categoryFilter.value)) query.category = categoryFilter.value
     if (!isAllScope(conditionFilter.value)) query.condition = conditionFilter.value
     if (featuresFilter.value.length) query.features = featuresFilter.value.join(',')
@@ -534,6 +554,10 @@ watch(() => route.query, (q) => {
   landAreaMax.value = queryNum('landMax')
   livingAreaMin.value = queryNum('livMin')
   livingAreaMax.value = queryNum('livMax')
+  yearBuiltMin.value = queryNum('yearBuiltMin')
+  yearBuiltMax.value = queryNum('yearBuiltMax')
+  renovationYearMin.value = queryNum('renovationYearMin')
+  renovationYearMax.value = queryNum('renovationYearMax')
   categoryFilter.value = queryStr('category', ALL_SCOPE)
   conditionFilter.value = queryStr('condition', ALL_SCOPE)
   featuresFilter.value = queryList('features')
@@ -712,6 +736,10 @@ async function toggleWatchlist(a: Auction): Promise<void> {
           v-model:land-area-max="landAreaMax"
           v-model:living-area-min="livingAreaMin"
           v-model:living-area-max="livingAreaMax"
+          v-model:year-built-min="yearBuiltMin"
+          v-model:year-built-max="yearBuiltMax"
+          v-model:renovation-year-min="renovationYearMin"
+          v-model:renovation-year-max="renovationYearMax"
           v-model:category-filter="categoryFilter"
           v-model:condition-filter="conditionFilter"
           v-model:features-filter="featuresFilter"

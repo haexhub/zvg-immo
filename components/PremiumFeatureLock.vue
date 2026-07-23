@@ -1,11 +1,12 @@
 <script setup lang="ts">
 // Visual placeholder for detail-page sections whose underlying data doesn't
-// exist yet (Grundbuch, Flurstücke, Mängel, Belastungen, Bodenrichtwert, Bau &
-// Instandhaltung, Lage-Charakteristik, Orte in der Nähe — none of these are
-// extracted anywhere in the app today). Renders skeleton bars instead of the
-// real section content — never fabricated text — behind a lock overlay, so
-// the layout previews a future premium tier without claiming data we don't
-// have. No subscription/payment system backs the CTA; it links to signup.
+// exist yet (Grundbuch, Flurstücke, Orte in der Nähe — no extraction source
+// for these today; Mängel/Belastungen/Bodenrichtwert/Bau & Instandhaltung/
+// Lage now come from a.extraction.insights and render as real cards instead).
+// Renders skeleton bars instead of the real section content — never
+// fabricated text — behind a lock overlay, so the layout previews a future
+// premium tier without claiming data we don't have. No subscription/payment
+// system backs the CTA; it links to signup.
 import { Crown } from 'lucide-vue-next'
 
 withDefaults(defineProps<{

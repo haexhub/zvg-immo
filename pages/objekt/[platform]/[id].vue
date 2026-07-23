@@ -197,17 +197,25 @@ const flatAttachments = computed(() => groupedAttachments.value.flatMap(
 ))
 
 // Premium-Platzhalter-Abschnitte ohne bestehende Datenbasis (siehe
-// PremiumFeatureLock.vue) — als Liste statt 7x copy-paste, damit ein Feld,
-// das später echte Daten bekommt, an einer Stelle aus der Liste entfernt
-// werden kann.
+// PremiumFeatureLock.vue) — Grundbuch/Flurstücke bleiben bewusst außerhalb des
+// Kern-Scopes (keine Extraktionsquelle), Mängel/Belastungen/Bodenrichtwert/
+// Bau & Instandhaltung/Lage kommen jetzt aus a.extraction.insights (s.u.).
 const LOCKED_SECTIONS: Array<{ key: string; titleKey: string; rows?: number }> = [
   { key: 'parcels', titleKey: 'objektDetail.parcelsTitle' },
-  { key: 'defects', titleKey: 'objektDetail.defectsTitle', rows: 2 },
-  { key: 'encumbrances', titleKey: 'objektDetail.encumbrancesTitle', rows: 2 },
-  { key: 'landValue', titleKey: 'objektDetail.landValueTitle', rows: 2 },
-  { key: 'construction', titleKey: 'objektDetail.constructionTitle', rows: 4 },
-  { key: 'neighborhood', titleKey: 'objektDetail.neighborhoodCharacter', rows: 4 },
 ]
+
+function formatLandValue(eurPerSqm: number): string {
+  return `${eurPerSqm.toLocaleString(intlLocale.value, { maximumFractionDigits: 0 })} €/m²`
+}
+
+// Item 4: the Gutachten-derived summary fills in for a short/missing
+// scraped description — only shown once description alone would leave the
+// card thin, and always clearly labelled as generated (see template).
+const gutachtenSummary = computed(() => {
+  const summary = a.value?.extraction?.insights?.summary
+  if (!summary || (displayDescription.value?.length ?? 0) >= 200) return null
+  return summary
+})
 
 // "Zu Kalender hinzufügen" (Gerichtsinformationen sidebar) — null while the
 // Versteigerungstermin isn't a parseable timestamp (announcement-only listings).
@@ -304,6 +312,14 @@ useHead(() => ({
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.livingArea') }}</dt>
                 <dd class="text-sm font-medium tabular-nums">{{ formatArea(a.extraction.livingAreaSqm) }}</dd>
               </div>
+              <div v-if="a.extraction?.yearBuilt != null">
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.yearBuilt') }}</dt>
+                <dd class="text-sm font-medium tabular-nums">{{ a.extraction.yearBuilt }}</dd>
+              </div>
+              <div v-if="a.extraction?.lastRenovationYear != null">
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.lastRenovationYear') }}</dt>
+                <dd class="text-sm font-medium tabular-nums">{{ a.extraction.lastRenovationYear }}</dd>
+              </div>
               <div v-if="a.extraction?.rooms != null">
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.rooms') }}</dt>
                 <dd class="text-sm font-medium">{{ a.extraction.rooms }}</dd>
@@ -340,17 +356,24 @@ useHead(() => ({
             <p v-if="a.extraction?.biddingNotes" class="mt-1 text-xs text-muted-foreground">
               {{ $t('objektDetail.biddingNotes', { note: a.extraction.biddingNotes }) }}
             </p>
+            <p v-if="a.extraction?.renovationNotes" class="mt-1 text-xs text-muted-foreground">
+              {{ $t('objektDetail.renovationNotes', { note: a.extraction.renovationNotes }) }}
+            </p>
           </DetailSectionCard>
 
           <DetailSectionCard :title="$t('objektDetail.grundbuchTitle')">
             <PremiumFeatureLock :rows="4" />
           </DetailSectionCard>
 
-          <DetailSectionCard v-if="displayDescription" :title="$t('objektDetail.description')">
+          <DetailSectionCard v-if="displayDescription || gutachtenSummary" :title="$t('objektDetail.description')">
             <template v-if="descriptionTranslated" #subtitle>{{ $t('objektDetail.autoTranslatedHint') }}</template>
-            <p class="whitespace-pre-line text-sm text-foreground/90 leading-relaxed">
+            <p v-if="displayDescription" class="whitespace-pre-line text-sm text-foreground/90 leading-relaxed">
               {{ displayDescription }}
             </p>
+            <div v-if="gutachtenSummary" class="mt-4 space-y-1" :class="{ 'pt-4 border-t': displayDescription }">
+              <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.gutachtenSummaryTitle') }}</p>
+              <p class="whitespace-pre-line text-sm text-foreground/90 leading-relaxed">{{ gutachtenSummary }}</p>
+            </div>
           </DetailSectionCard>
 
           <LawyerContact :platform="a.platform" :external-id="a.externalId" :country="a.country" />
@@ -374,6 +397,25 @@ useHead(() => ({
           </DetailSectionCard>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <DetailSectionCard v-if="a.extraction?.insights?.defects?.length" :title="$t('objektDetail.defectsTitle')">
+              <ul class="list-disc list-inside space-y-1 text-sm text-foreground/90">
+                <li v-for="(defect, i) in a.extraction.insights.defects" :key="i">{{ defect }}</li>
+              </ul>
+            </DetailSectionCard>
+            <DetailSectionCard v-if="a.extraction?.insights?.encumbrances?.length" :title="$t('objektDetail.encumbrancesTitle')">
+              <ul class="list-disc list-inside space-y-1 text-sm text-foreground/90">
+                <li v-for="(encumbrance, i) in a.extraction.insights.encumbrances" :key="i">{{ encumbrance }}</li>
+              </ul>
+            </DetailSectionCard>
+            <DetailSectionCard v-if="a.extraction?.insights?.landValueEurPerSqm != null" :title="$t('objektDetail.landValueTitle')">
+              <p class="text-sm font-medium tabular-nums">{{ formatLandValue(a.extraction.insights.landValueEurPerSqm) }}</p>
+            </DetailSectionCard>
+            <DetailSectionCard v-if="a.extraction?.insights?.construction" :title="$t('objektDetail.constructionTitle')">
+              <p class="whitespace-pre-line text-sm text-foreground/90 leading-relaxed">{{ a.extraction.insights.construction }}</p>
+            </DetailSectionCard>
+            <DetailSectionCard v-if="a.extraction?.insights?.locationCharacter" :title="$t('objektDetail.neighborhoodCharacter')">
+              <p class="whitespace-pre-line text-sm text-foreground/90 leading-relaxed">{{ a.extraction.insights.locationCharacter }}</p>
+            </DetailSectionCard>
             <DetailSectionCard v-for="section in LOCKED_SECTIONS" :key="section.key" :title="$t(section.titleKey)">
               <PremiumFeatureLock :rows="section.rows" />
             </DetailSectionCard>

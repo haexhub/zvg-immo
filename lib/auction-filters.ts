@@ -38,6 +38,10 @@ export interface AuctionFilters {
   landMax: number | null
   livMin: number | null
   livMax: number | null
+  yearBuiltMin: number | null
+  yearBuiltMax: number | null
+  renovationYearMin: number | null
+  renovationYearMax: number | null
 }
 
 /** Restricts to the selected countries/regions only. Used both as the base
@@ -99,6 +103,18 @@ export function filterAuctions<T extends Auction>(items: T[], filters: AuctionFi
       if (v == null) return false
       if (filters.livMin != null && v < filters.livMin) return false
       if (filters.livMax != null && v > filters.livMax) return false
+    }
+    if (filters.yearBuiltMin != null || filters.yearBuiltMax != null) {
+      const v = a.extraction?.yearBuilt ?? null
+      if (v == null) return false
+      if (filters.yearBuiltMin != null && v < filters.yearBuiltMin) return false
+      if (filters.yearBuiltMax != null && v > filters.yearBuiltMax) return false
+    }
+    if (filters.renovationYearMin != null || filters.renovationYearMax != null) {
+      const v = a.extraction?.lastRenovationYear ?? null
+      if (v == null) return false
+      if (filters.renovationYearMin != null && v < filters.renovationYearMin) return false
+      if (filters.renovationYearMax != null && v > filters.renovationYearMax) return false
     }
     if (!q) return true
     const hay = `${a.caseNumber} ${a.authority} ${a.title ?? ''} ${a.address ?? ''} ${a.description ?? ''}`.toLowerCase()
