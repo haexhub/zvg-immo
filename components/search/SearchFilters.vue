@@ -31,6 +31,10 @@ const landAreaMin = defineModel<number | null>('landAreaMin', { required: true }
 const landAreaMax = defineModel<number | null>('landAreaMax', { required: true })
 const livingAreaMin = defineModel<number | null>('livingAreaMin', { required: true })
 const livingAreaMax = defineModel<number | null>('livingAreaMax', { required: true })
+const yearBuiltMin = defineModel<number | null>('yearBuiltMin', { required: true })
+const yearBuiltMax = defineModel<number | null>('yearBuiltMax', { required: true })
+const renovationYearMin = defineModel<number | null>('renovationYearMin', { required: true })
+const renovationYearMax = defineModel<number | null>('renovationYearMax', { required: true })
 const categoryFilter = defineModel<string>('categoryFilter', { required: true })
 const conditionFilter = defineModel<string>('conditionFilter', { required: true })
 const featuresFilter = defineModel<string[]>('featuresFilter', { required: true })
@@ -149,6 +153,24 @@ const priceBuckets = computed(() => [
         <Input v-model.number="livingAreaMin" type="number" min="0" step="10" :placeholder="$t('filters.from')" class="flex-1 min-w-0" />
         <span class="text-muted-foreground">–</span>
         <Input v-model.number="livingAreaMax" type="number" min="0" step="10" :placeholder="$t('filters.to')" class="flex-1 min-w-0" />
+      </div>
+    </div>
+
+    <div class="space-y-2">
+      <Label>{{ $t('filters.yearBuilt') }}</Label>
+      <div class="flex items-center gap-2">
+        <Input v-model.number="yearBuiltMin" type="number" min="1800" step="1" :placeholder="$t('filters.from')" class="flex-1 min-w-0" />
+        <span class="text-muted-foreground">–</span>
+        <Input v-model.number="yearBuiltMax" type="number" min="1800" step="1" :placeholder="$t('filters.to')" class="flex-1 min-w-0" />
+      </div>
+    </div>
+
+    <div class="space-y-2">
+      <Label>{{ $t('filters.renovationYear') }}</Label>
+      <div class="flex items-center gap-2">
+        <Input v-model.number="renovationYearMin" type="number" min="1800" step="1" :placeholder="$t('filters.from')" class="flex-1 min-w-0" />
+        <span class="text-muted-foreground">–</span>
+        <Input v-model.number="renovationYearMax" type="number" min="1800" step="1" :placeholder="$t('filters.to')" class="flex-1 min-w-0" />
       </div>
     </div>
 

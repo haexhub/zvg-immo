@@ -46,6 +46,10 @@ const BASE_FILTERS: AuctionFilters = {
   landMax: null,
   livMin: null,
   livMax: null,
+  yearBuiltMin: null,
+  yearBuiltMax: null,
+  renovationYearMin: null,
+  renovationYearMax: null,
 }
 
 describe('scopeByCountryRegion', () => {
@@ -163,6 +167,26 @@ describe('filterAuctions', () => {
       makeAuction({ externalId: '2', extraction: { propertyType: null, landAreaSqm: null, livingAreaSqm: 140, rooms: null, units: null, source: 'rules', confidence: 'high', at: '' } }),
     ]
     const result = filterAuctions(items, { ...BASE_FILTERS, livMin: 100 })
+    expect(result.map((a) => a.externalId)).toEqual(['2'])
+  })
+
+  it('filters by year built range, requiring extraction.yearBuilt once a bound is set', () => {
+    const items = [
+      makeAuction({ externalId: '1', extraction: { propertyType: null, landAreaSqm: null, livingAreaSqm: null, rooms: null, units: null, source: 'llm', confidence: 'low', yearBuilt: 1950, at: '' } }),
+      makeAuction({ externalId: '2', extraction: { propertyType: null, landAreaSqm: null, livingAreaSqm: null, rooms: null, units: null, source: 'llm', confidence: 'low', yearBuilt: 2010, at: '' } }),
+      makeAuction({ externalId: '3', extraction: { propertyType: null, landAreaSqm: null, livingAreaSqm: null, rooms: null, units: null, source: 'llm', confidence: 'low', yearBuilt: null, at: '' } }),
+      makeAuction({ externalId: '4', extraction: null }),
+    ]
+    const result = filterAuctions(items, { ...BASE_FILTERS, yearBuiltMin: 2000 })
+    expect(result.map((a) => a.externalId)).toEqual(['2'])
+  })
+
+  it('filters by renovation year range, requiring extraction.lastRenovationYear once a bound is set', () => {
+    const items = [
+      makeAuction({ externalId: '1', extraction: { propertyType: null, landAreaSqm: null, livingAreaSqm: null, rooms: null, units: null, source: 'llm', confidence: 'low', lastRenovationYear: 2005, at: '' } }),
+      makeAuction({ externalId: '2', extraction: { propertyType: null, landAreaSqm: null, livingAreaSqm: null, rooms: null, units: null, source: 'llm', confidence: 'low', lastRenovationYear: 2020, at: '' } }),
+    ]
+    const result = filterAuctions(items, { ...BASE_FILTERS, renovationYearMin: 2015 })
     expect(result.map((a) => a.externalId)).toEqual(['2'])
   })
 

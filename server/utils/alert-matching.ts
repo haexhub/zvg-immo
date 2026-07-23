@@ -73,6 +73,10 @@ export function toAuctionFilters(stored: Record<string, unknown>): AuctionFilter
     landMax: num('landMax'),
     livMin: num('livMin'),
     livMax: num('livMax'),
+    yearBuiltMin: num('yearBuiltMin'),
+    yearBuiltMax: num('yearBuiltMax'),
+    renovationYearMin: num('renovationYearMin'),
+    renovationYearMax: num('renovationYearMax'),
   }
 }
 
