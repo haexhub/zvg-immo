@@ -459,3 +459,16 @@ CREATE TABLE IF NOT EXISTS llm_batch_jobs (
 -- RLS ohne Policies (Default-Deny), gleiches Muster wie oben: server-intern,
 -- Backend-Zugriff läuft als Table-Owner und umgeht RLS ohnehin.
 ALTER TABLE llm_batch_jobs ENABLE ROW LEVEL SECURITY;
+
+-- app_settings: generischer Key/Value-Store für admin-konfigurierbare
+-- Dashboard-Settings ohne Redeploy (siehe
+-- docs/plans/2026-07-23-llm-max-output-tokens-config.md), erster Nutzer sind
+-- die LLM-Max-Output-Tokens-Limits (server/utils/app-settings.ts). Analog zu
+-- `lawyers`: RLS an, keine Policies — Server verbindet als Tabellenbesitzer
+-- und umgeht RLS ohnehin, PostgREST-anon/authenticated bleiben ausgesperrt.
+CREATE TABLE IF NOT EXISTS app_settings (
+  key         text PRIMARY KEY,
+  value       jsonb NOT NULL,
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE app_settings ENABLE ROW LEVEL SECURITY;

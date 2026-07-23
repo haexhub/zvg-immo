@@ -251,6 +251,19 @@
       "saving": "Saving …",
       "save": "Save",
       "cancel": "Cancel"
+    },
+    "llm": {
+      "title": "LLM configuration",
+      "description": "Max output tokens limit per use case — takes effect on the next LLM call, no redeploy needed.",
+      "extractionLabel": "Extraction",
+      "summaryLabel": "Summary",
+      "translationLabel": "Translation",
+      "loadError": "Configuration could not be loaded.",
+      "invalidValue": "Please enter a valid number for every field.",
+      "saveError": "Save failed.",
+      "saved": "Saved.",
+      "saving": "Saving …",
+      "save": "Save"
     }
   },
   "localeSwitcher": {

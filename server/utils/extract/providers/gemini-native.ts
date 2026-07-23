@@ -80,6 +80,10 @@ export class GeminiNativeProvider implements ExtractionProvider {
       generationConfig: {
         responseMimeType: 'application/json',
         responseSchema: toGeminiSchema(req.schema),
+        // Same fallback as the other two providers, for consistency —
+        // previously missing entirely, so config.maxTokens was silently
+        // ignored for this provider (see resolveLlmConfig()'s callers).
+        maxOutputTokens: this.config.maxTokens ?? 4096,
       },
     }
     const url = `${this.config.baseUrl.replace(/\/$/, '')}/v1beta/models/${model}:generateContent`

@@ -14,8 +14,9 @@ import { getPool } from '../utils/db'
 import { pickBestPdf, extractPdfTextFromBuffer } from '../utils/extract/pdf-text'
 import { renderPdfPagesJpeg } from '../utils/extract/pdf-render'
 import { extractByRules } from '../utils/extract/rules'
-import { extractByLlm, type LlmConfig, type LlmInput } from '../utils/extract/llm'
+import { extractByLlm, resolveLlmConfig, type LlmConfig, type LlmInput } from '../utils/extract/llm'
 import { isLlmBatchPending, submitGeminiBatch } from '../utils/extract/gemini-batch'
+import { DEFAULT_LLM_MAX_TOKENS, getLlmMaxTokens } from '../utils/app-settings'
 import { mergeLlmResult, type MergeInputFields } from '../utils/extract/merge-llm-result'
 import {
   applyExtractionToAuctions,
@@ -65,18 +66,15 @@ export interface ReprocessResult {
   llmCalls: number
 }
 
-function readLlmConfig(): LlmConfig | null {
+async function readLlmConfig(): Promise<LlmConfig | null> {
   const c = useRuntimeConfig().extractLlm as
     | { provider?: string; baseUrl?: string; apiKey?: string; model?: string; maxPerRun?: string }
     | undefined
-  if (!c?.baseUrl) return null
-  const provider = c.provider === 'claude-proxy' || c.provider === 'gemini-native' ? c.provider : 'openai-compatible'
-  return {
-    provider,
-    baseUrl: c.baseUrl,
-    apiKey: c.apiKey || undefined,
-    model: c.model || (provider === 'gemini-native' ? 'gemini-flash-latest' : 'claude-haiku-4-5'),
-  }
+  const db = getPool()
+  const maxTokens = db
+    ? await getLlmMaxTokens(db, 'extraction').catch(() => DEFAULT_LLM_MAX_TOKENS.extraction)
+    : DEFAULT_LLM_MAX_TOKENS.extraction
+  return resolveLlmConfig(c, { maxTokens })
 }
 
 function readMaxLlmPerRun(): number {
@@ -263,7 +261,7 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
 
   const candidates = await findCandidates(opts)
   const cache = await readExtractionCache()
-  const llmConfig = readLlmConfig()
+  const llmConfig = await readLlmConfig()
   const maxLlmPerRun = readMaxLlmPerRun()
   const at = new Date().toISOString()
   // Only meaningful with gemini-native — the only provider with a Batch API

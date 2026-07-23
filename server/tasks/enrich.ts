@@ -32,8 +32,10 @@ import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snap
 import { upsertCurrentAuctions } from '../utils/current-auctions'
 import { deriveMarketValueEur, getRates } from '../utils/exchange-rate'
 import { extractByRules } from '../utils/extract/rules'
-import { extractByLlm, type LlmConfig, type LlmInput, type PhotoCuration } from '../utils/extract/llm'
+import { extractByLlm, resolveLlmConfig, type LlmInput, type PhotoCuration } from '../utils/extract/llm'
 import { isLlmBatchPending, submitGeminiBatch } from '../utils/extract/gemini-batch'
+import { getPool } from '../utils/db'
+import { DEFAULT_LLM_MAX_TOKENS, getLlmMaxTokens } from '../utils/app-settings'
 import { mergeLlmResult } from '../utils/extract/merge-llm-result'
 import { downloadNativeImages } from '../utils/extract/native-images'
 import { extractPdfPhotos } from '../utils/extract/pdf-images'
@@ -94,18 +96,15 @@ function applyPhotoCuration(base: CuratedPhoto[], curation: PhotoCuration[]): Cu
   return out
 }
 
-function readLlmConfig(): LlmConfig | null {
+async function readLlmConfig(): Promise<ReturnType<typeof resolveLlmConfig>> {
   const c = useRuntimeConfig().extractLlm as
     | { provider?: string; baseUrl?: string; apiKey?: string; model?: string; maxPerRun?: string }
     | undefined
-  if (!c?.baseUrl) return null
-  const provider = c.provider === 'claude-proxy' || c.provider === 'gemini-native' ? c.provider : 'openai-compatible'
-  return {
-    provider,
-    baseUrl: c.baseUrl,
-    apiKey: c.apiKey || undefined,
-    model: c.model || (provider === 'gemini-native' ? 'gemini-flash-latest' : 'claude-haiku-4-5'),
-  }
+  const db = getPool()
+  const maxTokens = db
+    ? await getLlmMaxTokens(db, 'extraction').catch(() => DEFAULT_LLM_MAX_TOKENS.extraction)
+    : DEFAULT_LLM_MAX_TOKENS.extraction
+  return resolveLlmConfig(c, { maxTokens })
 }
 
 function readMaxLlmPerRun(): number {
@@ -146,7 +145,7 @@ async function runEnrich() {
     const cache = await readExtractionCache()
     const previousSnapshot = await readAuctionSnapshot()
     const byPlatform = new Map(platforms.map((p) => [p.id, p]))
-    const llmConfig = readLlmConfig()
+    const llmConfig = await readLlmConfig()
     const rates = await getRates()
 
     // Two independent reasons to enrich: no extraction yet, OR the previous
@@ -207,7 +206,7 @@ async function runEnrich() {
     const todo = interleaveByPlatform(eligible)
     const maxLlmPerRun = readMaxLlmPerRun()
     console.log(
-      `[enrich] crawled ${result.auctions.length}, ${todo.length} to (re)enrich · llm=${llmConfig ? llmConfig.model : 'off'} maxLlmPerRun=${maxLlmPerRun}`,
+      `[enrich] crawled ${result.auctions.length}, ${todo.length} to (re)enrich · llm=${llmConfig ? `${llmConfig.model} (maxTokens=${llmConfig.maxTokens})` : 'off'} maxLlmPerRun=${maxLlmPerRun}`,
     )
 
     let cached = 0
