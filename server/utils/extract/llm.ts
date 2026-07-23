@@ -25,9 +25,34 @@ export interface LlmInput {
 }
 
 export interface LlmConfig {
+  /** Which backend sends the extraction request. Only 'claude-proxy' exists
+   *  today; kept explicit so adding a provider (e.g. Gemini) is a config
+   *  change rather than a rewrite of extractByLlm's callers. */
+  provider?: 'claude-proxy'
   baseUrl: string
   model: string
   maxTokens?: number
+}
+
+type LlmContent =
+  | string
+  | Array<
+      | { type: 'text'; text: string }
+      | { type: 'image'; source: { type: 'base64'; media_type: 'image/jpeg'; data: string } }
+    >
+
+interface ExtractionRequest {
+  systemPrompt: string
+  schema: Record<string, unknown>
+  content: LlmContent
+}
+
+/** Narrow seam between prompt/schema building (provider-agnostic) and the
+ *  wire format a specific backend expects. Swapping or adding a provider
+ *  means writing a new implementation of this interface, not touching
+ *  buildPrompt/clampExtraction. */
+export interface ExtractionProvider {
+  extract(req: ExtractionRequest): Promise<Record<string, unknown> | null>
 }
 
 export interface ClampedExtraction {
@@ -194,6 +219,55 @@ function buildPrompt(input: LlmInput): string {
   return parts.join('\n\n')
 }
 
+/** Sends the request through haex-claude-proxy's Anthropic-compatible
+ *  `/v1/messages` endpoint, using a forced tool call to get JSON back. */
+class ClaudeProxyProvider implements ExtractionProvider {
+  constructor(private config: LlmConfig) {}
+
+  async extract(req: ExtractionRequest): Promise<Record<string, unknown> | null> {
+    const body = {
+      model: this.config.model,
+      max_tokens: this.config.maxTokens ?? 512,
+      system: req.systemPrompt,
+      messages: [{ role: 'user', content: req.content }],
+      tools: [
+        {
+          name: 'final_result',
+          description: 'Gib die extrahierten Eckdaten zurück.',
+          input_schema: req.schema,
+        },
+      ],
+      tool_choice: { type: 'tool', name: 'final_result' },
+    }
+    let resp: unknown
+    try {
+      // Bound the request: the proxy spawns a `claude` subprocess per call, so a
+      // stuck spawn (or upstream stall) would keep this promise pending forever
+      // and — because the enrich task awaits every worker via Promise.all — block
+      // the whole run.
+      resp = await $fetch(`${this.config.baseUrl.replace(/\/$/, '')}/v1/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' },
+        body,
+        signal: AbortSignal.timeout(60_000),
+      })
+    } catch (err) {
+      console.warn(`[extract/llm] request failed: ${(err as Error).message}`)
+      return null
+    }
+    return parseExtractionResponse(resp)
+  }
+}
+
+function getProvider(config: LlmConfig): ExtractionProvider {
+  switch (config.provider ?? 'claude-proxy') {
+    case 'claude-proxy':
+      return new ClaudeProxyProvider(config)
+    default:
+      throw new Error(`Unknown extraction provider: ${config.provider}`)
+  }
+}
+
 /** Returns null on empty input, request failure, or unparseable response. */
 export async function extractByLlm(
   input: LlmInput,
@@ -201,7 +275,7 @@ export async function extractByLlm(
 ): Promise<ClampedExtraction | null> {
   const prompt = buildPrompt(input)
   if (!prompt.trim() && !input.pdfImageBase64) return null
-  const content = input.pdfImageBase64
+  const content: LlmContent = input.pdfImageBase64
     ? [
         { type: 'text', text: prompt },
         {
@@ -210,36 +284,10 @@ export async function extractByLlm(
         },
       ]
     : prompt
-  const body = {
-    model: config.model,
-    max_tokens: config.maxTokens ?? 512,
-    system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content }],
-    tools: [
-      {
-        name: 'final_result',
-        description: 'Gib die extrahierten Eckdaten zurück.',
-        input_schema: EXTRACTION_SCHEMA,
-      },
-    ],
-    tool_choice: { type: 'tool', name: 'final_result' },
-  }
-  let resp: unknown
-  try {
-    // Bound the request: the proxy spawns a `claude` subprocess per call, so a
-    // stuck spawn (or upstream stall) would keep this promise pending forever
-    // and — because the enrich task awaits every worker via Promise.all — block
-    // the whole run.
-    resp = await $fetch(`${config.baseUrl.replace(/\/$/, '')}/v1/messages`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' },
-      body,
-      signal: AbortSignal.timeout(60_000),
-    })
-  } catch (err) {
-    console.warn(`[extract/llm] request failed: ${(err as Error).message}`)
-    return null
-  }
-  const raw = parseExtractionResponse(resp)
+  const raw = await getProvider(config).extract({
+    systemPrompt: SYSTEM_PROMPT,
+    schema: EXTRACTION_SCHEMA,
+    content,
+  })
   return raw ? clampExtraction(raw) : null
 }
