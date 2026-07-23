@@ -32,7 +32,10 @@ export class ClaudeProxyProvider implements ExtractionProvider {
   async extract(req: ExtractionRequest): Promise<Record<string, unknown> | null> {
     const body = {
       model: this.config.model,
-      max_tokens: this.config.maxTokens ?? 512,
+      // Raised from 512: the response now also carries `insights` (up to two
+      // 20-item string lists plus free text) and a per-candidate-photo
+      // curation array — the old budget truncated the larger JSON payload.
+      max_tokens: this.config.maxTokens ?? 4096,
       system: req.systemPrompt,
       messages: [{ role: 'user', content: toClaudeContent(req.parts) }],
       tools: [

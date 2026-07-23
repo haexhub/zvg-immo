@@ -141,6 +141,7 @@ describe('reprocessAuction', () => {
       lastRenovationYear: null,
       renovationNotes: null,
       insights: null,
+      photoCuration: [],
     }
     vi.mocked(extractByLlm).mockResolvedValue(llmResult)
 
@@ -374,6 +375,7 @@ describe('runReprocess', () => {
       lastRenovationYear: null,
       renovationNotes: null,
       insights: null,
+      photoCuration: [],
     })
     vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { baseUrl: 'http://proxy', maxPerRun: '1' } }))
 

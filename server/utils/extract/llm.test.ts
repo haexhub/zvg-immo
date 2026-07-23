@@ -50,6 +50,7 @@ describe('clampExtraction', () => {
       lastRenovationYear: null,
       renovationNotes: null,
       insights: null,
+      photoCuration: [],
     })
   })
 
@@ -79,6 +80,7 @@ describe('clampExtraction', () => {
       lastRenovationYear: null,
       renovationNotes: null,
       insights: null,
+      photoCuration: [],
     })
   })
 
@@ -183,6 +185,38 @@ describe('clampExtraction', () => {
         .insights!.landValueEurPerSqm,
     ).toBeNull()
   })
+
+  it('defaults photoCuration to an empty array when missing or malformed', () => {
+    expect(clampExtraction({}).photoCuration).toEqual([])
+    expect(clampExtraction({ photos: 'nope' as unknown as object }).photoCuration).toEqual([])
+  })
+
+  it('clamps photo curation entries: keeps valid ones, trims caption, falls back category/isPropertyPhoto', () => {
+    const r = clampExtraction({
+      photos: [
+        { photoIndex: 0, category: 'aussen', caption: '  Frontansicht  ', isPropertyPhoto: true },
+        { photoIndex: 1, category: 'lageplan', caption: null, isPropertyPhoto: false },
+        { photoIndex: 2, category: 'unknown-category', caption: 'x'.repeat(300), isPropertyPhoto: 'yes' },
+      ],
+    })
+    expect(r.photoCuration).toEqual([
+      { photoIndex: 0, category: 'aussen', caption: 'Frontansicht', isPropertyPhoto: true },
+      { photoIndex: 1, category: 'lageplan', caption: null, isPropertyPhoto: false },
+      { photoIndex: 2, category: 'sonstiges', caption: 'x'.repeat(200), isPropertyPhoto: true },
+    ])
+  })
+
+  it('drops photo curation entries with a missing or negative photoIndex', () => {
+    expect(
+      clampExtraction({
+        photos: [
+          { category: 'aussen', caption: null, isPropertyPhoto: true },
+          { photoIndex: -1, category: 'aussen', caption: null, isPropertyPhoto: true },
+          { photoIndex: 1.5, category: 'aussen', caption: null, isPropertyPhoto: true },
+        ],
+      }).photoCuration,
+    ).toEqual([])
+  })
 })
 
 describe('buildParts', () => {
@@ -224,6 +258,50 @@ describe('buildParts', () => {
     expect(parts).toEqual([
       { type: 'text', text: 'Objektbezeichnung: Haus' },
       { type: 'document', mimeType: 'application/pdf', data: 'base64pdfbytes' },
+    ])
+  })
+
+  it('interleaves an index-labeled text part before each candidate image', () => {
+    const parts = buildParts({
+      title: 'Haus',
+      description: null,
+      candidateImages: [
+        { label: 'Seite 3, Bild 1', mimeType: 'image/jpeg', data: 'aaa' },
+        { label: 'Seite 4, Bild 1', mimeType: 'image/png', data: 'bbb' },
+      ],
+    })
+    expect(parts).toEqual([
+      {
+        type: 'text',
+        text:
+          'Objektbezeichnung: Haus\n\nEs folgen 2 Kandidatenbilder aus dem Dokument, jeweils mit ' +
+          'vorangestelltem "Bild N:"-Label. Kuratiere jedes Bild im photos-Array (siehe Schema).',
+      },
+      { type: 'text', text: 'Bild 0: Seite 3, Bild 1' },
+      { type: 'image', mimeType: 'image/jpeg', data: 'aaa' },
+      { type: 'text', text: 'Bild 1: Seite 4, Bild 1' },
+      { type: 'image', mimeType: 'image/png', data: 'bbb' },
+    ])
+  })
+
+  it('places candidateImages after pdfPageImages when both are present', () => {
+    const parts = buildParts({
+      title: null,
+      description: null,
+      pdfPageImages: ['scan-page'],
+      candidateImages: [{ label: 'Foto 1', mimeType: 'image/jpeg', data: 'photo' }],
+    })
+    expect(parts).toEqual([
+      {
+        type: 'text',
+        text:
+          'Das Gutachten/Exposé liegt als eingescanntes Bild vor (siehe angehängte Bilder) — lies die Eckdaten daraus ab.\n\n' +
+          'Es folgen 1 Kandidatenbilder aus dem Dokument, jeweils mit vorangestelltem "Bild N:"-Label. ' +
+          'Kuratiere jedes Bild im photos-Array (siehe Schema).',
+      },
+      { type: 'image', mimeType: 'image/jpeg', data: 'scan-page' },
+      { type: 'text', text: 'Bild 0: Foto 1' },
+      { type: 'image', mimeType: 'image/jpeg', data: 'photo' },
     ])
   })
 })
