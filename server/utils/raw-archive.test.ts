@@ -13,6 +13,7 @@ const {
   archiveAuction,
   archiveBlob,
   archiveDocument,
+  archiveDocumentText,
   canonicalizeAuction,
   recordCapture,
   sha256Hex,
@@ -314,6 +315,40 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     const captureInserts = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO raw_captures'))
     expect(captureInserts).toHaveLength(2)
     expect(captureInserts[0]![1]).toContain('document')
+  })
+
+  it('archiveDocumentText: gzips the text and records a document_text capture', async () => {
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+
+    await archiveDocumentText(
+      'Gutachten-Volltext ...',
+      { platform: 'test', country: 'de', externalId: '1' },
+      'https://example.test/appraisal.pdf',
+      '2026-07-19T00:00:00.000Z',
+    )
+
+    expect(pool.blobs.size).toBe(1)
+    const row = [...pool.blobs.values()][0]!
+    expect(row.content_type).toBe('text/plain+gzip')
+    const stored = await readFile(join(outboxDir, row.s3_key))
+    expect(gunzipSync(stored).toString('utf8')).toBe('Gutachten-Volltext ...')
+
+    const captureInserts = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO raw_captures'))
+    expect(captureInserts).toHaveLength(1)
+    expect(captureInserts[0]![1]).toContain('document_text')
+  })
+
+  it('archiveDocumentText no-ops without a DB pool', async () => {
+    vi.mocked(getPool).mockReturnValue(null)
+    await expect(
+      archiveDocumentText(
+        'text',
+        { platform: 'test', country: 'de', externalId: '1' },
+        'https://example.test/appraisal.pdf',
+        '2026-07-19T00:00:00.000Z',
+      ),
+    ).resolves.toBeUndefined()
   })
 
   it('archiveDocument no-ops without a DB pool', async () => {

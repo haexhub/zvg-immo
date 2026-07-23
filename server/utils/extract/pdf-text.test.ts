@@ -12,6 +12,25 @@ const { pdfToText } = await import('./pdf-text')
 
 const CACHE_DIR = join(process.cwd(), '.cache_zvg', 'pdftext')
 const FAKE_PDF = Buffer.from('%PDF-1.4\n%%EOF')
+// Missing a real xref table, but poppler's recovery mode reads it anyway and
+// pdftotext prints "Hallo Welt" — unlike FAKE_PDF above (which pdftotext exits
+// non-zero on), this exercises the archiveDocumentText path below.
+const PDF_WITH_TEXT = Buffer.from(
+  [
+    '%PDF-1.4',
+    '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj',
+    '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj',
+    '3 0 obj<</Type/Page/Parent 2 0 R/Resources<</Font<</F1 4 0 R>>>>/MediaBox[0 0 200 200]/Contents 5 0 R>>endobj',
+    '4 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj',
+    '5 0 obj<</Length 44>>',
+    'stream',
+    'BT /F1 24 Tf 10 100 Td (Hallo Welt) Tj ET',
+    'endstream',
+    'endobj',
+    'trailer<</Size 6/Root 1 0 R>>',
+    '%%EOF',
+  ].join('\n'),
+)
 
 async function cleanupTextCache(url: string): Promise<void> {
   const key = createHash('sha1').update(url).digest('hex')
@@ -99,6 +118,47 @@ describe('pdfToText document archiving', () => {
 
     expect(pool.blobs.size).toBe(0)
     expect(pool.captures).toHaveLength(0)
+
+    await cleanupTextCache(url)
+  })
+
+  it('archives the extracted text as a document_text capture alongside the raw document', async () => {
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => new Response(PDF_WITH_TEXT, { status: 200 })))
+
+    const url = 'https://example.test/appraisal-text.pdf'
+    await cleanupTextCache(url)
+
+    const text = await pdfToText(url, {
+      identity: { platform: 'de', country: 'de', externalId: '1' },
+      capturedAt: '2026-07-19T00:00:00.000Z',
+    })
+
+    expect(text).toContain('Hallo Welt')
+    expect(pool.blobs.size).toBe(2) // one 'document' (raw PDF), one 'document_text'
+    expect(pool.captures).toHaveLength(2)
+    expect(pool.captures.map((c) => c.kind).sort()).toEqual(['document', 'document_text'])
+    const textCapture = pool.captures.find((c) => c.kind === 'document_text')
+    expect(textCapture).toMatchObject({ platform: 'de', externalId: '1', sourceUrl: url })
+
+    await cleanupTextCache(url)
+  })
+
+  it('does not archive document_text when pdftotext yields no usable output', async () => {
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    // FAKE_PDF (no trailer) makes pdftotext exit non-zero, so stdout is null.
+
+    const url = 'https://example.test/appraisal-blank.pdf'
+    await cleanupTextCache(url)
+
+    await pdfToText(url, {
+      identity: { platform: 'de', country: 'de', externalId: '1' },
+      capturedAt: '2026-07-19T00:00:00.000Z',
+    })
+
+    expect(pool.captures.map((c) => c.kind)).not.toContain('document_text')
 
     await cleanupTextCache(url)
   })

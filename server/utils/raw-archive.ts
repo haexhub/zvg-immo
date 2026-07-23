@@ -22,18 +22,20 @@ export type BlobContentType =
   | 'text/html'
   | 'application/pdf'
   | 'application/vnd.docx'
+  | 'text/plain'
 
-export type CaptureKind = 'auction' | 'document' | 'detail_html'
+export type CaptureKind = 'auction' | 'document' | 'detail_html' | 'document_text'
 
 // Text content is gzipped before storage (compresses well); PDF/DOCX are
 // already compressed, stored as-is. `content_type` in raw_blobs records the
 // stored (post-compression) type.
-const TEXT_TYPES = new Set<BlobContentType>(['application/json', 'text/html'])
+const TEXT_TYPES = new Set<BlobContentType>(['application/json', 'text/html', 'text/plain'])
 const EXT: Record<BlobContentType, string> = {
   'application/json': '.json',
   'text/html': '.html',
   'application/pdf': '.pdf',
   'application/vnd.docx': '.docx',
+  'text/plain': '.txt',
 }
 
 function outboxDir(): string {
@@ -223,6 +225,34 @@ export async function archiveDocument(
   await recordCapture({
     capturedAt,
     kind: 'document',
+    platform: identity.platform,
+    country: identity.country,
+    externalId: identity.externalId,
+    caseNumber: identity.caseNumber ?? null,
+    authority: identity.authority ?? null,
+    contentHash: hash,
+    sourceUrl,
+  })
+}
+
+/**
+ * Archives a document's canonically extracted text (pdftotext/OCR output,
+ * `kind='document_text'`) — the Stufe-1-Normalisierung output described in
+ * docs/plans/2026-07-22-de-crawler-photos-cards-plan.md (WP-B). Lets
+ * reprocessing read already-extracted text instead of re-running
+ * pdftotext/OCR on the raw PDF bytes. Never throws.
+ */
+export async function archiveDocumentText(
+  text: string,
+  identity: DocumentIdentity,
+  sourceUrl: string,
+  capturedAt: string,
+): Promise<void> {
+  const hash = await archiveBlob(Buffer.from(text, 'utf8'), 'text/plain', identity.country)
+  if (!hash) return
+  await recordCapture({
+    capturedAt,
+    kind: 'document_text',
     platform: identity.platform,
     country: identity.country,
     externalId: identity.externalId,
