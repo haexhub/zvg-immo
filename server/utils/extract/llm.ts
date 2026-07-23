@@ -13,7 +13,8 @@
 import { PROPERTY_TYPES, type PropertyType } from '~/lib/property-type'
 import { CONDITIONS, type Condition } from '~/lib/condition'
 import { FEATURES, type Feature } from '~/lib/features'
-import type { AuctionInsights } from '~/types/auction'
+import { PHOTO_CATEGORIES } from '~/lib/photo'
+import type { AuctionInsights, PhotoCategory } from '~/types/auction'
 import { ClaudeProxyProvider } from './providers/claude-proxy'
 import { OpenAiCompatibleProvider } from './providers/openai-compatible'
 import { GeminiNativeProvider } from './providers/gemini-native'
@@ -104,6 +105,21 @@ export interface ClampedExtraction {
   renovationNotes: string | null
   /** Richer assessment from the appraisal, or null when nothing stood out. */
   insights: AuctionInsights | null
+  /** LLM's curation of the `candidateImages` sent with the request, referenced
+   *  by index (not filename — the model never sees real filenames). Empty
+   *  when no candidateImages were sent, or none survived clamping. Callers
+   *  join this back to the actual candidate file list (by `photoIndex`) to
+   *  produce the filename-based `CuratedPhoto[]` stored on `AuctionExtraction`. */
+  photoCuration: PhotoCuration[]
+}
+
+/** One LLM-curated candidate image, referenced by its position in the
+ *  `candidateImages` list that was sent (see `LlmInput.candidateImages`). */
+export interface PhotoCuration {
+  photoIndex: number
+  category: PhotoCategory
+  caption: string | null
+  isPropertyPhoto: boolean
 }
 
 // Bound PDF prose so a 40-page Gutachten doesn't blow the token budget. The
@@ -131,7 +147,22 @@ const SYSTEM_PROMPT =
   '"Sanierungsstau" → sanierungsbeduerftig, "renovierungsbedürftig" → renovierungsbeduerftig), sonst null. ' +
   'Gib eine Liste erkannter Ausstattungsmerkmale zurück — nur Merkmale, die explizit ' +
   'im Text genannt werden (Negation beachten, z.B. "kein Balkon" nicht aufnehmen), ' +
-  'sonst eine leere Liste. Niemals raten.'
+  'sonst eine leere Liste. Niemals raten. ' +
+  'Gib das Baujahr zurück, falls im Text eindeutig genannt, sonst null. Gib das Jahr der ' +
+  'letzten Sanierung/Modernisierung zurück, falls eindeutig genannt, sonst null, und in ' +
+  'renovationNotes einen kurzen Freitext-Hinweis dazu, sonst null. ' +
+  'Extrahiere zusätzlich, sofern im Gutachten enthalten, eine reichhaltigere Einschätzung ' +
+  '(insights): defects (Mängel/Schäden/Sanierungsstau), encumbrances (Belastungen wie ' +
+  'Wohnrecht/Nießbrauch/Dienstbarkeiten), landValueEurPerSqm (Bodenrichtwert in EUR/m²), ' +
+  'construction (Bauweise/Konstruktion), locationCharacter (Lagecharakter) und summary ' +
+  '(kurze Gesamteinschätzung, 2-4 Sätze). Gib insights insgesamt als null zurück, wenn das ' +
+  'Gutachten keine dieser Angaben enthält. Niemals raten. ' +
+  'Falls Kandidatenbilder mitgesendet werden (jeweils mit vorangestelltem "Bild N:"-Label), ' +
+  'kuratiere jedes Bild im photos-Array: photoIndex (der Index aus dem Label), category ' +
+  '(aussen/innen/grundriss/lageplan/sonstiges), caption (kurze Bildunterschrift oder null) ' +
+  'und isPropertyPhoto (true nur bei einem echten Objektfoto, also Außen-/Innenansicht der ' +
+  'Immobilie; false bei Lageplan, Grundriss, Wappen, Deckblatt oder Textseite). Wurden keine ' +
+  'Bilder mitgesendet, gib ein leeres photos-Array zurück.'
 
 const EXTRACTION_SCHEMA = {
   type: 'object',
@@ -164,6 +195,71 @@ const EXTRACTION_SCHEMA = {
       items: { type: 'string', enum: FEATURES },
       description: 'Erkannte Ausstattungsmerkmale, leer wenn keine eindeutig genannt.',
     },
+    yearBuilt: { type: ['integer', 'null'], description: 'Baujahr, oder null wenn unklar.' },
+    lastRenovationYear: {
+      type: ['integer', 'null'],
+      description: 'Jahr der letzten Sanierung/Modernisierung, oder null wenn unklar.',
+    },
+    renovationNotes: {
+      type: ['string', 'null'],
+      description: 'Kurzer Hinweis zu Sanierung/Modernisierung, oder null.',
+    },
+    insights: {
+      type: ['object', 'null'],
+      additionalProperties: false,
+      description: 'Reichhaltigere Einschätzung aus dem Gutachten, oder null wenn nichts Nennenswertes.',
+      properties: {
+        defects: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Mängel/Schäden/Sanierungsstau, leer wenn keine genannt.',
+        },
+        encumbrances: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Belastungen (Wohnrecht, Nießbrauch, Dienstbarkeiten, ...), leer wenn keine genannt.',
+        },
+        landValueEurPerSqm: {
+          type: ['number', 'null'],
+          description: 'Bodenrichtwert in EUR/m², oder null.',
+        },
+        construction: { type: ['string', 'null'], description: 'Bauweise/Konstruktion, oder null.' },
+        locationCharacter: { type: ['string', 'null'], description: 'Lagecharakter, oder null.' },
+        summary: { type: ['string', 'null'], description: 'Kurze Gesamteinschätzung (2-4 Sätze), oder null.' },
+      },
+      required: [
+        'defects',
+        'encumbrances',
+        'landValueEurPerSqm',
+        'construction',
+        'locationCharacter',
+        'summary',
+      ],
+    },
+    photos: {
+      type: 'array',
+      description:
+        'Kuratierung der mitgesendeten Kandidatenbilder ("Bild N:"-Label), höchstens ein Eintrag pro Bild; leeres Array wenn keine Bilder mitgesendet wurden.',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          photoIndex: { type: 'integer', description: '0-basierter Index des Bildes (siehe "Bild N:"-Label).' },
+          category: {
+            type: 'string',
+            enum: PHOTO_CATEGORIES,
+            description: 'Kategorie des Bildes.',
+          },
+          caption: { type: ['string', 'null'], description: 'Kurze Bildunterschrift, oder null.' },
+          isPropertyPhoto: {
+            type: 'boolean',
+            description:
+              'true bei echtem Objektfoto (Außen-/Innenansicht), false bei Lageplan/Grundriss/Wappen/Deckblatt/Textseite.',
+          },
+        },
+        required: ['photoIndex', 'category', 'caption', 'isPropertyPhoto'],
+      },
+    },
   },
   required: [
     'propertyType',
@@ -175,6 +271,11 @@ const EXTRACTION_SCHEMA = {
     'biddingNotes',
     'condition',
     'features',
+    'yearBuilt',
+    'lastRenovationYear',
+    'renovationNotes',
+    'insights',
+    'photos',
   ],
 } as const
 
@@ -195,6 +296,7 @@ export function parseExtractionResponse(resp: unknown): Record<string, unknown> 
 const VALID_TYPES = new Set<string>(PROPERTY_TYPES)
 const VALID_CONDITIONS = new Set<string>(CONDITIONS)
 const VALID_FEATURES = new Set<string>(FEATURES)
+const VALID_PHOTO_CATEGORIES = new Set<string>(PHOTO_CATEGORIES)
 
 function plausibleArea(v: unknown, max: number): number | null {
   return typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= max ? v : null
@@ -249,6 +351,32 @@ function clampInsights(raw: unknown): AuctionInsights | null {
   return hasData ? insights : null
 }
 
+// Defensive against malformed LLM output: an entry with no valid photoIndex
+// is dropped rather than defaulted, since a wrong index would silently
+// mislabel an unrelated candidate image.
+function clampPhotoCuration(raw: unknown): PhotoCuration[] {
+  if (!Array.isArray(raw)) return []
+  const out: PhotoCuration[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const r = item as Record<string, unknown>
+    const photoIndex = Number.isInteger(r.photoIndex) && (r.photoIndex as number) >= 0
+      ? (r.photoIndex as number)
+      : null
+    if (photoIndex == null) continue
+    const category = typeof r.category === 'string' && VALID_PHOTO_CATEGORIES.has(r.category)
+      ? (r.category as PhotoCategory)
+      : 'sonstiges'
+    out.push({
+      photoIndex,
+      category,
+      caption: trimmedString(r.caption, 200),
+      isPropertyPhoto: typeof r.isPropertyPhoto === 'boolean' ? r.isPropertyPhoto : true,
+    })
+  }
+  return out
+}
+
 /**
  * Per-field plausibility bounds only — reject negatives, non-numbers and absurd
  * magnitudes, and unknown property types. No cross-field rules (a multi-storey
@@ -259,10 +387,7 @@ export function clampExtraction(raw: Record<string, unknown>): ClampedExtraction
     ? (raw.propertyType as PropertyType)
     : null
   const units = plausibleArea(raw.units, 10_000)
-  const biddingNotes =
-    typeof raw.biddingNotes === 'string' && raw.biddingNotes.trim()
-      ? raw.biddingNotes.trim().slice(0, 300)
-      : null
+  const biddingNotes = trimmedString(raw.biddingNotes, 300)
   const condition = typeof raw.condition === 'string' && VALID_CONDITIONS.has(raw.condition)
     ? (raw.condition as Condition)
     : null
@@ -286,6 +411,7 @@ export function clampExtraction(raw: Record<string, unknown>): ClampedExtraction
     lastRenovationYear: clampYear(raw.lastRenovationYear),
     renovationNotes: trimmedString(raw.renovationNotes, 300),
     insights: clampInsights(raw.insights),
+    photoCuration: clampPhotoCuration(raw.photos),
   }
 }
 
@@ -308,6 +434,12 @@ export function buildParts(input: LlmInput): ContentPart[] {
       'Das Gutachten/Exposé liegt als eingescanntes Bild vor (siehe angehängte Bilder) — lies die Eckdaten daraus ab.',
     )
   }
+  if (input.candidateImages?.length) {
+    text.push(
+      `Es folgen ${input.candidateImages.length} Kandidatenbilder aus dem Dokument, jeweils mit ` +
+        'vorangestelltem "Bild N:"-Label. Kuratiere jedes Bild im photos-Array (siehe Schema).',
+    )
+  }
 
   const parts: ContentPart[] = []
   if (text.length) parts.push({ type: 'text', text: text.join('\n\n') })
@@ -315,6 +447,15 @@ export function buildParts(input: LlmInput): ContentPart[] {
     parts.push({ type: 'document', mimeType: 'application/pdf', data: input.pdfBytes! })
   } else if (input.pdfPageImages?.length) {
     for (const data of input.pdfPageImages) parts.push({ type: 'image', mimeType: 'image/jpeg', data })
+  }
+  // Interleaved with an index label right before each image so the model can
+  // reliably report `photoIndex` back — a bare image sequence gives it
+  // nothing stable to reference.
+  if (input.candidateImages?.length) {
+    input.candidateImages.forEach((img, i) => {
+      parts.push({ type: 'text', text: `Bild ${i}: ${img.label}` })
+      parts.push({ type: 'image', mimeType: img.mimeType, data: img.data })
+    })
   }
   return parts
 }
