@@ -76,11 +76,12 @@ function makeFakePool() {
       return { rows: hit ? [hit] : [] }
     }
     if (sql.includes('INSERT INTO raw_captures')) {
-      const [, kind, platform, , externalId, , , contentHash] = params as [
+      const [, kind, platform, , , externalId, , , contentHash] = params as [
         string,
         string,
         string,
         string,
+        string | null,
         string,
         string | null,
         string | null,
@@ -287,6 +288,19 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     expect(captureInserts).toHaveLength(2)
   })
 
+  it('archiveAuction persists region directly on the capture row', async () => {
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+
+    await archiveAuction(auction({ region: 'Sachsen-Anhalt' }), '2026-07-19T00:00:00.000Z')
+
+    const [insertSql, insertParams] = pool.query.mock.calls.find(([sql]) =>
+      sql.includes('INSERT INTO raw_captures'),
+    )!
+    expect(insertSql).toContain('region')
+    expect(insertParams![4]).toBe('Sachsen-Anhalt')
+  })
+
   it('archiveDocument: same PDF referenced by two auctions dedups the blob but captures both', async () => {
     const pool = makeFakePool()
     vi.mocked(getPool).mockReturnValue(pool as never)
@@ -295,7 +309,14 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     await archiveDocument(
       pdfBytes,
       'application/pdf',
-      { platform: 'test', country: 'de', externalId: '1', caseNumber: '1 K 1/26', authority: 'AG Test' },
+      {
+        platform: 'test',
+        country: 'de',
+        region: 'Sachsen',
+        externalId: '1',
+        caseNumber: '1 K 1/26',
+        authority: 'AG Test',
+      },
       'https://example.test/appraisal.pdf',
       '2026-07-19T00:00:00.000Z',
     )
@@ -315,6 +336,8 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     const captureInserts = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO raw_captures'))
     expect(captureInserts).toHaveLength(2)
     expect(captureInserts[0]![1]).toContain('document')
+    expect(captureInserts[0]![1]![4]).toBe('Sachsen') // region forwarded from DocumentIdentity
+    expect(captureInserts[1]![1]![4]).toBeNull() // omitted region -> null, not undefined/crash
   })
 
   it('archiveDocumentText: gzips the text and records a document_text capture', async () => {

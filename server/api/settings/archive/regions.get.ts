@@ -1,9 +1,12 @@
-// Level 2 of the Roh-Archiv browser: regions within a country. `auctions`
-// carries `region` (raw_captures does not), joined on the natural key
-// `(platform, external_id)` — no FK, see
-// docs/plans/2026-07-18-raw-archive-g1-design.md. LEFT JOIN because a capture
-// can exist before/without a matching `auctions` row; those fall into the
-// `'—'` bucket rather than being silently dropped.
+// Level 2 of the Roh-Archiv browser: regions within a country. `region` is
+// stored directly on raw_captures at capture time (see raw-archive.ts) — it
+// used to be joined live from `auctions`, but that table is a volatile
+// current-state mirror rebuilt from scratch on every enrich run, so a single
+// failed crawl/upsert for a Bundesland could make its entire capture history
+// vanish into the `'—'` bucket. Older rows captured before region was added
+// are backfilled from `auctions` once (schema.sql), then null forever after
+// that if nothing new is ever captured for that identity — those still fall
+// into `'—'`.
 
 import { getPool } from '../../../utils/db'
 
@@ -26,11 +29,10 @@ export default defineEventHandler(async (event): Promise<ArchiveRegionRow[]> => 
   }
 
   const { rows } = await db.query<{ region: string; count: string; last_captured_at: string }>(
-    `SELECT COALESCE(a.region, $2) AS region, count(*) AS count, max(rc.captured_at) AS last_captured_at
-     FROM raw_captures rc
-     LEFT JOIN auctions a ON a.platform = rc.platform AND a.external_id = rc.external_id
-     WHERE rc.country = $1
-     GROUP BY COALESCE(a.region, $2)
+    `SELECT COALESCE(NULLIF(region, ''), $2) AS region, count(*) AS count, max(captured_at) AS last_captured_at
+     FROM raw_captures
+     WHERE country = $1
+     GROUP BY COALESCE(NULLIF(region, ''), $2)
      ORDER BY region`,
     [country, UNKNOWN_REGION],
   )

@@ -155,6 +155,7 @@ export interface CaptureInput {
   kind: CaptureKind
   platform: string
   country: string
+  region?: string | null
   externalId: string
   caseNumber?: string | null
   authority?: string | null
@@ -182,13 +183,14 @@ export async function recordCapture(input: CaptureInput): Promise<void> {
 
     await db.query(
       `INSERT INTO raw_captures
-         (captured_at, kind, platform, country, external_id, case_number, authority, content_hash, source_url)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+         (captured_at, kind, platform, country, region, external_id, case_number, authority, content_hash, source_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       [
         input.capturedAt,
         input.kind,
         input.platform,
         input.country,
+        input.region || null,
         input.externalId,
         input.caseNumber ?? null,
         input.authority ?? null,
@@ -204,6 +206,7 @@ export async function recordCapture(input: CaptureInput): Promise<void> {
 export interface DocumentIdentity {
   platform: string
   country: string
+  region?: string | null
   externalId: string
   caseNumber?: string | null
   authority?: string | null
@@ -230,6 +233,7 @@ export async function archiveDocument(
     kind: 'document',
     platform: identity.platform,
     country: identity.country,
+    region: identity.region ?? null,
     externalId: identity.externalId,
     caseNumber: identity.caseNumber ?? null,
     authority: identity.authority ?? null,
@@ -258,6 +262,7 @@ export async function archiveDocumentText(
     kind: 'document_text',
     platform: identity.platform,
     country: identity.country,
+    region: identity.region ?? null,
     externalId: identity.externalId,
     caseNumber: identity.caseNumber ?? null,
     authority: identity.authority ?? null,
@@ -286,6 +291,7 @@ export async function archiveAuction(auction: Auction, capturedAt: string): Prom
       kind: 'auction',
       platform: auction.platform,
       country: auction.country,
+      region: auction.region,
       externalId: auction.externalId,
       caseNumber: auction.caseNumber || null,
       authority: auction.authority || null,
