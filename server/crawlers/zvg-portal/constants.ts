@@ -10,9 +10,10 @@ export const COUNTRY = 'de'
  * through a single `land_abk` query parameter. Order matches the typical
  * Bundesland sort. The `code` is the upstream's `land_abk` value.
  *
- * Mecklenburg-Vorpommern is deliberately absent: its Amtsgerichte never opted
- * into this portal (land_abk=mv is selectable but returns zero results) — see
- * server/crawlers/mv-zvgcom for the portal MV actually publishes on.
+ * Mecklenburg-Vorpommern, Hamburg and Schleswig-Holstein are deliberately
+ * absent: their Amtsgerichte never opted into this portal (land_abk=mv/hh/sh
+ * are selectable but return zero results) — see server/crawlers/mv-zvgcom
+ * for the portal all three actually publish on.
  */
 export const DE_REGIONS: readonly RegionInfo[] = [
   { code: 'bw', name: 'Baden-Württemberg' },
@@ -20,7 +21,6 @@ export const DE_REGIONS: readonly RegionInfo[] = [
   { code: 'be', name: 'Berlin' },
   { code: 'br', name: 'Brandenburg' },
   { code: 'hb', name: 'Bremen' },
-  { code: 'hh', name: 'Hamburg' },
   { code: 'he', name: 'Hessen' },
   { code: 'ni', name: 'Niedersachsen' },
   { code: 'nw', name: 'Nordrhein-Westfalen' },
@@ -28,7 +28,6 @@ export const DE_REGIONS: readonly RegionInfo[] = [
   { code: 'sl', name: 'Saarland' },
   { code: 'sn', name: 'Sachsen' },
   { code: 'st', name: 'Sachsen-Anhalt' },
-  { code: 'sh', name: 'Schleswig-Holstein' },
   { code: 'th', name: 'Thüringen' },
 ] as const
 

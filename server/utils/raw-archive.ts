@@ -164,27 +164,35 @@ export interface CaptureInput {
 }
 
 /**
- * Append-only, change-only capture log: inserts a `raw_captures` row only
- * when `contentHash` differs from the most recent capture for the same
- * `(kind, platform, externalId)` — otherwise every unchanged run would add a
- * capture row for no reason. Never throws.
+ * Append-only capture log, keyed on `(kind, platform, externalId,
+ * contentHash)` (unique index in schema.sql): a hash never seen before for
+ * this identity inserts a new history row; a hash seen before upserts in
+ * place via `ON CONFLICT ... DO UPDATE`, refreshing captured_at and the
+ * metadata columns (region, case_number, authority, source_url) instead of
+ * leaving them stale. That refresh matters even on the common "nothing
+ * changed" path: for `kind='document'`/`'document_text'` the content hash is
+ * over the document bytes, not the auction identity, so the same PDF can be
+ * re-captured after the auction's region/case_number was corrected upstream
+ * with the document itself never changing — an early return on unchanged
+ * hash (as a naive change-only log would do) would freeze that stale
+ * metadata on the row forever. `refresh.ts` and `enrich.ts` can also call
+ * this concurrently for the same auction; the unique index + upsert (rather
+ * than a check-then-insert) is what makes that race safe. Never throws.
  */
 export async function recordCapture(input: CaptureInput): Promise<void> {
   const db = getPool()
   if (!db) return
   try {
-    const { rows } = await db.query<{ content_hash: string }>(
-      `SELECT content_hash FROM raw_captures
-       WHERE kind = $1 AND platform = $2 AND external_id = $3
-       ORDER BY captured_at DESC LIMIT 1`,
-      [input.kind, input.platform, input.externalId],
-    )
-    if (rows[0]?.content_hash === input.contentHash) return
-
     await db.query(
       `INSERT INTO raw_captures
          (captured_at, kind, platform, country, region, external_id, case_number, authority, content_hash, source_url)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       ON CONFLICT (kind, platform, external_id, content_hash) DO UPDATE SET
+         captured_at = EXCLUDED.captured_at,
+         region      = EXCLUDED.region,
+         case_number = EXCLUDED.case_number,
+         authority   = EXCLUDED.authority,
+         source_url  = EXCLUDED.source_url`,
       [
         input.capturedAt,
         input.kind,

@@ -1,6 +1,6 @@
 import type { Attachment, Auction } from '~/types/auction'
 import { classifyAttachment } from '~/server/utils/classify-attachment'
-import { ZVGCOM_BASE, UA, COUNTRY, MV_BUNDESLAND_ID, AUFGEHOBEN_PLACEHOLDER_IMG } from './constants'
+import { ZVGCOM_BASE, UA, COUNTRY, ZVGCOM_STATES, AUFGEHOBEN_PLACEHOLDER_IMG } from './constants'
 import { parseMvDateTime, stripAzPrefix } from './text'
 
 interface GerichtInfo {
@@ -39,7 +39,7 @@ async function fetchJson<T>(path: string): Promise<T> {
   return res.json() as Promise<T>
 }
 
-function mapItem(item: ListItem, platformId: string): Auction {
+function mapItem(item: ListItem, platformId: string, region: string): Auction {
   const { iso: auctionDateIso, label: auctionDateText } = parseMvDateTime(item.date, item.time)
   const title = stripAzPrefix(item.title, item.az) || null
   const address = [item.street, [item.plz, item.city].filter(Boolean).join(' ')]
@@ -67,7 +67,7 @@ function mapItem(item: ListItem, platformId: string): Auction {
   return {
     platform: platformId,
     country: COUNTRY,
-    region: 'Mecklenburg-Vorpommern',
+    region,
     externalId: String(item.id),
     caseNumber: item.az,
     authority: item.ag,
@@ -90,12 +90,24 @@ function mapItem(item: ListItem, platformId: string): Auction {
   }
 }
 
+async function fetchStateListings(
+  state: (typeof ZVGCOM_STATES)[number],
+  platformId: string,
+): Promise<Auction[]> {
+  const items = await fetchJson<ListItem[]>(
+    `/v2024/termine.prg?act=getGridJson&id_b=${state.bundeslandId}`,
+  )
+  return items
+    .filter((i) => i.active === 1)
+    .map((item) => mapItem(item, platformId, state.name))
+}
+
 export async function fetchAllListings(
   platformId: string,
 ): Promise<{ auctions: Auction[]; total: number | null }> {
-  const items = await fetchJson<ListItem[]>(
-    `/v2024/termine.prg?act=getGridJson&id_b=${MV_BUNDESLAND_ID}`,
+  const perState = await Promise.all(
+    ZVGCOM_STATES.map((state) => fetchStateListings(state, platformId)),
   )
-  const auctions = items.filter((i) => i.active === 1).map((item) => mapItem(item, platformId))
+  const auctions = perState.flat()
   return { auctions, total: auctions.length }
 }
