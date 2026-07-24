@@ -18,7 +18,7 @@ import { mkdir, rename } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { createClient } from '@supabase/supabase-js'
 import { Pool } from 'pg'
-import { shardedKey, type BlobContentType } from '../server/utils/raw-archive.ts'
+import { shardedKey, type BlobContentType } from '../server/utils/raw-archive'
 
 const apply = process.argv.includes('--apply')
 
