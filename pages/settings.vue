@@ -91,9 +91,13 @@ function normalizeSettingsError(err: unknown, fallback: string): string {
     clearAuthState()
     return t('settings.claude.sessionExpired')
   }
-  return (err as { statusMessage?: string; message?: string }).statusMessage
-    || (err as Error).message
-    || fallback
+  // `data.statusMessage` carries the createError() message from our own API
+  // routes. The top-level `statusMessage`/`message` are ofetch's own fields —
+  // for an HTTP/2 response (no reason phrase) they degrade to an unhelpful
+  // `[GET] "/api/...": 404`, so only fall back to them when the server didn't
+  // send a structured error body.
+  const e = err as { data?: { statusMessage?: string }; statusMessage?: string; message?: string }
+  return e.data?.statusMessage || e.statusMessage || e.message || fallback
 }
 
 // Claude OAuth flow state — mirrored from the proxy's setup state machine.
@@ -417,6 +421,45 @@ const llmProviderError = ref<string | null>(null)
 const llmProviderSaved = ref(false)
 const llmProviderPending = ref(false)
 
+// Modell-Select: welche Modelle für den aktuell gewählten Provider gültig/
+// verfügbar sind, live von /api/settings/llm-provider/models geladen (siehe
+// dort — claude-proxy fragt den Proxy selbst, gemini-native Googles
+// ListModels). openai-compatible hat keine gemeinsame Discovery, dafür bleibt
+// das Feld ein Freitext-Input.
+const llmModelOptions = ref<{ id: string; label: string }[]>([])
+const llmModelOptionsPending = ref(false)
+const llmModelKeyRequired = ref(false)
+const llmModelOptionsError = ref<string | null>(null)
+
+async function loadModelOptions(): Promise<void> {
+  llmModelOptionsError.value = null
+  llmModelKeyRequired.value = false
+  if (llmProviderForm.value.provider === 'openai-compatible') {
+    llmModelOptions.value = []
+    return
+  }
+  llmModelOptionsPending.value = true
+  try {
+    const res = await $fetch<{ models: { id: string; label: string }[]; keyRequired?: boolean }>(
+      '/api/settings/llm-provider/models',
+      {
+        query: {
+          provider: llmProviderForm.value.provider,
+          baseUrl: llmProviderForm.value.baseUrl,
+          apiKey: llmProviderForm.value.apiKey || undefined,
+        },
+      },
+    )
+    llmModelOptions.value = res.models
+    llmModelKeyRequired.value = !!res.keyRequired
+  } catch (err) {
+    llmModelOptions.value = []
+    llmModelOptionsError.value = normalizeSettingsError(err, t('settings.llmProvider.modelLoadError'))
+  } finally {
+    llmModelOptionsPending.value = false
+  }
+}
+
 async function loadLlmProvider(): Promise<void> {
   try {
     const res = await $fetch<{
@@ -443,6 +486,7 @@ async function loadLlmProvider(): Promise<void> {
       llmProviderApiKeySet.value = false
     }
     llmProviderError.value = null
+    await loadModelOptions()
   } catch (err) {
     llmProviderError.value = normalizeSettingsError(err, t('settings.llmProvider.loadError'))
   }
@@ -452,6 +496,7 @@ function onLlmProviderChange(): void {
   const preset = LLM_PROVIDER_PRESETS[llmProviderForm.value.provider]
   llmProviderForm.value.baseUrl = preset.baseUrl
   llmProviderForm.value.model = preset.model
+  void loadModelOptions()
 }
 
 async function putLlmProvider(apiKey: string | undefined): Promise<void> {
@@ -473,6 +518,7 @@ async function putLlmProvider(apiKey: string | undefined): Promise<void> {
     llmProviderApiKeySet.value = res.apiKeySet
     llmProviderForm.value.apiKey = ''
     llmProviderSaved.value = true
+    await loadModelOptions()
   } catch (err) {
     llmProviderError.value = normalizeSettingsError(err, t('settings.llmProvider.saveError'))
   } finally {
@@ -743,7 +789,24 @@ onBeforeUnmount(stopPolling)
               </div>
               <div class="space-y-1">
                 <Label>{{ $t('settings.llmProvider.modelLabel') }}</Label>
-                <Input v-model="llmProviderForm.model" />
+                <Input v-if="llmProviderForm.provider === 'openai-compatible'" v-model="llmProviderForm.model" />
+                <div v-else class="flex gap-2">
+                  <Select v-model="llmProviderForm.model" :disabled="llmModelOptionsPending || !llmModelOptions.length">
+                    <SelectTrigger class="w-full">
+                      <SelectValue
+                        :placeholder="llmModelOptionsPending ? $t('settings.llmProvider.modelLoading') : $t('settings.llmProvider.modelSelectPlaceholder')"
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem v-for="opt in llmModelOptions" :key="opt.id" :value="opt.id">{{ opt.label }}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button type="button" variant="outline" :disabled="llmModelOptionsPending" @click="loadModelOptions">
+                    {{ $t('settings.llmProvider.modelRefresh') }}
+                  </Button>
+                </div>
+                <p v-if="llmModelKeyRequired" class="text-xs text-muted-foreground">{{ $t('settings.llmProvider.modelKeyRequired') }}</p>
+                <p v-if="llmModelOptionsError" class="text-xs text-destructive">{{ llmModelOptionsError }}</p>
               </div>
             </div>
             <div v-if="llmProviderForm.provider !== 'claude-proxy'" class="space-y-1">
