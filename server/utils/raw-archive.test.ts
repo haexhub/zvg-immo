@@ -74,12 +74,6 @@ function makeFakePool() {
   // identity ("kind|platform|externalId") -> hash -> row
   const captures = new Map<string, Map<string, FakeCaptureRow>>()
 
-  function mostRecent(identity: string): FakeCaptureRow | undefined {
-    const byHash = captures.get(identity)
-    if (!byHash) return undefined
-    return [...byHash.values()].sort((a, b) => b.capturedAt.localeCompare(a.capturedAt))[0]
-  }
-
   const query = vi.fn(async (sql: string, params: unknown[] = []) => {
     if (sql.includes('SELECT 1 FROM raw_blobs')) {
       const hash = params[0] as string
@@ -89,11 +83,6 @@ function makeFakePool() {
       const [hash, s3_key, content_type, byte_size] = params as [string, string, string, number]
       if (!blobs.has(hash)) blobs.set(hash, { s3_key, content_type, byte_size })
       return { rows: [], rowCount: 1 }
-    }
-    if (sql.includes('SELECT content_hash FROM raw_captures')) {
-      const [kind, platform, externalId] = params as [string, string, string]
-      const hit = mostRecent(`${kind}|${platform}|${externalId}`)
-      return { rows: hit ? [{ content_hash: hit.contentHash }] : [] }
     }
     if (sql.includes('INSERT INTO raw_captures')) {
       const [capturedAt, kind, platform, , region, externalId, caseNumber, authority, contentHash, sourceUrl] =
@@ -265,8 +254,32 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     await recordCapture({ ...base, capturedAt: '2026-07-19T00:00:00.000Z' })
     await recordCapture({ ...base, capturedAt: '2026-07-20T00:00:00.000Z' })
 
-    const insertCalls = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO raw_captures'))
-    expect(insertCalls).toHaveLength(1)
+    // Both calls upsert (no fast-path skip) but land on the same row — the
+    // unique index, not a pre-check, is what prevents a duplicate.
+    const byHash = pool.captures.get('auction|test|1')!
+    expect(byHash.size).toBe(1)
+    expect(byHash.get('hash-a')).toMatchObject({ capturedAt: '2026-07-20T00:00:00.000Z' })
+  })
+
+  it('recordCapture refreshes metadata even when the content_hash is unchanged', async () => {
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+
+    const base = {
+      kind: 'document' as const,
+      platform: 'test',
+      country: 'de',
+      externalId: '1',
+      contentHash: 'hash-a',
+    }
+    // The PDF itself never changes — only the auction's region gets
+    // corrected upstream between the two captures.
+    await recordCapture({ ...base, capturedAt: '2026-07-01T00:00:00.000Z', region: null })
+    await recordCapture({ ...base, capturedAt: '2026-07-20T00:00:00.000Z', region: 'Hamburg' })
+
+    const byHash = pool.captures.get('document|test|1')!
+    expect(byHash.size).toBe(1) // no duplicate row
+    expect(byHash.get('hash-a')).toMatchObject({ region: 'Hamburg', capturedAt: '2026-07-20T00:00:00.000Z' })
   })
 
   it('recordCapture inserts again when the content_hash changes', async () => {
@@ -286,7 +299,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     expect(insertCalls).toHaveLength(2)
   })
 
-  it('recordCapture refreshes metadata on a content_hash that resurfaces (ON CONFLICT DO UPDATE)', async () => {
+  it('recordCapture preserves history when distinct content sits between two identical hashes', async () => {
     const pool = makeFakePool()
     vi.mocked(getPool).mockReturnValue(pool as never)
 
@@ -303,7 +316,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
       contentHash: 'hash-a',
       region: null,
     })
-    // …content briefly changes (so the fast-path SELECT doesn't skip the next call)…
+    // …content genuinely changes for a while…
     await recordCapture({
       ...base,
       capturedAt: '2026-07-10T00:00:00.000Z',
@@ -330,7 +343,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     expect(byHash.get('hash-a')).toMatchObject({ region: 'Hamburg', capturedAt: '2026-07-20T00:00:00.000Z' })
   })
 
-  it('archiveAuction: a second run with no real change produces no new blob or capture', async () => {
+  it('archiveAuction: a second run with no real change produces no new blob or capture row', async () => {
     const pool = makeFakePool()
     vi.mocked(getPool).mockReturnValue(pool as never)
 
@@ -339,8 +352,8 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
 
     expect(pool.blobs.size).toBe(1)
     expect(pool.captures.size).toBe(1)
-    const captureInserts = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO raw_captures'))
-    expect(captureInserts).toHaveLength(1)
+    const identity = pool.captures.get('auction|test|42')!
+    expect(identity.size).toBe(1) // second run upserts the same row, doesn't duplicate it
   })
 
   it('archiveAuction: enrichment (new description) produces a new blob and capture', async () => {
