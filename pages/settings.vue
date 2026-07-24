@@ -60,8 +60,10 @@ function clearAuthState(): void {
   stopPolling()
 }
 
+const adminLogoutError = ref<string | null>(null)
+
 async function logout(): Promise<void> {
-  claudeError.value = null
+  adminLogoutError.value = null
   try {
     await $fetch('/api/settings/logout', { method: 'POST' })
     clearAuthState()
@@ -73,9 +75,9 @@ async function logout(): Promise<void> {
       clearAuthState()
       return
     }
-    claudeError.value = (err as { statusMessage?: string; message?: string }).statusMessage
+    adminLogoutError.value = (err as { statusMessage?: string; message?: string }).statusMessage
       || (err as Error).message
-      || t('settings.claude.logoutError')
+      || t('settings.logoutAdminError')
   }
 }
 
@@ -545,11 +547,14 @@ onBeforeUnmount(stopPolling)
 <template>
   <main class="px-4 py-6">
     <div class="max-w-2xl mx-auto space-y-6">
-      <div class="flex items-center justify-between">
+      <div class="flex items-center justify-between gap-3">
         <NuxtLink to="/search" class="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
           <ArrowLeft class="h-4 w-4" /> {{ $t('settings.back') }}
         </NuxtLink>
-        <Button v-if="authed" type="button" variant="ghost" size="sm" @click="logout">{{ $t('settings.logoutAdmin') }}</Button>
+        <div v-if="authed" class="flex items-center gap-2">
+          <p v-if="adminLogoutError" class="text-sm text-destructive">{{ adminLogoutError }}</p>
+          <Button type="button" variant="ghost" size="sm" @click="logout">{{ $t('settings.logoutAdmin') }}</Button>
+        </div>
       </div>
       <h1 class="text-2xl font-bold tracking-tight">{{ $t('settings.heading') }}</h1>
 

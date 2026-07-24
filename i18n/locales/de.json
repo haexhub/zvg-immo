@@ -177,6 +177,7 @@
     "back": "Zurück zur Übersicht",
     "heading": "Einstellungen",
     "logoutAdmin": "Abmelden",
+    "logoutAdminError": "Abmelden fehlgeschlagen.",
     "login": {
       "title": "Anmeldung",
       "protected": "Diese Seite ist passwortgeschützt.",

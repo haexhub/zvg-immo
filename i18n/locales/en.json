@@ -177,6 +177,7 @@
     "back": "Back to overview",
     "heading": "Settings",
     "logoutAdmin": "Sign out",
+    "logoutAdminError": "Sign out failed.",
     "login": {
       "title": "Sign in",
       "protected": "This page is password-protected.",
