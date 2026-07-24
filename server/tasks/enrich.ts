@@ -402,6 +402,11 @@ export async function runEnrich() {
         // only when the photo pipeline actually runs this iteration.
         let photosCheckedAt = priorEntry?.photosCheckedAt
         let photoFailures = priorEntry?.photoFailures ?? 0
+        // Whether the photo pipeline actually ran this iteration (success or
+        // failure) — distinct from cacheable below, so a photo-only backfill
+        // outcome still gets persisted even when rules are unconfident and
+        // the LLM is disabled/capped/failed (see cacheable assignments below).
+        let photoPipelineRan = false
         if (priorEntry && !needsPhotoBackfill(a)) {
           // A re-run (needsLlmRetry / needsLlmFieldsBackfill — a cache entry
           // here means one of those, or needsEnrich alone with photos already
@@ -433,6 +438,7 @@ export async function runEnrich() {
           // predicate only lets a listing in here when it has no photos yet,
           // so there's nothing on disk worth preserving from priorEntry.
           const destDir = join(IMAGES_DIR, a.platform, a.externalId)
+          photoPipelineRan = true
           // The deterministic pipeline yields bare filenames; they become
           // CuratedPhoto entries (category defaults to 'sonstiges' unless the
           // LLM call below curates them for real).
@@ -540,7 +546,7 @@ export async function runEnrich() {
             // — cache the rules-only result now so the listing shows
             // *something* immediately; llm-batch-poll.ts merges the LLM
             // contribution once the submitted job completes.
-            cacheable = mergedConfident || detailOk
+            cacheable = mergedConfident || detailOk || photoPipelineRan
           } else {
             // A short/empty pdftotext result on an actual attachment usually
             // means the Gutachten PDF is a scanned image, not real text —
@@ -569,8 +575,10 @@ export async function runEnrich() {
               photoFailures: photoFailures > 0 ? photoFailures : undefined,
             }
             // Same rationale as the cap-hit/disabled branches below: a failed
-            // request only caches when detail/rules already gave us something.
-            cacheable = llm !== null || mergedConfident || detailOk
+            // request only caches when detail/rules already gave us something
+            // — unless the photo pipeline ran, in which case that outcome
+            // (photosCheckedAt/photoFailures) still needs to be persisted.
+            cacheable = llm !== null || mergedConfident || detailOk || photoPipelineRan
             if (cacheable) {
               cache[key] = merged
               dirty[key] = merged
@@ -594,11 +602,11 @@ export async function runEnrich() {
           // needsLlmFieldsBackfill retries them too. Leaving it uncached
           // instead starved huge platforms (IT: 14k listings ÷ 300
           // calls/run) of any extraction data for months.
-          cacheable = mergedConfident || detailOk
+          cacheable = mergedConfident || detailOk || photoPipelineRan
         } else {
           // LLM disabled entirely: cache the rules result if we had real text
           // to work with, else leave it for a later run to retry.
-          cacheable = mergedConfident || detailOk
+          cacheable = mergedConfident || detailOk || photoPipelineRan
         }
 
         if (!cacheable) continue

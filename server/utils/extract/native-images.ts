@@ -59,7 +59,13 @@ async function fetchImageBytes(url: string): Promise<Buffer | null> {
       Accept: 'image/jpeg,image/png,image/*;q=0.9,*/*;q=0.1',
     },
   })
-  if (!res.ok) return null
+  if (!res.ok) {
+    // Transient — worth a retry, unlike a stable 404/403 on a dead link.
+    if (res.status === 408 || res.status === 429 || res.status >= 500) {
+      throw new Error(`image fetch failed with HTTP ${res.status}`)
+    }
+    return null
+  }
   return Buffer.from(await res.arrayBuffer())
 }
 

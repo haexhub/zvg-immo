@@ -190,6 +190,49 @@ describe('runEnrich photo backfill (WP-1)', () => {
     expect(written['zvg-portal:14409']?.photoFailures).toBe(2)
   })
 
+  it('persists a photo-only outcome even when rules are unconfident and detail-fetch fails', async () => {
+    // Regression for a gap where photosCheckedAt/photoFailures were silently
+    // dropped: cacheable used to depend only on mergedConfident/detailOk, so
+    // a listing whose only successful pipeline this run was the photo
+    // backfill (rules unconfident, no LLM configured, enrichOne failing)
+    // never got persisted and was retried forever.
+    const platformWithFailingDetail = {
+      ...AT_PLATFORM,
+      enrichOne: vi.fn(async () => {
+        throw new Error('detail fetch failed')
+      }),
+    }
+    const { platforms, crawlAll } = await import('../crawlers/registry')
+    const mutablePlatforms = platforms as unknown as (typeof AT_PLATFORM)[]
+    mutablePlatforms.length = 0
+    mutablePlatforms.push(platformWithFailingDetail)
+
+    const auction = makeAuction()
+    vi.mocked(crawlAll).mockResolvedValue(mockCrawl([auction]))
+
+    const cache: ExtractionCache = {
+      'zvg-portal:14409': {
+        propertyType: null,
+        landAreaSqm: null,
+        livingAreaSqm: null,
+        rooms: null,
+        units: null,
+        source: 'rules',
+        confidence: 'low',
+        photos: undefined,
+        photosCheckedAt: undefined,
+        at: '2026-07-01T00:00:00.000Z',
+      },
+    }
+    vi.mocked(readExtractionCache).mockResolvedValue(cache)
+    vi.mocked(downloadNativeImages).mockResolvedValue(['foto1.jpg'])
+
+    await runEnrich()
+
+    const written = vi.mocked(writeExtractionCache).mock.calls[0]?.[0] as ExtractionCache
+    expect(written['zvg-portal:14409']?.photosCheckedAt).toBeTruthy()
+  })
+
   it('stops retrying once photoFailures reaches the bound', async () => {
     const auction = makeAuction()
     const { crawlAll } = await import('../crawlers/registry')

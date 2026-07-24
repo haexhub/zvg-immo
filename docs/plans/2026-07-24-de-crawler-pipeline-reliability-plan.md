@@ -32,21 +32,24 @@ irgendeinem (auch transienten) Grund fehl — Netzwerk-Hänger beim PDF-Fetch,
 Auktions-Eintrag für immer ohne Fotos, auch wenn ein erneuter Versuch heute
 welche fände.
 
-**WP-1: Foto-Backfill-Mechanismus**
+**WP-1: Foto-Backfill-Mechanismus — umgesetzt in [PR #156](https://github.com/haexhub/zvg-immo/pull/156)**
 - Neues Feld auf `AuctionExtraction`/`ExtractionCache`, das unterscheidet
   zwischen "Fotos nie versucht" und "versucht, keine gefunden" (analog zu
-  `condition === undefined` vs. `null` bei den LLM-Feldern) — z.B.
-  `photosCheckedAt: string | undefined`.
+  `condition === undefined` vs. `null` bei den LLM-Feldern) — `photosCheckedAt: string | undefined`.
 - `needsPhotoBackfill(a)`-Prädikat (analog `needsLlmFieldsBackfill`) nimmt
   Einträge ohne `photosCheckedAt` in die `eligible`-Liste auf, begrenzt durch
-  einen Failure-Counter (analog `MAX_LLM_FAILURES`), damit ein Listing mit
+  einen Failure-Counter (`photoFailures`, analog `MAX_LLM_FAILURES`), damit ein Listing mit
   echt fehlenden Fotos nicht bei jedem Run erneut probiert wird.
-- Einmaliger Backfill-Lauf über den bestehenden Cache-Bestand (alle Einträge
-  ohne den neuen Marker gelten als "nie versucht").
-- Akzeptanzkriterium: 14409 bekommt nach dem nächsten Enrich-Run Fotos; ein
-  Nachweis-Test (`enrich`-Unit-Test oder Integrationstest) belegt, dass ein
-  Eintrag mit `photos: undefined` und fehlendem `photosCheckedAt` erneut die
-  Foto-Pipeline durchläuft, einer mit gesetztem Marker nicht.
+- Kein separater Einmal-Lauf nötig: bestehende Cache-Einträge ohne den neuen
+  Marker gelten automatisch als "nie versucht" und laufen beim nächsten
+  regulären Enrich-Run durch die Backfill-Prädikat-Logik.
+- Akzeptanzkriterium: 14409 bekommt beim nächsten Enrich-Run entweder Fotos
+  (falls die Extraktion erfolgreich ist) oder einen erhöhten `photoFailures`-
+  Zähler nach einem fehlgeschlagenen, aber protokollierten Versuch — kein
+  stiller "für immer keine Fotos"-Zustand mehr. Ein Nachweis-Test
+  (`enrich`-Unit-Test) belegt, dass ein Eintrag mit `photos: undefined` und
+  fehlendem `photosCheckedAt` erneut die Foto-Pipeline durchläuft, einer mit
+  gesetztem Marker nicht.
 
 ## Befund 2: Bilder teilweise verdreht
 
@@ -131,7 +134,9 @@ unabhängig vom Modell.
 
 ## Reihenfolge
 
-WP-1 und WP-3 sind eigenständig umsetzbar und klar geschnitten. WP-4 ist ein
-kleiner, schneller Fix. WP-2 braucht zuerst einen Spike, bevor der eigentliche
-Umfang feststeht. Empfehlung: WP-1 → WP-4 → WP-3 → WP-2-Spike, jeweils als
-eigener PR (kein Bündel-PR), da die vier Themen inhaltlich unabhängig sind.
+WP-1 (umgesetzt, [PR #156](https://github.com/haexhub/zvg-immo/pull/156)) und
+WP-3 sind eigenständig umsetzbar und klar geschnitten. WP-4 ist ein kleiner,
+schneller Fix. WP-2 braucht zuerst einen Spike, bevor der eigentliche Umfang
+feststeht. Empfehlung für die verbleibenden drei: WP-4 → WP-3 → WP-2-Spike,
+jeweils als eigener PR (kein Bündel-PR), da die Themen inhaltlich unabhängig
+sind.

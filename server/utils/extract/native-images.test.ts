@@ -122,6 +122,28 @@ describe('downloadNativeImages', () => {
     expect(files).toHaveLength(1)
   })
 
+  it('treats transient HTTP statuses (408/429/5xx) as retryable failures', async () => {
+    // Unlike a stable 404/403, these should surface as a thrown error (via
+    // hadFetchError) rather than a silent "no image here" so the enrich
+    // task's photoFailures/photosCheckedAt tracking sees it as unresolved.
+    stubFetch({
+      'https://example.com/rate-limited.jpg': { ok: false, status: 429, body: null },
+    })
+
+    await expect(
+      downloadNativeImages(['https://example.com/rate-limited.jpg'], { destDir }),
+    ).rejects.toThrow(/network error/)
+  })
+
+  it('still treats a stable 404 as a confirmed empty result, not retryable', async () => {
+    stubFetch({
+      'https://example.com/gone-for-good.jpg': { ok: false, status: 404, body: null },
+    })
+
+    const files = await downloadNativeImages(['https://example.com/gone-for-good.jpg'], { destDir })
+    expect(files).toEqual([])
+  })
+
   it('dedupes identical bytes to one file', async () => {
     const same = makeImage(JPEG_MAGIC, 5)
     stubFetch({
