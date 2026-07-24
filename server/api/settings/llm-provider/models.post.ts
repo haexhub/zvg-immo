@@ -29,20 +29,32 @@ async function fetchClaudeProxyModels(baseUrl: string): Promise<LlmModelOption[]
 }
 
 async function fetchGeminiModels(apiKey: string): Promise<LlmModelOption[]> {
-  const res = await $fetch<{ models: { name: string; displayName?: string; supportedGenerationMethods?: string[] }[] }>(
-    'https://generativelanguage.googleapis.com/v1beta/models',
-    { query: { key: apiKey }, signal: AbortSignal.timeout(10_000) },
-  )
-  return (res.models ?? [])
-    .filter((m) => m.supportedGenerationMethods?.includes('generateContent'))
-    .map((m) => ({ id: m.name.replace(/^models\//, ''), label: m.displayName || m.name }))
+  const options: LlmModelOption[] = []
+  let pageToken: string | undefined
+  do {
+    const res = await $fetch<{
+      models: { name: string; displayName?: string; supportedGenerationMethods?: string[] }[]
+      nextPageToken?: string
+    }>('https://generativelanguage.googleapis.com/v1beta/models', {
+      headers: { 'x-goog-api-key': apiKey },
+      query: { pageSize: 1000, pageToken },
+      signal: AbortSignal.timeout(10_000),
+    })
+    options.push(
+      ...(res.models ?? [])
+        .filter((m) => m.supportedGenerationMethods?.includes('generateContent'))
+        .map((m) => ({ id: m.name.replace(/^models\//, ''), label: m.displayName || m.name })),
+    )
+    pageToken = res.nextPageToken
+  } while (pageToken)
+  return options
 }
 
 export default defineEventHandler(async (event) => {
-  const query = getQuery(event)
-  const provider = String(query.provider ?? '')
-  const baseUrl = String(query.baseUrl ?? '')
-  const typedApiKey = typeof query.apiKey === 'string' ? query.apiKey : ''
+  const body = (await readBody<{ provider?: string; baseUrl?: string; apiKey?: string }>(event)) ?? {}
+  const provider = String(body.provider ?? '')
+  const baseUrl = String(body.baseUrl ?? '')
+  const typedApiKey = typeof body.apiKey === 'string' ? body.apiKey : ''
 
   if (provider === 'claude-proxy') {
     if (!baseUrl) throw createError({ statusCode: 400, statusMessage: 'baseUrl fehlt.' })

@@ -430,8 +430,10 @@ const llmModelOptions = ref<{ id: string; label: string }[]>([])
 const llmModelOptionsPending = ref(false)
 const llmModelKeyRequired = ref(false)
 const llmModelOptionsError = ref<string | null>(null)
+let llmModelOptionsRequestId = 0
 
 async function loadModelOptions(): Promise<void> {
+  const requestId = ++llmModelOptionsRequestId
   llmModelOptionsError.value = null
   llmModelKeyRequired.value = false
   if (llmProviderForm.value.provider === 'openai-compatible') {
@@ -443,20 +445,23 @@ async function loadModelOptions(): Promise<void> {
     const res = await $fetch<{ models: { id: string; label: string }[]; keyRequired?: boolean }>(
       '/api/settings/llm-provider/models',
       {
-        query: {
+        method: 'POST',
+        body: {
           provider: llmProviderForm.value.provider,
           baseUrl: llmProviderForm.value.baseUrl,
           apiKey: llmProviderForm.value.apiKey || undefined,
         },
       },
     )
+    if (requestId !== llmModelOptionsRequestId) return
     llmModelOptions.value = res.models
     llmModelKeyRequired.value = !!res.keyRequired
   } catch (err) {
+    if (requestId !== llmModelOptionsRequestId) return
     llmModelOptions.value = []
     llmModelOptionsError.value = normalizeSettingsError(err, t('settings.llmProvider.modelLoadError'))
   } finally {
-    llmModelOptionsPending.value = false
+    if (requestId === llmModelOptionsRequestId) llmModelOptionsPending.value = false
   }
 }
 
