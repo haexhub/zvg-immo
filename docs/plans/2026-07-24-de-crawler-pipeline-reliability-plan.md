@@ -74,14 +74,35 @@ Zwei mögliche Lösungsrichtungen, beide mit nicht-trivialem Aufwand:
   neue Systemabhängigkeit, größerer Eingriff in den bestehenden
   poppler-CLI-Ansatz.
 
-**WP-2: Rotation — erst Spike, dann Entscheidung**
-- Kurzer Spike gegen das 14409-PDF (und 2-3 weitere Beispiel-PDFs mit bekannt
-  gedrehten Bildern): prüfen, ob `pdftohtml -xml` genug Positionsinfo liefert,
-  um (a) umzusetzen, ohne eine neue Abhängigkeit einzuführen.
-- Ergebnis des Spikes entscheidet, ob (a) umgesetzt wird oder (b) nötig ist —
-  das ist bewusst noch offen, da der Aufwand von (b) eine neue Abhängigkeit
-  bedeutet und das gegen den Nutzen (wie oft betrifft es Auktionen wirklich?)
-  abgewogen werden sollte, bevor Code geschrieben wird.
+**WP-2: Rotation — Spike-Ergebnis: (a) verworfen, (b) zurückgestellt.**
+
+Spike durchgeführt (2026-07-24): das echte Gutachten.pdf zu 14409 live von
+zvg-portal.de geladen (20 Seiten, Fall bestätigt) — enthält zufällig keine
+sichtbar rotierten Fotos, taugt also nicht als Gegenbeispiel. Zusätzlich zwei
+synthetische Test-PDFs gebaut (ein Foto, per Content-Stream-CTM um 90° in
+beide Richtungen gedreht platziert — exakt das oben beschriebene Szenario)
+und alle drei Werkzeuge verglichen:
+
+- `pdftoppm` rendert die Rotation korrekt (visuell per Farb-Sampling an vier
+  Referenzpunkten verifiziert).
+- `pdfimages -list` liefert wie erwartet die rohen, ungedrehten Maße.
+- `pdftohtml -xml` liefert für **beide** getesteten Rotationsrichtungen
+  unbrauchbare Bounding-Boxes — negative Breiten/Höhen, teils Koordinaten
+  außerhalb der Seite. Kein Rundungsfehler, sondern ein systematischer
+  Aussetzer bei Matrizen mit a=d=0 (reine 90°/270°-Drehung).
+
+**Damit ist Option (a) verworfen** — pdftohtml -xml liefert für genau den
+Rotationsfall, den es lösen soll, unbrauchbare Positionsdaten. Es bliebe nur
+Option (b) (PyMuPDF/mutool), was eine neue Abhängigkeit außerhalb des
+bestehenden Node/poppler-CLI-Stacks bedeutet (inkl. Deployment-Aufwand im
+separaten ansible-Repo).
+
+**Entscheidung (Nutzer, 2026-07-24): zurückgestellt.** Kein Code-Change.
+Begründung: unklar, wie oft rotierte Fotos in der Praxis tatsächlich
+auftreten (das 14409-Beispiel selbst hatte keine) — Aufwand/Nutzen einer
+neuen Systemabhängigkeit soll erst mit mehr Datenbasis bewertet werden. Bei
+Bedarf später erneut aufgreifen, dann direkt mit Option (b) planen (Option
+(a) ist durch den Spike ausgeschlossen).
 
 ## Befund 3: Kein Verkehrswert/Bodenrichtwert für DE
 
@@ -97,18 +118,12 @@ Zwei mögliche Lösungsrichtungen, beide mit nicht-trivialem Aufwand:
   fehlendes Feature — deutsche Gutachten nennen den Verkehrswert in aller Regel
   explizit im Text, es fehlt schlicht ein Feld + Prompt-Anweisung dafür.
 
-**WP-3: Verkehrswert-Extraktion für DE**
-- Neues Feld im `EXTRACTION_SCHEMA`/`ClampedExtraction` (z.B. `marketValueEur`
-  + optional `marketValueText` für den O-Ton, analog zum bestehenden Muster
-  bei `securityDeposit`), Prompt-Ergänzung ("gib den im Gutachten genannten
-  Verkehrswert in der Landeswährung zurück, oder null").
-- Präzedenz beim Zusammenführen klären: `Auction.marketValueEur` wird aktuell
-  ausschließlich aus dem AT/Biddit-Cache befüllt (`enrich.ts` Zeile ~617-623).
-  Die LLM-Extraktion darf einen strukturell bekannten Wert nicht überschreiben,
-  soll aber greifen, wenn noch keiner gesetzt ist.
-- Akzeptanzkriterium: für 14409 (und eine Stichprobe weiterer zvg-portal-Fälle
-  mit explizit genanntem Verkehrswert im Gutachten) erscheint der Wert im
-  Auktions-Datensatz.
+**WP-3: Verkehrswert-Extraktion für DE** — **UMGESETZT** (PR #158).
+- Neues Feld `marketValueEur`/`marketValueText` im `EXTRACTION_SCHEMA`/
+  `ClampedExtraction`, Prompt-Ergänzung.
+- Präzedenz beim Zusammenführen: `applyExtractionToAuctions` füllt
+  `Auction.marketValueEur` nur, wenn noch keiner strukturell gesetzt ist
+  (AT-Edikte/Biddit über `verkehrswert-cache.ts` gewinnen immer).
 
 ## Befund 4: Falscher Wert bei "250 Zimmer" (Hotel-Genehmigung ≠ existierendes Hotel)
 
@@ -121,22 +136,19 @@ Verständnisfehler, den ein stärkeres Modell wahrscheinlich vermeidet, den man
 aber zusätzlich durch eine explizite Prompt-Klarstellung absichern sollte,
 unabhängig vom Modell.
 
-**WP-4: Extraktionsqualität**
+**WP-4: Extraktionsqualität** — **UMGESETZT** (PR #157).
 - Prompt-Ergänzung in `SYSTEM_PROMPT`: Zimmeranzahl nur für tatsächlich
   existierende Bebauung, nicht für genehmigte/mögliche/zulässige Kapazität aus
-  Bebauungsplan oder Baugenehmigung — ein genehmigtes, aber unbebautes
-  Grundstück hat 0 (bzw. null) Zimmer.
-- Modellwechsel: da LLM-Provider bereits Admin-konfigurierbar ist (#150-153),
-  klären ob (a) nur die Admin-Empfehlung auf Sonnet geändert wird, oder (b)
-  der Code-Default in `resolveLlmConfig()` ebenfalls auf ein Sonnet-Modell
-  angehoben wird. Kosten-/Latenz-Auswirkung (Haiku vs. Sonnet, aktuelles
-  Auktionsvolumen) vorher kurz gegenrechnen.
+  Bebauungsplan oder Baugenehmigung.
+- Modellwechsel: Admin-Empfehlung in den LLM-Provider-Settings auf ein
+  Sonnet-Modell angehoben; der Code-Default in `resolveLlmConfig()` bleibt
+  bewusst `claude-haiku-4-5` als Sicherheitsnetz für unkonfigurierte
+  Deployments (Nutzer-Entscheidung: keine automatische ~3x-Kostensteigerung
+  für bestehende Installationen).
 
 ## Reihenfolge
 
-WP-1 (umgesetzt, [PR #156](https://github.com/haexhub/zvg-immo/pull/156)) und
-WP-3 sind eigenständig umsetzbar und klar geschnitten. WP-4 ist ein kleiner,
-schneller Fix. WP-2 braucht zuerst einen Spike, bevor der eigentliche Umfang
-feststeht. Empfehlung für die verbleibenden drei: WP-4 → WP-3 → WP-2-Spike,
-jeweils als eigener PR (kein Bündel-PR), da die Themen inhaltlich unabhängig
-sind.
+WP-1 und WP-3 sind eigenständig umsetzbar und klar geschnitten. WP-4 ist ein
+kleiner, schneller Fix. WP-2 braucht zuerst einen Spike, bevor der eigentliche
+Umfang feststeht. Umsetzung: WP-1 → WP-4 → WP-3 als eigene PRs (#156, #157,
+#158); WP-2-Spike durchgeführt, Ergebnis siehe oben — zurückgestellt.
