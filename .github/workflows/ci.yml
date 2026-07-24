@@ -1,0 +1,44 @@
+# Gates every PR (and push to main) on typecheck + tests + build, so broken
+# TS/config never reaches main silently — build-image.yml only builds after
+# merge and doesn't run on pull requests.
+
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install poppler-utils (pdftoppm, used by PDF extraction tests)
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Nuxt types
+        run: pnpm exec nuxi prepare
+
+      - name: Typecheck
+        run: pnpm exec nuxi typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
