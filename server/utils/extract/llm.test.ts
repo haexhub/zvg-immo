@@ -51,6 +51,8 @@ describe('clampExtraction', () => {
       renovationNotes: null,
       insights: null,
       photoCuration: [],
+      marketValueEur: null,
+      marketValueText: null,
     })
   })
 
@@ -81,6 +83,8 @@ describe('clampExtraction', () => {
       renovationNotes: null,
       insights: null,
       photoCuration: [],
+      marketValueEur: null,
+      marketValueText: null,
     })
   })
 
@@ -96,6 +100,20 @@ describe('clampExtraction', () => {
 
   it('keeps a plausible securityDeposit', () => {
     expect(clampExtraction({ securityDeposit: 3000 }).securityDeposit).toBe(3000)
+  })
+
+  it('rejects a non-positive or absurd marketValueEur', () => {
+    expect(clampExtraction({ marketValueEur: 0 }).marketValueEur).toBeNull()
+    expect(clampExtraction({ marketValueEur: -100 }).marketValueEur).toBeNull()
+    expect(clampExtraction({ marketValueEur: 999_999_999_999 }).marketValueEur).toBeNull()
+  })
+
+  it('keeps a plausible marketValueEur and trims marketValueText', () => {
+    expect(clampExtraction({ marketValueEur: 185_000 }).marketValueEur).toBe(185_000)
+    expect(clampExtraction({ marketValueText: '  185.000 EUR laut Gutachten  ' }).marketValueText).toBe(
+      '185.000 EUR laut Gutachten',
+    )
+    expect(clampExtraction({ marketValueText: '   ' }).marketValueText).toBeNull()
   })
 
   it('trims and caps biddingNotes, nulls blank/non-string values', () => {

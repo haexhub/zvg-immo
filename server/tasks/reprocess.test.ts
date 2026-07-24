@@ -174,6 +174,8 @@ describe('reprocessAuction', () => {
         summary: 'Solide Bausubstanz.',
       },
       photoCuration: [],
+      marketValueEur: null,
+      marketValueText: null,
     })
 
     const result = await reprocessAuction(
@@ -225,6 +227,8 @@ describe('reprocessAuction', () => {
       renovationNotes: null,
       insights: null,
       photoCuration: [],
+      marketValueEur: null,
+      marketValueText: null,
     }
     vi.mocked(extractByLlm).mockResolvedValue(llmResult)
 
@@ -273,6 +277,8 @@ describe('reprocessAuction', () => {
       renovationNotes: null,
       insights: null,
       photoCuration: [],
+      marketValueEur: null,
+      marketValueText: null,
     })
 
     await reprocessAuction(
@@ -433,6 +439,8 @@ describe('runReprocess', () => {
       renovationNotes: 'Dach erneuert',
       insights: null,
       photoCuration: [],
+      marketValueEur: null,
+      marketValueText: null,
     })
 
     const missingRenovationNotesEntry: AuctionExtraction = {
@@ -565,6 +573,8 @@ describe('runReprocess', () => {
       renovationNotes: null,
       insights: null,
       photoCuration: [],
+      marketValueEur: null,
+      marketValueText: null,
     })
     vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { baseUrl: 'http://proxy', maxPerRun: '1' } }))
 

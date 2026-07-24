@@ -1,7 +1,36 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { AuctionExtraction } from '~/types/auction'
+import type { Auction, AuctionExtraction } from '~/types/auction'
+import { applyExtractionToAuctions, type ExtractionCache } from './extraction-cache'
 
 vi.mock('./db', () => ({ getPool: vi.fn() }))
+
+function makeAuction(overrides: Partial<Auction> = {}): Auction {
+  return {
+    platform: 'zvg-portal',
+    country: 'de',
+    region: 'Berlin',
+    externalId: '14409',
+    caseNumber: '70 K 7/25',
+    authority: 'AG Köpenick',
+    title: null,
+    address: 'Paradiesstraße 214-218, Berlin-Köpenick',
+    marketValueEur: null,
+    marketValueText: null,
+    auctionDateIso: '2026-09-01T09:00:00.000Z',
+    auctionDateText: '01.09.2026',
+    cancelled: false,
+    sourceUpdatedIso: null,
+    pdfUrl: null,
+    detailUrl: null,
+    pdfUrlUpstream: null,
+    detailUrlUpstream: null,
+    attachments: [],
+    description: null,
+    photoCount: 0,
+    thumbnailUrl: null,
+    ...overrides,
+  }
+}
 
 const extraction: AuctionExtraction = {
   propertyType: 'einfamilienhaus',
@@ -140,5 +169,73 @@ describe('writeExtractionCache', () => {
     const { writeExtractionCache } = await import('./extraction-cache')
 
     await expect(writeExtractionCache({ 'zvg-portal:7265': extraction })).resolves.toBe(false)
+  })
+})
+
+describe('applyExtractionToAuctions — marketValueEur precedence (WP-3)', () => {
+  it('fills marketValueEur/marketValueText from the LLM extraction when the auction has none', () => {
+    const auction = makeAuction()
+    const cache: ExtractionCache = {
+      'zvg-portal:14409': {
+        ...extraction,
+        marketValueEur: 185_000,
+        marketValueText: '185.000 EUR laut Gutachten',
+      },
+    }
+
+    applyExtractionToAuctions([auction], cache)
+
+    expect(auction.marketValueEur).toBe(185_000)
+    expect(auction.marketValueText).toBe('185.000 EUR laut Gutachten')
+  })
+
+  it('never overwrites a structurally known marketValueEur (e.g. AT-Edikte/Biddit) with the LLM value', () => {
+    const auction = makeAuction({ marketValueEur: 250_000, marketValueText: '250.000 EUR' })
+    const cache: ExtractionCache = {
+      'zvg-portal:14409': {
+        ...extraction,
+        marketValueEur: 185_000,
+        marketValueText: '185.000 EUR laut Gutachten',
+      },
+    }
+
+    applyExtractionToAuctions([auction], cache)
+
+    expect(auction.marketValueEur).toBe(250_000)
+    expect(auction.marketValueText).toBe('250.000 EUR')
+  })
+
+  it('leaves marketValueEur null when the LLM found none either', () => {
+    const auction = makeAuction()
+    const cache: ExtractionCache = { 'zvg-portal:14409': { ...extraction, marketValueEur: null } }
+
+    applyExtractionToAuctions([auction], cache)
+
+    expect(auction.marketValueEur).toBeNull()
+  })
+
+  it('leaves marketValueEur untouched when the cache entry never checked (undefined)', () => {
+    const auction = makeAuction()
+    const cache: ExtractionCache = { 'zvg-portal:14409': { ...extraction } }
+
+    applyExtractionToAuctions([auction], cache)
+
+    expect(auction.marketValueEur).toBeNull()
+  })
+
+  it('does not fill marketValueEur for a non-EUR-native auction (LLM value is in the native currency, not EUR)', () => {
+    const auction = makeAuction({ platform: 'hu', currency: 'HUF' })
+    const cache: ExtractionCache = {
+      'hu:14409': {
+        ...extraction,
+        marketValueEur: 50_000_000,
+        marketValueText: '50.000.000 HUF laut Gutachten',
+      },
+    }
+
+    applyExtractionToAuctions([auction], cache)
+
+    expect(auction.marketValueEur).toBeNull()
+    expect(auction.marketValueText).toBeNull()
   })
 })

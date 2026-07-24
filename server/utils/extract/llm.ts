@@ -105,6 +105,12 @@ export interface ClampedExtraction {
   renovationNotes: string | null
   /** Richer assessment from the appraisal, or null when nothing stood out. */
   insights: AuctionInsights | null
+  /** Verkehrswert (Gesamtschätzwert) explicitly stated in the Gutachten, in
+   *  the auction's native currency, or null. Distinct from
+   *  `insights.landValueEurPerSqm` (Bodenrichtwert, EUR/m² of the land only). */
+  marketValueEur: number | null
+  /** Short free-text O-Ton for `marketValueEur`, or null. */
+  marketValueText: string | null
   /** LLM's curation of the `candidateImages` sent with the request, referenced
    *  by index (not filename — the model never sees real filenames). Empty
    *  when no candidateImages were sent, or none survived clamping. Callers
@@ -144,6 +150,11 @@ export const SYSTEM_PROMPT =
   'Landeswährung der Anzeige im Text genannt wird (z. B. eine von der gesetzlichen ' +
   '10%-Regel abweichende Festsetzung) — niemals aus einem Prozentsatz berechnen ' +
   'oder in eine andere Währung umrechnen, sonst null. ' +
+  'Gib den im Gutachten genannten Verkehrswert (Gesamtschätzwert der ' +
+  'Immobilie) in der Landeswährung der Anzeige zurück, falls explizit ' +
+  'genannt, sonst null — nicht zu verwechseln mit dem Bodenrichtwert ' +
+  '(EUR/m² nur für das Grundstück, siehe insights). In marketValueText den ' +
+  'O-Ton-Betrag als kurzen Freitext, sonst null. ' +
   'Gib in biddingNotes einen kurzen Hinweis zurück, falls der Text etwas ' +
   'Ungewöhnliches zum Bietverfahren nennt (abweichende Sicherheitsleistung, ' +
   'ungewöhnliche Zahlungsfrist o. Ä.), sonst null. ' +
@@ -189,6 +200,15 @@ export const EXTRACTION_SCHEMA = {
     securityDeposit: {
       type: ['number', 'null'],
       description: 'Explizit genannte Sicherheitsleistung in der Landeswährung der Anzeige, oder null.',
+    },
+    marketValueEur: {
+      type: ['number', 'null'],
+      description:
+        'Im Gutachten genannter Verkehrswert (Gesamtschätzwert) in der Landeswährung der Anzeige, oder null. Nicht der Bodenrichtwert.',
+    },
+    marketValueText: {
+      type: ['string', 'null'],
+      description: 'O-Ton-Betrag zu marketValueEur, oder null.',
     },
     biddingNotes: {
       type: ['string', 'null'],
@@ -277,6 +297,8 @@ export const EXTRACTION_SCHEMA = {
     'rooms',
     'units',
     'securityDeposit',
+    'marketValueEur',
+    'marketValueText',
     'biddingNotes',
     'condition',
     'features',
@@ -413,6 +435,8 @@ export function clampExtraction(raw: Record<string, unknown>): ClampedExtraction
     // accidentally echoing an unrelated large figure (e.g. the Verkehrswert
     // itself), not a real-world deposit ceiling.
     securityDeposit: plausibleArea(raw.securityDeposit, 100_000_000),
+    marketValueEur: plausibleArea(raw.marketValueEur, 1_000_000_000),
+    marketValueText: trimmedString(raw.marketValueText, 200),
     biddingNotes,
     condition,
     features,

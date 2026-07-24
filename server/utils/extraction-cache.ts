@@ -41,6 +41,18 @@ export function applyExtractionToAuctions(auctions: Auction[], cache: Extraction
     // behind the `CuratedPhoto[]` type.
     const photos = (hit.photos ?? []).map(normalizePhoto)
     a.extraction = photos.length > 0 ? { ...hit, photos } : hit
+    // WP-3: zvg-portal/DE has no structural Verkehrswert source (unlike
+    // AT-Edikte/Biddit, whose overlay runs before this and already set
+    // a.marketValueEur — see verkehrswert-cache.ts) — the LLM-extracted value
+    // only fills in when nothing else has set one, never overwrites a
+    // structurally known value. `hit.marketValueEur` is extracted in the
+    // auction's native currency (see llm.ts), not converted — only safe to
+    // apply here for EUR-native platforms (a.currency unset); everywhere else
+    // it would silently misrepresent a foreign-currency figure as EUR.
+    if (a.currency == null && a.marketValueEur == null && hit.marketValueEur != null) {
+      a.marketValueEur = hit.marketValueEur
+      a.marketValueText = hit.marketValueText ?? null
+    }
     if (photos.length === 0) continue
     if (!a.thumbnailUrl) {
       a.thumbnailUrl = `/api/auction-image/${a.platform}/${a.externalId}/${photos[0]!.file}`

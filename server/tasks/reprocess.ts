@@ -146,6 +146,8 @@ async function buildReprocessInput(
     lastRenovationYear: priorEntry?.lastRenovationYear,
     renovationNotes: priorEntry?.renovationNotes,
     insights: priorEntry?.insights,
+    marketValueEur: priorEntry?.marketValueEur,
+    marketValueText: priorEntry?.marketValueText,
     confident:
       rules.confident || (propertyType != null && propertyType !== 'sonstiges' && (landAreaSqm != null || livingAreaSqm != null)),
   }
@@ -203,6 +205,8 @@ function buildRulesOnlyEntry(
     lastRenovationYear: fields.lastRenovationYear,
     renovationNotes: fields.renovationNotes,
     insights: fields.insights,
+    marketValueEur: fields.marketValueEur,
+    marketValueText: fields.marketValueText,
     source: 'rules',
     confidence: hasType && hasArea ? 'high' : 'low',
     photos,

@@ -4,9 +4,9 @@
 // rules: structured/rules values win when present, the LLM only fills gaps
 // (and only contributes propertyType/sizes at all when rules weren't already
 // confident), while condition/features/yearBuilt/lastRenovationYear/
-// renovationNotes/insights are LLM-only and always take the latest call's
-// result. Pure function, no I/O — easy to unit-test independently of any
-// provider or cache.
+// renovationNotes/insights/marketValueEur/marketValueText are LLM-only and
+// always take the latest call's result. Pure function, no I/O — easy to
+// unit-test independently of any provider or cache.
 
 import type { PropertyType } from '~/lib/property-type'
 import type { Condition } from '~/lib/condition'
@@ -30,6 +30,8 @@ export interface MergeInputFields {
   lastRenovationYear?: number | null
   renovationNotes?: string | null
   insights?: AuctionInsights | null
+  marketValueEur?: number | null
+  marketValueText?: string | null
   /** `rules.confident || (propertyType set (not 'sonstiges') && an area is
    *  set)` — computed by the caller (needs `rules.confident`, which this
    *  function doesn't otherwise need to know about). Gates whether the LLM
@@ -70,6 +72,8 @@ export function mergeLlmResult(
   let lastRenovationYear = base.lastRenovationYear
   let renovationNotes = base.renovationNotes
   let insights = base.insights
+  let marketValueEur = base.marketValueEur
+  let marketValueText = base.marketValueText
 
   if (llm) {
     // Only let the LLM contribute propertyType/sizes when rules didn't
@@ -93,6 +97,8 @@ export function mergeLlmResult(
     lastRenovationYear = llm.lastRenovationYear
     renovationNotes = llm.renovationNotes
     insights = llm.insights
+    marketValueEur = llm.marketValueEur
+    marketValueText = llm.marketValueText
   }
 
   const hasType = propertyType != null && propertyType !== 'sonstiges'
@@ -117,6 +123,8 @@ export function mergeLlmResult(
     lastRenovationYear,
     renovationNotes,
     insights,
+    marketValueEur,
+    marketValueText,
     source,
     confidence: hasType && hasArea ? 'high' : 'low',
     photos,
