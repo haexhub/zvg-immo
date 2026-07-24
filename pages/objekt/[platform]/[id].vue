@@ -133,7 +133,7 @@ const hasPropertyData = computed(() => {
   if (!e) return false
   return e.landAreaSqm != null || e.livingAreaSqm != null || e.yearBuilt != null
     || e.lastRenovationYear != null || e.rooms != null || (e.units != null && e.units > 1)
-    || !!e.condition || !!e.features?.length
+    || !!e.condition || !!e.features?.length || !!e.renovationNotes
 })
 
 // Online-bidding-style platforms (Biddit, si, fi, hu, pl, boe, ca,
