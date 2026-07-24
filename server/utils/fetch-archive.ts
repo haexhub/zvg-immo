@@ -32,6 +32,7 @@ export async function archiveDetailCapture(
     kind: 'detail_html',
     platform: identity.platform,
     country: identity.country,
+    region: identity.region ?? null,
     externalId: identity.externalId,
     caseNumber: identity.caseNumber ?? null,
     authority: identity.authority ?? null,

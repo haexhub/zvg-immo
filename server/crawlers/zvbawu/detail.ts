@@ -204,6 +204,7 @@ export async function enrichInBatches(
         const identity: DocumentIdentity = {
           platform: item.platform,
           country: item.country,
+          region: item.region,
           externalId: item.externalId,
           caseNumber: item.caseNumber,
           authority: item.authority,

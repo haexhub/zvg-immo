@@ -160,6 +160,7 @@ export async function enrichOne(auction: Auction): Promise<void> {
   const identity: DocumentIdentity = {
     platform: auction.platform,
     country: auction.country,
+    region: auction.region,
     externalId: auction.externalId,
     caseNumber: auction.caseNumber,
     authority: auction.authority,

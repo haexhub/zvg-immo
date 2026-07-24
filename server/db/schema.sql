@@ -472,3 +472,21 @@ CREATE TABLE IF NOT EXISTS app_settings (
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE app_settings ENABLE ROW LEVEL SECURITY;
+
+-- Roh-Archiv-Fix: region wurde bisher nicht auf raw_captures gespeichert,
+-- sondern beim Lesen (regions.get.ts/cases.get.ts) live gegen die auctions-
+-- Tabelle gejoint. Da auctions bei jedem enrich-Lauf komplett neu geschrieben
+-- wird (current-auctions.ts) und ein einzelner fehlgeschlagener Upsert-Chunk
+-- den Rest des Laufs stillschweigend abbricht, konnte ein ganzes Bundesland
+-- im Archiv-Browser unter "—" verschwinden, obwohl raw_captures dafür Daten
+-- hat. Ab jetzt wird region direkt beim Capture geschrieben (raw-archive.ts),
+-- unabhängig vom aktuellen Zustand von auctions.
+ALTER TABLE raw_captures ADD COLUMN IF NOT EXISTS region text;
+CREATE INDEX IF NOT EXISTS idx_capt_country_region_time ON raw_captures (country, region, captured_at DESC);
+-- Backfill für Bestandszeilen (region ist erst mit obigem ADD COLUMN
+-- entstanden, ältere Zeilen haben region=NULL). Nur IS NULL, läuft bei jedem
+-- Boot erneut (idempotent) und holt automatisch nach, sobald auctions für ein
+-- bislang fehlendes Bundesland wieder befüllt ist.
+UPDATE raw_captures rc SET region = a.region
+FROM auctions a
+WHERE rc.region IS NULL AND rc.platform = a.platform AND rc.external_id = a.external_id;

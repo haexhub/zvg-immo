@@ -333,6 +333,7 @@ async function runEnrich() {
         const pdfIdentity = {
           platform: a.platform,
           country: a.country,
+          region: a.region,
           externalId: a.externalId,
           caseNumber: a.caseNumber,
           authority: a.authority,
