@@ -67,6 +67,7 @@ export function toAuctionFilters(stored: Record<string, unknown>): AuctionFilter
     features: list('features'),
     onlyWithPhotos: str('photos') === '1',
     includeCancelled: str('cancelled') === '1',
+    hideRulesOnly: str('llmOnly') === '1',
     priceMin: num('priceMin'),
     priceMax: num('priceMax'),
     landMin: num('landMin'),

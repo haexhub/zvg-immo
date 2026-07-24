@@ -40,6 +40,7 @@ const conditionFilter = defineModel<string>('conditionFilter', { required: true 
 const featuresFilter = defineModel<string[]>('featuresFilter', { required: true })
 const onlyWithPhotos = defineModel<boolean>('onlyWithPhotos', { required: true })
 const includeCancelled = defineModel<boolean>('includeCancelled', { required: true })
+const hideRulesOnly = defineModel<boolean>('hideRulesOnly', { required: true })
 
 const { t } = useI18n()
 const countryLabel = useCountryLabel()
@@ -223,6 +224,9 @@ const priceBuckets = computed(() => [
       </Label>
       <Label class="cursor-pointer">
         <Checkbox v-model="includeCancelled" /> {{ $t('filters.includeCancelled') }}
+      </Label>
+      <Label class="cursor-pointer">
+        <Checkbox v-model="hideRulesOnly" /> {{ $t('filters.hideRulesOnly') }}
       </Label>
     </div>
   </div>

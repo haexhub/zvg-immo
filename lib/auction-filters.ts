@@ -32,6 +32,10 @@ export interface AuctionFilters {
   features: string[]
   onlyWithPhotos: boolean
   includeCancelled: boolean
+  /** Hides auctions whose extraction never had an LLM field succeed
+   *  (`extraction.source === 'rules'`, regex/rules-only). Auctions with no
+   *  extraction at all are also hidden — treated the same as rules-only. */
+  hideRulesOnly: boolean
   priceMin: number | null
   priceMax: number | null
   landMin: number | null
@@ -90,6 +94,7 @@ export function filterAuctions<T extends Auction>(items: T[], filters: AuctionFi
       if (!filters.features.some((f) => have.includes(f))) return false
     }
     if (filters.onlyWithPhotos && a.photoCount === 0) return false
+    if (filters.hideRulesOnly && a.extraction?.source !== 'llm') return false
     if (filters.priceMin != null && (a.marketValueEur == null || a.marketValueEur < filters.priceMin)) return false
     if (filters.priceMax != null && (a.marketValueEur == null || a.marketValueEur > filters.priceMax)) return false
     if (filters.landMin != null || filters.landMax != null) {

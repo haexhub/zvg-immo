@@ -59,6 +59,15 @@ const { data: countries } = await useFetch<CountryEntry[]>('/api/regions', {
   default: () => [],
 })
 
+// Admin-configured default for the hideRulesOnly filter below (/settings'
+// "Dashboard-Anzeige" — see server/utils/app-settings.ts's
+// getHideRulesOnlyAuctions). Public endpoint outside /api/settings/ since
+// every visitor, not just an admin, needs this default.
+const { data: displaySettings } = await useFetch<{ hideRulesOnlyAuctions: boolean }>('/api/display-settings', {
+  default: () => ({ hideRulesOnlyAuctions: true }),
+})
+const hideRulesOnlyServerDefault = computed(() => displaySettings.value?.hideRulesOnlyAuctions ?? true)
+
 // Regions of the currently selected countries (empty when none selected).
 // Each entry carries its country's display name so the checkbox list can
 // disambiguate identically-named regions once multiple countries are picked.
@@ -274,6 +283,13 @@ const categoryFilter = ref<string>(queryStr('category', ALL_SCOPE))
 const conditionFilter = ref<string>(queryStr('condition', ALL_SCOPE))
 const featuresFilter = ref<string[]>(queryList('features'))
 const onlyWithPhotos = ref(route.query.photos === '1')
+// Three-way: explicit '1'/'0' in the URL wins, otherwise fall back to the
+// admin-configured default (hideRulesOnlyServerDefault) instead of `false` —
+// unlike onlyWithPhotos/includeCancelled, "absent from the URL" doesn't mean
+// "off" here.
+const hideRulesOnly = ref(
+  route.query.llmOnly === '1' ? true : route.query.llmOnly === '0' ? false : hideRulesOnlyServerDefault.value,
+)
 
 function setPriceBucket(min: number | null, max: number | null): void {
   priceMin.value = min
@@ -372,6 +388,7 @@ function clearAllFilters(): void {
   featuresFilter.value = []
   onlyWithPhotos.value = false
   includeCancelled.value = false
+  hideRulesOnly.value = false
 }
 
 // v-model.number yields '' (empty string) when the input is cleared; treat
@@ -392,6 +409,7 @@ const currentFilters = computed<AuctionFilters>(() => ({
   features: featuresFilter.value,
   onlyWithPhotos: onlyWithPhotos.value,
   includeCancelled: includeCancelled.value,
+  hideRulesOnly: hideRulesOnly.value,
   priceMin: numOrNull(priceMin.value),
   priceMax: numOrNull(priceMax.value),
   landMin: numOrNull(landAreaMin.value),
@@ -508,11 +526,12 @@ const activeFilterCount = computed(() => {
   if (featuresFilter.value.length) n++
   if (onlyWithPhotos.value) n++
   if (includeCancelled.value) n++
+  if (hideRulesOnly.value !== hideRulesOnlyServerDefault.value) n++
   return n
 })
 
 watch(
-  [selectedCountries, selectedRegionKeys, debouncedSearch, authorityFilter, priceMin, priceMax, landAreaMin, landAreaMax, livingAreaMin, livingAreaMax, yearBuiltMin, yearBuiltMax, renovationYearMin, renovationYearMax, categoryFilter, conditionFilter, featuresFilter, onlyWithPhotos, includeCancelled, view],
+  [selectedCountries, selectedRegionKeys, debouncedSearch, authorityFilter, priceMin, priceMax, landAreaMin, landAreaMax, livingAreaMin, livingAreaMax, yearBuiltMin, yearBuiltMax, renovationYearMin, renovationYearMax, categoryFilter, conditionFilter, featuresFilter, onlyWithPhotos, includeCancelled, hideRulesOnly, view],
   () => {
     const query: Record<string, string> = {}
     if (selectedCountries.value.length) query.country = selectedCountries.value.join(',')
@@ -534,6 +553,7 @@ watch(
     if (featuresFilter.value.length) query.features = featuresFilter.value.join(',')
     if (onlyWithPhotos.value) query.photos = '1'
     if (includeCancelled.value) query.cancelled = '1'
+    if (hideRulesOnly.value !== hideRulesOnlyServerDefault.value) query.llmOnly = hideRulesOnly.value ? '1' : '0'
     if (view.value === 'list') query.view = 'list'
     router.replace({ query })
   },
@@ -562,6 +582,7 @@ watch(() => route.query, (q) => {
   conditionFilter.value = queryStr('condition', ALL_SCOPE)
   featuresFilter.value = queryList('features')
   onlyWithPhotos.value = q.photos === '1'
+  hideRulesOnly.value = q.llmOnly === '1' ? true : q.llmOnly === '0' ? false : hideRulesOnlyServerDefault.value
   view.value = q.view === 'list' ? 'list' : 'map'
 }, { deep: true })
 
@@ -745,6 +766,7 @@ async function toggleWatchlist(a: Auction): Promise<void> {
           v-model:features-filter="featuresFilter"
           v-model:only-with-photos="onlyWithPhotos"
           v-model:include-cancelled="includeCancelled"
+          v-model:hide-rules-only="hideRulesOnly"
           :countries="countries ?? []"
           :selected-countries="selectedCountries"
           :available-regions="availableRegions"

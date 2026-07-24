@@ -65,3 +65,81 @@ export async function setLlmMaxTokens(db: Pool, kind: LlmMaxTokensKind, value: n
     [keyFor(kind), JSON.stringify(clamp(value))],
   )
 }
+
+// DB-backed override for server/utils/extract/llm.ts's provider switch — lets
+// /settings flip the active extraction provider (e.g. gemini-native ->
+// claude-proxy while no Gemini budget is set up) without a redeploy. Absent
+// row = keep using the ENV-configured provider (nuxt.config.ts's
+// extractLlm.*), same graceful-degrade contract as the max-tokens settings
+// above.
+export type LlmProvider = 'claude-proxy' | 'openai-compatible' | 'gemini-native'
+
+export const LLM_PROVIDERS: LlmProvider[] = ['claude-proxy', 'openai-compatible', 'gemini-native']
+
+export interface LlmProviderOverride {
+  provider: LlmProvider
+  baseUrl: string
+  model: string
+  /** '' when the provider doesn't need one (claude-proxy is OAuth-based via
+   *  its sidecar). */
+  apiKey: string
+}
+
+const LLM_PROVIDER_OVERRIDE_KEY = 'llm_provider_override'
+
+function coerceProviderOverride(value: unknown): LlmProviderOverride | null {
+  if (!value || typeof value !== 'object') return null
+  const v = value as Record<string, unknown>
+  if (typeof v.provider !== 'string' || !LLM_PROVIDERS.includes(v.provider as LlmProvider)) return null
+  if (typeof v.baseUrl !== 'string' || !v.baseUrl) return null
+  if (typeof v.model !== 'string' || !v.model) return null
+  return {
+    provider: v.provider as LlmProvider,
+    baseUrl: v.baseUrl,
+    model: v.model,
+    apiKey: typeof v.apiKey === 'string' ? v.apiKey : '',
+  }
+}
+
+export async function getLlmProviderOverride(db: Pool): Promise<LlmProviderOverride | null> {
+  const { rows } = await db.query<{ value: unknown }>(
+    'SELECT value FROM app_settings WHERE key = $1',
+    [LLM_PROVIDER_OVERRIDE_KEY],
+  )
+  return rows[0] ? coerceProviderOverride(rows[0].value) : null
+}
+
+export async function setLlmProviderOverride(db: Pool, value: LlmProviderOverride): Promise<void> {
+  await db.query(
+    `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, now())
+     ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()`,
+    [LLM_PROVIDER_OVERRIDE_KEY, JSON.stringify(value)],
+  )
+}
+
+export async function clearLlmProviderOverride(db: Pool): Promise<void> {
+  await db.query('DELETE FROM app_settings WHERE key = $1', [LLM_PROVIDER_OVERRIDE_KEY])
+}
+
+// DB-backed default for whether the search dashboard hides rules-only
+// (regex-parsed, no LLM field ever succeeded) auctions. Defaults to hidden —
+// matches the initial rollout decision to only surface complete listings
+// until reviewed otherwise from /settings.
+const HIDE_RULES_ONLY_KEY = 'hide_rules_only_auctions'
+export const DEFAULT_HIDE_RULES_ONLY_AUCTIONS = true
+
+export async function getHideRulesOnlyAuctions(db: Pool): Promise<boolean> {
+  const { rows } = await db.query<{ value: unknown }>(
+    'SELECT value FROM app_settings WHERE key = $1',
+    [HIDE_RULES_ONLY_KEY],
+  )
+  return typeof rows[0]?.value === 'boolean' ? rows[0].value : DEFAULT_HIDE_RULES_ONLY_AUCTIONS
+}
+
+export async function setHideRulesOnlyAuctions(db: Pool, value: boolean): Promise<void> {
+  await db.query(
+    `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, now())
+     ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()`,
+    [HIDE_RULES_ONLY_KEY, JSON.stringify(value)],
+  )
+}

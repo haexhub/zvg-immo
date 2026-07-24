@@ -9,21 +9,21 @@
 
 import type { H3Event } from 'h3'
 import type { Pool } from 'pg'
-import { readAuctionSnapshot } from '../../../../utils/auction-snapshot'
-import { isSafePathSegment } from '../../../../utils/path-segment'
-import { cacheKey } from '../../../../utils/verkehrswert-cache'
-import { getPool } from '../../../../utils/db'
-import { sha256Hex } from '../../../../utils/raw-archive'
-import { readContentTranslation, writeContentTranslation } from '../../../../utils/content-translation'
-import { getLlmMaxTokens } from '../../../../utils/app-settings'
-import { resolveLlmConfig } from '../../../../utils/extract/llm'
-import { callTranslationLlm, type TranslationResult } from '../../../../utils/extract/text-llm'
+import { readAuctionSnapshot } from '~/server/utils/auction-snapshot'
+import { isSafePathSegment } from '~/server/utils/path-segment'
+import { cacheKey } from '~/server/utils/verkehrswert-cache'
+import { getPool } from '~/server/utils/db'
+import { sha256Hex } from '~/server/utils/raw-archive'
+import { readContentTranslation, writeContentTranslation } from '~/server/utils/content-translation'
+import { getLlmMaxTokens, getLlmProviderOverride } from '~/server/utils/app-settings'
+import { resolveLlmConfig } from '~/server/utils/extract/llm'
+import { callTranslationLlm, type TranslationResult } from '~/server/utils/extract/text-llm'
 import { isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
 import {
   checkInMemoryRateLimit,
   createInMemoryRateLimitState,
   recordInMemoryRateLimitHit,
-} from '../../../../utils/in-memory-rate-limit'
+} from '~/server/utils/in-memory-rate-limit'
 
 const SUPPORTED_TARGET_LANGS = new Set<ContentTargetLang>(['de', 'en'])
 
@@ -116,7 +116,8 @@ export default defineEventHandler(async (event) => {
   const llmCfg = useRuntimeConfig().extractLlm as
     | { provider?: string; baseUrl?: string; apiKey?: string; model?: string }
     | undefined
-  const config = resolveLlmConfig(llmCfg, { maxTokens: await getLlmMaxTokens(db, 'translation') })
+  const override = await getLlmProviderOverride(db).catch(() => null)
+  const config = resolveLlmConfig(override ?? llmCfg, { maxTokens: await getLlmMaxTokens(db, 'translation') })
   if (!config) {
     throw createError({ statusCode: 503, statusMessage: 'LLM not configured' })
   }

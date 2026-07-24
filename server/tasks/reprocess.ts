@@ -10,23 +10,23 @@
 // endpoint), not a standing background job.
 
 import type { Auction, AuctionExtraction, CuratedPhoto } from '~/types/auction'
-import { getPool } from '../utils/db'
-import { pickBestPdf, extractPdfTextFromBuffer } from '../utils/extract/pdf-text'
-import { renderPdfPagesJpeg } from '../utils/extract/pdf-render'
-import { extractByRules } from '../utils/extract/rules'
-import { extractByLlm, resolveLlmConfig, type LlmConfig, type LlmInput } from '../utils/extract/llm'
-import { isLlmBatchPending, submitGeminiBatch } from '../utils/extract/gemini-batch'
-import { DEFAULT_LLM_MAX_TOKENS, getLlmMaxTokens } from '../utils/app-settings'
-import { mergeLlmResult, type MergeInputFields } from '../utils/extract/merge-llm-result'
+import { getPool } from '~/server/utils/db'
+import { pickBestPdf, extractPdfTextFromBuffer } from '~/server/utils/extract/pdf-text'
+import { renderPdfPagesJpeg } from '~/server/utils/extract/pdf-render'
+import { extractByRules } from '~/server/utils/extract/rules'
+import { extractByLlm, resolveLlmConfig, type LlmConfig, type LlmInput } from '~/server/utils/extract/llm'
+import { isLlmBatchPending, submitGeminiBatch } from '~/server/utils/extract/gemini-batch'
+import { DEFAULT_LLM_MAX_TOKENS, getLlmMaxTokens, getLlmProviderOverride } from '~/server/utils/app-settings'
+import { mergeLlmResult, type MergeInputFields } from '~/server/utils/extract/merge-llm-result'
 import {
   applyExtractionToAuctions,
   readExtractionCache,
   writeExtractionCache,
   type ExtractionCache,
-} from '../utils/extraction-cache'
-import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
-import { downloadBlob, findLatestCapture } from '../utils/storage-download'
-import { cacheKey } from '../utils/verkehrswert-cache'
+} from '~/server/utils/extraction-cache'
+import { readAuctionSnapshot, writeAuctionSnapshot } from '~/server/utils/auction-snapshot'
+import { downloadBlob, findLatestCapture } from '~/server/utils/storage-download'
+import { cacheKey } from '~/server/utils/verkehrswert-cache'
 import { normalizePhoto } from '~/lib/photo'
 
 const DEFAULT_COUNTRY = 'de'
@@ -74,7 +74,8 @@ async function readLlmConfig(): Promise<LlmConfig | null> {
   const maxTokens = db
     ? await getLlmMaxTokens(db, 'extraction').catch(() => DEFAULT_LLM_MAX_TOKENS.extraction)
     : DEFAULT_LLM_MAX_TOKENS.extraction
-  return resolveLlmConfig(c, { maxTokens })
+  const override = db ? await getLlmProviderOverride(db).catch(() => null) : null
+  return resolveLlmConfig(override ?? c, { maxTokens })
 }
 
 function readMaxLlmPerRun(): number {

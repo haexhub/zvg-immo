@@ -2,7 +2,7 @@
 import { ArrowLeft, ExternalLink, Loader2, Pencil, Trash2 } from 'lucide-vue-next'
 import type { ClaudeSetupStatus } from '~/server/api/settings/claude/status.get'
 import type { AdminLawyer } from '~/server/api/settings/lawyers/index.get'
-import type { LlmMaxTokensKind } from '~/server/utils/app-settings'
+import type { LlmMaxTokensKind, LlmProvider } from '~/server/utils/app-settings'
 
 const { t } = useI18n()
 useHead({ title: t('settings.title') })
@@ -22,6 +22,8 @@ async function probeSession(): Promise<void> {
       await refreshStatus()
       await loadLawyers()
       await loadLlmConfig()
+      await loadLlmProvider()
+      await loadDisplaySettings()
     }
   } catch {
     authed.value = false
@@ -41,6 +43,8 @@ async function login(): Promise<void> {
     await refreshStatus()
     await loadLawyers()
     await loadLlmConfig()
+    await loadLlmProvider()
+    await loadDisplaySettings()
   } catch (err) {
     authError.value = (err as { statusMessage?: string; message?: string }).statusMessage
       || (err as Error).message
@@ -370,6 +374,153 @@ async function saveLlmConfig(): Promise<void> {
   }
 }
 
+// LLM-Provider: aktiver Extraktions-Provider, gegen /api/settings/llm-provider
+// (settings-auth-Muster wie oben). Presets füllen Base-URL/Modell beim
+// Wechsel der Auswahl nur clientseitig vor — reine UX-Hilfe, keine
+// Server-Logik.
+const LLM_PROVIDER_PRESETS: Record<LlmProvider, { baseUrl: string; model: string }> = {
+  'claude-proxy': { baseUrl: 'http://haex-claude-proxy:8080', model: 'claude-haiku-4-5' },
+  'gemini-native': { baseUrl: 'https://generativelanguage.googleapis.com', model: 'gemini-flash-latest' },
+  'openai-compatible': { baseUrl: '', model: '' },
+}
+interface LlmProviderForm {
+  provider: LlmProvider
+  baseUrl: string
+  model: string
+  /** Write-only: leer beim Laden, egal ob ein Key gespeichert ist. */
+  apiKey: string
+}
+const llmProviderForm = ref<LlmProviderForm>({ provider: 'claude-proxy', baseUrl: '', model: '', apiKey: '' })
+const llmProviderOverrideActive = ref(false)
+const llmProviderApiKeySet = ref(false)
+const llmProviderEnvDefault = ref<{ provider: string; baseUrl: string; model: string } | null>(null)
+const llmProviderError = ref<string | null>(null)
+const llmProviderSaved = ref(false)
+const llmProviderPending = ref(false)
+
+async function loadLlmProvider(): Promise<void> {
+  try {
+    const res = await $fetch<{
+      override: { provider: LlmProvider; baseUrl: string; model: string; apiKeySet: boolean } | null
+      envDefault: { provider: string; baseUrl: string; model: string }
+    }>('/api/settings/llm-provider')
+    llmProviderEnvDefault.value = res.envDefault
+    llmProviderOverrideActive.value = !!res.override
+    if (res.override) {
+      llmProviderForm.value = {
+        provider: res.override.provider,
+        baseUrl: res.override.baseUrl,
+        model: res.override.model,
+        apiKey: '',
+      }
+      llmProviderApiKeySet.value = res.override.apiKeySet
+    } else {
+      llmProviderForm.value = {
+        provider: (res.envDefault.provider as LlmProvider) || 'claude-proxy',
+        baseUrl: res.envDefault.baseUrl,
+        model: res.envDefault.model,
+        apiKey: '',
+      }
+      llmProviderApiKeySet.value = false
+    }
+    llmProviderError.value = null
+  } catch (err) {
+    llmProviderError.value = normalizeSettingsError(err, t('settings.llmProvider.loadError'))
+  }
+}
+
+function onLlmProviderChange(): void {
+  const preset = LLM_PROVIDER_PRESETS[llmProviderForm.value.provider]
+  if (preset.baseUrl) llmProviderForm.value.baseUrl = preset.baseUrl
+  if (preset.model) llmProviderForm.value.model = preset.model
+}
+
+async function putLlmProvider(apiKey: string | undefined): Promise<void> {
+  llmProviderPending.value = true
+  llmProviderError.value = null
+  llmProviderSaved.value = false
+  try {
+    const body: Record<string, unknown> = {
+      provider: llmProviderForm.value.provider,
+      baseUrl: llmProviderForm.value.baseUrl.trim(),
+      model: llmProviderForm.value.model.trim(),
+    }
+    if (apiKey !== undefined) body.apiKey = apiKey
+    const res = await $fetch<{ provider: LlmProvider; baseUrl: string; model: string; apiKeySet: boolean }>(
+      '/api/settings/llm-provider',
+      { method: 'PUT', body },
+    )
+    llmProviderOverrideActive.value = true
+    llmProviderApiKeySet.value = res.apiKeySet
+    llmProviderForm.value.apiKey = ''
+    llmProviderSaved.value = true
+  } catch (err) {
+    llmProviderError.value = normalizeSettingsError(err, t('settings.llmProvider.saveError'))
+  } finally {
+    llmProviderPending.value = false
+  }
+}
+
+async function saveLlmProvider(): Promise<void> {
+  if (!llmProviderForm.value.baseUrl.trim() || !llmProviderForm.value.model.trim()) {
+    llmProviderError.value = t('settings.llmProvider.invalidValue')
+    return
+  }
+  await putLlmProvider(llmProviderForm.value.apiKey || undefined)
+}
+
+async function clearLlmProviderApiKey(): Promise<void> {
+  await putLlmProvider('')
+}
+
+async function resetLlmProvider(): Promise<void> {
+  llmProviderPending.value = true
+  llmProviderError.value = null
+  try {
+    await $fetch('/api/settings/llm-provider', { method: 'DELETE' })
+    await loadLlmProvider()
+  } catch (err) {
+    llmProviderError.value = normalizeSettingsError(err, t('settings.llmProvider.resetError'))
+  } finally {
+    llmProviderPending.value = false
+  }
+}
+
+// Dashboard-Anzeige: Standard für "Regex-only-Auktionen ausblenden" auf
+// /search, gegen /api/settings/display (settings-auth-Muster wie oben).
+const hideRulesOnlyDefault = ref(true)
+const displayError = ref<string | null>(null)
+const displaySaved = ref(false)
+const displayPending = ref(false)
+
+async function loadDisplaySettings(): Promise<void> {
+  try {
+    const res = await $fetch<{ hideRulesOnlyAuctions: boolean }>('/api/settings/display')
+    hideRulesOnlyDefault.value = res.hideRulesOnlyAuctions
+    displayError.value = null
+  } catch (err) {
+    displayError.value = normalizeSettingsError(err, t('settings.display.loadError'))
+  }
+}
+
+async function saveDisplaySettings(): Promise<void> {
+  displayPending.value = true
+  displayError.value = null
+  displaySaved.value = false
+  try {
+    const res = await $fetch<{ hideRulesOnlyAuctions: boolean }>('/api/settings/display', {
+      method: 'PUT',
+      body: { hideRulesOnlyAuctions: hideRulesOnlyDefault.value },
+    })
+    hideRulesOnlyDefault.value = res.hideRulesOnlyAuctions
+    displaySaved.value = true
+  } catch (err) {
+    displayError.value = normalizeSettingsError(err, t('settings.display.saveError'))
+  } finally {
+    displayPending.value = false
+  }
+}
+
 onMounted(probeSession)
 onBeforeUnmount(stopPolling)
 </script>
@@ -619,6 +770,110 @@ onBeforeUnmount(stopPolling)
                 {{ llmConfigPending ? $t('settings.llm.saving') : $t('settings.llm.save') }}
               </Button>
             </div>
+          </form>
+        </CardContent>
+      </Card>
+
+      <Card v-if="authed">
+        <CardHeader>
+          <CardTitle>{{ $t('settings.llmProvider.title') }}</CardTitle>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          <p class="text-sm text-muted-foreground">
+            {{ $t('settings.llmProvider.description') }}
+          </p>
+
+          <p v-if="!llmProviderOverrideActive && llmProviderEnvDefault" class="text-sm text-muted-foreground">
+            {{ $t('settings.llmProvider.usingEnvDefault', {
+              provider: llmProviderEnvDefault.provider,
+              baseUrl: llmProviderEnvDefault.baseUrl,
+            }) }}
+          </p>
+
+          <p v-if="llmProviderError" class="text-sm text-destructive">{{ llmProviderError }}</p>
+          <p v-if="llmProviderSaved" class="text-sm text-emerald-600 dark:text-emerald-500">{{ $t('settings.llmProvider.saved') }}</p>
+
+          <form class="space-y-3" @submit.prevent="saveLlmProvider">
+            <div class="space-y-1">
+              <Label>{{ $t('settings.llmProvider.providerLabel') }}</Label>
+              <Select v-model="llmProviderForm.provider" @update:model-value="onLlmProviderChange">
+                <SelectTrigger class="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="claude-proxy">{{ $t('settings.llmProvider.providerClaudeProxy') }}</SelectItem>
+                  <SelectItem value="gemini-native">{{ $t('settings.llmProvider.providerGeminiNative') }}</SelectItem>
+                  <SelectItem value="openai-compatible">{{ $t('settings.llmProvider.providerOpenaiCompatible') }}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div class="space-y-1">
+                <Label>{{ $t('settings.llmProvider.baseUrlLabel') }}</Label>
+                <Input v-model="llmProviderForm.baseUrl" />
+              </div>
+              <div class="space-y-1">
+                <Label>{{ $t('settings.llmProvider.modelLabel') }}</Label>
+                <Input v-model="llmProviderForm.model" />
+              </div>
+            </div>
+            <div class="space-y-1">
+              <Label>{{ $t('settings.llmProvider.apiKeyLabel') }}</Label>
+              <div class="flex gap-2">
+                <Input
+                  v-model="llmProviderForm.apiKey"
+                  type="password"
+                  autocomplete="off"
+                  :placeholder="llmProviderApiKeySet ? $t('settings.llmProvider.apiKeyPlaceholderSet') : $t('settings.llmProvider.apiKeyPlaceholderUnset')"
+                />
+                <Button
+                  v-if="llmProviderApiKeySet"
+                  type="button"
+                  variant="outline"
+                  :disabled="llmProviderPending"
+                  @click="clearLlmProviderApiKey"
+                >
+                  {{ $t('settings.llmProvider.apiKeyClear') }}
+                </Button>
+              </div>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <Button type="submit" :disabled="llmProviderPending">
+                {{ llmProviderPending ? $t('settings.llmProvider.saving') : $t('settings.llmProvider.save') }}
+              </Button>
+              <Button
+                v-if="llmProviderOverrideActive"
+                type="button"
+                variant="outline"
+                :disabled="llmProviderPending"
+                @click="resetLlmProvider"
+              >
+                {{ $t('settings.llmProvider.reset') }}
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+
+      <Card v-if="authed">
+        <CardHeader>
+          <CardTitle>{{ $t('settings.display.title') }}</CardTitle>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          <p class="text-sm text-muted-foreground">
+            {{ $t('settings.display.description') }}
+          </p>
+
+          <p v-if="displayError" class="text-sm text-destructive">{{ displayError }}</p>
+          <p v-if="displaySaved" class="text-sm text-emerald-600 dark:text-emerald-500">{{ $t('settings.display.saved') }}</p>
+
+          <form class="space-y-3" @submit.prevent="saveDisplaySettings">
+            <Label class="flex items-center gap-2">
+              <Checkbox v-model="hideRulesOnlyDefault" /> {{ $t('settings.display.hideRulesOnlyLabel') }}
+            </Label>
+            <Button type="submit" :disabled="displayPending">
+              {{ displayPending ? $t('settings.display.saving') : $t('settings.display.save') }}
+            </Button>
           </form>
         </CardContent>
       </Card>

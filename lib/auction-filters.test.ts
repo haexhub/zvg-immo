@@ -40,6 +40,7 @@ const BASE_FILTERS: AuctionFilters = {
   features: [],
   onlyWithPhotos: false,
   includeCancelled: false,
+  hideRulesOnly: false,
   priceMin: null,
   priceMax: null,
   landMin: null,
@@ -138,6 +139,22 @@ describe('filterAuctions', () => {
       makeAuction({ externalId: '2', photoCount: 3 }),
     ]
     const result = filterAuctions(items, { ...BASE_FILTERS, onlyWithPhotos: true })
+    expect(result.map((a) => a.externalId)).toEqual(['2'])
+  })
+
+  it('filters hideRulesOnly, treating missing extraction the same as rules-only', () => {
+    const items = [
+      makeAuction({ externalId: '1', extraction: {
+        propertyType: null, landAreaSqm: null, livingAreaSqm: null, rooms: null,
+        units: null, source: 'rules', confidence: 'low', at: '2024-01-01T00:00:00Z',
+      } }),
+      makeAuction({ externalId: '2', extraction: {
+        propertyType: 'einfamilienhaus', landAreaSqm: null, livingAreaSqm: null, rooms: null,
+        units: null, source: 'llm', confidence: 'high', at: '2024-01-01T00:00:00Z',
+      } }),
+      makeAuction({ externalId: '3', extraction: null }),
+    ]
+    const result = filterAuctions(items, { ...BASE_FILTERS, hideRulesOnly: true })
     expect(result.map((a) => a.externalId)).toEqual(['2'])
   })
 
