@@ -176,6 +176,7 @@
     "title": "Einstellungen — Zwangsversteigerungen",
     "back": "Zurück zur Übersicht",
     "heading": "Einstellungen",
+    "logoutAdmin": "Abmelden",
     "login": {
       "title": "Anmeldung",
       "protected": "Diese Seite ist passwortgeschützt.",
@@ -269,7 +270,7 @@
       "title": "LLM-Provider",
       "description": "Aktiver Extraktions-Provider — überschreibt die serverseitige ENV-Konfiguration ohne Redeploy.",
       "providerLabel": "Provider",
-      "providerClaudeProxy": "Claude-Proxy (OAuth, oben verbunden)",
+      "providerClaudeProxy": "Claude-Proxy (OAuth)",
       "providerOpenaiCompatible": "OpenAI-kompatibel",
       "providerGeminiNative": "Gemini (native)",
       "baseUrlLabel": "Base-URL",
