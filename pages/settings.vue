@@ -402,7 +402,7 @@ async function saveLlmConfig(): Promise<void> {
 // Wechsel der Auswahl nur clientseitig vor — reine UX-Hilfe, keine
 // Server-Logik.
 const LLM_PROVIDER_PRESETS: Record<LlmProvider, { baseUrl: string; model: string }> = {
-  'claude-proxy': { baseUrl: 'http://haex-claude-proxy:8080', model: 'claude-haiku-4-5' },
+  'claude-proxy': { baseUrl: 'http://haex-claude-proxy:8080', model: 'claude-sonnet-5' },
   'gemini-native': { baseUrl: 'https://generativelanguage.googleapis.com', model: 'gemini-flash-latest' },
   'openai-compatible': { baseUrl: '', model: '' },
 }
