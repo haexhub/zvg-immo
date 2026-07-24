@@ -176,6 +176,8 @@
     "title": "Settings — Foreclosure Auctions",
     "back": "Back to overview",
     "heading": "Settings",
+    "logoutAdmin": "Sign out",
+    "logoutAdminError": "Sign out failed.",
     "login": {
       "title": "Sign in",
       "protected": "This page is password-protected.",
@@ -269,7 +271,7 @@
       "title": "LLM provider",
       "description": "Active extraction provider — overrides the server-side ENV configuration without a redeploy.",
       "providerLabel": "Provider",
-      "providerClaudeProxy": "Claude proxy (OAuth, connected above)",
+      "providerClaudeProxy": "Claude proxy (OAuth)",
       "providerOpenaiCompatible": "OpenAI-compatible",
       "providerGeminiNative": "Gemini (native)",
       "baseUrlLabel": "Base URL",
