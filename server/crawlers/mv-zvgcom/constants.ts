@@ -7,22 +7,31 @@ export const COUNTRY = 'de'
 export const PLATFORM_ID = 'mv-zvgcom'
 
 /**
- * Mecklenburg-Vorpommern's Amtsgerichte are the only ones alongside
- * Rheinland-Pfalz that don't publish on the joint Bund-Länder zvg-portal.de
- * (confirmed both by zvg-portal.de returning zero results for land_abk=mv and
- * by MV Amtsgericht pages — e.g. ag-greifswald.mv-justiz.de — pointing at
- * zvg.com as their Zwangsversteigerung listing). zvg.com is a privately run
- * portal the MV courts contract with to publish termine; it runs a JSON API
- * (undocumented but public, no auth) under /v2024/*.prg.
+ * Mecklenburg-Vorpommern, Hamburg and Schleswig-Holstein are the only German
+ * states (alongside Rheinland-Pfalz, which already publishes fully via
+ * zvg-portal.de) whose Amtsgerichte don't publish on the joint Bund-Länder
+ * zvg-portal.de (confirmed by zvg-portal.de returning zero results for
+ * land_abk=mv/hh/sh). All three instead publish via zvg.com, a privately run
+ * portal that runs a JSON API (undocumented but public, no auth) under
+ * /v2024/*.prg.
  */
-export const MV_REGIONS: readonly RegionInfo[] = [
-  { code: 'mv', name: 'Mecklenburg-Vorpommern' },
+export interface ZvgcomState extends RegionInfo {
+  /** zvg.com's internal Bundesland id ("Lfd"), as returned by
+   *  GET /v2024/bundesland.prg?act=getData. Static — this list of German
+   *  states doesn't change. */
+  bundeslandId: number
+}
+
+export const ZVGCOM_STATES: readonly ZvgcomState[] = [
+  { code: 'hh', name: 'Hamburg', bundeslandId: 2 },
+  { code: 'mv', name: 'Mecklenburg-Vorpommern', bundeslandId: 6 },
+  { code: 'sh', name: 'Schleswig-Holstein', bundeslandId: 8 },
 ] as const
 
-/** zvg.com's internal Bundesland id ("Lfd") for Mecklenburg-Vorpommern, as
- *  returned by GET /v2024/bundesland.prg?act=getData. Static — this list of
- *  German states doesn't change. */
-export const MV_BUNDESLAND_ID = 6
+export const ZVGCOM_REGIONS: readonly RegionInfo[] = ZVGCOM_STATES.map(({ code, name }) => ({
+  code,
+  name,
+}))
 
 /** This placeholder graphic replaces the real listing photo once a Termin is
  *  aufgehoben — it is not a property photo and must not be surfaced as one. */

@@ -167,7 +167,12 @@ export interface CaptureInput {
  * Append-only, change-only capture log: inserts a `raw_captures` row only
  * when `contentHash` differs from the most recent capture for the same
  * `(kind, platform, externalId)` — otherwise every unchanged run would add a
- * capture row for no reason. Never throws.
+ * capture row for no reason. The SELECT-then-INSERT above is only a fast-path
+ * skip, not the dedup guarantee: `refresh.ts` and `enrich.ts` can call this
+ * concurrently for the same auction, so the actual guarantee is the unique
+ * index on (kind, platform, external_id, content_hash) (schema.sql) — the
+ * INSERT no-ops via ON CONFLICT if a race already wrote the same row. Never
+ * throws.
  */
 export async function recordCapture(input: CaptureInput): Promise<void> {
   const db = getPool()
@@ -184,7 +189,8 @@ export async function recordCapture(input: CaptureInput): Promise<void> {
     await db.query(
       `INSERT INTO raw_captures
          (captured_at, kind, platform, country, region, external_id, case_number, authority, content_hash, source_url)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       ON CONFLICT (kind, platform, external_id, content_hash) DO NOTHING`,
       [
         input.capturedAt,
         input.kind,
