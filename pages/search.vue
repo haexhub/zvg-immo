@@ -388,7 +388,7 @@ function clearAllFilters(): void {
   featuresFilter.value = []
   onlyWithPhotos.value = false
   includeCancelled.value = false
-  hideRulesOnly.value = false
+  hideRulesOnly.value = hideRulesOnlyServerDefault.value
 }
 
 // v-model.number yields '' (empty string) when the input is cleared; treat

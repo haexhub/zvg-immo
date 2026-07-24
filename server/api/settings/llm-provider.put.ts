@@ -4,7 +4,7 @@
 // echoes the real value back, so the form can't "round-trip" a stale key.
 
 import { getPool } from '~/server/utils/db'
-import { getLlmProviderOverride, setLlmProviderOverride, LLM_PROVIDERS, type LlmProvider } from '~/server/utils/app-settings'
+import { setLlmProviderOverride, LLM_PROVIDERS, type LlmProvider } from '~/server/utils/app-settings'
 
 export default defineEventHandler(async (event) => {
   const db = getPool()
@@ -23,21 +23,17 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'model: darf nicht leer sein.' })
   }
 
-  const existing = await getLlmProviderOverride(db)
-  const apiKey = typeof body.apiKey === 'string' ? body.apiKey : existing?.apiKey ?? ''
-
-  await setLlmProviderOverride(db, {
+  const saved = await setLlmProviderOverride(db, {
     provider: body.provider as LlmProvider,
     baseUrl: body.baseUrl.trim(),
     model: body.model.trim(),
-    apiKey,
+    apiKey: typeof body.apiKey === 'string' ? body.apiKey : undefined,
   })
 
-  const saved = await getLlmProviderOverride(db)
   return {
-    provider: saved!.provider,
-    baseUrl: saved!.baseUrl,
-    model: saved!.model,
-    apiKeySet: !!saved!.apiKey,
+    provider: saved.provider,
+    baseUrl: saved.baseUrl,
+    model: saved.model,
+    apiKeySet: !!saved.apiKey,
   }
 })

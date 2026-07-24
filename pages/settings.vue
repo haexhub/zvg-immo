@@ -431,8 +431,8 @@ async function loadLlmProvider(): Promise<void> {
 
 function onLlmProviderChange(): void {
   const preset = LLM_PROVIDER_PRESETS[llmProviderForm.value.provider]
-  if (preset.baseUrl) llmProviderForm.value.baseUrl = preset.baseUrl
-  if (preset.model) llmProviderForm.value.model = preset.model
+  llmProviderForm.value.baseUrl = preset.baseUrl
+  llmProviderForm.value.model = preset.model
 }
 
 async function putLlmProvider(apiKey: string | undefined): Promise<void> {

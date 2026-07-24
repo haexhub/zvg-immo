@@ -29,9 +29,18 @@ function makeFakePool() {
       return { rows: keys.filter((k) => rows.has(k)).map((k) => ({ key: k, value: rows.get(k) })) }
     }
     if (sql.includes('INSERT INTO app_settings')) {
-      const [key, value] = params as [string, string]
-      rows.set(key, JSON.parse(value))
-      return { rows: [], rowCount: 1 }
+      if (params.length === 2) {
+        const [key, value] = params as [string, string]
+        rows.set(key, JSON.parse(value))
+        return { rows: [], rowCount: 1 }
+      }
+      // setLlmProviderOverride's atomic upsert: [key, provider, baseUrl, model, apiKey|null].
+      // Emulates the SQL's COALESCE($5, current.apiKey, '') without a real jsonb engine.
+      const [key, provider, baseUrl, model, apiKey] = params as [string, string, string, string, string | null]
+      const existing = rows.get(key) as { apiKey?: string } | undefined
+      const value = { provider, baseUrl, model, apiKey: apiKey ?? existing?.apiKey ?? '' }
+      rows.set(key, value)
+      return { rows: [{ value }], rowCount: 1 }
     }
     if (sql.includes('DELETE FROM app_settings')) {
       const [key] = params as [string]

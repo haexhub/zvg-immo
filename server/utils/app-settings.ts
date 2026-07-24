@@ -81,7 +81,9 @@ export interface LlmProviderOverride {
   baseUrl: string
   model: string
   /** '' when the provider doesn't need one (claude-proxy is OAuth-based via
-   *  its sidecar). */
+   *  its sidecar). Stored as plaintext JSON in app_settings — accepted
+   *  tradeoff for this solo-admin deployment (no other DB readers); revisit
+   *  with at-rest encryption if that ever changes. */
   apiKey: string
 }
 
@@ -109,12 +111,30 @@ export async function getLlmProviderOverride(db: Pool): Promise<LlmProviderOverr
   return rows[0] ? coerceProviderOverride(rows[0].value) : null
 }
 
-export async function setLlmProviderOverride(db: Pool, value: LlmProviderOverride): Promise<void> {
-  await db.query(
-    `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, now())
-     ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()`,
-    [LLM_PROVIDER_OVERRIDE_KEY, JSON.stringify(value)],
+// apiKey undefined means "leave the stored key untouched" (the PUT route's
+// write-only preserve-on-omit contract). Resolved via COALESCE against the
+// current row inside the single upsert statement, not a separate read
+// beforehand, so a concurrent rotation/clear/delete can't be clobbered by a
+// stale read — the whole read-modify-write happens atomically in Postgres.
+export async function setLlmProviderOverride(
+  db: Pool,
+  value: { provider: LlmProvider; baseUrl: string; model: string; apiKey?: string },
+): Promise<LlmProviderOverride> {
+  const { rows } = await db.query<{ value: unknown }>(
+    `INSERT INTO app_settings (key, value, updated_at)
+     VALUES ($1, jsonb_build_object('provider', $2::text, 'baseUrl', $3::text, 'model', $4::text, 'apiKey', COALESCE($5::text, '')), now())
+     ON CONFLICT (key) DO UPDATE SET
+       value = jsonb_build_object(
+         'provider', $2::text,
+         'baseUrl', $3::text,
+         'model', $4::text,
+         'apiKey', COALESCE($5::text, app_settings.value->>'apiKey', '')
+       ),
+       updated_at = now()
+     RETURNING value`,
+    [LLM_PROVIDER_OVERRIDE_KEY, value.provider, value.baseUrl, value.model, value.apiKey ?? null],
   )
+  return coerceProviderOverride(rows[0]?.value)!
 }
 
 export async function clearLlmProviderOverride(db: Pool): Promise<void> {
