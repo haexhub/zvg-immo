@@ -75,6 +75,12 @@ const SCANNED_PDF_TEXT_THRESHOLD = 200
 // starving healthy listings of the per-run budget. A few retries still absorb
 // transient proxy blips.
 const MAX_LLM_FAILURES = 3
+// Give up retrying a listing whose photo pipeline (native download / PDF
+// extraction) keeps *throwing* after this many attempts — same rationale as
+// MAX_LLM_FAILURES. A listing that completes an attempt but legitimately has
+// no usable photos stops retrying immediately (photosCheckedAt gets set),
+// this bound only guards against persistent errors.
+const MAX_PHOTO_FAILURES = 3
 // Cap on candidate photos sent to the LLM for curation per document — a
 // Gutachten with dozens of embedded rasters would otherwise blow the token
 // budget for one extraction call.
@@ -138,7 +144,7 @@ export default defineTask({
   },
 })
 
-async function runEnrich() {
+export async function runEnrich() {
     const startedAt = Date.now()
     console.log('[enrich] start')
 
@@ -197,12 +203,29 @@ async function runEnrich() {
         !isLlmBatchPending(hit)
       )
     }
+    // A prior attempt may never have run the actual photo pipeline (the
+    // `if (priorEntry)` reuse branch below only carries `priorEntry.photos`
+    // forward) or may have thrown before completing. `photosCheckedAt` unset
+    // means "never attempted"; bounded by MAX_PHOTO_FAILURES so a listing
+    // whose PDF/URLs genuinely hold no usable photos doesn't retry forever.
+    // Entries that already have photos need no backfill regardless of the
+    // marker.
+    const needsPhotoBackfill = (a: Auction): boolean => {
+      const hit = cache[cacheKey(a.platform, a.externalId)]
+      return (
+        hit != null &&
+        !hit.photos?.length &&
+        hit.photosCheckedAt == null &&
+        (hit.photoFailures ?? 0) < MAX_PHOTO_FAILURES
+      )
+    }
     const eligible = result.auctions.filter(
       (a) =>
         !cache[cacheKey(a.platform, a.externalId)] ||
         needsEnrich(a) ||
         needsLlmRetry(a) ||
-        needsLlmFieldsBackfill(a),
+        needsLlmFieldsBackfill(a) ||
+        needsPhotoBackfill(a),
     )
     const todo = interleaveByPlatform(eligible)
     const maxLlmPerRun = readMaxLlmPerRun()
@@ -249,7 +272,8 @@ async function runEnrich() {
         const crawler = byPlatform.get(a.platform)
         const key = cacheKey(a.platform, a.externalId)
         const priorEntry = cache[key]
-        const extractionMissing = !priorEntry || needsLlmRetry(a) || needsLlmFieldsBackfill(a)
+        const extractionMissing =
+          !priorEntry || needsLlmRetry(a) || needsLlmFieldsBackfill(a) || needsPhotoBackfill(a)
 
         // Detail fetch (description + attachments) so extraction has real text
         // and the snapshot writer has enrichOne-populated fields to persist.
@@ -374,16 +398,26 @@ async function runEnrich() {
         let curatedPhotos: CuratedPhoto[] | undefined
         let freshPhotoFiles: string[] | undefined
         let freshPhotoDestDir: string | null = null
-        if (priorEntry) {
+        // Carried forward by default (matches priorEntry); overwritten below
+        // only when the photo pipeline actually runs this iteration.
+        let photosCheckedAt = priorEntry?.photosCheckedAt
+        let photoFailures = priorEntry?.photoFailures ?? 0
+        // Whether the photo pipeline actually ran this iteration (success or
+        // failure) — distinct from cacheable below, so a photo-only backfill
+        // outcome still gets persisted even when rules are unconfident and
+        // the LLM is disabled/capped/failed (see cacheable assignments below).
+        let photoPipelineRan = false
+        if (priorEntry && !needsPhotoBackfill(a)) {
           // A re-run (needsLlmRetry / needsLlmFieldsBackfill — a cache entry
-          // here means exactly one of those): the photo pipeline already ran
-          // when this entry was first cached. The mirrored files are
+          // here means one of those, or needsEnrich alone with photos already
+          // checked): the photo pipeline already ran when this entry was
+          // first cached (or a later backfill pass). The mirrored files are
           // content-addressed and still on disk — reuse the result instead of
           // re-downloading every gallery / re-mining the PDF on every retry
-          // pass. First runs and entries never cached before still go through
-          // the full pipeline below. Normalize while reusing: a legacy prior
-          // entry may hold bare filename strings, and re-persisting them raw
-          // would perpetuate the old shape instead of upgrading it.
+          // pass. First runs and entries never checked before go through the
+          // full pipeline below instead. Normalize while reusing: a legacy
+          // prior entry may hold bare filename strings, and re-persisting
+          // them raw would perpetuate the old shape instead of upgrading it.
           curatedPhotos = priorEntry.photos?.map(normalizePhoto)
           // Unlike a fully-curated prior entry, one whose LLM fields never got
           // a successful call (cap hit / request failure on the run that
@@ -400,7 +434,11 @@ async function runEnrich() {
             freshPhotoDestDir = join(IMAGES_DIR, a.platform, a.externalId)
           }
         } else if (isSafePathSegment(a.platform) && isSafePathSegment(a.externalId)) {
+          // First-ever entry, or a backfill retry (needsPhotoBackfill): the
+          // predicate only lets a listing in here when it has no photos yet,
+          // so there's nothing on disk worth preserving from priorEntry.
           const destDir = join(IMAGES_DIR, a.platform, a.externalId)
+          photoPipelineRan = true
           // The deterministic pipeline yields bare filenames; they become
           // CuratedPhoto entries (category defaults to 'sonstiges' unless the
           // LLM call below curates them for real).
@@ -435,7 +473,13 @@ async function runEnrich() {
                 await uploadImage(bytes, `${a.platform}/${a.externalId}/${name}`)
               }
             }
+            // Completed without throwing — "checked", regardless of whether
+            // any photos were actually found (a legitimately photo-less
+            // listing/PDF stops being retried from here on).
+            photosCheckedAt = at
+            photoFailures = 0
           } catch (err) {
+            photoFailures++
             console.warn(
               `[enrich] photo extraction failed for ${a.platform}:${a.externalId}: ${(err as Error).message}`,
             )
@@ -502,7 +546,7 @@ async function runEnrich() {
             // — cache the rules-only result now so the listing shows
             // *something* immediately; llm-batch-poll.ts merges the LLM
             // contribution once the submitted job completes.
-            cacheable = mergedConfident || detailOk
+            cacheable = mergedConfident || detailOk || photoPipelineRan
           } else {
             // A short/empty pdftotext result on an actual attachment usually
             // means the Gutachten PDF is a scanned image, not real text —
@@ -522,10 +566,19 @@ async function runEnrich() {
             if (llm && curatedPhotos && candidateImages?.length && llm.photoCuration.length) {
               curatedPhotos = applyPhotoCuration(curatedPhotos, llm.photoCuration)
             }
-            const merged = mergeLlmResult(priorEntry, { ...fields, confident: mergedConfident }, llm, at, curatedPhotos)
+            const merged = {
+              ...mergeLlmResult(priorEntry, { ...fields, confident: mergedConfident }, llm, at, curatedPhotos),
+              // Override mergeLlmResult's priorEntry-carried defaults with this
+              // iteration's actual photo-attempt outcome (explicit `undefined`
+              // clears a stale value rather than leaving the carried-forward one).
+              photosCheckedAt,
+              photoFailures: photoFailures > 0 ? photoFailures : undefined,
+            }
             // Same rationale as the cap-hit/disabled branches below: a failed
-            // request only caches when detail/rules already gave us something.
-            cacheable = llm !== null || mergedConfident || detailOk
+            // request only caches when detail/rules already gave us something
+            // — unless the photo pipeline ran, in which case that outcome
+            // (photosCheckedAt/photoFailures) still needs to be persisted.
+            cacheable = llm !== null || mergedConfident || detailOk || photoPipelineRan
             if (cacheable) {
               cache[key] = merged
               dirty[key] = merged
@@ -549,11 +602,11 @@ async function runEnrich() {
           // needsLlmFieldsBackfill retries them too. Leaving it uncached
           // instead starved huge platforms (IT: 14k listings ÷ 300
           // calls/run) of any extraction data for months.
-          cacheable = mergedConfident || detailOk
+          cacheable = mergedConfident || detailOk || photoPipelineRan
         } else {
           // LLM disabled entirely: cache the rules result if we had real text
           // to work with, else leave it for a later run to retry.
-          cacheable = mergedConfident || detailOk
+          cacheable = mergedConfident || detailOk || photoPipelineRan
         }
 
         if (!cacheable) continue
@@ -568,6 +621,8 @@ async function runEnrich() {
           source: 'rules',
           confidence: hasType && hasArea ? 'high' : 'low',
           photos: curatedPhotos,
+          photosCheckedAt,
+          photoFailures: photoFailures > 0 ? photoFailures : undefined,
           at,
           ...(prevFailures > 0 ? { llmFailures: prevFailures } : {}),
         }

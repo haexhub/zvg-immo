@@ -206,8 +206,10 @@ function buildRulesOnlyEntry(
     source: 'rules',
     confidence: hasType && hasArea ? 'high' : 'low',
     photos,
+    photosCheckedAt: priorEntry?.photosCheckedAt,
     at,
     ...(prevFailures > 0 ? { llmFailures: prevFailures } : {}),
+    ...(priorEntry?.photoFailures ? { photoFailures: priorEntry.photoFailures } : {}),
   }
 }
 

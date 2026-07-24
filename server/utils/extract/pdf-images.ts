@@ -130,15 +130,19 @@ export interface ExtractPhotosOptions {
 /**
  * Fetch the PDF at `proxyUrl`, extract embedded raster images, filter and
  * dedupe them, write the keepers to `destDir`. Returns the list of filenames
- * (e.g. `['0.jpg', '1.png']`). Returns `[]` on any failure or if no photo-sized
- * image is present.
+ * (e.g. `['0.jpg', '1.png']`). Returns `[]` only for a confirmed-empty PDF
+ * (fetched fine, no photo-sized image inside). Throws instead of swallowing
+ * to `[]` when the fetch or the pdfimages run itself failed — that's a
+ * transient problem (network hang, timeout), not evidence the listing has no
+ * photos, and the caller (enrich.ts) relies on the distinction to decide
+ * between photosCheckedAt (confirmed empty) and photoFailures (retry).
  */
 export async function extractPdfPhotos(
   proxyUrl: string,
   opts: ExtractPhotosOptions,
 ): Promise<string[]> {
   const buf = await fetchPdfBuffer(proxyUrl)
-  if (!buf) return []
+  if (!buf) throw new Error(`failed to fetch PDF for photo extraction: ${proxyUrl}`)
 
   const workDir = await mkdtemp(join(tmpdir(), 'zvg-pdfimages-'))
   const inputPath = join(workDir, 'in.pdf')
@@ -152,8 +156,8 @@ export async function extractPdfPhotos(
         maxBuffer: 10 * 1024 * 1024,
       })
       listOut = stdout
-    } catch {
-      return []
+    } catch (err) {
+      throw new Error(`pdfimages -list failed: ${(err as Error).message}`)
     }
     const wanted = filterImages(parseImageList(listOut))
     if (wanted.length === 0) return []
@@ -166,8 +170,8 @@ export async function extractPdfPhotos(
         timeout: 120_000,
         maxBuffer: 50 * 1024 * 1024,
       })
-    } catch {
-      return []
+    } catch (err) {
+      throw new Error(`pdfimages extraction failed: ${(err as Error).message}`)
     }
 
     const files = await readdir(workDir)

@@ -43,23 +43,30 @@ function detectImageExt(buf: Buffer): 'jpg' | 'png' | 'webp' | null {
   return null
 }
 
+// Network/timeout errors are left to throw (unlike a non-OK HTTP status,
+// which resolves to null below): downloadNativeImages needs to tell "fetch
+// never even completed" apart from "server responded, no image here" so it
+// can avoid reporting a transient network failure as a confirmed absence of
+// photos (see photosCheckedAt/photoFailures in enrich.ts).
 async function fetchImageBytes(url: string): Promise<Buffer | null> {
-  try {
-    const res = await fetch(url, {
-      // 30s upper bound: the enrich task's Promise.all fan-out would otherwise
-      // stall a whole worker on one hung upstream. AT-Edikte (Lotus-Domino) is
-      // the slowest we hit, ~500ms typical.
-      signal: AbortSignal.timeout(30_000),
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101 Firefox/130.0',
-        Accept: 'image/jpeg,image/png,image/*;q=0.9,*/*;q=0.1',
-      },
-    })
-    if (!res.ok) return null
-    return Buffer.from(await res.arrayBuffer())
-  } catch {
+  const res = await fetch(url, {
+    // 30s upper bound: the enrich task's Promise.all fan-out would otherwise
+    // stall a whole worker on one hung upstream. AT-Edikte (Lotus-Domino) is
+    // the slowest we hit, ~500ms typical.
+    signal: AbortSignal.timeout(30_000),
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101 Firefox/130.0',
+      Accept: 'image/jpeg,image/png,image/*;q=0.9,*/*;q=0.1',
+    },
+  })
+  if (!res.ok) {
+    // Transient — worth a retry, unlike a stable 404/403 on a dead link.
+    if (res.status === 408 || res.status === 429 || res.status >= 500) {
+      throw new Error(`image fetch failed with HTTP ${res.status}`)
+    }
     return null
   }
+  return Buffer.from(await res.arrayBuffer())
 }
 
 const DEFAULT_MAX_IMAGES = 12
@@ -103,11 +110,18 @@ export async function downloadNativeImages(
 
   const written: string[] = []
   const seenHashes = new Set<string>()
+  let hadFetchError = false
   // The cap counts successful downloads, not attempts — dead URLs at the
   // front of the list must not block valid ones further back.
   for (const url of urls) {
     if (written.length >= cap) break
-    const buf = await fetchImageBytes(url)
+    let buf: Buffer | null
+    try {
+      buf = await fetchImageBytes(url)
+    } catch {
+      hadFetchError = true
+      continue
+    }
     if (!buf || buf.length < MIN_BYTES) continue
     const ext = detectImageExt(buf)
     if (!ext) continue
@@ -121,6 +135,14 @@ export async function downloadNativeImages(
       existing.add(hash)
     }
     written.push(name)
+  }
+  // Nothing came back *and* at least one URL failed at the network level:
+  // can't tell this apart from "all dead links", but it's exactly the
+  // transient-failure shape the caller needs to retry rather than treat as a
+  // confirmed empty gallery. If some URLs did succeed, a few dead ones among
+  // them are unremarkable and not worth failing the whole listing over.
+  if (written.length === 0 && hadFetchError) {
+    throw new Error('all native image fetches failed (network error)')
   }
   return written
 }

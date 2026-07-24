@@ -120,7 +120,9 @@ export function mergeLlmResult(
     source,
     confidence: hasType && hasArea ? 'high' : 'low',
     photos,
+    photosCheckedAt: priorEntry?.photosCheckedAt,
     at,
     ...(llmFailures > 0 ? { llmFailures } : {}),
+    ...(priorEntry?.photoFailures ? { photoFailures: priorEntry.photoFailures } : {}),
   }
 }
