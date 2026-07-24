@@ -31,6 +31,7 @@ describe('toAuctionFilters', () => {
       features: 'balkon,garage',
       photos: '1',
       cancelled: '1',
+      llmOnly: '1',
     })
 
     expect(filters.countries).toEqual(['de'])
@@ -42,6 +43,7 @@ describe('toAuctionFilters', () => {
     expect(filters.features).toEqual(['balkon', 'garage'])
     expect(filters.onlyWithPhotos).toBe(true)
     expect(filters.includeCancelled).toBe(true)
+    expect(filters.hideRulesOnly).toBe(true)
     expect(filters.priceMin).toBe(100000)
     expect(filters.priceMax).toBeNull()
     expect(filters.landMin).toBe(500)
@@ -58,6 +60,7 @@ describe('toAuctionFilters', () => {
     expect(filters.features).toEqual([])
     expect(filters.onlyWithPhotos).toBe(false)
     expect(filters.includeCancelled).toBe(false)
+    expect(filters.hideRulesOnly).toBe(false)
     expect(filters.priceMin).toBeNull()
   })
 

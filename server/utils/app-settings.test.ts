@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import type { Pool } from 'pg'
-import { DEFAULT_LLM_MAX_TOKENS, getAllLlmMaxTokens, getLlmMaxTokens, setLlmMaxTokens } from './app-settings'
+import {
+  DEFAULT_HIDE_RULES_ONLY_AUCTIONS,
+  DEFAULT_LLM_MAX_TOKENS,
+  clearLlmProviderOverride,
+  getAllLlmMaxTokens,
+  getHideRulesOnlyAuctions,
+  getLlmMaxTokens,
+  getLlmProviderOverride,
+  setHideRulesOnlyAuctions,
+  setLlmMaxTokens,
+  setLlmProviderOverride,
+} from './app-settings'
 
 /** Minimal in-memory stand-in for the `pg` Pool, matching the exact queries
  *  app-settings.ts issues (checked via the SQL prefix), mirroring the fake
@@ -18,9 +29,23 @@ function makeFakePool() {
       return { rows: keys.filter((k) => rows.has(k)).map((k) => ({ key: k, value: rows.get(k) })) }
     }
     if (sql.includes('INSERT INTO app_settings')) {
-      const [key, value] = params as [string, string]
-      rows.set(key, JSON.parse(value))
-      return { rows: [], rowCount: 1 }
+      if (params.length === 2) {
+        const [key, value] = params as [string, string]
+        rows.set(key, JSON.parse(value))
+        return { rows: [], rowCount: 1 }
+      }
+      // setLlmProviderOverride's atomic upsert: [key, provider, baseUrl, model, apiKey|null].
+      // Emulates the SQL's COALESCE($5, current.apiKey, '') without a real jsonb engine.
+      const [key, provider, baseUrl, model, apiKey] = params as [string, string, string, string, string | null]
+      const existing = rows.get(key) as { apiKey?: string } | undefined
+      const value = { provider, baseUrl, model, apiKey: apiKey ?? existing?.apiKey ?? '' }
+      rows.set(key, value)
+      return { rows: [{ value }], rowCount: 1 }
+    }
+    if (sql.includes('DELETE FROM app_settings')) {
+      const [key] = params as [string]
+      const existed = rows.delete(key)
+      return { rows: [], rowCount: existed ? 1 : 0 }
     }
     throw new Error(`unexpected query: ${sql}`)
   }
@@ -112,5 +137,64 @@ describe('setLlmMaxTokens', () => {
     await setLlmMaxTokens(db, 'summary', 2048)
     await setLlmMaxTokens(db, 'summary', 3000)
     expect(await getLlmMaxTokens(db, 'summary')).toBe(3000)
+  })
+})
+
+describe('getLlmProviderOverride', () => {
+  it('returns null when no row exists', async () => {
+    const db = makeFakePool() as unknown as Pool
+    expect(await getLlmProviderOverride(db)).toBeNull()
+  })
+
+  it('returns a previously written override', async () => {
+    const db = makeFakePool() as unknown as Pool
+    await setLlmProviderOverride(db, {
+      provider: 'claude-proxy',
+      baseUrl: 'http://haex-claude-proxy:8080',
+      model: 'claude-haiku-4-5',
+      apiKey: '',
+    })
+    expect(await getLlmProviderOverride(db)).toEqual({
+      provider: 'claude-proxy',
+      baseUrl: 'http://haex-claude-proxy:8080',
+      model: 'claude-haiku-4-5',
+      apiKey: '',
+    })
+  })
+
+  it('returns null for a malformed stored value', async () => {
+    const db = makeFakePool()
+    ;(db as unknown as { query: (sql: string, params?: unknown[]) => Promise<unknown> }).query = async (
+      sql: string,
+    ) => {
+      if (sql.includes('SELECT value')) return { rows: [{ value: { provider: 'not-a-real-provider' } }] }
+      throw new Error('unexpected')
+    }
+    expect(await getLlmProviderOverride(db as unknown as Pool)).toBeNull()
+  })
+
+  it('is null again after clearLlmProviderOverride', async () => {
+    const db = makeFakePool() as unknown as Pool
+    await setLlmProviderOverride(db, {
+      provider: 'gemini-native',
+      baseUrl: 'https://generativelanguage.googleapis.com',
+      model: 'gemini-flash-latest',
+      apiKey: 'secret',
+    })
+    await clearLlmProviderOverride(db)
+    expect(await getLlmProviderOverride(db)).toBeNull()
+  })
+})
+
+describe('getHideRulesOnlyAuctions', () => {
+  it('defaults to true when no row exists', async () => {
+    const db = makeFakePool() as unknown as Pool
+    expect(await getHideRulesOnlyAuctions(db)).toBe(DEFAULT_HIDE_RULES_ONLY_AUCTIONS)
+  })
+
+  it('returns a previously written value', async () => {
+    const db = makeFakePool() as unknown as Pool
+    await setHideRulesOnlyAuctions(db, false)
+    expect(await getHideRulesOnlyAuctions(db)).toBe(false)
   })
 })

@@ -27,31 +27,31 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Auction, AuctionExtraction, CuratedPhoto } from '~/types/auction'
 import { normalizePhoto } from '~/lib/photo'
-import { crawlAll, platforms } from '../crawlers/registry'
-import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
-import { upsertCurrentAuctions } from '../utils/current-auctions'
-import { deriveMarketValueEur, getRates } from '../utils/exchange-rate'
-import { extractByRules } from '../utils/extract/rules'
-import { extractByLlm, resolveLlmConfig, type LlmInput, type PhotoCuration } from '../utils/extract/llm'
-import { isLlmBatchPending, submitGeminiBatch } from '../utils/extract/gemini-batch'
-import { getPool } from '../utils/db'
-import { DEFAULT_LLM_MAX_TOKENS, getLlmMaxTokens } from '../utils/app-settings'
-import { mergeLlmResult } from '../utils/extract/merge-llm-result'
-import { downloadNativeImages } from '../utils/extract/native-images'
-import { extractPdfPhotos } from '../utils/extract/pdf-images'
-import { pdfPagesToBase64Jpeg } from '../utils/extract/pdf-render'
-import { fetchPdfBuffer, pdfToText, pickBestPdf } from '../utils/extract/pdf-text'
+import { crawlAll, platforms } from '~/server/crawlers/registry'
+import { readAuctionSnapshot, writeAuctionSnapshot } from '~/server/utils/auction-snapshot'
+import { upsertCurrentAuctions } from '~/server/utils/current-auctions'
+import { deriveMarketValueEur, getRates } from '~/server/utils/exchange-rate'
+import { extractByRules } from '~/server/utils/extract/rules'
+import { extractByLlm, resolveLlmConfig, type LlmInput, type PhotoCuration } from '~/server/utils/extract/llm'
+import { isLlmBatchPending, submitGeminiBatch } from '~/server/utils/extract/gemini-batch'
+import { getPool } from '~/server/utils/db'
+import { DEFAULT_LLM_MAX_TOKENS, getLlmMaxTokens, getLlmProviderOverride } from '~/server/utils/app-settings'
+import { mergeLlmResult } from '~/server/utils/extract/merge-llm-result'
+import { downloadNativeImages } from '~/server/utils/extract/native-images'
+import { extractPdfPhotos } from '~/server/utils/extract/pdf-images'
+import { pdfPagesToBase64Jpeg } from '~/server/utils/extract/pdf-render'
+import { fetchPdfBuffer, pdfToText, pickBestPdf } from '~/server/utils/extract/pdf-text'
 import {
   applyExtractionToAuctions,
   type ExtractionCache,
   readExtractionCache,
   writeExtractionCache,
-} from '../utils/extraction-cache'
-import { imagesBucketConfigured, mimeTypeFor, uploadImage } from '../utils/image-storage'
-import { interleaveByPlatform } from '../utils/interleave-by-platform'
-import { isSafePathSegment } from '../utils/path-segment'
-import { archiveAuction, archiveDocument } from '../utils/raw-archive'
-import { cacheKey, readVerkehrswertCache } from '../utils/verkehrswert-cache'
+} from '~/server/utils/extraction-cache'
+import { imagesBucketConfigured, mimeTypeFor, uploadImage } from '~/server/utils/image-storage'
+import { interleaveByPlatform } from '~/server/utils/interleave-by-platform'
+import { isSafePathSegment } from '~/server/utils/path-segment'
+import { archiveAuction, archiveDocument } from '~/server/utils/raw-archive'
+import { cacheKey, readVerkehrswertCache } from '~/server/utils/verkehrswert-cache'
 
 const IMAGES_DIR = join(process.cwd(), '.cache_zvg', 'images')
 
@@ -104,7 +104,8 @@ async function readLlmConfig(): Promise<ReturnType<typeof resolveLlmConfig>> {
   const maxTokens = db
     ? await getLlmMaxTokens(db, 'extraction').catch(() => DEFAULT_LLM_MAX_TOKENS.extraction)
     : DEFAULT_LLM_MAX_TOKENS.extraction
-  return resolveLlmConfig(c, { maxTokens })
+  const override = db ? await getLlmProviderOverride(db).catch(() => null) : null
+  return resolveLlmConfig(override ?? c, { maxTokens })
 }
 
 function readMaxLlmPerRun(): number {

@@ -7,20 +7,20 @@
 // source language (CZ/PL/IT/BE content is translated on the fly).
 
 import type { H3Event } from 'h3'
-import { readAuctionSnapshot } from '../../../../utils/auction-snapshot'
-import { readSummaryCache, writeSummaryCache } from '../../../../utils/summary-cache'
-import { isSafePathSegment } from '../../../../utils/path-segment'
-import { cacheKey } from '../../../../utils/verkehrswert-cache'
-import { pickBestPdf, pdfToText } from '../../../../utils/extract/pdf-text'
-import { resolveLlmConfig } from '../../../../utils/extract/llm'
-import { callSummaryLlm } from '../../../../utils/extract/text-llm'
-import { getPool } from '../../../../utils/db'
-import { DEFAULT_LLM_MAX_TOKENS, getLlmMaxTokens } from '../../../../utils/app-settings'
+import { readAuctionSnapshot } from '~/server/utils/auction-snapshot'
+import { readSummaryCache, writeSummaryCache } from '~/server/utils/summary-cache'
+import { isSafePathSegment } from '~/server/utils/path-segment'
+import { cacheKey } from '~/server/utils/verkehrswert-cache'
+import { pickBestPdf, pdfToText } from '~/server/utils/extract/pdf-text'
+import { resolveLlmConfig } from '~/server/utils/extract/llm'
+import { callSummaryLlm } from '~/server/utils/extract/text-llm'
+import { getPool } from '~/server/utils/db'
+import { DEFAULT_LLM_MAX_TOKENS, getLlmMaxTokens, getLlmProviderOverride } from '~/server/utils/app-settings'
 import {
   checkInMemoryRateLimit,
   createInMemoryRateLimitState,
   recordInMemoryRateLimitHit,
-} from '../../../../utils/in-memory-rate-limit'
+} from '~/server/utils/in-memory-rate-limit'
 
 const MAX_PDF_CHARS = 8_000
 
@@ -94,7 +94,8 @@ export default defineEventHandler(async (event) => {
   const maxTokens = db
     ? await getLlmMaxTokens(db, 'summary').catch(() => DEFAULT_LLM_MAX_TOKENS.summary)
     : DEFAULT_LLM_MAX_TOKENS.summary
-  const config = resolveLlmConfig(llmCfg, { maxTokens })
+  const override = db ? await getLlmProviderOverride(db).catch(() => null) : null
+  const config = resolveLlmConfig(override ?? llmCfg, { maxTokens })
   if (!config) {
     throw createError({ statusCode: 503, statusMessage: 'LLM not configured' })
   }
