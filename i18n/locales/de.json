@@ -264,6 +264,33 @@
       "saved": "Gespeichert.",
       "saving": "Speichere …",
       "save": "Speichern"
+    },
+    "archive": {
+      "title": "Roh-Archiv",
+      "description": "Durchsuche das archivierte Rohmaterial (Auktions-Snapshots, Gutachten-PDFs, Detail-HTML) nach Land, Region und Aktenzeichen.",
+      "loadError": "Archiv konnte nicht geladen werden.",
+      "loading": "Lade …",
+      "empty": "Keine Einträge.",
+      "back": "Zurück",
+      "retry": "Erneut versuchen",
+      "open": "Öffnen",
+      "download": "Herunterladen",
+      "colCountry": "Land",
+      "colRegion": "Region",
+      "colCase": "Aktenzeichen",
+      "colAuthority": "Amtsgericht",
+      "colCount": "Anzahl",
+      "colLast": "Zuletzt",
+      "colKind": "Art",
+      "colType": "Typ",
+      "colSize": "Größe",
+      "colActions": "Aktionen",
+      "kind": {
+        "auction": "Auktion",
+        "document": "Dokument",
+        "detail_html": "Detail-HTML",
+        "document_text": "Dokument-Text"
+      }
     }
   },
   "localeSwitcher": {
