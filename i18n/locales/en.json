@@ -264,6 +264,32 @@
       "saved": "Saved.",
       "saving": "Saving …",
       "save": "Save"
+    },
+    "archive": {
+      "title": "Raw archive",
+      "description": "Browse the archived raw material (auction snapshots, appraisal PDFs, detail HTML) by country, region and case number.",
+      "loadError": "Archive could not be loaded.",
+      "loading": "Loading …",
+      "empty": "No entries.",
+      "back": "Back",
+      "open": "Open",
+      "download": "Download",
+      "colCountry": "Country",
+      "colRegion": "Region",
+      "colCase": "Case number",
+      "colAuthority": "Court",
+      "colCount": "Count",
+      "colLast": "Last seen",
+      "colKind": "Kind",
+      "colType": "Type",
+      "colSize": "Size",
+      "colActions": "Actions",
+      "kind": {
+        "auction": "Auction",
+        "document": "Document",
+        "detail_html": "Detail HTML",
+        "document_text": "Document text"
+      }
     }
   },
   "localeSwitcher": {

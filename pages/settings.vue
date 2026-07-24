@@ -622,6 +622,15 @@ onBeforeUnmount(stopPolling)
           </form>
         </CardContent>
       </Card>
+
+      <Card v-if="authed">
+        <CardHeader>
+          <CardTitle>{{ $t('settings.archive.title') }}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <SettingsArchiveBrowser />
+        </CardContent>
+      </Card>
     </div>
   </main>
 </template>

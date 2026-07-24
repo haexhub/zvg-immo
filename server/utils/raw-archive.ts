@@ -30,7 +30,10 @@ export type CaptureKind = 'auction' | 'document' | 'detail_html' | 'document_tex
 // already compressed, stored as-is. `content_type` in raw_blobs records the
 // stored (post-compression) type.
 const TEXT_TYPES = new Set<BlobContentType>(['application/json', 'text/html', 'text/plain'])
-const EXT: Record<BlobContentType, string> = {
+// Exported for server/api/settings/archive/download/[id].get.ts, which needs
+// the file extension for a Content-Disposition filename without duplicating
+// this map.
+export const EXT: Record<BlobContentType, string> = {
   'application/json': '.json',
   'text/html': '.html',
   'application/pdf': '.pdf',
