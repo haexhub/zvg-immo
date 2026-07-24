@@ -222,4 +222,20 @@ describe('applyExtractionToAuctions — marketValueEur precedence (WP-3)', () =>
 
     expect(auction.marketValueEur).toBeNull()
   })
+
+  it('does not fill marketValueEur for a non-EUR-native auction (LLM value is in the native currency, not EUR)', () => {
+    const auction = makeAuction({ platform: 'hu', currency: 'HUF' })
+    const cache: ExtractionCache = {
+      'hu:14409': {
+        ...extraction,
+        marketValueEur: 50_000_000,
+        marketValueText: '50.000.000 HUF laut Gutachten',
+      },
+    }
+
+    applyExtractionToAuctions([auction], cache)
+
+    expect(auction.marketValueEur).toBeNull()
+    expect(auction.marketValueText).toBeNull()
+  })
 })

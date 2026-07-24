@@ -45,8 +45,11 @@ export function applyExtractionToAuctions(auctions: Auction[], cache: Extraction
     // AT-Edikte/Biddit, whose overlay runs before this and already set
     // a.marketValueEur — see verkehrswert-cache.ts) — the LLM-extracted value
     // only fills in when nothing else has set one, never overwrites a
-    // structurally known value.
-    if (a.marketValueEur == null && hit.marketValueEur != null) {
+    // structurally known value. `hit.marketValueEur` is extracted in the
+    // auction's native currency (see llm.ts), not converted — only safe to
+    // apply here for EUR-native platforms (a.currency unset); everywhere else
+    // it would silently misrepresent a foreign-currency figure as EUR.
+    if (a.currency == null && a.marketValueEur == null && hit.marketValueEur != null) {
       a.marketValueEur = hit.marketValueEur
       a.marketValueText = hit.marketValueText ?? null
     }
