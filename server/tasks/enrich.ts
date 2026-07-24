@@ -176,9 +176,9 @@ async function runEnrich() {
         !isLlmBatchPending(hit)
       )
     }
-    // condition/features/yearBuilt/lastRenovationYear/insights are LLM-only
-    // fields added after this cache existed: `undefined` means "never
-    // checked" (an entry written before the field existed, or a
+    // condition/features/yearBuilt/lastRenovationYear/insights/marketValueEur
+    // are LLM-only fields added after this cache existed: `undefined` means
+    // "never checked" (an entry written before the field existed, or a
     // mergedConfident entry from before this backfill shipped), `null`/`[]`
     // means "checked, nothing found". Bounded by MAX_LLM_FAILURES like
     // needsLlmRetry so a persistently-failing listing doesn't re-consume an
@@ -192,7 +192,8 @@ async function runEnrich() {
           hit.features === undefined ||
           hit.yearBuilt === undefined ||
           hit.lastRenovationYear === undefined ||
-          hit.insights === undefined) &&
+          hit.insights === undefined ||
+          hit.marketValueEur === undefined) &&
         (hit.llmFailures ?? 0) < MAX_LLM_FAILURES &&
         !isLlmBatchPending(hit)
       )
@@ -322,6 +323,8 @@ async function runEnrich() {
           lastRenovationYear: priorEntry?.lastRenovationYear,
           renovationNotes: priorEntry?.renovationNotes,
           insights: priorEntry?.insights,
+          marketValueEur: priorEntry?.marketValueEur,
+          marketValueText: priorEntry?.marketValueText,
         }
         const mergedConfident =
           rules.confident ||

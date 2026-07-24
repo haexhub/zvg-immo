@@ -137,6 +137,8 @@ describe('runLlmBatchPoll', () => {
           renovationNotes: null,
           insights: null,
           photoCuration: [],
+          marketValueEur: null,
+          marketValueText: null,
         },
       },
     ])
@@ -179,6 +181,8 @@ describe('runLlmBatchPoll', () => {
           renovationNotes: null,
           insights: null,
           photoCuration: [],
+          marketValueEur: null,
+          marketValueText: null,
         },
       },
     ])

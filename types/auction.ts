@@ -202,6 +202,17 @@ export interface AuctionExtraction {
   /** LLM-only richer assessment. `undefined` = never checked yet; `null` =
    *  checked, nothing found. Same backfill semantics as `condition`. */
   insights?: AuctionInsights | null
+  /** LLM-only Verkehrswert extracted from the Gutachten text, in the
+   *  auction's `currency`. `undefined` = never checked yet; `null` = checked,
+   *  nothing found. Same backfill semantics as `condition`. Only ever applied
+   *  to `Auction.marketValueEur` when that field isn't already set from a
+   *  structural source (AT-Edikte/Biddit's Verkehrswert-Cache — see
+   *  enrich.ts/extraction-cache.ts) — a platform with a known-reliable value
+   *  is never overwritten by an LLM guess. */
+  marketValueEur?: number | null
+  /** LLM-only free-text O-Ton for `marketValueEur` (e.g. "185.000 EUR laut
+   *  Gutachten"), or null. */
+  marketValueText?: string | null
   /** Curated photos, in display order. Older cache rows hold bare filename
    *  strings (normalized on read by lib/photo.ts's normalizePhoto). Empty/
    *  absent when the listing/PDF held no usable photos. Served via
