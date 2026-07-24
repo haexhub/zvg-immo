@@ -128,6 +128,14 @@ function showOriginalPrice(): boolean {
   return !!a.value?.marketValueText && (a.value?.currency ?? 'EUR') !== currency.value
 }
 
+const hasPropertyData = computed(() => {
+  const e = a.value?.extraction
+  if (!e) return false
+  return e.landAreaSqm != null || e.livingAreaSqm != null || e.yearBuilt != null
+    || e.lastRenovationYear != null || e.rooms != null || (e.units != null && e.units > 1)
+    || !!e.condition || !!e.features?.length || !!e.renovationNotes
+})
+
 // Online-bidding-style platforms (Biddit, si, fi, hu, pl, boe, ca,
 // us-bid4assets) additionally publish a starting bid and/or a live current
 // bid — German-court-style platforms never set these, so this card simply
@@ -276,7 +284,7 @@ useHead(() => ({
 
       <div class="grid grid-cols-1 lg:grid-cols-5 gap-6 items-start">
         <div class="lg:col-span-3 space-y-8">
-          <DetailSectionCard :title="$t('objektDetail.generalInfoTitle')">
+          <DetailSectionCard :title="$t('objektDetail.auctionDataTitle')">
             <dl class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-4">
               <div>
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.marketValue') }}</dt>
@@ -304,6 +312,22 @@ useHead(() => ({
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.securityDeposit') }}</dt>
                 <dd class="text-sm font-medium tabular-nums">{{ formatNative(a.extraction.securityDeposit, a.currency) }}</dd>
               </div>
+              <div>
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.authority') }}</dt>
+                <dd class="text-sm font-medium">{{ a.authority }}</dd>
+              </div>
+              <div>
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.caseNumber') }}</dt>
+                <dd class="text-sm font-mono">{{ a.caseNumber }}</dd>
+              </div>
+            </dl>
+            <p v-if="a.extraction?.biddingNotes" class="mt-4 text-xs text-muted-foreground">
+              {{ $t('objektDetail.biddingNotes', { note: a.extraction.biddingNotes }) }}
+            </p>
+          </DetailSectionCard>
+
+          <DetailSectionCard v-if="hasPropertyData" :title="$t('objektDetail.propertyDataTitle')">
+            <dl class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-4">
               <div v-if="a.extraction?.landAreaSqm != null">
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.landArea') }}</dt>
                 <dd class="text-sm font-medium tabular-nums">{{ formatArea(a.extraction.landAreaSqm) }}</dd>
@@ -332,14 +356,6 @@ useHead(() => ({
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.condition') }}</dt>
                 <dd class="text-sm font-medium">{{ conditionLabel(a.extraction.condition) }}</dd>
               </div>
-              <div>
-                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.authority') }}</dt>
-                <dd class="text-sm font-medium">{{ a.authority }}</dd>
-              </div>
-              <div>
-                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.caseNumber') }}</dt>
-                <dd class="text-sm font-mono">{{ a.caseNumber }}</dd>
-              </div>
             </dl>
             <div v-if="a.extraction?.features?.length" class="mt-4 space-y-1.5">
               <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.features') }}</dt>
@@ -352,9 +368,6 @@ useHead(() => ({
               class="mt-4 text-xs text-muted-foreground"
             >
               {{ $t('objektDetail.extractionNotice', { confidence: a.extraction.confidence === 'high' ? $t('objektDetail.confidenceHigh') : $t('objektDetail.confidenceLow') }) }}
-            </p>
-            <p v-if="a.extraction?.biddingNotes" class="mt-1 text-xs text-muted-foreground">
-              {{ $t('objektDetail.biddingNotes', { note: a.extraction.biddingNotes }) }}
             </p>
             <p v-if="a.extraction?.renovationNotes" class="mt-1 text-xs text-muted-foreground">
               {{ $t('objektDetail.renovationNotes', { note: a.extraction.renovationNotes }) }}
