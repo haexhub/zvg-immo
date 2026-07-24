@@ -27,64 +27,65 @@ function formatDate(iso: string): string {
   return new Date(iso).toLocaleString(intlLocale.value)
 }
 
-async function loadCountries(): Promise<void> {
+async function withLoading<T>(fn: () => Promise<T>): Promise<T | undefined> {
   pending.value = true
   error.value = null
   try {
-    countries.value = await $fetch<ArchiveCountryRow[]>('/api/settings/archive/countries')
+    return await fn()
   } catch {
     error.value = t('settings.archive.loadError')
+    return undefined
   } finally {
     pending.value = false
   }
 }
 
+const retry = ref<() => void>(() => loadCountries())
+
+async function loadCountries(): Promise<void> {
+  retry.value = () => loadCountries()
+  const result = await withLoading(() => $fetch<ArchiveCountryRow[]>('/api/settings/archive/countries'))
+  if (result) countries.value = result
+}
+
 async function openCountry(row: ArchiveCountryRow): Promise<void> {
   selectedCountry.value = { code: row.code, label: row.label }
-  pending.value = true
-  error.value = null
-  try {
-    regions.value = await $fetch<ArchiveRegionRow[]>('/api/settings/archive/regions', {
-      query: { country: row.code },
-    })
+  retry.value = () => openCountry(row)
+  const result = await withLoading(() =>
+    $fetch<ArchiveRegionRow[]>('/api/settings/archive/regions', { query: { country: row.code } }),
+  )
+  if (result) {
+    regions.value = result
     level.value = 'region'
-  } catch {
-    error.value = t('settings.archive.loadError')
-  } finally {
-    pending.value = false
   }
 }
 
 async function openRegion(row: ArchiveRegionRow): Promise<void> {
   if (!selectedCountry.value) return
   selectedRegion.value = row.region
-  pending.value = true
-  error.value = null
-  try {
-    cases.value = await $fetch<ArchiveCaseRow[]>('/api/settings/archive/cases', {
-      query: { country: selectedCountry.value.code, region: row.region },
-    })
+  retry.value = () => openRegion(row)
+  const result = await withLoading(() =>
+    $fetch<ArchiveCaseRow[]>('/api/settings/archive/cases', {
+      query: { country: selectedCountry.value!.code, region: row.region },
+    }),
+  )
+  if (result) {
+    cases.value = result
     level.value = 'case'
-  } catch {
-    error.value = t('settings.archive.loadError')
-  } finally {
-    pending.value = false
   }
 }
 
 async function openCase(row: ArchiveCaseRow): Promise<void> {
   selectedCase.value = row
-  pending.value = true
-  error.value = null
-  try {
-    documents.value = await $fetch<ArchiveDocumentRow[]>('/api/settings/archive/documents', {
+  retry.value = () => openCase(row)
+  const result = await withLoading(() =>
+    $fetch<ArchiveDocumentRow[]>('/api/settings/archive/documents', {
       query: { platform: row.platform, externalId: row.externalId },
-    })
+    }),
+  )
+  if (result) {
+    documents.value = result
     level.value = 'document'
-  } catch {
-    error.value = t('settings.archive.loadError')
-  } finally {
-    pending.value = false
   }
 }
 
@@ -114,10 +115,15 @@ onMounted(loadCountries)
       <span v-if="selectedCase && level === 'document'">/ {{ selectedCase.caseLabel }}</span>
     </div>
 
-    <p v-if="error" class="text-sm text-destructive">{{ error }}</p>
-    <p v-else-if="pending" class="text-sm text-muted-foreground">{{ $t('settings.archive.loading') }}</p>
+    <div v-if="error" class="flex items-center gap-2 text-sm text-destructive">
+      <span>{{ error }}</span>
+      <Button type="button" variant="ghost" size="sm" @click="retry()">
+        {{ $t('settings.archive.retry') }}
+      </Button>
+    </div>
+    <p v-if="pending" class="text-sm text-muted-foreground">{{ $t('settings.archive.loading') }}</p>
 
-    <template v-else-if="level === 'country'">
+    <template v-if="level === 'country'">
       <Table v-if="countries.length" class="min-w-[520px]">
         <TableHeader>
           <TableRow>
@@ -218,6 +224,7 @@ onMounted(loadCountries)
               <a
                 :href="`/api/settings/archive/download/${d.id}`"
                 download
+                target="_blank"
                 class="inline-flex h-8 items-center rounded-md border px-3 text-sm hover:bg-accent"
               >
                 {{ $t('settings.archive.download') }}
