@@ -21,6 +21,10 @@ services:
       NUXT_EXTRACT_LLM_MODEL: claude-haiku-4-5
       # /settings page + Claude passthrough. See .env.example for how to
       # generate values. All three must be set for /settings to work.
+      # Fixed address of the sibling proxy container, independent of
+      # NUXT_EXTRACT_LLM_BASE_URL above (which switches with the active
+      # extraction provider) — see server/utils/claude-proxy.ts.
+      NUXT_CLAUDE_PROXY_URL: http://haex-claude-proxy:8080
       NUXT_PROXY_SETUP_TOKEN: ${PROXY_SETUP_TOKEN}
       NUXT_SETTINGS_PASSWORD: ${SETTINGS_PASSWORD}
       NUXT_SETTINGS_SESSION_SECRET: ${SETTINGS_SESSION_SECRET}
