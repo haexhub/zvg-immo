@@ -79,6 +79,13 @@ export default defineNuxtConfig({
       //   NUXT_EXTRACT_LLM_MAX_PER_RUN=2000
       maxPerRun: '',
     },
+    // Sibling haex-claude-proxy container's own address — always deployed
+    // regardless of which provider extractLlm.baseUrl currently points at
+    // (e.g. gemini-native). Used only for the /settings OAuth setup flow
+    // (server/utils/claude-proxy.ts), so it must NOT be derived from
+    // extractLlm.baseUrl, which switches with the active extraction provider.
+    //   NUXT_CLAUDE_PROXY_URL=http://haex-claude-proxy:8080
+    claudeProxyUrl: '',
     // Bearer token that authenticates zvg-immo against haex-claude-proxy's
     // /setup/* endpoints. Same value must be set on both containers.
     //   NUXT_PROXY_SETUP_TOKEN=<openssl rand -hex 32>

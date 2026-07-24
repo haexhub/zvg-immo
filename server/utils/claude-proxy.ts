@@ -16,7 +16,7 @@ interface ProxyConfig {
 
 function readProxyConfig(): ProxyConfig {
   const config = useRuntimeConfig()
-  const baseUrl = String((config.extractLlm as { baseUrl?: string }).baseUrl ?? '')
+  const baseUrl = String(config.claudeProxyUrl ?? '')
   const token = String(config.proxySetupToken ?? '')
   if (!baseUrl) {
     throw createError({
