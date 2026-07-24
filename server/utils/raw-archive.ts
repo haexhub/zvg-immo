@@ -170,9 +170,14 @@ export interface CaptureInput {
  * capture row for no reason. The SELECT-then-INSERT above is only a fast-path
  * skip, not the dedup guarantee: `refresh.ts` and `enrich.ts` can call this
  * concurrently for the same auction, so the actual guarantee is the unique
- * index on (kind, platform, external_id, content_hash) (schema.sql) — the
- * INSERT no-ops via ON CONFLICT if a race already wrote the same row. Never
- * throws.
+ * index on (kind, platform, external_id, content_hash) (schema.sql). On a
+ * conflict the metadata columns (captured_at, region, case_number, authority,
+ * source_url) are refreshed to the incoming values rather than left
+ * untouched — for `kind='document'`/`'document_text'` the content hash is
+ * over the document bytes, not the auction identity, so the same PDF can
+ * resurface (e.g. after content briefly changed and reverted) once the
+ * auction's region/case_number has since been corrected; DO NOTHING would
+ * freeze the stale metadata on that row forever. Never throws.
  */
 export async function recordCapture(input: CaptureInput): Promise<void> {
   const db = getPool()
@@ -190,7 +195,12 @@ export async function recordCapture(input: CaptureInput): Promise<void> {
       `INSERT INTO raw_captures
          (captured_at, kind, platform, country, region, external_id, case_number, authority, content_hash, source_url)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       ON CONFLICT (kind, platform, external_id, content_hash) DO NOTHING`,
+       ON CONFLICT (kind, platform, external_id, content_hash) DO UPDATE SET
+         captured_at = EXCLUDED.captured_at,
+         region      = EXCLUDED.region,
+         case_number = EXCLUDED.case_number,
+         authority   = EXCLUDED.authority,
+         source_url  = EXCLUDED.source_url`,
       [
         input.capturedAt,
         input.kind,

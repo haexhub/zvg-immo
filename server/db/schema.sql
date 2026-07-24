@@ -299,11 +299,14 @@ CREATE INDEX IF NOT EXISTS idx_capt_hash          ON raw_captures (content_hash)
 -- Dedupe before adding the uniqueness guarantee below: recordCapture's
 -- check-then-insert (server/utils/raw-archive.ts) isn't atomic, so concurrent
 -- refresh/enrich runs could occasionally insert the same
--- (kind, platform, external_id, content_hash) twice. Keep the earliest row.
+-- (kind, platform, external_id, content_hash) twice. Keep the row with the
+-- latest captured_at (metadata like region/case_number can have been
+-- corrected between the two inserts — the newer row is the more trustworthy
+-- one), not just the lowest id.
 DELETE FROM raw_captures a USING raw_captures b
-WHERE a.id > b.id
-  AND a.kind = b.kind AND a.platform = b.platform
-  AND a.external_id = b.external_id AND a.content_hash = b.content_hash;
+WHERE a.kind = b.kind AND a.platform = b.platform
+  AND a.external_id = b.external_id AND a.content_hash = b.content_hash
+  AND (a.captured_at, a.id) < (b.captured_at, b.id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_capt_unique ON raw_captures (kind, platform, external_id, content_hash);
 -- Server-intern, nie clientseitig exponiert — trotzdem RLS aktivieren (ohne
 -- Policies, also Default-Deny), sonst liest/schreibt PostgREST-anon/authenticated

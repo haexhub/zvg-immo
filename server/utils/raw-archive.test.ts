@@ -54,11 +54,31 @@ interface FakeBlobRow {
   byte_size: number
 }
 
+interface FakeCaptureRow {
+  capturedAt: string
+  region: string | null
+  caseNumber: string | null
+  authority: string | null
+  contentHash: string
+  sourceUrl: string | null
+}
+
 /** Minimal in-memory stand-in for the `pg` Pool, matching the exact queries
- *  raw-archive.ts issues (checked via the SQL prefix). */
+ *  raw-archive.ts issues (checked via the SQL prefix). Models the unique
+ *  index on (kind, platform, external_id, content_hash) and the ON CONFLICT
+ *  DO UPDATE behavior — keyed by the full tuple, not just identity, so a
+ *  repeated content_hash updates the existing row's metadata in place
+ *  instead of creating a second one. */
 function makeFakePool() {
   const blobs = new Map<string, FakeBlobRow>()
-  const captures = new Map<string, { content_hash: string }>()
+  // identity ("kind|platform|externalId") -> hash -> row
+  const captures = new Map<string, Map<string, FakeCaptureRow>>()
+
+  function mostRecent(identity: string): FakeCaptureRow | undefined {
+    const byHash = captures.get(identity)
+    if (!byHash) return undefined
+    return [...byHash.values()].sort((a, b) => b.capturedAt.localeCompare(a.capturedAt))[0]
+  }
 
   const query = vi.fn(async (sql: string, params: unknown[] = []) => {
     if (sql.includes('SELECT 1 FROM raw_blobs')) {
@@ -72,22 +92,29 @@ function makeFakePool() {
     }
     if (sql.includes('SELECT content_hash FROM raw_captures')) {
       const [kind, platform, externalId] = params as [string, string, string]
-      const hit = captures.get(`${kind}|${platform}|${externalId}`)
-      return { rows: hit ? [hit] : [] }
+      const hit = mostRecent(`${kind}|${platform}|${externalId}`)
+      return { rows: hit ? [{ content_hash: hit.contentHash }] : [] }
     }
     if (sql.includes('INSERT INTO raw_captures')) {
-      const [, kind, platform, , , externalId, , , contentHash] = params as [
-        string,
-        string,
-        string,
-        string,
-        string | null,
-        string,
-        string | null,
-        string | null,
-        string,
-      ]
-      captures.set(`${kind}|${platform}|${externalId}`, { content_hash: contentHash })
+      const [capturedAt, kind, platform, , region, externalId, caseNumber, authority, contentHash, sourceUrl] =
+        params as [
+          string,
+          string,
+          string,
+          string,
+          string | null,
+          string,
+          string | null,
+          string | null,
+          string,
+          string | null,
+        ]
+      const identity = `${kind}|${platform}|${externalId}`
+      const byHash = captures.get(identity) ?? new Map<string, FakeCaptureRow>()
+      captures.set(identity, byHash)
+      // ON CONFLICT (kind, platform, external_id, content_hash) DO UPDATE:
+      // same tuple refreshes the row's metadata in place, no new row.
+      byHash.set(contentHash, { capturedAt, region, caseNumber, authority, contentHash, sourceUrl })
       return { rows: [], rowCount: 1 }
     }
     throw new Error(`unexpected query: ${sql}`)
@@ -257,6 +284,50 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
 
     const insertCalls = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO raw_captures'))
     expect(insertCalls).toHaveLength(2)
+  })
+
+  it('recordCapture refreshes metadata on a content_hash that resurfaces (ON CONFLICT DO UPDATE)', async () => {
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+
+    const base = {
+      kind: 'document' as const,
+      platform: 'test',
+      country: 'de',
+      externalId: '1',
+    }
+    // Same PDF captured while the auction was still assigned to the wrong region…
+    await recordCapture({
+      ...base,
+      capturedAt: '2026-07-01T00:00:00.000Z',
+      contentHash: 'hash-a',
+      region: null,
+    })
+    // …content briefly changes (so the fast-path SELECT doesn't skip the next call)…
+    await recordCapture({
+      ...base,
+      capturedAt: '2026-07-10T00:00:00.000Z',
+      contentHash: 'hash-b',
+      region: null,
+    })
+    // …then reverts to the original bytes after the region got corrected. This
+    // collides with the very first row on (kind, platform, external_id,
+    // content_hash) — the row must be updated in place with the corrected
+    // region, not silently dropped.
+    await recordCapture({
+      ...base,
+      capturedAt: '2026-07-20T00:00:00.000Z',
+      contentHash: 'hash-a',
+      region: 'Hamburg',
+    })
+
+    const insertCalls = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO raw_captures'))
+    expect(insertCalls).toHaveLength(3)
+    expect(insertCalls[2]![0]).toMatch(/ON CONFLICT .* DO UPDATE/)
+
+    const byHash = pool.captures.get('document|test|1')!
+    expect(byHash.size).toBe(2) // hash-a updated in place, hash-b still its own row
+    expect(byHash.get('hash-a')).toMatchObject({ region: 'Hamburg', capturedAt: '2026-07-20T00:00:00.000Z' })
   })
 
   it('archiveAuction: a second run with no real change produces no new blob or capture', async () => {
