@@ -207,6 +207,19 @@ export interface AuctionExtraction {
    *  absent when the listing/PDF held no usable photos. Served via
    *  /api/auction-image. */
   photos?: CuratedPhoto[]
+  /** ISO timestamp of the last photo pipeline attempt (native download + PDF
+   *  fallback) that completed without throwing — set regardless of whether
+   *  photos were actually found. `undefined` = never attempted (older cache
+   *  entries predate this field, or the first attempt threw before
+   *  completing). Lets enrich.ts retry a listing whose photos are missing
+   *  instead of treating "never tried" the same as "tried, found none"
+   *  forever. */
+  photosCheckedAt?: string
+  /** How many times the photo pipeline was attempted and threw (network/
+   *  subprocess failure) before completing. Bounds retries the same way
+   *  `llmFailures` does. Reset (absent) on any attempt that completes
+   *  without throwing, whether or not it found photos. */
+  photoFailures?: number
   /** ISO timestamp of when this extraction was produced. */
   at: string
   /** Set when this entry was written as the immediate rules-only fallback

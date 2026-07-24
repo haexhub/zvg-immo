@@ -112,4 +112,19 @@ describe('mergeLlmResult', () => {
     const entry = mergeLlmResult(undefined, baseFields(), llmResult(), AT, undefined)
     expect(entry.at).toBe(AT)
   })
+
+  it('carries photosCheckedAt/photoFailures forward from priorEntry unchanged', () => {
+    const priorEntry = { photosCheckedAt: '2026-07-01T00:00:00.000Z', photoFailures: 2 } as AuctionExtraction
+    const entry = mergeLlmResult(priorEntry, baseFields(), llmResult(), AT, undefined)
+
+    expect(entry.photosCheckedAt).toBe('2026-07-01T00:00:00.000Z')
+    expect(entry.photoFailures).toBe(2)
+  })
+
+  it('omits photosCheckedAt/photoFailures when priorEntry never had them', () => {
+    const entry = mergeLlmResult(undefined, baseFields(), llmResult(), AT, undefined)
+
+    expect(entry.photosCheckedAt).toBeUndefined()
+    expect(entry.photoFailures).toBeUndefined()
+  })
 })
