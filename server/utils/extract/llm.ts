@@ -135,6 +135,11 @@ export const SYSTEM_PROMPT =
   'zurück und Flächen in Quadratmetern (Hektar in m² umrechnen: 1 ha = 10000 m²). ' +
   'Wohnfläche und Grundstücksfläche strikt getrennt halten. Wenn ein Wert nicht ' +
   'eindeutig im Text steht, gib null zurück — niemals raten. ' +
+  'Gib die Zimmeranzahl nur für tatsächlich vorhandene, bereits errichtete Bebauung ' +
+  'zurück. Eine im Bebauungsplan oder einer Baugenehmigung genannte zulässige oder ' +
+  'genehmigte Kapazität (z. B. "bis zu 250 Hotelzimmer laut Baugenehmigung") ist keine ' +
+  'existierende Zimmerzahl — ein genehmigtes, aber noch unbebautes Grundstück hat null ' +
+  'Zimmer. ' +
   'Gib eine Sicherheitsleistung nur zurück, wenn ein konkreter Geldbetrag in der ' +
   'Landeswährung der Anzeige im Text genannt wird (z. B. eine von der gesetzlichen ' +
   '10%-Regel abweichende Festsetzung) — niemals aus einem Prozentsatz berechnen ' +
@@ -175,7 +180,11 @@ export const EXTRACTION_SCHEMA = {
     },
     landAreaSqm: { type: ['number', 'null'], description: 'Grundstücksfläche in m².' },
     livingAreaSqm: { type: ['number', 'null'], description: 'Wohnfläche in m².' },
-    rooms: { type: ['number', 'null'], description: 'Zimmeranzahl.' },
+    rooms: {
+      type: ['number', 'null'],
+      description:
+        'Zimmeranzahl der tatsächlich existierenden Bebauung, oder null. Genehmigte/zulässige Kapazität aus Bebauungsplan oder Baugenehmigung zählt nicht.',
+    },
     units: { type: ['integer', 'null'], description: 'Anzahl Wohneinheiten.' },
     securityDeposit: {
       type: ['number', 'null'],
