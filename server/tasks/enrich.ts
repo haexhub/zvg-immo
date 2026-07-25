@@ -85,6 +85,11 @@ const MAX_PHOTO_FAILURES = 3
 // Gutachten with dozens of embedded rasters would otherwise blow the token
 // budget for one extraction call.
 const MAX_CANDIDATE_PHOTOS = 8
+// Cap on photos mined across *all* candidate PDFs for one listing. Gutachten
+// are frequently split into several attachments (Teil 1/Teil 2/Anlagen) with
+// photos scattered across them, so mining stops only once this many are found
+// or every candidate has been tried — not after the first PDF.
+const MAX_PDF_PHOTOS_PER_LISTING = 12
 
 /** Overlays the LLM's index-based curation onto the default-categorized
  *  photo list, keeping each entry's `file` — the LLM never sees real
@@ -456,13 +461,44 @@ export async function runEnrich() {
               .map((att) => att.proxyUrl),
             ...(a.photoUrls ?? []),
           ]
+          // Gutachten are often split across several attachments (Teil 1,
+          // Teil 2, Anlagen); the property photos can end up in any of them,
+          // not just the one pickBestPdf() picks for text extraction. Try
+          // appraisal PDFs first, then the Exposé/brochure, until the cap is
+          // hit or every candidate has been mined.
+          const pdfPhotoCandidates = [
+            ...a.attachments.filter((att) => att.kind === 'appraisal'),
+            ...a.attachments.filter((att) => att.kind === 'brochure'),
+          ]
           try {
             if (nativeFotoUrls.length > 0) {
               photos = await downloadNativeImages([...new Set(nativeFotoUrls)], { destDir })
             }
-            if (photos.length === 0 && bestPdf && a.photoCount === 0) {
-              photoExtractions++
-              photos = await extractPdfPhotos(bestPdf.proxyUrl, { destDir })
+            if (photos.length === 0 && pdfPhotoCandidates.length > 0 && a.photoCount === 0) {
+              let pdfMiningFailed = false
+              for (const pdf of pdfPhotoCandidates) {
+                if (photos.length >= MAX_PDF_PHOTOS_PER_LISTING) break
+                photoExtractions++
+                try {
+                  const found = await extractPdfPhotos(pdf.proxyUrl, {
+                    destDir,
+                    maxPhotos: MAX_PDF_PHOTOS_PER_LISTING - photos.length,
+                  })
+                  for (const name of found) if (!photos.includes(name)) photos.push(name)
+                } catch (err) {
+                  pdfMiningFailed = true
+                  console.warn(
+                    `[enrich] photo extraction failed for ${a.platform}:${a.externalId} (${pdf.proxyUrl}): ${(err as Error).message}`,
+                  )
+                }
+              }
+              // Only surface as a retryable failure when nothing was found at
+              // all and at least one candidate errored — a confirmed-empty
+              // pass across every candidate should still set photosCheckedAt
+              // below, same as the pre-existing single-PDF behavior.
+              if (photos.length === 0 && pdfMiningFailed) {
+                throw new Error(`photo extraction failed for all ${pdfPhotoCandidates.length} candidate PDF(s)`)
+              }
             }
             photosTotal += photos.length
             // Mirror the freshly written files into the images bucket (WP-4) so

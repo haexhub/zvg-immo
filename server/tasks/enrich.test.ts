@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Auction } from '~/types/auction'
 import { downloadNativeImages } from '../utils/extract/native-images'
+import { extractPdfPhotos } from '../utils/extract/pdf-images'
 import { readExtractionCache, writeExtractionCache, type ExtractionCache } from '../utils/extraction-cache'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
 import { readVerkehrswertCache } from '../utils/verkehrswert-cache'
@@ -258,5 +259,63 @@ describe('runEnrich photo backfill (WP-1)', () => {
     await runEnrich()
 
     expect(downloadNativeImages).not.toHaveBeenCalled()
+  })
+
+  it('mines every appraisal PDF for photos, not just the first, when earlier ones are empty', async () => {
+    // Regression: a Gutachten split into "Teil 1"/"Teil 2"/"Anlagen" only had
+    // pickBestPdf()'s single pick (Teil 1) mined for photos; when the actual
+    // property photos live in a later attachment they were never found even
+    // though photoCount correctly read 0 for the listing.
+    const auction = makeAuction({
+      photoUrls: [],
+      attachments: [
+        {
+          kind: 'appraisal',
+          label: 'Gutachten',
+          filename: 'Gutachten_Teil 1.pdf',
+          sizeBytes: 100,
+          fileId: '1',
+          proxyUrl: '/api/zvg-proxy?file_id=1',
+        },
+        {
+          kind: 'appraisal',
+          label: 'Gutachten',
+          filename: 'Anlagen.pdf',
+          sizeBytes: 100,
+          fileId: '2',
+          proxyUrl: '/api/zvg-proxy?file_id=2',
+        },
+      ],
+    })
+    const { crawlAll } = await import('../crawlers/registry')
+    vi.mocked(crawlAll).mockResolvedValue(mockCrawl([auction]))
+
+    const cache: ExtractionCache = {
+      'zvg-portal:14409': {
+        propertyType: null,
+        landAreaSqm: null,
+        livingAreaSqm: null,
+        rooms: null,
+        units: null,
+        source: 'rules',
+        confidence: 'low',
+        photos: undefined,
+        photosCheckedAt: undefined,
+        at: '2026-07-01T00:00:00.000Z',
+      },
+    }
+    vi.mocked(readExtractionCache).mockResolvedValue(cache)
+    vi.mocked(extractPdfPhotos).mockResolvedValueOnce([]).mockResolvedValueOnce(['abc123.jpg'])
+
+    await runEnrich()
+
+    expect(extractPdfPhotos).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(extractPdfPhotos).mock.calls[0]?.[0]).toBe('/api/zvg-proxy?file_id=1')
+    expect(vi.mocked(extractPdfPhotos).mock.calls[1]?.[0]).toBe('/api/zvg-proxy?file_id=2')
+    const written = vi.mocked(writeExtractionCache).mock.calls[0]?.[0] as ExtractionCache
+    expect(written['zvg-portal:14409']?.photos).toEqual([
+      { file: 'abc123.jpg', category: 'sonstiges', caption: null, isPropertyPhoto: true },
+    ])
+    expect(written['zvg-portal:14409']?.photosCheckedAt).toBeTruthy()
   })
 })
