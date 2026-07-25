@@ -149,9 +149,9 @@ function makeFakePool() {
   const captures: Array<{ kind: string; platform: string; externalId: string; sourceUrl: string | null }> = []
 
   const query = vi.fn(async (sql: string, params: unknown[] = []) => {
-    if (sql.includes('SELECT 1 FROM raw_blobs')) {
+    if (sql.includes('SELECT uploaded_at FROM raw_blobs')) {
       const hash = params[0] as string
-      return { rows: [], rowCount: blobs.has(hash) ? 1 : 0 }
+      return { rows: blobs.has(hash) ? [{ uploaded_at: null }] : [] }
     }
     if (sql.includes('INSERT INTO raw_blobs')) {
       const [hash, s3_key, content_type] = params as [string, string, string]

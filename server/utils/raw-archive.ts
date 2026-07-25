@@ -124,8 +124,22 @@ export async function archiveBlob(
   try {
     const hash = sha256Hex(opts?.canonicalBytesForHash ?? bytes)
 
-    const existing = await db.query('SELECT 1 FROM raw_blobs WHERE content_hash = $1', [hash])
-    if ((existing.rowCount ?? 0) > 0) return hash
+    // Only a *confirmed* upload counts as "already archived". A Supabase
+    // Storage outage before 2026-07-23 (Kong not yet routing /storage/v1/*,
+    // see ansible#62/zvg-immo#122) let drainOutbox mark ~8000 blobs
+    // `uploaded_at` even though the bytes never reached the bucket — and
+    // then delete their outbox copy, as a confirmed upload normally warrants.
+    // Skipping on row-existence alone (as before) would permanently orphan
+    // any future capture whose content happens to hash-match one of those
+    // dead rows: dedup would keep skipping the (re)write forever. A row
+    // that's still `uploaded_at IS NULL` is safe to treat as not yet
+    // archived and rewrite — the write below is idempotent, and
+    // drainOutbox only ever trusts `uploaded_at`, never row presence.
+    const existing = await db.query<{ uploaded_at: string | null }>(
+      'SELECT uploaded_at FROM raw_blobs WHERE content_hash = $1',
+      [hash],
+    )
+    if (existing.rows[0]?.uploaded_at != null) return hash
 
     const gzip = TEXT_TYPES.has(contentType)
     const stored = gzip ? gzipSync(bytes) : bytes
@@ -140,7 +154,7 @@ export async function archiveBlob(
     await db.query(
       `INSERT INTO raw_blobs (content_hash, s3_key, content_type, byte_size, first_seen_at, uploaded_at)
        VALUES ($1, $2, $3, $4, now(), null)
-       ON CONFLICT (content_hash) DO NOTHING`,
+       ON CONFLICT (content_hash) DO UPDATE SET uploaded_at = null`,
       [hash, key, storedContentType(contentType), stored.length],
     )
     return hash

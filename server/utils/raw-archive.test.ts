@@ -52,6 +52,7 @@ interface FakeBlobRow {
   s3_key: string
   content_type: string
   byte_size: number
+  uploaded_at: string | null
 }
 
 interface FakeCaptureRow {
@@ -75,13 +76,17 @@ function makeFakePool() {
   const captures = new Map<string, Map<string, FakeCaptureRow>>()
 
   const query = vi.fn(async (sql: string, params: unknown[] = []) => {
-    if (sql.includes('SELECT 1 FROM raw_blobs')) {
+    if (sql.includes('SELECT uploaded_at FROM raw_blobs')) {
       const hash = params[0] as string
-      return { rows: [], rowCount: blobs.has(hash) ? 1 : 0 }
+      const row = blobs.get(hash)
+      return { rows: row ? [{ uploaded_at: row.uploaded_at }] : [], rowCount: row ? 1 : 0 }
     }
     if (sql.includes('INSERT INTO raw_blobs')) {
       const [hash, s3_key, content_type, byte_size] = params as [string, string, string, number]
-      if (!blobs.has(hash)) blobs.set(hash, { s3_key, content_type, byte_size })
+      // Mirrors the production ON CONFLICT (content_hash) DO UPDATE SET
+      // uploaded_at = null: a re-write always resets uploaded_at, whether
+      // the row is new or a previously-orphaned one being recovered.
+      blobs.set(hash, { s3_key, content_type, byte_size, uploaded_at: null })
       return { rows: [], rowCount: 1 }
     }
     if (sql.includes('INSERT INTO raw_captures')) {
@@ -212,7 +217,30 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     ).resolves.toBeUndefined()
   })
 
-  it('archiveBlob dedups identical content (one outbox write, one DB row)', async () => {
+  it('archiveBlob dedups a *confirmed-uploaded* blob (no rewrite)', async () => {
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+
+    const bytes = Buffer.from(JSON.stringify({ a: 1 }))
+    const first = await archiveBlob(bytes, 'application/json', 'de')
+    pool.blobs.get(first!)!.uploaded_at = new Date().toISOString() // drainOutbox confirmed it
+
+    const second = await archiveBlob(bytes, 'application/json', 'de')
+
+    expect(second).toBe(first)
+    expect(pool.blobs.size).toBe(1)
+    // The confirmed-upload check short-circuits the second call — no redundant write.
+    const insertCalls = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO raw_blobs'))
+    expect(insertCalls).toHaveLength(1)
+  })
+
+  it('archiveBlob rewrites a still-pending (uploaded_at null) blob instead of trusting row presence', async () => {
+    // Guards the ansible#62/zvg-immo#122 orphan scenario: a row can exist
+    // with uploaded_at still null (e.g. drainOutbox never got to it, or a
+    // historical outage falsely marked-then-lost it — see the comment in
+    // archiveBlob). Treating existence alone as "already archived" would
+    // permanently skip writing the outbox file, so any future capture
+    // hash-matching that row would never actually be retrievable.
     const pool = makeFakePool()
     vi.mocked(getPool).mockReturnValue(pool as never)
 
@@ -220,12 +248,14 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     const first = await archiveBlob(bytes, 'application/json', 'de')
     const second = await archiveBlob(bytes, 'application/json', 'de')
 
-    expect(first).not.toBeNull()
     expect(second).toBe(first)
     expect(pool.blobs.size).toBe(1)
-    // The existence check short-circuits the second call — no redundant write.
     const insertCalls = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO raw_blobs'))
-    expect(insertCalls).toHaveLength(1)
+    expect(insertCalls).toHaveLength(2)
+    // The outbox file is present and intact either way.
+    const row = pool.blobs.get(first!)!
+    const stored = await readFile(join(outboxDir, row.s3_key))
+    expect(gunzipSync(stored)).toEqual(bytes)
   })
 
   it('archiveBlob gzips JSON content in the outbox', async () => {
