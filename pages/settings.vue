@@ -805,20 +805,16 @@ onBeforeUnmount(stopPolling)
           <p v-if="llmConfigError" class="text-sm text-destructive">{{ llmConfigError }}</p>
           <p v-if="llmConfigSaved" class="text-sm text-emerald-600 dark:text-emerald-500">{{ $t('settings.llm.saved') }}</p>
 
-          <form class="grid grid-cols-1 sm:grid-cols-3 gap-3" @submit.prevent="saveLlmConfig">
+          <form class="grid grid-cols-1 sm:grid-cols-2 gap-3" @submit.prevent="saveLlmConfig">
             <div class="space-y-1">
               <Label>{{ $t('settings.llm.extractionLabel') }}</Label>
               <Input v-model="llmConfig.extraction" type="number" min="256" max="32768" step="1" />
             </div>
             <div class="space-y-1">
-              <Label>{{ $t('settings.llm.summaryLabel') }}</Label>
-              <Input v-model="llmConfig.summary" type="number" min="256" max="32768" step="1" />
-            </div>
-            <div class="space-y-1">
               <Label>{{ $t('settings.llm.translationLabel') }}</Label>
               <Input v-model="llmConfig.translation" type="number" min="256" max="32768" step="1" />
             </div>
-            <div class="sm:col-span-3">
+            <div class="sm:col-span-2">
               <Button type="submit" :disabled="llmConfigPending">
                 {{ llmConfigPending ? $t('settings.llm.saving') : $t('settings.llm.save') }}
               </Button>

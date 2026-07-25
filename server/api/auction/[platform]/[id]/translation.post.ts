@@ -1,11 +1,10 @@
-// Lazy LLM translation of one auction's title+description into a target
-// language (?lang=de|en). Mirrors summary.post.ts's structure: cache-first,
-// in-flight dedup, in-memory rate limit, snapshot lookup, isSafePathSegment.
+// Lazy LLM translation of one auction's title, description and document
+// synthesis into a target language (?lang=de|en). Cache-first, with in-flight
+// dedup, an in-memory rate limit, snapshot lookup and safe path segments.
 // Cached by (content_hash, lang) in Postgres (content_translations) — the
-// hash covers only title+description, so unrelated field changes never
-// invalidate a cached translation, and an actual content edit mints a new
-// hash and triggers a fresh translation. Auctions whose country's primary
-// language already matches the target are passed through without an LLM call.
+// hash covers only the translated fields, so unrelated field changes never
+// invalidate the cache. Auctions whose country's primary language already
+// matches the target are passed through without an LLM call.
 
 import type { H3Event } from 'h3'
 import type { Pool } from 'pg'
@@ -34,19 +33,26 @@ const SYSTEM_PROMPT =
   'Übersetze wörtlich und originalgetreu — keine Ausschmückung, keine Zusammenfassung. ' +
   'Fach- und Rechtsbegriffe unverändert lassen, wenn eine wörtliche Übersetzung den Sinn verfälschen würde.'
 
-// Same rationale as summary.post.ts: dedupe concurrent misses for the same
-// (auction, lang) and cap total concurrent LLM work.
+// Dedupe concurrent misses for the same content+language and cap total
+// concurrent LLM work.
 const inflight = new Map<string, Promise<TranslationResult>>()
 const MAX_INFLIGHT = 4
 const TRANSLATION_RATE_LIMIT = { max: 30, windowMs: 60 * 60 * 1000, maxKeys: 10_000 }
 const translationRateLimit = createInMemoryRateLimitState()
 
-function buildPrompt(title: string | null, description: string | null, targetLang: ContentTargetLang): string {
+/** Builds a labelled prompt so nullable fields retain their identity. */
+function buildPrompt(
+  title: string | null,
+  description: string | null,
+  documentSummary: string | null,
+  targetLang: ContentTargetLang,
+): string {
   const lines = [
     `Translate the following real-estate foreclosure auction text fields into ${LANG_NAMES[targetLang]}.`,
     '',
     `TITLE: ${title ?? ''}`,
     `DESCRIPTION:\n${description ?? ''}`,
+    `DOCUMENT_SUMMARY:\n${documentSummary ?? ''}`,
   ]
   return lines.join('\n')
 }
@@ -84,15 +90,16 @@ export default defineEventHandler(async (event) => {
   }
 
   const { title, description } = auction
-  if (title == null && description == null) {
-    return { title: null, description: null, translated: false }
+  const documentSummary = auction.extraction?.documentSummary ?? null
+  if (title == null && description == null && documentSummary == null) {
+    return { title: null, description: null, documentSummary: null, translated: false }
   }
 
   if (isPassthroughLanguage(auction.country, targetLang)) {
-    return { title, description, translated: false }
+    return { title, description, documentSummary, translated: false }
   }
 
-  const contentHash = sha256Hex(Buffer.from(JSON.stringify({ title, description })))
+  const contentHash = sha256Hex(Buffer.from(JSON.stringify({ title, description, documentSummary })))
   const inflightKey = `${contentHash}:${targetLang}`
 
   const db: Pool | null = getPool()
@@ -102,7 +109,12 @@ export default defineEventHandler(async (event) => {
 
   const cached = await readContentTranslation(db, contentHash, targetLang)
   if (cached) {
-    return { title: cached.title, description: cached.description, translated: true }
+    return {
+      title: cached.title,
+      description: cached.description,
+      documentSummary: cached.documentSummary,
+      translated: true,
+    }
   }
 
   const existing = inflight.get(inflightKey)
@@ -132,15 +144,23 @@ export default defineEventHandler(async (event) => {
   const gen = (async () => {
     const result = await callTranslationLlm(
       SYSTEM_PROMPT,
-      buildPrompt(title, description, targetLang),
+      buildPrompt(title, description, documentSummary, targetLang),
       title,
       description,
+      documentSummary,
       config,
     )
     if (!result) {
       throw createError({ statusCode: 502, statusMessage: 'LLM did not return a translation' })
     }
-    await writeContentTranslation(db, contentHash, targetLang, result.title, result.description)
+    await writeContentTranslation(
+      db,
+      contentHash,
+      targetLang,
+      result.title,
+      result.description,
+      result.documentSummary,
+    )
     return result
   })()
 

@@ -63,6 +63,9 @@ function toMergeFields(entry: AuctionExtraction): MergeInputFields {
     renovationNotes: entry.renovationNotes,
     insights: entry.insights,
     planningNotes: entry.planningNotes,
+    documentSummary: entry.documentSummary,
+    marketValueEur: entry.marketValueEur,
+    marketValueText: entry.marketValueText,
     confident: entry.confidence === 'high',
   }
 }

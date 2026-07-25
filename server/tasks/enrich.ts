@@ -25,7 +25,7 @@
 
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { Auction, AuctionExtraction, CuratedPhoto } from '~/types/auction'
+import type { Attachment, Auction, AuctionExtraction, CuratedPhoto } from '~/types/auction'
 import { normalizePhoto } from '~/lib/photo'
 import { crawlAll, platforms } from '~/server/crawlers/registry'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '~/server/utils/auction-snapshot'
@@ -33,6 +33,7 @@ import { upsertCurrentAuctions } from '~/server/utils/current-auctions'
 import { deriveMarketValueEur, getRates } from '~/server/utils/exchange-rate'
 import { extractByRules } from '~/server/utils/extract/rules'
 import { extractByLlm, resolveLlmConfig, type LlmInput, type PhotoCuration } from '~/server/utils/extract/llm'
+import { buildDocumentLlmParts } from '~/server/utils/extract/pdf-documents'
 import { isLlmBatchPending, submitGeminiBatch } from '~/server/utils/extract/gemini-batch'
 import { getPool } from '~/server/utils/db'
 import { DEFAULT_LLM_MAX_TOKENS, getLlmMaxTokens, getLlmProviderOverride } from '~/server/utils/app-settings'
@@ -40,7 +41,7 @@ import { mergeLlmResult } from '~/server/utils/extract/merge-llm-result'
 import { downloadNativeImages } from '~/server/utils/extract/native-images'
 import { extractPdfPhotos } from '~/server/utils/extract/pdf-images'
 import { pdfPagesToBase64Jpeg } from '~/server/utils/extract/pdf-render'
-import { fetchPdfBuffer, pdfToText, pickBestPdf } from '~/server/utils/extract/pdf-text'
+import { fetchPdfBuffer, pdfToText, pickBestPdf, pickRelevantPdfs } from '~/server/utils/extract/pdf-text'
 import {
   applyExtractionToAuctions,
   type ExtractionCache,
@@ -52,6 +53,7 @@ import { interleaveByPlatform } from '~/server/utils/interleave-by-platform'
 import { isSafePathSegment } from '~/server/utils/path-segment'
 import { archiveAuction, archiveDocument } from '~/server/utils/raw-archive'
 import { cacheKey, readVerkehrswertCache } from '~/server/utils/verkehrswert-cache'
+import { applyDescriptionMarketValue } from '~/server/utils/description-market-value'
 
 const IMAGES_DIR = join(process.cwd(), '.cache_zvg', 'images')
 
@@ -64,11 +66,6 @@ const FLUSH_EVERY = 200
 // be raised temporarily while only one country is being crawled, to clear its
 // backlog in a handful of runs instead of trickling in over weeks.
 const DEFAULT_MAX_LLM_PER_RUN = 300
-// Below this, pdftotext's output is almost certainly not the Gutachten's real
-// content but leftover header/footer noise from a scanned-image PDF (~12% of
-// sampled DE PDFs fall under this). Below the threshold, render the page and
-// let the LLM read it visually instead of failing to extract from noise.
-const SCANNED_PDF_TEXT_THRESHOLD = 200
 // Give up retrying a listing whose LLM request keeps *failing* (network/proxy
 // error, timeout) after this many attempts. Without a bound, such a listing
 // never gets a cache entry and so re-consumes an LLM slot on every run forever,
@@ -205,6 +202,7 @@ export async function runEnrich() {
           hit.lastRenovationYear === undefined ||
           hit.insights === undefined ||
           hit.planningNotes === undefined ||
+          hit.documentSummary === undefined ||
           hit.marketValueEur === undefined) &&
         (hit.llmFailures ?? 0) < MAX_LLM_FAILURES &&
         !isLlmBatchPending(hit)
@@ -292,6 +290,7 @@ export async function runEnrich() {
         if (crawler?.enrichOne) {
           try {
             await crawler.enrichOne(a)
+            applyDescriptionMarketValue(a)
             deriveMarketValueEur(a, rates)
             detailOk = true
             // Any enrichOne-populated field counts — some platforms yield only
@@ -354,6 +353,7 @@ export async function runEnrich() {
           renovationNotes: priorEntry?.renovationNotes,
           insights: priorEntry?.insights,
           planningNotes: priorEntry?.planningNotes,
+          documentSummary: priorEntry?.documentSummary,
           marketValueEur: priorEntry?.marketValueEur,
           marketValueText: priorEntry?.marketValueText,
         }
@@ -364,6 +364,12 @@ export async function runEnrich() {
             (fields.landAreaSqm != null || fields.livingAreaSqm != null))
         let cacheable: boolean
         const bestPdf = pickBestPdf(a.attachments)
+        const relevantPdfs = pickRelevantPdfs(a.attachments)
+        const documentPdfs = relevantPdfs.length > 0
+          ? relevantPdfs
+          : bestPdf
+            ? [bestPdf]
+            : []
         const pdfIdentity = {
           platform: a.platform,
           country: a.country,
@@ -383,9 +389,14 @@ export async function runEnrich() {
         // re-processing, independent of today's extraction outcome. The
         // on-disk text cache in pdfToText means this is a no-op fetch/archive
         // on any run after the first for a given PDF.
-        const pdfText =
-          bestPdf && !usingNativeDoc ? await pdfToText(bestPdf.proxyUrl, { identity: pdfIdentity, capturedAt: at }) : null
-
+        const pdfTextEntries = usingNativeDoc
+          ? []
+          : await Promise.all(
+              documentPdfs.map(async (pdf) => ({
+                pdf,
+                text: await pdfToText(pdf.proxyUrl, { identity: pdfIdentity, capturedAt: at }),
+              })),
+            )
         // Two-way photo pipeline (platform/externalId guard applies to both — the
         // API endpoint enforces the same shape, so files under an unsafe path
         // would be unreachable anyway):
@@ -574,15 +585,28 @@ export async function runEnrich() {
             // like pdfText above) so a cap-skipped item under gemini-native
             // doesn't re-hit the upstream every single run — it archives
             // once it actually gets a slot.
-            let pdfBytes: string | null = null
-            if (bestPdf) {
-              const bytes = await fetchPdfBuffer(bestPdf.proxyUrl)
-              if (bytes) {
-                await archiveDocument(bytes, 'application/pdf', pdfIdentity, bestPdf.proxyUrl, at)
-                pdfBytes = bytes.toString('base64')
-              }
-            }
-            batchItems.push({ key, input: { title: a.title, description: a.description, pdfBytes, candidateImages } })
+            const nativeDocuments = (
+              await Promise.all(documentPdfs.map(async (pdf) => {
+                const bytes = await fetchPdfBuffer(pdf.proxyUrl)
+                if (!bytes) return null
+                await archiveDocument(bytes, 'application/pdf', pdfIdentity, pdf.proxyUrl, at)
+                return {
+                  source: pdf,
+                  label: pdf.label || pdf.filename,
+                  data: bytes.toString('base64'),
+                }
+              }))
+            ).filter((doc): doc is { source: Attachment; label: string; data: string } => doc != null)
+            const documentParts = await buildDocumentLlmParts(nativeDocuments, { native: true })
+            batchItems.push({
+              key,
+              input: {
+                title: a.title,
+                description: a.description,
+                ...documentParts,
+                candidateImages,
+              },
+            })
             // Same fallback as the per-run/per-platform cap-hit branch below
             // — cache the rules-only result now so the listing shows
             // *something* immediately; llm-batch-poll.ts merges the LLM
@@ -591,13 +615,20 @@ export async function runEnrich() {
           } else {
             // A short/empty pdftotext result on an actual attachment usually
             // means the Gutachten PDF is a scanned image, not real text —
-            // render its first page and let the LLM read it visually instead.
-            const pdfPageImages =
-              bestPdf && (!pdfText || pdfText.trim().length < SCANNED_PDF_TEXT_THRESHOLD)
-                ? await pdfPagesToBase64Jpeg(bestPdf.proxyUrl)
-                : null
+            // render a bounded page range and let the LLM read it visually.
+            const documentParts = await buildDocumentLlmParts(
+              pdfTextEntries.map(({ pdf, text }) => ({
+                source: pdf,
+                label: pdf.label || pdf.filename,
+                text,
+              })),
+              {
+                native: false,
+                renderPages: (pdf, maxPages) => pdfPagesToBase64Jpeg(pdf.proxyUrl, { maxPages }),
+              },
+            )
             const llm = await extractByLlm(
-              { title: a.title, description: a.description, pdfText, pdfPageImages, candidateImages },
+              { title: a.title, description: a.description, ...documentParts, candidateImages },
               llmConfig,
             )
             // Curation only applies to the photos actually offered this call

@@ -23,23 +23,18 @@ export function stripAzPrefix(title: string, az: string): string {
 }
 
 /** The grid's `vwert` is 0 for some auctions although the getText free text
- *  carries "Verkehrswert: 75.500,00 €". Multi-lot auctions (Einzelausgebote)
- *  list one value per lot with no overall figure, so a value is only returned
- *  when exactly one distinct amount appears in the text. */
-export function extractSingleVerkehrswert(
+ * carries the value. zvg.com also publishes several Grundstücke of the same
+ * proceeding in one description (one "Verkehrswert" per lot). In that case
+ * the auction card needs the combined value, matching the document extractor's
+ * convention for a single auction object made up of several lots. */
+export function extractVerkehrswert(
   text: string,
 ): { eur: number; text: string } | null {
-  const matches = [...text.matchAll(/Verkehrswert:?\s*([\d.]+(?:,\d+)?)\s*€/gi)].map(
-    (m) => m[1]!,
-  )
-  // Compare parsed values, not raw strings — the same amount may appear twice
-  // with different formatting ("75.500" vs "75.500,00").
-  const distinct = [...new Set(matches.map((m) => parseFloat(m.replace(/\./g, '').replace(',', '.'))))]
-  if (distinct.length !== 1) return null
-  const eur = distinct[0]!
-  if (!Number.isFinite(eur) || eur <= 0) return null
-  return { eur, text: `${matches[0]} €` }
+  return extractDescriptionMarketValue(text)
 }
+
+/** Kept as an export alias for callers/tests written against the old name. */
+export const extractSingleVerkehrswert = extractVerkehrswert
 
 /** getText's response is a single `<div class="divHTML">...</div>` blob of
  *  loosely-closed HTML (<br>, <U>, <B>, <Font Color=red>). Strip tags, keep
@@ -55,3 +50,4 @@ export function stripDivHtml(html: string): string {
     .replace(/\n{3,}/g, '\n\n')
     .trim()
 }
+import { extractDescriptionMarketValue } from '~/server/utils/description-market-value'

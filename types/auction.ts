@@ -241,6 +241,12 @@ export interface AuctionExtraction {
    *  Grundstücksaufteilung, ...). `undefined` = never checked yet; `null` =
    *  checked, nothing found. Same backfill semantics as `condition`. */
   planningNotes?: PlanningNotes | null
+  /** Detailed, factual synthesis of all listing-specific documents supplied
+   * to the extractor. Shown as part of the normal description rather than as
+   * a separate on-demand "AI summary". `undefined` means an older cache entry
+   * has not been backfilled yet; `null` means the documents contained no
+   * useful additional description. */
+  documentSummary?: string | null
   /** LLM-only Verkehrswert extracted from the Gutachten text, in the
    *  auction's `currency`. `undefined` = never checked yet; `null` = checked,
    *  nothing found. Same backfill semantics as `condition`. Only ever applied

@@ -1,7 +1,7 @@
 import type { Attachment, Auction } from '~/types/auction'
 import { classifyAttachment } from '~/server/utils/classify-attachment'
 import { ZVGCOM_BASE, UA, AUFGEHOBEN_PLACEHOLDER_IMG } from './constants'
-import { extractSingleVerkehrswert, stripDivHtml } from './text'
+import { extractVerkehrswert, stripDivHtml } from './text'
 
 interface PdfResponse {
   result: number
@@ -66,7 +66,7 @@ export async function enrichOne(auction: Auction): Promise<void> {
   // The grid reports vwert=0 for some auctions although the free text names
   // the value — pull it from there, but never override a structured value.
   if (auction.marketValueEur == null && text) {
-    const vw = extractSingleVerkehrswert(text)
+    const vw = extractVerkehrswert(text)
     if (vw) {
       auction.marketValueEur = vw.eur
       auction.marketValueText = vw.text

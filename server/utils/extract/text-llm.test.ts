@@ -62,28 +62,41 @@ describe('callTranslationLlm', () => {
   }
 
   it('returns the translated title and description', async () => {
-    stubResponse({ title: 'Haus', description: 'Schöne Beschreibung' })
-    await expect(callTranslationLlm('sys', 'user text', 'House', 'Nice description', config)).resolves.toEqual({
+    stubResponse({
       title: 'Haus',
       description: 'Schöne Beschreibung',
+      documentSummary: 'Ausführliche Dokument-Zusammenfassung',
+    })
+    await expect(
+      callTranslationLlm('sys', 'user text', 'House', 'Nice description', 'Detailed document summary', config),
+    ).resolves.toEqual({
+      title: 'Haus',
+      description: 'Schöne Beschreibung',
+      documentSummary: 'Ausführliche Dokument-Zusammenfassung',
     })
   })
 
   it('keeps a null field null when the source was null', async () => {
-    stubResponse({ title: 'Haus', description: null })
-    await expect(callTranslationLlm('sys', 'user text', 'House', null, config)).resolves.toEqual({
+    stubResponse({ title: 'Haus', description: null, documentSummary: null })
+    await expect(callTranslationLlm('sys', 'user text', 'House', null, null, config)).resolves.toEqual({
       title: 'Haus',
       description: null,
+      documentSummary: null,
     })
   })
 
   it('signals failure when the source had a title but the model returned an empty one', async () => {
-    stubResponse({ title: '', description: 'x' })
-    await expect(callTranslationLlm('sys', 'user text', 'House', 'x', config)).resolves.toBeNull()
+    stubResponse({ title: '', description: 'x', documentSummary: null })
+    await expect(callTranslationLlm('sys', 'user text', 'House', 'x', null, config)).resolves.toBeNull()
+  })
+
+  it('signals failure when a source document summary was not translated', async () => {
+    stubResponse({ title: null, description: null, documentSummary: '' })
+    await expect(callTranslationLlm('sys', 'user text', null, null, 'Document', config)).resolves.toBeNull()
   })
 
   it('returns null on request failure', async () => {
     vi.stubGlobal('$fetch', vi.fn().mockRejectedValue(new Error('boom')))
-    await expect(callTranslationLlm('sys', 'user text', 'House', 'desc', config)).resolves.toBeNull()
+    await expect(callTranslationLlm('sys', 'user text', 'House', 'desc', null, config)).resolves.toBeNull()
   })
 })

@@ -315,7 +315,7 @@ ALTER TABLE raw_blobs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE raw_captures ENABLE ROW LEVEL SECURITY;
 
 -- WP-8: i18n Baustein B (Content-Übersetzung). content_hash = sha256 über
--- {title, description} (server/utils/raw-archive.ts's sha256Hex, siehe
+-- {title, description, documentSummary} (raw-archive.ts's sha256Hex, siehe
 -- server/utils/content-translation.ts) — derselbe Änderungs-Schlüssel wie im
 -- G1-Archiv: unveränderter Inhalt -> Cache-Treffer, geänderter Inhalt -> neuer
 -- Hash -> neue Übersetzung. Immutabel pro (content_hash, lang), keine
@@ -326,9 +326,11 @@ CREATE TABLE IF NOT EXISTS content_translations (
   lang          text NOT NULL,
   title         text,
   description   text,
+  document_summary text,
   at            timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (content_hash, lang)
 );
+ALTER TABLE content_translations ADD COLUMN IF NOT EXISTS document_summary text;
 -- RLS ohne Policies (Default-Deny): sperrt PostgREST-anon/authenticated aus,
 -- der Backend-Zugriff läuft als Table-Owner und umgeht RLS ohnehin.
 ALTER TABLE content_translations ENABLE ROW LEVEL SECURITY;
