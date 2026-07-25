@@ -153,6 +153,41 @@ export interface AuctionInsights {
   summary: string | null
 }
 
+/** One Teilfläche/Flurstück from the Gutachten's "wertmethodische Aufteilung
+ *  des Grundstückes" section, or a single Flurstück row from its "Aufteilung
+ *  auf die Flurstücke" table. */
+export interface LandParcel {
+  /** Label as given in the Gutachten (e.g. "Teilfläche A" or a Flurstücksnummer like "743/1"). */
+  label: string
+  areaSqm: number | null
+  /** Nutzung/Zweck (e.g. "gewerbliche Baufläche", "öffentliche Verkehrsfläche"), or null. */
+  use: string | null
+}
+
+/** LLM-only planning/legal notes from the Gutachten's "weitere
+ *  Zustandsmerkmale" table (Denkmalschutz, Altlasten, Bauleitplanung, ...) —
+ *  a sibling to `AuctionInsights`, kept separate since these are per-topic
+ *  short facts rather than a free-form assessment. */
+export interface PlanningNotes {
+  /** Denkmalschutz-Detail (O-Ton, e.g. "kein Denkmalschutz gemäß
+   *  Denkmalliste"), or null. Complements the binary `features: 'denkmalschutz'` flag. */
+  monumentProtection: string | null
+  /** Altlasten-Hinweis, or null. */
+  contamination: string | null
+  /** Bauleitplanung/B-Plan-Festsetzung, or null. */
+  developmentPlan: string | null
+  /** Bodenordnung, or null. */
+  landConsolidation: string | null
+  /** Erschließungs-/Ausbaubeiträge, or null. */
+  developmentCharges: string | null
+  /** Sanierungsgebiet, or null. */
+  redevelopmentArea: string | null
+  /** Erhaltungsgebiet, or null. */
+  conservationArea: string | null
+  /** Aufteilung des Grundstücks in Teilflächen/Flurstücke mit Fläche und Nutzung. */
+  landParcels: LandParcel[]
+}
+
 /** The "extracted layer": property type + sizes derived by the enrich task's
  *  rules pass (and later the LLM fallback). */
 export interface AuctionExtraction {
@@ -202,6 +237,10 @@ export interface AuctionExtraction {
   /** LLM-only richer assessment. `undefined` = never checked yet; `null` =
    *  checked, nothing found. Same backfill semantics as `condition`. */
   insights?: AuctionInsights | null
+  /** LLM-only planning/legal notes (Denkmalschutz, Altlasten, Bauleitplanung,
+   *  Grundstücksaufteilung, ...). `undefined` = never checked yet; `null` =
+   *  checked, nothing found. Same backfill semantics as `condition`. */
+  planningNotes?: PlanningNotes | null
   /** LLM-only Verkehrswert extracted from the Gutachten text, in the
    *  auction's `currency`. `undefined` = never checked yet; `null` = checked,
    *  nothing found. Same backfill semantics as `condition`. Only ever applied

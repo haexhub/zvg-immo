@@ -11,7 +11,7 @@
 import type { PropertyType } from '~/lib/property-type'
 import type { Condition } from '~/lib/condition'
 import type { Feature } from '~/lib/features'
-import type { AuctionExtraction, AuctionInsights, CuratedPhoto } from '~/types/auction'
+import type { AuctionExtraction, AuctionInsights, CuratedPhoto, PlanningNotes } from '~/types/auction'
 import type { ClampedExtraction } from './llm'
 
 /** Rules/structured fields plus the LLM-only fields carried forward from a
@@ -30,6 +30,7 @@ export interface MergeInputFields {
   lastRenovationYear?: number | null
   renovationNotes?: string | null
   insights?: AuctionInsights | null
+  planningNotes?: PlanningNotes | null
   marketValueEur?: number | null
   marketValueText?: string | null
   /** `rules.confident || (propertyType set (not 'sonstiges') && an area is
@@ -72,6 +73,7 @@ export function mergeLlmResult(
   let lastRenovationYear = base.lastRenovationYear
   let renovationNotes = base.renovationNotes
   let insights = base.insights
+  let planningNotes = base.planningNotes
   let marketValueEur = base.marketValueEur
   let marketValueText = base.marketValueText
 
@@ -97,6 +99,7 @@ export function mergeLlmResult(
     lastRenovationYear = llm.lastRenovationYear
     renovationNotes = llm.renovationNotes
     insights = llm.insights
+    planningNotes = llm.planningNotes
     marketValueEur = llm.marketValueEur
     marketValueText = llm.marketValueText
   }
@@ -123,6 +126,7 @@ export function mergeLlmResult(
     lastRenovationYear,
     renovationNotes,
     insights,
+    planningNotes,
     marketValueEur,
     marketValueText,
     source,

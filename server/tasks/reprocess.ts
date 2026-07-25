@@ -152,6 +152,7 @@ async function buildReprocessInput(
     lastRenovationYear: priorEntry?.lastRenovationYear,
     renovationNotes: priorEntry?.renovationNotes,
     insights: priorEntry?.insights,
+    planningNotes: priorEntry?.planningNotes,
     marketValueEur: priorEntry?.marketValueEur,
     marketValueText: priorEntry?.marketValueText,
     confident:
@@ -211,6 +212,7 @@ function buildRulesOnlyEntry(
     lastRenovationYear: fields.lastRenovationYear,
     renovationNotes: fields.renovationNotes,
     insights: fields.insights,
+    planningNotes: fields.planningNotes,
     marketValueEur: fields.marketValueEur,
     marketValueText: fields.marketValueText,
     source: 'rules',
@@ -301,7 +303,8 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
           priorEntry.yearBuilt === undefined ||
           priorEntry.lastRenovationYear === undefined ||
           priorEntry.renovationNotes === undefined ||
-          priorEntry.insights === undefined) &&
+          priorEntry.insights === undefined ||
+          priorEntry.planningNotes === undefined) &&
           (priorEntry?.llmFailures ?? 0) < MAX_LLM_FAILURES &&
           !isLlmBatchPending(priorEntry))
       if (!eligible) {

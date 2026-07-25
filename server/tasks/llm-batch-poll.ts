@@ -62,6 +62,7 @@ function toMergeFields(entry: AuctionExtraction): MergeInputFields {
     lastRenovationYear: entry.lastRenovationYear,
     renovationNotes: entry.renovationNotes,
     insights: entry.insights,
+    planningNotes: entry.planningNotes,
     confident: entry.confidence === 'high',
   }
 }

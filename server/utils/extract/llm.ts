@@ -14,7 +14,7 @@ import { PROPERTY_TYPES, type PropertyType } from '~/lib/property-type'
 import { CONDITIONS, type Condition } from '~/lib/condition'
 import { FEATURES, type Feature } from '~/lib/features'
 import { PHOTO_CATEGORIES } from '~/lib/photo'
-import type { AuctionInsights, PhotoCategory } from '~/types/auction'
+import type { AuctionInsights, LandParcel, PhotoCategory, PlanningNotes } from '~/types/auction'
 import { ClaudeProxyProvider } from './providers/claude-proxy'
 import { OpenAiCompatibleProvider } from './providers/openai-compatible'
 import { GeminiNativeProvider } from './providers/gemini-native'
@@ -105,6 +105,10 @@ export interface ClampedExtraction {
   renovationNotes: string | null
   /** Richer assessment from the appraisal, or null when nothing stood out. */
   insights: AuctionInsights | null
+  /** Planning/legal notes (Denkmalschutz, Altlasten, Bauleitplanung,
+   *  Grundstücksaufteilung, ...) from the appraisal, or null when nothing
+   *  stood out. */
+  planningNotes: PlanningNotes | null
   /** Verkehrswert (Gesamtschätzwert) explicitly stated in the Gutachten, in
    *  the auction's native currency, or null. Distinct from
    *  `insights.landValueEurPerSqm` (Bodenrichtwert, EUR/m² of the land only). */
@@ -173,6 +177,21 @@ export const SYSTEM_PROMPT =
   'construction (Bauweise/Konstruktion), locationCharacter (Lagecharakter) und summary ' +
   '(kurze Gesamteinschätzung, 2-4 Sätze). Gib insights insgesamt als null zurück, wenn das ' +
   'Gutachten keine dieser Angaben enthält. Niemals raten. ' +
+  'Extrahiere außerdem, sofern im Gutachten enthalten (typischerweise in einer Tabelle ' +
+  '"weitere Zustandsmerkmale" oder ähnlich betitelt), planerische/rechtliche Hinweise ' +
+  '(planningNotes) als kurzen Freitext je Feld: monumentProtection (Denkmalschutz, O-Ton), ' +
+  'contamination (Altlasten), developmentPlan (Bauleitplanung/Bebauungsplan-Festsetzung), ' +
+  'landConsolidation (Bodenordnung), developmentCharges (Erschließungs-/Ausbaubeiträge), ' +
+  'redevelopmentArea (Sanierungsgebiet), conservationArea (Erhaltungsgebiet). Ein "kein(e) ' +
+  'X bekannt/vorhanden"-Hinweis zählt als vorhandene Angabe (kurz wiedergeben), nicht als ' +
+  'null — null nur wenn das Gutachten das Thema gar nicht erwähnt. Extrahiere außerdem, ' +
+  'sofern im Gutachten enthalten (z. B. Abschnitt "wertmethodische Aufteilung des ' +
+  'Grundstückes" oder "Aufteilung auf die Flurstücke"), die Aufteilung des Grundstücks in ' +
+  'landParcels: eine Liste aus label (Teilflächen- oder Flurstücksbezeichnung, z. B. ' +
+  '"Teilfläche A" oder "743/1"), areaSqm (Fläche in m², oder null) und use (Nutzung/Zweck, ' +
+  'z. B. "gewerbliche Baufläche", oder null). Leere Liste, wenn keine Aufteilung genannt ' +
+  'wird. Gib planningNotes insgesamt als null zurück, wenn keines der Felder und keine ' +
+  'landParcels-Einträge im Gutachten stehen. Niemals raten. ' +
   'Falls Kandidatenbilder mitgesendet werden (jeweils mit vorangestelltem "Bild N:"-Label), ' +
   'kuratiere jedes Bild im photos-Array: photoIndex (der Index aus dem Label), category ' +
   '(aussen/innen/grundriss/lageplan/sonstiges), caption (kurze Bildunterschrift oder null) ' +
@@ -265,6 +284,47 @@ export const EXTRACTION_SCHEMA = {
         'summary',
       ],
     },
+    planningNotes: {
+      type: ['object', 'null'],
+      additionalProperties: false,
+      description: 'Planerische/rechtliche Hinweise aus dem Gutachten, oder null wenn nichts Nennenswertes.',
+      properties: {
+        monumentProtection: { type: ['string', 'null'], description: 'Denkmalschutz-Hinweis (O-Ton), oder null.' },
+        contamination: { type: ['string', 'null'], description: 'Altlasten-Hinweis, oder null.' },
+        developmentPlan: { type: ['string', 'null'], description: 'Bauleitplanung/B-Plan-Festsetzung, oder null.' },
+        landConsolidation: { type: ['string', 'null'], description: 'Bodenordnung, oder null.' },
+        developmentCharges: {
+          type: ['string', 'null'],
+          description: 'Erschließungs-/Ausbaubeiträge, oder null.',
+        },
+        redevelopmentArea: { type: ['string', 'null'], description: 'Sanierungsgebiet, oder null.' },
+        conservationArea: { type: ['string', 'null'], description: 'Erhaltungsgebiet, oder null.' },
+        landParcels: {
+          type: 'array',
+          description: 'Aufteilung des Grundstücks in Teilflächen/Flurstücke, leer wenn keine genannt.',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              label: { type: 'string', description: 'Teilflächen- oder Flurstücksbezeichnung.' },
+              areaSqm: { type: ['number', 'null'], description: 'Fläche in m², oder null.' },
+              use: { type: ['string', 'null'], description: 'Nutzung/Zweck, oder null.' },
+            },
+            required: ['label', 'areaSqm', 'use'],
+          },
+        },
+      },
+      required: [
+        'monumentProtection',
+        'contamination',
+        'developmentPlan',
+        'landConsolidation',
+        'developmentCharges',
+        'redevelopmentArea',
+        'conservationArea',
+        'landParcels',
+      ],
+    },
     photos: {
       type: 'array',
       description:
@@ -306,6 +366,7 @@ export const EXTRACTION_SCHEMA = {
     'lastRenovationYear',
     'renovationNotes',
     'insights',
+    'planningNotes',
     'photos',
   ],
 } as const
@@ -382,6 +443,45 @@ function clampInsights(raw: unknown): AuctionInsights | null {
   return hasData ? insights : null
 }
 
+function clampLandParcels(raw: unknown): LandParcel[] {
+  if (!Array.isArray(raw)) return []
+  const out: LandParcel[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const r = item as Record<string, unknown>
+    const label = trimmedString(r.label, 100)
+    if (!label) continue
+    out.push({ label, areaSqm: plausibleArea(r.areaSqm, 100_000_000), use: trimmedString(r.use, 200) })
+    if (out.length >= 30) break
+  }
+  return out
+}
+
+function clampPlanningNotes(raw: unknown): PlanningNotes | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const r = raw as Record<string, unknown>
+  const notes: PlanningNotes = {
+    monumentProtection: trimmedString(r.monumentProtection, 300),
+    contamination: trimmedString(r.contamination, 300),
+    developmentPlan: trimmedString(r.developmentPlan, 300),
+    landConsolidation: trimmedString(r.landConsolidation, 300),
+    developmentCharges: trimmedString(r.developmentCharges, 300),
+    redevelopmentArea: trimmedString(r.redevelopmentArea, 300),
+    conservationArea: trimmedString(r.conservationArea, 300),
+    landParcels: clampLandParcels(r.landParcels),
+  }
+  const hasData =
+    notes.monumentProtection != null ||
+    notes.contamination != null ||
+    notes.developmentPlan != null ||
+    notes.landConsolidation != null ||
+    notes.developmentCharges != null ||
+    notes.redevelopmentArea != null ||
+    notes.conservationArea != null ||
+    notes.landParcels.length > 0
+  return hasData ? notes : null
+}
+
 // Defensive against malformed LLM output: an entry with no valid photoIndex
 // is dropped rather than defaulted, since a wrong index would silently
 // mislabel an unrelated candidate image.
@@ -444,6 +544,7 @@ export function clampExtraction(raw: Record<string, unknown>): ClampedExtraction
     lastRenovationYear: clampYear(raw.lastRenovationYear),
     renovationNotes: trimmedString(raw.renovationNotes, 300),
     insights: clampInsights(raw.insights),
+    planningNotes: clampPlanningNotes(raw.planningNotes),
     photoCuration: clampPhotoCuration(raw.photos),
   }
 }

@@ -204,17 +204,26 @@ const flatAttachments = computed(() => groupedAttachments.value.flatMap(
   (g) => g.items.map((att) => ({ att, groupLabel: g.label })),
 ))
 
-// Premium-Platzhalter-Abschnitte ohne bestehende Datenbasis (siehe
-// PremiumFeatureLock.vue) — Grundbuch/Flurstücke bleiben bewusst außerhalb des
-// Kern-Scopes (keine Extraktionsquelle), Mängel/Belastungen/Bodenrichtwert/
-// Bau & Instandhaltung/Lage kommen jetzt aus a.extraction.insights (s.u.).
-const LOCKED_SECTIONS: Array<{ key: string; titleKey: string; rows?: number }> = [
-  { key: 'parcels', titleKey: 'objektDetail.parcelsTitle' },
-]
+// Grundbuch bleibt bewusst außerhalb des Kern-Scopes (keine
+// Extraktionsquelle, siehe PremiumFeatureLock.vue) — Flurstücke/
+// Zustandsmerkmale kommen jetzt aus a.extraction.planningNotes/insights (s.u.).
 
 function formatLandValue(eurPerSqm: number): string {
   return `${eurPerSqm.toLocaleString(intlLocale.value, { maximumFractionDigits: 0 })} €/m²`
 }
+
+const planningNotesHasContent = computed(() => {
+  const p = a.value?.extraction?.planningNotes
+  return !!p && (
+    p.monumentProtection != null ||
+    p.contamination != null ||
+    p.developmentPlan != null ||
+    p.landConsolidation != null ||
+    p.developmentCharges != null ||
+    p.redevelopmentArea != null ||
+    p.conservationArea != null
+  )
+})
 
 // Item 4: the Gutachten-derived summary fills in for a short/missing
 // scraped description — only shown once description alone would leave the
@@ -429,8 +438,48 @@ useHead(() => ({
             <DetailSectionCard v-if="a.extraction?.insights?.locationCharacter" :title="$t('objektDetail.neighborhoodCharacter')">
               <p class="whitespace-pre-line text-sm text-foreground/90 leading-relaxed">{{ a.extraction.insights.locationCharacter }}</p>
             </DetailSectionCard>
-            <DetailSectionCard v-for="section in LOCKED_SECTIONS" :key="section.key" :title="$t(section.titleKey)">
-              <PremiumFeatureLock :rows="section.rows" />
+            <DetailSectionCard v-if="planningNotesHasContent" :title="$t('objektDetail.planningNotesTitle')">
+              <dl class="space-y-2 text-sm">
+                <div v-if="a.extraction?.planningNotes?.monumentProtection">
+                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.monumentProtection') }}</dt>
+                  <dd class="text-foreground/90">{{ a.extraction.planningNotes.monumentProtection }}</dd>
+                </div>
+                <div v-if="a.extraction?.planningNotes?.contamination">
+                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.contamination') }}</dt>
+                  <dd class="text-foreground/90">{{ a.extraction.planningNotes.contamination }}</dd>
+                </div>
+                <div v-if="a.extraction?.planningNotes?.developmentPlan">
+                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.developmentPlan') }}</dt>
+                  <dd class="text-foreground/90">{{ a.extraction.planningNotes.developmentPlan }}</dd>
+                </div>
+                <div v-if="a.extraction?.planningNotes?.landConsolidation">
+                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.landConsolidation') }}</dt>
+                  <dd class="text-foreground/90">{{ a.extraction.planningNotes.landConsolidation }}</dd>
+                </div>
+                <div v-if="a.extraction?.planningNotes?.developmentCharges">
+                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.developmentCharges') }}</dt>
+                  <dd class="text-foreground/90">{{ a.extraction.planningNotes.developmentCharges }}</dd>
+                </div>
+                <div v-if="a.extraction?.planningNotes?.redevelopmentArea">
+                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.redevelopmentArea') }}</dt>
+                  <dd class="text-foreground/90">{{ a.extraction.planningNotes.redevelopmentArea }}</dd>
+                </div>
+                <div v-if="a.extraction?.planningNotes?.conservationArea">
+                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.conservationArea') }}</dt>
+                  <dd class="text-foreground/90">{{ a.extraction.planningNotes.conservationArea }}</dd>
+                </div>
+              </dl>
+            </DetailSectionCard>
+            <DetailSectionCard v-if="a.extraction?.planningNotes?.landParcels?.length" :title="$t('objektDetail.parcelsTitle')">
+              <ul class="space-y-2 text-sm">
+                <li v-for="(parcel, i) in a.extraction.planningNotes.landParcels" :key="i" class="flex items-baseline justify-between gap-3">
+                  <span class="font-medium">{{ parcel.label }}</span>
+                  <span class="text-foreground/90 text-right">
+                    <span v-if="parcel.areaSqm != null" class="tabular-nums">{{ formatArea(parcel.areaSqm) }}</span>
+                    <span v-if="parcel.use" class="block text-xs text-muted-foreground">{{ parcel.use }}</span>
+                  </span>
+                </li>
+              </ul>
             </DetailSectionCard>
           </div>
         </div>
