@@ -229,8 +229,17 @@ watch([geocodingInProgress, mapVisible], ([running, visible]) => {
 }, { immediate: true })
 
 onMounted(() => {
-  view.value = route.query.view === 'list' ? 'list' : 'map'
+  const isMapView = route.query.view === 'map'
+  view.value = isMapView ? 'map' : 'list'
   mounted.value = true
+  // The multi-ref sync watcher below only fires on change — a stale
+  // non-map `view` param (e.g. old `?view=list` links) wouldn't trigger
+  // it since view.value already equals the default, so clean it up here.
+  if (!isMapView && route.query.view !== undefined) {
+    const query = { ...route.query }
+    delete query.view
+    router.replace({ query })
+  }
 })
 
 onDeactivated(() => stopGeoPoll())
@@ -554,7 +563,7 @@ watch(
     if (onlyWithPhotos.value) query.photos = '1'
     if (includeCancelled.value) query.cancelled = '1'
     if (hideRulesOnly.value !== hideRulesOnlyServerDefault.value) query.llmOnly = hideRulesOnly.value ? '1' : '0'
-    if (view.value === 'list') query.view = 'list'
+    if (view.value === 'map') query.view = 'map'
     router.replace({ query })
   },
 )
@@ -583,7 +592,7 @@ watch(() => route.query, (q) => {
   featuresFilter.value = queryList('features')
   onlyWithPhotos.value = q.photos === '1'
   hideRulesOnly.value = q.llmOnly === '1' ? true : q.llmOnly === '0' ? false : hideRulesOnlyServerDefault.value
-  view.value = q.view === 'list' ? 'list' : 'map'
+  view.value = q.view === 'map' ? 'map' : 'list'
 }, { deep: true })
 
 // Validate URL-restored authorityFilter / categoryFilter once data has loaded.
