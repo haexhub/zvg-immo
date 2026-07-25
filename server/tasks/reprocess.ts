@@ -13,6 +13,7 @@ import type { Auction, AuctionExtraction, CuratedPhoto } from '~/types/auction'
 import { getPool } from '~/server/utils/db'
 import { pickBestPdf, pickRelevantPdfs, extractPdfTextFromBuffer } from '~/server/utils/extract/pdf-text'
 import { renderPdfPagesJpeg } from '~/server/utils/extract/pdf-render'
+import { buildDocumentLlmParts } from '~/server/utils/extract/pdf-documents'
 import { extractByRules } from '~/server/utils/extract/rules'
 import { extractByLlm, resolveLlmConfig, type LlmConfig, type LlmInput } from '~/server/utils/extract/llm'
 import { isLlmBatchPending, submitGeminiBatch } from '~/server/utils/extract/gemini-batch'
@@ -30,9 +31,6 @@ import { cacheKey } from '~/server/utils/verkehrswert-cache'
 import { normalizePhoto } from '~/lib/photo'
 
 const DEFAULT_COUNTRY = 'de'
-// Same heuristic as server/tasks/enrich.ts: below this, pdftotext's output is
-// almost certainly scanned-image noise rather than the Gutachten's real text.
-const SCANNED_PDF_TEXT_THRESHOLD = 200
 const DEFAULT_MAX_LLM_PER_RUN = 300
 // Same bound as server/tasks/enrich.ts: stop retrying an auction's LLM call
 // after this many consecutive failures.
@@ -187,36 +185,26 @@ async function buildReprocessInput(
             text: await extractPdfTextFromBuffer(document.bytes),
           })),
         )
-    const pdfText = textEntries
-      .filter((entry): entry is typeof entry & { text: string } => !!entry.text?.trim())
-      .map((entry) => `=== ${entry.pdf.label || entry.pdf.filename} ===\n${entry.text}`)
-      .join('\n\n') || null
-    const scannedDocuments = textEntries.filter(
-      (entry) => !entry.text || entry.text.trim().length < SCANNED_PDF_TEXT_THRESHOLD,
+    const documentParts = await buildDocumentLlmParts(
+      documents.map((document) => ({
+        source: document,
+        label: document.pdf.label || document.pdf.filename,
+        text: usingNativeDoc
+          ? null
+          : textEntries.find((entry) => entry.pdf.proxyUrl === document.pdf.proxyUrl)?.text,
+        data: usingNativeDoc ? document.bytes.toString('base64') : undefined,
+      })),
+      {
+        native: usingNativeDoc,
+        renderPages: async (document, maxPages) =>
+          (await renderPdfPagesJpeg(document.bytes, { maxPages }))
+            .map((buf) => buf.toString('base64')),
+      },
     )
-    const pdfPageImages = scannedDocuments.length > 0
-      ? (
-          await Promise.all(
-            scannedDocuments.slice(0, 3).map(async (document) =>
-              (await renderPdfPagesJpeg(document.bytes, { maxPages: 8 }))
-                .map((buf) => buf.toString('base64')),
-            ),
-          )
-        ).flat().slice(0, 20)
-      : null
-    const pdfDocuments = usingNativeDoc
-      ? documents.map((document) => ({
-          label: document.pdf.label || document.pdf.filename,
-          data: document.bytes.toString('base64'),
-        }))
-      : []
     input = {
       title: auction.title,
       description: auction.description,
-      pdfText,
-      pdfPageImages,
-      pdfBytes: pdfDocuments[0]?.data ?? null,
-      pdfDocuments: pdfDocuments.length > 1 ? pdfDocuments : undefined,
+      ...documentParts,
     }
   }
 
@@ -344,7 +332,8 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
           priorEntry.renovationNotes === undefined ||
           priorEntry.insights === undefined ||
           priorEntry.planningNotes === undefined ||
-          priorEntry.documentSummary === undefined) &&
+          priorEntry.documentSummary === undefined ||
+          priorEntry.marketValueEur === undefined) &&
           (priorEntry?.llmFailures ?? 0) < MAX_LLM_FAILURES &&
           !isLlmBatchPending(priorEntry))
       if (!eligible) {

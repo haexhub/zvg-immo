@@ -141,6 +141,10 @@ export interface PhotoCuration {
 // Bound the combined prose from all listing-specific PDFs. This is deliberately
 // larger than the old single-document 12k window: the detailed description
 // needs room for split appraisals, exposés and the official announcement.
+// 60k characters is roughly a 15k-token worst-case input for non-native
+// providers; native Gemini sends PDFs instead and does not consume this text
+// window. Keep this explicit ceiling when adding documents so cost/latency
+// cannot grow without a corresponding budget review.
 const MAX_PDF_CHARS = 60_000
 
 export const SYSTEM_PROMPT =

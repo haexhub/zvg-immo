@@ -194,8 +194,8 @@ export function applySnapshotPhotosToAuctions(auctions: Auction[], snapshot: Auc
     if (!hit) continue
     if (!a.thumbnailUrl && hit.thumbnailUrl) a.thumbnailUrl = hit.thumbnailUrl
     if (a.photoCount < hit.photoCount) a.photoCount = hit.photoCount
-    if ((!a.photoUrls || a.photoUrls.length === 0) && hit.photoUrls && hit.photoUrls.length > 0) {
-      a.photoUrls = hit.photoUrls
+    if (hit.photoUrls?.length) {
+      a.photoUrls = [...new Set([...(a.photoUrls ?? []), ...hit.photoUrls])]
     }
   }
 }

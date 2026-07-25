@@ -25,30 +25,41 @@ const { data: a, error, pending } = await useFetch<AuctionDetail | null>(
   { default: () => null },
 )
 
-// Auto-translated title/description (WP-8): loaded silently whenever the
+// Auto-translated title/description/document synthesis (WP-8): loaded silently whenever the
 // viewer's locale differs from the auction's source language — unlike the
 // original content, this replaces text the user would otherwise see
 // untranslated. Falls back to the original text (via the
 // computed below) while pending or on error.
 const translatedTitle = ref<string | null>(null)
 const translatedDescription = ref<string | null>(null)
+const translatedDocumentSummary = ref<string | null>(null)
 
 const displayTitle = computed(() => translatedTitle.value ?? a.value?.title ?? null)
 const displayDescription = computed(() => translatedDescription.value ?? a.value?.description ?? null)
+const displayDocumentSummary = computed(
+  () => translatedDocumentSummary.value ?? a.value?.extraction?.documentSummary ?? null,
+)
 const titleTranslated = computed(() => translatedTitle.value != null)
-const descriptionTranslated = computed(() => translatedDescription.value != null)
+const descriptionTranslated = computed(
+  () => translatedDescription.value != null || translatedDocumentSummary.value != null,
+)
 
 const translationSeq = ref(0)
 watch([a, locale], async ([val, loc]) => {
   const seq = ++translationSeq.value
   translatedTitle.value = null
   translatedDescription.value = null
+  translatedDocumentSummary.value = null
   if (!val) return
-  if (val.title == null && val.description == null) return
+  if (val.title == null && val.description == null && val.extraction?.documentSummary == null) return
   if (isPassthroughLanguage(val.country, loc as ContentTargetLang)) return
 
   try {
-    const res = await $fetch<{ title: string | null; description: string | null }>(
+    const res = await $fetch<{
+      title: string | null
+      description: string | null
+      documentSummary: string | null
+    }>(
       `/api/auction/${encodeURIComponent(platform)}/${encodeURIComponent(id)}/translation`,
       { method: 'POST', query: { lang: loc } },
     )
@@ -57,6 +68,7 @@ watch([a, locale], async ([val, loc]) => {
     if (seq !== translationSeq.value) return
     translatedTitle.value = res.title
     translatedDescription.value = res.description
+    translatedDocumentSummary.value = res.documentSummary
   } catch {
     // Best-effort: keep showing the original text (see displayTitle/displayDescription).
   }
@@ -173,7 +185,7 @@ const planningNotesHasContent = computed(() => {
 const combinedDescription = computed(() => {
   const parts = [
     displayDescription.value?.trim(),
-    a.value?.extraction?.documentSummary?.trim(),
+    displayDocumentSummary.value?.trim(),
   ].filter((part): part is string => !!part)
   return [...new Set(parts)].join('\n\n')
 })

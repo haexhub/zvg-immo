@@ -76,6 +76,7 @@ export function applyDescriptionMarketValue(auction: Auction): void {
   auction.marketValueText = extracted.text
 }
 
+/** Parses a positive German-formatted amount without guessing other formats. */
 function parseGermanEuro(raw: string): number | null {
   const value = Number.parseFloat(raw.replace(/\./g, '').replace(',', '.'))
   return Number.isFinite(value) && value > 0 ? value : null

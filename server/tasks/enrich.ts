@@ -33,6 +33,7 @@ import { upsertCurrentAuctions } from '~/server/utils/current-auctions'
 import { deriveMarketValueEur, getRates } from '~/server/utils/exchange-rate'
 import { extractByRules } from '~/server/utils/extract/rules'
 import { extractByLlm, resolveLlmConfig, type LlmInput, type PhotoCuration } from '~/server/utils/extract/llm'
+import { buildDocumentLlmParts } from '~/server/utils/extract/pdf-documents'
 import { isLlmBatchPending, submitGeminiBatch } from '~/server/utils/extract/gemini-batch'
 import { getPool } from '~/server/utils/db'
 import { DEFAULT_LLM_MAX_TOKENS, getLlmMaxTokens, getLlmProviderOverride } from '~/server/utils/app-settings'
@@ -65,11 +66,6 @@ const FLUSH_EVERY = 200
 // be raised temporarily while only one country is being crawled, to clear its
 // backlog in a handful of runs instead of trickling in over weeks.
 const DEFAULT_MAX_LLM_PER_RUN = 300
-// Below this, pdftotext's output is almost certainly not the Gutachten's real
-// content but leftover header/footer noise from a scanned-image PDF (~12% of
-// sampled DE PDFs fall under this). Below the threshold, render the page and
-// let the LLM read it visually instead of failing to extract from noise.
-const SCANNED_PDF_TEXT_THRESHOLD = 200
 // Give up retrying a listing whose LLM request keeps *failing* (network/proxy
 // error, timeout) after this many attempts. Without a bound, such a listing
 // never gets a cache entry and so re-consumes an LLM slot on every run forever,
@@ -401,11 +397,6 @@ export async function runEnrich() {
                 text: await pdfToText(pdf.proxyUrl, { identity: pdfIdentity, capturedAt: at }),
               })),
             )
-        const pdfText = pdfTextEntries
-          .filter((entry): entry is { pdf: Attachment; text: string } => !!entry.text?.trim())
-          .map((entry) => `=== ${entry.pdf.label || entry.pdf.filename} ===\n${entry.text}`)
-          .join('\n\n') || null
-
         // Two-way photo pipeline (platform/externalId guard applies to both — the
         // API endpoint enforces the same shape, so files under an unsafe path
         // would be unreachable anyway):
@@ -594,24 +585,25 @@ export async function runEnrich() {
             // like pdfText above) so a cap-skipped item under gemini-native
             // doesn't re-hit the upstream every single run — it archives
             // once it actually gets a slot.
-            const pdfDocuments = (
+            const nativeDocuments = (
               await Promise.all(documentPdfs.map(async (pdf) => {
                 const bytes = await fetchPdfBuffer(pdf.proxyUrl)
                 if (!bytes) return null
                 await archiveDocument(bytes, 'application/pdf', pdfIdentity, pdf.proxyUrl, at)
                 return {
+                  source: pdf,
                   label: pdf.label || pdf.filename,
                   data: bytes.toString('base64'),
                 }
               }))
-            ).filter((doc): doc is { label: string; data: string } => doc != null)
+            ).filter((doc): doc is { source: Attachment; label: string; data: string } => doc != null)
+            const documentParts = await buildDocumentLlmParts(nativeDocuments, { native: true })
             batchItems.push({
               key,
               input: {
                 title: a.title,
                 description: a.description,
-                pdfBytes: pdfDocuments[0]?.data ?? null,
-                pdfDocuments: pdfDocuments.length > 1 ? pdfDocuments : undefined,
+                ...documentParts,
                 candidateImages,
               },
             })
@@ -623,21 +615,20 @@ export async function runEnrich() {
           } else {
             // A short/empty pdftotext result on an actual attachment usually
             // means the Gutachten PDF is a scanned image, not real text —
-            // render its first page and let the LLM read it visually instead.
-            const scannedPdfs = pdfTextEntries
-              .filter((entry) => !entry.text || entry.text.trim().length < SCANNED_PDF_TEXT_THRESHOLD)
-              .map((entry) => entry.pdf)
-            const pdfPageImages = scannedPdfs.length > 0
-              ? (
-                  await Promise.all(
-                    scannedPdfs.slice(0, 3).map((pdf) =>
-                      pdfPagesToBase64Jpeg(pdf.proxyUrl, { maxPages: 8 }),
-                    ),
-                  )
-                ).flatMap((pages) => pages ?? []).slice(0, 20)
-              : null
+            // render a bounded page range and let the LLM read it visually.
+            const documentParts = await buildDocumentLlmParts(
+              pdfTextEntries.map(({ pdf, text }) => ({
+                source: pdf,
+                label: pdf.label || pdf.filename,
+                text,
+              })),
+              {
+                native: false,
+                renderPages: (pdf, maxPages) => pdfPagesToBase64Jpeg(pdf.proxyUrl, { maxPages }),
+              },
+            )
             const llm = await extractByLlm(
-              { title: a.title, description: a.description, pdfText, pdfPageImages, candidateImages },
+              { title: a.title, description: a.description, ...documentParts, candidateImages },
               llmConfig,
             )
             // Curation only applies to the photos actually offered this call

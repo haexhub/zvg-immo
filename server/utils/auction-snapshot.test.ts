@@ -418,6 +418,28 @@ describe('applySnapshotPhotosToAuctions', () => {
     expect(listAuction.photoCount).toBe(3)
   })
 
+  it('merges a partial list gallery with the fuller snapshot gallery', () => {
+    const listAuction = auction({
+      thumbnailUrl: '/thumb.jpg',
+      photoUrls: ['/native-1.jpg', '/shared.jpg'],
+      photoCount: 2,
+    })
+    const snapshot = snapshotOf(
+      auction({
+        photoUrls: ['/shared.jpg', '/snapshot-2.jpg', '/snapshot-3.jpg'],
+        photoCount: 3,
+      }),
+    )
+    applySnapshotPhotosToAuctions([listAuction], snapshot)
+    expect(listAuction.photoUrls).toEqual([
+      '/native-1.jpg',
+      '/shared.jpg',
+      '/snapshot-2.jpg',
+      '/snapshot-3.jpg',
+    ])
+    expect(listAuction.photoCount).toBe(3)
+  })
+
   it('leaves the auction untouched when no snapshot entry exists', () => {
     const listAuction = auction()
     applySnapshotPhotosToAuctions([listAuction], {})

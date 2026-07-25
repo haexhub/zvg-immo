@@ -402,6 +402,8 @@ describe('runReprocess', () => {
       insights: null,
       planningNotes: null,
       documentSummary: null,
+      marketValueEur: null,
+      marketValueText: null,
       source: 'llm',
       confidence: 'high',
       at: '2026-07-01T00:00:00.000Z',
@@ -470,6 +472,74 @@ describe('runReprocess', () => {
     expect(result).toEqual({ candidates: 1, processed: 1, skipped: 0, llmCalls: 1 })
     expect(writeExtractionCache).toHaveBeenCalledWith({
       'zvg-portal:7265': expect.objectContaining({ renovationNotes: 'Dach erneuert' }),
+    })
+  })
+
+  it('backfills an entry whose only missing LLM field is marketValueEur', async () => {
+    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { baseUrl: 'http://proxy' } }))
+    const auction = makeAuction({
+      marketValueEur: null,
+      marketValueText: null,
+      title: 'Gutshaus',
+      description: 'Verkehrswert: 78.000,00 €',
+    })
+    const query = vi.fn().mockResolvedValue({ rows: [{ platform: 'zvg-portal', external_id: '7265' }] })
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
+      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
+    )
+    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
+    vi.mocked(extractByLlm).mockResolvedValue({
+      propertyType: null,
+      landAreaSqm: null,
+      livingAreaSqm: null,
+      rooms: null,
+      units: null,
+      securityDeposit: null,
+      biddingNotes: null,
+      condition: null,
+      features: [],
+      yearBuilt: null,
+      lastRenovationYear: null,
+      renovationNotes: null,
+      insights: null,
+      planningNotes: null,
+      documentSummary: null,
+      photoCuration: [],
+      marketValueEur: 78_000,
+      marketValueText: '78.000,00 €',
+    })
+
+    const missingMarketValueEntry: AuctionExtraction = {
+      propertyType: null,
+      landAreaSqm: null,
+      livingAreaSqm: null,
+      rooms: null,
+      units: null,
+      condition: null,
+      features: [],
+      yearBuilt: null,
+      lastRenovationYear: null,
+      renovationNotes: null,
+      insights: null,
+      planningNotes: null,
+      documentSummary: null,
+      source: 'llm',
+      confidence: 'low',
+      at: '2026-07-01T00:00:00.000Z',
+    }
+    vi.mocked(readExtractionCache).mockResolvedValue({
+      'zvg-portal:7265': missingMarketValueEntry,
+    })
+
+    const result = await runReprocess({})
+
+    expect(result).toEqual({ candidates: 1, processed: 1, skipped: 0, llmCalls: 1 })
+    expect(writeExtractionCache).toHaveBeenCalledWith({
+      'zvg-portal:7265': expect.objectContaining({
+        marketValueEur: 78_000,
+        marketValueText: '78.000,00 €',
+      }),
     })
   })
 

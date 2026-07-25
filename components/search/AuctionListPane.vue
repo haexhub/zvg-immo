@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { Star } from 'lucide-vue-next'
-import { Navigation, Pagination } from 'swiper/modules'
+import { A11y, Navigation, Pagination } from 'swiper/modules'
 import { Swiper, SwiperSlide } from 'swiper/vue'
 import 'swiper/css'
 import 'swiper/css/navigation'
 import 'swiper/css/pagination'
+import 'swiper/css/a11y'
 import { auctionPhotoUrls } from '~/lib/auction-photos'
 import type { Auction } from '~/types/auction'
 
@@ -25,7 +26,7 @@ const intlLocale = useIntlLocale()
 const { currency, eurToDisplay, nativeToDisplay } = useCurrencyDisplay()
 const conditionLabel = useConditionLabel()
 const featureLabel = useFeatureLabel()
-const swiperModules = [Navigation, Pagination]
+const swiperModules = [A11y, Navigation, Pagination]
 
 const photosByAuction = computed(() => {
   const photos = new Map<string, string[]>()
@@ -35,6 +36,7 @@ const photosByAuction = computed(() => {
   return photos
 })
 
+/** Returns the stable, deduplicated gallery prepared for one search card. */
 function cardPhotos(a: Auction): string[] {
   return photosByAuction.value.get(watchlistKey(a)) ?? []
 }

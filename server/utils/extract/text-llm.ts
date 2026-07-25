@@ -42,24 +42,30 @@ const TRANSLATION_SCHEMA = {
       type: ['string', 'null'],
       description: 'Übersetzte Beschreibung, oder null wenn keine Beschreibung vorhanden war.',
     },
+    documentSummary: {
+      type: ['string', 'null'],
+      description: 'Übersetzte Dokument-Zusammenfassung, oder null wenn keine vorhanden war.',
+    },
   },
-  required: ['title', 'description'],
+  required: ['title', 'description', 'documentSummary'],
 } as const
 
 export interface TranslationResult {
   title: string | null
   description: string | null
+  documentSummary: string | null
 }
 
-/** Returns null on request failure, or when the source had a title/description
- *  but the model came back empty for it — signals failure rather than caching
- *  an untranslated fallback forever under an "auto-translated" label (the
- *  caller's cache is immutable per content_hash+lang). */
+/** Returns null on request failure, or when a populated source field came
+ *  back empty — signals failure rather than caching an untranslated fallback
+ *  forever under an "auto-translated" label (the caller's cache is immutable
+ *  per content_hash+lang). */
 export async function callTranslationLlm(
   systemPrompt: string,
   userText: string,
   title: string | null,
   description: string | null,
+  documentSummary: string | null,
   config: LlmConfig,
 ): Promise<TranslationResult | null> {
   const raw = await getProvider(config).extract({
@@ -70,10 +76,13 @@ export async function callTranslationLlm(
   if (!raw) return null
   const translatedTitle = typeof raw.title === 'string' ? raw.title.trim() : null
   const translatedDescription = typeof raw.description === 'string' ? raw.description.trim() : null
+  const translatedDocumentSummary = typeof raw.documentSummary === 'string' ? raw.documentSummary.trim() : null
   if (title != null && !translatedTitle) return null
   if (description != null && !translatedDescription) return null
+  if (documentSummary != null && !translatedDocumentSummary) return null
   return {
     title: title == null ? null : translatedTitle,
     description: description == null ? null : translatedDescription,
+    documentSummary: documentSummary == null ? null : translatedDocumentSummary,
   }
 }

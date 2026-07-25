@@ -9,6 +9,7 @@ const expanded = ref(false)
 const collapsible = ref(false)
 let observer: ResizeObserver | null = null
 
+/** Recomputes whether the rendered copy exceeds the always-visible ten lines. */
 function measure() {
   const el = copy.value
   if (!el || typeof window === 'undefined') return
