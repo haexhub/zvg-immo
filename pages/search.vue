@@ -229,7 +229,7 @@ watch([geocodingInProgress, mapVisible], ([running, visible]) => {
 }, { immediate: true })
 
 onMounted(() => {
-  view.value = route.query.view === 'list' ? 'list' : 'map'
+  view.value = route.query.view === 'map' ? 'map' : 'list'
   mounted.value = true
 })
 
@@ -554,7 +554,7 @@ watch(
     if (onlyWithPhotos.value) query.photos = '1'
     if (includeCancelled.value) query.cancelled = '1'
     if (hideRulesOnly.value !== hideRulesOnlyServerDefault.value) query.llmOnly = hideRulesOnly.value ? '1' : '0'
-    if (view.value === 'list') query.view = 'list'
+    if (view.value === 'map') query.view = 'map'
     router.replace({ query })
   },
 )
@@ -583,7 +583,7 @@ watch(() => route.query, (q) => {
   featuresFilter.value = queryList('features')
   onlyWithPhotos.value = q.photos === '1'
   hideRulesOnly.value = q.llmOnly === '1' ? true : q.llmOnly === '0' ? false : hideRulesOnlyServerDefault.value
-  view.value = q.view === 'list' ? 'list' : 'map'
+  view.value = q.view === 'map' ? 'map' : 'list'
 }, { deep: true })
 
 // Validate URL-restored authorityFilter / categoryFilter once data has loaded.
