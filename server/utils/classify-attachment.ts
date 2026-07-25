@@ -9,10 +9,11 @@ const RULES: ReadonlyArray<[RegExp, AttachmentKind]> = [
   [/edikt|bekanntmachung|verlautbarung|tac|cahier|terms|conditions|verkoopsvoorwaarden|huutokauppaehdot|auktionsvillkor/i, 'announcement'],
   [/expos[ée]|brochure|prospect|myyntiesite|salgsopstilling/i, 'brochure'],
   // Checked before 'photo': zvg-portal sometimes labels administrative PDFs
-  // (bank-details sheets, registration forms) "Foto" — seen live as
-  // "Kontoverbindung-Sicherheitsleistung" tagged Foto, which would inflate
+  // (bank-details sheets, registration forms, entry-control notices) "Foto"
+  // — seen live as "Kontoverbindung-Sicherheitsleistung" and "Hinweis
+  // Wartezeiten aufgrund Einlasskontrolle" tagged Foto, which would inflate
   // photoCount and get picked as a thumbnail.
-  [/kontoverbindung|sicherheitsleistung|merkblatt|anmeldeformular/i, 'other'],
+  [/kontoverbindung|sicherheitsleistung|merkblatt|anmeldeformular|einlasskontrolle|wartezeit/i, 'other'],
   [/foto|bild|photo|picture|image/i, 'photo'],
 ]
 

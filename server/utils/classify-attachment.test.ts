@@ -30,4 +30,10 @@ describe('classifyAttachment — mislabeled administrative PDFs', () => {
   it('does not tag a bank-details sheet labeled Foto as photo', () => {
     expect(classifyAttachment('Foto', 'Kontoverbindung-Sicherheitsleistung.pdf')).toBe('other')
   })
+
+  it('does not tag an entry-control wait-time notice labeled Foto as photo', () => {
+    expect(
+      classifyAttachment('Foto', 'HInweis Wartezeiten aufgrund Einlasskontrolle.pdf'),
+    ).toBe('other')
+  })
 })
