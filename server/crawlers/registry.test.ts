@@ -1,6 +1,19 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import type { Auction } from '~/types/auction'
-import { completenessScore, frAddressDateKey } from './registry'
+import { DEFAULT_ENABLED_COUNTRIES } from '~/server/utils/app-settings'
+import {
+  completenessScore,
+  configureEnabledCountries,
+  frAddressDateKey,
+  getCrawlersForRegion,
+  isCountryEnabled,
+  listCountries,
+  listRegisteredCountries,
+} from './registry'
+
+afterEach(() => {
+  configureEnabledCountries(DEFAULT_ENABLED_COUNTRIES)
+})
 
 function auction(overrides: Partial<Auction>): Auction {
   return {
@@ -90,5 +103,37 @@ describe('completenessScore', () => {
       photoCount: 1,
     })
     expect(completenessScore(describedFewPhotos)).toBeGreaterThan(completenessScore(manyPhotosNoText))
+  })
+})
+
+describe('enabled countries', () => {
+  it('surfaces Germany and Sweden for crawling and country discovery', () => {
+    expect(listCountries().map((country) => country.code)).toEqual(['de', 'se'])
+    expect(isCountryEnabled('DE')).toBe(true)
+    expect(isCountryEnabled('SE')).toBe(true)
+  })
+
+  it('dispatches Sweden to the Kronofogden crawler', () => {
+    expect(getCrawlersForRegion('se', 'all').map((crawler) => crawler.id)).toEqual([
+      'se-kronofogden',
+    ])
+  })
+
+  it('keeps countries outside the current rollout paused', () => {
+    expect(isCountryEnabled('at')).toBe(false)
+    expect(getCrawlersForRegion('at', 'all')).toEqual([])
+  })
+
+  it('applies an admin selection without hiding paused sources from the admin catalog', () => {
+    configureEnabledCountries(['se'])
+
+    expect(listCountries().map((country) => country.code)).toEqual(['se'])
+    expect(isCountryEnabled('de')).toBe(false)
+    expect(listRegisteredCountries().map((country) => country.code)).toContain('de')
+  })
+
+  it('ignores country codes without a registered crawler', () => {
+    expect(configureEnabledCountries(['se', 'xx'])).toEqual(['se'])
+    expect(isCountryEnabled('xx')).toBe(false)
   })
 })

@@ -306,6 +306,16 @@
       "saving": "Speichere …",
       "save": "Speichern"
     },
+    "sources": {
+      "title": "Datenquellen",
+      "description": "Aktivierte Länder werden in der Suche angezeigt, aus dem Cache ausgeliefert und regelmäßig gecrawlt. Änderungen wirken sofort; für eine neu aktivierte Quelle kannst du anschließend den Refresh manuell starten.",
+      "enabledCount": "{enabled} von {total} Quellen aktiv",
+      "loadError": "Datenquellen konnten nicht geladen werden.",
+      "saveError": "Datenquellen konnten nicht gespeichert werden.",
+      "saved": "Datenquellen gespeichert.",
+      "saving": "Speichere …",
+      "save": "Datenquellen speichern"
+    },
     "reprocess": {
       "title": "Reprocess-Testlauf",
       "description": "Extraktion für eine begrenzte Anzahl Auktionen aus dem Archiv neu laufen lassen — z. B. um eine neue Provider-/Modell-Konfiguration zu verifizieren, bevor der volle Bestand neu verarbeitet wird.",

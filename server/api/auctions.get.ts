@@ -1,5 +1,11 @@
 import type { CrawlResult } from '~/types/auction'
-import { crawlAll, crawlSingle, isCountryEnabled } from '../crawlers/registry'
+import {
+  crawlAll,
+  crawlSingle,
+  ensureEnabledCountriesLoaded,
+  getEnabledCountryCodes,
+  isCountryEnabled,
+} from '../crawlers/registry'
 import { cacheKey, readVerkehrswertCache } from '../utils/verkehrswert-cache'
 import { applyExtractionToAuctions, readExtractionCache } from '../utils/extraction-cache'
 import { applySnapshotPhotosToAuctions, readAuctionSnapshot } from '../utils/auction-snapshot'
@@ -25,11 +31,12 @@ const cachedCrawl = defineCachedFunction(
     maxAge: 1800,
     swr: true,
     getKey: (country, region, immobilienOnly) =>
-      `${country}:${region}:${immobilienOnly ? '1' : '0'}`,
+      `${getEnabledCountryCodes().sort().join(',')}:${country}:${region}:${immobilienOnly ? '1' : '0'}`,
   },
 )
 
 export default defineEventHandler(async (event): Promise<CrawlResult> => {
+  await ensureEnabledCountriesLoaded()
   const query = getQuery(event)
   const country = scopeParam(query.country)
   const region = scopeParam(query.region)

@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import type { Pool } from 'pg'
 import {
+  DEFAULT_ENABLED_COUNTRIES,
   DEFAULT_HIDE_RULES_ONLY_AUCTIONS,
   DEFAULT_LLM_MAX_TOKENS,
   clearLlmProviderOverride,
   getAllLlmMaxTokens,
+  getEnabledCountries,
   getHideRulesOnlyAuctions,
   getLlmMaxTokens,
   getLlmProviderOverride,
+  setEnabledCountries,
   setHideRulesOnlyAuctions,
   setLlmMaxTokens,
   setLlmProviderOverride,
@@ -52,6 +55,34 @@ function makeFakePool() {
 
   return { query: query as unknown as Pool['query'] }
 }
+
+describe('enabled countries', () => {
+  it('defaults to Germany and Sweden when no row exists', async () => {
+    const db = makeFakePool() as unknown as Pool
+    expect(await getEnabledCountries(db)).toEqual(DEFAULT_ENABLED_COUNTRIES)
+  })
+
+  it('persists a normalized, duplicate-free country list', async () => {
+    const db = makeFakePool() as unknown as Pool
+    await setEnabledCountries(db, ['SE', 'de', 'se'])
+    expect(await getEnabledCountries(db)).toEqual(['se', 'de'])
+  })
+
+  it('allows all country sources to be paused', async () => {
+    const db = makeFakePool() as unknown as Pool
+    await setEnabledCountries(db, [])
+    expect(await getEnabledCountries(db)).toEqual([])
+  })
+
+  it('falls back to defaults for a malformed stored value', async () => {
+    const db = makeFakePool()
+    ;(db as unknown as { query: (sql: string) => Promise<unknown> }).query = async (sql: string) => {
+      if (sql.includes('SELECT value')) return { rows: [{ value: 'de,se' }] }
+      throw new Error('unexpected')
+    }
+    expect(await getEnabledCountries(db as unknown as Pool)).toEqual(DEFAULT_ENABLED_COUNTRIES)
+  })
+})
 
 describe('getLlmMaxTokens', () => {
   it('falls back to the default when no row exists', async () => {

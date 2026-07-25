@@ -306,6 +306,16 @@
       "saving": "Saving …",
       "save": "Save"
     },
+    "sources": {
+      "title": "Data sources",
+      "description": "Enabled countries appear in search, are served from cache, and are crawled regularly. Changes take effect immediately; after enabling a new source, you can trigger a refresh manually.",
+      "enabledCount": "{enabled} of {total} sources enabled",
+      "loadError": "Data sources could not be loaded.",
+      "saveError": "Data sources could not be saved.",
+      "saved": "Data sources saved.",
+      "saving": "Saving …",
+      "save": "Save data sources"
+    },
     "reprocess": {
       "title": "Reprocess test run",
       "description": "Re-run extraction for a limited number of archived auctions — e.g. to verify a new provider/model configuration before reprocessing the full dataset.",

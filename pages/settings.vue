@@ -3,8 +3,10 @@ import { ArrowLeft, ExternalLink, Loader2, Pencil, Trash2 } from 'lucide-vue-nex
 import type { ClaudeSetupStatus } from '~/server/api/settings/claude/status.get'
 import type { AdminLawyer } from '~/server/api/settings/lawyers/index.get'
 import type { LlmMaxTokensKind, LlmProvider } from '~/server/utils/app-settings'
+import type { CountrySourceSetting, CountrySourceSettings } from '~/server/utils/country-source-settings'
 
 const { t } = useI18n()
+const countryLabel = useCountryLabel()
 useHead({ title: t('settings.title') })
 
 // Auth state — probed on mount so a returning user with a valid cookie skips
@@ -24,6 +26,7 @@ async function probeSession(): Promise<void> {
       await loadLlmConfig()
       await loadLlmProvider()
       await loadDisplaySettings()
+      await loadCountrySources()
     }
   } catch {
     authed.value = false
@@ -45,6 +48,7 @@ async function login(): Promise<void> {
     await loadLlmConfig()
     await loadLlmProvider()
     await loadDisplaySettings()
+    await loadCountrySources()
   } catch (err) {
     authError.value = (err as { statusMessage?: string; message?: string }).statusMessage
       || (err as Error).message
@@ -615,6 +619,55 @@ const refreshPending = ref(false)
 const refreshError = ref<string | null>(null)
 const refreshResult = ref<RefreshResult | null>(null)
 
+// Datenquellen: persistent aktivierte Länder-Crawler. Die Registry setzt eine
+// gespeicherte Änderung sofort um; der nächste reguläre/manuelle Refresh füllt
+// den Cache einer neu aktivierten Quelle.
+const countrySources = ref<CountrySourceSetting[]>([])
+const countrySourcesPending = ref(false)
+const countrySourcesError = ref<string | null>(null)
+const countrySourcesSaved = ref(false)
+const enabledCountrySourceCount = computed(
+  () => countrySources.value.filter((source) => source.enabled).length,
+)
+
+async function loadCountrySources(): Promise<void> {
+  try {
+    const res = await $fetch<CountrySourceSettings>('/api/settings/countries')
+    countrySources.value = res.countries
+    countrySourcesError.value = null
+  } catch (err) {
+    countrySourcesError.value = normalizeSettingsError(err, t('settings.sources.loadError'))
+  }
+}
+
+function toggleCountrySource(code: string): void {
+  const source = countrySources.value.find((candidate) => candidate.code === code)
+  if (source) source.enabled = !source.enabled
+  countrySourcesSaved.value = false
+}
+
+async function saveCountrySources(): Promise<void> {
+  countrySourcesPending.value = true
+  countrySourcesError.value = null
+  countrySourcesSaved.value = false
+  try {
+    const res = await $fetch<CountrySourceSettings>('/api/settings/countries', {
+      method: 'PUT',
+      body: {
+        enabledCountries: countrySources.value
+          .filter((source) => source.enabled)
+          .map((source) => source.code),
+      },
+    })
+    countrySources.value = res.countries
+    countrySourcesSaved.value = true
+  } catch (err) {
+    countrySourcesError.value = normalizeSettingsError(err, t('settings.sources.saveError'))
+  } finally {
+    countrySourcesPending.value = false
+  }
+}
+
 async function runRefreshNow(): Promise<void> {
   refreshPending.value = true
   refreshError.value = null
@@ -1059,6 +1112,57 @@ onBeforeUnmount(stopPolling)
             <dt class="text-muted-foreground">{{ $t('settings.reprocess.llmCalls') }}</dt>
             <dd>{{ reprocessResult.llmCalls }}</dd>
           </dl>
+        </CardContent>
+      </Card>
+
+      <Card v-if="authed">
+        <CardHeader>
+          <CardTitle>{{ $t('settings.sources.title') }}</CardTitle>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          <p class="text-sm text-muted-foreground">
+            {{ $t('settings.sources.description') }}
+          </p>
+
+          <p v-if="countrySourcesError" class="text-sm text-destructive">{{ countrySourcesError }}</p>
+          <p v-if="countrySourcesSaved" class="text-sm text-emerald-600 dark:text-emerald-500">{{ $t('settings.sources.saved') }}</p>
+
+          <form class="space-y-3" @submit.prevent="saveCountrySources">
+            <div class="max-h-80 overflow-y-auto rounded-md border divide-y">
+              <label
+                v-for="source in countrySources"
+                :key="source.code"
+                class="flex items-start gap-3 px-3 py-2.5 cursor-pointer hover:bg-muted/50"
+              >
+                <Checkbox
+                  class="mt-0.5"
+                  :model-value="source.enabled"
+                  :disabled="countrySourcesPending"
+                  @update:model-value="toggleCountrySource(source.code)"
+                />
+                <span class="min-w-0">
+                  <span class="block text-sm font-medium">
+                    {{ countryLabel(source.code, source.name) }}
+                    <span class="ml-1 font-mono text-xs uppercase text-muted-foreground">{{ source.code }}</span>
+                  </span>
+                  <span class="block text-xs text-muted-foreground">
+                    {{ source.platforms.map((platform) => platform.name).join(', ') }}
+                  </span>
+                </span>
+              </label>
+            </div>
+
+            <p class="text-xs text-muted-foreground">
+              {{ $t('settings.sources.enabledCount', {
+                enabled: enabledCountrySourceCount,
+                total: countrySources.length,
+              }) }}
+            </p>
+
+            <Button type="submit" :disabled="countrySourcesPending">
+              {{ countrySourcesPending ? $t('settings.sources.saving') : $t('settings.sources.save') }}
+            </Button>
+          </form>
         </CardContent>
       </Card>
 
