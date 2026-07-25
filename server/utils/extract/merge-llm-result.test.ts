@@ -33,6 +33,7 @@ function llmResult(overrides: Partial<ClampedExtraction> = {}): ClampedExtractio
     lastRenovationYear: null,
     renovationNotes: null,
     insights: null,
+    planningNotes: null,
     photoCuration: [],
     marketValueEur: null,
     marketValueText: null,

@@ -50,6 +50,7 @@ describe('clampExtraction', () => {
       lastRenovationYear: null,
       renovationNotes: null,
       insights: null,
+      planningNotes: null,
       photoCuration: [],
       marketValueEur: null,
       marketValueText: null,
@@ -82,6 +83,7 @@ describe('clampExtraction', () => {
       lastRenovationYear: null,
       renovationNotes: null,
       insights: null,
+      planningNotes: null,
       photoCuration: [],
       marketValueEur: null,
       marketValueText: null,
@@ -202,6 +204,42 @@ describe('clampExtraction', () => {
       clampExtraction({ insights: { landValueEurPerSqm: 9_999_999, construction: 'Massivbau' } })
         .insights!.landValueEurPerSqm,
     ).toBeNull()
+  })
+
+  it('nulls planningNotes when missing, not an object, or every field clamps away to empty', () => {
+    expect(clampExtraction({}).planningNotes).toBeNull()
+    expect(clampExtraction({ planningNotes: 'nope' as unknown as object }).planningNotes).toBeNull()
+    expect(clampExtraction({ planningNotes: [] as unknown as object }).planningNotes).toBeNull()
+    expect(
+      clampExtraction({ planningNotes: { monumentProtection: '  ', landParcels: [] } }).planningNotes,
+    ).toBeNull()
+  })
+
+  it('clamps planningNotes scalar fields and landParcels entries', () => {
+    const r = clampExtraction({
+      planningNotes: {
+        monumentProtection: '  kein Denkmalschutz gemäß Denkmalliste  ',
+        contamination: 'keine Hinweise auf Altlasten bekannt',
+        developmentPlan: 'im Geltungsbereich des Bebauungsplanes XV-37 d gelegen',
+        landConsolidation: null,
+        developmentCharges: null,
+        redevelopmentArea: null,
+        conservationArea: null,
+        landParcels: [
+          { label: 'Teilfläche A', areaSqm: 1460, use: 'gewerbliche Baufläche' },
+          { label: '', areaSqm: 500, use: 'skipped: no label' },
+          { label: 'Teilfläche B', areaSqm: 527, use: 'öffentliche Verkehrsfläche' },
+        ],
+      },
+    })
+    expect(r.planningNotes).not.toBeNull()
+    expect(r.planningNotes!.monumentProtection).toBe('kein Denkmalschutz gemäß Denkmalliste')
+    expect(r.planningNotes!.contamination).toBe('keine Hinweise auf Altlasten bekannt')
+    expect(r.planningNotes!.landConsolidation).toBeNull()
+    expect(r.planningNotes!.landParcels).toEqual([
+      { label: 'Teilfläche A', areaSqm: 1460, use: 'gewerbliche Baufläche' },
+      { label: 'Teilfläche B', areaSqm: 527, use: 'öffentliche Verkehrsfläche' },
+    ])
   })
 
   it('defaults photoCuration to an empty array when missing or malformed', () => {

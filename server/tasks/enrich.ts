@@ -204,6 +204,7 @@ export async function runEnrich() {
           hit.yearBuilt === undefined ||
           hit.lastRenovationYear === undefined ||
           hit.insights === undefined ||
+          hit.planningNotes === undefined ||
           hit.marketValueEur === undefined) &&
         (hit.llmFailures ?? 0) < MAX_LLM_FAILURES &&
         !isLlmBatchPending(hit)
@@ -352,6 +353,7 @@ export async function runEnrich() {
           lastRenovationYear: priorEntry?.lastRenovationYear,
           renovationNotes: priorEntry?.renovationNotes,
           insights: priorEntry?.insights,
+          planningNotes: priorEntry?.planningNotes,
           marketValueEur: priorEntry?.marketValueEur,
           marketValueText: priorEntry?.marketValueText,
         }
