@@ -306,6 +306,20 @@
       "saving": "Speichere …",
       "save": "Speichern"
     },
+    "reprocess": {
+      "title": "Reprocess-Testlauf",
+      "description": "Extraktion für eine begrenzte Anzahl Auktionen aus dem Archiv neu laufen lassen — z. B. um eine neue Provider-/Modell-Konfiguration zu verifizieren, bevor der volle Bestand neu verarbeitet wird.",
+      "limitLabel": "Anzahl Auktionen",
+      "countryLabel": "Land",
+      "invalidLimit": "Anzahl muss zwischen 1 und 200 liegen.",
+      "run": "Testlauf starten",
+      "running": "Läuft …",
+      "runError": "Testlauf fehlgeschlagen.",
+      "candidates": "Kandidaten",
+      "processed": "Verarbeitet",
+      "skipped": "Übersprungen",
+      "llmCalls": "LLM-Aufrufe"
+    },
     "archive": {
       "title": "Roh-Archiv",
       "description": "Durchsuche das archivierte Rohmaterial (Auktions-Snapshots, Gutachten-PDFs, Detail-HTML) nach Land, Region und Aktenzeichen.",

@@ -556,6 +556,49 @@ async function resetLlmProvider(): Promise<void> {
   }
 }
 
+// Reprocess-Testlauf: begrenzter Testlauf gegen /api/settings/reprocess
+// (server/tasks/reprocess.ts), um eine neue LLM-Provider/Modell-Konfiguration
+// gegen eine Handvoll archivierter Auktionen zu verifizieren, bevor der
+// volle Bestand neu verarbeitet wird. Zahleneingabe als String + manuelles
+// Parsen beim Absenden, gleiches Muster wie llmConfig oben.
+interface ReprocessResult {
+  candidates: number
+  processed: number
+  skipped: number
+  llmCalls: number
+}
+const reprocessLimit = ref('10')
+const reprocessCountry = ref('de')
+const reprocessPending = ref(false)
+const reprocessError = ref<string | null>(null)
+const reprocessResult = ref<ReprocessResult | null>(null)
+
+function parseReprocessLimit(raw: string): number | null {
+  const value = Number(raw)
+  return Number.isInteger(value) && value >= 1 && value <= 200 ? value : null
+}
+
+async function runReprocessTest(): Promise<void> {
+  const limit = parseReprocessLimit(reprocessLimit.value)
+  if (limit === null) {
+    reprocessError.value = t('settings.reprocess.invalidLimit')
+    return
+  }
+  reprocessPending.value = true
+  reprocessError.value = null
+  reprocessResult.value = null
+  try {
+    reprocessResult.value = await $fetch<ReprocessResult>('/api/settings/reprocess', {
+      method: 'POST',
+      body: { limit, country: reprocessCountry.value.trim() || undefined },
+    })
+  } catch (err) {
+    reprocessError.value = normalizeSettingsError(err, t('settings.reprocess.runError'))
+  } finally {
+    reprocessPending.value = false
+  }
+}
+
 // Dashboard-Anzeige: Standard für "Regex-only-Auktionen ausblenden" auf
 // /search, gegen /api/settings/display (settings-auth-Muster wie oben).
 const hideRulesOnlyDefault = ref(true)
@@ -950,6 +993,46 @@ onBeforeUnmount(stopPolling)
               {{ claudeError }}
             </p>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card v-if="authed">
+        <CardHeader>
+          <CardTitle>{{ $t('settings.reprocess.title') }}</CardTitle>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          <p class="text-sm text-muted-foreground">
+            {{ $t('settings.reprocess.description') }}
+          </p>
+
+          <p v-if="reprocessError" class="text-sm text-destructive">{{ reprocessError }}</p>
+
+          <form class="space-y-3" @submit.prevent="runReprocessTest">
+            <div class="grid grid-cols-2 gap-3">
+              <div class="space-y-1">
+                <Label>{{ $t('settings.reprocess.limitLabel') }}</Label>
+                <Input v-model="reprocessLimit" type="number" min="1" max="200" step="1" />
+              </div>
+              <div class="space-y-1">
+                <Label>{{ $t('settings.reprocess.countryLabel') }}</Label>
+                <Input v-model="reprocessCountry" />
+              </div>
+            </div>
+            <Button type="submit" :disabled="reprocessPending">
+              {{ reprocessPending ? $t('settings.reprocess.running') : $t('settings.reprocess.run') }}
+            </Button>
+          </form>
+
+          <dl v-if="reprocessResult" class="grid grid-cols-2 gap-x-4 gap-y-1 text-sm border-t pt-3">
+            <dt class="text-muted-foreground">{{ $t('settings.reprocess.candidates') }}</dt>
+            <dd>{{ reprocessResult.candidates }}</dd>
+            <dt class="text-muted-foreground">{{ $t('settings.reprocess.processed') }}</dt>
+            <dd>{{ reprocessResult.processed }}</dd>
+            <dt class="text-muted-foreground">{{ $t('settings.reprocess.skipped') }}</dt>
+            <dd>{{ reprocessResult.skipped }}</dd>
+            <dt class="text-muted-foreground">{{ $t('settings.reprocess.llmCalls') }}</dt>
+            <dd>{{ reprocessResult.llmCalls }}</dd>
+          </dl>
         </CardContent>
       </Card>
 

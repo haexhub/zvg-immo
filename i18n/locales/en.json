@@ -306,6 +306,20 @@
       "saving": "Saving …",
       "save": "Save"
     },
+    "reprocess": {
+      "title": "Reprocess test run",
+      "description": "Re-run extraction for a limited number of archived auctions — e.g. to verify a new provider/model configuration before reprocessing the full dataset.",
+      "limitLabel": "Number of auctions",
+      "countryLabel": "Country",
+      "invalidLimit": "Count must be between 1 and 200.",
+      "run": "Start test run",
+      "running": "Running …",
+      "runError": "Test run failed.",
+      "candidates": "Candidates",
+      "processed": "Processed",
+      "skipped": "Skipped",
+      "llmCalls": "LLM calls"
+    },
     "archive": {
       "title": "Raw archive",
       "description": "Browse the archived raw material (auction snapshots, appraisal PDFs, detail HTML) by country, region and case number.",
