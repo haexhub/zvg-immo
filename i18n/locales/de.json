@@ -320,6 +320,17 @@
       "skipped": "Übersprungen",
       "llmCalls": "LLM-Aufrufe"
     },
+    "refresh": {
+      "title": "Refresh jetzt starten",
+      "description": "Stößt den Crawl-Refresh sofort an statt auf den stündlichen Cron-Tick zu warten — crawlt weiterhin nur Regionen, deren Cache-Alter das jeweilige Portal-Intervall überschritten hat.",
+      "run": "Refresh starten",
+      "running": "Läuft …",
+      "runError": "Refresh fehlgeschlagen.",
+      "ok": "Erfolgreich",
+      "failed": "Fehlgeschlagen",
+      "skipped": "Übersprungen (Cache noch frisch)",
+      "durationMs": "Dauer (ms)"
+    },
     "archive": {
       "title": "Roh-Archiv",
       "description": "Durchsuche das archivierte Rohmaterial (Auktions-Snapshots, Gutachten-PDFs, Detail-HTML) nach Land, Region und Aktenzeichen.",
