@@ -153,8 +153,13 @@ export const SYSTEM_PROMPT =
   'Gib den im Gutachten genannten Verkehrswert (Gesamtschätzwert der ' +
   'Immobilie) in der Landeswährung der Anzeige zurück, falls explizit ' +
   'genannt, sonst null — nicht zu verwechseln mit dem Bodenrichtwert ' +
-  '(EUR/m² nur für das Grundstück, siehe insights). In marketValueText den ' +
-  'O-Ton-Betrag als kurzen Freitext, sonst null. ' +
+  '(EUR/m² nur für das Grundstück, siehe insights). Werden für mehrere ' +
+  'Flurstücke/Teilgrundstücke desselben Versteigerungsobjekts jeweils ' +
+  'eigene Verkehrswerte genannt, ohne dass ein gemeinsamer Gesamtwert ' +
+  'explizit dasteht, addiere sie zu einem Gesamtwert (das Objekt wird als ' +
+  'ein Los versteigert). In marketValueText den O-Ton-Betrag als kurzen ' +
+  'Freitext, bei einer Summe mit kurzem Hinweis (z. B. "78.000 + 8.000 EUR, ' +
+  'Summe mehrerer Flurstücke"), sonst null. ' +
   'Gib in biddingNotes einen kurzen Hinweis zurück, falls der Text etwas ' +
   'Ungewöhnliches zum Bietverfahren nennt (abweichende Sicherheitsleistung, ' +
   'ungewöhnliche Zahlungsfrist o. Ä.), sonst null. ' +
@@ -204,7 +209,7 @@ export const EXTRACTION_SCHEMA = {
     marketValueEur: {
       type: ['number', 'null'],
       description:
-        'Im Gutachten genannter Verkehrswert (Gesamtschätzwert) in der Landeswährung der Anzeige, oder null. Nicht der Bodenrichtwert.',
+        'Im Gutachten genannter Verkehrswert (Gesamtschätzwert) in der Landeswährung der Anzeige, oder null. Nicht der Bodenrichtwert. Bei mehreren Flurstücken mit je eigenem Verkehrswert und ohne genannten Gesamtwert: Summe.',
     },
     marketValueText: {
       type: ['string', 'null'],
