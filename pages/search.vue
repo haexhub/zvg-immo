@@ -229,8 +229,17 @@ watch([geocodingInProgress, mapVisible], ([running, visible]) => {
 }, { immediate: true })
 
 onMounted(() => {
-  view.value = route.query.view === 'map' ? 'map' : 'list'
+  const isMapView = route.query.view === 'map'
+  view.value = isMapView ? 'map' : 'list'
   mounted.value = true
+  // The multi-ref sync watcher below only fires on change — a stale
+  // non-map `view` param (e.g. old `?view=list` links) wouldn't trigger
+  // it since view.value already equals the default, so clean it up here.
+  if (!isMapView && route.query.view !== undefined) {
+    const query = { ...route.query }
+    delete query.view
+    router.replace({ query })
+  }
 })
 
 onDeactivated(() => stopGeoPoll())
