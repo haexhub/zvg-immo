@@ -90,7 +90,7 @@ function mapItem(item: ListItem, platformId: string, region: string): Auction {
   }
 }
 
-async function fetchStateListings(
+export async function fetchStateListings(
   state: (typeof ZVGCOM_STATES)[number],
   platformId: string,
 ): Promise<Auction[]> {
@@ -100,14 +100,4 @@ async function fetchStateListings(
   return items
     .filter((i) => i.active === 1)
     .map((item) => mapItem(item, platformId, state.name))
-}
-
-export async function fetchAllListings(
-  platformId: string,
-): Promise<{ auctions: Auction[]; total: number | null }> {
-  const perState = await Promise.all(
-    ZVGCOM_STATES.map((state) => fetchStateListings(state, platformId)),
-  )
-  const auctions = perState.flat()
-  return { auctions, total: auctions.length }
 }
