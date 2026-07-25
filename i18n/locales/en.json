@@ -320,6 +320,17 @@
       "skipped": "Skipped",
       "llmCalls": "LLM calls"
     },
+    "refresh": {
+      "title": "Trigger refresh now",
+      "description": "Runs the crawl refresh immediately instead of waiting for the hourly cron tick — still only crawls regions whose cache age has exceeded that portal's interval.",
+      "run": "Start refresh",
+      "running": "Running …",
+      "runError": "Refresh failed.",
+      "ok": "Succeeded",
+      "failed": "Failed",
+      "skipped": "Skipped (cache still fresh)",
+      "durationMs": "Duration (ms)"
+    },
     "archive": {
       "title": "Raw archive",
       "description": "Browse the archived raw material (auction snapshots, appraisal PDFs, detail HTML) by country, region and case number.",

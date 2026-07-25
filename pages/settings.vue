@@ -599,6 +599,36 @@ async function runReprocessTest(): Promise<void> {
   }
 }
 
+// Refresh-Trigger: stößt server/tasks/refresh.ts sofort an statt auf den
+// stündlichen Cron-Tick zu warten — z. B. um einen raw-archive-Fix gegen
+// eine live neu gecrawlte Auktion zu verifizieren. Läuft trotzdem nur für
+// Regionen, deren List-Cache das cadence-Intervall überschritten hat
+// (server/crawlers/crawl-cadence.ts) — kein Force-Override, kein
+// zusätzliches IP-Ban-Risiko gegenüber dem regulären Tick.
+interface RefreshResult {
+  ok: number
+  failed: number
+  skipped: number
+  durationMs: number
+}
+const refreshPending = ref(false)
+const refreshError = ref<string | null>(null)
+const refreshResult = ref<RefreshResult | null>(null)
+
+async function runRefreshNow(): Promise<void> {
+  refreshPending.value = true
+  refreshError.value = null
+  refreshResult.value = null
+  try {
+    const res = await $fetch<{ result: RefreshResult }>('/api/settings/refresh', { method: 'POST' })
+    refreshResult.value = res.result
+  } catch (err) {
+    refreshError.value = normalizeSettingsError(err, t('settings.refresh.runError'))
+  } finally {
+    refreshPending.value = false
+  }
+}
+
 // Dashboard-Anzeige: Standard für "Regex-only-Auktionen ausblenden" auf
 // /search, gegen /api/settings/display (settings-auth-Muster wie oben).
 const hideRulesOnlyDefault = ref(true)
@@ -1032,6 +1062,34 @@ onBeforeUnmount(stopPolling)
             <dd>{{ reprocessResult.skipped }}</dd>
             <dt class="text-muted-foreground">{{ $t('settings.reprocess.llmCalls') }}</dt>
             <dd>{{ reprocessResult.llmCalls }}</dd>
+          </dl>
+        </CardContent>
+      </Card>
+
+      <Card v-if="authed">
+        <CardHeader>
+          <CardTitle>{{ $t('settings.refresh.title') }}</CardTitle>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          <p class="text-sm text-muted-foreground">
+            {{ $t('settings.refresh.description') }}
+          </p>
+
+          <p v-if="refreshError" class="text-sm text-destructive">{{ refreshError }}</p>
+
+          <Button type="button" :disabled="refreshPending" @click="runRefreshNow">
+            {{ refreshPending ? $t('settings.refresh.running') : $t('settings.refresh.run') }}
+          </Button>
+
+          <dl v-if="refreshResult" class="grid grid-cols-2 gap-x-4 gap-y-1 text-sm border-t pt-3">
+            <dt class="text-muted-foreground">{{ $t('settings.refresh.ok') }}</dt>
+            <dd>{{ refreshResult.ok }}</dd>
+            <dt class="text-muted-foreground">{{ $t('settings.refresh.failed') }}</dt>
+            <dd>{{ refreshResult.failed }}</dd>
+            <dt class="text-muted-foreground">{{ $t('settings.refresh.skipped') }}</dt>
+            <dd>{{ refreshResult.skipped }}</dd>
+            <dt class="text-muted-foreground">{{ $t('settings.refresh.durationMs') }}</dt>
+            <dd>{{ refreshResult.durationMs }}</dd>
           </dl>
         </CardContent>
       </Card>
