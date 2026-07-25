@@ -46,9 +46,14 @@ export interface ReprocessOptions {
   caseNumber?: string
   /** Reprocess even entries that already look complete (high confidence,
    *  condition/features already checked) — for iterating on prompts against
-   *  auctions already extracted. Requires platform/externalId/caseNumber so
-   *  an unbounded forced re-run of an entire country can't happen by accident. */
+   *  auctions already extracted. Requires platform/externalId/caseNumber or
+   *  limit so an unbounded forced re-run of an entire country can't happen
+   *  by accident. */
   force?: boolean
+  /** Cap the number of candidates considered (SQL LIMIT), for a bounded spot
+   *  check before committing to a full country run — e.g. verifying a new
+   *  provider/model config against a handful of auctions first. */
+  limit?: number
   /** Submit eligible candidates to the Gemini Batch API (see gemini-batch.ts)
    *  instead of extracting each one synchronously. Default false (unchanged
    *  synchronous behavior) — this is a manually triggered debug/backfill
@@ -97,8 +102,9 @@ async function findCandidates(opts: ReprocessOptions): Promise<Candidate[]> {
   if (opts.platform) conditions.push(`platform = $${params.push(opts.platform)}`)
   if (opts.externalId) conditions.push(`external_id = $${params.push(opts.externalId)}`)
   if (opts.caseNumber) conditions.push(`case_number = $${params.push(opts.caseNumber)}`)
+  const limitClause = opts.limit ? ` LIMIT $${params.push(opts.limit)}` : ''
   const { rows } = await db.query<{ platform: string; external_id: string }>(
-    `SELECT DISTINCT platform, external_id FROM raw_captures WHERE ${conditions.join(' AND ')}`,
+    `SELECT DISTINCT platform, external_id FROM raw_captures WHERE ${conditions.join(' AND ')}${limitClause}`,
     params,
   )
   return rows.map((r) => ({ platform: r.platform, externalId: r.external_id }))
@@ -260,9 +266,9 @@ export default defineTask({
 })
 
 export async function runReprocess(opts: ReprocessOptions = {}): Promise<ReprocessResult> {
-  if (opts.force && !opts.platform && !opts.externalId && !opts.caseNumber) {
+  if (opts.force && !opts.platform && !opts.externalId && !opts.caseNumber && !opts.limit) {
     throw new Error(
-      '[reprocess] force requires platform/externalId/caseNumber — an unfiltered forced run would re-spend the LLM budget on every already-extracted auction',
+      '[reprocess] force requires platform/externalId/caseNumber or limit — an unbounded forced run would re-spend the LLM budget on every already-extracted auction',
     )
   }
 
