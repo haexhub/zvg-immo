@@ -2,12 +2,12 @@
 import { classifyPropertyType } from '~/lib/property-type'
 import type { AuctionDetail } from '~/server/api/auction/[platform]/[id].get'
 import type { Attachment } from '~/types/auction'
-import { normalizePhoto } from '~/lib/photo'
+import { auctionPhotoUrls } from '~/lib/auction-photos'
 import { ATTACHMENT_KIND_ORDER } from '~/lib/auction-constants'
 import { isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
 import { safeHref } from '~/lib/utils'
 import { googleCalendarUrl, icsDataUrl, outlookCalendarUrl } from '~/lib/calendar-links'
-import { ArrowLeft, CalendarPlus, Sparkles } from 'lucide-vue-next'
+import { ArrowLeft, CalendarPlus } from 'lucide-vue-next'
 
 const route = useRoute()
 const platform = String(route.params.platform)
@@ -25,36 +25,10 @@ const { data: a, error, pending } = await useFetch<AuctionDetail | null>(
   { default: () => null },
 )
 
-// Lazy German AI summary — pre-filled from cache if already generated,
-// otherwise generated on button click.
-const summary = ref<string | null>(null)
-const summaryPending = ref(false)
-const summaryError = ref<string | null>(null)
-
-watch(a, (val) => {
-  summary.value = val?.summary ?? null
-  summaryError.value = null
-}, { immediate: true })
-
-// Minimal markdown → safe HTML: escape first, then apply bold/paragraph patterns.
-// Covers the `**Heading** — text` structure the LLM returns.
-const summaryHtml = computed(() => {
-  if (!summary.value) return ''
-  const escaped = summary.value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-  return escaped
-    .split(/\n\n+/)
-    .map((p) => `<p>${p.replace(/\n/g, '<br>')}</p>`)
-    .join('')
-})
-
 // Auto-translated title/description (WP-8): loaded silently whenever the
 // viewer's locale differs from the auction's source language — unlike the
-// summary above, no manual button, since this replaces text the user would
-// otherwise see untranslated. Falls back to the original text (via the
+// original content, this replaces text the user would otherwise see
+// untranslated. Falls back to the original text (via the
 // computed below) while pending or on error.
 const translatedTitle = ref<string | null>(null)
 const translatedDescription = ref<string | null>(null)
@@ -87,25 +61,6 @@ watch([a, locale], async ([val, loc]) => {
     // Best-effort: keep showing the original text (see displayTitle/displayDescription).
   }
 }, { immediate: true })
-
-async function loadSummary() {
-  summaryPending.value = true
-  summaryError.value = null
-  try {
-    const res = await $fetch<{ summary: string }>(
-      `/api/auction/${encodeURIComponent(platform)}/${encodeURIComponent(id)}/summary`,
-      { method: 'POST' },
-    )
-    summary.value = res.summary
-  } catch (err: unknown) {
-    const msg = (err as { statusMessage?: string; message?: string })?.statusMessage
-      ?? (err as { message?: string })?.message
-      ?? t('objektDetail.aiSummaryErrorFallback')
-    summaryError.value = msg
-  } finally {
-    summaryPending.value = false
-  }
-}
 
 function category(): { id: string; label: string } | null {
   if (!a.value) return null
@@ -167,20 +122,7 @@ function formatArea(n: number | null): string {
 // encodeURIComponent'd — the API endpoint validates them against a strict
 // allow-list, but the URL itself needs to be well-formed before we get there.
 const photoUrls = computed<string[]>(() => {
-  if (!a.value) return []
-  const urls: string[] = []
-  for (const att of a.value.attachments) {
-    if (att.kind === 'photo') urls.push(att.proxyUrl)
-  }
-  // Normalize on read: older cache rows hold bare filename strings, newer ones
-  // CuratedPhoto objects (see lib/photo.ts).
-  const extracted = (a.value.extraction?.photos ?? []).map(normalizePhoto)
-  const platform = encodeURIComponent(a.value.platform)
-  const externalId = encodeURIComponent(a.value.externalId)
-  for (const photo of extracted) {
-    urls.push(`/api/auction-image/${platform}/${externalId}/${encodeURIComponent(photo.file)}`)
-  }
-  return urls
+  return a.value ? auctionPhotoUrls(a.value) : []
 })
 
 const groupedAttachments = computed<Array<{ kind: string; label: string; items: Attachment[] }>>(() => {
@@ -225,13 +167,15 @@ const planningNotesHasContent = computed(() => {
   )
 })
 
-// Item 4: the Gutachten-derived summary fills in for a short/missing
-// scraped description — only shown once description alone would leave the
-// card thin, and always clearly labelled as generated (see template).
-const gutachtenSummary = computed(() => {
-  const summary = a.value?.extraction?.insights?.summary
-  if (!summary || (displayDescription.value?.length ?? 0) >= 200) return null
-  return summary
+// The normal description contains both the source listing and the detailed,
+// pre-generated synthesis across every listing-specific document. This
+// replaces the former separate on-demand AI-summary card.
+const combinedDescription = computed(() => {
+  const parts = [
+    displayDescription.value?.trim(),
+    a.value?.extraction?.documentSummary?.trim(),
+  ].filter((part): part is string => !!part)
+  return [...new Set(parts)].join('\n\n')
 })
 
 // "Zu Kalender hinzufügen" (Gerichtsinformationen sidebar) — null while the
@@ -387,36 +331,12 @@ useHead(() => ({
             <PremiumFeatureLock :rows="4" />
           </DetailSectionCard>
 
-          <DetailSectionCard v-if="displayDescription || gutachtenSummary" :title="$t('objektDetail.description')">
+          <DetailSectionCard v-if="combinedDescription" :title="$t('objektDetail.description')">
             <template v-if="descriptionTranslated" #subtitle>{{ $t('objektDetail.autoTranslatedHint') }}</template>
-            <p v-if="displayDescription" class="whitespace-pre-line text-sm text-foreground/90 leading-relaxed">
-              {{ displayDescription }}
-            </p>
-            <div v-if="gutachtenSummary" class="mt-4 space-y-1" :class="{ 'pt-4 border-t': displayDescription }">
-              <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.gutachtenSummaryTitle') }}</p>
-              <p class="whitespace-pre-line text-sm text-foreground/90 leading-relaxed">{{ gutachtenSummary }}</p>
-            </div>
+            <DescriptionAccordion :text="combinedDescription" />
           </DetailSectionCard>
 
           <LawyerContact :platform="a.platform" :external-id="a.externalId" :country="a.country" />
-
-          <DetailSectionCard :title="$t('objektDetail.aiSummaryTitle')" :subtitle="$t('objektDetail.aiSummaryHint')">
-            <div
-              v-if="summary"
-              class="text-sm leading-relaxed [&_p]:mb-3 [&_p:last-child]:mb-0 [&_strong]:font-semibold [&_strong]:text-foreground"
-              v-html="summaryHtml"
-            />
-            <p v-else-if="summaryError" class="text-sm text-destructive">
-              {{ $t('objektDetail.aiSummaryError', { msg: summaryError }) }}
-            </p>
-            <p v-else-if="summaryPending" class="text-sm text-muted-foreground animate-pulse">
-              {{ $t('objektDetail.aiSummaryPending') }}
-            </p>
-            <Button v-else type="button" variant="outline" :disabled="summaryPending" @click="loadSummary">
-              <Sparkles class="h-4 w-4" />
-              {{ $t('objektDetail.aiSummaryGenerate') }}
-            </Button>
-          </DetailSectionCard>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <DetailSectionCard v-if="a.extraction?.insights?.defects?.length" :title="$t('objektDetail.defectsTitle')">

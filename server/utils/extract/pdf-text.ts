@@ -22,6 +22,7 @@ const CACHE_DIR = join(process.cwd(), '.cache_zvg', 'pdftext')
 
 /** Attachment kinds whose PDF most likely carries the size/type facts, best first. */
 const PDF_KIND_PRIORITY = ['appraisal', 'brochure', 'announcement', 'other'] as const
+const SUMMARY_PDF_KINDS = new Set(['appraisal', 'brochure', 'announcement'])
 
 /** Pick the attachment whose PDF is most likely to describe the property. */
 export function pickBestPdf(attachments: Attachment[]): Attachment | null {
@@ -30,6 +31,25 @@ export function pickBestPdf(attachments: Attachment[]): Attachment | null {
     if (hit) return hit
   }
   return null
+}
+
+/**
+ * Every listing-specific PDF that can contribute facts to the description,
+ * ordered from richest to most formal. Generic court-wide "other" documents
+ * (e.g. Biethinweise) are deliberately excluded.
+ */
+export function pickRelevantPdfs(attachments: Attachment[]): Attachment[] {
+  const seen = new Set<string>()
+  const out: Attachment[] = []
+  for (const kind of PDF_KIND_PRIORITY) {
+    if (!SUMMARY_PDF_KINDS.has(kind)) continue
+    for (const attachment of attachments) {
+      if (attachment.kind !== kind || seen.has(attachment.proxyUrl)) continue
+      seen.add(attachment.proxyUrl)
+      out.push(attachment)
+    }
+  }
+  return out
 }
 
 function resolveSource(proxyUrl: string): { url: string; headers: Record<string, string> } {

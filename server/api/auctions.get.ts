@@ -5,6 +5,7 @@ import { applyExtractionToAuctions, readExtractionCache } from '../utils/extract
 import { applySnapshotPhotosToAuctions, readAuctionSnapshot } from '../utils/auction-snapshot'
 import { readListCache, readMergedListCache, writeListCache } from '../utils/list-cache'
 import { MULTI_PLATFORM, isAllScope, isValidScopeParam, scopeParam } from '~/lib/auction-constants'
+import { applyDescriptionMarketValue } from '../utils/description-market-value'
 
 // Live-crawl fallback — only used on cold cache (startup before first refresh
 // completes) or for immo=false requests which aren't cached. Short in-memory
@@ -130,13 +131,25 @@ export default defineEventHandler(async (event): Promise<CrawlResult> => {
 async function overlayCachedVerkehrswert(result: CrawlResult): Promise<void> {
   const needsOverlay = result.auctions.some((a) => a.marketValueEur == null)
   if (!needsOverlay) return
-  const cache = await readVerkehrswertCache()
+  const [cache, snapshot] = await Promise.all([
+    readVerkehrswertCache(),
+    readAuctionSnapshot(),
+  ])
   for (const a of result.auctions) {
     if (a.marketValueEur != null) continue
     const hit = cache[cacheKey(a.platform, a.externalId)]
-    if (!hit) continue
-    a.marketValueEur = hit.marketValueEur
-    a.marketValueText = hit.marketValueText
+    if (hit?.marketValueEur != null) {
+      a.marketValueEur = hit.marketValueEur
+      a.marketValueText = hit.marketValueText
+      continue
+    }
+    const snapshotHit = snapshot[cacheKey(a.platform, a.externalId)]
+    if (!snapshotHit) continue
+    const candidate = { ...snapshotHit }
+    applyDescriptionMarketValue(candidate)
+    if (candidate.marketValueEur == null) continue
+    a.marketValueEur = candidate.marketValueEur
+    a.marketValueText = candidate.marketValueText
   }
 }
 
@@ -147,8 +160,6 @@ async function overlayCachedVerkehrswert(result: CrawlResult): Promise<void> {
 // crawlers/zvg-portal/list.ts vs. index.ts's applyDetail). Read-only, like the
 // Verkehrswert overlay: a cache miss just leaves the list-crawl value in place.
 async function overlaySnapshotPhotos(result: CrawlResult): Promise<void> {
-  const needsOverlay = result.auctions.some((a) => !a.thumbnailUrl || a.photoCount === 0)
-  if (!needsOverlay) return
   const snapshot = await readAuctionSnapshot()
   applySnapshotPhotosToAuctions(result.auctions, snapshot)
 }

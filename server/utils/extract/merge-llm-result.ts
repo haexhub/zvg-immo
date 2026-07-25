@@ -31,6 +31,7 @@ export interface MergeInputFields {
   renovationNotes?: string | null
   insights?: AuctionInsights | null
   planningNotes?: PlanningNotes | null
+  documentSummary?: string | null
   marketValueEur?: number | null
   marketValueText?: string | null
   /** `rules.confident || (propertyType set (not 'sonstiges') && an area is
@@ -74,6 +75,7 @@ export function mergeLlmResult(
   let renovationNotes = base.renovationNotes
   let insights = base.insights
   let planningNotes = base.planningNotes
+  let documentSummary = base.documentSummary
   let marketValueEur = base.marketValueEur
   let marketValueText = base.marketValueText
 
@@ -100,6 +102,7 @@ export function mergeLlmResult(
     renovationNotes = llm.renovationNotes
     insights = llm.insights
     planningNotes = llm.planningNotes
+    documentSummary = llm.documentSummary
     marketValueEur = llm.marketValueEur
     marketValueText = llm.marketValueText
   }
@@ -127,6 +130,7 @@ export function mergeLlmResult(
     renovationNotes,
     insights,
     planningNotes,
+    documentSummary,
     marketValueEur,
     marketValueText,
     source,

@@ -8,7 +8,7 @@ import { getPool } from '../db'
 vi.mock('../db', () => ({ getPool: vi.fn() }))
 
 // Imported after the mock so the module under test picks up the mocked getPool.
-const { pdfToText } = await import('./pdf-text')
+const { pdfToText, pickRelevantPdfs } = await import('./pdf-text')
 
 const CACHE_DIR = join(process.cwd(), '.cache_zvg', 'pdftext')
 const FAKE_PDF = Buffer.from('%PDF-1.4\n%%EOF')
@@ -31,6 +31,34 @@ const PDF_WITH_TEXT = Buffer.from(
     '%%EOF',
   ].join('\n'),
 )
+
+describe('pickRelevantPdfs', () => {
+  it('keeps every listing-specific PDF in priority order and excludes generic other files', () => {
+    const attachment = (kind: 'appraisal' | 'brochure' | 'announcement' | 'other', proxyUrl: string) => ({
+      kind,
+      label: kind,
+      filename: `${kind}.pdf`,
+      sizeBytes: null,
+      fileId: proxyUrl,
+      proxyUrl,
+    })
+    expect(
+      pickRelevantPdfs([
+        attachment('announcement', '/notice.pdf'),
+        attachment('other', '/bidding.pdf'),
+        attachment('appraisal', '/appraisal-1.pdf'),
+        attachment('brochure', '/brochure.pdf'),
+        attachment('appraisal', '/appraisal-2.pdf'),
+        attachment('announcement', '/notice.pdf'),
+      ]),
+    ).toEqual([
+      attachment('appraisal', '/appraisal-1.pdf'),
+      attachment('appraisal', '/appraisal-2.pdf'),
+      attachment('brochure', '/brochure.pdf'),
+      attachment('announcement', '/notice.pdf'),
+    ])
+  })
+})
 
 async function cleanupTextCache(url: string): Promise<void> {
   const key = createHash('sha1').update(url).digest('hex')

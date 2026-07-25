@@ -400,12 +400,22 @@ describe('applySnapshotPhotosToAuctions', () => {
     expect(listAuction.photoUrls).toEqual(['/api/auction-image/test/42/1.jpg'])
   })
 
-  it('does not overwrite a native photo already present on the list crawl', () => {
+  it('keeps a native thumbnail but still restores the fuller snapshot count', () => {
     const listAuction = auction({ thumbnailUrl: '/api/auction-image/test/42/native.jpg', photoCount: 1 })
     const snapshot = snapshotOf(auction({ thumbnailUrl: '/api/zvg-thumb?file_id=9', photoCount: 5 }))
     applySnapshotPhotosToAuctions([listAuction], snapshot)
     expect(listAuction.thumbnailUrl).toBe('/api/auction-image/test/42/native.jpg')
-    expect(listAuction.photoCount).toBe(1)
+    expect(listAuction.photoCount).toBe(5)
+  })
+
+  it('restores a full gallery even when the list crawl already has a thumbnail', () => {
+    const listAuction = auction({ thumbnailUrl: '/thumb.jpg', photoCount: 1 })
+    const snapshot = snapshotOf(
+      auction({ photoUrls: ['/1.jpg', '/2.jpg', '/3.jpg'], photoCount: 3 }),
+    )
+    applySnapshotPhotosToAuctions([listAuction], snapshot)
+    expect(listAuction.photoUrls).toEqual(['/1.jpg', '/2.jpg', '/3.jpg'])
+    expect(listAuction.photoCount).toBe(3)
   })
 
   it('leaves the auction untouched when no snapshot entry exists', () => {

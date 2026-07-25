@@ -33,6 +33,10 @@ export interface LlmInput {
    *  step. Providers that don't support it ignore this field and fall back
    *  to pdfText/pdfPageImages instead. */
   pdfBytes?: string | null
+  /** Multiple listing-specific PDFs for native document-understanding
+   * providers. Labels keep appraisal, brochure and announcement distinguishable
+   * to the model. */
+  pdfDocuments?: { label: string; data: string }[]
   /** Candidate photos for LLM-driven curation. Referenced by index
    *  (`photoIndex`) in the extraction response rather than by filename,
    *  since a filename echoed back by the model is unreliable. */
@@ -109,6 +113,8 @@ export interface ClampedExtraction {
    *  Grundstücksaufteilung, ...) from the appraisal, or null when nothing
    *  stood out. */
   planningNotes: PlanningNotes | null
+  /** Detailed factual synthesis across every supplied listing document. */
+  documentSummary?: string | null
   /** Verkehrswert (Gesamtschätzwert) explicitly stated in the Gutachten, in
    *  the auction's native currency, or null. Distinct from
    *  `insights.landValueEurPerSqm` (Bodenrichtwert, EUR/m² of the land only). */
@@ -132,9 +138,10 @@ export interface PhotoCuration {
   isPropertyPhoto: boolean
 }
 
-// Bound PDF prose so a 40-page Gutachten doesn't blow the token budget. The
-// size/type facts are almost always in the first pages.
-const MAX_PDF_CHARS = 12_000
+// Bound the combined prose from all listing-specific PDFs. This is deliberately
+// larger than the old single-document 12k window: the detailed description
+// needs room for split appraisals, exposés and the official announcement.
+const MAX_PDF_CHARS = 60_000
 
 export const SYSTEM_PROMPT =
   'Du extrahierst strukturierte Eckdaten aus Anzeigen für Immobilien-' +
@@ -176,6 +183,15 @@ export const SYSTEM_PROMPT =
   'Gib das Baujahr zurück, falls im Text eindeutig genannt, sonst null. Gib das Jahr der ' +
   'letzten Sanierung/Modernisierung zurück, falls eindeutig genannt, sonst null, und in ' +
   'renovationNotes einen kurzen Freitext-Hinweis dazu, sonst null. ' +
+  'Erstelle außerdem in documentSummary eine ausführliche, sachliche Zusammenfassung ' +
+  'aus ALLEN bereitgestellten objektbezogenen Dokumenten und der Anzeige. Führe die ' +
+  'wesentlichen Angaben zu Objekt und Nutzung, Lage, Flächen, Bauweise und Zustand, ' +
+  'Modernisierungen, Mängeln, rechtlichen oder planerischen Besonderheiten sowie ' +
+  'Wertermittlung in gut lesbaren Absätzen zusammen. Widersprüche zwischen Dokumenten ' +
+  'kenntlich machen und keine Tatsachen ergänzen. Allgemeine, nicht objektspezifische ' +
+  'Biet- oder Gerichtshinweise nicht wiederholen. Ziel sind etwa 5 bis 10 kompakte ' +
+  'Absätze; null nur, wenn außer dem bereits gelieferten Anzeigentext keine verwertbaren ' +
+  'Objektinformationen vorhanden sind. ' +
   'Extrahiere zusätzlich, sofern im Gutachten enthalten, eine reichhaltigere Einschätzung ' +
   '(insights): defects (Mängel/Schäden/Sanierungsstau), encumbrances (Belastungen wie ' +
   'Wohnrecht/Nießbrauch/Dienstbarkeiten), landValueEurPerSqm (Bodenrichtwert in EUR/m²), ' +
@@ -330,6 +346,11 @@ export const EXTRACTION_SCHEMA = {
         'landParcels',
       ],
     },
+    documentSummary: {
+      type: ['string', 'null'],
+      description:
+        'Ausführliche sachliche Zusammenfassung aller bereitgestellten objektbezogenen Dokumente in etwa 5 bis 10 kompakten Absätzen, oder null.',
+    },
     photos: {
       type: 'array',
       description:
@@ -372,6 +393,7 @@ export const EXTRACTION_SCHEMA = {
     'renovationNotes',
     'insights',
     'planningNotes',
+    'documentSummary',
     'photos',
   ],
 } as const
@@ -550,6 +572,7 @@ export function clampExtraction(raw: Record<string, unknown>): ClampedExtraction
     renovationNotes: trimmedString(raw.renovationNotes, 300),
     insights: clampInsights(raw.insights),
     planningNotes: clampPlanningNotes(raw.planningNotes),
+    documentSummary: trimmedString(raw.documentSummary, 8_000),
     photoCuration: clampPhotoCuration(raw.photos),
   }
 }
@@ -564,7 +587,12 @@ export function buildParts(input: LlmInput): ContentPart[] {
   const text: string[] = []
   if (input.title) text.push(`Objektbezeichnung: ${input.title}`)
   if (input.description) text.push(`Beschreibung:\n${input.description}`)
-  const usingDocumentPart = !!input.pdfBytes
+  const nativeDocuments = input.pdfDocuments?.length
+    ? input.pdfDocuments
+    : input.pdfBytes
+      ? [{ label: 'Gutachten/Exposé', data: input.pdfBytes }]
+      : []
+  const usingDocumentPart = nativeDocuments.length > 0
   if (input.pdfText && !usingDocumentPart) {
     text.push(`Auszug aus Gutachten/Exposé (PDF):\n${input.pdfText.slice(0, MAX_PDF_CHARS)}`)
   }
@@ -583,7 +611,12 @@ export function buildParts(input: LlmInput): ContentPart[] {
   const parts: ContentPart[] = []
   if (text.length) parts.push({ type: 'text', text: text.join('\n\n') })
   if (usingDocumentPart) {
-    parts.push({ type: 'document', mimeType: 'application/pdf', data: input.pdfBytes! })
+    for (const document of nativeDocuments) {
+      if (nativeDocuments.length > 1) {
+        parts.push({ type: 'text', text: `Dokument: ${document.label}` })
+      }
+      parts.push({ type: 'document', mimeType: 'application/pdf', data: document.data })
+    }
   } else if (input.pdfPageImages?.length) {
     for (const data of input.pdfPageImages) parts.push({ type: 'image', mimeType: 'image/jpeg', data })
   }

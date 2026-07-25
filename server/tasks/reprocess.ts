@@ -11,7 +11,7 @@
 
 import type { Auction, AuctionExtraction, CuratedPhoto } from '~/types/auction'
 import { getPool } from '~/server/utils/db'
-import { pickBestPdf, extractPdfTextFromBuffer } from '~/server/utils/extract/pdf-text'
+import { pickBestPdf, pickRelevantPdfs, extractPdfTextFromBuffer } from '~/server/utils/extract/pdf-text'
 import { renderPdfPagesJpeg } from '~/server/utils/extract/pdf-render'
 import { extractByRules } from '~/server/utils/extract/rules'
 import { extractByLlm, resolveLlmConfig, type LlmConfig, type LlmInput } from '~/server/utils/extract/llm'
@@ -153,6 +153,7 @@ async function buildReprocessInput(
     renovationNotes: priorEntry?.renovationNotes,
     insights: priorEntry?.insights,
     planningNotes: priorEntry?.planningNotes,
+    documentSummary: priorEntry?.documentSummary,
     marketValueEur: priorEntry?.marketValueEur,
     marketValueText: priorEntry?.marketValueText,
     confident:
@@ -162,24 +163,61 @@ async function buildReprocessInput(
   let input: LlmInput | null = null
   if (llmConfig) {
     const bestPdf = pickBestPdf(auction.attachments)
-    let pdfBytes: Buffer | null = null
-    if (bestPdf) {
-      const docCapture = await findLatestCapture('document', platform, externalId, bestPdf.proxyUrl)
-      if (docCapture) pdfBytes = await downloadBlob(docCapture.contentHash)
-    }
+    const relevantPdfs = pickRelevantPdfs(auction.attachments)
+    const documentPdfs = relevantPdfs.length > 0 ? relevantPdfs : bestPdf ? [bestPdf] : []
+    const documents = (
+      await Promise.all(documentPdfs.map(async (pdf) => {
+        const docCapture = await findLatestCapture('document', platform, externalId, pdf.proxyUrl)
+        if (!docCapture) return null
+        const bytes = await downloadBlob(docCapture.contentHash)
+        return bytes ? { pdf, bytes } : null
+      }))
+    ).filter((doc): doc is { pdf: (typeof documentPdfs)[number]; bytes: Buffer } => doc != null)
     // Native document understanding (GeminiNativeProvider) reads the PDF
     // bytes directly and needs neither pdftotext nor rendered page images —
     // skip both so a gemini-native run doesn't pay for pdftotext/rasterize
     // work that buildParts would discard anyway (it prefers pdfBytes over
     // pdfText/pdfPageImages once set).
     const usingNativeDoc = llmConfig.provider === 'gemini-native'
-    const pdfText = pdfBytes && !usingNativeDoc ? await extractPdfTextFromBuffer(pdfBytes) : null
-    const pdfPageImages =
-      pdfBytes && !usingNativeDoc && (!pdfText || pdfText.trim().length < SCANNED_PDF_TEXT_THRESHOLD)
-        ? (await renderPdfPagesJpeg(pdfBytes)).map((buf) => buf.toString('base64'))
-        : null
-    const nativeDocBytes = pdfBytes && usingNativeDoc ? pdfBytes.toString('base64') : null
-    input = { title: auction.title, description: auction.description, pdfText, pdfPageImages, pdfBytes: nativeDocBytes }
+    const textEntries = usingNativeDoc
+      ? []
+      : await Promise.all(
+          documents.map(async (document) => ({
+            ...document,
+            text: await extractPdfTextFromBuffer(document.bytes),
+          })),
+        )
+    const pdfText = textEntries
+      .filter((entry): entry is typeof entry & { text: string } => !!entry.text?.trim())
+      .map((entry) => `=== ${entry.pdf.label || entry.pdf.filename} ===\n${entry.text}`)
+      .join('\n\n') || null
+    const scannedDocuments = textEntries.filter(
+      (entry) => !entry.text || entry.text.trim().length < SCANNED_PDF_TEXT_THRESHOLD,
+    )
+    const pdfPageImages = scannedDocuments.length > 0
+      ? (
+          await Promise.all(
+            scannedDocuments.slice(0, 3).map(async (document) =>
+              (await renderPdfPagesJpeg(document.bytes, { maxPages: 8 }))
+                .map((buf) => buf.toString('base64')),
+            ),
+          )
+        ).flat().slice(0, 20)
+      : null
+    const pdfDocuments = usingNativeDoc
+      ? documents.map((document) => ({
+          label: document.pdf.label || document.pdf.filename,
+          data: document.bytes.toString('base64'),
+        }))
+      : []
+    input = {
+      title: auction.title,
+      description: auction.description,
+      pdfText,
+      pdfPageImages,
+      pdfBytes: pdfDocuments[0]?.data ?? null,
+      pdfDocuments: pdfDocuments.length > 1 ? pdfDocuments : undefined,
+    }
   }
 
   return { fields, input, photos: priorEntry?.photos?.map(normalizePhoto) }
@@ -213,6 +251,7 @@ function buildRulesOnlyEntry(
     renovationNotes: fields.renovationNotes,
     insights: fields.insights,
     planningNotes: fields.planningNotes,
+    documentSummary: fields.documentSummary,
     marketValueEur: fields.marketValueEur,
     marketValueText: fields.marketValueText,
     source: 'rules',
@@ -304,7 +343,8 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
           priorEntry.lastRenovationYear === undefined ||
           priorEntry.renovationNotes === undefined ||
           priorEntry.insights === undefined ||
-          priorEntry.planningNotes === undefined) &&
+          priorEntry.planningNotes === undefined ||
+          priorEntry.documentSummary === undefined) &&
           (priorEntry?.llmFailures ?? 0) < MAX_LLM_FAILURES &&
           !isLlmBatchPending(priorEntry))
       if (!eligible) {

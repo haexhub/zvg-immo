@@ -51,6 +51,7 @@ describe('clampExtraction', () => {
       renovationNotes: null,
       insights: null,
       planningNotes: null,
+      documentSummary: null,
       photoCuration: [],
       marketValueEur: null,
       marketValueText: null,
@@ -84,6 +85,7 @@ describe('clampExtraction', () => {
       renovationNotes: null,
       insights: null,
       planningNotes: null,
+      documentSummary: null,
       photoCuration: [],
       marketValueEur: null,
       marketValueText: null,
@@ -314,6 +316,24 @@ describe('buildParts', () => {
     expect(parts).toEqual([
       { type: 'text', text: 'Objektbezeichnung: Haus' },
       { type: 'document', mimeType: 'application/pdf', data: 'base64pdfbytes' },
+    ])
+  })
+
+  it('includes every labeled native PDF document', () => {
+    const parts = buildParts({
+      title: 'Haus',
+      description: null,
+      pdfDocuments: [
+        { label: 'Gutachten', data: 'appraisal' },
+        { label: 'Bekanntmachung', data: 'notice' },
+      ],
+    })
+    expect(parts).toEqual([
+      { type: 'text', text: 'Objektbezeichnung: Haus' },
+      { type: 'text', text: 'Dokument: Gutachten' },
+      { type: 'document', mimeType: 'application/pdf', data: 'appraisal' },
+      { type: 'text', text: 'Dokument: Bekanntmachung' },
+      { type: 'document', mimeType: 'application/pdf', data: 'notice' },
     ])
   })
 

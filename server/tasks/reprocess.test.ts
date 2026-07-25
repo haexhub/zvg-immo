@@ -401,6 +401,7 @@ describe('runReprocess', () => {
       renovationNotes: null,
       insights: null,
       planningNotes: null,
+      documentSummary: null,
       source: 'llm',
       confidence: 'high',
       at: '2026-07-01T00:00:00.000Z',
