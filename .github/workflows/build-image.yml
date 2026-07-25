@@ -67,6 +67,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Standard OCI labels (org.opencontainers.image.revision/.created/...)
+      # derived from git context — without this the built image carries no
+      # labels at all, so there's no way to tell which commit is actually
+      # deployed short of comparing timestamps. Only the labels output is
+      # used here; tags are computed separately in the merge job below.
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/zvg-immo
+
       - name: Build and push by digest
         id: build
         uses: docker/build-push-action@v7
@@ -74,6 +85,7 @@ jobs:
           context: .
           file: Dockerfile
           platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.slug }}
           cache-to: type=gha,mode=max,scope=${{ matrix.slug }}
           outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/zvg-immo,push-by-digest=true,name-canonical=true,push=true
