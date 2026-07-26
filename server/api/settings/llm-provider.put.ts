@@ -8,7 +8,9 @@ import {
   DEFAULT_LLM_EXECUTION_MODE,
   LLM_EXECUTION_MODES,
   LLM_PROVIDERS,
+  getLlmProviderOverride,
   setLlmProviderOverride,
+  supportsLlmProviderExecutionMode,
   type LlmExecutionMode,
   type LlmProvider,
 } from '~/server/utils/app-settings'
@@ -33,7 +35,11 @@ export default defineEventHandler(async (event) => {
     typeof body.executionMode === 'string' && LLM_EXECUTION_MODES.includes(body.executionMode as LlmExecutionMode)
       ? (body.executionMode as LlmExecutionMode)
       : DEFAULT_LLM_EXECUTION_MODE
-  if (executionMode === 'batch' && body.provider === 'openai-compatible') {
+  const provider = body.provider as LlmProvider
+  const incomingApiKey = typeof body.apiKey === 'string' ? body.apiKey : undefined
+  const current = incomingApiKey === undefined ? await getLlmProviderOverride(db).catch(() => null) : null
+  const effectiveApiKey = incomingApiKey ?? current?.apiKey ?? ''
+  if (!supportsLlmProviderExecutionMode(provider, executionMode, effectiveApiKey)) {
     throw createError({
       statusCode: 400,
       statusMessage: 'batch: Dieser Provider unterstützt keinen Batch-Modus.',
@@ -41,11 +47,11 @@ export default defineEventHandler(async (event) => {
   }
 
   const saved = await setLlmProviderOverride(db, {
-    provider: body.provider as LlmProvider,
+    provider,
     baseUrl: body.baseUrl.trim(),
     model: body.model.trim(),
     executionMode,
-    apiKey: typeof body.apiKey === 'string' ? body.apiKey : undefined,
+    apiKey: incomingApiKey,
   })
 
   return {

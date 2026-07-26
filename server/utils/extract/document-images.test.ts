@@ -5,6 +5,12 @@ import { deflateRawSync } from 'node:zlib'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Attachment } from '~/types/auction'
 
+vi.mock('node:dns/promises', () => ({
+  lookup: vi.fn(async (hostname: string) => {
+    if (hostname === 'private.test') return [{ address: '127.0.0.1', family: 4 }]
+    return [{ address: '93.184.216.34', family: 4 }]
+  }),
+}))
 vi.mock('./pdf-images', () => ({ extractPdfPhotos: vi.fn(async () => ['pdf-photo.jpg']) }))
 
 const { extractDocumentPhotos, extractHtmlImageUrls, pickDocumentImageCandidates } = await import('./document-images')
@@ -115,12 +121,7 @@ function stubFetch(responses: Record<string, Buffer | string>): void {
       const body = responses[url]
       if (body == null) throw new Error(`unstubbed URL: ${url}`)
       const bytes = typeof body === 'string' ? Buffer.from(body, 'utf8') : body
-      return {
-        ok: true,
-        status: 200,
-        headers: new Headers(),
-        arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
-      } as Response
+      return new Response(bytes, { status: 200 })
     }),
   )
 }
@@ -222,5 +223,22 @@ describe('extractDocumentPhotos', () => {
 
     expect(files).toHaveLength(1)
     expect(files.every((file) => /^[0-9a-f]{16}\.png$/.test(file))).toBe(true)
+  })
+
+  it('skips HTML image URLs that resolve to non-public addresses', async () => {
+    stubFetch({
+      'https://example.test/docs/page.html': '<img src="https://private.test/secret.png"><img src="/large.png">',
+      'https://example.test/large.png': png(1200, 800, 7),
+    })
+
+    const files = await extractDocumentPhotos([
+      attachment({ kind: 'brochure', filename: 'page.html', proxyUrl: 'https://example.test/docs/page.html' }),
+    ], { destDir })
+
+    expect(files).toHaveLength(1)
+    expect(vi.mocked(fetch)).not.toHaveBeenCalledWith(
+      'https://private.test/secret.png',
+      expect.anything(),
+    )
   })
 })

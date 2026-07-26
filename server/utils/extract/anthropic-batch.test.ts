@@ -23,6 +23,7 @@ function stubOfetch(handlers: Array<{ match: string; data?: unknown; error?: Err
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
   vi.clearAllMocks()
 })
 
@@ -82,6 +83,30 @@ describe('submitAnthropicBatch', () => {
       .resolves.toBeNull()
     expect(insertLlmBatchJob).not.toHaveBeenCalled()
   })
+
+  it('splits requests before the serialized batch body reaches Anthropic limits', async () => {
+    vi.stubGlobal('$fetch', vi.fn()
+      .mockResolvedValueOnce({ id: 'msgbatch_a' })
+      .mockResolvedValueOnce({ id: 'msgbatch_b' }))
+    const realByteLength = Buffer.byteLength
+    vi.spyOn(Buffer, 'byteLength').mockImplementation((value: Parameters<typeof Buffer.byteLength>[0], encoding?: BufferEncoding) => {
+      const text = typeof value === 'string' ? value : ''
+      if (text.includes('Haus 1') && text.includes('Haus 2')) return 256 * 1024 * 1024
+      return realByteLength(value, encoding)
+    })
+    const { insertLlmBatchJob } = await import('../llm-batch-jobs')
+    const { submitAnthropicBatch } = await import('./anthropic-batch')
+
+    const jobName = await submitAnthropicBatch([
+      { key: 'one', input: { title: 'Haus 1', description: 'Beschreibung eins' } },
+      { key: 'two', input: { title: 'Haus 2', description: 'Beschreibung zwei' } },
+    ], config, 'enrich')
+
+    expect(jobName).toBe('msgbatch_a,msgbatch_b')
+    expect(vi.mocked($fetch)).toHaveBeenCalledTimes(2)
+    expect(insertLlmBatchJob).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(insertLlmBatchJob).mock.calls.map(([arg]) => arg.itemCount)).toEqual([1, 1])
+  })
 })
 
 describe('pollAnthropicBatch', () => {
@@ -130,5 +155,12 @@ describe('fetchAnthropicBatchResults', () => {
     expect(results[0]!.extraction?.propertyType).toBe('einfamilienhaus')
     expect(results[0]!.extraction?.landAreaSqm).toBe(500)
     expect(results[1]).toEqual({ key: 'zvg-portal:9999', extraction: null })
+  })
+
+  it('lets transport errors propagate to the poller retry path', async () => {
+    stubOfetch([{ match: '/msgbatch_abc/results', error: new Error('timeout') }])
+    const { fetchAnthropicBatchResults } = await import('./anthropic-batch')
+
+    await expect(fetchAnthropicBatchResults('msgbatch_abc', config, {})).rejects.toThrow('timeout')
   })
 })

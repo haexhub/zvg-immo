@@ -23,11 +23,10 @@ import {
   supportsNativeBatchDocuments,
 } from '~/server/utils/extract/llm-batch'
 import {
-  DEFAULT_LLM_EXECUTION_MODE,
   DEFAULT_LLM_MAX_TOKENS,
   getLlmMaxTokens,
   getLlmProviderOverride,
-  type LlmExecutionMode,
+  readLlmExecutionMode,
 } from '~/server/utils/app-settings'
 import { mergeLlmResult, type MergeInputFields } from '~/server/utils/extract/merge-llm-result'
 import {
@@ -89,12 +88,6 @@ async function readLlmConfig(): Promise<LlmConfig | null> {
     : DEFAULT_LLM_MAX_TOKENS.extraction
   const override = db ? await getLlmProviderOverride(db).catch(() => null) : null
   return resolveLlmConfig(override ?? c, { maxTokens })
-}
-
-async function readLlmExecutionMode(): Promise<LlmExecutionMode> {
-  const db = getPool()
-  const override = db ? await getLlmProviderOverride(db).catch(() => null) : null
-  return override?.executionMode ?? DEFAULT_LLM_EXECUTION_MODE
 }
 
 function readMaxLlmPerRun(): number {

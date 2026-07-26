@@ -4,51 +4,17 @@
 // URL regardless of which pipeline produced the file. Not for PDF-embedded
 // images — that's what extractPdfPhotos is for.
 
-import { createHash } from 'node:crypto'
 import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-
-/** JPEG/PNG/WebP magic bytes. Guards against upstreams that return HTML/JSON
- *  error pages with a 200 status — the file would be served as an image by
- *  the API and break silently in the browser. */
-function detectImageExt(buf: Buffer): 'jpg' | 'png' | 'webp' | null {
-  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpg'
-  if (
-    buf.length >= 8 &&
-    buf[0] === 0x89 &&
-    buf[1] === 0x50 &&
-    buf[2] === 0x4e &&
-    buf[3] === 0x47 &&
-    buf[4] === 0x0d &&
-    buf[5] === 0x0a &&
-    buf[6] === 0x1a &&
-    buf[7] === 0x0a
-  ) {
-    return 'png'
-  }
-  // WebP RIFF container: 'RIFF' at offset 0, 'WEBP' at offset 8.
-  if (
-    buf.length >= 12 &&
-    buf[0] === 0x52 &&
-    buf[1] === 0x49 &&
-    buf[2] === 0x46 &&
-    buf[3] === 0x46 &&
-    buf[8] === 0x57 &&
-    buf[9] === 0x45 &&
-    buf[10] === 0x42 &&
-    buf[11] === 0x50
-  ) {
-    return 'webp'
-  }
-  return null
-}
+import type { Dispatcher } from 'undici'
+import { detectImageExt, imageContentHash } from './image-bytes'
 
 // Network/timeout errors are left to throw (unlike a non-OK HTTP status,
 // which resolves to null below): downloadNativeImages needs to tell "fetch
 // never even completed" apart from "server responded, no image here" so it
 // can avoid reporting a transient network failure as a confirmed absence of
 // photos (see photosCheckedAt/photoFailures in enrich.ts).
-async function fetchImageBytes(url: string): Promise<Buffer | null> {
+async function fetchImageBytes(url: string, opts: Pick<DownloadNativeImagesOptions, 'dispatcher' | 'redirect'>): Promise<Buffer | null> {
   const res = await fetch(url, {
     // 30s upper bound: the enrich task's Promise.all fan-out would otherwise
     // stall a whole worker on one hung upstream. AT-Edikte (Lotus-Domino) is
@@ -58,7 +24,9 @@ async function fetchImageBytes(url: string): Promise<Buffer | null> {
       'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101 Firefox/130.0',
       Accept: 'image/jpeg,image/png,image/*;q=0.9,*/*;q=0.1',
     },
-  })
+    redirect: opts.redirect,
+    dispatcher: opts.dispatcher,
+  } as RequestInit & { dispatcher?: Dispatcher })
   if (!res.ok) {
     // Transient — worth a retry, unlike a stable 404/403 on a dead link.
     if (res.status === 408 || res.status === 429 || res.status >= 500) {
@@ -75,6 +43,8 @@ const MIN_BYTES = 512
 export interface DownloadNativeImagesOptions {
   destDir: string
   maxImages?: number
+  dispatcher?: Dispatcher
+  redirect?: RequestRedirect
 }
 
 /**
@@ -117,7 +87,7 @@ export async function downloadNativeImages(
     if (written.length >= cap) break
     let buf: Buffer | null
     try {
-      buf = await fetchImageBytes(url)
+      buf = await fetchImageBytes(url, opts)
     } catch {
       hadFetchError = true
       continue
@@ -126,7 +96,7 @@ export async function downloadNativeImages(
     const ext = detectImageExt(buf)
     if (!ext) continue
 
-    const hash = createHash('md5').update(buf).digest('hex').slice(0, 16)
+    const hash = imageContentHash(buf)
     if (seenHashes.has(hash)) continue
     seenHashes.add(hash)
     const name = `${hash}.${ext}`

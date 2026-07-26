@@ -22,6 +22,10 @@ type AnthropicContentBlock =
   | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
   | { type: 'document'; source: { type: 'base64'; media_type: 'application/pdf'; data: string } }
 
+const MAX_ANTHROPIC_BATCH_REQUESTS = 100_000
+const MAX_ANTHROPIC_BATCH_BODY_BYTES = 256 * 1024 * 1024
+const ANTHROPIC_BATCH_BODY_HEADROOM_BYTES = 1024 * 1024
+
 function apiBase(config: LlmConfig): string {
   return config.baseUrl.replace(/\/$/, '')
 }
@@ -70,48 +74,85 @@ function buildRequest(customId: string, input: LlmInput, config: LlmConfig): Rec
   }
 }
 
+function serializedBatchBytes(requests: readonly Record<string, unknown>[]): number {
+  return Buffer.byteLength(JSON.stringify({ requests }), 'utf8')
+}
+
+async function submitAnthropicRequestChunk(
+  requests: Record<string, unknown>[],
+  customIdMap: Record<string, string>,
+  config: LlmConfig,
+  source: 'enrich' | 'reprocess',
+): Promise<string | null> {
+  const batch = await $fetch<{ id?: string }>(`${apiBase(config)}/v1/messages/batches`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'anthropic-version': '2023-06-01',
+      ...authHeaders(config),
+    },
+    body: { requests },
+    signal: AbortSignal.timeout(30_000),
+  })
+  if (!batch.id) {
+    console.warn('[anthropic-batch] create response had no batch id')
+    return null
+  }
+  const recorded = await insertLlmBatchJob({
+    jobName: batch.id,
+    source,
+    itemCount: requests.length,
+    customIdMap,
+  })
+  if (!recorded) {
+    console.warn(`[anthropic-batch] failed to record job ${batch.id} — treating submission as failed`)
+    return null
+  }
+  return batch.id
+}
+
 export async function submitAnthropicBatch(
   items: { key: string; input: LlmInput }[],
   config: LlmConfig,
   source: 'enrich' | 'reprocess',
 ): Promise<string | null> {
-  const requests: Record<string, unknown>[] = []
-  const customIdMap: Record<string, string> = {}
+  const chunks: Array<{ requests: Record<string, unknown>[]; customIdMap: Record<string, string> }> = []
+  let currentRequests: Record<string, unknown>[] = []
+  let currentCustomIdMap: Record<string, string> = {}
   for (const [index, item] of items.entries()) {
     const customId = customIdForKey(item.key, index)
     const request = buildRequest(customId, item.input, config)
     if (!request) continue
-    requests.push(request)
-    customIdMap[customId] = item.key
+    const requestBytes = serializedBatchBytes([request])
+    if (requestBytes > MAX_ANTHROPIC_BATCH_BODY_BYTES - ANTHROPIC_BATCH_BODY_HEADROOM_BYTES) {
+      console.warn(`[anthropic-batch] skipping oversized request for ${item.key}`)
+      continue
+    }
+    if (
+      currentRequests.length >= MAX_ANTHROPIC_BATCH_REQUESTS ||
+      (
+        currentRequests.length > 0 &&
+        serializedBatchBytes([...currentRequests, request]) > MAX_ANTHROPIC_BATCH_BODY_BYTES - ANTHROPIC_BATCH_BODY_HEADROOM_BYTES
+      )
+    ) {
+      chunks.push({ requests: currentRequests, customIdMap: currentCustomIdMap })
+      currentRequests = []
+      currentCustomIdMap = {}
+    }
+    currentRequests.push(request)
+    currentCustomIdMap[customId] = item.key
   }
-  if (requests.length === 0) return null
+  if (currentRequests.length > 0) chunks.push({ requests: currentRequests, customIdMap: currentCustomIdMap })
+  if (chunks.length === 0) return null
 
   try {
-    const batch = await $fetch<{ id?: string }>(`${apiBase(config)}/v1/messages/batches`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'anthropic-version': '2023-06-01',
-        ...authHeaders(config),
-      },
-      body: { requests },
-      signal: AbortSignal.timeout(30_000),
-    })
-    if (!batch.id) {
-      console.warn('[anthropic-batch] create response had no batch id')
-      return null
+    const jobNames: string[] = []
+    for (const chunk of chunks) {
+      const jobName = await submitAnthropicRequestChunk(chunk.requests, chunk.customIdMap, config, source)
+      if (!jobName) return null
+      jobNames.push(jobName)
     }
-    const recorded = await insertLlmBatchJob({
-      jobName: batch.id,
-      source,
-      itemCount: requests.length,
-      customIdMap,
-    })
-    if (!recorded) {
-      console.warn(`[anthropic-batch] failed to record job ${batch.id} — treating submission as failed`)
-      return null
-    }
-    return batch.id
+    return jobNames.join(',')
   } catch (err) {
     console.warn(`[anthropic-batch] submit failed: ${(err as Error).message}`)
     return null
@@ -142,34 +183,29 @@ export async function fetchAnthropicBatchResults(
   config: LlmConfig,
   customIdMap: Record<string, string>,
 ): Promise<{ key: string; extraction: ClampedExtraction | null }[]> {
-  try {
-    const text = await $fetch<string>(`${apiBase(config)}/v1/messages/batches/${jobName}/results`, {
-      headers: {
-        'anthropic-version': '2023-06-01',
-        ...authHeaders(config),
-      },
-      signal: AbortSignal.timeout(120_000),
-      responseType: 'text',
-    })
-    const out: { key: string; extraction: ClampedExtraction | null }[] = []
-    for (const line of text.split('\n')) {
-      const trimmed = line.trim()
-      if (!trimmed) continue
-      let parsed: { custom_id?: unknown; result?: { type?: unknown; message?: unknown } }
-      try {
-        parsed = JSON.parse(trimmed) as typeof parsed
-      } catch (err) {
-        console.warn(`[anthropic-batch] failed to parse result line: ${(err as Error).message}`)
-        continue
-      }
-      if (typeof parsed.custom_id !== 'string') continue
-      const key = customIdMap[parsed.custom_id] ?? parsed.custom_id
-      const raw = parsed.result?.type === 'succeeded' ? parseExtractionResponse(parsed.result.message) : null
-      out.push({ key, extraction: raw ? clampExtraction(raw) : null })
+  const text = await $fetch<string>(`${apiBase(config)}/v1/messages/batches/${jobName}/results`, {
+    headers: {
+      'anthropic-version': '2023-06-01',
+      ...authHeaders(config),
+    },
+    signal: AbortSignal.timeout(120_000),
+    responseType: 'text',
+  })
+  const out: { key: string; extraction: ClampedExtraction | null }[] = []
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    let parsed: { custom_id?: unknown; result?: { type?: unknown; message?: unknown } }
+    try {
+      parsed = JSON.parse(trimmed) as typeof parsed
+    } catch (err) {
+      console.warn(`[anthropic-batch] failed to parse result line: ${(err as Error).message}`)
+      continue
     }
-    return out
-  } catch (err) {
-    console.warn(`[anthropic-batch] fetch results failed for ${jobName}: ${(err as Error).message}`)
-    return []
+    if (typeof parsed.custom_id !== 'string') continue
+    const key = customIdMap[parsed.custom_id] ?? parsed.custom_id
+    const raw = parsed.result?.type === 'succeeded' ? parseExtractionResponse(parsed.result.message) : null
+    out.push({ key, extraction: raw ? clampExtraction(raw) : null })
   }
+  return out
 }

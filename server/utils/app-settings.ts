@@ -125,6 +125,16 @@ export interface LlmProviderOverride {
 
 const LLM_PROVIDER_OVERRIDE_KEY = 'llm_provider_override'
 
+export function supportsLlmProviderExecutionMode(
+  provider: LlmProvider,
+  executionMode: LlmExecutionMode,
+  apiKey = '',
+): boolean {
+  if (executionMode === 'sync') return true
+  if (provider === 'gemini-native') return true
+  return provider === 'claude-proxy' && !!apiKey
+}
+
 function coerceProviderOverride(value: unknown): LlmProviderOverride | null {
   if (!value || typeof value !== 'object') return null
   const v = value as Record<string, unknown>
@@ -134,13 +144,14 @@ function coerceProviderOverride(value: unknown): LlmProviderOverride | null {
   if (typeof v.executionMode !== 'string' || !LLM_EXECUTION_MODES.includes(v.executionMode as LlmExecutionMode)) {
     return null
   }
-  return {
+  const override = {
     provider: v.provider as LlmProvider,
     baseUrl: v.baseUrl,
     model: v.model,
     executionMode: v.executionMode as LlmExecutionMode,
     apiKey: typeof v.apiKey === 'string' ? v.apiKey : '',
   }
+  return supportsLlmProviderExecutionMode(override.provider, override.executionMode, override.apiKey) ? override : null
 }
 
 export async function getLlmProviderOverride(db: Pool): Promise<LlmProviderOverride | null> {
@@ -158,17 +169,25 @@ export async function getLlmProviderOverride(db: Pool): Promise<LlmProviderOverr
 // stale read — the whole read-modify-write happens atomically in Postgres.
 export async function setLlmProviderOverride(
   db: Pool,
-  value: { provider: LlmProvider; baseUrl: string; model: string; executionMode: LlmExecutionMode; apiKey?: string },
+  value: { provider: LlmProvider; baseUrl: string; model: string; executionMode?: LlmExecutionMode; apiKey?: string },
 ): Promise<LlmProviderOverride> {
+  const current = value.executionMode == null || value.apiKey == null
+    ? await getLlmProviderOverride(db).catch(() => null)
+    : null
+  const effectiveExecutionMode = value.executionMode ?? current?.executionMode ?? DEFAULT_LLM_EXECUTION_MODE
+  const effectiveApiKey = value.apiKey ?? current?.apiKey ?? ''
+  if (!supportsLlmProviderExecutionMode(value.provider, effectiveExecutionMode, effectiveApiKey)) {
+    throw new Error('unsupported provider/executionMode combination')
+  }
   const { rows } = await db.query<{ value: unknown }>(
     `INSERT INTO app_settings (key, value, updated_at)
-     VALUES ($1, jsonb_build_object('provider', $2::text, 'baseUrl', $3::text, 'model', $4::text, 'executionMode', $5::text, 'apiKey', COALESCE($6::text, '')), now())
+     VALUES ($1, jsonb_build_object('provider', $2::text, 'baseUrl', $3::text, 'model', $4::text, 'executionMode', COALESCE($5::text, $7::text), 'apiKey', COALESCE($6::text, '')), now())
      ON CONFLICT (key) DO UPDATE SET
        value = jsonb_build_object(
          'provider', $2::text,
          'baseUrl', $3::text,
          'model', $4::text,
-         'executionMode', $5::text,
+         'executionMode', COALESCE($5::text, app_settings.value->>'executionMode', $7::text),
          'apiKey', COALESCE($6::text, app_settings.value->>'apiKey', '')
        ),
        updated_at = now()
@@ -178,11 +197,21 @@ export async function setLlmProviderOverride(
       value.provider,
       value.baseUrl,
       value.model,
-      value.executionMode,
+      value.executionMode ?? null,
       value.apiKey ?? null,
+      DEFAULT_LLM_EXECUTION_MODE,
     ],
   )
-  return coerceProviderOverride(rows[0]?.value)!
+  const saved = coerceProviderOverride(rows[0]?.value)
+  if (!saved) throw new Error('unsupported provider/executionMode combination')
+  return saved
+}
+
+export async function readLlmExecutionMode(): Promise<LlmExecutionMode> {
+  const { getPool } = await import('./db')
+  const db = getPool()
+  const override = db ? await getLlmProviderOverride(db).catch(() => null) : null
+  return override?.executionMode ?? DEFAULT_LLM_EXECUTION_MODE
 }
 
 export async function clearLlmProviderOverride(db: Pool): Promise<void> {

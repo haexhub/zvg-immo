@@ -44,11 +44,10 @@ import {
 } from '~/server/utils/extract/llm-batch'
 import { getPool } from '~/server/utils/db'
 import {
-  DEFAULT_LLM_EXECUTION_MODE,
   DEFAULT_LLM_MAX_TOKENS,
   getLlmMaxTokens,
   getLlmProviderOverride,
-  type LlmExecutionMode,
+  readLlmExecutionMode,
 } from '~/server/utils/app-settings'
 import { mergeLlmResult } from '~/server/utils/extract/merge-llm-result'
 import { downloadNativeImages } from '~/server/utils/extract/native-images'
@@ -129,12 +128,6 @@ async function readLlmConfig(): Promise<ReturnType<typeof resolveLlmConfig>> {
     : DEFAULT_LLM_MAX_TOKENS.extraction
   const override = db ? await getLlmProviderOverride(db).catch(() => null) : null
   return resolveLlmConfig(override ?? c, { maxTokens })
-}
-
-async function readLlmExecutionMode(): Promise<LlmExecutionMode> {
-  const db = getPool()
-  const override = db ? await getLlmProviderOverride(db).catch(() => null) : null
-  return override?.executionMode ?? DEFAULT_LLM_EXECUTION_MODE
 }
 
 function readMaxLlmPerRun(): number {
