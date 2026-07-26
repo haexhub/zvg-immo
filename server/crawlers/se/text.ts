@@ -42,6 +42,35 @@ export function parseSekAmount(raw: string): number | null {
   return Number.isFinite(n) && n >= 1000 ? n : null
 }
 
+export function cleanKronofogdenAddress(raw: string): string {
+  return raw
+    .replace(/\badress\s+saknas\s*\/\s*/gi, '')
+    .replace(/\badress\s+saknas\b/gi, '')
+    .replace(/\s*,\s*/g, ', ')
+    .replace(/,\s*(\d{3})\s?(\d{2})\s*,\s*/g, ', $1 $2 ')
+    .replace(/\s+/g, ' ')
+    .replace(/\s+,/g, ',')
+    .replace(/,\s*$/g, '')
+    .trim()
+}
+
+export function extractShowingAddress(html: string): string | null {
+  const matches = html.matchAll(/"showingAddress"\s*:\s*"((?:\\.|[^"\\])*)"/g)
+  for (const match of matches) {
+    const raw = match[1]
+    if (!raw) continue
+    try {
+      const decoded = JSON.parse(`"${raw}"`) as unknown
+      if (typeof decoded !== 'string') continue
+      const cleaned = cleanKronofogdenAddress(decoded)
+      if (cleaned) return cleaned
+    } catch {
+      // Ignore malformed embedded state and keep looking.
+    }
+  }
+  return null
+}
+
 /** Strips HTML tags and normalises whitespace, preserving paragraph breaks. */
 export function stripHtml(html: string): string {
   return html

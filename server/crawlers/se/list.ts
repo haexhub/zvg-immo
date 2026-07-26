@@ -1,6 +1,6 @@
 import type { Attachment, Auction } from '~/types/auction'
 import { SE_BASE, COUNTRY } from './constants'
-import { extractFact, parseSekAmount, extractBody, parseStorlek, cleanCategory } from './text'
+import { extractFact, parseSekAmount, extractBody, parseStorlek, cleanCategory, cleanKronofogdenAddress, extractShowingAddress } from './text'
 
 const DETAIL_CONCURRENCY = 4
 const SEARCH_PATHS = [
@@ -86,6 +86,7 @@ async function fetchSearchIds(path: string): Promise<string[]> {
 
 function mapDetail(id: string, html: string, platformId: string): Auction | null {
   const address = extractFact(html, 'Adress')
+  const showingAddress = extractShowingAddress(html)
   const kommun = extractFact(html, 'Kommun')
   const marknadsvardRaw = extractFact(html, 'Marknadsvarde')
   const arendenummer = extractFact(html, 'Arendenummer') ?? ''
@@ -112,8 +113,10 @@ function mapDetail(id: string, html: string, platformId: string): Auction | null
   const imgMatches = html.match(/srcset="\/images\/[^\s]+\s+160w/g) ?? []
   const photoCount = new Set(imgMatches).size
 
-  // Build full address: "Kvarnbyn 76, Burträsk, Skellefteå kommun"
-  const addressParts = [address, kommun].filter(Boolean)
+  // Prefer the showingAddress embedded in Kronofogden's booking widget: it
+  // usually includes the postal code ("Kvarnbyn 76, 93794, Burträsk"), which
+  // geocodes much more precisely than the sidebar's address + municipality.
+  const addressParts = [address ? cleanKronofogdenAddress(address) : null, kommun].filter(Boolean)
   const fullAddress = addressParts.length > 0 ? addressParts.join(', ') : null
 
   const sekAmount = marknadsvardRaw ? parseSekAmount(marknadsvardRaw) : null
@@ -171,7 +174,7 @@ function mapDetail(id: string, html: string, platformId: string): Auction | null
     caseNumber: arendenummer,
     authority: 'Kronofogden',
     title,
-    address: fullAddress,
+    address: showingAddress ?? fullAddress,
     marketValueEur: null,
     marketValue: sekAmount,
     currency: sekAmount != null ? 'SEK' : null,

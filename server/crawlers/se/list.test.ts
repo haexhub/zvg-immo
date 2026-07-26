@@ -22,6 +22,19 @@ function detailHtml(id: string): string {
   `
 }
 
+function detailHtmlWithShowingAddress(id: string): string {
+  return `
+    <h3 id="h-Adress">Adress</h3><p class="normal">Kvarnbyn 76, Burträsk</p>
+    <h3 id="h-Kommun">Kommun</h3><p class="normal">Skellefteå kommun</p>
+    <h3 id="h-Arendenummer">Ärendenummer</h3><p class="normal">F-${id}-25</p>
+    <h2 id="h-Upplatelseform">Upplatelseform</h2><p class="normal">Äganderätt.</p>
+    <div id="datumet">2026-08-27</div>
+    <script>
+      AppRegistry.registerInitialState('booking-${id}', {"showingAddress":"Kvarnbyn 76, 93794, Burtr\\u00e4sk"});
+    </script>
+  `
+}
+
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
@@ -122,5 +135,26 @@ describe('fetchAllListings', () => {
 
     expect(result.auctions.map((a) => a.externalId)).toEqual(['101003'])
     expect(warn).toHaveBeenCalledOnce()
+  })
+
+  it('uses the embedded showing address with postcode when Kronofogden exposes it', async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const href = String(url)
+      if (href === `${BASE}/Sokfastigheterbostadsratter.html?query=*`) {
+        return new Response(searchHtml(['101784'], 1), { status: 200 })
+      }
+      if (href === `${BASE}/22660.html?query=*`) {
+        return new Response(searchHtml([], 0), { status: 200 })
+      }
+      if (href === `${BASE}/101784.html`) {
+        return new Response(detailHtmlWithShowingAddress('101784'), { status: 200 })
+      }
+      return new Response('not found', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await fetchAllListings('se-kronofogden')
+
+    expect(result.auctions[0]?.address).toBe('Kvarnbyn 76, 937 94 Burträsk')
   })
 })

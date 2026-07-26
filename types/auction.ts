@@ -298,6 +298,10 @@ export interface CrawlResult {
   /** Region names covered by this result. Empty array means "alle". */
   regions: string[]
   fetchedAt: string
+  /** Optional per-country serving-cache version. Used to invalidate cached
+   * list results when a crawler's mapped fields change without touching the
+   * upstream source timestamp. */
+  listCacheVersion?: number
   /** Total reported by the upstream platform; null when unknown or aggregated. */
   totalReported: number | null
   auctions: Auction[]

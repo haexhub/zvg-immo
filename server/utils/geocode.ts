@@ -393,6 +393,65 @@ export function normalizeLvAddress(address: string): string[] {
   return out.length > 0 ? [...new Set(out)] : [address]
 }
 
+// --- Sweden (kronofogden.se) -------------------------------------------------
+// SE listings often carry "street, locality, municipality kommun" rather than
+// a postal address. Nominatim can miss the full form but resolve the locality
+// or municipality, which is preferable to dropping the auction from the map.
+function stripSeMissingAddressMarker(address: string): string {
+  return address
+    .replace(/^\s*adress\s+saknas\s*\/\s*/i, '')
+    .replace(/\badress\s+saknas\b\s*\/?\s*/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function seMunicipalityCandidates(value: string): string[] {
+  const base = value.replace(/\s+kommun$/i, '').trim()
+  if (!base) return []
+  const candidates = [base]
+  // Several municipality labels are genitive ("Bodens kommun" -> "Boden"),
+  // while names like "Borås kommun" genuinely end in s. Try both.
+  if (base.endsWith('s') && !/(?:fors|ås)$/i.test(base)) candidates.push(base.slice(0, -1))
+  return [...new Set(candidates)]
+}
+
+export function normalizeSeAddress(address: string): string[] {
+  const cleaned = stripSeMissingAddressMarker(address.replace(/\s*,\s*/g, ', '))
+  if (!cleaned) return [address]
+
+  const parts = cleaned
+    .split(',')
+    .map((part) => stripSeMissingAddressMarker(part).trim())
+    .filter(Boolean)
+  if (parts.length === 0) return [address]
+
+  const last = parts[parts.length - 1]!
+  const municipalityCandidates = /\bkommun$/i.test(last) ? seMunicipalityCandidates(last) : []
+  const locality = parts.length >= 2
+    ? (municipalityCandidates.length ? parts[parts.length - 2] : parts[parts.length - 1])
+    : null
+  const addressParts = municipalityCandidates.length ? parts.slice(0, -2) : parts.slice(0, -1)
+  const streetCandidates = addressParts.length > 0
+    ? addressParts.flatMap((part) => part.split('/').map((s) => s.trim()).filter(Boolean))
+    : []
+
+  const out: string[] = [cleaned]
+  if (municipalityCandidates.length) {
+    out.push([...parts.slice(0, -1), municipalityCandidates[0]].join(', '))
+  }
+  if (locality) {
+    for (const street of streetCandidates) {
+      out.push(`${street}, ${locality}`)
+      for (const municipality of municipalityCandidates) out.push(`${street}, ${municipality}`)
+    }
+    for (const municipality of municipalityCandidates) out.push(`${locality}, ${municipality}`)
+    out.push(locality)
+  }
+  out.push(...municipalityCandidates)
+
+  return [...new Set(out)]
+}
+
 /**
  * Normalises an address into a Nominatim-friendly query, optionally falling
  * back to PLZ+city if the full address fails to resolve.
@@ -404,6 +463,7 @@ function buildQueries(address: string, country: string): string[] {
   if (country === 'lt') return normalizeLtAddress(cleaned)
   if (country === 'ee') return normalizeEeAddress(cleaned)
   if (country === 'lv') return normalizeLvAddress(cleaned)
+  if (country === 'se') return normalizeSeAddress(cleaned)
   // Strip trailing country name for countries where it confuses Nominatim.
   // countrycodes= already restricts the search, so the name is redundant.
   const suffix = STRIP_COUNTRY_SUFFIX[country]

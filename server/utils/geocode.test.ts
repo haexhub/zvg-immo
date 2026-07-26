@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { normalizeLtAddress, normalizeEeAddress, normalizeLvAddress } from './geocode'
+import { normalizeLtAddress, normalizeEeAddress, normalizeLvAddress, normalizeSeAddress } from './geocode'
 
 // eaukcionai.lt serves addresses as a chain of genitive administrative units
 // plus a street. Nominatim only resolves the reduced "<street>, <city>" form,
@@ -143,6 +143,50 @@ describe('normalizeLvAddress', () => {
   it('strips the "Neapbūvēta zemesgabala ... nomas tiesību elektroniska izsole" wrapper', () => {
     expect(normalizeLvAddress('Neapbūvēta zemesgabala Sēlpils ielā 13, Rīgā nomas tiesību elektroniska izsole'))
       .toEqual(['Sēlpils ielā 13, Rīgā'])
+  })
+})
+
+describe('normalizeSeAddress', () => {
+  it('falls back from a rural address to locality and municipality queries', () => {
+    expect(normalizeSeAddress('Kvarnbyn 76, Burträsk, Skellefteå kommun')).toEqual([
+      'Kvarnbyn 76, Burträsk, Skellefteå kommun',
+      'Kvarnbyn 76, Burträsk, Skellefteå',
+      'Kvarnbyn 76, Burträsk',
+      'Kvarnbyn 76, Skellefteå',
+      'Burträsk, Skellefteå',
+      'Burträsk',
+      'Skellefteå',
+    ])
+  })
+
+  it('strips the "adress saknas" prefix but still uses the real address', () => {
+    expect(normalizeSeAddress('adress saknas/Norrlimstavägen 33, Kramfors, Kramfors kommun')).toEqual([
+      'Norrlimstavägen 33, Kramfors, Kramfors kommun',
+      'Norrlimstavägen 33, Kramfors, Kramfors',
+      'Norrlimstavägen 33, Kramfors',
+      'Kramfors, Kramfors',
+      'Kramfors',
+    ])
+  })
+
+  it('tries both official genitive and base municipality names', () => {
+    expect(normalizeSeAddress('Degerbäckens By 406, Boden, Bodens kommun')).toEqual([
+      'Degerbäckens By 406, Boden, Bodens kommun',
+      'Degerbäckens By 406, Boden, Bodens',
+      'Degerbäckens By 406, Boden',
+      'Degerbäckens By 406, Bodens',
+      'Boden, Bodens',
+      'Boden, Boden',
+      'Boden',
+      'Bodens',
+    ])
+  })
+
+  it('keeps non-municipality two-part addresses usable', () => {
+    expect(normalizeSeAddress('Stationsvägen 51, Skärblacka')).toEqual([
+      'Stationsvägen 51, Skärblacka',
+      'Skärblacka',
+    ])
   })
 })
 

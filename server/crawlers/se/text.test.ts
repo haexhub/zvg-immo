@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractFact, parseStorlek, cleanCategory, parseSekAmount } from './text'
+import { extractFact, parseStorlek, cleanCategory, parseSekAmount, cleanKronofogdenAddress, extractShowingAddress } from './text'
 
 describe('extractFact', () => {
   it('extracts a sidebar fact (h3)', () => {
@@ -56,5 +56,28 @@ describe('parseSekAmount', () => {
   it('parses "450000:-" and spaced thousands', () => {
     expect(parseSekAmount('450000:-')).toBe(450000)
     expect(parseSekAmount('1 200 000:-')).toBe(1200000)
+  })
+})
+
+describe('cleanKronofogdenAddress', () => {
+  it('removes missing-address prefixes and normalises Swedish postcodes', () => {
+    expect(cleanKronofogdenAddress('adress saknas/Norrlimstavägen 33, 87231, Kramfors'))
+      .toBe('Norrlimstavägen 33, 872 31 Kramfors')
+  })
+})
+
+describe('extractShowingAddress', () => {
+  it('reads the embedded booking widget address', () => {
+    const html = `
+      <script>
+        AppRegistry.registerInitialState('id', {"showingAddress":"Kvarnbyn 76, 93794, Burtr\\u00e4sk"});
+      </script>
+    `
+
+    expect(extractShowingAddress(html)).toBe('Kvarnbyn 76, 937 94 Burträsk')
+  })
+
+  it('returns null when no showing address is embedded', () => {
+    expect(extractShowingAddress('<main>No widget</main>')).toBeNull()
   })
 })
