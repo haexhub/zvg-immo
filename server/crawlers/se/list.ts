@@ -51,6 +51,10 @@ function searchUrl(path: string, startAtHit: number): string {
   return `${SE_BASE}${path}?${params.toString()}`
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 async function fetchSearchIds(path: string): Promise<string[]> {
   const ids: string[] = []
   const seenStarts = new Set<number>()
@@ -192,9 +196,28 @@ function mapDetail(id: string, html: string, platformId: string): Auction | null
 export async function fetchAllListings(
   platformId: string,
 ): Promise<{ auctions: Auction[]; total: number | null }> {
-  const ids = [
-    ...new Set((await Promise.all(SEARCH_PATHS.map((path) => fetchSearchIds(path)))).flat()),
-  ]
+  const searchResults = await Promise.all(
+    SEARCH_PATHS.map(async (path) => {
+      try {
+        return { path, ids: await fetchSearchIds(path), error: null }
+      } catch (error) {
+        return { path, ids: null, error }
+      }
+    }),
+  )
+  const failed = searchResults.filter((result) => result.error)
+  if (failed.length === searchResults.length) {
+    throw new Error(
+      `kronofogden.se search failed: ${failed
+        .map((result) => `${result.path}: ${errorMessage(result.error)}`)
+        .join('; ')}`,
+    )
+  }
+  for (const result of failed) {
+    console.warn(`[se-kronofogden] search ${result.path}: ${errorMessage(result.error)}`)
+  }
+
+  const ids = [...new Set(searchResults.flatMap((result) => result.ids ?? []))]
   if (ids.length === 0) return { auctions: [], total: 0 }
 
   // Fetch detail pages with bounded concurrency
