@@ -456,20 +456,21 @@ CREATE TABLE IF NOT EXISTS auction_snapshot (
 );
 ALTER TABLE auction_snapshot ENABLE ROW LEVEL SECURITY;
 
--- llm_batch_jobs: tracks in-flight Gemini Batch API jobs submitted by
--- enrich.ts/reprocess.ts (see server/utils/extract/gemini-batch.ts). No
--- separate items table — correlation runs through the `key`
--- (`platform:externalId`) embedded in the submitted JSONL and echoed back by
--- Gemini in the results, so the JSONL file itself is the item list.
+-- llm_batch_jobs: tracks in-flight LLM Batch API jobs submitted by
+-- enrich.ts/reprocess.ts. Gemini echoes the submitted `key` directly in its
+-- result JSONL; Anthropic restricts `custom_id` to a short safe alphabet, so
+-- custom_id_map stores `{ custom_id: "platform:externalId" }` for those jobs.
 CREATE TABLE IF NOT EXISTS llm_batch_jobs (
   job_name     text PRIMARY KEY,
   source       text NOT NULL,
   status       text NOT NULL DEFAULT 'pending',
   item_count   integer NOT NULL,
+  custom_id_map jsonb NOT NULL DEFAULT '{}'::jsonb,
   submitted_at timestamptz NOT NULL DEFAULT now(),
   checked_at   timestamptz,
   updated_at   timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE llm_batch_jobs ADD COLUMN IF NOT EXISTS custom_id_map jsonb NOT NULL DEFAULT '{}'::jsonb;
 -- RLS ohne Policies (Default-Deny), gleiches Muster wie oben: server-intern,
 -- Backend-Zugriff läuft als Table-Owner und umgeht RLS ohnehin.
 ALTER TABLE llm_batch_jobs ENABLE ROW LEVEL SECURITY;

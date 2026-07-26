@@ -58,6 +58,7 @@ export default defineNuxtConfig({
     // haex-claude-proxy) as the transitional path:
     //   NUXT_EXTRACT_LLM_PROVIDER=claude-proxy
     //   NUXT_EXTRACT_LLM_BASE_URL=http://haex-claude-proxy:8080
+    //   NUXT_EXTRACT_LLM_API_KEY=<optional proxy resolver token; required for api_key-backed Anthropic Batch>
     //   NUXT_EXTRACT_LLM_MODEL=claude-haiku-4-5
     // 'gemini-native' opts into Gemini's own API (not its OpenAI-compat layer)
     // for its one genuine extra capability, native PDF understanding — reads
@@ -178,8 +179,8 @@ export default defineNuxtConfig({
       // robust portals refresh hourly while rate-limited ones stay on a longer
       // interval — an always-on background watch for new/updated auctions.
       '0 * * * *': ['refresh'],
-      // Every 30 minutes: check in-flight Gemini Batch API jobs submitted by
-      // enrich.ts (see server/utils/extract/gemini-batch.ts) and merge
+      // Every 30 minutes: check in-flight LLM Batch API jobs submitted by
+      // explicit batch runs (see server/utils/extract/llm-batch.ts) and merge
       // completed results — jobs often finish well under the 24h SLA, so a
       // shorter tick than enrich's own 6h cadence gets results merged sooner.
       '*/30 * * * *': ['llm-batch-poll'],

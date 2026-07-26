@@ -4,7 +4,15 @@
 // echoes the real value back, so the form can't "round-trip" a stale key.
 
 import { getPool } from '~/server/utils/db'
-import { setLlmProviderOverride, LLM_PROVIDERS, type LlmProvider } from '~/server/utils/app-settings'
+import {
+  LLM_EXECUTION_MODES,
+  LLM_PROVIDERS,
+  getLlmProviderOverride,
+  setLlmProviderOverride,
+  supportsLlmProviderExecutionMode,
+  type LlmExecutionMode,
+  type LlmProvider,
+} from '~/server/utils/app-settings'
 
 export default defineEventHandler(async (event) => {
   const db = getPool()
@@ -22,18 +30,38 @@ export default defineEventHandler(async (event) => {
   if (typeof body.model !== 'string' || !body.model.trim()) {
     throw createError({ statusCode: 400, statusMessage: 'model: darf nicht leer sein.' })
   }
+  const incomingExecutionMode =
+    typeof body.executionMode === 'string' && LLM_EXECUTION_MODES.includes(body.executionMode as LlmExecutionMode)
+      ? (body.executionMode as LlmExecutionMode)
+      : undefined
+  const provider = body.provider as LlmProvider
+  const incomingApiKey = typeof body.apiKey === 'string' ? body.apiKey : undefined
+  const current =
+    incomingExecutionMode === undefined || incomingApiKey === undefined
+      ? await getLlmProviderOverride(db).catch(() => null)
+      : null
+  const effectiveExecutionMode = incomingExecutionMode ?? current?.executionMode ?? 'sync'
+  const effectiveApiKey = incomingApiKey ?? current?.apiKey ?? ''
+  if (!supportsLlmProviderExecutionMode(provider, effectiveExecutionMode, effectiveApiKey)) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: 'batch: Dieser Provider unterstützt keinen Batch-Modus.',
+    })
+  }
 
   const saved = await setLlmProviderOverride(db, {
-    provider: body.provider as LlmProvider,
+    provider,
     baseUrl: body.baseUrl.trim(),
     model: body.model.trim(),
-    apiKey: typeof body.apiKey === 'string' ? body.apiKey : undefined,
+    executionMode: incomingExecutionMode,
+    apiKey: incomingApiKey,
   })
 
   return {
     provider: saved.provider,
     baseUrl: saved.baseUrl,
     model: saved.model,
+    executionMode: saved.executionMode,
     apiKeySet: !!saved.apiKey,
   }
 })

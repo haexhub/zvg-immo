@@ -1,4 +1,4 @@
-// Translates the canonical JSON-Schema used by extractByLlm's EXTRACTION_SCHEMA
+// Translates the canonical JSON-Schema used by extractByLlm's universal auction schema
 // into Gemini's native `responseSchema` format — an OpenAPI-3.0 subset that
 // differs in a few load-bearing ways: uppercase type names, `nullable: true`
 // instead of a `type: [x, 'null']` union, no `null` entry inside `enum`, and

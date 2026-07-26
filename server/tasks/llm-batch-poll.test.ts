@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Auction, AuctionExtraction } from '~/types/auction'
-import { fetchGeminiBatchResults, pollGeminiBatch } from '../utils/extract/gemini-batch'
-import { deleteLlmBatchJob, listPendingLlmBatchJobs } from '../utils/llm-batch-jobs'
+import { fetchLlmBatchResults, pollLlmBatch } from '../utils/extract/llm-batch'
+import { deleteLlmBatchJob, listPendingLlmBatchJobs, type LlmBatchJob } from '../utils/llm-batch-jobs'
 import { readExtractionCache, writeExtractionCache } from '../utils/extraction-cache'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
 
-vi.mock('../utils/extract/gemini-batch', () => ({ pollGeminiBatch: vi.fn(), fetchGeminiBatchResults: vi.fn() }))
+vi.mock('../utils/extract/llm-batch', () => ({ pollLlmBatch: vi.fn(), fetchLlmBatchResults: vi.fn() }))
 vi.mock('../utils/llm-batch-jobs', () => ({ listPendingLlmBatchJobs: vi.fn(), deleteLlmBatchJob: vi.fn() }))
 vi.mock('../utils/extraction-cache', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/extraction-cache')>()
@@ -27,6 +27,20 @@ function makeEntry(overrides: Partial<AuctionExtraction> = {}): AuctionExtractio
     confidence: 'low',
     at: '2026-07-23T00:00:00.000Z',
     llmBatchJob: 'batches/abc',
+    ...overrides,
+  }
+}
+
+function makeJob(overrides: Partial<LlmBatchJob> = {}): LlmBatchJob {
+  return {
+    jobName: 'batches/abc',
+    source: 'enrich',
+    status: 'pending',
+    itemCount: 1,
+    customIdMap: {},
+    submittedAt: '2026-07-26T18:00:00.000Z',
+    checkedAt: null,
+    updatedAt: '2026-07-26T18:00:00.000Z',
     ...overrides,
   }
 }
@@ -79,33 +93,33 @@ describe('runLlmBatchPoll', () => {
     const result = await runLlmBatchPoll()
 
     expect(result).toEqual({ checked: 0, merged: 0 })
-    expect(pollGeminiBatch).not.toHaveBeenCalled()
+    expect(pollLlmBatch).not.toHaveBeenCalled()
   })
 
   it('skips without an LLM provider configured, even with pending jobs', async () => {
     vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: {} }))
-    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([{ jobName: 'batches/abc', source: 'enrich', status: 'pending', itemCount: 1 }])
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([makeJob()])
 
     const result = await runLlmBatchPoll()
 
     expect(result).toEqual({ checked: 0, merged: 0 })
-    expect(pollGeminiBatch).not.toHaveBeenCalled()
+    expect(pollLlmBatch).not.toHaveBeenCalled()
   })
 
   it('leaves a still-pending job untouched', async () => {
-    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([{ jobName: 'batches/abc', source: 'enrich', status: 'pending', itemCount: 1 }])
-    vi.mocked(pollGeminiBatch).mockResolvedValue({ state: 'pending' })
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([makeJob()])
+    vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'pending' })
 
     const result = await runLlmBatchPoll()
 
     expect(result).toEqual({ checked: 1, merged: 0 })
     expect(deleteLlmBatchJob).not.toHaveBeenCalled()
-    expect(fetchGeminiBatchResults).not.toHaveBeenCalled()
+    expect(fetchLlmBatchResults).not.toHaveBeenCalled()
   })
 
   it('deletes the job row on failed/expired without touching the cache', async () => {
-    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([{ jobName: 'batches/abc', source: 'enrich', status: 'pending', itemCount: 1 }])
-    vi.mocked(pollGeminiBatch).mockResolvedValue({ state: 'failed' })
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([makeJob()])
+    vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'failed' })
 
     const result = await runLlmBatchPoll()
 
@@ -117,9 +131,9 @@ describe('runLlmBatchPoll', () => {
   it('merges a succeeded job into extraction_cache and auction_snapshot, then deletes the job row', async () => {
     const priorEntry = makeEntry({ propertyType: 'einfamilienhaus', landAreaSqm: 500, confidence: 'high' })
     vi.mocked(readExtractionCache).mockResolvedValue({ 'zvg-portal:7265': priorEntry })
-    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([{ jobName: 'batches/abc', source: 'enrich', status: 'pending', itemCount: 1 }])
-    vi.mocked(pollGeminiBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/results' })
-    vi.mocked(fetchGeminiBatchResults).mockResolvedValue([
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([makeJob()])
+    vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/results' })
+    vi.mocked(fetchLlmBatchResults).mockResolvedValue([
       {
         key: 'zvg-portal:7265',
         extraction: {
@@ -149,6 +163,7 @@ describe('runLlmBatchPoll', () => {
     const result = await runLlmBatchPoll()
 
     expect(result).toEqual({ checked: 1, merged: 1 })
+    expect(fetchLlmBatchResults).toHaveBeenCalledWith('batches/abc', 'files/results', expect.any(Object), {})
     expect(writeExtractionCache).toHaveBeenCalledWith({
       'zvg-portal:7265': expect.objectContaining({ condition: 'gepflegt', yearBuilt: 1998, propertyType: 'einfamilienhaus' }),
     })
@@ -162,9 +177,9 @@ describe('runLlmBatchPoll', () => {
   it('leaves the job row in place when writing the cache fails, so the next tick retries', async () => {
     const priorEntry = makeEntry({ propertyType: 'einfamilienhaus', landAreaSqm: 500, confidence: 'high' })
     vi.mocked(readExtractionCache).mockResolvedValue({ 'zvg-portal:7265': priorEntry })
-    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([{ jobName: 'batches/abc', source: 'enrich', status: 'pending', itemCount: 1 }])
-    vi.mocked(pollGeminiBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/results' })
-    vi.mocked(fetchGeminiBatchResults).mockResolvedValue([
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([makeJob()])
+    vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/results' })
+    vi.mocked(fetchLlmBatchResults).mockResolvedValue([
       {
         key: 'zvg-portal:7265',
         extraction: {
@@ -199,9 +214,9 @@ describe('runLlmBatchPoll', () => {
 
   it('skips a result whose key has no cached prior entry', async () => {
     vi.mocked(readExtractionCache).mockResolvedValue({})
-    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([{ jobName: 'batches/abc', source: 'enrich', status: 'pending', itemCount: 1 }])
-    vi.mocked(pollGeminiBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/results' })
-    vi.mocked(fetchGeminiBatchResults).mockResolvedValue([{ key: 'zvg-portal:unknown', extraction: null }])
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([makeJob()])
+    vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/results' })
+    vi.mocked(fetchLlmBatchResults).mockResolvedValue([{ key: 'zvg-portal:unknown', extraction: null }])
 
     const result = await runLlmBatchPoll()
 
@@ -212,10 +227,10 @@ describe('runLlmBatchPoll', () => {
 
   it('continues with other jobs when one job throws', async () => {
     vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([
-      { jobName: 'batches/bad', source: 'enrich', status: 'pending', itemCount: 1 },
-      { jobName: 'batches/good', source: 'enrich', status: 'pending', itemCount: 1 },
+      makeJob({ jobName: 'batches/bad' }),
+      makeJob({ jobName: 'batches/good' }),
     ])
-    vi.mocked(pollGeminiBatch).mockImplementation(async (jobName) => {
+    vi.mocked(pollLlmBatch).mockImplementation(async (jobName) => {
       if (jobName === 'batches/bad') throw new Error('boom')
       return { state: 'failed' }
     })

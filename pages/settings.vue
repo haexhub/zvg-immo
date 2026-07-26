@@ -2,7 +2,7 @@
 import { ArrowLeft, ExternalLink, Loader2, Pencil, RefreshCw, Trash2 } from 'lucide-vue-next'
 import type { ClaudeSetupStatus } from '~/server/api/settings/claude/status.get'
 import type { AdminLawyer } from '~/server/api/settings/lawyers/index.get'
-import type { LlmMaxTokensKind, LlmProvider } from '~/server/utils/app-settings'
+import type { LlmExecutionMode, LlmMaxTokensKind, LlmProvider } from '~/server/utils/app-settings'
 import type { CountryRebuildResult } from '~/server/utils/country-rebuild'
 import type { CountrySourceSetting, CountrySourceSettings } from '~/server/utils/country-source-settings'
 
@@ -26,6 +26,7 @@ async function probeSession(): Promise<void> {
       await loadLawyers()
       await loadLlmConfig()
       await loadLlmProvider()
+      await loadLlmBatchJobs()
       await loadDisplaySettings()
       await loadCountrySources()
     }
@@ -48,6 +49,7 @@ async function login(): Promise<void> {
     await loadLawyers()
     await loadLlmConfig()
     await loadLlmProvider()
+    await loadLlmBatchJobs()
     await loadDisplaySettings()
     await loadCountrySources()
   } catch (err) {
@@ -415,10 +417,17 @@ interface LlmProviderForm {
   provider: LlmProvider
   baseUrl: string
   model: string
+  executionMode: LlmExecutionMode
   /** Write-only: leer beim Laden, egal ob ein Key gespeichert ist. */
   apiKey: string
 }
-const llmProviderForm = ref<LlmProviderForm>({ provider: 'claude-proxy', baseUrl: '', model: '', apiKey: '' })
+const llmProviderForm = ref<LlmProviderForm>({
+  provider: 'claude-proxy',
+  baseUrl: '',
+  model: '',
+  executionMode: 'sync',
+  apiKey: '',
+})
 const llmProviderOverrideActive = ref(false)
 const llmProviderApiKeySet = ref(false)
 const llmProviderEnvDefault = ref<{ provider: string; baseUrl: string; model: string } | null>(null)
@@ -436,6 +445,14 @@ const llmModelOptionsPending = ref(false)
 const llmModelKeyRequired = ref(false)
 const llmModelOptionsError = ref<string | null>(null)
 let llmModelOptionsRequestId = 0
+
+const llmProviderSupportsBatch = computed(() =>
+  llmProviderForm.value.provider === 'gemini-native' || llmProviderForm.value.provider === 'claude-proxy',
+)
+const llmProviderCanSelectBatch = computed(() =>
+  llmProviderForm.value.provider === 'gemini-native' ||
+  (llmProviderForm.value.provider === 'claude-proxy' && (llmProviderApiKeySet.value || !!llmProviderForm.value.apiKey)),
+)
 
 async function loadModelOptions(): Promise<void> {
   const requestId = ++llmModelOptionsRequestId
@@ -473,8 +490,14 @@ async function loadModelOptions(): Promise<void> {
 async function loadLlmProvider(): Promise<void> {
   try {
     const res = await $fetch<{
-      override: { provider: LlmProvider; baseUrl: string; model: string; apiKeySet: boolean } | null
-      envDefault: { provider: string; baseUrl: string; model: string }
+      override: {
+        provider: LlmProvider
+        baseUrl: string
+        model: string
+        executionMode: LlmExecutionMode
+        apiKeySet: boolean
+      } | null
+      envDefault: { provider: string; baseUrl: string; model: string; executionMode: LlmExecutionMode }
     }>('/api/settings/llm-provider')
     llmProviderEnvDefault.value = res.envDefault
     llmProviderOverrideActive.value = !!res.override
@@ -483,6 +506,7 @@ async function loadLlmProvider(): Promise<void> {
         provider: res.override.provider,
         baseUrl: res.override.baseUrl,
         model: res.override.model,
+        executionMode: res.override.executionMode,
         apiKey: '',
       }
       llmProviderApiKeySet.value = res.override.apiKeySet
@@ -491,9 +515,16 @@ async function loadLlmProvider(): Promise<void> {
         provider: (res.envDefault.provider as LlmProvider) || 'claude-proxy',
         baseUrl: res.envDefault.baseUrl,
         model: res.envDefault.model,
+        executionMode: res.envDefault.executionMode,
         apiKey: '',
       }
       llmProviderApiKeySet.value = false
+    }
+    if (
+      llmProviderForm.value.executionMode === 'batch' &&
+      (!llmProviderSupportsBatch.value || !llmProviderCanSelectBatch.value)
+    ) {
+      llmProviderForm.value.executionMode = 'sync'
     }
     llmProviderError.value = null
     await loadModelOptions()
@@ -506,6 +537,7 @@ function onLlmProviderChange(): void {
   const preset = LLM_PROVIDER_PRESETS[llmProviderForm.value.provider]
   llmProviderForm.value.baseUrl = preset.baseUrl
   llmProviderForm.value.model = preset.model
+  if (!llmProviderSupportsBatch.value) llmProviderForm.value.executionMode = 'sync'
   void loadModelOptions()
 }
 
@@ -518,14 +550,22 @@ async function putLlmProvider(apiKey: string | undefined): Promise<void> {
       provider: llmProviderForm.value.provider,
       baseUrl: llmProviderForm.value.baseUrl.trim(),
       model: llmProviderForm.value.model.trim(),
+      executionMode:
+        llmProviderForm.value.executionMode === 'batch' && llmProviderCanSelectBatch.value
+          ? 'batch'
+          : 'sync',
     }
     if (apiKey !== undefined) body.apiKey = apiKey
-    const res = await $fetch<{ provider: LlmProvider; baseUrl: string; model: string; apiKeySet: boolean }>(
-      '/api/settings/llm-provider',
-      { method: 'PUT', body },
-    )
+    const res = await $fetch<{
+      provider: LlmProvider
+      baseUrl: string
+      model: string
+      executionMode: LlmExecutionMode
+      apiKeySet: boolean
+    }>('/api/settings/llm-provider', { method: 'PUT', body })
     llmProviderOverrideActive.value = true
     llmProviderApiKeySet.value = res.apiKeySet
+    llmProviderForm.value.executionMode = res.executionMode
     llmProviderForm.value.apiKey = ''
     llmProviderSaved.value = true
     await loadModelOptions()
@@ -545,6 +585,7 @@ async function saveLlmProvider(): Promise<void> {
 }
 
 async function clearLlmProviderApiKey(): Promise<void> {
+  if (llmProviderForm.value.provider === 'claude-proxy') llmProviderForm.value.executionMode = 'sync'
   await putLlmProvider('')
 }
 
@@ -572,11 +613,49 @@ interface ReprocessResult {
   skipped: number
   llmCalls: number
 }
+interface LlmBatchJobOverviewItem {
+  jobName: string
+  source: 'enrich' | 'reprocess'
+  status: 'pending'
+  provider: 'anthropic' | 'gemini'
+  itemCount: number
+  pendingCount: number
+  requestKeys: string[]
+  submittedAt: string
+  checkedAt: string | null
+  updatedAt: string
+}
+interface LlmBatchJobsOverview {
+  totalJobs: number
+  totalRequests: number
+  jobs: LlmBatchJobOverviewItem[]
+}
 const reprocessLimit = ref('10')
 const reprocessCountry = ref('de')
 const reprocessPending = ref(false)
 const reprocessError = ref<string | null>(null)
 const reprocessResult = ref<ReprocessResult | null>(null)
+const llmBatchJobs = ref<LlmBatchJobsOverview | null>(null)
+const llmBatchJobsPending = ref(false)
+const llmBatchJobsError = ref<string | null>(null)
+
+function formatBatchDate(iso: string | null): string {
+  if (!iso) return '–'
+  const date = new Date(iso)
+  return Number.isFinite(date.getTime()) ? date.toLocaleString() : iso
+}
+
+async function loadLlmBatchJobs(): Promise<void> {
+  llmBatchJobsPending.value = true
+  llmBatchJobsError.value = null
+  try {
+    llmBatchJobs.value = await $fetch<LlmBatchJobsOverview>('/api/settings/llm-batch-jobs', { cache: 'no-store' })
+  } catch (err) {
+    llmBatchJobsError.value = normalizeSettingsError(err, t('settings.llmBatch.loadError'))
+  } finally {
+    llmBatchJobsPending.value = false
+  }
+}
 
 function parseReprocessLimit(raw: string): number | null {
   const value = Number(raw)
@@ -595,30 +674,18 @@ async function runReprocessTest(): Promise<void> {
   try {
     reprocessResult.value = await $fetch<ReprocessResult>('/api/settings/reprocess', {
       method: 'POST',
-      body: { limit, country: reprocessCountry.value.trim() || undefined },
+      body: {
+        limit,
+        country: reprocessCountry.value.trim() || undefined,
+      },
     })
+    await loadLlmBatchJobs()
   } catch (err) {
     reprocessError.value = normalizeSettingsError(err, t('settings.reprocess.runError'))
   } finally {
     reprocessPending.value = false
   }
 }
-
-// Refresh-Trigger: stößt server/tasks/refresh.ts sofort an statt auf den
-// stündlichen Cron-Tick zu warten — z. B. um einen raw-archive-Fix gegen
-// eine live neu gecrawlte Auktion zu verifizieren. Läuft trotzdem nur für
-// Regionen, deren List-Cache das cadence-Intervall überschritten hat
-// (server/crawlers/crawl-cadence.ts) — kein Force-Override, kein
-// zusätzliches IP-Ban-Risiko gegenüber dem regulären Tick.
-interface RefreshResult {
-  ok: number
-  failed: number
-  skipped: number
-  durationMs: number
-}
-const refreshPending = ref(false)
-const refreshError = ref<string | null>(null)
-const refreshResult = ref<RefreshResult | null>(null)
 
 // Datenquellen: persistent aktivierte Länder-Crawler. Die Registry setzt eine
 // gespeicherte Änderung sofort um; der nächste reguläre/manuelle Refresh füllt
@@ -693,20 +760,6 @@ async function rebuildCountrySource(source: CountrySourceSetting): Promise<void>
     countryRebuildError.value = normalizeSettingsError(err, t('settings.sources.rebuildError'))
   } finally {
     countryRebuildPending.value = null
-  }
-}
-
-async function runRefreshNow(): Promise<void> {
-  refreshPending.value = true
-  refreshError.value = null
-  refreshResult.value = null
-  try {
-    const res = await $fetch<{ result: RefreshResult }>('/api/settings/refresh', { method: 'POST' })
-    refreshResult.value = res.result
-  } catch (err) {
-    refreshError.value = normalizeSettingsError(err, t('settings.refresh.runError'))
-  } finally {
-    refreshPending.value = false
   }
 }
 
@@ -937,6 +990,29 @@ onBeforeUnmount(stopPolling)
                 </SelectContent>
               </Select>
             </div>
+            <div class="space-y-1">
+              <Label>{{ $t('settings.llmProvider.executionModeLabel') }}</Label>
+              <Select v-model="llmProviderForm.executionMode">
+                <SelectTrigger class="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="sync">{{ $t('settings.llmProvider.executionModeSync') }}</SelectItem>
+                  <SelectItem v-if="llmProviderSupportsBatch" value="batch" :disabled="!llmProviderCanSelectBatch">
+                    {{ $t('settings.llmProvider.executionModeBatch') }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p v-if="!llmProviderSupportsBatch" class="text-xs text-muted-foreground">
+                {{ $t('settings.llmProvider.batchUnsupported') }}
+              </p>
+              <p
+                v-else-if="llmProviderForm.provider === 'claude-proxy' && !llmProviderCanSelectBatch"
+                class="text-xs text-muted-foreground"
+              >
+                {{ $t('settings.llmProvider.batchKeyRequired') }}
+              </p>
+            </div>
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div class="space-y-1">
                 <Label>{{ $t('settings.llmProvider.baseUrlLabel') }}</Label>
@@ -964,7 +1040,7 @@ onBeforeUnmount(stopPolling)
                 <p v-if="llmModelOptionsError" class="text-xs text-destructive">{{ llmModelOptionsError }}</p>
               </div>
             </div>
-            <div v-if="llmProviderForm.provider !== 'claude-proxy'" class="space-y-1">
+            <div class="space-y-1">
               <Label>{{ $t('settings.llmProvider.apiKeyLabel') }}</Label>
               <div class="flex gap-2">
                 <Input
@@ -1105,6 +1181,65 @@ onBeforeUnmount(stopPolling)
 
       <Card v-if="authed">
         <CardHeader>
+          <div class="flex items-center justify-between gap-3">
+            <CardTitle>{{ $t('settings.llmBatch.title') }}</CardTitle>
+            <Button type="button" variant="outline" size="sm" :disabled="llmBatchJobsPending" @click="loadLlmBatchJobs">
+              <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': llmBatchJobsPending }" />
+              {{ $t('settings.llmBatch.refresh') }}
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          <p class="text-sm text-muted-foreground">
+            {{ $t('settings.llmBatch.description') }}
+          </p>
+          <p v-if="llmBatchJobsError" class="text-sm text-destructive">{{ llmBatchJobsError }}</p>
+
+          <div class="grid grid-cols-2 gap-3 text-sm">
+            <div class="border rounded-md p-3">
+              <div class="text-xs text-muted-foreground">{{ $t('settings.llmBatch.totalJobs') }}</div>
+              <div class="text-xl font-semibold tabular-nums">{{ llmBatchJobs?.totalJobs ?? 0 }}</div>
+            </div>
+            <div class="border rounded-md p-3">
+              <div class="text-xs text-muted-foreground">{{ $t('settings.llmBatch.totalRequests') }}</div>
+              <div class="text-xl font-semibold tabular-nums">{{ llmBatchJobs?.totalRequests ?? 0 }}</div>
+            </div>
+          </div>
+
+          <p v-if="!llmBatchJobsPending && (!llmBatchJobs || llmBatchJobs.jobs.length === 0)" class="text-sm text-muted-foreground">
+            {{ $t('settings.llmBatch.empty') }}
+          </p>
+
+          <div v-for="job in llmBatchJobs?.jobs ?? []" :key="job.jobName" class="border rounded-md p-3 space-y-3">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div class="min-w-0">
+                <div class="font-mono text-xs break-all">{{ job.jobName }}</div>
+                <div class="mt-1 flex flex-wrap gap-2">
+                  <Badge variant="secondary">{{ job.provider }}</Badge>
+                  <Badge variant="outline">{{ $t(`settings.llmBatch.source.${job.source}`) }}</Badge>
+                </div>
+              </div>
+              <div class="text-right text-sm">
+                <div class="font-semibold tabular-nums">
+                  {{ $t('settings.llmBatch.pendingOfTotal', { pending: job.pendingCount, total: job.itemCount }) }}
+                </div>
+                <div class="text-xs text-muted-foreground">
+                  {{ $t('settings.llmBatch.submittedAt', { at: formatBatchDate(job.submittedAt) }) }}
+                </div>
+              </div>
+            </div>
+
+            <div v-if="job.requestKeys.length" class="max-h-40 overflow-auto rounded border bg-muted/30 p-2">
+              <div v-for="key in job.requestKeys" :key="`${job.jobName}:${key}`" class="font-mono text-xs leading-6">
+                {{ key }}
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card v-if="authed">
+        <CardHeader>
           <CardTitle>{{ $t('settings.reprocess.title') }}</CardTitle>
         </CardHeader>
         <CardContent class="space-y-4">
@@ -1218,34 +1353,6 @@ onBeforeUnmount(stopPolling)
               {{ countrySourcesPending ? $t('settings.sources.saving') : $t('settings.sources.save') }}
             </Button>
           </form>
-        </CardContent>
-      </Card>
-
-      <Card v-if="authed">
-        <CardHeader>
-          <CardTitle>{{ $t('settings.refresh.title') }}</CardTitle>
-        </CardHeader>
-        <CardContent class="space-y-4">
-          <p class="text-sm text-muted-foreground">
-            {{ $t('settings.refresh.description') }}
-          </p>
-
-          <p v-if="refreshError" class="text-sm text-destructive">{{ refreshError }}</p>
-
-          <Button type="button" :disabled="refreshPending" @click="runRefreshNow">
-            {{ refreshPending ? $t('settings.refresh.running') : $t('settings.refresh.run') }}
-          </Button>
-
-          <dl v-if="refreshResult" class="grid grid-cols-2 gap-x-4 gap-y-1 text-sm border-t pt-3">
-            <dt class="text-muted-foreground">{{ $t('settings.refresh.ok') }}</dt>
-            <dd>{{ refreshResult.ok }}</dd>
-            <dt class="text-muted-foreground">{{ $t('settings.refresh.failed') }}</dt>
-            <dd>{{ refreshResult.failed }}</dd>
-            <dt class="text-muted-foreground">{{ $t('settings.refresh.skipped') }}</dt>
-            <dd>{{ refreshResult.skipped }}</dd>
-            <dt class="text-muted-foreground">{{ $t('settings.refresh.durationMs') }}</dt>
-            <dd>{{ refreshResult.durationMs }}</dd>
-          </dl>
         </CardContent>
       </Card>
 

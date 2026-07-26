@@ -1,5 +1,36 @@
 import { describe, expect, it } from 'vitest'
-import { buildParts, clampExtraction, parseExtractionResponse, resolveLlmConfig } from './llm'
+import {
+  buildParts,
+  clampExtraction,
+  parseExtractionResponse,
+  resolveLlmConfig,
+  SYSTEM_PROMPT,
+  UNIVERSAL_AUCTION_SCHEMA,
+  UNIVERSAL_AUCTION_SCHEMA_ID,
+  UNIVERSAL_AUCTION_SCHEMA_NAME,
+  UNIVERSAL_AUCTION_SCHEMA_VERSION,
+} from './llm'
+
+describe('universal auction extraction schema', () => {
+  it('exposes the canonical schema identity and required fields', () => {
+    expect(UNIVERSAL_AUCTION_SCHEMA_VERSION).toBe(1)
+    expect(UNIVERSAL_AUCTION_SCHEMA_ID).toContain(UNIVERSAL_AUCTION_SCHEMA_NAME)
+    expect(UNIVERSAL_AUCTION_SCHEMA).toMatchObject({
+      type: 'object',
+      additionalProperties: false,
+    })
+    expect(UNIVERSAL_AUCTION_SCHEMA.required).toContain('propertyType')
+    expect(UNIVERSAL_AUCTION_SCHEMA.required).toContain('documentSummary')
+  })
+
+  it('instructs the LLM to normalize country-specific text into the universal JSON format', () => {
+    expect(SYSTEM_PROMPT).toContain('universelles JSON-Format')
+    expect(SYSTEM_PROMPT).toContain('polnisch')
+    expect(SYSTEM_PROMPT).toContain('spanisch')
+    expect(SYSTEM_PROMPT).toContain('Enum-Werte exakt')
+    expect(SYSTEM_PROMPT).toContain('gibst du auf Deutsch zurück')
+  })
+})
 
 describe('parseExtractionResponse', () => {
   it('returns the final_result tool_use input', () => {

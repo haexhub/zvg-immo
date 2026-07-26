@@ -1,15 +1,15 @@
-import { createHash } from 'node:crypto'
+import { lookup } from 'node:dns/promises'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { inflateRawSync } from 'node:zlib'
+import ipaddr from 'ipaddr.js'
+import { Agent } from 'undici'
+import { fromBufferPromise, validateFileName, type Entry, type ZipFile } from 'yauzl'
 import type { Attachment } from '~/types/auction'
 import { UA, ZVG_BASE } from '~/server/crawlers/zvg-portal/constants'
+import { detectImageExt, imageContentFilename, imageContentHash, imageSize } from './image-bytes'
 import { downloadNativeImages } from './native-images'
 import { extractPdfPhotos } from './pdf-images'
 
-const EOCD_SIGNATURE = 0x06054b50
-const CENTRAL_DIR_SIGNATURE = 0x02014b50
-const ZIP_MAX_COMMENT_BYTES = 0xffff
 const MAX_DOCUMENT_BYTES = 30 * 1024 * 1024
 const MAX_INFLATED_BYTES = 30 * 1024 * 1024
 const MIN_IMAGE_BYTES = 512
@@ -22,6 +22,11 @@ type DocumentImageFormat = 'pdf' | 'docx' | 'html'
 interface ZipEntry {
   name: string
   bytes: Buffer
+}
+
+interface PinnedHost {
+  address: string
+  family: 4 | 6
 }
 
 export interface ExtractDocumentPhotosOptions {
@@ -63,125 +68,98 @@ function resolveDocumentSource(proxyUrl: string, accept: string): { url: string;
 
 async function fetchDocumentBytes(proxyUrl: string, accept: string): Promise<Buffer | null> {
   const { url, headers } = resolveDocumentSource(proxyUrl, accept)
-  let buf: Buffer
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 30_000)
   try {
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(30_000) })
+    const res = await fetch(url, { headers, signal: controller.signal })
     if (!res.ok) {
       if (res.status === 408 || res.status === 429 || res.status >= 500) {
         throw new Error(`document fetch failed with HTTP ${res.status}`)
       }
+      await res.body?.cancel().catch(() => undefined)
       return null
     }
     const contentLength = Number(res.headers.get('content-length') ?? '')
-    if (Number.isFinite(contentLength) && contentLength > MAX_DOCUMENT_BYTES) return null
-    buf = Buffer.from(await res.arrayBuffer())
+    if (Number.isFinite(contentLength) && contentLength > MAX_DOCUMENT_BYTES) {
+      await res.body?.cancel().catch(() => undefined)
+      return null
+    }
+    if (!res.body) return null
+    const reader = res.body.getReader()
+    const chunks: Buffer[] = []
+    let total = 0
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (!value) continue
+      total += value.byteLength
+      if (total > MAX_DOCUMENT_BYTES) {
+        await reader.cancel().catch(() => undefined)
+        return null
+      }
+      chunks.push(Buffer.from(value))
+    }
+    return Buffer.concat(chunks, total)
   } catch (err) {
     if (err instanceof Error && /document fetch failed/.test(err.message)) throw err
     throw new Error(`document fetch failed: ${(err as Error).message}`)
+  } finally {
+    clearTimeout(timer)
   }
-  return buf.length > MAX_DOCUMENT_BYTES ? null : buf
 }
 
-function readZipEntries(buf: Buffer): ZipEntry[] {
-  const entries: ZipEntry[] = []
-  if (buf.length < 22) return entries
+async function readZipEntryBytes(zip: ZipFile, entry: Entry): Promise<Buffer | null> {
+  if (!entry.canDecodeFileData() || entry.isEncrypted() || entry.uncompressedSize > MAX_INFLATED_BYTES) return null
+  return new Promise((resolve) => {
+    zip.openReadStream(entry, (err, stream) => {
+      if (err || !stream) {
+        resolve(null)
+        return
+      }
+      const chunks: Buffer[] = []
+      let total = 0
+      let resolved = false
+      const done = (bytes: Buffer | null) => {
+        if (resolved) return
+        resolved = true
+        resolve(bytes)
+      }
+      stream.on('data', (chunk: Buffer) => {
+        total += chunk.length
+        if (total > MAX_INFLATED_BYTES) {
+          stream.destroy()
+          done(null)
+          return
+        }
+        chunks.push(chunk)
+      })
+      stream.on('end', () => done(Buffer.concat(chunks, total)))
+      stream.on('error', () => done(null))
+    })
+  })
+}
 
-  let eocd = -1
-  const eocdSearchStart = Math.max(0, buf.length - 22 - ZIP_MAX_COMMENT_BYTES)
-  for (let i = buf.length - 22; i >= eocdSearchStart; i--) {
-    if (buf.readUInt32LE(i) === EOCD_SIGNATURE) {
-      eocd = i
-      break
-    }
+async function readZipEntries(buf: Buffer): Promise<ZipEntry[]> {
+  let zip: ZipFile
+  try {
+    zip = await fromBufferPromise(buf, { lazyEntries: true, validateEntrySizes: true, strictFileNames: true })
+  } catch {
+    return []
   }
-  if (eocd < 0) return entries
-
-  const entryCount = buf.readUInt16LE(eocd + 10)
-  let offset = buf.readUInt32LE(eocd + 16)
-  for (let i = 0; i < entryCount; i++) {
-    if (offset < 0 || offset + 46 > buf.length) return entries
-    if (buf.readUInt32LE(offset) !== CENTRAL_DIR_SIGNATURE) break
-    const compressionMethod = buf.readUInt16LE(offset + 10)
-    const compressedSize = buf.readUInt32LE(offset + 20)
-    const nameLength = buf.readUInt16LE(offset + 28)
-    const extraLength = buf.readUInt16LE(offset + 30)
-    const commentLength = buf.readUInt16LE(offset + 32)
-    const localHeaderOffset = buf.readUInt32LE(offset + 42)
-    const nameStart = offset + 46
-    const nameEnd = nameStart + nameLength
-    if (nameEnd > buf.length) return entries
-    const name = buf.toString('utf8', nameStart, nameEnd)
-    offset += 46 + nameLength + extraLength + commentLength
-
-    if (localHeaderOffset + 30 > buf.length) continue
-    const localNameLength = buf.readUInt16LE(localHeaderOffset + 26)
-    const localExtraLength = buf.readUInt16LE(localHeaderOffset + 28)
-    const dataStart = localHeaderOffset + 30 + localNameLength + localExtraLength
-    const dataEnd = dataStart + compressedSize
-    if (dataStart < 0 || dataEnd > buf.length) continue
-    const data = buf.subarray(dataStart, dataEnd)
-    try {
-      if (compressionMethod === 0) entries.push({ name, bytes: Buffer.from(data) })
-      if (compressionMethod === 8) entries.push({ name, bytes: inflateRawSync(data, { maxOutputLength: MAX_INFLATED_BYTES }) })
-    } catch {
-      // One corrupt member should not discard the rest of the document.
+  const entries: ZipEntry[] = []
+  try {
+    for await (const entry of zip.eachEntry()) {
+      if (entries.length >= 200) break
+      if (entry.fileName.endsWith('/') || validateFileName(entry.fileName) !== null) continue
+      const bytes = await readZipEntryBytes(zip, entry)
+      if (bytes) entries.push({ name: entry.fileName, bytes })
     }
+  } catch {
+    entries.length = 0
+  } finally {
+    zip.close()
   }
   return entries
-}
-
-function detectImageExt(buf: Buffer): 'jpg' | 'png' | 'webp' | null {
-  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpg'
-  if (
-    buf.length >= 8 &&
-    buf[0] === 0x89 &&
-    buf[1] === 0x50 &&
-    buf[2] === 0x4e &&
-    buf[3] === 0x47 &&
-    buf[4] === 0x0d &&
-    buf[5] === 0x0a &&
-    buf[6] === 0x1a &&
-    buf[7] === 0x0a
-  ) {
-    return 'png'
-  }
-  if (
-    buf.length >= 12 &&
-    buf[0] === 0x52 &&
-    buf[1] === 0x49 &&
-    buf[2] === 0x46 &&
-    buf[3] === 0x46 &&
-    buf[8] === 0x57 &&
-    buf[9] === 0x45 &&
-    buf[10] === 0x42 &&
-    buf[11] === 0x50
-  ) {
-    return 'webp'
-  }
-  return null
-}
-
-function imageSize(buf: Buffer): { width: number; height: number } | null {
-  if (buf.length >= 24 && detectImageExt(buf) === 'png') {
-    return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) }
-  }
-  if (detectImageExt(buf) === 'jpg') {
-    let offset = 2
-    while (offset + 9 < buf.length) {
-      if (buf[offset] !== 0xff) return null
-      const marker = buf[offset + 1]
-      offset += 2
-      if (marker == null || marker === 0xd9 || marker === 0xda) break
-      if (offset + 2 > buf.length) break
-      const length = buf.readUInt16BE(offset)
-      if (length < 2 || offset + length > buf.length) break
-      if ((marker >= 0xc0 && marker <= 0xc3) || (marker >= 0xc5 && marker <= 0xc7) || (marker >= 0xc9 && marker <= 0xcb) || (marker >= 0xcd && marker <= 0xcf)) {
-        return { height: buf.readUInt16BE(offset + 3), width: buf.readUInt16BE(offset + 5) }
-      }
-      offset += length
-    }
-  }
-  return null
 }
 
 function isLikelyPhoto(buf: Buffer): boolean {
@@ -206,10 +184,10 @@ async function writeImageBytes(entries: readonly Buffer[], opts: ExtractDocument
     if (!isLikelyPhoto(bytes)) continue
     const ext = detectImageExt(bytes)
     if (!ext) continue
-    const hash = createHash('md5').update(bytes).digest('hex')
+    const hash = imageContentHash(bytes)
     if (seen.has(hash)) continue
     seen.add(hash)
-    const name = `${hash.slice(0, 16)}.${ext}`
+    const name = imageContentFilename(bytes, ext)
     await writeFile(join(opts.destDir, name), bytes)
     written.push(name)
   }
@@ -223,7 +201,7 @@ async function extractDocxPhotos(proxyUrl: string, opts: ExtractDocumentPhotosOp
   )
   if (!buf) return []
   if (buf.length < 4 || buf.readUInt32LE(0) !== 0x04034b50) return []
-  const media = readZipEntries(buf)
+  const media = (await readZipEntries(buf))
     .filter((entry) => /^word\/media\/.+\.(?:jpe?g|png|webp)$/i.test(entry.name))
     .map((entry) => entry.bytes)
   return writeImageBytes(media, opts)
@@ -259,11 +237,80 @@ export function extractHtmlImageUrls(html: string, baseUrl: string): string[] {
   return urls
 }
 
+function isPublicIp(address: string): boolean {
+  if (!ipaddr.isValid(address)) return false
+  const parsed = ipaddr.parse(address)
+  return parsed.range() === 'unicast'
+}
+
+function normalizeHostname(hostname: string): string {
+  return hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname
+}
+
+async function resolvePublicHost(hostname: string): Promise<PinnedHost | null> {
+  const normalized = normalizeHostname(hostname)
+  if (ipaddr.isValid(normalized)) {
+    const parsed = ipaddr.parse(normalized)
+    const family = parsed.kind() === 'ipv4' ? 4 : 6
+    return isPublicIp(normalized) ? { address: normalized, family } : null
+  }
+  const records = await lookup(normalized, { all: true, verbatim: true }).catch(() => [])
+  if (records.length === 0 || records.some((record) => !isPublicIp(record.address))) return null
+  const first = records[0]!
+  if (first.family !== 4 && first.family !== 6) return null
+  return { address: first.address, family: first.family }
+}
+
+async function pinPublicImageUrls(urls: readonly string[]): Promise<{ urls: string[]; dispatcher: Agent | null }> {
+  const pinned = new Map<string, PinnedHost>()
+  const out: string[] = []
+  for (const raw of urls) {
+    let url: URL
+    try {
+      url = new URL(raw)
+    } catch {
+      continue
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') continue
+    const key = normalizeHostname(url.hostname).toLowerCase()
+    const resolved = pinned.get(key) ?? await resolvePublicHost(url.hostname)
+    if (!resolved) continue
+    pinned.set(key, resolved)
+    out.push(url.toString())
+  }
+  if (out.length === 0) return { urls: [], dispatcher: null }
+  const dispatcher = new Agent({
+    connect: {
+      lookup(hostname, _opts, callback) {
+        const resolved = pinned.get(normalizeHostname(hostname).toLowerCase())
+        if (!resolved) {
+          callback(new Error(`unpinned host: ${hostname}`), '', 0)
+          return
+        }
+        callback(null, resolved.address, resolved.family)
+      },
+    },
+  })
+  return { urls: out, dispatcher }
+}
+
 async function extractHtmlPhotos(proxyUrl: string, opts: ExtractDocumentPhotosOptions): Promise<string[]> {
   const buf = await fetchDocumentBytes(proxyUrl, 'text/html,application/xhtml+xml,*/*')
   if (!buf) return []
   const urls = extractHtmlImageUrls(buf.toString('utf8'), proxyUrl)
-  const downloaded = await downloadNativeImages(urls, { destDir: opts.destDir, maxImages: opts.maxPhotos })
+  const pinned = await pinPublicImageUrls(urls)
+  if (!pinned.urls.length || !pinned.dispatcher) return []
+  let downloaded: string[]
+  try {
+    downloaded = await downloadNativeImages(pinned.urls, {
+      destDir: opts.destDir,
+      maxImages: opts.maxPhotos,
+      dispatcher: pinned.dispatcher,
+      redirect: 'manual',
+    })
+  } finally {
+    await pinned.dispatcher.close()
+  }
   const photos: string[] = []
   for (const name of downloaded) {
     try {

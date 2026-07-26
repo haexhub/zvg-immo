@@ -274,6 +274,11 @@
       "providerClaudeProxy": "Claude-Proxy (OAuth)",
       "providerOpenaiCompatible": "OpenAI-kompatibel",
       "providerGeminiNative": "Gemini (native)",
+      "executionModeLabel": "API-Aufruf",
+      "executionModeSync": "Sync",
+      "executionModeBatch": "Batch",
+      "batchUnsupported": "Dieser Provider bietet hier keinen Batch-Modus an.",
+      "batchKeyRequired": "Batch über Claude-Proxy benötigt einen gespeicherten Proxy-/API-Key.",
       "baseUrlLabel": "Base-URL",
       "modelLabel": "Modell",
       "modelSelectPlaceholder": "Modell wählen …",
@@ -336,16 +341,20 @@
       "skipped": "Übersprungen",
       "llmCalls": "LLM-Aufrufe"
     },
-    "refresh": {
-      "title": "Refresh jetzt starten",
-      "description": "Stößt den Crawl-Refresh sofort an statt auf den stündlichen Cron-Tick zu warten — crawlt weiterhin nur Regionen, deren Cache-Alter das jeweilige Portal-Intervall überschritten hat.",
-      "run": "Refresh starten",
-      "running": "Läuft …",
-      "runError": "Refresh fehlgeschlagen.",
-      "ok": "Erfolgreich",
-      "failed": "Fehlgeschlagen",
-      "skipped": "Übersprungen (Cache noch frisch)",
-      "durationMs": "Dauer (ms)"
+    "llmBatch": {
+      "title": "LLM-Batch-Pipeline",
+      "description": "Offene Batch-Jobs, die an einen LLM-Provider übergeben wurden und noch auf Ergebnisse warten.",
+      "refresh": "Aktualisieren",
+      "loadError": "Batch-Pipeline konnte nicht geladen werden.",
+      "empty": "Keine offenen Batch-Requests.",
+      "totalJobs": "Offene Jobs",
+      "totalRequests": "Offene Requests",
+      "pendingOfTotal": "{pending} von {total} offen",
+      "submittedAt": "Eingereicht: {at}",
+      "source": {
+        "enrich": "Enrich",
+        "reprocess": "Reprocess"
+      }
     },
     "archive": {
       "title": "Roh-Archiv",

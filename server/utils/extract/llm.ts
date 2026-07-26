@@ -147,11 +147,21 @@ export interface PhotoCuration {
 // cannot grow without a corresponding budget review.
 const MAX_PDF_CHARS = 60_000
 
+export const UNIVERSAL_AUCTION_SCHEMA_VERSION = 1
+export const UNIVERSAL_AUCTION_SCHEMA_NAME = 'universal_auction_extraction_v1'
+export const UNIVERSAL_AUCTION_SCHEMA_ID = `https://zvg-immo.local/schemas/${UNIVERSAL_AUCTION_SCHEMA_NAME}.json`
+
 export const SYSTEM_PROMPT =
-  'Du extrahierst strukturierte Eckdaten aus Anzeigen für Immobilien-' +
-  'Zwangsversteigerungen (Texte können deutsch, spanisch, italienisch, französisch, ' +
-  'niederländisch, tschechisch, polnisch, bosnisch, ungarisch, litauisch, lettisch, ' +
-  'estnisch, schwedisch, finnisch, dänisch oder isländisch sein). ' +
+  'Du übersetzt chaotische, länderspezifische Texte und Dokumente zu Immobilienauktionen ' +
+  'in ein universelles JSON-Format. Die Eingabe kann deutsch, spanisch, italienisch, ' +
+  'französisch, niederländisch, tschechisch, polnisch, bosnisch, ungarisch, litauisch, ' +
+  'lettisch, estnisch, schwedisch, finnisch, dänisch, isländisch oder eine andere ' +
+  'europäische Sprache enthalten. Arbeite semantisch, nicht wortwörtlich: ordne lokale ' +
+  'Auktions-, Gerichts-, Grundstücks- und Immobilienbegriffe den kanonischen Schemafeldern ' +
+  'zu und gib Enum-Werte exakt in den erlaubten normalisierten Codes zurück. Freitexte ' +
+  'wie documentSummary, biddingNotes, renovationNotes, insights.summary und planningNotes ' +
+  'gibst du auf Deutsch zurück; kurze O-Ton-Beträge in marketValueText dürfen in der ' +
+  'Originalsprache/-schreibweise bleiben. ' +
   'Gib die Objektart als eine der erlaubten Kategorien ' +
   'zurück und Flächen in Quadratmetern (Hektar in m² umrechnen: 1 ha = 10000 m²). ' +
   'Wohnfläche und Grundstücksfläche strikt getrennt halten. Wenn ein Wert nicht ' +
@@ -224,7 +234,9 @@ export const SYSTEM_PROMPT =
   'Immobilie; false bei Lageplan, Grundriss, Wappen, Deckblatt oder Textseite). Wurden keine ' +
   'Bilder mitgesendet, gib ein leeres photos-Array zurück.'
 
-export const EXTRACTION_SCHEMA = {
+export const UNIVERSAL_AUCTION_SCHEMA = {
+  description:
+    'Kanonisches, länder- und sprachunabhängiges Zielformat für aus Auktionstexten und Dokumenten extrahierte Immobilien-Eckdaten.',
   type: 'object',
   additionalProperties: false,
   properties: {
@@ -679,7 +691,7 @@ export async function extractByLlm(
   if (parts.length === 0) return null
   const raw = await getProvider(config).extract({
     systemPrompt: SYSTEM_PROMPT,
-    schema: EXTRACTION_SCHEMA,
+    schema: UNIVERSAL_AUCTION_SCHEMA,
     parts,
   })
   return raw ? clampExtraction(raw) : null

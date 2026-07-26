@@ -274,6 +274,11 @@
       "providerClaudeProxy": "Claude proxy (OAuth)",
       "providerOpenaiCompatible": "OpenAI-compatible",
       "providerGeminiNative": "Gemini (native)",
+      "executionModeLabel": "API call",
+      "executionModeSync": "Sync",
+      "executionModeBatch": "Batch",
+      "batchUnsupported": "This provider does not offer batch mode here.",
+      "batchKeyRequired": "Batch via Claude proxy requires a saved proxy/API key.",
       "baseUrlLabel": "Base URL",
       "modelLabel": "Model",
       "modelSelectPlaceholder": "Select a model …",
@@ -336,16 +341,20 @@
       "skipped": "Skipped",
       "llmCalls": "LLM calls"
     },
-    "refresh": {
-      "title": "Trigger refresh now",
-      "description": "Runs the crawl refresh immediately instead of waiting for the hourly cron tick — still only crawls regions whose cache age has exceeded that portal's interval.",
-      "run": "Start refresh",
-      "running": "Running …",
-      "runError": "Refresh failed.",
-      "ok": "Succeeded",
-      "failed": "Failed",
-      "skipped": "Skipped (cache still fresh)",
-      "durationMs": "Duration (ms)"
+    "llmBatch": {
+      "title": "LLM batch pipeline",
+      "description": "Open batch jobs that were handed to an LLM provider and are still waiting for results.",
+      "refresh": "Refresh",
+      "loadError": "Could not load the batch pipeline.",
+      "empty": "No open batch requests.",
+      "totalJobs": "Open jobs",
+      "totalRequests": "Open requests",
+      "pendingOfTotal": "{pending} of {total} open",
+      "submittedAt": "Submitted: {at}",
+      "source": {
+        "enrich": "Enrich",
+        "reprocess": "Reprocess"
+      }
     },
     "archive": {
       "title": "Raw archive",

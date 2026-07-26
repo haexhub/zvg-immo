@@ -3,7 +3,16 @@ import { describe, expect, it, vi } from 'vitest'
 vi.mock('./db', () => ({ getPool: vi.fn() }))
 
 function makeFakePool() {
-  const rows: Array<{ job_name: string; source: string; status: string; item_count: number }> = []
+  const rows: Array<{
+    job_name: string
+    source: string
+    status: string
+    item_count: number
+    custom_id_map: Record<string, string>
+    submitted_at: string
+    checked_at: string | null
+    updated_at: string
+  }> = []
   const query = vi.fn(async (sql: string, params: unknown[] = []) => {
     if (sql.startsWith('INSERT INTO llm_batch_jobs')) {
       rows.push({
@@ -11,10 +20,14 @@ function makeFakePool() {
         source: params[1] as string,
         status: 'pending',
         item_count: params[2] as number,
+        custom_id_map: params[3] ? JSON.parse(params[3] as string) : {},
+        submitted_at: '2026-07-26T18:00:00.000Z',
+        checked_at: null,
+        updated_at: '2026-07-26T18:00:00.000Z',
       })
       return { rows: [], rowCount: 1 }
     }
-    if (sql.includes("SELECT job_name, source, status, item_count FROM llm_batch_jobs WHERE status = 'pending'")) {
+    if (sql.includes('SELECT job_name, source, status, item_count, custom_id_map, submitted_at, checked_at, updated_at')) {
       return { rows: rows.filter((r) => r.status === 'pending'), rowCount: rows.length }
     }
     if (sql.startsWith('DELETE FROM llm_batch_jobs')) {
@@ -47,7 +60,45 @@ describe('llm-batch-jobs', () => {
     await insertLlmBatchJob({ jobName: 'batches/abc', source: 'reprocess', itemCount: 3 })
     const pending = await listPendingLlmBatchJobs()
 
-    expect(pending).toEqual([{ jobName: 'batches/abc', source: 'reprocess', status: 'pending', itemCount: 3 }])
+    expect(pending).toEqual([
+      {
+        jobName: 'batches/abc',
+        source: 'reprocess',
+        status: 'pending',
+        itemCount: 3,
+        customIdMap: {},
+        submittedAt: '2026-07-26T18:00:00.000Z',
+        checkedAt: null,
+        updatedAt: '2026-07-26T18:00:00.000Z',
+      },
+    ])
+  })
+
+  it('persists and returns an Anthropic custom_id map', async () => {
+    const { getPool } = await import('./db')
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { insertLlmBatchJob, listPendingLlmBatchJobs } = await import('./llm-batch-jobs')
+
+    await insertLlmBatchJob({
+      jobName: 'msgbatch_abc',
+      source: 'enrich',
+      itemCount: 1,
+      customIdMap: { zvg_0_hash: 'zvg-portal:7265' },
+    })
+
+    await expect(listPendingLlmBatchJobs()).resolves.toEqual([
+      {
+        jobName: 'msgbatch_abc',
+        source: 'enrich',
+        status: 'pending',
+        itemCount: 1,
+        customIdMap: { zvg_0_hash: 'zvg-portal:7265' },
+        submittedAt: '2026-07-26T18:00:00.000Z',
+        checkedAt: null,
+        updatedAt: '2026-07-26T18:00:00.000Z',
+      },
+    ])
   })
 
   it('deletes a job, removing it from the pending list', async () => {

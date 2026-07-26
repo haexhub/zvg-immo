@@ -13,12 +13,19 @@ export default defineEventHandler(async () => {
   const override = db ? await getLlmProviderOverride(db) : null
   return {
     override: override
-      ? { provider: override.provider, baseUrl: override.baseUrl, model: override.model, apiKeySet: !!override.apiKey }
+      ? {
+          provider: override.provider,
+          baseUrl: override.baseUrl,
+          model: override.model,
+          executionMode: override.executionMode,
+          apiKeySet: !!override.apiKey,
+        }
       : null,
     envDefault: {
       provider: envConfig?.provider || 'openai-compatible',
       baseUrl: envConfig?.baseUrl || '',
       model: envConfig?.model || '',
+      executionMode: 'sync',
     },
   }
 })
