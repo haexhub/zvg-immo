@@ -626,6 +626,7 @@ const countrySources = ref<CountrySourceSetting[]>([])
 const countrySourcesPending = ref(false)
 const countrySourcesError = ref<string | null>(null)
 const countrySourcesSaved = ref(false)
+const countrySourcesLoaded = ref(false)
 const enabledCountrySourceCount = computed(
   () => countrySources.value.filter((source) => source.enabled).length,
 )
@@ -634,8 +635,10 @@ async function loadCountrySources(): Promise<void> {
   try {
     const res = await $fetch<CountrySourceSettings>('/api/settings/countries')
     countrySources.value = res.countries
+    countrySourcesLoaded.value = true
     countrySourcesError.value = null
   } catch (err) {
+    countrySourcesLoaded.value = false
     countrySourcesError.value = normalizeSettingsError(err, t('settings.sources.loadError'))
   }
 }
@@ -647,6 +650,7 @@ function toggleCountrySource(code: string): void {
 }
 
 async function saveCountrySources(): Promise<void> {
+  if (!countrySourcesLoaded.value) return
   countrySourcesPending.value = true
   countrySourcesError.value = null
   countrySourcesSaved.value = false
@@ -1159,7 +1163,7 @@ onBeforeUnmount(stopPolling)
               }) }}
             </p>
 
-            <Button type="submit" :disabled="countrySourcesPending">
+            <Button type="submit" :disabled="countrySourcesPending || !countrySourcesLoaded">
               {{ countrySourcesPending ? $t('settings.sources.saving') : $t('settings.sources.save') }}
             </Button>
           </form>
