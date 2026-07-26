@@ -407,19 +407,22 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
   }
 
   if (batchItems.length > 0 && llmConfig) {
-    const jobName = await submitLlmBatch(batchItems, llmConfig, 'reprocess')
-    if (jobName) {
+    const submission = await submitLlmBatch(batchItems, llmConfig, 'reprocess')
+    if (submission) {
       // Same rationale as enrich.ts: mark every submitted item so a second
       // runReprocess({ batch: true }) call doesn't re-submit it to a new job
       // while this one is still in flight (job submission isn't idempotent).
-      for (const item of batchItems) {
+      for (const item of submission.submitted) {
         const priorItemEntry = cache[item.key]
         if (!priorItemEntry) continue
-        const marked = { ...priorItemEntry, llmBatchJob: jobName }
+        const marked = { ...priorItemEntry, llmBatchJob: item.jobName }
         cache[item.key] = marked
         dirty[item.key] = marked
       }
-      console.log(`[reprocess] submitted LLM batch ${jobName} with ${batchItems.length} items`)
+      console.log(`[reprocess] submitted LLM batch ${submission.jobName} with ${submission.submitted.length} items`)
+      if (submission.retryItems.length > 0) {
+        console.warn(`[reprocess] ${submission.retryItems.length} LLM batch item(s) were not submitted`)
+      }
     } else {
       console.warn(`[reprocess] LLM batch submission failed for ${batchItems.length} items`)
     }

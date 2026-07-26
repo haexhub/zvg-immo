@@ -14,6 +14,12 @@ import type { ClampedExtraction, LlmConfig, LlmInput } from './llm'
 
 export { isLlmBatchPending }
 
+export interface LlmBatchSubmitResult {
+  jobName: string
+  submitted: Array<{ key: string; jobName: string }>
+  retryItems: Array<{ key: string; input: LlmInput }>
+}
+
 export function supportsLlmBatch(config: LlmConfig | null | undefined): boolean {
   if (!config) return false
   if (config.provider === 'gemini-native') return true
@@ -31,8 +37,13 @@ export async function submitLlmBatch(
   items: { key: string; input: LlmInput }[],
   config: LlmConfig,
   source: 'enrich' | 'reprocess',
-): Promise<string | null> {
-  if (config.provider === 'gemini-native') return submitGeminiBatch(items, config, source)
+): Promise<LlmBatchSubmitResult | null> {
+  if (config.provider === 'gemini-native') {
+    const jobName = await submitGeminiBatch(items, config, source)
+    return jobName
+      ? { jobName, submitted: items.map((item) => ({ key: item.key, jobName })), retryItems: [] }
+      : null
+  }
   if (config.provider === 'claude-proxy') return submitAnthropicBatch(items, config, source)
   return null
 }

@@ -1,7 +1,7 @@
 import { lookup } from 'node:dns/promises'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { isIP } from 'node:net'
 import { join } from 'node:path'
+import ipaddr from 'ipaddr.js'
 import { Agent } from 'undici'
 import { fromBufferPromise, validateFileName, type Entry, type ZipFile } from 'yauzl'
 import type { Attachment } from '~/types/auction'
@@ -76,10 +76,14 @@ async function fetchDocumentBytes(proxyUrl: string, accept: string): Promise<Buf
       if (res.status === 408 || res.status === 429 || res.status >= 500) {
         throw new Error(`document fetch failed with HTTP ${res.status}`)
       }
+      await res.body?.cancel().catch(() => undefined)
       return null
     }
     const contentLength = Number(res.headers.get('content-length') ?? '')
-    if (Number.isFinite(contentLength) && contentLength > MAX_DOCUMENT_BYTES) return null
+    if (Number.isFinite(contentLength) && contentLength > MAX_DOCUMENT_BYTES) {
+      await res.body?.cancel().catch(() => undefined)
+      return null
+    }
     if (!res.body) return null
     const reader = res.body.getReader()
     const chunks: Buffer[] = []
@@ -151,8 +155,7 @@ async function readZipEntries(buf: Buffer): Promise<ZipEntry[]> {
       if (bytes) entries.push({ name: entry.fileName, bytes })
     }
   } catch {
-    // One corrupt archive should fail closed for this document while leaving
-    // later attachment candidates available to the caller.
+    entries.length = 0
   } finally {
     zip.close()
   }
@@ -234,43 +237,24 @@ export function extractHtmlImageUrls(html: string, baseUrl: string): string[] {
   return urls
 }
 
-function isPublicIpv4(address: string): boolean {
-  const parts = address.split('.').map((part) => Number(part))
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false
-  const [a, b] = parts as [number, number, number, number]
-  if (a === 0 || a === 10 || a === 127) return false
-  if (a === 100 && b >= 64 && b <= 127) return false
-  if (a === 169 && b === 254) return false
-  if (a === 172 && b >= 16 && b <= 31) return false
-  if (a === 192 && (b === 0 || b === 168)) return false
-  if (a === 198 && (b === 18 || b === 19 || (b === 51 && parts[2] === 100))) return false
-  if (a === 203 && b === 0 && parts[2] === 113) return false
-  if (a >= 224) return false
-  return true
-}
-
-function isPublicIpv6(address: string): boolean {
-  const lower = address.toLowerCase()
-  if (lower.startsWith('::ffff:')) return isPublicIp(lower.slice(7))
-  if (lower === '::' || lower === '::1') return false
-  if (/^f[cd]/.test(lower)) return false
-  if (/^fe[89ab]:/.test(lower)) return false
-  if (lower.startsWith('ff')) return false
-  if (lower.startsWith('2001:db8:')) return false
-  return true
-}
-
 function isPublicIp(address: string): boolean {
-  const kind = isIP(address)
-  if (kind === 4) return isPublicIpv4(address)
-  if (kind === 6) return isPublicIpv6(address)
-  return false
+  if (!ipaddr.isValid(address)) return false
+  const parsed = ipaddr.parse(address)
+  return parsed.range() === 'unicast'
+}
+
+function normalizeHostname(hostname: string): string {
+  return hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname
 }
 
 async function resolvePublicHost(hostname: string): Promise<PinnedHost | null> {
-  const directIp = isIP(hostname)
-  if (directIp === 4 || directIp === 6) return isPublicIp(hostname) ? { address: hostname, family: directIp } : null
-  const records = await lookup(hostname, { all: true, verbatim: true }).catch(() => [])
+  const normalized = normalizeHostname(hostname)
+  if (ipaddr.isValid(normalized)) {
+    const parsed = ipaddr.parse(normalized)
+    const family = parsed.kind() === 'ipv4' ? 4 : 6
+    return isPublicIp(normalized) ? { address: normalized, family } : null
+  }
+  const records = await lookup(normalized, { all: true, verbatim: true }).catch(() => [])
   if (records.length === 0 || records.some((record) => !isPublicIp(record.address))) return null
   const first = records[0]!
   if (first.family !== 4 && first.family !== 6) return null
@@ -288,7 +272,7 @@ async function pinPublicImageUrls(urls: readonly string[]): Promise<{ urls: stri
       continue
     }
     if (url.protocol !== 'http:' && url.protocol !== 'https:') continue
-    const key = url.hostname.toLowerCase()
+    const key = normalizeHostname(url.hostname).toLowerCase()
     const resolved = pinned.get(key) ?? await resolvePublicHost(url.hostname)
     if (!resolved) continue
     pinned.set(key, resolved)
@@ -298,7 +282,7 @@ async function pinPublicImageUrls(urls: readonly string[]): Promise<{ urls: stri
   const dispatcher = new Agent({
     connect: {
       lookup(hostname, _opts, callback) {
-        const resolved = pinned.get(hostname.toLowerCase())
+        const resolved = pinned.get(normalizeHostname(hostname).toLowerCase())
         if (!resolved) {
           callback(new Error(`unpinned host: ${hostname}`), '', 0)
           return
@@ -316,12 +300,17 @@ async function extractHtmlPhotos(proxyUrl: string, opts: ExtractDocumentPhotosOp
   const urls = extractHtmlImageUrls(buf.toString('utf8'), proxyUrl)
   const pinned = await pinPublicImageUrls(urls)
   if (!pinned.urls.length || !pinned.dispatcher) return []
-  const downloaded = await downloadNativeImages(pinned.urls, {
-    destDir: opts.destDir,
-    maxImages: opts.maxPhotos,
-    dispatcher: pinned.dispatcher,
-    redirect: 'manual',
-  }).finally(() => pinned.dispatcher?.close())
+  let downloaded: string[]
+  try {
+    downloaded = await downloadNativeImages(pinned.urls, {
+      destDir: opts.destDir,
+      maxImages: opts.maxPhotos,
+      dispatcher: pinned.dispatcher,
+      redirect: 'manual',
+    })
+  } finally {
+    await pinned.dispatcher.close()
+  }
   const photos: string[] = []
   for (const name of downloaded) {
     try {

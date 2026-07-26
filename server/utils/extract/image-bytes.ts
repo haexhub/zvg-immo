@@ -64,7 +64,7 @@ export function imageSize(buf: Buffer): { width: number; height: number } | null
 }
 
 export function imageContentHash(buf: Buffer): string {
-  return createHash('md5').update(buf).digest('hex').slice(0, 16)
+  return createHash('sha256').update(buf).digest('hex').slice(0, 16)
 }
 
 export function imageContentFilename(buf: Buffer, ext: ImageExt): string {

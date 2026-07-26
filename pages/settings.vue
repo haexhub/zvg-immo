@@ -677,7 +677,6 @@ async function runReprocessTest(): Promise<void> {
       body: {
         limit,
         country: reprocessCountry.value.trim() || undefined,
-        batch: llmProviderForm.value.executionMode === 'batch',
       },
     })
     await loadLlmBatchJobs()

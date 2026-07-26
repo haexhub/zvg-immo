@@ -16,6 +16,7 @@ import {
 } from './llm'
 import { insertLlmBatchJob } from '../llm-batch-jobs'
 import type { PollResult } from './gemini-batch'
+import type { LlmBatchSubmitResult } from './llm-batch'
 
 type AnthropicContentBlock =
   | { type: 'text'; text: string }
@@ -78,6 +79,10 @@ function serializedBatchBytes(requests: readonly Record<string, unknown>[]): num
   return Buffer.byteLength(JSON.stringify({ requests }), 'utf8')
 }
 
+function serializedRequestBytes(request: Record<string, unknown>): number {
+  return Buffer.byteLength(JSON.stringify(request), 'utf8')
+}
+
 async function submitAnthropicRequestChunk(
   requests: Record<string, unknown>[],
   customIdMap: Record<string, string>,
@@ -115,48 +120,75 @@ export async function submitAnthropicBatch(
   items: { key: string; input: LlmInput }[],
   config: LlmConfig,
   source: 'enrich' | 'reprocess',
-): Promise<string | null> {
-  const chunks: Array<{ requests: Record<string, unknown>[]; customIdMap: Record<string, string> }> = []
+): Promise<LlmBatchSubmitResult | null> {
+  const chunks: Array<{
+    requests: Record<string, unknown>[]
+    customIdMap: Record<string, string>
+    items: Array<{ key: string; input: LlmInput }>
+  }> = []
+  const skipped: Array<{ key: string; input: LlmInput }> = []
   let currentRequests: Record<string, unknown>[] = []
   let currentCustomIdMap: Record<string, string> = {}
+  let currentItems: Array<{ key: string; input: LlmInput }> = []
+  let currentBytes = serializedBatchBytes([])
   for (const [index, item] of items.entries()) {
     const customId = customIdForKey(item.key, index)
     const request = buildRequest(customId, item.input, config)
-    if (!request) continue
-    const requestBytes = serializedBatchBytes([request])
-    if (requestBytes > MAX_ANTHROPIC_BATCH_BODY_BYTES - ANTHROPIC_BATCH_BODY_HEADROOM_BYTES) {
-      console.warn(`[anthropic-batch] skipping oversized request for ${item.key}`)
+    if (!request) {
+      skipped.push(item)
       continue
     }
+    const requestBytes = serializedRequestBytes(request)
+    const firstRequestBytes = serializedBatchBytes([request])
+    if (firstRequestBytes > MAX_ANTHROPIC_BATCH_BODY_BYTES - ANTHROPIC_BATCH_BODY_HEADROOM_BYTES) {
+      console.warn(`[anthropic-batch] skipping oversized request for ${item.key}`)
+      skipped.push(item)
+      continue
+    }
+    const separatorBytes = currentRequests.length > 0 ? 1 : 0
     if (
       currentRequests.length >= MAX_ANTHROPIC_BATCH_REQUESTS ||
       (
         currentRequests.length > 0 &&
-        serializedBatchBytes([...currentRequests, request]) > MAX_ANTHROPIC_BATCH_BODY_BYTES - ANTHROPIC_BATCH_BODY_HEADROOM_BYTES
+        currentBytes + separatorBytes + requestBytes > MAX_ANTHROPIC_BATCH_BODY_BYTES - ANTHROPIC_BATCH_BODY_HEADROOM_BYTES
       )
     ) {
-      chunks.push({ requests: currentRequests, customIdMap: currentCustomIdMap })
+      chunks.push({ requests: currentRequests, customIdMap: currentCustomIdMap, items: currentItems })
       currentRequests = []
       currentCustomIdMap = {}
+      currentItems = []
+      currentBytes = serializedBatchBytes([])
     }
+    currentBytes += (currentRequests.length > 0 ? 1 : 0) + requestBytes
     currentRequests.push(request)
     currentCustomIdMap[customId] = item.key
+    currentItems.push(item)
   }
-  if (currentRequests.length > 0) chunks.push({ requests: currentRequests, customIdMap: currentCustomIdMap })
+  if (currentRequests.length > 0) {
+    chunks.push({ requests: currentRequests, customIdMap: currentCustomIdMap, items: currentItems })
+  }
   if (chunks.length === 0) return null
 
-  try {
-    const jobNames: string[] = []
-    for (const chunk of chunks) {
+  const jobNames: string[] = []
+  const submitted: LlmBatchSubmitResult['submitted'] = []
+  let retryItems = [...skipped]
+  for (const [chunkIndex, chunk] of chunks.entries()) {
+    try {
       const jobName = await submitAnthropicRequestChunk(chunk.requests, chunk.customIdMap, config, source)
-      if (!jobName) return null
+      if (!jobName) {
+        retryItems = retryItems.concat(chunks.slice(chunkIndex).flatMap((c) => c.items))
+        break
+      }
       jobNames.push(jobName)
+      submitted.push(...chunk.items.map((item) => ({ key: item.key, jobName })))
+    } catch (err) {
+      console.warn(`[anthropic-batch] submit failed: ${(err as Error).message}`)
+      retryItems = retryItems.concat(chunks.slice(chunkIndex).flatMap((c) => c.items))
+      break
     }
-    return jobNames.join(',')
-  } catch (err) {
-    console.warn(`[anthropic-batch] submit failed: ${(err as Error).message}`)
-    return null
   }
+  if (jobNames.length === 0) return null
+  return { jobName: jobNames.join(','), submitted, retryItems }
 }
 
 export async function pollAnthropicBatch(jobName: string, config: LlmConfig): Promise<PollResult> {

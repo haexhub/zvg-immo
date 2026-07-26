@@ -33,7 +33,7 @@ describe('submitAnthropicBatch', () => {
     const { insertLlmBatchJob } = await import('../llm-batch-jobs')
     const { submitAnthropicBatch } = await import('./anthropic-batch')
 
-    const jobName = await submitAnthropicBatch(
+    const result = await submitAnthropicBatch(
       [
         {
           key: 'zvg-portal:7265',
@@ -48,7 +48,9 @@ describe('submitAnthropicBatch', () => {
       'enrich',
     )
 
-    expect(jobName).toBe('msgbatch_abc')
+    expect(result?.jobName).toBe('msgbatch_abc')
+    expect(result?.submitted).toEqual([{ key: 'zvg-portal:7265', jobName: 'msgbatch_abc' }])
+    expect(result?.retryItems).toEqual([])
     const [url, opts] = vi.mocked($fetch).mock.calls[0]!
     expect(url).toBe('http://haex-claude-proxy:8080/v1/messages/batches')
     expect((opts as { headers: Record<string, string> }).headers['x-api-key']).toBe('proxy-session-token')
@@ -91,21 +93,52 @@ describe('submitAnthropicBatch', () => {
     const realByteLength = Buffer.byteLength
     vi.spyOn(Buffer, 'byteLength').mockImplementation((value: Parameters<typeof Buffer.byteLength>[0], encoding?: BufferEncoding) => {
       const text = typeof value === 'string' ? value : ''
-      if (text.includes('Haus 1') && text.includes('Haus 2')) return 256 * 1024 * 1024
+      if (text.includes('Haus 1') || text.includes('Haus 2')) return 255 * 1024 * 1024
       return realByteLength(value, encoding)
     })
     const { insertLlmBatchJob } = await import('../llm-batch-jobs')
     const { submitAnthropicBatch } = await import('./anthropic-batch')
 
-    const jobName = await submitAnthropicBatch([
+    const result = await submitAnthropicBatch([
       { key: 'one', input: { title: 'Haus 1', description: 'Beschreibung eins' } },
       { key: 'two', input: { title: 'Haus 2', description: 'Beschreibung zwei' } },
     ], config, 'enrich')
 
-    expect(jobName).toBe('msgbatch_a,msgbatch_b')
+    expect(result?.jobName).toBe('msgbatch_a,msgbatch_b')
+    expect(result?.submitted).toEqual([
+      { key: 'one', jobName: 'msgbatch_a' },
+      { key: 'two', jobName: 'msgbatch_b' },
+    ])
+    expect(result?.retryItems).toEqual([])
     expect(vi.mocked($fetch)).toHaveBeenCalledTimes(2)
     expect(insertLlmBatchJob).toHaveBeenCalledTimes(2)
     expect(vi.mocked(insertLlmBatchJob).mock.calls.map(([arg]) => arg.itemCount)).toEqual([1, 1])
+  })
+
+  it('surfaces partial progress when a later chunk fails after an earlier chunk was submitted', async () => {
+    vi.stubGlobal('$fetch', vi.fn()
+      .mockResolvedValueOnce({ id: 'msgbatch_a' })
+      .mockRejectedValueOnce(new Error('timeout')))
+    const realByteLength = Buffer.byteLength
+    vi.spyOn(Buffer, 'byteLength').mockImplementation((value: Parameters<typeof Buffer.byteLength>[0], encoding?: BufferEncoding) => {
+      const text = typeof value === 'string' ? value : ''
+      if (text.includes('Haus 1') || text.includes('Haus 2')) return 255 * 1024 * 1024
+      return realByteLength(value, encoding)
+    })
+    const { insertLlmBatchJob } = await import('../llm-batch-jobs')
+    const { submitAnthropicBatch } = await import('./anthropic-batch')
+    const retryItem = { key: 'two', input: { title: 'Haus 2', description: 'Beschreibung zwei' } }
+
+    const result = await submitAnthropicBatch([
+      { key: 'one', input: { title: 'Haus 1', description: 'Beschreibung eins' } },
+      retryItem,
+    ], config, 'enrich')
+
+    expect(result?.jobName).toBe('msgbatch_a')
+    expect(result?.submitted).toEqual([{ key: 'one', jobName: 'msgbatch_a' }])
+    expect(result?.retryItems).toEqual([retryItem])
+    expect(insertLlmBatchJob).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(insertLlmBatchJob).mock.calls[0]?.[0].itemCount).toBe(1)
   })
 })
 

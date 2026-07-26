@@ -719,20 +719,23 @@ export async function runEnrich(opts: EnrichOptions = {}) {
     await Promise.all(Array.from({ length: ENRICH_CONCURRENCY }, worker))
 
     if (batchItems.length > 0 && llmConfig && useBatch) {
-      const jobName = await submitLlmBatch(batchItems, llmConfig, 'enrich')
-      if (jobName) {
+      const submission = await submitLlmBatch(batchItems, llmConfig, 'enrich')
+      if (submission) {
         // Mark every submitted item's already-cached rules-only entry with
         // the job name so needsLlmRetry/needsLlmFieldsBackfill don't
         // re-submit it to a second job while this one is still in flight
         // (see AuctionExtraction.llmBatchJob / isLlmBatchPending).
-        for (const item of batchItems) {
+        for (const item of submission.submitted) {
           const priorItemEntry = cache[item.key]
           if (!priorItemEntry) continue
-          const marked = { ...priorItemEntry, llmBatchJob: jobName }
+          const marked = { ...priorItemEntry, llmBatchJob: item.jobName }
           cache[item.key] = marked
           dirty[item.key] = marked
         }
-        console.log(`[enrich] submitted LLM batch ${jobName} with ${batchItems.length} items`)
+        console.log(`[enrich] submitted LLM batch ${submission.jobName} with ${submission.submitted.length} items`)
+        if (submission.retryItems.length > 0) {
+          console.warn(`[enrich] ${submission.retryItems.length} LLM batch item(s) were not submitted — will retry next run`)
+        }
       } else {
         console.warn(`[enrich] LLM batch submission failed for ${batchItems.length} items — will retry next run`)
       }

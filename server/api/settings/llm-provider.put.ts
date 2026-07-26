@@ -5,7 +5,6 @@
 
 import { getPool } from '~/server/utils/db'
 import {
-  DEFAULT_LLM_EXECUTION_MODE,
   LLM_EXECUTION_MODES,
   LLM_PROVIDERS,
   getLlmProviderOverride,
@@ -31,15 +30,19 @@ export default defineEventHandler(async (event) => {
   if (typeof body.model !== 'string' || !body.model.trim()) {
     throw createError({ statusCode: 400, statusMessage: 'model: darf nicht leer sein.' })
   }
-  const executionMode =
+  const incomingExecutionMode =
     typeof body.executionMode === 'string' && LLM_EXECUTION_MODES.includes(body.executionMode as LlmExecutionMode)
       ? (body.executionMode as LlmExecutionMode)
-      : DEFAULT_LLM_EXECUTION_MODE
+      : undefined
   const provider = body.provider as LlmProvider
   const incomingApiKey = typeof body.apiKey === 'string' ? body.apiKey : undefined
-  const current = incomingApiKey === undefined ? await getLlmProviderOverride(db).catch(() => null) : null
+  const current =
+    incomingExecutionMode === undefined || incomingApiKey === undefined
+      ? await getLlmProviderOverride(db).catch(() => null)
+      : null
+  const effectiveExecutionMode = incomingExecutionMode ?? current?.executionMode ?? 'sync'
   const effectiveApiKey = incomingApiKey ?? current?.apiKey ?? ''
-  if (!supportsLlmProviderExecutionMode(provider, executionMode, effectiveApiKey)) {
+  if (!supportsLlmProviderExecutionMode(provider, effectiveExecutionMode, effectiveApiKey)) {
     throw createError({
       statusCode: 400,
       statusMessage: 'batch: Dieser Provider unterstützt keinen Batch-Modus.',
@@ -50,7 +53,7 @@ export default defineEventHandler(async (event) => {
     provider,
     baseUrl: body.baseUrl.trim(),
     model: body.model.trim(),
-    executionMode,
+    executionMode: incomingExecutionMode,
     apiKey: incomingApiKey,
   })
 
