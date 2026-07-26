@@ -7,6 +7,7 @@ import {
   type LocationEnrichmentCache,
 } from '~/server/utils/external-data/location-enrichment'
 import { createDvfFileMarketAdapter } from '~/server/utils/external-data/fr-dvf-cache'
+import { createEuFloodRiskFileAdapter } from '~/server/utils/external-data/eu-flood-risk'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 
 export interface MarketComparisonAdapter {
@@ -92,7 +93,7 @@ export async function runExternalEnrichment(
 
   const marketAdapters = options.marketAdapters ?? await defaultMarketAdapters()
   const landValueAdapters = options.landValueAdapters ?? []
-  const hazardAdapters = options.hazardAdapters ?? []
+  const hazardAdapters = options.hazardAdapters ?? await defaultHazardAdapters(checkedAt)
 
   for (const rawAuction of Object.values(snapshot)) {
     if (options.limit != null && summary.processed >= options.limit) break
@@ -209,10 +210,28 @@ function sourceVersion(adapters: Array<{ id: string; sourceVersion: string }>): 
 
 async function defaultMarketAdapters(): Promise<MarketComparisonAdapter[]> {
   if (typeof useRuntimeConfig !== 'function') return []
-  const config = useRuntimeConfig().externalData as { frDvfCachePath?: string } | undefined
+  const config = useRuntimeConfig().externalData as ExternalDataRuntimeConfig | undefined
   const adapters: MarketComparisonAdapter[] = []
   if (config?.frDvfCachePath) {
     adapters.push(await createDvfFileMarketAdapter({ cachePath: config.frDvfCachePath }))
   }
   return adapters
+}
+
+async function defaultHazardAdapters(checkedAt: string): Promise<HazardAssessmentAdapter[]> {
+  if (typeof useRuntimeConfig !== 'function') return []
+  const config = useRuntimeConfig().externalData as ExternalDataRuntimeConfig | undefined
+  const adapters: HazardAssessmentAdapter[] = []
+  if (config?.euFloodRiskGeoJsonPath) {
+    adapters.push(await createEuFloodRiskFileAdapter({
+      geoJsonPath: config.euFloodRiskGeoJsonPath,
+      checkedAt,
+    }))
+  }
+  return adapters
+}
+
+interface ExternalDataRuntimeConfig {
+  frDvfCachePath?: string
+  euFloodRiskGeoJsonPath?: string
 }

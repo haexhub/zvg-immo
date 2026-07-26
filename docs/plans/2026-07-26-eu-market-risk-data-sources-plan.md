@@ -248,12 +248,23 @@ Completed in the current implementation branch:
     - `POST /api/settings/external-data/enrichment`
   - Added daily scheduled task at `15 3 * * *`. With no configured adapters this is a cheap no-op.
   - Added provider failure, skipped-coordinate and written-result counts.
+- WP4 flood-risk fixture-first foundation:
+  - Added `server/utils/external-data/eu-flood-risk.ts` for local GeoJSON FeatureCollection ingestion/evaluation.
+  - Added a small fixture cache at `server/utils/external-data/fixtures/eu-flood-risk-zones.fixture.geojson`.
+  - Supports Polygon and MultiPolygon geometries, point-in-polygon checks, polygon holes and nearest edge distance.
+  - Maps flood status to `inside`, `nearby`, `outside` or `unknown`; `outside` only means outside known zones in the selected source.
+  - Reads severity from feature properties where possible and falls back to `unknown`.
+  - Adds source label/source URL from the external source registry.
+  - Added a default `external-enrichment` flood adapter that activates only when configured:
+    - `NUXT_EXTERNAL_DATA_EU_FLOOD_RISK_GEO_JSON_PATH=.cache_zvg/external/eu-flood-risk.geojson`
+  - Detail pages still never fetch external hazard providers live; they only read cached `location_enrichment`.
 - UI:
   - Added cached "Preise in der Region", "Bodenwert-Baseline" and "Naturgefahren" cards to `pages/objekt/[platform]/[id].vue`.
   - Cards always show source/check metadata and disclaimers. Hazards never use "safe" language.
 
 Verification completed:
 
+- `pnpm vitest run server/utils/external-data/eu-flood-risk.test.ts server/tasks/external-enrichment.test.ts`
 - `pnpm vitest run server/utils/external-data server/tasks/external-enrichment.test.ts server/tasks/import-fr-dvf-cache.test.ts server/api/auction/[platform]/[id].get.test.ts server/api/settings/external-data`
 - `pnpm exec nuxi typecheck`
 - `pnpm test`
@@ -273,12 +284,11 @@ Current branch already has:
 - tests and typecheck passing
 
 Next focus:
-Implement WP4 EU flood risk v1. Start with a fixture-first GeoJSON ingestion/evaluation module:
-- parse small GeoJSON FeatureCollections
-- point-in-polygon and nearest-distance helpers
-- map flood status to inside/nearby/outside/unknown without ever saying "safe"
-- create a flood adapter for external-enrichment
-- add tests for polygon fixtures and detail overlay behavior
+Extend WP4 from fixture-first cache support toward real EU Flood Risk Areas ingestion:
+- choose the first official downloadable/WFS source format to normalize into the local GeoJSON cache
+- add import tooling analogous to the France DVF cache task if the source is file-based
+- add country/source freshness metadata and stale-result handling
+- evaluate whether national flood layers should override the EU layer for DE/FR/AT
 Keep detail pages cache-only; no live external fetch from the API route.
 ```
 

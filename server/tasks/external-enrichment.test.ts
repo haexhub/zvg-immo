@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { join } from 'node:path'
 import type { Auction, HazardAssessment, LandValueBaseline, MarketComparison } from '~/types/auction'
 
 vi.mock('~/server/utils/auction-snapshot', () => ({ readAuctionSnapshot: vi.fn() }))
@@ -183,6 +184,47 @@ describe('runExternalEnrichment', () => {
     expect(summary.providerFailures).toBe(1)
     expect(summary.marketComparisons).toBe(1)
     expect(summary.written).toBe(1)
+  })
+
+  it('writes flood hazards from the default configured GeoJSON adapter', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    vi.stubGlobal('useRuntimeConfig', () => ({
+      externalData: {
+        frDvfCachePath: '',
+        euFloodRiskGeoJsonPath: join(process.cwd(), 'server/utils/external-data/fixtures/eu-flood-risk-zones.fixture.geojson'),
+      },
+    }))
+    const { readAuctionSnapshot } = await import('~/server/utils/auction-snapshot')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionSnapshot).mockResolvedValue({ 'test:42': auction() })
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    const summary = await runExternalEnrichment({
+      now: new Date('2026-07-26T00:00:00.000Z'),
+      marketAdapters: [],
+      landValueAdapters: [],
+    })
+
+    expect(summary).toMatchObject({
+      processed: 1,
+      written: 1,
+      hazards: 1,
+      providerFailures: 0,
+    })
+    expect(writeLocationEnrichmentCache).toHaveBeenCalledWith({
+      'test:42': expect.objectContaining({
+        hazards: [expect.objectContaining({
+          hazard: 'flood',
+          status: 'inside',
+          severity: 'medium',
+          sourceLabel: 'EU Flood Risk Areas',
+          checkedAt: '2026-07-26T00:00:00.000Z',
+        })],
+        sourceVersion: expect.stringContaining('eu-flood-risk-file-cache@'),
+      }),
+    })
   })
 
   it('can limit processed auctions for manual spot runs', async () => {

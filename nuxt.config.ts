@@ -112,8 +112,10 @@ export default defineNuxtConfig({
     // Postgres-backed caches; detail pages only read location_enrichment.
     // Empty values keep the external-enrichment task inert.
     //   NUXT_EXTERNAL_DATA_FR_DVF_CACHE_PATH=/app/.cache_zvg/external/fr-dvf.json
+    //   NUXT_EXTERNAL_DATA_EU_FLOOD_RISK_GEO_JSON_PATH=/app/.cache_zvg/external/eu-flood-risk.geojson
     externalData: {
       frDvfCachePath: '',
+      euFloodRiskGeoJsonPath: '',
     },
     // G1 Roh-Archiv (WP-3): Supabase Storage bucket for archived crawl
     // snapshots (server/utils/raw-archive.ts, storage-uploader.ts). Empty →
