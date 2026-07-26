@@ -290,6 +290,8 @@ export interface AuctionExtraction {
 }
 
 export interface CrawlResult {
+  /** Internal persistent-list-cache version. Omitted by older cache rows. */
+  listCacheVersion?: number
   /** Platform id (matches PlatformCrawler.id). */
   platform: string
   source: string

@@ -45,14 +45,23 @@ function makeFakePool(rows: Row[] = []) {
     if (sql.includes('SELECT country, result FROM list_cache')) {
       return { rows: rows.map((r) => ({ country: r.country, result: r.result })), rowCount: rows.length }
     }
-    if (sql.includes('SELECT fetched_at FROM list_cache WHERE country')) {
+    if (sql.includes('SELECT fetched_at') && sql.includes('FROM list_cache WHERE country')) {
       const [country, region] = params as [string, string]
       const hit = rows.find((r) => r.country === country && r.region === region)
-      return { rows: hit ? [{ fetched_at: hit.fetched_at }] : [], rowCount: hit ? 1 : 0 }
+      return {
+        rows: hit ? [{ fetched_at: hit.fetched_at, list_cache_version: hit.result.listCacheVersion?.toString() ?? null }] : [],
+        rowCount: hit ? 1 : 0,
+      }
     }
-    if (sql.includes('SELECT MAX(fetched_at)')) {
-      const newest = rows.reduce((n, r) => (r.fetched_at > n ? r.fetched_at : n), '')
-      return { rows: [{ newest: newest || null }], rowCount: 1 }
+    if (sql.includes('result->>') && sql.includes('FROM list_cache')) {
+      return {
+        rows: rows.map((r) => ({
+          country: r.country,
+          list_cache_version: r.result.listCacheVersion?.toString() ?? null,
+          fetched_at: r.fetched_at,
+        })),
+        rowCount: rows.length,
+      }
     }
     if (sql.includes('INSERT INTO list_cache')) {
       const [country, region, result, fetched_at] = params as [string, string, string, string]
@@ -86,6 +95,23 @@ describe('readListCache', () => {
     expect(result?.auctions).toHaveLength(1)
   })
 
+  it('treats pre-pagination Sweden rows as stale', async () => {
+    const { getPool } = await import('./db')
+    const staleSe: CrawlResult = {
+      ...deBy,
+      platform: 'se-kronofogden',
+      source: 'https://auktionstorget.kronofogden.se',
+      countries: ['se'],
+      regions: ['Schweden'],
+      auctions: [{ platform: 'se-kronofogden', externalId: '101784' } as CrawlResult['auctions'][number]],
+    }
+    const pool = makeFakePool([{ country: 'se', region: 'all', result: staleSe, fetched_at: staleSe.fetchedAt }])
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { readListCache } = await import('./list-cache')
+
+    expect(await readListCache('se', 'all')).toBeNull()
+  })
+
   it('returns null without a configured pool', async () => {
     const { getPool } = await import('./db')
     vi.mocked(getPool).mockReturnValue(null)
@@ -112,7 +138,12 @@ describe('writeListCache', () => {
 
     await writeListCache('de', 'by', deBy)
 
-    expect(pool.upserted).toEqual([{ country: 'de', region: 'by', result: deBy, fetched_at: deBy.fetchedAt }])
+    expect(pool.upserted).toEqual([{
+      country: 'de',
+      region: 'by',
+      result: { ...deBy, listCacheVersion: 1 },
+      fetched_at: deBy.fetchedAt,
+    }])
   })
 })
 
@@ -170,6 +201,17 @@ describe('cache age helpers', () => {
     expect(await regionListCacheAgeMs('de', 'nrw')).toBeNull()
   })
 
+  it('regionListCacheAgeMs returns null for stale country cache versions', async () => {
+    const { getPool } = await import('./db')
+    const fetchedAt = new Date(Date.now() - 60_000).toISOString()
+    const staleSe: CrawlResult = { ...deBy, countries: ['se'], platform: 'se-kronofogden' }
+    const pool = makeFakePool([{ country: 'se', region: 'all', result: staleSe, fetched_at: fetchedAt }])
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { regionListCacheAgeMs } = await import('./list-cache')
+
+    expect(await regionListCacheAgeMs('se', 'all')).toBeNull()
+  })
+
   it('listCacheAgeMs uses the newest fetched_at across all regions', async () => {
     const { getPool } = await import('./db')
     const older = new Date(Date.now() - 3_600_000).toISOString()
@@ -183,6 +225,20 @@ describe('cache age helpers', () => {
 
     const age = await listCacheAgeMs()
     expect(age).toBeLessThan(120_000)
+  })
+
+  it('listCacheAgeMs returns null when any enabled country row has a stale version', async () => {
+    const { getPool } = await import('./db')
+    const fetchedAt = new Date(Date.now() - 60_000).toISOString()
+    const staleSe: CrawlResult = { ...deBy, countries: ['se'], platform: 'se-kronofogden' }
+    const pool = makeFakePool([
+      { country: 'de', region: 'by', result: deBy, fetched_at: fetchedAt },
+      { country: 'se', region: 'all', result: staleSe, fetched_at: fetchedAt },
+    ])
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { listCacheAgeMs } = await import('./list-cache')
+
+    expect(await listCacheAgeMs()).toBeNull()
   })
 
   it('listCacheAgeMs returns null when empty', async () => {
