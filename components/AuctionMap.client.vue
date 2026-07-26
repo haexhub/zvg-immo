@@ -5,29 +5,29 @@ import 'leaflet.markercluster/dist/MarkerCluster.Default.css'
 import L from 'leaflet'
 import 'leaflet.markercluster'
 import { createApp, type App as VueApp } from 'vue'
-import iconUrl from 'leaflet/dist/images/marker-icon.png'
-import iconRetinaUrl from 'leaflet/dist/images/marker-icon-2x.png'
-import shadowUrl from 'leaflet/dist/images/marker-shadow.png'
 import type { GeoAuction } from '~/server/api/auctions-geo.get'
 import LotPopover from '~/components/LotPopover.vue'
 import { createAllCountryImageryLayers } from '~/lib/countryImagery'
 
-// Pass an explicit Icon to every marker. Mutating L.Icon.Default at module
-// top level was tree-shaken by the production build, so the markers fell
-// back to relative filenames that 404 from the site root.
-const markerIcon = L.icon({
-  iconUrl,
-  iconRetinaUrl,
-  shadowUrl,
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  tooltipAnchor: [16, -28],
-  shadowSize: [41, 41],
-})
+type AuctionMarker = L.Marker & { auctionKey?: string }
+
+function pinIcon(active: boolean): L.DivIcon {
+  return L.divIcon({
+    className: '',
+    html: `<span class="auction-map-pin${active ? ' is-active' : ''}"></span>`,
+    iconSize: [28, 38],
+    iconAnchor: [14, 36],
+    popupAnchor: [0, -34],
+    tooltipAnchor: [14, -28],
+  })
+}
+
+const markerIcon = pinIcon(false)
+const activeMarkerIcon = pinIcon(true)
 
 const props = defineProps<{
   auctions: GeoAuction[]
+  activeAuctionKey?: string | null
   /** Bumping this string requests a re-fit on the next marker refresh — used
    *  by the parent so country/region changes recenter the map, while polling
    *  updates leave the user's current zoom/pan alone. */
@@ -39,6 +39,8 @@ const emit = defineEmits<{
    *  fit). The parent uses it to restrict the result list to the map area
    *  when the "Kartenbereich" filter is on. */
   (e: 'bounds-change', bounds: { north: number; south: number; east: number; west: number }): void
+  (e: 'auction-hover', key: string | null): void
+  (e: 'auction-select', key: string): void
 }>()
 
 const mapEl = ref<HTMLDivElement | null>(null)
@@ -83,17 +85,46 @@ let shouldFitNext = true
 
 // Markers keyed by `platform:externalId` so refreshMarkers can diff instead of
 // rebuilding — existing markers (and an open popup) survive poll updates.
-const markersByKey = new Map<string, L.Marker>()
+const markersByKey = new Map<string, AuctionMarker>()
 
-function createMarker(a: GeoAuction, lat: number, lng: number): L.Marker {
-  const marker = L.marker([lat, lng], {
-    icon: markerIcon,
-    title: `${a.title ?? ''} · ${a.address ?? ''}`,
+function auctionKey(a: { platform: string; externalId: string }): string {
+  return `${a.platform}:${a.externalId}`
+}
+
+function updateMarkerHighlight(): void {
+  for (const [key, marker] of markersByKey) {
+    const active = key === props.activeAuctionKey
+    marker.setIcon(active ? activeMarkerIcon : markerIcon)
+    marker.setZIndexOffset(active ? 1000 : 0)
+  }
+  markersLayer?.refreshClusters()
+}
+
+function clusterIcon(cluster: L.MarkerCluster): L.DivIcon {
+  const children = cluster.getAllChildMarkers() as AuctionMarker[]
+  const active = props.activeAuctionKey != null && children.some((marker) => marker.auctionKey === props.activeAuctionKey)
+  return L.divIcon({
+    className: '',
+    html: `<span class="auction-map-cluster${active ? ' is-active' : ''}">${cluster.getChildCount()}</span>`,
+    iconSize: [36, 36],
+    iconAnchor: [18, 18],
   })
+}
+
+function createMarker(a: GeoAuction, lat: number, lng: number): AuctionMarker {
+  const key = auctionKey(a)
+  const marker = L.marker([lat, lng], {
+    icon: key === props.activeAuctionKey ? activeMarkerIcon : markerIcon,
+    title: `${a.title ?? ''} · ${a.address ?? ''}`,
+  }) as AuctionMarker
+  marker.auctionKey = key
   // Empty container; the Vue app is mounted lazily on popupopen so the
   // /api/auction-detail fetch only fires when the popup is actually opened.
   marker.bindPopup('<div class="lot-popover-mount"></div>', { maxWidth: 320, minWidth: 280 })
   let app: VueApp | null = null
+  marker.on('mouseover', () => emit('auction-hover', key))
+  marker.on('mouseout', () => emit('auction-hover', null))
+  marker.on('click', () => emit('auction-select', key))
   marker.on('popupopen', (e) => {
     const el = e.popup.getElement()?.querySelector('.lot-popover-mount') as HTMLElement | null
     if (!el) return
@@ -205,6 +236,7 @@ onMounted(async () => {
     chunkedLoading: true,
     maxClusterRadius: 60,
     disableClusteringAtZoom: 16,
+    iconCreateFunction: clusterIcon,
   }).addTo(map)
   // moveend fires for both user pan/zoom and programmatic fitBounds/setView,
   // so this single hook covers the "search re-fit → new viewport" flow too.
@@ -226,6 +258,7 @@ watch(() => props.fitKey, () => {
 })
 
 watch(() => props.auctions, refreshMarkers, { deep: false })
+watch(() => props.activeAuctionKey, updateMarkerHighlight)
 </script>
 
 <template>
@@ -240,5 +273,50 @@ watch(() => props.auctions, refreshMarkers, { deep: false })
 }
 .leaflet-popup-content {
   margin: 8px 12px;
+}
+
+.auction-map-pin {
+  display: block;
+  width: 22px;
+  height: 22px;
+  border: 2px solid white;
+  border-radius: 9999px 9999px 9999px 0;
+  background: #2563eb;
+  box-shadow: 0 2px 8px rgb(15 23 42 / 35%);
+  transform: rotate(-45deg);
+}
+
+.auction-map-pin::after {
+  content: '';
+  position: absolute;
+  inset: 5px;
+  border-radius: 9999px;
+  background: white;
+  opacity: 0.9;
+}
+
+.auction-map-pin.is-active {
+  background: #dc2626;
+  box-shadow: 0 0 0 4px rgb(220 38 38 / 25%), 0 4px 12px rgb(15 23 42 / 35%);
+}
+
+.auction-map-cluster {
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid white;
+  border-radius: 9999px;
+  background: #2563eb;
+  color: white;
+  font-size: 0.75rem;
+  font-weight: 700;
+  box-shadow: 0 2px 10px rgb(15 23 42 / 30%);
+}
+
+.auction-map-cluster.is-active {
+  background: #dc2626;
+  box-shadow: 0 0 0 5px rgb(220 38 38 / 24%), 0 4px 12px rgb(15 23 42 / 35%);
 }
 </style>

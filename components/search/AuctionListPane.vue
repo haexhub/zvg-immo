@@ -15,11 +15,14 @@ const props = defineProps<{
   pending: boolean
   loggedIn: boolean
   watchlistIds: Map<string, string>
+  activeAuctionKey?: string | null
+  scrollTargetKey?: string | null
 }>()
 
 const emit = defineEmits<{
   (e: 'toggle-watchlist', auction: Auction): void
   (e: 'load-more'): void
+  (e: 'auction-hover', key: string | null): void
 }>()
 
 const intlLocale = useIntlLocale()
@@ -44,6 +47,17 @@ function cardPhotos(a: Auction): string[] {
 function watchlistKey(a: Auction): string {
   return `${a.platform}:${a.externalId}`
 }
+
+function escapeSelectorValue(value: string): string {
+  return globalThis.CSS?.escape ? globalThis.CSS.escape(value) : value.replace(/["\\]/g, '\\$&')
+}
+
+watch(() => props.scrollTargetKey, async (key) => {
+  if (!key || !import.meta.client) return
+  await nextTick()
+  const el = document.querySelector(`[data-auction-key="${escapeSelectorValue(key)}"]`)
+  el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+})
 
 function detailPath(a: Auction): string {
   return `/objekt/${encodeURIComponent(a.platform)}/${encodeURIComponent(a.externalId)}`
@@ -91,10 +105,21 @@ function bidLine(a: Auction): string | null {
     </p>
 
     <ul v-if="props.auctions.length" class="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(16rem,1fr))]">
-      <li v-for="a in props.auctions" :key="`${a.platform}:${a.externalId}`">
+      <li
+        v-for="a in props.auctions"
+        :key="`${a.platform}:${a.externalId}`"
+        :data-auction-key="watchlistKey(a)"
+        @mouseenter="emit('auction-hover', watchlistKey(a))"
+        @mouseleave="emit('auction-hover', null)"
+        @focusin="emit('auction-hover', watchlistKey(a))"
+        @focusout="emit('auction-hover', null)"
+      >
         <article
-          class="group h-full flex flex-col rounded-xl border bg-card text-card-foreground shadow-sm overflow-hidden transition-shadow hover:shadow-md"
-          :class="{ 'opacity-60': a.cancelled }"
+          class="group h-full flex flex-col rounded-xl border bg-card text-card-foreground shadow-sm overflow-hidden transition-all hover:shadow-md"
+          :class="{
+            'opacity-60': a.cancelled,
+            'ring-2 ring-red-500 border-red-500 shadow-md': watchlistKey(a) === props.activeAuctionKey,
+          }"
         >
           <div class="relative border-b">
             <Swiper

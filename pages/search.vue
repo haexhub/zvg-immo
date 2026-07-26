@@ -137,10 +137,10 @@ const view = ref<'list' | 'map'>('list')
 const mapVisible = computed(() => isDesktop.value || view.value === 'map')
 
 // Geo-fetch is gated behind the map being visible but reacts to country/region
-// changes. Cache-only mode loads instantly from already-geocoded addresses.
-// Switching the toggle to "frisch geokodieren" hits Nominatim for missing
-// addresses — slow on cold start (1 req/s) but caches future calls.
-const fetchMissing = ref(false)
+// changes. The first request stays cache-only so the map appears instantly; a
+// narrowed single-country view then lets the poller ask the server to resolve
+// missing coordinates in the background.
+const shouldFetchMissingGeo = computed(() => selectedCountries.value.length === 1)
 const {
   data: geoData,
   pending: geoPending,
@@ -150,7 +150,7 @@ const {
   query: {
     country: serverCountry,
     region: serverRegion,
-    fetch: computed(() => (fetchMissing.value ? '1' : '0')),
+    fetch: '0',
   },
   default: () => null,
   immediate: false,
@@ -180,7 +180,7 @@ async function pollGeoOnce(): Promise<void> {
   // user requested for a different country/region mid-flight.
   const country = serverCountry.value
   const region = serverRegion.value
-  const fetchParam = fetchMissing.value ? '1' : '0'
+  const fetchParam = shouldFetchMissingGeo.value ? '1' : '0'
   pollInFlight = true
   try {
     const fresh = await $fetch<GeoCrawlResult>('/api/auctions-geo', {
@@ -195,7 +195,7 @@ async function pollGeoOnce(): Promise<void> {
     if (
       country === serverCountry.value
       && region === serverRegion.value
-      && fetchParam === (fetchMissing.value ? '1' : '0')
+      && fetchParam === (shouldFetchMissingGeo.value ? '1' : '0')
     ) {
       geoData.value = fresh
     }
@@ -207,8 +207,15 @@ async function pollGeoOnce(): Promise<void> {
 }
 function startGeoPoll(): void {
   if (geoPollTimer) return
+  if (mapVisible.value && shouldFetchMissingGeo.value && geocodingInProgress.value && !geoPending.value && !pollInFlight) {
+    void pollGeoOnce()
+  }
   geoPollTimer = setInterval(() => {
     if (!mapVisible.value) return
+    if (!shouldFetchMissingGeo.value) {
+      stopGeoPoll()
+      return
+    }
     if (!geocodingInProgress.value) {
       stopGeoPoll()
       return
@@ -223,8 +230,8 @@ function stopGeoPoll(): void {
     geoPollTimer = null
   }
 }
-watch([geocodingInProgress, mapVisible], ([running, visible]) => {
-  if (running && visible) startGeoPoll()
+watch([geocodingInProgress, mapVisible, shouldFetchMissingGeo], ([running, visible, shouldFetch]) => {
+  if (running && visible && shouldFetch) startGeoPoll()
   else stopGeoPoll()
 }, { immediate: true })
 
@@ -499,6 +506,45 @@ function loadMore(): void {
   visibleCount.value += LIST_PAGE_SIZE
 }
 
+const hoveredAuctionKey = ref<string | null>(null)
+const selectedAuctionKey = ref<string | null>(null)
+const scrollTargetKey = ref<string | null>(null)
+const activeAuctionKey = computed(() => hoveredAuctionKey.value ?? selectedAuctionKey.value)
+
+function auctionKey(a: { platform: string; externalId: string }): string {
+  return `${a.platform}:${a.externalId}`
+}
+
+function revealAuctionInList(key: string): void {
+  const idx = sortedList.value.findIndex((a) => auctionKey(a) === key)
+  if (idx >= 0 && idx >= visibleCount.value) {
+    visibleCount.value = idx + 1
+  }
+  scrollTargetKey.value = key
+}
+
+function setAuctionHover(key: string | null): void {
+  hoveredAuctionKey.value = key
+}
+
+function handleMapAuctionHover(key: string | null): void {
+  hoveredAuctionKey.value = key
+  if (key) revealAuctionInList(key)
+}
+
+function handleMapAuctionSelect(key: string): void {
+  selectedAuctionKey.value = key
+  revealAuctionInList(key)
+}
+
+watch(sortedList, () => {
+  if (activeAuctionKey.value && !sortedList.value.some((a) => auctionKey(a) === activeAuctionKey.value)) {
+    hoveredAuctionKey.value = null
+    selectedAuctionKey.value = null
+    scrollTargetKey.value = null
+  }
+})
+
 // The search term feeds the fit-key so the map re-centres on matching results —
 // searching "Chemnitz" zooms the map to Chemnitz, not just the country. Country
 // and region selections still recentre too.
@@ -724,7 +770,10 @@ async function toggleWatchlist(a: Auction): Promise<void> {
           :geo-pending="geoPending"
           :has-geo-data="!!geoData"
           :geo-error="geoError"
+          :active-auction-key="activeAuctionKey"
           @bounds-change="mapBounds = $event"
+          @auction-hover="handleMapAuctionHover"
+          @auction-select="handleMapAuctionSelect"
         />
         <SearchAuctionListPane
           class="flex-1 min-h-0"
@@ -733,8 +782,11 @@ async function toggleWatchlist(a: Auction): Promise<void> {
           :pending="pending"
           :logged-in="!!user"
           :watchlist-ids="watchlistIds"
+          :active-auction-key="activeAuctionKey"
+          :scroll-target-key="scrollTargetKey"
           @toggle-watchlist="toggleWatchlist"
           @load-more="loadMore"
+          @auction-hover="setAuctionHover"
         />
       </div>
       <SearchTabs
@@ -745,6 +797,8 @@ async function toggleWatchlist(a: Auction): Promise<void> {
         :pending="pending"
         :logged-in="!!user"
         :watchlist-ids="watchlistIds"
+        :active-auction-key="activeAuctionKey"
+        :scroll-target-key="scrollTargetKey"
         :geo-auctions="filteredGeo"
         :geo-fit-key="geoFitKey"
         :geo-pending="geoPending"
@@ -753,6 +807,8 @@ async function toggleWatchlist(a: Auction): Promise<void> {
         @toggle-watchlist="toggleWatchlist"
         @load-more="loadMore"
         @bounds-change="mapBounds = $event"
+        @auction-hover="setAuctionHover"
+        @auction-select="handleMapAuctionSelect"
       />
     </div>
 

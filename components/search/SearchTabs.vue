@@ -8,6 +8,8 @@ defineProps<{
   pending: boolean
   loggedIn: boolean
   watchlistIds: Map<string, string>
+  activeAuctionKey?: string | null
+  scrollTargetKey?: string | null
   geoAuctions: GeoAuction[]
   geoFitKey: string
   geoPending: boolean
@@ -19,6 +21,8 @@ const emit = defineEmits<{
   (e: 'toggle-watchlist', auction: Auction): void
   (e: 'load-more'): void
   (e: 'bounds-change', bounds: { north: number; south: number; east: number; west: number }): void
+  (e: 'auction-hover', key: string | null): void
+  (e: 'auction-select', key: string): void
 }>()
 
 const activeTab = defineModel<'list' | 'map'>({ required: true })
@@ -37,18 +41,24 @@ const activeTab = defineModel<'list' | 'map'>({ required: true })
         :pending="pending"
         :logged-in="loggedIn"
         :watchlist-ids="watchlistIds"
+        :active-auction-key="activeAuctionKey"
+        :scroll-target-key="scrollTargetKey"
         @toggle-watchlist="emit('toggle-watchlist', $event)"
         @load-more="emit('load-more')"
+        @auction-hover="emit('auction-hover', $event)"
       />
     </TabsContent>
     <TabsContent value="map" class="flex-1 min-h-0">
       <SearchAuctionMapPane
         :auctions="geoAuctions"
+        :active-auction-key="activeAuctionKey"
         :fit-key="geoFitKey"
         :geo-pending="geoPending"
         :has-geo-data="!!geoData"
         :geo-error="geoError"
         @bounds-change="emit('bounds-change', $event)"
+        @auction-hover="emit('auction-hover', $event)"
+        @auction-select="emit('auction-select', $event)"
       />
     </TabsContent>
   </Tabs>
