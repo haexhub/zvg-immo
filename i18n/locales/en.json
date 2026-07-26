@@ -314,7 +314,13 @@
       "saveError": "Data sources could not be saved.",
       "saved": "Data sources saved.",
       "saving": "Saving …",
-      "save": "Save data sources"
+      "save": "Save data sources",
+      "rebuild": "Recrawl",
+      "rebuilding": "Running …",
+      "rebuildTitle": "Delete current data for this country and crawl it again",
+      "rebuildConfirm": "Delete current cache/extraction data for {country} and crawl the country again?",
+      "rebuildError": "Country could not be recrawled.",
+      "rebuildDone": "{country}: recrawled {auctions} listings ({ok} regions succeeded, {failed} failed)."
     },
     "reprocess": {
       "title": "Reprocess test run",

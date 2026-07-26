@@ -314,7 +314,13 @@
       "saveError": "Datenquellen konnten nicht gespeichert werden.",
       "saved": "Datenquellen gespeichert.",
       "saving": "Speichere …",
-      "save": "Datenquellen speichern"
+      "save": "Datenquellen speichern",
+      "rebuild": "Neu crawlen",
+      "rebuilding": "Läuft …",
+      "rebuildTitle": "Aktuelle Daten für dieses Land löschen und neu crawlen",
+      "rebuildConfirm": "Aktuelle Cache-/Extraktionsdaten für {country} löschen und das Land neu crawlen?",
+      "rebuildError": "Land konnte nicht neu gecrawlt werden.",
+      "rebuildDone": "{country}: {auctions} Anzeigen neu gecrawlt ({ok} Regionen erfolgreich, {failed} fehlgeschlagen)."
     },
     "reprocess": {
       "title": "Reprocess-Testlauf",
