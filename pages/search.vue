@@ -130,6 +130,8 @@ const { data, pending, error, refresh } = useLazyFetch<CrawlResult | null>('/api
 // SSR-safe default 'list' (see isDesktop above) — this is now purely the
 // active *mobile* tab; on desktop both panes render regardless of its value.
 const view = ref<'list' | 'map'>('list')
+const mapViewImpliedByCountryQuery = ref(false)
+let applyingImplicitMapView = false
 
 // The map pane is visible whenever it's actually on screen: always on
 // desktop, or only during the "map" mobile tab. Drives both the geo-fetch
@@ -238,7 +240,15 @@ watch([geocodingInProgress, mapVisible, shouldFetchMissingGeo], ([running, visib
 
 onMounted(() => {
   const isMapView = route.query.view === 'map'
-  view.value = isMapView ? 'map' : 'list'
+  const isCountryMapView = !isMapView && route.query.view === undefined && selectedCountries.value.length > 0
+  mapViewImpliedByCountryQuery.value = isCountryMapView
+  applyingImplicitMapView = isCountryMapView
+  view.value = isMapView || isCountryMapView ? 'map' : 'list'
+  if (applyingImplicitMapView) {
+    void nextTick(() => {
+      applyingImplicitMapView = false
+    })
+  }
   mounted.value = true
   // The multi-ref sync watcher below only fires on change — a stale
   // non-map `view` param (e.g. old `?view=list` links) wouldn't trigger
@@ -255,6 +265,11 @@ onActivated(() => {
   if (geocodingInProgress.value && mapVisible.value) startGeoPoll()
 })
 onBeforeUnmount(() => stopGeoPoll())
+
+watch(view, () => {
+  if (!mounted.value || applyingImplicitMapView) return
+  mapViewImpliedByCountryQuery.value = false
+})
 
 const search = ref(queryStr('q'))
 // Every keystroke re-runs filteredGeo and rebuilds thousands of map markers —
@@ -606,7 +621,7 @@ watch(
     if (onlyWithPhotos.value) query.photos = '1'
     if (includeCancelled.value) query.cancelled = '1'
     if (hideRulesOnly.value !== hideRulesOnlyServerDefault.value) query.llmOnly = hideRulesOnly.value ? '1' : '0'
-    if (view.value === 'map') query.view = 'map'
+    if (view.value === 'map' && !mapViewImpliedByCountryQuery.value) query.view = 'map'
     router.replace({ query })
   },
 )
@@ -615,6 +630,7 @@ watch(
 // Without this watch, same-route history navigation updates route.query reactively
 // but refs are only initialized once at setup, so URL and UI would diverge.
 watch(() => route.query, (q) => {
+  const hadCountrySelection = selectedCountries.value.length > 0
   selectedCountries.value = queryList('country')
   selectedRegionKeys.value = queryList('region')
   search.value = queryStr('q')
@@ -635,7 +651,19 @@ watch(() => route.query, (q) => {
   featuresFilter.value = queryList('features')
   onlyWithPhotos.value = q.photos === '1'
   hideRulesOnly.value = q.llmOnly === '1' ? true : q.llmOnly === '0' ? false : hideRulesOnlyServerDefault.value
-  view.value = q.view === 'map' ? 'map' : 'list'
+  const isMapView = q.view === 'map'
+  const isCountryMapView = !isMapView
+    && q.view === undefined
+    && selectedCountries.value.length > 0
+    && (!hadCountrySelection || mapViewImpliedByCountryQuery.value)
+  mapViewImpliedByCountryQuery.value = isCountryMapView
+  applyingImplicitMapView = isCountryMapView
+  view.value = isMapView || isCountryMapView ? 'map' : 'list'
+  if (applyingImplicitMapView) {
+    void nextTick(() => {
+      applyingImplicitMapView = false
+    })
+  }
 }, { deep: true })
 
 // Validate URL-restored authorityFilter / categoryFilter once data has loaded.
@@ -760,6 +788,7 @@ async function toggleWatchlist(a: Auction): Promise<void> {
         <SearchAuctionMapPane
           class="w-2/5 min-w-88 shrink-0 min-h-0"
           :auctions="filteredGeo"
+          :selected-countries="selectedCountries"
           :fit-key="geoFitKey"
           :geo-pending="geoPending"
           :has-geo-data="!!geoData"
@@ -794,6 +823,7 @@ async function toggleWatchlist(a: Auction): Promise<void> {
         :active-auction-key="activeAuctionKey"
         :scroll-target-key="scrollTargetKey"
         :geo-auctions="filteredGeo"
+        :selected-countries="selectedCountries"
         :geo-fit-key="geoFitKey"
         :geo-pending="geoPending"
         :geo-data="geoData"

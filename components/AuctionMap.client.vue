@@ -8,6 +8,7 @@ import { createApp, type App as VueApp } from 'vue'
 import type { GeoAuction } from '~/server/api/auctions-geo.get'
 import LotPopover from '~/components/LotPopover.vue'
 import { auctionKey } from '~/lib/auction-key'
+import { boundsForCountries } from '~/lib/country-bounds'
 import { createAllCountryImageryLayers } from '~/lib/countryImagery'
 
 type AuctionMarker = L.Marker & { auctionKey?: string }
@@ -28,6 +29,7 @@ const activeMarkerIcon = pinIcon(true)
 
 const props = defineProps<{
   auctions: GeoAuction[]
+  selectedCountries?: string[]
   activeAuctionKey?: string | null
   /** Bumping this string requests a re-fit on the next marker refresh — used
    *  by the parent so country/region changes recenter the map, while polling
@@ -83,6 +85,7 @@ function mountLotPopover(el: HTMLElement, a: GeoAuction): VueApp {
 // next refreshMarkers call consumes it, so polling-driven updates never reset
 // the user's zoom/pan.
 let shouldFitNext = true
+let fallbackFitKey: string | null = null
 
 // Markers keyed by `platform:externalId` so refreshMarkers can diff instead of
 // rebuilding — existing markers (and an open popup) survive poll updates.
@@ -158,6 +161,16 @@ function emitBounds(): void {
   emit('bounds-change', { north: b.getNorth(), south: b.getSouth(), east: b.getEast(), west: b.getWest() })
 }
 
+function fitFallbackView(): void {
+  if (!map) return
+  const bounds = boundsForCountries(props.selectedCountries ?? [])
+  if (bounds) {
+    map.fitBounds(bounds, { padding: [28, 28] })
+  } else {
+    map.setView(GERMANY_CENTER, 6)
+  }
+}
+
 function refreshMarkers(): void {
   if (!map || !markersLayer) return
   const seen = new Set<string>()
@@ -181,13 +194,18 @@ function refreshMarkers(): void {
       markersByKey.delete(key)
     }
   }
-  if (!shouldFitNext) return
-  shouldFitNext = false
+  const currentFitKey = props.fitKey ?? ''
+  const canUpgradeFallbackFit = fallbackFitKey === currentFitKey && points.length > 0
+  if (!shouldFitNext && !canUpgradeFallbackFit) return
   if (points.length > 0) {
+    shouldFitNext = false
+    fallbackFitKey = null
     const bounds = L.latLngBounds(points)
     map.fitBounds(bounds, { padding: [40, 40], maxZoom: 12 })
   } else {
-    map.setView(GERMANY_CENTER, 6)
+    shouldFitNext = false
+    fallbackFitKey = currentFitKey
+    fitFallbackView()
   }
 }
 
@@ -268,6 +286,8 @@ onBeforeUnmount(() => {
 
 watch(() => props.fitKey, () => {
   shouldFitNext = true
+  fallbackFitKey = null
+  refreshMarkers()
 })
 
 watch(() => props.auctions, refreshMarkers, { deep: false })
