@@ -18,6 +18,7 @@ services:
       # LLM extractor points at the sibling proxy service via the compose
       # network. Leaving these unset falls back to rules-only extraction.
       NUXT_EXTRACT_LLM_BASE_URL: http://haex-claude-proxy:8080
+      NUXT_EXTRACT_LLM_API_KEY: ${EXTRACT_LLM_API_KEY:-}
       NUXT_EXTRACT_LLM_MODEL: claude-haiku-4-5
       # /settings page + Claude passthrough. See .env.example for how to
       # generate values. All three must be set for /settings to work.

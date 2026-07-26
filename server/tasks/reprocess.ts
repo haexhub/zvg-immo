@@ -16,8 +16,19 @@ import { renderPdfPagesJpeg } from '~/server/utils/extract/pdf-render'
 import { buildDocumentLlmParts } from '~/server/utils/extract/pdf-documents'
 import { extractByRules } from '~/server/utils/extract/rules'
 import { extractByLlm, resolveLlmConfig, type LlmConfig, type LlmInput } from '~/server/utils/extract/llm'
-import { isLlmBatchPending, submitGeminiBatch } from '~/server/utils/extract/gemini-batch'
-import { DEFAULT_LLM_MAX_TOKENS, getLlmMaxTokens, getLlmProviderOverride } from '~/server/utils/app-settings'
+import {
+  isLlmBatchPending,
+  submitLlmBatch,
+  supportsLlmBatch,
+  supportsNativeBatchDocuments,
+} from '~/server/utils/extract/llm-batch'
+import {
+  DEFAULT_LLM_EXECUTION_MODE,
+  DEFAULT_LLM_MAX_TOKENS,
+  getLlmMaxTokens,
+  getLlmProviderOverride,
+  type LlmExecutionMode,
+} from '~/server/utils/app-settings'
 import { mergeLlmResult, type MergeInputFields } from '~/server/utils/extract/merge-llm-result'
 import {
   applyExtractionToAuctions,
@@ -52,13 +63,12 @@ export interface ReprocessOptions {
    *  check before committing to a full country run — e.g. verifying a new
    *  provider/model config against a handful of auctions first. */
   limit?: number
-  /** Submit eligible candidates to the Gemini Batch API (see gemini-batch.ts)
+  /** Submit eligible candidates to the configured provider's Batch API
    *  instead of extracting each one synchronously. Default false (unchanged
    *  synchronous behavior) — this is a manually triggered debug/backfill
    *  tool where an immediate result is usually wanted; opt in only for a
-   *  deliberate full-country batch run. Only takes effect when the
-   *  configured provider is 'gemini-native' (the only one with a Batch API
-   *  integration) — otherwise falls back to the synchronous path. */
+   *  deliberate full-country batch run. Only takes effect when llm-batch.ts
+   *  knows how to batch the configured provider. */
   batch?: boolean
 }
 
@@ -79,6 +89,12 @@ async function readLlmConfig(): Promise<LlmConfig | null> {
     : DEFAULT_LLM_MAX_TOKENS.extraction
   const override = db ? await getLlmProviderOverride(db).catch(() => null) : null
   return resolveLlmConfig(override ?? c, { maxTokens })
+}
+
+async function readLlmExecutionMode(): Promise<LlmExecutionMode> {
+  const db = getPool()
+  const override = db ? await getLlmProviderOverride(db).catch(() => null) : null
+  return override?.executionMode ?? DEFAULT_LLM_EXECUTION_MODE
 }
 
 function readMaxLlmPerRun(): number {
@@ -112,7 +128,7 @@ async function findCandidates(opts: ReprocessOptions): Promise<Candidate[]> {
  * Re-derives one auction's rules/structured fields and (when an LLM is
  * configured) its LLM request input from its archived captures — the
  * fetch+rules step shared by both the synchronous path (reprocessAuction)
- * and the Gemini Batch opt-in path (runReprocess) below. Returns null when
+ * and explicit Batch opt-in path (runReprocess) below. Returns null when
  * the auction capture can't be found or read.
  */
 async function buildReprocessInput(
@@ -120,6 +136,7 @@ async function buildReprocessInput(
   externalId: string,
   priorEntry: AuctionExtraction | undefined,
   llmConfig: LlmConfig | null,
+  opts: { nativeDocuments?: boolean } = {},
 ): Promise<{ fields: MergeInputFields; input: LlmInput | null; photos: CuratedPhoto[] | undefined } | null> {
   const auctionCapture = await findLatestCapture('auction', platform, externalId)
   if (!auctionCapture) return null
@@ -171,12 +188,12 @@ async function buildReprocessInput(
         return bytes ? { pdf, bytes } : null
       }))
     ).filter((doc): doc is { pdf: (typeof documentPdfs)[number]; bytes: Buffer } => doc != null)
-    // Native document understanding (GeminiNativeProvider) reads the PDF
+    // Native document understanding for batch providers reads the PDF
     // bytes directly and needs neither pdftotext nor rendered page images —
     // skip both so a gemini-native run doesn't pay for pdftotext/rasterize
     // work that buildParts would discard anyway (it prefers pdfBytes over
     // pdfText/pdfPageImages once set).
-    const usingNativeDoc = llmConfig.provider === 'gemini-native'
+    const usingNativeDoc = opts.nativeDocuments ?? llmConfig.provider === 'gemini-native'
     const textEntries = usingNativeDoc
       ? []
       : await Promise.all(
@@ -305,12 +322,13 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
   const candidates = await findCandidates(opts)
   const cache = await readExtractionCache()
   const llmConfig = await readLlmConfig()
+  const executionMode = await readLlmExecutionMode()
   const maxLlmPerRun = readMaxLlmPerRun()
   const at = new Date().toISOString()
-  // Only meaningful with gemini-native — the only provider with a Batch API
-  // integration (see gemini-batch.ts). Any other configured provider falls
-  // back to the synchronous path even if `batch: true` was requested.
-  const useBatch = !!opts.batch && llmConfig?.provider === 'gemini-native'
+  // Any provider without a Batch API integration falls back to the
+  // synchronous path even if `batch: true` was requested.
+  const batchRequested = opts.batch ?? executionMode === 'batch'
+  const useBatch = batchRequested && supportsLlmBatch(llmConfig)
 
   let processed = 0
   let skipped = 0
@@ -343,7 +361,9 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
       }
 
       if (useBatch) {
-        const base = await buildReprocessInput(platform, externalId, priorEntry, llmConfig)
+        const base = await buildReprocessInput(platform, externalId, priorEntry, llmConfig, {
+          nativeDocuments: supportsNativeBatchDocuments(llmConfig),
+        })
         if (!base || !base.input) {
           skipped++
           continue
@@ -394,7 +414,7 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
   }
 
   if (batchItems.length > 0 && llmConfig) {
-    const jobName = await submitGeminiBatch(batchItems, llmConfig, 'reprocess')
+    const jobName = await submitLlmBatch(batchItems, llmConfig, 'reprocess')
     if (jobName) {
       // Same rationale as enrich.ts: mark every submitted item so a second
       // runReprocess({ batch: true }) call doesn't re-submit it to a new job
@@ -406,9 +426,9 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
         cache[item.key] = marked
         dirty[item.key] = marked
       }
-      console.log(`[reprocess] submitted Gemini batch ${jobName} with ${batchItems.length} items`)
+      console.log(`[reprocess] submitted LLM batch ${jobName} with ${batchItems.length} items`)
     } else {
-      console.warn(`[reprocess] Gemini batch submission failed for ${batchItems.length} items`)
+      console.warn(`[reprocess] LLM batch submission failed for ${batchItems.length} items`)
     }
   }
 

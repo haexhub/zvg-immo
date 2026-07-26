@@ -37,11 +37,19 @@ function makeFakePool() {
         rows.set(key, JSON.parse(value))
         return { rows: [], rowCount: 1 }
       }
-      // setLlmProviderOverride's atomic upsert: [key, provider, baseUrl, model, apiKey|null].
-      // Emulates the SQL's COALESCE($5, current.apiKey, '') without a real jsonb engine.
-      const [key, provider, baseUrl, model, apiKey] = params as [string, string, string, string, string | null]
+      // setLlmProviderOverride's atomic upsert:
+      // [key, provider, baseUrl, model, executionMode, apiKey|null].
+      // Emulates the SQL's COALESCE($6, current.apiKey, '') without a real jsonb engine.
+      const [key, provider, baseUrl, model, executionMode, apiKey] = params as [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string | null,
+      ]
       const existing = rows.get(key) as { apiKey?: string } | undefined
-      const value = { provider, baseUrl, model, apiKey: apiKey ?? existing?.apiKey ?? '' }
+      const value = { provider, baseUrl, model, executionMode, apiKey: apiKey ?? existing?.apiKey ?? '' }
       rows.set(key, value)
       return { rows: [{ value }], rowCount: 1 }
     }
@@ -177,19 +185,39 @@ describe('getLlmProviderOverride', () => {
     expect(await getLlmProviderOverride(db)).toBeNull()
   })
 
-  it('returns a previously written override', async () => {
+  it('returns a previously written sync override', async () => {
     const db = makeFakePool() as unknown as Pool
     await setLlmProviderOverride(db, {
       provider: 'claude-proxy',
       baseUrl: 'http://haex-claude-proxy:8080',
       model: 'claude-haiku-4-5',
+      executionMode: 'sync',
       apiKey: '',
     })
     expect(await getLlmProviderOverride(db)).toEqual({
       provider: 'claude-proxy',
       baseUrl: 'http://haex-claude-proxy:8080',
       model: 'claude-haiku-4-5',
+      executionMode: 'sync',
       apiKey: '',
+    })
+  })
+
+  it('persists an explicit batch execution mode', async () => {
+    const db = makeFakePool() as unknown as Pool
+    await setLlmProviderOverride(db, {
+      provider: 'gemini-native',
+      baseUrl: 'https://generativelanguage.googleapis.com',
+      model: 'gemini-flash-latest',
+      executionMode: 'batch',
+      apiKey: 'secret',
+    })
+    expect(await getLlmProviderOverride(db)).toEqual({
+      provider: 'gemini-native',
+      baseUrl: 'https://generativelanguage.googleapis.com',
+      model: 'gemini-flash-latest',
+      executionMode: 'batch',
+      apiKey: 'secret',
     })
   })
 
@@ -204,12 +232,35 @@ describe('getLlmProviderOverride', () => {
     expect(await getLlmProviderOverride(db as unknown as Pool)).toBeNull()
   })
 
+  it('returns null when a stored provider override is missing executionMode', async () => {
+    const db = makeFakePool()
+    ;(db as unknown as { query: (sql: string, params?: unknown[]) => Promise<unknown> }).query = async (
+      sql: string,
+    ) => {
+      if (sql.includes('SELECT value')) {
+        return {
+          rows: [{
+            value: {
+              provider: 'claude-proxy',
+              baseUrl: 'http://haex-claude-proxy:8080',
+              model: 'claude-haiku-4-5',
+              apiKey: '',
+            },
+          }],
+        }
+      }
+      throw new Error('unexpected')
+    }
+    expect(await getLlmProviderOverride(db as unknown as Pool)).toBeNull()
+  })
+
   it('is null again after clearLlmProviderOverride', async () => {
     const db = makeFakePool() as unknown as Pool
     await setLlmProviderOverride(db, {
       provider: 'gemini-native',
       baseUrl: 'https://generativelanguage.googleapis.com',
       model: 'gemini-flash-latest',
+      executionMode: 'sync',
       apiKey: 'secret',
     })
     await clearLlmProviderOverride(db)

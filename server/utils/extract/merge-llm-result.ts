@@ -1,6 +1,6 @@
 // Shared merge step between rules-derived fields and an LLM extraction
 // attempt — factored out because enrich.ts, reprocess.ts and (with the
-// Gemini Batch API) llm-batch-poll.ts all need the exact same precedence
+// LLM Batch API) llm-batch-poll.ts all need the exact same precedence
 // rules: structured/rules values win when present, the LLM only fills gaps
 // (and only contributes propertyType/sizes at all when rules weren't already
 // confident), while condition/features/yearBuilt/lastRenovationYear/
@@ -45,7 +45,7 @@ export interface MergeInputFields {
 /**
  * Merges `fields` with an LLM extraction attempt into a persistable
  * `AuctionExtraction`. `llm` is `null` when an LLM call was actually made and
- * failed (network/proxy error, or — for a Gemini Batch API item — that
+ * failed (network/proxy error, or — for an LLM Batch API item — that
  * item's individual generation errored); pass a `ClampedExtraction` when it
  * succeeded. Do not call this at all when no LLM call was attempted (per-run
  * cap hit, LLM disabled, or a batch job still pending) — that path caches the

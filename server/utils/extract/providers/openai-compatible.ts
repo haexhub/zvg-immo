@@ -4,6 +4,7 @@
 // is a baseUrl/apiKey/model config change, never a new class.
 
 import type { ContentPart, ExtractionProvider, ExtractionRequest, LlmConfig } from '../llm'
+import { UNIVERSAL_AUCTION_SCHEMA_NAME } from '../llm'
 
 type OpenAiContentPart =
   | { type: 'text'; text: string }
@@ -57,7 +58,7 @@ export class OpenAiCompatibleProvider implements ExtractionProvider {
       ],
       response_format: {
         type: 'json_schema',
-        json_schema: { name: 'extraction', schema: req.schema, strict: true },
+        json_schema: { name: UNIVERSAL_AUCTION_SCHEMA_NAME, schema: req.schema, strict: true },
       },
     }
     let resp: unknown

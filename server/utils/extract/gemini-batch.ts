@@ -2,7 +2,7 @@
 // as one job instead of hundreds of synchronous generateContent calls (see
 // docs/plans — the Gemini Batch-API-Umstellung plan). Reuses the exact same
 // prompt/schema/parsing building blocks as the synchronous gemini-native
-// path (buildParts/SYSTEM_PROMPT/EXTRACTION_SCHEMA from ./llm,
+// path (buildParts/SYSTEM_PROMPT/UNIVERSAL_AUCTION_SCHEMA from ./llm,
 // toGeminiParts/parseGeminiExtractionResponse from ./providers/gemini-native,
 // toGeminiSchema from ./providers/gemini-schema) — no duplicated prompt logic.
 //
@@ -22,8 +22,8 @@
 import {
   buildParts,
   clampExtraction,
-  EXTRACTION_SCHEMA,
   SYSTEM_PROMPT,
+  UNIVERSAL_AUCTION_SCHEMA,
   type ClampedExtraction,
   type LlmConfig,
   type LlmInput,
@@ -63,7 +63,7 @@ function buildJsonlLine(key: string, input: LlmInput): string | null {
       contents: [{ role: 'user', parts: toGeminiParts(parts) }],
       generationConfig: {
         responseMimeType: 'application/json',
-        responseSchema: toGeminiSchema(EXTRACTION_SCHEMA),
+        responseSchema: toGeminiSchema(UNIVERSAL_AUCTION_SCHEMA),
       },
     },
   })

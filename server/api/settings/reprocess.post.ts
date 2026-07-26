@@ -24,6 +24,7 @@ export default defineEventHandler(async (event) => {
     platform: typeof body.platform === 'string' ? body.platform : undefined,
     externalId: typeof body.externalId === 'string' ? body.externalId : undefined,
     caseNumber: typeof body.caseNumber === 'string' ? body.caseNumber : undefined,
+    batch: body.batch === true,
   }
 
   return await runReprocess(opts)

@@ -41,7 +41,7 @@ export class ClaudeProxyProvider implements ExtractionProvider {
       tools: [
         {
           name: 'final_result',
-          description: 'Gib die extrahierten Eckdaten zurück.',
+          description: 'Gib die extrahierten Eckdaten im universellen Auktions-JSON zurück.',
           input_schema: req.schema,
         },
       ],
@@ -55,7 +55,11 @@ export class ClaudeProxyProvider implements ExtractionProvider {
       // the whole run.
       resp = await $fetch(`${this.config.baseUrl.replace(/\/$/, '')}/v1/messages`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' },
+        headers: {
+          'content-type': 'application/json',
+          'anthropic-version': '2023-06-01',
+          ...(this.config.apiKey ? { 'x-api-key': this.config.apiKey } : {}),
+        },
         body,
         signal: AbortSignal.timeout(60_000),
       })

@@ -104,15 +104,20 @@ export async function setLlmMaxTokens(db: Pool, kind: LlmMaxTokensKind, value: n
 // extractLlm.*), same graceful-degrade contract as the max-tokens settings
 // above.
 export type LlmProvider = 'claude-proxy' | 'openai-compatible' | 'gemini-native'
+export type LlmExecutionMode = 'sync' | 'batch'
 
 export const LLM_PROVIDERS: LlmProvider[] = ['claude-proxy', 'openai-compatible', 'gemini-native']
+export const LLM_EXECUTION_MODES: LlmExecutionMode[] = ['sync', 'batch']
+export const DEFAULT_LLM_EXECUTION_MODE: LlmExecutionMode = 'sync'
 
 export interface LlmProviderOverride {
   provider: LlmProvider
   baseUrl: string
   model: string
-  /** '' when the provider doesn't need one (claude-proxy is OAuth-based via
-   *  its sidecar). Stored as plaintext JSON in app_settings — accepted
+  executionMode: LlmExecutionMode
+  /** '' when the provider doesn't need one (OAuth-based claude-proxy sidecar);
+   *  for api_key-backed claude-proxy resolvers this is the proxy auth token.
+   *  Stored as plaintext JSON in app_settings — accepted
    *  tradeoff for this solo-admin deployment (no other DB readers); revisit
    *  with at-rest encryption if that ever changes. */
   apiKey: string
@@ -126,10 +131,14 @@ function coerceProviderOverride(value: unknown): LlmProviderOverride | null {
   if (typeof v.provider !== 'string' || !LLM_PROVIDERS.includes(v.provider as LlmProvider)) return null
   if (typeof v.baseUrl !== 'string' || !v.baseUrl) return null
   if (typeof v.model !== 'string' || !v.model) return null
+  if (typeof v.executionMode !== 'string' || !LLM_EXECUTION_MODES.includes(v.executionMode as LlmExecutionMode)) {
+    return null
+  }
   return {
     provider: v.provider as LlmProvider,
     baseUrl: v.baseUrl,
     model: v.model,
+    executionMode: v.executionMode as LlmExecutionMode,
     apiKey: typeof v.apiKey === 'string' ? v.apiKey : '',
   }
 }
@@ -149,21 +158,29 @@ export async function getLlmProviderOverride(db: Pool): Promise<LlmProviderOverr
 // stale read — the whole read-modify-write happens atomically in Postgres.
 export async function setLlmProviderOverride(
   db: Pool,
-  value: { provider: LlmProvider; baseUrl: string; model: string; apiKey?: string },
+  value: { provider: LlmProvider; baseUrl: string; model: string; executionMode: LlmExecutionMode; apiKey?: string },
 ): Promise<LlmProviderOverride> {
   const { rows } = await db.query<{ value: unknown }>(
     `INSERT INTO app_settings (key, value, updated_at)
-     VALUES ($1, jsonb_build_object('provider', $2::text, 'baseUrl', $3::text, 'model', $4::text, 'apiKey', COALESCE($5::text, '')), now())
+     VALUES ($1, jsonb_build_object('provider', $2::text, 'baseUrl', $3::text, 'model', $4::text, 'executionMode', $5::text, 'apiKey', COALESCE($6::text, '')), now())
      ON CONFLICT (key) DO UPDATE SET
        value = jsonb_build_object(
          'provider', $2::text,
          'baseUrl', $3::text,
          'model', $4::text,
-         'apiKey', COALESCE($5::text, app_settings.value->>'apiKey', '')
+         'executionMode', $5::text,
+         'apiKey', COALESCE($6::text, app_settings.value->>'apiKey', '')
        ),
        updated_at = now()
      RETURNING value`,
-    [LLM_PROVIDER_OVERRIDE_KEY, value.provider, value.baseUrl, value.model, value.apiKey ?? null],
+    [
+      LLM_PROVIDER_OVERRIDE_KEY,
+      value.provider,
+      value.baseUrl,
+      value.model,
+      value.executionMode,
+      value.apiKey ?? null,
+    ],
   )
   return coerceProviderOverride(rows[0]?.value)!
 }

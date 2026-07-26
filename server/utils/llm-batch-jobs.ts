@@ -1,4 +1,4 @@
-// Tracks in-flight Gemini Batch API jobs (server/utils/extract/gemini-batch.ts)
+// Tracks in-flight LLM Batch API jobs (server/utils/extract/*-batch.ts)
 // so llm-batch-poll.ts knows what to check and enrich.ts/reprocess.ts can
 // avoid double-submitting while a job is still open (see AuctionExtraction's
 // `llmBatchJob` marker). No in-process memoization like extraction-cache.ts —
@@ -15,22 +15,27 @@ export interface LlmBatchJob {
   source: 'enrich' | 'reprocess'
   status: LlmBatchJobStatus
   itemCount: number
+  customIdMap: Record<string, string>
+  submittedAt: string
+  checkedAt: string | null
+  updatedAt: string
 }
 
-/** Returns whether the row was recorded, so the caller (submitGeminiBatch) can
+/** Returns whether the row was recorded, so the caller can
  *  treat a failed insert as a failed submission instead of returning a job
  *  name the poller will never see. */
 export async function insertLlmBatchJob(job: {
   jobName: string
   source: 'enrich' | 'reprocess'
   itemCount: number
+  customIdMap?: Record<string, string>
 }): Promise<boolean> {
   const db = getPool()
   if (!db) return true
   try {
     await db.query(
-      'INSERT INTO llm_batch_jobs (job_name, source, item_count) VALUES ($1, $2, $3)',
-      [job.jobName, job.source, job.itemCount],
+      'INSERT INTO llm_batch_jobs (job_name, source, item_count, custom_id_map) VALUES ($1, $2, $3, $4::jsonb)',
+      [job.jobName, job.source, job.itemCount, JSON.stringify(job.customIdMap ?? {})],
     )
     return true
   } catch (err) {
@@ -43,19 +48,48 @@ export async function listPendingLlmBatchJobs(): Promise<LlmBatchJob[]> {
   const db = getPool()
   if (!db) return []
   try {
-    const { rows } = await db.query<{ job_name: string; source: string; status: string; item_count: number }>(
-      "SELECT job_name, source, status, item_count FROM llm_batch_jobs WHERE status = 'pending'",
+    const { rows } = await db.query<{
+      job_name: string
+      source: string
+      status: string
+      item_count: number
+      custom_id_map: unknown
+      submitted_at: Date | string
+      checked_at: Date | string | null
+      updated_at: Date | string
+    }>(
+      `SELECT job_name, source, status, item_count, custom_id_map, submitted_at, checked_at, updated_at
+       FROM llm_batch_jobs
+       WHERE status = 'pending'
+       ORDER BY submitted_at ASC`,
     )
     return rows.map((r) => ({
       jobName: r.job_name,
       source: r.source as 'enrich' | 'reprocess',
       status: r.status as LlmBatchJobStatus,
       itemCount: r.item_count,
+      customIdMap: isStringMap(r.custom_id_map) ? r.custom_id_map : {},
+      submittedAt: toIso(r.submitted_at),
+      checkedAt: r.checked_at == null ? null : toIso(r.checked_at),
+      updatedAt: toIso(r.updated_at),
     }))
   } catch (err) {
     console.warn(`[llm-batch-jobs] list failed: ${(err as Error).message}`)
     return []
   }
+}
+
+function toIso(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : value
+}
+
+function isStringMap(value: unknown): value is Record<string, string> {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    Object.values(value).every((v) => typeof v === 'string')
+  )
 }
 
 /** Removes a job's row once llm-batch-poll.ts has resolved it (succeeded,

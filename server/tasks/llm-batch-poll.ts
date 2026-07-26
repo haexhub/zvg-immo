@@ -1,5 +1,5 @@
-// Polls in-flight Gemini Batch API jobs (submitted by enrich.ts/reprocess.ts,
-// see server/utils/extract/gemini-batch.ts) and merges completed results into
+// Polls in-flight LLM Batch API jobs (submitted by enrich.ts/reprocess.ts,
+// see server/utils/extract/llm-batch.ts) and merges completed results into
 // extraction_cache/auction_snapshot — the async counterpart to those tasks'
 // synchronous LLM merge (server/utils/extract/merge-llm-result.ts). Scheduled
 // every 30 minutes (nuxt.config.ts) plus a boot-time nudge (llm-batch-poll-
@@ -7,7 +7,7 @@
 // gets merged promptly instead of waiting for the next tick.
 
 import type { Auction, AuctionExtraction } from '~/types/auction'
-import { fetchGeminiBatchResults, pollGeminiBatch } from '../utils/extract/gemini-batch'
+import { fetchLlmBatchResults, pollLlmBatch } from '../utils/extract/llm-batch'
 import { type LlmConfig } from '../utils/extract/llm'
 import { mergeLlmResult, type MergeInputFields } from '../utils/extract/merge-llm-result'
 import {
@@ -40,8 +40,8 @@ function splitKey(key: string): { platform: string; externalId: string } | null 
 }
 
 // Reconstructs the `MergeInputFields` mergeLlmResult needs from the
-// already-cached rules-only entry (written at submit time by enrich.ts/
-// reprocess.ts). `confident` (whether the LLM may still touch propertyType/
+// already-cached rules-only entry (written at explicit batch-submit time by
+// enrich.ts/reprocess.ts). `confident` (whether the LLM may still touch propertyType/
 // sizes) is provably `confidence === 'high'`: extractByRules defines
 // `confident` as "a real property type and an area", the exact same
 // condition both callers' `confidence: 'high'` is derived from — so the
@@ -73,7 +73,7 @@ function toMergeFields(entry: AuctionExtraction): MergeInputFields {
 export default defineTask({
   meta: {
     name: 'llm-batch-poll',
-    description: 'Poll in-flight Gemini Batch API jobs and merge completed results into extraction_cache/auction_snapshot.',
+    description: 'Poll in-flight LLM Batch API jobs and merge completed results into extraction_cache/auction_snapshot.',
   },
   async run() {
     return { result: await runLlmBatchPoll() }
@@ -96,7 +96,7 @@ export async function runLlmBatchPoll(): Promise<{ checked: number; merged: numb
 
   for (const job of jobs) {
     try {
-      const poll = await pollGeminiBatch(job.jobName, llmConfig)
+      const poll = await pollLlmBatch(job.jobName, llmConfig)
       if (poll.state === 'pending') continue
 
       if (poll.state === 'failed' || poll.state === 'expired') {
@@ -108,7 +108,7 @@ export async function runLlmBatchPoll(): Promise<{ checked: number; merged: numb
         continue
       }
 
-      const results = await fetchGeminiBatchResults(poll.resultFileName!, llmConfig)
+      const results = await fetchLlmBatchResults(job.jobName, poll.resultFileName, llmConfig, job.customIdMap)
       const dirty: ExtractionCache = {}
       const snapshot = await readAuctionSnapshot()
       const snapshotUpdates: Auction[] = []

@@ -21,7 +21,9 @@
 //      run so a cold start doesn't spawn thousands of proxy subprocesses at once.
 //
 // Triggered by the scheduled task config in nuxt.config.ts and once shortly
-// after server startup via server/plugins/enrich-bootstrap.ts.
+// after server startup via server/plugins/enrich-bootstrap.ts. Batch LLM
+// submission is opt-in either per task payload (`{ batch: true }`) or via the
+// admin LLM provider setting; the persisted default is still synchronous.
 
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -34,9 +36,20 @@ import { deriveMarketValueEur, getRates } from '~/server/utils/exchange-rate'
 import { extractByRules } from '~/server/utils/extract/rules'
 import { extractByLlm, resolveLlmConfig, type LlmInput, type PhotoCuration } from '~/server/utils/extract/llm'
 import { buildDocumentLlmParts } from '~/server/utils/extract/pdf-documents'
-import { isLlmBatchPending, submitGeminiBatch } from '~/server/utils/extract/gemini-batch'
+import {
+  isLlmBatchPending,
+  submitLlmBatch,
+  supportsLlmBatch,
+  supportsNativeBatchDocuments,
+} from '~/server/utils/extract/llm-batch'
 import { getPool } from '~/server/utils/db'
-import { DEFAULT_LLM_MAX_TOKENS, getLlmMaxTokens, getLlmProviderOverride } from '~/server/utils/app-settings'
+import {
+  DEFAULT_LLM_EXECUTION_MODE,
+  DEFAULT_LLM_MAX_TOKENS,
+  getLlmMaxTokens,
+  getLlmProviderOverride,
+  type LlmExecutionMode,
+} from '~/server/utils/app-settings'
 import { mergeLlmResult } from '~/server/utils/extract/merge-llm-result'
 import { downloadNativeImages } from '~/server/utils/extract/native-images'
 import { extractDocumentPhotos } from '~/server/utils/extract/document-images'
@@ -118,6 +131,12 @@ async function readLlmConfig(): Promise<ReturnType<typeof resolveLlmConfig>> {
   return resolveLlmConfig(override ?? c, { maxTokens })
 }
 
+async function readLlmExecutionMode(): Promise<LlmExecutionMode> {
+  const db = getPool()
+  const override = db ? await getLlmProviderOverride(db).catch(() => null) : null
+  return override?.executionMode ?? DEFAULT_LLM_EXECUTION_MODE
+}
+
 function readMaxLlmPerRun(): number {
   const raw = Number((useRuntimeConfig().extractLlm as { maxPerRun?: string })?.maxPerRun)
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_MAX_LLM_PER_RUN
@@ -128,27 +147,34 @@ function readMaxLlmPerRun(): number {
 // concurrent runs would double-fetch details and race on the snapshot write.
 let running = false
 
+export interface EnrichOptions {
+  /** Submit eligible LLM work via the configured provider's Batch API.
+   *  Default false: provider selection alone never changes sync vs async
+   *  behavior. */
+  batch?: boolean
+}
+
 export default defineTask({
   meta: {
     name: 'enrich',
     description:
       'Crawl all regions and extract property type + sizes (rules + LLM fallback) for new listings into the disk cache.',
   },
-  async run() {
+  async run(event) {
     if (running) {
       console.warn('[enrich] previous run still in progress — skipping')
       return { result: undefined }
     }
     running = true
     try {
-      return await runEnrich()
+      return await runEnrich((event?.payload ?? {}) as EnrichOptions)
     } finally {
       running = false
     }
   },
 })
 
-export async function runEnrich() {
+export async function runEnrich(opts: EnrichOptions = {}) {
     const startedAt = Date.now()
     console.log('[enrich] start')
 
@@ -157,6 +183,9 @@ export async function runEnrich() {
     const previousSnapshot = await readAuctionSnapshot()
     const byPlatform = new Map(platforms.map((p) => [p.id, p]))
     const llmConfig = await readLlmConfig()
+    const executionMode = await readLlmExecutionMode()
+    const batchRequested = opts.batch ?? executionMode === 'batch'
+    const useBatch = batchRequested && supportsLlmBatch(llmConfig)
     const rates = await getRates()
 
     // Two independent reasons to enrich: no extraction yet, OR the previous
@@ -239,7 +268,7 @@ export async function runEnrich() {
     const todo = interleaveByPlatform(eligible)
     const maxLlmPerRun = readMaxLlmPerRun()
     console.log(
-      `[enrich] crawled ${result.auctions.length}, ${todo.length} to (re)enrich · llm=${llmConfig ? `${llmConfig.model} (maxTokens=${llmConfig.maxTokens})` : 'off'} maxLlmPerRun=${maxLlmPerRun}`,
+      `[enrich] crawled ${result.auctions.length}, ${todo.length} to (re)enrich · llm=${llmConfig ? `${llmConfig.model} (maxTokens=${llmConfig.maxTokens}, batch=${useBatch})` : 'off'} maxLlmPerRun=${maxLlmPerRun}`,
     )
 
     let cached = 0
@@ -255,10 +284,9 @@ export async function runEnrich() {
     // flush call, synchronously (no `await` in between), so no writer can add
     // to a batch that's already been handed off.
     let dirty: ExtractionCache = {}
-    // LLM inputs collected for gemini-native's batch submission (see
-    // gemini-batch.ts) — one submitGeminiBatch call for the whole run instead
-    // of a synchronous generateContent call per item. Unused (stays empty)
-    // for the other providers, which still call extractByLlm synchronously.
+    // LLM inputs collected only when this run explicitly opts into a provider
+    // Batch API (`runEnrich({ batch: true })`). Provider selection alone never
+    // flips sync extraction into async batch submission.
     const batchItems: { key: string; input: LlmInput }[] = []
 
     // maxLlmPerRun is shared across all platforms, but which item reaches
@@ -383,11 +411,13 @@ export async function runEnrich() {
           caseNumber: a.caseNumber,
           authority: a.authority,
         }
-        // gemini-native reads the PDF's raw bytes directly (native document
-        // understanding, see gemini-batch.ts) — skip pdftotext for it
-        // entirely, fetching bytes instead once this item is actually about
-        // to be batch-submitted (below, inside the LLM-budget-gated block).
-        const usingNativeDoc = llmConfig?.provider === 'gemini-native'
+        // Batch-native providers read the PDF's raw bytes directly only on
+        // explicit batch runs. Synchronous extraction keeps its existing
+        // provider-specific behavior (Gemini native docs; Claude proxy text/
+        // rendered pages).
+        const usingNativeDoc = useBatch
+          ? supportsNativeBatchDocuments(llmConfig)
+          : llmConfig?.provider === 'gemini-native'
         // Fetching (and archiving) the best appraisal PDF happens here
         // regardless of whether rules already found a confident result — the
         // archive's purpose is preserving the source document for
@@ -554,14 +584,14 @@ export async function runEnrich() {
             }
           }
 
-          if (usingNativeDoc) {
-            // Batch mode (see gemini-batch.ts): collect this item's LLM
-            // input for one submitGeminiBatch call after the whole worker
+          if (useBatch) {
+            // Batch mode (see llm-batch.ts): collect this item's LLM
+            // input for one submitLlmBatch call after the whole worker
             // pool finishes instead of a synchronous generateContent call —
-            // the Free-Tier rate limit that motivated this migration can't
+            // the rate limit/cost profile that motivated this path can't
             // sustain hundreds of synchronous calls in a couple of minutes.
             // Fetch+archive the raw PDF bytes only now (not unconditionally
-            // like pdfText above) so a cap-skipped item under gemini-native
+            // like pdfText above) so a cap-skipped item under a batch provider
             // doesn't re-hit the upstream every single run — it archives
             // once it actually gets a slot.
             const nativeDocuments = (
@@ -695,8 +725,8 @@ export async function runEnrich() {
     }
     await Promise.all(Array.from({ length: ENRICH_CONCURRENCY }, worker))
 
-    if (batchItems.length > 0 && llmConfig) {
-      const jobName = await submitGeminiBatch(batchItems, llmConfig, 'enrich')
+    if (batchItems.length > 0 && llmConfig && useBatch) {
+      const jobName = await submitLlmBatch(batchItems, llmConfig, 'enrich')
       if (jobName) {
         // Mark every submitted item's already-cached rules-only entry with
         // the job name so needsLlmRetry/needsLlmFieldsBackfill don't
@@ -709,9 +739,9 @@ export async function runEnrich() {
           cache[item.key] = marked
           dirty[item.key] = marked
         }
-        console.log(`[enrich] submitted Gemini batch ${jobName} with ${batchItems.length} items`)
+        console.log(`[enrich] submitted LLM batch ${jobName} with ${batchItems.length} items`)
       } else {
-        console.warn(`[enrich] Gemini batch submission failed for ${batchItems.length} items — will retry next run`)
+        console.warn(`[enrich] LLM batch submission failed for ${batchItems.length} items — will retry next run`)
       }
     }
 
