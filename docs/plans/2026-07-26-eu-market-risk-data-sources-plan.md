@@ -306,9 +306,32 @@ Completed in the current implementation branch:
     - `server/utils/external-data/fixtures/avalanche-discovery.fixture.json`
   - `external-enrichment` now loads WP5 adapters only when those local cache paths are configured.
   - Hazard UI no longer colors `outside` green, avoiding a visual "safe" cue.
+- WP6 operational safeguards:
+  - Extended `external-enrichment` summaries with per-provider admin stats:
+    - adapter id/kind/source version
+    - supported auctions
+    - attempted calls
+    - produced results
+    - stale hazard results
+    - provider failures
+    - rate-limit waits and total waited milliseconds
+    - adapter execution duration
+  - Added optional per-provider rate-limit gates to `external-enrichment`.
+    - Adapters can set `minIntervalMs`.
+    - Manual settings runs can pass `providerRateLimits`.
+    - Scheduled/default runs can read `NUXT_EXTERNAL_DATA_PROVIDER_RATE_LIMITS_JSON`.
+  - Kept default rate limits at zero so configured local cache adapters remain fast and the scheduled task is still cheap when no adapters are configured.
+  - The protected manual enrichment endpoint now validates optional provider rate limits and returns the structured provider summary.
+  - Existing summary counters still include processed/written items, skipped missing coordinates, provider failures and stale result count.
+  - Source-specific TTLs remain enforced inside the source adapters:
+    - flood cache age via `euFloodRiskMaxCacheAgeDays`
+    - EFFIS static risk age via `effisWildfireStaticRiskMaxCacheAgeDays`
+    - EFFIS current fire danger via per-cache `ttlHours`
+    - avalanche discovery via `avalancheDiscoveryMaxCacheAgeDays`
 
 Verification completed:
 
+- `pnpm vitest run server/tasks/external-enrichment.test.ts server/api/settings/external-data/enrichment.post.test.ts`
 - `pnpm vitest run server/utils/external-data/effis-wildfire.test.ts server/utils/external-data/avalanche.test.ts server/tasks/external-enrichment.test.ts server/tasks/import-effis-wildfire-cache.test.ts server/api/settings/external-data/effis-wildfire-cache.post.test.ts`
 - `pnpm vitest run server/utils/external-data/eu-flood-risk.test.ts server/tasks/external-enrichment.test.ts server/tasks/import-eu-flood-risk-cache.test.ts server/api/settings/external-data/eu-flood-risk-cache.post.test.ts server/api/settings/external-data/enrichment.post.test.ts`
 - `pnpm vitest run server/utils/external-data/eu-flood-risk.test.ts server/tasks/external-enrichment.test.ts`
@@ -316,29 +339,10 @@ Verification completed:
 - `pnpm exec nuxi typecheck`
 - `pnpm test`
 
-Next recommended prompt:
+Plan status:
 
-```text
-Continue implementing docs/plans/2026-07-26-eu-market-risk-data-sources-plan.md.
-
-Current branch already has:
-- external-data source registry and typed LocationEnrichment model
-- Postgres-backed location_enrichment cache and detail API overlay
-- detail-page cards for market comparison, BORIS-D land-value baseline and hazards
-- France DVF CSV import/cache path and file-cache market adapter
-- import-fr-dvf-cache Nitro task + protected settings endpoint
-- external-enrichment task + protected manual endpoint + daily no-op-safe schedule
-- EU Flood Risk Areas GeoJSON cache evaluation and official ArcGIS REST import path
-- tests and typecheck passing
-
-Next focus:
-Implement WP5 wildfire/avalanche v1:
-- add an EFFIS adapter/import path only after choosing a concrete service layer and cache shape for raster/time-varying fire danger
-- keep current fire danger on a short TTL and distinguish it from static wildfire susceptibility/risk
-- add avalanche/national-service discovery first; only implement a country adapter where an authoritative public endpoint is confirmed
-- unsupported or stale wildfire/avalanche sources must yield `unknown`, never `outside`
-Keep detail pages cache-only; no live external fetch from the API route.
-```
+- WP1-WP6 are complete for the first EU-first market and natural-risk enrichment pass.
+- Remaining work is expansion rather than plan completion: add more national/country adapters after confirming authoritative endpoints, revisit PostGIS if cache volume outgrows lightweight GeoJSON/sample caches, and deepen admin UI presentation if operators need more than the JSON summary.
 
 ## Open questions
 

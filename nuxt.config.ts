@@ -119,6 +119,7 @@ export default defineNuxtConfig({
     //   NUXT_EXTERNAL_DATA_EFFIS_WILDFIRE_MAX_SAMPLE_DISTANCE_METERS=12000
     //   NUXT_EXTERNAL_DATA_AVALANCHE_DISCOVERY_PATH=/app/.cache_zvg/external/avalanche-discovery.json
     //   NUXT_EXTERNAL_DATA_AVALANCHE_DISCOVERY_MAX_CACHE_AGE_DAYS=400
+    //   NUXT_EXTERNAL_DATA_PROVIDER_RATE_LIMITS_JSON={"effis-wildfire-file-cache":250}
     externalData: {
       frDvfCachePath: '',
       euFloodRiskGeoJsonPath: '',
@@ -128,6 +129,7 @@ export default defineNuxtConfig({
       effisWildfireMaxSampleDistanceMeters: 12_000,
       avalancheDiscoveryPath: '',
       avalancheDiscoveryMaxCacheAgeDays: 400,
+      providerRateLimitsJson: '',
     },
     // G1 Roh-Archiv (WP-3): Supabase Storage bucket for archived crawl
     // snapshots (server/utils/raw-archive.ts, storage-uploader.ts). Empty →

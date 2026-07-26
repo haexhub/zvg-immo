@@ -74,12 +74,26 @@ const hazard: HazardAssessment = {
 }
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   vi.resetModules()
   vi.clearAllMocks()
 })
 
 describe('runExternalEnrichment', () => {
+  it('parses runtime provider rate-limit JSON', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { parseProviderRateLimits } = await import('./external-enrichment')
+
+    expect(parseProviderRateLimits(JSON.stringify({
+      'hazard:effis-wildfire-file-cache': '250',
+      'bad key': 100,
+      negative: -1,
+    }))).toEqual({
+      'hazard:effis-wildfire-file-cache': 250,
+    })
+  })
+
   it('writes cached enrichment from market, land-value and hazard adapters', async () => {
     vi.stubGlobal('defineTask', (def: unknown) => def)
     const { readAuctionSnapshot } = await import('~/server/utils/auction-snapshot')
@@ -120,6 +134,11 @@ describe('runExternalEnrichment', () => {
       staleResults: 0,
       providerFailures: 0,
     })
+    expect(summary.providers).toEqual([
+      expect.objectContaining({ id: 'dvf-fixture', kind: 'market', supported: 1, attempted: 1, produced: 1 }),
+      expect.objectContaining({ id: 'boris-fixture', kind: 'land_value', supported: 1, attempted: 1, produced: 1 }),
+      expect.objectContaining({ id: 'flood-fixture', kind: 'hazard', supported: 1, attempted: 1, produced: 1 }),
+    ])
     expect(writeLocationEnrichmentCache).toHaveBeenCalledWith({
       'test:42': {
         platform: 'test',
@@ -185,6 +204,10 @@ describe('runExternalEnrichment', () => {
     expect(summary.providerFailures).toBe(1)
     expect(summary.marketComparisons).toBe(1)
     expect(summary.written).toBe(1)
+    expect(summary.providers).toEqual([
+      expect.objectContaining({ id: 'failing', failures: 1, attempted: 1, produced: 0 }),
+      expect.objectContaining({ id: 'working', failures: 0, attempted: 1, produced: 1 }),
+    ])
   })
 
   it('writes flood hazards from the default configured GeoJSON adapter', async () => {
@@ -293,6 +316,51 @@ describe('runExternalEnrichment', () => {
 
     expect(summary.hazards).toBe(1)
     expect(summary.staleResults).toBe(1)
+    expect(summary.providers).toEqual([
+      expect.objectContaining({ id: 'stale-flood', staleResults: 1 }),
+    ])
+  })
+
+  it('tracks provider rate-limit waits without dropping results', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-26T00:00:00.000Z'))
+    const { readAuctionSnapshot } = await import('~/server/utils/auction-snapshot')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionSnapshot).mockResolvedValue({
+      'test:1': auction({ externalId: '1' }),
+      'test:2': auction({ externalId: '2' }),
+    })
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+    const sleep = vi.fn(async () => {})
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    const summary = await runExternalEnrichment({
+      now: new Date('2026-07-26T00:00:00.000Z'),
+      marketAdapters: [],
+      landValueAdapters: [],
+      hazardAdapters: [{
+        id: 'slow-hazard',
+        sourceVersion: 'v1',
+        supports: () => true,
+        assess: vi.fn(async () => [hazard]),
+      }],
+      providerRateLimits: { 'hazard:slow-hazard': 250 },
+      sleep,
+    })
+
+    expect(summary.hazards).toBe(2)
+    expect(sleep).toHaveBeenCalledWith(250)
+    expect(summary.providers).toEqual([
+      expect.objectContaining({
+        id: 'slow-hazard',
+        attempted: 2,
+        produced: 2,
+        rateLimited: 1,
+        waitedMs: 250,
+      }),
+    ])
   })
 
   it('can limit processed auctions for manual spot runs', async () => {
