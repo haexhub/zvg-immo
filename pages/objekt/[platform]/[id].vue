@@ -16,6 +16,7 @@ import {
   BrickWall,
   Building2,
   CalendarPlus,
+  ChartNoAxesColumn,
   ChefHat,
   Flame,
   Heater,
@@ -23,8 +24,10 @@ import {
   Mountain,
   ParkingSquare,
   ShowerHead,
+  ShieldAlert,
   TreePine,
   Warehouse,
+  Waves,
 } from 'lucide-vue-next'
 
 const route = useRoute()
@@ -37,6 +40,7 @@ const propertyTypeLabel = usePropertyTypeLabel()
 const attachmentKindLabelFn = useAttachmentKindLabel()
 const conditionLabel = useConditionLabel()
 const featureLabel = useFeatureLabel()
+const MARKET_COMPARISON_MIN_SAMPLES = 5
 
 const { data: a, error, pending } = await useFetch<AuctionDetail | null>(
   `/api/auction/${platform}/${id}`,
@@ -160,6 +164,18 @@ function formatPricePerSqm(n: number | null): string {
   return `${converted.toLocaleString(intlLocale.value, { style: 'currency', currency: currency.value, maximumFractionDigits: 0 })}/m²`
 }
 
+function formatPercent(n: number | null): string {
+  if (n == null) return '–'
+  return `${n > 0 ? '+' : ''}${n.toLocaleString(intlLocale.value, { maximumFractionDigits: 0 })}%`
+}
+
+function formatShortDate(iso: string | null | undefined): string {
+  if (!iso) return '–'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleDateString(intlLocale.value, { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
 const priceAreaSqm = computed(() => {
   const e = a.value?.extraction
   return e?.livingAreaSqm ?? e?.landAreaSqm ?? null
@@ -175,6 +191,52 @@ const pricePerSqmBasis = computed(() => {
   if (!e || pricePerSqm.value == null) return null
   return e.livingAreaSqm != null ? t('objektDetail.pricePerSqmLivingArea') : t('objektDetail.pricePerSqmLandArea')
 })
+
+const marketComparison = computed(() => a.value?.locationEnrichment?.marketComparison ?? null)
+const showMarketComparison = computed(() => {
+  const m = marketComparison.value
+  return !!m && m.samples >= MARKET_COMPARISON_MIN_SAMPLES && m.verdict !== 'insufficient_data'
+})
+const landValueBaseline = computed(() => a.value?.locationEnrichment?.landValueBaseline ?? null)
+
+const hazardAssessments = computed(() => a.value?.locationEnrichment?.hazards ?? [])
+const showHazards = computed(() => hazardAssessments.value.length > 0)
+
+function marketVerdictClass(verdict: string): string {
+  if (verdict === 'cheaper') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
+  if (verdict === 'more_expensive') return 'border-amber-200 bg-amber-50 text-amber-700'
+  return 'border-slate-200 bg-slate-50 text-slate-700'
+}
+
+function marketVerdictLabel(verdict: string): string {
+  return t(`objektDetail.marketVerdict.${verdict}`)
+}
+
+function hazardIcon(hazard: string): Component {
+  if (hazard === 'flood') return Waves
+  if (hazard === 'wildfire') return Flame
+  if (hazard === 'avalanche') return Mountain
+  return ShieldAlert
+}
+
+function hazardLabel(hazard: string): string {
+  return t(`objektDetail.hazard.${hazard}`)
+}
+
+function hazardStatusLabel(status: string): string {
+  return t(`objektDetail.hazardStatus.${status}`)
+}
+
+function hazardSeverityLabel(severity: string): string {
+  return t(`objektDetail.hazardSeverity.${severity}`)
+}
+
+function hazardStatusClass(status: string): string {
+  if (status === 'inside') return 'text-destructive'
+  if (status === 'nearby') return 'text-amber-700'
+  if (status === 'outside') return 'text-emerald-700'
+  return 'text-muted-foreground'
+}
 
 // Photo URLs: native foto attachments (when present) first, then extracted
 // embedded photos from the Gutachten/Exposé PDF. Segments are
@@ -441,6 +503,109 @@ useHead(() => ({
             <p v-if="a.extraction?.renovationNotes" class="mt-1 text-xs text-muted-foreground">
               {{ $t('objektDetail.renovationNotes', { note: a.extraction.renovationNotes }) }}
             </p>
+          </DetailSectionCard>
+
+          <DetailSectionCard v-if="showMarketComparison && marketComparison" :title="$t('objektDetail.marketComparisonTitle')">
+            <div class="mb-4 flex flex-wrap items-center gap-2">
+              <Badge variant="outline" :class="marketVerdictClass(marketComparison.verdict)">
+                <ChartNoAxesColumn class="h-3.5 w-3.5" />
+                {{ marketVerdictLabel(marketComparison.verdict) }}
+              </Badge>
+              <span class="text-xs text-muted-foreground">
+                {{ $t('objektDetail.marketComparisonSamples', { count: marketComparison.samples, region: marketComparison.regionLabel }) }}
+              </span>
+            </div>
+            <dl class="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-4">
+              <div>
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.objectPricePerSqm') }}</dt>
+                <dd class="text-sm font-medium tabular-nums">{{ formatPricePerSqm(marketComparison.pricePerSqm) }}</dd>
+              </div>
+              <div>
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.regionalMedian') }}</dt>
+                <dd class="text-sm font-medium tabular-nums">{{ formatPricePerSqm(marketComparison.medianPricePerSqm) }}</dd>
+              </div>
+              <div>
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.regionalRange') }}</dt>
+                <dd class="text-sm font-medium tabular-nums">
+                  {{ formatPricePerSqm(marketComparison.p25PricePerSqm) }} – {{ formatPricePerSqm(marketComparison.p75PricePerSqm) }}
+                </dd>
+              </div>
+              <div>
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.deltaVsMedian') }}</dt>
+                <dd class="text-sm font-medium tabular-nums">{{ formatPercent(marketComparison.deltaPctVsMedian) }}</dd>
+              </div>
+            </dl>
+            <div class="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+              <span>{{ $t('objektDetail.pricePerSqmBasisLabel') }} {{ marketComparison.basis === 'livingArea' ? $t('objektDetail.pricePerSqmLivingArea') : $t('objektDetail.pricePerSqmLandArea') }}</span>
+              <a
+                v-for="source in marketComparison.sources"
+                :key="source.id"
+                :href="safeHref(source.url)"
+                target="_blank"
+                rel="noopener"
+                class="underline underline-offset-2 hover:text-foreground"
+              >
+                {{ source.label }}
+              </a>
+            </div>
+            <p class="mt-3 text-xs text-muted-foreground">{{ $t('objektDetail.externalDataDisclaimer') }}</p>
+          </DetailSectionCard>
+
+          <DetailSectionCard v-if="landValueBaseline" :title="$t('objektDetail.landValueBaselineTitle')">
+            <dl class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-4">
+              <div>
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.landValueBaseline') }}</dt>
+                <dd class="text-sm font-medium tabular-nums">{{ formatPricePerSqm(landValueBaseline.valueEurPerSqm) }}</dd>
+              </div>
+              <div>
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.region') }}</dt>
+                <dd class="text-sm font-medium">{{ landValueBaseline.regionLabel }}</dd>
+              </div>
+              <div v-if="landValueBaseline.zoneLabel">
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.landValueZone') }}</dt>
+                <dd class="text-sm font-medium">{{ landValueBaseline.zoneLabel }}</dd>
+              </div>
+            </dl>
+            <p class="mt-4 text-xs text-muted-foreground">
+              {{ $t('objektDetail.sourceChecked', { source: landValueBaseline.source.label, date: formatShortDate(landValueBaseline.checkedAt) }) }}
+              <a :href="safeHref(landValueBaseline.source.url)" target="_blank" rel="noopener" class="ml-1 underline underline-offset-2 hover:text-foreground">
+                {{ $t('objektDetail.sourceLink') }}
+              </a>
+            </p>
+            <p class="mt-2 text-xs text-muted-foreground">{{ $t('objektDetail.landValueBaselineDisclaimer') }}</p>
+          </DetailSectionCard>
+
+          <DetailSectionCard v-if="showHazards" :title="$t('objektDetail.hazardsTitle')">
+            <div class="divide-y rounded-md border">
+              <div
+                v-for="hazard in hazardAssessments"
+                :key="`${hazard.hazard}:${hazard.sourceLabel}`"
+                class="grid grid-cols-[auto_1fr] gap-3 p-3"
+              >
+                <component :is="hazardIcon(hazard.hazard)" class="mt-0.5 h-4 w-4 text-primary" />
+                <div class="min-w-0">
+                  <div class="flex flex-wrap items-baseline justify-between gap-2">
+                    <p class="text-sm font-medium">{{ hazardLabel(hazard.hazard) }}</p>
+                    <p class="text-xs font-medium" :class="hazardStatusClass(hazard.status)">
+                      {{ hazardStatusLabel(hazard.status) }}
+                    </p>
+                  </div>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    {{ $t('objektDetail.hazardSeverityLabel') }} {{ hazardSeverityLabel(hazard.severity) }}
+                    <span v-if="hazard.distanceMeters != null">
+                      · {{ $t('objektDetail.hazardDistance', { meters: hazard.distanceMeters.toLocaleString(intlLocale, { maximumFractionDigits: 0 }) }) }}
+                    </span>
+                  </p>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    {{ $t('objektDetail.sourceChecked', { source: hazard.sourceLabel, date: formatShortDate(hazard.checkedAt) }) }}
+                    <a :href="safeHref(hazard.sourceUrl)" target="_blank" rel="noopener" class="ml-1 underline underline-offset-2 hover:text-foreground">
+                      {{ $t('objektDetail.sourceLink') }}
+                    </a>
+                  </p>
+                </div>
+              </div>
+            </div>
+            <p class="mt-3 text-xs text-muted-foreground">{{ $t('objektDetail.externalDataDisclaimer') }}</p>
           </DetailSectionCard>
 
           <DetailSectionCard v-if="amenityItems.length" :title="$t('objektDetail.amenitiesTitle')">

@@ -2,6 +2,71 @@ import type { PropertyType } from '~/lib/property-type'
 import type { Condition } from '~/lib/condition'
 import type { Feature } from '~/lib/features'
 
+export interface DataSourceAttribution {
+  id: string
+  label: string
+  url: string
+  licenseNote: string
+}
+
+export type MarketComparisonPropertyClass = 'house' | 'apartment' | 'land' | 'mixed' | 'unknown'
+
+export interface MarketComparison {
+  pricePerSqm: number | null
+  basis: 'livingArea' | 'landArea'
+  areaSqm: number
+  regionLabel: string
+  propertyClass: MarketComparisonPropertyClass
+  medianPricePerSqm: number | null
+  p25PricePerSqm: number | null
+  p75PricePerSqm: number | null
+  deltaPctVsMedian: number | null
+  verdict: 'cheaper' | 'similar' | 'more_expensive' | 'insufficient_data'
+  samples: number
+  sources: DataSourceAttribution[]
+}
+
+export interface LandValueBaseline {
+  valueEurPerSqm: number
+  regionLabel: string
+  zoneLabel: string | null
+  distanceMeters: number | null
+  source: DataSourceAttribution
+  checkedAt: string
+}
+
+export type HazardKind =
+  | 'flood'
+  | 'wildfire'
+  | 'avalanche'
+  | 'earthquake'
+  | 'landslide'
+  | 'storm'
+  | 'hail'
+  | 'snow_load'
+
+export interface HazardAssessment {
+  hazard: HazardKind
+  status: 'inside' | 'nearby' | 'outside' | 'unknown'
+  severity: 'low' | 'medium' | 'high' | 'very_high' | 'unknown'
+  distanceMeters: number | null
+  sourceLabel: string
+  sourceUrl: string
+  checkedAt: string
+}
+
+export interface LocationEnrichment {
+  platform: string
+  externalId: string
+  lat: number
+  lng: number
+  marketComparison?: MarketComparison | null
+  landValueBaseline?: LandValueBaseline | null
+  hazards?: HazardAssessment[] | null
+  checkedAt: string
+  sourceVersion: string
+}
+
 export type AttachmentKind = 'announcement' | 'photo' | 'brochure' | 'appraisal' | 'other'
 
 export interface Attachment {

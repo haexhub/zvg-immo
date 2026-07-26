@@ -212,6 +212,76 @@ EU-level official data is useful for trend context, but generally too coarse for
 4. WP5 EFFIS wildfire, then national avalanche pilot.
 5. Expand country adapters in the order of active crawler coverage and data availability.
 
+## Implementation status
+
+Updated: 2026-07-26
+
+Completed in the current implementation branch:
+
+- WP1 foundation:
+  - Added `LocationEnrichment`, `MarketComparison`, `LandValueBaseline`, `HazardAssessment` and shared source-attribution types in `types/auction.ts`.
+  - Added typed source registry in `server/utils/external-data/sources.ts` with EU, France, Germany and Austria source metadata.
+  - Added tests that assert registered adapters have labels and source URLs.
+- WP2 cache/API overlay:
+  - Added Postgres-backed `location_enrichment` table in `server/db/schema.sql`.
+  - Added `server/utils/external-data/location-enrichment.ts` mirroring the existing memoized Postgres cache style.
+  - Extended `server/api/auction/[platform]/[id].get.ts` to return cached `locationEnrichment`.
+  - Detail pages still never fetch external providers live.
+- WP3 market pilot foundation:
+  - Added server-side price-per-square-meter helpers in `server/utils/external-data/market.ts`.
+  - Added France DVF normalization and comparison logic in `server/utils/external-data/fr-dvf.ts`:
+    - local radius filtering
+    - property-class filtering
+    - p25 / median / p75
+    - minimum sample threshold
+    - cheaper / similar / more-expensive verdict
+  - Added file-based DVF CSV import/cache path in `server/utils/external-data/fr-dvf-cache.ts`.
+  - Added `import-fr-dvf-cache` Nitro task and protected settings endpoint:
+    - `server/tasks/import-fr-dvf-cache.ts`
+    - `POST /api/settings/external-data/fr-dvf-cache`
+  - Added optional runtime config:
+    - `NUXT_EXTERNAL_DATA_FR_DVF_CACHE_PATH=.cache_zvg/external/fr-dvf.json`
+  - Added Germany BORIS-D land-value baseline model in `server/utils/external-data/de-boris.ts`; it is explicitly separate from residential comparable sales.
+- Operational shell:
+  - Added adapter-driven `external-enrichment` task in `server/tasks/external-enrichment.ts`.
+  - Added protected manual run endpoint:
+    - `POST /api/settings/external-data/enrichment`
+  - Added daily scheduled task at `15 3 * * *`. With no configured adapters this is a cheap no-op.
+  - Added provider failure, skipped-coordinate and written-result counts.
+- UI:
+  - Added cached "Preise in der Region", "Bodenwert-Baseline" and "Naturgefahren" cards to `pages/objekt/[platform]/[id].vue`.
+  - Cards always show source/check metadata and disclaimers. Hazards never use "safe" language.
+
+Verification completed:
+
+- `pnpm vitest run server/utils/external-data server/tasks/external-enrichment.test.ts server/tasks/import-fr-dvf-cache.test.ts server/api/auction/[platform]/[id].get.test.ts server/api/settings/external-data`
+- `pnpm exec nuxi typecheck`
+- `pnpm test`
+
+Next recommended prompt:
+
+```text
+Continue implementing docs/plans/2026-07-26-eu-market-risk-data-sources-plan.md.
+
+Current branch already has:
+- external-data source registry and typed LocationEnrichment model
+- Postgres-backed location_enrichment cache and detail API overlay
+- detail-page cards for market comparison, BORIS-D land-value baseline and hazards
+- France DVF CSV import/cache path and file-cache market adapter
+- import-fr-dvf-cache Nitro task + protected settings endpoint
+- external-enrichment task + protected manual endpoint + daily no-op-safe schedule
+- tests and typecheck passing
+
+Next focus:
+Implement WP4 EU flood risk v1. Start with a fixture-first GeoJSON ingestion/evaluation module:
+- parse small GeoJSON FeatureCollections
+- point-in-polygon and nearest-distance helpers
+- map flood status to inside/nearby/outside/unknown without ever saying "safe"
+- create a flood adapter for external-enrichment
+- add tests for polygon fixtures and detail overlay behavior
+Keep detail pages cache-only; no live external fetch from the API route.
+```
+
 ## Open questions
 
 - Should external data live in Postgres only, or also in a disk cache for local development without DB?
