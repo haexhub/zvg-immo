@@ -157,12 +157,67 @@ const LAND_LABELS =
 const LIVING_AREA_RE = compileLabeledAreaRe(LIVING_LABELS)
 const LAND_AREA_RE = compileLabeledAreaRe(LAND_LABELS)
 
+const TOTAL_WORDS =
+  'gesamt|gesamte|insgesamt|total|totale|totales|totala|sammanlagd|sammanlagda|overall|combined' +
+  '|łączna|łącznej|łącznie|celková|celkova|összes|bendras|ukupna|totala'
+const LAND_OBJECT_WORDS =
+  'grundstück|grundstueck|liegenschaft|flurstück|flurstueck|parzelle|grundbesitz' +
+  '|fastighet(?:en)?|skifte|tomt' +
+  '|plot|property|parcel|lot|land' +
+  '|terrain|parcelle|bien' +
+  '|terreno|finca|parcela|solar' +
+  '|terreno|fondo|particella' +
+  '|działka|nieruchomość|gruntu|pozemek|parcela|telek|sklypas|zemljište|zemljiste'
+const LAND_TOTAL_AREA_LABELS =
+  'gesamt(?:fläche|flaeche|areal)(?:\\s+(?:grundstück|grundstueck|liegenschaft|flurstück|flurstueck))?' +
+  '|(?:grundstück|grundstueck|liegenschaft|flurstück|flurstueck)\\s+gesamt(?:fläche|flaeche|areal)' +
+  '|gesamt(?:e)?\\s+grundstücks(?:fläche|größe)|gesamt(?:e)?\\s+grundstuecks(?:flaeche|groesse)' +
+  '|grundstücks(?:fläche|größe)\\s+gesamt|grundstuecks(?:flaeche|groesse)\\s+gesamt' +
+  '|gesamt(?:e)?\\s+(?:fläche|flaeche|areal)|fläche\\s+gesamt|flaeche\\s+gesamt' +
+  `|(?:${TOTAL_WORDS})\\s+(?:${LAND_LABELS})` +
+  `|(?:${LAND_LABELS})\\s+(?:${TOTAL_WORDS})`
+const AREA_NOUNS =
+  'fläche|flaeche|areal|area|surface|superficie|powierzchni\\S*|plocha|terület|plotas|površin\\S*|povrsin\\S*'
+const APPROX = '(?:ca\\.?|circa|approx\\.?|approximately|about)?'
+const WORD_END = '(?![a-zäöüåéèêàáíóúñçąćęłńóśźż\\d])'
+const LAND_TOTAL_AREA_RES = [
+  // "Grundstück bestehend aus einer Parzelle mit einer Fläche von ca. 18,1 ha"
+  // "Fastighet bestående av ett skifte med en areal om ca 18,1 ha"
+  new RegExp(
+    `(?:${LAND_OBJECT_WORDS})${WORD_END}[^.\\n]{0,180}?` +
+      `(?:bestehend|bestående|bestar|består|consisting|compris|comprenant|compuest[oa]|composto|composta|składa|sklada|tvořen|tvoren|sastoji)[^.\\n]{0,140}?` +
+      `(?:${AREA_NOUNS})` +
+      `(?:\\s+(?:von|om|på|of|de|di|o|:))?\\s*${APPROX}\\s*(${AREA_TOKEN})(?![a-zäöü\\d\\u0370-\\u03ff])`,
+    'i',
+  ),
+  // "Gesamtfläche Grundstück: 18,1 ha", "total surface du terrain 18,1 ha"
+  new RegExp(
+    `(?:${LAND_TOTAL_AREA_LABELS})\\D{0,24}?(${AREA_TOKEN})(?![a-zäöü\\d\\u0370-\\u03ff])`,
+    'i',
+  ),
+  // "Grundstück umfasst 18,1 ha, davon ..." / "property totals 18.1 ha, of which ..."
+  new RegExp(
+    `(?:${LAND_OBJECT_WORDS})${WORD_END}[^.\\n]{0,80}?` +
+      `(?:umfasst|beträgt|betraegt|uppgår\\s+till|totals?|covers?|comprises|comprend|comprende|obejmuje|wynosi)` +
+      `\\D{0,24}?(${AREA_TOKEN})(?![a-zäöü\\d\\u0370-\\u03ff])`,
+    'i',
+  ),
+]
+
 export function findLivingAreaSqm(text: string): number | null {
   return findLabeledArea(text, LIVING_AREA_RE)
 }
 
+export function findTotalLandAreaSqm(text: string): number | null {
+  for (const re of LAND_TOTAL_AREA_RES) {
+    const area = findLabeledArea(text, re)
+    if (area != null) return area
+  }
+  return null
+}
+
 export function findLandAreaSqm(text: string): number | null {
-  return findLabeledArea(text, LAND_AREA_RE)
+  return findTotalLandAreaSqm(text) ?? findLabeledArea(text, LAND_AREA_RE)
 }
 
 // The fallback patterns ("label then number") must not fire on compounds

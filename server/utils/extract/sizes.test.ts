@@ -3,6 +3,7 @@ import {
   findLandAreaSqm,
   findLivingAreaSqm,
   findRooms,
+  findTotalLandAreaSqm,
   findUnits,
   parseAreaValue,
 } from './sizes'
@@ -101,8 +102,56 @@ describe('findLandAreaSqm', () => {
     expect(findLandAreaSqm('Grundstück 2 ha')).toBe(20000)
   })
 
+  it('prefers a total plot area before later usage sub-areas', () => {
+    const text =
+      'Grundstück bestehend aus einer Parzelle mit einer Fläche von ca. 18,1 ha, wovon ca. 14,6 ha auf ' +
+      'produktiven Forstboden mit einem Holzvorrat von 2 280 m3sk entfallen, ca. 1,8 ha Grundstücksfläche, ' +
+      'ca. 1,4 ha Weideland sowie ca. 0,5 ha sonstiges Land.'
+
+    expect(findLandAreaSqm(text)).toBe(181000)
+  })
+
   it('does not read "1 Haus" as one hectare', () => {
     expect(findLandAreaSqm('Grundstück mit 1 Haus und Garten')).toBeNull()
+  })
+})
+
+describe('findTotalLandAreaSqm', () => {
+  it('extracts the total area from Swedish farm prose', () => {
+    const text =
+      'Fastighet bestående av ett skifte med en areal om ca 18,1 ha, varav ca 14,6 ha avser produktiv skogsmark ' +
+      'med ett virkesförråd om 2 280 m3sk, ca 1,8 ha tomtmark, ca 1,4 ha betesmark samt ca 0,5 ha övrig mark.'
+
+    expect(findTotalLandAreaSqm(text)).toBe(181000)
+  })
+
+  it('extracts the total area from German translated parcel prose', () => {
+    const text =
+      'Grundstück bestehend aus einer Parzelle mit einer Fläche von ca. 18,1 ha, wovon ca. 14,6 ha auf ' +
+      'produktiven Forstboden entfallen, ca. 1,8 ha Grundstücksfläche und ca. 1,4 ha Weideland.'
+
+    expect(findTotalLandAreaSqm(text)).toBe(181000)
+  })
+
+  it('extracts total labels before later sub-areas', () => {
+    expect(findTotalLandAreaSqm('Gesamtfläche Grundstück: ca. 18,1 ha, davon Waldfläche 14,6 ha.')).toBe(181000)
+  })
+
+  it('extracts English total property area', () => {
+    expect(findTotalLandAreaSqm('Property consisting of one parcel with an area of approximately 18.1 ha, of which 14.6 ha is forest.')).toBe(181000)
+  })
+
+  it('extracts Romance-language total parcel prose', () => {
+    expect(findTotalLandAreaSqm('Finca compuesta por una parcela con una superficie de 18,1 ha, de las cuales 14,6 ha son forestales.')).toBe(181000)
+    expect(findTotalLandAreaSqm('Terrain comprenant une parcelle avec une surface de 18,1 ha, dont 14,6 ha de forêt.')).toBe(181000)
+  })
+
+  it('extracts Polish total parcel prose', () => {
+    expect(findTotalLandAreaSqm('Nieruchomość składa się z działki o powierzchni 18,1 ha, z czego 14,6 ha stanowią lasy.')).toBe(181000)
+  })
+
+  it('ignores usage sub-areas when no total area is stated', () => {
+    expect(findTotalLandAreaSqm('ca 1,8 ha tomtmark, ca 1,4 ha betesmark samt ca 0,5 ha övrig mark.')).toBeNull()
   })
 })
 

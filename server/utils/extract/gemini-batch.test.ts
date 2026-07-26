@@ -204,20 +204,20 @@ describe('pollGeminiBatch', () => {
 
 describe('isLlmBatchPending', () => {
   it('is false when no llmBatchJob marker is set', async () => {
-    const { isLlmBatchPending } = await import('./gemini-batch')
+    const { isLlmBatchPending } = await import('./llm-batch')
     expect(isLlmBatchPending(undefined)).toBe(false)
     expect(isLlmBatchPending({ at: '2026-07-23T00:00:00.000Z' })).toBe(false)
   })
 
   it('is true for a marker younger than 48h', async () => {
-    const { isLlmBatchPending } = await import('./gemini-batch')
+    const { isLlmBatchPending } = await import('./llm-batch')
     const at = new Date('2026-07-23T00:00:00.000Z')
     const now = at.getTime() + 60 * 60 * 1000
     expect(isLlmBatchPending({ llmBatchJob: 'batches/x', at: at.toISOString() }, now)).toBe(true)
   })
 
   it('is false (orphaned) for a marker older than 48h', async () => {
-    const { isLlmBatchPending } = await import('./gemini-batch')
+    const { isLlmBatchPending } = await import('./llm-batch')
     const at = new Date('2026-07-23T00:00:00.000Z')
     const now = at.getTime() + 49 * 60 * 60 * 1000
     expect(isLlmBatchPending({ llmBatchJob: 'batches/x', at: at.toISOString() }, now)).toBe(false)

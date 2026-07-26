@@ -1,4 +1,5 @@
 import type { Attachment, Auction } from '~/types/auction'
+import { findTotalLandAreaSqm } from '~/server/utils/extract/sizes'
 import { SE_BASE, COUNTRY } from './constants'
 import { extractFact, parseSekAmount, extractBody, parseStorlek, cleanCategory, cleanKronofogdenAddress, extractShowingAddress } from './text'
 
@@ -138,6 +139,7 @@ function mapDetail(id: string, html: string, platformId: string): Auction | null
   const tomtbeskrivning = extractFact(html, 'Tomtbeskrivning')
   const beskrivningFact = extractFact(html, 'Beskrivning')
   const body = extractBody(html)
+  const sourceLandAreaSqm = findTotalLandAreaSqm([tomtbeskrivning, beskrivningFact, body].filter(Boolean).join('\n'))
   const description = [
     storlek ? `Storlek: ${storlek}` : null,
     byggar && byggar !== '0' ? `Byggår: ${byggar}` : null,
@@ -193,6 +195,7 @@ function mapDetail(id: string, html: string, platformId: string): Auction | null
     thumbnailUrl,
     sourceRooms,
     sourceLivingAreaSqm,
+    sourceLandAreaSqm,
   }
 }
 

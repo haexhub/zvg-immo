@@ -35,6 +35,23 @@ function detailHtmlWithShowingAddress(id: string): string {
   `
 }
 
+function detailHtmlWithFarmArea(id: string): string {
+  return `
+    <h3 id="h-Adress">Adress</h3><p class="normal">Åse 360, Trångsviken</p>
+    <h3 id="h-Kommun">Kommun</h3><p class="normal">Krokoms kommun</p>
+    <h3 id="h-Arendenummer">Ärendenummer</h3><p class="normal">F-${id}-25</p>
+    <h3 id="h-Storlek">Storlek</h3><p class="normal">3 rum, 80 kvm<br>3 rum och kök</p>
+    <h2 id="h-Taxeringskod">Taxeringskod</h2><p class="normal">Lantbruksenhet, bebyggd (120).</p>
+    <div id="datumet">2026-09-03</div>
+    <div class="sv-text-portlet">
+      <div id="Ingress"><!-- Ingress --></div>
+      <div class="sv-text-portlet-content">
+        <p class="brodtextxingress">Fastighet bestående av ett skifte med en areal om ca 18,1 ha, varav ca 14,6 ha avser produktiv skogsmark med ett virkesförråd om 2 280 m3sk, ca 1,8 ha tomtmark, ca 1,4 ha betesmark samt ca 0,5 ha övrig mark.</p>
+      </div>
+    </div>
+  `
+}
+
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
@@ -156,5 +173,28 @@ describe('fetchAllListings', () => {
     const result = await fetchAllListings('se-kronofogden')
 
     expect(result.auctions[0]?.address).toBe('Kvarnbyn 76, 937 94 Burträsk')
+  })
+
+  it('stores the total farm area as source land area', async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const href = String(url)
+      if (href === `${BASE}/Sokfastigheterbostadsratter.html?query=*`) {
+        return new Response(searchHtml(['101765'], 1), { status: 200 })
+      }
+      if (href === `${BASE}/22660.html?query=*`) {
+        return new Response(searchHtml([], 0), { status: 200 })
+      }
+      if (href === `${BASE}/101765.html`) {
+        return new Response(detailHtmlWithFarmArea('2703'), { status: 200 })
+      }
+      return new Response('not found', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await fetchAllListings('se-kronofogden')
+
+    expect(result.auctions[0]?.sourceLandAreaSqm).toBe(181000)
+    expect(result.auctions[0]?.sourceLivingAreaSqm).toBe(80)
+    expect(result.auctions[0]?.sourceRooms).toBe(3)
   })
 })
