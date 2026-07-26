@@ -16,6 +16,7 @@ import type { Pool } from 'pg'
 import type { Auction } from '~/types/auction'
 import { getPool } from './db'
 import { cacheKey } from './verkehrswert-cache'
+import { normalizeAuctionDescription } from './description-normalization'
 
 export type AuctionSnapshot = Record<string, Auction>
 
@@ -77,6 +78,7 @@ async function loadAuctionSnapshot(): Promise<AuctionSnapshot> {
   const snapshot: AuctionSnapshot = {}
   for (const row of rows) {
     normalizeLegacyAuction(row.auction as unknown as Record<string, unknown>)
+    normalizeAuctionDescription(row.auction)
     snapshot[cacheKey(row.platform, row.external_id)] = row.auction
   }
   return snapshot
@@ -92,6 +94,8 @@ async function loadAuctionSnapshot(): Promise<AuctionSnapshot> {
  * Exported for tests.
  */
 export function mergePreservedDetail(next: Auction, prev: Auction): Auction {
+  normalizeAuctionDescription(next)
+  normalizeAuctionDescription(prev)
   const prevAttachments = Array.isArray(prev.attachments) ? prev.attachments : []
   if (next.attachments.length === 0 && prevAttachments.length > 0) {
     next.attachments = prevAttachments
@@ -208,6 +212,7 @@ export async function writeAuctionSnapshot(auctions: Auction[]): Promise<void> {
     const key = cacheKey(a.platform, a.externalId)
     const prev = previous[key]
     merged[key] = prev ? mergePreservedDetail(a, prev) : a
+    normalizeAuctionDescription(merged[key])
   }
   // Update the shared in-process cache immediately, mirroring
   // extraction-cache.ts's writeExtractionCache. A platform absent from this

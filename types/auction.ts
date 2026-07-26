@@ -276,6 +276,11 @@ export interface AuctionExtraction {
    *  `llmFailures` does. Reset (absent) on any attempt that completes
    *  without throwing, whether or not it found photos. */
   photoFailures?: number
+  /** Internal schema/version marker for the deterministic photo pipeline.
+   *  Lets enrich.ts re-run older false-negative attempts once when the
+   *  crawler/mining rules improve, without retrying confirmed-empty PDFs
+   *  forever. */
+  photoPipelineVersion?: number
   /** ISO timestamp of when this extraction was produced. */
   at: string
   /** Set when this entry was written as the immediate rules-only fallback

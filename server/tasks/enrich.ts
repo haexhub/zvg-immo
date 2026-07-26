@@ -39,7 +39,7 @@ import { getPool } from '~/server/utils/db'
 import { DEFAULT_LLM_MAX_TOKENS, getLlmMaxTokens, getLlmProviderOverride } from '~/server/utils/app-settings'
 import { mergeLlmResult } from '~/server/utils/extract/merge-llm-result'
 import { downloadNativeImages } from '~/server/utils/extract/native-images'
-import { extractPdfPhotos } from '~/server/utils/extract/pdf-images'
+import { extractDocumentPhotos } from '~/server/utils/extract/document-images'
 import { pdfPagesToBase64Jpeg } from '~/server/utils/extract/pdf-render'
 import { fetchPdfBuffer, pdfToText, pickBestPdf, pickRelevantPdfs } from '~/server/utils/extract/pdf-text'
 import {
@@ -54,6 +54,7 @@ import { isSafePathSegment } from '~/server/utils/path-segment'
 import { archiveAuction, archiveDocument } from '~/server/utils/raw-archive'
 import { cacheKey, readVerkehrswertCache } from '~/server/utils/verkehrswert-cache'
 import { applyDescriptionMarketValue } from '~/server/utils/description-market-value'
+import { normalizeAuctionDescription, normalizeAuctionDescriptions } from '~/server/utils/description-normalization'
 
 const IMAGES_DIR = join(process.cwd(), '.cache_zvg', 'images')
 
@@ -72,21 +73,22 @@ const DEFAULT_MAX_LLM_PER_RUN = 300
 // starving healthy listings of the per-run budget. A few retries still absorb
 // transient proxy blips.
 const MAX_LLM_FAILURES = 3
-// Give up retrying a listing whose photo pipeline (native download / PDF
+// Give up retrying a listing whose photo pipeline (native download / document
 // extraction) keeps *throwing* after this many attempts — same rationale as
 // MAX_LLM_FAILURES. A listing that completes an attempt but legitimately has
 // no usable photos stops retrying immediately (photosCheckedAt gets set),
 // this bound only guards against persistent errors.
 const MAX_PHOTO_FAILURES = 3
+const PHOTO_PIPELINE_VERSION = 2
 // Cap on candidate photos sent to the LLM for curation per document — a
 // Gutachten with dozens of embedded rasters would otherwise blow the token
 // budget for one extraction call.
 const MAX_CANDIDATE_PHOTOS = 8
-// Cap on photos mined across *all* candidate PDFs for one listing. Gutachten
-// are frequently split into several attachments (Teil 1/Teil 2/Anlagen) with
-// photos scattered across them, so mining stops only once this many are found
-// or every candidate has been tried — not after the first PDF.
-const MAX_PDF_PHOTOS_PER_LISTING = 12
+// Cap on photos mined across *all* candidate documents for one listing.
+// Gutachten/Exposés are frequently split across PDF/DOCX/HTML attachments
+// (Teil 1, Teil 2, Anlagen), so mining stops only once this many are found
+// or every candidate has been tried — not after the first document.
+const MAX_DOCUMENT_PHOTOS_PER_LISTING = 12
 
 /** Overlays the LLM's index-based curation onto the default-categorized
  *  photo list, keeping each entry's `file` — the LLM never sees real
@@ -211,8 +213,10 @@ export async function runEnrich() {
     // A prior attempt may never have run the actual photo pipeline (the
     // `if (priorEntry)` reuse branch below only carries `priorEntry.photos`
     // forward) or may have thrown before completing. `photosCheckedAt` unset
-    // means "never attempted"; bounded by MAX_PHOTO_FAILURES so a listing
-    // whose PDF/URLs genuinely hold no usable photos doesn't retry forever.
+    // means "never attempted". `photoPipelineVersion` lets one improved
+    // pipeline pass revisit older confirmed-empty false negatives.
+    // Bounded by MAX_PHOTO_FAILURES so a listing whose PDF/URLs genuinely
+    // cannot be mined doesn't retry forever.
     // Entries that already have photos need no backfill regardless of the
     // marker.
     const needsPhotoBackfill = (a: Auction): boolean => {
@@ -220,7 +224,7 @@ export async function runEnrich() {
       return (
         hit != null &&
         !hit.photos?.length &&
-        hit.photosCheckedAt == null &&
+        (hit.photosCheckedAt == null || (hit.photoPipelineVersion ?? 1) < PHOTO_PIPELINE_VERSION) &&
         (hit.photoFailures ?? 0) < MAX_PHOTO_FAILURES
       )
     }
@@ -290,6 +294,7 @@ export async function runEnrich() {
         if (crawler?.enrichOne) {
           try {
             await crawler.enrichOne(a)
+            normalizeAuctionDescription(a)
             applyDescriptionMarketValue(a)
             deriveMarketValueEur(a, rates)
             detailOk = true
@@ -406,10 +411,10 @@ export async function runEnrich() {
         //      them into the local image cache so the browser fetches from us,
         //      not the upstream on every card.
         //   b) When (a) yields nothing (no native URLs, or all downloads
-        //      failed), mine the best PDF for embedded rasters — but only if
-        //      the listing didn't already declare foto attachments, since
-        //      Gutachten photos are a different set from the listing's own
-        //      Foto.pdf/JPG and we don't want to overwrite them.
+        //      failed), mine the candidate documents for embedded rasters. Do not
+        //      trust `photoCount` as a skip signal here: some crawlers can
+        //      count upstream preview images without exposing download-ready
+        //      full-size image URLs.
         // Wrapped in try/catch so a disk-full or subprocess failure on one
         // listing can't reject the whole Promise.all — mirrors the enrichOne
         // pattern above.
@@ -423,6 +428,7 @@ export async function runEnrich() {
         // only when the photo pipeline actually runs this iteration.
         let photosCheckedAt = priorEntry?.photosCheckedAt
         let photoFailures = priorEntry?.photoFailures ?? 0
+        let photoPipelineVersion = priorEntry?.photoPipelineVersion
         // Whether the photo pipeline actually ran this iteration (success or
         // failure) — distinct from cacheable below, so a photo-only backfill
         // outcome still gets persisted even when rules are unconfident and
@@ -474,44 +480,16 @@ export async function runEnrich() {
               .map((att) => att.proxyUrl),
             ...(a.photoUrls ?? []),
           ]
-          // Gutachten are often split across several attachments (Teil 1,
-          // Teil 2, Anlagen); the property photos can end up in any of them,
-          // not just the one pickBestPdf() picks for text extraction. Try
-          // appraisal PDFs first, then the Exposé/brochure, until the cap is
-          // hit or every candidate has been mined.
-          const pdfPhotoCandidates = [
-            ...a.attachments.filter((att) => att.kind === 'appraisal'),
-            ...a.attachments.filter((att) => att.kind === 'brochure'),
-          ]
           try {
             if (nativeFotoUrls.length > 0) {
               photos = await downloadNativeImages([...new Set(nativeFotoUrls)], { destDir })
             }
-            if (photos.length === 0 && pdfPhotoCandidates.length > 0 && a.photoCount === 0) {
-              let pdfMiningFailed = false
-              for (const pdf of pdfPhotoCandidates) {
-                if (photos.length >= MAX_PDF_PHOTOS_PER_LISTING) break
-                photoExtractions++
-                try {
-                  const found = await extractPdfPhotos(pdf.proxyUrl, {
-                    destDir,
-                    maxPhotos: MAX_PDF_PHOTOS_PER_LISTING - photos.length,
-                  })
-                  for (const name of found) if (!photos.includes(name)) photos.push(name)
-                } catch (err) {
-                  pdfMiningFailed = true
-                  console.warn(
-                    `[enrich] photo extraction failed for ${a.platform}:${a.externalId} (${pdf.proxyUrl}): ${(err as Error).message}`,
-                  )
-                }
-              }
-              // Only surface as a retryable failure when nothing was found at
-              // all and at least one candidate errored — a confirmed-empty
-              // pass across every candidate should still set photosCheckedAt
-              // below, same as the pre-existing single-PDF behavior.
-              if (photos.length === 0 && pdfMiningFailed) {
-                throw new Error(`photo extraction failed for all ${pdfPhotoCandidates.length} candidate PDF(s)`)
-              }
+            if (photos.length === 0 && a.attachments.length > 0) {
+              photoExtractions++
+              photos = await extractDocumentPhotos(a.attachments, {
+                destDir,
+                maxPhotos: MAX_DOCUMENT_PHOTOS_PER_LISTING,
+              })
             }
             photosTotal += photos.length
             // Mirror the freshly written files into the images bucket (WP-4) so
@@ -527,9 +505,10 @@ export async function runEnrich() {
             }
             // Completed without throwing — "checked", regardless of whether
             // any photos were actually found (a legitimately photo-less
-            // listing/PDF stops being retried from here on).
+            // listing/document stops being retried from here on).
             photosCheckedAt = at
             photoFailures = 0
+            photoPipelineVersion = PHOTO_PIPELINE_VERSION
           } catch (err) {
             photoFailures++
             console.warn(
@@ -645,6 +624,7 @@ export async function runEnrich() {
               // clears a stale value rather than leaving the carried-forward one).
               photosCheckedAt,
               photoFailures: photoFailures > 0 ? photoFailures : undefined,
+              photoPipelineVersion,
             }
             // Same rationale as the cap-hit/disabled branches below: a failed
             // request only caches when detail/rules already gave us something
@@ -695,6 +675,7 @@ export async function runEnrich() {
           photos: curatedPhotos,
           photosCheckedAt,
           photoFailures: photoFailures > 0 ? photoFailures : undefined,
+          photoPipelineVersion,
           at,
           ...(prevFailures > 0 ? { llmFailures: prevFailures } : {}),
         }
@@ -749,6 +730,7 @@ export async function runEnrich() {
       a.marketValueText = hit.marketValueText
     }
     applyExtractionToAuctions(result.auctions, cache)
+    normalizeAuctionDescriptions(result.auctions)
     await writeAuctionSnapshot(result.auctions)
     // Structured Postgres mirror for fast SQL filter queries (Daten-API, admin
     // tooling) — additive, no-op without NUXT_DATABASE_URL. See

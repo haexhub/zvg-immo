@@ -7,20 +7,27 @@ const { t } = useI18n()
 const copy = ref<HTMLElement | null>(null)
 const expanded = ref(false)
 const collapsible = ref(false)
+const measured = ref(false)
 let observer: ResizeObserver | null = null
 
 /** Recomputes whether the rendered copy exceeds the always-visible ten lines. */
 function measure() {
   const el = copy.value
   if (!el || typeof window === 'undefined') return
-  const lineHeight = Number.parseFloat(window.getComputedStyle(el).lineHeight)
-  if (!Number.isFinite(lineHeight)) return
+  const style = window.getComputedStyle(el)
+  let lineHeight = Number.parseFloat(style.lineHeight)
+  if (!Number.isFinite(lineHeight)) {
+    const fontSize = Number.parseFloat(style.fontSize)
+    lineHeight = Number.isFinite(fontSize) ? fontSize * 1.625 : 26
+  }
   collapsible.value = el.scrollHeight > lineHeight * 10 + 1
   if (!collapsible.value) expanded.value = false
+  measured.value = true
 }
 
 watch(() => props.text, async () => {
   expanded.value = false
+  measured.value = false
   await nextTick()
   measure()
 })
@@ -41,7 +48,7 @@ onUnmounted(() => observer?.disconnect())
       id="auction-description"
       ref="copy"
       class="description-copy whitespace-pre-line text-sm text-foreground/90"
-      :class="{ 'description-copy--collapsed': collapsible && !expanded }"
+      :class="{ 'description-copy--collapsed': !expanded && (!measured || collapsible) }"
     >
       {{ text }}
     </p>
@@ -63,6 +70,8 @@ onUnmounted(() => observer?.disconnect())
 <style scoped>
 .description-copy {
   line-height: 1.625;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .description-copy--collapsed {

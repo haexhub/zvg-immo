@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Auction } from '~/types/auction'
 import { downloadNativeImages } from '../utils/extract/native-images'
-import { extractPdfPhotos } from '../utils/extract/pdf-images'
+import { extractDocumentPhotos } from '../utils/extract/document-images'
 import { readExtractionCache, writeExtractionCache, type ExtractionCache } from '../utils/extraction-cache'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
 import { readVerkehrswertCache } from '../utils/verkehrswert-cache'
@@ -17,7 +17,7 @@ vi.mock('../utils/exchange-rate', () => ({
   deriveMarketValueEur: vi.fn(),
 }))
 vi.mock('../utils/extract/native-images', () => ({ downloadNativeImages: vi.fn() }))
-vi.mock('../utils/extract/pdf-images', () => ({ extractPdfPhotos: vi.fn(async () => []) }))
+vi.mock('../utils/extract/document-images', () => ({ extractDocumentPhotos: vi.fn(async () => []) }))
 vi.mock('../utils/extraction-cache', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/extraction-cache')>()
   return { ...actual, readExtractionCache: vi.fn(), writeExtractionCache: vi.fn(async () => true) }
@@ -133,9 +133,37 @@ describe('runEnrich photo backfill (WP-1)', () => {
       { file: 'foto1.jpg', category: 'sonstiges', caption: null, isPropertyPhoto: true },
     ])
     expect(written['zvg-portal:14409']?.photosCheckedAt).toBeTruthy()
+    expect(written['zvg-portal:14409']?.photoPipelineVersion).toBe(2)
   })
 
-  it('does not re-attempt the photo pipeline once photosCheckedAt is set, even with no photos', async () => {
+  it('does not re-attempt the photo pipeline once photosCheckedAt is set for the current pipeline version', async () => {
+    const auction = makeAuction()
+    const { crawlAll } = await import('../crawlers/registry')
+    vi.mocked(crawlAll).mockResolvedValue(mockCrawl([auction]))
+
+    const cache: ExtractionCache = {
+      'zvg-portal:14409': {
+        propertyType: null,
+        landAreaSqm: null,
+        livingAreaSqm: null,
+        rooms: null,
+        units: null,
+        source: 'rules',
+        confidence: 'low',
+        photos: undefined,
+        photosCheckedAt: '2026-07-20T00:00:00.000Z',
+        photoPipelineVersion: 2,
+        at: '2026-07-01T00:00:00.000Z',
+      },
+    }
+    vi.mocked(readExtractionCache).mockResolvedValue(cache)
+
+    await runEnrich()
+
+    expect(downloadNativeImages).not.toHaveBeenCalled()
+  })
+
+  it('re-attempts old confirmed-empty photo checks once when the pipeline version changes', async () => {
     const auction = makeAuction()
     const { crawlAll } = await import('../crawlers/registry')
     vi.mocked(crawlAll).mockResolvedValue(mockCrawl([auction]))
@@ -155,10 +183,13 @@ describe('runEnrich photo backfill (WP-1)', () => {
       },
     }
     vi.mocked(readExtractionCache).mockResolvedValue(cache)
+    vi.mocked(downloadNativeImages).mockResolvedValue(['foto1.jpg'])
 
     await runEnrich()
 
-    expect(downloadNativeImages).not.toHaveBeenCalled()
+    expect(downloadNativeImages).toHaveBeenCalledTimes(1)
+    const written = vi.mocked(writeExtractionCache).mock.calls[0]?.[0] as ExtractionCache
+    expect(written['zvg-portal:14409']?.photoPipelineVersion).toBe(2)
   })
 
   it('bumps photoFailures and leaves photosCheckedAt unset when the pipeline throws', async () => {
@@ -261,11 +292,10 @@ describe('runEnrich photo backfill (WP-1)', () => {
     expect(downloadNativeImages).not.toHaveBeenCalled()
   })
 
-  it('mines every appraisal PDF for photos, not just the first, when earlier ones are empty', async () => {
-    // Regression: a Gutachten split into "Teil 1"/"Teil 2"/"Anlagen" only had
-    // pickBestPdf()'s single pick (Teil 1) mined for photos; when the actual
-    // property photos live in a later attachment they were never found even
-    // though photoCount correctly read 0 for the listing.
+  it('passes every document attachment to the central document photo miner', async () => {
+    // Regression: photo extraction used to have a PDF-only candidate list in
+    // enrich.ts. All document formats now flow through document-images.ts so
+    // PDF/DOCX/HTML improvements apply to every crawler at once.
     const auction = makeAuction({
       photoUrls: [],
       attachments: [
@@ -305,17 +335,66 @@ describe('runEnrich photo backfill (WP-1)', () => {
       },
     }
     vi.mocked(readExtractionCache).mockResolvedValue(cache)
-    vi.mocked(extractPdfPhotos).mockResolvedValueOnce([]).mockResolvedValueOnce(['abc123.jpg'])
+    vi.mocked(extractDocumentPhotos).mockResolvedValueOnce(['abc123.jpg'])
 
     await runEnrich()
 
-    expect(extractPdfPhotos).toHaveBeenCalledTimes(2)
-    expect(vi.mocked(extractPdfPhotos).mock.calls[0]?.[0]).toBe('/api/zvg-proxy?file_id=1')
-    expect(vi.mocked(extractPdfPhotos).mock.calls[1]?.[0]).toBe('/api/zvg-proxy?file_id=2')
+    expect(extractDocumentPhotos).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(extractDocumentPhotos).mock.calls[0]?.[0]).toBe(auction.attachments)
     const written = vi.mocked(writeExtractionCache).mock.calls[0]?.[0] as ExtractionCache
     expect(written['zvg-portal:14409']?.photos).toEqual([
       { file: 'abc123.jpg', category: 'sonstiges', caption: null, isPropertyPhoto: true },
     ])
     expect(written['zvg-portal:14409']?.photosCheckedAt).toBeTruthy()
+  })
+
+  it('mines PDFs when photoCount is positive but no native photos were downloaded', async () => {
+    // Regression for se-kronofogden: the crawler can see upstream preview
+    // images and set photoCount > 0 without providing download-ready
+    // photoUrls. That must not block mining the attached appraisal PDF.
+    const auction = makeAuction({
+      photoCount: 1,
+      photoUrls: [],
+      thumbnailUrl: 'https://auktionstorget.kronofogden.se/images/thumb.jpg',
+      attachments: [
+        {
+          kind: 'appraisal',
+          label: 'Beskrivning och värdering',
+          filename: 'BOV.pdf',
+          sizeBytes: 100,
+          fileId: 'bov',
+          proxyUrl: 'https://auktionstorget.kronofogden.se/download/BOV.pdf',
+        },
+      ],
+    })
+    const { crawlAll } = await import('../crawlers/registry')
+    vi.mocked(crawlAll).mockResolvedValue(mockCrawl([auction]))
+
+    const cache: ExtractionCache = {
+      'zvg-portal:14409': {
+        propertyType: null,
+        landAreaSqm: null,
+        livingAreaSqm: null,
+        rooms: null,
+        units: null,
+        source: 'rules',
+        confidence: 'low',
+        photos: undefined,
+        photosCheckedAt: undefined,
+        at: '2026-07-01T00:00:00.000Z',
+      },
+    }
+    vi.mocked(readExtractionCache).mockResolvedValue(cache)
+    vi.mocked(extractDocumentPhotos).mockResolvedValueOnce(['bov-photo.jpg'])
+
+    await runEnrich()
+
+    expect(extractDocumentPhotos).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(extractDocumentPhotos).mock.calls[0]?.[0]).toBe(auction.attachments)
+    const written = vi.mocked(writeExtractionCache).mock.calls[0]?.[0] as ExtractionCache
+    expect(written['zvg-portal:14409']?.photos).toEqual([
+      { file: 'bov-photo.jpg', category: 'sonstiges', caption: null, isPropertyPhoto: true },
+    ])
+    expect(written['zvg-portal:14409']?.photoPipelineVersion).toBe(2)
   })
 })

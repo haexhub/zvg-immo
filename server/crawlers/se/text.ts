@@ -74,6 +74,9 @@ export function extractShowingAddress(html: string): string | null {
 /** Strips HTML tags and normalises whitespace, preserving paragraph breaks. */
 export function stripHtml(html: string): string {
   return html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, '')
+    .replace(/<style\b[\s\S]*?<\/style>/gi, '')
+    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, '')
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<\/p>/gi, '\n')
     .replace(/<\/h[1-6]>/gi, '\n')
@@ -88,11 +91,28 @@ export function stripHtml(html: string): string {
     .trim()
 }
 
+function extractPortletContentAfterAnchor(html: string, anchorId: string): string | null {
+  const re = new RegExp(
+    `<div[^>]+id="${anchorId}"[^>]*>[\\s\\S]*?<div[^>]+class="[^"]*\\bsv-text-portlet-content\\b[^"]*"[^>]*>([\\s\\S]*?)<\\/div>\\s*<\\/div>`,
+    'i',
+  )
+  return html.match(re)?.[1] ?? null
+}
+
 /**
  * Extract the main listing body text (intro + content sections).
  * Returns null if nothing meaningful is found.
  */
 export function extractBody(html: string): string | null {
+  const targeted = [
+    extractPortletContentAfterAnchor(html, 'Ingress'),
+    extractPortletContentAfterAnchor(html, 'Innehall'),
+  ].filter((part): part is string => !!part)
+  if (targeted.length > 0) {
+    const text = stripHtml(targeted.join('\n'))
+    if (text.length > 20) return text.slice(0, 3000)
+  }
+
   // Grab the Mittenspalt (centre column) which holds description + facts
   const mid = html.match(/<div[^>]+id="Mittenspalt"[^>]*>[\s\S]*?(?=<div[^>]+id="(?:Hogerspalt|svid10_6294450154af3d2b[^"]+|Footer)")/i)?.[0] ?? null
   if (!mid) return null

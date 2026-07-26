@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { extractFact, parseStorlek, cleanCategory, parseSekAmount, cleanKronofogdenAddress, extractShowingAddress } from './text'
+import {
+  extractBody,
+  extractFact,
+  parseStorlek,
+  cleanCategory,
+  parseSekAmount,
+  cleanKronofogdenAddress,
+  extractShowingAddress,
+  stripHtml,
+} from './text'
 
 describe('extractFact', () => {
   it('extracts a sidebar fact (h3)', () => {
@@ -79,5 +88,63 @@ describe('extractShowingAddress', () => {
 
   it('returns null when no showing address is embedded', () => {
     expect(extractShowingAddress('<main>No widget</main>')).toBeNull()
+  })
+})
+
+describe('stripHtml', () => {
+  it('drops embedded app scripts instead of exposing their source as text', () => {
+    const html = `
+      <p class="normal">Objekttext</p>
+      <script>AppRegistry.registerInitialState('id', {"showingAddress":"X"});</script>
+    `
+
+    expect(stripHtml(html)).toBe('Objekttext')
+  })
+})
+
+describe('extractBody', () => {
+  it('uses Kronofogden ingress/content portlets and ignores booking widget scripts', () => {
+    const html = `
+      <div id="Mittenspalt"><!-- Mittenspalt --></div>
+      <div class="sv-text-portlet">
+        <div id="Ingress"><!-- Ingress --></div>
+        <div class="sv-text-portlet-content">
+          <p class="brodtextxingress">Villa om 170 m².</p>
+          <p class="normal">Byggnaden är uppförd utan startbesked.</p>
+        </div>
+      </div>
+      <div class="sv-text-portlet">
+        <div id="Innehall"><!-- Innehåll --></div>
+        <div class="sv-text-portlet-content">
+          <h2 id="h-Beskrivning">Beskrivning</h2>
+          <h2 id="h-Tomtbeskrivning">Tomtbeskrivning</h2>
+          <p class="normal">Tomt om 1 566 m².</p>
+        </div>
+      </div>
+      <div id="Bokningstjanstvisning">
+        <script>AppRegistry.registerApp({applicationId:'auk-visning-app'});</script>
+      </div>
+    `
+
+    const body = extractBody(html)
+    expect(body).toContain('Villa om 170 m².')
+    expect(body).toContain('Tomtbeskrivning')
+    expect(body).not.toContain('AppRegistry')
+    expect(body).not.toContain('auk-visning-app')
+  })
+
+  it('falls back to Mittenspalt when targeted portlets are too short', () => {
+    const html = `
+      <div class="sv-text-portlet">
+        <div id="Ingress"><!-- Ingress --></div>
+        <div class="sv-text-portlet-content"><p>Short</p></div>
+      </div>
+      <div id="Mittenspalt">
+        <p class="normal">Fallback body text with enough useful content.</p>
+      </div>
+      <div id="Hogerspalt"></div>
+    `
+
+    expect(extractBody(html)).toBe('Fallback body text with enough useful content.')
   })
 })
