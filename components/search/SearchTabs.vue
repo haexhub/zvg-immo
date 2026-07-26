@@ -11,6 +11,7 @@ defineProps<{
   activeAuctionKey?: string | null
   scrollTargetKey?: string | null
   geoAuctions: GeoAuction[]
+  selectedCountries: string[]
   geoFitKey: string
   geoPending: boolean
   geoData: GeoCrawlResult | null
@@ -51,6 +52,7 @@ const activeTab = defineModel<'list' | 'map'>({ required: true })
     <TabsContent value="map" class="flex-1 min-h-0">
       <SearchAuctionMapPane
         :auctions="geoAuctions"
+        :selected-countries="selectedCountries"
         :active-auction-key="activeAuctionKey"
         :fit-key="geoFitKey"
         :geo-pending="geoPending"

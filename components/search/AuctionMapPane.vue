@@ -3,6 +3,7 @@ import type { GeoAuction } from '~/server/api/auctions-geo.get'
 
 defineProps<{
   auctions: GeoAuction[]
+  selectedCountries: string[]
   activeAuctionKey?: string | null
   fitKey: string
   geoPending: boolean
@@ -27,6 +28,7 @@ const emit = defineEmits<{
            as geoData arrives instead of gating the whole map behind it. -->
       <AuctionMap
         :auctions="auctions"
+        :selected-countries="selectedCountries"
         :active-auction-key="activeAuctionKey"
         :fit-key="fitKey"
         @bounds-change="emit('bounds-change', $event)"
