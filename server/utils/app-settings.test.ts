@@ -278,6 +278,32 @@ describe('getLlmProviderOverride', () => {
     })).rejects.toThrow('unsupported provider/executionMode combination')
   })
 
+  it('allows OpenAI-compatible batch mode only for the real OpenAI API with a saved key', async () => {
+    const db = makeFakePool() as unknown as Pool
+    await setLlmProviderOverride(db, {
+      provider: 'openai-compatible',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-test',
+      executionMode: 'batch',
+      apiKey: 'sk-test',
+    })
+    expect(await getLlmProviderOverride(db)).toEqual({
+      provider: 'openai-compatible',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-test',
+      executionMode: 'batch',
+      apiKey: 'sk-test',
+    })
+
+    await expect(setLlmProviderOverride(db, {
+      provider: 'openai-compatible',
+      baseUrl: 'https://api.moonshot.ai/v1',
+      model: 'kimi',
+      executionMode: 'batch',
+      apiKey: 'sk-test',
+    })).rejects.toThrow('unsupported provider/executionMode combination')
+  })
+
   it('rejects claude-proxy batch overrides without an apiKey', async () => {
     const db = makeFakePool() as unknown as Pool
     await expect(setLlmProviderOverride(db, {

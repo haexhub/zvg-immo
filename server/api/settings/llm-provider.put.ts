@@ -9,10 +9,10 @@ import {
   LLM_PROVIDERS,
   getLlmProviderOverride,
   setLlmProviderOverride,
-  supportsLlmProviderExecutionMode,
   type LlmExecutionMode,
   type LlmProvider,
 } from '~/server/utils/app-settings'
+import { supportsLlmProviderExecutionMode } from '~/server/utils/llm-provider-capabilities'
 
 export default defineEventHandler(async (event) => {
   const db = getPool()
@@ -42,7 +42,7 @@ export default defineEventHandler(async (event) => {
       : null
   const effectiveExecutionMode = incomingExecutionMode ?? current?.executionMode ?? 'sync'
   const effectiveApiKey = incomingApiKey ?? current?.apiKey ?? ''
-  if (!supportsLlmProviderExecutionMode(provider, effectiveExecutionMode, effectiveApiKey)) {
+  if (!supportsLlmProviderExecutionMode(provider, effectiveExecutionMode, effectiveApiKey, body.baseUrl.trim())) {
     throw createError({
       statusCode: 400,
       statusMessage: 'batch: Dieser Provider unterstützt keinen Batch-Modus.',

@@ -279,6 +279,7 @@
       "executionModeBatch": "Batch",
       "batchUnsupported": "Dieser Provider bietet hier keinen Batch-Modus an.",
       "batchKeyRequired": "Batch über Claude-Proxy benötigt einen gespeicherten Proxy-/API-Key.",
+      "batchOpenAiRequired": "OpenAI-Batch benötigt https://api.openai.com/v1 als Base-URL und einen gespeicherten API-Key.",
       "baseUrlLabel": "Base-URL",
       "modelLabel": "Modell",
       "modelSelectPlaceholder": "Modell wählen …",

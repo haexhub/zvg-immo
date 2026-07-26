@@ -411,7 +411,7 @@ async function saveLlmConfig(): Promise<void> {
 const LLM_PROVIDER_PRESETS: Record<LlmProvider, { baseUrl: string; model: string }> = {
   'claude-proxy': { baseUrl: 'http://haex-claude-proxy:8080', model: 'claude-sonnet-5' },
   'gemini-native': { baseUrl: 'https://generativelanguage.googleapis.com', model: 'gemini-flash-latest' },
-  'openai-compatible': { baseUrl: '', model: '' },
+  'openai-compatible': { baseUrl: 'https://api.openai.com/v1', model: '' },
 }
 interface LlmProviderForm {
   provider: LlmProvider
@@ -446,12 +446,31 @@ const llmModelKeyRequired = ref(false)
 const llmModelOptionsError = ref<string | null>(null)
 let llmModelOptionsRequestId = 0
 
+function isOpenAiBatchBaseUrl(baseUrl: string): boolean {
+  try {
+    const url = new URL(baseUrl)
+    return (
+      url.protocol === 'https:' &&
+      url.hostname === 'api.openai.com' &&
+      url.pathname.replace(/\/+$/, '') === '/v1'
+    )
+  } catch {
+    return false
+  }
+}
+
 const llmProviderSupportsBatch = computed(() =>
-  llmProviderForm.value.provider === 'gemini-native' || llmProviderForm.value.provider === 'claude-proxy',
+  llmProviderForm.value.provider === 'gemini-native' ||
+  llmProviderForm.value.provider === 'claude-proxy' ||
+  (llmProviderForm.value.provider === 'openai-compatible' && isOpenAiBatchBaseUrl(llmProviderForm.value.baseUrl)),
 )
 const llmProviderCanSelectBatch = computed(() =>
   llmProviderForm.value.provider === 'gemini-native' ||
-  (llmProviderForm.value.provider === 'claude-proxy' && (llmProviderApiKeySet.value || !!llmProviderForm.value.apiKey)),
+  (
+    (llmProviderForm.value.provider === 'claude-proxy' ||
+      (llmProviderForm.value.provider === 'openai-compatible' && isOpenAiBatchBaseUrl(llmProviderForm.value.baseUrl))) &&
+    (llmProviderApiKeySet.value || !!llmProviderForm.value.apiKey)
+  ),
 )
 
 async function loadModelOptions(): Promise<void> {
@@ -585,7 +604,9 @@ async function saveLlmProvider(): Promise<void> {
 }
 
 async function clearLlmProviderApiKey(): Promise<void> {
-  if (llmProviderForm.value.provider === 'claude-proxy') llmProviderForm.value.executionMode = 'sync'
+  if (llmProviderForm.value.provider === 'claude-proxy' || llmProviderForm.value.provider === 'openai-compatible') {
+    llmProviderForm.value.executionMode = 'sync'
+  }
   await putLlmProvider('')
 }
 
@@ -617,7 +638,7 @@ interface LlmBatchJobOverviewItem {
   jobName: string
   source: 'enrich' | 'reprocess'
   status: 'pending'
-  provider: 'anthropic' | 'gemini'
+  provider: 'anthropic' | 'gemini' | 'openai'
   itemCount: number
   pendingCount: number
   requestKeys: string[]
@@ -1011,6 +1032,12 @@ onBeforeUnmount(stopPolling)
                 class="text-xs text-muted-foreground"
               >
                 {{ $t('settings.llmProvider.batchKeyRequired') }}
+              </p>
+              <p
+                v-else-if="llmProviderForm.provider === 'openai-compatible' && !llmProviderCanSelectBatch"
+                class="text-xs text-muted-foreground"
+              >
+                {{ $t('settings.llmProvider.batchOpenAiRequired') }}
               </p>
             </div>
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
