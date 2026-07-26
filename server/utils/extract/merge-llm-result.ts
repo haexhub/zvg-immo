@@ -137,6 +137,7 @@ export function mergeLlmResult(
     confidence: hasType && hasArea ? 'high' : 'low',
     photos,
     photosCheckedAt: priorEntry?.photosCheckedAt,
+    photoPipelineVersion: priorEntry?.photoPipelineVersion,
     at,
     ...(llmFailures > 0 ? { llmFailures } : {}),
     ...(priorEntry?.photoFailures ? { photoFailures: priorEntry.photoFailures } : {}),

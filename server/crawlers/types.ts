@@ -1,4 +1,5 @@
 import type { Auction, CrawlResult } from '~/types/auction'
+import { normalizeAuctionDescriptions } from '~/server/utils/description-normalization'
 
 interface CrawlResultInput {
   platform: string
@@ -10,6 +11,7 @@ interface CrawlResultInput {
 }
 
 export function createCrawlResult(input: CrawlResultInput): CrawlResult {
+  normalizeAuctionDescriptions(input.auctions)
   return {
     platform: input.platform,
     source: input.source,

@@ -3,6 +3,7 @@ import { MULTI_PLATFORM } from '~/lib/auction-constants'
 import { deriveMarketValueEur, getRates } from '../utils/exchange-rate'
 import { COUNTRY_NAMES } from '../utils/countries'
 import { getPool } from '../utils/db'
+import { normalizeAuctionDescriptions } from '../utils/description-normalization'
 import {
   DEFAULT_ENABLED_COUNTRIES,
   getEnabledCountries as getStoredEnabledCountries,
@@ -363,6 +364,7 @@ export async function crawlSingle(
   auctions.push(...azWinners.values())
   const rates = await getRates()
   for (const a of auctions) deriveMarketValueEur(a, rates)
+  normalizeAuctionDescriptions(auctions)
   return {
     platform: results.length === 1 ? (results[0] as CrawlResult).platform : MULTI_PLATFORM,
     source: [...new Set(results.map((r) => r.source))].join(', '),
