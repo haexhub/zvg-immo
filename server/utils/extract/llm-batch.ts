@@ -10,7 +10,13 @@ import {
   submitGeminiBatch,
   type PollResult,
 } from './gemini-batch'
+import {
+  fetchOpenAiBatchResults,
+  pollOpenAiBatch,
+  submitOpenAiBatch,
+} from './openai-batch'
 import type { ClampedExtraction, LlmConfig, LlmInput } from './llm'
+import { isOpenAiBatchBaseUrl } from '../llm-provider-capabilities'
 
 export { isLlmBatchPending }
 
@@ -23,6 +29,7 @@ export interface LlmBatchSubmitResult {
 export function supportsLlmBatch(config: LlmConfig | null | undefined): boolean {
   if (!config) return false
   if (config.provider === 'gemini-native') return true
+  if (config.provider === 'openai-compatible') return !!config.apiKey && isOpenAiBatchBaseUrl(config.baseUrl)
   // The Claude proxy can batch only when zvg-immo authenticates to a proxy
   // resolver that returns an Anthropic api_key credential. Keeping this gated
   // on config.apiKey avoids silently breaking the OAuth/claude-CLI path.
@@ -30,7 +37,7 @@ export function supportsLlmBatch(config: LlmConfig | null | undefined): boolean 
 }
 
 export function supportsNativeBatchDocuments(config: LlmConfig | null | undefined): boolean {
-  return config?.provider === 'gemini-native' || supportsLlmBatch(config)
+  return config?.provider === 'gemini-native' || (config?.provider === 'claude-proxy' && supportsLlmBatch(config))
 }
 
 export async function submitLlmBatch(
@@ -45,13 +52,14 @@ export async function submitLlmBatch(
       : null
   }
   if (config.provider === 'claude-proxy') return submitAnthropicBatch(items, config, source)
+  if (config.provider === 'openai-compatible') return submitOpenAiBatch(items, config, source)
   return null
 }
 
 export async function pollLlmBatch(jobName: string, config: LlmConfig): Promise<PollResult> {
-  return jobName.startsWith('msgbatch_')
-    ? pollAnthropicBatch(jobName, config)
-    : pollGeminiBatch(jobName, config)
+  if (jobName.startsWith('msgbatch_')) return pollAnthropicBatch(jobName, config)
+  if (jobName.startsWith('batch_')) return pollOpenAiBatch(jobName, config)
+  return pollGeminiBatch(jobName, config)
 }
 
 export async function fetchLlmBatchResults(
@@ -61,6 +69,10 @@ export async function fetchLlmBatchResults(
   customIdMap: Record<string, string>,
 ): Promise<{ key: string; extraction: ClampedExtraction | null }[]> {
   if (jobName.startsWith('msgbatch_')) return fetchAnthropicBatchResults(jobName, config, customIdMap)
+  if (jobName.startsWith('batch_')) {
+    if (!resultFileName) return []
+    return fetchOpenAiBatchResults(resultFileName, config, customIdMap)
+  }
   if (!resultFileName) return []
   return fetchGeminiBatchResults(resultFileName, config)
 }

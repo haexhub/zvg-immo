@@ -10,7 +10,7 @@ export interface LlmBatchJobOverviewItem {
   jobName: string
   source: 'enrich' | 'reprocess'
   status: 'pending'
-  provider: 'anthropic' | 'gemini'
+  provider: 'anthropic' | 'gemini' | 'openai'
   itemCount: number
   pendingCount: number
   requestKeys: string[]
@@ -45,7 +45,7 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
       jobName: job.jobName,
       source: job.source,
       status: 'pending',
-      provider: job.jobName.startsWith('msgbatch_') ? 'anthropic' : 'gemini',
+      provider: job.jobName.startsWith('msgbatch_') ? 'anthropic' : job.jobName.startsWith('batch_') ? 'openai' : 'gemini',
       itemCount: job.itemCount,
       pendingCount: requestKeys.length || job.itemCount,
       requestKeys,

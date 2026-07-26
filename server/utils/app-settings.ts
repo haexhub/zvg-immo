@@ -6,6 +6,7 @@
 // is absent, since a fresh install has no rows yet.
 
 import type { Pool } from 'pg'
+import { supportsLlmProviderExecutionMode } from './llm-provider-capabilities'
 
 export type LlmMaxTokensKind = 'extraction' | 'summary' | 'translation'
 
@@ -125,16 +126,6 @@ export interface LlmProviderOverride {
 
 const LLM_PROVIDER_OVERRIDE_KEY = 'llm_provider_override'
 
-export function supportsLlmProviderExecutionMode(
-  provider: LlmProvider,
-  executionMode: LlmExecutionMode,
-  apiKey = '',
-): boolean {
-  if (executionMode === 'sync') return true
-  if (provider === 'gemini-native') return true
-  return provider === 'claude-proxy' && !!apiKey
-}
-
 function coerceProviderOverride(value: unknown): LlmProviderOverride | null {
   if (!value || typeof value !== 'object') return null
   const v = value as Record<string, unknown>
@@ -151,7 +142,9 @@ function coerceProviderOverride(value: unknown): LlmProviderOverride | null {
     executionMode: v.executionMode as LlmExecutionMode,
     apiKey: typeof v.apiKey === 'string' ? v.apiKey : '',
   }
-  return supportsLlmProviderExecutionMode(override.provider, override.executionMode, override.apiKey) ? override : null
+  return supportsLlmProviderExecutionMode(override.provider, override.executionMode, override.apiKey, override.baseUrl)
+    ? override
+    : null
 }
 
 export async function getLlmProviderOverride(db: Pool): Promise<LlmProviderOverride | null> {
@@ -176,7 +169,7 @@ export async function setLlmProviderOverride(
     : null
   const effectiveExecutionMode = value.executionMode ?? current?.executionMode ?? DEFAULT_LLM_EXECUTION_MODE
   const effectiveApiKey = value.apiKey ?? current?.apiKey ?? ''
-  if (!supportsLlmProviderExecutionMode(value.provider, effectiveExecutionMode, effectiveApiKey)) {
+  if (!supportsLlmProviderExecutionMode(value.provider, effectiveExecutionMode, effectiveApiKey, value.baseUrl)) {
     throw new Error('unsupported provider/executionMode combination')
   }
   const { rows } = await db.query<{ value: unknown }>(
