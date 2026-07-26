@@ -40,6 +40,16 @@ describe('normalizeDescriptionText', () => {
     `)).toBe('Wohnhaus & Nebengebäude\n\nGrundstück 500 m²')
   })
 
+  it('strips unclosed executable HTML blocks through the end of input', () => {
+    for (const tag of ['script', 'style', 'noscript', 'template']) {
+      expect(normalizeDescriptionText(`Visible<${tag}>discarded`)).toBe('Visible')
+    }
+  })
+
+  it('drops numeric entities outside the Unicode scalar range', () => {
+    expect(normalizeDescriptionText('A &#65; &#x41; &#x110000; &#1114112; &#xD800; B')).toBe('A A A B')
+  })
+
   it('removes leaked hydration/app state from already-stripped text', () => {
     const text = [
       'Anmeldung offen bis 10:00AppRegistry.registerBootstrapData("x","y","AGNOSTIC_RENDERER");',

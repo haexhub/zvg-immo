@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { inflateRawSync } from 'node:zlib'
 import type { Attachment } from '~/types/auction'
@@ -11,6 +11,7 @@ const EOCD_SIGNATURE = 0x06054b50
 const CENTRAL_DIR_SIGNATURE = 0x02014b50
 const ZIP_MAX_COMMENT_BYTES = 0xffff
 const MAX_DOCUMENT_BYTES = 30 * 1024 * 1024
+const MAX_INFLATED_BYTES = 30 * 1024 * 1024
 const MIN_IMAGE_BYTES = 512
 
 const DOCUMENT_KIND_PRIORITY = ['appraisal', 'brochure', 'announcement', 'photo', 'other'] as const
@@ -121,7 +122,7 @@ function readZipEntries(buf: Buffer): ZipEntry[] {
     const data = buf.subarray(dataStart, dataEnd)
     try {
       if (compressionMethod === 0) entries.push({ name, bytes: Buffer.from(data) })
-      if (compressionMethod === 8) entries.push({ name, bytes: inflateRawSync(data) })
+      if (compressionMethod === 8) entries.push({ name, bytes: inflateRawSync(data, { maxOutputLength: MAX_INFLATED_BYTES }) })
     } catch {
       // One corrupt member should not discard the rest of the document.
     }
@@ -262,7 +263,17 @@ async function extractHtmlPhotos(proxyUrl: string, opts: ExtractDocumentPhotosOp
   const buf = await fetchDocumentBytes(proxyUrl, 'text/html,application/xhtml+xml,*/*')
   if (!buf) return []
   const urls = extractHtmlImageUrls(buf.toString('utf8'), proxyUrl)
-  return downloadNativeImages(urls, { destDir: opts.destDir, maxImages: opts.maxPhotos })
+  const downloaded = await downloadNativeImages(urls, { destDir: opts.destDir, maxImages: opts.maxPhotos })
+  const photos: string[] = []
+  for (const name of downloaded) {
+    try {
+      if (isLikelyPhoto(await readFile(join(opts.destDir, name)))) photos.push(name)
+    } catch {
+      // Ignore a raced/missing local file; the photo pipeline can continue
+      // with other successfully downloaded images.
+    }
+  }
+  return photos
 }
 
 export async function extractDocumentPhotos(

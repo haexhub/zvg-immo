@@ -195,10 +195,24 @@ describe('extractDocumentPhotos', () => {
     expect(await readdir(destDir)).toEqual(files)
   })
 
-  it('extracts images referenced by HTML document attachments', async () => {
+  it('skips oversized inflated DOCX media entries and keeps processing later images', async () => {
+    const docx = zip([
+      { name: 'word/media/huge.png', bytes: Buffer.alloc(31 * 1024 * 1024, 1) },
+      { name: 'word/media/image1.png', bytes: png(1200, 800, 6) },
+    ])
+
+    const files = await extractDocumentPhotos([
+      attachment({ filename: 'report.docx', proxyUrl: dataUrl(docx) }),
+    ], { destDir })
+
+    expect(files).toHaveLength(1)
+    expect(files[0]).toMatch(/^[0-9a-f]{16}\.png$/)
+  })
+
+  it('extracts and filters images referenced by HTML document attachments', async () => {
     stubFetch({
-      'https://example.test/docs/page.html': '<img srcset="small.png 400w, /large.png 1200w">',
-      'https://example.test/docs/small.png': png(320, 240, 4),
+      'https://example.test/docs/page.html': '<img srcset="icon.png 64w, /large.png 1200w">',
+      'https://example.test/docs/icon.png': png(64, 64, 4),
       'https://example.test/large.png': png(1200, 800, 5),
     })
 
@@ -206,7 +220,7 @@ describe('extractDocumentPhotos', () => {
       attachment({ kind: 'brochure', filename: 'page.html', proxyUrl: 'https://example.test/docs/page.html' }),
     ], { destDir })
 
-    expect(files).toHaveLength(2)
+    expect(files).toHaveLength(1)
     expect(files.every((file) => /^[0-9a-f]{16}\.png$/.test(file))).toBe(true)
   })
 })

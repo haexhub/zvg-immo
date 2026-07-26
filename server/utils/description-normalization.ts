@@ -1,5 +1,9 @@
 import type { Auction } from '~/types/auction'
 
+function isValidCodePoint(code: number): boolean {
+  return Number.isInteger(code) && code >= 0 && code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff)
+}
+
 function decodeEntities(text: string): string {
   return text
     .replace(/&nbsp;/gi, ' ')
@@ -10,20 +14,16 @@ function decodeEntities(text: string): string {
     .replace(/&#39;|&apos;/gi, "'")
     .replace(/&#(\d+);/g, (_, raw: string) => {
       const code = Number.parseInt(raw, 10)
-      return Number.isFinite(code) ? String.fromCodePoint(code) : ''
+      return isValidCodePoint(code) ? String.fromCodePoint(code) : ''
     })
     .replace(/&#x([0-9a-f]+);/gi, (_, raw: string) => {
       const code = Number.parseInt(raw, 16)
-      return Number.isFinite(code) ? String.fromCodePoint(code) : ''
+      return isValidCodePoint(code) ? String.fromCodePoint(code) : ''
     })
 }
 
 function stripExecutableHtml(text: string): string {
-  return text
-    .replace(/<script\b[\s\S]*?<\/script>/gi, '')
-    .replace(/<style\b[\s\S]*?<\/style>/gi, '')
-    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, '')
-    .replace(/<template\b[\s\S]*?<\/template>/gi, '')
+  return text.replace(/<(script|style|noscript|template)\b[\s\S]*?(?:<\/\1\s*>|$)/gi, '')
 }
 
 function stripHtml(text: string): string {

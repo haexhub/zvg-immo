@@ -110,7 +110,7 @@ export function extractBody(html: string): string | null {
   ].filter((part): part is string => !!part)
   if (targeted.length > 0) {
     const text = stripHtml(targeted.join('\n'))
-    return text.length > 20 ? text.slice(0, 3000) : null
+    if (text.length > 20) return text.slice(0, 3000)
   }
 
   // Grab the Mittenspalt (centre column) which holds description + facts

@@ -132,4 +132,19 @@ describe('extractBody', () => {
     expect(body).not.toContain('AppRegistry')
     expect(body).not.toContain('auk-visning-app')
   })
+
+  it('falls back to Mittenspalt when targeted portlets are too short', () => {
+    const html = `
+      <div class="sv-text-portlet">
+        <div id="Ingress"><!-- Ingress --></div>
+        <div class="sv-text-portlet-content"><p>Short</p></div>
+      </div>
+      <div id="Mittenspalt">
+        <p class="normal">Fallback body text with enough useful content.</p>
+      </div>
+      <div id="Hogerspalt"></div>
+    `
+
+    expect(extractBody(html)).toBe('Fallback body text with enough useful content.')
+  })
 })
