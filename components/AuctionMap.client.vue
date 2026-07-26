@@ -7,6 +7,7 @@ import 'leaflet.markercluster'
 import { createApp, type App as VueApp } from 'vue'
 import type { GeoAuction } from '~/server/api/auctions-geo.get'
 import LotPopover from '~/components/LotPopover.vue'
+import { auctionKey } from '~/lib/auction-key'
 import { createAllCountryImageryLayers } from '~/lib/countryImagery'
 
 type AuctionMarker = L.Marker & { auctionKey?: string }
@@ -86,18 +87,27 @@ let shouldFitNext = true
 // Markers keyed by `platform:externalId` so refreshMarkers can diff instead of
 // rebuilding — existing markers (and an open popup) survive poll updates.
 const markersByKey = new Map<string, AuctionMarker>()
+let lastActiveKey: string | null = null
 
-function auctionKey(a: { platform: string; externalId: string }): string {
-  return `${a.platform}:${a.externalId}`
+function applyMarkerHighlight(key: string, marker: AuctionMarker): void {
+  const active = key === props.activeAuctionKey
+  marker.setIcon(active ? activeMarkerIcon : markerIcon)
+  marker.setZIndexOffset(active ? 1000 : 0)
 }
 
 function updateMarkerHighlight(): void {
-  for (const [key, marker] of markersByKey) {
-    const active = key === props.activeAuctionKey
-    marker.setIcon(active ? activeMarkerIcon : markerIcon)
-    marker.setZIndexOffset(active ? 1000 : 0)
+  const changedKeys = new Set([lastActiveKey, props.activeAuctionKey].filter((key): key is string => key != null))
+  const changedMarkers: AuctionMarker[] = []
+
+  for (const key of changedKeys) {
+    const marker = markersByKey.get(key)
+    if (!marker) continue
+    applyMarkerHighlight(key, marker)
+    changedMarkers.push(marker)
   }
-  markersLayer?.refreshClusters()
+
+  lastActiveKey = props.activeAuctionKey ?? null
+  if (changedMarkers.length) markersLayer?.refreshClusters(changedMarkers)
 }
 
 function clusterIcon(cluster: L.MarkerCluster): L.DivIcon {
@@ -113,10 +123,13 @@ function clusterIcon(cluster: L.MarkerCluster): L.DivIcon {
 
 function createMarker(a: GeoAuction, lat: number, lng: number): AuctionMarker {
   const key = auctionKey(a)
+  const active = key === props.activeAuctionKey
   const marker = L.marker([lat, lng], {
-    icon: key === props.activeAuctionKey ? activeMarkerIcon : markerIcon,
+    icon: active ? activeMarkerIcon : markerIcon,
+    zIndexOffset: active ? 1000 : 0,
     title: `${a.title ?? ''} · ${a.address ?? ''}`,
   }) as AuctionMarker
+  if (active) lastActiveKey = key
   marker.auctionKey = key
   // Empty container; the Vue app is mounted lazily on popupopen so the
   // /api/auction-detail fetch only fires when the popup is actually opened.
@@ -151,7 +164,7 @@ function refreshMarkers(): void {
   const points: [number, number][] = []
   for (const a of props.auctions) {
     if (a.lat == null || a.lng == null) continue
-    const key = `${a.platform}:${a.externalId}`
+    const key = auctionKey(a)
     seen.add(key)
     if (!markersByKey.has(key)) {
       const marker = createMarker(a, a.lat, a.lng)

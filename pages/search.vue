@@ -3,6 +3,7 @@ import type { Auction, CrawlResult } from '~/types/auction'
 import type { GeoAuction, GeoCrawlResult } from '~/server/api/auctions-geo.get'
 import type { CountryEntry } from '~/server/crawlers/registry'
 import { ALL_SCOPE, isAllScope } from '~/lib/auction-constants'
+import { auctionKey } from '~/lib/auction-key'
 import { filterAuctions, scopeByCountryRegion, auctionCategory, type AuctionFilters } from '~/lib/auction-filters'
 import type { SavedSearch } from '~/server/api/saved-searches/index.get'
 import type { WatchlistItem } from '~/server/api/watchlist/index.get'
@@ -511,10 +512,6 @@ const selectedAuctionKey = ref<string | null>(null)
 const scrollTargetKey = ref<string | null>(null)
 const activeAuctionKey = computed(() => hoveredAuctionKey.value ?? selectedAuctionKey.value)
 
-function auctionKey(a: { platform: string; externalId: string }): string {
-  return `${a.platform}:${a.externalId}`
-}
-
 function revealAuctionInList(key: string): void {
   const idx = sortedList.value.findIndex((a) => auctionKey(a) === key)
   if (idx >= 0 && idx >= visibleCount.value) {
@@ -679,9 +676,6 @@ async function saveCurrentSearch(): Promise<void> {
 // Watchlist star toggle. Keyed by `${platform}:${externalId}` → the watchlist
 // row's own id (needed for the DELETE call). Loaded once per login state.
 const watchlistIds = ref<Map<string, string>>(new Map())
-function watchlistKey(a: { platform: string; externalId: string }): string {
-  return `${a.platform}:${a.externalId}`
-}
 async function loadWatchlist(): Promise<void> {
   if (!user.value) {
     watchlistIds.value = new Map()
@@ -689,7 +683,7 @@ async function loadWatchlist(): Promise<void> {
   }
   try {
     const items = await authFetch<WatchlistItem[]>('/api/watchlist')
-    watchlistIds.value = new Map(items.map((i) => [`${i.platform}:${i.externalId}`, i.id]))
+    watchlistIds.value = new Map(items.map((i) => [auctionKey(i), i.id]))
   } catch {
     // Ignore transient load errors — the star just falls back to "off".
   }
@@ -698,7 +692,7 @@ watch(user, () => loadWatchlist(), { immediate: true })
 
 async function toggleWatchlist(a: Auction): Promise<void> {
   if (!user.value) return
-  const key = watchlistKey(a)
+  const key = auctionKey(a)
   const existingId = watchlistIds.value.get(key)
   try {
     if (existingId) {
@@ -807,7 +801,7 @@ async function toggleWatchlist(a: Auction): Promise<void> {
         @toggle-watchlist="toggleWatchlist"
         @load-more="loadMore"
         @bounds-change="mapBounds = $event"
-        @auction-hover="setAuctionHover"
+        @auction-hover="handleMapAuctionHover"
         @auction-select="handleMapAuctionSelect"
       />
     </div>

@@ -6,6 +6,7 @@ import 'swiper/css'
 import 'swiper/css/navigation'
 import 'swiper/css/pagination'
 import 'swiper/css/a11y'
+import { auctionKey } from '~/lib/auction-key'
 import { auctionPhotoUrls } from '~/lib/auction-photos'
 import type { Auction } from '~/types/auction'
 
@@ -34,18 +35,14 @@ const swiperModules = [A11y, Navigation, Pagination]
 const photosByAuction = computed(() => {
   const photos = new Map<string, string[]>()
   for (const auction of props.auctions) {
-    photos.set(watchlistKey(auction), auctionPhotoUrls(auction))
+    photos.set(auctionKey(auction), auctionPhotoUrls(auction))
   }
   return photos
 })
 
 /** Returns the stable, deduplicated gallery prepared for one search card. */
 function cardPhotos(a: Auction): string[] {
-  return photosByAuction.value.get(watchlistKey(a)) ?? []
-}
-
-function watchlistKey(a: Auction): string {
-  return `${a.platform}:${a.externalId}`
+  return photosByAuction.value.get(auctionKey(a)) ?? []
 }
 
 function escapeSelectorValue(value: string): string {
@@ -107,18 +104,18 @@ function bidLine(a: Auction): string | null {
     <ul v-if="props.auctions.length" class="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(16rem,1fr))]">
       <li
         v-for="a in props.auctions"
-        :key="`${a.platform}:${a.externalId}`"
-        :data-auction-key="watchlistKey(a)"
-        @mouseenter="emit('auction-hover', watchlistKey(a))"
+        :key="auctionKey(a)"
+        :data-auction-key="auctionKey(a)"
+        @mouseenter="emit('auction-hover', auctionKey(a))"
         @mouseleave="emit('auction-hover', null)"
-        @focusin="emit('auction-hover', watchlistKey(a))"
+        @focusin="emit('auction-hover', auctionKey(a))"
         @focusout="emit('auction-hover', null)"
       >
         <article
           class="group h-full flex flex-col rounded-xl border bg-card text-card-foreground shadow-sm overflow-hidden transition-all hover:shadow-md"
           :class="{
             'opacity-60': a.cancelled,
-            'ring-2 ring-red-500 border-red-500 shadow-md': watchlistKey(a) === props.activeAuctionKey,
+            'ring-2 ring-red-500 border-red-500 shadow-md': auctionKey(a) === props.activeAuctionKey,
           }"
         >
           <div class="relative border-b">
@@ -151,11 +148,11 @@ function bidLine(a: Auction): string | null {
               v-if="props.loggedIn"
               type="button"
               class="absolute z-10 right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-background/90 shadow-sm transition-colors hover:bg-background"
-              :class="{ 'text-amber-500': props.watchlistIds.has(watchlistKey(a)) }"
-              :title="props.watchlistIds.has(watchlistKey(a)) ? $t('search.removeFromWatchlist') : $t('search.addToWatchlist')"
+              :class="{ 'text-amber-500': props.watchlistIds.has(auctionKey(a)) }"
+              :title="props.watchlistIds.has(auctionKey(a)) ? $t('search.removeFromWatchlist') : $t('search.addToWatchlist')"
               @click="emit('toggle-watchlist', a)"
             >
-              <Star class="h-4 w-4" :class="{ 'fill-current': props.watchlistIds.has(watchlistKey(a)) }" />
+              <Star class="h-4 w-4" :class="{ 'fill-current': props.watchlistIds.has(auctionKey(a)) }" />
             </button>
           </div>
 
