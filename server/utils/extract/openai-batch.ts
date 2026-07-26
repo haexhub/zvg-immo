@@ -112,6 +112,15 @@ async function submitOpenAiRequestChunk(
   })
   if (!recorded) {
     console.warn(`[openai-batch] failed to record job ${batch.id} — treating submission as failed`)
+    try {
+      await $fetch(`${apiBase(config)}/batches/${batch.id}/cancel`, {
+        method: 'POST',
+        headers: authHeaders(config),
+        signal: AbortSignal.timeout(30_000),
+      })
+    } catch (err) {
+      console.warn(`[openai-batch] failed to cancel orphaned job ${batch.id}: ${(err as Error).message}`)
+    }
     return null
   }
   return batch.id
@@ -189,7 +198,7 @@ export async function submitOpenAiBatch(
     }
   }
   if (jobNames.length === 0) return null
-  return { jobName: jobNames.join(','), submitted, retryItems }
+  return { jobName: jobNames[0]!, submitted, retryItems }
 }
 
 export async function pollOpenAiBatch(jobName: string, config: LlmConfig): Promise<PollResult> {

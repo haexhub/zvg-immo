@@ -5,7 +5,6 @@ import {
 } from './anthropic-batch'
 import {
   fetchGeminiBatchResults,
-  isLlmBatchPending,
   pollGeminiBatch,
   submitGeminiBatch,
   type PollResult,
@@ -18,7 +17,22 @@ import {
 import type { ClampedExtraction, LlmConfig, LlmInput } from './llm'
 import { isOpenAiBatchBaseUrl } from '../llm-provider-capabilities'
 
-export { isLlmBatchPending }
+// A submitted-but-not-yet-polled item is marked with `llmBatchJob` (see
+// AuctionExtraction.llmBatchJob) so enrich.ts/reprocess.ts don't re-submit it
+// to a second job while the first is still in flight — job submission isn't
+// idempotent. Batch jobs expire after 48h if never completed, so a marker
+// older than that is orphaned and the item becomes eligible again rather than
+// stuck forever.
+const LLM_BATCH_JOB_EXPIRY_MS = 48 * 60 * 60 * 1000
+
+export function isLlmBatchPending(
+  entry: { llmBatchJob?: string; at: string } | undefined,
+  now: number = Date.now(),
+): boolean {
+  if (!entry?.llmBatchJob) return false
+  const at = Date.parse(entry.at)
+  return Number.isFinite(at) && now - at < LLM_BATCH_JOB_EXPIRY_MS
+}
 
 export interface LlmBatchSubmitResult {
   jobName: string

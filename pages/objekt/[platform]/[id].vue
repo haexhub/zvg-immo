@@ -158,10 +158,6 @@ const flatAttachments = computed(() => groupedAttachments.value.flatMap(
   (g) => g.items.map((att) => ({ att, groupLabel: g.label })),
 ))
 
-// Grundbuch bleibt bewusst außerhalb des Kern-Scopes (keine
-// Extraktionsquelle, siehe PremiumFeatureLock.vue) — Flurstücke/
-// Zustandsmerkmale kommen jetzt aus a.extraction.planningNotes/insights (s.u.).
-
 function formatLandValue(eurPerSqm: number): string {
   return `${eurPerSqm.toLocaleString(intlLocale.value, { maximumFractionDigits: 0 })} €/m²`
 }
@@ -337,10 +333,6 @@ useHead(() => ({
             <p v-if="a.extraction?.renovationNotes" class="mt-1 text-xs text-muted-foreground">
               {{ $t('objektDetail.renovationNotes', { note: a.extraction.renovationNotes }) }}
             </p>
-          </DetailSectionCard>
-
-          <DetailSectionCard :title="$t('objektDetail.grundbuchTitle')">
-            <PremiumFeatureLock :rows="4" />
           </DetailSectionCard>
 
           <DetailSectionCard v-if="combinedDescription" :title="$t('objektDetail.description')">
