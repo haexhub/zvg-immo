@@ -13,7 +13,8 @@ const config: LlmConfig = {
 
 function stubOfetch(handlers: Array<{ match: string; data?: unknown; error?: Error }>) {
   const fetchFn = vi.fn(async (url: string) => {
-    const h = handlers.find((h) => url.includes(h.match))
+    const index = handlers.findIndex((h) => url.includes(h.match))
+    const h = index >= 0 ? handlers.splice(index, 1)[0] : null
     if (!h) throw new Error(`unstubbed URL: ${url}`)
     if (h.error) throw h.error
     return h.data
@@ -58,6 +59,56 @@ describe('submitOpenAiBatch', () => {
     const recorded = vi.mocked(insertLlmBatchJob).mock.calls[0]?.[0]
     expect(recorded).toMatchObject({ jobName: 'batch_abc', source: 'enrich', itemCount: 1 })
     expect(Object.values(recorded?.customIdMap ?? {})).toEqual(['zvg-portal:7265'])
+  })
+
+  it('returns a single real job id while keeping per-chunk job ids on submitted items', async () => {
+    const byteLength = vi.spyOn(Buffer, 'byteLength').mockReturnValue(100 * 1024 * 1024)
+    stubOfetch([
+      { match: '/files', data: { id: 'file-a' } },
+      { match: '/batches', data: { id: 'batch_a' } },
+      { match: '/files', data: { id: 'file-b' } },
+      { match: '/batches', data: { id: 'batch_b' } },
+    ])
+    const { submitOpenAiBatch } = await import('./openai-batch')
+
+    const result = await submitOpenAiBatch(
+      [
+        { key: 'one', input: { title: 'Haus eins', description: null } },
+        { key: 'two', input: { title: 'Haus zwei', description: null } },
+      ],
+      config,
+      'enrich',
+    )
+
+    expect(result?.jobName).toBe('batch_a')
+    expect(result?.submitted).toEqual([
+      { key: 'one', jobName: 'batch_a' },
+      { key: 'two', jobName: 'batch_b' },
+    ])
+    expect(result?.retryItems).toEqual([])
+    expect(byteLength).toHaveBeenCalled()
+  })
+
+  it('cancels an OpenAI batch when local job recording fails', async () => {
+    stubOfetch([
+      { match: '/files', data: { id: 'file-abc' } },
+      { match: '/batches', data: { id: 'batch_abc' } },
+      { match: '/batches/batch_abc/cancel', data: { id: 'batch_abc', status: 'cancelling' } },
+    ])
+    const { insertLlmBatchJob } = await import('../llm-batch-jobs')
+    vi.mocked(insertLlmBatchJob).mockResolvedValueOnce(false)
+    const { submitOpenAiBatch } = await import('./openai-batch')
+
+    await expect(submitOpenAiBatch(
+      [{ key: 'zvg-portal:7265', input: { title: 'Haus', description: 'Beschreibung' } }],
+      config,
+      'enrich',
+    )).resolves.toBeNull()
+
+    expect(vi.mocked($fetch)).toHaveBeenCalledWith(
+      'https://api.openai.com/v1/batches/batch_abc/cancel',
+      expect.objectContaining({ method: 'POST' }),
+    )
   })
 
   it('returns null when the upload response has no file id', async () => {

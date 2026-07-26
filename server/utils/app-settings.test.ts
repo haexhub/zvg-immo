@@ -302,6 +302,15 @@ describe('getLlmProviderOverride', () => {
       executionMode: 'batch',
       apiKey: 'sk-test',
     })).rejects.toThrow('unsupported provider/executionMode combination')
+
+    const dbWithoutKey = makeFakePool() as unknown as Pool
+    await expect(setLlmProviderOverride(dbWithoutKey, {
+      provider: 'openai-compatible',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-test',
+      executionMode: 'batch',
+      apiKey: '',
+    })).rejects.toThrow('unsupported provider/executionMode combination')
   })
 
   it('rejects claude-proxy batch overrides without an apiKey', async () => {
