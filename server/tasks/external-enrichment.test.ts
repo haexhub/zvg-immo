@@ -229,6 +229,48 @@ describe('runExternalEnrichment', () => {
     })
   })
 
+  it('writes wildfire and avalanche hazards from default configured local caches', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    vi.stubGlobal('useRuntimeConfig', () => ({
+      externalData: {
+        frDvfCachePath: '',
+        euFloodRiskGeoJsonPath: '',
+        effisWildfireCachePath: join(process.cwd(), 'server/utils/external-data/fixtures/effis-wildfire.fixture.json'),
+        avalancheDiscoveryPath: join(process.cwd(), 'server/utils/external-data/fixtures/avalanche-discovery.fixture.json'),
+      },
+    }))
+    const { readAuctionSnapshot } = await import('~/server/utils/auction-snapshot')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionSnapshot).mockResolvedValue({ 'test:42': auction({ country: 'fr' }) })
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    const summary = await runExternalEnrichment({
+      now: new Date('2026-07-26T12:00:00.000Z'),
+      marketAdapters: [],
+      landValueAdapters: [],
+    })
+
+    expect(summary).toMatchObject({
+      processed: 1,
+      written: 1,
+      hazards: 3,
+      staleResults: 0,
+      providerFailures: 0,
+    })
+    expect(writeLocationEnrichmentCache).toHaveBeenCalledWith({
+      'test:42': expect.objectContaining({
+        hazards: [
+          expect.objectContaining({ hazard: 'wildfire', sourceLabel: 'Copernicus EFFIS wildfire risk' }),
+          expect.objectContaining({ hazard: 'wildfire', sourceLabel: 'Copernicus EFFIS fire danger forecast' }),
+          expect.objectContaining({ hazard: 'avalanche', status: 'unknown', sourceLabel: 'European Avalanche Warning Services' }),
+        ],
+        sourceVersion: expect.stringContaining('effis-wildfire-file-cache@'),
+      }),
+    })
+  })
+
   it('counts stale hazard results separately', async () => {
     vi.stubGlobal('defineTask', (def: unknown) => def)
     const { readAuctionSnapshot } = await import('~/server/utils/auction-snapshot')

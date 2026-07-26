@@ -114,10 +114,20 @@ export default defineNuxtConfig({
     //   NUXT_EXTERNAL_DATA_FR_DVF_CACHE_PATH=/app/.cache_zvg/external/fr-dvf.json
     //   NUXT_EXTERNAL_DATA_EU_FLOOD_RISK_GEO_JSON_PATH=/app/.cache_zvg/external/eu-flood-risk.geojson
     //   NUXT_EXTERNAL_DATA_EU_FLOOD_RISK_MAX_CACHE_AGE_DAYS=400
+    //   NUXT_EXTERNAL_DATA_EFFIS_WILDFIRE_CACHE_PATH=/app/.cache_zvg/external/effis-wildfire.json
+    //   NUXT_EXTERNAL_DATA_EFFIS_WILDFIRE_STATIC_RISK_MAX_CACHE_AGE_DAYS=400
+    //   NUXT_EXTERNAL_DATA_EFFIS_WILDFIRE_MAX_SAMPLE_DISTANCE_METERS=12000
+    //   NUXT_EXTERNAL_DATA_AVALANCHE_DISCOVERY_PATH=/app/.cache_zvg/external/avalanche-discovery.json
+    //   NUXT_EXTERNAL_DATA_AVALANCHE_DISCOVERY_MAX_CACHE_AGE_DAYS=400
     externalData: {
       frDvfCachePath: '',
       euFloodRiskGeoJsonPath: '',
       euFloodRiskMaxCacheAgeDays: 400,
+      effisWildfireCachePath: '',
+      effisWildfireStaticRiskMaxCacheAgeDays: 400,
+      effisWildfireMaxSampleDistanceMeters: 12_000,
+      avalancheDiscoveryPath: '',
+      avalancheDiscoveryMaxCacheAgeDays: 400,
     },
     // G1 Roh-Archiv (WP-3): Supabase Storage bucket for archived crawl
     // snapshots (server/utils/raw-archive.ts, storage-uploader.ts). Empty →

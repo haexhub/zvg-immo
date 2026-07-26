@@ -11,6 +11,11 @@ import {
   createEuFloodRiskFileAdapter,
   DEFAULT_EU_FLOOD_RISK_MAX_CACHE_AGE_DAYS,
 } from '~/server/utils/external-data/eu-flood-risk'
+import {
+  createEffisWildfireFileAdapter,
+  DEFAULT_EFFIS_STATIC_RISK_MAX_CACHE_AGE_DAYS,
+} from '~/server/utils/external-data/effis-wildfire'
+import { createAvalancheDiscoveryAdapter } from '~/server/utils/external-data/avalanche'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 
 export interface MarketComparisonAdapter {
@@ -235,6 +240,21 @@ async function defaultHazardAdapters(checkedAt: string): Promise<HazardAssessmen
       maxCacheAgeDays: numberConfig(config.euFloodRiskMaxCacheAgeDays, DEFAULT_EU_FLOOD_RISK_MAX_CACHE_AGE_DAYS),
     }))
   }
+  if (config?.effisWildfireCachePath) {
+    adapters.push(await createEffisWildfireFileAdapter({
+      cachePath: config.effisWildfireCachePath,
+      checkedAt,
+      maxStaticRiskAgeDays: numberConfig(config.effisWildfireStaticRiskMaxCacheAgeDays, DEFAULT_EFFIS_STATIC_RISK_MAX_CACHE_AGE_DAYS),
+      maxSampleDistanceMeters: numberConfig(config.effisWildfireMaxSampleDistanceMeters, 12_000),
+    }))
+  }
+  if (config?.avalancheDiscoveryPath) {
+    adapters.push(await createAvalancheDiscoveryAdapter({
+      metadataPath: config.avalancheDiscoveryPath,
+      checkedAt,
+      maxCacheAgeDays: numberConfig(config.avalancheDiscoveryMaxCacheAgeDays, 400),
+    }))
+  }
   return adapters
 }
 
@@ -242,6 +262,11 @@ interface ExternalDataRuntimeConfig {
   frDvfCachePath?: string
   euFloodRiskGeoJsonPath?: string
   euFloodRiskMaxCacheAgeDays?: number | string
+  effisWildfireCachePath?: string
+  effisWildfireStaticRiskMaxCacheAgeDays?: number | string
+  effisWildfireMaxSampleDistanceMeters?: number | string
+  avalancheDiscoveryPath?: string
+  avalancheDiscoveryMaxCacheAgeDays?: number | string
 }
 
 function numberConfig(value: number | string | undefined, fallback: number): number {

@@ -276,9 +276,40 @@ Completed in the current implementation branch:
 - UI:
   - Added cached "Preise in der Region", "Bodenwert-Baseline" and "Naturgefahren" cards to `pages/objekt/[platform]/[id].vue`.
   - Cards always show source/check metadata and disclaimers. Hazards never use "safe" language.
+- WP5 wildfire/avalanche v1:
+  - Verified EFFIS Data and services:
+    - EFFIS publishes WMS services at `https://maps.effis.emergency.copernicus.eu/effis` and `https://maps.effis.emergency.copernicus.eu/gwis`.
+    - The Fire Danger Forecast table exposes the ECMWF Fire Weather Index layer as `ecmwf.fwi`; EFFIS documents ECMWF forecast resolution at about 8 km and maps FWI into low/moderate/high/very high/extreme/very extreme classes.
+    - The wildfire-risk module is a pan-European prototype and explicitly indicative at continental scale, so WP5 treats it as a baseline signal, not parcel-level safety.
+  - Added fixture-first EFFIS wildfire cache evaluation in `server/utils/external-data/effis-wildfire.ts`.
+    - Cache shape is local JSON with separate `staticRisk` and `currentFireDanger` sections.
+    - Static risk and current fire danger are stored as pre-sampled raster cells (`lat`, `lng`, `radiusMeters`, `severity`, optional `fwi`), matching the WMS/raster nature of EFFIS.
+    - Current fire danger has its own short TTL (`ttlHours`, default 36 hours) and stale current forecasts return `unknown`.
+    - Wildfire assessments never emit `outside` for missing, stale or low current samples; non-elevated/currently unsupported interpretations are `unknown` rather than a "safe" signal.
+  - Added an official EFFIS WMS point-sample cache importer:
+    - `importEffisCurrentFireDangerCache(...)` in `server/utils/external-data/effis-wildfire.ts`
+    - `server/tasks/import-effis-wildfire-cache.ts`
+    - `POST /api/settings/external-data/effis-wildfire-cache`
+    - The importer samples configured coordinates from WMS `GetFeatureInfo` on `gwis`, layer `ecmwf.fwi`, and writes only the local cache. Detail pages still never query EFFIS live.
+  - Added optional runtime config:
+    - `NUXT_EXTERNAL_DATA_EFFIS_WILDFIRE_CACHE_PATH=.cache_zvg/external/effis-wildfire.json`
+    - `NUXT_EXTERNAL_DATA_EFFIS_WILDFIRE_STATIC_RISK_MAX_CACHE_AGE_DAYS=400`
+    - `NUXT_EXTERNAL_DATA_EFFIS_WILDFIRE_MAX_SAMPLE_DISTANCE_METERS=12000`
+  - Added EAWS/national avalanche discovery metadata in `server/utils/external-data/avalanche.ts`.
+    - No true avalanche hazard adapter was enabled because no authoritative public bulk geodata endpoint was confirmed for WP5.
+    - Unsupported countries and unconfirmed national services return `unknown`, never `outside`.
+    - Added optional runtime config:
+      - `NUXT_EXTERNAL_DATA_AVALANCHE_DISCOVERY_PATH=.cache_zvg/external/avalanche-discovery.json`
+      - `NUXT_EXTERNAL_DATA_AVALANCHE_DISCOVERY_MAX_CACHE_AGE_DAYS=400`
+  - Added fixture caches:
+    - `server/utils/external-data/fixtures/effis-wildfire.fixture.json`
+    - `server/utils/external-data/fixtures/avalanche-discovery.fixture.json`
+  - `external-enrichment` now loads WP5 adapters only when those local cache paths are configured.
+  - Hazard UI no longer colors `outside` green, avoiding a visual "safe" cue.
 
 Verification completed:
 
+- `pnpm vitest run server/utils/external-data/effis-wildfire.test.ts server/utils/external-data/avalanche.test.ts server/tasks/external-enrichment.test.ts server/tasks/import-effis-wildfire-cache.test.ts server/api/settings/external-data/effis-wildfire-cache.post.test.ts`
 - `pnpm vitest run server/utils/external-data/eu-flood-risk.test.ts server/tasks/external-enrichment.test.ts server/tasks/import-eu-flood-risk-cache.test.ts server/api/settings/external-data/eu-flood-risk-cache.post.test.ts server/api/settings/external-data/enrichment.post.test.ts`
 - `pnpm vitest run server/utils/external-data/eu-flood-risk.test.ts server/tasks/external-enrichment.test.ts`
 - `pnpm vitest run server/utils/external-data server/tasks/external-enrichment.test.ts server/tasks/import-fr-dvf-cache.test.ts server/api/auction/[platform]/[id].get.test.ts server/api/settings/external-data`

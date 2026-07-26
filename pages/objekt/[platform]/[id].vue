@@ -234,7 +234,7 @@ function hazardSeverityLabel(severity: string): string {
 function hazardStatusClass(status: string): string {
   if (status === 'inside') return 'text-destructive'
   if (status === 'nearby') return 'text-amber-700'
-  if (status === 'outside') return 'text-emerald-700'
+  if (status === 'outside') return 'text-muted-foreground'
   return 'text-muted-foreground'
 }
 
