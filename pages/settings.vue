@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ArrowLeft, ExternalLink, Loader2, Pencil, Trash2 } from 'lucide-vue-next'
+import { ArrowLeft, ExternalLink, Loader2, Pencil, RefreshCw, Trash2 } from 'lucide-vue-next'
 import type { ClaudeSetupStatus } from '~/server/api/settings/claude/status.get'
 import type { AdminLawyer } from '~/server/api/settings/lawyers/index.get'
 import type { LlmMaxTokensKind, LlmProvider } from '~/server/utils/app-settings'
+import type { CountryRebuildResult } from '~/server/utils/country-rebuild'
 import type { CountrySourceSetting, CountrySourceSettings } from '~/server/utils/country-source-settings'
 
 const { t } = useI18n()
@@ -627,6 +628,9 @@ const countrySourcesPending = ref(false)
 const countrySourcesError = ref<string | null>(null)
 const countrySourcesSaved = ref(false)
 const countrySourcesLoaded = ref(false)
+const countryRebuildPending = ref<string | null>(null)
+const countryRebuildError = ref<string | null>(null)
+const countryRebuildResult = ref<CountryRebuildResult | null>(null)
 const enabledCountrySourceCount = computed(
   () => countrySources.value.filter((source) => source.enabled).length,
 )
@@ -669,6 +673,26 @@ async function saveCountrySources(): Promise<void> {
     countrySourcesError.value = normalizeSettingsError(err, t('settings.sources.saveError'))
   } finally {
     countrySourcesPending.value = false
+  }
+}
+
+async function rebuildCountrySource(source: CountrySourceSetting): Promise<void> {
+  if (!source.enabled || countryRebuildPending.value) return
+  const label = countryLabel(source.code, source.name)
+  if (!window.confirm(t('settings.sources.rebuildConfirm', { country: label }))) return
+
+  countryRebuildPending.value = source.code
+  countryRebuildError.value = null
+  countryRebuildResult.value = null
+  try {
+    countryRebuildResult.value = await $fetch<CountryRebuildResult>(
+      `/api/settings/countries/${source.code}/rebuild`,
+      { method: 'POST' },
+    )
+  } catch (err) {
+    countryRebuildError.value = normalizeSettingsError(err, t('settings.sources.rebuildError'))
+  } finally {
+    countryRebuildPending.value = null
   }
 }
 
@@ -1129,14 +1153,23 @@ onBeforeUnmount(stopPolling)
           </p>
 
           <p v-if="countrySourcesError" class="text-sm text-destructive">{{ countrySourcesError }}</p>
+          <p v-if="countryRebuildError" class="text-sm text-destructive">{{ countryRebuildError }}</p>
           <p v-if="countrySourcesSaved" class="text-sm text-emerald-600 dark:text-emerald-500">{{ $t('settings.sources.saved') }}</p>
+          <p v-if="countryRebuildResult" class="text-sm text-emerald-600 dark:text-emerald-500">
+            {{ $t('settings.sources.rebuildDone', {
+              country: countryLabel(countryRebuildResult.country),
+              auctions: countryRebuildResult.crawled.auctions,
+              ok: countryRebuildResult.crawled.ok,
+              failed: countryRebuildResult.crawled.failed,
+            }) }}
+          </p>
 
           <form class="space-y-3" @submit.prevent="saveCountrySources">
             <div class="max-h-80 overflow-y-auto rounded-md border divide-y">
-              <label
+              <div
                 v-for="source in countrySources"
                 :key="source.code"
-                class="flex items-start gap-3 px-3 py-2.5 cursor-pointer hover:bg-muted/50"
+                class="flex items-start gap-3 px-3 py-2.5 hover:bg-muted/50"
               >
                 <Checkbox
                   class="mt-0.5"
@@ -1144,7 +1177,12 @@ onBeforeUnmount(stopPolling)
                   :disabled="countrySourcesPending"
                   @update:model-value="toggleCountrySource(source.code)"
                 />
-                <span class="min-w-0">
+                <button
+                  type="button"
+                  class="min-w-0 flex-1 text-left disabled:cursor-not-allowed disabled:opacity-60"
+                  :disabled="countrySourcesPending || countryRebuildPending !== null"
+                  @click="toggleCountrySource(source.code)"
+                >
                   <span class="block text-sm font-medium">
                     {{ countryLabel(source.code, source.name) }}
                     <span class="ml-1 font-mono text-xs uppercase text-muted-foreground">{{ source.code }}</span>
@@ -1152,8 +1190,21 @@ onBeforeUnmount(stopPolling)
                   <span class="block text-xs text-muted-foreground">
                     {{ source.platforms.map((platform) => platform.name).join(', ') }}
                   </span>
-                </span>
-              </label>
+                </button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  class="shrink-0"
+                  :title="$t('settings.sources.rebuildTitle')"
+                  :disabled="!source.enabled || countrySourcesPending || countryRebuildPending !== null"
+                  @click="rebuildCountrySource(source)"
+                >
+                  <Loader2 v-if="countryRebuildPending === source.code" class="h-4 w-4 animate-spin" />
+                  <RefreshCw v-else class="h-4 w-4" />
+                  {{ countryRebuildPending === source.code ? $t('settings.sources.rebuilding') : $t('settings.sources.rebuild') }}
+                </Button>
+              </div>
             </div>
 
             <p class="text-xs text-muted-foreground">
