@@ -3,7 +3,10 @@ import { SE_BASE, COUNTRY } from './constants'
 import { extractFact, parseSekAmount, extractBody, parseStorlek, cleanCategory } from './text'
 
 const DETAIL_CONCURRENCY = 4
-const LIST_URL = `${SE_BASE}/Sokfastigheterbostadsratter.html?query=*`
+const SEARCH_PATHS = [
+  '/Sokfastigheterbostadsratter.html',
+  '/22660.html',
+] as const
 
 async function htmlFetch(url: string): Promise<string> {
   const res = await fetch(url, {
@@ -18,9 +21,63 @@ async function htmlFetch(url: string): Promise<string> {
   return res.text()
 }
 
-function extractListingIds(html: string): string[] {
-  const raw = html.match(/href="\/(\d+)\.html"/g) ?? []
-  return [...new Set(raw.map((m) => m.match(/\/(\d+)\.html/)![1]!))]
+export function extractListingIds(html: string): string[] {
+  const links = html.match(/<a\b[^>]*href=["']\/\d+\.html["'][^>]*>/gi) ?? []
+  const ids = links
+    .filter((link) => /\bclass=["'][^"']*\bh3rubrik\b/i.test(link))
+    .map((link) => link.match(/href=["']\/(\d+)\.html["']/i)?.[1])
+    .filter((id): id is string => !!id)
+  return [...new Set(ids)]
+}
+
+export function extractTotalHits(html: string): number | null {
+  const m = html.match(/av totalt\s+(\d+)\s+tr[äa]ffar/i)
+  if (!m?.[1]) return null
+  const total = Number.parseInt(m[1], 10)
+  return Number.isFinite(total) ? total : null
+}
+
+export function extractNextStartAtHit(html: string, currentStart: number): number | null {
+  const starts = [...html.matchAll(/[?&](?:amp;)?startAtHit=(\d+)/g)]
+    .map((m) => Number.parseInt(m[1]!, 10))
+    .filter((n) => Number.isFinite(n) && n > currentStart)
+    .sort((a, b) => a - b)
+  return starts[0] ?? null
+}
+
+function searchUrl(path: string, startAtHit: number): string {
+  const params = new URLSearchParams({ query: '*' })
+  if (startAtHit > 0) params.set('startAtHit', String(startAtHit))
+  return `${SE_BASE}${path}?${params.toString()}`
+}
+
+async function fetchSearchIds(path: string): Promise<string[]> {
+  const ids: string[] = []
+  const seenStarts = new Set<number>()
+  let startAtHit = 0
+
+  while (!seenStarts.has(startAtHit)) {
+    seenStarts.add(startAtHit)
+    const html = await htmlFetch(searchUrl(path, startAtHit))
+    ids.push(...extractListingIds(html))
+
+    const next = extractNextStartAtHit(html, startAtHit)
+    if (next != null) {
+      startAtHit = next
+      continue
+    }
+
+    const total = extractTotalHits(html)
+    const inferredNext = startAtHit + 10
+    if (total != null && inferredNext < total) {
+      startAtHit = inferredNext
+      continue
+    }
+
+    break
+  }
+
+  return ids
 }
 
 function mapDetail(id: string, html: string, platformId: string): Auction | null {
@@ -135,8 +192,9 @@ function mapDetail(id: string, html: string, platformId: string): Auction | null
 export async function fetchAllListings(
   platformId: string,
 ): Promise<{ auctions: Auction[]; total: number | null }> {
-  const listHtml = await htmlFetch(LIST_URL)
-  const ids = extractListingIds(listHtml)
+  const ids = [
+    ...new Set((await Promise.all(SEARCH_PATHS.map((path) => fetchSearchIds(path)))).flat()),
+  ]
   if (ids.length === 0) return { auctions: [], total: 0 }
 
   // Fetch detail pages with bounded concurrency
