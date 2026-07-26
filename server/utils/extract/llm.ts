@@ -89,6 +89,12 @@ export interface ClampedExtraction {
   landAreaSqm: number | null
   livingAreaSqm: number | null
   rooms: number | null
+  bedrooms: number | null
+  bathrooms: number | null
+  floor: string | null
+  bathroomHasTub: boolean | null
+  bathroomHasShower: boolean | null
+  heating: string | null
   units: number | null
   /** Explicit security-deposit amount in the auction's native currency, only
    *  when the text states one directly (e.g. a German court deviating from
@@ -147,8 +153,8 @@ export interface PhotoCuration {
 // cannot grow without a corresponding budget review.
 const MAX_PDF_CHARS = 60_000
 
-export const UNIVERSAL_AUCTION_SCHEMA_VERSION = 1
-export const UNIVERSAL_AUCTION_SCHEMA_NAME = 'universal_auction_extraction_v1'
+export const UNIVERSAL_AUCTION_SCHEMA_VERSION = 2
+export const UNIVERSAL_AUCTION_SCHEMA_NAME = 'universal_auction_extraction_v2'
 export const UNIVERSAL_AUCTION_SCHEMA_ID = `https://zvg-immo.local/schemas/${UNIVERSAL_AUCTION_SCHEMA_NAME}.json`
 
 export const SYSTEM_PROMPT =
@@ -166,6 +172,13 @@ export const SYSTEM_PROMPT =
   'zurück und Flächen in Quadratmetern (Hektar in m² umrechnen: 1 ha = 10000 m²). ' +
   'Wohnfläche und Grundstücksfläche strikt getrennt halten. Wenn ein Wert nicht ' +
   'eindeutig im Text steht, gib null zurück — niemals raten. ' +
+  'Extrahiere Schlafzimmer, Badezimmer, Etage/Geschosslage, Badewanne, Dusche und ' +
+  'Heizungsart nur, wenn sie ausdrücklich genannt werden. Bei Etage/Geschosslage ' +
+  'kurze Angaben wie "EG", "1. OG", "Dachgeschoss" verwenden. Badewanne/Dusche ' +
+  'als true/false nur zurückgeben, wenn das Vorhandensein oder Nichtvorhandensein ' +
+  'klar genannt ist; sonst null. Heizungsart/Energieträger als kurzen deutschen ' +
+  'Freitext zurückgeben, z. B. "Gaszentralheizung", "Ölheizung", "Wärmepumpe" ' +
+  'oder "Ofenheizung"; sonst null. ' +
   'Gib die Zimmeranzahl nur für tatsächlich vorhandene, bereits errichtete Bebauung ' +
   'zurück. Eine im Bebauungsplan oder einer Baugenehmigung genannte zulässige oder ' +
   'genehmigte Kapazität (z. B. "bis zu 250 Hotelzimmer laut Baugenehmigung") ist keine ' +
@@ -251,6 +264,24 @@ export const UNIVERSAL_AUCTION_SCHEMA = {
       type: ['number', 'null'],
       description:
         'Zimmeranzahl der tatsächlich existierenden Bebauung, oder null. Genehmigte/zulässige Kapazität aus Bebauungsplan oder Baugenehmigung zählt nicht.',
+    },
+    bedrooms: { type: ['number', 'null'], description: 'Schlafzimmeranzahl, oder null wenn unklar.' },
+    bathrooms: { type: ['number', 'null'], description: 'Badezimmeranzahl, oder null wenn unklar.' },
+    floor: {
+      type: ['string', 'null'],
+      description: 'Etage/Geschosslage bei Wohnungen als kurzer Text (z. B. EG, 1. OG, Dachgeschoss), oder null.',
+    },
+    bathroomHasTub: {
+      type: ['boolean', 'null'],
+      description: 'true/false wenn Badewanne ausdrücklich vorhanden/nicht vorhanden ist, sonst null.',
+    },
+    bathroomHasShower: {
+      type: ['boolean', 'null'],
+      description: 'true/false wenn Dusche ausdrücklich vorhanden/nicht vorhanden ist, sonst null.',
+    },
+    heating: {
+      type: ['string', 'null'],
+      description: 'Heizungsart/Energieträger als kurzer deutscher Freitext, oder null.',
     },
     units: { type: ['integer', 'null'], description: 'Anzahl Wohneinheiten.' },
     securityDeposit: {
@@ -397,6 +428,12 @@ export const UNIVERSAL_AUCTION_SCHEMA = {
     'landAreaSqm',
     'livingAreaSqm',
     'rooms',
+    'bedrooms',
+    'bathrooms',
+    'floor',
+    'bathroomHasTub',
+    'bathroomHasShower',
+    'heating',
     'units',
     'securityDeposit',
     'marketValueEur',
@@ -573,6 +610,12 @@ export function clampExtraction(raw: Record<string, unknown>): ClampedExtraction
     landAreaSqm: plausibleArea(raw.landAreaSqm, 100_000_000),
     livingAreaSqm: plausibleArea(raw.livingAreaSqm, 1_000_000),
     rooms: plausibleArea(raw.rooms, 100),
+    bedrooms: plausibleArea(raw.bedrooms, 100),
+    bathrooms: plausibleArea(raw.bathrooms, 100),
+    floor: trimmedString(raw.floor, 80),
+    bathroomHasTub: typeof raw.bathroomHasTub === 'boolean' ? raw.bathroomHasTub : null,
+    bathroomHasShower: typeof raw.bathroomHasShower === 'boolean' ? raw.bathroomHasShower : null,
+    heating: trimmedString(raw.heating, 160),
     units: units == null ? null : Math.round(units),
     // Upper bound generous but finite — a plausibility guard against the LLM
     // accidentally echoing an unrelated large figure (e.g. the Verkehrswert

@@ -24,6 +24,12 @@ function llmResult(overrides: Partial<ClampedExtraction> = {}): ClampedExtractio
     landAreaSqm: 500,
     livingAreaSqm: 120,
     rooms: 4,
+    bedrooms: 3,
+    bathrooms: 1,
+    floor: 'EG',
+    bathroomHasTub: true,
+    bathroomHasShower: true,
+    heating: 'Gaszentralheizung',
     units: 1,
     securityDeposit: null,
     biddingNotes: null,
@@ -69,6 +75,9 @@ describe('mergeLlmResult', () => {
     expect(entry.condition).toBe('sanierungsbeduerftig')
     expect(entry.features).toEqual(['balkon'])
     expect(entry.yearBuilt).toBe(1990)
+    expect(entry.bedrooms).toBe(3)
+    expect(entry.bathroomHasShower).toBe(true)
+    expect(entry.heating).toBe('Gaszentralheizung')
   })
 
   it('does not fill an already-set field from the LLM (rules/source values win)', () => {

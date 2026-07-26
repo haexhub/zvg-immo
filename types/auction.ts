@@ -197,6 +197,19 @@ export interface AuctionExtraction {
   /** Wohnfläche in m² (kept separate from land area). */
   livingAreaSqm: number | null
   rooms: number | null
+  /** Schlafzimmeranzahl, soweit im Gutachten/Exposé explizit genannt. */
+  bedrooms?: number | null
+  /** Badezimmeranzahl, soweit im Gutachten/Exposé explizit genannt. */
+  bathrooms?: number | null
+  /** Etage/Geschosslage bei Wohnungen, als kurzer Original-/Normaltext
+   *  ("EG", "1. OG", "Dachgeschoss", ...), oder null. */
+  floor?: string | null
+  /** Ausstattung des Badezimmers, soweit ausdrücklich genannt. */
+  bathroomHasTub?: boolean | null
+  bathroomHasShower?: boolean | null
+  /** Heizungsart/Energieträger als kurzer Freitext (z. B. "Gaszentralheizung",
+   *  "Wärmepumpe", "Ofenheizung"), oder null. */
+  heating?: string | null
   /** Number of Wohneinheiten. */
   units: number | null
   /** Merged security-deposit figure, in the auction's `currency`:

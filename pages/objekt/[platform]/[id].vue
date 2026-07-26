@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import type { Component } from 'vue'
 import { classifyPropertyType } from '~/lib/property-type'
+import type { Feature } from '~/lib/features'
 import type { AuctionDetail } from '~/server/api/auction/[platform]/[id].get'
 import type { Attachment } from '~/types/auction'
 import { auctionPhotoUrls } from '~/lib/auction-photos'
@@ -7,7 +9,23 @@ import { ATTACHMENT_KIND_ORDER } from '~/lib/auction-constants'
 import { isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
 import { safeHref } from '~/lib/utils'
 import { googleCalendarUrl, icsDataUrl, outlookCalendarUrl } from '~/lib/calendar-links'
-import { ArrowLeft, CalendarPlus } from 'lucide-vue-next'
+import {
+  Accessibility,
+  ArrowLeft,
+  Bath,
+  BrickWall,
+  Building2,
+  CalendarPlus,
+  ChefHat,
+  Flame,
+  Heater,
+  Layers3,
+  Mountain,
+  ParkingSquare,
+  ShowerHead,
+  TreePine,
+  Warehouse,
+} from 'lucide-vue-next'
 
 const route = useRoute()
 const platform = String(route.params.platform)
@@ -100,7 +118,8 @@ const hasPropertyData = computed(() => {
   if (!e) return false
   return e.landAreaSqm != null || e.livingAreaSqm != null || e.yearBuilt != null
     || e.lastRenovationYear != null || e.rooms != null || (e.units != null && e.units > 1)
-    || !!e.condition || !!e.features?.length || !!e.renovationNotes
+    || e.bedrooms != null || e.bathrooms != null || e.floor != null || pricePerSqm.value != null
+    || !!e.condition || !!e.renovationNotes
 })
 
 // Online-bidding-style platforms (Biddit, si, fi, hu, pl, boe, ca,
@@ -128,6 +147,34 @@ function formatArea(n: number | null): string {
   if (n == null) return '–'
   return `${n.toLocaleString(intlLocale.value, { maximumFractionDigits: 0 })} m²`
 }
+
+function formatCount(n: number | null | undefined): string {
+  if (n == null) return '–'
+  return n.toLocaleString(intlLocale.value, { maximumFractionDigits: 1 })
+}
+
+function formatPricePerSqm(n: number | null): string {
+  if (n == null) return '–'
+  const converted = eurToDisplay(n)
+  if (converted == null) return '–'
+  return `${converted.toLocaleString(intlLocale.value, { style: 'currency', currency: currency.value, maximumFractionDigits: 0 })}/m²`
+}
+
+const priceAreaSqm = computed(() => {
+  const e = a.value?.extraction
+  return e?.livingAreaSqm ?? e?.landAreaSqm ?? null
+})
+
+const pricePerSqm = computed(() => {
+  if (a.value?.marketValueEur == null || priceAreaSqm.value == null || priceAreaSqm.value <= 0) return null
+  return a.value.marketValueEur / priceAreaSqm.value
+})
+
+const pricePerSqmBasis = computed(() => {
+  const e = a.value?.extraction
+  if (!e || pricePerSqm.value == null) return null
+  return e.livingAreaSqm != null ? t('objektDetail.pricePerSqmLivingArea') : t('objektDetail.pricePerSqmLandArea')
+})
 
 // Photo URLs: native foto attachments (when present) first, then extracted
 // embedded photos from the Gutachten/Exposé PDF. Segments are
@@ -161,6 +208,56 @@ const flatAttachments = computed(() => groupedAttachments.value.flatMap(
 function formatLandValue(eurPerSqm: number): string {
   return `${eurPerSqm.toLocaleString(intlLocale.value, { maximumFractionDigits: 0 })} €/m²`
 }
+
+type AmenityItem = { key: string; label: string; value?: string; icon: Component }
+
+const FEATURE_ICONS: Partial<Record<Feature, Component>> = {
+  balkon: Building2,
+  terrasse: TreePine,
+  garten: TreePine,
+  garage: Warehouse,
+  stellplatz: ParkingSquare,
+  keller: Warehouse,
+  dachgeschoss: Mountain,
+  aufzug: Layers3,
+  einbaukueche: ChefHat,
+  kamin: Flame,
+  barrierefrei: Accessibility,
+  zentralheizung: Heater,
+  fussbodenheizung: Heater,
+  denkmalschutz: BrickWall,
+  vermietet: Building2,
+}
+
+const amenityItems = computed<AmenityItem[]>(() => {
+  const e = a.value?.extraction
+  if (!e) return []
+  const items: AmenityItem[] = []
+  const seen = new Set<string>()
+  const add = (item: AmenityItem) => {
+    if (seen.has(item.key)) return
+    seen.add(item.key)
+    items.push(item)
+  }
+
+  for (const f of e.features ?? []) {
+    add({ key: `feature:${f}`, label: featureLabel(f), icon: FEATURE_ICONS[f] ?? Building2 })
+  }
+  if (e.heating) add({ key: 'heating', label: t('objektDetail.heating'), value: e.heating, icon: Heater })
+  if (e.bathroomHasTub === true) add({ key: 'bathroomHasTub', label: t('objektDetail.bathroomHasTub'), icon: Bath })
+  if (e.bathroomHasTub === false) add({ key: 'bathroomHasTub', label: t('objektDetail.bathroomHasNoTub'), icon: Bath })
+  if (e.bathroomHasShower === true) add({ key: 'bathroomHasShower', label: t('objektDetail.bathroomHasShower'), icon: ShowerHead })
+  if (e.bathroomHasShower === false) add({ key: 'bathroomHasShower', label: t('objektDetail.bathroomHasNoShower'), icon: ShowerHead })
+  if (e.insights?.construction) {
+    add({
+      key: 'construction',
+      label: t('objektDetail.constructionShort'),
+      value: e.insights.construction,
+      icon: BrickWall,
+    })
+  }
+  return items
+})
 
 const planningNotesHasContent = computed(() => {
   const p = a.value?.extraction?.planningNotes
@@ -307,23 +404,34 @@ useHead(() => ({
               </div>
               <div v-if="a.extraction?.rooms != null">
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.rooms') }}</dt>
-                <dd class="text-sm font-medium">{{ a.extraction.rooms }}</dd>
+                <dd class="text-sm font-medium">{{ formatCount(a.extraction.rooms) }}</dd>
+              </div>
+              <div v-if="a.extraction?.bedrooms != null">
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.bedrooms') }}</dt>
+                <dd class="text-sm font-medium">{{ formatCount(a.extraction.bedrooms) }}</dd>
+              </div>
+              <div v-if="a.extraction?.bathrooms != null">
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.bathrooms') }}</dt>
+                <dd class="text-sm font-medium">{{ formatCount(a.extraction.bathrooms) }}</dd>
+              </div>
+              <div v-if="a.extraction?.floor">
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.floor') }}</dt>
+                <dd class="text-sm font-medium">{{ a.extraction.floor }}</dd>
               </div>
               <div v-if="a.extraction?.units != null && a.extraction.units > 1">
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.units') }}</dt>
                 <dd class="text-sm font-medium">{{ a.extraction.units }}</dd>
+              </div>
+              <div v-if="pricePerSqm != null">
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.pricePerSqm') }}</dt>
+                <dd class="text-sm font-medium tabular-nums">{{ formatPricePerSqm(pricePerSqm) }}</dd>
+                <dd v-if="pricePerSqmBasis" class="text-xs text-muted-foreground">{{ pricePerSqmBasis }}</dd>
               </div>
               <div v-if="a.extraction?.condition">
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.condition') }}</dt>
                 <dd class="text-sm font-medium">{{ conditionLabel(a.extraction.condition) }}</dd>
               </div>
             </dl>
-            <div v-if="a.extraction?.features?.length" class="mt-4 space-y-1.5">
-              <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.features') }}</dt>
-              <div class="flex flex-wrap gap-1.5">
-                <Badge v-for="f in a.extraction.features" :key="f" variant="secondary">{{ featureLabel(f) }}</Badge>
-              </div>
-            </div>
             <p
               v-if="a.extraction?.source === 'llm'"
               class="mt-4 text-xs text-muted-foreground"
@@ -333,6 +441,22 @@ useHead(() => ({
             <p v-if="a.extraction?.renovationNotes" class="mt-1 text-xs text-muted-foreground">
               {{ $t('objektDetail.renovationNotes', { note: a.extraction.renovationNotes }) }}
             </p>
+          </DetailSectionCard>
+
+          <DetailSectionCard v-if="amenityItems.length" :title="$t('objektDetail.amenitiesTitle')">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div
+                v-for="item in amenityItems"
+                :key="item.key"
+                class="flex min-h-14 items-start gap-3 rounded-md border bg-muted/20 px-3 py-2.5"
+              >
+                <component :is="item.icon" class="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                <div class="min-w-0">
+                  <p class="text-sm font-medium leading-snug">{{ item.label }}</p>
+                  <p v-if="item.value" class="mt-0.5 text-xs leading-relaxed text-muted-foreground">{{ item.value }}</p>
+                </div>
+              </div>
+            </div>
           </DetailSectionCard>
 
           <DetailSectionCard v-if="combinedDescription" :title="$t('objektDetail.description')">

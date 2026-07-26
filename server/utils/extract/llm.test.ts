@@ -13,7 +13,7 @@ import {
 
 describe('universal auction extraction schema', () => {
   it('exposes the canonical schema identity and required fields', () => {
-    expect(UNIVERSAL_AUCTION_SCHEMA_VERSION).toBe(1)
+    expect(UNIVERSAL_AUCTION_SCHEMA_VERSION).toBe(2)
     expect(UNIVERSAL_AUCTION_SCHEMA_ID).toContain(UNIVERSAL_AUCTION_SCHEMA_NAME)
     expect(UNIVERSAL_AUCTION_SCHEMA).toMatchObject({
       type: 'object',
@@ -21,6 +21,7 @@ describe('universal auction extraction schema', () => {
     })
     expect(UNIVERSAL_AUCTION_SCHEMA.required).toContain('propertyType')
     expect(UNIVERSAL_AUCTION_SCHEMA.required).toContain('documentSummary')
+    expect(UNIVERSAL_AUCTION_SCHEMA.required).toContain('bathroomHasShower')
   })
 
   it('instructs the LLM to normalize country-specific text into the universal JSON format', () => {
@@ -61,6 +62,12 @@ describe('clampExtraction', () => {
         landAreaSqm: 620,
         livingAreaSqm: 140,
         rooms: 5,
+        bedrooms: 3,
+        bathrooms: 2,
+        floor: '1. OG',
+        bathroomHasTub: true,
+        bathroomHasShower: false,
+        heating: 'Gaszentralheizung',
         units: 1,
         securityDeposit: 5000,
         biddingNotes: 'Abweichende Sicherheitsleistung von 5.000 EUR gefordert.',
@@ -72,6 +79,12 @@ describe('clampExtraction', () => {
       landAreaSqm: 620,
       livingAreaSqm: 140,
       rooms: 5,
+      bedrooms: 3,
+      bathrooms: 2,
+      floor: '1. OG',
+      bathroomHasTub: true,
+      bathroomHasShower: false,
+      heating: 'Gaszentralheizung',
       units: 1,
       securityDeposit: 5000,
       biddingNotes: 'Abweichende Sicherheitsleistung von 5.000 EUR gefordert.',
@@ -106,6 +119,12 @@ describe('clampExtraction', () => {
       landAreaSqm: null,
       livingAreaSqm: null,
       rooms: null,
+      bedrooms: null,
+      bathrooms: null,
+      floor: null,
+      bathroomHasTub: null,
+      bathroomHasShower: null,
+      heating: null,
       units: null,
       securityDeposit: null,
       biddingNotes: null,
@@ -125,6 +144,40 @@ describe('clampExtraction', () => {
 
   it('drops non-numeric junk', () => {
     expect(clampExtraction({ landAreaSqm: 'big' as unknown as number }).landAreaSqm).toBeNull()
+  })
+
+  it('clamps bedrooms, bathrooms, floor and heating details', () => {
+    const r = clampExtraction({
+      bedrooms: 2,
+      bathrooms: 1.5,
+      floor: '  Dachgeschoss  ',
+      bathroomHasTub: false,
+      bathroomHasShower: true,
+      heating: '  Wärmepumpe  ',
+    })
+    expect(r.bedrooms).toBe(2)
+    expect(r.bathrooms).toBe(1.5)
+    expect(r.floor).toBe('Dachgeschoss')
+    expect(r.bathroomHasTub).toBe(false)
+    expect(r.bathroomHasShower).toBe(true)
+    expect(r.heating).toBe('Wärmepumpe')
+  })
+
+  it('nulls malformed bathroom and heating detail fields', () => {
+    const r = clampExtraction({
+      bedrooms: -1,
+      bathrooms: 'eins',
+      floor: '   ',
+      bathroomHasTub: 'ja',
+      bathroomHasShower: 1,
+      heating: '',
+    } as unknown as Record<string, unknown>)
+    expect(r.bedrooms).toBeNull()
+    expect(r.bathrooms).toBeNull()
+    expect(r.floor).toBeNull()
+    expect(r.bathroomHasTub).toBeNull()
+    expect(r.bathroomHasShower).toBeNull()
+    expect(r.heating).toBeNull()
   })
 
   it('rejects a non-positive or absurd securityDeposit', () => {
