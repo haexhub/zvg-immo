@@ -53,6 +53,7 @@ export interface HazardAssessment {
   sourceLabel: string
   sourceUrl: string
   checkedAt: string
+  stale?: boolean
 }
 
 export interface LocationEnrichment {

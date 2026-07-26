@@ -117,6 +117,7 @@ describe('runExternalEnrichment', () => {
       marketComparisons: 1,
       landValueBaselines: 1,
       hazards: 1,
+      staleResults: 0,
       providerFailures: 0,
     })
     expect(writeLocationEnrichmentCache).toHaveBeenCalledWith({
@@ -211,6 +212,7 @@ describe('runExternalEnrichment', () => {
       processed: 1,
       written: 1,
       hazards: 1,
+      staleResults: 0,
       providerFailures: 0,
     })
     expect(writeLocationEnrichmentCache).toHaveBeenCalledWith({
@@ -225,6 +227,30 @@ describe('runExternalEnrichment', () => {
         sourceVersion: expect.stringContaining('eu-flood-risk-file-cache@'),
       }),
     })
+  })
+
+  it('counts stale hazard results separately', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { readAuctionSnapshot } = await import('~/server/utils/auction-snapshot')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionSnapshot).mockResolvedValue({ 'test:42': auction() })
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    const summary = await runExternalEnrichment({
+      hazardAdapters: [{
+        id: 'stale-flood',
+        sourceVersion: 'v1',
+        supports: () => true,
+        assess: vi.fn(async () => [{ ...hazard, stale: true }]),
+      }],
+      marketAdapters: [],
+      landValueAdapters: [],
+    })
+
+    expect(summary.hazards).toBe(1)
+    expect(summary.staleResults).toBe(1)
   })
 
   it('can limit processed auctions for manual spot runs', async () => {

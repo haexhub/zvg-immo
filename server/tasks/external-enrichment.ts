@@ -7,7 +7,10 @@ import {
   type LocationEnrichmentCache,
 } from '~/server/utils/external-data/location-enrichment'
 import { createDvfFileMarketAdapter } from '~/server/utils/external-data/fr-dvf-cache'
-import { createEuFloodRiskFileAdapter } from '~/server/utils/external-data/eu-flood-risk'
+import {
+  createEuFloodRiskFileAdapter,
+  DEFAULT_EU_FLOOD_RISK_MAX_CACHE_AGE_DAYS,
+} from '~/server/utils/external-data/eu-flood-risk'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 
 export interface MarketComparisonAdapter {
@@ -46,6 +49,7 @@ export interface ExternalEnrichmentSummary {
   marketComparisons: number
   landValueBaselines: number
   hazards: number
+  staleResults: number
   providerFailures: number
   durationMs: number
 }
@@ -87,6 +91,7 @@ export async function runExternalEnrichment(
     marketComparisons: 0,
     landValueBaselines: 0,
     hazards: 0,
+    staleResults: 0,
     providerFailures: 0,
     durationMs: 0,
   }
@@ -114,6 +119,7 @@ export async function runExternalEnrichment(
     if (marketComparison) summary.marketComparisons++
     if (landValueBaseline) summary.landValueBaselines++
     summary.hazards += hazards.length
+    summary.staleResults += hazards.filter((hazard) => hazard.stale).length
 
     if (!marketComparison && !landValueBaseline && hazards.length === 0) continue
 
@@ -226,6 +232,7 @@ async function defaultHazardAdapters(checkedAt: string): Promise<HazardAssessmen
     adapters.push(await createEuFloodRiskFileAdapter({
       geoJsonPath: config.euFloodRiskGeoJsonPath,
       checkedAt,
+      maxCacheAgeDays: numberConfig(config.euFloodRiskMaxCacheAgeDays, DEFAULT_EU_FLOOD_RISK_MAX_CACHE_AGE_DAYS),
     }))
   }
   return adapters
@@ -234,4 +241,14 @@ async function defaultHazardAdapters(checkedAt: string): Promise<HazardAssessmen
 interface ExternalDataRuntimeConfig {
   frDvfCachePath?: string
   euFloodRiskGeoJsonPath?: string
+  euFloodRiskMaxCacheAgeDays?: number | string
+}
+
+function numberConfig(value: number | string | undefined, fallback: number): number {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed) && parsed > 0) return parsed
+  }
+  return fallback
 }

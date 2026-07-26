@@ -1,0 +1,59 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('~/server/tasks/import-eu-flood-risk-cache', () => ({ runImportEuFloodRiskCache: vi.fn() }))
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.resetModules()
+  vi.clearAllMocks()
+})
+
+describe('/api/settings/external-data/eu-flood-risk-cache', () => {
+  it('passes a valid import payload to the task helper', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    vi.stubGlobal('readBody', vi.fn(async () => ({
+      cachePath: '/cache/eu-flood-risk.geojson',
+      serviceUrl: 'https://example.test/MapServer/2',
+      sourceVersion: 'flood-v1',
+      generatedAt: '2026-07-27T00:00:00.000Z',
+      pageSize: 100,
+      maxPages: 2,
+      countryCodes: ['de', 'FR'],
+    })))
+    vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
+
+    const { runImportEuFloodRiskCache } = await import('~/server/tasks/import-eu-flood-risk-cache')
+    vi.mocked(runImportEuFloodRiskCache).mockResolvedValue({
+      cachePath: '/cache/eu-flood-risk.geojson',
+      serviceUrl: 'https://example.test/MapServer/2',
+      sourceVersion: 'flood-v1',
+      generatedAt: '2026-07-27T00:00:00.000Z',
+      fetched: 2,
+      normalized: 2,
+      pages: 1,
+    })
+
+    const handler = (await import('./eu-flood-risk-cache.post')).default as unknown as (event: unknown) => Promise<unknown>
+
+    await expect(handler({})).resolves.toMatchObject({ normalized: 2 })
+    expect(runImportEuFloodRiskCache).toHaveBeenCalledWith({
+      cachePath: '/cache/eu-flood-risk.geojson',
+      serviceUrl: 'https://example.test/MapServer/2',
+      sourceVersion: 'flood-v1',
+      generatedAt: '2026-07-27T00:00:00.000Z',
+      pageSize: 100,
+      maxPages: 2,
+      countryCodes: ['de', 'fr'],
+    })
+  })
+
+  it('rejects invalid country codes', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    vi.stubGlobal('readBody', vi.fn(async () => ({ countryCodes: ['deu'] })))
+    vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
+
+    const handler = (await import('./eu-flood-risk-cache.post')).default as unknown as (event: unknown) => Promise<unknown>
+
+    await expect(handler({})).rejects.toMatchObject({ statusCode: 400 })
+  })
+})

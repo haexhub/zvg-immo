@@ -21,6 +21,7 @@ describe('/api/settings/external-data/enrichment', () => {
       marketComparisons: 10,
       landValueBaselines: 0,
       hazards: 0,
+      staleResults: 0,
       providerFailures: 0,
       durationMs: 123,
     })

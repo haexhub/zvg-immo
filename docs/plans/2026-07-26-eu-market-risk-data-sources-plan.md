@@ -214,7 +214,7 @@ EU-level official data is useful for trend context, but generally too coarse for
 
 ## Implementation status
 
-Updated: 2026-07-26
+Updated: 2026-07-27
 
 Completed in the current implementation branch:
 
@@ -258,12 +258,28 @@ Completed in the current implementation branch:
   - Added a default `external-enrichment` flood adapter that activates only when configured:
     - `NUXT_EXTERNAL_DATA_EU_FLOOD_RISK_GEO_JSON_PATH=.cache_zvg/external/eu-flood-risk.geojson`
   - Detail pages still never fetch external hazard providers live; they only read cached `location_enrichment`.
+- WP4 official EU Flood Risk Areas cache ingestion:
+  - Verified the EEA Datahub source "Floods Reference Spatial Datasets reported under Floods Directive - version 3.0, Mar. 2025", published 2025-08-05.
+  - The official dataset exposes a 1.4 GB Geopackage download plus ArcGIS REST/WMS services. The implementation uses the ArcGIS REST polygon layer because it supports GeoJSON, pagination and focused country imports:
+    - `https://water.discomap.eea.europa.eu/arcgis/rest/services/FloodsDirective/FloodsRiskZone_WM/MapServer/2`
+  - Added paginated ArcGIS REST import into the local GeoJSON cache:
+    - `importEuFloodRiskGeoJsonCache(...)` in `server/utils/external-data/eu-flood-risk.ts`
+  - Added Nitro task and protected settings endpoint:
+    - `server/tasks/import-eu-flood-risk-cache.ts`
+    - `POST /api/settings/external-data/eu-flood-risk-cache`
+  - Cache files now carry top-level metadata (`sourceVersion`, `generatedAt`, source label/URL/service URL).
+  - Added optional country-code filters for focused DE/FR/AT-style imports.
+  - Added stale-cache handling: stale flood caches produce `unknown`, not `outside`.
+  - Added `staleResults` to the external-enrichment summary.
+  - Added optional runtime config:
+    - `NUXT_EXTERNAL_DATA_EU_FLOOD_RISK_MAX_CACHE_AGE_DAYS=400`
 - UI:
   - Added cached "Preise in der Region", "Bodenwert-Baseline" and "Naturgefahren" cards to `pages/objekt/[platform]/[id].vue`.
   - Cards always show source/check metadata and disclaimers. Hazards never use "safe" language.
 
 Verification completed:
 
+- `pnpm vitest run server/utils/external-data/eu-flood-risk.test.ts server/tasks/external-enrichment.test.ts server/tasks/import-eu-flood-risk-cache.test.ts server/api/settings/external-data/eu-flood-risk-cache.post.test.ts server/api/settings/external-data/enrichment.post.test.ts`
 - `pnpm vitest run server/utils/external-data/eu-flood-risk.test.ts server/tasks/external-enrichment.test.ts`
 - `pnpm vitest run server/utils/external-data server/tasks/external-enrichment.test.ts server/tasks/import-fr-dvf-cache.test.ts server/api/auction/[platform]/[id].get.test.ts server/api/settings/external-data`
 - `pnpm exec nuxi typecheck`
@@ -281,14 +297,15 @@ Current branch already has:
 - France DVF CSV import/cache path and file-cache market adapter
 - import-fr-dvf-cache Nitro task + protected settings endpoint
 - external-enrichment task + protected manual endpoint + daily no-op-safe schedule
+- EU Flood Risk Areas GeoJSON cache evaluation and official ArcGIS REST import path
 - tests and typecheck passing
 
 Next focus:
-Extend WP4 from fixture-first cache support toward real EU Flood Risk Areas ingestion:
-- choose the first official downloadable/WFS source format to normalize into the local GeoJSON cache
-- add import tooling analogous to the France DVF cache task if the source is file-based
-- add country/source freshness metadata and stale-result handling
-- evaluate whether national flood layers should override the EU layer for DE/FR/AT
+Implement WP5 wildfire/avalanche v1:
+- add an EFFIS adapter/import path only after choosing a concrete service layer and cache shape for raster/time-varying fire danger
+- keep current fire danger on a short TTL and distinguish it from static wildfire susceptibility/risk
+- add avalanche/national-service discovery first; only implement a country adapter where an authoritative public endpoint is confirmed
+- unsupported or stale wildfire/avalanche sources must yield `unknown`, never `outside`
 Keep detail pages cache-only; no live external fetch from the API route.
 ```
 

@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import type { Auction, HazardAssessment } from '~/types/auction'
 import type { HazardAssessmentAdapter } from '~/server/tasks/external-enrichment'
+import { writeJsonCache } from '../json-cache'
 import { distanceMeters, type Point } from './geo'
 import { EXTERNAL_DATA_SOURCES } from './sources'
 
@@ -20,6 +21,7 @@ export interface FloodRiskFeature {
 
 export interface FloodRiskFeatureCollection {
   type: 'FeatureCollection'
+  properties?: Record<string, unknown> | null
   features: FloodRiskFeature[]
 }
 
@@ -39,6 +41,7 @@ export interface FloodRiskZoneCollection {
 export interface FloodRiskEvaluationOptions {
   nearbyDistanceMeters?: number
   checkedAt?: string
+  maxCacheAgeDays?: number
 }
 
 export interface FloodRiskFileAdapterOptions extends FloodRiskEvaluationOptions {
@@ -46,18 +49,44 @@ export interface FloodRiskFileAdapterOptions extends FloodRiskEvaluationOptions 
   sourceVersion?: string
 }
 
+export interface ImportEuFloodRiskCacheOptions {
+  cachePath: string
+  serviceUrl?: string
+  sourceVersion?: string
+  generatedAt?: string
+  pageSize?: number
+  maxPages?: number
+  countryCodes?: string[]
+  fetchImpl?: typeof fetch
+}
+
+export interface ImportEuFloodRiskCacheSummary {
+  cachePath: string
+  serviceUrl: string
+  sourceVersion: string
+  generatedAt: string
+  fetched: number
+  normalized: number
+  pages: number
+}
+
 const DEFAULT_NEARBY_DISTANCE_METERS = 1_000
+const DEFAULT_PAGE_SIZE = 2_000
+export const DEFAULT_EU_FLOOD_RISK_MAX_CACHE_AGE_DAYS = 400
+export const EU_FLOOD_RISK_SOURCE_VERSION = 'eea-floods-ref-v03-r00-2025-08-05'
+export const EU_FLOOD_RISK_POLYGON_LAYER_URL =
+  'https://water.discomap.eea.europa.eu/arcgis/rest/services/FloodsDirective/FloodsRiskZone_WM/MapServer/2'
 const FLOOD_SOURCE = EXTERNAL_DATA_SOURCES.find((source) => source.id === 'eu-flood-risk-areas')!
 
 export async function readFloodRiskGeoJson(path: string, sourceVersion?: string): Promise<FloodRiskZoneCollection> {
   return loadFloodRiskGeoJson(await readFile(path, 'utf8'), {
-    sourceVersion: sourceVersion ?? path,
+    sourceVersion: sourceVersion ?? '',
   })
 }
 
 export function loadFloodRiskGeoJson(
   content: string,
-  options: { sourceVersion: string; generatedAt?: string },
+  options: { sourceVersion?: string; generatedAt?: string },
 ): FloodRiskZoneCollection {
   const parsed = JSON.parse(content) as unknown
   return normalizeFloodRiskFeatureCollection(parsed, options)
@@ -65,12 +94,15 @@ export function loadFloodRiskGeoJson(
 
 export function normalizeFloodRiskFeatureCollection(
   input: unknown,
-  options: { sourceVersion: string; generatedAt?: string },
+  options: { sourceVersion?: string; generatedAt?: string },
 ): FloodRiskZoneCollection {
+  const metadata = isFeatureCollection(input) ? input.properties ?? {} : {}
+  const sourceVersion = options.sourceVersion || stringProperty(metadata, 'sourceVersion') || 'unknown'
+  const generatedAt = options.generatedAt ?? stringProperty(metadata, 'generatedAt') ?? new Date().toISOString()
   if (!isFeatureCollection(input)) {
     return {
-      sourceVersion: options.sourceVersion,
-      generatedAt: options.generatedAt ?? new Date().toISOString(),
+      sourceVersion,
+      generatedAt,
       zones: [],
     }
   }
@@ -89,9 +121,61 @@ export function normalizeFloodRiskFeatureCollection(
   })
 
   return {
-    sourceVersion: options.sourceVersion,
-    generatedAt: options.generatedAt ?? new Date().toISOString(),
+    sourceVersion,
+    generatedAt,
     zones,
+  }
+}
+
+export async function importEuFloodRiskGeoJsonCache(
+  options: ImportEuFloodRiskCacheOptions,
+): Promise<ImportEuFloodRiskCacheSummary> {
+  const serviceUrl = options.serviceUrl?.trim() || EU_FLOOD_RISK_POLYGON_LAYER_URL
+  const generatedAt = options.generatedAt ?? new Date().toISOString()
+  const sourceVersion = options.sourceVersion?.trim() || EU_FLOOD_RISK_SOURCE_VERSION
+  const pageSize = options.pageSize ?? DEFAULT_PAGE_SIZE
+  const fetchImpl = options.fetchImpl ?? fetch
+  const where = countryWhereClause(options.countryCodes)
+  const features: FloodRiskFeature[] = []
+  let pages = 0
+
+  for (let offset = 0; ; offset += pageSize) {
+    if (options.maxPages != null && pages >= options.maxPages) break
+    const page = await fetchArcGisGeoJsonPage(fetchImpl, serviceUrl, {
+      where,
+      offset,
+      pageSize,
+    })
+    pages++
+    features.push(...page.features.filter(isFeature))
+    if (page.features.length < pageSize) break
+  }
+
+  const collection: FloodRiskFeatureCollection = {
+    type: 'FeatureCollection',
+    properties: {
+      sourceVersion,
+      generatedAt,
+      sourceLabel: FLOOD_SOURCE.label,
+      sourceUrl: FLOOD_SOURCE.sourceUrl,
+      serviceUrl,
+    },
+    features,
+  }
+  const normalized = normalizeFloodRiskFeatureCollection(collection, {
+    sourceVersion,
+    generatedAt,
+  })
+  await writeJsonCache(options.cachePath, collection)
+
+  return {
+    cachePath: options.cachePath,
+    serviceUrl,
+    sourceVersion,
+    generatedAt,
+    fetched: features.length,
+    normalized: normalized.zones.length,
+    pages,
   }
 }
 
@@ -104,6 +188,10 @@ export function buildFloodHazardAssessment(
   const checkedAt = options.checkedAt ?? new Date().toISOString()
   const nearbyDistanceMeters = options.nearbyDistanceMeters ?? DEFAULT_NEARBY_DISTANCE_METERS
   const point = { lat: auction.lat, lng: auction.lng }
+
+  if (isStale(collection.generatedAt, checkedAt, options.maxCacheAgeDays)) {
+    return assessment('unknown', 'unknown', null, checkedAt, true)
+  }
 
   if (collection.zones.length === 0) {
     return assessment('unknown', 'unknown', null, checkedAt)
@@ -166,6 +254,7 @@ function assessment(
   severity: HazardAssessment['severity'],
   distance: number | null,
   checkedAt: string,
+  stale = false,
 ): HazardAssessment {
   return {
     hazard: 'flood',
@@ -175,7 +264,58 @@ function assessment(
     sourceLabel: FLOOD_SOURCE.label,
     sourceUrl: FLOOD_SOURCE.sourceUrl,
     checkedAt,
+    ...(stale ? { stale: true } : {}),
   }
+}
+
+async function fetchArcGisGeoJsonPage(
+  fetchImpl: typeof fetch,
+  serviceUrl: string,
+  options: { where: string; offset: number; pageSize: number },
+): Promise<FloodRiskFeatureCollection> {
+  const url = new URL(`${serviceUrl.replace(/\/$/, '')}/query`)
+  url.searchParams.set('f', 'geojson')
+  url.searchParams.set('where', options.where)
+  url.searchParams.set('outFields', '*')
+  url.searchParams.set('returnGeometry', 'true')
+  url.searchParams.set('outSR', '4326')
+  url.searchParams.set('orderByFields', 'OBJECTID')
+  url.searchParams.set('resultOffset', String(options.offset))
+  url.searchParams.set('resultRecordCount', String(options.pageSize))
+
+  const response = await fetchImpl(url)
+  if (!response.ok) throw new Error(`EU flood risk request failed: ${response.status} ${response.statusText}`)
+  const body = await response.json() as unknown
+  if (hasArcGisError(body)) {
+    throw new Error(`EU flood risk request failed: ${body.error.message}`)
+  }
+  if (!isFeatureCollection(body)) {
+    throw new Error('EU flood risk response was not a GeoJSON FeatureCollection')
+  }
+  return body
+}
+
+function hasArcGisError(input: unknown): input is { error: { message: string } } {
+  if (!input || typeof input !== 'object') return false
+  const error = (input as { error?: unknown }).error
+  return !!error && typeof error === 'object' && typeof (error as { message?: unknown }).message === 'string'
+}
+
+function countryWhereClause(countryCodes: string[] | undefined): string {
+  const normalized = (countryCodes ?? [])
+    .map((country) => country.trim().toUpperCase())
+    .filter((country) => /^[A-Z]{2}$/.test(country))
+  if (normalized.length === 0) return '1=1'
+  return `countryCode IN (${normalized.map((country) => `'${country}'`).join(',')})`
+}
+
+function isStale(generatedAt: string, checkedAt: string, maxAgeDays: number | undefined): boolean {
+  if (maxAgeDays == null) return false
+  const generatedTime = Date.parse(generatedAt)
+  const checkedTime = Date.parse(checkedAt)
+  if (!Number.isFinite(generatedTime)) return true
+  if (!Number.isFinite(checkedTime)) return true
+  return checkedTime - generatedTime > maxAgeDays * 24 * 60 * 60 * 1000
 }
 
 function zoneContainsPoint(zone: FloodRiskZone, point: Point): boolean {
@@ -283,6 +423,11 @@ function firstString(properties: Record<string, unknown>, keys: string[]): strin
     if (typeof value === 'string' && value.trim()) return value
   }
   return null
+}
+
+function stringProperty(properties: Record<string, unknown>, key: string): string | null {
+  const value = properties[key]
+  return typeof value === 'string' && value.trim() ? value : null
 }
 
 function idForFeature(properties: Record<string, unknown>, index: number): string {
