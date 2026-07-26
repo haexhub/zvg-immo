@@ -1,6 +1,6 @@
 // Generic key/value settings store (app_settings table) — admin-configurable
-// values that take effect without a redeploy. First (and currently only)
-// user: the per-use-case LLM max-output-tokens limits (see
+// values that take effect without a redeploy. The first user was the
+// per-use-case LLM max-output-tokens limit (see
 // docs/plans/2026-07-23-llm-max-output-tokens-config.md). Table is reusable
 // for future settings; readers should still fall back gracefully when a key
 // is absent, since a fresh install has no rows yet.
@@ -8,6 +8,37 @@
 import type { Pool } from 'pg'
 
 export type LlmMaxTokensKind = 'extraction' | 'summary' | 'translation'
+
+export const DEFAULT_ENABLED_COUNTRIES = ['de', 'se'] as const
+const ENABLED_COUNTRIES_KEY = 'enabled_countries'
+
+function coerceEnabledCountries(value: unknown): string[] {
+  if (!Array.isArray(value)) return [...DEFAULT_ENABLED_COUNTRIES]
+  return [
+    ...new Set(
+      value
+        .filter((code): code is string => typeof code === 'string')
+        .map((code) => code.trim().toLowerCase())
+        .filter((code) => /^[a-z]{2}$/.test(code)),
+    ),
+  ]
+}
+
+export async function getEnabledCountries(db: Pool): Promise<string[]> {
+  const { rows } = await db.query<{ value: unknown }>(
+    'SELECT value FROM app_settings WHERE key = $1',
+    [ENABLED_COUNTRIES_KEY],
+  )
+  return rows[0] ? coerceEnabledCountries(rows[0].value) : [...DEFAULT_ENABLED_COUNTRIES]
+}
+
+export async function setEnabledCountries(db: Pool, countries: readonly string[]): Promise<void> {
+  await db.query(
+    `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, now())
+     ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()`,
+    [ENABLED_COUNTRIES_KEY, JSON.stringify(coerceEnabledCountries([...countries]))],
+  )
+}
 
 const KINDS: LlmMaxTokensKind[] = ['extraction', 'summary', 'translation']
 

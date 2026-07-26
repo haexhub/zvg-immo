@@ -1,5 +1,6 @@
-import { listCountries, type CountryEntry } from '../crawlers/registry'
+import { ensureEnabledCountriesLoaded, listCountries, type CountryEntry } from '../crawlers/registry'
 
-export default defineEventHandler((): CountryEntry[] => {
+export default defineEventHandler(async (): Promise<CountryEntry[]> => {
+  await ensureEnabledCountriesLoaded()
   return listCountries()
 })

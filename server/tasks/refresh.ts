@@ -7,7 +7,7 @@
 // (server/crawlers/crawl-cadence.ts), so hourly ticks keep robust portals
 // fresh without over-polling rate-limited ones.
 
-import { crawlSingle, listRegions } from '../crawlers/registry'
+import { crawlSingle, ensureEnabledCountriesLoaded, listRegions } from '../crawlers/registry'
 import { regionRefreshIntervalMs } from '../crawlers/crawl-cadence'
 import { matchAlerts } from '../utils/alert-matching'
 import { recordObservations } from '../utils/history'
@@ -39,6 +39,7 @@ export default defineTask({
 async function runRefresh() {
   const startedAt = Date.now()
   const capturedAt = new Date(startedAt).toISOString()
+  await ensureEnabledCountriesLoaded()
   const regions = listRegions()
   console.log(`[refresh] start — ${regions.length} regions`)
 

@@ -2,6 +2,11 @@ import type { Auction, CrawlResult } from '~/types/auction'
 import { MULTI_PLATFORM } from '~/lib/auction-constants'
 import { deriveMarketValueEur, getRates } from '../utils/exchange-rate'
 import { COUNTRY_NAMES } from '../utils/countries'
+import { getPool } from '../utils/db'
+import {
+  DEFAULT_ENABLED_COUNTRIES,
+  getEnabledCountries as getStoredEnabledCountries,
+} from '../utils/app-settings'
 import type { CrawlOptions, PlatformCrawler, RegionInfo } from './types'
 import { zvgPortalCrawler } from './zvg-portal'
 import { boeCrawler } from './boe'
@@ -83,28 +88,82 @@ export interface CountryEntry {
 }
 
 /**
- * Countries actively crawled/shown while the data-quality push focuses on one
- * country at a time (see docs/plans). Every other registered country's raw
- * data stays put (crawl history, watchlists, saved searches, permalinks all
- * keep working) — it just stops being scheduled or surfaced in country/region
- * pickers until re-added here. `listRegions()` is the single place this is
- * enforced; `refresh.ts`/`enrich.ts`'s `crawlAll()`/`listCountries()`/
- * `stats.get.ts` all derive from it, so this one line is the whole switch.
+ * Countries actively crawled/shown. The default is used without Postgres and
+ * on fresh installs; the admin UI persists overrides in app_settings. Paused
+ * countries keep their raw data, crawl history, watchlists and permalinks, but
+ * stop being scheduled, served from list_cache or surfaced in discovery.
  */
-const ENABLED_COUNTRIES = new Set(['de'])
+let enabledCountries = new Set<string>(DEFAULT_ENABLED_COUNTRIES)
+let enabledCountriesLoaded = false
+let enabledCountriesLoad: Promise<string[]> | null = null
+let enabledCountriesRevision = 0
 
-/** Whether a country is currently in scope for scheduling/discovery — see
- *  `ENABLED_COUNTRIES` above. Exported so callers outside the registry (e.g.
+function registeredCountryCodes(): Set<string> {
+  return new Set(platforms.map((platform) => platform.country))
+}
+
+export function getEnabledCountryCodes(): string[] {
+  return [...enabledCountries]
+}
+
+/** Applies a validated admin setting immediately to every synchronous registry
+ * consumer. Unknown/removed crawler codes are ignored defensively. */
+export function configureEnabledCountries(countries: readonly string[]): string[] {
+  const registered = registeredCountryCodes()
+  enabledCountries = new Set(
+    countries
+      .map((country) => country.trim().toLowerCase())
+      .filter((country) => registered.has(country)),
+  )
+  enabledCountriesLoaded = true
+  enabledCountriesRevision++
+  return getEnabledCountryCodes()
+}
+
+/** Lazily hydrates the synchronous registry switch from Postgres once per
+ * process. Callers that already operate asynchronously use this before reading
+ * listRegions()/isCountryEnabled(); without Postgres, defaults stay active. */
+export async function ensureEnabledCountriesLoaded(): Promise<string[]> {
+  if (enabledCountriesLoaded) return getEnabledCountryCodes()
+  if (enabledCountriesLoad) return enabledCountriesLoad
+
+  const revisionAtStart = enabledCountriesRevision
+  enabledCountriesLoad = (async () => {
+    const db = getPool()
+    if (!db) {
+      enabledCountriesLoaded = true
+      return getEnabledCountryCodes()
+    }
+    try {
+      const stored = await getStoredEnabledCountries(db)
+      // An admin PUT may have completed while this read was in flight. Its
+      // in-memory value is newer and must not be overwritten by the stale read.
+      if (enabledCountriesRevision === revisionAtStart) {
+        configureEnabledCountries(stored)
+      }
+      return getEnabledCountryCodes()
+    } catch (err) {
+      console.warn(`[crawler-registry] enabled countries could not be loaded: ${(err as Error).message}`)
+      return getEnabledCountryCodes()
+    } finally {
+      enabledCountriesLoad = null
+    }
+  })()
+  return enabledCountriesLoad
+}
+
+/** Whether a country is currently in scope for scheduling/discovery. Exported
+ *  so callers outside the registry (e.g.
  *  the list-cache aggregate) can apply the same scope to on-disk data that
  *  predates a pause, without duplicating the allowlist. */
 export function isCountryEnabled(country: string): boolean {
-  return ENABLED_COUNTRIES.has(country.toLowerCase())
+  return enabledCountries.has(country.toLowerCase())
 }
 
-export function listRegions(): RegionEntry[] {
+function collectRegions(enabledOnly: boolean): RegionEntry[] {
   const byKey = new Map<string, RegionEntry>()
   for (const p of platforms) {
-    if (!ENABLED_COUNTRIES.has(p.country)) continue
+    if (enabledOnly && !enabledCountries.has(p.country)) continue
     for (const r of p.regions) {
       const key = `${p.country}:${r.code}`
       const existing = byKey.get(key)
@@ -125,9 +184,9 @@ export function listRegions(): RegionEntry[] {
   )
 }
 
-export function listCountries(): CountryEntry[] {
+function groupCountries(regionsToGroup: RegionEntry[]): CountryEntry[] {
   const grouped = new Map<string, RegionEntry[]>()
-  for (const r of listRegions()) {
+  for (const r of regionsToGroup) {
     const arr = grouped.get(r.country) ?? []
     arr.push(r)
     grouped.set(r.country, arr)
@@ -141,13 +200,27 @@ export function listCountries(): CountryEntry[] {
     .sort((a, b) => a.name.localeCompare(b.name, 'de'))
 }
 
+export function listRegions(): RegionEntry[] {
+  return collectRegions(true)
+}
+
+export function listCountries(): CountryEntry[] {
+  return groupCountries(listRegions())
+}
+
+/** All implemented sources, including currently paused ones. Used by the
+ * admin UI to present the complete configurable source catalog. */
+export function listRegisteredCountries(): CountryEntry[] {
+  return groupCountries(collectRegions(false))
+}
+
 export function getCrawlersForRegion(country: string, regionCode: string): PlatformCrawler[] {
   const c = country.toLowerCase()
   // Paused countries must never be crawled, even on the direct crawlSingle path
   // (e.g. a scoped /api/auctions request for a permalink to a paused country).
   // listRegions/crawlAll already skip them; this is the choke point for the
   // single-region path.
-  if (!ENABLED_COUNTRIES.has(c)) return []
+  if (!enabledCountries.has(c)) return []
   const r = regionCode.toLowerCase()
   return platforms.filter(
     (p) => p.country === c && p.regions.some((reg) => reg.code === r),
@@ -208,6 +281,7 @@ export function completenessScore(a: Auction): number {
 export async function crawlSingle(
   opts: CrawlOptions & { country: string },
 ): Promise<CrawlResult> {
+  await ensureEnabledCountriesLoaded()
   const crawlers = getCrawlersForRegion(opts.country, opts.region)
   if (crawlers.length === 0) {
     throw new Error(
@@ -324,6 +398,7 @@ export interface CrawlAllOptions {
 export async function crawlAll(
   opts: CrawlAllOptions = {},
 ): Promise<CrawlResult & { errors: { country: string; region: string; message: string }[] }> {
+  await ensureEnabledCountriesLoaded()
   const concurrency = opts.regionConcurrency ?? 4
   const all = listRegions().filter(
     (r) => !opts.country || r.country === opts.country.toLowerCase(),

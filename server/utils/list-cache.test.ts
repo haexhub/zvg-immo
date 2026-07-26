@@ -29,6 +29,9 @@ const frIdf: CrawlResult = {
 function makeFakePool(rows: Row[] = []) {
   const upserted: Row[] = []
   const query = vi.fn(async (sql: string, params: unknown[] = []) => {
+    if (sql.includes('SELECT value FROM app_settings WHERE key')) {
+      return { rows: [], rowCount: 0 }
+    }
     if (sql.includes('SELECT result FROM list_cache WHERE country') && sql.includes('region')) {
       const [country, region] = params as [string, string]
       const hit = rows.filter((r) => r.country === country && r.region === region)
@@ -62,14 +65,15 @@ function makeFakePool(rows: Row[] = []) {
 }
 
 describe('readListCache', () => {
-  it('returns null for a paused country without querying Postgres', async () => {
+  it('returns null for a paused country without querying list_cache', async () => {
     const { getPool } = await import('./db')
     const pool = makeFakePool([{ country: 'fr', region: 'idf', result: frIdf, fetched_at: frIdf.fetchedAt }])
     vi.mocked(getPool).mockReturnValue(pool as never)
     const { readListCache } = await import('./list-cache')
 
     expect(await readListCache('fr', 'idf')).toBeNull()
-    expect(pool.query).not.toHaveBeenCalled()
+    expect(pool.query).toHaveBeenCalledTimes(1)
+    expect(pool.query.mock.calls[0]?.[0]).toContain('app_settings')
   })
 
   it('serves an enabled country from Postgres', async () => {

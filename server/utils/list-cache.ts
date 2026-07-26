@@ -10,10 +10,11 @@
 
 import type { CrawlResult } from '~/types/auction'
 import { MULTI_PLATFORM } from '~/lib/auction-constants'
-import { isCountryEnabled } from '../crawlers/registry'
+import { ensureEnabledCountriesLoaded, isCountryEnabled } from '../crawlers/registry'
 import { getPool } from './db'
 
 export async function readListCache(country: string, region: string): Promise<CrawlResult | null> {
+  await ensureEnabledCountriesLoaded()
   // A paused country's cached row must stop being served, not just stop being
   // refreshed — otherwise stale non-enabled-country listings would keep
   // showing up for anyone who still requests them by URL/saved search (see
@@ -99,6 +100,7 @@ export async function regionListCacheAgeMs(country: string, region: string): Pro
  * Returns null when the cache is empty/unconfigured.
  */
 export async function readMergedListCache(country?: string): Promise<CrawlResult | null> {
+  await ensureEnabledCountriesLoaded()
   const db = getPool()
   if (!db) return null
   try {
