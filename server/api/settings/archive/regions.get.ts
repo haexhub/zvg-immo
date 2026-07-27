@@ -29,9 +29,11 @@ export default defineEventHandler(async (event): Promise<ArchiveRegionRow[]> => 
   }
 
   const { rows } = await db.query<{ region: string; count: string; last_captured_at: string }>(
-    `SELECT COALESCE(NULLIF(region, ''), $2) AS region, count(*) AS count, max(captured_at) AS last_captured_at
+    `SELECT COALESCE(NULLIF(region, ''), $2) AS region,
+            count(DISTINCT (platform, external_id)) AS count,
+            max(captured_at) AS last_captured_at
      FROM raw_captures
-     WHERE country = $1
+     WHERE country = $1 AND kind = 'auction'
      GROUP BY COALESCE(NULLIF(region, ''), $2)
      ORDER BY region`,
     [country, UNKNOWN_REGION],

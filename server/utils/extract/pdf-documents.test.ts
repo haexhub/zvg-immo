@@ -14,6 +14,16 @@ describe('buildDocumentLlmParts', () => {
     expect(result.pdfBytes).toBeNull()
   })
 
+  it('ignores raw PDF bytes in text mode for non-native batch providers', async () => {
+    const result = await buildDocumentLlmParts([
+      { source: 'a', label: 'Gutachten', text: 'Verwertbarer Text '.repeat(20), data: 'base64-a' },
+    ], { native: false })
+
+    expect(result.pdfText).toContain('Verwertbarer Text')
+    expect(result.pdfBytes).toBeNull()
+    expect(result.pdfDocuments).toBeUndefined()
+  })
+
   it('renders only short or empty text documents with the shared limits', async () => {
     const renderPages = vi.fn(async (source: string, maxPages: number) => [
       `${source}-page-1`,

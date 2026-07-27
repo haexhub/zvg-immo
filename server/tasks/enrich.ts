@@ -668,12 +668,21 @@ export async function runEnrich(opts: EnrichOptions = {}) {
             // pool finishes instead of a synchronous generateContent call —
             // the rate limit/cost profile that motivated this path can't
             // sustain hundreds of synchronous calls in a couple of minutes.
-            const nativeDocuments = preparedDocuments.map((document) => ({
-              source: document.pdf,
-              label: document.pdf.label || document.pdf.filename,
-              data: document.bytes!.toString('base64'),
-            }))
-            const documentParts = await buildDocumentLlmParts(nativeDocuments, { native: true })
+            const batchUsesNativeDocuments = supportsNativeBatchDocuments(llmConfig)
+            const documentParts = await buildDocumentLlmParts(
+              preparedDocuments.map((document) => ({
+                source: document.pdf,
+                label: document.pdf.label || document.pdf.filename,
+                text: batchUsesNativeDocuments ? null : document.text,
+                data: batchUsesNativeDocuments ? document.bytes!.toString('base64') : undefined,
+              })),
+              {
+                native: batchUsesNativeDocuments,
+                renderPages: batchUsesNativeDocuments
+                  ? undefined
+                  : (pdf, maxPages) => pdfPagesToBase64Jpeg(pdf.proxyUrl, { maxPages }),
+              },
+            )
             batchItems.push({
               key,
               input: {

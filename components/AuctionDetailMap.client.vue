@@ -5,14 +5,17 @@ import iconUrl from 'leaflet/dist/images/marker-icon.png'
 import iconRetinaUrl from 'leaflet/dist/images/marker-icon-2x.png'
 import shadowUrl from 'leaflet/dist/images/marker-shadow.png'
 import { createCountryImageryLayer } from '~/lib/countryImagery'
+import type { HazardAssessment } from '~/types/auction'
 
 const props = defineProps<{
   lat: number
   lng: number
   label?: string
   country?: string
+  hazards?: HazardAssessment[] | null
 }>()
 
+const { t } = useI18n()
 const markerIcon = L.icon({
   iconUrl,
   iconRetinaUrl,
@@ -31,6 +34,25 @@ const runtimeConfig = useRuntimeConfig()
 const countryImageryKeys = {
   fi: runtimeConfig.public.mmlApiKey as string,
   dk: runtimeConfig.public.datafordelerApiKey as string,
+}
+
+function hazardColor(hazard: HazardAssessment): string {
+  if (hazard.status === 'inside') return '#dc2626'
+  if (hazard.status === 'nearby') return '#d97706'
+  if (hazard.status === 'outside') return '#16a34a'
+  return '#64748b'
+}
+
+function hazardRadius(hazard: HazardAssessment): number {
+  if (hazard.status === 'inside') return 250
+  if (hazard.distanceMeters != null && hazard.distanceMeters > 0) {
+    return Math.min(Math.max(hazard.distanceMeters, 250), 5_000)
+  }
+  return 500
+}
+
+function hazardOverlayLabel(hazard: HazardAssessment): string {
+  return `${t(`objektDetail.hazard.${hazard.hazard}`)}: ${t(`objektDetail.hazardStatus.${hazard.status}`)}`
 }
 
 onMounted(async () => {
@@ -74,7 +96,32 @@ onMounted(async () => {
   if (countryImagery) {
     layers['Satellit (Länder-Tiles)'] = L.layerGroup([esriImagery, countryImagery, placeLabels])
   }
-  L.control.layers(layers, undefined, { position: 'topright' }).addTo(map)
+  const overlays: Record<string, L.Layer> = {}
+  for (const hazard of props.hazards ?? []) {
+    const color = hazardColor(hazard)
+    const group = L.layerGroup([
+      L.circle([props.lat, props.lng], {
+        radius: hazardRadius(hazard),
+        color,
+        weight: 2,
+        opacity: 0.85,
+        fillColor: color,
+        fillOpacity: hazard.status === 'inside' ? 0.18 : 0.08,
+        dashArray: hazard.status === 'inside' ? undefined : '6 6',
+      }).bindPopup(
+        `${hazardOverlayLabel(hazard)}<br>${t(`objektDetail.hazardSeverityLabel`)} ${t(`objektDetail.hazardSeverity.${hazard.severity}`)}`,
+      ),
+      L.circleMarker([props.lat, props.lng], {
+        radius: 7,
+        color,
+        weight: 2,
+        fillColor: color,
+        fillOpacity: 0.9,
+      }),
+    ])
+    overlays[hazardOverlayLabel(hazard)] = group
+  }
+  L.control.layers(layers, overlays, { position: 'topright' }).addTo(map)
   const marker = L.marker([props.lat, props.lng], { icon: markerIcon })
   if (props.label) marker.bindTooltip(props.label)
   marker.addTo(map)

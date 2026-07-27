@@ -21,8 +21,11 @@ export default defineEventHandler(async (): Promise<ArchiveCountryRow[]> => {
   }
 
   const { rows } = await db.query<{ country: string; count: string; last_captured_at: string }>(
-    `SELECT country, count(*) AS count, max(captured_at) AS last_captured_at
+    `SELECT country,
+            count(DISTINCT (platform, external_id)) AS count,
+            max(captured_at) AS last_captured_at
      FROM raw_captures
+     WHERE kind = 'auction'
      GROUP BY country
      ORDER BY country`,
   )

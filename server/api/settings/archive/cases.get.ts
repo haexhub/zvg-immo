@@ -41,10 +41,10 @@ export default defineEventHandler(async (event): Promise<ArchiveCaseRow[]> => {
     `SELECT platform, external_id,
             COALESCE(max(case_number), external_id) AS case_label,
             max(authority) AS authority,
-            count(*) AS count,
+            count(*) FILTER (WHERE kind = 'auction') AS count,
             max(captured_at) AS last_captured_at
      FROM raw_captures
-     WHERE country = $1 AND COALESCE(NULLIF(region, ''), $3) = $2
+     WHERE country = $1 AND kind = 'auction' AND COALESCE(NULLIF(region, ''), $3) = $2
      GROUP BY platform, external_id
      ORDER BY case_label`,
     [country, region, UNKNOWN_REGION],

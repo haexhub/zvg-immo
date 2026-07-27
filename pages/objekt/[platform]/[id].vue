@@ -762,7 +762,13 @@ useHead(() => ({
         <h2 class="text-base font-semibold">{{ $t('objektDetail.location') }}</h2>
         <div class="grid grid-cols-1 lg:grid-cols-5 gap-4 items-start">
           <div class="lg:col-span-3">
-            <AuctionDetailMap :lat="a.lat" :lng="a.lng" :label="a.address ?? undefined" :country="a.country" />
+            <AuctionDetailMap
+              :lat="a.lat"
+              :lng="a.lng"
+              :label="a.address ?? undefined"
+              :country="a.country"
+              :hazards="a.locationEnrichment?.hazards"
+            />
           </div>
           <DetailSectionCard class="lg:col-span-2" :title="$t('objektDetail.nearbyPlaces')">
             <PremiumFeatureLock :rows="3" />
