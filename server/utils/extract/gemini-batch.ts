@@ -52,6 +52,13 @@ function buildJsonlLine(key: string, input: LlmInput): string | null {
   })
 }
 
+function extractBatchJobName(resp: { name?: unknown; batch?: { name?: unknown }; response?: { name?: unknown } }): string | null {
+  for (const candidate of [resp.name, resp.batch?.name, resp.response?.name]) {
+    if (typeof candidate === 'string' && candidate.startsWith('batches/')) return candidate
+  }
+  return null
+}
+
 /** 3-step resumable upload (start → get upload URL from response header →
  *  upload+finalize) — see ai.google.dev's Files API docs. Returns the
  *  uploaded file's resource name (`files/...`), or null on any failure. */
@@ -99,28 +106,36 @@ export async function submitGeminiBatch(
   config: LlmConfig,
   source: 'enrich' | 'reprocess',
 ): Promise<string | null> {
-  const lines = items.map((item) => buildJsonlLine(item.key, item.input)).filter((l): l is string => l != null)
-  if (lines.length === 0) return null
+  const lineItems = items
+    .map((item) => ({ item, line: buildJsonlLine(item.key, item.input) }))
+    .filter((entry): entry is { item: { key: string; input: LlmInput }; line: string } => entry.line != null)
+  if (lineItems.length === 0) return null
+  const lines = lineItems.map((entry) => entry.line)
+  // Google may return file results in input order without echoing the JSONL
+  // `key` on every line. Persist an ordinal fallback so the poller can still
+  // merge each response into the right extraction-cache entry.
+  const customIdMap = Object.fromEntries(lineItems.map((entry, index) => [String(index), entry.item.key]))
   const model = config.model || DEFAULT_MODEL
   try {
     const fileName = await uploadJsonl(lines.join('\n'), config)
     if (!fileName) return null
-    const batch = await $fetch<{ name?: string }>(`${apiBase(config)}/v1beta/models/${model}:batchGenerateContent`, {
+    const batch = await $fetch<{ name?: string; batch?: { name?: string }; response?: { name?: string } }>(`${apiBase(config)}/v1beta/models/${model}:batchGenerateContent`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-goog-api-key': config.apiKey ?? '' },
       body: { batch: { display_name: `zvg-immo-${source}`, input_config: { file_name: fileName } } },
       signal: AbortSignal.timeout(30_000),
     })
-    if (!batch.name) {
+    const jobName = extractBatchJobName(batch)
+    if (!jobName) {
       console.warn('[gemini-batch] batchGenerateContent response had no job name')
       return null
     }
-    const recorded = await insertLlmBatchJob({ jobName: batch.name, source, itemCount: lines.length })
+    const recorded = await insertLlmBatchJob({ jobName, source, itemCount: lines.length, customIdMap })
     if (!recorded) {
-      console.warn(`[gemini-batch] failed to record job ${batch.name} — treating submission as failed`)
+      console.warn(`[gemini-batch] failed to record job ${jobName} — treating submission as failed`)
       return null
     }
-    return batch.name
+    return jobName
   } catch (err) {
     console.warn(`[gemini-batch] submit failed: ${(err as Error).message}`)
     return null
@@ -158,7 +173,24 @@ function extractResultFileName(resp: Record<string, unknown>): string | null {
   const response = resp.response as Record<string, unknown> | undefined
   const output = response?.output as Record<string, unknown> | undefined
   const destination = response?.destination as Record<string, unknown> | undefined
-  for (const c of [output?.responsesFile, destination?.fileName, response?.responsesFile]) {
+  const dest = resp.dest as Record<string, unknown> | undefined
+  const batch = resp.batch as Record<string, unknown> | undefined
+  const batchOutput = batch?.output as Record<string, unknown> | undefined
+  const batchDest = batch?.dest as Record<string, unknown> | undefined
+  for (const c of [
+    output?.responsesFile,
+    output?.responses_file,
+    destination?.fileName,
+    destination?.file_name,
+    response?.responsesFile,
+    response?.responses_file,
+    dest?.fileName,
+    dest?.file_name,
+    batchOutput?.responsesFile,
+    batchOutput?.responses_file,
+    batchDest?.fileName,
+    batchDest?.file_name,
+  ]) {
     if (typeof c === 'string') return c
   }
   return null
@@ -200,6 +232,7 @@ export async function pollGeminiBatch(jobName: string, config: LlmConfig): Promi
 export async function fetchGeminiBatchResults(
   resultFileName: string,
   config: LlmConfig,
+  customIdMap: Record<string, string> = {},
 ): Promise<{ key: string; extraction: ClampedExtraction | null }[]> {
   try {
     const text = await $fetch<string>(`${apiBase(config)}/download/v1beta/${resultFileName}:download`, {
@@ -209,19 +242,29 @@ export async function fetchGeminiBatchResults(
       responseType: 'text',
     })
     const out: { key: string; extraction: ClampedExtraction | null }[] = []
+    let lineIndex = 0
     for (const line of text.split('\n')) {
       const trimmed = line.trim()
       if (!trimmed) continue
-      let parsed: { key?: unknown; response?: unknown; error?: unknown }
+      const indexKey = String(lineIndex++)
+      let parsed: { key?: unknown; metadata?: unknown; response?: unknown; error?: unknown; candidates?: unknown }
       try {
         parsed = JSON.parse(trimmed) as typeof parsed
       } catch (err) {
         console.warn(`[gemini-batch] failed to parse result line: ${(err as Error).message}`)
         continue
       }
-      if (typeof parsed.key !== 'string') continue
-      const raw = parsed.error ? null : parseGeminiExtractionResponse(parsed.response)
-      out.push({ key: parsed.key, extraction: raw ? clampExtraction(raw) : null })
+      const metadata = parsed.metadata as Record<string, unknown> | undefined
+      const key =
+        typeof parsed.key === 'string'
+          ? parsed.key
+          : typeof metadata?.key === 'string'
+            ? metadata.key
+            : customIdMap[indexKey]
+      if (typeof key !== 'string') continue
+      const response = parsed.response ?? (Array.isArray(parsed.candidates) ? parsed : null)
+      const raw = parsed.error ? null : parseGeminiExtractionResponse(response)
+      out.push({ key, extraction: raw ? clampExtraction(raw) : null })
     }
     return out
   } catch (err) {

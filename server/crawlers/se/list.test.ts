@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   fetchAllListings,
+  fetchListingById,
   extractKronofogdenPhotoUrls,
   extractListingIds,
   extractNextStartAtHit,
@@ -290,5 +291,33 @@ describe('fetchAllListings', () => {
       `${BASE}/images/200.def/1782824511166/Bild%202.jpg`,
     ])
     expect(result.auctions[0]?.photoCount).toBe(2)
+  })
+})
+
+describe('fetchListingById', () => {
+  it('fetches and maps a single Kronofogden detail page without walking search pages', async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const href = String(url)
+      if (href === `${BASE}/101743.html`) {
+        return new Response(detailHtmlWithShowingAddress('101743'), { status: 200 })
+      }
+      return new Response('not found', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const auction = await fetchListingById('101743', 'se-kronofogden')
+
+    expect(auction?.externalId).toBe('101743')
+    expect(auction?.address).toBe('Kvarnbyn 76, 937 94 Burträsk')
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('rejects non-numeric ids before fetching', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(fetchListingById('../nope', 'se-kronofogden')).resolves.toBeNull()
+
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })

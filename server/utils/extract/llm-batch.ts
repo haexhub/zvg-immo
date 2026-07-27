@@ -88,5 +88,5 @@ export async function fetchLlmBatchResults(
     return fetchOpenAiBatchResults(resultFileName, config, customIdMap)
   }
   if (!resultFileName) return []
-  return fetchGeminiBatchResults(resultFileName, config)
+  return fetchGeminiBatchResults(resultFileName, config, customIdMap)
 }

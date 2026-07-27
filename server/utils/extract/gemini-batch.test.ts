@@ -57,7 +57,12 @@ describe('submitGeminiBatch', () => {
     )
 
     expect(jobName).toBe('batches/xyz')
-    expect(insertLlmBatchJob).toHaveBeenCalledWith({ jobName: 'batches/xyz', source: 'enrich', itemCount: 1 })
+    expect(insertLlmBatchJob).toHaveBeenCalledWith({
+      jobName: 'batches/xyz',
+      source: 'enrich',
+      itemCount: 1,
+      customIdMap: { '0': 'zvg-portal:1' },
+    })
     const submitCall = vi.mocked($fetch).mock.calls.find(([url]) => (url as string).includes(':batchGenerateContent'))
     expect((submitCall?.[1] as { body: unknown })?.body).toEqual({
       batch: { display_name: 'zvg-immo-enrich', input_config: { file_name: 'files/abc' } },
@@ -166,6 +171,21 @@ describe('pollGeminiBatch', () => {
     await expect(pollGeminiBatch('batches/xyz', config)).resolves.toEqual({ state: 'pending' })
   })
 
+  it('recognizes the current top-level dest.fileName result path', async () => {
+    stubOfetch([
+      {
+        match: '/v1beta/batches/xyz',
+        data: { state: 'JOB_STATE_SUCCEEDED', dest: { fileName: 'files/results' } },
+      },
+    ])
+    const { pollGeminiBatch } = await import('./gemini-batch')
+
+    await expect(pollGeminiBatch('batches/xyz', config)).resolves.toEqual({
+      state: 'succeeded',
+      resultFileName: 'files/results',
+    })
+  })
+
   it('reports failed for a failed/cancelled state', async () => {
     stubOfetch([{ match: '/v1beta/batches/xyz', data: { metadata: { state: 'JOB_STATE_FAILED' } } }])
     const { pollGeminiBatch } = await import('./gemini-batch')
@@ -253,6 +273,28 @@ describe('fetchGeminiBatchResults', () => {
     const results = await fetchGeminiBatchResults('files/results', config)
 
     expect(results).toEqual([{ key: 'zvg-portal:1', extraction: null }])
+  })
+
+  it('falls back to metadata.key and input-order customIdMap for result lines', async () => {
+    const lines = [
+      JSON.stringify({
+        metadata: { key: 'zvg-portal:1' },
+        response: { candidates: [{ content: { parts: [{ text: '{"propertyType":"einfamilienhaus"}' }] } }] },
+      }),
+      JSON.stringify({
+        candidates: [{ content: { parts: [{ text: '{"landAreaSqm":600}' }] } }],
+      }),
+    ]
+    stubOfetch([{ match: '/download/v1beta/files/results', data: lines.join('\n') }])
+    const { fetchGeminiBatchResults } = await import('./gemini-batch')
+
+    const results = await fetchGeminiBatchResults('files/results', config, { '1': 'zvg-portal:2' })
+
+    expect(results[0]?.key).toBe('zvg-portal:1')
+    expect(results[1]).toEqual({
+      key: 'zvg-portal:2',
+      extraction: expect.objectContaining({ landAreaSqm: 600 }),
+    })
   })
 
   it('returns an empty array when the download request fails', async () => {

@@ -62,4 +62,8 @@ export interface PlatformCrawler {
    *  listing on every run (which would hammer the upstream portals). Optional —
    *  a crawler that can't enrich one item in isolation omits it. */
   enrichOne?(auction: Auction): Promise<void>
+  /** Optional fast path for permalink/detail pages whose snapshot entry has
+   *  not been written yet. Returns one fully mapped listing without crawling
+   *  the whole region. */
+  findOne?(externalId: string): Promise<Auction | null>
 }
