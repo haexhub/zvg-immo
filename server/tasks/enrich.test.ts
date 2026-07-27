@@ -6,7 +6,8 @@ import { extractByLlm } from '../utils/extract/llm'
 import { readExtractionCache, writeExtractionCache, type ExtractionCache } from '../utils/extraction-cache'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
 import { readVerkehrswertCache } from '../utils/verkehrswert-cache'
-import { archiveDocumentSet } from '../utils/raw-archive'
+import { archiveAuction, archiveDocumentSet } from '../utils/raw-archive'
+import { deriveMarketValueEur } from '../utils/exchange-rate'
 
 // WP-1 (docs/plans/2026-07-24-de-crawler-pipeline-reliability-plan.md): the
 // photo pipeline must retry a listing whose cache entry never recorded a
@@ -156,6 +157,22 @@ describe('document set invalidation', () => {
         { setHash: 'same-set', version: 3, changed: false },
       ),
     ).toBe(false)
+  })
+})
+
+describe('runEnrich detail post-processing without enrichOne', () => {
+  it('still archives, EUR-converts and stamps detailFetchedAt for a crawler with no enrichOne (e.g. se-kronofogden)', async () => {
+    const auction = makeAuction()
+    const { crawlAll } = await import('../crawlers/registry')
+    vi.mocked(crawlAll).mockResolvedValue(mockCrawl([auction]))
+    vi.mocked(readExtractionCache).mockResolvedValue({})
+
+    await runEnrich()
+
+    expect(archiveAuction).toHaveBeenCalledWith(auction, expect.any(String))
+    expect(deriveMarketValueEur).toHaveBeenCalledWith(auction, expect.anything())
+    const snapshotted = vi.mocked(writeAuctionSnapshot).mock.calls[0]?.[0] as Auction[]
+    expect(typeof snapshotted[0]?.detailFetchedAt).toBe('string')
   })
 })
 
