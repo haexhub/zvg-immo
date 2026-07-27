@@ -22,6 +22,12 @@ export interface MergeInputFields {
   landAreaSqm: number | null
   livingAreaSqm: number | null
   rooms: number | null
+  bedrooms?: number | null
+  bathrooms?: number | null
+  floor?: string | null
+  bathroomHasTub?: boolean | null
+  bathroomHasShower?: boolean | null
+  heating?: string | null
   units: number | null
   securityDeposit: number | null
   condition?: Condition | null
@@ -65,6 +71,12 @@ export function mergeLlmResult(
   let landAreaSqm = base.landAreaSqm
   let livingAreaSqm = base.livingAreaSqm
   let rooms = base.rooms
+  let bedrooms = base.bedrooms
+  let bathrooms = base.bathrooms
+  let floor = base.floor
+  let bathroomHasTub = base.bathroomHasTub
+  let bathroomHasShower = base.bathroomHasShower
+  let heating = base.heating
   let units = base.units
   let securityDeposit = base.securityDeposit
   let biddingNotes: string | null | undefined
@@ -95,6 +107,12 @@ export function mergeLlmResult(
       securityDeposit = securityDeposit ?? llm.securityDeposit
       biddingNotes = llm.biddingNotes
     }
+    bedrooms = llm.bedrooms
+    bathrooms = llm.bathrooms
+    floor = llm.floor
+    bathroomHasTub = llm.bathroomHasTub
+    bathroomHasShower = llm.bathroomHasShower
+    heating = llm.heating
     condition = llm.condition
     features = llm.features
     yearBuilt = llm.yearBuilt
@@ -120,6 +138,12 @@ export function mergeLlmResult(
     landAreaSqm,
     livingAreaSqm,
     rooms,
+    bedrooms,
+    bathrooms,
+    floor,
+    bathroomHasTub,
+    bathroomHasShower,
+    heating,
     units,
     securityDeposit,
     biddingNotes,

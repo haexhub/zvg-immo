@@ -223,6 +223,12 @@ export async function runEnrich(opts: EnrichOptions = {}) {
         hit != null &&
         (hit.condition === undefined ||
           hit.features === undefined ||
+          hit.bedrooms === undefined ||
+          hit.bathrooms === undefined ||
+          hit.floor === undefined ||
+          hit.bathroomHasTub === undefined ||
+          hit.bathroomHasShower === undefined ||
+          hit.heating === undefined ||
           hit.yearBuilt === undefined ||
           hit.lastRenovationYear === undefined ||
           hit.insights === undefined ||
@@ -395,6 +401,12 @@ export async function runEnrich(opts: EnrichOptions = {}) {
           // normally happen since they're set together, but keeps this idempotent).
           condition: priorEntry?.condition,
           features: priorEntry?.features,
+          bedrooms: priorEntry?.bedrooms,
+          bathrooms: priorEntry?.bathrooms,
+          floor: priorEntry?.floor,
+          bathroomHasTub: priorEntry?.bathroomHasTub,
+          bathroomHasShower: priorEntry?.bathroomHasShower,
+          heating: priorEntry?.heating,
           yearBuilt: priorEntry?.yearBuilt,
           lastRenovationYear: priorEntry?.lastRenovationYear,
           renovationNotes: priorEntry?.renovationNotes,

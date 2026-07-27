@@ -5,7 +5,7 @@
 // the endpoint returns 404 — the user can still reach the source portal via
 // the link on the list view.
 
-import type { Auction } from '~/types/auction'
+import type { Auction, LocationEnrichment } from '~/types/auction'
 import { applySnapshotPhotosToAuctions, readAuctionSnapshot, type AuctionSnapshot } from '../../../utils/auction-snapshot'
 import { applyExtractionToAuctions, readExtractionCache } from '../../../utils/extraction-cache'
 import { geocodeAddress } from '../../../utils/geocode'
@@ -15,10 +15,12 @@ import { applyDescriptionMarketValue } from '../../../utils/description-market-v
 import { deriveMarketValueEur, getRates } from '../../../utils/exchange-rate'
 import { ensureEnabledCountriesLoaded, isCountryEnabled, platforms } from '../../../crawlers/registry'
 import { readMergedListCache } from '../../../utils/list-cache'
+import { readLocationEnrichment } from '../../../utils/external-data/location-enrichment'
 
 export interface AuctionDetail extends Auction {
   lat: number | null
   lng: number | null
+  locationEnrichment: LocationEnrichment | null
 }
 
 function cloneAuction(a: Auction): Auction {
@@ -115,5 +117,6 @@ export default defineEventHandler(async (event): Promise<AuctionDetail> => {
   const lat = sourcePoint?.lat ?? point?.lat ?? null
   const lng = sourcePoint?.lng ?? point?.lng ?? null
   applyDescriptionMarketValue(auction)
-  return { ...auction, lat, lng }
+  const locationEnrichment = await readLocationEnrichment(platform, id)
+  return { ...auction, lat, lng, locationEnrichment }
 })

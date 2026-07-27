@@ -456,6 +456,20 @@ CREATE TABLE IF NOT EXISTS auction_snapshot (
 );
 ALTER TABLE auction_snapshot ENABLE ROW LEVEL SECURITY;
 
+-- External market/hazard enrichment is intentionally stored outside the LLM
+-- extraction cache: provider licenses, TTLs and source versions have their
+-- own cadence, and detail pages only ever read the cached result.
+CREATE TABLE IF NOT EXISTS location_enrichment (
+  platform      text NOT NULL,
+  external_id   text NOT NULL,
+  enrichment    jsonb NOT NULL,
+  checked_at    timestamptz NOT NULL,
+  updated_at    timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (platform, external_id)
+);
+CREATE INDEX IF NOT EXISTS idx_location_enrichment_checked_at ON location_enrichment (checked_at DESC);
+ALTER TABLE location_enrichment ENABLE ROW LEVEL SECURITY;
+
 -- llm_batch_jobs: tracks in-flight LLM Batch API jobs submitted by
 -- enrich.ts/reprocess.ts. Gemini echoes the submitted `key` directly in its
 -- result JSONL; Anthropic restricts `custom_id` to a short safe alphabet, so

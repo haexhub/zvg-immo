@@ -156,6 +156,12 @@ async function buildReprocessInput(
     securityDeposit: auction.sourceSecurityDeposit ?? rules.securityDeposit,
     condition: priorEntry?.condition,
     features: priorEntry?.features,
+    bedrooms: priorEntry?.bedrooms,
+    bathrooms: priorEntry?.bathrooms,
+    floor: priorEntry?.floor,
+    bathroomHasTub: priorEntry?.bathroomHasTub,
+    bathroomHasShower: priorEntry?.bathroomHasShower,
+    heating: priorEntry?.heating,
     yearBuilt: priorEntry?.yearBuilt,
     lastRenovationYear: priorEntry?.lastRenovationYear,
     renovationNotes: priorEntry?.renovationNotes,
@@ -239,6 +245,12 @@ function buildRulesOnlyEntry(
     landAreaSqm: fields.landAreaSqm,
     livingAreaSqm: fields.livingAreaSqm,
     rooms: fields.rooms,
+    bedrooms: fields.bedrooms,
+    bathrooms: fields.bathrooms,
+    floor: fields.floor,
+    bathroomHasTub: fields.bathroomHasTub,
+    bathroomHasShower: fields.bathroomHasShower,
+    heating: fields.heating,
     units: fields.units,
     securityDeposit: fields.securityDeposit,
     biddingNotes: priorEntry?.biddingNotes,
@@ -333,19 +345,28 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
     try {
       const key = cacheKey(platform, externalId)
       const priorEntry = cache[key]
-      const eligible =
-        opts.force ||
-        ((!priorEntry ||
-          (priorEntry.source === 'rules' && priorEntry.confidence === 'low') ||
-          priorEntry.condition === undefined ||
+      const hasMissingLlmOnlyField = priorEntry
+        ? priorEntry.condition === undefined ||
           priorEntry.features === undefined ||
+          priorEntry.bedrooms === undefined ||
+          priorEntry.bathrooms === undefined ||
+          priorEntry.floor === undefined ||
+          priorEntry.bathroomHasTub === undefined ||
+          priorEntry.bathroomHasShower === undefined ||
+          priorEntry.heating === undefined ||
           priorEntry.yearBuilt === undefined ||
           priorEntry.lastRenovationYear === undefined ||
           priorEntry.renovationNotes === undefined ||
           priorEntry.insights === undefined ||
           priorEntry.planningNotes === undefined ||
           priorEntry.documentSummary === undefined ||
-          priorEntry.marketValueEur === undefined) &&
+          priorEntry.marketValueEur === undefined
+        : false
+      const eligible =
+        opts.force ||
+        ((!priorEntry ||
+          (priorEntry.source === 'rules' && priorEntry.confidence === 'low') ||
+          (llmConfig != null && hasMissingLlmOnlyField)) &&
           (priorEntry?.llmFailures ?? 0) < MAX_LLM_FAILURES &&
           !isLlmBatchPending(priorEntry))
       if (!eligible) {
