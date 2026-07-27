@@ -5,16 +5,18 @@
 // the endpoint returns 404 — the user can still reach the source portal via
 // the link on the list view.
 
-import type { Auction } from '~/types/auction'
+import type { Auction, LocationEnrichment } from '~/types/auction'
 import { readAuctionSnapshot } from '../../../utils/auction-snapshot'
 import { geocodeAddress } from '../../../utils/geocode'
 import { isSafePathSegment } from '../../../utils/path-segment'
 import { cacheKey } from '../../../utils/verkehrswert-cache'
 import { applyDescriptionMarketValue } from '../../../utils/description-market-value'
+import { readLocationEnrichment } from '../../../utils/external-data/location-enrichment'
 
 export interface AuctionDetail extends Auction {
   lat: number | null
   lng: number | null
+  locationEnrichment: LocationEnrichment | null
 }
 
 export default defineEventHandler(async (event): Promise<AuctionDetail> => {
@@ -41,5 +43,6 @@ export default defineEventHandler(async (event): Promise<AuctionDetail> => {
   const lng = sourcePoint?.lng ?? point?.lng ?? null
   const auction = { ...hit }
   applyDescriptionMarketValue(auction)
-  return { ...auction, lat, lng }
+  const locationEnrichment = await readLocationEnrichment(platform, id)
+  return { ...auction, lat, lng, locationEnrichment }
 })

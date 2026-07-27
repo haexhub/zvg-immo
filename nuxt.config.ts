@@ -108,6 +108,17 @@ export default defineNuxtConfig({
     // migrations are skipped (see db.ts) rather than failing hard.
     //   NUXT_DATABASE_URL=postgres://postgres:<pw>@db:5432/postgres
     databaseUrl: '',
+    // External market/risk datasets are ingested out-of-band into local or
+    // Postgres-backed caches; detail pages only read location_enrichment.
+    // Empty values keep the external-enrichment task inert.
+    //   NUXT_EXTERNAL_DATA_FR_DVF_CACHE_PATH=/app/.cache_zvg/external/fr-dvf.json
+    //   NUXT_EXTERNAL_DATA_EU_FLOOD_RISK_GEO_JSON_PATH=/app/.cache_zvg/external/eu-flood-risk.geojson
+    //   NUXT_EXTERNAL_DATA_EU_FLOOD_RISK_MAX_CACHE_AGE_DAYS=400
+    externalData: {
+      frDvfCachePath: '',
+      euFloodRiskGeoJsonPath: '',
+      euFloodRiskMaxCacheAgeDays: 400,
+    },
     // G1 Roh-Archiv (WP-3): Supabase Storage bucket for archived crawl
     // snapshots (server/utils/raw-archive.ts, storage-uploader.ts). Empty →
     // archiving stays local-only (blobs pile up in the outbox, nothing
@@ -184,6 +195,10 @@ export default defineNuxtConfig({
       // completed results — jobs often finish well under the 24h SLA, so a
       // shorter tick than enrich's own 6h cadence gets results merged sooner.
       '*/30 * * * *': ['llm-batch-poll'],
+      // Daily: refresh cached external market/risk overlays. With no configured
+      // externalData adapters this is a cheap no-op; detail pages never fetch
+      // providers live.
+      '15 3 * * *': ['external-enrichment'],
     },
     routeRules: {
       // /api/auctions caches inside the handler (defineCachedFunction) instead
