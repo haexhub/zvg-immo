@@ -16,6 +16,7 @@ import {
 } from './openai-batch'
 import type { ClampedExtraction, LlmConfig, LlmInput } from './llm'
 import { isOpenAiBatchBaseUrl } from '../llm-provider-capabilities'
+import { getLlmBatchCapability } from '../llm-batch-jobs'
 
 // A submitted-but-not-yet-polled item is marked with `llmBatchJob` (see
 // AuctionExtraction.llmBatchJob) so enrich.ts/reprocess.ts don't re-submit it
@@ -52,6 +53,20 @@ export function supportsLlmBatch(config: LlmConfig | null | undefined): boolean 
 
 export function supportsNativeBatchDocuments(config: LlmConfig | null | undefined): boolean {
   return config?.provider === 'gemini-native' || (config?.provider === 'claude-proxy' && supportsLlmBatch(config))
+}
+
+// supportsLlmBatch above only checks static config shape (provider/apiKey/
+// baseUrl) — it can't know that e.g. Gemini's free tier rejects every
+// batchGenerateContent call with 400 FAILED_PRECONDITION (see
+// gemini-batch.ts's header). Each provider's submit function records the
+// outcome of its last *real* attempt via recordLlmBatchCapability
+// (../llm-batch-jobs.ts); this reads it back so enrich.ts/reprocess.ts can
+// fall back to the synchronous path automatically once a provider is
+// confirmed broken, instead of submitting doomed jobs run after run.
+export async function isLlmBatchProviderBroken(config: LlmConfig | null | undefined): Promise<boolean> {
+  if (!config?.provider) return false
+  const capability = await getLlmBatchCapability(config.provider)
+  return capability?.ok === false
 }
 
 export async function submitLlmBatch(

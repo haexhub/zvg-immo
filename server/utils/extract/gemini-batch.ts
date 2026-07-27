@@ -6,18 +6,29 @@
 // toGeminiParts/parseGeminiExtractionResponse from ./providers/gemini-native,
 // toGeminiSchema from ./providers/gemini-schema) — no duplicated prompt logic.
 //
-// *** UNVERIFIED — READ BEFORE RELYING ON THIS IN PRODUCTION ***
-// The resumable-upload dance (uploadJsonl below) follows Google's standard
-// X-Goog-Upload-* protocol, used identically across several Google APIs — is fairly
-// safe. `pollGeminiBatch`'s and `fetchGeminiBatchResults`' exact REST JSON
-// field paths (job state location, result-file field, per-item error
-// envelope) are NOT: at the time this was written, Gemini was rate-limited
-// and the mandatory live test call (a live batch submit/poll/fetch-result
-// round trip that the migration plan requires before writing this parser)
-// couldn't be done. `extractState`/`extractResultFileName` below check
-// several plausible field paths defensively so a layout mismatch surfaces as
-// a warning + 'pending'/'failed' state rather than a silent misparse, but
-// this must still be confirmed against a real API response before this ships.
+// *** VERIFIED LIVE 2026-07-27: free tier has no Batch API access at all ***
+// batchGenerateContent rejects every request with 400 FAILED_PRECONDITION —
+// confirmed against the real API with a valid uploaded JSONL file, not just a
+// malformed one — while sync generateContent on the same key works fine.
+// Google's own docs back this up: Batch API rate limits are only defined for
+// paid Tier 1-3 accounts, and FAILED_PRECONDITION on this endpoint is
+// documented as "enable billing on your project". The free-tier quota guard
+// below (maxJobsPerDay etc.) was written assuming free tier could batch, just
+// slowly — that assumption was wrong. Rather than trust a static
+// geminiBatchTier config flag an admin has to remember to set correctly,
+// every real submit attempt below records its outcome via
+// recordLlmBatchCapability (../llm-batch-jobs.ts) — enrich.ts/reprocess.ts
+// read that alongside supportsLlmBatch so a confirmed-broken provider falls
+// back to the synchronous path automatically instead of submitting doomed
+// jobs run after run, and /settings surfaces the real error instead of a
+// silent stuck backlog.
+// `pollGeminiBatch`'s and `fetchGeminiBatchResults`' exact REST JSON field
+// paths (job state location, result-file field, per-item error envelope) are
+// still UNVERIFIED — no job has ever been accepted by Google to poll/fetch
+// against. `extractState`/`extractResultFileName` below check several
+// plausible field paths defensively so a layout mismatch surfaces as a
+// warning + 'pending'/'failed' state rather than a silent misparse, but this
+// must still be confirmed against a real completed job once billing is on.
 
 import {
   buildParts,
@@ -34,6 +45,7 @@ import {
   insertLlmBatchJob,
   readGeminiBatchQuotaUsage,
   recordGeminiBatchQuotaUsage,
+  recordLlmBatchCapability,
   setGeminiBatchQuotaBackoff,
   type GeminiBatchQuotaUsage,
   withGeminiBatchQuotaLock,
@@ -125,6 +137,19 @@ function backoffActive(usage: GeminiBatchQuotaUsage): boolean {
   return Number.isFinite(until) && until > Date.now()
 }
 
+/** ofetch's FetchError.message is generic ("[POST] "url": 400 Bad Request")
+ *  — the actionable text (e.g. "FAILED_PRECONDITION: Precondition check
+ *  failed.") lives in the parsed JSON body ofetch exposes as `.data`. Falls
+ *  back to the generic message when the body isn't Google's error shape. */
+function extractOfetchErrorMessage(err: unknown): string {
+  const data = (err as { data?: unknown })?.data as { error?: { message?: unknown; status?: unknown } } | undefined
+  if (data?.error && typeof data.error.message === 'string') {
+    const status = typeof data.error.status === 'string' ? `${data.error.status}: ` : ''
+    return `${status}${data.error.message}`
+  }
+  return err instanceof Error ? err.message : String(err)
+}
+
 function isGeminiQuotaError(err: unknown): boolean {
   const status = (err as { status?: unknown; statusCode?: unknown; response?: { status?: unknown } })?.status
   const statusCode =
@@ -135,6 +160,25 @@ function isGeminiQuotaError(err: unknown): boolean {
   if (statusCode === 429 || responseStatus === 429) return true
   const message = err instanceof Error ? err.message : String(err)
   return /quota|rate.?limit|resource_exhausted|too many requests/i.test(message)
+}
+
+/** Timeouts, connection failures and 5xx responses say nothing about
+ *  whether this account/model can batch at all (unlike isGeminiQuotaError's
+ *  429, they're not even evidence the request was understood) — only a
+ *  durable rejection like 400 FAILED_PRECONDITION should ever flip the
+ *  recorded capability to broken, or a transient blip could disable batching
+ *  for every subsequent run until someone notices and manually re-checks it. */
+function isTransientBatchError(err: unknown): boolean {
+  const status = (err as { status?: unknown; statusCode?: unknown; response?: { status?: unknown } })?.status
+  const statusCode =
+    typeof status === 'number' ? status : (err as { statusCode?: unknown })?.statusCode
+  const responseStatus = (err as { response?: { status?: unknown } })?.response?.status
+  const httpStatus = typeof statusCode === 'number' ? statusCode : typeof responseStatus === 'number' ? responseStatus : undefined
+  if (httpStatus != null && httpStatus >= 500) return true
+  const name = (err as { name?: unknown })?.name
+  if (name === 'AbortError' || name === 'TimeoutError') return true
+  const code = (err as { code?: unknown })?.code ?? (err as { cause?: { code?: unknown } })?.cause?.code
+  return typeof code === 'string' && /^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EPIPE)$/.test(code)
 }
 
 function selectLineItemsForQuota(
@@ -292,7 +336,12 @@ async function submitGeminiBatchLocked(
   const model = config.model || DEFAULT_MODEL
   try {
     const fileName = await uploadJsonl(lines.join('\n'), config)
-    if (!fileName) return null
+    if (!fileName) {
+      const message = 'resumable upload did not return a usable file'
+      console.warn(`[gemini-batch] ${message}`)
+      await recordLlmBatchCapability('gemini-native', { ok: false, message, source })
+      return null
+    }
     const batch = await $fetch<{ name?: string; batch?: { name?: string }; response?: { name?: string } }>(`${apiBase(config)}/v1beta/models/${model}:batchGenerateContent`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-goog-api-key': config.apiKey ?? '' },
@@ -301,9 +350,14 @@ async function submitGeminiBatchLocked(
     })
     const jobName = extractBatchJobName(batch)
     if (!jobName) {
-      console.warn('[gemini-batch] batchGenerateContent response had no job name')
+      const message = 'batchGenerateContent response had no job name'
+      console.warn(`[gemini-batch] ${message}`)
+      await recordLlmBatchCapability('gemini-native', { ok: false, message, source })
       return null
     }
+    // Google accepted the request — batch submission itself works for this
+    // account/model, independent of whether our own bookkeeping below does.
+    await recordLlmBatchCapability('gemini-native', { ok: true, message: null, source })
     // The job is accepted by Google at this point and consumes quota even if
     // our local job row insert fails and the batch becomes orphaned.
     await recordGeminiBatchQuotaUsage(quotaDay, {
@@ -322,10 +376,22 @@ async function submitGeminiBatchLocked(
       retryItems: selection.retryItems,
     }
   } catch (err) {
+    const message = extractOfetchErrorMessage(err)
     if (isGeminiQuotaError(err)) {
+      // Rate-limited, not incapable — proves the account CAN batch, just not
+      // right now. Don't flip capability to broken over a transient 429.
       await setGeminiBatchQuotaBackoff(quotaDay, nextUtcDayIso())
+      console.warn(`[gemini-batch] submit failed: ${message}`)
+      return null
     }
-    console.warn(`[gemini-batch] submit failed: ${(err as Error).message}`)
+    if (isTransientBatchError(err)) {
+      // Timeout/connection failure/5xx — inconclusive about whether the
+      // account can batch at all, so don't flip capability to broken either.
+      console.warn(`[gemini-batch] submit failed (transient): ${message}`)
+      return null
+    }
+    console.warn(`[gemini-batch] submit failed: ${message}`)
+    await recordLlmBatchCapability('gemini-native', { ok: false, message, source })
     return null
   }
 }
@@ -333,6 +399,7 @@ async function submitGeminiBatchLocked(
 export interface PollResult {
   state: 'pending' | 'succeeded' | 'failed' | 'expired'
   resultFileName?: string
+  errorMessage?: string
 }
 
 const SUCCEEDED_STATES = new Set(['JOB_STATE_SUCCEEDED', 'BATCH_STATE_SUCCEEDED', 'SUCCEEDED'])
@@ -355,6 +422,19 @@ function extractState(resp: Record<string, unknown>): string | null {
     if (typeof c === 'string') return c
   }
   return null
+}
+
+// Best-effort — checks the same plausible field-nesting patterns as
+// extractState/extractResultFileName. A failed/expired job with no
+// discoverable error field just leaves the UI with no reason, same as today.
+function extractErrorMessage(resp: Record<string, unknown>): string | undefined {
+  const metadata = resp.metadata as Record<string, unknown> | undefined
+  const batch = (resp as { batch?: Record<string, unknown> }).batch
+  for (const candidate of [resp.error, metadata?.error, batch?.error]) {
+    const error = candidate as { message?: unknown } | undefined
+    if (error && typeof error.message === 'string') return error.message
+  }
+  return undefined
 }
 
 function extractResultFileName(resp: Record<string, unknown>): string | null {
@@ -403,8 +483,8 @@ export async function pollGeminiBatch(jobName: string, config: LlmConfig): Promi
       }
       return { state: 'succeeded', resultFileName }
     }
-    if (FAILED_STATES.has(state)) return { state: 'failed' }
-    if (EXPIRED_STATES.has(state)) return { state: 'expired' }
+    if (FAILED_STATES.has(state)) return { state: 'failed', errorMessage: extractErrorMessage(resp) }
+    if (EXPIRED_STATES.has(state)) return { state: 'expired', errorMessage: extractErrorMessage(resp) }
     return { state: 'pending' }
   } catch (err) {
     console.warn(`[gemini-batch] poll failed for ${jobName}: ${(err as Error).message}`)

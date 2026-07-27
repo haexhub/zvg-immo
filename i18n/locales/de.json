@@ -284,6 +284,7 @@
       "executionModeSync": "Sync",
       "executionModeBatch": "Batch",
       "batchUnsupported": "Dieser Provider bietet hier keinen Batch-Modus an.",
+      "batchBroken": "Batch-API zuletzt fehlgeschlagen: {message}",
       "batchKeyRequired": "Batch über Claude-Proxy benötigt einen gespeicherten Proxy-/API-Key.",
       "batchOpenAiRequired": "OpenAI-Batch benötigt https://api.openai.com/v1 als Base-URL und einen gespeicherten API-Key.",
       "baseUrlLabel": "Base-URL",
@@ -354,11 +355,13 @@
       "candidates": "Kandidaten",
       "processed": "Verarbeitet",
       "skipped": "Übersprungen",
-      "llmCalls": "LLM-Aufrufe"
+      "llmCalls": "LLM-Aufrufe",
+      "batchLabel": "Über Batch API einreichen (prüft, ob Batch für diesen Provider aktuell funktioniert)"
     },
     "llmBatch": {
       "title": "LLM-Batch-Pipeline",
       "description": "Offene Batch-Jobs, die an einen LLM-Provider übergeben wurden und noch auf Ergebnisse warten.",
+      "capabilityBroken": "Batch-API für {provider} ist zuletzt fehlgeschlagen ({at}): {message}",
       "refresh": "Aktualisieren",
       "loadError": "Batch-Pipeline konnte nicht geladen werden.",
       "empty": "Keine offenen Batch-Requests.",

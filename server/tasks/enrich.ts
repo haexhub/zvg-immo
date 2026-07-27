@@ -38,6 +38,7 @@ import { extractByLlm, type LlmInput, type PhotoCuration } from '~/server/utils/
 import { MAX_LLM_FAILURES, readExtractionLlmConfig } from '~/server/utils/extract/llm-task-config'
 import {
   isLlmBatchPending,
+  isLlmBatchProviderBroken,
   submitLlmBatch,
   supportsLlmBatch,
   supportsNativeBatchDocuments,
@@ -175,7 +176,13 @@ export async function runEnrich(opts: EnrichOptions = {}) {
     const llmConfig = await readExtractionLlmConfig()
     const executionMode = await readLlmExecutionMode()
     const batchRequested = opts.batch ?? executionMode === 'batch'
-    const useBatch = batchRequested && supportsLlmBatch(llmConfig)
+    const batchProviderBroken = batchRequested && (await isLlmBatchProviderBroken(llmConfig))
+    if (batchProviderBroken) {
+      console.warn(
+        `[enrich] batch mode requested but ${llmConfig?.provider} is known-broken (see /settings) — falling back to sync`,
+      )
+    }
+    const useBatch = batchRequested && supportsLlmBatch(llmConfig) && !batchProviderBroken
     const rates = await getRates()
 
     // Two independent reasons to enrich: no extraction yet, OR the previous

@@ -584,3 +584,34 @@ describe('runEnrich photo backfill (WP-1)', () => {
     expect(written['se-kronofogden:14409']?.photoPipelineVersion).toBe(3)
   })
 })
+
+describe('runEnrich batch mode gating', () => {
+  it('falls back to the synchronous LLM call when the requested batch provider is known-broken', async () => {
+    vi.stubGlobal('useRuntimeConfig', () => ({
+      extractLlm: {
+        provider: 'gemini-native',
+        baseUrl: 'https://generativelanguage.googleapis.com',
+        apiKey: 'test-key',
+        model: 'gemini-flash-latest',
+      },
+    }))
+    const auction = makeAuction()
+    const { crawlAll } = await import('../crawlers/registry')
+    vi.mocked(crawlAll).mockResolvedValue(mockCrawl([auction]))
+    vi.mocked(readExtractionCache).mockResolvedValue({})
+
+    const { recordLlmBatchCapability } = await import('../utils/llm-batch-jobs')
+    await recordLlmBatchCapability('gemini-native', {
+      ok: false,
+      message: 'FAILED_PRECONDITION: Precondition check failed.',
+      source: 'enrich',
+    })
+
+    await runEnrich({ batch: true })
+
+    // supportsLlmBatch alone would say gemini-native can batch — the known-
+    // broken capability (recorded by a real prior attempt) must still force
+    // the synchronous path instead of collecting doomed batch items.
+    expect(extractByLlm).toHaveBeenCalled()
+  })
+})

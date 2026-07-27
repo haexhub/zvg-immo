@@ -14,9 +14,36 @@ import {
   type LlmConfig,
   type LlmInput,
 } from './llm'
-import { insertLlmBatchJob } from '../llm-batch-jobs'
+import { insertLlmBatchJob, recordLlmBatchCapability } from '../llm-batch-jobs'
 import type { PollResult } from './gemini-batch'
 import type { LlmBatchSubmitResult } from './llm-batch'
+
+/** ofetch's FetchError.message is generic ("[POST] "url": 400 Bad Request")
+ *  — the actionable text lives in the parsed JSON body ofetch exposes as
+ *  `.data`, shaped like `{error:{type,message}}` for Anthropic. */
+function extractOfetchErrorMessage(err: unknown): string {
+  const data = (err as { data?: unknown })?.data as { error?: { message?: unknown } } | undefined
+  if (data?.error && typeof data.error.message === 'string') return data.error.message
+  return err instanceof Error ? err.message : String(err)
+}
+
+/** Timeouts, connection failures and 5xx/429 responses say nothing about
+ *  whether this account/model can batch at all — only a durable rejection
+ *  (e.g. a 4xx like "model: field required") should ever flip the recorded
+ *  capability to broken, or a transient blip could disable batching for
+ *  every subsequent run until someone notices and manually re-checks it. */
+function isTransientBatchError(err: unknown): boolean {
+  const status = (err as { status?: unknown; statusCode?: unknown; response?: { status?: unknown } })?.status
+  const statusCode =
+    typeof status === 'number' ? status : (err as { statusCode?: unknown })?.statusCode
+  const responseStatus = (err as { response?: { status?: unknown } })?.response?.status
+  const httpStatus = typeof statusCode === 'number' ? statusCode : typeof responseStatus === 'number' ? responseStatus : undefined
+  if (httpStatus != null && (httpStatus === 429 || httpStatus >= 500)) return true
+  const name = (err as { name?: unknown })?.name
+  if (name === 'AbortError' || name === 'TimeoutError') return true
+  const code = (err as { code?: unknown })?.code ?? (err as { cause?: { code?: unknown } })?.cause?.code
+  return typeof code === 'string' && /^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EPIPE)$/.test(code)
+}
 
 type AnthropicContentBlock =
   | { type: 'text'; text: string }
@@ -100,9 +127,14 @@ async function submitAnthropicRequestChunk(
     signal: AbortSignal.timeout(30_000),
   })
   if (!batch.id) {
-    console.warn('[anthropic-batch] create response had no batch id')
+    const message = 'create response had no batch id'
+    console.warn(`[anthropic-batch] ${message}`)
+    await recordLlmBatchCapability('claude-proxy', { ok: false, message, source })
     return null
   }
+  // Anthropic accepted the request — batch submission itself works for this
+  // account/model, independent of whether our own bookkeeping below does.
+  await recordLlmBatchCapability('claude-proxy', { ok: true, message: null, source })
   const recorded = await insertLlmBatchJob({
     jobName: batch.id,
     source,
@@ -182,7 +214,11 @@ export async function submitAnthropicBatch(
       jobNames.push(jobName)
       submitted.push(...chunk.items.map((item) => ({ key: item.key, jobName })))
     } catch (err) {
-      console.warn(`[anthropic-batch] submit failed: ${(err as Error).message}`)
+      const message = extractOfetchErrorMessage(err)
+      console.warn(`[anthropic-batch] submit failed: ${message}`)
+      if (!isTransientBatchError(err)) {
+        await recordLlmBatchCapability('claude-proxy', { ok: false, message, source })
+      }
       retryItems = retryItems.concat(chunks.slice(chunkIndex).flatMap((c) => c.items))
       break
     }

@@ -137,8 +137,8 @@ export async function runLlmBatchPoll(): Promise<{ checked: number; merged: numb
         // Affected items keep their (now-orphaned) llmBatchJob marker — no
         // extra code needed, isLlmBatchPending's 48h age check makes them
         // eligible again on its own once this job marker expires.
-        await markLlmBatchJobResolved(job.jobName, poll.state, at)
-        console.warn(`[llm-batch-poll] job ${job.jobName} ${poll.state}`)
+        await markLlmBatchJobResolved(job.jobName, poll.state, at, poll.errorMessage ?? null)
+        console.warn(`[llm-batch-poll] job ${job.jobName} ${poll.state}${poll.errorMessage ? `: ${poll.errorMessage}` : ''}`)
         continue
       }
 
