@@ -334,6 +334,47 @@ const planningNotesHasContent = computed(() => {
   )
 })
 
+type AnalysisStatus = 'pending' | 'rules' | 'batch' | 'llm' | 'failed'
+
+function hasCompletedLlmAnalysis(): boolean {
+  const e = a.value?.extraction
+  if (!e) return false
+  return !!e.llmAnalyzedAt ||
+    e.source === 'llm' ||
+    e.condition !== undefined ||
+    e.features !== undefined ||
+    e.bedrooms !== undefined ||
+    e.bathrooms !== undefined ||
+    e.floor !== undefined ||
+    e.bathroomHasTub !== undefined ||
+    e.bathroomHasShower !== undefined ||
+    e.heating !== undefined ||
+    e.yearBuilt !== undefined ||
+    e.lastRenovationYear !== undefined ||
+    e.renovationNotes !== undefined ||
+    e.insights !== undefined ||
+    e.planningNotes !== undefined ||
+    e.documentSummary !== undefined ||
+    e.marketValueEur !== undefined
+}
+
+const analysisStatus = computed<AnalysisStatus>(() => {
+  const e = a.value?.extraction
+  if (!e) return 'pending'
+  if (e.llmBatchJob) return 'batch'
+  if (hasCompletedLlmAnalysis()) return 'llm'
+  if ((e.llmFailures ?? 0) >= 3) return 'failed'
+  return 'rules'
+})
+
+const analysisStatusClass = computed(() => {
+  if (analysisStatus.value === 'llm') return 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-50'
+  if (analysisStatus.value === 'batch') return 'border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-50'
+  if (analysisStatus.value === 'rules') return 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-50'
+  if (analysisStatus.value === 'failed') return 'border-destructive/30 bg-destructive/10 text-destructive hover:bg-destructive/10'
+  return 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-50'
+})
+
 // The normal description contains both the source listing and the detailed,
 // pre-generated synthesis across every listing-specific document. This
 // replaces the former separate on-demand AI-summary card.
@@ -390,6 +431,7 @@ useHead(() => ({
           <Badge v-if="category()" class="bg-primary/10 text-primary hover:bg-primary/10">{{ category()?.label }}</Badge>
           <Badge variant="secondary">{{ a.authority }}</Badge>
           <Badge v-if="a.region" variant="outline">{{ a.region }}</Badge>
+          <Badge variant="outline" :class="analysisStatusClass">{{ $t(`objektDetail.analysisStatus.${analysisStatus}`) }}</Badge>
           <Badge v-if="a.cancelled" variant="destructive">{{ $t('objektDetail.cancelled') }}</Badge>
           <span class="font-mono text-muted-foreground">{{ a.caseNumber }}</span>
         </div>

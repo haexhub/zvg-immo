@@ -1,5 +1,5 @@
 // LLM fallback extractor. Sends the listing text (title + description +
-// optional Gutachten/Exposé PDF text) to an LLM provider and gets back
+// optional attachment/document context) to an LLM provider and gets back
 // structured fields through a forced-schema tool/response-format call. Used
 // for what the deterministic rules can't resolve: sizes buried in PDF prose,
 // and property types for non-German sources the property-type classifier misses.
@@ -22,6 +22,11 @@ import { GeminiNativeProvider } from './providers/gemini-native'
 export interface LlmInput {
   title: string | null
   description: string | null
+  /** Extracted prose from non-PDF documents (HTML, DOCX, text) plus any
+   *  unsupported attachment notices. PDF prose remains in pdfText so the
+   *  native-document providers can intentionally omit it when raw PDFs are
+   *  supplied instead. */
+  documentText?: string | null
   pdfText?: string | null
   /** Base64 JPEGs of Gutachten pages 1..N, used when pdfText is too sparse to
    *  be the scanned PDF's real content (see pdfPagesToBase64Jpeg). Page 1
@@ -37,6 +42,9 @@ export interface LlmInput {
    * providers. Labels keep appraisal, brochure and announcement distinguishable
    * to the model. */
   pdfDocuments?: { label: string; data: string }[]
+  /** Base64 images that are documents in their own right (e.g. scanned JPG/PNG
+   *  attachments), not merely photos offered for gallery curation. */
+  documentImages?: { label: string; mimeType: string; data: string }[]
   /** Candidate photos for LLM-driven curation. Referenced by index
    *  (`photoIndex`) in the extraction response rather than by filename,
    *  since a filename echoed back by the model is unreliable. */
@@ -152,6 +160,7 @@ export interface PhotoCuration {
 // window. Keep this explicit ceiling when adding documents so cost/latency
 // cannot grow without a corresponding budget review.
 const MAX_PDF_CHARS = 60_000
+const MAX_DOCUMENT_TEXT_CHARS = 80_000
 
 export const UNIVERSAL_AUCTION_SCHEMA_VERSION = 2
 export const UNIVERSAL_AUCTION_SCHEMA_NAME = 'universal_auction_extraction_v2'
@@ -652,6 +661,9 @@ export function buildParts(input: LlmInput): ContentPart[] {
   const text: string[] = []
   if (input.title) text.push(`Objektbezeichnung: ${input.title}`)
   if (input.description) text.push(`Beschreibung:\n${input.description}`)
+  if (input.documentText) {
+    text.push(`Weitere Dokumenttexte/HTML-Anhänge:\n${input.documentText.slice(0, MAX_DOCUMENT_TEXT_CHARS)}`)
+  }
   const nativeDocuments = input.pdfDocuments?.length
     ? input.pdfDocuments
     : input.pdfBytes
@@ -664,6 +676,12 @@ export function buildParts(input: LlmInput): ContentPart[] {
   if (input.pdfPageImages?.length && !usingDocumentPart) {
     text.push(
       'Das Gutachten/Exposé liegt als eingescanntes Bild vor (siehe angehängte Bilder) — lies die Eckdaten daraus ab.',
+    )
+  }
+  if (input.documentImages?.length) {
+    text.push(
+      `Es folgen ${input.documentImages.length} Bildanhänge/Dokumentbilder. Lies auch daraus Objektangaben, ` +
+        'Scans, Pläne, Tabellen und erkennbare Widersprüche ab.',
     )
   }
   if (input.candidateImages?.length) {
@@ -684,6 +702,12 @@ export function buildParts(input: LlmInput): ContentPart[] {
     }
   } else if (input.pdfPageImages?.length) {
     for (const data of input.pdfPageImages) parts.push({ type: 'image', mimeType: 'image/jpeg', data })
+  }
+  if (input.documentImages?.length) {
+    for (const image of input.documentImages) {
+      parts.push({ type: 'text', text: `Dokumentbild: ${image.label}` })
+      parts.push({ type: 'image', mimeType: image.mimeType, data: image.data })
+    }
   }
   // Interleaved with an index label right before each image so the model can
   // reliably report `photoIndex` back — a bare image sequence gives it

@@ -11,11 +11,9 @@
 
 import type { Auction, AuctionExtraction, CuratedPhoto } from '~/types/auction'
 import { getPool } from '~/server/utils/db'
-import { pickBestPdf, pickRelevantPdfs, extractPdfTextFromBuffer } from '~/server/utils/extract/pdf-text'
-import { renderPdfPagesJpeg } from '~/server/utils/extract/pdf-render'
-import { buildDocumentLlmParts } from '~/server/utils/extract/pdf-documents'
 import { extractByRules } from '~/server/utils/extract/rules'
 import { extractByLlm, resolveLlmConfig, type LlmConfig, type LlmInput } from '~/server/utils/extract/llm'
+import { prepareArchivedLlmDocuments } from '~/server/utils/extract/llm-documents'
 import {
   isLlmBatchPending,
   submitLlmBatch,
@@ -176,51 +174,16 @@ async function buildReprocessInput(
 
   let input: LlmInput | null = null
   if (llmConfig) {
-    const bestPdf = pickBestPdf(auction.attachments)
-    const relevantPdfs = pickRelevantPdfs(auction.attachments)
-    const documentPdfs = relevantPdfs.length > 0 ? relevantPdfs : bestPdf ? [bestPdf] : []
-    const documents = (
-      await Promise.all(documentPdfs.map(async (pdf) => {
-        const docCapture = await findLatestCapture('document', platform, externalId, pdf.proxyUrl)
-        if (!docCapture) return null
-        const bytes = await downloadBlob(docCapture.contentHash)
-        return bytes ? { pdf, bytes } : null
-      }))
-    ).filter((doc): doc is { pdf: (typeof documentPdfs)[number]; bytes: Buffer } => doc != null)
-    // Native document understanding for batch providers reads the PDF
-    // bytes directly and needs neither pdftotext nor rendered page images —
-    // skip both so a gemini-native run doesn't pay for pdftotext/rasterize
-    // work that buildParts would discard anyway (it prefers pdfBytes over
-    // pdfText/pdfPageImages once set).
+    // Native document understanding for batch providers reads PDF bytes
+    // directly and needs neither pdftotext nor rendered page images for those
+    // PDFs. DOCX/HTML/text/image attachments are still normalized by
+    // prepareArchivedLlmDocuments so every archived attachment can contribute.
     const usingNativeDoc = opts.nativeDocuments ?? llmConfig.provider === 'gemini-native'
-    const textEntries = usingNativeDoc
-      ? []
-      : await Promise.all(
-          documents.map(async (document) => ({
-            ...document,
-            text: await extractPdfTextFromBuffer(document.bytes),
-          })),
-        )
-    const documentParts = await buildDocumentLlmParts(
-      documents.map((document) => ({
-        source: document,
-        label: document.pdf.label || document.pdf.filename,
-        text: usingNativeDoc
-          ? null
-          : textEntries.find((entry) => entry.pdf.proxyUrl === document.pdf.proxyUrl)?.text,
-        data: usingNativeDoc ? document.bytes.toString('base64') : undefined,
-      })),
-      {
-        native: usingNativeDoc,
-        renderPages: async (document, maxPages) =>
-          (await renderPdfPagesJpeg(document.bytes, { maxPages }))
-            .map((buf) => buf.toString('base64')),
-      },
-    )
+    const documentParts = await prepareArchivedLlmDocuments(auction, { nativeDocuments: usingNativeDoc })
     input = {
       title: auction.title,
       description: auction.description,
-      ...documentParts,
+      ...documentParts.input,
     }
   }
 

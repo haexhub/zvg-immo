@@ -694,6 +694,13 @@
     "constructionShort": "Bauweise",
     "authority": "Gericht",
     "caseNumber": "Aktenzeichen",
+    "analysisStatus": {
+      "pending": "Analyse ausstehend",
+      "rules": "Enrich: Regeln",
+      "batch": "LLM läuft",
+      "llm": "LLM analysiert",
+      "failed": "LLM fehlgeschlagen"
+    },
     "extractionNotice": "Eckdaten automatisch aus dem Gutachten/Exposé extrahiert ({confidence}).",
     "biddingNotes": "Hinweis zum Bietverfahren: {note}",
     "renovationNotes": "Sanierungshinweis: {note}",

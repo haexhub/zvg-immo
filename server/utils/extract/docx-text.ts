@@ -85,6 +85,16 @@ function documentXmlToText(xml: string): string {
     .trim()
 }
 
+/** Extract plain text from already-fetched DOCX bytes. */
+export function docxBufferToText(buf: Buffer): string | null {
+  if (buf.length > MAX_DOCX_BYTES) return null
+  if (buf.length < 4 || buf.readUInt32LE(0) !== 0x04034b50) return null
+  const xml = readZipEntry(buf, 'word/document.xml')
+  if (!xml) return null
+  const text = documentXmlToText(xml.toString('utf8'))
+  return text || null
+}
+
 /**
  * Fetch the DOCX at `url` and return its text, or null on any failure. When
  * `archive` is given, the raw DOCX bytes are captured into the G1 archive
@@ -123,9 +133,7 @@ export async function docxToText(
     await archiveDocument(buf, 'application/vnd.docx', archive.identity, url, archive.capturedAt)
   }
 
-  const xml = readZipEntry(buf, 'word/document.xml')
-  if (!xml) return null
-  const text = documentXmlToText(xml.toString('utf8'))
+  const text = docxBufferToText(buf)
   if (!text) return null
 
   try {

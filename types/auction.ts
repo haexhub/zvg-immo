@@ -371,6 +371,10 @@ export interface AuctionExtraction {
   photoPipelineVersion?: number
   /** ISO timestamp of when this extraction was produced. */
   at: string
+  /** ISO timestamp of the last successful LLM analysis. Rules-only interim
+   *  entries leave this unset, even when they already contain useful source or
+   *  regex-derived fields. */
+  llmAnalyzedAt?: string
   /** Set when this entry was written as the immediate rules-only fallback
    *  for an item submitted to the Gemini Batch API, to the job's resource
    *  name (`batches/...`) — prevents re-submitting the same item to a new

@@ -8,7 +8,7 @@ import { getPool } from '../db'
 vi.mock('../db', () => ({ getPool: vi.fn() }))
 
 // Imported after the mock so the module under test picks up the mocked getPool.
-const { pdfToText, pickRelevantPdfs } = await import('./pdf-text')
+const { pdfToText, pickAllPdfs, pickRelevantPdfs } = await import('./pdf-text')
 
 const CACHE_DIR = join(process.cwd(), '.cache_zvg', 'pdftext')
 const FAKE_PDF = Buffer.from('%PDF-1.4\n%%EOF')
@@ -56,6 +56,35 @@ describe('pickRelevantPdfs', () => {
       attachment('appraisal', '/appraisal-2.pdf'),
       attachment('brochure', '/brochure.pdf'),
       attachment('announcement', '/notice.pdf'),
+    ])
+  })
+})
+
+describe('pickAllPdfs', () => {
+  it('keeps every PDF attachment, including other documents, and drops non-PDF files', () => {
+    const attachment = (kind: 'appraisal' | 'brochure' | 'announcement' | 'other', filename: string, proxyUrl: string) => ({
+      kind,
+      label: kind,
+      filename,
+      sizeBytes: null,
+      fileId: proxyUrl,
+      proxyUrl,
+    })
+
+    expect(
+      pickAllPdfs([
+        attachment('other', 'bidding.pdf', '/bidding.pdf'),
+        attachment('appraisal', 'gutachten.pdf', '/gutachten.pdf'),
+        attachment('brochure', 'expose.pdf', '/expose.pdf'),
+        attachment('announcement', 'notice.pdf', '/notice.pdf'),
+        attachment('other', 'photo.jpg', '/photo.jpg'),
+        attachment('other', 'bidding.pdf', '/bidding.pdf'),
+      ]),
+    ).toEqual([
+      attachment('appraisal', 'gutachten.pdf', '/gutachten.pdf'),
+      attachment('brochure', 'expose.pdf', '/expose.pdf'),
+      attachment('announcement', 'notice.pdf', '/notice.pdf'),
+      attachment('other', 'bidding.pdf', '/bidding.pdf'),
     ])
   })
 })
