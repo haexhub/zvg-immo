@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ChevronLeft } from 'lucide-vue-next'
+import { ChevronLeft, Loader2, Trash2 } from 'lucide-vue-next'
 import type { ArchiveCountryRow } from '~/server/api/settings/archive/countries.get'
 import type { ArchiveRegionRow } from '~/server/api/settings/archive/regions.get'
 import type { ArchiveCaseRow } from '~/server/api/settings/archive/cases.get'
 import type { ArchiveDocumentRow } from '~/server/api/settings/archive/documents.get'
+import type { DeleteRawArchiveCountryResult } from '~/server/utils/raw-archive-delete'
 
 type Level = 'country' | 'region' | 'case' | 'document'
 
@@ -22,6 +23,8 @@ const documents = ref<ArchiveDocumentRow[]>([])
 
 const pending = ref(false)
 const error = ref<string | null>(null)
+const deleteCountryPending = ref<string | null>(null)
+const deleteCountryResult = ref<DeleteRawArchiveCountryResult | null>(null)
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleString(intlLocale.value)
@@ -57,6 +60,27 @@ async function openCountry(row: ArchiveCountryRow): Promise<void> {
   if (result) {
     regions.value = result
     level.value = 'region'
+  }
+}
+
+async function deleteCountry(row: ArchiveCountryRow): Promise<void> {
+  if (pending.value || deleteCountryPending.value) return
+  const ok = window.confirm(t('settings.archive.deleteCountryConfirm', { country: row.label }))
+  if (!ok) return
+
+  deleteCountryPending.value = row.code
+  deleteCountryResult.value = null
+  error.value = null
+  try {
+    deleteCountryResult.value = await $fetch<DeleteRawArchiveCountryResult>(
+      `/api/settings/archive/countries/${encodeURIComponent(row.code)}`,
+      { method: 'DELETE' },
+    )
+    await loadCountries()
+  } catch {
+    error.value = t('settings.archive.deleteCountryError')
+  } finally {
+    deleteCountryPending.value = null
   }
 }
 
@@ -121,6 +145,14 @@ onMounted(loadCountries)
         {{ $t('settings.archive.retry') }}
       </Button>
     </div>
+    <p v-if="deleteCountryResult" class="text-sm text-emerald-600 dark:text-emerald-500">
+      {{ $t('settings.archive.deleteCountryDone', {
+        country: deleteCountryResult.country.toUpperCase(),
+        captures: deleteCountryResult.deleted.captures,
+        sets: deleteCountryResult.deleted.documentSets,
+        blobs: deleteCountryResult.deleted.blobs,
+      }) }}
+    </p>
     <p v-if="pending" class="text-sm text-muted-foreground">{{ $t('settings.archive.loading') }}</p>
 
     <template v-if="level === 'country'">
@@ -139,9 +171,23 @@ onMounted(loadCountries)
             <TableCell class="tabular-nums">{{ c.count }}</TableCell>
             <TableCell class="text-xs text-muted-foreground">{{ formatDate(c.lastCapturedAt) }}</TableCell>
             <TableCell class="text-right">
-              <Button type="button" variant="outline" size="sm" @click="openCountry(c)">
-                {{ $t('settings.archive.open') }}
-              </Button>
+              <div class="flex justify-end gap-2">
+                <Button type="button" variant="outline" size="sm" :disabled="deleteCountryPending !== null" @click="openCountry(c)">
+                  {{ $t('settings.archive.open') }}
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="icon-sm"
+                  :title="$t('settings.archive.deleteCountry')"
+                  :aria-label="$t('settings.archive.deleteCountry')"
+                  :disabled="pending || deleteCountryPending !== null"
+                  @click="deleteCountry(c)"
+                >
+                  <Loader2 v-if="deleteCountryPending === c.code" class="h-4 w-4 animate-spin" />
+                  <Trash2 v-else class="h-4 w-4" />
+                </Button>
+              </div>
             </TableCell>
           </TableRow>
         </TableBody>
@@ -207,7 +253,9 @@ onMounted(loadCountries)
       <Table v-if="documents.length" class="min-w-[640px]">
         <TableHeader>
           <TableRow>
+            <TableHead>{{ $t('settings.archive.colVersion') }}</TableHead>
             <TableHead>{{ $t('settings.archive.colKind') }}</TableHead>
+            <TableHead>{{ $t('settings.archive.colDocument') }}</TableHead>
             <TableHead>{{ $t('settings.archive.colType') }}</TableHead>
             <TableHead>{{ $t('settings.archive.colSize') }}</TableHead>
             <TableHead>{{ $t('settings.archive.colLast') }}</TableHead>
@@ -216,7 +264,13 @@ onMounted(loadCountries)
         </TableHeader>
         <TableBody>
           <TableRow v-for="d in documents" :key="d.id">
+            <TableCell class="tabular-nums">
+              {{ d.setVersion ? `v${d.setVersion}` : '–' }}
+            </TableCell>
             <TableCell>{{ $t(`settings.archive.kind.${d.kind}`) }}</TableCell>
+            <TableCell class="max-w-[220px] truncate text-xs text-muted-foreground">
+              {{ d.label || d.filename || d.sourceUrl || '–' }}
+            </TableCell>
             <TableCell class="text-xs text-muted-foreground">{{ d.contentType }}</TableCell>
             <TableCell class="tabular-nums">{{ (d.byteSize / 1024).toFixed(0) }} KB</TableCell>
             <TableCell class="text-xs text-muted-foreground">{{ formatDate(d.capturedAt) }}</TableCell>

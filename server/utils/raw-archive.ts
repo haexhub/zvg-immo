@@ -1,12 +1,12 @@
 // G1 Roh-Archiv Schicht 1: unveränderliches Archiv des vollständigen geparsten
 // Auktions-Stands (raw_blobs = content-addressed Bytes, raw_captures =
-// append-only "welche Auktions-Identität zeigte wann auf welchen Blob").
+// aktueller "welche Auktions-Identität zeigt auf welchen Blob"-Index).
 // Best-effort wie recordObservations/matchAlerts: jeder exportierte Aufruf
 // fängt seine eigenen Fehler und wirft nie. No-op ohne NUXT_DATABASE_URL (see
 // server/utils/db.ts) — Blobs bleiben dann ungeschrieben, kein halbes Archiv.
 //
 // Schreibpfad: Bytes zuerst in eine lokale Outbox (schnell, netzunabhängig);
-// server/utils/storage-uploader.ts drainiert sie später nach Supabase Storage.
+// server/utils/storage-uploader.ts drainiert sie später nach S3-compatible storage.
 
 import { createHash } from 'node:crypto'
 import { mkdir, rename, writeFile } from 'node:fs/promises'
@@ -78,6 +78,14 @@ export function canonicalize(value: unknown): unknown {
     return sorted
   }
   return value
+}
+
+async function rollbackQuietly(client: { query: (sql: string) => Promise<unknown> }): Promise<void> {
+  try {
+    await client.query('ROLLBACK')
+  } catch {
+    // Preserve the original DB error; rollback failures are only secondary noise.
+  }
 }
 
 /**
@@ -178,47 +186,48 @@ export interface CaptureInput {
 }
 
 /**
- * Append-only capture log, keyed on `(kind, platform, externalId,
- * contentHash)` (unique index in schema.sql): a hash never seen before for
- * this identity inserts a new history row; a hash seen before upserts in
- * place via `ON CONFLICT ... DO UPDATE`, refreshing captured_at and the
- * metadata columns (region, case_number, authority, source_url) instead of
- * leaving them stale. That refresh matters even on the common "nothing
- * changed" path: for `kind='document'`/`'document_text'` the content hash is
- * over the document bytes, not the auction identity, so the same PDF can be
- * re-captured after the auction's region/case_number was corrected upstream
- * with the document itself never changing — an early return on unchanged
- * hash (as a naive change-only log would do) would freeze that stale
- * metadata on the row forever. `refresh.ts` and `enrich.ts` can also call
- * this concurrently for the same auction; the unique index + upsert (rather
- * than a check-then-insert) is what makes that race safe. Never throws.
+ * Capture index. Auctions are keyed by `(kind, platform, externalId)` and
+ * therefore represent the latest parsed auction state. Documents/detail/text
+ * captures are keyed by `(kind, platform, externalId, sourceUrl, contentHash)`:
+ * repeated crawls of the same bytes refresh metadata in place, but an updated
+ * document behind the same URL remains as its own capture so document-set
+ * versions can still point at older valid combinations. Never throws.
  */
 export async function recordCapture(input: CaptureInput): Promise<void> {
   const db = getPool()
   if (!db) return
   try {
+    const params = [
+      input.capturedAt,
+      input.kind,
+      input.platform,
+      input.country,
+      input.region || null,
+      input.externalId,
+      input.caseNumber ?? null,
+      input.authority ?? null,
+      input.contentHash,
+      input.sourceUrl ?? null,
+    ]
+    const updateSet = `captured_at = EXCLUDED.captured_at,
+         country      = EXCLUDED.country,
+         region       = EXCLUDED.region,
+         case_number  = EXCLUDED.case_number,
+         authority    = EXCLUDED.authority,
+         content_hash = EXCLUDED.content_hash,
+         source_url   = EXCLUDED.source_url`
+    const conflictTarget =
+      input.kind === 'auction'
+        ? `(kind, platform, external_id) WHERE kind = 'auction'`
+        : `(kind, platform, external_id, (COALESCE(source_url, '')), content_hash) WHERE kind <> 'auction'`
+
     await db.query(
       `INSERT INTO raw_captures
          (captured_at, kind, platform, country, region, external_id, case_number, authority, content_hash, source_url)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       ON CONFLICT (kind, platform, external_id, content_hash) DO UPDATE SET
-         captured_at = EXCLUDED.captured_at,
-         region      = EXCLUDED.region,
-         case_number = EXCLUDED.case_number,
-         authority   = EXCLUDED.authority,
-         source_url  = EXCLUDED.source_url`,
-      [
-        input.capturedAt,
-        input.kind,
-        input.platform,
-        input.country,
-        input.region || null,
-        input.externalId,
-        input.caseNumber ?? null,
-        input.authority ?? null,
-        input.contentHash,
-        input.sourceUrl ?? null,
-      ],
+       ON CONFLICT ${conflictTarget} DO UPDATE SET
+         ${updateSet}`,
+      params,
     )
   } catch (err) {
     console.warn(`[raw-archive] recordCapture failed: ${(err as Error).message}`)
@@ -234,6 +243,23 @@ export interface DocumentIdentity {
   authority?: string | null
 }
 
+export interface ArchivedDocumentSetItem {
+  ordinal: number
+  kind: CaptureKind
+  label: string | null
+  filename: string | null
+  fileId: string | null
+  sourceUrl: string
+  contentHash: string
+  contentType: 'application/pdf' | 'application/vnd.docx'
+}
+
+export interface ArchivedDocumentSetResult {
+  setHash: string
+  version: number
+  changed: boolean
+}
+
 /**
  * Archives a PDF/DOCX attachment's raw bytes (`kind='document'`), keyed on
  * the auction whose enrichment fetched it. Content-hash-dedup means the same
@@ -247,9 +273,9 @@ export async function archiveDocument(
   identity: DocumentIdentity,
   sourceUrl: string,
   capturedAt: string,
-): Promise<void> {
+): Promise<string | null> {
   const hash = await archiveBlob(bytes, contentType, identity.country)
-  if (!hash) return
+  if (!hash) return null
   await recordCapture({
     capturedAt,
     kind: 'document',
@@ -262,6 +288,7 @@ export async function archiveDocument(
     contentHash: hash,
     sourceUrl,
   })
+  return hash
 }
 
 /**
@@ -276,9 +303,9 @@ export async function archiveDocumentText(
   identity: DocumentIdentity,
   sourceUrl: string,
   capturedAt: string,
-): Promise<void> {
+): Promise<string | null> {
   const hash = await archiveBlob(Buffer.from(text, 'utf8'), 'text/plain', identity.country)
-  if (!hash) return
+  if (!hash) return null
   await recordCapture({
     capturedAt,
     kind: 'document_text',
@@ -291,6 +318,148 @@ export async function archiveDocumentText(
     contentHash: hash,
     sourceUrl,
   })
+  return hash
+}
+
+/**
+ * Archives the current set of listing documents as one versioned manifest.
+ * Individual document bytes remain content-addressed in raw_blobs; this table
+ * records which hashes were valid together for the auction. Re-seeing the same
+ * set only updates last_seen_at; a changed/added/withdrawn document produces
+ * the next version. Never throws.
+ */
+export async function archiveDocumentSet(
+  identity: DocumentIdentity,
+  documents: ArchivedDocumentSetItem[],
+  capturedAt: string,
+): Promise<ArchivedDocumentSetResult | null> {
+  const db = getPool()
+  if (!db) return null
+  try {
+    const canonicalDocuments = documents
+      .map((doc) => canonicalize({
+        kind: doc.kind,
+        label: doc.label ?? null,
+        filename: doc.filename ?? null,
+        fileId: doc.fileId ?? null,
+        sourceUrl: doc.sourceUrl,
+        contentHash: doc.contentHash,
+        contentType: doc.contentType,
+      }))
+      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+    const setHash = sha256Hex(Buffer.from(JSON.stringify(canonicalize({ documents: canonicalDocuments }))))
+
+    const existing = await db.query<{ id: string; version: number }>(
+      `SELECT id, version
+       FROM raw_document_sets
+       WHERE platform = $1 AND external_id = $2 AND set_hash = $3`,
+      [identity.platform, identity.externalId, setHash],
+    )
+    const existingRow = existing.rows[0]
+    if (existingRow) {
+      await db.query(
+        `UPDATE raw_document_sets SET
+           last_seen_at = $1,
+           country = $2,
+           region = $3,
+           case_number = $4,
+           authority = $5
+         WHERE id = $6`,
+        [
+          capturedAt,
+          identity.country,
+          identity.region ?? null,
+          identity.caseNumber ?? null,
+          identity.authority ?? null,
+          existingRow.id,
+        ],
+      )
+      return { setHash, version: existingRow.version, changed: false }
+    }
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const client = await db.connect()
+      try {
+        await client.query('BEGIN')
+        const inserted = await client.query<{ id: string; version: number }>(
+          `INSERT INTO raw_document_sets
+             (captured_at, last_seen_at, platform, country, region, external_id, case_number, authority, set_hash, version, document_count)
+           VALUES (
+             $1, $1, $2, $3, $4, $5, $6, $7, $8,
+             COALESCE((SELECT max(version) + 1 FROM raw_document_sets WHERE platform = $2 AND external_id = $5), 1),
+             $9
+           )
+           RETURNING id, version`,
+          [
+            capturedAt,
+            identity.platform,
+            identity.country,
+            identity.region ?? null,
+            identity.externalId,
+            identity.caseNumber ?? null,
+            identity.authority ?? null,
+            setHash,
+            documents.length,
+          ],
+        )
+        const row = inserted.rows[0]
+        if (!row) {
+          await client.query('COMMIT')
+          return null
+        }
+
+        if (documents.length > 0) {
+          const params: unknown[] = []
+          const tuples: string[] = []
+          for (const doc of documents) {
+            const offset = params.length
+            tuples.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9})`)
+            params.push(
+              row.id,
+              doc.ordinal,
+              doc.kind,
+              doc.label ?? null,
+              doc.filename ?? null,
+              doc.fileId ?? null,
+              doc.sourceUrl,
+              doc.contentHash,
+              doc.contentType,
+            )
+          }
+          await client.query(
+            `INSERT INTO raw_document_set_items
+               (set_id, ordinal, kind, label, filename, file_id, source_url, content_hash, content_type)
+             VALUES ${tuples.join(', ')}`,
+            params,
+          )
+        }
+
+        await client.query('COMMIT')
+        return { setHash, version: row.version, changed: true }
+      } catch (err) {
+        await rollbackQuietly(client)
+        if ((err as { code?: string }).code === '23505') {
+          const winner = await db.query<{ id: string; version: number }>(
+            `SELECT id, version
+             FROM raw_document_sets
+             WHERE platform = $1 AND external_id = $2 AND set_hash = $3`,
+            [identity.platform, identity.externalId, setHash],
+          )
+          const winnerRow = winner.rows[0]
+          if (winnerRow) return { setHash, version: winnerRow.version, changed: false }
+          continue
+        }
+        throw err
+      } finally {
+        client.release()
+      }
+    }
+
+    return null
+  } catch (err) {
+    console.warn(`[raw-archive] archiveDocumentSet failed: ${(err as Error).message}`)
+    return null
+  }
 }
 
 /**
