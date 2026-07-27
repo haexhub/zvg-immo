@@ -379,7 +379,7 @@ describe('reprocessAuction', () => {
         { kind: 'appraisal', label: 'Gutachten', filename: 'gutachten.pdf', sizeBytes: 1000, fileId: '1', proxyUrl: '/api/zvg-proxy?file_id=1' },
         { kind: 'other', label: 'Biethinweise', filename: 'hinweise.pdf', sizeBytes: 500, fileId: '2', proxyUrl: '/api/zvg-proxy?file_id=2' },
         { kind: 'brochure', label: 'Expose HTML', filename: 'expose.html', sizeBytes: 400, fileId: '3', proxyUrl: 'https://example.test/expose.html' },
-        { kind: 'photo', label: 'Scan JPG', filename: 'scan.jpg', sizeBytes: jpgBytes.length, fileId: '4', proxyUrl: 'https://example.test/scan.jpg' },
+        { kind: 'other', label: 'Scan JPG', filename: 'scan.jpg', sizeBytes: jpgBytes.length, fileId: '4', proxyUrl: 'https://example.test/scan.jpg' },
       ],
     })
     vi.mocked(findLatestCapture).mockImplementation(async (kind, _platform, _externalId, sourceUrl) => {

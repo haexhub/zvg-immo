@@ -41,6 +41,7 @@ export interface ArchivedLiveDocuments {
 
 const MAX_ATTACHMENT_BYTES = 30 * 1024 * 1024
 const MAX_TEXT_CHARS_PER_ATTACHMENT = 40_000
+const MAX_COMBINED_DOCUMENT_TEXT_CHARS = 80_000
 const DOCUMENT_KIND_PRIORITY = ['appraisal', 'brochure', 'announcement', 'photo', 'other'] as const
 
 function attachmentLabel(att: Attachment): string {
@@ -238,15 +239,30 @@ function unsupportedNotice(doc: PreparedAttachmentDocument): string | null {
 }
 
 function combineDocumentText(documents: readonly PreparedAttachmentDocument[], extraText: string[] = []): string | null {
-  const sections = [...extraText]
+  const sections: string[] = []
+  let used = 0
+  const append = (raw: string): boolean => {
+    if (!raw) return true
+    const separatorLength = sections.length > 0 ? 2 : 0
+    const remaining = MAX_COMBINED_DOCUMENT_TEXT_CHARS - used - separatorLength
+    if (remaining <= 0) return false
+    const text = raw.slice(0, remaining)
+    if (!text) return false
+    sections.push(text)
+    used += separatorLength + text.length
+    return raw.length <= remaining
+  }
+  for (const text of extraText) {
+    if (!append(text)) return sections.length > 0 ? sections.join('\n\n') : null
+  }
   for (const doc of documents) {
     const notice = unsupportedNotice(doc)
     if (notice) {
-      sections.push(notice)
+      if (!append(notice)) break
       continue
     }
     if (!doc.text?.trim()) continue
-    sections.push(`=== ${doc.label} (${doc.format.toUpperCase()}) ===\n${doc.text.slice(0, MAX_TEXT_CHARS_PER_ATTACHMENT)}`)
+    if (!append(`=== ${doc.label} (${doc.format.toUpperCase()}) ===\n${doc.text.slice(0, MAX_TEXT_CHARS_PER_ATTACHMENT)}`)) break
   }
   return sections.length > 0 ? sections.join('\n\n') : null
 }
@@ -271,11 +287,12 @@ async function buildPreparedInput(
     },
   )
   const documentImages = documents
-    .filter((doc) => doc.format === 'image')
+    .filter((doc) => doc.format === 'image' && doc.attachment.kind !== 'photo')
     .map((doc) => ({ label: doc.label, mimeType: doc.contentType, data: doc.bytes.toString('base64') }))
+  const textDocuments = opts.nativeDocuments ? documents : documents.filter((doc) => doc.format !== 'pdf')
   return {
     ...pdfParts,
-    documentText: combineDocumentText(documents, opts.extraText),
+    documentText: combineDocumentText(textDocuments, opts.extraText),
     documentImages: documentImages.length > 0 ? documentImages : undefined,
   }
 }
@@ -345,26 +362,34 @@ export async function prepareLiveLlmDocuments(
   }
 }
 
-function attachmentFromDocumentSetItem(item: ArchivedDocumentSetItem): Attachment {
+function attachmentFromDocumentSetItem(
+  item: ArchivedDocumentSetItem,
+  sourceAttachments: readonly Attachment[] = [],
+): Attachment {
+  const source = sourceAttachments.find((attachment) => attachment.proxyUrl === item.sourceUrl)
   return {
-    kind: 'other',
-    label: item.label ?? item.filename ?? item.fileId ?? item.sourceUrl,
-    filename: item.filename ?? '',
+    kind: source?.kind ?? 'other',
+    label: source?.label ?? item.label ?? item.filename ?? item.fileId ?? item.sourceUrl,
+    filename: source?.filename ?? item.filename ?? '',
     sizeBytes: null,
-    fileId: item.fileId ?? '',
+    fileId: source?.fileId ?? item.fileId ?? '',
     proxyUrl: item.sourceUrl,
   }
 }
 
 async function prepareArchivedDocumentSetItems(
   items: readonly ArchivedDocumentSetItem[],
-  opts: { nativeDocuments: boolean; extraText?: string[] } = { nativeDocuments: false },
+  opts: {
+    nativeDocuments: boolean
+    extraText?: string[]
+    sourceAttachments?: readonly Attachment[]
+  } = { nativeDocuments: false },
 ): Promise<PreparedLlmDocuments> {
   const prepared = (
     await Promise.all(items.map(async (item) => {
       const bytes = await downloadBlob(item.contentHash)
       if (!bytes) return null
-      return prepareDocument(attachmentFromDocumentSetItem(item), item.ordinal, bytes, {
+      return prepareDocument(attachmentFromDocumentSetItem(item, opts.sourceAttachments), item.ordinal, bytes, {
         nativeDocuments: opts.nativeDocuments,
         contentHash: item.contentHash,
       })
@@ -396,7 +421,11 @@ export async function prepareArchivedLlmDocuments(
     setHash: opts.documentSetHash,
     version: opts.documentSetVersion,
   })
-  return prepareArchivedDocumentSetItems(documentSetItems ?? [], { ...opts, extraText })
+  return prepareArchivedDocumentSetItems(documentSetItems ?? [], {
+    ...opts,
+    extraText,
+    sourceAttachments: auction.attachments,
+  })
 }
 
 export async function readArchivedAuction(platform: string, externalId: string): Promise<Auction | null> {

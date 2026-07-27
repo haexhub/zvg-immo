@@ -15,6 +15,7 @@ const EOCD_SIGNATURE = 0x06054b50
 const CENTRAL_DIR_SIGNATURE = 0x02014b50
 const ZIP_MAX_COMMENT_BYTES = 0xffff
 const MAX_DOCX_BYTES = 20 * 1024 * 1024
+const MAX_DOCX_ENTRY_BYTES = 20 * 1024 * 1024
 
 /** Read one named entry out of a ZIP buffer, or null if absent/unreadable. */
 function readZipEntry(buf: Buffer, entryName: string): Buffer | null {
@@ -39,6 +40,7 @@ function readZipEntry(buf: Buffer, entryName: string): Buffer | null {
       if (buf.readUInt32LE(offset) !== CENTRAL_DIR_SIGNATURE) break
       const compressionMethod = buf.readUInt16LE(offset + 10)
       const compressedSize = buf.readUInt32LE(offset + 20)
+      const uncompressedSize = buf.readUInt32LE(offset + 24)
       const nameLength = buf.readUInt16LE(offset + 28)
       const extraLength = buf.readUInt16LE(offset + 30)
       const commentLength = buf.readUInt16LE(offset + 32)
@@ -49,6 +51,7 @@ function readZipEntry(buf: Buffer, entryName: string): Buffer | null {
       const name = buf.toString('utf8', nameStart, nameEnd)
 
       if (name === entryName) {
+        if (uncompressedSize > MAX_DOCX_ENTRY_BYTES) return null
         if (localHeaderOffset + 30 > buf.length) return null
         const localNameLength = buf.readUInt16LE(localHeaderOffset + 26)
         const localExtraLength = buf.readUInt16LE(localHeaderOffset + 28)
@@ -57,7 +60,7 @@ function readZipEntry(buf: Buffer, entryName: string): Buffer | null {
         if (dataStart < 0 || dataEnd > buf.length) return null
         const data = buf.subarray(dataStart, dataEnd)
         if (compressionMethod === 0) return data
-        if (compressionMethod === 8) return inflateRawSync(data)
+        if (compressionMethod === 8) return inflateRawSync(data, { maxOutputLength: MAX_DOCX_ENTRY_BYTES })
         return null
       }
       offset += 46 + nameLength + extraLength + commentLength
