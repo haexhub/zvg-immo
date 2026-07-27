@@ -7,7 +7,7 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { gunzipSync } from 'node:zlib'
-import type { CaptureKind } from './raw-archive'
+import type { ArchivedDocumentSetItem, CaptureKind } from './raw-archive'
 import { getPool } from './db'
 import { getServiceClient } from './supabase'
 
@@ -58,6 +58,57 @@ export async function findLatestCapture(
     return { contentHash: row.content_hash, sourceUrl: row.source_url, capturedAt: row.captured_at }
   } catch (err) {
     console.warn(`[storage-download] findLatestCapture failed: ${(err as Error).message}`)
+    return null
+  }
+}
+
+export async function readDocumentSetItems(
+  platform: string,
+  externalId: string,
+  opts: { setHash?: string | null; version?: number | null } = {},
+): Promise<ArchivedDocumentSetItem[] | null> {
+  const db = getPool()
+  if (!db) return null
+  try {
+    const conditions = ['platform = $1', 'external_id = $2']
+    const params: unknown[] = [platform, externalId]
+    if (opts.setHash) conditions.push(`set_hash = $${params.push(opts.setHash)}`)
+    if (opts.version != null) conditions.push(`version = $${params.push(opts.version)}`)
+    const { rows } = await db.query<{
+      ordinal: number
+      kind: string
+      label: string | null
+      filename: string | null
+      file_id: string | null
+      source_url: string
+      content_hash: string
+      content_type: string
+    }>(
+      `WITH selected_set AS (
+         SELECT id
+         FROM raw_document_sets
+         WHERE ${conditions.join(' AND ')}
+         ORDER BY version DESC
+         LIMIT 1
+       )
+       SELECT ordinal, kind, label, filename, file_id, source_url, content_hash, content_type
+       FROM raw_document_set_items
+       WHERE set_id = (SELECT id FROM selected_set)
+       ORDER BY ordinal ASC`,
+      params,
+    )
+    return rows.map((row) => ({
+      ordinal: row.ordinal,
+      kind: row.kind as ArchivedDocumentSetItem['kind'],
+      label: row.label,
+      filename: row.filename,
+      fileId: row.file_id,
+      sourceUrl: row.source_url,
+      contentHash: row.content_hash,
+      contentType: row.content_type as ArchivedDocumentSetItem['contentType'],
+    }))
+  } catch (err) {
+    console.warn(`[storage-download] readDocumentSetItems failed: ${(err as Error).message}`)
     return null
   }
 }

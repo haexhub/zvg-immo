@@ -165,6 +165,7 @@ export function mergeLlmResult(
     photosCheckedAt: priorEntry?.photosCheckedAt,
     photoPipelineVersion: priorEntry?.photoPipelineVersion,
     at,
+    ...(llm ? { llmAnalyzedAt: at } : {}),
     ...(llmFailures > 0 ? { llmFailures } : {}),
     ...(priorEntry?.photoFailures ? { photoFailures: priorEntry.photoFailures } : {}),
   }

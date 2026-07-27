@@ -52,6 +52,33 @@ export function pickRelevantPdfs(attachments: Attachment[]): Attachment[] {
   return out
 }
 
+function isPdfAttachment(attachment: Attachment): boolean {
+  return /\.pdf(?:[?#]|$)/i.test(attachment.filename ?? '') || /\.pdf(?:[?#]|$)/i.test(attachment.proxyUrl)
+}
+
+/**
+ * Every auction-specific PDF attachment, ordered predictably but without
+ * dropping "other" documents. Used for full LLM analysis where recall matters
+ * more than the old "best/relevant document" shortcut.
+ */
+export function pickAllPdfs(attachments: Attachment[]): Attachment[] {
+  const seen = new Set<string>()
+  const out: Attachment[] = []
+  for (const kind of PDF_KIND_PRIORITY) {
+    for (const attachment of attachments) {
+      if (attachment.kind !== kind || !isPdfAttachment(attachment) || seen.has(attachment.proxyUrl)) continue
+      seen.add(attachment.proxyUrl)
+      out.push(attachment)
+    }
+  }
+  for (const attachment of attachments) {
+    if (!isPdfAttachment(attachment) || seen.has(attachment.proxyUrl)) continue
+    seen.add(attachment.proxyUrl)
+    out.push(attachment)
+  }
+  return out
+}
+
 function resolveSource(proxyUrl: string): { url: string; headers: Record<string, string> } {
   if (proxyUrl.startsWith('/api/zvg-proxy')) {
     const q = new URLSearchParams(proxyUrl.split('?')[1] ?? '')

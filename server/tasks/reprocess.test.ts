@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Auction, AuctionExtraction } from '~/types/auction'
 import { getPool } from '../utils/db'
-import { downloadBlob, findLatestCapture } from '../utils/storage-download'
+import { downloadBlob, findLatestCapture, readDocumentSetItems } from '../utils/storage-download'
 import { extractByLlm } from '../utils/extract/llm'
 import { extractPdfTextFromBuffer } from '../utils/extract/pdf-text'
 import { renderPdfPagesJpeg } from '../utils/extract/pdf-render'
@@ -9,7 +9,11 @@ import { readExtractionCache, writeExtractionCache } from '../utils/extraction-c
 import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
 
 vi.mock('../utils/db', () => ({ getPool: vi.fn() }))
-vi.mock('../utils/storage-download', () => ({ findLatestCapture: vi.fn(), downloadBlob: vi.fn() }))
+vi.mock('../utils/storage-download', () => ({
+  findLatestCapture: vi.fn(),
+  downloadBlob: vi.fn(),
+  readDocumentSetItems: vi.fn(async () => []),
+}))
 vi.mock('../utils/extract/llm', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/extract/llm')>()
   return { ...actual, extractByLlm: vi.fn() }
@@ -87,6 +91,26 @@ function makeAuction(overrides: Partial<Auction> = {}): Auction {
     ...overrides,
   }
 }
+
+function documentSetItem(overrides: {
+  ordinal: number
+  label: string
+  filename: string
+  fileId: string
+  sourceUrl: string
+  contentHash: string
+  contentType?: 'application/pdf' | 'text/html' | 'image/jpeg'
+}) {
+  return {
+    kind: 'document' as const,
+    contentType: overrides.contentType ?? 'application/pdf',
+    ...overrides,
+  }
+}
+
+beforeEach(() => {
+  vi.mocked(readDocumentSetItems).mockResolvedValue([])
+})
 
 afterEach(() => {
   vi.clearAllMocks()
@@ -223,9 +247,18 @@ describe('reprocessAuction', () => {
     })
     vi.mocked(findLatestCapture).mockImplementation(async (kind) => {
       if (kind === 'auction') return { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' }
-      if (kind === 'document') return { contentHash: 'doc1', sourceUrl: '/api/zvg-proxy?file_id=1', capturedAt: '2026-07-01T00:00:00.000Z' }
       return null
     })
+    vi.mocked(readDocumentSetItems).mockResolvedValue([
+      documentSetItem({
+        ordinal: 0,
+        label: 'Gutachten',
+        filename: 'gutachten.pdf',
+        fileId: '1',
+        sourceUrl: '/api/zvg-proxy?file_id=1',
+        contentHash: 'doc1',
+      }),
+    ])
     vi.mocked(downloadBlob).mockImplementation(async (hash) => {
       if (hash === 'abc') return Buffer.from(JSON.stringify(auction))
       if (hash === 'doc1') return SCANNED_LIKE_PDF
@@ -280,9 +313,18 @@ describe('reprocessAuction', () => {
     })
     vi.mocked(findLatestCapture).mockImplementation(async (kind) => {
       if (kind === 'auction') return { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' }
-      if (kind === 'document') return { contentHash: 'doc1', sourceUrl: '/api/zvg-proxy?file_id=1', capturedAt: '2026-07-01T00:00:00.000Z' }
       return null
     })
+    vi.mocked(readDocumentSetItems).mockResolvedValue([
+      documentSetItem({
+        ordinal: 0,
+        label: 'Gutachten',
+        filename: 'gutachten.pdf',
+        fileId: '1',
+        sourceUrl: '/api/zvg-proxy?file_id=1',
+        contentHash: 'doc1',
+      }),
+    ])
     vi.mocked(downloadBlob).mockImplementation(async (hash) => {
       if (hash === 'abc') return Buffer.from(JSON.stringify(auction))
       if (hash === 'doc1') return SCANNED_LIKE_PDF
@@ -328,6 +370,114 @@ describe('reprocessAuction', () => {
     expect(callArgs.pdfBytes).toEqual(SCANNED_LIKE_PDF.toString('base64'))
     expect(extractPdfTextFromBuffer).not.toHaveBeenCalled()
     expect(renderPdfPagesJpeg).not.toHaveBeenCalled()
+  })
+
+  it('feeds every archived document format to native-document LLM providers', async () => {
+    const jpgBytes = Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0x00, 0x43, 0x00, 0xff, 0xd9])
+    const auction = makeAuction({
+      attachments: [
+        { kind: 'appraisal', label: 'Gutachten', filename: 'gutachten.pdf', sizeBytes: 1000, fileId: '1', proxyUrl: '/api/zvg-proxy?file_id=1' },
+        { kind: 'other', label: 'Biethinweise', filename: 'hinweise.pdf', sizeBytes: 500, fileId: '2', proxyUrl: '/api/zvg-proxy?file_id=2' },
+        { kind: 'brochure', label: 'Expose HTML', filename: 'expose.html', sizeBytes: 400, fileId: '3', proxyUrl: 'https://example.test/expose.html' },
+        { kind: 'other', label: 'Scan JPG', filename: 'scan.jpg', sizeBytes: jpgBytes.length, fileId: '4', proxyUrl: 'https://example.test/scan.jpg' },
+      ],
+    })
+    vi.mocked(findLatestCapture).mockImplementation(async (kind, _platform, _externalId, sourceUrl) => {
+      if (kind === 'auction') return { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' }
+      if (kind === 'detail_html') return { contentHash: 'detail', sourceUrl: 'https://example.test/detail', capturedAt: '2026-07-01T00:00:00.000Z' }
+      return null
+    })
+    vi.mocked(readDocumentSetItems).mockResolvedValue([
+      documentSetItem({
+        ordinal: 0,
+        label: 'Gutachten',
+        filename: 'gutachten.pdf',
+        fileId: '1',
+        sourceUrl: '/api/zvg-proxy?file_id=1',
+        contentHash: 'doc1',
+      }),
+      documentSetItem({
+        ordinal: 1,
+        label: 'Expose HTML',
+        filename: 'expose.html',
+        fileId: '3',
+        sourceUrl: 'https://example.test/expose.html',
+        contentHash: 'doc3',
+        contentType: 'text/html',
+      }),
+      documentSetItem({
+        ordinal: 2,
+        label: 'Scan JPG',
+        filename: 'scan.jpg',
+        fileId: '4',
+        sourceUrl: 'https://example.test/scan.jpg',
+        contentHash: 'doc4',
+        contentType: 'image/jpeg',
+      }),
+      documentSetItem({
+        ordinal: 3,
+        label: 'Biethinweise',
+        filename: 'hinweise.pdf',
+        fileId: '2',
+        sourceUrl: '/api/zvg-proxy?file_id=2',
+        contentHash: 'doc2',
+      }),
+    ])
+    vi.mocked(downloadBlob).mockImplementation(async (hash) => {
+      if (hash === 'abc') return Buffer.from(JSON.stringify(auction))
+      if (hash === 'doc1') return Buffer.from('%PDF-1.4\none\n%%EOF')
+      if (hash === 'doc2') return Buffer.from('%PDF-1.4\ntwo\n%%EOF')
+      if (hash === 'doc3') return Buffer.from('<html><body><h1>Wohnhaus</h1><p>Baujahr 1999</p></body></html>')
+      if (hash === 'doc4') return jpgBytes
+      if (hash === 'detail') return Buffer.from('<html><body><p>Detail HTML: Grundstueck 700 m2</p></body></html>')
+      return null
+    })
+    vi.mocked(extractByLlm).mockResolvedValue({
+      propertyType: null,
+      landAreaSqm: null,
+      livingAreaSqm: null,
+      rooms: null,
+      bedrooms: null,
+      bathrooms: null,
+      floor: null,
+      bathroomHasTub: null,
+      bathroomHasShower: null,
+      heating: null,
+      units: null,
+      securityDeposit: null,
+      biddingNotes: null,
+      condition: null,
+      features: [],
+      yearBuilt: null,
+      lastRenovationYear: null,
+      renovationNotes: null,
+      insights: null,
+      planningNotes: null,
+      documentSummary: null,
+      photoCuration: [],
+      marketValueEur: null,
+      marketValueText: null,
+    })
+
+    await reprocessAuction(
+      'zvg-portal',
+      '7265',
+      undefined,
+      { provider: 'gemini-native', baseUrl: 'http://gemini', model: 'gemini-flash-latest' },
+      '2026-07-22T00:00:00.000Z',
+    )
+
+    const callArgs = vi.mocked(extractByLlm).mock.calls[0]![0]
+    expect(callArgs.pdfBytes).toBeNull()
+    expect(callArgs.pdfDocuments).toEqual([
+      { label: 'Gutachten', data: Buffer.from('%PDF-1.4\none\n%%EOF').toString('base64') },
+      { label: 'Biethinweise', data: Buffer.from('%PDF-1.4\ntwo\n%%EOF').toString('base64') },
+    ])
+    expect(callArgs.documentText).toContain('Wohnhaus')
+    expect(callArgs.documentText).toContain('Detail HTML: Grundstueck 700 m2')
+    expect(callArgs.documentImages).toEqual([
+      { label: 'Scan JPG', mimeType: 'image/jpeg', data: jpgBytes.toString('base64') },
+    ])
   })
 
   it('bumps llmFailures and keeps the prior rules-only fields when the LLM request fails', async () => {

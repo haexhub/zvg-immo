@@ -9,7 +9,7 @@ import { getPool } from '../db'
 vi.mock('../db', () => ({ getPool: vi.fn() }))
 
 // Imported after the mock so the module under test picks up the mocked getPool.
-const { docxToText } = await import('./docx-text')
+const { docxBufferToText, docxToText } = await import('./docx-text')
 
 function writeUInt16(n: number): Buffer {
   const b = Buffer.alloc(2)
@@ -135,6 +135,12 @@ describe('docxToText', () => {
     await cleanup(url)
     await expect(docxToText(url)).resolves.toBeNull()
     await cleanup(url)
+  })
+
+  it('rejects a highly compressed document.xml whose inflated size exceeds the cap', () => {
+    const oversized = zipWithDocumentXml(`<w:document><w:body>${'x'.repeat(21 * 1024 * 1024)}</w:body></w:document>`)
+    expect(oversized.length).toBeLessThan(200_000)
+    expect(docxBufferToText(oversized)).toBeNull()
   })
 })
 

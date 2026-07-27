@@ -113,6 +113,20 @@ describe('mergeLlmResult', () => {
     expect(entry.llmFailures).toBeUndefined()
   })
 
+  it('stamps llmAnalyzedAt on successful LLM calls, even when source stays rules', () => {
+    const fields = baseFields({ confident: true, propertyType: 'eigentumswohnung', landAreaSqm: 80 })
+    const entry = mergeLlmResult(undefined, fields, llmResult(), AT, undefined)
+
+    expect(entry.source).toBe('rules')
+    expect(entry.llmAnalyzedAt).toBe(AT)
+  })
+
+  it('does not stamp llmAnalyzedAt when the LLM call failed', () => {
+    const entry = mergeLlmResult(undefined, baseFields(), null, AT, undefined)
+
+    expect(entry.llmAnalyzedAt).toBeUndefined()
+  })
+
   it('reports low confidence when neither type nor area could be resolved', () => {
     const entry = mergeLlmResult(undefined, baseFields(), llmResult({ propertyType: null, landAreaSqm: null, livingAreaSqm: null }), AT, undefined)
     expect(entry.confidence).toBe('low')

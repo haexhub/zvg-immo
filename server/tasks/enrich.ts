@@ -35,7 +35,6 @@ import { upsertCurrentAuctions } from '~/server/utils/current-auctions'
 import { deriveMarketValueEur, getRates } from '~/server/utils/exchange-rate'
 import { extractByRules } from '~/server/utils/extract/rules'
 import { extractByLlm, resolveLlmConfig, type LlmInput, type PhotoCuration } from '~/server/utils/extract/llm'
-import { buildDocumentLlmParts } from '~/server/utils/extract/pdf-documents'
 import {
   isLlmBatchPending,
   submitLlmBatch,
@@ -52,8 +51,11 @@ import {
 import { mergeLlmResult } from '~/server/utils/extract/merge-llm-result'
 import { downloadNativeImages } from '~/server/utils/extract/native-images'
 import { extractDocumentPhotos } from '~/server/utils/extract/document-images'
-import { pdfPagesToBase64Jpeg } from '~/server/utils/extract/pdf-render'
-import { extractPdfTextFromBuffer, fetchPdfBuffer, pickBestPdf, pickRelevantPdfs } from '~/server/utils/extract/pdf-text'
+import {
+  prepareArchivedLlmDocuments,
+  prepareLiveLlmDocuments,
+  readArchivedAuction,
+} from '~/server/utils/extract/llm-documents'
 import {
   applyExtractionToAuctions,
   type ExtractionCache,
@@ -65,9 +67,7 @@ import { interleaveByPlatform } from '~/server/utils/interleave-by-platform'
 import { isSafePathSegment } from '~/server/utils/path-segment'
 import {
   archiveAuction,
-  archiveDocument,
   archiveDocumentSet,
-  archiveDocumentText,
   type ArchivedDocumentSetResult,
 } from '~/server/utils/raw-archive'
 import { cacheKey, readVerkehrswertCache } from '~/server/utils/verkehrswert-cache'
@@ -154,6 +154,14 @@ export interface EnrichOptions {
   batch?: boolean
 }
 
+export function hasDocumentSetChanged(
+  priorEntry: AuctionExtraction | undefined,
+  currentDocumentSet: ArchivedDocumentSetResult | null,
+): boolean {
+  if (!priorEntry || !currentDocumentSet) return false
+  return priorEntry.documentSetHash !== currentDocumentSet.setHash
+}
+
 export default defineTask({
   meta: {
     name: 'enrich',
@@ -201,13 +209,11 @@ export async function runEnrich(opts: EnrichOptions = {}) {
       return !prev?.detailFetchedAt || (a.sourceUpdatedIso != null && prev.sourceUpdatedIso !== a.sourceUpdatedIso)
     }
     const needsDocumentSetCheck = (a: Auction): boolean => {
-      const crawler = byPlatform.get(a.platform)
-      if (!crawler?.enrichOne) return false
       const hit = cache[cacheKey(a.platform, a.externalId)]
       const prev = previousSnapshot[cacheKey(a.platform, a.externalId)]
       return (
         !hit ||
-        hit.documentSetHash === undefined ||
+        (a.attachments.length > 0 && hit.documentSetHash === undefined) ||
         (a.sourceUpdatedIso != null && prev?.sourceUpdatedIso !== a.sourceUpdatedIso)
       )
     }
@@ -395,14 +401,7 @@ export async function runEnrich(opts: EnrichOptions = {}) {
         }
         if (enriched) enrichedCount++
 
-        const bestPdf = pickBestPdf(a.attachments)
-        const relevantPdfs = pickRelevantPdfs(a.attachments)
-        const documentPdfs = relevantPdfs.length > 0
-          ? relevantPdfs
-          : bestPdf
-            ? [bestPdf]
-            : []
-        const pdfIdentity = {
+        const documentIdentity = {
           platform: a.platform,
           country: a.country,
           region: a.region,
@@ -410,7 +409,7 @@ export async function runEnrich(opts: EnrichOptions = {}) {
           caseNumber: a.caseNumber,
           authority: a.authority,
         }
-        // Batch-native providers read the PDF's raw bytes directly only on
+        // Batch-native providers read PDF raw bytes directly only on
         // explicit batch runs. Synchronous extraction keeps its existing
         // provider-specific behavior (Gemini native docs; Claude proxy text/
         // rendered pages).
@@ -418,46 +417,15 @@ export async function runEnrich(opts: EnrichOptions = {}) {
           ? supportsNativeBatchDocuments(llmConfig)
           : llmConfig?.provider === 'gemini-native'
         const preparedDocuments = extractionMissing || documentSetCheckDue
-          ? (
-              await Promise.all(documentPdfs.map(async (pdf, index) => {
-                const bytes = await fetchPdfBuffer(pdf.proxyUrl)
-                if (!bytes) return null
-                const contentHash = await archiveDocument(bytes, 'application/pdf', pdfIdentity, pdf.proxyUrl, at)
-                if (!contentHash) return null
-                const text = usingNativeDoc ? null : await extractPdfTextFromBuffer(bytes)
-                if (text?.trim()) {
-                  await archiveDocumentText(text, pdfIdentity, pdf.proxyUrl, at)
-                }
-                return { pdf, bytes: useBatch ? bytes : undefined, contentHash, text, ordinal: index }
-              }))
-            ).filter((doc): doc is {
-              pdf: (typeof documentPdfs)[number]
-              bytes: Buffer | undefined
-              contentHash: string
-              text: string | null
-              ordinal: number
-            } => doc != null)
-          : []
-        const documentsComplete = preparedDocuments.length === documentPdfs.length
-        if ((extractionMissing || documentSetCheckDue) && documentsComplete) {
+          ? await prepareLiveLlmDocuments(a.attachments, documentIdentity, at)
+          : null
+        if ((extractionMissing || documentSetCheckDue) && preparedDocuments?.documentSetComplete) {
           currentDocumentSet = await archiveDocumentSet(
-            pdfIdentity,
-            preparedDocuments.map((doc) => ({
-              ordinal: doc.ordinal,
-              kind: 'document',
-              label: doc.pdf.label || null,
-              filename: doc.pdf.filename || null,
-              fileId: doc.pdf.fileId || null,
-              sourceUrl: doc.pdf.proxyUrl,
-              contentHash: doc.contentHash,
-              contentType: 'application/pdf',
-            })),
+            documentIdentity,
+            preparedDocuments.documentSetItems,
             at,
           )
-          documentSetChanged =
-            currentDocumentSet != null &&
-            priorEntry?.documentSetHash != null &&
-            priorEntry.documentSetHash !== currentDocumentSet.setHash
+          documentSetChanged = hasDocumentSetChanged(priorEntry, currentDocumentSet)
         }
         if (documentSetChanged) {
           console.log(
@@ -474,17 +442,31 @@ export async function runEnrich(opts: EnrichOptions = {}) {
         // Only a confirmed document-set change invalidates prior document-derived facts;
         // an unknown or unavailable archive must not wipe cached extraction fields.
         const effectivePriorEntry = documentSetChanged ? undefined : priorEntry
-        const rules = extractByRules({ title: a.title, description: a.description })
+        const archivedAuction = await readArchivedAuction(a.platform, a.externalId)
+        if (!archivedAuction) {
+          console.warn(`[enrich] archived auction missing for ${a.platform}:${a.externalId}; LLM analysis will wait for the raw archive`)
+        }
+        const analysisAuction = archivedAuction ?? a
+        const archivedDocuments =
+          archivedAuction && currentDocumentSet
+            ? await prepareArchivedLlmDocuments(archivedAuction, {
+                nativeDocuments: usingNativeDoc,
+                documentSetHash: currentDocumentSet.setHash,
+                documentSetVersion: currentDocumentSet.version,
+              })
+            : null
+        const archivedLlmReady = !!archivedAuction && !!archivedDocuments?.documentSetComplete
+        const rules = extractByRules({ title: analysisAuction.title, description: analysisAuction.description })
         // Structured values straight from the source platform beat anything
         // parsed out of free text — they are the platform's own data, not a
         // regex guess.
         const fields = {
           propertyType: rules.propertyType,
-          landAreaSqm: a.sourceLandAreaSqm ?? rules.landAreaSqm,
-          livingAreaSqm: a.sourceLivingAreaSqm ?? rules.livingAreaSqm,
-          rooms: a.sourceRooms ?? rules.rooms,
+          landAreaSqm: analysisAuction.sourceLandAreaSqm ?? rules.landAreaSqm,
+          livingAreaSqm: analysisAuction.sourceLivingAreaSqm ?? rules.livingAreaSqm,
+          rooms: analysisAuction.sourceRooms ?? rules.rooms,
           units: rules.units,
-          securityDeposit: a.sourceSecurityDeposit ?? rules.securityDeposit,
+          securityDeposit: analysisAuction.sourceSecurityDeposit ?? rules.securityDeposit,
           biddingNotes: undefined as string | null | undefined,
           condition: effectivePriorEntry?.condition,
           features: effectivePriorEntry?.features,
@@ -636,7 +618,7 @@ export async function runEnrich(opts: EnrichOptions = {}) {
         // so it also picks up condition/features/yearBuilt/insights/photo
         // curation — the earlier "confident → skip LLM entirely" fast path
         // left those fields unset until a delayed backfill run.
-        if (llmConfig && llmCalls < maxLlmPerRun && platformLlmCalls < llmCapPerPlatform) {
+        if (llmConfig && archivedLlmReady && llmCalls < maxLlmPerRun && platformLlmCalls < llmCapPerPlatform) {
           llmCalls++
           llmCallsByPlatform.set(a.platform, platformLlmCalls + 1)
           // Offer a capped subset of a freshly downloaded/extracted photo set
@@ -668,27 +650,12 @@ export async function runEnrich(opts: EnrichOptions = {}) {
             // pool finishes instead of a synchronous generateContent call —
             // the rate limit/cost profile that motivated this path can't
             // sustain hundreds of synchronous calls in a couple of minutes.
-            const batchUsesNativeDocuments = supportsNativeBatchDocuments(llmConfig)
-            const documentParts = await buildDocumentLlmParts(
-              preparedDocuments.map((document) => ({
-                source: document.pdf,
-                label: document.pdf.label || document.pdf.filename,
-                text: batchUsesNativeDocuments ? null : document.text,
-                data: batchUsesNativeDocuments ? document.bytes!.toString('base64') : undefined,
-              })),
-              {
-                native: batchUsesNativeDocuments,
-                renderPages: batchUsesNativeDocuments
-                  ? undefined
-                  : (pdf, maxPages) => pdfPagesToBase64Jpeg(pdf.proxyUrl, { maxPages }),
-              },
-            )
             batchItems.push({
               key,
               input: {
-                title: a.title,
-                description: a.description,
-                ...documentParts,
+                title: analysisAuction.title,
+                description: analysisAuction.description,
+                ...(archivedDocuments?.input ?? {}),
                 candidateImages,
               },
             })
@@ -698,22 +665,13 @@ export async function runEnrich(opts: EnrichOptions = {}) {
             // contribution once the submitted job completes.
             cacheable = mergedConfident || detailOk || photoPipelineRan
           } else {
-            // A short/empty pdftotext result on an actual attachment usually
-            // means the Gutachten PDF is a scanned image, not real text —
-            // render a bounded page range and let the LLM read it visually.
-            const documentParts = await buildDocumentLlmParts(
-              preparedDocuments.map(({ pdf, text }) => ({
-                source: pdf,
-                label: pdf.label || pdf.filename,
-                text,
-              })),
-              {
-                native: false,
-                renderPages: (pdf, maxPages) => pdfPagesToBase64Jpeg(pdf.proxyUrl, { maxPages }),
-              },
-            )
             const llm = await extractByLlm(
-              { title: a.title, description: a.description, ...documentParts, candidateImages },
+              {
+                title: analysisAuction.title,
+                description: analysisAuction.description,
+                ...(archivedDocuments?.input ?? {}),
+                candidateImages,
+              },
               llmConfig,
             )
             // Curation only applies to the photos actually offered this call

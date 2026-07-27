@@ -468,6 +468,29 @@ describe('buildParts', () => {
       { type: 'image', mimeType: 'image/jpeg', data: 'photo' },
     ])
   })
+
+  it('adds document text and document images before candidate-photo curation images', () => {
+    const parts = buildParts({
+      title: 'Haus',
+      description: null,
+      documentText: '=== Expose HTML ===\nBaujahr 1999',
+      documentImages: [{ label: 'Scan JPG', mimeType: 'image/jpeg', data: 'scan' }],
+      candidateImages: [{ label: 'Foto 1', mimeType: 'image/png', data: 'photo' }],
+    })
+    expect(parts).toEqual([
+      {
+        type: 'text',
+        text:
+          'Objektbezeichnung: Haus\n\nWeitere Dokumenttexte/HTML-Anhänge:\n=== Expose HTML ===\nBaujahr 1999\n\n' +
+          'Es folgen 1 Bildanhänge/Dokumentbilder. Lies auch daraus Objektangaben, Scans, Pläne, Tabellen und erkennbare Widersprüche ab.\n\n' +
+          'Es folgen 1 Kandidatenbilder aus dem Dokument, jeweils mit vorangestelltem "Bild N:"-Label. Kuratiere jedes Bild im photos-Array (siehe Schema).',
+      },
+      { type: 'text', text: 'Dokumentbild: Scan JPG' },
+      { type: 'image', mimeType: 'image/jpeg', data: 'scan' },
+      { type: 'text', text: 'Bild 0: Foto 1' },
+      { type: 'image', mimeType: 'image/png', data: 'photo' },
+    ])
+  })
 })
 
 describe('resolveLlmConfig', () => {

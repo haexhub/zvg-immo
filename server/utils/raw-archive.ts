@@ -20,8 +20,12 @@ import { getPool } from './db'
 export type BlobContentType =
   | 'application/json'
   | 'text/html'
+  | 'application/octet-stream'
   | 'application/pdf'
   | 'application/vnd.docx'
+  | 'image/jpeg'
+  | 'image/png'
+  | 'image/webp'
   | 'text/plain'
 
 export type CaptureKind = 'auction' | 'document' | 'detail_html' | 'document_text'
@@ -36,8 +40,12 @@ const TEXT_TYPES = new Set<BlobContentType>(['application/json', 'text/html', 't
 export const EXT: Record<BlobContentType, string> = {
   'application/json': '.json',
   'text/html': '.html',
+  'application/octet-stream': '.bin',
   'application/pdf': '.pdf',
   'application/vnd.docx': '.docx',
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/webp': '.webp',
   'text/plain': '.txt',
 }
 
@@ -251,7 +259,7 @@ export interface ArchivedDocumentSetItem {
   fileId: string | null
   sourceUrl: string
   contentHash: string
-  contentType: 'application/pdf' | 'application/vnd.docx'
+  contentType: BlobContentType
 }
 
 export interface ArchivedDocumentSetResult {
@@ -261,15 +269,15 @@ export interface ArchivedDocumentSetResult {
 }
 
 /**
- * Archives a PDF/DOCX attachment's raw bytes (`kind='document'`), keyed on
+ * Archives an attachment's raw bytes (`kind='document'`), keyed on
  * the auction whose enrichment fetched it. Content-hash-dedup means the same
- * appraisal document shared across multiple auctions (or re-fetched
+ * appraisal/document shared across multiple auctions (or re-fetched
  * unchanged on a later run) is stored once, while each referencing auction
  * still gets its own capture row. Never throws.
  */
-export async function archiveDocument(
+export async function archiveDocumentBlob(
   bytes: Buffer,
-  contentType: 'application/pdf' | 'application/vnd.docx',
+  contentType: BlobContentType,
   identity: DocumentIdentity,
   sourceUrl: string,
   capturedAt: string,
@@ -289,6 +297,16 @@ export async function archiveDocument(
     sourceUrl,
   })
   return hash
+}
+
+export async function archiveDocument(
+  bytes: Buffer,
+  contentType: 'application/pdf' | 'application/vnd.docx',
+  identity: DocumentIdentity,
+  sourceUrl: string,
+  capturedAt: string,
+): Promise<string | null> {
+  return archiveDocumentBlob(bytes, contentType, identity, sourceUrl, capturedAt)
 }
 
 /**
