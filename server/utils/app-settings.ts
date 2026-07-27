@@ -299,6 +299,50 @@ export async function setLlmProviderProfileSettings(
   return { profiles, assignments }
 }
 
+// Saves the profile list without touching the existing use-case assignments
+// — backs the "LLM-Provider" card's own save action, kept independent from
+// the "Modellzuordnung" card's setLlmProviderAssignments below so saving one
+// card never silently commits unsaved edits from the other.
+export async function setLlmProviderProfiles(
+  db: Pool,
+  inputProfiles: readonly LlmProviderProfileInput[],
+): Promise<LlmProviderProfile[]> {
+  const { assignments } = await getLlmProviderProfileSettings(db)
+  const saved = await setLlmProviderProfileSettings(db, inputProfiles, assignments)
+  return saved.profiles
+}
+
+// Saves only the use-case assignments; profiles are left untouched. Invalid
+// or now-deleted profile ids are dropped via coerceAssignments.
+export async function setLlmProviderAssignments(
+  db: Pool,
+  inputAssignments: LlmProviderAssignments,
+): Promise<LlmProviderAssignments> {
+  const profileIds = new Set((await getLlmProviderProfiles(db)).map((profile) => profile.id))
+  const assignments = coerceAssignments(inputAssignments, profileIds)
+  await db.query(
+    `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, now())
+     ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()`,
+    [LLM_PROVIDER_ASSIGNMENTS_KEY, JSON.stringify(assignments)],
+  )
+  return assignments
+}
+
+// Deletes a single profile immediately (not gated behind the profile list's
+// "Speichern" button) and prunes any assignment pointing to it.
+export async function deleteLlmProviderProfile(
+  db: Pool,
+  id: string,
+): Promise<{ profiles: LlmProviderProfile[]; assignments: LlmProviderAssignments }> {
+  const { profiles, assignments } = await getLlmProviderProfileSettings(db)
+  const remaining = profiles.filter((profile) => profile.id !== id)
+  const prunedAssignments: LlmProviderAssignments = { ...assignments }
+  for (const scope of ['extraction', 'translation'] as const) {
+    if (prunedAssignments[scope] === id) delete prunedAssignments[scope]
+  }
+  return setLlmProviderProfileSettings(db, remaining, prunedAssignments)
+}
+
 export async function getLlmProviderOverride(
   db: Pool,
   scope: LlmProviderScope = 'extraction',

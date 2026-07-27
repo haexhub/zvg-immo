@@ -404,11 +404,15 @@ async function saveLlmConfig(): Promise<void> {
   }
 }
 
-// LLM-Provider: getrennte Provider-Overrides für Dokument-Extraktion und
-// Text-Übersetzung, gegen /api/settings/llm-provider?scope=...
-// (settings-auth-Muster wie oben). Presets füllen Base-URL/Modell beim
-// Wechsel der Auswahl nur clientseitig vor — reine UX-Hilfe, keine
-// Server-Logik.
+// LLM-Provider: wiederverwendbare Provider-Profile (Zugangsdaten) gegen
+// /api/settings/llm-profiles (Liste/Anlegen/Bearbeiten) und
+// /api/settings/llm-profiles/:id (Löschen, sofort wirksam). Welches Profil
+// für Dokument-Extraktion bzw. Text-Übersetzung genutzt wird, ist eine
+// eigene Zuordnung gegen /api/settings/llm-assignments — beide Ressourcen
+// werden zusammen per GET /api/settings/llm-profiles geladen, aber
+// unabhängig voneinander gespeichert (eigene Card, eigener Save-Button).
+// Presets füllen Base-URL/Modell beim Wechsel der Provider-Auswahl nur
+// clientseitig vor — reine UX-Hilfe, keine Server-Logik.
 const LLM_PROVIDER_PRESETS: Record<LlmProvider, { baseUrl: string; model: string }> = {
   'claude-proxy': { baseUrl: 'http://haex-claude-proxy:8080', model: 'claude-sonnet-5' },
   'gemini-native': { baseUrl: 'https://generativelanguage.googleapis.com', model: 'gemini-flash-latest' },
@@ -496,6 +500,10 @@ function makeProfileForm(input?: Partial<LlmProviderProfileForm>): LlmProviderPr
 }
 
 const llmProfiles = ref<LlmProviderProfileForm[]>([])
+// ids known to exist server-side (from the last load) — deleting a profile
+// not in this set (an unsaved "Profil hinzufügen" row) is a local-only
+// splice, no DELETE call needed.
+const persistedLlmProfileIds = ref<Set<string>>(new Set())
 const NO_LLM_PROFILE = '__none'
 const llmProfileAssignments = reactive<Record<LlmProviderScope, string>>({
   extraction: NO_LLM_PROFILE,
@@ -505,6 +513,9 @@ const llmProfileEffective = ref<LlmProfilesResponse['effective'] | null>(null)
 const llmProfilesError = ref<string | null>(null)
 const llmProfilesSaved = ref(false)
 const llmProfilesPending = ref(false)
+const llmAssignmentsError = ref<string | null>(null)
+const llmAssignmentsSaved = ref(false)
+const llmAssignmentsPending = ref(false)
 
 function profileSupportsBatch(profile: LlmProviderProfileForm): boolean {
   return profile.provider === 'gemini-native' ||
@@ -559,6 +570,7 @@ async function loadLlmProfiles(): Promise<void> {
   try {
     const res = await $fetch<LlmProfilesResponse>('/api/settings/llm-profiles')
     llmProfiles.value = res.profiles.map((profile) => makeProfileForm(profile))
+    persistedLlmProfileIds.value = new Set(res.profiles.map((profile) => profile.id))
     llmProfileAssignments.extraction = res.assignments.extraction ?? NO_LLM_PROFILE
     llmProfileAssignments.translation = res.assignments.translation ?? NO_LLM_PROFILE
     llmProfileEffective.value = res.effective
@@ -574,12 +586,21 @@ function addLlmProfile(): void {
   llmProfilesSaved.value = false
 }
 
-function removeLlmProfile(profile: LlmProviderProfileForm): void {
-  llmProfiles.value = llmProfiles.value.filter((candidate) => candidate.id !== profile.id)
-  for (const scope of LLM_PROVIDER_SCOPES) {
-    if (llmProfileAssignments[scope] === profile.id) llmProfileAssignments[scope] = NO_LLM_PROFILE
+async function deleteLlmProfile(profile: LlmProviderProfileForm): Promise<void> {
+  if (!persistedLlmProfileIds.value.has(profile.id)) {
+    llmProfiles.value = llmProfiles.value.filter((candidate) => candidate.id !== profile.id)
+    return
   }
-  llmProfilesSaved.value = false
+  llmProfilesPending.value = true
+  llmProfilesError.value = null
+  try {
+    await $fetch(`/api/settings/llm-profiles/${profile.id}`, { method: 'DELETE' })
+    await loadLlmProfiles()
+  } catch (err) {
+    llmProfilesError.value = normalizeSettingsError(err, t('settings.llmProvider.deleteError'))
+  } finally {
+    llmProfilesPending.value = false
+  }
 }
 
 function onLlmProfileProviderChange(profile: LlmProviderProfileForm): void {
@@ -590,7 +611,7 @@ function onLlmProfileProviderChange(profile: LlmProviderProfileForm): void {
   void loadProfileModelOptions(profile)
 }
 
-async function saveLlmProfiles(): Promise<void> {
+async function saveLlmProfileList(): Promise<void> {
   llmProfilesPending.value = true
   llmProfilesError.value = null
   llmProfilesSaved.value = false
@@ -607,10 +628,6 @@ async function saveLlmProfiles(): Promise<void> {
           executionMode: profile.executionMode === 'batch' && profileCanSelectBatch(profile) ? 'batch' : 'sync',
           ...(profile.clearApiKey ? { apiKey: '' } : profile.apiKey ? { apiKey: profile.apiKey } : {}),
         })),
-        assignments: {
-          extraction: llmProfileAssignments.extraction === NO_LLM_PROFILE ? undefined : llmProfileAssignments.extraction,
-          translation: llmProfileAssignments.translation === NO_LLM_PROFILE ? undefined : llmProfileAssignments.translation,
-        },
       },
     })
     await loadLlmProfiles()
@@ -619,6 +636,29 @@ async function saveLlmProfiles(): Promise<void> {
     llmProfilesError.value = normalizeSettingsError(err, t('settings.llmProvider.saveError'))
   } finally {
     llmProfilesPending.value = false
+  }
+}
+
+async function saveLlmAssignments(): Promise<void> {
+  llmAssignmentsPending.value = true
+  llmAssignmentsError.value = null
+  llmAssignmentsSaved.value = false
+  try {
+    await $fetch('/api/settings/llm-assignments', {
+      method: 'PUT',
+      body: {
+        assignments: {
+          extraction: llmProfileAssignments.extraction === NO_LLM_PROFILE ? undefined : llmProfileAssignments.extraction,
+          translation: llmProfileAssignments.translation === NO_LLM_PROFILE ? undefined : llmProfileAssignments.translation,
+        },
+      },
+    })
+    await loadLlmProfiles()
+    llmAssignmentsSaved.value = !llmAssignmentsError.value
+  } catch (err) {
+    llmAssignmentsError.value = normalizeSettingsError(err, t('settings.llmAssignment.saveError'))
+  } finally {
+    llmAssignmentsPending.value = false
   }
 }
 
@@ -1000,6 +1040,9 @@ onBeforeUnmount(stopPolling)
       <Card v-if="authed">
         <CardHeader>
           <CardTitle>{{ $t('settings.llmProvider.title') }}</CardTitle>
+          <CardAction>
+            <Button type="button" size="sm" @click="addLlmProfile">{{ $t('settings.llmProvider.addProfile') }}</Button>
+          </CardAction>
         </CardHeader>
         <CardContent class="space-y-6">
           <p class="text-sm text-muted-foreground">
@@ -1009,37 +1052,7 @@ onBeforeUnmount(stopPolling)
           <p v-if="llmProfilesError" class="text-sm text-destructive">{{ llmProfilesError }}</p>
           <p v-if="llmProfilesSaved" class="text-sm text-emerald-600 dark:text-emerald-500">{{ $t('settings.llmProvider.saved') }}</p>
 
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div v-for="scope in LLM_PROVIDER_SCOPES" :key="scope" class="space-y-1">
-              <Label>
-                {{ scope === 'translation' ? $t('settings.llmProvider.translationTitle') : $t('settings.llmProvider.extractionTitle') }}
-              </Label>
-              <Select v-model="llmProfileAssignments[scope]">
-                <SelectTrigger class="w-full">
-                  <SelectValue :placeholder="$t('settings.llmProvider.noProfileAssigned')" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem :value="NO_LLM_PROFILE">{{ $t('settings.llmProvider.noProfileAssigned') }}</SelectItem>
-                  <SelectItem v-for="profile in llmProfiles" :key="profile.id" :value="profile.id">
-                    {{ profile.name || profile.model }}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              <p v-if="llmProfileAssignments[scope] === NO_LLM_PROFILE && llmProfileEffective" class="text-xs text-muted-foreground">
-                {{ $t(scope === 'translation' ? 'settings.llmProvider.usingTranslationFallback' : 'settings.llmProvider.usingEnvDefault', {
-                  provider: llmProfileEffective[scope].provider,
-                  baseUrl: llmProfileEffective[scope].baseUrl,
-                }) }}
-              </p>
-            </div>
-          </div>
-
           <div class="space-y-4">
-            <div class="flex items-center justify-between gap-3">
-              <h3 class="text-sm font-semibold">{{ $t('settings.llmProvider.profilesTitle') }}</h3>
-              <Button type="button" size="sm" @click="addLlmProfile">{{ $t('settings.llmProvider.addProfile') }}</Button>
-            </div>
-
             <p v-if="!llmProfiles.length" class="text-sm text-muted-foreground">
               {{ $t('settings.llmProvider.profilesEmpty') }}
             </p>
@@ -1123,7 +1136,7 @@ onBeforeUnmount(stopPolling)
               </div>
 
               <div class="flex justify-end">
-                <Button type="button" variant="ghost" class="hover:text-destructive" @click="removeLlmProfile(profile)">
+                <Button type="button" variant="ghost" class="hover:text-destructive" :disabled="llmProfilesPending" @click="deleteLlmProfile(profile)">
                   <Trash2 class="h-4 w-4" />
                   {{ $t('settings.llmProvider.removeProfile') }}
                 </Button>
@@ -1132,7 +1145,7 @@ onBeforeUnmount(stopPolling)
           </div>
 
           <div class="flex flex-wrap gap-2">
-            <Button type="button" :disabled="llmProfilesPending" @click="saveLlmProfiles">
+            <Button type="button" :disabled="llmProfilesPending" @click="saveLlmProfileList">
               {{ llmProfilesPending ? $t('settings.llmProvider.saving') : $t('settings.llmProvider.save') }}
             </Button>
           </div>
@@ -1239,6 +1252,51 @@ onBeforeUnmount(stopPolling)
             <p v-if="claudeError" class="text-sm text-destructive border-t pt-3">
               {{ claudeError }}
             </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card v-if="authed">
+        <CardHeader>
+          <CardTitle>{{ $t('settings.llmAssignment.title') }}</CardTitle>
+        </CardHeader>
+        <CardContent class="space-y-6">
+          <p class="text-sm text-muted-foreground">
+            {{ $t('settings.llmAssignment.description') }}
+          </p>
+
+          <p v-if="llmAssignmentsError" class="text-sm text-destructive">{{ llmAssignmentsError }}</p>
+          <p v-if="llmAssignmentsSaved" class="text-sm text-emerald-600 dark:text-emerald-500">{{ $t('settings.llmAssignment.saved') }}</p>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div v-for="scope in LLM_PROVIDER_SCOPES" :key="scope" class="space-y-1">
+              <Label>
+                {{ scope === 'translation' ? $t('settings.llmAssignment.translationTitle') : $t('settings.llmAssignment.extractionTitle') }}
+              </Label>
+              <Select v-model="llmProfileAssignments[scope]">
+                <SelectTrigger class="w-full">
+                  <SelectValue :placeholder="$t('settings.llmAssignment.noProfileAssigned')" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem :value="NO_LLM_PROFILE">{{ $t('settings.llmAssignment.noProfileAssigned') }}</SelectItem>
+                  <SelectItem v-for="profile in llmProfiles" :key="profile.id" :value="profile.id">
+                    {{ profile.name || profile.model }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p v-if="llmProfileAssignments[scope] === NO_LLM_PROFILE && llmProfileEffective" class="text-xs text-muted-foreground">
+                {{ $t(scope === 'translation' ? 'settings.llmAssignment.usingTranslationFallback' : 'settings.llmAssignment.usingEnvDefault', {
+                  provider: llmProfileEffective[scope].provider,
+                  baseUrl: llmProfileEffective[scope].baseUrl,
+                }) }}
+              </p>
+            </div>
+          </div>
+
+          <div class="flex flex-wrap gap-2">
+            <Button type="button" :disabled="llmAssignmentsPending" @click="saveLlmAssignments">
+              {{ llmAssignmentsPending ? $t('settings.llmAssignment.saving') : $t('settings.llmAssignment.save') }}
+            </Button>
           </div>
         </CardContent>
       </Card>

@@ -1,15 +1,15 @@
-// Saves reusable LLM provider profiles and per-use-case assignments. API keys
-// are write-only: omitted preserves an existing key for the same profile id,
-// explicit '' clears it.
+// Saves reusable LLM provider profiles (credentials). API keys are
+// write-only: omitted preserves an existing key for the same profile id,
+// explicit '' clears it. Use-case assignments are saved separately via
+// PUT /api/settings/llm-assignments.
 
 import { getPool } from '~/server/utils/db'
 import {
   LLM_EXECUTION_MODES,
   LLM_PROVIDERS,
-  setLlmProviderProfileSettings,
+  setLlmProviderProfiles,
   type LlmExecutionMode,
   type LlmProvider,
-  type LlmProviderAssignments,
   type LlmProviderProfileInput,
 } from '~/server/utils/app-settings'
 
@@ -54,13 +54,10 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'profiles: Array erforderlich.' })
   }
   const profiles = body.profiles.map(readProfile)
-  const assignments = (body.assignments && typeof body.assignments === 'object'
-    ? body.assignments
-    : {}) as LlmProviderAssignments
   try {
-    const saved = await setLlmProviderProfileSettings(db, profiles, assignments)
+    const saved = await setLlmProviderProfiles(db, profiles)
     return {
-      profiles: saved.profiles.map((profile) => ({
+      profiles: saved.map((profile) => ({
         id: profile.id,
         name: profile.name,
         provider: profile.provider,
@@ -69,7 +66,6 @@ export default defineEventHandler(async (event) => {
         executionMode: profile.executionMode,
         apiKeySet: !!profile.apiKey,
       })),
-      assignments: saved.assignments,
     }
   } catch (err) {
     const message = (err as Error).message

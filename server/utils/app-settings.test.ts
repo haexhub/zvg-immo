@@ -6,6 +6,7 @@ import {
   DEFAULT_LLM_EXECUTION_MODE,
   DEFAULT_LLM_MAX_TOKENS,
   clearLlmProviderOverride,
+  deleteLlmProviderProfile,
   getAllLlmMaxTokens,
   getEnabledCountries,
   getHideRulesOnlyAuctions,
@@ -15,6 +16,8 @@ import {
   setEnabledCountries,
   setHideRulesOnlyAuctions,
   setLlmMaxTokens,
+  setLlmProviderAssignments,
+  setLlmProviderProfiles,
   setLlmProviderProfileSettings,
   setLlmProviderOverride,
 } from './app-settings'
@@ -542,6 +545,139 @@ describe('getLlmProviderOverride', () => {
     }
 
     await expect(setLlmProviderProfileSettings(db, [profile, profile], {})).rejects.toThrow('profile id: doppelter Wert.')
+  })
+})
+
+describe('setLlmProviderProfiles / setLlmProviderAssignments / deleteLlmProviderProfile', () => {
+  it('setLlmProviderProfiles saves profiles without touching existing assignments', async () => {
+    const db = makeFakePool() as unknown as Pool
+    await setLlmProviderProfileSettings(db, [
+      {
+        id: 'gemini',
+        provider: 'gemini-native',
+        baseUrl: 'https://generativelanguage.googleapis.com',
+        model: 'gemini-flash-latest',
+        executionMode: 'sync',
+        apiKey: 'secret',
+      },
+    ], { extraction: 'gemini' })
+
+    await setLlmProviderProfiles(db, [
+      {
+        id: 'gemini',
+        name: 'Gemini renamed',
+        provider: 'gemini-native',
+        baseUrl: 'https://generativelanguage.googleapis.com',
+        model: 'gemini-flash-latest',
+        executionMode: 'sync',
+      },
+    ])
+
+    expect(await getLlmProviderProfileSettings(db)).toEqual({
+      profiles: [{
+        id: 'gemini',
+        name: 'Gemini renamed',
+        provider: 'gemini-native',
+        baseUrl: 'https://generativelanguage.googleapis.com',
+        model: 'gemini-flash-latest',
+        executionMode: 'sync',
+        apiKey: 'secret',
+      }],
+      assignments: { extraction: 'gemini' },
+    })
+  })
+
+  it('setLlmProviderAssignments updates assignments without touching profiles', async () => {
+    const db = makeFakePool() as unknown as Pool
+    await setLlmProviderProfileSettings(db, [
+      {
+        id: 'gemini',
+        provider: 'gemini-native',
+        baseUrl: 'https://generativelanguage.googleapis.com',
+        model: 'gemini-flash-latest',
+        executionMode: 'sync',
+        apiKey: 'secret',
+      },
+    ], {})
+
+    const saved = await setLlmProviderAssignments(db, { extraction: 'gemini', translation: 'gemini' })
+
+    expect(saved).toEqual({ extraction: 'gemini', translation: 'gemini' })
+    expect(await getLlmProviderProfileSettings(db)).toEqual({
+      profiles: [{
+        id: 'gemini',
+        name: 'gemini-native',
+        provider: 'gemini-native',
+        baseUrl: 'https://generativelanguage.googleapis.com',
+        model: 'gemini-flash-latest',
+        executionMode: 'sync',
+        apiKey: 'secret',
+      }],
+      assignments: { extraction: 'gemini', translation: 'gemini' },
+    })
+  })
+
+  it('setLlmProviderAssignments drops assignments referencing an unknown profile id', async () => {
+    const db = makeFakePool() as unknown as Pool
+    expect(await setLlmProviderAssignments(db, { extraction: 'does-not-exist' })).toEqual({})
+  })
+
+  it('deleteLlmProviderProfile removes the profile and prunes its assignments', async () => {
+    const db = makeFakePool() as unknown as Pool
+    await setLlmProviderProfileSettings(db, [
+      {
+        id: 'gemini',
+        provider: 'gemini-native',
+        baseUrl: 'https://generativelanguage.googleapis.com',
+        model: 'gemini-flash-latest',
+        executionMode: 'sync',
+        apiKey: 'secret',
+      },
+      {
+        id: 'claude',
+        provider: 'claude-proxy',
+        baseUrl: 'http://haex-claude-proxy:8080',
+        model: 'claude-sonnet-5',
+        executionMode: 'sync',
+        apiKey: '',
+      },
+    ], { extraction: 'gemini', translation: 'claude' })
+
+    const result = await deleteLlmProviderProfile(db, 'gemini')
+
+    expect(result.profiles.map((profile) => profile.id)).toEqual(['claude'])
+    expect(result.assignments).toEqual({ translation: 'claude' })
+    expect(await getLlmProviderProfileSettings(db)).toEqual({
+      profiles: [{
+        id: 'claude',
+        name: 'claude-proxy',
+        provider: 'claude-proxy',
+        baseUrl: 'http://haex-claude-proxy:8080',
+        model: 'claude-sonnet-5',
+        executionMode: 'sync',
+        apiKey: '',
+      }],
+      assignments: { translation: 'claude' },
+    })
+  })
+
+  it('deleteLlmProviderProfile is a no-op for an unknown profile id', async () => {
+    const db = makeFakePool() as unknown as Pool
+    await setLlmProviderProfileSettings(db, [
+      {
+        id: 'gemini',
+        provider: 'gemini-native',
+        baseUrl: 'https://generativelanguage.googleapis.com',
+        model: 'gemini-flash-latest',
+        executionMode: 'sync',
+        apiKey: 'secret',
+      },
+    ], { extraction: 'gemini' })
+
+    const result = await deleteLlmProviderProfile(db, 'does-not-exist')
+
+    expect(result.profiles.map((profile) => profile.id)).toEqual(['gemini'])
+    expect(result.assignments).toEqual({ extraction: 'gemini' })
   })
 })
 
