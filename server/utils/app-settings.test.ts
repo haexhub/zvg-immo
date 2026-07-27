@@ -10,10 +10,12 @@ import {
   getEnabledCountries,
   getHideRulesOnlyAuctions,
   getLlmMaxTokens,
+  getLlmProviderProfileSettings,
   getLlmProviderOverride,
   setEnabledCountries,
   setHideRulesOnlyAuctions,
   setLlmMaxTokens,
+  setLlmProviderProfileSettings,
   setLlmProviderOverride,
 } from './app-settings'
 
@@ -211,6 +213,39 @@ describe('getLlmProviderOverride', () => {
     })
   })
 
+  it('keeps extraction and translation provider overrides separate', async () => {
+    const db = makeFakePool() as unknown as Pool
+    await setLlmProviderOverride(db, {
+      provider: 'claude-proxy',
+      baseUrl: 'http://haex-claude-proxy:8080',
+      model: 'claude-sonnet-5',
+      executionMode: 'sync',
+      apiKey: '',
+    })
+    await setLlmProviderOverride(db, {
+      provider: 'gemini-native',
+      baseUrl: 'https://generativelanguage.googleapis.com',
+      model: 'gemini-flash-latest',
+      executionMode: 'sync',
+      apiKey: 'gemini-secret',
+    }, 'translation')
+
+    expect(await getLlmProviderOverride(db, 'extraction')).toEqual({
+      provider: 'claude-proxy',
+      baseUrl: 'http://haex-claude-proxy:8080',
+      model: 'claude-sonnet-5',
+      executionMode: 'sync',
+      apiKey: '',
+    })
+    expect(await getLlmProviderOverride(db, 'translation')).toEqual({
+      provider: 'gemini-native',
+      baseUrl: 'https://generativelanguage.googleapis.com',
+      model: 'gemini-flash-latest',
+      executionMode: 'sync',
+      apiKey: 'gemini-secret',
+    })
+  })
+
   it('persists an explicit batch execution mode', async () => {
     const db = makeFakePool() as unknown as Pool
     await setLlmProviderOverride(db, {
@@ -368,6 +403,110 @@ describe('getLlmProviderOverride', () => {
     })
     await clearLlmProviderOverride(db)
     expect(await getLlmProviderOverride(db)).toBeNull()
+  })
+
+  it('clears only the requested provider override scope', async () => {
+    const db = makeFakePool() as unknown as Pool
+    await setLlmProviderOverride(db, {
+      provider: 'claude-proxy',
+      baseUrl: 'http://haex-claude-proxy:8080',
+      model: 'claude-sonnet-5',
+      executionMode: 'sync',
+      apiKey: '',
+    })
+    await setLlmProviderOverride(db, {
+      provider: 'gemini-native',
+      baseUrl: 'https://generativelanguage.googleapis.com',
+      model: 'gemini-flash-latest',
+      executionMode: 'sync',
+      apiKey: 'gemini-secret',
+    }, 'translation')
+
+    await clearLlmProviderOverride(db, 'translation')
+
+    expect(await getLlmProviderOverride(db, 'translation')).toBeNull()
+    expect(await getLlmProviderOverride(db, 'extraction')).toEqual({
+      provider: 'claude-proxy',
+      baseUrl: 'http://haex-claude-proxy:8080',
+      model: 'claude-sonnet-5',
+      executionMode: 'sync',
+      apiKey: '',
+    })
+  })
+
+  it('resolves assigned reusable provider profiles before legacy overrides', async () => {
+    const db = makeFakePool() as unknown as Pool
+    await setLlmProviderOverride(db, {
+      provider: 'claude-proxy',
+      baseUrl: 'http://haex-claude-proxy:8080',
+      model: 'claude-sonnet-5',
+      executionMode: 'sync',
+      apiKey: '',
+    })
+    await setLlmProviderProfileSettings(db, [
+      {
+        id: 'cheap-translation',
+        name: 'Cheap translation',
+        provider: 'gemini-native',
+        baseUrl: 'https://generativelanguage.googleapis.com',
+        model: 'gemini-flash-latest',
+        executionMode: 'batch',
+        apiKey: 'gemini-secret',
+      },
+    ], { translation: 'cheap-translation' })
+
+    expect(await getLlmProviderOverride(db, 'translation')).toEqual({
+      provider: 'gemini-native',
+      baseUrl: 'https://generativelanguage.googleapis.com',
+      model: 'gemini-flash-latest',
+      executionMode: 'sync',
+      apiKey: 'gemini-secret',
+    })
+    expect(await getLlmProviderOverride(db, 'extraction')).toEqual({
+      provider: 'claude-proxy',
+      baseUrl: 'http://haex-claude-proxy:8080',
+      model: 'claude-sonnet-5',
+      executionMode: 'sync',
+      apiKey: '',
+    })
+  })
+
+  it('preserves profile api keys when an update omits apiKey', async () => {
+    const db = makeFakePool() as unknown as Pool
+    await setLlmProviderProfileSettings(db, [
+      {
+        id: 'gemini',
+        provider: 'gemini-native',
+        baseUrl: 'https://generativelanguage.googleapis.com',
+        model: 'gemini-flash-latest',
+        executionMode: 'sync',
+        apiKey: 'secret',
+      },
+    ], { extraction: 'gemini' })
+
+    await setLlmProviderProfileSettings(db, [
+      {
+        id: 'gemini',
+        name: 'Gemini cheaper',
+        provider: 'gemini-native',
+        baseUrl: 'https://generativelanguage.googleapis.com',
+        model: 'gemini-flash-next',
+        executionMode: 'sync',
+      },
+    ], { translation: 'gemini' })
+
+    expect(await getLlmProviderProfileSettings(db)).toEqual({
+      profiles: [{
+        id: 'gemini',
+        name: 'Gemini cheaper',
+        provider: 'gemini-native',
+        baseUrl: 'https://generativelanguage.googleapis.com',
+        model: 'gemini-flash-next',
+        executionMode: 'sync',
+        apiKey: 'secret',
+      }],
+      assignments: { translation: 'gemini' },
+    })
   })
 })
 

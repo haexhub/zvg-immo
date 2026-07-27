@@ -8,7 +8,7 @@
 
 import type { Auction, AuctionExtraction } from '~/types/auction'
 import { fetchLlmBatchResults, pollLlmBatch } from '../utils/extract/llm-batch'
-import { type LlmConfig } from '../utils/extract/llm'
+import { resolveLlmConfig, type LlmConfig } from '../utils/extract/llm'
 import { mergeLlmResult, type MergeInputFields } from '../utils/extract/merge-llm-result'
 import {
   applyExtractionToAuctions,
@@ -23,21 +23,18 @@ import {
   markLlmBatchJobResolved,
   type LlmBatchJob,
 } from '../utils/llm-batch-jobs'
+import { getPool } from '../utils/db'
+import { getLlmProviderOverride } from '../utils/app-settings'
 
 const DEFAULT_GEMINI_FREE_BATCH_POLL_INTERVAL_HOURS = 6
 
-function readLlmConfig(): LlmConfig | null {
+async function readLlmConfig(): Promise<LlmConfig | null> {
   const c = useRuntimeConfig().extractLlm as
     | { provider?: string; baseUrl?: string; apiKey?: string; model?: string }
     | undefined
-  if (!c?.baseUrl) return null
-  const provider = c.provider === 'claude-proxy' || c.provider === 'gemini-native' ? c.provider : 'openai-compatible'
-  return {
-    provider,
-    baseUrl: c.baseUrl,
-    apiKey: c.apiKey || undefined,
-    model: c.model || (provider === 'gemini-native' ? 'gemini-flash-latest' : 'claude-haiku-4-5'),
-  }
+  const db = getPool()
+  const override = db ? await getLlmProviderOverride(db, 'extraction').catch(() => null) : null
+  return resolveLlmConfig(override ?? c)
 }
 
 function parsePositiveNumber(value: unknown, fallback: number): number {
@@ -127,7 +124,7 @@ export async function runLlmBatchPoll(): Promise<{ checked: number; merged: numb
   const jobs = await listPendingLlmBatchJobs()
   if (jobs.length === 0) return { checked: 0, merged: 0 }
 
-  const llmConfig = readLlmConfig()
+  const llmConfig = await readLlmConfig()
   if (!llmConfig) {
     console.warn('[llm-batch-poll] pending jobs exist but no LLM provider is configured — skipping')
     return { checked: 0, merged: 0 }

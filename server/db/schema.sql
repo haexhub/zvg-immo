@@ -390,12 +390,11 @@ ALTER TABLE raw_document_sets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE raw_document_set_items ENABLE ROW LEVEL SECURITY;
 
 -- WP-8: i18n Baustein B (Content-Übersetzung). content_hash = sha256 über
--- {title, description, documentSummary} (raw-archive.ts's sha256Hex, siehe
--- server/utils/content-translation.ts) — derselbe Änderungs-Schlüssel wie im
--- G1-Archiv: unveränderter Inhalt -> Cache-Treffer, geänderter Inhalt -> neuer
--- Hash -> neue Übersetzung. Immutabel pro (content_hash, lang), keine
--- Invalidierung nötig. Kein RLS: öffentlich lesbarer, nicht nutzergebundener
--- Übersetzungs-Cache (wie auction_observations server-intern verwaltet).
+-- {title, description, documentSummary, documentSetHash, documentSetVersion}
+-- (raw-archive.ts's sha256Hex, siehe server/api/.../translation.post.ts):
+-- unveränderter Inhalt/Dokumentstand -> Cache-Treffer, geänderter Inhalt oder
+-- neue Dokumentversion -> neuer Hash -> neue Übersetzung. Immutabel pro
+-- (content_hash, lang), keine destructive Invalidierung nötig.
 CREATE TABLE IF NOT EXISTS content_translations (
   content_hash  text NOT NULL,
   lang          text NOT NULL,

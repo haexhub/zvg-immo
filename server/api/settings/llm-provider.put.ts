@@ -3,6 +3,7 @@
 // stored key unchanged, an explicit '' clears it — the GET route never
 // echoes the real value back, so the form can't "round-trip" a stale key.
 
+import type { H3Event } from 'h3'
 import { getPool } from '~/server/utils/db'
 import {
   LLM_EXECUTION_MODES,
@@ -11,10 +12,16 @@ import {
   setLlmProviderOverride,
   type LlmExecutionMode,
   type LlmProvider,
+  type LlmProviderScope,
 } from '~/server/utils/app-settings'
 import { supportsLlmProviderExecutionMode } from '~/server/utils/llm-provider-capabilities'
 
+function readScope(event: H3Event): LlmProviderScope {
+  return getQuery(event).scope === 'translation' ? 'translation' : 'extraction'
+}
+
 export default defineEventHandler(async (event) => {
+  const scope = readScope(event)
   const db = getPool()
   if (!db) {
     throw createError({ statusCode: 503, statusMessage: 'Postgres ist nicht konfiguriert.' })
@@ -36,13 +43,24 @@ export default defineEventHandler(async (event) => {
       : undefined
   const provider = body.provider as LlmProvider
   const incomingApiKey = typeof body.apiKey === 'string' ? body.apiKey : undefined
+  const baseUrl = body.baseUrl.trim()
   const current =
     incomingExecutionMode === undefined || incomingApiKey === undefined
-      ? await getLlmProviderOverride(db).catch(() => null)
+      ? await getLlmProviderOverride(db, scope).catch(() => null)
       : null
-  const effectiveExecutionMode = incomingExecutionMode ?? current?.executionMode ?? 'sync'
-  const effectiveApiKey = incomingApiKey ?? current?.apiKey ?? ''
-  if (!supportsLlmProviderExecutionMode(provider, effectiveExecutionMode, effectiveApiKey, body.baseUrl.trim())) {
+  const extractionFallback =
+    scope === 'translation' && incomingApiKey === undefined && !current
+      ? await getLlmProviderOverride(db, 'extraction').catch(() => null)
+      : null
+  const fallbackApiKey =
+    extractionFallback?.provider === provider && extractionFallback.baseUrl === baseUrl
+      ? extractionFallback.apiKey
+      : undefined
+  const effectiveExecutionMode = scope === 'translation'
+    ? 'sync'
+    : incomingExecutionMode ?? current?.executionMode ?? 'sync'
+  const effectiveApiKey = incomingApiKey ?? current?.apiKey ?? fallbackApiKey ?? ''
+  if (!supportsLlmProviderExecutionMode(provider, effectiveExecutionMode, effectiveApiKey, baseUrl)) {
     throw createError({
       statusCode: 400,
       statusMessage: 'batch: Dieser Provider unterstützt keinen Batch-Modus.',
@@ -51,11 +69,11 @@ export default defineEventHandler(async (event) => {
 
   const saved = await setLlmProviderOverride(db, {
     provider,
-    baseUrl: body.baseUrl.trim(),
+    baseUrl,
     model: body.model.trim(),
-    executionMode: incomingExecutionMode,
-    apiKey: incomingApiKey,
-  })
+    executionMode: scope === 'translation' ? 'sync' : incomingExecutionMode,
+    apiKey: incomingApiKey ?? fallbackApiKey,
+  }, scope)
 
   return {
     provider: saved.provider,

@@ -6,9 +6,11 @@
 // is absent, since a fresh install has no rows yet.
 
 import type { Pool } from 'pg'
+import { randomUUID } from 'node:crypto'
 import { supportsLlmProviderExecutionMode } from './llm-provider-capabilities'
 
 export type LlmMaxTokensKind = 'extraction' | 'summary' | 'translation'
+export type LlmProviderScope = 'extraction' | 'translation'
 
 export const DEFAULT_ENABLED_COUNTRIES = ['de', 'se'] as const
 const ENABLED_COUNTRIES_KEY = 'enabled_countries'
@@ -124,7 +126,32 @@ export interface LlmProviderOverride {
   apiKey: string
 }
 
+export interface LlmProviderProfile extends LlmProviderOverride {
+  id: string
+  name: string
+}
+
+export interface LlmProviderProfileInput {
+  id?: string
+  name?: string
+  provider: LlmProvider
+  baseUrl: string
+  model: string
+  executionMode?: LlmExecutionMode
+  /** undefined preserves an existing key for the same profile id; '' clears it. */
+  apiKey?: string
+}
+
+export type LlmProviderAssignments = Partial<Record<LlmProviderScope, string>>
+
 const LLM_PROVIDER_OVERRIDE_KEY = 'llm_provider_override'
+const LLM_TRANSLATION_PROVIDER_OVERRIDE_KEY = 'llm_translation_provider_override'
+const LLM_PROVIDER_PROFILES_KEY = 'llm_provider_profiles'
+const LLM_PROVIDER_ASSIGNMENTS_KEY = 'llm_provider_assignments'
+
+function providerOverrideKey(scope: LlmProviderScope): string {
+  return scope === 'translation' ? LLM_TRANSLATION_PROVIDER_OVERRIDE_KEY : LLM_PROVIDER_OVERRIDE_KEY
+}
 
 function coerceProviderOverride(value: unknown): LlmProviderOverride | null {
   if (!value || typeof value !== 'object') return null
@@ -147,10 +174,145 @@ function coerceProviderOverride(value: unknown): LlmProviderOverride | null {
     : null
 }
 
-export async function getLlmProviderOverride(db: Pool): Promise<LlmProviderOverride | null> {
+function isValidProfileId(id: string): boolean {
+  return /^[A-Za-z0-9_-]{1,80}$/.test(id)
+}
+
+function coerceProviderProfile(value: unknown): LlmProviderProfile | null {
+  if (!value || typeof value !== 'object') return null
+  const v = value as Record<string, unknown>
+  if (typeof v.id !== 'string' || !isValidProfileId(v.id)) return null
+  const override = coerceProviderOverride(v)
+  if (!override) return null
+  return {
+    ...override,
+    id: v.id,
+    name: typeof v.name === 'string' && v.name.trim() ? v.name.trim().slice(0, 80) : override.provider,
+  }
+}
+
+function coerceProviderProfiles(value: unknown): LlmProviderProfile[] {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
+  const profiles: LlmProviderProfile[] = []
+  for (const raw of value) {
+    const profile = coerceProviderProfile(raw)
+    if (!profile || seen.has(profile.id)) continue
+    seen.add(profile.id)
+    profiles.push(profile)
+  }
+  return profiles
+}
+
+function coerceAssignments(value: unknown, profileIds: ReadonlySet<string>): LlmProviderAssignments {
+  if (!value || typeof value !== 'object') return {}
+  const v = value as Record<string, unknown>
+  const assignments: LlmProviderAssignments = {}
+  for (const scope of ['extraction', 'translation'] as const) {
+    if (typeof v[scope] === 'string' && profileIds.has(v[scope])) assignments[scope] = v[scope]
+  }
+  return assignments
+}
+
+export async function getLlmProviderProfiles(db: Pool): Promise<LlmProviderProfile[]> {
   const { rows } = await db.query<{ value: unknown }>(
     'SELECT value FROM app_settings WHERE key = $1',
-    [LLM_PROVIDER_OVERRIDE_KEY],
+    [LLM_PROVIDER_PROFILES_KEY],
+  )
+  return coerceProviderProfiles(rows[0]?.value)
+}
+
+export async function getLlmProviderAssignments(db: Pool): Promise<LlmProviderAssignments> {
+  const profiles = await getLlmProviderProfiles(db)
+  const profileIds = new Set(profiles.map((profile) => profile.id))
+  const { rows } = await db.query<{ value: unknown }>(
+    'SELECT value FROM app_settings WHERE key = $1',
+    [LLM_PROVIDER_ASSIGNMENTS_KEY],
+  )
+  return coerceAssignments(rows[0]?.value, profileIds)
+}
+
+export async function getLlmProviderProfileSettings(db: Pool): Promise<{
+  profiles: LlmProviderProfile[]
+  assignments: LlmProviderAssignments
+}> {
+  const profiles = await getLlmProviderProfiles(db)
+  const profileIds = new Set(profiles.map((profile) => profile.id))
+  const { rows } = await db.query<{ value: unknown }>(
+    'SELECT value FROM app_settings WHERE key = $1',
+    [LLM_PROVIDER_ASSIGNMENTS_KEY],
+  )
+  return {
+    profiles,
+    assignments: coerceAssignments(rows[0]?.value, profileIds),
+  }
+}
+
+export async function setLlmProviderProfileSettings(
+  db: Pool,
+  inputProfiles: readonly LlmProviderProfileInput[],
+  inputAssignments: LlmProviderAssignments,
+): Promise<{ profiles: LlmProviderProfile[]; assignments: LlmProviderAssignments }> {
+  const existing = new Map((await getLlmProviderProfiles(db)).map((profile) => [profile.id, profile]))
+  const profiles: LlmProviderProfile[] = []
+  const seen = new Set<string>()
+  for (const input of inputProfiles) {
+    const id = input.id && isValidProfileId(input.id) ? input.id : randomUUID()
+    if (seen.has(id)) continue
+    const current = existing.get(id)
+    const executionMode = input.executionMode ?? current?.executionMode ?? DEFAULT_LLM_EXECUTION_MODE
+    const apiKey = input.apiKey ?? current?.apiKey ?? ''
+    if (!supportsLlmProviderExecutionMode(input.provider, executionMode, apiKey, input.baseUrl)) {
+      throw new Error('unsupported provider/executionMode combination')
+    }
+    profiles.push({
+      id,
+      name: (input.name?.trim() || current?.name || input.provider).slice(0, 80),
+      provider: input.provider,
+      baseUrl: input.baseUrl,
+      model: input.model,
+      executionMode,
+      apiKey,
+    })
+    seen.add(id)
+  }
+  const profileIds = new Set(profiles.map((profile) => profile.id))
+  const assignments = coerceAssignments(inputAssignments, profileIds)
+  await db.query(
+    `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, now())
+     ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()`,
+    [LLM_PROVIDER_PROFILES_KEY, JSON.stringify(profiles)],
+  )
+  await db.query(
+    `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, now())
+     ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()`,
+    [LLM_PROVIDER_ASSIGNMENTS_KEY, JSON.stringify(assignments)],
+  )
+  return { profiles, assignments }
+}
+
+export async function getLlmProviderOverride(
+  db: Pool,
+  scope: LlmProviderScope = 'extraction',
+): Promise<LlmProviderOverride | null> {
+  const { profiles, assignments } = await getLlmProviderProfileSettings(db).catch(() => ({
+    profiles: [] as LlmProviderProfile[],
+    assignments: {} as LlmProviderAssignments,
+  }))
+  const assigned = assignments[scope]
+  const profile = assigned ? profiles.find((candidate) => candidate.id === assigned) : null
+  if (profile) {
+    return {
+      provider: profile.provider,
+      baseUrl: profile.baseUrl,
+      model: profile.model,
+      executionMode: scope === 'translation' ? 'sync' : profile.executionMode,
+      apiKey: profile.apiKey,
+    }
+  }
+  const { rows } = await db.query<{ value: unknown }>(
+    'SELECT value FROM app_settings WHERE key = $1',
+    [providerOverrideKey(scope)],
   )
   return rows[0] ? coerceProviderOverride(rows[0].value) : null
 }
@@ -163,9 +325,10 @@ export async function getLlmProviderOverride(db: Pool): Promise<LlmProviderOverr
 export async function setLlmProviderOverride(
   db: Pool,
   value: { provider: LlmProvider; baseUrl: string; model: string; executionMode?: LlmExecutionMode; apiKey?: string },
+  scope: LlmProviderScope = 'extraction',
 ): Promise<LlmProviderOverride> {
   const current = value.executionMode == null || value.apiKey == null
-    ? await getLlmProviderOverride(db).catch(() => null)
+    ? await getLlmProviderOverride(db, scope).catch(() => null)
     : null
   const effectiveExecutionMode = value.executionMode ?? current?.executionMode ?? DEFAULT_LLM_EXECUTION_MODE
   const effectiveApiKey = value.apiKey ?? current?.apiKey ?? ''
@@ -186,7 +349,7 @@ export async function setLlmProviderOverride(
        updated_at = now()
      RETURNING value`,
     [
-      LLM_PROVIDER_OVERRIDE_KEY,
+      providerOverrideKey(scope),
       value.provider,
       value.baseUrl,
       value.model,
@@ -207,8 +370,11 @@ export async function readLlmExecutionMode(): Promise<LlmExecutionMode> {
   return override?.executionMode ?? DEFAULT_LLM_EXECUTION_MODE
 }
 
-export async function clearLlmProviderOverride(db: Pool): Promise<void> {
-  await db.query('DELETE FROM app_settings WHERE key = $1', [LLM_PROVIDER_OVERRIDE_KEY])
+export async function clearLlmProviderOverride(
+  db: Pool,
+  scope: LlmProviderScope = 'extraction',
+): Promise<void> {
+  await db.query('DELETE FROM app_settings WHERE key = $1', [providerOverrideKey(scope)])
 }
 
 // DB-backed default for whether the search dashboard hides rules-only
