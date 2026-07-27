@@ -7,7 +7,7 @@ import {
   type BlobContentType,
   type DocumentIdentity,
 } from '../raw-archive'
-import { downloadBlob, findLatestCapture } from '../storage-download'
+import { downloadBlob, findLatestCapture, readDocumentSetItems } from '../storage-download'
 import { detectImageExt, type ImageExt } from './image-bytes'
 import { docxBufferToText } from './docx-text'
 import { buildDocumentLlmParts } from './pdf-documents'
@@ -30,6 +30,11 @@ interface PreparedAttachmentDocument {
 
 export interface PreparedLlmDocuments {
   input: Pick<LlmInput, 'documentText' | 'documentImages' | 'pdfText' | 'pdfPageImages' | 'pdfBytes' | 'pdfDocuments'>
+  documentSetItems: ArchivedDocumentSetItem[]
+  documentSetComplete: boolean
+}
+
+export interface ArchivedLiveDocuments {
   documentSetItems: ArchivedDocumentSetItem[]
   documentSetComplete: boolean
 }
@@ -228,9 +233,8 @@ function textForPrepared(format: LlmAttachmentFormat, bytes: Buffer): string | n
 
 function unsupportedNotice(doc: PreparedAttachmentDocument): string | null {
   if (doc.format !== 'unsupported') return null
-  const archiveState = doc.contentHash ? 'geholt und archiviert' : 'geholt'
   return `=== ${doc.label} (nicht dekodierbarer Anhang) ===\n` +
-    `Der Anhang wurde ${archiveState}, konnte aber nicht als PDF, DOCX, HTML/Text oder Bild gelesen werden. Dateiname: ${doc.attachment.filename || 'unbekannt'}.`
+    `Der archivierte Anhang konnte nicht als PDF, DOCX, HTML/Text oder Bild gelesen werden. Dateiname: ${doc.attachment.filename || 'unbekannt'}.`
 }
 
 function combineDocumentText(documents: readonly PreparedAttachmentDocument[], extraText: string[] = []): string | null {
@@ -310,8 +314,7 @@ export async function prepareLiveLlmDocuments(
   attachments: readonly Attachment[],
   identity: DocumentIdentity,
   capturedAt: string,
-  opts: { nativeDocuments: boolean },
-): Promise<PreparedLlmDocuments> {
+): Promise<ArchivedLiveDocuments> {
   const candidates = pickAllLlmDocumentAttachments(attachments)
   const prepared = (
     await Promise.all(candidates.map(async (attachment, ordinal) => {
@@ -320,11 +323,10 @@ export async function prepareLiveLlmDocuments(
       return prepareDocument(attachment, ordinal, bytes, {
         identity,
         capturedAt,
-        nativeDocuments: opts.nativeDocuments,
+        nativeDocuments: false,
       })
     }))
   ).filter((doc): doc is PreparedAttachmentDocument => doc != null)
-  const input = await buildPreparedInput(prepared, opts)
   const documentSetItems = prepared
     .filter((doc): doc is PreparedAttachmentDocument & { contentHash: string } => !!doc.contentHash)
     .map((doc) => ({
@@ -338,30 +340,48 @@ export async function prepareLiveLlmDocuments(
       contentType: doc.contentType,
     }))
   return {
-    input,
     documentSetItems,
     documentSetComplete: documentSetItems.length === candidates.length,
   }
 }
 
-export async function prepareArchivedLlmDocuments(
-  auction: Auction,
-  opts: { nativeDocuments: boolean },
+function attachmentFromDocumentSetItem(item: ArchivedDocumentSetItem): Attachment {
+  return {
+    kind: 'other',
+    label: item.label ?? item.filename ?? item.fileId ?? item.sourceUrl,
+    filename: item.filename ?? '',
+    sizeBytes: null,
+    fileId: item.fileId ?? '',
+    proxyUrl: item.sourceUrl,
+  }
+}
+
+async function prepareArchivedDocumentSetItems(
+  items: readonly ArchivedDocumentSetItem[],
+  opts: { nativeDocuments: boolean; extraText?: string[] } = { nativeDocuments: false },
 ): Promise<PreparedLlmDocuments> {
-  const candidates = pickAllLlmDocumentAttachments(auction.attachments)
   const prepared = (
-    await Promise.all(candidates.map(async (attachment, ordinal) => {
-      const capture = await findLatestCapture('document', auction.platform, auction.externalId, attachment.proxyUrl)
-      if (!capture) return null
-      const bytes = await downloadBlob(capture.contentHash)
+    await Promise.all(items.map(async (item) => {
+      const bytes = await downloadBlob(item.contentHash)
       if (!bytes) return null
-      return prepareDocument(attachment, ordinal, bytes, {
+      return prepareDocument(attachmentFromDocumentSetItem(item), item.ordinal, bytes, {
         nativeDocuments: opts.nativeDocuments,
-        contentHash: capture.contentHash,
+        contentHash: item.contentHash,
       })
     }))
   ).filter((doc): doc is PreparedAttachmentDocument => doc != null)
 
+  return {
+    input: await buildPreparedInput(prepared, opts),
+    documentSetItems: [...items],
+    documentSetComplete: prepared.length === items.length,
+  }
+}
+
+export async function prepareArchivedLlmDocuments(
+  auction: Auction,
+  opts: { nativeDocuments: boolean; documentSetHash?: string | null; documentSetVersion?: number | null },
+): Promise<PreparedLlmDocuments> {
   const extraText: string[] = []
   const detailCapture = await findLatestCapture('detail_html', auction.platform, auction.externalId)
   if (detailCapture) {
@@ -372,20 +392,21 @@ export async function prepareArchivedLlmDocuments(
     }
   }
 
-  return {
-    input: await buildPreparedInput(prepared, { ...opts, extraText }),
-    documentSetItems: prepared
-      .filter((doc): doc is PreparedAttachmentDocument & { contentHash: string } => !!doc.contentHash)
-      .map((doc) => ({
-        ordinal: doc.ordinal,
-        kind: 'document' as const,
-        label: doc.attachment.label || null,
-        filename: doc.attachment.filename || null,
-        fileId: doc.attachment.fileId || null,
-        sourceUrl: doc.attachment.proxyUrl,
-        contentHash: doc.contentHash,
-        contentType: doc.contentType,
-      })),
-    documentSetComplete: prepared.length === candidates.length,
+  const documentSetItems = await readDocumentSetItems(auction.platform, auction.externalId, {
+    setHash: opts.documentSetHash,
+    version: opts.documentSetVersion,
+  })
+  return prepareArchivedDocumentSetItems(documentSetItems ?? [], { ...opts, extraText })
+}
+
+export async function readArchivedAuction(platform: string, externalId: string): Promise<Auction | null> {
+  const capture = await findLatestCapture('auction', platform, externalId)
+  if (!capture) return null
+  const bytes = await downloadBlob(capture.contentHash)
+  if (!bytes) return null
+  try {
+    return JSON.parse(bytes.toString('utf8')) as Auction
+  } catch {
+    return null
   }
 }

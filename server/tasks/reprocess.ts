@@ -179,7 +179,11 @@ async function buildReprocessInput(
     // PDFs. DOCX/HTML/text/image attachments are still normalized by
     // prepareArchivedLlmDocuments so every archived attachment can contribute.
     const usingNativeDoc = opts.nativeDocuments ?? llmConfig.provider === 'gemini-native'
-    const documentParts = await prepareArchivedLlmDocuments(auction, { nativeDocuments: usingNativeDoc })
+    const documentParts = await prepareArchivedLlmDocuments(auction, {
+      nativeDocuments: usingNativeDoc,
+      documentSetHash: priorEntry?.documentSetHash,
+      documentSetVersion: priorEntry?.documentSetVersion,
+    })
     input = {
       title: auction.title,
       description: auction.description,

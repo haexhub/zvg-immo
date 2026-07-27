@@ -51,7 +51,11 @@ import {
 import { mergeLlmResult } from '~/server/utils/extract/merge-llm-result'
 import { downloadNativeImages } from '~/server/utils/extract/native-images'
 import { extractDocumentPhotos } from '~/server/utils/extract/document-images'
-import { prepareLiveLlmDocuments } from '~/server/utils/extract/llm-documents'
+import {
+  prepareArchivedLlmDocuments,
+  prepareLiveLlmDocuments,
+  readArchivedAuction,
+} from '~/server/utils/extract/llm-documents'
 import {
   applyExtractionToAuctions,
   type ExtractionCache,
@@ -407,7 +411,7 @@ export async function runEnrich(opts: EnrichOptions = {}) {
           ? supportsNativeBatchDocuments(llmConfig)
           : llmConfig?.provider === 'gemini-native'
         const preparedDocuments = extractionMissing || documentSetCheckDue
-          ? await prepareLiveLlmDocuments(a.attachments, documentIdentity, at, { nativeDocuments: usingNativeDoc })
+          ? await prepareLiveLlmDocuments(a.attachments, documentIdentity, at)
           : null
         if ((extractionMissing || documentSetCheckDue) && preparedDocuments?.documentSetComplete) {
           currentDocumentSet = await archiveDocumentSet(
@@ -435,17 +439,31 @@ export async function runEnrich(opts: EnrichOptions = {}) {
         // Only a confirmed document-set change invalidates prior document-derived facts;
         // an unknown or unavailable archive must not wipe cached extraction fields.
         const effectivePriorEntry = documentSetChanged ? undefined : priorEntry
-        const rules = extractByRules({ title: a.title, description: a.description })
+        const archivedAuction = await readArchivedAuction(a.platform, a.externalId)
+        if (!archivedAuction) {
+          console.warn(`[enrich] archived auction missing for ${a.platform}:${a.externalId}; LLM analysis will wait for the raw archive`)
+        }
+        const analysisAuction = archivedAuction ?? a
+        const archivedDocuments =
+          archivedAuction && currentDocumentSet
+            ? await prepareArchivedLlmDocuments(archivedAuction, {
+                nativeDocuments: usingNativeDoc,
+                documentSetHash: currentDocumentSet.setHash,
+                documentSetVersion: currentDocumentSet.version,
+              })
+            : null
+        const archivedLlmReady = !!archivedAuction && !!archivedDocuments?.documentSetComplete
+        const rules = extractByRules({ title: analysisAuction.title, description: analysisAuction.description })
         // Structured values straight from the source platform beat anything
         // parsed out of free text — they are the platform's own data, not a
         // regex guess.
         const fields = {
           propertyType: rules.propertyType,
-          landAreaSqm: a.sourceLandAreaSqm ?? rules.landAreaSqm,
-          livingAreaSqm: a.sourceLivingAreaSqm ?? rules.livingAreaSqm,
-          rooms: a.sourceRooms ?? rules.rooms,
+          landAreaSqm: analysisAuction.sourceLandAreaSqm ?? rules.landAreaSqm,
+          livingAreaSqm: analysisAuction.sourceLivingAreaSqm ?? rules.livingAreaSqm,
+          rooms: analysisAuction.sourceRooms ?? rules.rooms,
           units: rules.units,
-          securityDeposit: a.sourceSecurityDeposit ?? rules.securityDeposit,
+          securityDeposit: analysisAuction.sourceSecurityDeposit ?? rules.securityDeposit,
           biddingNotes: undefined as string | null | undefined,
           condition: effectivePriorEntry?.condition,
           features: effectivePriorEntry?.features,
@@ -597,7 +615,7 @@ export async function runEnrich(opts: EnrichOptions = {}) {
         // so it also picks up condition/features/yearBuilt/insights/photo
         // curation — the earlier "confident → skip LLM entirely" fast path
         // left those fields unset until a delayed backfill run.
-        if (llmConfig && llmCalls < maxLlmPerRun && platformLlmCalls < llmCapPerPlatform) {
+        if (llmConfig && archivedLlmReady && llmCalls < maxLlmPerRun && platformLlmCalls < llmCapPerPlatform) {
           llmCalls++
           llmCallsByPlatform.set(a.platform, platformLlmCalls + 1)
           // Offer a capped subset of a freshly downloaded/extracted photo set
@@ -632,9 +650,9 @@ export async function runEnrich(opts: EnrichOptions = {}) {
             batchItems.push({
               key,
               input: {
-                title: a.title,
-                description: a.description,
-                ...(preparedDocuments?.input ?? {}),
+                title: analysisAuction.title,
+                description: analysisAuction.description,
+                ...(archivedDocuments?.input ?? {}),
                 candidateImages,
               },
             })
@@ -645,7 +663,12 @@ export async function runEnrich(opts: EnrichOptions = {}) {
             cacheable = mergedConfident || detailOk || photoPipelineRan
           } else {
             const llm = await extractByLlm(
-              { title: a.title, description: a.description, ...(preparedDocuments?.input ?? {}), candidateImages },
+              {
+                title: analysisAuction.title,
+                description: analysisAuction.description,
+                ...(archivedDocuments?.input ?? {}),
+                candidateImages,
+              },
               llmConfig,
             )
             // Curation only applies to the photos actually offered this call
