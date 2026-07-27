@@ -14,6 +14,8 @@ import {
   type LlmBatchJobStatus,
 } from '~/server/utils/llm-batch-jobs'
 import { readExtractionCache } from '~/server/utils/extraction-cache'
+import { isGeminiBatchTierPaid } from '~/server/utils/extract/gemini-batch'
+import { getTaskRunStatus, type TaskRunStatus } from '~/server/utils/task-runs'
 
 export interface LlmBatchJobOverviewItem {
   jobName: string
@@ -48,6 +50,7 @@ export interface LlmBatchJobsOverview {
   // accepted, so /settings can show why batch mode currently isn't running
   // instead of a silently stuck backlog.
   capabilities: Record<string, LlmBatchCapability>
+  enrichStatus: TaskRunStatus
 }
 
 const MAX_KEYS_PER_GROUP = 200
@@ -79,11 +82,25 @@ function hasMissingLlmFields(entry: AuctionExtraction): boolean {
 }
 
 export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
-  const [jobs, recentJobs, capabilities] = await Promise.all([
+  const [jobs, recentJobs, capabilities, enrichStatus] = await Promise.all([
     listPendingLlmBatchJobs(),
     listRecentLlmBatchJobs(20),
     getAllLlmBatchCapabilities(),
+    getTaskRunStatus('enrich'),
   ])
+  // supportsLlmBatch() gates gemini-native on isGeminiBatchTierPaid() (see
+  // llm-batch.ts), so on the free tier a real batch submit never happens and
+  // recordLlmBatchCapability never fires — capabilities['gemini-native'] would
+  // stay empty forever, silently hiding why batch mode isn't running. Fill
+  // that gap from the static config instead of a real attempt.
+  if (!capabilities['gemini-native'] && !isGeminiBatchTierPaid()) {
+    capabilities['gemini-native'] = {
+      ok: false,
+      message: 'Google erlaubt Batch-Anfragen erst ab Bezahl-Tarif — aktuell ist Free-Tier konfiguriert (geminiBatchTier).',
+      checkedAt: new Date().toISOString(),
+      source: 'config',
+    }
+  }
   const cache = await readExtractionCache()
   const keysByJob = new Map<string, string[]>()
   const pendingJobNames = new Set(jobs.map((job) => job.jobName))
@@ -159,5 +176,6 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
     jobs: overviewJobs,
     recentJobs: recentJobs.map(mapJob),
     capabilities,
+    enrichStatus,
   }
 })
