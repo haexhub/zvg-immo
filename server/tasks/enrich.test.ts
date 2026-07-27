@@ -133,7 +133,7 @@ describe('runEnrich photo backfill (WP-1)', () => {
       { file: 'foto1.jpg', category: 'sonstiges', caption: null, isPropertyPhoto: true },
     ])
     expect(written['zvg-portal:14409']?.photosCheckedAt).toBeTruthy()
-    expect(written['zvg-portal:14409']?.photoPipelineVersion).toBe(3)
+    expect(written['zvg-portal:14409']?.photoPipelineVersion).toBe(2)
   })
 
   it('does not re-attempt the photo pipeline once photosCheckedAt is set for the current pipeline version', async () => {
@@ -152,7 +152,7 @@ describe('runEnrich photo backfill (WP-1)', () => {
         confidence: 'low',
         photos: undefined,
         photosCheckedAt: '2026-07-20T00:00:00.000Z',
-        photoPipelineVersion: 3,
+        photoPipelineVersion: 2,
         at: '2026-07-01T00:00:00.000Z',
       },
     }
@@ -161,6 +161,36 @@ describe('runEnrich photo backfill (WP-1)', () => {
     await runEnrich()
 
     expect(downloadNativeImages).not.toHaveBeenCalled()
+  })
+
+  it('does not re-attempt unchanged native-photo entries from other platforms just because Kronofogden moved to version 3', async () => {
+    const auction = makeAuction({
+      photoUrls: ['https://zvg-portal.de/foto1.jpg'],
+    })
+    const { crawlAll } = await import('../crawlers/registry')
+    vi.mocked(crawlAll).mockResolvedValue(mockCrawl([auction]))
+
+    const cache: ExtractionCache = {
+      'zvg-portal:14409': {
+        propertyType: 'einfamilienhaus',
+        landAreaSqm: null,
+        livingAreaSqm: 100,
+        rooms: null,
+        units: null,
+        source: 'llm',
+        confidence: 'high',
+        photos: [{ file: 'foto1.jpg', category: 'sonstiges', caption: null, isPropertyPhoto: true }],
+        photosCheckedAt: '2026-07-20T00:00:00.000Z',
+        photoPipelineVersion: 2,
+        at: '2026-07-01T00:00:00.000Z',
+      },
+    }
+    vi.mocked(readExtractionCache).mockResolvedValue(cache)
+
+    await runEnrich()
+
+    expect(downloadNativeImages).not.toHaveBeenCalled()
+    expect(writeExtractionCache).not.toHaveBeenCalled()
   })
 
   it('re-attempts old confirmed-empty photo checks once when the pipeline version changes', async () => {
@@ -189,7 +219,7 @@ describe('runEnrich photo backfill (WP-1)', () => {
 
     expect(downloadNativeImages).toHaveBeenCalledTimes(1)
     const written = vi.mocked(writeExtractionCache).mock.calls[0]?.[0] as ExtractionCache
-    expect(written['zvg-portal:14409']?.photoPipelineVersion).toBe(3)
+    expect(written['zvg-portal:14409']?.photoPipelineVersion).toBe(2)
   })
 
   it('bumps photoFailures and leaves photosCheckedAt unset when the pipeline throws', async () => {
@@ -395,11 +425,12 @@ describe('runEnrich photo backfill (WP-1)', () => {
     expect(written['zvg-portal:14409']?.photos).toEqual([
       { file: 'bov-photo.jpg', category: 'sonstiges', caption: null, isPropertyPhoto: true },
     ])
-    expect(written['zvg-portal:14409']?.photoPipelineVersion).toBe(3)
+    expect(written['zvg-portal:14409']?.photoPipelineVersion).toBe(2)
   })
 
   it('merges newly exposed native gallery photos into existing document photos', async () => {
     const auction = makeAuction({
+      platform: 'se-kronofogden',
       photoUrls: ['https://auktionstorget.kronofogden.se/images/200.abc/1/Bild%201.jpg'],
       attachments: [
         {
@@ -416,7 +447,7 @@ describe('runEnrich photo backfill (WP-1)', () => {
     vi.mocked(crawlAll).mockResolvedValue(mockCrawl([auction]))
 
     const cache: ExtractionCache = {
-      'zvg-portal:14409': {
+      'se-kronofogden:14409': {
         propertyType: null,
         landAreaSqm: null,
         livingAreaSqm: null,
@@ -438,10 +469,10 @@ describe('runEnrich photo backfill (WP-1)', () => {
     expect(downloadNativeImages).toHaveBeenCalledTimes(1)
     expect(extractDocumentPhotos).not.toHaveBeenCalled()
     const written = vi.mocked(writeExtractionCache).mock.calls[0]?.[0] as ExtractionCache
-    expect(written['zvg-portal:14409']?.photos).toEqual([
+    expect(written['se-kronofogden:14409']?.photos).toEqual([
       { file: 'pdf-photo.jpg', category: 'aussen', caption: 'PDF', isPropertyPhoto: true },
       { file: 'native-photo.jpg', category: 'sonstiges', caption: null, isPropertyPhoto: true },
     ])
-    expect(written['zvg-portal:14409']?.photoPipelineVersion).toBe(3)
+    expect(written['se-kronofogden:14409']?.photoPipelineVersion).toBe(3)
   })
 })

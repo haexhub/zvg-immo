@@ -91,7 +91,8 @@ const MAX_LLM_FAILURES = 3
 // no usable photos stops retrying immediately (photosCheckedAt gets set),
 // this bound only guards against persistent errors.
 const MAX_PHOTO_FAILURES = 3
-const PHOTO_PIPELINE_VERSION = 3
+const PHOTO_PIPELINE_VERSION = 2
+const KRONOFOGDEN_GALLERY_PHOTO_PIPELINE_VERSION = 3
 // Cap on candidate photos sent to the LLM for curation per document — a
 // Gutachten with dozens of embedded rasters would otherwise blow the token
 // budget for one extraction call.
@@ -242,6 +243,10 @@ export async function runEnrich(opts: EnrichOptions = {}) {
         .map((att) => att.proxyUrl),
       ...(a.photoUrls ?? []),
     ]
+    const targetPhotoPipelineVersion = (a: Auction): number =>
+      a.platform === 'se-kronofogden' && (a.photoUrls?.length ?? 0) > 0
+        ? KRONOFOGDEN_GALLERY_PHOTO_PIPELINE_VERSION
+        : PHOTO_PIPELINE_VERSION
     // A prior attempt may never have run the actual photo pipeline (the
     // `if (priorEntry)` reuse branch below only carries `priorEntry.photos`
     // forward) or may have thrown before completing. `photosCheckedAt` unset
@@ -256,8 +261,9 @@ export async function runEnrich(opts: EnrichOptions = {}) {
     const needsPhotoBackfill = (a: Auction): boolean => {
       const hit = cache[cacheKey(a.platform, a.externalId)]
       const photos = hit?.photos?.length ?? 0
+      const targetVersion = targetPhotoPipelineVersion(a)
       const pipelineDue =
-        hit?.photosCheckedAt == null || (hit.photoPipelineVersion ?? 1) < PHOTO_PIPELINE_VERSION
+        hit?.photosCheckedAt == null || (hit.photoPipelineVersion ?? 1) < targetVersion
       return (
         hit != null &&
         pipelineDue &&
@@ -543,7 +549,7 @@ export async function runEnrich(opts: EnrichOptions = {}) {
             // listing/document stops being retried from here on).
             photosCheckedAt = at
             photoFailures = 0
-            photoPipelineVersion = PHOTO_PIPELINE_VERSION
+            photoPipelineVersion = targetPhotoPipelineVersion(a)
           } catch (err) {
             photoFailures++
             console.warn(
