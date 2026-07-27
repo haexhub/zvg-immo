@@ -30,7 +30,148 @@ import {
 } from './llm'
 import { DEFAULT_MODEL, parseGeminiExtractionResponse, toGeminiParts } from './providers/gemini-native'
 import { toGeminiSchema } from './providers/gemini-schema'
-import { insertLlmBatchJob } from '../llm-batch-jobs'
+import {
+  insertLlmBatchJob,
+  readGeminiBatchQuotaUsage,
+  recordGeminiBatchQuotaUsage,
+  setGeminiBatchQuotaBackoff,
+  type GeminiBatchQuotaUsage,
+  withGeminiBatchQuotaLock,
+} from '../llm-batch-jobs'
+
+interface GeminiBatchQuotaPolicy {
+  tier: 'free' | 'paid'
+  maxJobsPerDay: number | null
+  maxItemsPerBatch: number
+  maxEstimatedTokensPerBatch: number | null
+}
+
+export interface GeminiBatchSubmitResult {
+  jobName: string
+  submitted: Array<{ key: string; jobName: string }>
+  retryItems: Array<{ key: string; input: LlmInput }>
+}
+
+const DEFAULT_FREE_BATCH_MAX_JOBS_PER_DAY = 1
+const DEFAULT_FREE_BATCH_MAX_ITEMS = 5
+const DEFAULT_FREE_BATCH_MAX_ESTIMATED_TOKENS = 100_000
+const DEFAULT_PAID_BATCH_MAX_ITEMS = 300
+const MIN_BATCH_ITEMS = 1
+
+function todayUtc(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function nextUtcDayIso(): string {
+  const now = new Date()
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)).toISOString()
+}
+
+function parsePositiveInt(value: unknown, fallback: number): number {
+  const raw = typeof value === 'string' && value.trim() ? Number(value) : value
+  return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? Math.round(raw) : fallback
+}
+
+function parseOptionalPositiveInt(value: unknown, fallback: number | null): number | null {
+  if (value === '' || value == null) return fallback
+  const raw = typeof value === 'string' ? Number(value) : value
+  return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? Math.round(raw) : fallback
+}
+
+function readGeminiBatchQuotaPolicy(): GeminiBatchQuotaPolicy {
+  const extractLlm =
+    typeof useRuntimeConfig === 'function'
+      ? (useRuntimeConfig().extractLlm as Record<string, unknown> | undefined)
+      : undefined
+  const tier = extractLlm?.geminiBatchTier === 'paid' ? 'paid' : 'free'
+  if (tier === 'paid') {
+    return {
+      tier,
+      maxJobsPerDay: null,
+      maxItemsPerBatch: Math.max(
+        MIN_BATCH_ITEMS,
+        parsePositiveInt(extractLlm?.geminiPaidBatchMaxItems, DEFAULT_PAID_BATCH_MAX_ITEMS),
+      ),
+      maxEstimatedTokensPerBatch: null,
+    }
+  }
+  return {
+    tier,
+    maxJobsPerDay: Math.max(
+      1,
+      parsePositiveInt(extractLlm?.geminiFreeBatchMaxJobsPerDay, DEFAULT_FREE_BATCH_MAX_JOBS_PER_DAY),
+    ),
+    maxItemsPerBatch: Math.max(
+      MIN_BATCH_ITEMS,
+      parsePositiveInt(extractLlm?.geminiFreeBatchMaxItems, DEFAULT_FREE_BATCH_MAX_ITEMS),
+    ),
+    maxEstimatedTokensPerBatch: parseOptionalPositiveInt(
+      extractLlm?.geminiFreeBatchMaxEstimatedTokens,
+      DEFAULT_FREE_BATCH_MAX_ESTIMATED_TOKENS,
+    ),
+  }
+}
+
+function estimateTokens(json: string): number {
+  // Conservative cheap estimate for deciding batch size before upload. Exact
+  // CountTokens would itself add requests; base64/PDF-heavy payloads are the
+  // reason this guard exists, so we bias toward smaller free-tier batches.
+  return Math.ceil(Buffer.byteLength(json, 'utf8') / 4)
+}
+
+function backoffActive(usage: GeminiBatchQuotaUsage): boolean {
+  if (!usage.backoffUntil) return false
+  const until = Date.parse(usage.backoffUntil)
+  return Number.isFinite(until) && until > Date.now()
+}
+
+function isGeminiQuotaError(err: unknown): boolean {
+  const status = (err as { status?: unknown; statusCode?: unknown; response?: { status?: unknown } })?.status
+  const statusCode =
+    typeof status === 'number'
+      ? status
+      : (err as { statusCode?: unknown; response?: { status?: unknown } })?.statusCode
+  const responseStatus = (err as { response?: { status?: unknown } })?.response?.status
+  if (statusCode === 429 || responseStatus === 429) return true
+  const message = err instanceof Error ? err.message : String(err)
+  return /quota|rate.?limit|resource_exhausted|too many requests/i.test(message)
+}
+
+function selectLineItemsForQuota(
+  lineItems: Array<{ item: { key: string; input: LlmInput }; line: string }>,
+  policy: GeminiBatchQuotaPolicy,
+): {
+  selected: Array<{ item: { key: string; input: LlmInput }; line: string; estimatedTokens: number }>
+  retryItems: Array<{ key: string; input: LlmInput }>
+  estimatedTokens: number
+} {
+  const selected: Array<{ item: { key: string; input: LlmInput }; line: string; estimatedTokens: number }> = []
+  const retryItems: Array<{ key: string; input: LlmInput }> = []
+  let totalEstimatedTokens = 0
+  for (const entry of lineItems) {
+    const itemEstimatedTokens = estimateTokens(entry.line)
+    const itemLimitExceeded =
+      policy.maxEstimatedTokensPerBatch != null && itemEstimatedTokens > policy.maxEstimatedTokensPerBatch
+    const batchLimitExceeded =
+      policy.maxEstimatedTokensPerBatch != null &&
+      totalEstimatedTokens + itemEstimatedTokens > policy.maxEstimatedTokensPerBatch
+    if (
+      selected.length >= policy.maxItemsPerBatch ||
+      itemLimitExceeded ||
+      (batchLimitExceeded && selected.length > 0)
+    ) {
+      retryItems.push(entry.item)
+      continue
+    }
+    if (batchLimitExceeded) {
+      retryItems.push(entry.item)
+      continue
+    }
+    selected.push({ ...entry, estimatedTokens: itemEstimatedTokens })
+    totalEstimatedTokens += itemEstimatedTokens
+  }
+  return { selected, retryItems, estimatedTokens: totalEstimatedTokens }
+}
 
 function apiBase(config: LlmConfig): string {
   return config.baseUrl.replace(/\/$/, '')
@@ -96,25 +237,58 @@ async function uploadJsonl(jsonl: string, config: LlmConfig): Promise<string | n
 }
 
 /**
- * Builds the JSONL, uploads it, and submits a batchGenerateContent job.
- * Writes the `llm_batch_jobs` row on success. Returns the job's resource name
- * (`batches/...`), or null on any failure — the caller logs and leaves the
- * items unchanged so the next run tries again (no partial/half-submitted state).
+ * Builds the JSONL, applies the configured Gemini Batch quota guard, uploads
+ * the selected lines, and submits a batchGenerateContent job. Returns the
+ * submitted keys plus retryable leftovers so callers mark only work that
+ * actually reached Google.
  */
 export async function submitGeminiBatch(
   items: { key: string; input: LlmInput }[],
   config: LlmConfig,
   source: 'enrich' | 'reprocess',
-): Promise<string | null> {
+): Promise<GeminiBatchSubmitResult | null> {
   const lineItems = items
     .map((item) => ({ item, line: buildJsonlLine(item.key, item.input) }))
     .filter((entry): entry is { item: { key: string; input: LlmInput }; line: string } => entry.line != null)
   if (lineItems.length === 0) return null
-  const lines = lineItems.map((entry) => entry.line)
+  return withGeminiBatchQuotaLock(() => submitGeminiBatchLocked(lineItems, config, source))
+}
+
+async function submitGeminiBatchLocked(
+  lineItems: Array<{ item: { key: string; input: LlmInput }; line: string }>,
+  config: LlmConfig,
+  source: 'enrich' | 'reprocess',
+): Promise<GeminiBatchSubmitResult | null> {
+  const policy = readGeminiBatchQuotaPolicy()
+  const quotaDay = todayUtc()
+  const usage = await readGeminiBatchQuotaUsage(quotaDay)
+  if (policy.maxJobsPerDay != null && usage.jobs >= policy.maxJobsPerDay) {
+    console.warn(
+      `[gemini-batch] ${policy.tier} tier quota guard skipped submit: ${usage.jobs}/${policy.maxJobsPerDay} batch job(s) already submitted for ${quotaDay}`,
+    )
+    return null
+  }
+  if (backoffActive(usage)) {
+    console.warn(`[gemini-batch] quota backoff active until ${usage.backoffUntil} — skipping submit`)
+    return null
+  }
+  const selection = selectLineItemsForQuota(lineItems, policy)
+  if (selection.selected.length === 0) {
+    console.warn(
+      `[gemini-batch] ${policy.tier} tier quota guard found no item small enough for one batch (maxEstimatedTokens=${policy.maxEstimatedTokensPerBatch ?? 'off'})`,
+    )
+    return null
+  }
+  const lines = selection.selected.map((entry) => entry.line)
+  if (selection.retryItems.length > 0) {
+    console.warn(
+      `[gemini-batch] ${policy.tier} tier quota guard selected ${selection.selected.length}/${lineItems.length} item(s); ${selection.retryItems.length} left for a later run`,
+    )
+  }
   // Google may return file results in input order without echoing the JSONL
   // `key` on every line. Persist an ordinal fallback so the poller can still
   // merge each response into the right extraction-cache entry.
-  const customIdMap = Object.fromEntries(lineItems.map((entry, index) => [String(index), entry.item.key]))
+  const customIdMap = Object.fromEntries(selection.selected.map((entry, index) => [String(index), entry.item.key]))
   const model = config.model || DEFAULT_MODEL
   try {
     const fileName = await uploadJsonl(lines.join('\n'), config)
@@ -130,13 +304,27 @@ export async function submitGeminiBatch(
       console.warn('[gemini-batch] batchGenerateContent response had no job name')
       return null
     }
+    // The job is accepted by Google at this point and consumes quota even if
+    // our local job row insert fails and the batch becomes orphaned.
+    await recordGeminiBatchQuotaUsage(quotaDay, {
+      jobs: 1,
+      items: selection.selected.length,
+      estimatedTokens: selection.estimatedTokens,
+    })
     const recorded = await insertLlmBatchJob({ jobName, source, itemCount: lines.length, customIdMap })
     if (!recorded) {
       console.warn(`[gemini-batch] failed to record job ${jobName} — treating submission as failed`)
       return null
     }
-    return jobName
+    return {
+      jobName,
+      submitted: selection.selected.map((entry) => ({ key: entry.item.key, jobName })),
+      retryItems: selection.retryItems,
+    }
   } catch (err) {
+    if (isGeminiQuotaError(err)) {
+      await setGeminiBatchQuotaBackoff(quotaDay, nextUtcDayIso())
+    }
     console.warn(`[gemini-batch] submit failed: ${(err as Error).message}`)
     return null
   }

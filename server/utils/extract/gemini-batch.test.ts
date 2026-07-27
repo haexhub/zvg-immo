@@ -1,7 +1,19 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { LlmConfig } from './llm'
 
-vi.mock('../llm-batch-jobs', () => ({ insertLlmBatchJob: vi.fn().mockResolvedValue(true) }))
+vi.mock('../llm-batch-jobs', () => ({
+  insertLlmBatchJob: vi.fn().mockResolvedValue(true),
+  readGeminiBatchQuotaUsage: vi.fn().mockResolvedValue({
+    day: '2026-07-27',
+    jobs: 0,
+    items: 0,
+    estimatedTokens: 0,
+    backoffUntil: null,
+  }),
+  recordGeminiBatchQuotaUsage: vi.fn().mockResolvedValue(undefined),
+  setGeminiBatchQuotaBackoff: vi.fn().mockResolvedValue(undefined),
+  withGeminiBatchQuotaLock: vi.fn(async (fn: () => Promise<unknown>) => fn()),
+}))
 
 const config: LlmConfig = {
   provider: 'gemini-native',
@@ -35,6 +47,26 @@ function stubOfetch(handlers: Array<{ match: string; raw?: { headers?: Record<st
   vi.stubGlobal('$fetch', fetchFn)
 }
 
+beforeEach(async () => {
+  vi.stubGlobal('useRuntimeConfig', () => ({
+    extractLlm: {
+      geminiBatchTier: 'free',
+      geminiFreeBatchMaxJobsPerDay: 1,
+      geminiFreeBatchMaxItems: 5,
+      geminiFreeBatchMaxEstimatedTokens: 100_000,
+      geminiPaidBatchMaxItems: 300,
+    },
+  }))
+  const { readGeminiBatchQuotaUsage } = await import('../llm-batch-jobs')
+  vi.mocked(readGeminiBatchQuotaUsage).mockResolvedValue({
+    day: '2026-07-27',
+    jobs: 0,
+    items: 0,
+    estimatedTokens: 0,
+    backoffUntil: null,
+  })
+})
+
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.clearAllMocks()
@@ -50,13 +82,17 @@ describe('submitGeminiBatch', () => {
     const { insertLlmBatchJob } = await import('../llm-batch-jobs')
     const { submitGeminiBatch } = await import('./gemini-batch')
 
-    const jobName = await submitGeminiBatch(
+    const result = await submitGeminiBatch(
       [{ key: 'zvg-portal:1', input: { title: 'Haus', description: 'schön', pdfText: null } }],
       config,
       'enrich',
     )
 
-    expect(jobName).toBe('batches/xyz')
+    expect(result).toEqual({
+      jobName: 'batches/xyz',
+      submitted: [{ key: 'zvg-portal:1', jobName: 'batches/xyz' }],
+      retryItems: [],
+    })
     expect(insertLlmBatchJob).toHaveBeenCalledWith({
       jobName: 'batches/xyz',
       source: 'enrich',
@@ -67,6 +103,68 @@ describe('submitGeminiBatch', () => {
     expect((submitCall?.[1] as { body: unknown })?.body).toEqual({
       batch: { display_name: 'zvg-immo-enrich', input_config: { file_name: 'files/abc' } },
     })
+    const { recordGeminiBatchQuotaUsage } = await import('../llm-batch-jobs')
+    expect(recordGeminiBatchQuotaUsage).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ jobs: 1, items: 1 }),
+    )
+  })
+
+  it('free-tier caps the submitted JSONL and leaves the rest for retry', async () => {
+    vi.stubGlobal('useRuntimeConfig', () => ({
+      extractLlm: {
+        geminiBatchTier: 'free',
+        geminiFreeBatchMaxJobsPerDay: 1,
+        geminiFreeBatchMaxItems: 2,
+        geminiFreeBatchMaxEstimatedTokens: 100_000,
+      },
+    }))
+    stubOfetch([
+      { match: '/upload/v1beta/files', raw: { headers: { 'x-goog-upload-url': 'https://upload.example/session-1' } } },
+      { match: 'upload.example/session-1', data: { file: { name: 'files/abc' } } },
+      { match: ':batchGenerateContent', data: { name: 'batches/xyz' } },
+    ])
+    const { submitGeminiBatch } = await import('./gemini-batch')
+
+    const result = await submitGeminiBatch(
+      [
+        { key: 'zvg-portal:1', input: { title: 'Haus 1', description: 'schön', pdfText: null } },
+        { key: 'zvg-portal:2', input: { title: 'Haus 2', description: 'schön', pdfText: null } },
+        { key: 'zvg-portal:3', input: { title: 'Haus 3', description: 'schön', pdfText: null } },
+      ],
+      config,
+      'enrich',
+    )
+
+    expect(result?.submitted).toEqual([
+      { key: 'zvg-portal:1', jobName: 'batches/xyz' },
+      { key: 'zvg-portal:2', jobName: 'batches/xyz' },
+    ])
+    expect(result?.retryItems.map((item) => item.key)).toEqual(['zvg-portal:3'])
+    const uploadCall = vi.mocked($fetch).mock.calls.find(([url]) => (url as string).includes('upload.example/session-1'))
+    const body = uploadCall?.[1]?.body as Buffer
+    expect(body.toString('utf8').split('\n')).toHaveLength(2)
+  })
+
+  it('skips submitting when the free-tier daily job quota is already used', async () => {
+    const { readGeminiBatchQuotaUsage, insertLlmBatchJob } = await import('../llm-batch-jobs')
+    vi.mocked(readGeminiBatchQuotaUsage).mockResolvedValueOnce({
+      day: '2026-07-27',
+      jobs: 1,
+      items: 5,
+      estimatedTokens: 5000,
+      backoffUntil: null,
+    })
+    const { submitGeminiBatch } = await import('./gemini-batch')
+
+    const result = await submitGeminiBatch(
+      [{ key: 'zvg-portal:1', input: { title: 'Haus', description: 'schön', pdfText: null } }],
+      config,
+      'enrich',
+    )
+
+    expect(result).toBeNull()
+    expect(insertLlmBatchJob).not.toHaveBeenCalled()
   })
 
   it('returns null and does not record the job when insertLlmBatchJob fails to persist it', async () => {
@@ -75,17 +173,59 @@ describe('submitGeminiBatch', () => {
       { match: 'upload.example/session-1', data: { file: { name: 'files/abc' } } },
       { match: ':batchGenerateContent', data: { name: 'batches/xyz' } },
     ])
-    const { insertLlmBatchJob } = await import('../llm-batch-jobs')
+    const { insertLlmBatchJob, recordGeminiBatchQuotaUsage } = await import('../llm-batch-jobs')
     vi.mocked(insertLlmBatchJob).mockResolvedValueOnce(false)
     const { submitGeminiBatch } = await import('./gemini-batch')
 
-    const jobName = await submitGeminiBatch(
+    const result = await submitGeminiBatch(
       [{ key: 'zvg-portal:1', input: { title: 'Haus', description: 'schön', pdfText: null } }],
       config,
       'enrich',
     )
 
-    expect(jobName).toBeNull()
+    expect(result).toBeNull()
+    expect(recordGeminiBatchQuotaUsage).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ jobs: 1, items: 1 }),
+    )
+  })
+
+  it('does not put the quota guard into backoff for a non-quota 403', async () => {
+    stubOfetch([
+      { match: '/upload/v1beta/files', raw: { headers: { 'x-goog-upload-url': 'https://upload.example/session-1' } } },
+      { match: 'upload.example/session-1', data: { file: { name: 'files/abc' } } },
+      { match: ':batchGenerateContent', error: Object.assign(new Error('permission denied'), { statusCode: 403 }) },
+    ])
+    const { setGeminiBatchQuotaBackoff } = await import('../llm-batch-jobs')
+    const { submitGeminiBatch } = await import('./gemini-batch')
+
+    const result = await submitGeminiBatch(
+      [{ key: 'zvg-portal:1', input: { title: 'Haus', description: 'schön', pdfText: null } }],
+      config,
+      'enrich',
+    )
+
+    expect(result).toBeNull()
+    expect(setGeminiBatchQuotaBackoff).not.toHaveBeenCalled()
+  })
+
+  it('puts the quota guard into backoff for a 429', async () => {
+    stubOfetch([
+      { match: '/upload/v1beta/files', raw: { headers: { 'x-goog-upload-url': 'https://upload.example/session-1' } } },
+      { match: 'upload.example/session-1', data: { file: { name: 'files/abc' } } },
+      { match: ':batchGenerateContent', error: Object.assign(new Error('too many requests'), { statusCode: 429 }) },
+    ])
+    const { setGeminiBatchQuotaBackoff } = await import('../llm-batch-jobs')
+    const { submitGeminiBatch } = await import('./gemini-batch')
+
+    const result = await submitGeminiBatch(
+      [{ key: 'zvg-portal:1', input: { title: 'Haus', description: 'schön', pdfText: null } }],
+      config,
+      'enrich',
+    )
+
+    expect(result).toBeNull()
+    expect(setGeminiBatchQuotaBackoff).toHaveBeenCalledWith(expect.any(String), expect.any(String))
   })
 
   it('returns null without submitting anything when no item has content', async () => {
