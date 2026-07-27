@@ -135,6 +135,24 @@ describe('extractKronofogdenPhotoUrls', () => {
     ])
   })
 
+  it('does not truncate the gallery at nested divs', () => {
+    const html = `
+      <div id="galleria">
+        <div class="slide">
+          <img src="/images/200.aaa/1782824511083/Bild%201.jpg">
+        </div>
+        <div class="slide">
+          <img src="/images/200.bbb/1782824511166/Bild%202.jpg">
+        </div>
+      </div>
+    `
+
+    expect(extractKronofogdenPhotoUrls(html)).toEqual([
+      `${BASE}/images/200.aaa/1782824511083/Bild%201.jpg`,
+      `${BASE}/images/200.bbb/1782824511166/Bild%202.jpg`,
+    ])
+  })
+
   it('falls back to the largest Bild srcset candidates when no galleria block exists', () => {
     const html = `
       <img alt="" srcset="/images/18.abc/1/x160p/Bild%201.jpg 160w, /images/18.abc/1/Bild%201.jpg 1024w" src="/images/18.abc/1/Bild%201.jpg">

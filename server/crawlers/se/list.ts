@@ -91,8 +91,8 @@ function toAbsoluteListingImageUrl(raw: string): string | null {
 }
 
 export function extractKronofogdenPhotoUrls(html: string): string[] {
-  const gallery = html.match(/<div\b[^>]*\bid=["']galleria["'][^>]*>[\s\S]*?<\/div>/i)?.[0]
-  const source = gallery ?? html
+  const galleryStart = html.search(/<div\b[^>]*\bid=["']galleria["'][^>]*>/i)
+  const source = galleryStart >= 0 ? html.slice(galleryStart) : html
   const bestByImage = new Map<string, { url: string; width: number }>()
 
   function add(raw: string, width = 0) {
