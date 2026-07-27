@@ -2,7 +2,7 @@
 import { ArrowLeft, ExternalLink, Loader2, Pencil, RefreshCw, Trash2 } from 'lucide-vue-next'
 import type { ClaudeSetupStatus } from '~/server/api/settings/claude/status.get'
 import type { AdminLawyer } from '~/server/api/settings/lawyers/index.get'
-import type { LlmExecutionMode, LlmMaxTokensKind, LlmProvider } from '~/server/utils/app-settings'
+import type { LlmExecutionMode, LlmMaxTokensKind, LlmProvider, LlmProviderScope } from '~/server/utils/app-settings'
 import type { CountryRebuildResult } from '~/server/utils/country-rebuild'
 import type { CountrySourceSetting, CountrySourceSettings } from '~/server/utils/country-source-settings'
 
@@ -25,7 +25,7 @@ async function probeSession(): Promise<void> {
       await refreshStatus()
       await loadLawyers()
       await loadLlmConfig()
-      await loadLlmProvider()
+      await loadLlmProfiles()
       await loadLlmBatchJobs()
       await loadDisplaySettings()
       await loadCountrySources()
@@ -48,7 +48,7 @@ async function login(): Promise<void> {
     await refreshStatus()
     await loadLawyers()
     await loadLlmConfig()
-    await loadLlmProvider()
+    await loadLlmProfiles()
     await loadLlmBatchJobs()
     await loadDisplaySettings()
     await loadCountrySources()
@@ -404,7 +404,8 @@ async function saveLlmConfig(): Promise<void> {
   }
 }
 
-// LLM-Provider: aktiver Extraktions-Provider, gegen /api/settings/llm-provider
+// LLM-Provider: getrennte Provider-Overrides für Dokument-Extraktion und
+// Text-Übersetzung, gegen /api/settings/llm-provider?scope=...
 // (settings-auth-Muster wie oben). Presets füllen Base-URL/Modell beim
 // Wechsel der Auswahl nur clientseitig vor — reine UX-Hilfe, keine
 // Server-Logik.
@@ -413,39 +414,13 @@ const LLM_PROVIDER_PRESETS: Record<LlmProvider, { baseUrl: string; model: string
   'gemini-native': { baseUrl: 'https://generativelanguage.googleapis.com', model: 'gemini-flash-latest' },
   'openai-compatible': { baseUrl: 'https://api.openai.com/v1', model: '' },
 }
-interface LlmProviderForm {
-  provider: LlmProvider
-  baseUrl: string
-  model: string
-  executionMode: LlmExecutionMode
-  /** Write-only: leer beim Laden, egal ob ein Key gespeichert ist. */
-  apiKey: string
-}
-const llmProviderForm = ref<LlmProviderForm>({
-  provider: 'claude-proxy',
-  baseUrl: '',
-  model: '',
-  executionMode: 'sync',
-  apiKey: '',
-})
-const llmProviderOverrideActive = ref(false)
-const llmProviderApiKeySet = ref(false)
-const llmProviderEnvDefault = ref<{ provider: string; baseUrl: string; model: string } | null>(null)
-const llmProviderError = ref<string | null>(null)
-const llmProviderSaved = ref(false)
-const llmProviderPending = ref(false)
+const LLM_PROVIDER_SCOPES: LlmProviderScope[] = ['extraction', 'translation']
 
 // Modell-Select: welche Modelle für den aktuell gewählten Provider gültig/
 // verfügbar sind, live von /api/settings/llm-provider/models geladen (siehe
 // dort — claude-proxy fragt den Proxy selbst, gemini-native Googles
 // ListModels). openai-compatible hat keine gemeinsame Discovery, dafür bleibt
 // das Feld ein Freitext-Input.
-const llmModelOptions = ref<{ id: string; label: string }[]>([])
-const llmModelOptionsPending = ref(false)
-const llmModelKeyRequired = ref(false)
-const llmModelOptionsError = ref<string | null>(null)
-let llmModelOptionsRequestId = 0
-
 function isOpenAiBatchBaseUrl(baseUrl: string): boolean {
   try {
     const url = new URL(baseUrl)
@@ -459,167 +434,191 @@ function isOpenAiBatchBaseUrl(baseUrl: string): boolean {
   }
 }
 
-const llmProviderSupportsBatch = computed(() =>
-  llmProviderForm.value.provider === 'gemini-native' ||
-  llmProviderForm.value.provider === 'claude-proxy' ||
-  (llmProviderForm.value.provider === 'openai-compatible' && isOpenAiBatchBaseUrl(llmProviderForm.value.baseUrl)),
-)
-const llmProviderCanSelectBatch = computed(() =>
-  llmProviderForm.value.provider === 'gemini-native' ||
-  (
-    (llmProviderForm.value.provider === 'claude-proxy' ||
-      (llmProviderForm.value.provider === 'openai-compatible' && isOpenAiBatchBaseUrl(llmProviderForm.value.baseUrl))) &&
-    (llmProviderApiKeySet.value || !!llmProviderForm.value.apiKey)
-  ),
-)
+interface LlmProviderProfileForm {
+  id: string
+  name: string
+  provider: LlmProvider
+  baseUrl: string
+  model: string
+  executionMode: LlmExecutionMode
+  apiKey: string
+  apiKeySet: boolean
+  clearApiKey: boolean
+  modelOptions: { id: string; label: string }[]
+  modelOptionsPending: boolean
+  modelKeyRequired: boolean
+  modelOptionsError: string | null
+  modelOptionsRequestId: number
+}
 
-async function loadModelOptions(): Promise<void> {
-  const requestId = ++llmModelOptionsRequestId
-  llmModelOptionsError.value = null
-  llmModelKeyRequired.value = false
-  if (llmProviderForm.value.provider === 'openai-compatible') {
-    llmModelOptions.value = []
+interface LlmProfilesResponse {
+  profiles: Array<{
+    id: string
+    name: string
+    provider: LlmProvider
+    baseUrl: string
+    model: string
+    executionMode: LlmExecutionMode
+    apiKeySet: boolean
+  }>
+  assignments: Partial<Record<LlmProviderScope, string>>
+  effective: Record<LlmProviderScope, {
+    provider: string
+    baseUrl: string
+    model: string
+    executionMode: LlmExecutionMode
+  }>
+}
+
+function localProfileId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
+  return `profile_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`
+}
+
+function makeProfileForm(input?: Partial<LlmProviderProfileForm>): LlmProviderProfileForm {
+  const preset = LLM_PROVIDER_PRESETS[input?.provider ?? 'gemini-native']
+  return {
+    id: input?.id ?? localProfileId(),
+    name: input?.name ?? '',
+    provider: input?.provider ?? 'gemini-native',
+    baseUrl: input?.baseUrl ?? preset.baseUrl,
+    model: input?.model ?? preset.model,
+    executionMode: input?.executionMode ?? 'sync',
+    apiKey: '',
+    apiKeySet: input?.apiKeySet ?? false,
+    clearApiKey: false,
+    modelOptions: [],
+    modelOptionsPending: false,
+    modelKeyRequired: false,
+    modelOptionsError: null,
+    modelOptionsRequestId: 0,
+  }
+}
+
+const llmProfiles = ref<LlmProviderProfileForm[]>([])
+const NO_LLM_PROFILE = '__none'
+const llmProfileAssignments = reactive<Record<LlmProviderScope, string>>({
+  extraction: NO_LLM_PROFILE,
+  translation: NO_LLM_PROFILE,
+})
+const llmProfileEffective = ref<LlmProfilesResponse['effective'] | null>(null)
+const llmProfilesError = ref<string | null>(null)
+const llmProfilesSaved = ref(false)
+const llmProfilesPending = ref(false)
+
+function profileSupportsBatch(profile: LlmProviderProfileForm): boolean {
+  return profile.provider === 'gemini-native' ||
+    profile.provider === 'claude-proxy' ||
+    (profile.provider === 'openai-compatible' && isOpenAiBatchBaseUrl(profile.baseUrl))
+}
+
+function profileCanSelectBatch(profile: LlmProviderProfileForm): boolean {
+  return profile.provider === 'gemini-native' ||
+    (
+      (profile.provider === 'claude-proxy' ||
+        (profile.provider === 'openai-compatible' && isOpenAiBatchBaseUrl(profile.baseUrl))) &&
+      (profile.apiKeySet || !!profile.apiKey)
+    )
+}
+
+async function loadProfileModelOptions(profile: LlmProviderProfileForm): Promise<void> {
+  const requestId = ++profile.modelOptionsRequestId
+  profile.modelOptionsError = null
+  profile.modelKeyRequired = false
+  if (profile.provider === 'openai-compatible') {
+    profile.modelOptions = []
     return
   }
-  llmModelOptionsPending.value = true
+  profile.modelOptionsPending = true
   try {
     const res = await $fetch<{ models: { id: string; label: string }[]; keyRequired?: boolean }>(
       '/api/settings/llm-provider/models',
       {
         method: 'POST',
         body: {
-          provider: llmProviderForm.value.provider,
-          baseUrl: llmProviderForm.value.baseUrl,
-          apiKey: llmProviderForm.value.apiKey || undefined,
+          profileId: profile.id,
+          provider: profile.provider,
+          baseUrl: profile.baseUrl,
+          apiKey: profile.apiKey || undefined,
         },
       },
     )
-    if (requestId !== llmModelOptionsRequestId) return
-    llmModelOptions.value = res.models
-    llmModelKeyRequired.value = !!res.keyRequired
+    if (requestId !== profile.modelOptionsRequestId) return
+    profile.modelOptions = res.models
+    profile.modelKeyRequired = !!res.keyRequired
   } catch (err) {
-    if (requestId !== llmModelOptionsRequestId) return
-    llmModelOptions.value = []
-    llmModelOptionsError.value = normalizeSettingsError(err, t('settings.llmProvider.modelLoadError'))
+    if (requestId !== profile.modelOptionsRequestId) return
+    profile.modelOptions = []
+    profile.modelOptionsError = normalizeSettingsError(err, t('settings.llmProvider.modelLoadError'))
   } finally {
-    if (requestId === llmModelOptionsRequestId) llmModelOptionsPending.value = false
+    if (requestId === profile.modelOptionsRequestId) profile.modelOptionsPending = false
   }
 }
 
-async function loadLlmProvider(): Promise<void> {
+async function loadLlmProfiles(): Promise<void> {
   try {
-    const res = await $fetch<{
-      override: {
-        provider: LlmProvider
-        baseUrl: string
-        model: string
-        executionMode: LlmExecutionMode
-        apiKeySet: boolean
-      } | null
-      envDefault: { provider: string; baseUrl: string; model: string; executionMode: LlmExecutionMode }
-    }>('/api/settings/llm-provider')
-    llmProviderEnvDefault.value = res.envDefault
-    llmProviderOverrideActive.value = !!res.override
-    if (res.override) {
-      llmProviderForm.value = {
-        provider: res.override.provider,
-        baseUrl: res.override.baseUrl,
-        model: res.override.model,
-        executionMode: res.override.executionMode,
-        apiKey: '',
-      }
-      llmProviderApiKeySet.value = res.override.apiKeySet
-    } else {
-      llmProviderForm.value = {
-        provider: (res.envDefault.provider as LlmProvider) || 'claude-proxy',
-        baseUrl: res.envDefault.baseUrl,
-        model: res.envDefault.model,
-        executionMode: res.envDefault.executionMode,
-        apiKey: '',
-      }
-      llmProviderApiKeySet.value = false
-    }
-    if (
-      llmProviderForm.value.executionMode === 'batch' &&
-      (!llmProviderSupportsBatch.value || !llmProviderCanSelectBatch.value)
-    ) {
-      llmProviderForm.value.executionMode = 'sync'
-    }
-    llmProviderError.value = null
-    await loadModelOptions()
+    const res = await $fetch<LlmProfilesResponse>('/api/settings/llm-profiles')
+    llmProfiles.value = res.profiles.map((profile) => makeProfileForm(profile))
+    llmProfileAssignments.extraction = res.assignments.extraction ?? NO_LLM_PROFILE
+    llmProfileAssignments.translation = res.assignments.translation ?? NO_LLM_PROFILE
+    llmProfileEffective.value = res.effective
+    llmProfilesError.value = null
+    await Promise.all(llmProfiles.value.map((profile) => loadProfileModelOptions(profile)))
   } catch (err) {
-    llmProviderError.value = normalizeSettingsError(err, t('settings.llmProvider.loadError'))
+    llmProfilesError.value = normalizeSettingsError(err, t('settings.llmProvider.loadError'))
   }
 }
 
-function onLlmProviderChange(): void {
-  const preset = LLM_PROVIDER_PRESETS[llmProviderForm.value.provider]
-  llmProviderForm.value.baseUrl = preset.baseUrl
-  llmProviderForm.value.model = preset.model
-  if (!llmProviderSupportsBatch.value) llmProviderForm.value.executionMode = 'sync'
-  void loadModelOptions()
+function addLlmProfile(): void {
+  llmProfiles.value.push(makeProfileForm({ name: t('settings.llmProvider.newProfileName') }))
+  llmProfilesSaved.value = false
 }
 
-async function putLlmProvider(apiKey: string | undefined): Promise<void> {
-  llmProviderPending.value = true
-  llmProviderError.value = null
-  llmProviderSaved.value = false
+function removeLlmProfile(profile: LlmProviderProfileForm): void {
+  llmProfiles.value = llmProfiles.value.filter((candidate) => candidate.id !== profile.id)
+  for (const scope of LLM_PROVIDER_SCOPES) {
+    if (llmProfileAssignments[scope] === profile.id) llmProfileAssignments[scope] = NO_LLM_PROFILE
+  }
+  llmProfilesSaved.value = false
+}
+
+function onLlmProfileProviderChange(profile: LlmProviderProfileForm): void {
+  const preset = LLM_PROVIDER_PRESETS[profile.provider]
+  profile.baseUrl = preset.baseUrl
+  profile.model = preset.model
+  if (!profileSupportsBatch(profile)) profile.executionMode = 'sync'
+  void loadProfileModelOptions(profile)
+}
+
+async function saveLlmProfiles(): Promise<void> {
+  llmProfilesPending.value = true
+  llmProfilesError.value = null
+  llmProfilesSaved.value = false
   try {
-    const body: Record<string, unknown> = {
-      provider: llmProviderForm.value.provider,
-      baseUrl: llmProviderForm.value.baseUrl.trim(),
-      model: llmProviderForm.value.model.trim(),
-      executionMode:
-        llmProviderForm.value.executionMode === 'batch' && llmProviderCanSelectBatch.value
-          ? 'batch'
-          : 'sync',
-    }
-    if (apiKey !== undefined) body.apiKey = apiKey
-    const res = await $fetch<{
-      provider: LlmProvider
-      baseUrl: string
-      model: string
-      executionMode: LlmExecutionMode
-      apiKeySet: boolean
-    }>('/api/settings/llm-provider', { method: 'PUT', body })
-    llmProviderOverrideActive.value = true
-    llmProviderApiKeySet.value = res.apiKeySet
-    llmProviderForm.value.executionMode = res.executionMode
-    llmProviderForm.value.apiKey = ''
-    llmProviderSaved.value = true
-    await loadModelOptions()
+    await $fetch('/api/settings/llm-profiles', {
+      method: 'PUT',
+      body: {
+        profiles: llmProfiles.value.map((profile) => ({
+          id: profile.id,
+          name: profile.name.trim() || profile.provider,
+          provider: profile.provider,
+          baseUrl: profile.baseUrl.trim(),
+          model: profile.model.trim(),
+          executionMode: profile.executionMode === 'batch' && profileCanSelectBatch(profile) ? 'batch' : 'sync',
+          ...(profile.clearApiKey ? { apiKey: '' } : profile.apiKey ? { apiKey: profile.apiKey } : {}),
+        })),
+        assignments: {
+          extraction: llmProfileAssignments.extraction === NO_LLM_PROFILE ? undefined : llmProfileAssignments.extraction,
+          translation: llmProfileAssignments.translation === NO_LLM_PROFILE ? undefined : llmProfileAssignments.translation,
+        },
+      },
+    })
+    await loadLlmProfiles()
+    llmProfilesSaved.value = !llmProfilesError.value
   } catch (err) {
-    llmProviderError.value = normalizeSettingsError(err, t('settings.llmProvider.saveError'))
+    llmProfilesError.value = normalizeSettingsError(err, t('settings.llmProvider.saveError'))
   } finally {
-    llmProviderPending.value = false
-  }
-}
-
-async function saveLlmProvider(): Promise<void> {
-  if (!llmProviderForm.value.baseUrl.trim() || !llmProviderForm.value.model.trim()) {
-    llmProviderError.value = t('settings.llmProvider.invalidValue')
-    return
-  }
-  await putLlmProvider(llmProviderForm.value.apiKey || undefined)
-}
-
-async function clearLlmProviderApiKey(): Promise<void> {
-  if (llmProviderForm.value.provider === 'claude-proxy' || llmProviderForm.value.provider === 'openai-compatible') {
-    llmProviderForm.value.executionMode = 'sync'
-  }
-  await putLlmProvider('')
-}
-
-async function resetLlmProvider(): Promise<void> {
-  llmProviderPending.value = true
-  llmProviderError.value = null
-  try {
-    await $fetch('/api/settings/llm-provider', { method: 'DELETE' })
-    await loadLlmProvider()
-  } catch (err) {
-    llmProviderError.value = normalizeSettingsError(err, t('settings.llmProvider.resetError'))
-  } finally {
-    llmProviderPending.value = false
+    llmProfilesPending.value = false
   }
 }
 
@@ -1002,128 +1001,146 @@ onBeforeUnmount(stopPolling)
         <CardHeader>
           <CardTitle>{{ $t('settings.llmProvider.title') }}</CardTitle>
         </CardHeader>
-        <CardContent class="space-y-4">
+        <CardContent class="space-y-6">
           <p class="text-sm text-muted-foreground">
             {{ $t('settings.llmProvider.description') }}
           </p>
 
-          <p v-if="!llmProviderOverrideActive && llmProviderEnvDefault" class="text-sm text-muted-foreground">
-            {{ $t('settings.llmProvider.usingEnvDefault', {
-              provider: llmProviderEnvDefault.provider,
-              baseUrl: llmProviderEnvDefault.baseUrl,
-            }) }}
-          </p>
+          <p v-if="llmProfilesError" class="text-sm text-destructive">{{ llmProfilesError }}</p>
+          <p v-if="llmProfilesSaved" class="text-sm text-emerald-600 dark:text-emerald-500">{{ $t('settings.llmProvider.saved') }}</p>
 
-          <p v-if="llmProviderError" class="text-sm text-destructive">{{ llmProviderError }}</p>
-          <p v-if="llmProviderSaved" class="text-sm text-emerald-600 dark:text-emerald-500">{{ $t('settings.llmProvider.saved') }}</p>
-
-          <form class="space-y-3" @submit.prevent="saveLlmProvider">
-            <div class="space-y-1">
-              <Label>{{ $t('settings.llmProvider.providerLabel') }}</Label>
-              <Select v-model="llmProviderForm.provider" @update:model-value="onLlmProviderChange">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div v-for="scope in LLM_PROVIDER_SCOPES" :key="scope" class="space-y-1">
+              <Label>
+                {{ scope === 'translation' ? $t('settings.llmProvider.translationTitle') : $t('settings.llmProvider.extractionTitle') }}
+              </Label>
+              <Select v-model="llmProfileAssignments[scope]">
                 <SelectTrigger class="w-full">
-                  <SelectValue />
+                  <SelectValue :placeholder="$t('settings.llmProvider.noProfileAssigned')" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="claude-proxy">{{ $t('settings.llmProvider.providerClaudeProxy') }}</SelectItem>
-                  <SelectItem value="gemini-native">{{ $t('settings.llmProvider.providerGeminiNative') }}</SelectItem>
-                  <SelectItem value="openai-compatible">{{ $t('settings.llmProvider.providerOpenaiCompatible') }}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div class="space-y-1">
-              <Label>{{ $t('settings.llmProvider.executionModeLabel') }}</Label>
-              <Select v-model="llmProviderForm.executionMode">
-                <SelectTrigger class="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="sync">{{ $t('settings.llmProvider.executionModeSync') }}</SelectItem>
-                  <SelectItem v-if="llmProviderSupportsBatch" value="batch" :disabled="!llmProviderCanSelectBatch">
-                    {{ $t('settings.llmProvider.executionModeBatch') }}
+                  <SelectItem :value="NO_LLM_PROFILE">{{ $t('settings.llmProvider.noProfileAssigned') }}</SelectItem>
+                  <SelectItem v-for="profile in llmProfiles" :key="profile.id" :value="profile.id">
+                    {{ profile.name || profile.model }}
                   </SelectItem>
                 </SelectContent>
               </Select>
-              <p v-if="!llmProviderSupportsBatch" class="text-xs text-muted-foreground">
-                {{ $t('settings.llmProvider.batchUnsupported') }}
-              </p>
-              <p
-                v-else-if="llmProviderForm.provider === 'claude-proxy' && !llmProviderCanSelectBatch"
-                class="text-xs text-muted-foreground"
-              >
-                {{ $t('settings.llmProvider.batchKeyRequired') }}
-              </p>
-              <p
-                v-else-if="llmProviderForm.provider === 'openai-compatible' && !llmProviderCanSelectBatch"
-                class="text-xs text-muted-foreground"
-              >
-                {{ $t('settings.llmProvider.batchOpenAiRequired') }}
+              <p v-if="llmProfileAssignments[scope] === NO_LLM_PROFILE && llmProfileEffective" class="text-xs text-muted-foreground">
+                {{ $t(scope === 'translation' ? 'settings.llmProvider.usingTranslationFallback' : 'settings.llmProvider.usingEnvDefault', {
+                  provider: llmProfileEffective[scope].provider,
+                  baseUrl: llmProfileEffective[scope].baseUrl,
+                }) }}
               </p>
             </div>
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div class="space-y-1">
-                <Label>{{ $t('settings.llmProvider.baseUrlLabel') }}</Label>
-                <Input v-model="llmProviderForm.baseUrl" />
-              </div>
-              <div class="space-y-1">
-                <Label>{{ $t('settings.llmProvider.modelLabel') }}</Label>
-                <Input v-if="llmProviderForm.provider === 'openai-compatible'" v-model="llmProviderForm.model" />
-                <div v-else class="flex gap-2">
-                  <Select v-model="llmProviderForm.model" :disabled="llmModelOptionsPending || !llmModelOptions.length">
+          </div>
+
+          <div class="space-y-4">
+            <div class="flex items-center justify-between gap-3">
+              <h3 class="text-sm font-semibold">{{ $t('settings.llmProvider.profilesTitle') }}</h3>
+              <Button type="button" size="sm" @click="addLlmProfile">{{ $t('settings.llmProvider.addProfile') }}</Button>
+            </div>
+
+            <p v-if="!llmProfiles.length" class="text-sm text-muted-foreground">
+              {{ $t('settings.llmProvider.profilesEmpty') }}
+            </p>
+
+            <div v-for="profile in llmProfiles" :key="profile.id" class="space-y-3 rounded-md border p-3">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div class="space-y-1">
+                  <Label>{{ $t('settings.llmProvider.profileNameLabel') }}</Label>
+                  <Input v-model="profile.name" />
+                </div>
+                <div class="space-y-1">
+                  <Label>{{ $t('settings.llmProvider.providerLabel') }}</Label>
+                  <Select v-model="profile.provider" @update:model-value="onLlmProfileProviderChange(profile)">
                     <SelectTrigger class="w-full">
-                      <SelectValue
-                        :placeholder="llmModelOptionsPending ? $t('settings.llmProvider.modelLoading') : $t('settings.llmProvider.modelSelectPlaceholder')"
-                      />
+                      <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem v-for="opt in llmModelOptions" :key="opt.id" :value="opt.id">{{ opt.label }}</SelectItem>
+                      <SelectItem value="claude-proxy">{{ $t('settings.llmProvider.providerClaudeProxy') }}</SelectItem>
+                      <SelectItem value="gemini-native">{{ $t('settings.llmProvider.providerGeminiNative') }}</SelectItem>
+                      <SelectItem value="openai-compatible">{{ $t('settings.llmProvider.providerOpenaiCompatible') }}</SelectItem>
                     </SelectContent>
                   </Select>
-                  <Button type="button" variant="outline" :disabled="llmModelOptionsPending" @click="loadModelOptions">
-                    {{ $t('settings.llmProvider.modelRefresh') }}
-                  </Button>
                 </div>
-                <p v-if="llmModelKeyRequired" class="text-xs text-muted-foreground">{{ $t('settings.llmProvider.modelKeyRequired') }}</p>
-                <p v-if="llmModelOptionsError" class="text-xs text-destructive">{{ llmModelOptionsError }}</p>
+                <div class="space-y-1">
+                  <Label>{{ $t('settings.llmProvider.baseUrlLabel') }}</Label>
+                  <Input v-model="profile.baseUrl" />
+                </div>
+                <div class="space-y-1">
+                  <Label>{{ $t('settings.llmProvider.modelLabel') }}</Label>
+                  <Input v-if="profile.provider === 'openai-compatible'" v-model="profile.model" />
+                  <div v-else class="flex gap-2">
+                    <Select v-model="profile.model" :disabled="profile.modelOptionsPending || !profile.modelOptions.length">
+                      <SelectTrigger class="w-full">
+                        <SelectValue
+                          :placeholder="profile.modelOptionsPending ? $t('settings.llmProvider.modelLoading') : $t('settings.llmProvider.modelSelectPlaceholder')"
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem v-for="opt in profile.modelOptions" :key="opt.id" :value="opt.id">{{ opt.label }}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button type="button" variant="outline" :disabled="profile.modelOptionsPending" @click="loadProfileModelOptions(profile)">
+                      {{ $t('settings.llmProvider.modelRefresh') }}
+                    </Button>
+                  </div>
+                  <p v-if="profile.modelKeyRequired" class="text-xs text-muted-foreground">{{ $t('settings.llmProvider.modelKeyRequired') }}</p>
+                  <p v-if="profile.modelOptionsError" class="text-xs text-destructive">{{ profile.modelOptionsError }}</p>
+                </div>
               </div>
-            </div>
-            <div class="space-y-1">
-              <Label>{{ $t('settings.llmProvider.apiKeyLabel') }}</Label>
-              <div class="flex gap-2">
+
+              <div class="space-y-1">
+                <Label>{{ $t('settings.llmProvider.executionModeLabel') }}</Label>
+                <Select v-model="profile.executionMode">
+                  <SelectTrigger class="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="sync">{{ $t('settings.llmProvider.executionModeSync') }}</SelectItem>
+                    <SelectItem v-if="profileSupportsBatch(profile)" value="batch" :disabled="!profileCanSelectBatch(profile)">
+                      {{ $t('settings.llmProvider.executionModeBatch') }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <p v-if="!profileSupportsBatch(profile)" class="text-xs text-muted-foreground">
+                  {{ $t('settings.llmProvider.batchUnsupported') }}
+                </p>
+              </div>
+
+              <div class="space-y-1">
+                <Label>{{ $t('settings.llmProvider.apiKeyLabel') }}</Label>
                 <Input
-                  v-model="llmProviderForm.apiKey"
+                  v-model="profile.apiKey"
                   type="password"
                   autocomplete="off"
-                  :placeholder="llmProviderApiKeySet ? $t('settings.llmProvider.apiKeyPlaceholderSet') : $t('settings.llmProvider.apiKeyPlaceholderUnset')"
+                  :placeholder="profile.apiKeySet ? $t('settings.llmProvider.apiKeyPlaceholderSet') : $t('settings.llmProvider.apiKeyPlaceholderUnset')"
                 />
-                <Button
-                  v-if="llmProviderApiKeySet"
-                  type="button"
-                  variant="outline"
-                  :disabled="llmProviderPending"
-                  @click="clearLlmProviderApiKey"
-                >
-                  {{ $t('settings.llmProvider.apiKeyClear') }}
+                <Label v-if="profile.apiKeySet" class="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Checkbox v-model="profile.clearApiKey" />
+                  {{ $t('settings.llmProvider.apiKeyClearOnSave') }}
+                </Label>
+              </div>
+
+              <div class="flex justify-end">
+                <Button type="button" variant="ghost" class="hover:text-destructive" @click="removeLlmProfile(profile)">
+                  <Trash2 class="h-4 w-4" />
+                  {{ $t('settings.llmProvider.removeProfile') }}
                 </Button>
               </div>
             </div>
-            <div class="flex flex-wrap gap-2">
-              <Button type="submit" :disabled="llmProviderPending">
-                {{ llmProviderPending ? $t('settings.llmProvider.saving') : $t('settings.llmProvider.save') }}
-              </Button>
-              <Button
-                v-if="llmProviderOverrideActive"
-                type="button"
-                variant="outline"
-                :disabled="llmProviderPending"
-                @click="resetLlmProvider"
-              >
-                {{ $t('settings.llmProvider.reset') }}
-              </Button>
-            </div>
-          </form>
+          </div>
 
-          <div v-if="llmProviderForm.provider === 'claude-proxy'" class="border-t pt-4 space-y-4">
+          <div class="flex flex-wrap gap-2">
+            <Button type="button" :disabled="llmProfilesPending" @click="saveLlmProfiles">
+              {{ llmProfilesPending ? $t('settings.llmProvider.saving') : $t('settings.llmProvider.save') }}
+            </Button>
+          </div>
+
+          <div
+            v-if="llmProfiles.some((profile) => profile.provider === 'claude-proxy')"
+            class="border-t pt-4 space-y-4"
+          >
             <div class="flex items-center justify-between">
               <h3 class="text-sm font-semibold">{{ $t('settings.claude.title') }}</h3>
               <Button

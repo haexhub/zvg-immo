@@ -421,11 +421,12 @@ export async function prepareArchivedLlmDocuments(
     setHash: opts.documentSetHash,
     version: opts.documentSetVersion,
   })
-  return prepareArchivedDocumentSetItems(documentSetItems ?? [], {
+  const prepared = await prepareArchivedDocumentSetItems(documentSetItems ?? [], {
     ...opts,
     extraText,
     sourceAttachments: auction.attachments,
   })
+  return documentSetItems == null ? { ...prepared, documentSetComplete: false } : prepared
 }
 
 export async function readArchivedAuction(platform: string, externalId: string): Promise<Auction | null> {

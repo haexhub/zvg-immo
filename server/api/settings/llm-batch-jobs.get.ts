@@ -5,6 +5,7 @@
 // context to debug why listings are still rules-only.
 
 import type { AuctionExtraction } from '~/types/auction'
+import { MAX_LLM_FAILURES } from '~/lib/llm-limits'
 import { listPendingLlmBatchJobs, listRecentLlmBatchJobs, type LlmBatchJobStatus } from '~/server/utils/llm-batch-jobs'
 import { readExtractionCache } from '~/server/utils/extraction-cache'
 
@@ -98,7 +99,7 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
     const missingFields = hasMissingLlmFields(entry)
     if (lowRules) lowConfidenceRules++
     if (missingFields) missingLlmFields++
-    if ((entry.llmFailures ?? 0) >= 3) {
+    if ((entry.llmFailures ?? 0) >= MAX_LLM_FAILURES) {
       failedLimit++
       continue
     }

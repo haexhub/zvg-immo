@@ -13,7 +13,7 @@
 //   never calls this route.
 
 import { getPool } from '~/server/utils/db'
-import { getLlmProviderOverride } from '~/server/utils/app-settings'
+import { getLlmProviderOverride, getLlmProviderProfiles, type LlmProviderScope } from '~/server/utils/app-settings'
 
 export interface LlmModelOption {
   id: string
@@ -51,10 +51,18 @@ async function fetchGeminiModels(apiKey: string): Promise<LlmModelOption[]> {
 }
 
 export default defineEventHandler(async (event) => {
-  const body = (await readBody<{ provider?: string; baseUrl?: string; apiKey?: string }>(event)) ?? {}
+  const body = (await readBody<{
+    provider?: string
+    baseUrl?: string
+    apiKey?: string
+    scope?: LlmProviderScope
+    profileId?: string
+  }>(event)) ?? {}
   const provider = String(body.provider ?? '')
   const baseUrl = String(body.baseUrl ?? '')
   const typedApiKey = typeof body.apiKey === 'string' ? body.apiKey : ''
+  const scope = body.scope === 'translation' ? 'translation' : 'extraction'
+  const profileId = typeof body.profileId === 'string' ? body.profileId : ''
 
   if (provider === 'claude-proxy') {
     if (!baseUrl) throw createError({ statusCode: 400, statusMessage: 'baseUrl fehlt.' })
@@ -69,8 +77,14 @@ export default defineEventHandler(async (event) => {
     let apiKey = typedApiKey
     if (!apiKey) {
       const db = getPool()
-      const override = db ? await getLlmProviderOverride(db) : null
-      if (override?.provider === 'gemini-native') apiKey = override.apiKey
+      const profile = db && profileId
+        ? (await getLlmProviderProfiles(db)).find((candidate) => candidate.id === profileId)
+        : null
+      const override = db ? await getLlmProviderOverride(db, scope) : null
+      const extractionOverride = scope === 'translation' && db ? await getLlmProviderOverride(db, 'extraction') : null
+      if (profile?.provider === 'gemini-native') apiKey = profile.apiKey
+      else if (override?.provider === 'gemini-native') apiKey = override.apiKey
+      else if (extractionOverride?.provider === 'gemini-native') apiKey = extractionOverride.apiKey
     }
     if (!apiKey) return { models: [], keyRequired: true }
     try {

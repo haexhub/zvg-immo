@@ -34,20 +34,15 @@ import { readAuctionSnapshot, writeAuctionSnapshot } from '~/server/utils/auctio
 import { upsertCurrentAuctions } from '~/server/utils/current-auctions'
 import { deriveMarketValueEur, getRates } from '~/server/utils/exchange-rate'
 import { extractByRules } from '~/server/utils/extract/rules'
-import { extractByLlm, resolveLlmConfig, type LlmInput, type PhotoCuration } from '~/server/utils/extract/llm'
+import { extractByLlm, type LlmInput, type PhotoCuration } from '~/server/utils/extract/llm'
+import { MAX_LLM_FAILURES, readExtractionLlmConfig } from '~/server/utils/extract/llm-task-config'
 import {
   isLlmBatchPending,
   submitLlmBatch,
   supportsLlmBatch,
   supportsNativeBatchDocuments,
 } from '~/server/utils/extract/llm-batch'
-import { getPool } from '~/server/utils/db'
-import {
-  DEFAULT_LLM_MAX_TOKENS,
-  getLlmMaxTokens,
-  getLlmProviderOverride,
-  readLlmExecutionMode,
-} from '~/server/utils/app-settings'
+import { readLlmExecutionMode } from '~/server/utils/app-settings'
 import { mergeLlmResult } from '~/server/utils/extract/merge-llm-result'
 import { downloadNativeImages } from '~/server/utils/extract/native-images'
 import { extractDocumentPhotos } from '~/server/utils/extract/document-images'
@@ -90,7 +85,6 @@ const DEFAULT_MAX_LLM_PER_RUN = 300
 // never gets a cache entry and so re-consumes an LLM slot on every run forever,
 // starving healthy listings of the per-run budget. A few retries still absorb
 // transient proxy blips.
-const MAX_LLM_FAILURES = 3
 // Give up retrying a listing whose photo pipeline (native download / document
 // extraction) keeps *throwing* after this many attempts — same rationale as
 // MAX_LLM_FAILURES. A listing that completes an attempt but legitimately has
@@ -123,18 +117,6 @@ function applyPhotoCuration(base: CuratedPhoto[], curation: PhotoCuration[]): Cu
     out[c.photoIndex] = { file: prior.file, category: c.category, caption: c.caption, isPropertyPhoto: c.isPropertyPhoto }
   }
   return out
-}
-
-async function readLlmConfig(): Promise<ReturnType<typeof resolveLlmConfig>> {
-  const c = useRuntimeConfig().extractLlm as
-    | { provider?: string; baseUrl?: string; apiKey?: string; model?: string; maxPerRun?: string }
-    | undefined
-  const db = getPool()
-  const maxTokens = db
-    ? await getLlmMaxTokens(db, 'extraction').catch(() => DEFAULT_LLM_MAX_TOKENS.extraction)
-    : DEFAULT_LLM_MAX_TOKENS.extraction
-  const override = db ? await getLlmProviderOverride(db).catch(() => null) : null
-  return resolveLlmConfig(override ?? c, { maxTokens })
 }
 
 function readMaxLlmPerRun(): number {
@@ -190,7 +172,7 @@ export async function runEnrich(opts: EnrichOptions = {}) {
     const cache = await readExtractionCache()
     const previousSnapshot = await readAuctionSnapshot()
     const byPlatform = new Map(platforms.map((p) => [p.id, p]))
-    const llmConfig = await readLlmConfig()
+    const llmConfig = await readExtractionLlmConfig()
     const executionMode = await readLlmExecutionMode()
     const batchRequested = opts.batch ?? executionMode === 'batch'
     const useBatch = batchRequested && supportsLlmBatch(llmConfig)
@@ -443,19 +425,28 @@ export async function runEnrich(opts: EnrichOptions = {}) {
         // an unknown or unavailable archive must not wipe cached extraction fields.
         const effectivePriorEntry = documentSetChanged ? undefined : priorEntry
         const archivedAuction = await readArchivedAuction(a.platform, a.externalId)
-        if (!archivedAuction) {
+        if (!archivedAuction && detailOk) {
           console.warn(`[enrich] archived auction missing for ${a.platform}:${a.externalId}; LLM analysis will wait for the raw archive`)
+        } else if (archivedAuction && !detailOk) {
+          console.warn(`[enrich] ignoring archived auction for ${a.platform}:${a.externalId}; detail fetch failed this run`)
         }
-        const analysisAuction = archivedAuction ?? a
+        const archivedAnalysisAuction = detailOk ? archivedAuction : null
+        const canUseArchivedAuction = archivedAnalysisAuction != null
+        const analysisAuction = archivedAnalysisAuction ?? a
         const archivedDocuments =
-          archivedAuction && currentDocumentSet
-            ? await prepareArchivedLlmDocuments(archivedAuction, {
+          canUseArchivedAuction && currentDocumentSet
+            ? await prepareArchivedLlmDocuments(archivedAnalysisAuction, {
                 nativeDocuments: usingNativeDoc,
                 documentSetHash: currentDocumentSet.setHash,
                 documentSetVersion: currentDocumentSet.version,
               })
             : null
-        const archivedLlmReady = !!archivedAuction && !!archivedDocuments?.documentSetComplete
+        const documentArchiveRequired = currentDocumentSet != null || a.attachments.length > 0
+        const archivedDocumentSetReady = !currentDocumentSet || !!archivedDocuments?.documentSetComplete
+        const archivedLlmReady =
+          detailOk && (!documentArchiveRequired || (canUseArchivedAuction && archivedDocumentSetReady))
+        const llmBlockedByArchive =
+          llmConfig != null && detailOk && documentArchiveRequired && (!canUseArchivedAuction || !archivedDocumentSetReady)
         const rules = extractByRules({ title: analysisAuction.title, description: analysisAuction.description })
         // Structured values straight from the source platform beat anything
         // parsed out of free text — they are the platform's own data, not a
@@ -711,6 +702,29 @@ export async function runEnrich(opts: EnrichOptions = {}) {
             }
             continue
           }
+        } else if (llmConfig && llmBlockedByArchive) {
+          const merged = {
+            ...mergeLlmResult(effectivePriorEntry, { ...fields, confident: mergedConfident }, null, at, curatedPhotos),
+            photosCheckedAt,
+            photoFailures: photoFailures > 0 ? photoFailures : undefined,
+            photoPipelineVersion,
+            documentSetHash: currentDocumentSet?.setHash ?? effectivePriorEntry?.documentSetHash ?? null,
+            documentSetVersion: currentDocumentSet?.version ?? effectivePriorEntry?.documentSetVersion ?? null,
+          }
+          cacheable = mergedConfident || detailOk || photoPipelineRan || (merged.llmFailures ?? 0) > 0
+          if (cacheable) {
+            cache[key] = merged
+            dirty[key] = merged
+            cached++
+            if (merged.confidence === 'high') confident++
+            if (cached % FLUSH_EVERY === 0) {
+              const toFlush = dirty
+              dirty = {}
+              const ok = await writeExtractionCache(toFlush)
+              if (!ok) dirty = { ...toFlush, ...dirty }
+            }
+          }
+          continue
         } else if (llmConfig) {
           // Per-run or per-platform LLM cap hit: cache the rules result
           // anyway so the listing shows *something* immediately. When rules

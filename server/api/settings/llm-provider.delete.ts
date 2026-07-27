@@ -4,12 +4,13 @@
 
 import { getPool } from '~/server/utils/db'
 import { clearLlmProviderOverride } from '~/server/utils/app-settings'
+import { readLlmProviderScope } from '~/server/utils/llm-provider-scope'
 
-export default defineEventHandler(async () => {
+export default defineEventHandler(async (event) => {
   const db = getPool()
   if (!db) {
     throw createError({ statusCode: 503, statusMessage: 'Postgres ist nicht konfiguriert.' })
   }
-  await clearLlmProviderOverride(db)
+  await clearLlmProviderOverride(db, readLlmProviderScope(event))
   return { cleared: true }
 })

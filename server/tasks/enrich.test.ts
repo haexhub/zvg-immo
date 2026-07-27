@@ -2,9 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Auction } from '~/types/auction'
 import { downloadNativeImages } from '../utils/extract/native-images'
 import { extractDocumentPhotos } from '../utils/extract/document-images'
+import { extractByLlm } from '../utils/extract/llm'
 import { readExtractionCache, writeExtractionCache, type ExtractionCache } from '../utils/extraction-cache'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
 import { readVerkehrswertCache } from '../utils/verkehrswert-cache'
+import { archiveDocumentSet } from '../utils/raw-archive'
 
 // WP-1 (docs/plans/2026-07-24-de-crawler-pipeline-reliability-plan.md): the
 // photo pipeline must retry a listing whose cache entry never recorded a
@@ -18,6 +20,10 @@ vi.mock('../utils/exchange-rate', () => ({
 }))
 vi.mock('../utils/extract/native-images', () => ({ downloadNativeImages: vi.fn() }))
 vi.mock('../utils/extract/document-images', () => ({ extractDocumentPhotos: vi.fn(async () => []) }))
+vi.mock('../utils/extract/llm', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/extract/llm')>()
+  return { ...actual, extractByLlm: vi.fn(async () => null) }
+})
 vi.mock('../utils/extraction-cache', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/extraction-cache')>()
   return { ...actual, readExtractionCache: vi.fn(), writeExtractionCache: vi.fn(async () => true) }
@@ -29,6 +35,14 @@ vi.mock('../utils/auction-snapshot', () => ({
 vi.mock('../utils/verkehrswert-cache', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/verkehrswert-cache')>()
   return { ...actual, readVerkehrswertCache: vi.fn(async () => ({})) }
+})
+vi.mock('../utils/raw-archive', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/raw-archive')>()
+  return {
+    ...actual,
+    archiveAuction: vi.fn(),
+    archiveDocumentSet: vi.fn(async () => null),
+  }
 })
 // defineTask is a Nitro auto-import — stub so importing the module (which
 // calls it at the top level for the default export) doesn't throw. Same
@@ -92,6 +106,7 @@ function mockCrawl(auctions: Auction[]) {
 }
 
 beforeEach(async () => {
+  vi.stubGlobal('useRuntimeConfig', () => ({}))
   const { platforms } = await import('../crawlers/registry')
   const mutablePlatforms = platforms as unknown as (typeof AT_PLATFORM)[]
   mutablePlatforms.length = 0
@@ -145,6 +160,57 @@ describe('document set invalidation', () => {
 })
 
 describe('runEnrich photo backfill (WP-1)', () => {
+  it('bumps llmFailures when a known document set cannot be loaded from the raw archive', async () => {
+    vi.stubGlobal('useRuntimeConfig', () => ({
+      extractLlm: {
+        provider: 'openai-compatible',
+        baseUrl: 'https://api.openai.test/v1',
+        model: 'gpt-test',
+        apiKey: 'sk-test',
+        maxPerRun: '10',
+      },
+    }))
+    const auction = makeAuction({
+      title: 'Unklare Immobilie',
+      description: 'Detailtext ohne verwertbare Flaechen.',
+      photoUrls: [],
+    })
+    const { crawlAll } = await import('../crawlers/registry')
+    vi.mocked(crawlAll).mockResolvedValue(mockCrawl([auction]))
+    vi.mocked(archiveDocumentSet).mockResolvedValueOnce({
+      setHash: 'prior-set',
+      version: 7,
+      changed: false,
+    })
+
+    const cache: ExtractionCache = {
+      'zvg-portal:14409': {
+        propertyType: null,
+        landAreaSqm: null,
+        livingAreaSqm: null,
+        rooms: null,
+        units: null,
+        source: 'rules',
+        confidence: 'low',
+        llmFailures: 1,
+        documentSetHash: 'prior-set',
+        documentSetVersion: 7,
+        photosCheckedAt: '2026-07-20T00:00:00.000Z',
+        photoPipelineVersion: 2,
+        at: '2026-07-01T00:00:00.000Z',
+      },
+    }
+    vi.mocked(readExtractionCache).mockResolvedValue(cache)
+
+    await runEnrich()
+
+    expect(extractByLlm).not.toHaveBeenCalled()
+    const written = vi.mocked(writeExtractionCache).mock.calls[0]?.[0] as ExtractionCache
+    expect(written['zvg-portal:14409']?.llmFailures).toBe(2)
+    expect(written['zvg-portal:14409']?.documentSetHash).toBe('prior-set')
+    expect(written['zvg-portal:14409']?.documentSetVersion).toBe(7)
+  })
+
   it('re-attempts the photo pipeline for an entry with no photos and no photosCheckedAt marker', async () => {
     const auction = makeAuction()
     const { crawlAll } = await import('../crawlers/registry')

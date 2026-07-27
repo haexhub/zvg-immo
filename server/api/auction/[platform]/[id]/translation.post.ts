@@ -2,9 +2,10 @@
 // synthesis into a target language (?lang=de|en). Cache-first, with in-flight
 // dedup, an in-memory rate limit, snapshot lookup and safe path segments.
 // Cached by (content_hash, lang) in Postgres (content_translations) — the
-// hash covers only the translated fields, so unrelated field changes never
-// invalidate the cache. Auctions whose country's primary language already
-// matches the target are passed through without an LLM call.
+// hash covers the translated fields plus the current document-set identity, so
+// unrelated field changes never invalidate the cache but changed/withdrawn/new
+// documents do. Auctions whose country's primary language already matches the
+// target are passed through without an LLM call.
 
 import type { H3Event } from 'h3'
 import type { Pool } from 'pg'
@@ -99,7 +100,13 @@ export default defineEventHandler(async (event) => {
     return { title, description, documentSummary, translated: false }
   }
 
-  const contentHash = sha256Hex(Buffer.from(JSON.stringify({ title, description, documentSummary })))
+  const contentHash = sha256Hex(Buffer.from(JSON.stringify({
+    title,
+    description,
+    documentSummary,
+    documentSetHash: auction.extraction?.documentSetHash ?? null,
+    documentSetVersion: auction.extraction?.documentSetVersion ?? null,
+  })))
   const inflightKey = `${contentHash}:${targetLang}`
 
   const db: Pool | null = getPool()
@@ -128,8 +135,11 @@ export default defineEventHandler(async (event) => {
   const llmCfg = useRuntimeConfig().extractLlm as
     | { provider?: string; baseUrl?: string; apiKey?: string; model?: string }
     | undefined
-  const override = await getLlmProviderOverride(db).catch(() => null)
-  const config = resolveLlmConfig(override ?? llmCfg, { maxTokens: await getLlmMaxTokens(db, 'translation') })
+  const translationOverride = await getLlmProviderOverride(db, 'translation').catch(() => null)
+  const extractionOverride = translationOverride ? null : await getLlmProviderOverride(db, 'extraction').catch(() => null)
+  const config = resolveLlmConfig(translationOverride ?? extractionOverride ?? llmCfg, {
+    maxTokens: await getLlmMaxTokens(db, 'translation'),
+  })
   if (!config) {
     throw createError({ statusCode: 503, statusMessage: 'LLM not configured' })
   }
