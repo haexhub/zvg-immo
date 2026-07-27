@@ -163,6 +163,36 @@ describe('runEnrich photo backfill (WP-1)', () => {
     expect(downloadNativeImages).not.toHaveBeenCalled()
   })
 
+  it('does not re-attempt unchanged native-photo entries from other platforms just because Kronofogden moved to version 3', async () => {
+    const auction = makeAuction({
+      photoUrls: ['https://zvg-portal.de/foto1.jpg'],
+    })
+    const { crawlAll } = await import('../crawlers/registry')
+    vi.mocked(crawlAll).mockResolvedValue(mockCrawl([auction]))
+
+    const cache: ExtractionCache = {
+      'zvg-portal:14409': {
+        propertyType: 'einfamilienhaus',
+        landAreaSqm: null,
+        livingAreaSqm: 100,
+        rooms: null,
+        units: null,
+        source: 'llm',
+        confidence: 'high',
+        photos: [{ file: 'foto1.jpg', category: 'sonstiges', caption: null, isPropertyPhoto: true }],
+        photosCheckedAt: '2026-07-20T00:00:00.000Z',
+        photoPipelineVersion: 2,
+        at: '2026-07-01T00:00:00.000Z',
+      },
+    }
+    vi.mocked(readExtractionCache).mockResolvedValue(cache)
+
+    await runEnrich()
+
+    expect(downloadNativeImages).not.toHaveBeenCalled()
+    expect(writeExtractionCache).not.toHaveBeenCalled()
+  })
+
   it('re-attempts old confirmed-empty photo checks once when the pipeline version changes', async () => {
     const auction = makeAuction()
     const { crawlAll } = await import('../crawlers/registry')
@@ -396,5 +426,53 @@ describe('runEnrich photo backfill (WP-1)', () => {
       { file: 'bov-photo.jpg', category: 'sonstiges', caption: null, isPropertyPhoto: true },
     ])
     expect(written['zvg-portal:14409']?.photoPipelineVersion).toBe(2)
+  })
+
+  it('merges newly exposed native gallery photos into existing document photos', async () => {
+    const auction = makeAuction({
+      platform: 'se-kronofogden',
+      photoUrls: ['https://auktionstorget.kronofogden.se/images/200.abc/1/Bild%201.jpg'],
+      attachments: [
+        {
+          kind: 'appraisal',
+          label: 'Beskrivning och värdering',
+          filename: 'BOV.pdf',
+          sizeBytes: 100,
+          fileId: 'bov',
+          proxyUrl: 'https://auktionstorget.kronofogden.se/download/BOV.pdf',
+        },
+      ],
+    })
+    const { crawlAll } = await import('../crawlers/registry')
+    vi.mocked(crawlAll).mockResolvedValue(mockCrawl([auction]))
+
+    const cache: ExtractionCache = {
+      'se-kronofogden:14409': {
+        propertyType: null,
+        landAreaSqm: null,
+        livingAreaSqm: null,
+        rooms: null,
+        units: null,
+        source: 'rules',
+        confidence: 'low',
+        photos: [{ file: 'pdf-photo.jpg', category: 'aussen', caption: 'PDF', isPropertyPhoto: true }],
+        photosCheckedAt: '2026-07-20T00:00:00.000Z',
+        photoPipelineVersion: 2,
+        at: '2026-07-01T00:00:00.000Z',
+      },
+    }
+    vi.mocked(readExtractionCache).mockResolvedValue(cache)
+    vi.mocked(downloadNativeImages).mockResolvedValue(['native-photo.jpg'])
+
+    await runEnrich()
+
+    expect(downloadNativeImages).toHaveBeenCalledTimes(1)
+    expect(extractDocumentPhotos).not.toHaveBeenCalled()
+    const written = vi.mocked(writeExtractionCache).mock.calls[0]?.[0] as ExtractionCache
+    expect(written['se-kronofogden:14409']?.photos).toEqual([
+      { file: 'pdf-photo.jpg', category: 'aussen', caption: 'PDF', isPropertyPhoto: true },
+      { file: 'native-photo.jpg', category: 'sonstiges', caption: null, isPropertyPhoto: true },
+    ])
+    expect(written['se-kronofogden:14409']?.photoPipelineVersion).toBe(3)
   })
 })

@@ -92,6 +92,7 @@ const MAX_LLM_FAILURES = 3
 // this bound only guards against persistent errors.
 const MAX_PHOTO_FAILURES = 3
 const PHOTO_PIPELINE_VERSION = 2
+const KRONOFOGDEN_GALLERY_PHOTO_PIPELINE_VERSION = 3
 // Cap on candidate photos sent to the LLM for curation per document — a
 // Gutachten with dozens of embedded rasters would otherwise blow the token
 // budget for one extraction call.
@@ -238,6 +239,20 @@ export async function runEnrich(opts: EnrichOptions = {}) {
         !isLlmBatchPending(hit)
       )
     }
+    const nativePhotoUrls = (a: Auction): string[] => [
+      ...a.attachments
+        .filter(
+          (att) =>
+            att.kind === 'photo' &&
+            /^https?:\/\/.*\.(?:jpe?g|png|webp)(?:[?#]|$)/i.test(att.proxyUrl),
+        )
+        .map((att) => att.proxyUrl),
+      ...(a.photoUrls ?? []),
+    ]
+    const targetPhotoPipelineVersion = (a: Auction): number =>
+      a.platform === 'se-kronofogden' && (a.photoUrls?.length ?? 0) > 0
+        ? KRONOFOGDEN_GALLERY_PHOTO_PIPELINE_VERSION
+        : PHOTO_PIPELINE_VERSION
     // A prior attempt may never have run the actual photo pipeline (the
     // `if (priorEntry)` reuse branch below only carries `priorEntry.photos`
     // forward) or may have thrown before completing. `photosCheckedAt` unset
@@ -245,14 +260,20 @@ export async function runEnrich(opts: EnrichOptions = {}) {
     // pipeline pass revisit older confirmed-empty false negatives.
     // Bounded by MAX_PHOTO_FAILURES so a listing whose PDF/URLs genuinely
     // cannot be mined doesn't retry forever.
-    // Entries that already have photos need no backfill regardless of the
-    // marker.
+    // Entries that already have photos normally need no backfill, except when
+    // a newer crawler version now exposes native gallery URLs: in that case we
+    // run once more and merge those source photos with already-mined document
+    // images.
     const needsPhotoBackfill = (a: Auction): boolean => {
       const hit = cache[cacheKey(a.platform, a.externalId)]
+      const photos = hit?.photos?.length ?? 0
+      const targetVersion = targetPhotoPipelineVersion(a)
+      const pipelineDue =
+        hit?.photosCheckedAt == null || (hit.photoPipelineVersion ?? 1) < targetVersion
       return (
         hit != null &&
-        !hit.photos?.length &&
-        (hit.photosCheckedAt == null || (hit.photoPipelineVersion ?? 1) < PHOTO_PIPELINE_VERSION) &&
+        pipelineDue &&
+        (photos === 0 || nativePhotoUrls(a).length > 0) &&
         (hit.photoFailures ?? 0) < MAX_PHOTO_FAILURES
       )
     }
@@ -497,34 +518,31 @@ export async function runEnrich(opts: EnrichOptions = {}) {
           }
         } else if (isSafePathSegment(a.platform) && isSafePathSegment(a.externalId)) {
           // First-ever entry, or a backfill retry (needsPhotoBackfill): the
-          // predicate only lets a listing in here when it has no photos yet,
-          // so there's nothing on disk worth preserving from priorEntry.
+          // backfill may be for missing photos or for newly-exposed native
+          // gallery URLs; preserve prior document photos and append new files.
           const destDir = join(IMAGES_DIR, a.platform, a.externalId)
           photoPipelineRan = true
           // The deterministic pipeline yields bare filenames; they become
           // CuratedPhoto entries (category defaults to 'sonstiges' unless the
           // LLM call below curates them for real).
-          let photos: string[] = []
-          const nativeFotoUrls = [
-            ...a.attachments
-              .filter(
-                (att) =>
-                  att.kind === 'photo' &&
-                  /^https?:\/\/.*\.(?:jpe?g|png|webp)(?:[?#]|$)/i.test(att.proxyUrl),
-              )
-              .map((att) => att.proxyUrl),
-            ...(a.photoUrls ?? []),
-          ]
+          const priorPhotos = priorEntry?.photos?.map(normalizePhoto) ?? []
+          let photos = priorPhotos.map((photo) => photo.file)
+          let newlyDownloadedPhotos: string[] = []
+          const nativeFotoUrls = nativePhotoUrls(a)
           try {
             if (nativeFotoUrls.length > 0) {
-              photos = await downloadNativeImages([...new Set(nativeFotoUrls)], { destDir })
+              newlyDownloadedPhotos = await downloadNativeImages([...new Set(nativeFotoUrls)], {
+                destDir,
+              })
+              photos = [...new Set([...photos, ...newlyDownloadedPhotos])]
             }
             if (photos.length === 0 && a.attachments.length > 0) {
               photoExtractions++
-              photos = await extractDocumentPhotos(a.attachments, {
+              newlyDownloadedPhotos = await extractDocumentPhotos(a.attachments, {
                 destDir,
                 maxPhotos: MAX_DOCUMENT_PHOTOS_PER_LISTING,
               })
+              photos = newlyDownloadedPhotos
             }
             photosTotal += photos.length
             // Mirror the freshly written files into the images bucket (WP-4) so
@@ -533,7 +551,7 @@ export async function runEnrich(opts: EnrichOptions = {}) {
             // without a configured bucket; skip re-reading the files off disk
             // entirely in that (default) case.
             if (imagesBucketConfigured()) {
-              for (const name of photos) {
+              for (const name of [...new Set(newlyDownloadedPhotos)]) {
                 const bytes = await readFile(join(destDir, name))
                 await uploadImage(bytes, `${a.platform}/${a.externalId}/${name}`)
               }
@@ -543,14 +561,18 @@ export async function runEnrich(opts: EnrichOptions = {}) {
             // listing/document stops being retried from here on).
             photosCheckedAt = at
             photoFailures = 0
-            photoPipelineVersion = PHOTO_PIPELINE_VERSION
+            photoPipelineVersion = targetPhotoPipelineVersion(a)
           } catch (err) {
             photoFailures++
             console.warn(
               `[enrich] photo extraction failed for ${a.platform}:${a.externalId}: ${(err as Error).message}`,
             )
           }
-          curatedPhotos = photos.length > 0 ? photos.map(normalizePhoto) : undefined
+          curatedPhotos = photos.length > 0
+            ? photos.map(
+                (name) => priorPhotos.find((photo) => photo.file === name) ?? normalizePhoto(name),
+              )
+            : undefined
           if (photos.length > 0) {
             freshPhotoFiles = photos
             freshPhotoDestDir = destDir

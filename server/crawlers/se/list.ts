@@ -46,6 +46,79 @@ export function extractNextStartAtHit(html: string, currentStart: number): numbe
   return starts[0] ?? null
 }
 
+function decodeHtmlAttribute(value: string): string {
+  return value
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+}
+
+function imageSortKey(url: string): string {
+  try {
+    const path = decodeURIComponent(new URL(url).pathname)
+    const file = path.split('/').pop()?.toLowerCase()
+    return file || path.toLowerCase()
+  } catch {
+    return url.toLowerCase()
+  }
+}
+
+function isLikelyListingPhoto(url: string): boolean {
+  try {
+    const u = new URL(url)
+    const path = decodeURIComponent(u.pathname)
+    return (
+      u.origin === SE_BASE &&
+      /^\/images\//i.test(path) &&
+      /\/bild\s*\d+\.(?:jpe?g|png|webp)$/i.test(path)
+    )
+  } catch {
+    return false
+  }
+}
+
+function toAbsoluteListingImageUrl(raw: string): string | null {
+  const decoded = decodeHtmlAttribute(raw).trim()
+  if (!decoded) return null
+  try {
+    const u = new URL(decoded, SE_BASE)
+    u.hash = ''
+    return isLikelyListingPhoto(u.href) ? u.href : null
+  } catch {
+    return null
+  }
+}
+
+export function extractKronofogdenPhotoUrls(html: string): string[] {
+  const galleryStart = html.search(/<div\b[^>]*\bid=["']galleria["'][^>]*>/i)
+  const source = galleryStart >= 0 ? html.slice(galleryStart) : html
+  const bestByImage = new Map<string, { url: string; width: number }>()
+
+  function add(raw: string, width = 0) {
+    const url = toAbsoluteListingImageUrl(raw)
+    if (!url) return
+    const key = imageSortKey(url)
+    const current = bestByImage.get(key)
+    if (!current || width > current.width) bestByImage.set(key, { url, width })
+  }
+
+  for (const match of source.matchAll(/\bsrcset\s*=\s*["']([^"']+)["']/gi)) {
+    const srcset = decodeHtmlAttribute(match[1] ?? '')
+    for (const candidate of srcset.split(',')) {
+      const m = candidate.trim().match(/^(\S+)(?:\s+(\d+)w)?$/i)
+      if (!m?.[1]) continue
+      add(m[1], m[2] ? Number.parseInt(m[2], 10) : 0)
+    }
+  }
+
+  for (const match of source.matchAll(/\b(?:src|href|data-[\w-]+)\s*=\s*["']([^"']+)["']/gi)) {
+    if (match[1]) add(match[1])
+  }
+
+  return [...bestByImage.values()].map((entry) => entry.url)
+}
+
 function searchUrl(path: string, startAtHit: number): string {
   const params = new URLSearchParams({ query: '*' })
   if (startAtHit > 0) params.set('startAtHit', String(startAtHit))
@@ -106,13 +179,9 @@ function mapDetail(id: string, html: string, platformId: string): Auction | null
   const pdfM = html.match(/href="(\/download\/[^"]+\.pdf)"/)
   const pdfUrl = pdfM?.[1] ? `${SE_BASE}${pdfM[1]}` : null
 
-  // First listing image (srcset, smallest variant) for thumbnail
-  const thumbM = html.match(/srcset="(\/images\/[^\s]+)\s+160w/)
-  const thumbnailUrl = thumbM?.[1] ? `${SE_BASE}${thumbM[1]}` : null
-
-  // Count all distinct image references
-  const imgMatches = html.match(/srcset="\/images\/[^\s]+\s+160w/g) ?? []
-  const photoCount = new Set(imgMatches).size
+  const photoUrls = extractKronofogdenPhotoUrls(html)
+  const thumbnailUrl = photoUrls[0] ?? null
+  const photoCount = photoUrls.length
 
   // Prefer the showingAddress embedded in Kronofogden's booking widget: it
   // usually includes the postal code ("Kvarnbyn 76, 93794, Burträsk"), which
@@ -193,6 +262,7 @@ function mapDetail(id: string, html: string, platformId: string): Auction | null
     description,
     photoCount,
     thumbnailUrl,
+    ...(photoUrls.length > 0 ? { photoUrls } : {}),
     sourceRooms,
     sourceLivingAreaSqm,
     sourceLandAreaSqm,
