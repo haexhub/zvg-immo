@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('./db', () => ({ getPool: vi.fn() }))
 
@@ -44,6 +44,10 @@ const SUMMARY = {
 }
 
 describe('task-runs', () => {
+  beforeEach(() => {
+    vi.resetModules()
+  })
+
   it('defaults to idle without a configured pool', async () => {
     const { getPool } = await import('./db')
     vi.mocked(getPool).mockReturnValue(null)

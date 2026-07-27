@@ -92,11 +92,14 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
   // llm-batch.ts), so on the free tier a real batch submit never happens and
   // recordLlmBatchCapability never fires — capabilities['gemini-native'] would
   // stay empty forever, silently hiding why batch mode isn't running. Fill
-  // that gap from the static config instead of a real attempt.
-  if (!capabilities['gemini-native'] && !isGeminiBatchTierPaid()) {
-    capabilities['gemini-native'] = {
+  // that gap from the static config instead of a real attempt. Copy first:
+  // getAllLlmBatchCapabilities() can return the shared in-memory fallback
+  // object directly, and mutating it here would leak into later requests.
+  const effectiveCapabilities = { ...capabilities }
+  if (!effectiveCapabilities['gemini-native'] && !isGeminiBatchTierPaid()) {
+    effectiveCapabilities['gemini-native'] = {
       ok: false,
-      message: 'Google erlaubt Batch-Anfragen erst ab Bezahl-Tarif — aktuell ist Free-Tier konfiguriert (geminiBatchTier).',
+      message: null,
       checkedAt: new Date().toISOString(),
       source: 'config',
     }
@@ -175,7 +178,7 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
     },
     jobs: overviewJobs,
     recentJobs: recentJobs.map(mapJob),
-    capabilities,
+    capabilities: effectiveCapabilities,
     enrichStatus,
   }
 })

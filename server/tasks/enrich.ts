@@ -158,8 +158,8 @@ export default defineTask({
       return { result: undefined }
     }
     running = true
-    await recordTaskRunStart('enrich')
     try {
+      await recordTaskRunStart('enrich')
       const outcome = await runEnrich((event?.payload ?? {}) as EnrichOptions)
       await recordTaskRunEnd('enrich', { result: outcome.result })
       return outcome

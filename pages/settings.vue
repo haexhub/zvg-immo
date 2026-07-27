@@ -1174,7 +1174,7 @@ onBeforeUnmount(stopPolling)
                   {{ $t('settings.llmProvider.batchUnsupported') }}
                 </p>
                 <p v-else-if="providerCapability(profile.provider)?.source === 'config'" class="text-xs text-destructive">
-                  {{ $t('settings.llmProvider.batchConfigGated', { message: providerCapability(profile.provider)?.message ?? '' }) }}
+                  {{ $t('settings.llmProvider.batchConfigGated') }}
                 </p>
                 <p v-else-if="providerBatchBroken(profile.provider)" class="text-xs text-destructive">
                   {{ $t('settings.llmProvider.batchBroken', { message: providerCapability(profile.provider)?.message ?? '' }) }}
@@ -1397,7 +1397,7 @@ onBeforeUnmount(stopPolling)
           <div v-if="brokenBatchCapabilities.length" class="space-y-1">
             <div v-for="entry in brokenBatchCapabilities" :key="entry.provider" class="text-sm text-destructive border border-destructive/30 rounded-md p-2">
               <template v-if="entry.source === 'config'">
-                {{ $t('settings.llmBatch.capabilityConfigGated', { provider: entry.provider, message: entry.message ?? '' }) }}
+                {{ $t('settings.llmBatch.capabilityConfigGated', { provider: entry.provider }) }}
               </template>
               <template v-else>
                 {{ $t('settings.llmBatch.capabilityBroken', { provider: entry.provider, message: entry.message ?? '', at: formatBatchDate(entry.checkedAt) }) }}
