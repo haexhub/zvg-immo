@@ -64,39 +64,73 @@ function imageSortKey(url: string): string {
   }
 }
 
-function isLikelyListingPhoto(url: string): boolean {
+const IMAGE_EXT_RE = /\.(?:jpe?g|png|webp)$/i
+// Kronofogden's per-case upload filenames are inconsistent ("Bild1.jpg",
+// "Bild-001.jpg", or plain "1.jpg" — depends on how the case officer
+// uploaded them), so this is only a fallback signal for when we can't
+// structurally scope to the gallery container (see extractGalleriaContent).
+const BILD_FILENAME_RE = /\/bild[-\s]*\d+\.(?:jpe?g|png|webp)$/i
+
+function isListingImageUrl(url: string, scopedToGallery: boolean): boolean {
   try {
     const u = new URL(url)
     const path = decodeURIComponent(u.pathname)
-    return (
-      u.origin === SE_BASE &&
-      /^\/images\//i.test(path) &&
-      /\/bild\s*\d+\.(?:jpe?g|png|webp)$/i.test(path)
-    )
+    if (u.origin !== SE_BASE || !/^\/images\//i.test(path) || !IMAGE_EXT_RE.test(path)) {
+      return false
+    }
+    return scopedToGallery || BILD_FILENAME_RE.test(path)
   } catch {
     return false
   }
 }
 
-function toAbsoluteListingImageUrl(raw: string): string | null {
+function toAbsoluteListingImageUrl(raw: string, scopedToGallery: boolean): string | null {
   const decoded = decodeHtmlAttribute(raw).trim()
   if (!decoded) return null
   try {
     const u = new URL(decoded, SE_BASE)
     u.hash = ''
-    return isLikelyListingPhoto(u.href) ? u.href : null
+    return isListingImageUrl(u.href, scopedToGallery) ? u.href : null
   } catch {
     return null
   }
 }
 
+/** Returns the inner HTML of `<div id="galleria">…</div>`, tracking nested
+ *  div depth to find its true matching close tag — unlike a non-greedy
+ *  regex (which would stop at the first nested `</div>`) or taking the rest
+ *  of the document (which would also sweep up unrelated images, e.g. footer
+ *  logos/banners, appearing later on the page). Returns null if no galleria
+ *  div is present. */
+function extractGalleriaContent(html: string): string | null {
+  const openMatch = /<div\b[^>]*\bid=["']galleria["'][^>]*>/i.exec(html)
+  if (!openMatch) return null
+  const start = openMatch.index + openMatch[0].length
+  const tagRe = /<div\b|<\/div>/gi
+  tagRe.lastIndex = start
+  let depth = 1
+  let match: RegExpExecArray | null
+  while ((match = tagRe.exec(html))) {
+    if (match[0].toLowerCase() === '</div>') {
+      if (--depth === 0) return html.slice(start, match.index)
+    } else {
+      depth++
+    }
+  }
+  return html.slice(start)
+}
+
 export function extractKronofogdenPhotoUrls(html: string): string[] {
-  const galleryStart = html.search(/<div\b[^>]*\bid=["']galleria["'][^>]*>/i)
-  const source = galleryStart >= 0 ? html.slice(galleryStart) : html
+  const galleryContent = extractGalleriaContent(html)
+  const source = galleryContent ?? html
+  // Inside the gallery container every image is a real listing photo
+  // regardless of filename; outside it (no galleria div found) filename
+  // is the only signal left to reject chrome/logo/banner images.
+  const scopedToGallery = galleryContent != null
   const bestByImage = new Map<string, { url: string; width: number }>()
 
   function add(raw: string, width = 0) {
-    const url = toAbsoluteListingImageUrl(raw)
+    const url = toAbsoluteListingImageUrl(raw, scopedToGallery)
     if (!url) return
     const key = imageSortKey(url)
     const current = bestByImage.get(key)
