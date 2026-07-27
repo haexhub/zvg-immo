@@ -6,6 +6,16 @@ vi.mock('~/server/utils/llm-batch-jobs', () => ({
   getAllLlmBatchCapabilities: vi.fn(),
 }))
 vi.mock('~/server/utils/extraction-cache', () => ({ readExtractionCache: vi.fn() }))
+vi.mock('~/server/utils/extract/gemini-batch', () => ({ isGeminiBatchTierPaid: vi.fn() }))
+vi.mock('~/server/utils/task-runs', () => ({ getTaskRunStatus: vi.fn() }))
+
+const IDLE_ENRICH_STATUS = {
+  status: 'idle' as const,
+  startedAt: null,
+  finishedAt: null,
+  lastResult: null,
+  lastError: null,
+}
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -19,6 +29,10 @@ describe('/api/settings/llm-batch-jobs', () => {
     const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
       await import('~/server/utils/llm-batch-jobs')
     const { readExtractionCache } = await import('~/server/utils/extraction-cache')
+    const { isGeminiBatchTierPaid } = await import('~/server/utils/extract/gemini-batch')
+    const { getTaskRunStatus } = await import('~/server/utils/task-runs')
+    vi.mocked(isGeminiBatchTierPaid).mockReturnValue(true)
+    vi.mocked(getTaskRunStatus).mockResolvedValue(IDLE_ENRICH_STATUS)
     const pendingJobs = [
       {
         jobName: 'msgbatch_abc',
@@ -118,6 +132,74 @@ describe('/api/settings/llm-batch-jobs', () => {
       capabilities: {
         'gemini-native': { ok: false, message: 'FAILED_PRECONDITION: Precondition check failed.', checkedAt: '2026-07-26T18:00:00.000Z', source: 'enrich' },
       },
+      enrichStatus: IDLE_ENRICH_STATUS,
     })
+  })
+
+  it('synthesizes a config-gated gemini-native capability when the free tier has never been attempted', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
+      await import('~/server/utils/llm-batch-jobs')
+    const { readExtractionCache } = await import('~/server/utils/extraction-cache')
+    const { isGeminiBatchTierPaid } = await import('~/server/utils/extract/gemini-batch')
+    const { getTaskRunStatus } = await import('~/server/utils/task-runs')
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([])
+    vi.mocked(listRecentLlmBatchJobs).mockResolvedValue([])
+    vi.mocked(getAllLlmBatchCapabilities).mockResolvedValue({})
+    vi.mocked(readExtractionCache).mockResolvedValue({})
+    vi.mocked(isGeminiBatchTierPaid).mockReturnValue(false)
+    vi.mocked(getTaskRunStatus).mockResolvedValue(IDLE_ENRICH_STATUS)
+
+    const handler = (await import('./llm-batch-jobs.get')).default as () => Promise<unknown>
+    const result = (await handler()) as { capabilities: Record<string, { ok: boolean; source: string }> }
+
+    expect(result.capabilities['gemini-native']).toMatchObject({ ok: false, source: 'config' })
+  })
+
+  it('does not synthesize a gemini-native capability once the tier is paid', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
+      await import('~/server/utils/llm-batch-jobs')
+    const { readExtractionCache } = await import('~/server/utils/extraction-cache')
+    const { isGeminiBatchTierPaid } = await import('~/server/utils/extract/gemini-batch')
+    const { getTaskRunStatus } = await import('~/server/utils/task-runs')
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([])
+    vi.mocked(listRecentLlmBatchJobs).mockResolvedValue([])
+    vi.mocked(getAllLlmBatchCapabilities).mockResolvedValue({})
+    vi.mocked(readExtractionCache).mockResolvedValue({})
+    vi.mocked(isGeminiBatchTierPaid).mockReturnValue(true)
+    vi.mocked(getTaskRunStatus).mockResolvedValue(IDLE_ENRICH_STATUS)
+
+    const handler = (await import('./llm-batch-jobs.get')).default as () => Promise<unknown>
+    const result = (await handler()) as { capabilities: Record<string, unknown> }
+
+    expect(result.capabilities['gemini-native']).toBeUndefined()
+  })
+
+  it('passes the enrich task run status through unchanged', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
+      await import('~/server/utils/llm-batch-jobs')
+    const { readExtractionCache } = await import('~/server/utils/extraction-cache')
+    const { isGeminiBatchTierPaid } = await import('~/server/utils/extract/gemini-batch')
+    const { getTaskRunStatus } = await import('~/server/utils/task-runs')
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([])
+    vi.mocked(listRecentLlmBatchJobs).mockResolvedValue([])
+    vi.mocked(getAllLlmBatchCapabilities).mockResolvedValue({})
+    vi.mocked(readExtractionCache).mockResolvedValue({})
+    vi.mocked(isGeminiBatchTierPaid).mockReturnValue(true)
+    const runningStatus = {
+      status: 'running' as const,
+      startedAt: '2026-07-27T20:00:00.000Z',
+      finishedAt: null,
+      lastResult: null,
+      lastError: null,
+    }
+    vi.mocked(getTaskRunStatus).mockResolvedValue(runningStatus)
+
+    const handler = (await import('./llm-batch-jobs.get')).default as () => Promise<unknown>
+    const result = (await handler()) as { enrichStatus: unknown }
+
+    expect(result.enrichStatus).toEqual(runningStatus)
   })
 })

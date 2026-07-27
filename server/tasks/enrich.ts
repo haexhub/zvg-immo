@@ -69,6 +69,7 @@ import {
 import { cacheKey, readVerkehrswertCache } from '~/server/utils/verkehrswert-cache'
 import { applyDescriptionMarketValue } from '~/server/utils/description-market-value'
 import { normalizeAuctionDescription, normalizeAuctionDescriptions } from '~/server/utils/description-normalization'
+import { recordTaskRunEnd, recordTaskRunStart } from '~/server/utils/task-runs'
 
 const IMAGES_DIR = join(process.cwd(), '.cache_zvg', 'images')
 
@@ -158,7 +159,13 @@ export default defineTask({
     }
     running = true
     try {
-      return await runEnrich((event?.payload ?? {}) as EnrichOptions)
+      await recordTaskRunStart('enrich')
+      const outcome = await runEnrich((event?.payload ?? {}) as EnrichOptions)
+      await recordTaskRunEnd('enrich', { result: outcome.result })
+      return outcome
+    } catch (err) {
+      await recordTaskRunEnd('enrich', { error: (err as Error).message })
+      throw err
     } finally {
       running = false
     }

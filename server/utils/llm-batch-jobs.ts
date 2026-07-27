@@ -35,7 +35,10 @@ export interface LlmBatchCapability {
   ok: boolean
   message: string | null
   checkedAt: string
-  source: 'enrich' | 'reprocess'
+  // 'config': synthesized from a static gate (e.g. Gemini's free-tier check)
+  // rather than a real submit attempt — see isGeminiBatchTierPaid() and
+  // server/api/settings/llm-batch-jobs.get.ts.
+  source: 'enrich' | 'reprocess' | 'config'
 }
 
 export interface GeminiBatchQuotaUsage {
@@ -206,7 +209,7 @@ function coerceLlmBatchCapabilityEntry(value: unknown): LlmBatchCapability | nul
   const v = value as Record<string, unknown>
   if (typeof v.ok !== 'boolean') return null
   if (typeof v.checkedAt !== 'string' || !v.checkedAt) return null
-  if (v.source !== 'enrich' && v.source !== 'reprocess') return null
+  if (v.source !== 'enrich' && v.source !== 'reprocess' && v.source !== 'config') return null
   return {
     ok: v.ok,
     message: typeof v.message === 'string' && v.message ? v.message : null,

@@ -704,7 +704,25 @@ interface LlmBatchCapability {
   ok: boolean
   message: string | null
   checkedAt: string
-  source: 'enrich' | 'reprocess'
+  source: 'enrich' | 'reprocess' | 'config'
+}
+interface EnrichRunSummary {
+  crawled: number
+  new: number
+  cached: number
+  enriched: number
+  llmCalls: number
+  photoExtractions: number
+  photosTotal: number
+  confident: number
+  durationMs: number
+}
+interface TaskRunStatus {
+  status: 'idle' | 'running'
+  startedAt: string | null
+  finishedAt: string | null
+  lastResult: EnrichRunSummary | null
+  lastError: string | null
 }
 interface LlmBatchJobsOverview {
   totalJobs: number
@@ -721,6 +739,7 @@ interface LlmBatchJobsOverview {
   jobs: LlmBatchJobOverviewItem[]
   recentJobs: LlmBatchJobOverviewItem[]
   capabilities: Record<string, LlmBatchCapability>
+  enrichStatus: TaskRunStatus
 }
 const reprocessLimit = ref('10')
 const reprocessCountry = ref('de')
@@ -751,7 +770,12 @@ const llmBatchBacklog = computed(() => llmBatchJobs.value?.backlog ?? {
 const brokenBatchCapabilities = computed(() =>
   Object.entries(llmBatchJobs.value?.capabilities ?? {})
     .filter(([, capability]) => !capability.ok)
-    .map(([provider, capability]) => ({ provider, message: capability.message, checkedAt: capability.checkedAt })),
+    .map(([provider, capability]) => ({
+      provider,
+      message: capability.message,
+      checkedAt: capability.checkedAt,
+      source: capability.source,
+    })),
 )
 
 async function loadLlmBatchJobs(): Promise<void> {
@@ -1149,6 +1173,9 @@ onBeforeUnmount(stopPolling)
                 <p v-if="!profileSupportsBatch(profile)" class="text-xs text-muted-foreground">
                   {{ $t('settings.llmProvider.batchUnsupported') }}
                 </p>
+                <p v-else-if="providerCapability(profile.provider)?.source === 'config'" class="text-xs text-destructive">
+                  {{ $t('settings.llmProvider.batchConfigGated') }}
+                </p>
                 <p v-else-if="providerBatchBroken(profile.provider)" class="text-xs text-destructive">
                   {{ $t('settings.llmProvider.batchBroken', { message: providerCapability(profile.provider)?.message ?? '' }) }}
                 </p>
@@ -1350,9 +1377,31 @@ onBeforeUnmount(stopPolling)
           </p>
           <p v-if="llmBatchJobsError" class="text-sm text-destructive">{{ llmBatchJobsError }}</p>
 
+          <div v-if="llmBatchJobs?.enrichStatus" class="text-sm space-y-1">
+            <p v-if="llmBatchJobs.enrichStatus.status === 'running'">
+              {{ $t('settings.llmBatch.enrichRunning', { at: formatBatchDate(llmBatchJobs.enrichStatus.startedAt) }) }}
+            </p>
+            <p v-else-if="llmBatchJobs.enrichStatus.finishedAt" class="text-muted-foreground">
+              {{ $t('settings.llmBatch.enrichLastRun', {
+                at: formatBatchDate(llmBatchJobs.enrichStatus.finishedAt),
+                enriched: llmBatchJobs.enrichStatus.lastResult?.enriched ?? 0,
+                llmCalls: llmBatchJobs.enrichStatus.lastResult?.llmCalls ?? 0,
+                duration: Math.round((llmBatchJobs.enrichStatus.lastResult?.durationMs ?? 0) / 1000),
+              }) }}
+            </p>
+            <p v-if="llmBatchJobs.enrichStatus.lastError" class="text-destructive">
+              {{ $t('settings.llmBatch.enrichLastError', { message: llmBatchJobs.enrichStatus.lastError }) }}
+            </p>
+          </div>
+
           <div v-if="brokenBatchCapabilities.length" class="space-y-1">
             <div v-for="entry in brokenBatchCapabilities" :key="entry.provider" class="text-sm text-destructive border border-destructive/30 rounded-md p-2">
-              {{ $t('settings.llmBatch.capabilityBroken', { provider: entry.provider, message: entry.message ?? '', at: formatBatchDate(entry.checkedAt) }) }}
+              <template v-if="entry.source === 'config'">
+                {{ $t('settings.llmBatch.capabilityConfigGated', { provider: entry.provider }) }}
+              </template>
+              <template v-else>
+                {{ $t('settings.llmBatch.capabilityBroken', { provider: entry.provider, message: entry.message ?? '', at: formatBatchDate(entry.checkedAt) }) }}
+              </template>
             </div>
           </div>
 
