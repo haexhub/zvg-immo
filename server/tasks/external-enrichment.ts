@@ -21,6 +21,7 @@ import { cacheKey } from '~/server/utils/verkehrswert-cache'
 export interface MarketComparisonAdapter {
   id: string
   sourceVersion: string
+  minIntervalMs?: number
   supports(auction: Auction): boolean
   compare(auction: Auction): Promise<MarketComparison | null>
 }
@@ -28,6 +29,7 @@ export interface MarketComparisonAdapter {
 export interface LandValueBaselineAdapter {
   id: string
   sourceVersion: string
+  minIntervalMs?: number
   supports(auction: Auction): boolean
   baseline(auction: Auction): Promise<LandValueBaseline | null>
 }
@@ -35,6 +37,7 @@ export interface LandValueBaselineAdapter {
 export interface HazardAssessmentAdapter {
   id: string
   sourceVersion: string
+  minIntervalMs?: number
   supports(auction: Auction): boolean
   assess(auction: Auction): Promise<HazardAssessment[]>
 }
@@ -43,8 +46,26 @@ export interface ExternalEnrichmentOptions {
   marketAdapters?: MarketComparisonAdapter[]
   landValueAdapters?: LandValueBaselineAdapter[]
   hazardAdapters?: HazardAssessmentAdapter[]
+  providerRateLimits?: Record<string, number>
+  sleep?: (ms: number) => Promise<void>
   now?: Date
   limit?: number
+}
+
+export type ExternalEnrichmentProviderKind = 'market' | 'land_value' | 'hazard'
+
+export interface ExternalEnrichmentProviderSummary {
+  id: string
+  kind: ExternalEnrichmentProviderKind
+  sourceVersion: string
+  supported: number
+  attempted: number
+  produced: number
+  staleResults: number
+  failures: number
+  rateLimited: number
+  waitedMs: number
+  durationMs: number
 }
 
 export interface ExternalEnrichmentSummary {
@@ -56,6 +77,7 @@ export interface ExternalEnrichmentSummary {
   hazards: number
   staleResults: number
   providerFailures: number
+  providers: ExternalEnrichmentProviderSummary[]
   durationMs: number
 }
 
@@ -98,12 +120,18 @@ export async function runExternalEnrichment(
     hazards: 0,
     staleResults: 0,
     providerFailures: 0,
+    providers: [],
     durationMs: 0,
   }
 
   const marketAdapters = options.marketAdapters ?? await defaultMarketAdapters()
   const landValueAdapters = options.landValueAdapters ?? []
   const hazardAdapters = options.hazardAdapters ?? await defaultHazardAdapters(checkedAt)
+  const providerStats = new ProviderStatsTracker(summary.providers)
+  const rateLimiter = new ProviderRateLimiter({
+    rateLimits: options.providerRateLimits ?? defaultProviderRateLimits(),
+    sleep: options.sleep ?? sleep,
+  })
 
   for (const rawAuction of Object.values(snapshot)) {
     if (options.limit != null && summary.processed >= options.limit) break
@@ -117,9 +145,9 @@ export async function runExternalEnrichment(
     const key = cacheKey(auction.platform, auction.externalId)
     const previous = existing[key]
 
-    const marketComparison = await firstMarketComparison(auction, marketAdapters, summary)
-    const landValueBaseline = await firstLandValueBaseline(auction, landValueAdapters, summary)
-    const hazards = await allHazards(auction, hazardAdapters, summary)
+    const marketComparison = await firstMarketComparison(auction, marketAdapters, summary, providerStats, rateLimiter)
+    const landValueBaseline = await firstLandValueBaseline(auction, landValueAdapters, summary, providerStats, rateLimiter)
+    const hazards = await allHazards(auction, hazardAdapters, summary, providerStats, rateLimiter)
 
     if (marketComparison) summary.marketComparisons++
     if (landValueBaseline) summary.landValueBaselines++
@@ -163,13 +191,25 @@ async function firstMarketComparison(
   auction: Auction,
   adapters: MarketComparisonAdapter[],
   summary: ExternalEnrichmentSummary,
+  providerStats: ProviderStatsTracker,
+  rateLimiter: ProviderRateLimiter,
 ): Promise<MarketComparison | null> {
   for (const adapter of adapters) {
     if (!adapter.supports(auction)) continue
+    const stats = providerStats.forAdapter('market', adapter)
+    stats.supported++
     try {
+      await rateLimiter.wait('market', adapter, stats)
+      stats.attempted++
+      const startedAt = Date.now()
       const result = await adapter.compare(auction)
-      if (result) return result
+      stats.durationMs += Date.now() - startedAt
+      if (result) {
+        stats.produced++
+        return result
+      }
     } catch (err) {
+      stats.failures++
       summary.providerFailures++
       console.warn(`[external-enrichment] ${adapter.id} market failed for ${auction.platform}/${auction.externalId}: ${(err as Error).message}`)
     }
@@ -181,13 +221,25 @@ async function firstLandValueBaseline(
   auction: Auction,
   adapters: LandValueBaselineAdapter[],
   summary: ExternalEnrichmentSummary,
+  providerStats: ProviderStatsTracker,
+  rateLimiter: ProviderRateLimiter,
 ): Promise<LandValueBaseline | null> {
   for (const adapter of adapters) {
     if (!adapter.supports(auction)) continue
+    const stats = providerStats.forAdapter('land_value', adapter)
+    stats.supported++
     try {
+      await rateLimiter.wait('land_value', adapter, stats)
+      stats.attempted++
+      const startedAt = Date.now()
       const result = await adapter.baseline(auction)
-      if (result) return result
+      stats.durationMs += Date.now() - startedAt
+      if (result) {
+        stats.produced++
+        return result
+      }
     } catch (err) {
+      stats.failures++
       summary.providerFailures++
       console.warn(`[external-enrichment] ${adapter.id} land baseline failed for ${auction.platform}/${auction.externalId}: ${(err as Error).message}`)
     }
@@ -199,13 +251,25 @@ async function allHazards(
   auction: Auction,
   adapters: HazardAssessmentAdapter[],
   summary: ExternalEnrichmentSummary,
+  providerStats: ProviderStatsTracker,
+  rateLimiter: ProviderRateLimiter,
 ): Promise<HazardAssessment[]> {
   const out: HazardAssessment[] = []
   for (const adapter of adapters) {
     if (!adapter.supports(auction)) continue
+    const stats = providerStats.forAdapter('hazard', adapter)
+    stats.supported++
     try {
-      out.push(...await adapter.assess(auction))
+      await rateLimiter.wait('hazard', adapter, stats)
+      stats.attempted++
+      const startedAt = Date.now()
+      const results = await adapter.assess(auction)
+      stats.durationMs += Date.now() - startedAt
+      stats.produced += results.length
+      stats.staleResults += results.filter((hazard) => hazard.stale).length
+      out.push(...results)
     } catch (err) {
+      stats.failures++
       summary.providerFailures++
       console.warn(`[external-enrichment] ${adapter.id} hazards failed for ${auction.platform}/${auction.externalId}: ${(err as Error).message}`)
     }
@@ -267,6 +331,7 @@ interface ExternalDataRuntimeConfig {
   effisWildfireMaxSampleDistanceMeters?: number | string
   avalancheDiscoveryPath?: string
   avalancheDiscoveryMaxCacheAgeDays?: number | string
+  providerRateLimitsJson?: string
 }
 
 function numberConfig(value: number | string | undefined, fallback: number): number {
@@ -276,4 +341,95 @@ function numberConfig(value: number | string | undefined, fallback: number): num
     if (Number.isFinite(parsed) && parsed > 0) return parsed
   }
   return fallback
+}
+
+function defaultProviderRateLimits(): Record<string, number> {
+  if (typeof useRuntimeConfig !== 'function') return {}
+  const config = useRuntimeConfig().externalData as ExternalDataRuntimeConfig | undefined
+  return parseProviderRateLimits(config?.providerRateLimitsJson)
+}
+
+export function parseProviderRateLimits(input: string | undefined): Record<string, number> {
+  if (!input?.trim()) return {}
+  try {
+    const parsed = JSON.parse(input) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    const out: Record<string, number> = {}
+    for (const [key, value] of Object.entries(parsed)) {
+      if (!/^[\w.:-]+$/.test(key)) continue
+      const number = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : Number.NaN
+      if (Number.isFinite(number) && number >= 0) out[key] = Math.round(number)
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+class ProviderStatsTracker {
+  private readonly byKey = new Map<string, ExternalEnrichmentProviderSummary>()
+
+  constructor(private readonly summaries: ExternalEnrichmentProviderSummary[]) {}
+
+  forAdapter(
+    kind: ExternalEnrichmentProviderKind,
+    adapter: { id: string; sourceVersion: string },
+  ): ExternalEnrichmentProviderSummary {
+    const key = `${kind}:${adapter.id}`
+    const existing = this.byKey.get(key)
+    if (existing) return existing
+    const summary: ExternalEnrichmentProviderSummary = {
+      id: adapter.id,
+      kind,
+      sourceVersion: adapter.sourceVersion,
+      supported: 0,
+      attempted: 0,
+      produced: 0,
+      staleResults: 0,
+      failures: 0,
+      rateLimited: 0,
+      waitedMs: 0,
+      durationMs: 0,
+    }
+    this.byKey.set(key, summary)
+    this.summaries.push(summary)
+    return summary
+  }
+}
+
+class ProviderRateLimiter {
+  private readonly lastStartedAt = new Map<string, number>()
+  private readonly rateLimits: Record<string, number>
+  private readonly sleep: (ms: number) => Promise<void>
+
+  constructor(options: { rateLimits: Record<string, number>; sleep: (ms: number) => Promise<void> }) {
+    this.rateLimits = options.rateLimits
+    this.sleep = options.sleep
+  }
+
+  async wait(
+    kind: ExternalEnrichmentProviderKind,
+    adapter: { id: string; minIntervalMs?: number },
+    stats: ExternalEnrichmentProviderSummary,
+  ): Promise<void> {
+    const minIntervalMs = adapter.minIntervalMs ?? this.rateLimits[adapter.id] ?? this.rateLimits[`${kind}:${adapter.id}`] ?? 0
+    if (minIntervalMs <= 0) {
+      this.lastStartedAt.set(`${kind}:${adapter.id}`, Date.now())
+      return
+    }
+    const key = `${kind}:${adapter.id}`
+    const now = Date.now()
+    const lastStartedAt = this.lastStartedAt.get(key)
+    const waitMs = lastStartedAt == null ? 0 : Math.max(0, lastStartedAt + minIntervalMs - now)
+    if (waitMs > 0) {
+      stats.rateLimited++
+      stats.waitedMs += waitMs
+      await this.sleep(waitMs)
+    }
+    this.lastStartedAt.set(key, Date.now())
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
