@@ -269,9 +269,9 @@ SET market_value = market_value_eur, currency = 'EUR'
 WHERE market_value_eur IS NOT NULL AND currency IS NULL;
 
 -- WP-3: G1 Roh-Archiv Schicht 1. raw_blobs = deduplizierte Bytes (S3-Key =
--- content_hash, sha256), raw_captures = append-only Log "wann zeigte welche
--- Auktions-Identität auf welchen Blob" (server/utils/raw-archive.ts). Muster
--- wie auction_observations: append-only, kein RLS, server-intern.
+-- content_hash, sha256), raw_captures = deduplizierter Capture-Index,
+-- raw_document_sets = versionierte "diese Dokumente galten zusammen"-
+-- Manifeste pro Auktion (server/utils/raw-archive.ts).
 CREATE TABLE IF NOT EXISTS raw_blobs (
   content_hash  text PRIMARY KEY,          -- sha256 der kanonisierten Bytes
   s3_key        text NOT NULL,             -- sharded Key im Primary-Bucket, z.B. 'ab/abcd….json.gz'
@@ -284,7 +284,7 @@ CREATE TABLE IF NOT EXISTS raw_blobs (
 CREATE TABLE IF NOT EXISTS raw_captures (
   id            bigserial PRIMARY KEY,
   captured_at   timestamptz NOT NULL,
-  kind          text NOT NULL,             -- 'auction' | 'document' | 'detail_html'
+  kind          text NOT NULL,             -- 'auction' | 'document' | 'detail_html' | 'document_text'
   platform      text NOT NULL,
   country       text NOT NULL,
   external_id   text NOT NULL,             -- Auktions-Identität (immer vorhanden)
@@ -296,23 +296,78 @@ CREATE TABLE IF NOT EXISTS raw_captures (
 CREATE INDEX IF NOT EXISTS idx_capt_identity_time ON raw_captures (platform, external_id, captured_at DESC);
 CREATE INDEX IF NOT EXISTS idx_capt_az_time       ON raw_captures (authority, case_number, captured_at DESC);
 CREATE INDEX IF NOT EXISTS idx_capt_hash          ON raw_captures (content_hash);
--- Dedupe before adding the uniqueness guarantee below: recordCapture's
--- check-then-insert (server/utils/raw-archive.ts) isn't atomic, so concurrent
--- refresh/enrich runs could occasionally insert the same
--- (kind, platform, external_id, content_hash) twice. Keep the row with the
--- latest captured_at (metadata like region/case_number can have been
--- corrected between the two inserts — the newer row is the more trustworthy
--- one), not just the lowest id.
-DELETE FROM raw_captures a USING raw_captures b
-WHERE a.kind = b.kind AND a.platform = b.platform
-  AND a.external_id = b.external_id AND a.content_hash = b.content_hash
-  AND (a.captured_at, a.id) < (b.captured_at, b.id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_capt_unique ON raw_captures (kind, platform, external_id, content_hash);
+-- Historical cleanup before adding the uniqueness guarantees below. Keep only
+-- the newest parsed auction row per identity; for documents/detail/text keep
+-- one row per identity+source_url+content_hash so updated documents remain
+-- addressable by older document-set versions without re-adding duplicates on
+-- every recrawl.
+WITH ranked AS (
+  SELECT id,
+         row_number() OVER (
+           PARTITION BY kind, platform, external_id,
+                        CASE WHEN kind = 'auction' THEN '' ELSE COALESCE(source_url, '') END,
+                        CASE WHEN kind = 'auction' THEN '' ELSE content_hash END
+           ORDER BY captured_at DESC, id DESC
+         ) AS rn
+  FROM raw_captures
+)
+DELETE FROM raw_captures rc USING ranked r
+WHERE rc.id = r.id AND r.rn > 1;
+-- The old uniqueness model keyed all captures by content_hash alone. The new
+-- model keeps auction rows current and document rows deduplicated by both
+-- source URL and bytes.
+DROP INDEX IF EXISTS idx_capt_unique;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_capt_unique_auction_current
+  ON raw_captures (kind, platform, external_id)
+  WHERE kind = 'auction';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_capt_unique_source_hash
+  ON raw_captures (kind, platform, external_id, (COALESCE(source_url, '')), content_hash)
+  WHERE kind <> 'auction';
+
+CREATE TABLE IF NOT EXISTS raw_document_sets (
+  id              bigserial PRIMARY KEY,
+  captured_at     timestamptz NOT NULL,
+  last_seen_at    timestamptz NOT NULL,
+  platform        text NOT NULL,
+  country         text NOT NULL,
+  region          text,
+  external_id     text NOT NULL,
+  case_number     text,
+  authority       text,
+  set_hash        text NOT NULL,
+  version         integer NOT NULL,
+  document_count  integer NOT NULL,
+  UNIQUE (platform, external_id, set_hash),
+  UNIQUE (platform, external_id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_doc_sets_identity_version
+  ON raw_document_sets (platform, external_id, version DESC);
+CREATE INDEX IF NOT EXISTS idx_doc_sets_country_region_time
+  ON raw_document_sets (country, region, captured_at DESC);
+
+CREATE TABLE IF NOT EXISTS raw_document_set_items (
+  set_id        bigint NOT NULL REFERENCES raw_document_sets(id) ON DELETE CASCADE,
+  ordinal       integer NOT NULL,
+  kind          text NOT NULL,
+  label         text,
+  filename      text,
+  file_id       text,
+  source_url    text NOT NULL,
+  content_hash  text NOT NULL REFERENCES raw_blobs(content_hash),
+  content_type  text NOT NULL,
+  PRIMARY KEY (set_id, ordinal)
+);
+CREATE INDEX IF NOT EXISTS idx_doc_set_items_hash ON raw_document_set_items (content_hash);
+DELETE FROM raw_blobs rb
+WHERE NOT EXISTS (SELECT 1 FROM raw_captures rc WHERE rc.content_hash = rb.content_hash)
+  AND NOT EXISTS (SELECT 1 FROM raw_document_set_items rdsi WHERE rdsi.content_hash = rb.content_hash);
 -- Server-intern, nie clientseitig exponiert — trotzdem RLS aktivieren (ohne
 -- Policies, also Default-Deny), sonst liest/schreibt PostgREST-anon/authenticated
 -- munter mit; der Backend-Zugriff läuft als Table-Owner und umgeht RLS ohnehin.
 ALTER TABLE raw_blobs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE raw_captures ENABLE ROW LEVEL SECURITY;
+ALTER TABLE raw_document_sets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE raw_document_set_items ENABLE ROW LEVEL SECURITY;
 
 -- WP-8: i18n Baustein B (Content-Übersetzung). content_hash = sha256 über
 -- {title, description, documentSummary} (raw-archive.ts's sha256Hex, siehe

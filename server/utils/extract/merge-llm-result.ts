@@ -157,6 +157,8 @@ export function mergeLlmResult(
     documentSummary,
     marketValueEur,
     marketValueText,
+    documentSetHash: priorEntry?.documentSetHash,
+    documentSetVersion: priorEntry?.documentSetVersion,
     source,
     confidence: hasType && hasArea ? 'high' : 'low',
     photos,

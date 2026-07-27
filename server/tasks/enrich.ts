@@ -27,7 +27,7 @@
 
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { Attachment, Auction, AuctionExtraction, CuratedPhoto } from '~/types/auction'
+import type { Auction, AuctionExtraction, CuratedPhoto } from '~/types/auction'
 import { normalizePhoto } from '~/lib/photo'
 import { crawlAll, platforms } from '~/server/crawlers/registry'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '~/server/utils/auction-snapshot'
@@ -53,7 +53,7 @@ import { mergeLlmResult } from '~/server/utils/extract/merge-llm-result'
 import { downloadNativeImages } from '~/server/utils/extract/native-images'
 import { extractDocumentPhotos } from '~/server/utils/extract/document-images'
 import { pdfPagesToBase64Jpeg } from '~/server/utils/extract/pdf-render'
-import { fetchPdfBuffer, pdfToText, pickBestPdf, pickRelevantPdfs } from '~/server/utils/extract/pdf-text'
+import { extractPdfTextFromBuffer, fetchPdfBuffer, pickBestPdf, pickRelevantPdfs } from '~/server/utils/extract/pdf-text'
 import {
   applyExtractionToAuctions,
   type ExtractionCache,
@@ -63,7 +63,13 @@ import {
 import { imagesBucketConfigured, mimeTypeFor, uploadImage } from '~/server/utils/image-storage'
 import { interleaveByPlatform } from '~/server/utils/interleave-by-platform'
 import { isSafePathSegment } from '~/server/utils/path-segment'
-import { archiveAuction, archiveDocument } from '~/server/utils/raw-archive'
+import {
+  archiveAuction,
+  archiveDocument,
+  archiveDocumentSet,
+  archiveDocumentText,
+  type ArchivedDocumentSetResult,
+} from '~/server/utils/raw-archive'
 import { cacheKey, readVerkehrswertCache } from '~/server/utils/verkehrswert-cache'
 import { applyDescriptionMarketValue } from '~/server/utils/description-market-value'
 import { normalizeAuctionDescription, normalizeAuctionDescriptions } from '~/server/utils/description-normalization'
@@ -192,7 +198,18 @@ export async function runEnrich(opts: EnrichOptions = {}) {
       const crawler = byPlatform.get(a.platform)
       if (!crawler?.enrichOne) return false
       const prev = previousSnapshot[cacheKey(a.platform, a.externalId)]
-      return !prev?.detailFetchedAt
+      return !prev?.detailFetchedAt || (a.sourceUpdatedIso != null && prev.sourceUpdatedIso !== a.sourceUpdatedIso)
+    }
+    const needsDocumentSetCheck = (a: Auction): boolean => {
+      const crawler = byPlatform.get(a.platform)
+      if (!crawler?.enrichOne) return false
+      const hit = cache[cacheKey(a.platform, a.externalId)]
+      const prev = previousSnapshot[cacheKey(a.platform, a.externalId)]
+      return (
+        !hit ||
+        hit.documentSetHash === undefined ||
+        (a.sourceUpdatedIso != null && prev?.sourceUpdatedIso !== a.sourceUpdatedIso)
+      )
     }
     // A prior run may have hit the per-run LLM cap before reaching this
     // listing's turn and cached a rules-only 'low' result to avoid re-running
@@ -281,6 +298,7 @@ export async function runEnrich(opts: EnrichOptions = {}) {
       (a) =>
         !cache[cacheKey(a.platform, a.externalId)] ||
         needsEnrich(a) ||
+        needsDocumentSetCheck(a) ||
         needsLlmRetry(a) ||
         needsLlmFieldsBackfill(a) ||
         needsPhotoBackfill(a),
@@ -331,6 +349,15 @@ export async function runEnrich(opts: EnrichOptions = {}) {
         const priorEntry = cache[key]
         const extractionMissing =
           !priorEntry || needsLlmRetry(a) || needsLlmFieldsBackfill(a) || needsPhotoBackfill(a)
+        const documentSetCheckDue = needsDocumentSetCheck(a)
+        let documentSetChanged = false
+        let currentDocumentSet: ArchivedDocumentSetResult | null = priorEntry?.documentSetHash
+          ? {
+              setHash: priorEntry.documentSetHash,
+              version: priorEntry.documentSetVersion ?? 0,
+              changed: false,
+            }
+          : null
 
         // Detail fetch (description + attachments) so extraction has real text
         // and the snapshot writer has enrichOne-populated fields to persist.
@@ -368,60 +395,6 @@ export async function runEnrich(opts: EnrichOptions = {}) {
         }
         if (enriched) enrichedCount++
 
-        // Skip the rules/LLM/photo extraction pipeline when we already have a
-        // cached result — this loop iteration may only be here to backfill
-        // snapshot detail data (see needsEnrich above). Overwriting the cache
-        // would clobber a prior LLM extraction with a downgraded rules-only one.
-        if (!extractionMissing) continue
-
-        const rules = extractByRules({ title: a.title, description: a.description })
-        // Structured values straight from the source platform beat anything
-        // parsed out of free text — they are the platform's own data, not a
-        // regex guess.
-        const fields = {
-          propertyType: rules.propertyType,
-          landAreaSqm: a.sourceLandAreaSqm ?? rules.landAreaSqm,
-          livingAreaSqm: a.sourceLivingAreaSqm ?? rules.livingAreaSqm,
-          rooms: a.sourceRooms ?? rules.rooms,
-          units: rules.units,
-          // Structured platform value (e.g. si's Kaution) beats a regex guess,
-          // same precedence as the source*Sqm fields above. Independent of the
-          // LLM branch below — an explicit amount stated in prose doesn't need
-          // an LLM call to find, so this fills in even for mergedConfident entries.
-          securityDeposit: a.sourceSecurityDeposit ?? rules.securityDeposit,
-          // LLM-only — stays undefined unless a successful LLM call below
-          // finds rules/structured values NOT already confident (see the
-          // `!mergedConfident` branch): biddingNotes is a rare catch-all, not
-          // a universal per-listing fact like condition/features/insights, so
-          // a confident entry doesn't get it overwritten even though the LLM
-          // call itself still runs for those other fields.
-          biddingNotes: undefined as string | null | undefined,
-          // LLM-only — undefined until a successful LLM call below sets them;
-          // carries a prior partial result forward on a re-run (shouldn't
-          // normally happen since they're set together, but keeps this idempotent).
-          condition: priorEntry?.condition,
-          features: priorEntry?.features,
-          bedrooms: priorEntry?.bedrooms,
-          bathrooms: priorEntry?.bathrooms,
-          floor: priorEntry?.floor,
-          bathroomHasTub: priorEntry?.bathroomHasTub,
-          bathroomHasShower: priorEntry?.bathroomHasShower,
-          heating: priorEntry?.heating,
-          yearBuilt: priorEntry?.yearBuilt,
-          lastRenovationYear: priorEntry?.lastRenovationYear,
-          renovationNotes: priorEntry?.renovationNotes,
-          insights: priorEntry?.insights,
-          planningNotes: priorEntry?.planningNotes,
-          documentSummary: priorEntry?.documentSummary,
-          marketValueEur: priorEntry?.marketValueEur,
-          marketValueText: priorEntry?.marketValueText,
-        }
-        const mergedConfident =
-          rules.confident ||
-          (fields.propertyType != null &&
-            fields.propertyType !== 'sonstiges' &&
-            (fields.landAreaSqm != null || fields.livingAreaSqm != null))
-        let cacheable: boolean
         const bestPdf = pickBestPdf(a.attachments)
         const relevantPdfs = pickRelevantPdfs(a.attachments)
         const documentPdfs = relevantPdfs.length > 0
@@ -444,20 +417,95 @@ export async function runEnrich(opts: EnrichOptions = {}) {
         const usingNativeDoc = useBatch
           ? supportsNativeBatchDocuments(llmConfig)
           : llmConfig?.provider === 'gemini-native'
-        // Fetching (and archiving) the best appraisal PDF happens here
-        // regardless of whether rules already found a confident result — the
-        // archive's purpose is preserving the source document for
-        // re-processing, independent of today's extraction outcome. The
-        // on-disk text cache in pdfToText means this is a no-op fetch/archive
-        // on any run after the first for a given PDF.
-        const pdfTextEntries = usingNativeDoc
-          ? []
-          : await Promise.all(
-              documentPdfs.map(async (pdf) => ({
-                pdf,
-                text: await pdfToText(pdf.proxyUrl, { identity: pdfIdentity, capturedAt: at }),
-              })),
-            )
+        const preparedDocuments = extractionMissing || documentSetCheckDue
+          ? (
+              await Promise.all(documentPdfs.map(async (pdf, index) => {
+                const bytes = await fetchPdfBuffer(pdf.proxyUrl)
+                if (!bytes) return null
+                const contentHash = await archiveDocument(bytes, 'application/pdf', pdfIdentity, pdf.proxyUrl, at)
+                if (!contentHash) return null
+                const text = usingNativeDoc ? null : await extractPdfTextFromBuffer(bytes)
+                if (text?.trim()) {
+                  await archiveDocumentText(text, pdfIdentity, pdf.proxyUrl, at)
+                }
+                return { pdf, bytes, contentHash, text, ordinal: index }
+              }))
+            ).filter((doc): doc is {
+              pdf: (typeof documentPdfs)[number]
+              bytes: Buffer
+              contentHash: string
+              text: string | null
+              ordinal: number
+            } => doc != null)
+          : []
+        const documentsComplete = preparedDocuments.length === documentPdfs.length
+        if ((extractionMissing || documentSetCheckDue) && documentsComplete) {
+          currentDocumentSet = await archiveDocumentSet(
+            pdfIdentity,
+            preparedDocuments.map((doc) => ({
+              ordinal: doc.ordinal,
+              kind: 'document',
+              label: doc.pdf.label || null,
+              filename: doc.pdf.filename || null,
+              fileId: doc.pdf.fileId || null,
+              sourceUrl: doc.pdf.proxyUrl,
+              contentHash: doc.contentHash,
+              contentType: 'application/pdf',
+            })),
+            at,
+          )
+          documentSetChanged =
+            priorEntry?.documentSetHash !== undefined &&
+            priorEntry.documentSetHash !== currentDocumentSet?.setHash
+        }
+        if (documentSetChanged) {
+          console.log(
+            `[enrich] document set changed for ${a.platform}:${a.externalId} -> v${currentDocumentSet?.version ?? '?'}`,
+          )
+        }
+
+        const shouldExtract = extractionMissing || documentSetChanged || documentSetCheckDue
+        // Skip the rules/LLM/photo extraction pipeline when the cached entry is
+        // still tied to the current document set. This path may only have been
+        // here to refresh detail metadata.
+        if (!shouldExtract) continue
+
+        const effectivePriorEntry = documentSetChanged || documentSetCheckDue ? undefined : priorEntry
+        const rules = extractByRules({ title: a.title, description: a.description })
+        // Structured values straight from the source platform beat anything
+        // parsed out of free text — they are the platform's own data, not a
+        // regex guess.
+        const fields = {
+          propertyType: rules.propertyType,
+          landAreaSqm: a.sourceLandAreaSqm ?? rules.landAreaSqm,
+          livingAreaSqm: a.sourceLivingAreaSqm ?? rules.livingAreaSqm,
+          rooms: a.sourceRooms ?? rules.rooms,
+          units: rules.units,
+          securityDeposit: a.sourceSecurityDeposit ?? rules.securityDeposit,
+          biddingNotes: undefined as string | null | undefined,
+          condition: effectivePriorEntry?.condition,
+          features: effectivePriorEntry?.features,
+          bedrooms: effectivePriorEntry?.bedrooms,
+          bathrooms: effectivePriorEntry?.bathrooms,
+          floor: effectivePriorEntry?.floor,
+          bathroomHasTub: effectivePriorEntry?.bathroomHasTub,
+          bathroomHasShower: effectivePriorEntry?.bathroomHasShower,
+          heating: effectivePriorEntry?.heating,
+          yearBuilt: effectivePriorEntry?.yearBuilt,
+          lastRenovationYear: effectivePriorEntry?.lastRenovationYear,
+          renovationNotes: effectivePriorEntry?.renovationNotes,
+          insights: effectivePriorEntry?.insights,
+          planningNotes: effectivePriorEntry?.planningNotes,
+          documentSummary: effectivePriorEntry?.documentSummary,
+          marketValueEur: effectivePriorEntry?.marketValueEur,
+          marketValueText: effectivePriorEntry?.marketValueText,
+        }
+        const mergedConfident =
+          rules.confident ||
+          (fields.propertyType != null &&
+            fields.propertyType !== 'sonstiges' &&
+            (fields.landAreaSqm != null || fields.livingAreaSqm != null))
+        let cacheable: boolean
         // Two-way photo pipeline (platform/externalId guard applies to both — the
         // API endpoint enforces the same shape, so files under an unsafe path
         // would be unreachable anyway):
@@ -480,17 +528,17 @@ export async function runEnrich(opts: EnrichOptions = {}) {
         let curatedPhotos: CuratedPhoto[] | undefined
         let freshPhotoFiles: string[] | undefined
         let freshPhotoDestDir: string | null = null
-        // Carried forward by default (matches priorEntry); overwritten below
+        // Carried forward by default (matches effectivePriorEntry); overwritten below
         // only when the photo pipeline actually runs this iteration.
-        let photosCheckedAt = priorEntry?.photosCheckedAt
-        let photoFailures = priorEntry?.photoFailures ?? 0
-        let photoPipelineVersion = priorEntry?.photoPipelineVersion
+        let photosCheckedAt = effectivePriorEntry?.photosCheckedAt
+        let photoFailures = effectivePriorEntry?.photoFailures ?? 0
+        let photoPipelineVersion = effectivePriorEntry?.photoPipelineVersion
         // Whether the photo pipeline actually ran this iteration (success or
         // failure) — distinct from cacheable below, so a photo-only backfill
         // outcome still gets persisted even when rules are unconfident and
         // the LLM is disabled/capped/failed (see cacheable assignments below).
         let photoPipelineRan = false
-        if (priorEntry && !needsPhotoBackfill(a)) {
+        if (effectivePriorEntry && !needsPhotoBackfill(a)) {
           // A re-run (needsLlmRetry / needsLlmFieldsBackfill — a cache entry
           // here means one of those, or needsEnrich alone with photos already
           // checked): the photo pipeline already ran when this entry was
@@ -501,7 +549,7 @@ export async function runEnrich(opts: EnrichOptions = {}) {
           // full pipeline below instead. Normalize while reusing: a legacy
           // prior entry may hold bare filename strings, and re-persisting
           // them raw would perpetuate the old shape instead of upgrading it.
-          curatedPhotos = priorEntry.photos?.map(normalizePhoto)
+          curatedPhotos = effectivePriorEntry.photos?.map(normalizePhoto)
           // Unlike a fully-curated prior entry, one whose LLM fields never got
           // a successful call (cap hit / request failure on the run that
           // downloaded these photos) never had a curation opportunity —
@@ -525,7 +573,7 @@ export async function runEnrich(opts: EnrichOptions = {}) {
           // The deterministic pipeline yields bare filenames; they become
           // CuratedPhoto entries (category defaults to 'sonstiges' unless the
           // LLM call below curates them for real).
-          const priorPhotos = priorEntry?.photos?.map(normalizePhoto) ?? []
+          const priorPhotos = effectivePriorEntry?.photos?.map(normalizePhoto) ?? []
           let photos = priorPhotos.map((photo) => photo.file)
           let newlyDownloadedPhotos: string[] = []
           const nativeFotoUrls = nativePhotoUrls(a)
@@ -617,22 +665,11 @@ export async function runEnrich(opts: EnrichOptions = {}) {
             // pool finishes instead of a synchronous generateContent call —
             // the rate limit/cost profile that motivated this path can't
             // sustain hundreds of synchronous calls in a couple of minutes.
-            // Fetch+archive the raw PDF bytes only now (not unconditionally
-            // like pdfText above) so a cap-skipped item under a batch provider
-            // doesn't re-hit the upstream every single run — it archives
-            // once it actually gets a slot.
-            const nativeDocuments = (
-              await Promise.all(documentPdfs.map(async (pdf) => {
-                const bytes = await fetchPdfBuffer(pdf.proxyUrl)
-                if (!bytes) return null
-                await archiveDocument(bytes, 'application/pdf', pdfIdentity, pdf.proxyUrl, at)
-                return {
-                  source: pdf,
-                  label: pdf.label || pdf.filename,
-                  data: bytes.toString('base64'),
-                }
-              }))
-            ).filter((doc): doc is { source: Attachment; label: string; data: string } => doc != null)
+            const nativeDocuments = preparedDocuments.map((document) => ({
+              source: document.pdf,
+              label: document.pdf.label || document.pdf.filename,
+              data: document.bytes.toString('base64'),
+            }))
             const documentParts = await buildDocumentLlmParts(nativeDocuments, { native: true })
             batchItems.push({
               key,
@@ -653,7 +690,7 @@ export async function runEnrich(opts: EnrichOptions = {}) {
             // means the Gutachten PDF is a scanned image, not real text —
             // render a bounded page range and let the LLM read it visually.
             const documentParts = await buildDocumentLlmParts(
-              pdfTextEntries.map(({ pdf, text }) => ({
+              preparedDocuments.map(({ pdf, text }) => ({
                 source: pdf,
                 label: pdf.label || pdf.filename,
                 text,
@@ -675,13 +712,15 @@ export async function runEnrich(opts: EnrichOptions = {}) {
               curatedPhotos = applyPhotoCuration(curatedPhotos, llm.photoCuration)
             }
             const merged = {
-              ...mergeLlmResult(priorEntry, { ...fields, confident: mergedConfident }, llm, at, curatedPhotos),
+              ...mergeLlmResult(effectivePriorEntry, { ...fields, confident: mergedConfident }, llm, at, curatedPhotos),
               // Override mergeLlmResult's priorEntry-carried defaults with this
               // iteration's actual photo-attempt outcome (explicit `undefined`
               // clears a stale value rather than leaving the carried-forward one).
               photosCheckedAt,
               photoFailures: photoFailures > 0 ? photoFailures : undefined,
               photoPipelineVersion,
+              documentSetHash: currentDocumentSet?.setHash ?? null,
+              documentSetVersion: currentDocumentSet?.version ?? null,
             }
             // Same rationale as the cap-hit/disabled branches below: a failed
             // request only caches when detail/rules already gave us something
@@ -724,7 +763,7 @@ export async function runEnrich(opts: EnrichOptions = {}) {
         const hasArea = fields.landAreaSqm != null || fields.livingAreaSqm != null
         // No LLM attempt was made on this path (batch-collect / cap-hit /
         // disabled) — carry the failure counter forward unchanged.
-        const prevFailures = cache[key]?.llmFailures ?? 0
+        const prevFailures = effectivePriorEntry?.llmFailures ?? 0
         const entry: AuctionExtraction = {
           ...fields,
           source: 'rules',
@@ -733,6 +772,8 @@ export async function runEnrich(opts: EnrichOptions = {}) {
           photosCheckedAt,
           photoFailures: photoFailures > 0 ? photoFailures : undefined,
           photoPipelineVersion,
+          documentSetHash: currentDocumentSet?.setHash ?? null,
+          documentSetVersion: currentDocumentSet?.version ?? null,
           at,
           ...(prevFailures > 0 ? { llmFailures: prevFailures } : {}),
         }

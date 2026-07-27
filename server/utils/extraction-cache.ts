@@ -3,9 +3,10 @@
 // enrich task; the /api/auctions overlay reads it read-only so requests never
 // block on extraction.
 //
-// First-write-wins, no TTL: a listing's text/documents don't change once
-// published. A later run may still re-process entries whose `confidence` is
-// 'low' to upgrade them with the LLM (see the enrich task).
+// Entries are keyed by auction identity, but the enrich task also stores the
+// document-set hash/version that produced them. If the portal later adds,
+// updates or withdraws a document, enrich writes a fresh entry from the new
+// valid set instead of carrying forward stale document-derived facts.
 //
 // WP-3: Postgres (`extraction_cache` table) is the sole persistent store —
 // no local JSON file. Since this runs as a single Nitro instance, the full
