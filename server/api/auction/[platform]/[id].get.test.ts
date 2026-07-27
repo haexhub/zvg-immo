@@ -1,9 +1,24 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Auction, LocationEnrichment } from '~/types/auction'
+import type { PlatformCrawler } from '../../../crawlers/types'
 
-vi.mock('../../../utils/auction-snapshot', () => ({ readAuctionSnapshot: vi.fn() }))
+const registryMock = vi.hoisted(() => ({
+  platforms: [] as PlatformCrawler[],
+  ensureEnabledCountriesLoaded: vi.fn(),
+  isCountryEnabled: vi.fn(() => true),
+}))
+
+vi.mock('../../../utils/auction-snapshot', () => ({ readAuctionSnapshot: vi.fn(), applySnapshotPhotosToAuctions: vi.fn() }))
 vi.mock('../../../utils/geocode', () => ({ geocodeAddress: vi.fn() }))
 vi.mock('../../../utils/external-data/location-enrichment', () => ({ readLocationEnrichment: vi.fn() }))
+vi.mock('../../../utils/list-cache', () => ({ readMergedListCache: vi.fn() }))
+vi.mock('../../../utils/extraction-cache', () => ({ readExtractionCache: vi.fn(), applyExtractionToAuctions: vi.fn() }))
+vi.mock('../../../utils/verkehrswert-cache', () => ({
+  cacheKey: (platform: string, id: string) => `${platform}:${id}`,
+  readVerkehrswertCache: vi.fn(),
+}))
+vi.mock('../../../utils/exchange-rate', () => ({ deriveMarketValueEur: vi.fn(), getRates: vi.fn() }))
+vi.mock('../../../crawlers/registry', () => registryMock)
 
 function auction(overrides: Partial<Auction> = {}): Auction {
   return {
@@ -44,29 +59,51 @@ const enrichment: LocationEnrichment = {
   marketComparison: null,
 }
 
+async function loadHandler() {
+  vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+  vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
+
+  const { readAuctionSnapshot } = await import('../../../utils/auction-snapshot')
+  const { geocodeAddress } = await import('../../../utils/geocode')
+  const { readLocationEnrichment } = await import('../../../utils/external-data/location-enrichment')
+  const { readMergedListCache } = await import('../../../utils/list-cache')
+  const { readExtractionCache } = await import('../../../utils/extraction-cache')
+  const { readVerkehrswertCache } = await import('../../../utils/verkehrswert-cache')
+  const { getRates } = await import('../../../utils/exchange-rate')
+
+  vi.mocked(readAuctionSnapshot).mockResolvedValue({})
+  vi.mocked(geocodeAddress).mockResolvedValue(null)
+  vi.mocked(readLocationEnrichment).mockResolvedValue(null)
+  vi.mocked(readMergedListCache).mockResolvedValue(null)
+  vi.mocked(readExtractionCache).mockResolvedValue({})
+  vi.mocked(readVerkehrswertCache).mockResolvedValue({})
+  vi.mocked(getRates).mockResolvedValue({ EUR: 1 })
+
+  return (await import('./[id].get')).default as unknown as (event: {
+    context: { params: { platform: string; id: string } }
+  }) => Promise<unknown>
+}
+
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.resetModules()
   vi.clearAllMocks()
+  registryMock.platforms.length = 0
+  registryMock.isCountryEnabled.mockReturnValue(true)
 })
 
 describe('/api/auction/:platform/:id location enrichment overlay', () => {
   it('returns cached locationEnrichment without live external fetches', async () => {
-    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
-    vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
-
     const { readAuctionSnapshot } = await import('../../../utils/auction-snapshot')
     const { geocodeAddress } = await import('../../../utils/geocode')
     const { readLocationEnrichment } = await import('../../../utils/external-data/location-enrichment')
+    const handler = await loadHandler()
+
     vi.mocked(readAuctionSnapshot).mockResolvedValue({
       'zvg-portal:7265': auction({ lat: 48.1, lng: 11.5 }),
     })
     vi.mocked(geocodeAddress).mockResolvedValue({ lat: 1, lng: 2, displayName: 'Ignored' } as never)
     vi.mocked(readLocationEnrichment).mockResolvedValue(enrichment)
-
-    const handler = (await import('./[id].get')).default as unknown as (event: {
-      context: { params: { platform: string; id: string } }
-    }) => Promise<unknown>
 
     await expect(handler({ context: { params: { platform: 'zvg-portal', id: '7265' } } })).resolves.toMatchObject({
       platform: 'zvg-portal',
@@ -76,5 +113,63 @@ describe('/api/auction/:platform/:id location enrichment overlay', () => {
       locationEnrichment: enrichment,
     })
     expect(readLocationEnrichment).toHaveBeenCalledWith('zvg-portal', '7265')
+  })
+
+  it('treats a findOne miss as definitive and skips the region crawl', async () => {
+    const findOne = vi.fn().mockResolvedValue(null)
+    const crawl = vi.fn().mockResolvedValue({
+      platform: 'se-kronofogden',
+      source: 'test',
+      countries: ['se'],
+      regions: ['all'],
+      fetchedAt: new Date().toISOString(),
+      totalReported: 0,
+      auctions: [],
+    })
+    registryMock.platforms.push({
+      id: 'se-kronofogden',
+      name: 'Kronofogden',
+      baseUrl: 'https://auktionstorget.kronofogden.se',
+      country: 'se',
+      regions: [{ code: 'all', name: 'All' }],
+      crawl,
+      findOne,
+    })
+    const handler = await loadHandler()
+
+    await expect(handler({ context: { params: { platform: 'se-kronofogden', id: '999999' } } })).rejects.toMatchObject({
+      statusCode: 404,
+    })
+
+    expect(findOne).toHaveBeenCalledWith('999999')
+    expect(crawl).not.toHaveBeenCalled()
+  })
+
+  it('caches live lookup misses briefly', async () => {
+    const crawl = vi.fn().mockResolvedValue({
+      platform: 'test-platform',
+      source: 'test',
+      countries: ['de'],
+      regions: ['All'],
+      fetchedAt: new Date().toISOString(),
+      totalReported: 0,
+      auctions: [],
+    })
+    registryMock.platforms.push({
+      id: 'test-platform',
+      name: 'Test Platform',
+      baseUrl: 'https://example.test',
+      country: 'de',
+      regions: [{ code: 'all', name: 'All' }],
+      crawl,
+    })
+    const handler = await loadHandler()
+    const event = { context: { params: { platform: 'test-platform', id: 'missing' } } }
+
+    await expect(handler(event)).rejects.toMatchObject({ statusCode: 404 })
+    await expect(handler(event)).rejects.toMatchObject({ statusCode: 404 })
+
+    expect(crawl).toHaveBeenCalledOnce()
+    expect(registryMock.ensureEnabledCountriesLoaded).toHaveBeenCalledOnce()
   })
 })

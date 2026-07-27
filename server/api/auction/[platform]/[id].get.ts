@@ -17,6 +17,9 @@ import { ensureEnabledCountriesLoaded, isCountryEnabled, platforms } from '../..
 import { readMergedListCache } from '../../../utils/list-cache'
 import { readLocationEnrichment } from '../../../utils/external-data/location-enrichment'
 
+const LIVE_MISS_TTL_MS = 60_000
+const liveMissCache = new Map<string, number>()
+
 export interface AuctionDetail extends Auction {
   lat: number | null
   lng: number | null
@@ -38,7 +41,21 @@ async function findCachedListAuction(platform: string, id: string): Promise<Auct
   return hit ? cloneAuction(hit) : null
 }
 
+function hasFreshLiveMiss(key: string, now = Date.now()): boolean {
+  const expiresAt = liveMissCache.get(key)
+  if (expiresAt == null) return false
+  if (expiresAt > now) return true
+  liveMissCache.delete(key)
+  return false
+}
+
+function rememberLiveMiss(key: string, now = Date.now()): void {
+  liveMissCache.set(key, now + LIVE_MISS_TTL_MS)
+}
+
 async function findLiveAuction(platform: string, id: string): Promise<Auction | null> {
+  const missKey = cacheKey(platform, id)
+  if (hasFreshLiveMiss(missKey)) return null
   await ensureEnabledCountriesLoaded()
   const crawler = platforms.find((p) => p.id === platform)
   if (!crawler || !isCountryEnabled(crawler.country)) return null
@@ -51,6 +68,8 @@ async function findLiveAuction(platform: string, id: string): Promise<Auction | 
         deriveMarketValueEur(auction, rates)
         return auction
       }
+      rememberLiveMiss(missKey)
+      return null
     } catch (err) {
       console.warn(`[api/auction] live item fallback ${platform}/${id}: ${(err as Error).message}`)
     }
@@ -67,6 +86,7 @@ async function findLiveAuction(platform: string, id: string): Promise<Auction | 
       console.warn(`[api/auction] live fallback ${platform}/${region.code}: ${(err as Error).message}`)
     }
   }
+  rememberLiveMiss(missKey)
   return null
 }
 
