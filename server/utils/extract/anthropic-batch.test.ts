@@ -117,6 +117,22 @@ describe('submitAnthropicBatch', () => {
     })
   })
 
+  it('does not flip capability to broken on a transient connection error', async () => {
+    stubOfetch([
+      {
+        match: '/v1/messages/batches',
+        error: Object.assign(new Error('fetch failed'), { code: 'ECONNRESET' }),
+      },
+    ])
+    const { recordLlmBatchCapability } = await import('../llm-batch-jobs')
+    const { submitAnthropicBatch } = await import('./anthropic-batch')
+
+    await expect(
+      submitAnthropicBatch([{ key: 'x:y', input: { title: 'Haus', description: null } }], config, 'enrich'),
+    ).resolves.toBeNull()
+    expect(recordLlmBatchCapability).not.toHaveBeenCalled()
+  })
+
   it('splits requests before the serialized batch body reaches Anthropic limits', async () => {
     vi.stubGlobal('$fetch', vi.fn()
       .mockResolvedValueOnce({ id: 'msgbatch_a' })

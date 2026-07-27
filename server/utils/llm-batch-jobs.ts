@@ -257,12 +257,17 @@ export async function recordLlmBatchCapability(
     return
   }
   try {
-    const current = await getAllLlmBatchCapabilities()
-    const merged = { ...current, [provider]: next }
+    // Atomic per-provider merge (no read-then-write) — enrich.ts and
+    // reprocess.ts run as independent background tasks that can submit
+    // concurrently, and a read-then-overwrite here could let one call's
+    // stale snapshot clobber another provider's just-written capability.
     await db.query(
-      `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, now())
-       ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()`,
-      [LLM_BATCH_CAPABILITY_KEY, JSON.stringify(merged)],
+      `INSERT INTO app_settings (key, value, updated_at)
+       VALUES ($1, jsonb_build_object($2::text, $3::jsonb), now())
+       ON CONFLICT (key) DO UPDATE SET
+         value = app_settings.value || jsonb_build_object($2::text, $3::jsonb),
+         updated_at = now()`,
+      [LLM_BATCH_CAPABILITY_KEY, provider, JSON.stringify(next)],
     )
   } catch (err) {
     console.warn(`[llm-batch-jobs] capability write failed for ${provider}: ${(err as Error).message}`)

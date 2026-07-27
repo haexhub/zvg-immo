@@ -152,6 +152,23 @@ describe('submitOpenAiBatch', () => {
       source: 'enrich',
     })
   })
+
+  it('does not flip capability to broken on a transient connection error', async () => {
+    stubOfetch([
+      { match: '/files', data: { id: 'file-abc' } },
+      {
+        match: '/batches',
+        error: Object.assign(new Error('fetch failed'), { code: 'ECONNRESET' }),
+      },
+    ])
+    const { recordLlmBatchCapability } = await import('../llm-batch-jobs')
+    const { submitOpenAiBatch } = await import('./openai-batch')
+
+    await expect(
+      submitOpenAiBatch([{ key: 'x:y', input: { title: 'Haus', description: null } }], config, 'enrich'),
+    ).resolves.toBeNull()
+    expect(recordLlmBatchCapability).not.toHaveBeenCalled()
+  })
 })
 
 describe('pollOpenAiBatch', () => {

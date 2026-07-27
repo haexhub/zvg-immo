@@ -27,6 +27,24 @@ function extractOfetchErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
+/** Timeouts, connection failures and 5xx/429 responses say nothing about
+ *  whether this account/model can batch at all — only a durable rejection
+ *  (e.g. a 4xx like "model: field required") should ever flip the recorded
+ *  capability to broken, or a transient blip could disable batching for
+ *  every subsequent run until someone notices and manually re-checks it. */
+function isTransientBatchError(err: unknown): boolean {
+  const status = (err as { status?: unknown; statusCode?: unknown; response?: { status?: unknown } })?.status
+  const statusCode =
+    typeof status === 'number' ? status : (err as { statusCode?: unknown })?.statusCode
+  const responseStatus = (err as { response?: { status?: unknown } })?.response?.status
+  const httpStatus = typeof statusCode === 'number' ? statusCode : typeof responseStatus === 'number' ? responseStatus : undefined
+  if (httpStatus != null && (httpStatus === 429 || httpStatus >= 500)) return true
+  const name = (err as { name?: unknown })?.name
+  if (name === 'AbortError' || name === 'TimeoutError') return true
+  const code = (err as { code?: unknown })?.code ?? (err as { cause?: { code?: unknown } })?.cause?.code
+  return typeof code === 'string' && /^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EPIPE)$/.test(code)
+}
+
 type AnthropicContentBlock =
   | { type: 'text'; text: string }
   | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
@@ -198,7 +216,9 @@ export async function submitAnthropicBatch(
     } catch (err) {
       const message = extractOfetchErrorMessage(err)
       console.warn(`[anthropic-batch] submit failed: ${message}`)
-      await recordLlmBatchCapability('claude-proxy', { ok: false, message, source })
+      if (!isTransientBatchError(err)) {
+        await recordLlmBatchCapability('claude-proxy', { ok: false, message, source })
+      }
       retryItems = retryItems.concat(chunks.slice(chunkIndex).flatMap((c) => c.items))
       break
     }

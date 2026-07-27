@@ -3,7 +3,7 @@ import type { Auction, AuctionExtraction } from '~/types/auction'
 import { getPool } from '../utils/db'
 import { downloadBlob, findLatestCapture, readDocumentSetItems } from '../utils/storage-download'
 import { extractByLlm } from '../utils/extract/llm'
-import { isLlmBatchProviderBroken } from '../utils/extract/llm-batch'
+import { isLlmBatchProviderBroken, submitLlmBatch } from '../utils/extract/llm-batch'
 import { extractPdfTextFromBuffer } from '../utils/extract/pdf-text'
 import { renderPdfPagesJpeg } from '../utils/extract/pdf-render'
 import { readExtractionCache, writeExtractionCache } from '../utils/extraction-cache'
@@ -21,7 +21,7 @@ vi.mock('../utils/extract/llm', async (importOriginal) => {
 })
 vi.mock('../utils/extract/llm-batch', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/extract/llm-batch')>()
-  return { ...actual, isLlmBatchProviderBroken: vi.fn(async () => false) }
+  return { ...actual, isLlmBatchProviderBroken: vi.fn(async () => false), submitLlmBatch: vi.fn() }
 })
 // Spy on (not stub out) the real implementations — other tests here rely on
 // actual pdftotext/rendering output (e.g. the scanned-PDF vision-fallback
@@ -726,7 +726,7 @@ describe('runReprocess', () => {
     })
   })
 
-  it('falls back to the synchronous LLM call when the requested batch provider is known-broken', async () => {
+  it('submits a batch probe instead of falling back to sync when batch is explicitly requested despite a known-broken provider', async () => {
     vi.stubGlobal('useRuntimeConfig', () => ({
       extractLlm: {
         provider: 'gemini-native',
@@ -735,7 +735,7 @@ describe('runReprocess', () => {
         model: 'gemini-flash-latest',
       },
     }))
-    vi.mocked(isLlmBatchProviderBroken).mockResolvedValueOnce(true)
+    vi.mocked(submitLlmBatch).mockResolvedValueOnce(null)
     const auction = makeAuction({
       title: 'Einfamilienhaus',
       description: 'Einfamilienhaus mit Wohnfläche ca. 140 m² und Grundstücksfläche 850 m².',
@@ -748,12 +748,17 @@ describe('runReprocess', () => {
     vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
     vi.mocked(readExtractionCache).mockResolvedValue({})
 
-    // supportsLlmBatch alone would say gemini-native can batch — the
-    // known-broken capability (isLlmBatchProviderBroken) must still force
-    // the synchronous path instead of collecting doomed batch items.
+    // opts.batch === true is the /settings "Submit via Batch API" checkbox —
+    // an explicit recovery probe that must reach the provider even though
+    // isLlmBatchProviderBroken would say it's known-broken, or the
+    // capability could never clear back to ok:true. Only the
+    // executionMode-derived automatic default defers to the known-broken
+    // gate and falls back to sync.
     await runReprocess({ batch: true })
 
-    expect(extractByLlm).toHaveBeenCalled()
+    expect(isLlmBatchProviderBroken).not.toHaveBeenCalled()
+    expect(submitLlmBatch).toHaveBeenCalled()
+    expect(extractByLlm).not.toHaveBeenCalled()
   })
 
   it('does not select entries only missing LLM-only fields when no LLM provider is configured', async () => {

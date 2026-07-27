@@ -220,6 +220,26 @@ describe('submitGeminiBatch', () => {
     )
   })
 
+  it('does not flip capability to broken on a transient 503', async () => {
+    stubOfetch([
+      { match: '/upload/v1beta/files', raw: { headers: { 'x-goog-upload-url': 'https://upload.example/session-1' } } },
+      { match: 'upload.example/session-1', data: { file: { name: 'files/abc' } } },
+      { match: ':batchGenerateContent', error: Object.assign(new Error('service unavailable'), { statusCode: 503 }) },
+    ])
+    const { recordLlmBatchCapability, setGeminiBatchQuotaBackoff } = await import('../llm-batch-jobs')
+    const { submitGeminiBatch } = await import('./gemini-batch')
+
+    const result = await submitGeminiBatch(
+      [{ key: 'zvg-portal:1', input: { title: 'Haus', description: 'schön', pdfText: null } }],
+      config,
+      'enrich',
+    )
+
+    expect(result).toBeNull()
+    expect(recordLlmBatchCapability).not.toHaveBeenCalled()
+    expect(setGeminiBatchQuotaBackoff).not.toHaveBeenCalled()
+  })
+
   it('does not put the quota guard into backoff for a non-quota 403', async () => {
     stubOfetch([
       { match: '/upload/v1beta/files', raw: { headers: { 'x-goog-upload-url': 'https://upload.example/session-1' } } },

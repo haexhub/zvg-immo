@@ -162,6 +162,25 @@ function isGeminiQuotaError(err: unknown): boolean {
   return /quota|rate.?limit|resource_exhausted|too many requests/i.test(message)
 }
 
+/** Timeouts, connection failures and 5xx responses say nothing about
+ *  whether this account/model can batch at all (unlike isGeminiQuotaError's
+ *  429, they're not even evidence the request was understood) — only a
+ *  durable rejection like 400 FAILED_PRECONDITION should ever flip the
+ *  recorded capability to broken, or a transient blip could disable batching
+ *  for every subsequent run until someone notices and manually re-checks it. */
+function isTransientBatchError(err: unknown): boolean {
+  const status = (err as { status?: unknown; statusCode?: unknown; response?: { status?: unknown } })?.status
+  const statusCode =
+    typeof status === 'number' ? status : (err as { statusCode?: unknown })?.statusCode
+  const responseStatus = (err as { response?: { status?: unknown } })?.response?.status
+  const httpStatus = typeof statusCode === 'number' ? statusCode : typeof responseStatus === 'number' ? responseStatus : undefined
+  if (httpStatus != null && httpStatus >= 500) return true
+  const name = (err as { name?: unknown })?.name
+  if (name === 'AbortError' || name === 'TimeoutError') return true
+  const code = (err as { code?: unknown })?.code ?? (err as { cause?: { code?: unknown } })?.cause?.code
+  return typeof code === 'string' && /^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EPIPE)$/.test(code)
+}
+
 function selectLineItemsForQuota(
   lineItems: Array<{ item: { key: string; input: LlmInput }; line: string }>,
   policy: GeminiBatchQuotaPolicy,
@@ -363,6 +382,12 @@ async function submitGeminiBatchLocked(
       // right now. Don't flip capability to broken over a transient 429.
       await setGeminiBatchQuotaBackoff(quotaDay, nextUtcDayIso())
       console.warn(`[gemini-batch] submit failed: ${message}`)
+      return null
+    }
+    if (isTransientBatchError(err)) {
+      // Timeout/connection failure/5xx — inconclusive about whether the
+      // account can batch at all, so don't flip capability to broken either.
+      console.warn(`[gemini-batch] submit failed (transient): ${message}`)
       return null
     }
     console.warn(`[gemini-batch] submit failed: ${message}`)

@@ -65,8 +65,18 @@ function makeFakePool() {
       const value = settings.get(params[0] as string)
       return { rows: value === undefined ? [] : [{ value }], rowCount: value === undefined ? 0 : 1 }
     }
+    if (sql.startsWith('INSERT INTO app_settings') && sql.includes('value || jsonb_build_object')) {
+      // Atomic per-provider capability merge (recordLlmBatchCapability):
+      // params = [key, provider, jsonValue].
+      const key = params[0] as string
+      const provider = params[1] as string
+      const value = typeof params[2] === 'string' ? JSON.parse(params[2] as string) : params[2]
+      const current = (settings.get(key) as Record<string, unknown> | undefined) ?? {}
+      settings.set(key, { ...current, [provider]: value })
+      return { rows: [], rowCount: 1 }
+    }
     if (sql.startsWith('INSERT INTO app_settings') && !sql.includes('jsonb_build_object')) {
-      // Generic key/value upsert (llm_batch_capability and friends): params = [key, jsonValue].
+      // Generic key/value upsert: params = [key, jsonValue].
       const key = params[0] as string
       const value = typeof params[1] === 'string' ? JSON.parse(params[1] as string) : params[1]
       settings.set(key, value)
