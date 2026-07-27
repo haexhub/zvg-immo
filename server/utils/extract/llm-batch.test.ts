@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { supportsLlmBatch, supportsNativeBatchDocuments } from './llm-batch'
+import { isLlmBatchProviderBroken, supportsLlmBatch, supportsNativeBatchDocuments } from './llm-batch'
+
+vi.mock('../llm-batch-jobs', () => ({ getLlmBatchCapability: vi.fn() }))
 
 describe('llm-batch provider gates', () => {
   beforeEach(() => {
@@ -32,6 +34,34 @@ describe('llm-batch provider gates', () => {
       .toBe(true)
     expect(supportsLlmBatch({ provider: 'claude-proxy', baseUrl: 'http://proxy', model: 'claude-haiku-4-5' }))
       .toBe(false)
+  })
+
+  it('isLlmBatchProviderBroken reflects the last recorded real submit attempt for that provider', async () => {
+    const { getLlmBatchCapability } = await import('../llm-batch-jobs')
+    const config = { provider: 'gemini-native' as const, baseUrl: 'http://gemini', model: 'gemini-flash-latest' }
+
+    vi.mocked(getLlmBatchCapability).mockResolvedValue(null)
+    await expect(isLlmBatchProviderBroken(config)).resolves.toBe(false)
+
+    vi.mocked(getLlmBatchCapability).mockResolvedValue({
+      ok: false,
+      message: 'FAILED_PRECONDITION: Precondition check failed.',
+      checkedAt: '2026-07-27T14:30:00.000Z',
+      source: 'enrich',
+    })
+    await expect(isLlmBatchProviderBroken(config)).resolves.toBe(true)
+    expect(getLlmBatchCapability).toHaveBeenCalledWith('gemini-native')
+
+    vi.mocked(getLlmBatchCapability).mockResolvedValue({
+      ok: true,
+      message: null,
+      checkedAt: '2026-07-27T15:00:00.000Z',
+      source: 'enrich',
+    })
+    await expect(isLlmBatchProviderBroken(config)).resolves.toBe(false)
+
+    await expect(isLlmBatchProviderBroken(null)).resolves.toBe(false)
+    await expect(isLlmBatchProviderBroken({ baseUrl: 'x', model: 'y' })).resolves.toBe(false)
   })
 
   it('reports which batch-capable providers can submit native documents', () => {

@@ -1,7 +1,6 @@
 <script setup lang="ts">
-// Photo grid + lightbox for the auction detail page: a large lead photo next
-// to a 2x2 thumbnail grid (collapsing to a single lead photo + scrollable
-// strip on narrow screens), any tile of which opens a full Swiper carousel.
+// Photo slideshow + lightbox for the auction detail page: an inline Swiper
+// carousel, any slide of which opens a larger fullscreen Swiper carousel.
 // Reuses the Swiper dependency already used by LotPopover.vue for the same
 // carousel-with-navigation/pagination/keyboard pattern.
 import { Swiper, SwiperSlide } from 'swiper/vue'
@@ -18,10 +17,6 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
-
-const GRID_TILE_COUNT = 4 // thumbnails shown next to the lead photo
-const gridTiles = computed(() => props.photos.slice(1, 1 + GRID_TILE_COUNT))
-const remainingCount = computed(() => Math.max(0, props.photos.length - 1 - GRID_TILE_COUNT))
 
 const lightboxOpen = ref(false)
 const activeIndex = ref(0)
@@ -59,48 +54,31 @@ const swiperModules = [Navigation, Pagination, Keyboard]
 
 <template>
   <section v-if="photos.length" class="mb-8">
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 rounded-xl overflow-hidden">
-      <button
-        type="button"
-        class="relative block overflow-hidden bg-muted"
-        :aria-label="t('objektDetail.showPhoto', { n: 1 })"
-        @click="openLightbox(0)"
-      >
-        <img
-          :src="photos[0]"
-          :alt="t('objektDetail.photoAlt', { n: 1, total: photos.length, title: altBase })"
-          referrerpolicy="no-referrer"
-          class="h-64 w-full object-cover sm:h-full"
-        >
-        <span class="absolute top-3 right-3 rounded-full bg-black/60 px-2.5 py-1 text-xs font-medium text-white">
-          {{ t('objektDetail.gallery.count', { n: photos.length }) }}
-        </span>
-      </button>
-
-      <div v-if="gridTiles.length" class="grid grid-cols-2 grid-rows-2 gap-2">
+    <Swiper
+      :modules="swiperModules"
+      :navigation="photos.length > 1"
+      :pagination="photos.length > 1 ? { type: 'fraction' } : false"
+      :keyboard="{ enabled: true }"
+      :loop="photos.length > 1"
+      class="auction-gallery-swiper rounded-xl bg-muted"
+    >
+      <SwiperSlide v-for="(url, i) in photos" :key="url">
         <button
-          v-for="(url, i) in gridTiles"
-          :key="url"
           type="button"
-          class="relative block overflow-hidden bg-muted"
-          :aria-label="t('objektDetail.showPhoto', { n: i + 2 })"
-          @click="openLightbox(i + 1)"
+          class="block h-full w-full"
+          :aria-label="t('objektDetail.showPhoto', { n: i + 1 })"
+          @click="openLightbox(i)"
         >
           <img
             :src="url"
-            :alt="t('objektDetail.photoAlt', { n: i + 2, total: photos.length, title: altBase })"
+            :alt="t('objektDetail.photoAlt', { n: i + 1, total: photos.length, title: altBase })"
             referrerpolicy="no-referrer"
-            class="h-full w-full min-h-28 object-cover"
+            :loading="i === 0 ? 'eager' : 'lazy'"
+            class="h-full w-full object-cover"
           >
-          <span
-            v-if="i === gridTiles.length - 1 && remainingCount > 0"
-            class="absolute inset-0 flex items-center justify-center bg-black/55 text-sm font-semibold text-white"
-          >
-            {{ t('objektDetail.gallery.more', { n: remainingCount }) }}
-          </span>
         </button>
-      </div>
-    </div>
+      </SwiperSlide>
+    </Swiper>
 
     <Teleport to="body">
       <div
@@ -141,6 +119,33 @@ const swiperModules = [Navigation, Pagination, Keyboard]
 </template>
 
 <style scoped>
+.auction-gallery-swiper {
+  width: 100%;
+  height: 16rem;
+}
+@media (min-width: 640px) {
+  .auction-gallery-swiper {
+    height: 24rem;
+  }
+}
+.auction-gallery-swiper :deep(.swiper-button-prev),
+.auction-gallery-swiper :deep(.swiper-button-next) {
+  color: #fff;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6));
+}
+.auction-gallery-swiper :deep(.swiper-pagination-fraction) {
+  bottom: 0.75rem;
+  width: auto;
+  right: 0.75rem;
+  left: auto;
+  border-radius: 9999px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
 .auction-gallery-lightbox {
   width: 100%;
   max-width: 1100px;

@@ -556,9 +556,16 @@ CREATE TABLE IF NOT EXISTS llm_batch_jobs (
   custom_id_map jsonb NOT NULL DEFAULT '{}'::jsonb,
   submitted_at timestamptz NOT NULL DEFAULT now(),
   checked_at   timestamptz,
-  updated_at   timestamptz NOT NULL DEFAULT now()
+  updated_at   timestamptz NOT NULL DEFAULT now(),
+  error_message text
 );
 ALTER TABLE llm_batch_jobs ADD COLUMN IF NOT EXISTS custom_id_map jsonb NOT NULL DEFAULT '{}'::jsonb;
+-- Reason a job resolved as 'failed'/'expired' (poll-time, from the provider's
+-- own error field) — previously only reached a console.warn, invisible from
+-- /settings, which let a structurally-broken batch path (Gemini free tier
+-- has no Batch API access at all — see gemini-batch.ts) run silently for
+-- hours before anyone noticed.
+ALTER TABLE llm_batch_jobs ADD COLUMN IF NOT EXISTS error_message text;
 -- RLS ohne Policies (Default-Deny), gleiches Muster wie oben: server-intern,
 -- Backend-Zugriff läuft als Table-Owner und umgeht RLS ohnehin.
 ALTER TABLE llm_batch_jobs ENABLE ROW LEVEL SECURITY;
