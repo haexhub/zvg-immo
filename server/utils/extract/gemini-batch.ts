@@ -6,18 +6,25 @@
 // toGeminiParts/parseGeminiExtractionResponse from ./providers/gemini-native,
 // toGeminiSchema from ./providers/gemini-schema) — no duplicated prompt logic.
 //
-// *** UNVERIFIED — READ BEFORE RELYING ON THIS IN PRODUCTION ***
-// The resumable-upload dance (uploadJsonl below) follows Google's standard
-// X-Goog-Upload-* protocol, used identically across several Google APIs — is fairly
-// safe. `pollGeminiBatch`'s and `fetchGeminiBatchResults`' exact REST JSON
-// field paths (job state location, result-file field, per-item error
-// envelope) are NOT: at the time this was written, Gemini was rate-limited
-// and the mandatory live test call (a live batch submit/poll/fetch-result
-// round trip that the migration plan requires before writing this parser)
-// couldn't be done. `extractState`/`extractResultFileName` below check
-// several plausible field paths defensively so a layout mismatch surfaces as
-// a warning + 'pending'/'failed' state rather than a silent misparse, but
-// this must still be confirmed against a real API response before this ships.
+// *** VERIFIED LIVE 2026-07-27: free tier has no Batch API access at all ***
+// batchGenerateContent rejects every request with 400 FAILED_PRECONDITION —
+// confirmed against the real API with a valid uploaded JSONL file, not just a
+// malformed one — while sync generateContent on the same key works fine.
+// Google's own docs back this up: Batch API rate limits are only defined for
+// paid Tier 1-3 accounts, and FAILED_PRECONDITION on this endpoint is
+// documented as "enable billing on your project". The free-tier quota guard
+// below (maxJobsPerDay etc.) was written assuming free tier could batch, just
+// slowly — that assumption was wrong, so `supportsLlmBatch` (./llm-batch.ts)
+// gates gemini-native on `isGeminiBatchTierPaid()` and never lets this path
+// run at all while geminiBatchTier stays 'free'. The guard logic remains
+// dormant, ready for when NUXT_EXTRACT_LLM_GEMINI_BATCH_TIER=paid is set.
+// `pollGeminiBatch`'s and `fetchGeminiBatchResults`' exact REST JSON field
+// paths (job state location, result-file field, per-item error envelope) are
+// still UNVERIFIED — no job has ever been accepted by Google to poll/fetch
+// against. `extractState`/`extractResultFileName` below check several
+// plausible field paths defensively so a layout mismatch surfaces as a
+// warning + 'pending'/'failed' state rather than a silent misparse, but this
+// must still be confirmed against a real completed job once billing is on.
 
 import {
   buildParts,
@@ -76,6 +83,14 @@ function parseOptionalPositiveInt(value: unknown, fallback: number | null): numb
   if (value === '' || value == null) return fallback
   const raw = typeof value === 'string' ? Number(value) : value
   return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? Math.round(raw) : fallback
+}
+
+// Google rejects every gemini-native batchGenerateContent call with 400
+// FAILED_PRECONDITION on a free-tier key (see the module header) — so
+// supportsLlmBatch (./llm-batch.ts) calls this to keep enrich.ts/reprocess.ts
+// on the synchronous path until billing is enabled for the project.
+export function isGeminiBatchTierPaid(): boolean {
+  return readGeminiBatchQuotaPolicy().tier === 'paid'
 }
 
 function readGeminiBatchQuotaPolicy(): GeminiBatchQuotaPolicy {

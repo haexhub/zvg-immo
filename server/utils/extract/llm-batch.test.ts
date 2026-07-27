@@ -1,10 +1,25 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { supportsLlmBatch, supportsNativeBatchDocuments } from './llm-batch'
 
 describe('llm-batch provider gates', () => {
-  it('supports Gemini natively, OpenAI with an API key, and Anthropic only through an authenticated proxy token', () => {
+  beforeEach(() => {
+    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { geminiBatchTier: 'paid' } }))
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('gates Gemini on the configured batch tier — free tier cannot use Google\'s Batch API at all', () => {
+    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { geminiBatchTier: 'free' } }))
+    expect(supportsLlmBatch({ provider: 'gemini-native', baseUrl: 'http://gemini', model: 'gemini-flash-latest' }))
+      .toBe(false)
+    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { geminiBatchTier: 'paid' } }))
     expect(supportsLlmBatch({ provider: 'gemini-native', baseUrl: 'http://gemini', model: 'gemini-flash-latest' }))
       .toBe(true)
+  })
+
+  it('supports OpenAI with an API key, and Anthropic only through an authenticated proxy token', () => {
     expect(supportsLlmBatch({ provider: 'openai-compatible', baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-test', model: 'gpt-test' }))
       .toBe(true)
     expect(supportsLlmBatch({ provider: 'openai-compatible', baseUrl: 'https://api.moonshot.ai/v1', apiKey: 'sk-test', model: 'kimi' }))
