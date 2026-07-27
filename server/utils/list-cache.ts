@@ -9,6 +9,7 @@
 // file before).
 
 import type { CrawlResult } from '~/types/auction'
+import { auctionKey } from '~/lib/auction-key'
 import { MULTI_PLATFORM } from '~/lib/auction-constants'
 import { ensureEnabledCountriesLoaded, isCountryEnabled } from '../crawlers/registry'
 import { getPool } from './db'
@@ -32,6 +33,16 @@ function isFreshCountryListCache(country: string, result: CrawlResult): boolean 
 function withCountryListCacheVersion(country: string, result: CrawlResult): CrawlResult {
   const version = countryListCacheVersion(country)
   return version == null ? result : { ...result, listCacheVersion: version }
+}
+
+function mergedAuctions(results: CrawlResult[]): CrawlResult['auctions'] {
+  const byKey = new Map<string, CrawlResult['auctions'][number]>()
+  for (const result of [...results].sort((a, b) => a.fetchedAt.localeCompare(b.fetchedAt))) {
+    for (const auction of result.auctions) {
+      byKey.set(auctionKey(auction), auction)
+    }
+  }
+  return [...byKey.values()]
 }
 
 export async function readListCache(country: string, region: string): Promise<CrawlResult | null> {
@@ -151,7 +162,7 @@ export async function readMergedListCache(country?: string): Promise<CrawlResult
       regions: [...new Set(results.flatMap((r) => r.regions))],
       fetchedAt: results.reduce((latest, r) => (r.fetchedAt > latest ? r.fetchedAt : latest), ''),
       totalReported: null,
-      auctions: results.flatMap((r) => r.auctions),
+      auctions: mergedAuctions(results),
     }
   } catch (err) {
     console.warn(`[list-cache] merged read${country ? ` (${country})` : ''}: ${(err as Error).message}`)

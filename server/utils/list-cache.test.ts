@@ -182,6 +182,37 @@ describe('readMergedListCache', () => {
     expect(result?.auctions.map((a) => a.externalId)).toEqual(['1', '3'])
   })
 
+  it('deduplicates auctions that appear in multiple cached rows for a country', async () => {
+    const { getPool } = await import('./db')
+    const olderSe = {
+      ...seAll,
+      fetchedAt: '2026-01-01T00:00:00.000Z',
+      listCacheVersion: 1,
+      auctions: [
+        { platform: 'se-kronofogden', externalId: '3', title: 'old' },
+        { platform: 'se-kronofogden', externalId: '4' },
+      ] as CrawlResult['auctions'],
+    }
+    const newerSe = {
+      ...seAll,
+      fetchedAt: '2026-01-01T01:00:00.000Z',
+      listCacheVersion: 1,
+      auctions: [
+        { platform: 'se-kronofogden', externalId: '3', title: 'new' },
+      ] as CrawlResult['auctions'],
+    }
+    const pool = makeFakePool([
+      { country: 'se', region: 'all-old', result: olderSe, fetched_at: olderSe.fetchedAt },
+      { country: 'se', region: 'all', result: newerSe, fetched_at: newerSe.fetchedAt },
+    ])
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { readMergedListCache } = await import('./list-cache')
+
+    const result = await readMergedListCache('se')
+    expect(result?.auctions.map((a) => a.externalId)).toEqual(['3', '4'])
+    expect(result?.auctions.find((a) => a.externalId === '3')?.title).toBe('new')
+  })
+
   it('filters to one country when given', async () => {
     const { getPool } = await import('./db')
     const pool = makeFakePool([{ country: 'de', region: 'by', result: deBy, fetched_at: deBy.fetchedAt }])
