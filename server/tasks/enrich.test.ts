@@ -36,7 +36,7 @@ vi.mock('../utils/verkehrswert-cache', async (importOriginal) => {
 vi.stubGlobal('defineTask', (def: unknown) => def)
 vi.stubGlobal('useRuntimeConfig', () => ({}))
 
-const { runEnrich } = await import('./enrich')
+const { hasDocumentSetChanged, runEnrich } = await import('./enrich')
 
 const AT_PLATFORM = {
   id: 'zvg-portal',
@@ -100,6 +100,48 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.clearAllMocks()
+})
+
+describe('document set invalidation', () => {
+  it('treats a current document-set hash as changed when the prior cache entry had none', () => {
+    expect(
+      hasDocumentSetChanged(
+        {
+          propertyType: 'einfamilienhaus',
+          landAreaSqm: 850,
+          livingAreaSqm: 140,
+          rooms: 5,
+          units: 1,
+          condition: 'gepflegt',
+          features: ['garage'],
+          documentSummary: 'Altes Gutachten',
+          source: 'llm',
+          confidence: 'high',
+          at: '2026-07-01T00:00:00.000Z',
+        },
+        { setHash: 'new-set', version: 1, changed: true },
+      ),
+    ).toBe(true)
+  })
+
+  it('keeps prior LLM fields only when the document-set hash is unchanged', () => {
+    expect(
+      hasDocumentSetChanged(
+        {
+          propertyType: null,
+          landAreaSqm: null,
+          livingAreaSqm: null,
+          rooms: null,
+          units: null,
+          documentSetHash: 'same-set',
+          source: 'rules',
+          confidence: 'low',
+          at: '2026-07-01T00:00:00.000Z',
+        },
+        { setHash: 'same-set', version: 3, changed: false },
+      ),
+    ).toBe(false)
+  })
 })
 
 describe('runEnrich photo backfill (WP-1)', () => {

@@ -154,6 +154,14 @@ export interface EnrichOptions {
   batch?: boolean
 }
 
+export function hasDocumentSetChanged(
+  priorEntry: AuctionExtraction | undefined,
+  currentDocumentSet: ArchivedDocumentSetResult | null,
+): boolean {
+  if (!priorEntry || !currentDocumentSet) return false
+  return priorEntry.documentSetHash !== currentDocumentSet.setHash
+}
+
 export default defineTask({
   meta: {
     name: 'enrich',
@@ -201,13 +209,11 @@ export async function runEnrich(opts: EnrichOptions = {}) {
       return !prev?.detailFetchedAt || (a.sourceUpdatedIso != null && prev.sourceUpdatedIso !== a.sourceUpdatedIso)
     }
     const needsDocumentSetCheck = (a: Auction): boolean => {
-      const crawler = byPlatform.get(a.platform)
-      if (!crawler?.enrichOne) return false
       const hit = cache[cacheKey(a.platform, a.externalId)]
       const prev = previousSnapshot[cacheKey(a.platform, a.externalId)]
       return (
         !hit ||
-        hit.documentSetHash === undefined ||
+        (a.attachments.length > 0 && hit.documentSetHash === undefined) ||
         (a.sourceUpdatedIso != null && prev?.sourceUpdatedIso !== a.sourceUpdatedIso)
       )
     }
@@ -419,10 +425,7 @@ export async function runEnrich(opts: EnrichOptions = {}) {
             preparedDocuments.documentSetItems,
             at,
           )
-          documentSetChanged =
-            currentDocumentSet != null &&
-            priorEntry?.documentSetHash != null &&
-            priorEntry.documentSetHash !== currentDocumentSet.setHash
+          documentSetChanged = hasDocumentSetChanged(priorEntry, currentDocumentSet)
         }
         if (documentSetChanged) {
           console.log(
