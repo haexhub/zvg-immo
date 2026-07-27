@@ -319,3 +319,9 @@ export async function fetchAllListings(
 
   return { auctions, total: auctions.length }
 }
+
+export async function fetchListingById(id: string, platformId: string): Promise<Auction | null> {
+  if (!/^\d{1,20}$/.test(id)) return null
+  const html = await htmlFetch(`${SE_BASE}/${id}.html`)
+  return mapDetail(id, html, platformId)
+}
