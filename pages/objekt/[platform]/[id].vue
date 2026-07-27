@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Component } from 'vue'
+import { MAX_LLM_FAILURES } from '~/lib/llm-limits'
 import { classifyPropertyType } from '~/lib/property-type'
 import type { Feature } from '~/lib/features'
 import type { AuctionDetail } from '~/server/api/auction/[platform]/[id].get'
@@ -363,7 +364,7 @@ const analysisStatus = computed<AnalysisStatus>(() => {
   if (!e) return 'pending'
   if (e.llmBatchJob) return 'batch'
   if (hasCompletedLlmAnalysis()) return 'llm'
-  if ((e.llmFailures ?? 0) >= 3) return 'failed'
+  if ((e.llmFailures ?? 0) >= MAX_LLM_FAILURES) return 'failed'
   return 'rules'
 })
 

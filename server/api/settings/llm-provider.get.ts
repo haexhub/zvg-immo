@@ -2,16 +2,12 @@
 // /settings "LLM-Provider" section. Lives under /api/settings/ and therefore
 // automatically inherits server/middleware/settings-auth.ts's guard.
 
-import type { H3Event } from 'h3'
 import { getPool } from '~/server/utils/db'
-import { getLlmProviderOverride, type LlmProviderScope } from '~/server/utils/app-settings'
-
-function readScope(event: H3Event): LlmProviderScope {
-  return getQuery(event).scope === 'translation' ? 'translation' : 'extraction'
-}
+import { getLlmProviderOverride } from '~/server/utils/app-settings'
+import { readLlmProviderScope } from '~/server/utils/llm-provider-scope'
 
 export default defineEventHandler(async (event) => {
-  const scope = readScope(event)
+  const scope = readLlmProviderScope(event)
   const envConfig = useRuntimeConfig().extractLlm as
     | { provider?: string; baseUrl?: string; model?: string }
     | undefined

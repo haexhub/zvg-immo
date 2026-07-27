@@ -26,6 +26,9 @@ function makeFakePool() {
   const rows = new Map<string, unknown>()
 
   const query = async (sql: string, params: unknown[] = []) => {
+    if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+      return { rows: [], rowCount: null }
+    }
     if (sql.includes('SELECT value FROM app_settings WHERE key =')) {
       const [key] = params as [string]
       return rows.has(key) ? { rows: [{ value: rows.get(key) }] } : { rows: [] }
@@ -71,7 +74,13 @@ function makeFakePool() {
     throw new Error(`unexpected query: ${sql}`)
   }
 
-  return { query: query as unknown as Pool['query'] }
+  return {
+    query: query as unknown as Pool['query'],
+    connect: async () => ({
+      query: query as unknown as Pool['query'],
+      release: () => undefined,
+    }),
+  }
 }
 
 describe('enabled countries', () => {
@@ -507,6 +516,32 @@ describe('getLlmProviderOverride', () => {
       }],
       assignments: { translation: 'gemini' },
     })
+  })
+
+  it('rejects invalid reusable provider profile ids', async () => {
+    const db = makeFakePool() as unknown as Pool
+    await expect(setLlmProviderProfileSettings(db, [
+      {
+        id: 'bad id',
+        provider: 'gemini-native',
+        baseUrl: 'https://generativelanguage.googleapis.com',
+        model: 'gemini-flash-latest',
+        executionMode: 'sync',
+      },
+    ], {})).rejects.toThrow('profile id: ungültiger Wert.')
+  })
+
+  it('rejects duplicate reusable provider profile ids', async () => {
+    const db = makeFakePool() as unknown as Pool
+    const profile = {
+      id: 'gemini',
+      provider: 'gemini-native' as const,
+      baseUrl: 'https://generativelanguage.googleapis.com',
+      model: 'gemini-flash-latest',
+      executionMode: 'sync' as const,
+    }
+
+    await expect(setLlmProviderProfileSettings(db, [profile, profile], {})).rejects.toThrow('profile id: doppelter Wert.')
   })
 })
 

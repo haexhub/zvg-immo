@@ -8,7 +8,7 @@
 
 import type { Auction, AuctionExtraction } from '~/types/auction'
 import { fetchLlmBatchResults, pollLlmBatch } from '../utils/extract/llm-batch'
-import { resolveLlmConfig, type LlmConfig } from '../utils/extract/llm'
+import { readExtractionLlmConfig } from '../utils/extract/llm-task-config'
 import { mergeLlmResult, type MergeInputFields } from '../utils/extract/merge-llm-result'
 import {
   applyExtractionToAuctions,
@@ -23,19 +23,8 @@ import {
   markLlmBatchJobResolved,
   type LlmBatchJob,
 } from '../utils/llm-batch-jobs'
-import { getPool } from '../utils/db'
-import { getLlmProviderOverride } from '../utils/app-settings'
 
 const DEFAULT_GEMINI_FREE_BATCH_POLL_INTERVAL_HOURS = 6
-
-async function readLlmConfig(): Promise<LlmConfig | null> {
-  const c = useRuntimeConfig().extractLlm as
-    | { provider?: string; baseUrl?: string; apiKey?: string; model?: string }
-    | undefined
-  const db = getPool()
-  const override = db ? await getLlmProviderOverride(db, 'extraction').catch(() => null) : null
-  return resolveLlmConfig(override ?? c)
-}
 
 function parsePositiveNumber(value: unknown, fallback: number): number {
   const raw = typeof value === 'string' && value.trim() ? Number(value) : value
@@ -124,7 +113,7 @@ export async function runLlmBatchPoll(): Promise<{ checked: number; merged: numb
   const jobs = await listPendingLlmBatchJobs()
   if (jobs.length === 0) return { checked: 0, merged: 0 }
 
-  const llmConfig = await readLlmConfig()
+  const llmConfig = await readExtractionLlmConfig()
   if (!llmConfig) {
     console.warn('[llm-batch-poll] pending jobs exist but no LLM provider is configured — skipping')
     return { checked: 0, merged: 0 }

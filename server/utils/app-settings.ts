@@ -6,7 +6,6 @@
 // is absent, since a fresh install has no rows yet.
 
 import type { Pool } from 'pg'
-import { randomUUID } from 'node:crypto'
 import { supportsLlmProviderExecutionMode } from './llm-provider-capabilities'
 
 export type LlmMaxTokensKind = 'extraction' | 'summary' | 'translation'
@@ -223,13 +222,7 @@ export async function getLlmProviderProfiles(db: Pool): Promise<LlmProviderProfi
 }
 
 export async function getLlmProviderAssignments(db: Pool): Promise<LlmProviderAssignments> {
-  const profiles = await getLlmProviderProfiles(db)
-  const profileIds = new Set(profiles.map((profile) => profile.id))
-  const { rows } = await db.query<{ value: unknown }>(
-    'SELECT value FROM app_settings WHERE key = $1',
-    [LLM_PROVIDER_ASSIGNMENTS_KEY],
-  )
-  return coerceAssignments(rows[0]?.value, profileIds)
+  return (await getLlmProviderProfileSettings(db)).assignments
 }
 
 export async function getLlmProviderProfileSettings(db: Pool): Promise<{
@@ -257,8 +250,13 @@ export async function setLlmProviderProfileSettings(
   const profiles: LlmProviderProfile[] = []
   const seen = new Set<string>()
   for (const input of inputProfiles) {
-    const id = input.id && isValidProfileId(input.id) ? input.id : randomUUID()
-    if (seen.has(id)) continue
+    if (!input.id || !isValidProfileId(input.id)) {
+      throw new Error('profile id: ungültiger Wert.')
+    }
+    const id = input.id
+    if (seen.has(id)) {
+      throw new Error('profile id: doppelter Wert.')
+    }
     const current = existing.get(id)
     const executionMode = input.executionMode ?? current?.executionMode ?? DEFAULT_LLM_EXECUTION_MODE
     const apiKey = input.apiKey ?? current?.apiKey ?? ''
@@ -278,16 +276,26 @@ export async function setLlmProviderProfileSettings(
   }
   const profileIds = new Set(profiles.map((profile) => profile.id))
   const assignments = coerceAssignments(inputAssignments, profileIds)
-  await db.query(
-    `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, now())
-     ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()`,
-    [LLM_PROVIDER_PROFILES_KEY, JSON.stringify(profiles)],
-  )
-  await db.query(
-    `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, now())
-     ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()`,
-    [LLM_PROVIDER_ASSIGNMENTS_KEY, JSON.stringify(assignments)],
-  )
+  const client = await db.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, now())
+       ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()`,
+      [LLM_PROVIDER_PROFILES_KEY, JSON.stringify(profiles)],
+    )
+    await client.query(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, now())
+       ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()`,
+      [LLM_PROVIDER_ASSIGNMENTS_KEY, JSON.stringify(assignments)],
+    )
+    await client.query('COMMIT')
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => undefined)
+    throw err
+  } finally {
+    client.release()
+  }
   return { profiles, assignments }
 }
 

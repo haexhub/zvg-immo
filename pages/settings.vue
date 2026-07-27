@@ -595,7 +595,7 @@ async function saveLlmProfiles(): Promise<void> {
   llmProfilesError.value = null
   llmProfilesSaved.value = false
   try {
-    const res = await $fetch<Omit<LlmProfilesResponse, 'effective'>>('/api/settings/llm-profiles', {
+    await $fetch('/api/settings/llm-profiles', {
       method: 'PUT',
       body: {
         profiles: llmProfiles.value.map((profile) => ({
@@ -613,11 +613,8 @@ async function saveLlmProfiles(): Promise<void> {
         },
       },
     })
-    llmProfiles.value = res.profiles.map((profile) => makeProfileForm(profile))
-    llmProfileAssignments.extraction = res.assignments.extraction ?? NO_LLM_PROFILE
-    llmProfileAssignments.translation = res.assignments.translation ?? NO_LLM_PROFILE
-    llmProfilesSaved.value = true
     await loadLlmProfiles()
+    llmProfilesSaved.value = !llmProfilesError.value
   } catch (err) {
     llmProfilesError.value = normalizeSettingsError(err, t('settings.llmProvider.saveError'))
   } finally {

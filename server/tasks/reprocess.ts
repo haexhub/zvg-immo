@@ -12,7 +12,7 @@
 import type { Auction, AuctionExtraction, CuratedPhoto } from '~/types/auction'
 import { getPool } from '~/server/utils/db'
 import { extractByRules } from '~/server/utils/extract/rules'
-import { extractByLlm, resolveLlmConfig, type LlmConfig, type LlmInput } from '~/server/utils/extract/llm'
+import { extractByLlm, type LlmConfig, type LlmInput } from '~/server/utils/extract/llm'
 import { prepareArchivedLlmDocuments } from '~/server/utils/extract/llm-documents'
 import {
   isLlmBatchPending,
@@ -20,12 +20,8 @@ import {
   supportsLlmBatch,
   supportsNativeBatchDocuments,
 } from '~/server/utils/extract/llm-batch'
-import {
-  DEFAULT_LLM_MAX_TOKENS,
-  getLlmMaxTokens,
-  getLlmProviderOverride,
-  readLlmExecutionMode,
-} from '~/server/utils/app-settings'
+import { readLlmExecutionMode } from '~/server/utils/app-settings'
+import { MAX_LLM_FAILURES, readExtractionLlmConfig } from '~/server/utils/extract/llm-task-config'
 import { mergeLlmResult, type MergeInputFields } from '~/server/utils/extract/merge-llm-result'
 import {
   applyExtractionToAuctions,
@@ -40,9 +36,6 @@ import { normalizePhoto } from '~/lib/photo'
 
 const DEFAULT_COUNTRY = 'de'
 const DEFAULT_MAX_LLM_PER_RUN = 300
-// Same bound as server/tasks/enrich.ts: stop retrying an auction's LLM call
-// after this many consecutive failures.
-const MAX_LLM_FAILURES = 3
 
 export interface ReprocessOptions {
   /** ISO-3166-1 alpha-2, lowercase. Defaults to 'de' (this WP's scope). */
@@ -74,18 +67,6 @@ export interface ReprocessResult {
   processed: number
   skipped: number
   llmCalls: number
-}
-
-async function readLlmConfig(): Promise<LlmConfig | null> {
-  const c = useRuntimeConfig().extractLlm as
-    | { provider?: string; baseUrl?: string; apiKey?: string; model?: string; maxPerRun?: string }
-    | undefined
-  const db = getPool()
-  const maxTokens = db
-    ? await getLlmMaxTokens(db, 'extraction').catch(() => DEFAULT_LLM_MAX_TOKENS.extraction)
-    : DEFAULT_LLM_MAX_TOKENS.extraction
-  const override = db ? await getLlmProviderOverride(db).catch(() => null) : null
-  return resolveLlmConfig(override ?? c, { maxTokens })
 }
 
 function readMaxLlmPerRun(): number {
@@ -293,7 +274,7 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
 
   const candidates = await findCandidates(opts)
   const cache = await readExtractionCache()
-  const llmConfig = await readLlmConfig()
+  const llmConfig = await readExtractionLlmConfig()
   const executionMode = await readLlmExecutionMode()
   const maxLlmPerRun = readMaxLlmPerRun()
   const at = new Date().toISOString()

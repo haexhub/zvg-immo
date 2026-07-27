@@ -47,9 +47,13 @@ export default defineEventHandler(async (event) => {
   if (!db) {
     throw createError({ statusCode: 503, statusMessage: 'Postgres ist nicht konfiguriert.' })
   }
-  const body = await readBody<Record<string, unknown>>(event).catch(() => ({}) as Record<string, unknown>)
-  const rawProfiles = Array.isArray(body.profiles) ? body.profiles : []
-  const profiles = rawProfiles.map(readProfile)
+  const body = await readBody<Record<string, unknown>>(event).catch(() => {
+    throw createError({ statusCode: 400, statusMessage: 'Ungültiger Request-Body.' })
+  })
+  if (!Array.isArray(body?.profiles)) {
+    throw createError({ statusCode: 400, statusMessage: 'profiles: Array erforderlich.' })
+  }
+  const profiles = body.profiles.map(readProfile)
   const assignments = (body.assignments && typeof body.assignments === 'object'
     ? body.assignments
     : {}) as LlmProviderAssignments
@@ -68,9 +72,18 @@ export default defineEventHandler(async (event) => {
       assignments: saved.assignments,
     }
   } catch (err) {
+    const message = (err as Error).message
+    if (
+      message === 'unsupported provider/executionMode combination' ||
+      message === 'profile id: ungültiger Wert.' ||
+      message === 'profile id: doppelter Wert.'
+    ) {
+      throw createError({ statusCode: 400, statusMessage: message })
+    }
+    console.warn(`[settings/llm-profiles] save failed: ${message}`)
     throw createError({
-      statusCode: 400,
-      statusMessage: (err as Error).message || 'LLM-Profile konnten nicht gespeichert werden.',
+      statusCode: 500,
+      statusMessage: 'LLM-Profile konnten nicht gespeichert werden.',
     })
   }
 })

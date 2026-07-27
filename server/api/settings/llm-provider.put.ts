@@ -3,7 +3,6 @@
 // stored key unchanged, an explicit '' clears it — the GET route never
 // echoes the real value back, so the form can't "round-trip" a stale key.
 
-import type { H3Event } from 'h3'
 import { getPool } from '~/server/utils/db'
 import {
   LLM_EXECUTION_MODES,
@@ -12,16 +11,12 @@ import {
   setLlmProviderOverride,
   type LlmExecutionMode,
   type LlmProvider,
-  type LlmProviderScope,
 } from '~/server/utils/app-settings'
 import { supportsLlmProviderExecutionMode } from '~/server/utils/llm-provider-capabilities'
-
-function readScope(event: H3Event): LlmProviderScope {
-  return getQuery(event).scope === 'translation' ? 'translation' : 'extraction'
-}
+import { readLlmProviderScope } from '~/server/utils/llm-provider-scope'
 
 export default defineEventHandler(async (event) => {
-  const scope = readScope(event)
+  const scope = readLlmProviderScope(event)
   const db = getPool()
   if (!db) {
     throw createError({ statusCode: 503, statusMessage: 'Postgres ist nicht konfiguriert.' })
