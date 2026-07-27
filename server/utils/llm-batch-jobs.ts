@@ -245,9 +245,27 @@ export async function insertLlmBatchJob(job: {
 }
 
 export async function listPendingLlmBatchJobs(): Promise<LlmBatchJob[]> {
+  return listLlmBatchJobs({ status: 'pending', order: 'asc' })
+}
+
+export async function listRecentLlmBatchJobs(limit = 20): Promise<LlmBatchJob[]> {
+  return listLlmBatchJobs({ limit, order: 'desc' })
+}
+
+async function listLlmBatchJobs(opts: {
+  status?: LlmBatchJobStatus
+  limit?: number
+  order: 'asc' | 'desc'
+}): Promise<LlmBatchJob[]> {
   const db = getPool()
   if (!db) return []
   try {
+    const params: unknown[] = []
+    const where = opts.status ? `WHERE status = $${params.push(opts.status)}` : ''
+    const limit = opts.limit && Number.isFinite(opts.limit) && opts.limit > 0
+      ? `LIMIT $${params.push(Math.round(opts.limit))}`
+      : ''
+    const order = opts.order === 'asc' ? 'ASC' : 'DESC'
     const { rows } = await db.query<{
       job_name: string
       source: string
@@ -260,8 +278,10 @@ export async function listPendingLlmBatchJobs(): Promise<LlmBatchJob[]> {
     }>(
       `SELECT job_name, source, status, item_count, custom_id_map, submitted_at, checked_at, updated_at
        FROM llm_batch_jobs
-       WHERE status = 'pending'
-       ORDER BY submitted_at ASC`,
+       ${where}
+       ORDER BY submitted_at ${order}
+       ${limit}`,
+      params,
     )
     return rows.map((r) => ({
       jobName: r.job_name,
@@ -292,6 +312,25 @@ export async function markLlmBatchJobChecked(jobName: string, checkedAt: string)
   }
 }
 
+export async function markLlmBatchJobResolved(
+  jobName: string,
+  status: Exclude<LlmBatchJobStatus, 'pending'>,
+  checkedAt: string,
+): Promise<void> {
+  const db = getPool()
+  if (!db) return
+  try {
+    await db.query(
+      `UPDATE llm_batch_jobs
+       SET status = $2, checked_at = $3, updated_at = now()
+       WHERE job_name = $1`,
+      [jobName, status, checkedAt],
+    )
+  } catch (err) {
+    console.warn(`[llm-batch-jobs] status update failed for ${jobName}: ${(err as Error).message}`)
+  }
+}
+
 function toIso(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : value
 }
@@ -305,9 +344,8 @@ function isStringMap(value: unknown): value is Record<string, string> {
   )
 }
 
-/** Removes a job's row once llm-batch-poll.ts has resolved it (succeeded,
- *  failed, or expired) — simpler than tracking terminal status/checked_at on
- *  the row, since there's no cleanup task needed either way. */
+/** Hard-delete helper kept for manual cleanup/tests. Normal poll completion
+ *  uses markLlmBatchJobResolved() so /settings can show history. */
 export async function deleteLlmBatchJob(jobName: string): Promise<void> {
   const db = getPool()
   if (!db) return

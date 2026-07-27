@@ -637,7 +637,7 @@ interface ReprocessResult {
 interface LlmBatchJobOverviewItem {
   jobName: string
   source: 'enrich' | 'reprocess'
-  status: 'pending'
+  status: 'pending' | 'succeeded' | 'failed' | 'expired'
   provider: 'anthropic' | 'gemini' | 'openai'
   itemCount: number
   pendingCount: number
@@ -649,7 +649,17 @@ interface LlmBatchJobOverviewItem {
 interface LlmBatchJobsOverview {
   totalJobs: number
   totalRequests: number
+  backlog: {
+    readyRequests: number
+    lowConfidenceRules: number
+    missingLlmFields: number
+    orphanedBatchMarkers: number
+    failedLimit: number
+    sampleRequestKeys: string[]
+    orphanedRequestKeys: string[]
+  }
   jobs: LlmBatchJobOverviewItem[]
+  recentJobs: LlmBatchJobOverviewItem[]
 }
 const reprocessLimit = ref('10')
 const reprocessCountry = ref('de')
@@ -665,6 +675,16 @@ function formatBatchDate(iso: string | null): string {
   const date = new Date(iso)
   return Number.isFinite(date.getTime()) ? date.toLocaleString() : iso
 }
+
+const llmBatchBacklog = computed(() => llmBatchJobs.value?.backlog ?? {
+  readyRequests: 0,
+  lowConfidenceRules: 0,
+  missingLlmFields: 0,
+  orphanedBatchMarkers: 0,
+  failedLimit: 0,
+  sampleRequestKeys: [],
+  orphanedRequestKeys: [],
+})
 
 async function loadLlmBatchJobs(): Promise<void> {
   llmBatchJobsPending.value = true
@@ -1233,10 +1253,54 @@ onBeforeUnmount(stopPolling)
             </div>
           </div>
 
+          <div class="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
+            <div class="border rounded-md p-3">
+              <div class="text-xs text-muted-foreground">{{ $t('settings.llmBatch.readyRequests') }}</div>
+              <div class="text-xl font-semibold tabular-nums">{{ llmBatchBacklog.readyRequests }}</div>
+            </div>
+            <div class="border rounded-md p-3">
+              <div class="text-xs text-muted-foreground">{{ $t('settings.llmBatch.lowConfidenceRules') }}</div>
+              <div class="text-xl font-semibold tabular-nums">{{ llmBatchBacklog.lowConfidenceRules }}</div>
+            </div>
+            <div class="border rounded-md p-3">
+              <div class="text-xs text-muted-foreground">{{ $t('settings.llmBatch.missingLlmFields') }}</div>
+              <div class="text-xl font-semibold tabular-nums">{{ llmBatchBacklog.missingLlmFields }}</div>
+            </div>
+            <div class="border rounded-md p-3">
+              <div class="text-xs text-muted-foreground">{{ $t('settings.llmBatch.orphanedBatchMarkers') }}</div>
+              <div class="text-xl font-semibold tabular-nums">{{ llmBatchBacklog.orphanedBatchMarkers }}</div>
+            </div>
+          </div>
+
+          <p v-if="llmBatchBacklog.failedLimit > 0" class="text-sm text-muted-foreground">
+            {{ $t('settings.llmBatch.failedLimit', { count: llmBatchBacklog.failedLimit }) }}
+          </p>
+
+          <div v-if="llmBatchBacklog.sampleRequestKeys.length" class="space-y-2">
+            <div class="text-sm font-medium">{{ $t('settings.llmBatch.readySample') }}</div>
+            <div class="max-h-32 overflow-auto rounded border bg-muted/30 p-2">
+              <div v-for="key in llmBatchBacklog.sampleRequestKeys" :key="`ready:${key}`" class="font-mono text-xs leading-6">
+                {{ key }}
+              </div>
+            </div>
+          </div>
+
+          <div v-if="llmBatchBacklog.orphanedRequestKeys.length" class="space-y-2">
+            <div class="text-sm font-medium">{{ $t('settings.llmBatch.orphanedSample') }}</div>
+            <div class="max-h-32 overflow-auto rounded border bg-muted/30 p-2">
+              <div v-for="key in llmBatchBacklog.orphanedRequestKeys" :key="`orphaned:${key}`" class="font-mono text-xs leading-6">
+                {{ key }}
+              </div>
+            </div>
+          </div>
+
           <p v-if="!llmBatchJobsPending && (!llmBatchJobs || llmBatchJobs.jobs.length === 0)" class="text-sm text-muted-foreground">
             {{ $t('settings.llmBatch.empty') }}
           </p>
 
+          <div v-if="llmBatchJobs?.jobs.length" class="space-y-3">
+            <div class="text-sm font-medium">{{ $t('settings.llmBatch.openHeading') }}</div>
+          </div>
           <div v-for="job in llmBatchJobs?.jobs ?? []" :key="job.jobName" class="border rounded-md p-3 space-y-3">
             <div class="flex flex-wrap items-start justify-between gap-3">
               <div class="min-w-0">
@@ -1244,6 +1308,7 @@ onBeforeUnmount(stopPolling)
                 <div class="mt-1 flex flex-wrap gap-2">
                   <Badge variant="secondary">{{ job.provider }}</Badge>
                   <Badge variant="outline">{{ $t(`settings.llmBatch.source.${job.source}`) }}</Badge>
+                  <Badge variant="outline">{{ $t(`settings.llmBatch.status.${job.status}`) }}</Badge>
                 </div>
               </div>
               <div class="text-right text-sm">
@@ -1259,6 +1324,35 @@ onBeforeUnmount(stopPolling)
             <div v-if="job.requestKeys.length" class="max-h-40 overflow-auto rounded border bg-muted/30 p-2">
               <div v-for="key in job.requestKeys" :key="`${job.jobName}:${key}`" class="font-mono text-xs leading-6">
                 {{ key }}
+              </div>
+            </div>
+          </div>
+
+          <div v-if="llmBatchJobs?.recentJobs.length" class="space-y-3">
+            <div class="text-sm font-medium">{{ $t('settings.llmBatch.historyHeading') }}</div>
+            <div v-for="job in llmBatchJobs.recentJobs" :key="`recent:${job.jobName}`" class="border rounded-md p-3 space-y-2">
+              <div class="flex flex-wrap items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <div class="font-mono text-xs break-all">{{ job.jobName }}</div>
+                  <div class="mt-1 flex flex-wrap gap-2">
+                    <Badge variant="secondary">{{ job.provider }}</Badge>
+                    <Badge variant="outline">{{ $t(`settings.llmBatch.source.${job.source}`) }}</Badge>
+                    <Badge variant="outline">{{ $t(`settings.llmBatch.status.${job.status}`) }}</Badge>
+                  </div>
+                </div>
+                <div class="text-right text-sm">
+                  <div class="font-semibold tabular-nums">
+                    {{ $t('settings.llmBatch.itemsTotal', { total: job.itemCount }) }}
+                  </div>
+                  <div class="text-xs text-muted-foreground">
+                    {{ $t('settings.llmBatch.updatedAt', { at: formatBatchDate(job.updatedAt) }) }}
+                  </div>
+                </div>
+              </div>
+              <div v-if="job.requestKeys.length" class="max-h-28 overflow-auto rounded border bg-muted/30 p-2">
+                <div v-for="key in job.requestKeys" :key="`recent:${job.jobName}:${key}`" class="font-mono text-xs leading-6">
+                  {{ key }}
+                </div>
               </div>
             </div>
           </div>

@@ -350,8 +350,25 @@
       "empty": "Keine offenen Batch-Requests.",
       "totalJobs": "Offene Jobs",
       "totalRequests": "Offene Requests",
+      "readyRequests": "Bereit für nächsten Lauf",
+      "lowConfidenceRules": "Regex low",
+      "missingLlmFields": "LLM-Felder offen",
+      "orphanedBatchMarkers": "Verwaiste Marker",
+      "failedLimit": "{count} Anzeigen haben das LLM-Fehlerlimit erreicht.",
+      "readySample": "Beispiele: noch nicht eingereiht",
+      "orphanedSample": "Beispiele: Marker ohne bekannten offenen Job",
+      "openHeading": "Offene Provider-Jobs",
+      "historyHeading": "Letzte Batch-Jobs",
       "pendingOfTotal": "{pending} von {total} offen",
+      "itemsTotal": "{total} Requests",
       "submittedAt": "Eingereicht: {at}",
+      "updatedAt": "Aktualisiert: {at}",
+      "status": {
+        "pending": "Offen",
+        "succeeded": "Erfolgreich",
+        "failed": "Fehlgeschlagen",
+        "expired": "Abgelaufen"
+      },
       "source": {
         "enrich": "Enrich",
         "reprocess": "Reprocess"
