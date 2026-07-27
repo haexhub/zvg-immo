@@ -21,6 +21,106 @@ export interface LlmBatchJob {
   updatedAt: string
 }
 
+export interface GeminiBatchQuotaUsage {
+  day: string
+  jobs: number
+  items: number
+  estimatedTokens: number
+  backoffUntil: string | null
+}
+
+const GEMINI_BATCH_QUOTA_KEY = 'gemini_batch_quota_usage'
+
+let memoryGeminiQuotaUsage: GeminiBatchQuotaUsage | null = null
+
+function defaultGeminiQuotaUsage(day: string): GeminiBatchQuotaUsage {
+  return { day, jobs: 0, items: 0, estimatedTokens: 0, backoffUntil: null }
+}
+
+function coerceGeminiQuotaUsage(value: unknown, day: string): GeminiBatchQuotaUsage {
+  if (!value || typeof value !== 'object') return defaultGeminiQuotaUsage(day)
+  const v = value as Record<string, unknown>
+  if (v.day !== day) return defaultGeminiQuotaUsage(day)
+  return {
+    day,
+    jobs: typeof v.jobs === 'number' && Number.isFinite(v.jobs) && v.jobs > 0 ? Math.round(v.jobs) : 0,
+    items: typeof v.items === 'number' && Number.isFinite(v.items) && v.items > 0 ? Math.round(v.items) : 0,
+    estimatedTokens:
+      typeof v.estimatedTokens === 'number' && Number.isFinite(v.estimatedTokens) && v.estimatedTokens > 0
+        ? Math.round(v.estimatedTokens)
+        : 0,
+    backoffUntil: typeof v.backoffUntil === 'string' && v.backoffUntil ? v.backoffUntil : null,
+  }
+}
+
+export async function readGeminiBatchQuotaUsage(day: string): Promise<GeminiBatchQuotaUsage> {
+  const db = getPool()
+  if (!db) {
+    memoryGeminiQuotaUsage = coerceGeminiQuotaUsage(memoryGeminiQuotaUsage, day)
+    return memoryGeminiQuotaUsage
+  }
+  try {
+    const { rows } = await db.query<{ value: unknown }>(
+      'SELECT value FROM app_settings WHERE key = $1',
+      [GEMINI_BATCH_QUOTA_KEY],
+    )
+    return coerceGeminiQuotaUsage(rows[0]?.value, day)
+  } catch (err) {
+    console.warn(`[llm-batch-jobs] Gemini quota read failed: ${(err as Error).message}`)
+    memoryGeminiQuotaUsage = coerceGeminiQuotaUsage(memoryGeminiQuotaUsage, day)
+    return memoryGeminiQuotaUsage
+  }
+}
+
+export async function recordGeminiBatchQuotaUsage(
+  day: string,
+  delta: { jobs: number; items: number; estimatedTokens: number },
+): Promise<void> {
+  const current = await readGeminiBatchQuotaUsage(day)
+  const next: GeminiBatchQuotaUsage = {
+    day,
+    jobs: current.jobs + Math.max(0, Math.round(delta.jobs)),
+    items: current.items + Math.max(0, Math.round(delta.items)),
+    estimatedTokens: current.estimatedTokens + Math.max(0, Math.round(delta.estimatedTokens)),
+    backoffUntil: current.backoffUntil,
+  }
+  const db = getPool()
+  if (!db) {
+    memoryGeminiQuotaUsage = next
+    return
+  }
+  try {
+    await db.query(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2::jsonb, now())
+       ON CONFLICT (key) DO UPDATE SET value = $2::jsonb, updated_at = now()`,
+      [GEMINI_BATCH_QUOTA_KEY, JSON.stringify(next)],
+    )
+  } catch (err) {
+    console.warn(`[llm-batch-jobs] Gemini quota write failed: ${(err as Error).message}`)
+    memoryGeminiQuotaUsage = next
+  }
+}
+
+export async function setGeminiBatchQuotaBackoff(day: string, backoffUntil: string): Promise<void> {
+  const current = await readGeminiBatchQuotaUsage(day)
+  const next: GeminiBatchQuotaUsage = { ...current, backoffUntil }
+  const db = getPool()
+  if (!db) {
+    memoryGeminiQuotaUsage = next
+    return
+  }
+  try {
+    await db.query(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2::jsonb, now())
+       ON CONFLICT (key) DO UPDATE SET value = $2::jsonb, updated_at = now()`,
+      [GEMINI_BATCH_QUOTA_KEY, JSON.stringify(next)],
+    )
+  } catch (err) {
+    console.warn(`[llm-batch-jobs] Gemini quota backoff write failed: ${(err as Error).message}`)
+    memoryGeminiQuotaUsage = next
+  }
+}
+
 /** Returns whether the row was recorded, so the caller can
  *  treat a failed insert as a failed submission instead of returning a job
  *  name the poller will never see. */
@@ -76,6 +176,19 @@ export async function listPendingLlmBatchJobs(): Promise<LlmBatchJob[]> {
   } catch (err) {
     console.warn(`[llm-batch-jobs] list failed: ${(err as Error).message}`)
     return []
+  }
+}
+
+export async function markLlmBatchJobChecked(jobName: string, checkedAt: string): Promise<void> {
+  const db = getPool()
+  if (!db) return
+  try {
+    await db.query(
+      'UPDATE llm_batch_jobs SET checked_at = $2, updated_at = now() WHERE job_name = $1',
+      [jobName, checkedAt],
+    )
+  } catch (err) {
+    console.warn(`[llm-batch-jobs] checked_at update failed for ${jobName}: ${(err as Error).message}`)
   }
 }
 

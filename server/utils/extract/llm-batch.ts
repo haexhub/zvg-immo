@@ -60,10 +60,7 @@ export async function submitLlmBatch(
   source: 'enrich' | 'reprocess',
 ): Promise<LlmBatchSubmitResult | null> {
   if (config.provider === 'gemini-native') {
-    const jobName = await submitGeminiBatch(items, config, source)
-    return jobName
-      ? { jobName, submitted: items.map((item) => ({ key: item.key, jobName })), retryItems: [] }
-      : null
+    return submitGeminiBatch(items, config, source)
   }
   if (config.provider === 'claude-proxy') return submitAnthropicBatch(items, config, source)
   if (config.provider === 'openai-compatible') return submitOpenAiBatch(items, config, source)

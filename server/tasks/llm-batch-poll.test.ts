@@ -1,12 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Auction, AuctionExtraction } from '~/types/auction'
 import { fetchLlmBatchResults, pollLlmBatch } from '../utils/extract/llm-batch'
-import { deleteLlmBatchJob, listPendingLlmBatchJobs, type LlmBatchJob } from '../utils/llm-batch-jobs'
+import { deleteLlmBatchJob, listPendingLlmBatchJobs, markLlmBatchJobChecked, type LlmBatchJob } from '../utils/llm-batch-jobs'
 import { readExtractionCache, writeExtractionCache } from '../utils/extraction-cache'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
 
 vi.mock('../utils/extract/llm-batch', () => ({ pollLlmBatch: vi.fn(), fetchLlmBatchResults: vi.fn() }))
-vi.mock('../utils/llm-batch-jobs', () => ({ listPendingLlmBatchJobs: vi.fn(), deleteLlmBatchJob: vi.fn() }))
+vi.mock('../utils/llm-batch-jobs', () => ({
+  listPendingLlmBatchJobs: vi.fn(),
+  deleteLlmBatchJob: vi.fn(),
+  markLlmBatchJobChecked: vi.fn(),
+}))
 vi.mock('../utils/extraction-cache', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/extraction-cache')>()
   return { ...actual, readExtractionCache: vi.fn(), writeExtractionCache: vi.fn() }
@@ -80,7 +84,14 @@ function makeAuction(overrides: Partial<Auction> = {}): Auction {
 }
 
 beforeEach(() => {
-  vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { baseUrl: 'http://gemini', provider: 'gemini-native' } }))
+  vi.stubGlobal('useRuntimeConfig', () => ({
+    extractLlm: {
+      baseUrl: 'http://gemini',
+      provider: 'gemini-native',
+      geminiBatchTier: 'free',
+      geminiFreeBatchPollIntervalHours: 6,
+    },
+  }))
   vi.mocked(readExtractionCache).mockResolvedValue({})
   vi.mocked(readAuctionSnapshot).mockResolvedValue({})
   vi.mocked(writeExtractionCache).mockResolvedValue(true)
@@ -119,8 +130,21 @@ describe('runLlmBatchPoll', () => {
     const result = await runLlmBatchPoll()
 
     expect(result).toEqual({ checked: 1, merged: 0 })
+    expect(markLlmBatchJobChecked).toHaveBeenCalledWith('batches/abc', expect.any(String))
     expect(deleteLlmBatchJob).not.toHaveBeenCalled()
     expect(fetchLlmBatchResults).not.toHaveBeenCalled()
+  })
+
+  it('skips a recently checked Gemini job while in the free-tier poll interval', async () => {
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([
+      makeJob({ checkedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString() }),
+    ])
+
+    const result = await runLlmBatchPoll()
+
+    expect(result).toEqual({ checked: 0, merged: 0 })
+    expect(pollLlmBatch).not.toHaveBeenCalled()
+    expect(markLlmBatchJobChecked).not.toHaveBeenCalled()
   })
 
   it('deletes the job row on failed/expired without touching the cache', async () => {

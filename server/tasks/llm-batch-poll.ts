@@ -17,7 +17,14 @@ import {
   type ExtractionCache,
 } from '../utils/extraction-cache'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
-import { deleteLlmBatchJob, listPendingLlmBatchJobs } from '../utils/llm-batch-jobs'
+import {
+  deleteLlmBatchJob,
+  listPendingLlmBatchJobs,
+  markLlmBatchJobChecked,
+  type LlmBatchJob,
+} from '../utils/llm-batch-jobs'
+
+const DEFAULT_GEMINI_FREE_BATCH_POLL_INTERVAL_HOURS = 6
 
 function readLlmConfig(): LlmConfig | null {
   const c = useRuntimeConfig().extractLlm as
@@ -31,6 +38,36 @@ function readLlmConfig(): LlmConfig | null {
     apiKey: c.apiKey || undefined,
     model: c.model || (provider === 'gemini-native' ? 'gemini-flash-latest' : 'claude-haiku-4-5'),
   }
+}
+
+function parsePositiveNumber(value: unknown, fallback: number): number {
+  const raw = typeof value === 'string' && value.trim() ? Number(value) : value
+  return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : fallback
+}
+
+function readGeminiBatchPollIntervalMs(): number {
+  const c = useRuntimeConfig().extractLlm as
+    | { geminiBatchTier?: string; geminiFreeBatchPollIntervalHours?: string | number }
+    | undefined
+  if (c?.geminiBatchTier === 'paid') return 0
+  return Math.round(
+    parsePositiveNumber(
+      c?.geminiFreeBatchPollIntervalHours,
+      DEFAULT_GEMINI_FREE_BATCH_POLL_INTERVAL_HOURS,
+    ) * 60 * 60 * 1000,
+  )
+}
+
+function isGeminiBatchJob(jobName: string): boolean {
+  return jobName.startsWith('batches/')
+}
+
+function shouldSkipGeminiFreePoll(job: LlmBatchJob, now: number): boolean {
+  if (!isGeminiBatchJob(job.jobName)) return false
+  const intervalMs = readGeminiBatchPollIntervalMs()
+  if (intervalMs <= 0 || !job.checkedAt) return false
+  const checkedAt = Date.parse(job.checkedAt)
+  return Number.isFinite(checkedAt) && now - checkedAt < intervalMs
 }
 
 function splitKey(key: string): { platform: string; externalId: string } | null {
@@ -98,11 +135,16 @@ export async function runLlmBatchPoll(): Promise<{ checked: number; merged: numb
 
   const cache = await readExtractionCache()
   const at = new Date().toISOString()
+  const now = Date.parse(at)
   let merged = 0
+  let checked = 0
 
   for (const job of jobs) {
+    if (shouldSkipGeminiFreePoll(job, now)) continue
+    checked++
     try {
       const poll = await pollLlmBatch(job.jobName, llmConfig)
+      await markLlmBatchJobChecked(job.jobName, at)
       if (poll.state === 'pending') continue
 
       if (poll.state === 'failed' || poll.state === 'expired') {
@@ -147,9 +189,10 @@ export async function runLlmBatchPoll(): Promise<{ checked: number; merged: numb
       await deleteLlmBatchJob(job.jobName)
       console.log(`[llm-batch-poll] job ${job.jobName} succeeded — merged ${results.length} items`)
     } catch (err) {
+      await markLlmBatchJobChecked(job.jobName, at)
       console.warn(`[llm-batch-poll] failed for job ${job.jobName}: ${(err as Error).message}`)
     }
   }
 
-  return { checked: jobs.length, merged }
+  return { checked, merged }
 }

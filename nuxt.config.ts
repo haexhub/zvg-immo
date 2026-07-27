@@ -79,6 +79,28 @@ export default defineNuxtConfig({
       // again once more countries are re-enabled and share the budget.
       //   NUXT_EXTRACT_LLM_MAX_PER_RUN=2000
       maxPerRun: '',
+      // Gemini Batch safety rail. The Gemini API doesn't expose a reliable
+      // "am I Free/Paid Tier?" endpoint to API-key callers; AI Studio remains
+      // the source of truth for the active tier/limits. Fail closed to "free"
+      // and make paid/budgeted operation explicit later.
+      //   NUXT_EXTRACT_LLM_GEMINI_BATCH_TIER=free|paid
+      // Free defaults below intentionally fit under the AI Studio Free Tier
+      // shape seen during setup (e.g. small RPD/RPM buckets): one mini-batch
+      // per UTC day, with token/item caps so a full-country reprocess cannot
+      // burn the day in one submission.
+      //   NUXT_EXTRACT_LLM_GEMINI_FREE_BATCH_MAX_JOBS_PER_DAY=1
+      //   NUXT_EXTRACT_LLM_GEMINI_FREE_BATCH_MAX_ITEMS=5
+      //   NUXT_EXTRACT_LLM_GEMINI_FREE_BATCH_MAX_ESTIMATED_TOKENS=100000
+      //   NUXT_EXTRACT_LLM_GEMINI_FREE_BATCH_POLL_INTERVAL_HOURS=6
+      // Paid stays faster by default, but still bounded to keep one accidental
+      // manual run from producing a monster JSONL job before proper budgets land.
+      //   NUXT_EXTRACT_LLM_GEMINI_PAID_BATCH_MAX_ITEMS=300
+      geminiBatchTier: 'free',
+      geminiFreeBatchMaxJobsPerDay: 1,
+      geminiFreeBatchMaxItems: 5,
+      geminiFreeBatchMaxEstimatedTokens: 100_000,
+      geminiFreeBatchPollIntervalHours: 6,
+      geminiPaidBatchMaxItems: 300,
     },
     // Sibling haex-claude-proxy container's own address — always deployed
     // regardless of which provider extractLlm.baseUrl currently points at
