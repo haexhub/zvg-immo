@@ -759,8 +759,6 @@
     "redevelopmentArea": "Redevelopment area",
     "conservationArea": "Conservation area",
     "gallery": {
-      "count": "{n} photos",
-      "more": "+{n} more photos",
       "close": "Close"
     }
   },

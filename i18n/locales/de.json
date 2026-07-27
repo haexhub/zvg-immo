@@ -759,8 +759,6 @@
     "redevelopmentArea": "Sanierungsgebiet",
     "conservationArea": "Erhaltungsgebiet",
     "gallery": {
-      "count": "{n} Bilder",
-      "more": "+{n} weitere Bilder",
       "close": "Schließen"
     }
   },
