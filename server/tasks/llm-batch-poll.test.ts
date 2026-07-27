@@ -1,15 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Auction, AuctionExtraction } from '~/types/auction'
 import { fetchLlmBatchResults, pollLlmBatch } from '../utils/extract/llm-batch'
-import { deleteLlmBatchJob, listPendingLlmBatchJobs, markLlmBatchJobChecked, type LlmBatchJob } from '../utils/llm-batch-jobs'
+import { listPendingLlmBatchJobs, markLlmBatchJobChecked, markLlmBatchJobResolved, type LlmBatchJob } from '../utils/llm-batch-jobs'
 import { readExtractionCache, writeExtractionCache } from '../utils/extraction-cache'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
 
 vi.mock('../utils/extract/llm-batch', () => ({ pollLlmBatch: vi.fn(), fetchLlmBatchResults: vi.fn() }))
 vi.mock('../utils/llm-batch-jobs', () => ({
   listPendingLlmBatchJobs: vi.fn(),
-  deleteLlmBatchJob: vi.fn(),
   markLlmBatchJobChecked: vi.fn(),
+  markLlmBatchJobResolved: vi.fn(),
 }))
 vi.mock('../utils/extraction-cache', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/extraction-cache')>()
@@ -131,7 +131,7 @@ describe('runLlmBatchPoll', () => {
 
     expect(result).toEqual({ checked: 1, merged: 0 })
     expect(markLlmBatchJobChecked).toHaveBeenCalledWith('batches/abc', expect.any(String))
-    expect(deleteLlmBatchJob).not.toHaveBeenCalled()
+    expect(markLlmBatchJobResolved).not.toHaveBeenCalled()
     expect(fetchLlmBatchResults).not.toHaveBeenCalled()
   })
 
@@ -147,18 +147,18 @@ describe('runLlmBatchPoll', () => {
     expect(markLlmBatchJobChecked).not.toHaveBeenCalled()
   })
 
-  it('deletes the job row on failed/expired without touching the cache', async () => {
+  it('marks a failed/expired job resolved without touching the cache', async () => {
     vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([makeJob()])
     vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'failed' })
 
     const result = await runLlmBatchPoll()
 
     expect(result).toEqual({ checked: 1, merged: 0 })
-    expect(deleteLlmBatchJob).toHaveBeenCalledWith('batches/abc')
+    expect(markLlmBatchJobResolved).toHaveBeenCalledWith('batches/abc', 'failed', expect.any(String))
     expect(writeExtractionCache).not.toHaveBeenCalled()
   })
 
-  it('merges a succeeded job into extraction_cache and auction_snapshot, then deletes the job row', async () => {
+  it('merges a succeeded job into extraction_cache and auction_snapshot, then marks the job resolved', async () => {
     const priorEntry = makeEntry({ propertyType: 'einfamilienhaus', landAreaSqm: 500, confidence: 'high' })
     vi.mocked(readExtractionCache).mockResolvedValue({ 'zvg-portal:7265': priorEntry })
     vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([makeJob()])
@@ -207,7 +207,7 @@ describe('runLlmBatchPoll', () => {
     const [written] = vi.mocked(writeExtractionCache).mock.calls[0]!
     expect(written['zvg-portal:7265']!.llmBatchJob).toBeUndefined()
     expect(writeAuctionSnapshot).toHaveBeenCalledTimes(1)
-    expect(deleteLlmBatchJob).toHaveBeenCalledWith('batches/abc')
+    expect(markLlmBatchJobResolved).toHaveBeenCalledWith('batches/abc', 'succeeded', expect.any(String))
   })
 
   it('leaves the job row in place when writing the cache fails, so the next tick retries', async () => {
@@ -251,7 +251,7 @@ describe('runLlmBatchPoll', () => {
 
     expect(result).toEqual({ checked: 1, merged: 1 })
     expect(writeAuctionSnapshot).not.toHaveBeenCalled()
-    expect(deleteLlmBatchJob).not.toHaveBeenCalled()
+    expect(markLlmBatchJobResolved).not.toHaveBeenCalled()
   })
 
   it('skips a result whose key has no cached prior entry', async () => {
@@ -264,7 +264,7 @@ describe('runLlmBatchPoll', () => {
 
     expect(result).toEqual({ checked: 1, merged: 0 })
     expect(writeExtractionCache).not.toHaveBeenCalled()
-    expect(deleteLlmBatchJob).toHaveBeenCalledWith('batches/abc')
+    expect(markLlmBatchJobResolved).toHaveBeenCalledWith('batches/abc', 'succeeded', expect.any(String))
   })
 
   it('continues with other jobs when one job throws', async () => {
@@ -280,7 +280,7 @@ describe('runLlmBatchPoll', () => {
     const result = await runLlmBatchPoll()
 
     expect(result).toEqual({ checked: 2, merged: 0 })
-    expect(deleteLlmBatchJob).toHaveBeenCalledWith('batches/good')
-    expect(deleteLlmBatchJob).not.toHaveBeenCalledWith('batches/bad')
+    expect(markLlmBatchJobResolved).toHaveBeenCalledWith('batches/good', 'failed', expect.any(String))
+    expect(markLlmBatchJobResolved).not.toHaveBeenCalledWith('batches/bad', expect.any(String), expect.any(String))
   })
 })

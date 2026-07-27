@@ -18,9 +18,9 @@ import {
 } from '../utils/extraction-cache'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
 import {
-  deleteLlmBatchJob,
   listPendingLlmBatchJobs,
   markLlmBatchJobChecked,
+  markLlmBatchJobResolved,
   type LlmBatchJob,
 } from '../utils/llm-batch-jobs'
 
@@ -150,8 +150,8 @@ export async function runLlmBatchPoll(): Promise<{ checked: number; merged: numb
       if (poll.state === 'failed' || poll.state === 'expired') {
         // Affected items keep their (now-orphaned) llmBatchJob marker — no
         // extra code needed, isLlmBatchPending's 48h age check makes them
-        // eligible again on its own once this deleted job would have expired.
-        await deleteLlmBatchJob(job.jobName)
+        // eligible again on its own once this job marker expires.
+        await markLlmBatchJobResolved(job.jobName, poll.state, at)
         console.warn(`[llm-batch-poll] job ${job.jobName} ${poll.state}`)
         continue
       }
@@ -186,7 +186,7 @@ export async function runLlmBatchPoll(): Promise<{ checked: number; merged: numb
         continue
       }
       if (snapshotUpdates.length > 0) await writeAuctionSnapshot(snapshotUpdates)
-      await deleteLlmBatchJob(job.jobName)
+      await markLlmBatchJobResolved(job.jobName, 'succeeded', at)
       console.log(`[llm-batch-poll] job ${job.jobName} succeeded — merged ${results.length} items`)
     } catch (err) {
       await markLlmBatchJobChecked(job.jobName, at)

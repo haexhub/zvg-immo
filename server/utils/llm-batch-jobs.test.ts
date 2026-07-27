@@ -29,7 +29,12 @@ function makeFakePool() {
       return { rows: [], rowCount: 1 }
     }
     if (sql.includes('SELECT job_name, source, status, item_count, custom_id_map, submitted_at, checked_at, updated_at')) {
-      return { rows: rows.filter((r) => r.status === 'pending'), rowCount: rows.length }
+      const status = sql.includes('WHERE status =') ? params[0] as string : undefined
+      const limit = typeof params.at(-1) === 'number' ? params.at(-1) as number : undefined
+      const selected = status ? rows.filter((r) => r.status === status) : [...rows]
+      const ordered = sql.includes('ORDER BY submitted_at DESC') ? selected.reverse() : selected
+      const limited = limit ? ordered.slice(0, limit) : ordered
+      return { rows: limited, rowCount: limited.length }
     }
     if (sql.startsWith('DELETE FROM llm_batch_jobs')) {
       const idx = rows.findIndex((r) => r.job_name === params[0])
@@ -41,6 +46,15 @@ function makeFakePool() {
       if (row) {
         row.checked_at = params[1] as string
         row.updated_at = params[1] as string
+      }
+      return { rows: [], rowCount: row ? 1 : 0 }
+    }
+    if (sql.includes('UPDATE llm_batch_jobs') && sql.includes('SET status =')) {
+      const row = rows.find((r) => r.job_name === params[0])
+      if (row) {
+        row.status = params[1] as string
+        row.checked_at = params[2] as string
+        row.updated_at = params[2] as string
       }
       return { rows: [], rowCount: row ? 1 : 0 }
     }
@@ -169,6 +183,25 @@ describe('llm-batch-jobs', () => {
     await deleteLlmBatchJob('batches/abc')
 
     await expect(listPendingLlmBatchJobs()).resolves.toEqual([])
+  })
+
+  it('marks a job resolved and keeps it in recent history', async () => {
+    const { getPool } = await import('./db')
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { insertLlmBatchJob, listPendingLlmBatchJobs, listRecentLlmBatchJobs, markLlmBatchJobResolved } = await import('./llm-batch-jobs')
+
+    await insertLlmBatchJob({ jobName: 'batches/abc', source: 'enrich', itemCount: 3 })
+    await markLlmBatchJobResolved('batches/abc', 'succeeded', '2026-07-27T12:00:00.000Z')
+
+    await expect(listPendingLlmBatchJobs()).resolves.toEqual([])
+    await expect(listRecentLlmBatchJobs()).resolves.toEqual([
+      expect.objectContaining({
+        jobName: 'batches/abc',
+        status: 'succeeded',
+        checkedAt: '2026-07-27T12:00:00.000Z',
+      }),
+    ])
   })
 
   it('updates checked_at for a pending job', async () => {

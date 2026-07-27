@@ -350,8 +350,25 @@
       "empty": "No open batch requests.",
       "totalJobs": "Open jobs",
       "totalRequests": "Open requests",
+      "readyRequests": "Ready for next run",
+      "lowConfidenceRules": "Regex low",
+      "missingLlmFields": "LLM fields open",
+      "orphanedBatchMarkers": "Orphaned markers",
+      "failedLimit": "{count} listings reached the LLM failure limit.",
+      "readySample": "Examples: not queued yet",
+      "orphanedSample": "Examples: marker without a known open job",
+      "openHeading": "Open provider jobs",
+      "historyHeading": "Recent batch jobs",
       "pendingOfTotal": "{pending} of {total} open",
+      "itemsTotal": "{total} requests",
       "submittedAt": "Submitted: {at}",
+      "updatedAt": "Updated: {at}",
+      "status": {
+        "pending": "Open",
+        "succeeded": "Succeeded",
+        "failed": "Failed",
+        "expired": "Expired"
+      },
       "source": {
         "enrich": "Enrich",
         "reprocess": "Reprocess"
