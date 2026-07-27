@@ -439,14 +439,18 @@ trotz nativem Provider weiterhin über `pdftotext`-Text (gekappt bei
 `MAX_PDF_CHARS`). Jetzt gehen bei `gemini-native` die rohen PDF-Bytes direkt raus,
 `pdftotext`/Seiten-Rendering werden übersprungen — Vorbedingung dafür, dass die
 geplante 10-Auktionen-Stichprobe die tatsächlich beabsichtigte Architektur misst.
+Für alle anderen Provider bleibt WP-Bs kanonischer Text der Input-Vertrag; sie lesen
+keine rohen Archiv-PDF-Bytes, sondern die normalisierte Textrepräsentation.
 `enrich.ts` hat dieselbe Lücke, bewusst nicht mit angefasst (eigenständiges Thema).
 Offen bleibt: Gemini ist in Prod noch nicht deployed (kein Key/Provider-Config in
 ansible/Container) — nötig, bevor der volle Lauf gegen Prod-DB starten kann.
 
 - Nach WP-B/C den `reprocess`-Task über die DE-Bestände laufen lassen: er liest
-  den in WP-B gespeicherten kanonischen Text (kein Re-Fetch, keine erneute OCR)
-  und füllt alle neuen Felder rückwirkend. Vorher an ~10 Auktionen Qualität +
-  Token messen, dann gebudgetiert über `maxLlmPerRun` durchlaufen.
+  provider-spezifisch entweder rohe archivierte PDF-Bytes (`gemini-native`) oder
+  den in WP-B gespeicherten kanonischen Text (andere Provider; kein Re-Fetch,
+  keine erneute OCR) und füllt alle neuen Felder rückwirkend. Vorher an ~10
+  Auktionen Qualität + Token je Provider-Pfad messen, dann gebudgetiert über
+  `maxLlmPerRun` durchlaufen.
 
 **Verifikation:** Bestands-Auktionen (inkl. 48639) haben nach dem Lauf
 `insights`/Baujahr befüllt.

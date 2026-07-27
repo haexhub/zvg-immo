@@ -428,11 +428,11 @@ export async function runEnrich(opts: EnrichOptions = {}) {
                 if (text?.trim()) {
                   await archiveDocumentText(text, pdfIdentity, pdf.proxyUrl, at)
                 }
-                return { pdf, bytes, contentHash, text, ordinal: index }
+                return { pdf, bytes: useBatch ? bytes : undefined, contentHash, text, ordinal: index }
               }))
             ).filter((doc): doc is {
               pdf: (typeof documentPdfs)[number]
-              bytes: Buffer
+              bytes: Buffer | undefined
               contentHash: string
               text: string | null
               ordinal: number
@@ -455,8 +455,9 @@ export async function runEnrich(opts: EnrichOptions = {}) {
             at,
           )
           documentSetChanged =
-            priorEntry?.documentSetHash !== undefined &&
-            priorEntry.documentSetHash !== currentDocumentSet?.setHash
+            currentDocumentSet != null &&
+            priorEntry?.documentSetHash != null &&
+            priorEntry.documentSetHash !== currentDocumentSet.setHash
         }
         if (documentSetChanged) {
           console.log(
@@ -470,7 +471,9 @@ export async function runEnrich(opts: EnrichOptions = {}) {
         // here to refresh detail metadata.
         if (!shouldExtract) continue
 
-        const effectivePriorEntry = documentSetChanged || documentSetCheckDue ? undefined : priorEntry
+        // Only a confirmed document-set change invalidates prior document-derived facts;
+        // an unknown or unavailable archive must not wipe cached extraction fields.
+        const effectivePriorEntry = documentSetChanged ? undefined : priorEntry
         const rules = extractByRules({ title: a.title, description: a.description })
         // Structured values straight from the source platform beat anything
         // parsed out of free text — they are the platform's own data, not a
@@ -668,7 +671,7 @@ export async function runEnrich(opts: EnrichOptions = {}) {
             const nativeDocuments = preparedDocuments.map((document) => ({
               source: document.pdf,
               label: document.pdf.label || document.pdf.filename,
-              data: document.bytes.toString('base64'),
+              data: document.bytes!.toString('base64'),
             }))
             const documentParts = await buildDocumentLlmParts(nativeDocuments, { native: true })
             batchItems.push({

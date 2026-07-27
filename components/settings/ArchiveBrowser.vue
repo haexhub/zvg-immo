@@ -180,6 +180,7 @@ onMounted(loadCountries)
                   variant="destructive"
                   size="icon-sm"
                   :title="$t('settings.archive.deleteCountry')"
+                  :aria-label="$t('settings.archive.deleteCountry')"
                   :disabled="pending || deleteCountryPending !== null"
                   @click="deleteCountry(c)"
                 >

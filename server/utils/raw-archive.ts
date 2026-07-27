@@ -6,7 +6,7 @@
 // server/utils/db.ts) — Blobs bleiben dann ungeschrieben, kein halbes Archiv.
 //
 // Schreibpfad: Bytes zuerst in eine lokale Outbox (schnell, netzunabhängig);
-// server/utils/storage-uploader.ts drainiert sie später nach Supabase Storage.
+// server/utils/storage-uploader.ts drainiert sie später nach S3-compatible storage.
 
 import { createHash } from 'node:crypto'
 import { mkdir, rename, writeFile } from 'node:fs/promises'
@@ -78,6 +78,14 @@ export function canonicalize(value: unknown): unknown {
     return sorted
   }
   return value
+}
+
+async function rollbackQuietly(client: { query: (sql: string) => Promise<unknown> }): Promise<void> {
+  try {
+    await client.query('ROLLBACK')
+  } catch {
+    // Preserve the original DB error; rollback failures are only secondary noise.
+  }
 }
 
 /**
@@ -330,7 +338,6 @@ export async function archiveDocumentSet(
   try {
     const canonicalDocuments = documents
       .map((doc) => canonicalize({
-        ordinal: doc.ordinal,
         kind: doc.kind,
         label: doc.label ?? null,
         filename: doc.filename ?? null,
@@ -370,65 +377,85 @@ export async function archiveDocumentSet(
       return { setHash, version: existingRow.version, changed: false }
     }
 
-    const inserted = await db.query<{ id: string; version: number }>(
-      `INSERT INTO raw_document_sets
-         (captured_at, last_seen_at, platform, country, region, external_id, case_number, authority, set_hash, version, document_count)
-       VALUES (
-         $1, $1, $2, $3, $4, $5, $6, $7, $8,
-         COALESCE((SELECT max(version) + 1 FROM raw_document_sets WHERE platform = $2 AND external_id = $5), 1),
-         $9
-       )
-       RETURNING id, version`,
-      [
-        capturedAt,
-        identity.platform,
-        identity.country,
-        identity.region ?? null,
-        identity.externalId,
-        identity.caseNumber ?? null,
-        identity.authority ?? null,
-        setHash,
-        documents.length,
-      ],
-    )
-    const row = inserted.rows[0]
-    if (!row) return null
-
-    if (documents.length > 0) {
-      const params: unknown[] = []
-      const tuples: string[] = []
-      for (const doc of documents) {
-        const offset = params.length
-        tuples.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9})`)
-        params.push(
-          row.id,
-          doc.ordinal,
-          doc.kind,
-          doc.label ?? null,
-          doc.filename ?? null,
-          doc.fileId ?? null,
-          doc.sourceUrl,
-          doc.contentHash,
-          doc.contentType,
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const client = await db.connect()
+      try {
+        await client.query('BEGIN')
+        const inserted = await client.query<{ id: string; version: number }>(
+          `INSERT INTO raw_document_sets
+             (captured_at, last_seen_at, platform, country, region, external_id, case_number, authority, set_hash, version, document_count)
+           VALUES (
+             $1, $1, $2, $3, $4, $5, $6, $7, $8,
+             COALESCE((SELECT max(version) + 1 FROM raw_document_sets WHERE platform = $2 AND external_id = $5), 1),
+             $9
+           )
+           RETURNING id, version`,
+          [
+            capturedAt,
+            identity.platform,
+            identity.country,
+            identity.region ?? null,
+            identity.externalId,
+            identity.caseNumber ?? null,
+            identity.authority ?? null,
+            setHash,
+            documents.length,
+          ],
         )
+        const row = inserted.rows[0]
+        if (!row) {
+          await client.query('COMMIT')
+          return null
+        }
+
+        if (documents.length > 0) {
+          const params: unknown[] = []
+          const tuples: string[] = []
+          for (const doc of documents) {
+            const offset = params.length
+            tuples.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9})`)
+            params.push(
+              row.id,
+              doc.ordinal,
+              doc.kind,
+              doc.label ?? null,
+              doc.filename ?? null,
+              doc.fileId ?? null,
+              doc.sourceUrl,
+              doc.contentHash,
+              doc.contentType,
+            )
+          }
+          await client.query(
+            `INSERT INTO raw_document_set_items
+               (set_id, ordinal, kind, label, filename, file_id, source_url, content_hash, content_type)
+             VALUES ${tuples.join(', ')}`,
+            params,
+          )
+        }
+
+        await client.query('COMMIT')
+        return { setHash, version: row.version, changed: true }
+      } catch (err) {
+        await rollbackQuietly(client)
+        if ((err as { code?: string }).code === '23505') {
+          const winner = await db.query<{ id: string; version: number }>(
+            `SELECT id, version
+             FROM raw_document_sets
+             WHERE platform = $1 AND external_id = $2 AND set_hash = $3`,
+            [identity.platform, identity.externalId, setHash],
+          )
+          const winnerRow = winner.rows[0]
+          if (winnerRow) return { setHash, version: winnerRow.version, changed: false }
+          continue
+        }
+        throw err
+      } finally {
+        client.release()
       }
-      await db.query(
-        `INSERT INTO raw_document_set_items
-           (set_id, ordinal, kind, label, filename, file_id, source_url, content_hash, content_type)
-         VALUES ${tuples.join(', ')}
-         ON CONFLICT (set_id, ordinal) DO UPDATE SET
-           kind = EXCLUDED.kind,
-           label = EXCLUDED.label,
-           filename = EXCLUDED.filename,
-           file_id = EXCLUDED.file_id,
-           source_url = EXCLUDED.source_url,
-           content_hash = EXCLUDED.content_hash,
-           content_type = EXCLUDED.content_type`,
-        params,
-      )
     }
 
-    return { setHash, version: row.version, changed: true }
+    return null
   } catch (err) {
     console.warn(`[raw-archive] archiveDocumentSet failed: ${(err as Error).message}`)
     return null

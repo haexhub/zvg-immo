@@ -18,15 +18,15 @@ Stand dort weiterlesen, nicht hier bei WP-7/8/9 wieder einsteigen.
 
 ## 1. Ausgangslage (verifiziert am 2026-07-22)
 
-Was **schon in Supabase** liegt:
+Was **schon in der Ziel-Persistenz** liegt:
 
 - **Relationale App-Daten** (Postgres): `saved_searches`, `watchlist_items`,
   `auction_observations`, `alert_subscriptions`, `lawyers`, `api_keys`,
   `content_translations` (Live-Übersetzung DE/EN, PR #98) usw.
-- **Roh-Archiv** (Supabase Storage, Bucket `zvg-immo-raw-archive`, seit PR
-  #120/#122): content-addressed Bytes (`raw_blobs`) + append-only Log
-  (`raw_captures`) für JSON-Snapshot, PDF/DOCX-Gutachten und Detail-HTML aller
-  Crawler. Schreibpfad: lokale Outbox → `drainOutbox()` lädt nach Storage,
+- **Roh-Archiv** (plain S3 bzw. S3-kompatibler Primary-Bucket, nicht Supabase
+  Storage, seit PR #120/#122): content-addressed Bytes (`raw_blobs`) +
+  append-only Log (`raw_captures`) für JSON-Snapshot, PDF/DOCX-Gutachten und
+  Detail-HTML aller Crawler. Schreibpfad: lokale Outbox → Uploader lädt nach S3,
   bestätigt-dann-lokal-löschen. **Das ist ein unveränderliches Archiv fürs
   Reprocessing, KEIN Serving-Pfad.**
 
@@ -84,7 +84,8 @@ werden** (Konflikte v.a. in enrich.ts/llm.ts sind sicher).
 1. **Supabase ist alleinige persistente Wahrheit.** Lokales Volume nur noch
    ephemerer Cache (löschbar ohne Datenverlust).
    - Strukturierte Daten: Serving-Endpoints lesen aus Postgres `auctions`.
-   - Bilder: in Supabase Storage, ausgeliefert von dort.
+   - Bilder: in privatem Supabase Storage, ausgeliefert über `/api/auction-image`
+     mit kurzlebiger Signed URL.
    - Extraktion: in Postgres persistiert; LLM muss nach Volume-Verlust nicht neu laufen.
 2. **LLM extrahiert alles Nötige:** Objektart, Wohn-/Grundstücksfläche, Zimmer,
    **Zustand** (baufällig, Denkmalschutz, Sanierungsbedarf, Schimmel, Statik …),
@@ -111,7 +112,7 @@ Server-seitiges WHERE-Filtern/Pagination ist ein späterer, separater Schnitt.
 Der Nutzer-Wunsch ("erst crawlen+speichern, dann LLM über die gespeicherten
 Daten") entspricht nicht dem heutigen gekoppelten Pfad (fetch+archive+parse in
 einem Lauf). **Ein leichtgewichtiger Reprocessing-Task, der PDFs/
-HTML aus Supabase Storage liest statt live von den Portalen.** Grund: Beim
+HTML aus dem plain-S3-Roh-Archiv liest statt live von den Portalen.** Grund: Beim
 "ein Land sauber machen" iteriert man die LLM-Extraktion mehrfach (neue Felder,
 bessere Prompts) — gegen das eingefrorene Archiv statt gegen Live-Portale
 (Rate-Limits/Captcha/Portal-Änderungen). Der gekoppelte Pfad bleibt für den
@@ -119,11 +120,13 @@ Erst-Crawl; Reprocessing ist der Iterations-Hebel. (Entspricht dem früher
 deferten WP-18.)
 
 ### E3 — Bilder: Bucket-Strategie ✅ BESCHLOSSEN
-**Eigener Storage-Bucket `zvg-immo-images` (public-read).** Auktions-
-fotos sind nicht sensibel; public-read spart Signed-URL-Logik und ist CDN-fähig.
-Getrennt vom immutablen `zvg-immo-raw-archive` (anderer Lebenszyklus: Bilder
-können neu extrahiert/ersetzt werden). `/api/auction-image` entfällt oder wird
-zu einem Redirect auf die Storage-URL.
+**Eigener privater Storage-Bucket `zvg-immo-images`.** Aus PDFs/HTML extrahierte
+Bilder können Ausschnitte mit personenbezogenen oder urheberrechtlich sensiblen
+Details enthalten; public-read ist daher erst nach einer expliziten Sanitizing-
+und Freigabeentscheidung zulässig. Auslieferung erfolgt über kurzlebige Signed
+URLs hinter `/api/auction-image`; Löschung/Retention folgt dem Lebenszyklus der
+zugehörigen Auktion bzw. einer erneuten Extraktion. Getrennt vom immutablen
+Roh-Archiv (anderer Lebenszyklus: Bilder können neu extrahiert/ersetzt werden).
 
 ### E4 — "Fees" vs. bestehender Kostenrechner
 Gerichtskosten/Grunderwerbsteuer werden bereits im Kostenrechner
@@ -140,10 +143,10 @@ Jedes WP = eigener Worktree/Branch, endet grün (tsc + Tests), eigener PR,
 review-gated (nie autonom mergen).
 
 ### WP-1 — Zustand + Ausstattung neu als PR *(zuerst, entkoppelt)* ✅ FERTIG
-**Status (22.07.2026): PR #123, offen, review-gated.** Auf aktuellem main neu
-portiert (nicht den alten `d633780`-Diff blind gemergt — main war 4 Commits
-weiter: Vision-Fallback #115, current-auctions #117, LLM-Cap-Config #116,
-Per-Platform-Quota #102).
+**Status (23.07.2026): PR #123, GEMERGT.** Historische Umsetzung: Auf aktuellem
+main neu portiert (nicht den alten `d633780`-Diff blind gemergt — main war 4
+Commits weiter: Vision-Fallback #115, current-auctions #117, LLM-Cap-Config
+#116, Per-Platform-Quota #102).
 - Neue Felder `condition`/`features` in `AuctionExtraction` (`types/auction.ts`),
   `lib/condition.ts` + `lib/features.ts` (Vokabular + Tests) übernommen.
 - LLM-Schema/Clamp/Prompt (`llm.ts`) + Backfill-Logik in `enrich.ts` auf den
@@ -202,16 +205,15 @@ Bucket-spezifisches Routing):
 - `NUXT_IMAGES_BUCKET` (server-only Runtime-Config + `docker-compose.yml`),
   eigener Bucket getrennt von `NUXT_STORAGE_BUCKET` (raw-archive).
 - `server/utils/image-storage.ts`: `uploadImage()` (best-effort, wie
-  `storage-uploader.ts`) + `imagePublicUrl()`.
+  `storage-uploader.ts`) + signed/private Read-URL-Helfer.
 - `enrich.ts`: frisch extrahierte Fotos zusätzlich unter
   `<platform>/<externalId>/<filename>` hochgeladen.
 - `/api/auction-image`: lokaler Cache zuerst, bei Cache-Miss Redirect (302)
-  auf die Supabase-URL, sonst 404 — Frontend (`extraction.photos`/
+  auf eine kurzlebige Signed URL, sonst 404 — Frontend (`extraction.photos`/
   `thumbnailUrl`) unverändert, da es weiterhin `/api/auction-image/...`-URLs
   synthetisiert.
 - **Verifikation:** tsc sauber, 656 Tests grün. Bucket-Anlage selbst
-  (public-read, einmaliger Infra-Schritt wie `zvg-immo-raw-archive`,
-  ansible#62) sowie Backfill bereits extrahierter lokaler Fotos sind
+  (privat, einmaliger Infra-Schritt) sowie Backfill bereits extrahierter lokaler Fotos sind
   **bewusst nicht** Teil dieses PRs (Backfill eher WP-6-Thema).
 
 ### WP-5 — Read-Path auf Postgres umstellen *(der Kern-Migrationsschritt)*
@@ -224,7 +226,7 @@ Bucket-spezifisches Routing):
 
 ### WP-6 — Reprocessing-Task (Parsen aus dem Archiv) *(E2)* ✅ #129 GEMERGT
 - Neuer Task, der pro DE-Auktion die neuesten `raw_captures` (PDF/HTML) aus
-  Supabase Storage lädt und `extractByRules`/`extractByLlm` (inkl. Vision) darauf
+  dem plain-S3-Roh-Archiv lädt und `extractByRules`/`extractByLlm` (inkl. Vision) darauf
   laufen lässt — **ohne Live-Fetch**.
 - Ermöglicht LLM-Iteration + Nachziehen neuer Felder ohne Portal-Last.
 - **Verifikation:** Reprocessing einer bekannten Bild-PDF-Auktion (zvg-portal/7265)
@@ -242,8 +244,8 @@ Nur falls WP-6/DE-Durchlauf Lücken zeigt:
 - **Verifikation:** Detailseite einer reichen DE-Auktion zeigt alle Felder.
 
 ### WP-9 — Voller DE-Durchlauf (Ausführung, kein Code)
-- DE-Crawl komplett laufen lassen → Roh-Archiv in Supabase füllen
-  (`raw_blobs`/`raw_captures` + Storage).
+- DE-Crawl komplett laufen lassen → Roh-Archiv in Postgres + plain S3 füllen
+  (`raw_blobs`/`raw_captures` + S3-Objekte).
 - Vollständige LLM-Enrichment über alle DE-Auktionen (LLM-Cap temporär hoch,
   `NUXT_EXTRACT_LLM_MAX_PER_RUN`, PR #116) — Vision-aware.
 - **Verifikation:** Stichproben-Audit: Anteil `source:'llm'`, Felddeckung

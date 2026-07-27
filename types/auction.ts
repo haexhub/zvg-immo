@@ -327,10 +327,13 @@ export interface AuctionExtraction {
    * useful additional description. */
   documentSummary?: string | null
   /** Hash/version of the current listing document set used for this
-   *  extraction. A changed set means the document-derived fields must be
-   *  rebuilt from the new valid documents, not merged with stale facts from
-   *  a withdrawn/updated document. */
+   *  extraction. `undefined` = legacy cache entry never checked; `null` =
+   *  checked, but no set could be recorded because the archive was unavailable.
+   *  A changed non-null set means document-derived fields must be rebuilt from
+   *  the new valid documents, not merged with stale facts from a withdrawn or
+   *  updated document. */
   documentSetHash?: string | null
+  /** See `documentSetHash` for the `undefined` vs `null` cache semantics. */
   documentSetVersion?: number | null
   /** LLM-only Verkehrswert extracted from the Gutachten text, in the
    *  auction's `currency`. `undefined` = never checked yet; `null` = checked,

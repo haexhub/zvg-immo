@@ -103,4 +103,27 @@ describe('deleteRawArchiveCountry', () => {
     await expect(deleteRawArchiveCountry('de;drop')).rejects.toMatchObject({ statusCode: 400 })
     expect(getPool).not.toHaveBeenCalled()
   })
+
+  it('returns 503 when the archive DB is not configured', async () => {
+    vi.mocked(getPool).mockReturnValue(null)
+
+    await expect(deleteRawArchiveCountry('de')).rejects.toMatchObject({ statusCode: 503 })
+  })
+
+  it('rolls back and releases the client when a transaction query fails', async () => {
+    const client = makeClient()
+    client.query.mockImplementation(async (sql: string, params: unknown[] = []) => {
+      client.queries.push({ sql, params })
+      if (sql === 'BEGIN' || sql === 'ROLLBACK') return { rows: [], rowCount: null }
+      if (sql.includes('SELECT DISTINCT rb.content_hash')) return { rows: [], rowCount: 0 }
+      if (sql.includes('SELECT count(*) AS count')) throw new Error('count failed')
+      throw new Error(`unexpected query: ${sql}`)
+    })
+    vi.mocked(getPool).mockReturnValue({ connect: vi.fn(async () => client) } as never)
+
+    await expect(deleteRawArchiveCountry('de')).rejects.toMatchObject({ statusCode: 500 })
+    expect(client.queries.map((q) => q.sql)).toContain('ROLLBACK')
+    expect(client.release).toHaveBeenCalledOnce()
+    expect(removeMock).not.toHaveBeenCalled()
+  })
 })

@@ -76,6 +76,9 @@ function makeFakePool() {
   const documentSetItems = new Map<string, unknown[]>()
 
   const query = vi.fn(async (sql: string, params: unknown[] = []) => {
+    if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+      return { rows: [], rowCount: null }
+    }
     if (sql.includes('SELECT uploaded_at FROM raw_blobs')) {
       const hash = params[0] as string
       const row = blobs.get(hash)
@@ -143,7 +146,9 @@ function makeFakePool() {
     throw new Error(`unexpected query: ${sql}`)
   })
 
-  return { blobs, captures, documentSets, documentSetItems, query }
+  const connect = vi.fn(async () => ({ query, release: vi.fn() }))
+
+  return { blobs, captures, documentSets, documentSetItems, query, connect }
 }
 
 describe('canonicalizeAuction', () => {
@@ -563,6 +568,68 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     expect(pool.documentSets.size).toBe(1)
   })
 
+  it('archiveDocumentSet treats pure document reordering as unchanged', async () => {
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+
+    const identity = { platform: 'test', country: 'de', externalId: '1' }
+    const first = await archiveDocumentSet(
+      identity,
+      [
+        {
+          ordinal: 0,
+          kind: 'document',
+          label: 'Gutachten',
+          filename: 'gutachten.pdf',
+          fileId: 'a',
+          sourceUrl: 'https://example.test/gutachten.pdf',
+          contentHash: 'hash-a',
+          contentType: 'application/pdf',
+        },
+        {
+          ordinal: 1,
+          kind: 'document',
+          label: 'Nachtrag',
+          filename: 'nachtrag.pdf',
+          fileId: 'b',
+          sourceUrl: 'https://example.test/nachtrag.pdf',
+          contentHash: 'hash-b',
+          contentType: 'application/pdf',
+        },
+      ],
+      '2026-07-19T00:00:00.000Z',
+    )
+    const reordered = await archiveDocumentSet(
+      identity,
+      [
+        {
+          ordinal: 0,
+          kind: 'document',
+          label: 'Nachtrag',
+          filename: 'nachtrag.pdf',
+          fileId: 'b',
+          sourceUrl: 'https://example.test/nachtrag.pdf',
+          contentHash: 'hash-b',
+          contentType: 'application/pdf',
+        },
+        {
+          ordinal: 1,
+          kind: 'document',
+          label: 'Gutachten',
+          filename: 'gutachten.pdf',
+          fileId: 'a',
+          sourceUrl: 'https://example.test/gutachten.pdf',
+          contentHash: 'hash-a',
+          contentType: 'application/pdf',
+        },
+      ],
+      '2026-07-20T00:00:00.000Z',
+    )
+
+    expect(reordered).toMatchObject({ version: 1, changed: false, setHash: first?.setHash })
+    expect(pool.documentSets.size).toBe(1)
+  })
+
   it('archiveDocumentSet creates a new version when the valid document set changes', async () => {
     const pool = makeFakePool()
     vi.mocked(getPool).mockReturnValue(pool as never)
@@ -615,6 +682,15 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     expect(second).toMatchObject({ version: 2, changed: true })
     expect(second?.setHash).not.toBe(first?.setHash)
     expect(pool.documentSets.size).toBe(2)
+    const itemParams = pool.documentSetItems.get('2')
+    expect(itemParams).toBeDefined()
+    expect([
+      { ordinal: itemParams![1], contentHash: itemParams![7] },
+      { ordinal: itemParams![10], contentHash: itemParams![16] },
+    ]).toEqual([
+      { ordinal: 0, contentHash: 'hash-b' },
+      { ordinal: 1, contentHash: 'hash-c' },
+    ])
   })
 
   it('archiveDocumentText no-ops without a DB pool', async () => {

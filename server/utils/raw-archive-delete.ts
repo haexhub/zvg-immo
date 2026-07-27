@@ -46,14 +46,21 @@ async function removeLocalFiles(keys: string[]): Promise<{ deleted: number; fail
   let deleted = 0
   let failed = 0
   const base = outboxDir()
-  for (const key of keys) {
-    try {
-      await rm(join(base, key), { force: true })
-      deleted++
-    } catch (err) {
-      console.warn(`[raw-archive-delete] local delete failed for ${key}: ${(err as Error).message}`)
-      failed++
-    }
+  for (let i = 0; i < keys.length; i += 100) {
+    const chunk = keys.slice(i, i + 100)
+    const results = await Promise.all(
+      chunk.map(async (key) => {
+        try {
+          await rm(join(base, key), { force: true })
+          return true
+        } catch (err) {
+          console.warn(`[raw-archive-delete] local delete failed for ${key}: ${(err as Error).message}`)
+          return false
+        }
+      }),
+    )
+    deleted += results.filter(Boolean).length
+    failed += results.filter((ok) => !ok).length
   }
   return { deleted, failed }
 }

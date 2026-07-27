@@ -6,6 +6,12 @@
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  name       text PRIMARY KEY,
+  applied_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE schema_migrations ENABLE ROW LEVEL SECURITY;
+
 -- Phase 2: gespeicherte Suchen + Watchlist. `filters` mirrors the query-param
 -- names pages/index.vue reads/writes (see lib/auction-filters.ts). `auth.users`
 -- is created by GoTrue's own migrations, not this file — the `app` service's
@@ -296,23 +302,30 @@ CREATE TABLE IF NOT EXISTS raw_captures (
 CREATE INDEX IF NOT EXISTS idx_capt_identity_time ON raw_captures (platform, external_id, captured_at DESC);
 CREATE INDEX IF NOT EXISTS idx_capt_az_time       ON raw_captures (authority, case_number, captured_at DESC);
 CREATE INDEX IF NOT EXISTS idx_capt_hash          ON raw_captures (content_hash);
--- Historical cleanup before adding the uniqueness guarantees below. Keep only
--- the newest parsed auction row per identity; for documents/detail/text keep
--- one row per identity+source_url+content_hash so updated documents remain
--- addressable by older document-set versions without re-adding duplicates on
--- every recrawl.
-WITH ranked AS (
-  SELECT id,
-         row_number() OVER (
-           PARTITION BY kind, platform, external_id,
-                        CASE WHEN kind = 'auction' THEN '' ELSE COALESCE(source_url, '') END,
-                        CASE WHEN kind = 'auction' THEN '' ELSE content_hash END
-           ORDER BY captured_at DESC, id DESC
-         ) AS rn
-  FROM raw_captures
-)
-DELETE FROM raw_captures rc USING ranked r
-WHERE rc.id = r.id AND r.rn > 1;
+-- One-time historical cleanup before adding the uniqueness guarantees below.
+-- Keep only the newest parsed auction row per identity; for documents/detail/
+-- text keep one row per identity+source_url+content_hash so updated documents
+-- remain addressable by older document-set versions without re-adding
+-- duplicates on every recrawl.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE name = 'raw_capture_dedupe_cleanup_20260727') THEN
+    WITH ranked AS (
+      SELECT id,
+             row_number() OVER (
+               PARTITION BY kind, platform, external_id,
+                            CASE WHEN kind = 'auction' THEN '' ELSE COALESCE(source_url, '') END,
+                            CASE WHEN kind = 'auction' THEN '' ELSE content_hash END
+               ORDER BY captured_at DESC, id DESC
+             ) AS rn
+      FROM raw_captures
+    )
+    DELETE FROM raw_captures rc USING ranked r
+    WHERE rc.id = r.id AND r.rn > 1;
+
+    INSERT INTO schema_migrations (name) VALUES ('raw_capture_dedupe_cleanup_20260727');
+  END IF;
+END $$;
 -- The old uniqueness model keyed all captures by content_hash alone. The new
 -- model keeps auction rows current and document rows deduplicated by both
 -- source URL and bytes.
@@ -358,9 +371,16 @@ CREATE TABLE IF NOT EXISTS raw_document_set_items (
   PRIMARY KEY (set_id, ordinal)
 );
 CREATE INDEX IF NOT EXISTS idx_doc_set_items_hash ON raw_document_set_items (content_hash);
-DELETE FROM raw_blobs rb
-WHERE NOT EXISTS (SELECT 1 FROM raw_captures rc WHERE rc.content_hash = rb.content_hash)
-  AND NOT EXISTS (SELECT 1 FROM raw_document_set_items rdsi WHERE rdsi.content_hash = rb.content_hash);
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE name = 'raw_blob_orphan_cleanup_20260727') THEN
+    DELETE FROM raw_blobs rb
+    WHERE NOT EXISTS (SELECT 1 FROM raw_captures rc WHERE rc.content_hash = rb.content_hash)
+      AND NOT EXISTS (SELECT 1 FROM raw_document_set_items rdsi WHERE rdsi.content_hash = rb.content_hash);
+
+    INSERT INTO schema_migrations (name) VALUES ('raw_blob_orphan_cleanup_20260727');
+  END IF;
+END $$;
 -- Server-intern, nie clientseitig exponiert — trotzdem RLS aktivieren (ohne
 -- Policies, also Default-Deny), sonst liest/schreibt PostgREST-anon/authenticated
 -- munter mit; der Backend-Zugriff läuft als Table-Owner und umgeht RLS ohnehin.

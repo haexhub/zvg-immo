@@ -63,9 +63,9 @@ Listen-HTML — bewusst zurückgestellt (siehe „Explizit nicht Teil").
   `server/utils/extract/docx-text.ts`.
 - **Schicht 2b (Detail-HTML) hat KEINEN zentralen Punkt** — Detail-Fetch liegt in jedem
   Crawler (`enrichOne`/`detail.ts`). Braucht einen geteilten Wrapper, den Crawler übernehmen.
-- **Identität ist im Typ garantiert:** `Auction.zvgId` (Pflicht, „stable per-platform id;
-  non-DE-Crawler füllen ihren nativen Identifier") + `aktenzeichen` + `amtsgericht`. Damit
-  ist `(platform, zvgId)` immer verfügbar; `(amtsgericht, aktenzeichen)` ist laut dongarra
+- **Identität ist im Typ garantiert:** `Auction.externalId` (Pflicht, „stable per-platform
+  id; non-DE-Crawler füllen ihren nativen Identifier") + `caseNumber` + `authority`. Damit
+  ist `(platform, externalId)` immer verfügbar; `(authority, caseNumber)` ist laut dongarra
   über Läufe hinweg sogar stabiler (Dedup-Gewinner kann die Plattform wechseln).
 - **DB-Schicht steht bereits** (dongarra, im Merge): `server/utils/db.ts` (`getPool()`,
   `runMigrations()` führt `server/db/schema.sql` idempotent aus), `db-bootstrap.ts`. Ohne
@@ -95,8 +95,10 @@ Listen-HTML — bewusst zurückgestellt (siehe „Explizit nicht Teil").
   (S3-Key = Hash, sharded `ab/cdef…`). PDFs dominieren das Volumen (5–50 MB/Gutachten) —
   Dedup ist Voraussetzung, nicht Optimierung.
 - **Identität ≠ Content — zwei orthogonale Achsen:**
-  - *Identität* (welche Auktion): `(platform, zvg_id)`, zusätzlich `aktenzeichen`+`amtsgericht`
-    mitgeschrieben. Das ist der stabile Identifier, den jede Quelle hat.
+  - *Identität* (welche Auktion): `(platform, external_id)`, zusätzlich
+    `case_number`+`authority` mitgeschrieben. Das sind die Terminologie-
+    Migrationsnamen für die früheren `zvg_id`/`aktenzeichen`/`amtsgericht`
+    Felder.
   - *Content-Hash* (haben sich die Daten geändert): pro Blob.
   Deshalb wird **pro Auktion** archiviert (nicht ein Region-Blob): nur *tatsächlich
   geänderte* Auktionen erzeugen einen neuen Blob. **Das löst den `fetchedAt`-Footgun von
@@ -129,24 +131,61 @@ CREATE TABLE IF NOT EXISTS raw_blobs (
 CREATE TABLE IF NOT EXISTS raw_captures (
   id            bigserial PRIMARY KEY,
   captured_at   timestamptz NOT NULL,
-  kind          text NOT NULL,             -- 'auction' | 'document' | 'detail_html'
+  kind          text NOT NULL,             -- 'auction' | 'document' | 'detail_html' | 'document_text'
   platform      text NOT NULL,
   country       text NOT NULL,
-  zvg_id        text NOT NULL,             -- Auktions-Identität (immer vorhanden)
-  aktenzeichen  text,                      -- stabilere Cross-Run-Identität
-  amtsgericht   text,
+  external_id   text NOT NULL,             -- Auktions-Identität (immer vorhanden; ehem. zvg_id)
+  case_number   text,                      -- stabilere Cross-Run-Identität (ehem. aktenzeichen)
+  authority     text,                      -- ehem. amtsgericht
   content_hash  text NOT NULL REFERENCES raw_blobs(content_hash),
   source_url    text                       -- Upstream-URL (Provenienz)
 );
-CREATE INDEX IF NOT EXISTS idx_capt_identity_time ON raw_captures (platform, zvg_id, captured_at DESC);
-CREATE INDEX IF NOT EXISTS idx_capt_az_time       ON raw_captures (amtsgericht, aktenzeichen, captured_at DESC);
+CREATE INDEX IF NOT EXISTS idx_capt_identity_time ON raw_captures (platform, external_id, captured_at DESC);
+CREATE INDEX IF NOT EXISTS idx_capt_az_time       ON raw_captures (authority, case_number, captured_at DESC);
 CREATE INDEX IF NOT EXISTS idx_capt_hash          ON raw_captures (content_hash);
 -- Kein RLS: server-intern, nie clientseitig exponiert (wie auction_observations).
+
+CREATE TABLE IF NOT EXISTS raw_document_sets (
+  id              bigserial PRIMARY KEY,
+  captured_at     timestamptz NOT NULL,
+  last_seen_at    timestamptz NOT NULL,
+  platform        text NOT NULL,
+  country         text NOT NULL,
+  region          text,
+  external_id     text NOT NULL,
+  case_number     text,
+  authority       text,
+  set_hash        text NOT NULL,           -- stabile Manifest-Identität ohne ordinal
+  version         integer NOT NULL,        -- laufende Version pro (platform, external_id)
+  document_count  integer NOT NULL,
+  UNIQUE (platform, external_id, set_hash),
+  UNIQUE (platform, external_id, version)
+);
+
+CREATE TABLE IF NOT EXISTS raw_document_set_items (
+  set_id        bigint NOT NULL REFERENCES raw_document_sets(id) ON DELETE CASCADE,
+  ordinal       integer NOT NULL,          -- Anzeige-/Crawler-Reihenfolge dieser Version
+  kind          text NOT NULL,
+  label         text,
+  filename      text,
+  file_id       text,                      -- stabile Dokument-Identität, falls die Quelle sie liefert
+  source_url    text NOT NULL,             -- fallback Identität und Provenienz
+  content_hash  text NOT NULL REFERENCES raw_blobs(content_hash),
+  content_type  text NOT NULL,
+  PRIMARY KEY (set_id, ordinal)
+);
 ```
 
-**Change-only Capture.** Ein `raw_captures`-Insert erfolgt nur, wenn der `content_hash` sich
-gegenüber der jüngsten Capture derselben `(kind, platform, zvg_id)` unterscheidet →
-`raw_captures` ist ein Änderungs-Log, kein 2×/Tag-Rauschen.
+**Change-only Capture.** Ein `raw_captures`-Insert erfolgt für Auktions-Snapshots nur,
+wenn der `content_hash` sich gegenüber der jüngsten Capture derselben
+`(kind, platform, external_id)` unterscheidet. Dokumente werden zusätzlich über
+`source_url`/`content_hash` dedupliziert, damit mehrere Dokumente derselben Auktion
+unabhängig adressierbar bleiben. Das aktuelle gültige Dokument-Bündel liegt in
+`raw_document_sets`: ein unverändertes Dokument wird über seinen `content_hash` in einer
+neuen Set-Version wiederverwendet; hinzugefügte, aktualisierte oder zurückgezogene
+Dokumente erzeugen nur ein neues Manifest. Ein Rückzug wird dadurch sichtbar, dass ein
+früheres `raw_document_set_items`-Mitglied in der neuesten Set-Version fehlt; `last_seen_at`
+am Set hält fest, wann genau diese Version zuletzt bestätigt wurde.
 
 ## S3-Kosten-Hinweis (bewusst, kein Silent Cap)
 
@@ -197,7 +236,7 @@ gezeigt). Empfehlung, finale Entscheidung liegt beim Betreiber:
     `raw_blobs` (`uploaded_at=null`). Idempotent, gibt `content_hash` oder null (No-Op) zurück.
   - `recordCapture({...Identität, content_hash, source_url})`: Change-only-Insert.
   - `archiveAuction(auction, capturedAt)`: kanonischer Auction-Content → `archiveBlob` →
-    `recordCapture(kind='auction')`. Keyed auf `(platform, zvg_id)`.
+    `recordCapture(kind='auction')`. Keyed auf `(platform, external_id)`.
 - **`server/utils/s3-uploader.ts`** (neu) — drainiert die Outbox: für jeden Blob ohne
   `uploaded_at` PUT nach Primary, dann `uploaded_at` setzen + lokale Datei löschen. Als
   Scheduled Task / am Ende von `refresh` getriggert. Best-Effort, Retry beim nächsten Lauf.
@@ -225,13 +264,13 @@ gezeigt). Empfehlung, finale Entscheidung liegt beim Betreiber:
   Kommentarblock im Stil von `extractLlm.baseUrl`).
 - **`package.json`** — S3-Client (`@aws-sdk/client-s3` oder `minio`); `zlib` ist in Node.
 
-## Re-Processing-Pfad (Payoff, aber Folge-Phase)
+## Re-Processing-Pfad (historisch; inzwischen WP-6)
 
 Der Nutzen von Schicht 2/2b — F1/F2 bzw. den Parser mit besserer Logik neu laufen lassen
-ohne Re-Crawl — braucht ein kleines Tool, das über `raw_captures` die Blobs eines Objekts
-findet, Bytes aus S3 statt Upstream lädt und Extraktion/Analyse neu fährt. **NICHT Teil
-dieser Phase** (hier nur *capturing*). Das Modell ist so ausgelegt, dass es möglich ist:
-`(platform, zvg_id) → raw_captures → content_hash → raw_blobs → S3`.
+ohne Re-Crawl — wurde später als WP-6 im Supabase-Migrations-Strang umgesetzt
+(`2026-07-22-supabase-full-migration-de.md`). In diesem ursprünglichen G1-Plan war nur
+das *Capturing* enthalten. Das Modell war dafür ausgelegt:
+`(platform, external_id) → raw_captures/raw_document_sets → content_hash → raw_blobs → S3`.
 
 ## Phasierung (empfohlen: 3 Worktrees/PRs)
 
@@ -244,7 +283,8 @@ dieser Phase** (hier nur *capturing*). Das Modell ist so ausgelegt, dass es mög
 3. **Schicht 2b (Detail-HTML)** — `fetch-archive.ts` + Crawler-Audit + inkrementelle
    Migration der HTML-only-Crawler.
 
-(Reprocessing-Tool + Schicht 3 = spätere, separate Pläne.)
+(Historisch: Reprocessing-Tool + Schicht 3 waren hier als spätere, separate Pläne
+notiert; WP-6 hat den Reprocessing-Pfad inzwischen geliefert.)
 
 ## Verifikation
 
@@ -260,7 +300,7 @@ dieser Phase** (hier nur *capturing*). Das Modell ist so ausgelegt, dass es mög
   Capture mit `source_url`. Zweites Objekt mit demselben PDF → **kein** zweiter Blob
   (Hash-Dedup), zweite Capture-Zeile.
 - **Phase 2b:** Für ein Objekt aus einem migrierten HTML-only-Land → `detail_html`-Blob,
-  gzippt, keyed auf `(platform, zvg_id)`; entpackt = das rohe Detail-HTML. Nicht-migriertes
+  gzippt, keyed auf `(platform, external_id)`; entpackt = das rohe Detail-HTML. Nicht-migriertes
   Land → kein HTML-Blob, Log-Hinweis (kein Fehler).
 - **Resilienz:** DB/S3 absichtlich während `refresh` stoppen → Crawl + `writeListCache` laufen
   unbeeinflusst; Blobs bleiben in der Outbox, Upload holt beim nächsten Lauf nach (kein
