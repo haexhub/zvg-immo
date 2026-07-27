@@ -1,9 +1,8 @@
-// Level 4 of the Roh-Archiv browser: every capture for one auction identity
-// `(platform, external_id)`. Append-only log — no dedup by content_hash, each
-// capture stays its own downloadable row (deliberate, see
-// docs/plans/2026-07-18-raw-archive-g1-design.md). `id` is what
-// download/[id].get.ts takes to resolve content_hash + content_type in one
-// query.
+// Level 4 of the Roh-Archiv browser: versioned document-set items plus
+// non-document captures for one auction identity `(platform, external_id)`.
+// Document rows include setVersion/setHash so the UI can show which files were
+// valid together. `id` remains raw_captures.id, so the existing download route
+// can resolve content_hash + content_type in one query.
 
 import { getPool } from '../../../utils/db'
 
@@ -14,6 +13,11 @@ export interface ArchiveDocumentRow {
   sourceUrl: string | null
   contentType: string
   byteSize: number
+  setVersion: number | null
+  setHash: string | null
+  itemOrdinal: number | null
+  label: string | null
+  filename: string | null
 }
 
 export default defineEventHandler(async (event): Promise<ArchiveDocumentRow[]> => {
@@ -35,12 +39,39 @@ export default defineEventHandler(async (event): Promise<ArchiveDocumentRow[]> =
     source_url: string | null
     content_type: string
     byte_size: string
+    set_version: number | null
+    set_hash: string | null
+    item_ordinal: number | null
+    label: string | null
+    filename: string | null
   }>(
-    `SELECT rc.id, rc.captured_at, rc.kind, rc.source_url, rb.content_type, rb.byte_size
-     FROM raw_captures rc
-     JOIN raw_blobs rb ON rb.content_hash = rc.content_hash
-     WHERE rc.platform = $1 AND rc.external_id = $2
-     ORDER BY rc.captured_at DESC`,
+    `WITH set_rows AS (
+       SELECT rc.id, rds.captured_at, rdsi.kind, rdsi.source_url, rb.content_type, rb.byte_size,
+              rds.version AS set_version, rds.set_hash, rdsi.ordinal AS item_ordinal,
+              rdsi.label, rdsi.filename
+       FROM raw_document_sets rds
+       JOIN raw_document_set_items rdsi ON rdsi.set_id = rds.id
+       JOIN raw_captures rc
+         ON rc.kind = rdsi.kind
+        AND rc.platform = rds.platform
+        AND rc.external_id = rds.external_id
+        AND COALESCE(rc.source_url, '') = rdsi.source_url
+        AND rc.content_hash = rdsi.content_hash
+       JOIN raw_blobs rb ON rb.content_hash = rdsi.content_hash
+       WHERE rds.platform = $1 AND rds.external_id = $2
+     ),
+     capture_rows AS (
+       SELECT rc.id, rc.captured_at, rc.kind, rc.source_url, rb.content_type, rb.byte_size,
+              null::integer AS set_version, null::text AS set_hash, null::integer AS item_ordinal,
+              null::text AS label, null::text AS filename
+       FROM raw_captures rc
+       JOIN raw_blobs rb ON rb.content_hash = rc.content_hash
+       WHERE rc.platform = $1 AND rc.external_id = $2 AND rc.kind <> 'document'
+     )
+     SELECT * FROM set_rows
+     UNION ALL
+     SELECT * FROM capture_rows
+     ORDER BY set_version DESC NULLS LAST, item_ordinal NULLS LAST, captured_at DESC`,
     [platform, externalId],
   )
   return rows.map((row) => ({
@@ -50,5 +81,10 @@ export default defineEventHandler(async (event): Promise<ArchiveDocumentRow[]> =
     sourceUrl: row.source_url,
     contentType: row.content_type.replace(/\+gzip$/, ''),
     byteSize: Number(row.byte_size),
+    setVersion: row.set_version,
+    setHash: row.set_hash,
+    itemOrdinal: row.item_ordinal,
+    label: row.label,
+    filename: row.filename,
   }))
 })

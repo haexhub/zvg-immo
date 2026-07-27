@@ -326,6 +326,12 @@ export interface AuctionExtraction {
    * has not been backfilled yet; `null` means the documents contained no
    * useful additional description. */
   documentSummary?: string | null
+  /** Hash/version of the current listing document set used for this
+   *  extraction. A changed set means the document-derived fields must be
+   *  rebuilt from the new valid documents, not merged with stale facts from
+   *  a withdrawn/updated document. */
+  documentSetHash?: string | null
+  documentSetVersion?: number | null
   /** LLM-only Verkehrswert extracted from the Gutachten text, in the
    *  auction's `currency`. `undefined` = never checked yet; `null` = checked,
    *  nothing found. Same backfill semantics as `condition`. Only ever applied
