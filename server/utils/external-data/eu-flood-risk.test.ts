@@ -158,6 +158,36 @@ describe('buildFloodHazardAssessment', () => {
     })
   })
 
+  it('treats the nearby threshold as an inclusive source-specific meter distance', () => {
+    const polygon: GeoJsonPolygonCoordinates = [[
+      [13.39, 52.51],
+      [13.41, 52.51],
+      [13.41, 52.53],
+      [13.39, 52.53],
+      [13.39, 52.51],
+    ]]
+    const point = auction({ lat: 52.535, lng: 13.4 })
+    const collection = {
+      sourceVersion: 'fixture-v1',
+      generatedAt: checkedAt,
+      zones: [{ id: 'zone-1', polygons: [polygon], severity: 'high' as const, properties: {} }],
+    }
+    const distance = distanceToPolygonMeters({ lat: point.lat!, lng: point.lng! }, polygon)
+
+    expect(buildFloodHazardAssessment(point, collection, {
+      checkedAt,
+      nearbyDistanceMeters: distance - 0.1,
+    })).toMatchObject({ status: 'outside' })
+    expect(buildFloodHazardAssessment(point, collection, {
+      checkedAt,
+      nearbyDistanceMeters: distance,
+    })).toMatchObject({ status: 'nearby' })
+    expect(buildFloodHazardAssessment(point, collection, {
+      checkedAt,
+      nearbyDistanceMeters: distance + 0.1,
+    })).toMatchObject({ status: 'nearby' })
+  })
+
   it('marks stale caches as unknown rather than outside', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-07-27T00:00:00.000Z'))

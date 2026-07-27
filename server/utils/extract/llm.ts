@@ -474,6 +474,12 @@ function plausibleArea(v: unknown, max: number): number | null {
   return typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= max ? v : null
 }
 
+function plausibleCount(v: unknown, max: number, opts: { allowZero?: boolean } = {}): number | null {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return null
+  const minOk = opts.allowZero ? v >= 0 : v > 0
+  return minOk && v <= max ? v : null
+}
+
 // Reject non-years and absurd values; upper bound is the current year (evaluated
 // at call time so a "built next year" hallucination is dropped rather than
 // hard-coding a cutoff that ages).
@@ -610,7 +616,7 @@ export function clampExtraction(raw: Record<string, unknown>): ClampedExtraction
     landAreaSqm: plausibleArea(raw.landAreaSqm, 100_000_000),
     livingAreaSqm: plausibleArea(raw.livingAreaSqm, 1_000_000),
     rooms: plausibleArea(raw.rooms, 100),
-    bedrooms: plausibleArea(raw.bedrooms, 100),
+    bedrooms: plausibleCount(raw.bedrooms, 100, { allowZero: true }),
     bathrooms: plausibleArea(raw.bathrooms, 100),
     floor: trimmedString(raw.floor, 80),
     bathroomHasTub: typeof raw.bathroomHasTub === 'boolean' ? raw.bathroomHasTub : null,

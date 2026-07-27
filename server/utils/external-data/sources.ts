@@ -55,7 +55,7 @@ export const EXTERNAL_DATA_SOURCES: readonly ExternalDataSource[] = [
   },
   {
     id: 'fr-dvf-geolocated',
-    label: 'Demandes de valeurs foncieres geolocalisees',
+    label: 'Demandes de valeurs foncières géolocalisées',
     countries: ['fr'],
     capabilities: ['market_transactions'],
     sourceUrl: 'https://www.data.gouv.fr/datasets/demandes-de-valeurs-foncieres-geolocalisees',

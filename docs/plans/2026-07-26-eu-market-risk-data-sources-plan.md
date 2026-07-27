@@ -33,7 +33,7 @@ export interface LocationEnrichment {
   marketComparison?: MarketComparison | null
   hazards?: HazardAssessment[] | null
   checkedAt: string
-  sourceVersion: string
+  sources: DataSourceAttribution[]
 }
 
 export interface MarketComparison {
@@ -62,6 +62,8 @@ export interface HazardAssessment {
 }
 ```
 
+Each contributing source must carry its own provenance (`id`, label, URL, license note, version, refresh cadence and checked timestamp). Combined enrichments should derive aggregate staleness from the stalest displayed child result, not from one global `sourceVersion` string.
+
 Persist this separately from LLM extraction so source refresh cadence, licenses, confidence and stale data can be managed independently.
 
 ## Source strategy
@@ -83,7 +85,7 @@ EU-level official data is useful for trend context, but generally too coarse for
    - Source: https://data.europa.eu/en
 
 3. National official comparables, priority countries:
-   - France: DVF / Demandes de valeurs foncieres. Good first implementation because it exposes transaction prices, property facts and regular updates. Must respect anti-reidentification constraints.
+   - France: DVF / Demandes de valeurs foncières. Good first implementation because it exposes transaction prices, property facts and regular updates. Must respect anti-reidentification constraints.
      - https://www.data.gouv.fr/datasets/demandes-de-valeurs-foncieres
      - https://www.data.gouv.fr/datasets/demandes-de-valeurs-foncieres-geolocalisees
    - United Kingdom / England & Wales if UK stays in scope for the app: HM Land Registry Price Paid Data. Good transaction source, but not EU. Treat as national fallback.
@@ -152,8 +154,8 @@ EU-level official data is useful for trend context, but generally too coarse for
   - do not compare if market value or area is missing
 - Implement France DVF adapter first:
   - query/download most recent files
-  - normalize transactions into local table keyed by commune / geohash / property class
-  - compute p25/median/p75 and sample count for a radius or administrative unit
+  - preserve every source transaction as a distinct record with a stable source transaction ID, transaction date, commune, geohash and property class
+  - compute p25/median/p75 and sample count for a radius or administrative unit in a separate aggregation step
   - enforce minimum sample count before producing verdict
 - Implement Germany BORIS-D baseline as separate `land_value_baseline`, not as "comparable homes".
 - UI: add "Preise in der Region" card only when `samples >= threshold` or when showing a clearly labelled land-value baseline.
@@ -166,6 +168,7 @@ EU-level official data is useful for trend context, but generally too coarse for
 - Implement EU Flood Risk Areas ingestion first:
   - ingest WFS/downloadable geometries into a local spatial-lite JSON/GeoJSON cache if no PostGIS is available
   - evaluate point-in-polygon and nearest distance
+  - classify `inside` when the point is in a zone, `nearby` when the nearest edge distance is `> 0` and `<=` the adapter threshold in meters, and `outside` only when it is beyond that threshold; thresholds may be source-specific and must be boundary-tested just below, at and above the configured value
   - return status/severity/source attribution
 - Add national override adapters for countries where EU layer is too coarse and official WMS/WFS/download endpoints are available.
 - UI: add "Naturgefahren" card with source and checked date.
@@ -194,7 +197,7 @@ EU-level official data is useful for trend context, but generally too coarse for
   - skipped missing coordinates
   - provider failures
   - stale result count
-- Every displayed result must show source label and an "not a substitute for official due diligence" disclaimer.
+- Every displayed result must show source label and a "not a substitute for official due diligence" disclaimer.
 
 ## UX rules
 

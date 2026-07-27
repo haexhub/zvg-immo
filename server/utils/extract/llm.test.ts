@@ -163,6 +163,10 @@ describe('clampExtraction', () => {
     expect(r.heating).toBe('Wärmepumpe')
   })
 
+  it('preserves an explicitly stated zero-bedroom value', () => {
+    expect(clampExtraction({ bedrooms: 0 }).bedrooms).toBe(0)
+  })
+
   it('nulls malformed bathroom and heating detail fields', () => {
     const r = clampExtraction({
       bedrooms: -1,

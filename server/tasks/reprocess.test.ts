@@ -142,12 +142,12 @@ describe('reprocessAuction', () => {
       landAreaSqm: 850,
       livingAreaSqm: 140,
       rooms: 5,
-      bedrooms: null,
-      bathrooms: null,
-      floor: null,
-      bathroomHasTub: null,
-      bathroomHasShower: null,
-      heating: null,
+      bedrooms: 3,
+      bathrooms: 2,
+      floor: 'EG',
+      bathroomHasTub: true,
+      bathroomHasShower: true,
+      heating: 'Gaszentralheizung',
       units: 1,
       condition: 'gepflegt',
       features: [],
@@ -163,12 +163,12 @@ describe('reprocessAuction', () => {
       landAreaSqm: null,
       livingAreaSqm: null,
       rooms: null,
-      bedrooms: null,
-      bathrooms: null,
-      floor: null,
-      bathroomHasTub: null,
-      bathroomHasShower: null,
-      heating: null,
+      bedrooms: 4,
+      bathrooms: 1.5,
+      floor: '1. OG',
+      bathroomHasTub: false,
+      bathroomHasShower: true,
+      heating: 'Wärmepumpe',
       units: null,
       securityDeposit: null,
       biddingNotes: null,
@@ -203,6 +203,12 @@ describe('reprocessAuction', () => {
     expect(result!.entry.source).toBe('rules')
     expect(result!.entry.propertyType).toBe('einfamilienhaus')
     expect(result!.entry.livingAreaSqm).toBe(140)
+    expect(result!.entry.bedrooms).toBe(4)
+    expect(result!.entry.bathrooms).toBe(1.5)
+    expect(result!.entry.floor).toBe('1. OG')
+    expect(result!.entry.bathroomHasTub).toBe(false)
+    expect(result!.entry.bathroomHasShower).toBe(true)
+    expect(result!.entry.heating).toBe('Wärmepumpe')
     expect(result!.entry.yearBuilt).toBe(1998)
     expect(result!.entry.lastRenovationYear).toBe(2015)
     expect(result!.entry.renovationNotes).toBe('Dach erneuert')
@@ -230,12 +236,12 @@ describe('reprocessAuction', () => {
       landAreaSqm: 850,
       livingAreaSqm: 140,
       rooms: 5,
-      bedrooms: null,
-      bathrooms: null,
-      floor: null,
-      bathroomHasTub: null,
-      bathroomHasShower: null,
-      heating: null,
+      bedrooms: 2,
+      bathrooms: 1,
+      floor: 'DG',
+      bathroomHasTub: true,
+      bathroomHasShower: false,
+      heating: 'Fernwärme',
       units: 1,
       securityDeposit: null,
       biddingNotes: null,
@@ -287,12 +293,12 @@ describe('reprocessAuction', () => {
       landAreaSqm: null,
       livingAreaSqm: null,
       rooms: null,
-      bedrooms: null,
-      bathrooms: null,
-      floor: null,
-      bathroomHasTub: null,
-      bathroomHasShower: null,
-      heating: null,
+      bedrooms: 2,
+      bathrooms: 1,
+      floor: 'DG',
+      bathroomHasTub: true,
+      bathroomHasShower: false,
+      heating: 'Fernwärme',
       units: null,
       securityDeposit: null,
       biddingNotes: null,
@@ -337,12 +343,12 @@ describe('reprocessAuction', () => {
       landAreaSqm: null,
       livingAreaSqm: null,
       rooms: null,
-      bedrooms: null,
-      bathrooms: null,
-      floor: null,
-      bathroomHasTub: null,
-      bathroomHasShower: null,
-      heating: null,
+      bedrooms: 2,
+      bathrooms: 1,
+      floor: 'DG',
+      bathroomHasTub: true,
+      bathroomHasShower: false,
+      heating: 'Fernwärme',
       units: null,
       source: 'rules',
       confidence: 'low',
@@ -353,6 +359,12 @@ describe('reprocessAuction', () => {
 
     expect(result!.entry.source).toBe('rules')
     expect(result!.entry.llmFailures).toBe(2)
+    expect(result!.entry.bedrooms).toBe(2)
+    expect(result!.entry.bathrooms).toBe(1)
+    expect(result!.entry.floor).toBe('DG')
+    expect(result!.entry.bathroomHasTub).toBe(true)
+    expect(result!.entry.bathroomHasShower).toBe(false)
+    expect(result!.entry.heating).toBe('Fernwärme')
   })
 
   it('skips the LLM branch entirely when llmConfig is null', async () => {
@@ -366,6 +378,42 @@ describe('reprocessAuction', () => {
 
     expect(result!.llmCalled).toBe(false)
     expect(extractByLlm).not.toHaveBeenCalled()
+  })
+
+  it('keeps prior LLM-only fields when llmConfig is null and only rules run', async () => {
+    const auction = makeAuction()
+    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
+      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
+    )
+    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
+    const priorEntry: AuctionExtraction = {
+      propertyType: 'einfamilienhaus',
+      landAreaSqm: 850,
+      livingAreaSqm: 140,
+      rooms: 5,
+      bedrooms: 3,
+      bathrooms: 2,
+      floor: 'EG',
+      bathroomHasTub: true,
+      bathroomHasShower: true,
+      heating: 'Gaszentralheizung',
+      units: 1,
+      source: 'rules',
+      confidence: 'low',
+      at: '2026-07-01T00:00:00.000Z',
+    }
+
+    const result = await reprocessAuction('zvg-portal', '7265', priorEntry, null, '2026-07-22T00:00:00.000Z')
+
+    expect(result!.llmCalled).toBe(false)
+    expect(result!.entry).toMatchObject({
+      bedrooms: 3,
+      bathrooms: 2,
+      floor: 'EG',
+      bathroomHasTub: true,
+      bathroomHasShower: true,
+      heating: 'Gaszentralheizung',
+    })
   })
 })
 
@@ -521,6 +569,29 @@ describe('runReprocess', () => {
     expect(writeExtractionCache).toHaveBeenCalledWith({
       'zvg-portal:7265': expect.objectContaining({ renovationNotes: 'Dach erneuert' }),
     })
+  })
+
+  it('does not select entries only missing LLM-only fields when no LLM provider is configured', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [{ platform: 'zvg-portal', external_id: '7265' }] })
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+    vi.mocked(readExtractionCache).mockResolvedValue({
+      'zvg-portal:7265': {
+        propertyType: 'einfamilienhaus',
+        landAreaSqm: 850,
+        livingAreaSqm: 140,
+        rooms: 5,
+        units: 1,
+        source: 'llm',
+        confidence: 'high',
+        at: '2026-07-01T00:00:00.000Z',
+      },
+    })
+
+    const result = await runReprocess({})
+
+    expect(result).toEqual({ candidates: 1, processed: 0, skipped: 1, llmCalls: 0 })
+    expect(findLatestCapture).not.toHaveBeenCalled()
+    expect(writeExtractionCache).not.toHaveBeenCalled()
   })
 
   it('backfills an entry whose only missing LLM field is marketValueEur', async () => {

@@ -345,11 +345,8 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
     try {
       const key = cacheKey(platform, externalId)
       const priorEntry = cache[key]
-      const eligible =
-        opts.force ||
-        ((!priorEntry ||
-          (priorEntry.source === 'rules' && priorEntry.confidence === 'low') ||
-          priorEntry.condition === undefined ||
+      const hasMissingLlmOnlyField = priorEntry
+        ? priorEntry.condition === undefined ||
           priorEntry.features === undefined ||
           priorEntry.bedrooms === undefined ||
           priorEntry.bathrooms === undefined ||
@@ -363,7 +360,13 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
           priorEntry.insights === undefined ||
           priorEntry.planningNotes === undefined ||
           priorEntry.documentSummary === undefined ||
-          priorEntry.marketValueEur === undefined) &&
+          priorEntry.marketValueEur === undefined
+        : false
+      const eligible =
+        opts.force ||
+        ((!priorEntry ||
+          (priorEntry.source === 'rules' && priorEntry.confidence === 'low') ||
+          (llmConfig != null && hasMissingLlmOnlyField)) &&
           (priorEntry?.llmFailures ?? 0) < MAX_LLM_FAILURES &&
           !isLlmBatchPending(priorEntry))
       if (!eligible) {
