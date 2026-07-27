@@ -5,6 +5,7 @@ import {
 } from './anthropic-batch'
 import {
   fetchGeminiBatchResults,
+  isGeminiBatchTierPaid,
   pollGeminiBatch,
   submitGeminiBatch,
   type PollResult,
@@ -43,7 +44,11 @@ export interface LlmBatchSubmitResult {
 
 export function supportsLlmBatch(config: LlmConfig | null | undefined): boolean {
   if (!config) return false
-  if (config.provider === 'gemini-native') return true
+  // Google rejects batchGenerateContent outright on a free-tier key (see
+  // gemini-batch.ts's header) — reporting batch support here regardless of
+  // tier left enrich.ts stuck forever submitting doomed jobs instead of
+  // falling back to the synchronous path.
+  if (config.provider === 'gemini-native') return isGeminiBatchTierPaid()
   if (config.provider === 'openai-compatible') return !!config.apiKey && isOpenAiBatchBaseUrl(config.baseUrl)
   // The Claude proxy can batch only when zvg-immo authenticates to a proxy
   // resolver that returns an Anthropic api_key credential. Keeping this gated

@@ -14,10 +14,13 @@
 // paid Tier 1-3 accounts, and FAILED_PRECONDITION on this endpoint is
 // documented as "enable billing on your project". The free-tier quota guard
 // below (maxJobsPerDay etc.) was written assuming free tier could batch, just
-// slowly — that assumption was wrong. Rather than trust a static
-// geminiBatchTier config flag an admin has to remember to set correctly,
-// every real submit attempt below records its outcome via
-// recordLlmBatchCapability (../llm-batch-jobs.ts) — enrich.ts/reprocess.ts
+// slowly — that assumption was wrong, so `supportsLlmBatch` (./llm-batch.ts)
+// gates gemini-native on `isGeminiBatchTierPaid()` and never lets this path
+// run at all while geminiBatchTier stays 'free'. The guard logic remains
+// dormant, ready for when NUXT_EXTRACT_LLM_GEMINI_BATCH_TIER=paid is set.
+// Rather than trust only that static config flag an admin has to remember to
+// set correctly, every real submit attempt below also records its outcome
+// via recordLlmBatchCapability (../llm-batch-jobs.ts) — enrich.ts/reprocess.ts
 // read that alongside supportsLlmBatch so a confirmed-broken provider falls
 // back to the synchronous path automatically instead of submitting doomed
 // jobs run after run, and /settings surfaces the real error instead of a
@@ -88,6 +91,14 @@ function parseOptionalPositiveInt(value: unknown, fallback: number | null): numb
   if (value === '' || value == null) return fallback
   const raw = typeof value === 'string' ? Number(value) : value
   return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? Math.round(raw) : fallback
+}
+
+// Google rejects every gemini-native batchGenerateContent call with 400
+// FAILED_PRECONDITION on a free-tier key (see the module header) — so
+// supportsLlmBatch (./llm-batch.ts) calls this to keep enrich.ts/reprocess.ts
+// on the synchronous path until billing is enabled for the project.
+export function isGeminiBatchTierPaid(): boolean {
+  return readGeminiBatchQuotaPolicy().tier === 'paid'
 }
 
 function readGeminiBatchQuotaPolicy(): GeminiBatchQuotaPolicy {

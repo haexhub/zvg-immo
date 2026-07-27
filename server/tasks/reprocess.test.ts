@@ -733,6 +733,10 @@ describe('runReprocess', () => {
         baseUrl: 'https://generativelanguage.googleapis.com',
         apiKey: 'test-key',
         model: 'gemini-flash-latest',
+        // Free tier's static gate (supportsLlmBatch → isGeminiBatchTierPaid)
+        // is unrelated to what this test targets — the known-broken bypass —
+        // so pin the tier to paid to isolate that behavior.
+        geminiBatchTier: 'paid',
       },
     }))
     vi.mocked(submitLlmBatch).mockResolvedValueOnce(null)
