@@ -1,0 +1,48 @@
+{
+  "sourceVersion": "effis-fixture-v1",
+  "generatedAt": "2026-07-26T00:00:00.000Z",
+  "staticRisk": {
+    "generatedAt": "2026-07-01T00:00:00.000Z",
+    "cells": [
+      {
+        "lat": 48.8566,
+        "lng": 2.3522,
+        "radiusMeters": 12000,
+        "severity": "high",
+        "classLabel": "high wildfire risk"
+      },
+      {
+        "lat": 52.52,
+        "lng": 13.405,
+        "radiusMeters": 12000,
+        "severity": "low",
+        "classLabel": "low wildfire risk"
+      }
+    ]
+  },
+  "currentFireDanger": {
+    "generatedAt": "2026-07-26T06:00:00.000Z",
+    "validFor": "2026-07-26",
+    "ttlHours": 36,
+    "model": "ecmwf",
+    "layer": "ecmwf.fwi",
+    "cells": [
+      {
+        "lat": 48.8566,
+        "lng": 2.3522,
+        "radiusMeters": 10000,
+        "fwi": 45,
+        "severity": "very_high",
+        "classLabel": "very high"
+      },
+      {
+        "lat": 52.52,
+        "lng": 13.405,
+        "radiusMeters": 10000,
+        "fwi": 8,
+        "severity": "low",
+        "classLabel": "low"
+      }
+    ]
+  }
+}

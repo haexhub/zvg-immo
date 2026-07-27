@@ -1,0 +1,20 @@
+{
+  "sourceVersion": "eaws-discovery-fixture-v1",
+  "generatedAt": "2026-07-26T00:00:00.000Z",
+  "services": [
+    {
+      "country": "at",
+      "label": "HORA Austria Natural Hazard Overview",
+      "sourceUrl": "https://hora.gv.at/",
+      "endpointStatus": "unconfirmed",
+      "notes": "HORA includes avalanche information, but no public bulk geodata endpoint is modeled in WP5."
+    },
+    {
+      "country": "de",
+      "label": "EAWS / national avalanche services",
+      "sourceUrl": "https://www.avalanches.org/",
+      "endpointStatus": "unsupported",
+      "notes": "Discovery metadata only."
+    }
+  ]
+}
