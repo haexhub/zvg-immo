@@ -12,6 +12,7 @@ vi.mock('../llm-batch-jobs', () => ({
   }),
   recordGeminiBatchQuotaUsage: vi.fn().mockResolvedValue(undefined),
   setGeminiBatchQuotaBackoff: vi.fn().mockResolvedValue(undefined),
+  withGeminiBatchQuotaLock: vi.fn(async (fn: () => Promise<unknown>) => fn()),
 }))
 
 const config: LlmConfig = {
@@ -172,7 +173,7 @@ describe('submitGeminiBatch', () => {
       { match: 'upload.example/session-1', data: { file: { name: 'files/abc' } } },
       { match: ':batchGenerateContent', data: { name: 'batches/xyz' } },
     ])
-    const { insertLlmBatchJob } = await import('../llm-batch-jobs')
+    const { insertLlmBatchJob, recordGeminiBatchQuotaUsage } = await import('../llm-batch-jobs')
     vi.mocked(insertLlmBatchJob).mockResolvedValueOnce(false)
     const { submitGeminiBatch } = await import('./gemini-batch')
 
@@ -183,6 +184,48 @@ describe('submitGeminiBatch', () => {
     )
 
     expect(result).toBeNull()
+    expect(recordGeminiBatchQuotaUsage).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ jobs: 1, items: 1 }),
+    )
+  })
+
+  it('does not put the quota guard into backoff for a non-quota 403', async () => {
+    stubOfetch([
+      { match: '/upload/v1beta/files', raw: { headers: { 'x-goog-upload-url': 'https://upload.example/session-1' } } },
+      { match: 'upload.example/session-1', data: { file: { name: 'files/abc' } } },
+      { match: ':batchGenerateContent', error: Object.assign(new Error('permission denied'), { statusCode: 403 }) },
+    ])
+    const { setGeminiBatchQuotaBackoff } = await import('../llm-batch-jobs')
+    const { submitGeminiBatch } = await import('./gemini-batch')
+
+    const result = await submitGeminiBatch(
+      [{ key: 'zvg-portal:1', input: { title: 'Haus', description: 'schön', pdfText: null } }],
+      config,
+      'enrich',
+    )
+
+    expect(result).toBeNull()
+    expect(setGeminiBatchQuotaBackoff).not.toHaveBeenCalled()
+  })
+
+  it('puts the quota guard into backoff for a 429', async () => {
+    stubOfetch([
+      { match: '/upload/v1beta/files', raw: { headers: { 'x-goog-upload-url': 'https://upload.example/session-1' } } },
+      { match: 'upload.example/session-1', data: { file: { name: 'files/abc' } } },
+      { match: ':batchGenerateContent', error: Object.assign(new Error('too many requests'), { statusCode: 429 }) },
+    ])
+    const { setGeminiBatchQuotaBackoff } = await import('../llm-batch-jobs')
+    const { submitGeminiBatch } = await import('./gemini-batch')
+
+    const result = await submitGeminiBatch(
+      [{ key: 'zvg-portal:1', input: { title: 'Haus', description: 'schön', pdfText: null } }],
+      config,
+      'enrich',
+    )
+
+    expect(result).toBeNull()
+    expect(setGeminiBatchQuotaBackoff).toHaveBeenCalledWith(expect.any(String), expect.any(String))
   })
 
   it('returns null without submitting anything when no item has content', async () => {

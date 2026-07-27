@@ -36,6 +36,7 @@ import {
   recordGeminiBatchQuotaUsage,
   setGeminiBatchQuotaBackoff,
   type GeminiBatchQuotaUsage,
+  withGeminiBatchQuotaLock,
 } from '../llm-batch-jobs'
 
 interface GeminiBatchQuotaPolicy {
@@ -131,7 +132,7 @@ function isGeminiQuotaError(err: unknown): boolean {
       ? status
       : (err as { statusCode?: unknown; response?: { status?: unknown } })?.statusCode
   const responseStatus = (err as { response?: { status?: unknown } })?.response?.status
-  if (statusCode === 429 || responseStatus === 429 || statusCode === 403 || responseStatus === 403) return true
+  if (statusCode === 429 || responseStatus === 429) return true
   const message = err instanceof Error ? err.message : String(err)
   return /quota|rate.?limit|resource_exhausted|too many requests/i.test(message)
 }
@@ -250,6 +251,14 @@ export async function submitGeminiBatch(
     .map((item) => ({ item, line: buildJsonlLine(item.key, item.input) }))
     .filter((entry): entry is { item: { key: string; input: LlmInput }; line: string } => entry.line != null)
   if (lineItems.length === 0) return null
+  return withGeminiBatchQuotaLock(() => submitGeminiBatchLocked(lineItems, config, source))
+}
+
+async function submitGeminiBatchLocked(
+  lineItems: Array<{ item: { key: string; input: LlmInput }; line: string }>,
+  config: LlmConfig,
+  source: 'enrich' | 'reprocess',
+): Promise<GeminiBatchSubmitResult | null> {
   const policy = readGeminiBatchQuotaPolicy()
   const quotaDay = todayUtc()
   const usage = await readGeminiBatchQuotaUsage(quotaDay)
@@ -295,16 +304,18 @@ export async function submitGeminiBatch(
       console.warn('[gemini-batch] batchGenerateContent response had no job name')
       return null
     }
-    const recorded = await insertLlmBatchJob({ jobName, source, itemCount: lines.length, customIdMap })
-    if (!recorded) {
-      console.warn(`[gemini-batch] failed to record job ${jobName} — treating submission as failed`)
-      return null
-    }
+    // The job is accepted by Google at this point and consumes quota even if
+    // our local job row insert fails and the batch becomes orphaned.
     await recordGeminiBatchQuotaUsage(quotaDay, {
       jobs: 1,
       items: selection.selected.length,
       estimatedTokens: selection.estimatedTokens,
     })
+    const recorded = await insertLlmBatchJob({ jobName, source, itemCount: lines.length, customIdMap })
+    if (!recorded) {
+      console.warn(`[gemini-batch] failed to record job ${jobName} — treating submission as failed`)
+      return null
+    }
     return {
       jobName,
       submitted: selection.selected.map((entry) => ({ key: entry.item.key, jobName })),

@@ -49,7 +49,48 @@ function makeFakePool() {
       return { rows: value === undefined ? [] : [{ value }], rowCount: value === undefined ? 0 : 1 }
     }
     if (sql.startsWith('INSERT INTO app_settings')) {
-      settings.set(params[0] as string, JSON.parse(params[1] as string))
+      const key = params[0] as string
+      const day = params[1] as string
+      const current = settings.get(key) as
+        | { day?: string; jobs?: number; items?: number; estimatedTokens?: number; backoffUntil?: string | null }
+        | undefined
+      if (params.length === 5) {
+        const deltaJobs = params[2] as number
+        const deltaItems = params[3] as number
+        const deltaEstimatedTokens = params[4] as number
+        settings.set(
+          key,
+          current?.day === day
+            ? {
+                day,
+                jobs: (current.jobs ?? 0) + deltaJobs,
+                items: (current.items ?? 0) + deltaItems,
+                estimatedTokens: (current.estimatedTokens ?? 0) + deltaEstimatedTokens,
+                backoffUntil: current.backoffUntil ?? null,
+              }
+            : {
+                day,
+                jobs: deltaJobs,
+                items: deltaItems,
+                estimatedTokens: deltaEstimatedTokens,
+                backoffUntil: null,
+              },
+        )
+      } else {
+        const backoffUntil = params[2] as string
+        settings.set(
+          key,
+          current?.day === day
+            ? {
+                day,
+                jobs: current.jobs ?? 0,
+                items: current.items ?? 0,
+                estimatedTokens: current.estimatedTokens ?? 0,
+                backoffUntil,
+              }
+            : { day, jobs: 0, items: 0, estimatedTokens: 0, backoffUntil },
+        )
+      }
       return { rows: [], rowCount: 1 }
     }
     throw new Error(`unexpected query: ${sql}`)

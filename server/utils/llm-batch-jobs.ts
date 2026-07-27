@@ -6,6 +6,7 @@
 // complexity; a live read per poll tick is simpler. Same graceful-no-op
 // pattern as extraction-cache.ts: getPool() → null without NUXT_DATABASE_URL.
 
+import type { PoolClient } from 'pg'
 import { getPool } from './db'
 
 export type LlmBatchJobStatus = 'pending' | 'succeeded' | 'failed' | 'expired'
@@ -32,6 +33,7 @@ export interface GeminiBatchQuotaUsage {
 const GEMINI_BATCH_QUOTA_KEY = 'gemini_batch_quota_usage'
 
 let memoryGeminiQuotaUsage: GeminiBatchQuotaUsage | null = null
+let memoryGeminiQuotaLock: Promise<void> = Promise.resolve()
 
 function defaultGeminiQuotaUsage(day: string): GeminiBatchQuotaUsage {
   return { day, jobs: 0, items: 0, estimatedTokens: 0, backoffUntil: null }
@@ -76,48 +78,146 @@ export async function recordGeminiBatchQuotaUsage(
   day: string,
   delta: { jobs: number; items: number; estimatedTokens: number },
 ): Promise<void> {
-  const current = await readGeminiBatchQuotaUsage(day)
-  const next: GeminiBatchQuotaUsage = {
-    day,
-    jobs: current.jobs + Math.max(0, Math.round(delta.jobs)),
-    items: current.items + Math.max(0, Math.round(delta.items)),
-    estimatedTokens: current.estimatedTokens + Math.max(0, Math.round(delta.estimatedTokens)),
-    backoffUntil: current.backoffUntil,
+  const safeDelta = {
+    jobs: Math.max(0, Math.round(delta.jobs)),
+    items: Math.max(0, Math.round(delta.items)),
+    estimatedTokens: Math.max(0, Math.round(delta.estimatedTokens)),
   }
   const db = getPool()
   if (!db) {
+    const current = await readGeminiBatchQuotaUsage(day)
+    const next: GeminiBatchQuotaUsage = {
+      day,
+      jobs: current.jobs + safeDelta.jobs,
+      items: current.items + safeDelta.items,
+      estimatedTokens: current.estimatedTokens + safeDelta.estimatedTokens,
+      backoffUntil: current.backoffUntil,
+    }
     memoryGeminiQuotaUsage = next
     return
   }
   try {
     await db.query(
-      `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2::jsonb, now())
-       ON CONFLICT (key) DO UPDATE SET value = $2::jsonb, updated_at = now()`,
-      [GEMINI_BATCH_QUOTA_KEY, JSON.stringify(next)],
+      `INSERT INTO app_settings (key, value, updated_at)
+       VALUES (
+         $1,
+         jsonb_build_object(
+           'day', $2::text,
+           'jobs', $3::integer,
+           'items', $4::integer,
+           'estimatedTokens', $5::integer,
+           'backoffUntil', NULL::text
+         ),
+         now()
+       )
+       ON CONFLICT (key) DO UPDATE SET
+         value = CASE
+           WHEN app_settings.value->>'day' = $2::text THEN jsonb_build_object(
+             'day', $2::text,
+             'jobs', (CASE WHEN app_settings.value->>'jobs' ~ '^[0-9]+$' THEN (app_settings.value->>'jobs')::integer ELSE 0 END) + $3::integer,
+             'items', (CASE WHEN app_settings.value->>'items' ~ '^[0-9]+$' THEN (app_settings.value->>'items')::integer ELSE 0 END) + $4::integer,
+             'estimatedTokens', (CASE WHEN app_settings.value->>'estimatedTokens' ~ '^[0-9]+$' THEN (app_settings.value->>'estimatedTokens')::integer ELSE 0 END) + $5::integer,
+             'backoffUntil', NULLIF(app_settings.value->>'backoffUntil', '')
+           )
+           ELSE jsonb_build_object(
+             'day', $2::text,
+             'jobs', $3::integer,
+             'items', $4::integer,
+             'estimatedTokens', $5::integer,
+             'backoffUntil', NULL::text
+           )
+         END,
+         updated_at = now()`,
+      [GEMINI_BATCH_QUOTA_KEY, day, safeDelta.jobs, safeDelta.items, safeDelta.estimatedTokens],
     )
   } catch (err) {
     console.warn(`[llm-batch-jobs] Gemini quota write failed: ${(err as Error).message}`)
-    memoryGeminiQuotaUsage = next
+    const current = await readGeminiBatchQuotaUsage(day)
+    memoryGeminiQuotaUsage = {
+      day,
+      jobs: current.jobs + safeDelta.jobs,
+      items: current.items + safeDelta.items,
+      estimatedTokens: current.estimatedTokens + safeDelta.estimatedTokens,
+      backoffUntil: current.backoffUntil,
+    }
   }
 }
 
 export async function setGeminiBatchQuotaBackoff(day: string, backoffUntil: string): Promise<void> {
-  const current = await readGeminiBatchQuotaUsage(day)
-  const next: GeminiBatchQuotaUsage = { ...current, backoffUntil }
   const db = getPool()
   if (!db) {
+    const current = await readGeminiBatchQuotaUsage(day)
+    const next: GeminiBatchQuotaUsage = { ...current, backoffUntil }
     memoryGeminiQuotaUsage = next
     return
   }
   try {
     await db.query(
-      `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2::jsonb, now())
-       ON CONFLICT (key) DO UPDATE SET value = $2::jsonb, updated_at = now()`,
-      [GEMINI_BATCH_QUOTA_KEY, JSON.stringify(next)],
+      `INSERT INTO app_settings (key, value, updated_at)
+       VALUES (
+         $1,
+         jsonb_build_object('day', $2::text, 'jobs', 0, 'items', 0, 'estimatedTokens', 0, 'backoffUntil', $3::text),
+         now()
+       )
+       ON CONFLICT (key) DO UPDATE SET
+         value = CASE
+           WHEN app_settings.value->>'day' = $2::text THEN jsonb_build_object(
+             'day', $2::text,
+             'jobs', CASE WHEN app_settings.value->>'jobs' ~ '^[0-9]+$' THEN (app_settings.value->>'jobs')::integer ELSE 0 END,
+             'items', CASE WHEN app_settings.value->>'items' ~ '^[0-9]+$' THEN (app_settings.value->>'items')::integer ELSE 0 END,
+             'estimatedTokens', CASE WHEN app_settings.value->>'estimatedTokens' ~ '^[0-9]+$' THEN (app_settings.value->>'estimatedTokens')::integer ELSE 0 END,
+             'backoffUntil', $3::text
+           )
+           ELSE jsonb_build_object('day', $2::text, 'jobs', 0, 'items', 0, 'estimatedTokens', 0, 'backoffUntil', $3::text)
+         END,
+         updated_at = now()`,
+      [GEMINI_BATCH_QUOTA_KEY, day, backoffUntil],
     )
   } catch (err) {
     console.warn(`[llm-batch-jobs] Gemini quota backoff write failed: ${(err as Error).message}`)
+    const current = await readGeminiBatchQuotaUsage(day)
+    const next: GeminiBatchQuotaUsage = { ...current, backoffUntil }
     memoryGeminiQuotaUsage = next
+  }
+}
+
+export async function withGeminiBatchQuotaLock<T>(fn: () => Promise<T>): Promise<T> {
+  const db = getPool()
+  if (!db) return withMemoryGeminiBatchQuotaLock(fn)
+  const client = await db.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [GEMINI_BATCH_QUOTA_KEY])
+    const result = await fn()
+    await client.query('COMMIT')
+    return result
+  } catch (err) {
+    await rollbackQuietly(client)
+    throw err
+  } finally {
+    client.release()
+  }
+}
+
+async function withMemoryGeminiBatchQuotaLock<T>(fn: () => Promise<T>): Promise<T> {
+  const previous = memoryGeminiQuotaLock
+  let release!: () => void
+  memoryGeminiQuotaLock = new Promise((resolve) => {
+    release = resolve
+  })
+  await previous
+  try {
+    return await fn()
+  } finally {
+    release()
+  }
+}
+
+async function rollbackQuietly(client: PoolClient): Promise<void> {
+  try {
+    await client.query('ROLLBACK')
+  } catch {
+    // Best-effort cleanup before releasing the client.
   }
 }
 
