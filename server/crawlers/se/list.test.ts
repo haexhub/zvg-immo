@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fetchAllListings, extractListingIds, extractNextStartAtHit, extractTotalHits } from './list'
+import {
+  fetchAllListings,
+  extractKronofogdenPhotoUrls,
+  extractListingIds,
+  extractNextStartAtHit,
+  extractTotalHits,
+} from './list'
 
 const BASE = 'https://auktionstorget.kronofogden.se'
 
@@ -19,6 +25,21 @@ function detailHtml(id: string): string {
     <h3 id="h-Kommun">Kommun</h3><p class="normal">Test kommun</p>
     <h2 id="h-Upplatelseform">Upplatelseform</h2><p class="normal">Äganderätt.</p>
     <div id="datumet">2026-08-27</div>
+  `
+}
+
+function detailHtmlWithGallery(id: string): string {
+  return `
+    <h3 id="h-Adress">Adress</h3><p class="normal">Testgatan ${id}</p>
+    <h3 id="h-Kommun">Kommun</h3><p class="normal">Test kommun</p>
+    <h2 id="h-Upplatelseform">Upplatelseform</h2><p class="normal">Äganderätt.</p>
+    <div id="datumet">2026-08-27</div>
+    <img src="/images/18.static/1/logotyp-footer.png">
+    <div id="galleria">
+      <img style="display:none" src="/images/200.abc/1782824511083/Bild%201.jpg">
+      <img style="display:none" src="/images/200.def/1782824511166/Bild%202.jpg">
+      <img style="display:none" src="/images/200.abc/1782824511083/Bild%201.jpg">
+    </div>
   `
 }
 
@@ -94,6 +115,35 @@ describe('extractNextStartAtHit', () => {
   it('returns null on the last page', () => {
     const html = '<span>Visar 41-46 av totalt 46 träffar</span>'
     expect(extractNextStartAtHit(html, 40)).toBeNull()
+  })
+})
+
+describe('extractKronofogdenPhotoUrls', () => {
+  it('extracts the object gallery images and ignores chrome/sidebar artwork', () => {
+    const html = `
+      <img src="/images/18.static/1/logotyp-footer.png">
+      <div id="galleria">
+        <img style="display:none" src="/images/200.728f87/1782824511083/Bild%201.jpg">
+        <img style="display:none" src="/images/200.728f88/1782824511166/Bild%202.jpg">
+      </div>
+      <img src="/images/18.static/1/auktionstorget_puff_lana.jpg">
+    `
+
+    expect(extractKronofogdenPhotoUrls(html)).toEqual([
+      `${BASE}/images/200.728f87/1782824511083/Bild%201.jpg`,
+      `${BASE}/images/200.728f88/1782824511166/Bild%202.jpg`,
+    ])
+  })
+
+  it('falls back to the largest Bild srcset candidates when no galleria block exists', () => {
+    const html = `
+      <img alt="" srcset="/images/18.abc/1/x160p/Bild%201.jpg 160w, /images/18.abc/1/Bild%201.jpg 1024w" src="/images/18.abc/1/Bild%201.jpg">
+      <img src="/images/18.static/1/Auktion_puffmellan_dorr.jpg">
+    `
+
+    expect(extractKronofogdenPhotoUrls(html)).toEqual([
+      `${BASE}/images/18.abc/1/Bild%201.jpg`,
+    ])
   })
 })
 
@@ -196,5 +246,31 @@ describe('fetchAllListings', () => {
     expect(result.auctions[0]?.sourceLandAreaSqm).toBe(181000)
     expect(result.auctions[0]?.sourceLivingAreaSqm).toBe(80)
     expect(result.auctions[0]?.sourceRooms).toBe(3)
+  })
+
+  it('stores Kronofogden gallery URLs for the native photo pipeline', async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const href = String(url)
+      if (href === `${BASE}/Sokfastigheterbostadsratter.html?query=*`) {
+        return new Response(searchHtml(['101843'], 1), { status: 200 })
+      }
+      if (href === `${BASE}/22660.html?query=*`) {
+        return new Response(searchHtml([], 0), { status: 200 })
+      }
+      if (href === `${BASE}/101843.html`) {
+        return new Response(detailHtmlWithGallery('101843'), { status: 200 })
+      }
+      return new Response('not found', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await fetchAllListings('se-kronofogden')
+
+    expect(result.auctions[0]?.thumbnailUrl).toBe(`${BASE}/images/200.abc/1782824511083/Bild%201.jpg`)
+    expect(result.auctions[0]?.photoUrls).toEqual([
+      `${BASE}/images/200.abc/1782824511083/Bild%201.jpg`,
+      `${BASE}/images/200.def/1782824511166/Bild%202.jpg`,
+    ])
+    expect(result.auctions[0]?.photoCount).toBe(2)
   })
 })
