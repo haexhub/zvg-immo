@@ -13,6 +13,7 @@ function makeFakePool() {
     submitted_at: string
     checked_at: string | null
     updated_at: string
+    error_message: string | null
   }> = []
   const query = vi.fn(async (sql: string, params: unknown[] = []) => {
     if (sql.startsWith('INSERT INTO llm_batch_jobs')) {
@@ -25,6 +26,7 @@ function makeFakePool() {
         submitted_at: '2026-07-26T18:00:00.000Z',
         checked_at: null,
         updated_at: '2026-07-26T18:00:00.000Z',
+        error_message: null,
       })
       return { rows: [], rowCount: 1 }
     }
@@ -55,12 +57,20 @@ function makeFakePool() {
         row.status = params[1] as string
         row.checked_at = params[2] as string
         row.updated_at = params[2] as string
+        row.error_message = (params[3] as string | null | undefined) ?? null
       }
       return { rows: [], rowCount: row ? 1 : 0 }
     }
     if (sql.startsWith('SELECT value FROM app_settings')) {
       const value = settings.get(params[0] as string)
       return { rows: value === undefined ? [] : [{ value }], rowCount: value === undefined ? 0 : 1 }
+    }
+    if (sql.startsWith('INSERT INTO app_settings') && !sql.includes('jsonb_build_object')) {
+      // Generic key/value upsert (llm_batch_capability and friends): params = [key, jsonValue].
+      const key = params[0] as string
+      const value = typeof params[1] === 'string' ? JSON.parse(params[1] as string) : params[1]
+      settings.set(key, value)
+      return { rows: [], rowCount: 1 }
     }
     if (sql.startsWith('INSERT INTO app_settings')) {
       const key = params[0] as string
@@ -142,6 +152,7 @@ describe('llm-batch-jobs', () => {
         submittedAt: '2026-07-26T18:00:00.000Z',
         checkedAt: null,
         updatedAt: '2026-07-26T18:00:00.000Z',
+        errorMessage: null,
       },
     ])
   })
@@ -169,6 +180,7 @@ describe('llm-batch-jobs', () => {
         submittedAt: '2026-07-26T18:00:00.000Z',
         checkedAt: null,
         updatedAt: '2026-07-26T18:00:00.000Z',
+        errorMessage: null,
       },
     ])
   })
@@ -251,6 +263,63 @@ describe('llm-batch-jobs', () => {
       items: 0,
       estimatedTokens: 0,
       backoffUntil: null,
+    })
+  })
+
+  it('marks a job resolved with its error message and surfaces it in history', async () => {
+    const { getPool } = await import('./db')
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { insertLlmBatchJob, listRecentLlmBatchJobs, markLlmBatchJobResolved } = await import('./llm-batch-jobs')
+
+    await insertLlmBatchJob({ jobName: 'batches/abc', source: 'enrich', itemCount: 3 })
+    await markLlmBatchJobResolved(
+      'batches/abc',
+      'failed',
+      '2026-07-27T12:00:00.000Z',
+      'FAILED_PRECONDITION: Precondition check failed.',
+    )
+
+    await expect(listRecentLlmBatchJobs()).resolves.toEqual([
+      expect.objectContaining({
+        jobName: 'batches/abc',
+        status: 'failed',
+        errorMessage: 'FAILED_PRECONDITION: Precondition check failed.',
+      }),
+    ])
+  })
+
+  it('tracks per-provider batch capability, defaulting to unset without a configured pool', async () => {
+    const { getPool } = await import('./db')
+    vi.mocked(getPool).mockReturnValue(null)
+    const { getLlmBatchCapability, getAllLlmBatchCapabilities, recordLlmBatchCapability } = await import('./llm-batch-jobs')
+
+    await expect(getLlmBatchCapability('gemini-native')).resolves.toBeNull()
+
+    await recordLlmBatchCapability('gemini-native', {
+      ok: false,
+      message: 'FAILED_PRECONDITION: Precondition check failed.',
+      source: 'enrich',
+    })
+
+    const capability = await getLlmBatchCapability('gemini-native')
+    expect(capability).toMatchObject({ ok: false, message: 'FAILED_PRECONDITION: Precondition check failed.', source: 'enrich' })
+    expect(typeof capability?.checkedAt).toBe('string')
+    await expect(getAllLlmBatchCapabilities()).resolves.toEqual({ 'gemini-native': capability })
+  })
+
+  it('persists batch capability per provider without clobbering other providers', async () => {
+    const { getPool } = await import('./db')
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { getAllLlmBatchCapabilities, recordLlmBatchCapability } = await import('./llm-batch-jobs')
+
+    await recordLlmBatchCapability('gemini-native', { ok: false, message: 'broken', source: 'enrich' })
+    await recordLlmBatchCapability('openai-compatible', { ok: true, message: null, source: 'reprocess' })
+
+    await expect(getAllLlmBatchCapabilities()).resolves.toEqual({
+      'gemini-native': expect.objectContaining({ ok: false, message: 'broken' }),
+      'openai-compatible': expect.objectContaining({ ok: true, message: null }),
     })
   })
 

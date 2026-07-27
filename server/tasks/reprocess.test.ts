@@ -3,6 +3,7 @@ import type { Auction, AuctionExtraction } from '~/types/auction'
 import { getPool } from '../utils/db'
 import { downloadBlob, findLatestCapture, readDocumentSetItems } from '../utils/storage-download'
 import { extractByLlm } from '../utils/extract/llm'
+import { isLlmBatchProviderBroken } from '../utils/extract/llm-batch'
 import { extractPdfTextFromBuffer } from '../utils/extract/pdf-text'
 import { renderPdfPagesJpeg } from '../utils/extract/pdf-render'
 import { readExtractionCache, writeExtractionCache } from '../utils/extraction-cache'
@@ -17,6 +18,10 @@ vi.mock('../utils/storage-download', () => ({
 vi.mock('../utils/extract/llm', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/extract/llm')>()
   return { ...actual, extractByLlm: vi.fn() }
+})
+vi.mock('../utils/extract/llm-batch', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/extract/llm-batch')>()
+  return { ...actual, isLlmBatchProviderBroken: vi.fn(async () => false) }
 })
 // Spy on (not stub out) the real implementations — other tests here rely on
 // actual pdftotext/rendering output (e.g. the scanned-PDF vision-fallback
@@ -719,6 +724,36 @@ describe('runReprocess', () => {
     expect(writeExtractionCache).toHaveBeenCalledWith({
       'zvg-portal:7265': expect.objectContaining({ renovationNotes: 'Dach erneuert' }),
     })
+  })
+
+  it('falls back to the synchronous LLM call when the requested batch provider is known-broken', async () => {
+    vi.stubGlobal('useRuntimeConfig', () => ({
+      extractLlm: {
+        provider: 'gemini-native',
+        baseUrl: 'https://generativelanguage.googleapis.com',
+        apiKey: 'test-key',
+        model: 'gemini-flash-latest',
+      },
+    }))
+    vi.mocked(isLlmBatchProviderBroken).mockResolvedValueOnce(true)
+    const auction = makeAuction({
+      title: 'Einfamilienhaus',
+      description: 'Einfamilienhaus mit Wohnfläche ca. 140 m² und Grundstücksfläche 850 m².',
+    })
+    const query = vi.fn().mockResolvedValue({ rows: [{ platform: 'zvg-portal', external_id: '7265' }] })
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
+      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
+    )
+    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
+    vi.mocked(readExtractionCache).mockResolvedValue({})
+
+    // supportsLlmBatch alone would say gemini-native can batch — the
+    // known-broken capability (isLlmBatchProviderBroken) must still force
+    // the synchronous path instead of collecting doomed batch items.
+    await runReprocess({ batch: true })
+
+    expect(extractByLlm).toHaveBeenCalled()
   })
 
   it('does not select entries only missing LLM-only fields when no LLM provider is configured', async () => {

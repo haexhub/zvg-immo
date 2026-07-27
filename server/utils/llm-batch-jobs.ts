@@ -20,6 +20,22 @@ export interface LlmBatchJob {
   submittedAt: string
   checkedAt: string | null
   updatedAt: string
+  errorMessage: string | null
+}
+
+// Records whether the *last* real attempt (not a deliberate quota/backoff
+// skip) to submit a batch for this provider actually reached the provider
+// and was accepted — e.g. Gemini's free tier rejects batchGenerateContent
+// outright with 400 FAILED_PRECONDITION, a fact no static config flag can
+// capture reliably. enrich.ts/reprocess.ts read this alongside
+// supportsLlmBatch() so a confirmed-broken provider falls back to the
+// synchronous path automatically instead of submitting doomed jobs forever,
+// and /settings surfaces the real message instead of a silent stuck backlog.
+export interface LlmBatchCapability {
+  ok: boolean
+  message: string | null
+  checkedAt: string
+  source: 'enrich' | 'reprocess'
 }
 
 export interface GeminiBatchQuotaUsage {
@@ -181,6 +197,79 @@ export async function setGeminiBatchQuotaBackoff(day: string, backoffUntil: stri
   }
 }
 
+const LLM_BATCH_CAPABILITY_KEY = 'llm_batch_capability'
+
+let memoryLlmBatchCapability: Record<string, LlmBatchCapability> = {}
+
+function coerceLlmBatchCapabilityEntry(value: unknown): LlmBatchCapability | null {
+  if (!value || typeof value !== 'object') return null
+  const v = value as Record<string, unknown>
+  if (typeof v.ok !== 'boolean') return null
+  if (typeof v.checkedAt !== 'string' || !v.checkedAt) return null
+  if (v.source !== 'enrich' && v.source !== 'reprocess') return null
+  return {
+    ok: v.ok,
+    message: typeof v.message === 'string' && v.message ? v.message : null,
+    checkedAt: v.checkedAt,
+    source: v.source,
+  }
+}
+
+function coerceLlmBatchCapabilityMap(value: unknown): Record<string, LlmBatchCapability> {
+  if (!value || typeof value !== 'object') return {}
+  const out: Record<string, LlmBatchCapability> = {}
+  for (const [provider, raw] of Object.entries(value as Record<string, unknown>)) {
+    const entry = coerceLlmBatchCapabilityEntry(raw)
+    if (entry) out[provider] = entry
+  }
+  return out
+}
+
+export async function getAllLlmBatchCapabilities(): Promise<Record<string, LlmBatchCapability>> {
+  const db = getPool()
+  if (!db) return memoryLlmBatchCapability
+  try {
+    const { rows } = await db.query<{ value: unknown }>(
+      'SELECT value FROM app_settings WHERE key = $1',
+      [LLM_BATCH_CAPABILITY_KEY],
+    )
+    return coerceLlmBatchCapabilityMap(rows[0]?.value)
+  } catch (err) {
+    console.warn(`[llm-batch-jobs] capability read failed: ${(err as Error).message}`)
+    return memoryLlmBatchCapability
+  }
+}
+
+export async function getLlmBatchCapability(provider: string): Promise<LlmBatchCapability | null> {
+  const all = await getAllLlmBatchCapabilities()
+  return all[provider] ?? null
+}
+
+export async function recordLlmBatchCapability(
+  provider: string,
+  entry: { ok: boolean; message: string | null; source: 'enrich' | 'reprocess' },
+): Promise<void> {
+  const checkedAt = new Date().toISOString()
+  const next: LlmBatchCapability = { ok: entry.ok, message: entry.message, checkedAt, source: entry.source }
+  const db = getPool()
+  if (!db) {
+    memoryLlmBatchCapability = { ...memoryLlmBatchCapability, [provider]: next }
+    return
+  }
+  try {
+    const current = await getAllLlmBatchCapabilities()
+    const merged = { ...current, [provider]: next }
+    await db.query(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, now())
+       ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()`,
+      [LLM_BATCH_CAPABILITY_KEY, JSON.stringify(merged)],
+    )
+  } catch (err) {
+    console.warn(`[llm-batch-jobs] capability write failed for ${provider}: ${(err as Error).message}`)
+    memoryLlmBatchCapability = { ...memoryLlmBatchCapability, [provider]: next }
+  }
+}
+
 export async function withGeminiBatchQuotaLock<T>(fn: () => Promise<T>): Promise<T> {
   const db = getPool()
   if (!db) return withMemoryGeminiBatchQuotaLock(fn)
@@ -275,8 +364,9 @@ async function listLlmBatchJobs(opts: {
       submitted_at: Date | string
       checked_at: Date | string | null
       updated_at: Date | string
+      error_message: string | null
     }>(
-      `SELECT job_name, source, status, item_count, custom_id_map, submitted_at, checked_at, updated_at
+      `SELECT job_name, source, status, item_count, custom_id_map, submitted_at, checked_at, updated_at, error_message
        FROM llm_batch_jobs
        ${where}
        ORDER BY submitted_at ${order}
@@ -292,6 +382,7 @@ async function listLlmBatchJobs(opts: {
       submittedAt: toIso(r.submitted_at),
       checkedAt: r.checked_at == null ? null : toIso(r.checked_at),
       updatedAt: toIso(r.updated_at),
+      errorMessage: r.error_message,
     }))
   } catch (err) {
     console.warn(`[llm-batch-jobs] list failed: ${(err as Error).message}`)
@@ -316,15 +407,16 @@ export async function markLlmBatchJobResolved(
   jobName: string,
   status: Exclude<LlmBatchJobStatus, 'pending'>,
   checkedAt: string,
+  errorMessage: string | null = null,
 ): Promise<void> {
   const db = getPool()
   if (!db) return
   try {
     await db.query(
       `UPDATE llm_batch_jobs
-       SET status = $2, checked_at = $3, updated_at = now()
+       SET status = $2, checked_at = $3, updated_at = now(), error_message = $4
        WHERE job_name = $1`,
-      [jobName, status, checkedAt],
+      [jobName, status, checkedAt, errorMessage],
     )
   } catch (err) {
     console.warn(`[llm-batch-jobs] status update failed for ${jobName}: ${(err as Error).message}`)

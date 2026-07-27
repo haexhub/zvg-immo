@@ -523,7 +523,21 @@ function profileSupportsBatch(profile: LlmProviderProfileForm): boolean {
     (profile.provider === 'openai-compatible' && isOpenAiBatchBaseUrl(profile.baseUrl))
 }
 
+// The last *real* batch submit attempt for this provider was rejected (e.g.
+// Gemini's free tier returns 400 FAILED_PRECONDITION on every
+// batchGenerateContent call) — a static config shape can't know this, only
+// an actual attempt can. Backed by /api/settings/llm-batch-jobs'
+// `capabilities` (server/utils/llm-batch-jobs.ts's recordLlmBatchCapability).
+function providerCapability(provider: LlmProvider): LlmBatchCapability | null {
+  return llmBatchJobs.value?.capabilities?.[provider] ?? null
+}
+
+function providerBatchBroken(provider: LlmProvider): boolean {
+  return providerCapability(provider)?.ok === false
+}
+
 function profileCanSelectBatch(profile: LlmProviderProfileForm): boolean {
+  if (providerBatchBroken(profile.provider)) return false
   return profile.provider === 'gemini-native' ||
     (
       (profile.provider === 'claude-proxy' ||
@@ -684,6 +698,13 @@ interface LlmBatchJobOverviewItem {
   submittedAt: string
   checkedAt: string | null
   updatedAt: string
+  errorMessage: string | null
+}
+interface LlmBatchCapability {
+  ok: boolean
+  message: string | null
+  checkedAt: string
+  source: 'enrich' | 'reprocess'
 }
 interface LlmBatchJobsOverview {
   totalJobs: number
@@ -699,9 +720,11 @@ interface LlmBatchJobsOverview {
   }
   jobs: LlmBatchJobOverviewItem[]
   recentJobs: LlmBatchJobOverviewItem[]
+  capabilities: Record<string, LlmBatchCapability>
 }
 const reprocessLimit = ref('10')
 const reprocessCountry = ref('de')
+const reprocessBatch = ref(false)
 const reprocessPending = ref(false)
 const reprocessError = ref<string | null>(null)
 const reprocessResult = ref<ReprocessResult | null>(null)
@@ -724,6 +747,12 @@ const llmBatchBacklog = computed(() => llmBatchJobs.value?.backlog ?? {
   sampleRequestKeys: [],
   orphanedRequestKeys: [],
 })
+
+const brokenBatchCapabilities = computed(() =>
+  Object.entries(llmBatchJobs.value?.capabilities ?? {})
+    .filter(([, capability]) => !capability.ok)
+    .map(([provider, capability]) => ({ provider, message: capability.message, checkedAt: capability.checkedAt })),
+)
 
 async function loadLlmBatchJobs(): Promise<void> {
   llmBatchJobsPending.value = true
@@ -757,6 +786,7 @@ async function runReprocessTest(): Promise<void> {
       body: {
         limit,
         country: reprocessCountry.value.trim() || undefined,
+        batch: reprocessBatch.value || undefined,
       },
     })
     await loadLlmBatchJobs()
@@ -1119,6 +1149,9 @@ onBeforeUnmount(stopPolling)
                 <p v-if="!profileSupportsBatch(profile)" class="text-xs text-muted-foreground">
                   {{ $t('settings.llmProvider.batchUnsupported') }}
                 </p>
+                <p v-else-if="providerBatchBroken(profile.provider)" class="text-xs text-destructive">
+                  {{ $t('settings.llmProvider.batchBroken', { message: providerCapability(profile.provider)?.message ?? '' }) }}
+                </p>
               </div>
 
               <div class="space-y-1">
@@ -1317,6 +1350,12 @@ onBeforeUnmount(stopPolling)
           </p>
           <p v-if="llmBatchJobsError" class="text-sm text-destructive">{{ llmBatchJobsError }}</p>
 
+          <div v-if="brokenBatchCapabilities.length" class="space-y-1">
+            <div v-for="entry in brokenBatchCapabilities" :key="entry.provider" class="text-sm text-destructive border border-destructive/30 rounded-md p-2">
+              {{ $t('settings.llmBatch.capabilityBroken', { provider: entry.provider, message: entry.message ?? '', at: formatBatchDate(entry.checkedAt) }) }}
+            </div>
+          </div>
+
           <div class="grid grid-cols-2 gap-3 text-sm">
             <div class="border rounded-md p-3">
               <div class="text-xs text-muted-foreground">{{ $t('settings.llmBatch.totalJobs') }}</div>
@@ -1424,6 +1463,7 @@ onBeforeUnmount(stopPolling)
                   </div>
                 </div>
               </div>
+              <p v-if="job.errorMessage" class="text-sm text-destructive">{{ job.errorMessage }}</p>
               <div v-if="job.requestKeys.length" class="max-h-28 overflow-auto rounded border bg-muted/30 p-2">
                 <div v-for="key in job.requestKeys" :key="`recent:${job.jobName}:${key}`" class="font-mono text-xs leading-6">
                   {{ key }}
@@ -1456,6 +1496,10 @@ onBeforeUnmount(stopPolling)
                 <Input v-model="reprocessCountry" />
               </div>
             </div>
+            <label class="flex items-center gap-2 text-sm">
+              <Checkbox v-model="reprocessBatch" />
+              {{ $t('settings.reprocess.batchLabel') }}
+            </label>
             <Button type="submit" :disabled="reprocessPending">
               {{ reprocessPending ? $t('settings.reprocess.running') : $t('settings.reprocess.run') }}
             </Button>

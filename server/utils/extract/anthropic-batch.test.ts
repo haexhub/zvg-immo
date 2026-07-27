@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { LlmConfig } from './llm'
 
-vi.mock('../llm-batch-jobs', () => ({ insertLlmBatchJob: vi.fn().mockResolvedValue(true) }))
+vi.mock('../llm-batch-jobs', () => ({
+  insertLlmBatchJob: vi.fn().mockResolvedValue(true),
+  recordLlmBatchCapability: vi.fn().mockResolvedValue(undefined),
+}))
 
 const config: LlmConfig = {
   provider: 'claude-proxy',
@@ -30,7 +33,7 @@ afterEach(() => {
 describe('submitAnthropicBatch', () => {
   it('submits Messages requests and records the custom_id map', async () => {
     stubOfetch([{ match: '/v1/messages/batches', data: { id: 'msgbatch_abc' } }])
-    const { insertLlmBatchJob } = await import('../llm-batch-jobs')
+    const { insertLlmBatchJob, recordLlmBatchCapability } = await import('../llm-batch-jobs')
     const { submitAnthropicBatch } = await import('./anthropic-batch')
 
     const result = await submitAnthropicBatch(
@@ -74,16 +77,44 @@ describe('submitAnthropicBatch', () => {
       itemCount: 1,
       customIdMap: { [body.requests[0]!.custom_id]: 'zvg-portal:7265' },
     })
+    expect(recordLlmBatchCapability).toHaveBeenCalledWith('claude-proxy', { ok: true, message: null, source: 'enrich' })
   })
 
   it('returns null when the create response has no id', async () => {
     stubOfetch([{ match: '/v1/messages/batches', data: {} }])
-    const { insertLlmBatchJob } = await import('../llm-batch-jobs')
+    const { insertLlmBatchJob, recordLlmBatchCapability } = await import('../llm-batch-jobs')
     const { submitAnthropicBatch } = await import('./anthropic-batch')
 
     await expect(submitAnthropicBatch([{ key: 'x:y', input: { title: 'Haus', description: null } }], config, 'enrich'))
       .resolves.toBeNull()
     expect(insertLlmBatchJob).not.toHaveBeenCalled()
+    expect(recordLlmBatchCapability).toHaveBeenCalledWith('claude-proxy', {
+      ok: false,
+      message: 'create response had no batch id',
+      source: 'enrich',
+    })
+  })
+
+  it('records the real error body as capability ok:false on a rejected submit', async () => {
+    stubOfetch([
+      {
+        match: '/v1/messages/batches',
+        error: Object.assign(new Error('[POST] "...": 400 Bad Request'), {
+          data: { error: { type: 'invalid_request_error', message: 'model: field required' } },
+        }),
+      },
+    ])
+    const { recordLlmBatchCapability } = await import('../llm-batch-jobs')
+    const { submitAnthropicBatch } = await import('./anthropic-batch')
+
+    await expect(
+      submitAnthropicBatch([{ key: 'x:y', input: { title: 'Haus', description: null } }], config, 'enrich'),
+    ).resolves.toBeNull()
+    expect(recordLlmBatchCapability).toHaveBeenCalledWith('claude-proxy', {
+      ok: false,
+      message: 'model: field required',
+      source: 'enrich',
+    })
   })
 
   it('splits requests before the serialized batch body reaches Anthropic limits', async () => {

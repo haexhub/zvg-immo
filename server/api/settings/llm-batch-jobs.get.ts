@@ -6,7 +6,13 @@
 
 import type { AuctionExtraction } from '~/types/auction'
 import { MAX_LLM_FAILURES } from '~/lib/llm-limits'
-import { listPendingLlmBatchJobs, listRecentLlmBatchJobs, type LlmBatchJobStatus } from '~/server/utils/llm-batch-jobs'
+import {
+  getAllLlmBatchCapabilities,
+  listPendingLlmBatchJobs,
+  listRecentLlmBatchJobs,
+  type LlmBatchCapability,
+  type LlmBatchJobStatus,
+} from '~/server/utils/llm-batch-jobs'
 import { readExtractionCache } from '~/server/utils/extraction-cache'
 
 export interface LlmBatchJobOverviewItem {
@@ -20,6 +26,7 @@ export interface LlmBatchJobOverviewItem {
   submittedAt: string
   checkedAt: string | null
   updatedAt: string
+  errorMessage: string | null
 }
 
 export interface LlmBatchJobsOverview {
@@ -36,6 +43,11 @@ export interface LlmBatchJobsOverview {
   }
   jobs: LlmBatchJobOverviewItem[]
   recentJobs: LlmBatchJobOverviewItem[]
+  // Keyed by LlmProvider ('gemini-native' | 'openai-compatible' | 'claude-proxy')
+  // — whether the *last real* batch submit attempt for that provider was
+  // accepted, so /settings can show why batch mode currently isn't running
+  // instead of a silently stuck backlog.
+  capabilities: Record<string, LlmBatchCapability>
 }
 
 const MAX_KEYS_PER_GROUP = 200
@@ -67,9 +79,10 @@ function hasMissingLlmFields(entry: AuctionExtraction): boolean {
 }
 
 export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
-  const [jobs, recentJobs] = await Promise.all([
+  const [jobs, recentJobs, capabilities] = await Promise.all([
     listPendingLlmBatchJobs(),
     listRecentLlmBatchJobs(20),
+    getAllLlmBatchCapabilities(),
   ])
   const cache = await readExtractionCache()
   const keysByJob = new Map<string, string[]>()
@@ -125,6 +138,7 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
       submittedAt: job.submittedAt,
       checkedAt: job.checkedAt,
       updatedAt: job.updatedAt,
+      errorMessage: job.errorMessage,
     }
   }
 
@@ -144,5 +158,6 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
     },
     jobs: overviewJobs,
     recentJobs: recentJobs.map(mapJob),
+    capabilities,
   }
 })

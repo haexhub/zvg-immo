@@ -3,6 +3,7 @@ import type { LlmConfig } from './llm'
 
 vi.mock('../llm-batch-jobs', () => ({
   insertLlmBatchJob: vi.fn().mockResolvedValue(true),
+  recordLlmBatchCapability: vi.fn().mockResolvedValue(undefined),
   readGeminiBatchQuotaUsage: vi.fn().mockResolvedValue({
     day: '2026-07-27',
     jobs: 0,
@@ -103,11 +104,40 @@ describe('submitGeminiBatch', () => {
     expect((submitCall?.[1] as { body: unknown })?.body).toEqual({
       batch: { display_name: 'zvg-immo-enrich', input_config: { file_name: 'files/abc' } },
     })
-    const { recordGeminiBatchQuotaUsage } = await import('../llm-batch-jobs')
+    const { recordGeminiBatchQuotaUsage, recordLlmBatchCapability } = await import('../llm-batch-jobs')
     expect(recordGeminiBatchQuotaUsage).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({ jobs: 1, items: 1 }),
     )
+    expect(recordLlmBatchCapability).toHaveBeenCalledWith('gemini-native', { ok: true, message: null, source: 'enrich' })
+  })
+
+  it('records the real Google error body as capability ok:false on a rejected submit', async () => {
+    stubOfetch([
+      { match: '/upload/v1beta/files', raw: { headers: { 'x-goog-upload-url': 'https://upload.example/session-1' } } },
+      { match: 'upload.example/session-1', data: { file: { name: 'files/abc' } } },
+      {
+        match: ':batchGenerateContent',
+        error: Object.assign(new Error('[POST] "...": 400 Bad Request'), {
+          data: { error: { code: 400, message: 'Precondition check failed.', status: 'FAILED_PRECONDITION' } },
+        }),
+      },
+    ])
+    const { recordLlmBatchCapability } = await import('../llm-batch-jobs')
+    const { submitGeminiBatch } = await import('./gemini-batch')
+
+    const result = await submitGeminiBatch(
+      [{ key: 'zvg-portal:1', input: { title: 'Haus', description: 'schön', pdfText: null } }],
+      config,
+      'enrich',
+    )
+
+    expect(result).toBeNull()
+    expect(recordLlmBatchCapability).toHaveBeenCalledWith('gemini-native', {
+      ok: false,
+      message: 'FAILED_PRECONDITION: Precondition check failed.',
+      source: 'enrich',
+    })
   })
 
   it('free-tier caps the submitted JSONL and leaves the rest for retry', async () => {
@@ -331,6 +361,21 @@ describe('pollGeminiBatch', () => {
     const { pollGeminiBatch } = await import('./gemini-batch')
 
     await expect(pollGeminiBatch('batches/xyz', config)).resolves.toEqual({ state: 'failed' })
+  })
+
+  it('surfaces the job error message for a failed state', async () => {
+    stubOfetch([
+      {
+        match: '/v1beta/batches/xyz',
+        data: { metadata: { state: 'JOB_STATE_FAILED' }, error: { code: 13, message: 'internal error' } },
+      },
+    ])
+    const { pollGeminiBatch } = await import('./gemini-batch')
+
+    await expect(pollGeminiBatch('batches/xyz', config)).resolves.toEqual({
+      state: 'failed',
+      errorMessage: 'internal error',
+    })
   })
 
   it('reports expired for an expired state', async () => {

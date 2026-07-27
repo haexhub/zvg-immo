@@ -10,9 +10,18 @@ import {
   type LlmInput,
 } from './llm'
 import { parseOpenAiExtractionResponse, toOpenAiContent } from './providers/openai-compatible'
-import { insertLlmBatchJob } from '../llm-batch-jobs'
+import { insertLlmBatchJob, recordLlmBatchCapability } from '../llm-batch-jobs'
 import type { PollResult } from './gemini-batch'
 import type { LlmBatchSubmitResult } from './llm-batch'
+
+/** ofetch's FetchError.message is generic ("[POST] "url": 400 Bad Request")
+ *  — the actionable text lives in the parsed JSON body ofetch exposes as
+ *  `.data`, shaped like Google's ({error:{message}}) for OpenAI too. */
+function extractOfetchErrorMessage(err: unknown): string {
+  const data = (err as { data?: unknown })?.data as { error?: { message?: unknown } } | undefined
+  if (data?.error && typeof data.error.message === 'string') return data.error.message
+  return err instanceof Error ? err.message : String(err)
+}
 
 const MAX_OPENAI_BATCH_REQUESTS = 50_000
 const MAX_OPENAI_BATCH_FILE_BYTES = 200 * 1024 * 1024
@@ -57,7 +66,11 @@ function buildBatchLine(customId: string, input: LlmInput, config: LlmConfig): s
   })
 }
 
-async function uploadJsonl(jsonl: string, config: LlmConfig): Promise<string | null> {
+async function uploadJsonl(
+  jsonl: string,
+  config: LlmConfig,
+  source: 'enrich' | 'reprocess',
+): Promise<string | null> {
   const form = new FormData()
   form.append('purpose', 'batch')
   form.append(
@@ -72,7 +85,9 @@ async function uploadJsonl(jsonl: string, config: LlmConfig): Promise<string | n
     signal: AbortSignal.timeout(120_000),
   })
   if (!file.id) {
-    console.warn('[openai-batch] file upload response had no file id')
+    const message = 'file upload response had no file id'
+    console.warn(`[openai-batch] ${message}`)
+    await recordLlmBatchCapability('openai-compatible', { ok: false, message, source })
     return null
   }
   return file.id
@@ -84,7 +99,7 @@ async function submitOpenAiRequestChunk(
   config: LlmConfig,
   source: 'enrich' | 'reprocess',
 ): Promise<string | null> {
-  const fileId = await uploadJsonl(lines.join('\n'), config)
+  const fileId = await uploadJsonl(lines.join('\n'), config, source)
   if (!fileId) return null
   const batch = await $fetch<{ id?: string }>(`${apiBase(config)}/batches`, {
     method: 'POST',
@@ -101,9 +116,14 @@ async function submitOpenAiRequestChunk(
     signal: AbortSignal.timeout(30_000),
   })
   if (!batch.id) {
-    console.warn('[openai-batch] create response had no batch id')
+    const message = 'create response had no batch id'
+    console.warn(`[openai-batch] ${message}`)
+    await recordLlmBatchCapability('openai-compatible', { ok: false, message, source })
     return null
   }
+  // OpenAI accepted the request — batch submission itself works for this
+  // account/model, independent of whether our own bookkeeping below does.
+  await recordLlmBatchCapability('openai-compatible', { ok: true, message: null, source })
   const recorded = await insertLlmBatchJob({
     jobName: batch.id,
     source,
@@ -192,7 +212,9 @@ export async function submitOpenAiBatch(
       jobNames.push(jobName)
       submitted.push(...chunk.items.map((item) => ({ key: item.key, jobName })))
     } catch (err) {
-      console.warn(`[openai-batch] submit failed: ${(err as Error).message}`)
+      const message = extractOfetchErrorMessage(err)
+      console.warn(`[openai-batch] submit failed: ${message}`)
+      await recordLlmBatchCapability('openai-compatible', { ok: false, message, source })
       retryItems = retryItems.concat(chunks.slice(chunkIndex).flatMap((c) => c.items))
       break
     }
@@ -203,13 +225,15 @@ export async function submitOpenAiBatch(
 
 export async function pollOpenAiBatch(jobName: string, config: LlmConfig): Promise<PollResult> {
   try {
-    const resp = await $fetch<{ status?: string; output_file_id?: string | null }>(
-      `${apiBase(config)}/batches/${jobName}`,
-      {
-        headers: authHeaders(config),
-        signal: AbortSignal.timeout(30_000),
-      },
-    )
+    const resp = await $fetch<{
+      status?: string
+      output_file_id?: string | null
+      errors?: { data?: Array<{ message?: string }> } | null
+    }>(`${apiBase(config)}/batches/${jobName}`, {
+      headers: authHeaders(config),
+      signal: AbortSignal.timeout(30_000),
+    })
+    const errorMessage = resp.errors?.data?.[0]?.message
     if (resp.status === 'completed') {
       if (!resp.output_file_id) {
         console.warn(`[openai-batch] job ${jobName} completed without an output_file_id`)
@@ -217,8 +241,8 @@ export async function pollOpenAiBatch(jobName: string, config: LlmConfig): Promi
       }
       return { state: 'succeeded', resultFileName: resp.output_file_id }
     }
-    if (resp.status === 'failed' || resp.status === 'cancelled') return { state: 'failed' }
-    if (resp.status === 'expired') return { state: 'expired' }
+    if (resp.status === 'failed' || resp.status === 'cancelled') return { state: 'failed', errorMessage }
+    if (resp.status === 'expired') return { state: 'expired', errorMessage }
     return { state: 'pending' }
   } catch (err) {
     console.warn(`[openai-batch] poll failed for ${jobName}: ${(err as Error).message}`)

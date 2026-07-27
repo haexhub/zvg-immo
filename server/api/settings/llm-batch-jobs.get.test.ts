@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 vi.mock('~/server/utils/llm-batch-jobs', () => ({
   listPendingLlmBatchJobs: vi.fn(),
   listRecentLlmBatchJobs: vi.fn(),
+  getAllLlmBatchCapabilities: vi.fn(),
 }))
 vi.mock('~/server/utils/extraction-cache', () => ({ readExtractionCache: vi.fn() }))
 
@@ -15,7 +16,8 @@ afterEach(() => {
 describe('/api/settings/llm-batch-jobs', () => {
   it('summarizes pending jobs and their waiting request keys', async () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
-    const { listPendingLlmBatchJobs, listRecentLlmBatchJobs } = await import('~/server/utils/llm-batch-jobs')
+    const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
+      await import('~/server/utils/llm-batch-jobs')
     const { readExtractionCache } = await import('~/server/utils/extraction-cache')
     const pendingJobs = [
       {
@@ -27,6 +29,7 @@ describe('/api/settings/llm-batch-jobs', () => {
         submittedAt: '2026-07-26T18:00:00.000Z',
         checkedAt: null,
         updatedAt: '2026-07-26T18:00:00.000Z',
+        errorMessage: null,
       },
     ] as const
     vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([...pendingJobs])
@@ -41,8 +44,12 @@ describe('/api/settings/llm-batch-jobs', () => {
         submittedAt: '2026-07-25T18:00:00.000Z',
         checkedAt: '2026-07-25T19:00:00.000Z',
         updatedAt: '2026-07-25T19:00:00.000Z',
+        errorMessage: null,
       },
     ])
+    vi.mocked(getAllLlmBatchCapabilities).mockResolvedValue({
+      'gemini-native': { ok: false, message: 'FAILED_PRECONDITION: Precondition check failed.', checkedAt: '2026-07-26T18:00:00.000Z', source: 'enrich' },
+    })
     vi.mocked(readExtractionCache).mockResolvedValue({
       'zvg-portal:1': { llmBatchJob: 'msgbatch_abc', at: '2026-07-26T18:00:00.000Z' } as never,
       'zvg-portal:2': { llmBatchJob: 'msgbatch_abc', at: '2026-07-26T18:00:00.000Z' } as never,
@@ -77,6 +84,7 @@ describe('/api/settings/llm-batch-jobs', () => {
           submittedAt: '2026-07-26T18:00:00.000Z',
           checkedAt: null,
           updatedAt: '2026-07-26T18:00:00.000Z',
+          errorMessage: null,
         },
       ],
       recentJobs: [
@@ -91,6 +99,7 @@ describe('/api/settings/llm-batch-jobs', () => {
           submittedAt: '2026-07-26T18:00:00.000Z',
           checkedAt: null,
           updatedAt: '2026-07-26T18:00:00.000Z',
+          errorMessage: null,
         },
         {
           jobName: 'batch_done',
@@ -103,8 +112,12 @@ describe('/api/settings/llm-batch-jobs', () => {
           submittedAt: '2026-07-25T18:00:00.000Z',
           checkedAt: '2026-07-25T19:00:00.000Z',
           updatedAt: '2026-07-25T19:00:00.000Z',
+          errorMessage: null,
         },
       ],
+      capabilities: {
+        'gemini-native': { ok: false, message: 'FAILED_PRECONDITION: Precondition check failed.', checkedAt: '2026-07-26T18:00:00.000Z', source: 'enrich' },
+      },
     })
   })
 })

@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { LlmConfig } from './llm'
 
-vi.mock('../llm-batch-jobs', () => ({ insertLlmBatchJob: vi.fn().mockResolvedValue(true) }))
+vi.mock('../llm-batch-jobs', () => ({
+  insertLlmBatchJob: vi.fn().mockResolvedValue(true),
+  recordLlmBatchCapability: vi.fn().mockResolvedValue(undefined),
+}))
 
 const config: LlmConfig = {
   provider: 'openai-compatible',
@@ -34,7 +37,7 @@ describe('submitOpenAiBatch', () => {
       { match: '/files', data: { id: 'file-abc' } },
       { match: '/batches', data: { id: 'batch_abc' } },
     ])
-    const { insertLlmBatchJob } = await import('../llm-batch-jobs')
+    const { insertLlmBatchJob, recordLlmBatchCapability } = await import('../llm-batch-jobs')
     const { submitOpenAiBatch } = await import('./openai-batch')
 
     const result = await submitOpenAiBatch(
@@ -44,6 +47,7 @@ describe('submitOpenAiBatch', () => {
     )
 
     expect(result?.jobName).toBe('batch_abc')
+    expect(recordLlmBatchCapability).toHaveBeenCalledWith('openai-compatible', { ok: true, message: null, source: 'enrich' })
     expect(result?.submitted).toEqual([{ key: 'zvg-portal:7265', jobName: 'batch_abc' }])
     expect(result?.retryItems).toEqual([])
     expect(vi.mocked($fetch)).toHaveBeenCalledWith(
@@ -113,12 +117,40 @@ describe('submitOpenAiBatch', () => {
 
   it('returns null when the upload response has no file id', async () => {
     stubOfetch([{ match: '/files', data: {} }])
-    const { insertLlmBatchJob } = await import('../llm-batch-jobs')
+    const { insertLlmBatchJob, recordLlmBatchCapability } = await import('../llm-batch-jobs')
     const { submitOpenAiBatch } = await import('./openai-batch')
 
     await expect(submitOpenAiBatch([{ key: 'x:y', input: { title: 'Haus', description: null } }], config, 'enrich'))
       .resolves.toBeNull()
     expect(insertLlmBatchJob).not.toHaveBeenCalled()
+    expect(recordLlmBatchCapability).toHaveBeenCalledWith('openai-compatible', {
+      ok: false,
+      message: 'file upload response had no file id',
+      source: 'enrich',
+    })
+  })
+
+  it('records the real error body as capability ok:false on a rejected submit', async () => {
+    stubOfetch([
+      { match: '/files', data: { id: 'file-abc' } },
+      {
+        match: '/batches',
+        error: Object.assign(new Error('[POST] "...": 400 Bad Request'), {
+          data: { error: { message: 'Invalid model.' } },
+        }),
+      },
+    ])
+    const { recordLlmBatchCapability } = await import('../llm-batch-jobs')
+    const { submitOpenAiBatch } = await import('./openai-batch')
+
+    await expect(
+      submitOpenAiBatch([{ key: 'x:y', input: { title: 'Haus', description: null } }], config, 'enrich'),
+    ).resolves.toBeNull()
+    expect(recordLlmBatchCapability).toHaveBeenCalledWith('openai-compatible', {
+      ok: false,
+      message: 'Invalid model.',
+      source: 'enrich',
+    })
   })
 })
 

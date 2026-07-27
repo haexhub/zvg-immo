@@ -16,6 +16,7 @@ import { extractByLlm, type LlmConfig, type LlmInput } from '~/server/utils/extr
 import { prepareArchivedLlmDocuments } from '~/server/utils/extract/llm-documents'
 import {
   isLlmBatchPending,
+  isLlmBatchProviderBroken,
   submitLlmBatch,
   supportsLlmBatch,
   supportsNativeBatchDocuments,
@@ -281,7 +282,13 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
   // Any provider without a Batch API integration falls back to the
   // synchronous path even if `batch: true` was requested.
   const batchRequested = opts.batch ?? executionMode === 'batch'
-  const useBatch = batchRequested && supportsLlmBatch(llmConfig)
+  const batchProviderBroken = batchRequested && (await isLlmBatchProviderBroken(llmConfig))
+  if (batchProviderBroken) {
+    console.warn(
+      `[reprocess] batch mode requested but ${llmConfig?.provider} is known-broken (see /settings) — falling back to sync`,
+    )
+  }
+  const useBatch = batchRequested && supportsLlmBatch(llmConfig) && !batchProviderBroken
 
   let processed = 0
   let skipped = 0

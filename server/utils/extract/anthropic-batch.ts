@@ -14,9 +14,18 @@ import {
   type LlmConfig,
   type LlmInput,
 } from './llm'
-import { insertLlmBatchJob } from '../llm-batch-jobs'
+import { insertLlmBatchJob, recordLlmBatchCapability } from '../llm-batch-jobs'
 import type { PollResult } from './gemini-batch'
 import type { LlmBatchSubmitResult } from './llm-batch'
+
+/** ofetch's FetchError.message is generic ("[POST] "url": 400 Bad Request")
+ *  — the actionable text lives in the parsed JSON body ofetch exposes as
+ *  `.data`, shaped like `{error:{type,message}}` for Anthropic. */
+function extractOfetchErrorMessage(err: unknown): string {
+  const data = (err as { data?: unknown })?.data as { error?: { message?: unknown } } | undefined
+  if (data?.error && typeof data.error.message === 'string') return data.error.message
+  return err instanceof Error ? err.message : String(err)
+}
 
 type AnthropicContentBlock =
   | { type: 'text'; text: string }
@@ -100,9 +109,14 @@ async function submitAnthropicRequestChunk(
     signal: AbortSignal.timeout(30_000),
   })
   if (!batch.id) {
-    console.warn('[anthropic-batch] create response had no batch id')
+    const message = 'create response had no batch id'
+    console.warn(`[anthropic-batch] ${message}`)
+    await recordLlmBatchCapability('claude-proxy', { ok: false, message, source })
     return null
   }
+  // Anthropic accepted the request — batch submission itself works for this
+  // account/model, independent of whether our own bookkeeping below does.
+  await recordLlmBatchCapability('claude-proxy', { ok: true, message: null, source })
   const recorded = await insertLlmBatchJob({
     jobName: batch.id,
     source,
@@ -182,7 +196,9 @@ export async function submitAnthropicBatch(
       jobNames.push(jobName)
       submitted.push(...chunk.items.map((item) => ({ key: item.key, jobName })))
     } catch (err) {
-      console.warn(`[anthropic-batch] submit failed: ${(err as Error).message}`)
+      const message = extractOfetchErrorMessage(err)
+      console.warn(`[anthropic-batch] submit failed: ${message}`)
+      await recordLlmBatchCapability('claude-proxy', { ok: false, message, source })
       retryItems = retryItems.concat(chunks.slice(chunkIndex).flatMap((c) => c.items))
       break
     }

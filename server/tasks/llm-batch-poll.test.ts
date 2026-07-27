@@ -51,6 +51,7 @@ function makeJob(overrides: Partial<LlmBatchJob> = {}): LlmBatchJob {
     submittedAt: '2026-07-26T18:00:00.000Z',
     checkedAt: null,
     updatedAt: '2026-07-26T18:00:00.000Z',
+    errorMessage: null,
     ...overrides,
   }
 }
@@ -147,14 +148,22 @@ describe('runLlmBatchPoll', () => {
     expect(markLlmBatchJobChecked).not.toHaveBeenCalled()
   })
 
-  it('marks a failed/expired job resolved without touching the cache', async () => {
+  it('marks a failed/expired job resolved with its error message, without touching the cache', async () => {
     vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([makeJob()])
-    vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'failed' })
+    vi.mocked(pollLlmBatch).mockResolvedValue({
+      state: 'failed',
+      errorMessage: 'FAILED_PRECONDITION: Precondition check failed.',
+    })
 
     const result = await runLlmBatchPoll()
 
     expect(result).toEqual({ checked: 1, merged: 0 })
-    expect(markLlmBatchJobResolved).toHaveBeenCalledWith('batches/abc', 'failed', expect.any(String))
+    expect(markLlmBatchJobResolved).toHaveBeenCalledWith(
+      'batches/abc',
+      'failed',
+      expect.any(String),
+      'FAILED_PRECONDITION: Precondition check failed.',
+    )
     expect(writeExtractionCache).not.toHaveBeenCalled()
   })
 
@@ -280,7 +289,7 @@ describe('runLlmBatchPoll', () => {
     const result = await runLlmBatchPoll()
 
     expect(result).toEqual({ checked: 2, merged: 0 })
-    expect(markLlmBatchJobResolved).toHaveBeenCalledWith('batches/good', 'failed', expect.any(String))
+    expect(markLlmBatchJobResolved).toHaveBeenCalledWith('batches/good', 'failed', expect.any(String), null)
     expect(markLlmBatchJobResolved).not.toHaveBeenCalledWith('batches/bad', expect.any(String), expect.any(String))
   })
 })
