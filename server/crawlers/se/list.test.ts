@@ -209,7 +209,10 @@ describe('extractKronofogdenPhotoUrls', () => {
     ])
   })
 
-  it('falls back to strict filename matching when the galleria close tag is missing (fails closed)', () => {
+  it('an unclosed galleria div is auto-closed at end of document, like a browser would', () => {
+    // A real HTML parser doesn't "fail to find" a missing close tag the way
+    // the old hand-rolled regex could — per the HTML5 spec it auto-closes
+    // the element at EOF, so both images still count as inside the gallery.
     const html = `
       <div id="galleria">
         <img src="/images/200.aaa/1781605779295/1.jpg">
@@ -217,6 +220,7 @@ describe('extractKronofogdenPhotoUrls', () => {
     `
 
     expect(extractKronofogdenPhotoUrls(html)).toEqual([
+      `${BASE}/images/200.aaa/1781605779295/1.jpg`,
       `${BASE}/images/200.bbb/1781594534027/Bild-002.jpg`,
     ])
   })
