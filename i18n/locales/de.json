@@ -365,6 +365,7 @@
       "processed": "Verarbeitet",
       "skipped": "Übersprungen",
       "llmCalls": "LLM-Aufrufe",
+      "warning": "Hinweis: {message}",
       "batchLabel": "Über Batch API einreichen (prüft, ob Batch für diesen Provider aktuell funktioniert)"
     },
     "llmBatch": {
@@ -373,6 +374,7 @@
       "reprocessRunning": "Extraktion läuft seit {at}",
       "reprocessLastRun": "Zuletzt gelaufen: {at} — {processed} verarbeitet, {llmCalls} LLM-Aufrufe, {duration}s",
       "reprocessLastError": "Letzter Lauf fehlgeschlagen: {message}",
+      "reprocessLastWarning": "Letzter Lauf mit Hinweis: {message}",
       "refresh": "Aktualisieren",
       "loadError": "Batch-Pipeline konnte nicht geladen werden.",
       "empty": "Keine offenen Batch-Requests.",

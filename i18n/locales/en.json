@@ -365,6 +365,7 @@
       "processed": "Processed",
       "skipped": "Skipped",
       "llmCalls": "LLM calls",
+      "warning": "Notice: {message}",
       "batchLabel": "Submit via Batch API (checks whether batch currently works for this provider)"
     },
     "llmBatch": {
@@ -373,6 +374,7 @@
       "reprocessRunning": "Extraction running since {at}",
       "reprocessLastRun": "Last run: {at} — {processed} processed, {llmCalls} LLM calls, {duration}s",
       "reprocessLastError": "Last run failed: {message}",
+      "reprocessLastWarning": "Last run notice: {message}",
       "refresh": "Refresh",
       "loadError": "Could not load the batch pipeline.",
       "empty": "No open batch requests.",

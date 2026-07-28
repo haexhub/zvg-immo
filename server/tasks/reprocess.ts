@@ -97,6 +97,7 @@ export interface ReprocessResult {
   skipped: number
   llmCalls: number
   durationMs: number
+  warning?: string
 }
 
 function readMaxLlmPerRun(): number {
@@ -107,6 +108,49 @@ function readMaxLlmPerRun(): number {
 interface Candidate {
   platform: string
   externalId: string
+}
+
+interface QuotaViolation {
+  quotaMetric?: unknown
+  quotaId?: unknown
+  quotaDimensions?: unknown
+  quotaValue?: unknown
+}
+
+function firstQuotaViolation(err: unknown): QuotaViolation | null {
+  const details = (err as { data?: { error?: { details?: unknown[] } } })?.data?.error?.details
+  if (!Array.isArray(details)) return null
+  for (const detail of details) {
+    const violations = (detail as { violations?: unknown[] })?.violations
+    if (!Array.isArray(violations)) continue
+    const violation = violations.find((entry) => entry && typeof entry === 'object')
+    if (violation) return violation as QuotaViolation
+  }
+  return null
+}
+
+function retryDelay(err: unknown): string | null {
+  const details = (err as { data?: { error?: { details?: unknown[] } } })?.data?.error?.details
+  if (!Array.isArray(details)) return null
+  for (const detail of details) {
+    const delay = (detail as { retryDelay?: unknown })?.retryDelay
+    if (typeof delay === 'string' && delay) return delay
+  }
+  return null
+}
+
+function buildLlmRateLimitWarning(err: unknown, llmConfig: LlmConfig | null): string {
+  const provider = llmConfig?.provider ?? 'openai-compatible'
+  const configuredModel = llmConfig?.model ?? 'unknown-model'
+  const violation = firstQuotaViolation(err)
+  const quotaDimensions = violation?.quotaDimensions as Record<string, unknown> | undefined
+  const model = typeof quotaDimensions?.model === 'string' && quotaDimensions.model ? quotaDimensions.model : configuredModel
+  const parts = [`LLM-Rate-Limit: ${provider}/${model}`]
+  if (typeof violation?.quotaId === 'string' && violation.quotaId) parts.push(`Quota ${violation.quotaId}`)
+  if (typeof violation?.quotaValue === 'string' && violation.quotaValue) parts.push(`Limit ${violation.quotaValue}`)
+  const delay = retryDelay(err)
+  if (delay) parts.push(`Retry nach ${delay}`)
+  return `${parts.join('; ')}.`
 }
 
 async function effectiveCandidateCountries(opts: ReprocessOptions): Promise<string[]> {
@@ -441,7 +485,8 @@ export default defineTask({
     try {
       await recordTaskRunStart('reprocess')
       const result = await runReprocess((event?.payload ?? {}) as ReprocessOptions)
-      await recordTaskRunEnd('reprocess', { result: { ...result } })
+      const { warning, ...summary } = result
+      await recordTaskRunEnd('reprocess', { result: summary, warning })
       return { result }
     } catch (err) {
       await recordTaskRunEnd('reprocess', { error: (err as Error).message })
@@ -508,6 +553,7 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
   let processed = 0
   let skipped = 0
   let llmCalls = 0
+  let warning: string | undefined
   const dirty: ExtractionCache = {}
   const batchItems: { key: string; input: LlmInput }[] = []
 
@@ -621,6 +667,7 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
       console.warn(`[reprocess] failed for ${platform}:${externalId}: ${(err as Error).message}`)
       skipped++
       if (isRateLimitError(err)) {
+        warning = buildLlmRateLimitWarning(err, llmConfig)
         console.warn('[reprocess] LLM provider rate-limited — stopping this run early')
         break
       }
@@ -656,5 +703,5 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
   console.log(
     `[reprocess] candidates=${candidates.length} processed=${processed} skipped=${skipped} llmCalls=${llmCalls} in ${(durationMs / 1000).toFixed(0)}s`,
   )
-  return { candidates: candidates.length, processed, skipped, llmCalls, durationMs }
+  return { candidates: candidates.length, processed, skipped, llmCalls, durationMs, ...(warning ? { warning } : {}) }
 }

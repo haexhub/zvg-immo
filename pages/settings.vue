@@ -686,6 +686,7 @@ interface ReprocessResult {
   processed: number
   skipped: number
   llmCalls: number
+  warning?: string | null
 }
 interface LlmBatchJobOverviewItem {
   jobName: string
@@ -714,6 +715,7 @@ interface TaskRunStatus {
   // summaries (see server/utils/task-runs.ts's TaskRunSummary).
   lastResult: Record<string, number> | null
   lastError: string | null
+  lastWarning: string | null
 }
 interface LlmBatchJobsOverview {
   totalJobs: number
@@ -1408,6 +1410,9 @@ onBeforeUnmount(stopPolling)
             <p v-if="llmBatchJobs.reprocessStatus.lastError" class="text-destructive">
               {{ $t('settings.llmBatch.reprocessLastError', { message: llmBatchJobs.reprocessStatus.lastError }) }}
             </p>
+            <p v-if="llmBatchJobs.reprocessStatus.lastWarning" class="text-amber-600 dark:text-amber-400">
+              {{ $t('settings.llmBatch.reprocessLastWarning', { message: llmBatchJobs.reprocessStatus.lastWarning }) }}
+            </p>
           </div>
 
           <div class="grid grid-cols-2 gap-3 text-sm">
@@ -1569,6 +1574,9 @@ onBeforeUnmount(stopPolling)
             <dt class="text-muted-foreground">{{ $t('settings.reprocess.llmCalls') }}</dt>
             <dd>{{ reprocessResult.llmCalls }}</dd>
           </dl>
+          <p v-if="reprocessResult?.warning" class="text-sm text-amber-600 dark:text-amber-400">
+            {{ $t('settings.reprocess.warning', { message: reprocessResult.warning }) }}
+          </p>
         </CardContent>
       </Card>
 
