@@ -62,6 +62,7 @@ const translatedTitle = ref<string | null>(null)
 const translatedDescription = ref<string | null>(null)
 const translatedDocumentSummary = ref<string | null>(null)
 const translatedExtractionTexts = ref<TranslatableExtractionTexts | null>(null)
+const translationPending = ref(false)
 
 const displayTitle = computed(() => translatedTitle.value ?? a.value?.title ?? null)
 const displayDescription = computed(() => translatedDescription.value ?? a.value?.description ?? null)
@@ -73,6 +74,34 @@ const titleTranslated = computed(() => translatedTitle.value != null)
 const descriptionTranslated = computed(
   () => translatedDescription.value != null || translatedDocumentSummary.value != null,
 )
+const sourceExtraction = computed(() => a.value?.extraction ?? null)
+const auctionDataTranslating = computed(() => translationPending.value && !!sourceExtraction.value?.biddingNotes)
+const propertyDataTranslating = computed(
+  () => translationPending.value && !!(sourceExtraction.value?.floor || sourceExtraction.value?.renovationNotes),
+)
+const amenitiesTranslating = computed(
+  () => translationPending.value && !!(sourceExtraction.value?.heating || sourceExtraction.value?.insights?.construction),
+)
+const descriptionTranslating = computed(
+  () => translationPending.value && !!(a.value?.description?.trim() || sourceExtraction.value?.documentSummary?.trim()),
+)
+const defectsTranslating = computed(() => translationPending.value && !!sourceExtraction.value?.insights?.defects?.length)
+const encumbrancesTranslating = computed(() => translationPending.value && !!sourceExtraction.value?.insights?.encumbrances?.length)
+const constructionTranslating = computed(() => translationPending.value && !!sourceExtraction.value?.insights?.construction)
+const locationCharacterTranslating = computed(() => translationPending.value && !!sourceExtraction.value?.insights?.locationCharacter)
+const planningNotesTranslating = computed(() => {
+  const p = sourceExtraction.value?.planningNotes
+  return translationPending.value && !!p && (
+    p.monumentProtection != null ||
+    p.contamination != null ||
+    p.developmentPlan != null ||
+    p.landConsolidation != null ||
+    p.developmentCharges != null ||
+    p.redevelopmentArea != null ||
+    p.conservationArea != null
+  )
+})
+const parcelsTranslating = computed(() => translationPending.value && !!sourceExtraction.value?.planningNotes?.landParcels?.length)
 
 const translationSeq = ref(0)
 watch([a, locale], async ([val, loc]) => {
@@ -81,6 +110,7 @@ watch([a, locale], async ([val, loc]) => {
   translatedDescription.value = null
   translatedDocumentSummary.value = null
   translatedExtractionTexts.value = null
+  translationPending.value = false
   if (!val) return
   if (
     val.title == null &&
@@ -90,6 +120,7 @@ watch([a, locale], async ([val, loc]) => {
   ) return
   if (isPassthroughLanguage(val.country, loc as ContentTargetLang)) return
 
+  translationPending.value = true
   try {
     const res = await $fetch<{
       title: string | null
@@ -109,6 +140,8 @@ watch([a, locale], async ([val, loc]) => {
     translatedExtractionTexts.value = res.extractionTexts
   } catch {
     // Best-effort: keep showing the original text (see displayTitle/displayDescription).
+  } finally {
+    if (seq === translationSeq.value) translationPending.value = false
   }
 }, { immediate: true })
 
@@ -453,6 +486,7 @@ useHead(() => ({
         </div>
         <div class="flex flex-wrap items-baseline gap-2">
           <h1 class="text-2xl font-bold leading-tight">{{ displayTitle || $t('objektDetail.untitled') }}</h1>
+          <TranslationPendingBadge v-if="translationPending" />
           <span v-if="titleTranslated" class="text-xs text-muted-foreground">({{ $t('objektDetail.autoTranslatedHint') }})</span>
         </div>
         <p v-if="a.address" class="text-muted-foreground">{{ a.address }}</p>
@@ -463,6 +497,9 @@ useHead(() => ({
       <div class="grid grid-cols-1 lg:grid-cols-5 gap-6 items-start">
         <div class="lg:col-span-3 space-y-8">
           <DetailSectionCard :title="$t('objektDetail.auctionDataTitle')">
+            <template v-if="auctionDataTranslating" #action>
+              <TranslationPendingBadge />
+            </template>
             <dl class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-4">
               <div>
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.marketValue') }}</dt>
@@ -505,6 +542,9 @@ useHead(() => ({
           </DetailSectionCard>
 
           <DetailSectionCard v-if="hasPropertyData" :title="$t('objektDetail.propertyDataTitle')">
+            <template v-if="propertyDataTranslating" #action>
+              <TranslationPendingBadge />
+            </template>
             <dl class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-4">
               <div v-if="displayExtraction?.landAreaSqm != null">
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.landArea') }}</dt>
@@ -667,6 +707,9 @@ useHead(() => ({
           </DetailSectionCard>
 
           <DetailSectionCard v-if="amenityItems.length" :title="$t('objektDetail.amenitiesTitle')">
+            <template v-if="amenitiesTranslating" #action>
+              <TranslationPendingBadge />
+            </template>
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div
                 v-for="item in amenityItems"
@@ -683,6 +726,9 @@ useHead(() => ({
           </DetailSectionCard>
 
           <DetailSectionCard v-if="combinedDescription" :title="$t('objektDetail.description')">
+            <template v-if="descriptionTranslating" #action>
+              <TranslationPendingBadge />
+            </template>
             <template v-if="descriptionTranslated" #subtitle>{{ $t('objektDetail.autoTranslatedHint') }}</template>
             <DescriptionAccordion :text="combinedDescription" />
           </DetailSectionCard>
@@ -691,11 +737,17 @@ useHead(() => ({
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <DetailSectionCard v-if="displayExtraction?.insights?.defects?.length" :title="$t('objektDetail.defectsTitle')">
+              <template v-if="defectsTranslating" #action>
+                <TranslationPendingBadge />
+              </template>
               <ul class="list-disc list-inside space-y-1 text-sm text-foreground/90">
                 <li v-for="(defect, i) in displayExtraction.insights.defects" :key="i">{{ defect }}</li>
               </ul>
             </DetailSectionCard>
             <DetailSectionCard v-if="displayExtraction?.insights?.encumbrances?.length" :title="$t('objektDetail.encumbrancesTitle')">
+              <template v-if="encumbrancesTranslating" #action>
+                <TranslationPendingBadge />
+              </template>
               <ul class="list-disc list-inside space-y-1 text-sm text-foreground/90">
                 <li v-for="(encumbrance, i) in displayExtraction.insights.encumbrances" :key="i">{{ encumbrance }}</li>
               </ul>
@@ -704,12 +756,21 @@ useHead(() => ({
               <p class="text-sm font-medium tabular-nums">{{ formatLandValue(displayExtraction.insights.landValueEurPerSqm) }}</p>
             </DetailSectionCard>
             <DetailSectionCard v-if="displayExtraction?.insights?.construction" :title="$t('objektDetail.constructionTitle')">
+              <template v-if="constructionTranslating" #action>
+                <TranslationPendingBadge />
+              </template>
               <p class="whitespace-pre-line text-sm text-foreground/90 leading-relaxed">{{ displayExtraction.insights.construction }}</p>
             </DetailSectionCard>
             <DetailSectionCard v-if="displayExtraction?.insights?.locationCharacter" :title="$t('objektDetail.neighborhoodCharacter')">
+              <template v-if="locationCharacterTranslating" #action>
+                <TranslationPendingBadge />
+              </template>
               <p class="whitespace-pre-line text-sm text-foreground/90 leading-relaxed">{{ displayExtraction.insights.locationCharacter }}</p>
             </DetailSectionCard>
             <DetailSectionCard v-if="planningNotesHasContent" :title="$t('objektDetail.planningNotesTitle')">
+              <template v-if="planningNotesTranslating" #action>
+                <TranslationPendingBadge />
+              </template>
               <dl class="space-y-2 text-sm">
                 <div v-if="displayExtraction?.planningNotes?.monumentProtection">
                   <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.monumentProtection') }}</dt>
@@ -742,6 +803,9 @@ useHead(() => ({
               </dl>
             </DetailSectionCard>
             <DetailSectionCard v-if="displayExtraction?.planningNotes?.landParcels?.length" :title="$t('objektDetail.parcelsTitle')">
+              <template v-if="parcelsTranslating" #action>
+                <TranslationPendingBadge />
+              </template>
               <ul class="space-y-2 text-sm">
                 <li v-for="(parcel, i) in displayExtraction.planningNotes.landParcels" :key="i" class="flex items-baseline justify-between gap-3">
                   <span class="font-medium">{{ parcel.label }}</span>
