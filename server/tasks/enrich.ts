@@ -136,7 +136,7 @@ export async function runEnrich() {
       const prev = previousSnapshot[cacheKey(a.platform, a.externalId)]
       return (
         !hit ||
-        (a.attachments.length > 0 && hit.archivedDocumentSetHash === undefined) ||
+        (a.attachments.length > 0 && hit.archivedDocumentSetHash == null) ||
         (a.sourceUpdatedIso != null && prev?.sourceUpdatedIso !== a.sourceUpdatedIso)
       )
     }
@@ -424,7 +424,7 @@ export async function runEnrich() {
     return {
       result: {
         crawled: result.auctions.length,
-        new: todo.length,
+        todo: todo.length,
         archived,
         enriched: enrichedCount,
         photoExtractions,

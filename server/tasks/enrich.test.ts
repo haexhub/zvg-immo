@@ -217,6 +217,71 @@ describe('runEnrich photo backfill (WP-1)', () => {
     expect(entry?.documentSetHash).toBe('prior-set')
   })
 
+  it('retries the document-set check after a previously failed archive attempt (archivedDocumentSetHash: null)', async () => {
+    const auction = makeAuction({
+      title: 'Unklare Immobilie',
+      description: 'Detailtext ohne verwertbare Flaechen.',
+      photoUrls: [],
+      attachments: [
+        {
+          kind: 'appraisal',
+          label: 'Gutachten',
+          filename: 'Gutachten.pdf',
+          sizeBytes: 100,
+          fileId: '1',
+          proxyUrl: 'https://example.test/gutachten.pdf',
+        },
+      ],
+    })
+    const { crawlAll } = await import('../crawlers/registry')
+    vi.mocked(crawlAll).mockResolvedValue(mockCrawl([auction]))
+    const { prepareLiveLlmDocuments } = await import('../utils/extract/llm-documents')
+    vi.mocked(prepareLiveLlmDocuments).mockResolvedValueOnce({
+      documentSetItems: [
+        {
+          ordinal: 0,
+          kind: 'document',
+          label: 'Gutachten',
+          filename: 'Gutachten.pdf',
+          fileId: '1',
+          sourceUrl: 'https://example.test/gutachten.pdf',
+          contentHash: 'hash-1',
+          contentType: 'application/pdf',
+        },
+      ],
+      documentSetComplete: true,
+    })
+    vi.mocked(archiveDocumentSet).mockResolvedValueOnce({
+      setHash: 'retried-set',
+      version: 1,
+      changed: true,
+    })
+
+    // A prior run's archive attempt failed and recorded `null` (not
+    // `undefined`) — needsDocumentSetCheck must still treat this as due, or a
+    // failed archive would permanently exclude the listing from retries.
+    const cache: ExtractionCache = {
+      'zvg-portal:14409': {
+        propertyType: null,
+        landAreaSqm: null,
+        livingAreaSqm: null,
+        rooms: null,
+        units: null,
+        source: 'rules',
+        confidence: 'low',
+        archivedDocumentSetHash: null,
+        at: '2026-07-01T00:00:00.000Z',
+      },
+    }
+    vi.mocked(readExtractionCache).mockResolvedValue(cache)
+
+    await runEnrich()
+
+    expect(archiveDocumentSet).toHaveBeenCalled()
+    const written = vi.mocked(writeExtractionCache).mock.calls[0]?.[0] as ExtractionCache
+    expect(written['zvg-portal:14409']?.archivedDocumentSetHash).toBe('retried-set')
+  })
+
   it('re-attempts the photo pipeline for an entry with no photos and no photosCheckedAt marker', async () => {
     const auction = makeAuction()
     const { crawlAll } = await import('../crawlers/registry')

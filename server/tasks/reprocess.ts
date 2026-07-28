@@ -147,25 +147,43 @@ function applyPhotoCuration(base: CuratedPhoto[], curation: PhotoCuration[]): Cu
   return out
 }
 
+/** `sourceIndices[i]` is the position in the original (uncapped) `photos`
+ *  array that `images[i]` came from — a per-photo read failure drops that
+ *  photo rather than the whole set, which shifts later images down, so
+ *  callers must remap the LLM's `photoIndex` (relative to `images`) through
+ *  this array before applying curation back onto the original photo list. */
 async function buildCandidateImages(
   platform: string,
   externalId: string,
   photos: CuratedPhoto[] | undefined,
-): Promise<{ label: string; mimeType: string; data: string }[] | undefined> {
+): Promise<
+  { images: { label: string; mimeType: string; data: string }[]; sourceIndices: number[] } | undefined
+> {
   if (!photos?.length || !isSafePathSegment(platform) || !isSafePathSegment(externalId)) return undefined
   const destDir = join(IMAGES_DIR, platform, externalId)
   const capped = photos.slice(0, MAX_CANDIDATE_PHOTOS)
-  try {
-    return await Promise.all(
-      capped.map(async (photo) => ({
-        label: photo.file,
-        mimeType: mimeTypeFor(photo.file),
-        data: (await readFile(join(destDir, photo.file))).toString('base64'),
-      })),
-    )
-  } catch (err) {
-    console.warn(`[reprocess] candidate image read failed for ${platform}:${externalId}: ${(err as Error).message}`)
-    return undefined
+  const read = await Promise.all(
+    capped.map(async (photo, sourceIndex) => {
+      try {
+        return {
+          sourceIndex,
+          label: photo.file,
+          mimeType: mimeTypeFor(photo.file),
+          data: (await readFile(join(destDir, photo.file))).toString('base64'),
+        }
+      } catch (err) {
+        console.warn(
+          `[reprocess] candidate image read failed for ${platform}:${externalId}/${photo.file}: ${(err as Error).message}`,
+        )
+        return null
+      }
+    }),
+  )
+  const kept = read.filter((img): img is NonNullable<typeof img> => img != null)
+  if (!kept.length) return undefined
+  return {
+    images: kept.map(({ label, mimeType, data }) => ({ label, mimeType, data })),
+    sourceIndices: kept.map((img) => img.sourceIndex),
   }
 }
 
@@ -185,7 +203,19 @@ async function buildReprocessInput(
   priorEntry: AuctionExtraction | undefined,
   llmConfig: LlmConfig | null,
   opts: { nativeDocuments?: boolean } = {},
-): Promise<{ fields: MergeInputFields; input: LlmInput | null; documentSetChanged: boolean } | null> {
+): Promise<
+  {
+    fields: MergeInputFields
+    input: LlmInput | null
+    documentSetChanged: boolean
+    /** Whether the archived document set this LLM input was built from was
+     *  read in full — false when a document blob couldn't be downloaded, in
+     *  which case the parse must not be stamped as caught up (see
+     *  reprocessAuction). Always true when no LLM was configured. */
+    documentSetComplete: boolean
+    photoSourceIndices: number[] | undefined
+  } | null
+> {
   const auctionCapture = await findLatestCapture('auction', platform, externalId)
   if (!auctionCapture) return null
   const auctionBytes = await downloadBlob(auctionCapture.contentHash)
@@ -233,13 +263,16 @@ async function buildReprocessInput(
   }
 
   let input: LlmInput | null = null
+  let documentSetComplete = true
+  let photoSourceIndices: number[] | undefined
   if (llmConfig) {
     // Native document understanding for batch providers reads PDF bytes
     // directly and needs neither pdftotext nor rendered page images for those
     // PDFs. DOCX/HTML/text/image attachments are still normalized by
     // prepareArchivedLlmDocuments so every archived attachment can contribute.
     const usingNativeDoc = opts.nativeDocuments ?? llmConfig.provider === 'gemini-native'
-    const candidateImages = await buildCandidateImages(platform, externalId, priorEntry?.photos?.map(normalizePhoto))
+    const candidates = await buildCandidateImages(platform, externalId, priorEntry?.photos?.map(normalizePhoto))
+    photoSourceIndices = candidates?.sourceIndices
     // Always read the *latest archived* set (enrich.ts's bookkeeping), not
     // this task's own documentSetHash — that would re-read the version we
     // already parsed instead of picking up a just-archived change.
@@ -248,15 +281,16 @@ async function buildReprocessInput(
       documentSetHash: priorEntry?.archivedDocumentSetHash,
       documentSetVersion: priorEntry?.archivedDocumentSetVersion,
     })
+    documentSetComplete = documentParts.documentSetComplete
     input = {
       title: auction.title,
       description: auction.description,
       ...documentParts.input,
-      candidateImages,
+      candidateImages: candidates?.images,
     }
   }
 
-  return { fields, input, documentSetChanged }
+  return { fields, input, documentSetChanged, documentSetComplete, photoSourceIndices }
 }
 
 /** Rules-only entry for a candidate no LLM attempt was made for (LLM
@@ -340,18 +374,31 @@ export async function reprocessAuction(
   const llm = await extractByLlm(base.input!, llmConfig)
   let curatedPhotos = priorEntry?.photos?.map(normalizePhoto)
   if (llm && curatedPhotos && base.input?.candidateImages?.length && llm.photoCuration.length) {
-    curatedPhotos = applyPhotoCuration(curatedPhotos, llm.photoCuration)
+    // llm.photoCuration's photoIndex is relative to the candidateImages that
+    // were actually sent, which buildCandidateImages may have shrunk (dropped
+    // unreadable photos) — remap through photoSourceIndices back to curatedPhotos'
+    // original positions before applying.
+    const sourceIndices = base.photoSourceIndices
+    const curation = sourceIndices
+      ? llm.photoCuration
+          .map((c) => (sourceIndices[c.photoIndex] != null ? { ...c, photoIndex: sourceIndices[c.photoIndex] } : null))
+          .filter((c): c is PhotoCuration => c != null)
+      : llm.photoCuration
+    curatedPhotos = applyPhotoCuration(curatedPhotos, curation)
   }
   const effectivePriorEntry = base.documentSetChanged ? undefined : priorEntry
+  // Only mark "parsed up to the currently archived version" when the LLM
+  // call actually succeeded and the archived document set was read in full —
+  // otherwise carry the prior documentSetHash forward so this entry stays
+  // due for reprocessing next run (see buildReprocessInput's documentSetComplete).
+  const parsedCurrentSet = llm != null && base.documentSetComplete
   const entry: AuctionExtraction = {
     ...mergeLlmResult(effectivePriorEntry, base.fields, llm, at, curatedPhotos),
-    // mergeLlmResult carries photosCheckedAt/photoPipelineVersion/photoFailures
-    // forward from its priorEntry argument already; override documentSetHash
-    // to mark "parsed up to the currently archived version" and pass the
-    // crawl-owned archived* fields through untouched — this task never sets
-    // them, only enrich.ts does.
-    documentSetHash: priorEntry?.archivedDocumentSetHash ?? null,
-    documentSetVersion: priorEntry?.archivedDocumentSetVersion ?? null,
+    documentSetHash: parsedCurrentSet ? (priorEntry?.archivedDocumentSetHash ?? null) : (priorEntry?.documentSetHash ?? null),
+    documentSetVersion: parsedCurrentSet
+      ? (priorEntry?.archivedDocumentSetVersion ?? null)
+      : (priorEntry?.documentSetVersion ?? null),
+    // Crawl-owned fields — pass through untouched, this task never sets them.
     archivedDocumentSetHash: priorEntry?.archivedDocumentSetHash ?? null,
     archivedDocumentSetVersion: priorEntry?.archivedDocumentSetVersion ?? null,
   }

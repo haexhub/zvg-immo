@@ -8,7 +8,12 @@ import { extractPdfTextFromBuffer } from '../utils/extract/pdf-text'
 import { renderPdfPagesJpeg } from '../utils/extract/pdf-render'
 import { readExtractionCache, writeExtractionCache } from '../utils/extraction-cache'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
+import { readFile } from 'node:fs/promises'
 
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, readFile: vi.fn(actual.readFile) }
+})
 vi.mock('../utils/db', () => ({ getPool: vi.fn() }))
 vi.mock('../utils/storage-download', () => ({
   findLatestCapture: vi.fn(),
@@ -697,6 +702,152 @@ describe('reprocessAuction: archivedDocumentSetHash vs documentSetHash', () => {
     expect(result!.entry.documentSetHash).toBeNull()
     expect(result!.entry.archivedDocumentSetHash).toBe('a-hash')
     expect(result!.entry.archivedDocumentSetVersion).toBe(3)
+  })
+
+  it('does not mark documentSetHash caught up when the LLM request fails', async () => {
+    const auction = makeAuction()
+    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
+      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
+    )
+    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
+    vi.mocked(extractByLlm).mockResolvedValue(null)
+
+    const priorEntry: AuctionExtraction = {
+      propertyType: null,
+      landAreaSqm: null,
+      livingAreaSqm: null,
+      rooms: null,
+      units: null,
+      source: 'rules',
+      confidence: 'low',
+      documentSetHash: 'old-hash',
+      documentSetVersion: 1,
+      archivedDocumentSetHash: 'new-hash',
+      archivedDocumentSetVersion: 2,
+      at: '2026-06-01T00:00:00.000Z',
+    }
+
+    const result = await reprocessAuction('zvg-portal', '7265', priorEntry, { baseUrl: 'http://proxy' } as never, '2026-07-22T00:00:00.000Z')
+
+    // The failed request must not be stamped as "parsed" — otherwise the
+    // listing would never become due for reprocessing again.
+    expect(result!.entry.documentSetHash).toBe('old-hash')
+    expect(result!.entry.documentSetVersion).toBe(1)
+    expect(result!.entry.archivedDocumentSetHash).toBe('new-hash')
+  })
+
+  it('does not mark documentSetHash caught up when the archived document set could not be read in full', async () => {
+    const auction = makeAuction()
+    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
+      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
+    )
+    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
+    vi.mocked(readDocumentSetItems).mockResolvedValueOnce(null)
+    vi.mocked(extractByLlm).mockResolvedValue(llmResult)
+    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { baseUrl: 'http://proxy' } }))
+
+    const priorEntry: AuctionExtraction = {
+      propertyType: null,
+      landAreaSqm: null,
+      livingAreaSqm: null,
+      rooms: null,
+      units: null,
+      source: 'rules',
+      confidence: 'low',
+      documentSetHash: 'old-hash',
+      documentSetVersion: 1,
+      archivedDocumentSetHash: 'new-hash',
+      archivedDocumentSetVersion: 2,
+      at: '2026-06-01T00:00:00.000Z',
+    }
+
+    const result = await reprocessAuction('zvg-portal', '7265', priorEntry, { baseUrl: 'http://proxy' } as never, '2026-07-22T00:00:00.000Z')
+
+    // The LLM call "succeeded" but only against a partially-read document
+    // set (readDocumentSetItems returned null) — documentSetHash must not
+    // jump to archivedDocumentSetHash, or the missing document(s) would
+    // never be picked up on a later run.
+    expect(result!.entry.documentSetHash).toBe('old-hash')
+    expect(result!.entry.documentSetVersion).toBe(1)
+    expect(result!.entry.archivedDocumentSetHash).toBe('new-hash')
+  })
+})
+
+describe('reprocessAuction: candidate photo tolerance and curation remap', () => {
+  const basePhotos = [
+    { file: 'a.jpg', category: 'sonstiges' as const, caption: null, isPropertyPhoto: false },
+    { file: 'b.jpg', category: 'sonstiges' as const, caption: null, isPropertyPhoto: false },
+    { file: 'c.jpg', category: 'sonstiges' as const, caption: null, isPropertyPhoto: false },
+  ]
+  const llmResult = {
+    propertyType: null,
+    landAreaSqm: null,
+    livingAreaSqm: null,
+    rooms: null,
+    bedrooms: null,
+    bathrooms: null,
+    floor: null,
+    bathroomHasTub: null,
+    bathroomHasShower: null,
+    heating: null,
+    units: null,
+    securityDeposit: null,
+    biddingNotes: null,
+    condition: null,
+    features: [],
+    yearBuilt: null,
+    lastRenovationYear: null,
+    renovationNotes: null,
+    insights: null,
+    planningNotes: null,
+    photoCuration: [],
+    marketValueEur: null,
+    marketValueText: null,
+  }
+
+  it('drops an unreadable candidate photo instead of failing the whole batch, and remaps the LLM curation back onto the original photo positions', async () => {
+    const auction = makeAuction()
+    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
+      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
+    )
+    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
+    // b.jpg (original index 1) fails to read — only a.jpg/c.jpg (original
+    // indices 0/2) reach the LLM, as candidateImages[0]/[1].
+    vi.mocked(readFile).mockImplementation(async (path) => {
+      if (String(path).includes('b.jpg')) throw new Error('ENOENT')
+      return Buffer.from('fake-image-bytes')
+    })
+    vi.mocked(extractByLlm).mockResolvedValue({
+      ...llmResult,
+      // Refers to candidateImages[1], i.e. c.jpg — must land on original
+      // index 2, not on b.jpg which never reached the LLM.
+      photoCuration: [{ photoIndex: 1, category: 'aussen', caption: 'Garten', isPropertyPhoto: true }],
+    })
+    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { baseUrl: 'http://proxy' } }))
+
+    const priorEntry: AuctionExtraction = {
+      propertyType: null,
+      landAreaSqm: null,
+      livingAreaSqm: null,
+      rooms: null,
+      units: null,
+      source: 'rules',
+      confidence: 'low',
+      photos: basePhotos,
+      at: '2026-06-01T00:00:00.000Z',
+    }
+
+    const result = await reprocessAuction('zvg-portal', '7265', priorEntry, { baseUrl: 'http://proxy' } as never, '2026-07-22T00:00:00.000Z')
+
+    expect(vi.mocked(extractByLlm).mock.calls[0]?.[0].candidateImages).toHaveLength(2)
+    expect(result!.entry.photos?.[0]).toMatchObject({ file: 'a.jpg', category: 'sonstiges' })
+    expect(result!.entry.photos?.[1]).toMatchObject({ file: 'b.jpg', category: 'sonstiges' })
+    expect(result!.entry.photos?.[2]).toMatchObject({
+      file: 'c.jpg',
+      category: 'aussen',
+      caption: 'Garten',
+      isPropertyPhoto: true,
+    })
   })
 })
 
