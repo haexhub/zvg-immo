@@ -811,11 +811,10 @@ async function runReprocessTest(): Promise<void> {
 }
 
 // Datenquellen: persistent aktivierte Länder-Crawler. Die Registry setzt eine
-// gespeicherte Änderung sofort um. enrichCountrySource stößt den
-// nicht-destruktiven Enrich-Task (Crawl/Archiv, server/tasks/enrich.ts) und
-// anschließend den Reprocess-Task (Extraktion) für nur dieses Land an —
-// destruktiver Rebuild (Cache löschen + neu crawlen) bleibt als
-// Recovery-Tool nur im Backend (rebuild.post.ts), ohne UI-Button.
+// gespeicherte Änderung sofort um. enrichCountrySource fragt die Originalquelle
+// erneut ab, füllt Cache/Roharchiv und stößt anschließend die Extraktion für
+// nur dieses Land an. Optional erzwingt die UI Checkbox die Extraktion auch
+// gegen unveränderte, bereits geparste Rohdaten.
 interface EnrichRunResult {
   crawled: number
   todo: number
@@ -833,6 +832,7 @@ const countrySourcesLoaded = ref(false)
 const countryEnrichPending = ref<string | null>(null)
 const countryEnrichError = ref<string | null>(null)
 const countryEnrichResult = ref<EnrichRunResult & { country: string } | null>(null)
+const forceCountryExtraction = ref(false)
 const enabledCountrySourceCount = computed(
   () => countrySources.value.filter((source) => source.enabled).length,
 )
@@ -911,7 +911,10 @@ async function enrichCountrySource(source: CountrySourceSetting): Promise<void> 
   try {
     const res = await $fetch<{ result: EnrichRunResult }>(
       `/api/settings/countries/${source.code}/enrich`,
-      { method: 'POST' },
+      {
+        method: 'POST',
+        body: { forceExtraction: forceCountryExtraction.value },
+      },
     )
     countryEnrichResult.value = { ...res.result, country: source.code }
     await loadLlmBatchJobs()
@@ -1663,6 +1666,14 @@ onBeforeUnmount(stopProgressPolling)
           </div>
 
           <form class="space-y-3" @submit.prevent="saveCountrySources">
+            <label class="flex items-start gap-2 rounded-md border bg-muted/20 p-3 text-sm">
+              <Checkbox v-model="forceCountryExtraction" class="mt-0.5" :disabled="countryEnrichPending !== null" />
+              <span class="space-y-1">
+                <span class="block font-medium">{{ $t('settings.sources.forceExtraction') }}</span>
+                <span class="block text-xs text-muted-foreground">{{ $t('settings.sources.forceExtractionHelp') }}</span>
+              </span>
+            </label>
+
             <div class="max-h-80 overflow-y-auto rounded-md border divide-y">
               <div
                 v-for="source in countrySources"

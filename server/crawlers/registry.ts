@@ -389,6 +389,8 @@ export interface CrawlAllOptions {
   /** Called after each region attempt (success or failure) completes, for
    *  callers that want to report live crawl progress (see enrich.ts). */
   onRegionDone?: (done: number, total: number) => void
+  /** Called for each successful regional crawl before it is merged. */
+  onRegionResult?: (country: string, region: string, result: CrawlResult) => void | Promise<void>
 }
 
 /**
@@ -425,6 +427,7 @@ export async function crawlAll(
           immobilienOnly: opts.immobilienOnly,
           enrichDetails: opts.enrichDetails,
         })
+        await opts.onRegionResult?.(r.country, r.code, result)
         results.push(result)
       } catch (err) {
         errors.push({

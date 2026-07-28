@@ -1,27 +1,24 @@
-// Manually triggers server/tasks/enrich.ts (crawl/archive + photo/document
-// pipeline) scoped to one country from /settings, then fires the reprocess
-// task (extraction) for the same country — the one-button, non-destructive
-// counterpart to rebuild.post.ts, which wipes and re-crawls. Together these
-// run the same incremental passes the scheduled crons would, without waiting
-// for either.
+// Manually refreshes one country from /settings: force-crawl the source once,
+// write list_cache + raw auction captures, run the full enrich archive/document
+// pipeline, then fire reprocess (rules + LLM) against the raw archive.
 //
-// Both go through the task wrapper (runTask, not runEnrich()/runReprocess()
-// directly) so recordTaskRunStart/End still fire and the existing overlap
-// guards still apply — the live task status /settings polls (see
-// server/utils/task-runs.ts) would otherwise never show this click as
-// 'running', and a manual click could race an in-flight scheduled run. If
-// the corresponding global cron is already running, runTask's own dedup
-// (see nitropack's runTask) makes this call resolve to that in-flight run's
-// (whole-fleet) result instead of starting a country-scoped one — existing,
-// accepted single-flight behavior, now visible via the live status instead
-// of silently ignored. The reprocess call is fire-and-forget (same pattern
-// as server/plugins/reprocess-bootstrap.ts) — its result isn't needed here.
+// The long-running crawl/extract phases still go through the task wrapper so
+// /settings can poll their status via server/utils/task-runs.ts. Reprocess is
+// fire-and-forget (same pattern as server/plugins/reprocess-bootstrap.ts): the
+// button returns after the raw archive has been rebuilt, while LLM extraction
+// progress remains visible in the existing status panel.
 
 import type { runEnrich } from '~/server/tasks/enrich'
 import { ensureEnabledCountriesLoaded, isCountryEnabled, listRegisteredCountries } from '~/server/crawlers/registry'
 
+interface EnrichCountryBody {
+  forceExtraction?: boolean
+}
+
 export default defineEventHandler(async (event) => {
   const country = (getRouterParam(event, 'country') ?? '').trim().toLowerCase()
+  const body = await readBody<EnrichCountryBody>(event).catch((): EnrichCountryBody => ({}))
+  const forceExtraction = body.forceExtraction === true
   await ensureEnabledCountriesLoaded()
   const registered = listRegisteredCountries().find((candidate) => candidate.code === country)
   if (!registered) {
@@ -31,8 +28,8 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: `${registered.name} ist deaktiviert.` })
   }
 
-  const outcome = (await runTask('enrich', { payload: { country } })) as Awaited<ReturnType<typeof runEnrich>>
-  void runTask('reprocess', { payload: { country } }).catch((err: unknown) => {
+  const outcome = (await runTask('enrich', { payload: { country, force: true, writeListCache: true } })) as Awaited<ReturnType<typeof runEnrich>>
+  void runTask('reprocess', { payload: { country, force: forceExtraction } }).catch((err: unknown) => {
     console.error('[settings/enrich] reprocess trigger failed:', (err as Error).message)
   })
   return outcome

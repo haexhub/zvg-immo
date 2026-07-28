@@ -7,6 +7,8 @@ import { archiveAuction } from './raw-archive'
 import { recordObservations } from './history'
 import { getPool } from './db'
 import { writeListCache } from './list-cache'
+import { invalidateAuctionSnapshot } from './auction-snapshot'
+import { invalidateExtractionCache } from './extraction-cache'
 
 export interface CountryRebuildResult {
   country: string
@@ -35,7 +37,7 @@ function platformIdsForCountry(country: string): string[] {
   ]
 }
 
-async function deleteCountryCurrentData(db: Pool, country: string): Promise<CountryRebuildResult['deleted']> {
+export async function deleteCountryCurrentData(db: Pool, country: string): Promise<CountryRebuildResult['deleted']> {
   const platformIds = platformIdsForCountry(country)
   const [
     listCache,
@@ -54,6 +56,9 @@ async function deleteCountryCurrentData(db: Pool, country: string): Promise<Coun
       ? db.query('DELETE FROM extraction_cache WHERE platform = ANY($1::text[])', [platformIds])
       : Promise.resolve({ rowCount: 0 }),
   ])
+
+  invalidateAuctionSnapshot()
+  invalidateExtractionCache()
 
   return {
     listCache: listCache.rowCount ?? 0,
