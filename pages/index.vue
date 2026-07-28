@@ -8,8 +8,14 @@ import {
 import type { CountryEntry } from '~/server/crawlers/registry'
 import type { SiteStats } from '~/server/api/stats.get'
 
-const { data: countries } = await useFetch<CountryEntry[]>('/api/regions', { default: () => [] })
-const { data: stats } = await useFetch<SiteStats | null>('/api/stats', { default: () => null })
+const { data: countries } = await useFetch<CountryEntry[]>('/api/regions', {
+  cache: 'no-store',
+  default: () => [],
+})
+const { data: stats } = await useFetch<SiteStats | null>('/api/stats', {
+  cache: 'no-store',
+  default: () => null,
+})
 
 const intlLocale = useIntlLocale()
 const router = useRouter()
