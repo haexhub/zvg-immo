@@ -734,7 +734,7 @@ interface LlmBatchJobsOverview {
   enrichStatus: TaskRunStatus
 }
 const reprocessLimit = ref('10')
-const reprocessCountry = ref('de')
+const reprocessCountry = ref('')
 const reprocessBatch = ref(false)
 const reprocessPending = ref(false)
 const reprocessError = ref<string | null>(null)

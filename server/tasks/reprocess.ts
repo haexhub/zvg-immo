@@ -16,9 +16,10 @@
 // next successful merge simply doesn't carry the old values forward).
 //
 // Runs on its own schedule (nuxt.config.ts's scheduledTasks) across every
-// country. Also invokable manually/scoped — `runTask('reprocess', {payload})`
-// or the Nitro task-run endpoint — for iterating on prompts/rules against the
-// frozen archive, or spot-checking a single auction/platform/country.
+// country currently enabled in the admin data-source settings. Also invokable
+// manually/scoped — `runTask('reprocess', {payload})` or the Nitro task-run
+// endpoint — for iterating on prompts/rules against the frozen archive, or
+// spot-checking a single auction/platform/country.
 
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -51,6 +52,11 @@ import { isSafePathSegment } from '~/server/utils/path-segment'
 import { mimeTypeFor } from '~/server/utils/image-storage'
 import { normalizePhoto } from '~/lib/photo'
 import { recordTaskRunEnd, recordTaskRunStart } from '~/server/utils/task-runs'
+import {
+  ensureEnabledCountriesLoaded,
+  getEnabledCountryCodes,
+  isCountryEnabled,
+} from '~/server/crawlers/registry'
 
 const IMAGES_DIR = join(process.cwd(), '.cache_zvg', 'images')
 const DEFAULT_MAX_LLM_PER_RUN = 300
@@ -61,7 +67,7 @@ const MAX_CANDIDATE_PHOTOS = 8
 let running = false
 
 export interface ReprocessOptions {
-  /** ISO-3166-1 alpha-2, lowercase. Omit to scan every archived country. */
+  /** ISO-3166-1 alpha-2, lowercase. Omit to scan every enabled country. */
   country?: string
   platform?: string
   externalId?: string
@@ -103,12 +109,26 @@ interface Candidate {
   externalId: string
 }
 
-async function findCandidates(opts: ReprocessOptions): Promise<Candidate[]> {
+async function effectiveCandidateCountries(opts: ReprocessOptions): Promise<string[]> {
+  await ensureEnabledCountriesLoaded()
+  if (opts.country) {
+    const country = opts.country.trim().toLowerCase()
+    return isCountryEnabled(country) ? [country] : []
+  }
+  return getEnabledCountryCodes()
+}
+
+async function findCandidates(opts: ReprocessOptions, countries: readonly string[]): Promise<Candidate[]> {
+  if (countries.length === 0) return []
   const db = getPool()
   if (!db) return []
   const conditions = ["kind = 'auction'"]
   const params: unknown[] = []
-  if (opts.country) conditions.push(`country = $${params.push(opts.country)}`)
+  if (countries.length === 1) {
+    conditions.push(`country = $${params.push(countries[0])}`)
+  } else {
+    conditions.push(`country = ANY($${params.push(countries)})`)
+  }
   if (opts.platform) conditions.push(`platform = $${params.push(opts.platform)}`)
   if (opts.externalId) conditions.push(`external_id = $${params.push(opts.externalId)}`)
   if (opts.caseNumber) conditions.push(`case_number = $${params.push(opts.caseNumber)}`)
@@ -439,8 +459,14 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
     )
   }
 
-  const rawCandidates = await findCandidates(opts)
+  const candidateCountries = await effectiveCandidateCountries(opts)
+  const rawCandidates = await findCandidates(opts, candidateCountries)
   const candidates = interleaveByPlatform(rawCandidates)
+  if (candidates.length === 0) {
+    const durationMs = Date.now() - startedAt
+    console.log(`[reprocess] candidates=0 processed=0 skipped=0 llmCalls=0 in ${(durationMs / 1000).toFixed(0)}s`)
+    return { candidates: 0, processed: 0, skipped: 0, llmCalls: 0, durationMs }
+  }
   const cache = await readExtractionCache()
   const llmConfig = await readExtractionLlmConfig()
   const executionMode = await readLlmExecutionMode()
