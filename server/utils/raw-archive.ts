@@ -1,6 +1,6 @@
 // G1 Roh-Archiv Schicht 1: unveränderliches Archiv des vollständigen geparsten
 // Auktions-Stands (raw_blobs = content-addressed Bytes, raw_captures =
-// aktueller "welche Auktions-Identität zeigt auf welchen Blob"-Index).
+// append-only "welche Auktions-Identität zeigt auf welchen Blob"-Index).
 // Best-effort wie recordObservations/matchAlerts: jeder exportierte Aufruf
 // fängt seine eigenen Fehler und wirft nie. No-op ohne NUXT_DATABASE_URL (see
 // server/utils/db.ts) — Blobs bleiben dann ungeschrieben, kein halbes Archiv.
@@ -194,12 +194,16 @@ export interface CaptureInput {
 }
 
 /**
- * Capture index. Auctions are keyed by `(kind, platform, externalId)` and
- * therefore represent the latest parsed auction state. Documents/detail/text
- * captures are keyed by `(kind, platform, externalId, sourceUrl, contentHash)`:
- * repeated crawls of the same bytes refresh metadata in place, but an updated
- * document behind the same URL remains as its own capture so document-set
- * versions can still point at older valid combinations. Never throws.
+ * Capture index, append-only. Auctions are keyed by `(kind, platform,
+ * externalId, contentHash)`: a repeated crawl with the same content_hash only
+ * refreshes metadata (captured_at/region/...) in place, but a real change to
+ * the parsed auction produces a new content hash and therefore a new version
+ * row — old versions are never overwritten (the unique index makes this
+ * race-safe). Documents/detail/text captures are keyed by `(kind, platform,
+ * externalId, sourceUrl, contentHash)`: repeated crawls of the same bytes
+ * refresh metadata in place, but an updated document behind the same URL
+ * remains as its own capture so document-set versions can still point at
+ * older valid combinations. Never throws.
  */
 export async function recordCapture(input: CaptureInput): Promise<void> {
   const db = getPool()
@@ -226,7 +230,7 @@ export async function recordCapture(input: CaptureInput): Promise<void> {
          source_url   = EXCLUDED.source_url`
     const conflictTarget =
       input.kind === 'auction'
-        ? `(kind, platform, external_id) WHERE kind = 'auction'`
+        ? `(kind, platform, external_id, content_hash) WHERE kind = 'auction'`
         : `(kind, platform, external_id, (COALESCE(source_url, '')), content_hash) WHERE kind <> 'auction'`
 
     await db.query(

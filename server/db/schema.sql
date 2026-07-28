@@ -603,3 +603,19 @@ CREATE INDEX IF NOT EXISTS idx_capt_country_region_time ON raw_captures (country
 UPDATE raw_captures rc SET region = a.region
 FROM auctions a
 WHERE rc.region IS NULL AND rc.platform = a.platform AND rc.external_id = a.external_id;
+
+-- Rollback von PR #186 (27.7.2026): der "aktueller Stand"-Index für
+-- kind='auction' hat das vorherige append-only-Verhalten (eine neue Zeile
+-- pro echter Content-Änderung, wie es document/detail_html/document_text
+-- weiterhin haben) versehentlich durch ein reines Überschreiben ersetzt und
+-- damit die historischen Auktions-Versionen unwiederbringlich gelöscht. Ab
+-- hier wieder append-only: eine neue Zeile nur bei geändertem content_hash,
+-- unveränderter Inhalt aktualisiert weiterhin nur die Metadaten der
+-- bestehenden Zeile in-place (siehe recordCapture() in raw-archive.ts). Der
+-- Cleanup von PR #186 hat bereits jede Auktion auf genau eine Zeile
+-- reduziert, daher kann der neue Unique-Index beim Anlegen nicht auf
+-- Duplikate stoßen.
+DROP INDEX IF EXISTS idx_capt_unique_auction_current;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_capt_unique_auction_hash
+  ON raw_captures (kind, platform, external_id, content_hash)
+  WHERE kind = 'auction';
