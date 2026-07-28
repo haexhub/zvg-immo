@@ -8,6 +8,11 @@
 // silently breaking when the config points at a different provider.
 
 import { getProvider, type LlmConfig } from './llm'
+import type {
+  TranslatableExtractionTexts,
+  TranslatableInsightsTexts,
+  TranslatablePlanningNotesTexts,
+} from '~/lib/extraction-translation'
 
 const SUMMARY_SCHEMA = {
   type: 'object',
@@ -46,14 +51,174 @@ const TRANSLATION_SCHEMA = {
       type: ['string', 'null'],
       description: 'Übersetzte Dokument-Zusammenfassung, oder null wenn keine vorhanden war.',
     },
+    extractionTexts: {
+      type: ['object', 'null'],
+      additionalProperties: false,
+      properties: {
+        biddingNotes: { type: ['string', 'null'] },
+        renovationNotes: { type: ['string', 'null'] },
+        floor: { type: ['string', 'null'] },
+        heating: { type: ['string', 'null'] },
+        insights: {
+          type: ['object', 'null'],
+          additionalProperties: false,
+          properties: {
+            defects: { type: 'array', items: { type: 'string' } },
+            encumbrances: { type: 'array', items: { type: 'string' } },
+            construction: { type: ['string', 'null'] },
+            locationCharacter: { type: ['string', 'null'] },
+            summary: { type: ['string', 'null'] },
+          },
+          required: ['defects', 'encumbrances', 'construction', 'locationCharacter', 'summary'],
+        },
+        planningNotes: {
+          type: ['object', 'null'],
+          additionalProperties: false,
+          properties: {
+            monumentProtection: { type: ['string', 'null'] },
+            contamination: { type: ['string', 'null'] },
+            developmentPlan: { type: ['string', 'null'] },
+            landConsolidation: { type: ['string', 'null'] },
+            developmentCharges: { type: ['string', 'null'] },
+            redevelopmentArea: { type: ['string', 'null'] },
+            conservationArea: { type: ['string', 'null'] },
+            landParcels: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  label: { type: ['string', 'null'] },
+                  use: { type: ['string', 'null'] },
+                },
+                required: ['label', 'use'],
+              },
+            },
+          },
+          required: [
+            'monumentProtection',
+            'contamination',
+            'developmentPlan',
+            'landConsolidation',
+            'developmentCharges',
+            'redevelopmentArea',
+            'conservationArea',
+            'landParcels',
+          ],
+        },
+      },
+      required: ['biddingNotes', 'renovationNotes', 'floor', 'heating', 'insights', 'planningNotes'],
+    },
   },
-  required: ['title', 'description', 'documentSummary'],
+  required: ['title', 'description', 'documentSummary', 'extractionTexts'],
 } as const
 
 export interface TranslationResult {
   title: string | null
   description: string | null
   documentSummary: string | null
+  extractionTexts: TranslatableExtractionTexts | null
+}
+
+function translatedString(raw: unknown, source: string | null): string | null | undefined {
+  const value = typeof raw === 'string' ? raw.trim() : null
+  if (source != null && !value) return undefined
+  return source == null ? null : value
+}
+
+function translatedStringArray(raw: unknown, source: string[]): string[] | null {
+  if (!Array.isArray(raw) || raw.length !== source.length) return null
+  const out = raw.map((value) => (typeof value === 'string' ? value.trim() : ''))
+  return out.every(Boolean) ? out : null
+}
+
+function translatedInsights(raw: unknown, source: TranslatableInsightsTexts | null): TranslatableInsightsTexts | null | undefined {
+  if (source == null) return null
+  if (!raw || typeof raw !== 'object') return undefined
+  const obj = raw as Record<string, unknown>
+  const defects = translatedStringArray(obj.defects, source.defects)
+  const encumbrances = translatedStringArray(obj.encumbrances, source.encumbrances)
+  const construction = translatedString(obj.construction, source.construction)
+  const locationCharacter = translatedString(obj.locationCharacter, source.locationCharacter)
+  const summary = translatedString(obj.summary, source.summary)
+  if (!defects || !encumbrances || construction === undefined || locationCharacter === undefined || summary === undefined) {
+    return undefined
+  }
+  return { defects, encumbrances, construction, locationCharacter, summary }
+}
+
+function translatedPlanningNotes(
+  raw: unknown,
+  source: TranslatablePlanningNotesTexts | null,
+): TranslatablePlanningNotesTexts | null | undefined {
+  if (source == null) return null
+  if (!raw || typeof raw !== 'object') return undefined
+  const obj = raw as Record<string, unknown>
+  const monumentProtection = translatedString(obj.monumentProtection, source.monumentProtection)
+  const contamination = translatedString(obj.contamination, source.contamination)
+  const developmentPlan = translatedString(obj.developmentPlan, source.developmentPlan)
+  const landConsolidation = translatedString(obj.landConsolidation, source.landConsolidation)
+  const developmentCharges = translatedString(obj.developmentCharges, source.developmentCharges)
+  const redevelopmentArea = translatedString(obj.redevelopmentArea, source.redevelopmentArea)
+  const conservationArea = translatedString(obj.conservationArea, source.conservationArea)
+  const rawParcels = obj.landParcels
+  if (!Array.isArray(rawParcels) || rawParcels.length !== source.landParcels.length) return undefined
+  const landParcels = rawParcels.map((rawParcel, i) => {
+    if (!rawParcel || typeof rawParcel !== 'object') return undefined
+    const rawParcelObj = rawParcel as Record<string, unknown>
+    const label = translatedString(rawParcelObj.label, source.landParcels[i]?.label ?? null)
+    const use = translatedString(rawParcelObj.use, source.landParcels[i]?.use ?? null)
+    if (label === undefined || use === undefined) return undefined
+    return { label, use }
+  })
+  if (
+    monumentProtection === undefined ||
+    contamination === undefined ||
+    developmentPlan === undefined ||
+    landConsolidation === undefined ||
+    developmentCharges === undefined ||
+    redevelopmentArea === undefined ||
+    conservationArea === undefined ||
+    landParcels.some((parcel) => parcel === undefined)
+  ) {
+    return undefined
+  }
+  return {
+    monumentProtection,
+    contamination,
+    developmentPlan,
+    landConsolidation,
+    developmentCharges,
+    redevelopmentArea,
+    conservationArea,
+    landParcels: landParcels as TranslatablePlanningNotesTexts['landParcels'],
+  }
+}
+
+function translatedExtractionTexts(
+  raw: unknown,
+  source: TranslatableExtractionTexts | null,
+): TranslatableExtractionTexts | null | undefined {
+  if (source == null) return null
+  if (!raw || typeof raw !== 'object') return undefined
+  const obj = raw as Record<string, unknown>
+  const biddingNotes = translatedString(obj.biddingNotes, source.biddingNotes)
+  const renovationNotes = translatedString(obj.renovationNotes, source.renovationNotes)
+  const floor = translatedString(obj.floor, source.floor)
+  const heating = translatedString(obj.heating, source.heating)
+  const insights = translatedInsights(obj.insights, source.insights)
+  const planningNotes = translatedPlanningNotes(obj.planningNotes, source.planningNotes)
+  if (
+    biddingNotes === undefined ||
+    renovationNotes === undefined ||
+    floor === undefined ||
+    heating === undefined ||
+    insights === undefined ||
+    planningNotes === undefined
+  ) {
+    return undefined
+  }
+  return { biddingNotes, renovationNotes, floor, heating, insights, planningNotes }
 }
 
 /** Returns null on request failure, or when a populated source field came
@@ -66,6 +231,7 @@ export async function callTranslationLlm(
   title: string | null,
   description: string | null,
   documentSummary: string | null,
+  extractionTexts: TranslatableExtractionTexts | null,
   config: LlmConfig,
 ): Promise<TranslationResult | null> {
   const raw = await getProvider(config).extract({
@@ -77,12 +243,15 @@ export async function callTranslationLlm(
   const translatedTitle = typeof raw.title === 'string' ? raw.title.trim() : null
   const translatedDescription = typeof raw.description === 'string' ? raw.description.trim() : null
   const translatedDocumentSummary = typeof raw.documentSummary === 'string' ? raw.documentSummary.trim() : null
+  const translatedExtraction = translatedExtractionTexts(raw.extractionTexts, extractionTexts)
   if (title != null && !translatedTitle) return null
   if (description != null && !translatedDescription) return null
   if (documentSummary != null && !translatedDocumentSummary) return null
+  if (translatedExtraction === undefined) return null
   return {
     title: title == null ? null : translatedTitle,
     description: description == null ? null : translatedDescription,
     documentSummary: documentSummary == null ? null : translatedDocumentSummary,
+    extractionTexts: translatedExtraction,
   }
 }
