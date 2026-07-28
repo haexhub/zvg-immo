@@ -190,6 +190,19 @@ export function mergePreservedDetail(next: Auction, prev: Auction): Auction {
 }
 
 /**
+ * Copies photo-only fields from a richer auction record onto a poorer one.
+ * Used both for persisted snapshots and for detail pages that need to recover
+ * fresh list-cache galleries without replacing the rest of the snapshot.
+ */
+export function applyAuctionPhotos(target: Auction, source: Auction): void {
+  if (!target.thumbnailUrl && source.thumbnailUrl) target.thumbnailUrl = source.thumbnailUrl
+  if (target.photoCount < source.photoCount) target.photoCount = source.photoCount
+  if (source.photoUrls?.length) {
+    target.photoUrls = [...new Set([...(target.photoUrls ?? []), ...source.photoUrls])]
+  }
+}
+
+/**
  * Apply snapshot photo data to list-crawl auctions (mutates in place) —
  * analogous to extraction-cache.ts's applyExtractionToAuctions. The list
  * crawl itself never carries thumbnailUrl/photoCount/photoUrls for platforms
@@ -203,11 +216,7 @@ export function applySnapshotPhotosToAuctions(auctions: Auction[], snapshot: Auc
   for (const a of auctions) {
     const hit = snapshot[cacheKey(a.platform, a.externalId)]
     if (!hit) continue
-    if (!a.thumbnailUrl && hit.thumbnailUrl) a.thumbnailUrl = hit.thumbnailUrl
-    if (a.photoCount < hit.photoCount) a.photoCount = hit.photoCount
-    if (hit.photoUrls?.length) {
-      a.photoUrls = [...new Set([...(a.photoUrls ?? []), ...hit.photoUrls])]
-    }
+    applyAuctionPhotos(a, hit)
   }
 }
 
