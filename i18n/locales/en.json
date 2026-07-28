@@ -350,7 +350,11 @@
       "enrichDone": "{country}: updated {archived} of {crawled} listings ({photos} photos, {duration}s).",
       "enrichStatusRunning": "Enrich running since {at} …",
       "enrichStatusLastRun": "Last enrich run: {at} — {archived} archived, {duration}s.",
-      "enrichStatusLastError": "Enrich last failed: {message}"
+      "enrichStatusLastError": "Enrich last failed: {message}",
+      "llmStatusRunning": "LLM extraction running since {at} …",
+      "llmStatusLastRun": "Last LLM extraction: {at} — {processed} processed, {llmCalls} LLM calls, {duration}s.",
+      "llmStatusLastWarning": "LLM notice: {message}",
+      "llmStatusLastError": "LLM extraction last failed: {message}"
     },
     "reprocess": {
       "title": "Reprocess test run",

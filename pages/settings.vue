@@ -1627,6 +1627,26 @@ onBeforeUnmount(stopPolling)
             </p>
           </div>
 
+          <div v-if="llmBatchJobs?.reprocessStatus" class="text-sm space-y-1">
+            <p v-if="llmBatchJobs.reprocessStatus.status === 'running'">
+              {{ $t('settings.sources.llmStatusRunning', { at: formatBatchDate(llmBatchJobs.reprocessStatus.startedAt) }) }}
+            </p>
+            <p v-else-if="llmBatchJobs.reprocessStatus.finishedAt" class="text-muted-foreground">
+              {{ $t('settings.sources.llmStatusLastRun', {
+                at: formatBatchDate(llmBatchJobs.reprocessStatus.finishedAt),
+                processed: llmBatchJobs.reprocessStatus.lastResult?.processed ?? 0,
+                llmCalls: llmBatchJobs.reprocessStatus.lastResult?.llmCalls ?? 0,
+                duration: Math.round((llmBatchJobs.reprocessStatus.lastResult?.durationMs ?? 0) / 1000),
+              }) }}
+            </p>
+            <p v-if="llmBatchJobs.reprocessStatus.lastWarning" class="text-amber-600 dark:text-amber-400">
+              {{ $t('settings.sources.llmStatusLastWarning', { message: llmBatchJobs.reprocessStatus.lastWarning }) }}
+            </p>
+            <p v-if="llmBatchJobs.reprocessStatus.lastError" class="text-destructive">
+              {{ $t('settings.sources.llmStatusLastError', { message: llmBatchJobs.reprocessStatus.lastError }) }}
+            </p>
+          </div>
+
           <form class="space-y-3" @submit.prevent="saveCountrySources">
             <div class="max-h-80 overflow-y-auto rounded-md border divide-y">
               <div

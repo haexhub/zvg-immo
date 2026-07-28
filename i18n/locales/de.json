@@ -350,7 +350,11 @@
       "enrichDone": "{country}: {archived} von {crawled} Anzeigen aktualisiert ({photos} Fotos, {duration}s).",
       "enrichStatusRunning": "Enrich läuft seit {at} …",
       "enrichStatusLastRun": "Letzter Enrich-Lauf: {at} — {archived} archiviert, {duration}s.",
-      "enrichStatusLastError": "Enrich zuletzt fehlgeschlagen: {message}"
+      "enrichStatusLastError": "Enrich zuletzt fehlgeschlagen: {message}",
+      "llmStatusRunning": "LLM-Extraktion läuft seit {at} …",
+      "llmStatusLastRun": "Letzte LLM-Extraktion: {at} — {processed} verarbeitet, {llmCalls} LLM-Aufrufe, {duration}s.",
+      "llmStatusLastWarning": "LLM-Hinweis: {message}",
+      "llmStatusLastError": "LLM-Extraktion zuletzt fehlgeschlagen: {message}"
     },
     "reprocess": {
       "title": "Reprocess-Testlauf",
