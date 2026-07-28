@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, ExternalLink, Loader2, Pencil, RefreshCw, Trash2 } from 'lucide-vue-next'
+import { ArrowLeft, Download, ExternalLink, Loader2, Pencil, RefreshCw, Trash2 } from 'lucide-vue-next'
 import type { ClaudeSetupStatus } from '~/server/api/settings/claude/status.get'
 import type { AdminLawyer } from '~/server/api/settings/lawyers/index.get'
 import type { LlmExecutionMode, LlmMaxTokensKind, LlmProvider, LlmProviderScope } from '~/server/utils/app-settings'
@@ -706,18 +706,13 @@ interface LlmBatchCapability {
   checkedAt: string
   source: 'enrich' | 'reprocess' | 'config'
 }
-interface ReprocessRunSummary {
-  candidates: number
-  processed: number
-  skipped: number
-  llmCalls: number
-  durationMs: number
-}
 interface TaskRunStatus {
   status: 'idle' | 'running'
   startedAt: string | null
   finishedAt: string | null
-  lastResult: ReprocessRunSummary | null
+  // Generic — enrichStatus and reprocessStatus report differently shaped
+  // summaries (see server/utils/task-runs.ts's TaskRunSummary).
+  lastResult: Record<string, number> | null
   lastError: string | null
 }
 interface LlmBatchJobsOverview {
@@ -736,6 +731,7 @@ interface LlmBatchJobsOverview {
   recentJobs: LlmBatchJobOverviewItem[]
   capabilities: Record<string, LlmBatchCapability>
   reprocessStatus: TaskRunStatus
+  enrichStatus: TaskRunStatus
 }
 const reprocessLimit = ref('10')
 const reprocessCountry = ref('de')
@@ -808,7 +804,19 @@ async function runReprocessTest(): Promise<void> {
 
 // Datenquellen: persistent aktivierte Länder-Crawler. Die Registry setzt eine
 // gespeicherte Änderung sofort um; der nächste reguläre/manuelle Refresh füllt
-// den Cache einer neu aktivierten Quelle.
+// den Cache einer neu aktivierten Quelle. rebuildCountrySource (Crawler, siehe
+// unten) löscht Cache-/Extraktionsdaten und crawlt neu; enrichCountrySource
+// stößt stattdessen den nicht-destruktiven Enrich-Task (Foto-/Dokumenten-
+// Pipeline, server/tasks/enrich.ts) für nur dieses Land an.
+interface EnrichRunResult {
+  crawled: number
+  todo: number
+  archived: number
+  enriched: number
+  photoExtractions: number
+  photosTotal: number
+  durationMs: number
+}
 const countrySources = ref<CountrySourceSetting[]>([])
 const countrySourcesPending = ref(false)
 const countrySourcesError = ref<string | null>(null)
@@ -817,6 +825,9 @@ const countrySourcesLoaded = ref(false)
 const countryRebuildPending = ref<string | null>(null)
 const countryRebuildError = ref<string | null>(null)
 const countryRebuildResult = ref<CountryRebuildResult | null>(null)
+const countryEnrichPending = ref<string | null>(null)
+const countryEnrichError = ref<string | null>(null)
+const countryEnrichResult = ref<EnrichRunResult & { country: string } | null>(null)
 const enabledCountrySourceCount = computed(
   () => countrySources.value.filter((source) => source.enabled).length,
 )
@@ -879,6 +890,26 @@ async function rebuildCountrySource(source: CountrySourceSetting): Promise<void>
     countryRebuildError.value = normalizeSettingsError(err, t('settings.sources.rebuildError'))
   } finally {
     countryRebuildPending.value = null
+  }
+}
+
+async function enrichCountrySource(source: CountrySourceSetting): Promise<void> {
+  if (!source.enabled || countryEnrichPending.value) return
+
+  countryEnrichPending.value = source.code
+  countryEnrichError.value = null
+  countryEnrichResult.value = null
+  try {
+    const res = await $fetch<{ result: EnrichRunResult }>(
+      `/api/settings/countries/${source.code}/enrich`,
+      { method: 'POST' },
+    )
+    countryEnrichResult.value = { ...res.result, country: source.code }
+    await loadLlmBatchJobs()
+  } catch (err) {
+    countryEnrichError.value = normalizeSettingsError(err, t('settings.sources.enrichError'))
+  } finally {
+    countryEnrichPending.value = null
   }
 }
 
@@ -1552,6 +1583,7 @@ onBeforeUnmount(stopPolling)
 
           <p v-if="countrySourcesError" class="text-sm text-destructive">{{ countrySourcesError }}</p>
           <p v-if="countryRebuildError" class="text-sm text-destructive">{{ countryRebuildError }}</p>
+          <p v-if="countryEnrichError" class="text-sm text-destructive">{{ countryEnrichError }}</p>
           <p v-if="countrySourcesSaved" class="text-sm text-emerald-600 dark:text-emerald-500">{{ $t('settings.sources.saved') }}</p>
           <p v-if="countryRebuildResult" class="text-sm text-emerald-600 dark:text-emerald-500">
             {{ $t('settings.sources.rebuildDone', {
@@ -1561,6 +1593,31 @@ onBeforeUnmount(stopPolling)
               failed: countryRebuildResult.crawled.failed,
             }) }}
           </p>
+          <p v-if="countryEnrichResult" class="text-sm text-emerald-600 dark:text-emerald-500">
+            {{ $t('settings.sources.enrichDone', {
+              country: countryLabel(countryEnrichResult.country),
+              archived: countryEnrichResult.archived,
+              crawled: countryEnrichResult.crawled,
+              photos: countryEnrichResult.photosTotal,
+              duration: Math.round(countryEnrichResult.durationMs / 1000),
+            }) }}
+          </p>
+
+          <div v-if="llmBatchJobs?.enrichStatus" class="text-sm space-y-1">
+            <p v-if="llmBatchJobs.enrichStatus.status === 'running'">
+              {{ $t('settings.sources.enrichStatusRunning', { at: formatBatchDate(llmBatchJobs.enrichStatus.startedAt) }) }}
+            </p>
+            <p v-else-if="llmBatchJobs.enrichStatus.finishedAt" class="text-muted-foreground">
+              {{ $t('settings.sources.enrichStatusLastRun', {
+                at: formatBatchDate(llmBatchJobs.enrichStatus.finishedAt),
+                archived: llmBatchJobs.enrichStatus.lastResult?.archived ?? 0,
+                duration: Math.round((llmBatchJobs.enrichStatus.lastResult?.durationMs ?? 0) / 1000),
+              }) }}
+            </p>
+            <p v-if="llmBatchJobs.enrichStatus.lastError" class="text-destructive">
+              {{ $t('settings.sources.enrichStatusLastError', { message: llmBatchJobs.enrichStatus.lastError }) }}
+            </p>
+          </div>
 
           <form class="space-y-3" @submit.prevent="saveCountrySources">
             <div class="max-h-80 overflow-y-auto rounded-md border divide-y">
@@ -1589,6 +1646,19 @@ onBeforeUnmount(stopPolling)
                     {{ source.platforms.map((platform) => platform.name).join(', ') }}
                   </span>
                 </button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  class="shrink-0"
+                  :title="$t('settings.sources.enrichTitle')"
+                  :disabled="!source.enabled || countrySourcesPending || countryEnrichPending !== null"
+                  @click="enrichCountrySource(source)"
+                >
+                  <Loader2 v-if="countryEnrichPending === source.code" class="h-4 w-4 animate-spin" />
+                  <Download v-else class="h-4 w-4" />
+                  {{ countryEnrichPending === source.code ? $t('settings.sources.enriching') : $t('settings.sources.enrich') }}
+                </Button>
                 <Button
                   type="button"
                   variant="outline"

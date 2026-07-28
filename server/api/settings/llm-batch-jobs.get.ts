@@ -53,6 +53,9 @@ export interface LlmBatchJobsOverview {
   // The extraction task's status, not the crawl/archive task's — this is the
   // one that actually calls the LLM (see server/tasks/reprocess.ts).
   reprocessStatus: TaskRunStatus
+  // The crawl/archive task's status (server/tasks/enrich.ts) — never calls
+  // an LLM, so it's tracked separately from reprocessStatus above.
+  enrichStatus: TaskRunStatus
 }
 
 const MAX_KEYS_PER_GROUP = 200
@@ -84,11 +87,12 @@ function hasMissingLlmFields(entry: AuctionExtraction): boolean {
 }
 
 export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
-  const [jobs, recentJobs, capabilities, reprocessStatus] = await Promise.all([
+  const [jobs, recentJobs, capabilities, reprocessStatus, enrichStatus] = await Promise.all([
     listPendingLlmBatchJobs(),
     listRecentLlmBatchJobs(20),
     getAllLlmBatchCapabilities(),
     getTaskRunStatus('reprocess'),
+    getTaskRunStatus('enrich'),
   ])
   // supportsLlmBatch() gates gemini-native on isGeminiBatchTierPaid() (see
   // llm-batch.ts), so on the free tier a real batch submit never happens and
@@ -182,5 +186,6 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
     recentJobs: recentJobs.map(mapJob),
     capabilities: effectiveCapabilities,
     reprocessStatus,
+    enrichStatus,
   }
 })

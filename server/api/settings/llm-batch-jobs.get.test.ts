@@ -133,7 +133,10 @@ describe('/api/settings/llm-batch-jobs', () => {
         'gemini-native': { ok: false, message: 'FAILED_PRECONDITION: Precondition check failed.', checkedAt: '2026-07-26T18:00:00.000Z', source: 'enrich' },
       },
       reprocessStatus: IDLE_REPROCESS_STATUS,
+      enrichStatus: IDLE_REPROCESS_STATUS,
     })
+    expect(getTaskRunStatus).toHaveBeenCalledWith('reprocess')
+    expect(getTaskRunStatus).toHaveBeenCalledWith('enrich')
   })
 
   it('synthesizes a config-gated gemini-native capability when the free tier has never been attempted', async () => {

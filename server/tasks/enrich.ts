@@ -80,13 +80,18 @@ const MAX_DOCUMENT_PHOTOS_PER_LISTING = 12
 // snapshot write.
 let running = false
 
+export interface EnrichOptions {
+  /** ISO-3166-1 alpha-2, lowercase. Omit to crawl every enabled country. */
+  country?: string
+}
+
 export default defineTask({
   meta: {
     name: 'enrich',
     description:
       'Crawl all regions, fetch detail pages, and download/archive documents + photos. No extraction — see the reprocess task.',
   },
-  async run() {
+  async run(event) {
     if (running) {
       console.warn('[enrich] previous run still in progress — skipping')
       return { result: undefined }
@@ -94,7 +99,7 @@ export default defineTask({
     running = true
     try {
       await recordTaskRunStart('enrich')
-      const outcome = await runEnrich()
+      const outcome = await runEnrich((event?.payload ?? {}) as EnrichOptions)
       await recordTaskRunEnd('enrich', { result: outcome.result })
       return outcome
     } catch (err) {
@@ -106,11 +111,11 @@ export default defineTask({
   },
 })
 
-export async function runEnrich() {
+export async function runEnrich(opts: EnrichOptions = {}) {
     const startedAt = Date.now()
-    console.log('[enrich] start')
+    console.log(`[enrich] start${opts.country ? ` (country=${opts.country})` : ''}`)
 
-    const result = await crawlAll({ immobilienOnly: true, enrichDetails: false })
+    const result = await crawlAll({ immobilienOnly: true, enrichDetails: false, country: opts.country })
     const cache = await readExtractionCache()
     const previousSnapshot = await readAuctionSnapshot()
     const byPlatform = new Map(platforms.map((p) => [p.id, p]))
