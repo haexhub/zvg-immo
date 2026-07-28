@@ -86,6 +86,18 @@ describe('extractByRules', () => {
     expect(r.propertyType).toBeNull()
     expect(r.confident).toBe(false)
   })
+
+  it('extracts areas from Swedish Kronofogden Markarealen prose', () => {
+    const r = extractByRules({
+      title: 'Småhusenhet, bebyggd',
+      description:
+        'Värderingsobjektet är bebyggd med ett friliggande hus i två plan. ' +
+        'Boarean uppgår till 180 m², fördelat på två lägenheter. ' +
+        'Markarealen uppgår till 1 316 m², vars obebyggda delar utgörs av gräsmatta, träd och buskar.',
+    })
+    expect(r.livingAreaSqm).toBe(180)
+    expect(r.landAreaSqm).toBe(1316)
+  })
 })
 
 describe('extractByRules — unlabeled area fallback', () => {
