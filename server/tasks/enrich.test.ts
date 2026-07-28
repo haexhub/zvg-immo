@@ -120,6 +120,28 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
+describe('runEnrich country scoping', () => {
+  it('passes an explicit country through to crawlAll for a manual per-country trigger', async () => {
+    const { crawlAll } = await import('../crawlers/registry')
+    vi.mocked(crawlAll).mockResolvedValue(mockCrawl([]))
+    vi.mocked(readExtractionCache).mockResolvedValue({})
+
+    await runEnrich({ country: 'se' })
+
+    expect(crawlAll).toHaveBeenCalledWith(expect.objectContaining({ country: 'se' }))
+  })
+
+  it('omits country from crawlAll when no scope is given (scheduled cron behavior)', async () => {
+    const { crawlAll } = await import('../crawlers/registry')
+    vi.mocked(crawlAll).mockResolvedValue(mockCrawl([]))
+    vi.mocked(readExtractionCache).mockResolvedValue({})
+
+    await runEnrich()
+
+    expect(crawlAll).toHaveBeenCalledWith(expect.objectContaining({ country: undefined }))
+  })
+})
+
 describe('runEnrich detail post-processing without enrichOne', () => {
   it('still archives, EUR-converts and stamps detailFetchedAt for a crawler with no enrichOne (e.g. se-kronofogden)', async () => {
     const auction = makeAuction()

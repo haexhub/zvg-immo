@@ -342,7 +342,15 @@
       "rebuildTitle": "Aktuelle Daten für dieses Land löschen und neu crawlen",
       "rebuildConfirm": "Aktuelle Cache-/Extraktionsdaten für {country} löschen und das Land neu crawlen?",
       "rebuildError": "Land konnte nicht neu gecrawlt werden.",
-      "rebuildDone": "{country}: {auctions} Anzeigen neu gecrawlt ({ok} Regionen erfolgreich, {failed} fehlgeschlagen)."
+      "rebuildDone": "{country}: {auctions} Anzeigen neu gecrawlt ({ok} Regionen erfolgreich, {failed} fehlgeschlagen).",
+      "enrich": "Enrich jetzt starten",
+      "enriching": "Läuft …",
+      "enrichTitle": "Fotos/Dokumente für dieses Land aktualisieren (ohne den Cache zu löschen)",
+      "enrichError": "Enrich konnte nicht gestartet werden.",
+      "enrichDone": "{country}: {archived} von {crawled} Anzeigen aktualisiert ({photos} Fotos, {duration}s).",
+      "enrichStatusRunning": "Enrich läuft seit {at} …",
+      "enrichStatusLastRun": "Letzter Enrich-Lauf: {at} — {archived} archiviert, {duration}s.",
+      "enrichStatusLastError": "Enrich zuletzt fehlgeschlagen: {message}"
     },
     "reprocess": {
       "title": "Reprocess-Testlauf",
