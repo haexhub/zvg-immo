@@ -128,7 +128,7 @@ const LAND_LABELS =
   // Lithuanian
   '|sklypo plotas|žemės plotas' +
   // Swedish
-  '|tomtmark|tomtyta|tomtareal|fastighetens areal|tomtstorlek' +
+  '|tomtmark|tomtyta|tomtareal|markareal(?:en)?|fastighetens areal|tomtstorlek' +
   // Spanish
   '|superficie del solar|superficie de la parcela|extensión superficial|superficie de la finca' +
   // Italian
@@ -162,7 +162,7 @@ const TOTAL_WORDS =
   '|łączna|łącznej|łącznie|celková|celkova|összes|bendras|ukupna|totala'
 const LAND_OBJECT_WORDS =
   'grundstück|grundstueck|liegenschaft|flurstück|flurstueck|parzelle|grundbesitz' +
-  '|fastighet(?:en)?|skifte|tomt' +
+  '|fastighet(?:en)?|skifte|tomt|markareal(?:en)?' +
   '|plot|property|parcel|lot|land' +
   '|terrain|parcelle|bien' +
   '|terreno|finca|parcela|solar' +

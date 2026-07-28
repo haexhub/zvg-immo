@@ -125,6 +125,14 @@ describe('findTotalLandAreaSqm', () => {
     expect(findTotalLandAreaSqm(text)).toBe(181000)
   })
 
+  it('extracts the total area from Swedish Markarealen prose', () => {
+    expect(
+      findTotalLandAreaSqm(
+        'Markarealen uppgår till 1 316 m², vars obebyggda delar utgörs av gräsmatta, träd och buskar.',
+      ),
+    ).toBe(1316)
+  })
+
   it('extracts the total area from German translated parcel prose', () => {
     const text =
       'Grundstück bestehend aus einer Parzelle mit einer Fläche von ca. 18,1 ha, wovon ca. 14,6 ha auf ' +
@@ -267,6 +275,10 @@ describe('findLandAreaSqm — multilingual', () => {
   })
   it('finds Greek εμβαδόν οικοπέδου with τ.μ.', () => {
     expect(findLandAreaSqm('εμβαδόν οικοπέδου: 500 τ.μ.')).toBe(500)
+  })
+  it('finds Swedish markareal labels', () => {
+    expect(findLandAreaSqm('Markarealen uppgår till 1 316 m².')).toBe(1316)
+    expect(findLandAreaSqm('Markareal: 950 kvm')).toBe(950)
   })
   it('does not read Greek "τμήματα" after a label as an area', () => {
     expect(findLandAreaSqm('εμβαδόν οικοπέδου: 2 τμήματα')).toBeNull()
