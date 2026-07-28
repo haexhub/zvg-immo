@@ -1,11 +1,5 @@
 <script setup lang="ts">
 import { Star } from 'lucide-vue-next'
-import { A11y, Navigation, Pagination } from 'swiper/modules'
-import { Swiper, SwiperSlide } from 'swiper/vue'
-import 'swiper/css'
-import 'swiper/css/navigation'
-import 'swiper/css/pagination'
-import 'swiper/css/a11y'
 import { auctionKey } from '~/lib/auction-key'
 import { auctionPhotoUrls } from '~/lib/auction-photos'
 import type { Auction } from '~/types/auction'
@@ -27,10 +21,10 @@ const emit = defineEmits<{
 }>()
 
 const intlLocale = useIntlLocale()
+const { t } = useI18n()
 const { currency, eurToDisplay, nativeToDisplay } = useCurrencyDisplay()
 const conditionLabel = useConditionLabel()
 const featureLabel = useFeatureLabel()
-const swiperModules = [A11y, Navigation, Pagination]
 
 const photosByAuction = computed(() => {
   const photos = new Map<string, string[]>()
@@ -43,6 +37,10 @@ const photosByAuction = computed(() => {
 /** Returns the stable, deduplicated gallery prepared for one search card. */
 function cardPhotos(a: Auction): string[] {
   return photosByAuction.value.get(auctionKey(a)) ?? []
+}
+
+function cardAltBase(a: Auction): string {
+  return a.title || a.address || t('search.unknownPropertyType')
 }
 
 function escapeSelectorValue(value: string): string {
@@ -119,26 +117,11 @@ function bidLine(a: Auction): string | null {
           }"
         >
           <div class="relative border-b">
-            <Swiper
+            <SearchAuctionCardGallery
               v-if="cardPhotos(a).length"
-              :modules="swiperModules"
-              :navigation="cardPhotos(a).length > 1"
-              :pagination="cardPhotos(a).length > 1 ? { type: 'fraction' } : false"
-              :threshold="8"
-              :watch-slides-progress="true"
-              class="auction-card-swiper aspect-16/10"
-            >
-              <SwiperSlide v-for="(url, index) in cardPhotos(a)" :key="url">
-                <img
-                  :src="url"
-                  loading="lazy"
-                  :alt="$t('objektDetail.photoAlt', { n: index + 1, total: cardPhotos(a).length, title: a.title || a.address || $t('search.unknownPropertyType') })"
-                  referrerpolicy="no-referrer"
-                  class="h-full w-full object-cover"
-                >
-                <div class="swiper-lazy-preloader" />
-              </SwiperSlide>
-            </Swiper>
+              :photos="cardPhotos(a)"
+              :alt-base="cardAltBase(a)"
+            />
             <div v-else class="flex aspect-16/10 items-center justify-center bg-muted text-muted-foreground text-sm">
               {{ $t('search.noPhoto') }}
             </div>
@@ -188,54 +171,3 @@ function bidLine(a: Auction): string | null {
     </div>
   </div>
 </template>
-
-<style scoped>
-.auction-card-swiper {
-  width: 100%;
-  background: var(--muted);
-}
-
-.auction-card-swiper :deep(.swiper-button-prev),
-.auction-card-swiper :deep(.swiper-button-next) {
-  width: 2rem;
-  height: 2rem;
-  margin-top: -1rem;
-  border-radius: 9999px;
-  background: rgb(0 0 0 / 55%);
-  color: white;
-  opacity: 0;
-  transition: opacity 150ms ease;
-}
-
-.group:hover .auction-card-swiper :deep(.swiper-button-prev),
-.group:hover .auction-card-swiper :deep(.swiper-button-next),
-.auction-card-swiper :deep(.swiper-button-prev:focus-visible),
-.auction-card-swiper :deep(.swiper-button-next:focus-visible) {
-  opacity: 1;
-}
-
-.auction-card-swiper :deep(.swiper-button-prev::after),
-.auction-card-swiper :deep(.swiper-button-next::after) {
-  font-size: 0.75rem;
-  font-weight: 700;
-}
-
-.auction-card-swiper :deep(.swiper-pagination-fraction) {
-  right: 0.5rem;
-  bottom: 0.5rem;
-  left: auto;
-  width: auto;
-  border-radius: 9999px;
-  background: rgb(0 0 0 / 65%);
-  padding: 0.125rem 0.5rem;
-  color: white;
-  font-size: 0.75rem;
-}
-
-@media (hover: none) {
-  .auction-card-swiper :deep(.swiper-button-prev),
-  .auction-card-swiper :deep(.swiper-button-next) {
-    display: none;
-  }
-}
-</style>
