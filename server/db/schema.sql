@@ -406,6 +406,8 @@ CREATE TABLE IF NOT EXISTS content_translations (
   at            timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (content_hash, lang)
 );
+ALTER TABLE content_translations ADD COLUMN IF NOT EXISTS document_summary text;
+ALTER TABLE content_translations ADD COLUMN IF NOT EXISTS extraction_texts jsonb;
 -- RLS ohne Policies (Default-Deny): sperrt PostgREST-anon/authenticated aus,
 -- der Backend-Zugriff läuft als Table-Owner und umgeht RLS ohnehin.
 ALTER TABLE content_translations ENABLE ROW LEVEL SECURITY;
