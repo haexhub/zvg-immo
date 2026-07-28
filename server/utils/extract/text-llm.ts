@@ -13,6 +13,7 @@ import type {
   TranslatableInsightsTexts,
   TranslatablePlanningNotesTexts,
 } from '~/lib/extraction-translation'
+import type { ContentTargetLang } from '~/lib/content-language'
 
 const SUMMARY_SCHEMA = {
   type: 'object',
@@ -164,6 +165,23 @@ function hasSourceTermWithParentheticalTranslation(source: string, translated: s
   return sourceWord != null && sourceWord === translatedWord && normalizedComparable(source) !== normalizedComparable(translated)
 }
 
+const GERMAN_SOURCE_TERM_NORMALIZATIONS: Array<[RegExp, string]> = [
+  [/\bUtmätning\s*\(\s*Pfändung\s*\)/gi, 'Pfändung'],
+  [/\bOfficialservitut\s*\(\s*Dienstbarkeit\s*\)/gi, 'Dienstbarkeit'],
+  [/\bHolzverkleidung\s*\(\s*Träpanel\s*\)/gi, 'Holzverkleidung'],
+]
+
+function normalizeKnownMixedGermanTerms(value: string): string {
+  return GERMAN_SOURCE_TERM_NORMALIZATIONS.reduce(
+    (out, [pattern, replacement]) => out.replace(pattern, replacement),
+    value,
+  )
+}
+
+function normalizeKnownMixedTerms(value: string, targetLang: ContentTargetLang | null): string {
+  return targetLang === 'de' ? normalizeKnownMixedGermanTerms(value) : value
+}
+
 function hasInvalidStructuredTranslation(source: string, translated: string): boolean {
   return isUnchangedSentence(source, translated) || hasSourceTermWithParentheticalTranslation(source, translated)
 }
@@ -171,9 +189,9 @@ function hasInvalidStructuredTranslation(source: string, translated: string): bo
 function translatedString(
   raw: unknown,
   source: string | null,
-  opts: { rejectUnchangedSentence?: boolean } = {},
+  opts: { rejectUnchangedSentence?: boolean, targetLang?: ContentTargetLang | null } = {},
 ): string | null | undefined {
-  const value = typeof raw === 'string' ? raw.trim() : null
+  const value = typeof raw === 'string' ? normalizeKnownMixedTerms(raw.trim(), opts.targetLang ?? null).trim() : null
   if (source != null && !value) return undefined
   if (source != null && value && opts.rejectUnchangedSentence !== false && hasInvalidStructuredTranslation(source, value)) {
     return undefined
@@ -181,21 +199,25 @@ function translatedString(
   return source == null ? null : value
 }
 
-function translatedStringArray(raw: unknown, source: string[]): string[] | null {
+function translatedStringArray(raw: unknown, source: string[], targetLang: ContentTargetLang | null): string[] | null {
   if (!Array.isArray(raw) || raw.length !== source.length) return null
-  const out = raw.map((value) => (typeof value === 'string' ? value.trim() : ''))
+  const out = raw.map((value) => (typeof value === 'string' ? normalizeKnownMixedTerms(value.trim(), targetLang).trim() : ''))
   return out.every((value, i) => Boolean(value) && !hasInvalidStructuredTranslation(source[i] ?? '', value)) ? out : null
 }
 
-function translatedInsights(raw: unknown, source: TranslatableInsightsTexts | null): TranslatableInsightsTexts | null | undefined {
+function translatedInsights(
+  raw: unknown,
+  source: TranslatableInsightsTexts | null,
+  targetLang: ContentTargetLang | null,
+): TranslatableInsightsTexts | null | undefined {
   if (source == null) return null
   if (!raw || typeof raw !== 'object') return undefined
   const obj = raw as Record<string, unknown>
-  const defects = translatedStringArray(obj.defects, source.defects)
-  const encumbrances = translatedStringArray(obj.encumbrances, source.encumbrances)
-  const construction = translatedString(obj.construction, source.construction)
-  const locationCharacter = translatedString(obj.locationCharacter, source.locationCharacter)
-  const summary = translatedString(obj.summary, source.summary)
+  const defects = translatedStringArray(obj.defects, source.defects, targetLang)
+  const encumbrances = translatedStringArray(obj.encumbrances, source.encumbrances, targetLang)
+  const construction = translatedString(obj.construction, source.construction, { targetLang })
+  const locationCharacter = translatedString(obj.locationCharacter, source.locationCharacter, { targetLang })
+  const summary = translatedString(obj.summary, source.summary, { targetLang })
   if (!defects || !encumbrances || construction === undefined || locationCharacter === undefined || summary === undefined) {
     return undefined
   }
@@ -205,17 +227,18 @@ function translatedInsights(raw: unknown, source: TranslatableInsightsTexts | nu
 function translatedPlanningNotes(
   raw: unknown,
   source: TranslatablePlanningNotesTexts | null,
+  targetLang: ContentTargetLang | null,
 ): TranslatablePlanningNotesTexts | null | undefined {
   if (source == null) return null
   if (!raw || typeof raw !== 'object') return undefined
   const obj = raw as Record<string, unknown>
-  const monumentProtection = translatedString(obj.monumentProtection, source.monumentProtection)
-  const contamination = translatedString(obj.contamination, source.contamination)
-  const developmentPlan = translatedString(obj.developmentPlan, source.developmentPlan)
-  const landConsolidation = translatedString(obj.landConsolidation, source.landConsolidation)
-  const developmentCharges = translatedString(obj.developmentCharges, source.developmentCharges)
-  const redevelopmentArea = translatedString(obj.redevelopmentArea, source.redevelopmentArea)
-  const conservationArea = translatedString(obj.conservationArea, source.conservationArea)
+  const monumentProtection = translatedString(obj.monumentProtection, source.monumentProtection, { targetLang })
+  const contamination = translatedString(obj.contamination, source.contamination, { targetLang })
+  const developmentPlan = translatedString(obj.developmentPlan, source.developmentPlan, { targetLang })
+  const landConsolidation = translatedString(obj.landConsolidation, source.landConsolidation, { targetLang })
+  const developmentCharges = translatedString(obj.developmentCharges, source.developmentCharges, { targetLang })
+  const redevelopmentArea = translatedString(obj.redevelopmentArea, source.redevelopmentArea, { targetLang })
+  const conservationArea = translatedString(obj.conservationArea, source.conservationArea, { targetLang })
   const rawParcels = obj.landParcels
   if (!Array.isArray(rawParcels) || rawParcels.length !== source.landParcels.length) return undefined
   const landParcels = rawParcels.map((rawParcel, i) => {
@@ -223,8 +246,9 @@ function translatedPlanningNotes(
     const rawParcelObj = rawParcel as Record<string, unknown>
     const label = translatedString(rawParcelObj.label, source.landParcels[i]?.label ?? null, {
       rejectUnchangedSentence: false,
+      targetLang,
     })
-    const use = translatedString(rawParcelObj.use, source.landParcels[i]?.use ?? null)
+    const use = translatedString(rawParcelObj.use, source.landParcels[i]?.use ?? null, { targetLang })
     if (label === undefined || use === undefined) return undefined
     return { label, use }
   })
@@ -255,16 +279,17 @@ function translatedPlanningNotes(
 function translatedExtractionTexts(
   raw: unknown,
   source: TranslatableExtractionTexts | null,
+  targetLang: ContentTargetLang | null,
 ): TranslatableExtractionTexts | null | undefined {
   if (source == null) return null
   if (!raw || typeof raw !== 'object') return undefined
   const obj = raw as Record<string, unknown>
-  const biddingNotes = translatedString(obj.biddingNotes, source.biddingNotes)
-  const renovationNotes = translatedString(obj.renovationNotes, source.renovationNotes)
-  const floor = translatedString(obj.floor, source.floor)
-  const heating = translatedString(obj.heating, source.heating)
-  const insights = translatedInsights(obj.insights, source.insights)
-  const planningNotes = translatedPlanningNotes(obj.planningNotes, source.planningNotes)
+  const biddingNotes = translatedString(obj.biddingNotes, source.biddingNotes, { targetLang })
+  const renovationNotes = translatedString(obj.renovationNotes, source.renovationNotes, { targetLang })
+  const floor = translatedString(obj.floor, source.floor, { targetLang })
+  const heating = translatedString(obj.heating, source.heating, { targetLang })
+  const insights = translatedInsights(obj.insights, source.insights, targetLang)
+  const planningNotes = translatedPlanningNotes(obj.planningNotes, source.planningNotes, targetLang)
   if (
     biddingNotes === undefined ||
     renovationNotes === undefined ||
@@ -290,6 +315,7 @@ export async function callTranslationLlm(
   documentSummary: string | null,
   extractionTexts: TranslatableExtractionTexts | null,
   config: LlmConfig,
+  targetLang: ContentTargetLang | null = null,
 ): Promise<TranslationResult | null> {
   const raw = await getProvider(config).extract({
     systemPrompt,
@@ -300,7 +326,7 @@ export async function callTranslationLlm(
   const translatedTitle = typeof raw.title === 'string' ? raw.title.trim() : null
   const translatedDescription = typeof raw.description === 'string' ? raw.description.trim() : null
   const translatedDocumentSummary = typeof raw.documentSummary === 'string' ? raw.documentSummary.trim() : null
-  const translatedExtraction = translatedExtractionTexts(raw.extractionTexts, extractionTexts)
+  const translatedExtraction = translatedExtractionTexts(raw.extractionTexts, extractionTexts, targetLang)
   if (title != null && !translatedTitle) return null
   if (description != null && !translatedDescription) return null
   if (documentSummary != null && !translatedDocumentSummary) return null
