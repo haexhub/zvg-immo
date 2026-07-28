@@ -33,12 +33,14 @@ const LANG_NAMES: Record<ContentTargetLang, string> = { de: 'German', en: 'Engli
 const SYSTEM_PROMPT =
   'Du bist ein präziser Übersetzer für Anzeigen von Immobilien-Zwangsversteigerungen. ' +
   'Übersetze wörtlich und originalgetreu — keine Ausschmückung, keine Zusammenfassung. ' +
-  'Fach- und Rechtsbegriffe unverändert lassen, wenn eine wörtliche Übersetzung den Sinn verfälschen würde.'
+  'Alle vollständigen Sätze müssen in der Zielsprache stehen. Fach- und Rechtsbegriffe nur dann unverändert lassen, ' +
+  'wenn es wirklich kein zuverlässiges Äquivalent gibt; keine Originalbegriffe mit Klammerübersetzung ausgeben.'
 
 // Dedupe concurrent misses for the same content+language and cap total
 // concurrent LLM work.
 const inflight = new Map<string, Promise<TranslationResult>>()
 const MAX_INFLIGHT = 4
+const MAX_TRANSLATION_ATTEMPTS = 2
 const TRANSLATION_RATE_LIMIT = { max: 30, windowMs: 60 * 60 * 1000, maxKeys: 10_000 }
 const translationRateLimit = createInMemoryRateLimitState()
 
@@ -53,6 +55,7 @@ function buildPrompt(
   const lines = [
     `Translate the following real-estate foreclosure auction text fields into ${LANG_NAMES[targetLang]}.`,
     'Return the same JSON shape. Translate every string value. Keep nulls, array order, array lengths, identifiers, dates, numbers and currencies unchanged.',
+    'Do not leave whole source-language sentences unchanged. Do not write source terms followed by target-language translations in parentheses; use the target-language term directly.',
     'EXTRACTION_TEXTS_JSON contains short structured labels shown in the property detail UI. Translate heating and insights.construction as user-facing amenity text, including material, roof, window, foundation and building-services terms. Keep an original specialist term only when there is no reliable target-language equivalent.',
     '',
     `TITLE: ${title ?? ''}`,
@@ -73,6 +76,58 @@ function clientKey(event: H3Event): string {
     if (realIp) return realIp
   }
   return event.node.req.socket.remoteAddress ?? 'unknown'
+}
+
+async function tryTranslate(
+  title: string | null,
+  description: string | null,
+  documentSummary: string | null,
+  extractionTexts: ReturnType<typeof extractTranslatableExtractionTexts>,
+  targetLang: ContentTargetLang,
+  config: Parameters<typeof callTranslationLlm>[6],
+  attempts = MAX_TRANSLATION_ATTEMPTS,
+): Promise<TranslationResult | null> {
+  const prompt = buildPrompt(title, description, documentSummary, extractionTexts, targetLang)
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const result = await callTranslationLlm(
+      SYSTEM_PROMPT,
+      prompt,
+      title,
+      description,
+      documentSummary,
+      extractionTexts,
+      config,
+      targetLang,
+    )
+    if (result) return result
+  }
+  return null
+}
+
+async function tryTranslateInParts(
+  title: string | null,
+  description: string | null,
+  documentSummary: string | null,
+  extractionTexts: ReturnType<typeof extractTranslatableExtractionTexts>,
+  targetLang: ContentTargetLang,
+  config: Parameters<typeof callTranslationLlm>[6],
+): Promise<TranslationResult | null> {
+  const textResult = title != null || description != null || documentSummary != null
+    ? await tryTranslate(title, description, documentSummary, null, targetLang, config)
+    : { title: null, description: null, documentSummary: null, extractionTexts: null }
+  if (!textResult) return null
+
+  const extractionResult = extractionTexts
+    ? await tryTranslate(null, null, null, extractionTexts, targetLang, config)
+    : { title: null, description: null, documentSummary: null, extractionTexts: null }
+  if (!extractionResult) return null
+
+  return {
+    title: textResult.title,
+    description: textResult.description,
+    documentSummary: textResult.documentSummary,
+    extractionTexts: extractionResult.extractionTexts,
+  }
 }
 
 export default defineEventHandler(async (event) => {
@@ -169,15 +224,8 @@ export default defineEventHandler(async (event) => {
   recordInMemoryRateLimitHit(translationRateLimit, requester, now, TRANSLATION_RATE_LIMIT)
 
   const gen = (async () => {
-    const result = await callTranslationLlm(
-      SYSTEM_PROMPT,
-      buildPrompt(title, description, documentSummary, extractionTexts, targetLang),
-      title,
-      description,
-      documentSummary,
-      extractionTexts,
-      config,
-    )
+    const result = await tryTranslate(title, description, documentSummary, extractionTexts, targetLang, config)
+      ?? await tryTranslateInParts(title, description, documentSummary, extractionTexts, targetLang, config)
     if (!result) {
       throw createError({ statusCode: 502, statusMessage: 'LLM did not return a translation' })
     }

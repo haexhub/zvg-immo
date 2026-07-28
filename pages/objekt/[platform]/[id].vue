@@ -441,6 +441,13 @@ const planningNotesHasContent = computed(() => {
   )
 })
 
+const defectItems = computed(() => displayExtraction.value?.insights?.defects ?? [])
+const encumbranceItems = computed(() => displayExtraction.value?.insights?.encumbrances ?? [])
+const landValueInsight = computed(() => displayExtraction.value?.insights?.landValueEurPerSqm ?? null)
+const constructionInsight = computed(() => displayExtraction.value?.insights?.construction?.trim() ?? '')
+const locationCharacterInsight = computed(() => displayExtraction.value?.insights?.locationCharacter?.trim() ?? '')
+const landParcelItems = computed(() => displayExtraction.value?.planningNotes?.landParcels ?? [])
+
 type AnalysisStatus = 'pending' | 'rules' | 'batch' | 'llm' | 'failed'
 
 function hasCompletedLlmAnalysis(): boolean {
@@ -776,42 +783,47 @@ useHead(() => ({
           <LawyerContact :platform="a.platform" :external-id="a.externalId" :country="a.country" />
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <DetailSectionCard v-if="displayExtraction?.insights?.defects?.length" :title="$t('objektDetail.defectsTitle')">
+            <DetailSectionCard :title="$t('objektDetail.defectsTitle')">
               <template v-if="defectsTranslating" #action>
                 <TranslationPendingBadge />
               </template>
-              <ul class="list-disc list-inside space-y-1 text-sm text-foreground/90">
-                <li v-for="(defect, i) in displayExtraction.insights.defects" :key="i">{{ defect }}</li>
+              <ul v-if="defectItems.length" class="list-disc list-inside space-y-1 text-sm text-foreground/90">
+                <li v-for="(defect, i) in defectItems" :key="i">{{ defect }}</li>
               </ul>
+              <p v-else class="text-sm text-muted-foreground">{{ $t('objektDetail.noKnownDefects') }}</p>
             </DetailSectionCard>
-            <DetailSectionCard v-if="displayExtraction?.insights?.encumbrances?.length" :title="$t('objektDetail.encumbrancesTitle')">
+            <DetailSectionCard :title="$t('objektDetail.encumbrancesTitle')">
               <template v-if="encumbrancesTranslating" #action>
                 <TranslationPendingBadge />
               </template>
-              <ul class="list-disc list-inside space-y-1 text-sm text-foreground/90">
-                <li v-for="(encumbrance, i) in displayExtraction.insights.encumbrances" :key="i">{{ encumbrance }}</li>
+              <ul v-if="encumbranceItems.length" class="list-disc list-inside space-y-1 text-sm text-foreground/90">
+                <li v-for="(encumbrance, i) in encumbranceItems" :key="i">{{ encumbrance }}</li>
               </ul>
+              <p v-else class="text-sm text-muted-foreground">{{ $t('objektDetail.noKnownEncumbrances') }}</p>
             </DetailSectionCard>
-            <DetailSectionCard v-if="displayExtraction?.insights?.landValueEurPerSqm != null" :title="$t('objektDetail.landValueTitle')">
-              <p class="text-sm font-medium tabular-nums">{{ formatLandValue(displayExtraction.insights.landValueEurPerSqm) }}</p>
+            <DetailSectionCard :title="$t('objektDetail.landValueTitle')">
+              <p v-if="landValueInsight != null" class="text-sm font-medium tabular-nums">{{ formatLandValue(landValueInsight) }}</p>
+              <p v-else class="text-sm text-muted-foreground">{{ $t('objektDetail.noKnownLandValue') }}</p>
             </DetailSectionCard>
-            <DetailSectionCard v-if="displayExtraction?.insights?.construction" :title="$t('objektDetail.constructionTitle')">
+            <DetailSectionCard :title="$t('objektDetail.constructionTitle')">
               <template v-if="constructionTranslating" #action>
                 <TranslationPendingBadge />
               </template>
-              <p class="whitespace-pre-line text-sm text-foreground/90 leading-relaxed">{{ displayExtraction.insights.construction }}</p>
+              <p v-if="constructionInsight" class="whitespace-pre-line text-sm text-foreground/90 leading-relaxed">{{ constructionInsight }}</p>
+              <p v-else class="text-sm text-muted-foreground">{{ $t('objektDetail.noKnownConstruction') }}</p>
             </DetailSectionCard>
-            <DetailSectionCard v-if="displayExtraction?.insights?.locationCharacter" :title="$t('objektDetail.neighborhoodCharacter')">
+            <DetailSectionCard :title="$t('objektDetail.neighborhoodCharacter')">
               <template v-if="locationCharacterTranslating" #action>
                 <TranslationPendingBadge />
               </template>
-              <p class="whitespace-pre-line text-sm text-foreground/90 leading-relaxed">{{ displayExtraction.insights.locationCharacter }}</p>
+              <p v-if="locationCharacterInsight" class="whitespace-pre-line text-sm text-foreground/90 leading-relaxed">{{ locationCharacterInsight }}</p>
+              <p v-else class="text-sm text-muted-foreground">{{ $t('objektDetail.noKnownLocationCharacter') }}</p>
             </DetailSectionCard>
-            <DetailSectionCard v-if="planningNotesHasContent" :title="$t('objektDetail.planningNotesTitle')">
+            <DetailSectionCard :title="$t('objektDetail.planningNotesTitle')">
               <template v-if="planningNotesTranslating" #action>
                 <TranslationPendingBadge />
               </template>
-              <dl class="space-y-2 text-sm">
+              <dl v-if="planningNotesHasContent" class="space-y-2 text-sm">
                 <div v-if="displayExtraction?.planningNotes?.monumentProtection">
                   <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.monumentProtection') }}</dt>
                   <dd class="text-foreground/90">{{ displayExtraction.planningNotes.monumentProtection }}</dd>
@@ -841,13 +853,14 @@ useHead(() => ({
                   <dd class="text-foreground/90">{{ displayExtraction.planningNotes.conservationArea }}</dd>
                 </div>
               </dl>
+              <p v-else class="text-sm text-muted-foreground">{{ $t('objektDetail.noKnownPlanningNotes') }}</p>
             </DetailSectionCard>
-            <DetailSectionCard v-if="displayExtraction?.planningNotes?.landParcels?.length" :title="$t('objektDetail.parcelsTitle')">
+            <DetailSectionCard :title="$t('objektDetail.parcelsTitle')">
               <template v-if="parcelsTranslating" #action>
                 <TranslationPendingBadge />
               </template>
-              <ul class="space-y-2 text-sm">
-                <li v-for="(parcel, i) in displayExtraction.planningNotes.landParcels" :key="i" class="flex items-baseline justify-between gap-3">
+              <ul v-if="landParcelItems.length" class="space-y-2 text-sm">
+                <li v-for="(parcel, i) in landParcelItems" :key="i" class="flex items-baseline justify-between gap-3">
                   <span class="font-medium">{{ parcel.label }}</span>
                   <span class="text-foreground/90 text-right">
                     <span v-if="parcel.areaSqm != null" class="tabular-nums">{{ formatArea(parcel.areaSqm) }}</span>
@@ -855,6 +868,7 @@ useHead(() => ({
                   </span>
                 </li>
               </ul>
+              <p v-else class="text-sm text-muted-foreground">{{ $t('objektDetail.noKnownParcels') }}</p>
             </DetailSectionCard>
           </div>
         </div>

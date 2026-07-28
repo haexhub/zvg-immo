@@ -1,6 +1,6 @@
 import type { AuctionExtraction, AuctionInsights, LandParcel, PlanningNotes } from '~/types/auction'
 
-export const TRANSLATABLE_EXTRACTION_TEXTS_VERSION = 2
+export const TRANSLATABLE_EXTRACTION_TEXTS_VERSION = 3
 
 export interface TranslatableInsightsTexts {
   defects: string[]
