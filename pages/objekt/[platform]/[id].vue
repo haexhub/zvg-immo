@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { Component } from 'vue'
 import { MAX_LLM_FAILURES } from '~/lib/llm-limits'
+import { hasCompletedLlmAnalysis as extractionHasCompletedLlmAnalysis } from '~/lib/auction-filters'
 import { classifyPropertyType } from '~/lib/property-type'
 import type { Feature } from '~/lib/features'
 import type { AuctionDetail } from '~/server/api/auction/[platform]/[id].get'
@@ -443,25 +444,7 @@ const planningNotesHasContent = computed(() => {
 type AnalysisStatus = 'pending' | 'rules' | 'batch' | 'llm' | 'failed'
 
 function hasCompletedLlmAnalysis(): boolean {
-  const e = a.value?.extraction
-  if (!e) return false
-  return !!e.llmAnalyzedAt ||
-    e.source === 'llm' ||
-    e.condition !== undefined ||
-    e.features !== undefined ||
-    e.bedrooms !== undefined ||
-    e.bathrooms !== undefined ||
-    e.floor !== undefined ||
-    e.bathroomHasTub !== undefined ||
-    e.bathroomHasShower !== undefined ||
-    e.heating !== undefined ||
-    e.yearBuilt !== undefined ||
-    e.lastRenovationYear !== undefined ||
-    e.renovationNotes !== undefined ||
-    e.insights !== undefined ||
-    e.planningNotes !== undefined ||
-    e.documentSummary !== undefined ||
-    e.marketValueEur !== undefined
+  return extractionHasCompletedLlmAnalysis(a.value?.extraction)
 }
 
 const analysisStatus = computed<AnalysisStatus>(() => {
