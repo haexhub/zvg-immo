@@ -46,6 +46,12 @@ function queryList(key: string): string[] {
   const raw = Array.isArray(v) ? v.join(',') : (v ?? '')
   return raw ? raw.split(',').filter(Boolean) : []
 }
+const SORT_OPTIONS = ['default', 'dateAsc', 'priceAsc', 'priceDesc'] as const
+type SortBy = typeof SORT_OPTIONS[number]
+function querySortBy(): SortBy {
+  const v = queryStr('sort', 'default')
+  return SORT_OPTIONS.includes(v as SortBy) ? (v as SortBy) : 'default'
+}
 
 // Country/region multi-select filter. Empty array = aggregate over every
 // registered platform across every country. Region selections are stored as
@@ -421,6 +427,7 @@ function clearAllFilters(): void {
   featuresFilter.value = []
   onlyWithPhotos.value = false
   includeCancelled.value = false
+  boundToMap.value = false
   hideRulesOnly.value = hideRulesOnlyServerDefault.value
 }
 
@@ -471,8 +478,8 @@ const filteredGeo = computed<GeoAuction[]>(() => {
 // of the list while this is active.
 type MapBounds = { north: number; south: number; east: number; west: number }
 const mapBounds = ref<MapBounds | null>(null)
-const boundToMap = ref(false)
-const sortBy = ref<'default' | 'dateAsc' | 'priceAsc' | 'priceDesc'>('default')
+const boundToMap = ref(route.query.boundToMap === '1')
+const sortBy = ref<SortBy>(querySortBy())
 
 const listBase = computed<Auction[]>(() => {
   if (boundToMap.value && mapBounds.value) {
@@ -594,12 +601,13 @@ const activeFilterCount = computed(() => {
   if (featuresFilter.value.length) n++
   if (onlyWithPhotos.value) n++
   if (includeCancelled.value) n++
+  if (boundToMap.value) n++
   if (hideRulesOnly.value !== hideRulesOnlyServerDefault.value) n++
   return n
 })
 
 watch(
-  [selectedCountries, selectedRegionKeys, debouncedSearch, authorityFilter, priceMin, priceMax, landAreaMin, landAreaMax, livingAreaMin, livingAreaMax, yearBuiltMin, yearBuiltMax, renovationYearMin, renovationYearMax, categoryFilter, conditionFilter, featuresFilter, onlyWithPhotos, includeCancelled, hideRulesOnly, view],
+  [selectedCountries, selectedRegionKeys, debouncedSearch, authorityFilter, priceMin, priceMax, landAreaMin, landAreaMax, livingAreaMin, livingAreaMax, yearBuiltMin, yearBuiltMax, renovationYearMin, renovationYearMax, categoryFilter, conditionFilter, featuresFilter, onlyWithPhotos, includeCancelled, hideRulesOnly, boundToMap, sortBy, view],
   () => {
     const query: Record<string, string> = {}
     if (selectedCountries.value.length) query.country = selectedCountries.value.join(',')
@@ -621,7 +629,9 @@ watch(
     if (featuresFilter.value.length) query.features = featuresFilter.value.join(',')
     if (onlyWithPhotos.value) query.photos = '1'
     if (includeCancelled.value) query.cancelled = '1'
+    if (boundToMap.value) query.boundToMap = '1'
     if (hideRulesOnly.value !== hideRulesOnlyServerDefault.value) query.llmOnly = hideRulesOnly.value ? '1' : '0'
+    if (sortBy.value !== 'default') query.sort = sortBy.value
     if (view.value === 'map' && !mapViewImpliedByCountryQuery.value) query.view = 'map'
     router.replace({ query })
   },
@@ -651,7 +661,9 @@ watch(() => route.query, (q) => {
   conditionFilter.value = queryStr('condition', ALL_SCOPE)
   featuresFilter.value = queryList('features')
   onlyWithPhotos.value = q.photos === '1'
+  boundToMap.value = q.boundToMap === '1'
   hideRulesOnly.value = q.llmOnly === '1' ? true : q.llmOnly === '0' ? false : hideRulesOnlyServerDefault.value
+  sortBy.value = querySortBy()
   const isMapView = q.view === 'map'
   const isCountryMapView = !isMapView
     && q.view === undefined
