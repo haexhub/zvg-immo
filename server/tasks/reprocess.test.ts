@@ -994,7 +994,25 @@ describe('runReprocess', () => {
     vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
     vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
       opts?.onProviderAttempt?.()
-      throw Object.assign(new Error('http 429'), { response: { status: 429 } })
+      throw Object.assign(new Error('http 429'), {
+        response: { status: 429 },
+        data: {
+          error: {
+            status: 'RESOURCE_EXHAUSTED',
+            details: [
+              {
+                violations: [
+                  {
+                    quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier',
+                    quotaDimensions: { model: 'gemini-3.6-flash' },
+                    quotaValue: '20',
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      })
     })
 
     const prior: AuctionExtraction = {
@@ -1012,7 +1030,16 @@ describe('runReprocess', () => {
 
     const result = await runReprocess({})
 
-    expect(result).toEqual({ candidates: 1, processed: 0, skipped: 1, llmCalls: 1, durationMs: expect.any(Number) })
+    expect(result).toEqual({
+      candidates: 1,
+      processed: 0,
+      skipped: 1,
+      llmCalls: 1,
+      durationMs: expect.any(Number),
+      warning: expect.stringContaining('GenerateRequestsPerDayPerProjectPerModel-FreeTier'),
+    })
+    expect(result.warning).toContain('gemini-3.6-flash')
+    expect(result.warning).toContain('Limit 20')
     expect(writeExtractionCache).not.toHaveBeenCalled()
   })
 
@@ -1040,7 +1067,14 @@ describe('runReprocess', () => {
 
     const result = await runReprocess({})
 
-    expect(result).toEqual({ candidates: 2, processed: 0, skipped: 1, llmCalls: 1, durationMs: expect.any(Number) })
+    expect(result).toEqual({
+      candidates: 2,
+      processed: 0,
+      skipped: 1,
+      llmCalls: 1,
+      durationMs: expect.any(Number),
+      warning: expect.stringContaining('LLM-Rate-Limit'),
+    })
     expect(extractByLlm).toHaveBeenCalledTimes(1)
     expect(writeExtractionCache).not.toHaveBeenCalled()
   })

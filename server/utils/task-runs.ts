@@ -20,6 +20,7 @@ export interface TaskRunStatus {
   finishedAt: string | null
   lastResult: TaskRunSummary | null
   lastError: string | null
+  lastWarning: string | null
 }
 
 const TASK_RUN_STATUS_KEY = 'task_run_status'
@@ -30,6 +31,7 @@ const IDLE_STATUS: TaskRunStatus = {
   finishedAt: null,
   lastResult: null,
   lastError: null,
+  lastWarning: null,
 }
 
 let memoryTaskRunStatus: Record<string, TaskRunStatus> = {}
@@ -54,6 +56,7 @@ function coerceTaskRunStatus(value: unknown): TaskRunStatus {
     finishedAt: typeof v.finishedAt === 'string' && v.finishedAt ? v.finishedAt : null,
     lastResult: coerceSummary(v.lastResult),
     lastError: typeof v.lastError === 'string' && v.lastError ? v.lastError : null,
+    lastWarning: typeof v.lastWarning === 'string' && v.lastWarning ? v.lastWarning : null,
   }
 }
 
@@ -112,12 +115,14 @@ export async function recordTaskRunStart(task: TrackedTask): Promise<void> {
     ...current,
     status: 'running',
     startedAt: new Date().toISOString(),
+    lastError: null,
+    lastWarning: null,
   })
 }
 
 export async function recordTaskRunEnd(
   task: TrackedTask,
-  outcome: { result: TaskRunSummary } | { error: string },
+  outcome: { result: TaskRunSummary; warning?: string | null } | { error: string },
 ): Promise<void> {
   const current = await getTaskRunStatus(task)
   await writeTaskRunStatus(task, {
@@ -126,5 +131,6 @@ export async function recordTaskRunEnd(
     finishedAt: new Date().toISOString(),
     lastResult: 'result' in outcome ? outcome.result : current.lastResult,
     lastError: 'error' in outcome ? outcome.error : null,
+    lastWarning: 'result' in outcome ? outcome.warning ?? null : null,
   })
 }

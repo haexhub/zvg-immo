@@ -7,6 +7,7 @@
 // country-wide run.
 
 import { runReprocess, type ReprocessOptions } from '~/server/tasks/reprocess'
+import { recordTaskRunEnd, recordTaskRunStart } from '~/server/utils/task-runs'
 
 const MAX_LIMIT = 200
 
@@ -27,5 +28,14 @@ export default defineEventHandler(async (event) => {
     batch: typeof body.batch === 'boolean' ? body.batch : undefined,
   }
 
-  return await runReprocess(opts)
+  try {
+    await recordTaskRunStart('reprocess')
+    const result = await runReprocess(opts)
+    const { warning, ...summary } = result
+    await recordTaskRunEnd('reprocess', { result: summary, warning })
+    return result
+  } catch (err) {
+    await recordTaskRunEnd('reprocess', { error: (err as Error).message })
+    throw err
+  }
 })
