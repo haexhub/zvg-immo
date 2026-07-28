@@ -362,9 +362,9 @@
     "llmBatch": {
       "title": "LLM batch pipeline",
       "description": "Open batch jobs that were handed to an LLM provider and are still waiting for results.",
-      "enrichRunning": "Enrich running since {at}",
-      "enrichLastRun": "Last run: {at} — {enriched} enriched, {llmCalls} LLM calls, {duration}s",
-      "enrichLastError": "Last run failed: {message}",
+      "reprocessRunning": "Extraction running since {at}",
+      "reprocessLastRun": "Last run: {at} — {processed} processed, {llmCalls} LLM calls, {duration}s",
+      "reprocessLastError": "Last run failed: {message}",
       "refresh": "Refresh",
       "loadError": "Could not load the batch pipeline.",
       "empty": "No open batch requests.",

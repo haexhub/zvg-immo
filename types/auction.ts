@@ -335,6 +335,16 @@ export interface AuctionExtraction {
   documentSetHash?: string | null
   /** See `documentSetHash` for the `undefined` vs `null` cache semantics. */
   documentSetVersion?: number | null
+  /** Hash/version of the document set as last archived by the crawl task
+   *  (enrich.ts) — distinct from `documentSetHash`/`documentSetVersion`,
+   *  which record what the extraction task (reprocess.ts) last actually
+   *  parsed. The two tasks run independently on their own schedules and
+   *  only communicate through this cache row, so a single shared field
+   *  can't tell "changed since archived" from "changed since parsed" —
+   *  reprocessing is due whenever this differs from `documentSetHash`. */
+  archivedDocumentSetHash?: string | null
+  /** See `archivedDocumentSetHash`. */
+  archivedDocumentSetVersion?: number | null
   /** LLM-only Verkehrswert extracted from the Gutachten text, in the
    *  auction's `currency`. `undefined` = never checked yet; `null` = checked,
    *  nothing found. Same backfill semantics as `condition`. Only ever applied

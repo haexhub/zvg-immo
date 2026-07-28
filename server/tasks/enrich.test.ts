@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Auction } from '~/types/auction'
 import { downloadNativeImages } from '../utils/extract/native-images'
 import { extractDocumentPhotos } from '../utils/extract/document-images'
-import { extractByLlm } from '../utils/extract/llm'
 import { readExtractionCache, writeExtractionCache, type ExtractionCache } from '../utils/extraction-cache'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
 import { readVerkehrswertCache } from '../utils/verkehrswert-cache'
@@ -21,10 +20,13 @@ vi.mock('../utils/exchange-rate', () => ({
 }))
 vi.mock('../utils/extract/native-images', () => ({ downloadNativeImages: vi.fn() }))
 vi.mock('../utils/extract/document-images', () => ({ extractDocumentPhotos: vi.fn(async () => []) }))
-vi.mock('../utils/extract/llm', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../utils/extract/llm')>()
-  return { ...actual, extractByLlm: vi.fn(async () => null) }
-})
+// Document text/native-doc preparation is irrelevant to this crawl/archive-only
+// task (only used here to build the bytes archiveDocumentSet stores) — default
+// to "nothing to archive" so tests that don't care about document-set
+// bookkeeping don't need a real network fetch to succeed.
+vi.mock('../utils/extract/llm-documents', () => ({
+  prepareLiveLlmDocuments: vi.fn(async () => ({ documentSetItems: [], documentSetComplete: false })),
+}))
 vi.mock('../utils/extraction-cache', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/extraction-cache')>()
   return { ...actual, readExtractionCache: vi.fn(), writeExtractionCache: vi.fn(async () => true) }
@@ -51,7 +53,7 @@ vi.mock('../utils/raw-archive', async (importOriginal) => {
 vi.stubGlobal('defineTask', (def: unknown) => def)
 vi.stubGlobal('useRuntimeConfig', () => ({}))
 
-const { hasDocumentSetChanged, runEnrich } = await import('./enrich')
+const { runEnrich } = await import('./enrich')
 
 const AT_PLATFORM = {
   id: 'zvg-portal',
@@ -118,48 +120,6 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-describe('document set invalidation', () => {
-  it('treats a current document-set hash as changed when the prior cache entry had none', () => {
-    expect(
-      hasDocumentSetChanged(
-        {
-          propertyType: 'einfamilienhaus',
-          landAreaSqm: 850,
-          livingAreaSqm: 140,
-          rooms: 5,
-          units: 1,
-          condition: 'gepflegt',
-          features: ['garage'],
-          documentSummary: 'Altes Gutachten',
-          source: 'llm',
-          confidence: 'high',
-          at: '2026-07-01T00:00:00.000Z',
-        },
-        { setHash: 'new-set', version: 1, changed: true },
-      ),
-    ).toBe(true)
-  })
-
-  it('keeps prior LLM fields only when the document-set hash is unchanged', () => {
-    expect(
-      hasDocumentSetChanged(
-        {
-          propertyType: null,
-          landAreaSqm: null,
-          livingAreaSqm: null,
-          rooms: null,
-          units: null,
-          documentSetHash: 'same-set',
-          source: 'rules',
-          confidence: 'low',
-          at: '2026-07-01T00:00:00.000Z',
-        },
-        { setHash: 'same-set', version: 3, changed: false },
-      ),
-    ).toBe(false)
-  })
-})
-
 describe('runEnrich detail post-processing without enrichOne', () => {
   it('still archives, EUR-converts and stamps detailFetchedAt for a crawler with no enrichOne (e.g. se-kronofogden)', async () => {
     const auction = makeAuction()
@@ -177,41 +137,65 @@ describe('runEnrich detail post-processing without enrichOne', () => {
 })
 
 describe('runEnrich photo backfill (WP-1)', () => {
-  it('bumps llmFailures when a known document set cannot be loaded from the raw archive', async () => {
-    vi.stubGlobal('useRuntimeConfig', () => ({
-      extractLlm: {
-        provider: 'openai-compatible',
-        baseUrl: 'https://api.openai.test/v1',
-        model: 'gpt-test',
-        apiKey: 'sk-test',
-        maxPerRun: '10',
-      },
-    }))
+  it('writes archivedDocumentSetHash from a freshly archived set while leaving parse-owned fields untouched', async () => {
     const auction = makeAuction({
       title: 'Unklare Immobilie',
       description: 'Detailtext ohne verwertbare Flaechen.',
       photoUrls: [],
+      attachments: [
+        {
+          kind: 'appraisal',
+          label: 'Gutachten',
+          filename: 'Gutachten.pdf',
+          sizeBytes: 100,
+          fileId: '1',
+          proxyUrl: 'https://example.test/gutachten.pdf',
+        },
+      ],
     })
     const { crawlAll } = await import('../crawlers/registry')
     vi.mocked(crawlAll).mockResolvedValue(mockCrawl([auction]))
+    const { prepareLiveLlmDocuments } = await import('../utils/extract/llm-documents')
+    vi.mocked(prepareLiveLlmDocuments).mockResolvedValueOnce({
+      documentSetItems: [
+        {
+          ordinal: 0,
+          kind: 'document',
+          label: 'Gutachten',
+          filename: 'Gutachten.pdf',
+          fileId: '1',
+          sourceUrl: 'https://example.test/gutachten.pdf',
+          contentHash: 'hash-1',
+          contentType: 'application/pdf',
+        },
+      ],
+      documentSetComplete: true,
+    })
     vi.mocked(archiveDocumentSet).mockResolvedValueOnce({
-      setHash: 'prior-set',
-      version: 7,
-      changed: false,
+      setHash: 'fresh-set',
+      version: 2,
+      changed: true,
     })
 
+    // archivedDocumentSetHash absent — this task has never archived a
+    // document set for this auction yet, so needsDocumentSetCheck is due.
+    // condition/source/confidence/llmFailures/documentSetHash are already
+    // set though — a fully separate task (reprocess.ts) owns them and must
+    // see them unchanged, even though enrich.ts rewrites this same cache row
+    // for its own (archivedDocumentSetHash/photo) fields.
     const cache: ExtractionCache = {
       'zvg-portal:14409': {
-        propertyType: null,
-        landAreaSqm: null,
-        livingAreaSqm: null,
-        rooms: null,
-        units: null,
-        source: 'rules',
-        confidence: 'low',
+        propertyType: 'einfamilienhaus',
+        landAreaSqm: 500,
+        livingAreaSqm: 120,
+        rooms: 4,
+        units: 1,
+        source: 'llm',
+        confidence: 'high',
+        condition: 'gepflegt',
         llmFailures: 1,
         documentSetHash: 'prior-set',
-        documentSetVersion: 7,
+        documentSetVersion: 1,
         photosCheckedAt: '2026-07-20T00:00:00.000Z',
         photoPipelineVersion: 2,
         at: '2026-07-01T00:00:00.000Z',
@@ -221,11 +205,81 @@ describe('runEnrich photo backfill (WP-1)', () => {
 
     await runEnrich()
 
-    expect(extractByLlm).not.toHaveBeenCalled()
     const written = vi.mocked(writeExtractionCache).mock.calls[0]?.[0] as ExtractionCache
-    expect(written['zvg-portal:14409']?.llmFailures).toBe(2)
-    expect(written['zvg-portal:14409']?.documentSetHash).toBe('prior-set')
-    expect(written['zvg-portal:14409']?.documentSetVersion).toBe(7)
+    const entry = written['zvg-portal:14409']
+    expect(entry?.archivedDocumentSetHash).toBe('fresh-set')
+    expect(entry?.archivedDocumentSetVersion).toBe(2)
+    // Untouched — reprocess.ts owns these.
+    expect(entry?.condition).toBe('gepflegt')
+    expect(entry?.source).toBe('llm')
+    expect(entry?.confidence).toBe('high')
+    expect(entry?.llmFailures).toBe(1)
+    expect(entry?.documentSetHash).toBe('prior-set')
+  })
+
+  it('retries the document-set check after a previously failed archive attempt (archivedDocumentSetHash: null)', async () => {
+    const auction = makeAuction({
+      title: 'Unklare Immobilie',
+      description: 'Detailtext ohne verwertbare Flaechen.',
+      photoUrls: [],
+      attachments: [
+        {
+          kind: 'appraisal',
+          label: 'Gutachten',
+          filename: 'Gutachten.pdf',
+          sizeBytes: 100,
+          fileId: '1',
+          proxyUrl: 'https://example.test/gutachten.pdf',
+        },
+      ],
+    })
+    const { crawlAll } = await import('../crawlers/registry')
+    vi.mocked(crawlAll).mockResolvedValue(mockCrawl([auction]))
+    const { prepareLiveLlmDocuments } = await import('../utils/extract/llm-documents')
+    vi.mocked(prepareLiveLlmDocuments).mockResolvedValueOnce({
+      documentSetItems: [
+        {
+          ordinal: 0,
+          kind: 'document',
+          label: 'Gutachten',
+          filename: 'Gutachten.pdf',
+          fileId: '1',
+          sourceUrl: 'https://example.test/gutachten.pdf',
+          contentHash: 'hash-1',
+          contentType: 'application/pdf',
+        },
+      ],
+      documentSetComplete: true,
+    })
+    vi.mocked(archiveDocumentSet).mockResolvedValueOnce({
+      setHash: 'retried-set',
+      version: 1,
+      changed: true,
+    })
+
+    // A prior run's archive attempt failed and recorded `null` (not
+    // `undefined`) — needsDocumentSetCheck must still treat this as due, or a
+    // failed archive would permanently exclude the listing from retries.
+    const cache: ExtractionCache = {
+      'zvg-portal:14409': {
+        propertyType: null,
+        landAreaSqm: null,
+        livingAreaSqm: null,
+        rooms: null,
+        units: null,
+        source: 'rules',
+        confidence: 'low',
+        archivedDocumentSetHash: null,
+        at: '2026-07-01T00:00:00.000Z',
+      },
+    }
+    vi.mocked(readExtractionCache).mockResolvedValue(cache)
+
+    await runEnrich()
+
+    expect(archiveDocumentSet).toHaveBeenCalled()
+    const written = vi.mocked(writeExtractionCache).mock.calls[0]?.[0] as ExtractionCache
+    expect(written['zvg-portal:14409']?.archivedDocumentSetHash).toBe('retried-set')
   })
 
   it('re-attempts the photo pipeline for an entry with no photos and no photosCheckedAt marker', async () => {
@@ -599,36 +653,5 @@ describe('runEnrich photo backfill (WP-1)', () => {
       { file: 'native-photo.jpg', category: 'sonstiges', caption: null, isPropertyPhoto: true },
     ])
     expect(written['se-kronofogden:14409']?.photoPipelineVersion).toBe(3)
-  })
-})
-
-describe('runEnrich batch mode gating', () => {
-  it('falls back to the synchronous LLM call when the requested batch provider is known-broken', async () => {
-    vi.stubGlobal('useRuntimeConfig', () => ({
-      extractLlm: {
-        provider: 'gemini-native',
-        baseUrl: 'https://generativelanguage.googleapis.com',
-        apiKey: 'test-key',
-        model: 'gemini-flash-latest',
-      },
-    }))
-    const auction = makeAuction()
-    const { crawlAll } = await import('../crawlers/registry')
-    vi.mocked(crawlAll).mockResolvedValue(mockCrawl([auction]))
-    vi.mocked(readExtractionCache).mockResolvedValue({})
-
-    const { recordLlmBatchCapability } = await import('../utils/llm-batch-jobs')
-    await recordLlmBatchCapability('gemini-native', {
-      ok: false,
-      message: 'FAILED_PRECONDITION: Precondition check failed.',
-      source: 'enrich',
-    })
-
-    await runEnrich({ batch: true })
-
-    // supportsLlmBatch alone would say gemini-native can batch — the known-
-    // broken capability (recorded by a real prior attempt) must still force
-    // the synchronous path instead of collecting doomed batch items.
-    expect(extractByLlm).toHaveBeenCalled()
   })
 })

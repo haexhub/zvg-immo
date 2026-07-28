@@ -1,30 +1,24 @@
-// Tracks whether a scheduled Nitro task (currently just `enrich`) is running
-// right now and what its last run produced — enrich.ts's own `running` guard
+// Tracks whether a scheduled Nitro task (`enrich` or `reprocess`) is running
+// right now and what its last run produced — each task's own `running` guard
 // is in-memory only, so /settings had no way to show whether the pipeline is
 // alive or stuck. Same app_settings KV + graceful in-memory-fallback pattern
 // as llm-batch-jobs.ts's recordLlmBatchCapability/getAllLlmBatchCapabilities.
 
 import { getPool } from './db'
 
-export type TrackedTask = 'enrich'
+export type TrackedTask = 'enrich' | 'reprocess'
 
-export interface EnrichRunSummary {
-  crawled: number
-  new: number
-  cached: number
-  enriched: number
-  llmCalls: number
-  photoExtractions: number
-  photosTotal: number
-  confident: number
-  durationMs: number
-}
+// enrich.ts (crawl/archive) and reprocess.ts (extraction) report differently
+// shaped, purely-numeric result summaries — kept generic here rather than a
+// fixed key list per task, so this file doesn't need to know either task's
+// exact shape.
+export type TaskRunSummary = Record<string, number>
 
 export interface TaskRunStatus {
   status: 'idle' | 'running'
   startedAt: string | null
   finishedAt: string | null
-  lastResult: EnrichRunSummary | null
+  lastResult: TaskRunSummary | null
   lastError: string | null
 }
 
@@ -40,16 +34,13 @@ const IDLE_STATUS: TaskRunStatus = {
 
 let memoryTaskRunStatus: Record<string, TaskRunStatus> = {}
 
-function coerceSummary(value: unknown): EnrichRunSummary | null {
+function coerceSummary(value: unknown): TaskRunSummary | null {
   if (!value || typeof value !== 'object') return null
   const v = value as Record<string, unknown>
-  const keys: (keyof EnrichRunSummary)[] = [
-    'crawled', 'new', 'cached', 'enriched', 'llmCalls', 'photoExtractions', 'photosTotal', 'confident', 'durationMs',
-  ]
-  const out = {} as EnrichRunSummary
-  for (const key of keys) {
-    if (typeof v[key] !== 'number' || !Number.isFinite(v[key] as number)) return null
-    out[key] = v[key] as number
+  const out: TaskRunSummary = {}
+  for (const [key, entryValue] of Object.entries(v)) {
+    if (typeof entryValue !== 'number' || !Number.isFinite(entryValue)) return null
+    out[key] = entryValue
   }
   return out
 }
@@ -126,7 +117,7 @@ export async function recordTaskRunStart(task: TrackedTask): Promise<void> {
 
 export async function recordTaskRunEnd(
   task: TrackedTask,
-  outcome: { result: EnrichRunSummary } | { error: string },
+  outcome: { result: TaskRunSummary } | { error: string },
 ): Promise<void> {
   const current = await getTaskRunStatus(task)
   await writeTaskRunStatus(task, {
