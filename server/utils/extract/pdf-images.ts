@@ -1,7 +1,10 @@
-// Extracts photos embedded in a Gutachten/Exposé PDF via poppler's `pdfimages`
-// (already in the runtime image). Filters out junk: too-small icons, masks,
-// extreme aspect ratios, and logos that repeat across pages. Results are
-// written to .cache_zvg/images/<platform>/<id>/ as `0.jpg`/`0.png`/… and the
+// Extracts useful gallery images embedded in a Gutachten/Exposé PDF via
+// poppler's `pdfimages`: property photos, floor plans, site plans and maps.
+// Fragmented image tiles are recomposed from `pdftohtml` layout coordinates and
+// `pdftoppm` crops, so maps/plans stay visible as complete images instead of
+// broken snippets. Filters out junk: too-small icons, masks, extreme aspect
+// ratios, and logos that repeat across pages. Results are written to
+// .cache_zvg/images/<platform>/<id>/ as content-addressed image files and the
 // list of filenames is returned for the extraction cache.
 
 import { execFile } from 'node:child_process'
@@ -28,6 +31,16 @@ export const DEFAULT_FILTER = {
   squareAspectMax: 1.15,
 } as const
 
+const PDF_LAYOUT_ZOOM = 1.5
+const PDF_LAYOUT_RENDER_DPI = String(Math.round(72 * PDF_LAYOUT_ZOOM))
+const CLUSTER_CROP_PADDING = 2
+const FRAGMENTED_CLUSTER = {
+  minImages: 3,
+  minWidth: 300,
+  minHeight: 250,
+  maxGap: 3,
+} as const
+
 export interface PdfImageInfo {
   page: number
   num: number
@@ -36,6 +49,32 @@ export interface PdfImageInfo {
   height: number
   color: string
   enc: string
+}
+
+export interface PdfImagePlacement {
+  page: number
+  num: number | null
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+export interface PdfImagePageLayout {
+  page: number
+  width: number
+  height: number
+  images: PdfImagePlacement[]
+}
+
+export interface PdfImageCluster {
+  page: number
+  num: number
+  left: number
+  top: number
+  width: number
+  height: number
+  imageKeys: string[]
 }
 
 /**
@@ -65,6 +104,147 @@ export function parseImageList(stdout: string): PdfImageInfo[] {
     })
   }
   return out
+}
+
+function parseXmlAttrs(raw: string): Record<string, string> {
+  const attrs: Record<string, string> = {}
+  for (const match of raw.matchAll(/\b([a-zA-Z_][\w:-]*)="([^"]*)"/g)) {
+    attrs[match[1]!] = match[2]!
+  }
+  return attrs
+}
+
+function finiteNumber(raw: string | undefined): number | null {
+  if (raw == null || raw.trim() === '') return null
+  const n = Number(raw)
+  return Number.isFinite(n) ? n : null
+}
+
+/**
+ * Parse `pdftohtml -xml` image placements. Poppler's XML uses page-local
+ * coordinates at the configured zoom; with `-zoom 1.5` those coordinates map
+ * to `pdftoppm -r 108` crop pixels.
+ */
+export function parseImageLayoutXml(xml: string, imageList: readonly PdfImageInfo[] = []): PdfImagePageLayout[] {
+  const imageNumsByPage = new Map<number, number[]>()
+  for (const info of imageList) {
+    if (info.type !== 'image') continue
+    const nums = imageNumsByPage.get(info.page) ?? []
+    nums.push(info.num)
+    imageNumsByPage.set(info.page, nums)
+  }
+
+  const pages: PdfImagePageLayout[] = []
+  for (const pageMatch of xml.matchAll(/<page\b([^>]*)>([\s\S]*?)<\/page>/g)) {
+    const attrs = parseXmlAttrs(pageMatch[1]!)
+    const page = finiteNumber(attrs.number)
+    const width = finiteNumber(attrs.width)
+    const height = finiteNumber(attrs.height)
+    if (page == null || width == null || height == null) continue
+
+    const nums = imageNumsByPage.get(page) ?? []
+    const images: PdfImagePlacement[] = []
+    let imageIndex = 0
+    for (const imageMatch of pageMatch[2]!.matchAll(/<image\b([^>]*)\/>/g)) {
+      const imageAttrs = parseXmlAttrs(imageMatch[1]!)
+      const left = finiteNumber(imageAttrs.left)
+      const top = finiteNumber(imageAttrs.top)
+      const imageWidth = finiteNumber(imageAttrs.width)
+      const imageHeight = finiteNumber(imageAttrs.height)
+      if (left == null || top == null || imageWidth == null || imageHeight == null) continue
+      images.push({
+        page,
+        num: nums[imageIndex] ?? null,
+        left,
+        top,
+        width: imageWidth,
+        height: imageHeight,
+      })
+      imageIndex += 1
+    }
+    pages.push({ page, width, height, images })
+  }
+  return pages
+}
+
+function imageKey(page: number, num: number): string {
+  return `${page}:${num}`
+}
+
+function touches(a: PdfImagePlacement, b: PdfImagePlacement, maxGap: number): boolean {
+  const aRight = a.left + a.width
+  const bRight = b.left + b.width
+  const aBottom = a.top + a.height
+  const bBottom = b.top + b.height
+  return (
+    a.left <= bRight + maxGap &&
+    b.left <= aRight + maxGap &&
+    a.top <= bBottom + maxGap &&
+    b.top <= aBottom + maxGap
+  )
+}
+
+/**
+ * Detect visually contiguous image tiles. Some PDFs, especially Microsoft
+ * Print-to-PDF appraisal documents, store one displayed map, plan or photo as
+ * multiple adjacent raster XObjects; extracting those objects directly produces
+ * broken gallery images. A cluster is only emitted when it contains at least
+ * one image that the normal gallery-image filter would otherwise keep.
+ */
+export function findFragmentedImageClusters(
+  pages: readonly PdfImagePageLayout[],
+  wantedKeys: ReadonlySet<string>,
+): PdfImageCluster[] {
+  const clusters: PdfImageCluster[] = []
+  for (const page of pages) {
+    if (page.page <= 1 || page.images.length < FRAGMENTED_CLUSTER.minImages) continue
+
+    const seen = new Set<number>()
+    for (let i = 0; i < page.images.length; i += 1) {
+      if (seen.has(i)) continue
+      const group: PdfImagePlacement[] = []
+      const queue = [i]
+      seen.add(i)
+      while (queue.length > 0) {
+        const idx = queue.shift()!
+        const current = page.images[idx]!
+        group.push(current)
+        for (let j = 0; j < page.images.length; j += 1) {
+          if (seen.has(j)) continue
+          if (!touches(current, page.images[j]!, FRAGMENTED_CLUSTER.maxGap)) continue
+          seen.add(j)
+          queue.push(j)
+        }
+      }
+
+      if (group.length < FRAGMENTED_CLUSTER.minImages) continue
+      const nums = group
+        .map((img) => img.num)
+        .filter((num): num is number => num != null)
+        .sort((a, b) => a - b)
+      const keys = nums.map((num) => imageKey(page.page, num))
+      if (!keys.some((key) => wantedKeys.has(key))) continue
+
+      const left = Math.max(0, Math.min(...group.map((img) => img.left)) - CLUSTER_CROP_PADDING)
+      const top = Math.max(0, Math.min(...group.map((img) => img.top)) - CLUSTER_CROP_PADDING)
+      const right = Math.min(page.width, Math.max(...group.map((img) => img.left + img.width)) + CLUSTER_CROP_PADDING)
+      const bottom = Math.min(page.height, Math.max(...group.map((img) => img.top + img.height)) + CLUSTER_CROP_PADDING)
+      const width = right - left
+      const height = bottom - top
+      if (width < FRAGMENTED_CLUSTER.minWidth || height < FRAGMENTED_CLUSTER.minHeight) continue
+      if (nums.length === 0) continue
+      clusters.push({
+        page: page.page,
+        num: Math.min(...nums),
+        left,
+        top,
+        width,
+        height,
+        imageKeys: keys,
+      })
+    }
+  }
+  return clusters
 }
 
 export interface ImageFilterOptions {
@@ -125,6 +305,53 @@ export interface ExtractPhotosOptions {
   maxPhotos?: number
 }
 
+async function readImageLayout(
+  inputPath: string,
+  workDir: string,
+  imageList: readonly PdfImageInfo[],
+): Promise<PdfImagePageLayout[]> {
+  const outputPrefix = join(workDir, 'layout')
+  try {
+    await exec('pdftohtml', ['-xml', '-hidden', '-noroundcoord', '-zoom', String(PDF_LAYOUT_ZOOM), inputPath, outputPrefix], {
+      timeout: 30_000,
+      maxBuffer: 10 * 1024 * 1024,
+    })
+    return parseImageLayoutXml(await readFile(`${outputPrefix}.xml`, 'utf8'), imageList)
+  } catch {
+    return []
+  }
+}
+
+async function renderImageCluster(
+  inputPath: string,
+  workDir: string,
+  cluster: PdfImageCluster,
+  idx: number,
+): Promise<Buffer> {
+  const outputPrefix = join(workDir, `cluster-${cluster.page}-${cluster.num}-${idx}`)
+  const outputPath = `${outputPrefix}.jpg`
+  try {
+    await exec(
+      'pdftoppm',
+      [
+        '-jpeg', '-jpegopt', 'quality=85',
+        '-r', PDF_LAYOUT_RENDER_DPI,
+        '-f', String(cluster.page), '-l', String(cluster.page),
+        '-singlefile',
+        '-x', String(Math.floor(cluster.left)),
+        '-y', String(Math.floor(cluster.top)),
+        '-W', String(Math.ceil(cluster.width)),
+        '-H', String(Math.ceil(cluster.height)),
+        inputPath, outputPrefix,
+      ],
+      { timeout: 30_000, maxBuffer: 20 * 1024 * 1024 },
+    )
+    return await readFile(outputPath)
+  } catch (err) {
+    throw new Error(`PDF image cluster render failed: ${(err as Error).message}`)
+  }
+}
+
 /**
  * Fetch the PDF at `proxyUrl`, extract embedded raster images, filter and
  * dedupe them, write the keepers to `destDir`. Returns the list of filenames
@@ -157,19 +384,27 @@ export async function extractPdfPhotos(
     } catch (err) {
       throw new Error(`pdfimages -list failed: ${(err as Error).message}`)
     }
-    const wanted = filterImages(parseImageList(listOut))
+    const imageList = parseImageList(listOut)
+    const wanted = filterImages(imageList)
     if (wanted.length === 0) return []
+
+    const wantedKeys = new Set(wanted.map((info) => imageKey(info.page, info.num)))
+    const clusters = findFragmentedImageClusters(await readImageLayout(inputPath, workDir, imageList), wantedKeys)
+    const clusteredKeys = new Set(clusters.flatMap((cluster) => cluster.imageKeys))
+    const individualWanted = wanted.filter((info) => !clusteredKeys.has(imageKey(info.page, info.num)))
 
     // `-j -png`: emit JPEG-encoded images as .jpg, everything else as .png.
     // This avoids browser-hostile JP2/PPM/TIFF outputs that `-all` would write.
     const prefix = join(workDir, 'img')
-    try {
-      await exec('pdfimages', ['-j', '-png', '-p', inputPath, prefix], {
-        timeout: 120_000,
-        maxBuffer: 50 * 1024 * 1024,
-      })
-    } catch (err) {
-      throw new Error(`pdfimages extraction failed: ${(err as Error).message}`)
+    if (individualWanted.length > 0) {
+      try {
+        await exec('pdfimages', ['-j', '-png', '-p', inputPath, prefix], {
+          timeout: 120_000,
+          maxBuffer: 50 * 1024 * 1024,
+        })
+      } catch (err) {
+        throw new Error(`pdfimages extraction failed: ${(err as Error).message}`)
+      }
     }
 
     const files = await readdir(workDir)
@@ -184,26 +419,52 @@ export async function extractPdfPhotos(
     // landscape, while portrait images in Gutachten are usually data sheets,
     // floor plans, or geoport maps. This puts the most photo-like image at
     // index 0, which becomes the listing's thumbnail.
-    const sorted = [...wanted].sort((a, b) => {
+    const sorted = [
+      ...clusters.map((cluster) => ({
+        kind: 'cluster' as const,
+        cluster,
+        page: cluster.page,
+        num: cluster.num,
+        width: cluster.width,
+        height: cluster.height,
+      })),
+      ...individualWanted.map((info) => ({
+        kind: 'image' as const,
+        info,
+        page: info.page,
+        num: info.num,
+        width: info.width,
+        height: info.height,
+      })),
+    ].sort((a, b) => {
       const aLandscape = a.width >= a.height ? 0 : 1
       const bLandscape = b.width >= b.height ? 0 : 1
       if (aLandscape !== bLandscape) return aLandscape - bLandscape
       return a.page - b.page || a.num - b.num
     })
     const withBytes: { file: string; bytes: Buffer; hash: string }[] = []
-    for (const info of sorted) {
-      const file = fileByPageNum.get(`${info.page}:${info.num}`)
-      if (!file) continue
-      const bytes = await readFile(join(workDir, file))
-      const hash = imageContentHash(bytes)
-      withBytes.push({ file, bytes, hash })
+    let clusterIndex = 0
+    for (const entry of sorted) {
+      if (entry.kind === 'cluster') {
+        const bytes = await renderImageCluster(inputPath, workDir, entry.cluster, clusterIndex)
+        clusterIndex += 1
+        const hash = imageContentHash(bytes)
+        withBytes.push({ file: `cluster-${entry.cluster.page}-${entry.cluster.num}.jpg`, bytes, hash })
+      } else {
+        const info = entry.info
+        const file = fileByPageNum.get(`${info.page}:${info.num}`)
+        if (!file) continue
+        const bytes = await readFile(join(workDir, file))
+        const hash = imageContentHash(bytes)
+        withBytes.push({ file, bytes, hash })
+      }
     }
     const deduped = dedupByHash(withBytes).slice(0, opts.maxPhotos ?? Number.POSITIVE_INFINITY)
     if (deduped.length === 0) return []
 
     await mkdir(opts.destDir, { recursive: true })
     const written: string[] = []
-    // Content-addressable filename: `<md5-prefix>.<ext>`. A unique byte stream
+    // Content-addressable filename: `<hash-prefix>.<ext>`. A unique byte stream
     // gets a unique URL, so the API can serve files with `immutable` honestly
     // — re-extracting the same image just produces the same filename.
     for (const entry of deduped) {
