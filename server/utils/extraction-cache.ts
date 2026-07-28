@@ -22,7 +22,7 @@ import type { Pool } from 'pg'
 import type { Auction, AuctionExtraction } from '~/types/auction'
 import { getPool } from './db'
 import { cacheKey } from './verkehrswert-cache'
-import { normalizePhoto } from '~/lib/photo'
+import { normalizePhoto, sortCuratedPhotos } from '~/lib/photo'
 
 export type ExtractionCache = Record<string, AuctionExtraction>
 
@@ -39,8 +39,12 @@ export function applyExtractionToAuctions(auctions: Auction[], cache: Extraction
     // Normalize on read: older cache rows hold bare filename strings, newer
     // ones CuratedPhoto objects (see lib/photo.ts). Expose the normalized array
     // through `a.extraction` too, so consumers never see raw legacy strings
-    // behind the `CuratedPhoto[]` type.
-    const photos = (hit.photos ?? []).map(normalizePhoto)
+    // behind the `CuratedPhoto[]` type. Sorted by the LLM's own curation
+    // (real photo vs. Energieausweis/plan/other) rather than pipeline order,
+    // so `photos[0]` below is the best thumbnail candidate across every
+    // platform, not just whichever page/file the crawler or pdfimages
+    // happened to return first.
+    const photos = sortCuratedPhotos((hit.photos ?? []).map(normalizePhoto))
     a.extraction = photos.length > 0 ? { ...hit, photos } : hit
     // WP-3: zvg-portal/DE has no structural Verkehrswert source (unlike
     // AT-Edikte/Biddit, whose overlay runs before this and already set

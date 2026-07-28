@@ -239,3 +239,37 @@ describe('applyExtractionToAuctions — marketValueEur precedence (WP-3)', () =>
     expect(auction.marketValueText).toBeNull()
   })
 })
+
+describe('applyExtractionToAuctions — photo ordering', () => {
+  it('reorders extraction.photos so the LLM-curated real photo leads, not whichever file the pipeline mined first', () => {
+    const auction = makeAuction()
+    const cache: ExtractionCache = {
+      'zvg-portal:14409': {
+        ...extraction,
+        photos: [
+          { file: 'energieausweis.jpg', category: 'sonstiges', caption: null, isPropertyPhoto: false },
+          { file: 'hausansicht.jpg', category: 'aussen', caption: null, isPropertyPhoto: true },
+        ],
+      },
+    }
+
+    applyExtractionToAuctions([auction], cache)
+
+    expect(auction.extraction?.photos?.map((p) => p.file)).toEqual(['hausansicht.jpg', 'energieausweis.jpg'])
+    expect(auction.thumbnailUrl).toBe('/api/auction-image/zvg-portal/14409/hausansicht.jpg')
+  })
+
+  it('normalizes legacy bare-filename rows before sorting them', () => {
+    const auction = makeAuction()
+    const cache: ExtractionCache = {
+      'zvg-portal:14409': {
+        ...extraction,
+        photos: ['a.jpg', 'b.jpg'] as unknown as AuctionExtraction['photos'],
+      },
+    }
+
+    applyExtractionToAuctions([auction], cache)
+
+    expect(auction.extraction?.photos?.map((p) => p.file)).toEqual(['a.jpg', 'b.jpg'])
+  })
+})
