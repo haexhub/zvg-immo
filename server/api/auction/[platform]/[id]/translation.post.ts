@@ -19,6 +19,7 @@ import { getLlmMaxTokens, getLlmProviderOverride } from '~/server/utils/app-sett
 import { resolveLlmConfig } from '~/server/utils/extract/llm'
 import { callTranslationLlm, type TranslationResult } from '~/server/utils/extract/text-llm'
 import { isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
+import { extractTranslatableExtractionTexts } from '~/lib/extraction-translation'
 import {
   checkInMemoryRateLimit,
   createInMemoryRateLimitState,
@@ -46,14 +47,17 @@ function buildPrompt(
   title: string | null,
   description: string | null,
   documentSummary: string | null,
+  extractionTexts: ReturnType<typeof extractTranslatableExtractionTexts>,
   targetLang: ContentTargetLang,
 ): string {
   const lines = [
     `Translate the following real-estate foreclosure auction text fields into ${LANG_NAMES[targetLang]}.`,
+    'Return the same JSON shape. Translate every string value. Keep nulls, array order, array lengths, identifiers, dates, numbers and currencies unchanged.',
     '',
     `TITLE: ${title ?? ''}`,
     `DESCRIPTION:\n${description ?? ''}`,
     `DOCUMENT_SUMMARY:\n${documentSummary ?? ''}`,
+    `EXTRACTION_TEXTS_JSON:\n${JSON.stringify(extractionTexts ?? null, null, 2)}`,
   ]
   return lines.join('\n')
 }
@@ -92,18 +96,20 @@ export default defineEventHandler(async (event) => {
 
   const { title, description } = auction
   const documentSummary = auction.extraction?.documentSummary ?? null
-  if (title == null && description == null && documentSummary == null) {
-    return { title: null, description: null, documentSummary: null, translated: false }
+  const extractionTexts = extractTranslatableExtractionTexts(auction.extraction)
+  if (title == null && description == null && documentSummary == null && extractionTexts == null) {
+    return { title: null, description: null, documentSummary: null, extractionTexts: null, translated: false }
   }
 
   if (isPassthroughLanguage(auction.country, targetLang)) {
-    return { title, description, documentSummary, translated: false }
+    return { title, description, documentSummary, extractionTexts, translated: false }
   }
 
   const contentHash = sha256Hex(Buffer.from(JSON.stringify({
     title,
     description,
     documentSummary,
+    extractionTexts,
     documentSetHash: auction.extraction?.documentSetHash ?? null,
     documentSetVersion: auction.extraction?.documentSetVersion ?? null,
   })))
@@ -120,6 +126,7 @@ export default defineEventHandler(async (event) => {
       title: cached.title,
       description: cached.description,
       documentSummary: cached.documentSummary,
+      extractionTexts: cached.extractionTexts,
       translated: true,
     }
   }
@@ -154,10 +161,11 @@ export default defineEventHandler(async (event) => {
   const gen = (async () => {
     const result = await callTranslationLlm(
       SYSTEM_PROMPT,
-      buildPrompt(title, description, documentSummary, targetLang),
+      buildPrompt(title, description, documentSummary, extractionTexts, targetLang),
       title,
       description,
       documentSummary,
+      extractionTexts,
       config,
     )
     if (!result) {
@@ -170,6 +178,7 @@ export default defineEventHandler(async (event) => {
       result.title,
       result.description,
       result.documentSummary,
+      result.extractionTexts,
     )
     return result
   })()

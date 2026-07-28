@@ -8,6 +8,11 @@ import type { Attachment } from '~/types/auction'
 import { auctionPhotoUrls } from '~/lib/auction-photos'
 import { ATTACHMENT_KIND_ORDER } from '~/lib/auction-constants'
 import { isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
+import {
+  applyTranslatedExtractionTexts,
+  extractTranslatableExtractionTexts,
+  type TranslatableExtractionTexts,
+} from '~/lib/extraction-translation'
 import { safeHref } from '~/lib/utils'
 import { googleCalendarUrl, icsDataUrl, outlookCalendarUrl } from '~/lib/calendar-links'
 import {
@@ -56,12 +61,14 @@ const { data: a, error, pending } = await useFetch<AuctionDetail | null>(
 const translatedTitle = ref<string | null>(null)
 const translatedDescription = ref<string | null>(null)
 const translatedDocumentSummary = ref<string | null>(null)
+const translatedExtractionTexts = ref<TranslatableExtractionTexts | null>(null)
 
 const displayTitle = computed(() => translatedTitle.value ?? a.value?.title ?? null)
 const displayDescription = computed(() => translatedDescription.value ?? a.value?.description ?? null)
 const displayDocumentSummary = computed(
   () => translatedDocumentSummary.value ?? a.value?.extraction?.documentSummary ?? null,
 )
+const displayExtraction = computed(() => applyTranslatedExtractionTexts(a.value?.extraction, translatedExtractionTexts.value) ?? null)
 const titleTranslated = computed(() => translatedTitle.value != null)
 const descriptionTranslated = computed(
   () => translatedDescription.value != null || translatedDocumentSummary.value != null,
@@ -73,8 +80,14 @@ watch([a, locale], async ([val, loc]) => {
   translatedTitle.value = null
   translatedDescription.value = null
   translatedDocumentSummary.value = null
+  translatedExtractionTexts.value = null
   if (!val) return
-  if (val.title == null && val.description == null && val.extraction?.documentSummary == null) return
+  if (
+    val.title == null &&
+    val.description == null &&
+    val.extraction?.documentSummary == null &&
+    extractTranslatableExtractionTexts(val.extraction) == null
+  ) return
   if (isPassthroughLanguage(val.country, loc as ContentTargetLang)) return
 
   try {
@@ -82,6 +95,7 @@ watch([a, locale], async ([val, loc]) => {
       title: string | null
       description: string | null
       documentSummary: string | null
+      extractionTexts: TranslatableExtractionTexts | null
     }>(
       `/api/auction/${encodeURIComponent(platform)}/${encodeURIComponent(id)}/translation`,
       { method: 'POST', query: { lang: loc } },
@@ -92,6 +106,7 @@ watch([a, locale], async ([val, loc]) => {
     translatedTitle.value = res.title
     translatedDescription.value = res.description
     translatedDocumentSummary.value = res.documentSummary
+    translatedExtractionTexts.value = res.extractionTexts
   } catch {
     // Best-effort: keep showing the original text (see displayTitle/displayDescription).
   }
@@ -119,7 +134,7 @@ function showOriginalPrice(): boolean {
 }
 
 const hasPropertyData = computed(() => {
-  const e = a.value?.extraction
+  const e = displayExtraction.value
   if (!e) return false
   return e.landAreaSqm != null || e.livingAreaSqm != null || e.yearBuilt != null
     || e.lastRenovationYear != null || e.rooms != null || (e.units != null && e.units > 1)
@@ -293,7 +308,7 @@ const FEATURE_ICONS: Partial<Record<Feature, Component>> = {
 }
 
 const amenityItems = computed<AmenityItem[]>(() => {
-  const e = a.value?.extraction
+  const e = displayExtraction.value
   if (!e) return []
   const items: AmenityItem[] = []
   const seen = new Set<string>()
@@ -323,7 +338,7 @@ const amenityItems = computed<AmenityItem[]>(() => {
 })
 
 const planningNotesHasContent = computed(() => {
-  const p = a.value?.extraction?.planningNotes
+  const p = displayExtraction.value?.planningNotes
   return !!p && (
     p.monumentProtection != null ||
     p.contamination != null ||
@@ -471,9 +486,9 @@ useHead(() => ({
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.currentBid') }}</dt>
                 <dd class="text-sm font-medium tabular-nums">{{ formatNative(a.currentBid, a.currency) }}</dd>
               </div>
-              <div v-if="a.extraction?.securityDeposit != null">
+              <div v-if="displayExtraction?.securityDeposit != null">
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.securityDeposit') }}</dt>
-                <dd class="text-sm font-medium tabular-nums">{{ formatNative(a.extraction.securityDeposit, a.currency) }}</dd>
+                <dd class="text-sm font-medium tabular-nums">{{ formatNative(displayExtraction.securityDeposit, a.currency) }}</dd>
               </div>
               <div>
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.authority') }}</dt>
@@ -484,67 +499,67 @@ useHead(() => ({
                 <dd class="text-sm font-mono">{{ a.caseNumber }}</dd>
               </div>
             </dl>
-            <p v-if="a.extraction?.biddingNotes" class="mt-4 text-xs text-muted-foreground">
-              {{ $t('objektDetail.biddingNotes', { note: a.extraction.biddingNotes }) }}
+            <p v-if="displayExtraction?.biddingNotes" class="mt-4 text-xs text-muted-foreground">
+              {{ $t('objektDetail.biddingNotes', { note: displayExtraction.biddingNotes }) }}
             </p>
           </DetailSectionCard>
 
           <DetailSectionCard v-if="hasPropertyData" :title="$t('objektDetail.propertyDataTitle')">
             <dl class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-4">
-              <div v-if="a.extraction?.landAreaSqm != null">
+              <div v-if="displayExtraction?.landAreaSqm != null">
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.landArea') }}</dt>
-                <dd class="text-sm font-medium tabular-nums">{{ formatArea(a.extraction.landAreaSqm) }}</dd>
+                <dd class="text-sm font-medium tabular-nums">{{ formatArea(displayExtraction.landAreaSqm) }}</dd>
               </div>
-              <div v-if="a.extraction?.livingAreaSqm != null">
+              <div v-if="displayExtraction?.livingAreaSqm != null">
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.livingArea') }}</dt>
-                <dd class="text-sm font-medium tabular-nums">{{ formatArea(a.extraction.livingAreaSqm) }}</dd>
+                <dd class="text-sm font-medium tabular-nums">{{ formatArea(displayExtraction.livingAreaSqm) }}</dd>
               </div>
-              <div v-if="a.extraction?.yearBuilt != null">
+              <div v-if="displayExtraction?.yearBuilt != null">
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.yearBuilt') }}</dt>
-                <dd class="text-sm font-medium tabular-nums">{{ a.extraction.yearBuilt }}</dd>
+                <dd class="text-sm font-medium tabular-nums">{{ displayExtraction.yearBuilt }}</dd>
               </div>
-              <div v-if="a.extraction?.lastRenovationYear != null">
+              <div v-if="displayExtraction?.lastRenovationYear != null">
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.lastRenovationYear') }}</dt>
-                <dd class="text-sm font-medium tabular-nums">{{ a.extraction.lastRenovationYear }}</dd>
+                <dd class="text-sm font-medium tabular-nums">{{ displayExtraction.lastRenovationYear }}</dd>
               </div>
-              <div v-if="a.extraction?.rooms != null">
+              <div v-if="displayExtraction?.rooms != null">
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.rooms') }}</dt>
-                <dd class="text-sm font-medium">{{ formatCount(a.extraction.rooms) }}</dd>
+                <dd class="text-sm font-medium">{{ formatCount(displayExtraction.rooms) }}</dd>
               </div>
-              <div v-if="a.extraction?.bedrooms != null">
+              <div v-if="displayExtraction?.bedrooms != null">
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.bedrooms') }}</dt>
-                <dd class="text-sm font-medium">{{ formatCount(a.extraction.bedrooms) }}</dd>
+                <dd class="text-sm font-medium">{{ formatCount(displayExtraction.bedrooms) }}</dd>
               </div>
-              <div v-if="a.extraction?.bathrooms != null">
+              <div v-if="displayExtraction?.bathrooms != null">
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.bathrooms') }}</dt>
-                <dd class="text-sm font-medium">{{ formatCount(a.extraction.bathrooms) }}</dd>
+                <dd class="text-sm font-medium">{{ formatCount(displayExtraction.bathrooms) }}</dd>
               </div>
-              <div v-if="a.extraction?.floor">
+              <div v-if="displayExtraction?.floor">
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.floor') }}</dt>
-                <dd class="text-sm font-medium">{{ a.extraction.floor }}</dd>
+                <dd class="text-sm font-medium">{{ displayExtraction.floor }}</dd>
               </div>
-              <div v-if="a.extraction?.units != null && a.extraction.units > 1">
+              <div v-if="displayExtraction?.units != null && displayExtraction.units > 1">
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.units') }}</dt>
-                <dd class="text-sm font-medium">{{ a.extraction.units }}</dd>
+                <dd class="text-sm font-medium">{{ displayExtraction.units }}</dd>
               </div>
               <div v-if="pricePerSqm != null">
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.pricePerSqm') }}</dt>
                 <dd class="text-sm font-medium tabular-nums">{{ formatPricePerSqm(pricePerSqm) }}</dd>
                 <dd v-if="pricePerSqmBasis" class="text-xs text-muted-foreground">{{ pricePerSqmBasis }}</dd>
               </div>
-              <div v-if="a.extraction?.condition">
+              <div v-if="displayExtraction?.condition">
                 <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.condition') }}</dt>
-                <dd class="text-sm font-medium">{{ conditionLabel(a.extraction.condition) }}</dd>
+                <dd class="text-sm font-medium">{{ conditionLabel(displayExtraction.condition) }}</dd>
               </div>
             </dl>
             <p
-              v-if="a.extraction?.source === 'llm'"
+              v-if="displayExtraction?.source === 'llm'"
               class="mt-4 text-xs text-muted-foreground"
             >
-              {{ $t('objektDetail.extractionNotice', { confidence: a.extraction.confidence === 'high' ? $t('objektDetail.confidenceHigh') : $t('objektDetail.confidenceLow') }) }}
+              {{ $t('objektDetail.extractionNotice', { confidence: displayExtraction.confidence === 'high' ? $t('objektDetail.confidenceHigh') : $t('objektDetail.confidenceLow') }) }}
             </p>
-            <p v-if="a.extraction?.renovationNotes" class="mt-1 text-xs text-muted-foreground">
-              {{ $t('objektDetail.renovationNotes', { note: a.extraction.renovationNotes }) }}
+            <p v-if="displayExtraction?.renovationNotes" class="mt-1 text-xs text-muted-foreground">
+              {{ $t('objektDetail.renovationNotes', { note: displayExtraction.renovationNotes }) }}
             </p>
           </DetailSectionCard>
 
@@ -675,60 +690,60 @@ useHead(() => ({
           <LawyerContact :platform="a.platform" :external-id="a.externalId" :country="a.country" />
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <DetailSectionCard v-if="a.extraction?.insights?.defects?.length" :title="$t('objektDetail.defectsTitle')">
+            <DetailSectionCard v-if="displayExtraction?.insights?.defects?.length" :title="$t('objektDetail.defectsTitle')">
               <ul class="list-disc list-inside space-y-1 text-sm text-foreground/90">
-                <li v-for="(defect, i) in a.extraction.insights.defects" :key="i">{{ defect }}</li>
+                <li v-for="(defect, i) in displayExtraction.insights.defects" :key="i">{{ defect }}</li>
               </ul>
             </DetailSectionCard>
-            <DetailSectionCard v-if="a.extraction?.insights?.encumbrances?.length" :title="$t('objektDetail.encumbrancesTitle')">
+            <DetailSectionCard v-if="displayExtraction?.insights?.encumbrances?.length" :title="$t('objektDetail.encumbrancesTitle')">
               <ul class="list-disc list-inside space-y-1 text-sm text-foreground/90">
-                <li v-for="(encumbrance, i) in a.extraction.insights.encumbrances" :key="i">{{ encumbrance }}</li>
+                <li v-for="(encumbrance, i) in displayExtraction.insights.encumbrances" :key="i">{{ encumbrance }}</li>
               </ul>
             </DetailSectionCard>
-            <DetailSectionCard v-if="a.extraction?.insights?.landValueEurPerSqm != null" :title="$t('objektDetail.landValueTitle')">
-              <p class="text-sm font-medium tabular-nums">{{ formatLandValue(a.extraction.insights.landValueEurPerSqm) }}</p>
+            <DetailSectionCard v-if="displayExtraction?.insights?.landValueEurPerSqm != null" :title="$t('objektDetail.landValueTitle')">
+              <p class="text-sm font-medium tabular-nums">{{ formatLandValue(displayExtraction.insights.landValueEurPerSqm) }}</p>
             </DetailSectionCard>
-            <DetailSectionCard v-if="a.extraction?.insights?.construction" :title="$t('objektDetail.constructionTitle')">
-              <p class="whitespace-pre-line text-sm text-foreground/90 leading-relaxed">{{ a.extraction.insights.construction }}</p>
+            <DetailSectionCard v-if="displayExtraction?.insights?.construction" :title="$t('objektDetail.constructionTitle')">
+              <p class="whitespace-pre-line text-sm text-foreground/90 leading-relaxed">{{ displayExtraction.insights.construction }}</p>
             </DetailSectionCard>
-            <DetailSectionCard v-if="a.extraction?.insights?.locationCharacter" :title="$t('objektDetail.neighborhoodCharacter')">
-              <p class="whitespace-pre-line text-sm text-foreground/90 leading-relaxed">{{ a.extraction.insights.locationCharacter }}</p>
+            <DetailSectionCard v-if="displayExtraction?.insights?.locationCharacter" :title="$t('objektDetail.neighborhoodCharacter')">
+              <p class="whitespace-pre-line text-sm text-foreground/90 leading-relaxed">{{ displayExtraction.insights.locationCharacter }}</p>
             </DetailSectionCard>
             <DetailSectionCard v-if="planningNotesHasContent" :title="$t('objektDetail.planningNotesTitle')">
               <dl class="space-y-2 text-sm">
-                <div v-if="a.extraction?.planningNotes?.monumentProtection">
+                <div v-if="displayExtraction?.planningNotes?.monumentProtection">
                   <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.monumentProtection') }}</dt>
-                  <dd class="text-foreground/90">{{ a.extraction.planningNotes.monumentProtection }}</dd>
+                  <dd class="text-foreground/90">{{ displayExtraction.planningNotes.monumentProtection }}</dd>
                 </div>
-                <div v-if="a.extraction?.planningNotes?.contamination">
+                <div v-if="displayExtraction?.planningNotes?.contamination">
                   <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.contamination') }}</dt>
-                  <dd class="text-foreground/90">{{ a.extraction.planningNotes.contamination }}</dd>
+                  <dd class="text-foreground/90">{{ displayExtraction.planningNotes.contamination }}</dd>
                 </div>
-                <div v-if="a.extraction?.planningNotes?.developmentPlan">
+                <div v-if="displayExtraction?.planningNotes?.developmentPlan">
                   <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.developmentPlan') }}</dt>
-                  <dd class="text-foreground/90">{{ a.extraction.planningNotes.developmentPlan }}</dd>
+                  <dd class="text-foreground/90">{{ displayExtraction.planningNotes.developmentPlan }}</dd>
                 </div>
-                <div v-if="a.extraction?.planningNotes?.landConsolidation">
+                <div v-if="displayExtraction?.planningNotes?.landConsolidation">
                   <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.landConsolidation') }}</dt>
-                  <dd class="text-foreground/90">{{ a.extraction.planningNotes.landConsolidation }}</dd>
+                  <dd class="text-foreground/90">{{ displayExtraction.planningNotes.landConsolidation }}</dd>
                 </div>
-                <div v-if="a.extraction?.planningNotes?.developmentCharges">
+                <div v-if="displayExtraction?.planningNotes?.developmentCharges">
                   <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.developmentCharges') }}</dt>
-                  <dd class="text-foreground/90">{{ a.extraction.planningNotes.developmentCharges }}</dd>
+                  <dd class="text-foreground/90">{{ displayExtraction.planningNotes.developmentCharges }}</dd>
                 </div>
-                <div v-if="a.extraction?.planningNotes?.redevelopmentArea">
+                <div v-if="displayExtraction?.planningNotes?.redevelopmentArea">
                   <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.redevelopmentArea') }}</dt>
-                  <dd class="text-foreground/90">{{ a.extraction.planningNotes.redevelopmentArea }}</dd>
+                  <dd class="text-foreground/90">{{ displayExtraction.planningNotes.redevelopmentArea }}</dd>
                 </div>
-                <div v-if="a.extraction?.planningNotes?.conservationArea">
+                <div v-if="displayExtraction?.planningNotes?.conservationArea">
                   <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.conservationArea') }}</dt>
-                  <dd class="text-foreground/90">{{ a.extraction.planningNotes.conservationArea }}</dd>
+                  <dd class="text-foreground/90">{{ displayExtraction.planningNotes.conservationArea }}</dd>
                 </div>
               </dl>
             </DetailSectionCard>
-            <DetailSectionCard v-if="a.extraction?.planningNotes?.landParcels?.length" :title="$t('objektDetail.parcelsTitle')">
+            <DetailSectionCard v-if="displayExtraction?.planningNotes?.landParcels?.length" :title="$t('objektDetail.parcelsTitle')">
               <ul class="space-y-2 text-sm">
-                <li v-for="(parcel, i) in a.extraction.planningNotes.landParcels" :key="i" class="flex items-baseline justify-between gap-3">
+                <li v-for="(parcel, i) in displayExtraction.planningNotes.landParcels" :key="i" class="flex items-baseline justify-between gap-3">
                   <span class="font-medium">{{ parcel.label }}</span>
                   <span class="text-foreground/90 text-right">
                     <span v-if="parcel.areaSqm != null" class="tabular-nums">{{ formatArea(parcel.areaSqm) }}</span>
