@@ -557,6 +557,25 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
   const dirty: ExtractionCache = {}
   const batchItems: { key: string; input: LlmInput }[] = []
 
+  async function persistEntry(key: string, entry: AuctionExtraction): Promise<boolean> {
+    const ok = await writeExtractionCache({ [key]: entry })
+    if (ok) {
+      delete dirty[key]
+    } else {
+      dirty[key] = entry
+    }
+    return ok
+  }
+
+  async function syncSnapshotEntry(key: string, entry: AuctionExtraction): Promise<void> {
+    const snapshot = await readAuctionSnapshot()
+    const snapshotEntry = snapshot[key]
+    if (!snapshotEntry) return
+    const updated: Auction = { ...snapshotEntry }
+    applyExtractionToAuctions([updated], { [key]: entry })
+    await writeAuctionSnapshot([updated])
+  }
+
   for (const { platform, externalId } of candidates) {
     try {
       const key = cacheKey(platform, externalId)
@@ -646,16 +665,11 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
       dirty[key] = result.entry
       processed++
 
-      // Keep the detail page (which reads auction_snapshot directly, not the
-      // extraction_cache overlay) in sync for auctions actually touched here —
-      // cheap since auction_snapshot is a per-row Postgres upsert rather than
-      // a whole-crawl JSON rewrite.
-      const snapshot = await readAuctionSnapshot()
-      const snapshotEntry = snapshot[key]
-      if (snapshotEntry) {
-        const updated: Auction = { ...snapshotEntry }
-        applyExtractionToAuctions([updated], { [key]: result.entry })
-        await writeAuctionSnapshot([updated])
+      // Persist each successful sync result immediately. Otherwise a long
+      // manual run can show LLM data from the in-process cache, then lose all
+      // unflushed progress when podman auto-update replaces the container.
+      if (await persistEntry(key, result.entry)) {
+        await syncSnapshotEntry(key, result.entry)
       }
     } catch (err) {
       // Also where a rate limit/quota error (see llm.ts's isRateLimitError())
