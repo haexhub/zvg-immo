@@ -7,6 +7,9 @@ import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snap
 import { readVerkehrswertCache } from '../utils/verkehrswert-cache'
 import { archiveAuction, archiveDocumentSet } from '../utils/raw-archive'
 import { deriveMarketValueEur } from '../utils/exchange-rate'
+import { writeListCache } from '../utils/list-cache'
+import { recordObservations } from '../utils/history'
+import { matchAlerts } from '../utils/alert-matching'
 
 // WP-1 (docs/plans/2026-07-24-de-crawler-pipeline-reliability-plan.md): the
 // photo pipeline must retry a listing whose cache entry never recorded a
@@ -20,6 +23,9 @@ vi.mock('../utils/exchange-rate', () => ({
 }))
 vi.mock('../utils/extract/native-images', () => ({ downloadNativeImages: vi.fn() }))
 vi.mock('../utils/extract/document-images', () => ({ extractDocumentPhotos: vi.fn(async () => []) }))
+vi.mock('../utils/list-cache', () => ({ writeListCache: vi.fn() }))
+vi.mock('../utils/history', () => ({ recordObservations: vi.fn() }))
+vi.mock('../utils/alert-matching', () => ({ matchAlerts: vi.fn() }))
 // Document text/native-doc preparation is irrelevant to this crawl/archive-only
 // task (only used here to build the bytes archiveDocumentSet stores) — default
 // to "nothing to archive" so tests that don't care about document-set
@@ -139,6 +145,24 @@ describe('runEnrich country scoping', () => {
     await runEnrich()
 
     expect(crawlAll).toHaveBeenCalledWith(expect.objectContaining({ country: undefined }))
+  })
+
+  it('can persist the regional crawl result to list cache/history/alerts for a manual source update', async () => {
+    const auction = makeAuction()
+    const regionResult = mockCrawl([auction])
+    const { crawlAll } = await import('../crawlers/registry')
+    vi.mocked(crawlAll).mockResolvedValue(mockCrawl([]))
+    vi.mocked(readExtractionCache).mockResolvedValue({})
+
+    await runEnrich({ country: 'se', force: true, writeListCache: true })
+
+    const opts = vi.mocked(crawlAll).mock.calls[0]?.[0]
+    await opts?.onRegionResult?.('se', 'all', regionResult)
+
+    expect(writeListCache).toHaveBeenCalledWith('se', 'all', regionResult)
+    expect(recordObservations).toHaveBeenCalledWith(regionResult, expect.any(String))
+    expect(matchAlerts).toHaveBeenCalledWith('se', 'all', regionResult)
+    expect(archiveAuction).toHaveBeenCalledWith(auction, expect.any(String))
   })
 })
 

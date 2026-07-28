@@ -58,6 +58,10 @@ export function normalizeLegacyAuction(entry: Record<string, unknown>): void {
 // Same pattern as extraction-cache.ts's readExtractionCache.
 let cachePromise: Promise<AuctionSnapshot> | null = null
 
+export function invalidateAuctionSnapshot(): void {
+  cachePromise = null
+}
+
 export async function readAuctionSnapshot(): Promise<AuctionSnapshot> {
   if (!cachePromise) cachePromise = loadAuctionSnapshot()
   try {

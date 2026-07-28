@@ -499,9 +499,9 @@ export default defineTask({
 
 export async function runReprocess(opts: ReprocessOptions = {}): Promise<ReprocessResult> {
   const startedAt = Date.now()
-  if (opts.force && !opts.platform && !opts.externalId && !opts.caseNumber && !opts.limit) {
+  if (opts.force && !opts.country && !opts.platform && !opts.externalId && !opts.caseNumber && !opts.limit) {
     throw new Error(
-      '[reprocess] force requires platform/externalId/caseNumber or limit — an unbounded forced re-run would re-spend the LLM budget on every already-extracted auction',
+      '[reprocess] force requires country/platform/externalId/caseNumber or limit — an unbounded forced re-run would re-spend the LLM budget on every already-extracted auction',
     )
   }
 
@@ -612,6 +612,10 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
 
       const platformLlmCalls = llmCallsByPlatform.get(platform) ?? 0
       const llmReady = !!llmConfig && llmCalls < maxLlmPerRun && platformLlmCalls < llmCapPerPlatform
+      if (opts.force && llmConfig && !llmReady) {
+        skipped++
+        continue
+      }
       const useLlm = llmReady ? llmConfig : null
 
       if (useBatch && llmReady) {

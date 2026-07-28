@@ -34,6 +34,7 @@ import { crawlAll, platforms } from '~/server/crawlers/registry'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '~/server/utils/auction-snapshot'
 import { upsertCurrentAuctions } from '~/server/utils/current-auctions'
 import { deriveMarketValueEur, getRates } from '~/server/utils/exchange-rate'
+import { matchAlerts } from '~/server/utils/alert-matching'
 import { downloadNativeImages } from '~/server/utils/extract/native-images'
 import { extractDocumentPhotos } from '~/server/utils/extract/document-images'
 import { prepareLiveLlmDocuments } from '~/server/utils/extract/llm-documents'
@@ -52,6 +53,8 @@ import {
   type ArchivedDocumentSetResult,
 } from '~/server/utils/raw-archive'
 import { cacheKey, readVerkehrswertCache } from '~/server/utils/verkehrswert-cache'
+import { recordObservations } from '~/server/utils/history'
+import { writeListCache } from '~/server/utils/list-cache'
 import { applyDescriptionMarketValue } from '~/server/utils/description-market-value'
 import { normalizeAuctionDescription, normalizeAuctionDescriptions } from '~/server/utils/description-normalization'
 import { recordTaskRunEnd, recordTaskRunProgress, recordTaskRunStart } from '~/server/utils/task-runs'
@@ -83,6 +86,10 @@ let running = false
 export interface EnrichOptions {
   /** ISO-3166-1 alpha-2, lowercase. Omit to crawl every enabled country. */
   country?: string
+  /** Revisit every crawled listing in scope, regardless of existing cache markers. */
+  force?: boolean
+  /** Persist each regional crawl into the serving list cache while archiving. */
+  writeListCache?: boolean
 }
 
 export default defineTask({
@@ -113,7 +120,8 @@ export default defineTask({
 
 export async function runEnrich(opts: EnrichOptions = {}) {
     const startedAt = Date.now()
-    console.log(`[enrich] start${opts.country ? ` (country=${opts.country})` : ''}`)
+    const capturedAt = new Date(startedAt).toISOString()
+    console.log(`[enrich] start${opts.country ? ` (country=${opts.country})` : ''}${opts.force ? ' force=true' : ''}`)
 
     let regionsDone = 0
     let regionsTotal = 0
@@ -121,6 +129,16 @@ export async function runEnrich(opts: EnrichOptions = {}) {
       immobilienOnly: true,
       enrichDetails: false,
       country: opts.country,
+      onRegionResult: opts.writeListCache
+        ? async (country, region, regionResult) => {
+            await writeListCache(country, region, regionResult)
+            await recordObservations(regionResult, capturedAt)
+            await matchAlerts(country, region, regionResult)
+            for (const auction of regionResult.auctions) {
+              await archiveAuction(auction, capturedAt)
+            }
+          }
+        : undefined,
       onRegionDone: (done, total) => {
         regionsDone = done
         regionsTotal = total
@@ -142,7 +160,7 @@ export async function runEnrich(opts: EnrichOptions = {}) {
       const crawler = byPlatform.get(a.platform)
       if (!crawler?.enrichOne) return false
       const prev = previousSnapshot[cacheKey(a.platform, a.externalId)]
-      return !prev?.detailFetchedAt || (a.sourceUpdatedIso != null && prev.sourceUpdatedIso !== a.sourceUpdatedIso)
+      return opts.force || !prev?.detailFetchedAt || (a.sourceUpdatedIso != null && prev.sourceUpdatedIso !== a.sourceUpdatedIso)
     }
     // `archivedDocumentSetHash` (not `documentSetHash`) is this task's own
     // bookkeeping — whether *this task* has ever archived a document set for
@@ -151,6 +169,7 @@ export async function runEnrich(opts: EnrichOptions = {}) {
       const hit = cache[cacheKey(a.platform, a.externalId)]
       const prev = previousSnapshot[cacheKey(a.platform, a.externalId)]
       return (
+        opts.force ||
         !hit ||
         (a.attachments.length > 0 && hit.archivedDocumentSetHash == null) ||
         (a.sourceUpdatedIso != null && prev?.sourceUpdatedIso !== a.sourceUpdatedIso)
@@ -182,6 +201,12 @@ export async function runEnrich(opts: EnrichOptions = {}) {
       const targetVersion = targetPhotoPipelineVersion(a)
       const pipelineDue =
         hit?.photosCheckedAt == null || (hit.photoPipelineVersion ?? 1) < targetVersion
+      if (opts.force) {
+        return (
+          (photos === 0 || nativePhotoUrls(a).length > 0 || a.attachments.length > 0) &&
+          (hit?.photoFailures ?? 0) < MAX_PHOTO_FAILURES
+        )
+      }
       return (
         hit != null &&
         pipelineDue &&
@@ -191,6 +216,7 @@ export async function runEnrich(opts: EnrichOptions = {}) {
     }
     const eligible = result.auctions.filter(
       (a) =>
+        opts.force ||
         !cache[cacheKey(a.platform, a.externalId)] ||
         needsEnrich(a) ||
         needsDocumentSetCheck(a) ||

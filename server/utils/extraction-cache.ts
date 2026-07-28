@@ -72,6 +72,10 @@ export function applyExtractionToAuctions(auctions: Auction[], cache: Extraction
 // on a failed load so the next call retries instead of caching the failure.
 let cachePromise: Promise<ExtractionCache> | null = null
 
+export function invalidateExtractionCache(): void {
+  cachePromise = null
+}
+
 export async function readExtractionCache(): Promise<ExtractionCache> {
   if (!cachePromise) cachePromise = loadExtractionCache()
   try {

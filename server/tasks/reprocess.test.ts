@@ -874,7 +874,48 @@ describe('runReprocess', () => {
   })
 
   it('rejects a forced run with no filter', async () => {
-    await expect(runReprocess({ force: true })).rejects.toThrow(/requires platform/)
+    await expect(runReprocess({ force: true })).rejects.toThrow(/requires country/)
+  })
+
+  it('allows a forced run scoped to one enabled country', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [] })
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+
+    await expect(runReprocess({ country: 'SE', force: true })).resolves.toEqual({
+      candidates: 0,
+      processed: 0,
+      skipped: 0,
+      llmCalls: 0,
+      durationMs: expect.any(Number),
+    })
+
+    const [sql, params] = query.mock.calls[0]!
+    expect(sql).toContain('country = $1')
+    expect(params).toEqual(['se'])
+  })
+
+  it('does not overwrite remaining forced candidates with rules-only entries after the LLM cap is reached', async () => {
+    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { baseUrl: 'http://proxy', maxPerRun: '1' } }))
+    const query = vi.fn().mockResolvedValue({
+      rows: [
+        { platform: 'zvg-portal', external_id: '7265' },
+        { platform: 'zvg-portal', external_id: '2222' },
+      ],
+    })
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+    vi.mocked(findLatestCapture).mockResolvedValue({ contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' })
+    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(makeAuction())))
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+      opts?.onProviderAttempt?.()
+      return null
+    })
+
+    const result = await runReprocess({ country: 'SE', force: true })
+
+    expect(result).toMatchObject({ candidates: 2, processed: 1, skipped: 1, llmCalls: 1 })
+    expect(writeExtractionCache).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(writeExtractionCache).mock.calls[0]?.[0]).toHaveProperty('zvg-portal:7265')
+    expect(vi.mocked(writeExtractionCache).mock.calls[0]?.[0]).not.toHaveProperty('zvg-portal:2222')
   })
 
   it('returns all-zero without a configured DB pool', async () => {
