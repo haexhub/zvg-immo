@@ -569,7 +569,11 @@
       "condition": "Mindestzustand",
       "features": "Ausstattung",
       "photos": "Nur mit Fotos",
-      "cancelled": "inkl. aufgehobene"
+      "cancelled": "inkl. aufgehobene",
+      "boundToMap": "Kartenbereich",
+      "sort": "Sortierung",
+      "llmOnly": "vollständig verarbeitet",
+      "view": "Ansicht"
     }
   },
   "authStatus": {

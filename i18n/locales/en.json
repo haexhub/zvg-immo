@@ -569,7 +569,11 @@
       "condition": "Minimum condition",
       "features": "Features",
       "photos": "Only with photos",
-      "cancelled": "incl. cancelled"
+      "cancelled": "incl. cancelled",
+      "boundToMap": "Map area",
+      "sort": "Sort",
+      "llmOnly": "fully processed",
+      "view": "View"
     }
   },
   "authStatus": {
