@@ -6,7 +6,7 @@
 // the link on the list view.
 
 import type { Auction, LocationEnrichment } from '~/types/auction'
-import { applySnapshotPhotosToAuctions, readAuctionSnapshot, type AuctionSnapshot } from '../../../utils/auction-snapshot'
+import { applyAuctionPhotos, applySnapshotPhotosToAuctions, readAuctionSnapshot, type AuctionSnapshot } from '../../../utils/auction-snapshot'
 import { applyExtractionToAuctions, readExtractionCache } from '../../../utils/extraction-cache'
 import { geocodeAddress } from '../../../utils/geocode'
 import { isSafePathSegment } from '../../../utils/path-segment'
@@ -35,8 +35,8 @@ function cloneAuction(a: Auction): Auction {
   }
 }
 
-async function findCachedListAuction(platform: string, id: string): Promise<Auction | null> {
-  const result = await readMergedListCache()
+async function findCachedListAuction(platform: string, id: string, country?: string): Promise<Auction | null> {
+  const result = await readMergedListCache(country)
   const hit = result?.auctions.find((a) => a.platform === platform && a.externalId === id)
   return hit ? cloneAuction(hit) : null
 }
@@ -90,11 +90,16 @@ async function findLiveAuction(platform: string, id: string): Promise<Auction | 
   return null
 }
 
-async function decorateFallbackAuction(auction: Auction, snapshot: AuctionSnapshot): Promise<Auction> {
-  const [extractionCache, verkehrswertCache] = await Promise.all([
+async function decorateDetailAuction(auction: Auction, snapshot: AuctionSnapshot): Promise<Auction> {
+  const [cachedListAuction, extractionCache, verkehrswertCache] = await Promise.all([
+    findCachedListAuction(auction.platform, auction.externalId, auction.country),
     readExtractionCache(),
     readVerkehrswertCache(),
   ])
+  // A detail snapshot can predate a crawler gaining native gallery support.
+  // The search/list cache may already have the richer gallery, so recover it
+  // for the detail page without replacing the snapshot's enriched fields.
+  if (cachedListAuction) applyAuctionPhotos(auction, cachedListAuction)
   const key = cacheKey(auction.platform, auction.externalId)
   if (auction.marketValueEur == null) {
     const vw = verkehrswertCache[key]
@@ -125,7 +130,7 @@ export default defineEventHandler(async (event): Promise<AuctionDetail> => {
   if (!hit) {
     throw createError({ statusCode: 404, statusMessage: 'auction not found' })
   }
-  const auction = snapshotHit ? hit : await decorateFallbackAuction(hit, snapshot)
+  const auction = await decorateDetailAuction(hit, snapshot)
   // Cache-only lookup: the geocode task fills coordinates ahead of time, so
   // serving a detail page never blocks on Nominatim.
   const point = await geocodeAddress(auction.address, auction.country, { fetchMissing: false })

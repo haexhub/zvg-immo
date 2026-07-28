@@ -127,7 +127,7 @@ watch(() => props.photos.join('\n'), () => {
   border-radius: 9999px;
   background: rgb(0 0 0 / 55%);
   color: white;
-  opacity: 0;
+  opacity: 0.9;
   transition: opacity 150ms ease;
 }
 
@@ -136,6 +136,11 @@ watch(() => props.photos.join('\n'), () => {
 .auction-card-swiper :deep(.swiper-button-prev:focus-visible),
 .auction-card-swiper :deep(.swiper-button-next:focus-visible) {
   opacity: 1;
+}
+
+.auction-card-swiper :deep(.swiper-button-prev.swiper-button-disabled),
+.auction-card-swiper :deep(.swiper-button-next.swiper-button-disabled) {
+  opacity: 0.25;
 }
 
 .auction-card-swiper :deep(.swiper-button-prev::after),
@@ -174,7 +179,7 @@ watch(() => props.photos.join('\n'), () => {
 @media (hover: none) {
   .auction-card-swiper :deep(.swiper-button-prev),
   .auction-card-swiper :deep(.swiper-button-next) {
-    display: none;
+    opacity: 0.8;
   }
 }
 </style>

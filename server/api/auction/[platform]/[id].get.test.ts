@@ -8,7 +8,27 @@ const registryMock = vi.hoisted(() => ({
   isCountryEnabled: vi.fn(() => true),
 }))
 
-vi.mock('../../../utils/auction-snapshot', () => ({ readAuctionSnapshot: vi.fn(), applySnapshotPhotosToAuctions: vi.fn() }))
+vi.mock('../../../utils/auction-snapshot', () => ({
+  readAuctionSnapshot: vi.fn(),
+  applyAuctionPhotos: vi.fn((target: Auction, source: Auction) => {
+    if (!target.thumbnailUrl && source.thumbnailUrl) target.thumbnailUrl = source.thumbnailUrl
+    if (target.photoCount < source.photoCount) target.photoCount = source.photoCount
+    if (source.photoUrls?.length) {
+      target.photoUrls = [...new Set([...(target.photoUrls ?? []), ...source.photoUrls])]
+    }
+  }),
+  applySnapshotPhotosToAuctions: vi.fn((auctions: Auction[], snapshot: Record<string, Auction>) => {
+    for (const a of auctions) {
+      const hit = snapshot[`${a.platform}:${a.externalId}`]
+      if (!hit) continue
+      if (!a.thumbnailUrl && hit.thumbnailUrl) a.thumbnailUrl = hit.thumbnailUrl
+      if (a.photoCount < hit.photoCount) a.photoCount = hit.photoCount
+      if (hit.photoUrls?.length) {
+        a.photoUrls = [...new Set([...(a.photoUrls ?? []), ...hit.photoUrls])]
+      }
+    }
+  }),
+}))
 vi.mock('../../../utils/geocode', () => ({ geocodeAddress: vi.fn() }))
 vi.mock('../../../utils/external-data/location-enrichment', () => ({ readLocationEnrichment: vi.fn() }))
 vi.mock('../../../utils/list-cache', () => ({ readMergedListCache: vi.fn() }))
@@ -93,6 +113,60 @@ afterEach(() => {
 })
 
 describe('/api/auction/:platform/:id location enrichment overlay', () => {
+  it('recovers a gallery from the list cache when the detail snapshot is stale', async () => {
+    const { readAuctionSnapshot } = await import('../../../utils/auction-snapshot')
+    const { readMergedListCache } = await import('../../../utils/list-cache')
+    const handler = await loadHandler()
+
+    vi.mocked(readAuctionSnapshot).mockResolvedValue({
+      'se-kronofogden:101762': auction({
+        platform: 'se-kronofogden',
+        country: 'se',
+        externalId: '101762',
+        photoCount: 0,
+        thumbnailUrl: null,
+      }),
+    })
+    vi.mocked(readMergedListCache).mockResolvedValue({
+      platform: 'multi',
+      source: '',
+      countries: ['se'],
+      regions: ['all'],
+      fetchedAt: '2026-07-28T00:00:00.000Z',
+      totalReported: 1,
+      auctions: [
+        auction({
+          platform: 'se-kronofogden',
+          country: 'se',
+          externalId: '101762',
+          photoCount: 5,
+          thumbnailUrl: 'https://example.test/1.jpg',
+          photoUrls: [
+            'https://example.test/1.jpg',
+            'https://example.test/2.jpg',
+            'https://example.test/3.jpg',
+            'https://example.test/4.jpg',
+            'https://example.test/5.jpg',
+          ],
+        }),
+      ],
+    })
+
+    await expect(handler({ context: { params: { platform: 'se-kronofogden', id: '101762' } } })).resolves.toMatchObject({
+      platform: 'se-kronofogden',
+      externalId: '101762',
+      photoCount: 5,
+      thumbnailUrl: 'https://example.test/1.jpg',
+      photoUrls: [
+        'https://example.test/1.jpg',
+        'https://example.test/2.jpg',
+        'https://example.test/3.jpg',
+        'https://example.test/4.jpg',
+        'https://example.test/5.jpg',
+      ],
+    })
+  })
+
   it('returns cached locationEnrichment without live external fetches', async () => {
     const { readAuctionSnapshot } = await import('../../../utils/auction-snapshot')
     const { geocodeAddress } = await import('../../../utils/geocode')
