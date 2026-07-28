@@ -367,14 +367,11 @@ export async function runEnrich(opts: EnrichOptions = {}) {
         // if the listing legitimately has no attachments/description — so we
         // don't re-fetch the same empty response on every future run.
         let enriched = false
-        let detailOk = !crawler?.enrichOne
+        let fetchDone = !crawler?.enrichOne
         if (crawler?.enrichOne) {
           try {
             await crawler.enrichOne(a)
-            normalizeAuctionDescription(a)
-            applyDescriptionMarketValue(a)
-            deriveMarketValueEur(a, rates)
-            detailOk = true
+            fetchDone = true
             // Any enrichOne-populated field counts — some platforms yield only
             // structured values or a photo gallery, no description/attachments.
             enriched =
@@ -385,14 +382,31 @@ export async function runEnrich(opts: EnrichOptions = {}) {
               a.sourceRooms != null ||
               (a.photoUrls?.length ?? 0) > 0 ||
               a.lat != null
+          } catch {
+            // Transient (network / BOE captcha): leave detailFetchedAt unset so
+            // this listing is retried on the next run.
+          }
+        }
+        // Runs regardless of whether this platform has its own enrichOne step
+        // — a crawler without one (e.g. se-kronofogden) already returns the
+        // final description/market-value data straight from the list crawl,
+        // so these must not be skipped just because there was no separate
+        // fetch to wait for.
+        let detailOk = false
+        if (fetchDone) {
+          try {
+            normalizeAuctionDescription(a)
+            applyDescriptionMarketValue(a)
+            deriveMarketValueEur(a, rates)
+            detailOk = true
             a.detailFetchedAt = at
             // Re-archive now that detail data (description/attachments/
             // source*) is on the auction — a new content hash whenever
             // enrichment actually added something (see raw-archive.ts).
             await archiveAuction(a, at)
           } catch {
-            // Transient (network / BOE captcha): leave detailFetchedAt unset so
-            // this listing is retried on the next run.
+            // Transient: leave detailFetchedAt unset so this listing is
+            // retried on the next run.
           }
         }
         if (enriched) enrichedCount++

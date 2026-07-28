@@ -362,8 +362,6 @@
     "llmBatch": {
       "title": "LLM-Batch-Pipeline",
       "description": "Offene Batch-Jobs, die an einen LLM-Provider übergeben wurden und noch auf Ergebnisse warten.",
-      "capabilityBroken": "Batch-API für {provider} ist zuletzt fehlgeschlagen ({at}): {message}",
-      "capabilityConfigGated": "{provider}: Batch-API aktuell deaktiviert (Free-Tier-Konfiguration)",
       "enrichRunning": "Enrich läuft seit {at}",
       "enrichLastRun": "Zuletzt gelaufen: {at} — {enriched} angereichert, {llmCalls} LLM-Aufrufe, {duration}s",
       "enrichLastError": "Letzter Lauf fehlgeschlagen: {message}",

@@ -767,17 +767,6 @@ const llmBatchBacklog = computed(() => llmBatchJobs.value?.backlog ?? {
   orphanedRequestKeys: [],
 })
 
-const brokenBatchCapabilities = computed(() =>
-  Object.entries(llmBatchJobs.value?.capabilities ?? {})
-    .filter(([, capability]) => !capability.ok)
-    .map(([provider, capability]) => ({
-      provider,
-      message: capability.message,
-      checkedAt: capability.checkedAt,
-      source: capability.source,
-    })),
-)
-
 async function loadLlmBatchJobs(): Promise<void> {
   llmBatchJobsPending.value = true
   llmBatchJobsError.value = null
@@ -1392,17 +1381,6 @@ onBeforeUnmount(stopPolling)
             <p v-if="llmBatchJobs.enrichStatus.lastError" class="text-destructive">
               {{ $t('settings.llmBatch.enrichLastError', { message: llmBatchJobs.enrichStatus.lastError }) }}
             </p>
-          </div>
-
-          <div v-if="brokenBatchCapabilities.length" class="space-y-1">
-            <div v-for="entry in brokenBatchCapabilities" :key="entry.provider" class="text-sm text-destructive border border-destructive/30 rounded-md p-2">
-              <template v-if="entry.source === 'config'">
-                {{ $t('settings.llmBatch.capabilityConfigGated', { provider: entry.provider }) }}
-              </template>
-              <template v-else>
-                {{ $t('settings.llmBatch.capabilityBroken', { provider: entry.provider, message: entry.message ?? '', at: formatBatchDate(entry.checkedAt) }) }}
-              </template>
-            </div>
           </div>
 
           <div class="grid grid-cols-2 gap-3 text-sm">
