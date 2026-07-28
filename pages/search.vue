@@ -57,6 +57,7 @@ const selectedRegionKeys = ref<string[]>(queryList('region'))
 const filtersOpen = ref(false)
 
 const { data: countries } = await useFetch<CountryEntry[]>('/api/regions', {
+  cache: 'no-store',
   default: () => [],
 })
 
