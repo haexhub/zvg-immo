@@ -113,6 +113,41 @@ describe('task-runs', () => {
     nowSpy.mockRestore()
   })
 
+  it('never lets an in-flight progress write land after — and clobber — an end write (interleaving regression)', async () => {
+    const { getPool } = await import('./db')
+    const pool = makeFakePool()
+    // Holds recordTaskRunProgress's own write (identified by its `progress`
+    // payload — recordTaskRunStart/End always write `progress: null`) so it
+    // can be released after recordTaskRunEnd has already completed, exactly
+    // the interleaving that used to restore a stale 'running' status once
+    // the delayed progress write finally landed.
+    let releaseProgressWrite: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => {
+      releaseProgressWrite = resolve
+    })
+    const originalQuery = pool.query
+    pool.query = vi.fn(async (sql: string, params: unknown[] = []) => {
+      if (sql.startsWith('INSERT INTO app_settings') && sql.includes('value || jsonb_build_object')) {
+        const value = typeof params[2] === 'string' ? JSON.parse(params[2] as string) : params[2]
+        if ((value as { progress?: unknown }).progress) await gate
+      }
+      return originalQuery(sql, params)
+    })
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { getTaskRunStatus, recordTaskRunStart, recordTaskRunEnd, recordTaskRunProgress } = await import('./task-runs')
+
+    await recordTaskRunStart('enrich')
+    const progressPromise = recordTaskRunProgress('enrich', { archivedDone: 1, archivedTotal: 10 })
+    const endPromise = recordTaskRunEnd('enrich', { result: { archived: 10 } })
+    releaseProgressWrite!()
+    await Promise.all([progressPromise, endPromise])
+
+    const status = await getTaskRunStatus('enrich')
+    expect(status.status).toBe('idle')
+    expect(status.lastResult).toEqual({ archived: 10 })
+    expect(status.progress).toBeNull()
+  })
+
   it('records a successful run warning for admin visibility', async () => {
     const { getPool } = await import('./db')
     const pool = makeFakePool()

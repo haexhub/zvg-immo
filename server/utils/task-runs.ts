@@ -44,6 +44,23 @@ const IDLE_STATUS: TaskRunStatus = {
 const PROGRESS_THROTTLE_MS = 1500
 const lastProgressWriteAt = new Map<TrackedTask, number>()
 
+// Serializes start/progress/end's read-modify-write per task. Without this, a
+// late (unawaited) recordTaskRunProgress read issued just before
+// recordTaskRunEnd — e.g. the last iteration of enrich's per-item loop — could
+// still be mid-flight when recordTaskRunEnd's write lands, then overwrite it
+// with the stale pre-completion status once it finally resolves, leaving
+// /settings polling forever. Queuing by call order (not completion order)
+// guarantees an earlier call's write always lands before a later call's
+// read-modify-write begins.
+const taskQueues = new Map<TrackedTask, Promise<unknown>>()
+
+function enqueue<T>(task: TrackedTask, fn: () => Promise<T>): Promise<T> {
+  const prev = taskQueues.get(task) ?? Promise.resolve()
+  const result = prev.then(fn, fn)
+  taskQueues.set(task, result.catch(() => {}))
+  return result
+}
+
 let memoryTaskRunStatus: Record<string, TaskRunStatus> = {}
 
 function coerceSummary(value: unknown): TaskRunSummary | null {
@@ -121,45 +138,53 @@ export async function getTaskRunStatus(task: TrackedTask): Promise<TaskRunStatus
 }
 
 export async function recordTaskRunStart(task: TrackedTask): Promise<void> {
-  const current = await getTaskRunStatus(task)
-  await writeTaskRunStatus(task, {
-    ...current,
-    status: 'running',
-    startedAt: new Date().toISOString(),
-    lastError: null,
-    lastWarning: null,
-    progress: null,
-  })
   lastProgressWriteAt.delete(task)
+  await enqueue(task, async () => {
+    const current = await getTaskRunStatus(task)
+    await writeTaskRunStatus(task, {
+      ...current,
+      status: 'running',
+      startedAt: new Date().toISOString(),
+      lastError: null,
+      lastWarning: null,
+      progress: null,
+    })
+  })
 }
 
 export async function recordTaskRunEnd(
   task: TrackedTask,
   outcome: { result: TaskRunSummary; warning?: string | null } | { error: string },
 ): Promise<void> {
-  const current = await getTaskRunStatus(task)
-  await writeTaskRunStatus(task, {
-    ...current,
-    status: 'idle',
-    finishedAt: new Date().toISOString(),
-    lastResult: 'result' in outcome ? outcome.result : current.lastResult,
-    lastError: 'error' in outcome ? outcome.error : null,
-    lastWarning: 'result' in outcome ? outcome.warning ?? null : null,
-    progress: null,
-  })
   lastProgressWriteAt.delete(task)
+  await enqueue(task, async () => {
+    const current = await getTaskRunStatus(task)
+    await writeTaskRunStatus(task, {
+      ...current,
+      status: 'idle',
+      finishedAt: new Date().toISOString(),
+      lastResult: 'result' in outcome ? outcome.result : current.lastResult,
+      lastError: 'error' in outcome ? outcome.error : null,
+      lastWarning: 'result' in outcome ? outcome.warning ?? null : null,
+      progress: null,
+    })
+  })
 }
 
 /** Updates only `progress`, leaving `status`/`startedAt`/`lastResult`
  *  untouched — for a long-running loop (crawlAll's regions, enrich's
  *  per-auction worker, reprocess's per-candidate loop) to report how far
  *  along it is while it's still running. Throttled per task so a fast loop
- *  doesn't turn every item into its own Postgres write. */
+ *  doesn't turn every item into its own Postgres write; queued behind
+ *  start/end (see `enqueue`) so a throttled-through call can never land after
+ *  the run's own end write. */
 export async function recordTaskRunProgress(task: TrackedTask, progress: TaskRunSummary): Promise<void> {
   const now = Date.now()
   const last = lastProgressWriteAt.get(task) ?? 0
   if (now - last < PROGRESS_THROTTLE_MS) return
   lastProgressWriteAt.set(task, now)
-  const current = await getTaskRunStatus(task)
-  await writeTaskRunStatus(task, { ...current, progress })
+  await enqueue(task, async () => {
+    const current = await getTaskRunStatus(task)
+    await writeTaskRunStatus(task, { ...current, progress })
+  })
 }

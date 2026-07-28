@@ -64,6 +64,7 @@ function clearAuthState(): void {
   authed.value = false
   status.value = null
   stopPolling()
+  stopProgressPolling()
 }
 
 const adminLogoutError = ref<string | null>(null)
