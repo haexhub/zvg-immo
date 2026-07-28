@@ -80,6 +80,9 @@ describe('classifyPropertyType — Swedish, Finnish, Danish, Icelandic', () => {
   it('classifies villa (SE)', () => {
     expect(classifyPropertyType('Villa med stor tomt').id).toBe('einfamilienhaus')
   })
+  it('classifies Swedish small-house tax units as houses before accessory garages in prose can win', () => {
+    expect(classifyPropertyType('Småhusenhet, bebyggd').id).toBe('einfamilienhaus')
+  })
   it('classifies omakotitalo (FI)', () => {
     expect(classifyPropertyType('Omakotitalo isolla tontilla').id).toBe('einfamilienhaus')
   })

@@ -58,7 +58,7 @@ describe('mergeLlmResult', () => {
     expect(entry.confidence).toBe('high')
   })
 
-  it('keeps source rules and ignores propertyType/sizes when rules were already confident', () => {
+  it('keeps source rules and does not overwrite propertyType/sizes when rules were already confident', () => {
     const fields = baseFields({ confident: true, propertyType: 'eigentumswohnung', landAreaSqm: 80 })
     const entry = mergeLlmResult(undefined, fields, llmResult({ propertyType: 'einfamilienhaus', landAreaSqm: 999 }), AT, undefined)
 
@@ -66,6 +66,71 @@ describe('mergeLlmResult', () => {
     expect(entry.propertyType).toBe('eigentumswohnung')
     expect(entry.landAreaSqm).toBe(80)
     expect(entry.biddingNotes).toBeUndefined()
+  })
+
+  it('lets the LLM fill missing area gaps even when rules were already confident', () => {
+    const fields = baseFields({ confident: true, propertyType: 'einfamilienhaus', livingAreaSqm: 180 })
+    const entry = mergeLlmResult(undefined, fields, llmResult({ landAreaSqm: 1316 }), AT, undefined)
+
+    expect(entry.source).toBe('rules')
+    expect(entry.livingAreaSqm).toBe(180)
+    expect(entry.landAreaSqm).toBe(1316)
+  })
+
+  it('derives missing land area from complete parcel areas across sources', () => {
+    const fields = baseFields({ confident: true, propertyType: 'einfamilienhaus', livingAreaSqm: 180 })
+    const entry = mergeLlmResult(
+      undefined,
+      fields,
+      llmResult({
+        landAreaSqm: null,
+        planningNotes: {
+          monumentProtection: null,
+          contamination: null,
+          developmentPlan: null,
+          landConsolidation: null,
+          developmentCharges: null,
+          redevelopmentArea: null,
+          conservationArea: null,
+          landParcels: [
+            { label: 'Flurstück 743/1', areaSqm: 500, use: 'Wohnbaufläche' },
+            { label: 'Flurstück 743/2', areaSqm: 816, use: 'Gartenland' },
+          ],
+        },
+      }),
+      AT,
+      undefined,
+    )
+
+    expect(entry.landAreaSqm).toBe(1316)
+  })
+
+  it('does not derive land area from incomplete parcel lists', () => {
+    const fields = baseFields({ confident: true, propertyType: 'einfamilienhaus', livingAreaSqm: 180 })
+    const entry = mergeLlmResult(
+      undefined,
+      fields,
+      llmResult({
+        landAreaSqm: null,
+        planningNotes: {
+          monumentProtection: null,
+          contamination: null,
+          developmentPlan: null,
+          landConsolidation: null,
+          developmentCharges: null,
+          redevelopmentArea: null,
+          conservationArea: null,
+          landParcels: [
+            { label: '743/1', areaSqm: 500, use: null },
+            { label: '743/2', areaSqm: null, use: null },
+          ],
+        },
+      }),
+      AT,
+      undefined,
+    )
+
+    expect(entry.landAreaSqm).toBeNull()
   })
 
   it('always applies LLM-only fields (condition/features/yearBuilt/...) regardless of confidence', () => {

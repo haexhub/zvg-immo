@@ -95,6 +95,7 @@ describe('extractByRules', () => {
         'Boarean uppgår till 180 m², fördelat på två lägenheter. ' +
         'Markarealen uppgår till 1 316 m², vars obebyggda delar utgörs av gräsmatta, träd och buskar.',
     })
+    expect(r.propertyType).toBe('einfamilienhaus')
     expect(r.livingAreaSqm).toBe(180)
     expect(r.landAreaSqm).toBe(1316)
   })

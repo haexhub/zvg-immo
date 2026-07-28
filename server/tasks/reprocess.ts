@@ -37,7 +37,7 @@ import {
 } from '~/server/utils/extract/llm-batch'
 import { readLlmExecutionMode } from '~/server/utils/app-settings'
 import { MAX_LLM_FAILURES, readExtractionLlmConfig } from '~/server/utils/extract/llm-task-config'
-import { mergeLlmResult, type MergeInputFields } from '~/server/utils/extract/merge-llm-result'
+import { mergeLlmResult, withDerivedExtractionFields, type MergeInputFields } from '~/server/utils/extract/merge-llm-result'
 import {
   applyExtractionToAuctions,
   readExtractionCache,
@@ -372,7 +372,7 @@ function buildRulesOnlyEntry(
   const hasType = fields.propertyType != null && fields.propertyType !== 'sonstiges'
   const hasArea = fields.landAreaSqm != null || fields.livingAreaSqm != null
   const prevFailures = priorEntry?.llmFailures ?? 0
-  return {
+  return withDerivedExtractionFields({
     propertyType: fields.propertyType,
     landAreaSqm: fields.landAreaSqm,
     livingAreaSqm: fields.livingAreaSqm,
@@ -408,7 +408,7 @@ function buildRulesOnlyEntry(
     at,
     ...(prevFailures > 0 ? { llmFailures: prevFailures } : {}),
     ...(priorEntry?.photoFailures ? { photoFailures: priorEntry.photoFailures } : {}),
-  }
+  })
 }
 
 /**

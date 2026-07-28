@@ -133,6 +133,14 @@ describe('findTotalLandAreaSqm', () => {
     ).toBe(1316)
   })
 
+  it('extracts the total area from Swedish Fastigheten omfattar prose', () => {
+    expect(
+      findTotalLandAreaSqm(
+        'Fastigheten omfattar ca 1 316 kvm tomtmark. Obebyggda delar utgörs av gräsmatta, träd och buskar.',
+      ),
+    ).toBe(1316)
+  })
+
   it('extracts the total area from German translated parcel prose', () => {
     const text =
       'Grundstück bestehend aus einer Parzelle mit einer Fläche von ca. 18,1 ha, wovon ca. 14,6 ha auf ' +

@@ -198,7 +198,7 @@ const LAND_TOTAL_AREA_RES = [
   // "Grundstück umfasst 18,1 ha, davon ..." / "property totals 18.1 ha, of which ..."
   new RegExp(
     `(?:${LAND_OBJECT_WORDS})${WORD_END}[^.\\n]{0,80}?` +
-      `(?:umfasst|beträgt|betraegt|uppgår\\s+till|totals?|covers?|comprises|comprend|comprende|obejmuje|wynosi)` +
+      `(?:umfasst|beträgt|betraegt|uppgår\\s+till|omfattar|totals?|covers?|comprises|comprend|comprende|obejmuje|wynosi)` +
       `\\D{0,24}?(${AREA_TOKEN})(?![a-zäöü\\d\\u0370-\\u03ff])`,
     'i',
   ),

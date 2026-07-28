@@ -84,7 +84,7 @@ const RULES: PropertyTypeRule[] = [
   {
     id: 'einfamilienhaus',
     label: 'Einfamilienhaus',
-    test: /einfamilienhaus|vivienda unifamiliar|casa unifamiliar|casa unifamiliare|villetta|maison individuelle|eengezinswoning|rodinný dům|dom jednorodzinny|családi ház|vienbutis namas|savrupmāja|eramu|villa|enfamiljshus|omakotitalo|enfamiliehus|parcelhus|einbýlishús|porodična kuća|stanovanjska hiša|μονοκατοικια/i,
+    test: /einfamilienhaus|vivienda unifamiliar|casa unifamiliar|casa unifamiliare|villetta|maison individuelle|eengezinswoning|rodinný dům|dom jednorodzinny|családi ház|vienbutis namas|savrupmāja|eramu|villa|enfamiljshus|småhusenhet\s*,?\s*bebyggd|omakotitalo|enfamiliehus|parcelhus|einbýlishús|porodična kuća|stanovanjska hiša|μονοκατοικια/i,
   },
   {
     id: 'eigentumswohnung',
