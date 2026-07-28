@@ -20,6 +20,7 @@ describe('extraction translation helpers', () => {
   it('extracts only visible structured free text', () => {
     expect(extractTranslatableExtractionTexts(extraction({
       renovationNotes: ' Visst underhållsbehov finna ',
+      heating: ' Fjärrvärme ',
       insights: {
         defects: ['Äldre fastighet med äldre ytlager', ''],
         encumbrances: [],
@@ -42,7 +43,7 @@ describe('extraction translation helpers', () => {
       biddingNotes: null,
       renovationNotes: 'Visst underhållsbehov finna',
       floor: null,
-      heating: null,
+      heating: 'Fjärrvärme',
       insights: {
         defects: ['Äldre fastighet med äldre ytlager'],
         encumbrances: [],
@@ -67,6 +68,7 @@ describe('extraction translation helpers', () => {
     const original = extraction({
       livingAreaSqm: 88,
       renovationNotes: 'Visst underhållsbehov finna',
+      heating: 'Fjärrvärme',
       insights: {
         defects: ['Äldre ytlager'],
         encumbrances: [],
@@ -81,7 +83,7 @@ describe('extraction translation helpers', () => {
       biddingNotes: null,
       renovationNotes: 'Gewisser Instandhaltungsbedarf vorhanden',
       floor: null,
-      heating: null,
+      heating: 'Fernwärme',
       insights: {
         defects: ['Ältere Oberflächen'],
         encumbrances: [],
@@ -93,6 +95,7 @@ describe('extraction translation helpers', () => {
     })).toMatchObject({
       livingAreaSqm: 88,
       renovationNotes: 'Gewisser Instandhaltungsbedarf vorhanden',
+      heating: 'Fernwärme',
       insights: {
         defects: ['Ältere Oberflächen'],
         landValueEurPerSqm: 123,

@@ -19,7 +19,7 @@ import { getLlmMaxTokens, getLlmProviderOverride } from '~/server/utils/app-sett
 import { resolveLlmConfig } from '~/server/utils/extract/llm'
 import { callTranslationLlm, type TranslationResult } from '~/server/utils/extract/text-llm'
 import { isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
-import { extractTranslatableExtractionTexts } from '~/lib/extraction-translation'
+import { extractTranslatableExtractionTexts, TRANSLATABLE_EXTRACTION_TEXTS_VERSION } from '~/lib/extraction-translation'
 import {
   checkInMemoryRateLimit,
   createInMemoryRateLimitState,
@@ -53,6 +53,7 @@ function buildPrompt(
   const lines = [
     `Translate the following real-estate foreclosure auction text fields into ${LANG_NAMES[targetLang]}.`,
     'Return the same JSON shape. Translate every string value. Keep nulls, array order, array lengths, identifiers, dates, numbers and currencies unchanged.',
+    'EXTRACTION_TEXTS_JSON contains short structured labels shown in the property detail UI. Translate heating and insights.construction as user-facing amenity text, including material, roof, window, foundation and building-services terms. Keep an original specialist term only when there is no reliable target-language equivalent.',
     '',
     `TITLE: ${title ?? ''}`,
     `DESCRIPTION:\n${description ?? ''}`,
@@ -111,6 +112,7 @@ export default defineEventHandler(async (event) => {
     description,
     documentSummary,
     extractionTexts,
+    extractionTextsVersion: TRANSLATABLE_EXTRACTION_TEXTS_VERSION,
     documentSetHash: auction.extraction?.documentSetHash ?? null,
     documentSetVersion: auction.extraction?.documentSetVersion ?? null,
   })))
