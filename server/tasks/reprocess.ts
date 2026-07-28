@@ -26,7 +26,7 @@ import { join } from 'node:path'
 import type { Auction, AuctionExtraction, CuratedPhoto } from '~/types/auction'
 import { getPool } from '~/server/utils/db'
 import { extractByRules } from '~/server/utils/extract/rules'
-import { extractByLlm, type LlmConfig, type LlmInput, type PhotoCuration } from '~/server/utils/extract/llm'
+import { extractByLlm, isRateLimitError, type LlmConfig, type LlmInput, type PhotoCuration } from '~/server/utils/extract/llm'
 import { prepareArchivedLlmDocuments } from '~/server/utils/extract/llm-documents'
 import {
   isLlmBatchPending,
@@ -383,6 +383,7 @@ export async function reprocessAuction(
   priorEntry: AuctionExtraction | undefined,
   llmConfig: LlmConfig | null,
   at: string,
+  opts: { onLlmAttempt?: () => void } = {},
 ): Promise<{ entry: AuctionExtraction; llmCalled: boolean } | null> {
   const base = await buildReprocessInput(platform, externalId, priorEntry, llmConfig)
   if (!base) return null
@@ -391,7 +392,7 @@ export async function reprocessAuction(
     return { entry: buildRulesOnlyEntry(base.fields, priorEntry, at), llmCalled: false }
   }
 
-  const llm = await extractByLlm(base.input!, llmConfig)
+  const llm = await extractByLlm(base.input!, llmConfig, { onProviderAttempt: opts.onLlmAttempt })
   let curatedPhotos = priorEntry?.photos?.map(normalizePhoto)
   if (llm && curatedPhotos && base.input?.candidateImages?.length && llm.photoCuration.length) {
     // llm.photoCuration's photoIndex is relative to the candidateImages that
@@ -488,6 +489,13 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
     )
   }
   const useBatch = batchRequested && supportsLlmBatch(llmConfig) && !batchProviderBroken
+  if (llmConfig) {
+    console.log(
+      `[reprocess] llm provider=${llmConfig.provider ?? 'openai-compatible'} model=${llmConfig.model} mode=${useBatch ? 'batch' : 'sync'} maxPerRun=${maxLlmPerRun}`,
+    )
+  } else {
+    console.log('[reprocess] llm disabled — rules-only')
+  }
 
   // maxLlmPerRun is shared across all platforms; a per-platform cap keeps one
   // huge platform's backlog from burning through the whole budget before
@@ -571,12 +579,19 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
         continue
       }
 
-      const result = await reprocessAuction(platform, externalId, priorEntry, useLlm, at)
+      let syncLlmAttempted = false
+      const result = await reprocessAuction(platform, externalId, priorEntry, useLlm, at, {
+        onLlmAttempt: () => {
+          syncLlmAttempted = true
+          llmCalls++
+          llmCallsByPlatform.set(platform, platformLlmCalls + 1)
+        },
+      })
       if (!result) {
         skipped++
         continue
       }
-      if (result.llmCalled) {
+      if (result.llmCalled && !syncLlmAttempted) {
         llmCalls++
         llmCallsByPlatform.set(platform, platformLlmCalls + 1)
       }
@@ -605,6 +620,10 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
       // rules-only once the limit is hit, long after the outage clears.
       console.warn(`[reprocess] failed for ${platform}:${externalId}: ${(err as Error).message}`)
       skipped++
+      if (isRateLimitError(err)) {
+        console.warn('[reprocess] LLM provider rate-limited — stopping this run early')
+        break
+      }
     }
   }
 
