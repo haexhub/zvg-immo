@@ -162,7 +162,7 @@ const TOTAL_WORDS =
   '|łączna|łącznej|łącznie|celková|celkova|összes|bendras|ukupna|totala'
 const LAND_OBJECT_WORDS =
   'grundstück|grundstueck|liegenschaft|flurstück|flurstueck|parzelle|grundbesitz' +
-  '|fastighet(?:en)?|skifte|tomt|markareal(?:en)?' +
+  '|fastighet(?:en)?|skifte|tomt|markareal(?:en)?|lantbruksenhet(?:en)?' +
   '|plot|property|parcel|lot|land' +
   '|terrain|parcelle|bien' +
   '|terreno|finca|parcela|solar' +
@@ -181,6 +181,13 @@ const AREA_NOUNS =
 const APPROX = '(?:ca\\.?|circa|approx\\.?|approximately|about)?'
 const WORD_END = '(?![a-zäöüåéèêàáíóúñçąćęłńóśźż\\d])'
 const LAND_TOTAL_AREA_RES = [
+  // "Lantbruksenhet om 30 607 m²" — Kronofogden uses this for the
+  // property/land unit total. Keep it before the looser prose patterns so a
+  // later building-area sentence ("totalt 563 m² Byggnadsarea") can't win.
+  new RegExp(
+    `(?:lantbruksenhet(?:en)?)${WORD_END}\\s+(?:om|på)\\s*${APPROX}\\s*(${AREA_TOKEN})(?![a-zäöü\\d\\u0370-\\u03ff])`,
+    'i',
+  ),
   // "Grundstück bestehend aus einer Parzelle mit einer Fläche von ca. 18,1 ha"
   // "Fastighet bestående av ett skifte med en areal om ca 18,1 ha"
   new RegExp(
@@ -198,7 +205,7 @@ const LAND_TOTAL_AREA_RES = [
   // "Grundstück umfasst 18,1 ha, davon ..." / "property totals 18.1 ha, of which ..."
   new RegExp(
     `(?:${LAND_OBJECT_WORDS})${WORD_END}[^.\\n]{0,80}?` +
-      `(?:umfasst|beträgt|betraegt|uppgår\\s+till|omfattar|totals?|covers?|comprises|comprend|comprende|obejmuje|wynosi)` +
+      `(?:umfasst|beträgt|betraegt|uppgår\\s+till|omfattar|totals?|covers?|comprises|comprend|comprende|obejmuje|wynosi)${WORD_END}` +
       `\\D{0,24}?(${AREA_TOKEN})(?![a-zäöü\\d\\u0370-\\u03ff])`,
     'i',
   ),

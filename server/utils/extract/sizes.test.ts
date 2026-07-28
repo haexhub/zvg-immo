@@ -141,6 +141,24 @@ describe('findTotalLandAreaSqm', () => {
     ).toBe(1316)
   })
 
+  it('extracts Kronofogden Lantbruksenhet totals before later building-area totals', () => {
+    const text =
+      'SUNNE IVARSBJÖRKE 1:491: Villa om 142 m² fördelat på 5 rum och kök. ' +
+      'SUNNE IVARSBJÖRKE 1:492: Lantbruksenhet om 30 607 m². ' +
+      'På fastigheten finns 1 ekonomibyggnad totalt 563 m² Byggnadsarea (BYA) samt 1 övrig byggnad totalt 950 m² Byggnadsarea (BYA).'
+
+    expect(findTotalLandAreaSqm(text)).toBe(30607)
+    expect(findLandAreaSqm(text)).toBe(30607)
+  })
+
+  it('does not read Kronofogden building area as total land area', () => {
+    expect(
+      findTotalLandAreaSqm(
+        'På fastigheten finns 1 ekonomibyggnad totalt 563 m² Byggnadsarea (BYA) samt 1 övrig byggnad totalt 950 m² Byggnadsarea (BYA).',
+      ),
+    ).toBeNull()
+  })
+
   it('extracts the total area from German translated parcel prose', () => {
     const text =
       'Grundstück bestehend aus einer Parzelle mit einer Fläche von ca. 18,1 ha, wovon ca. 14,6 ha auf ' +

@@ -133,6 +133,34 @@ describe('mergeLlmResult', () => {
     expect(entry.landAreaSqm).toBeNull()
   })
 
+  it('lets a complete parcel sum correct a smaller extracted land area', () => {
+    const fields = baseFields({ confident: true, propertyType: 'einfamilienhaus', landAreaSqm: 563, livingAreaSqm: 142 })
+    const entry = mergeLlmResult(
+      undefined,
+      fields,
+      llmResult({
+        landAreaSqm: null,
+        planningNotes: {
+          monumentProtection: null,
+          contamination: null,
+          developmentPlan: null,
+          landConsolidation: null,
+          developmentCharges: null,
+          redevelopmentArea: null,
+          conservationArea: null,
+          landParcels: [
+            { label: 'Sunne Ivarsbjörke 1:492', areaSqm: 15337, use: 'Lantbruksenhet' },
+            { label: 'Sunne Ivarsbjörke 1:491', areaSqm: 15270, use: 'Småhusenhet' },
+          ],
+        },
+      }),
+      AT,
+      undefined,
+    )
+
+    expect(entry.landAreaSqm).toBe(30607)
+  })
+
   it('always applies LLM-only fields (condition/features/yearBuilt/...) regardless of confidence', () => {
     const fields = baseFields({ confident: true, propertyType: 'eigentumswohnung', landAreaSqm: 80 })
     const entry = mergeLlmResult(undefined, fields, llmResult({ condition: 'sanierungsbeduerftig' }), AT, undefined)

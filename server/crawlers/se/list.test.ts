@@ -74,6 +74,39 @@ function detailHtmlWithFarmArea(id: string): string {
   `
 }
 
+function detailHtmlWithMultiParcelAndBuildingArea(id: string): string {
+  return `
+    <h3 id="h-Adress">Adress</h3><p class="normal">Ivarsbjörke 263</p>
+    <h3 id="h-Kommun">Kommun</h3><p class="normal">Sunne kommun</p>
+    <h3 id="h-Arendenummer">Ärendenummer</h3><p class="normal">F-${id}-25</p>
+    <h3 id="h-Storlek">Storlek</h3><p class="normal">5 rum, 142 kvm</p>
+    <h2 id="h-Taxeringskod">Taxeringskod</h2><p class="normal">Lantbruksenhet, bebyggd enbart med ekonomibyggnad (122)</p>
+    <h2 id="h-Tomtbeskrivning">Tomtbeskrivning</h2><p class="normal">Sunne Ivarsbjörke 1:492:</p>
+    <div id="datumet">2026-09-10</div>
+    <div class="sv-text-portlet">
+      <div id="Ingress"><!-- Ingress --></div>
+      <div class="sv-text-portlet-content">
+        <p class="brodtextxingress">
+          SUNNE IVARSBJÖRKE 1:491: Villa om 142 m² fördelat på 5 rum och kök.
+          SUNNE IVARSBJÖRKE 1:492: Lantbruksenhet om 30 607 m².
+          På fastigheten finns 1 ekonomibyggnad totalt 563 m² Byggnadsarea (BYA)
+          samt 1 övrig byggnad totalt 950 m² Byggnadsarea (BYA).
+        </p>
+      </div>
+    </div>
+    <div class="sv-text-portlet">
+      <div id="Innehall"><!-- Innehall --></div>
+      <div class="sv-text-portlet-content">
+        <h2>Tomtbeskrivning</h2>
+        <p>Sunne Ivarsbjörke 1:492:</p>
+        <p>Tomt om 15 337 m².</p>
+        <p>Sunne Ivarsbjörke 1:491:</p>
+        <p>Tomt om 15270 m².</p>
+      </div>
+    </div>
+  `
+}
+
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
@@ -341,6 +374,29 @@ describe('fetchAllListings', () => {
     expect(result.auctions[0]?.sourceLivingAreaSqm).toBe(80)
     expect(result.auctions[0]?.sourceRooms).toBe(3)
     expect(result.auctions[0]?.region).toBe('Jämtland')
+  })
+
+  it('does not mistake Kronofogden building area for land area on multi-parcel farm listings', async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const href = String(url)
+      if (href === `${BASE}/Sokfastigheterbostadsratter.html?query=*`) {
+        return new Response(searchHtml(['101853'], 1), { status: 200 })
+      }
+      if (href === `${BASE}/22660.html?query=*`) {
+        return new Response(searchHtml([], 0), { status: 200 })
+      }
+      if (href === `${BASE}/101853.html`) {
+        return new Response(detailHtmlWithMultiParcelAndBuildingArea('101853'), { status: 200 })
+      }
+      return new Response('not found', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await fetchAllListings('se-kronofogden')
+
+    expect(result.auctions[0]?.sourceLandAreaSqm).toBe(30607)
+    expect(result.auctions[0]?.sourceLivingAreaSqm).toBe(142)
+    expect(result.auctions[0]?.sourceRooms).toBe(5)
   })
 
   it('filters the national Kronofogden feed to the requested Swedish county', async () => {

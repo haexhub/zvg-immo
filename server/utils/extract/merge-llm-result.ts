@@ -61,7 +61,11 @@ export function deriveLandAreaSqmFromPlanningNotes(planningNotes: PlanningNotes 
 }
 
 export function withDerivedExtractionFields(entry: AuctionExtraction): AuctionExtraction {
-  const derivedLandAreaSqm = entry.landAreaSqm ?? deriveLandAreaSqmFromPlanningNotes(entry.planningNotes)
+  const parcelLandAreaSqm = deriveLandAreaSqmFromPlanningNotes(entry.planningNotes)
+  const derivedLandAreaSqm =
+    entry.landAreaSqm == null || (parcelLandAreaSqm != null && parcelLandAreaSqm > entry.landAreaSqm + 1)
+      ? parcelLandAreaSqm
+      : entry.landAreaSqm
   if (derivedLandAreaSqm == null || derivedLandAreaSqm === entry.landAreaSqm) return entry
 
   const hasType = entry.propertyType != null && entry.propertyType !== 'sonstiges'
