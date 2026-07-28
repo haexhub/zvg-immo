@@ -164,6 +164,80 @@ describe('extractKronofogdenPhotoUrls', () => {
       `${BASE}/images/18.abc/1/Bild%201.jpg`,
     ])
   })
+
+  it('accepts any filename inside the galleria block, not just "BildN"', () => {
+    // Real Kronofogden listings use inconsistent per-case filenames: plain
+    // numeric ("1.jpg") or hyphenated ("Bild-001.jpg") — neither matched the
+    // old "bild" + optional-whitespace + digits pattern, which silently
+    // dropped every photo for these listings.
+    const html = `
+      <div id="galleria">
+        <img style="display:none" src="/images/200.aaa/1781605779295/1.jpg">
+        <img style="display:none" src="/images/200.bbb/1781594534027/Bild-001.jpg">
+      </div>
+    `
+
+    expect(extractKronofogdenPhotoUrls(html)).toEqual([
+      `${BASE}/images/200.aaa/1781605779295/1.jpg`,
+      `${BASE}/images/200.bbb/1781594534027/Bild-001.jpg`,
+    ])
+  })
+
+  it('stops at the galleria close tag instead of sweeping up later page images', () => {
+    const html = `
+      <div id="galleria">
+        <img src="/images/200.aaa/1781605779295/1.jpg">
+      </div>
+      <img src="/images/18.static/1/2.jpg">
+    `
+
+    expect(extractKronofogdenPhotoUrls(html)).toEqual([
+      `${BASE}/images/200.aaa/1781605779295/1.jpg`,
+    ])
+  })
+
+  it('recognizes closing div tags with whitespace before the angle bracket', () => {
+    const html = `
+      <div id="galleria">
+        <img src="/images/200.aaa/1781605779295/1.jpg">
+      </div >
+      <img src="/images/18.static/1/2.jpg">
+    `
+
+    expect(extractKronofogdenPhotoUrls(html)).toEqual([
+      `${BASE}/images/200.aaa/1781605779295/1.jpg`,
+    ])
+  })
+
+  it('an unclosed galleria div is auto-closed at end of document, like a browser would', () => {
+    // A real HTML parser doesn't "fail to find" a missing close tag the way
+    // the old hand-rolled regex could — per the HTML5 spec it auto-closes
+    // the element at EOF, so both images still count as inside the gallery.
+    const html = `
+      <div id="galleria">
+        <img src="/images/200.aaa/1781605779295/1.jpg">
+        <img src="/images/200.bbb/1781594534027/Bild-002.jpg">
+    `
+
+    expect(extractKronofogdenPhotoUrls(html)).toEqual([
+      `${BASE}/images/200.aaa/1781605779295/1.jpg`,
+      `${BASE}/images/200.bbb/1781594534027/Bild-002.jpg`,
+    ])
+  })
+
+  it('preserves DOM order when a src candidate precedes a srcset candidate', () => {
+    const html = `
+      <div id="galleria">
+        <img src="/images/200.aaa/1781605779295/1.jpg">
+        <img srcset="/images/200.bbb/1781594534027/2.jpg 1024w">
+      </div>
+    `
+
+    expect(extractKronofogdenPhotoUrls(html)).toEqual([
+      `${BASE}/images/200.aaa/1781605779295/1.jpg`,
+      `${BASE}/images/200.bbb/1781594534027/2.jpg`,
+    ])
+  })
 })
 
 describe('fetchAllListings', () => {

@@ -1,3 +1,4 @@
+import { load } from 'cheerio'
 import type { Attachment, Auction } from '~/types/auction'
 import { findTotalLandAreaSqm } from '~/server/utils/extract/sizes'
 import { SE_BASE, COUNTRY } from './constants'
@@ -23,35 +24,32 @@ async function htmlFetch(url: string): Promise<string> {
 }
 
 export function extractListingIds(html: string): string[] {
-  const links = html.match(/<a\b[^>]*href=["']\/\d+\.html["'][^>]*>/gi) ?? []
-  const ids = links
-    .filter((link) => /\bclass=["'][^"']*\bh3rubrik\b/i.test(link))
-    .map((link) => link.match(/href=["']\/(\d+)\.html["']/i)?.[1])
-    .filter((id): id is string => !!id)
-  return [...new Set(ids)]
+  const $ = load(html)
+  const ids = new Set<string>()
+  $('a.h3rubrik[href]').each((_i, el) => {
+    const id = $(el).attr('href')?.match(/^\/(\d+)\.html$/)?.[1]
+    if (id) ids.add(id)
+  })
+  return [...ids]
 }
 
 export function extractTotalHits(html: string): number | null {
-  const m = html.match(/av totalt\s+(\d+)\s+tr[äa]ffar/i)
+  const $ = load(html)
+  const m = $.root().text().match(/av totalt\s+(\d+)\s+tr[äa]ffar/i)
   if (!m?.[1]) return null
   const total = Number.parseInt(m[1], 10)
   return Number.isFinite(total) ? total : null
 }
 
 export function extractNextStartAtHit(html: string, currentStart: number): number | null {
-  const starts = [...html.matchAll(/[?&](?:amp;)?startAtHit=(\d+)/g)]
-    .map((m) => Number.parseInt(m[1]!, 10))
-    .filter((n) => Number.isFinite(n) && n > currentStart)
-    .sort((a, b) => a - b)
+  const $ = load(html)
+  const starts: number[] = []
+  $('a[href*="startAtHit="]').each((_i, el) => {
+    const n = Number.parseInt($(el).attr('href')?.match(/[?&]startAtHit=(\d+)/)?.[1] ?? '', 10)
+    if (Number.isFinite(n) && n > currentStart) starts.push(n)
+  })
+  starts.sort((a, b) => a - b)
   return starts[0] ?? null
-}
-
-function decodeHtmlAttribute(value: string): string {
-  return value
-    .replace(/&amp;/g, '&')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ')
 }
 
 function imageSortKey(url: string): string {
@@ -64,57 +62,75 @@ function imageSortKey(url: string): string {
   }
 }
 
-function isLikelyListingPhoto(url: string): boolean {
+const IMAGE_EXT_RE = /\.(?:jpe?g|png|webp)$/i
+// Kronofogden's per-case upload filenames are inconsistent ("Bild1.jpg",
+// "Bild-001.jpg", or plain "1.jpg" — depends on how the case officer
+// uploaded them), so this is only a fallback signal for when we can't
+// structurally scope to the gallery container (see extractKronofogdenPhotoUrls).
+const BILD_FILENAME_RE = /\/bild[-\s]*\d+\.(?:jpe?g|png|webp)$/i
+
+function isListingImageUrl(url: string, scopedToGallery: boolean): boolean {
   try {
     const u = new URL(url)
     const path = decodeURIComponent(u.pathname)
-    return (
-      u.origin === SE_BASE &&
-      /^\/images\//i.test(path) &&
-      /\/bild\s*\d+\.(?:jpe?g|png|webp)$/i.test(path)
-    )
+    if (u.origin !== SE_BASE || !/^\/images\//i.test(path) || !IMAGE_EXT_RE.test(path)) {
+      return false
+    }
+    return scopedToGallery || BILD_FILENAME_RE.test(path)
   } catch {
     return false
   }
 }
 
-function toAbsoluteListingImageUrl(raw: string): string | null {
-  const decoded = decodeHtmlAttribute(raw).trim()
-  if (!decoded) return null
+function toAbsoluteListingImageUrl(raw: string, scopedToGallery: boolean): string | null {
+  const trimmed = raw.trim()
+  if (!trimmed) return null
   try {
-    const u = new URL(decoded, SE_BASE)
+    const u = new URL(trimmed, SE_BASE)
     u.hash = ''
-    return isLikelyListingPhoto(u.href) ? u.href : null
+    return isListingImageUrl(u.href, scopedToGallery) ? u.href : null
   } catch {
     return null
   }
 }
 
 export function extractKronofogdenPhotoUrls(html: string): string[] {
-  const galleryStart = html.search(/<div\b[^>]*\bid=["']galleria["'][^>]*>/i)
-  const source = galleryStart >= 0 ? html.slice(galleryStart) : html
+  const $ = load(html)
+  const galleria = $('#galleria').first()
+  // Inside the gallery container every image is a real listing photo
+  // regardless of filename; outside it (no galleria div found) filename
+  // is the only signal left to reject chrome/logo/banner images.
+  const scopedToGallery = galleria.length > 0
+  const elements = scopedToGallery ? galleria.find('*') : $('*')
   const bestByImage = new Map<string, { url: string; width: number }>()
 
   function add(raw: string, width = 0) {
-    const url = toAbsoluteListingImageUrl(raw)
+    const url = toAbsoluteListingImageUrl(raw, scopedToGallery)
     if (!url) return
     const key = imageSortKey(url)
     const current = bestByImage.get(key)
     if (!current || width > current.width) bestByImage.set(key, { url, width })
   }
 
-  for (const match of source.matchAll(/\bsrcset\s*=\s*["']([^"']+)["']/gi)) {
-    const srcset = decodeHtmlAttribute(match[1] ?? '')
-    for (const candidate of srcset.split(',')) {
-      const m = candidate.trim().match(/^(\S+)(?:\s+(\d+)w)?$/i)
-      if (!m?.[1]) continue
-      add(m[1], m[2] ? Number.parseInt(m[2], 10) : 0)
+  // Depth-first document order, so a gallery image found via `src` followed
+  // by one found via `srcset` keeps that order (Map preserves first-insertion
+  // order). cheerio's parser also decodes attribute entities and tracks tag
+  // nesting for us, unlike the hand-rolled regex this used to be.
+  elements.each((_i, el) => {
+    if (!('attribs' in el)) return
+    for (const [name, value] of Object.entries(el.attribs)) {
+      if (!value) continue
+      if (name === 'srcset') {
+        for (const candidate of value.split(',')) {
+          const m = candidate.trim().match(/^(\S+)(?:\s+(\d+)w)?$/i)
+          if (!m?.[1]) continue
+          add(m[1], m[2] ? Number.parseInt(m[2], 10) : 0)
+        }
+      } else if (name === 'src' || name === 'href' || name.startsWith('data-')) {
+        add(value)
+      }
     }
-  }
-
-  for (const match of source.matchAll(/\b(?:src|href|data-[\w-]+)\s*=\s*["']([^"']+)["']/gi)) {
-    if (match[1]) add(match[1])
-  }
+  })
 
   return [...bestByImage.values()].map((entry) => entry.url)
 }
@@ -166,9 +182,10 @@ function mapDetail(id: string, html: string, platformId: string): Auction | null
   const arendenummer = extractFact(html, 'Arendenummer') ?? ''
   const storlek = extractFact(html, 'Storlek')
 
-  // Auction date: <div id="datumet" ...>2026-08-27</div>
-  const datumM = html.match(/<div id="datumet"[^>]*>(\d{4}-\d{2}-\d{2})<\/div>/)
-  const auctionDateIso = datumM?.[1] ?? null
+  // Auction date: <div id="datumet">2026-08-27</div>
+  const $ = load(html)
+  const datumText = $('#datumet').first().text().trim()
+  const auctionDateIso = /^\d{4}-\d{2}-\d{2}$/.test(datumText) ? datumText : null
 
   // The list page's href="/<id>.html" pattern also matches static info pages
   // (cookie notice, Visningsinformation, …). Those have neither an auction
@@ -176,8 +193,8 @@ function mapDetail(id: string, html: string, platformId: string): Auction | null
   if (!auctionDateIso && !address) return null
 
   // First downloadable PDF attached to the listing
-  const pdfM = html.match(/href="(\/download\/[^"]+\.pdf)"/)
-  const pdfUrl = pdfM?.[1] ? `${SE_BASE}${pdfM[1]}` : null
+  const pdfHref = $('a[href^="/download/"][href$=".pdf"]').first().attr('href')
+  const pdfUrl = pdfHref ? `${SE_BASE}${pdfHref}` : null
 
   const photoUrls = extractKronofogdenPhotoUrls(html)
   const thumbnailUrl = photoUrls[0] ?? null
