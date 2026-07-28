@@ -40,7 +40,6 @@ const SYSTEM_PROMPT =
 // concurrent LLM work.
 const inflight = new Map<string, Promise<TranslationResult>>()
 const MAX_INFLIGHT = 4
-const MAX_TRANSLATION_ATTEMPTS = 2
 const TRANSLATION_RATE_LIMIT = { max: 30, windowMs: 60 * 60 * 1000, maxKeys: 10_000 }
 const translationRateLimit = createInMemoryRateLimitState()
 
@@ -76,6 +75,25 @@ function clientKey(event: H3Event): string {
     if (realIp) return realIp
   }
   return event.node.req.socket.remoteAddress ?? 'unknown'
+}
+
+async function tryTranslate(
+  title: string | null,
+  description: string | null,
+  documentSummary: string | null,
+  extractionTexts: ReturnType<typeof extractTranslatableExtractionTexts>,
+  targetLang: ContentTargetLang,
+  config: Parameters<typeof callTranslationLlm>[6],
+): Promise<TranslationResult | null> {
+  return await callTranslationLlm(
+    SYSTEM_PROMPT,
+    buildPrompt(title, description, documentSummary, extractionTexts, targetLang),
+    title,
+    description,
+    documentSummary,
+    extractionTexts,
+    config,
+  )
 }
 
 export default defineEventHandler(async (event) => {
@@ -172,19 +190,7 @@ export default defineEventHandler(async (event) => {
   recordInMemoryRateLimitHit(translationRateLimit, requester, now, TRANSLATION_RATE_LIMIT)
 
   const gen = (async () => {
-    const prompt = buildPrompt(title, description, documentSummary, extractionTexts, targetLang)
-    let result: TranslationResult | null = null
-    for (let attempt = 0; attempt < MAX_TRANSLATION_ATTEMPTS && !result; attempt += 1) {
-      result = await callTranslationLlm(
-        SYSTEM_PROMPT,
-        prompt,
-        title,
-        description,
-        documentSummary,
-        extractionTexts,
-        config,
-      )
-    }
+    const result = await tryTranslate(title, description, documentSummary, extractionTexts, targetLang, config)
     if (!result) {
       throw createError({ statusCode: 502, statusMessage: 'LLM did not return a translation' })
     }
