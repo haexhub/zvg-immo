@@ -7,7 +7,7 @@
 // documents do. Auctions whose country's primary language already matches the
 // target are passed through without an LLM call.
 
-import type { H3Event } from 'h3'
+import { setResponseHeader, setResponseStatus, type H3Event } from 'h3'
 import type { Pool } from 'pg'
 import { readAuctionSnapshot } from '~/server/utils/auction-snapshot'
 import { isSafePathSegment } from '~/server/utils/path-segment'
@@ -86,6 +86,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'invalid or missing lang' })
   }
   const targetLang = lang as ContentTargetLang
+  const cacheOnly = String(getQuery(event).cacheOnly ?? '') === '1'
 
   const key = cacheKey(platform, id)
   const snapshot = await readAuctionSnapshot()
@@ -122,6 +123,7 @@ export default defineEventHandler(async (event) => {
 
   const cached = await readContentTranslation(db, contentHash, targetLang)
   if (cached) {
+    setResponseHeader(event, 'x-zvg-translation-cache', 'hit')
     return {
       title: cached.title,
       description: cached.description,
@@ -132,7 +134,13 @@ export default defineEventHandler(async (event) => {
   }
 
   const existing = inflight.get(inflightKey)
+  if (cacheOnly) {
+    setResponseHeader(event, 'x-zvg-translation-cache', existing ? 'inflight' : 'miss')
+    setResponseStatus(event, 204)
+    return null
+  }
   if (existing) {
+    setResponseHeader(event, 'x-zvg-translation-cache', 'inflight')
     return { ...(await existing), translated: true }
   }
   if (inflight.size >= MAX_INFLIGHT) {
@@ -180,6 +188,7 @@ export default defineEventHandler(async (event) => {
       result.documentSummary,
       result.extractionTexts,
     )
+    setResponseHeader(event, 'x-zvg-translation-cache', 'generated')
     return result
   })()
 

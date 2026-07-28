@@ -53,16 +53,91 @@ const { data: a, error, pending } = await useFetch<AuctionDetail | null>(
   { default: () => null },
 )
 
+interface AuctionTranslationResponse {
+  title: string | null
+  description: string | null
+  documentSummary: string | null
+  extractionTexts: TranslatableExtractionTexts | null
+}
+
+interface LoadedAuctionTranslation {
+  lang: ContentTargetLang
+  sourceKey: string
+  payload: AuctionTranslationResponse
+}
+
+function targetContentLang(value: string): ContentTargetLang | null {
+  return value === 'de' || value === 'en' ? value : null
+}
+
+function hasTranslatableContent(val: AuctionDetail): boolean {
+  return !(
+    val.title == null &&
+    val.description == null &&
+    val.extraction?.documentSummary == null &&
+    extractTranslatableExtractionTexts(val.extraction) == null
+  )
+}
+
+function translationSourceKey(val: AuctionDetail): string {
+  return JSON.stringify({
+    title: val.title,
+    description: val.description,
+    documentSummary: val.extraction?.documentSummary ?? null,
+    extractionTexts: extractTranslatableExtractionTexts(val.extraction),
+    documentSetHash: val.extraction?.documentSetHash ?? null,
+    documentSetVersion: val.extraction?.documentSetVersion ?? null,
+  })
+}
+
+function translationRequest(val: AuctionDetail | null, loc: string): { lang: ContentTargetLang, sourceKey: string } | null {
+  if (!val || !hasTranslatableContent(val)) return null
+  const lang = targetContentLang(loc)
+  if (!lang || isPassthroughLanguage(val.country, lang)) return null
+  return { lang, sourceKey: translationSourceKey(val) }
+}
+
 // Auto-translated title/description/document synthesis (WP-8): loaded silently whenever the
 // viewer's locale differs from the auction's source language — unlike the
 // original content, this replaces text the user would otherwise see
-// untranslated. Falls back to the original text (via the
-// computed below) while pending or on error.
-const translatedTitle = ref<string | null>(null)
-const translatedDescription = ref<string | null>(null)
-const translatedDocumentSummary = ref<string | null>(null)
-const translatedExtractionTexts = ref<TranslatableExtractionTexts | null>(null)
-const translationPending = ref(false)
+// untranslated. The cached translation is part of Nuxt async data so a page
+// reload can hydrate an existing cache hit without flashing the source text.
+const currentTranslationRequest = computed(() => translationRequest(a.value, locale.value))
+const { data: loadedTranslation, pending: translationFetchPending } = await useAsyncData<LoadedAuctionTranslation | null>(
+  `auction-translation:${platform}:${id}`,
+  async () => {
+    const request = currentTranslationRequest.value
+    if (!request) return null
+    try {
+      const payload = await $fetch<AuctionTranslationResponse | null>(
+        `/api/auction/${encodeURIComponent(platform)}/${encodeURIComponent(id)}/translation`,
+        { method: 'POST', query: { lang: request.lang, cacheOnly: '1' } },
+      )
+      if (!payload) return null
+      return { ...request, payload }
+    } catch {
+      // Best-effort: keep showing the original text (see displayTitle/displayDescription).
+      return null
+    }
+  },
+  { default: () => null, watch: [currentTranslationRequest] },
+)
+
+const activeTranslation = computed(() => {
+  const request = currentTranslationRequest.value
+  const loaded = loadedTranslation.value
+  if (!request || !loaded) return null
+  return loaded.lang === request.lang && loaded.sourceKey === request.sourceKey ? loaded.payload : null
+})
+
+const translatedTitle = computed(() => activeTranslation.value?.title ?? null)
+const translatedDescription = computed(() => activeTranslation.value?.description ?? null)
+const translatedDocumentSummary = computed(() => activeTranslation.value?.documentSummary ?? null)
+const translatedExtractionTexts = computed(() => activeTranslation.value?.extractionTexts ?? null)
+const translationGenerationPending = ref(false)
+const translationPending = computed(
+  () => currentTranslationRequest.value != null && (translationFetchPending.value || translationGenerationPending.value),
+)
 
 const displayTitle = computed(() => translatedTitle.value ?? a.value?.title ?? null)
 const displayDescription = computed(() => translatedDescription.value ?? a.value?.description ?? null)
@@ -104,44 +179,24 @@ const planningNotesTranslating = computed(() => {
 const parcelsTranslating = computed(() => translationPending.value && !!sourceExtraction.value?.planningNotes?.landParcels?.length)
 
 const translationSeq = ref(0)
-watch([a, locale], async ([val, loc]) => {
+watch([currentTranslationRequest, activeTranslation, translationFetchPending], async ([request, existing, cacheLookupPending]) => {
+  if (import.meta.server) return
   const seq = ++translationSeq.value
-  translatedTitle.value = null
-  translatedDescription.value = null
-  translatedDocumentSummary.value = null
-  translatedExtractionTexts.value = null
-  translationPending.value = false
-  if (!val) return
-  if (
-    val.title == null &&
-    val.description == null &&
-    val.extraction?.documentSummary == null &&
-    extractTranslatableExtractionTexts(val.extraction) == null
-  ) return
-  if (isPassthroughLanguage(val.country, loc as ContentTargetLang)) return
+  translationGenerationPending.value = false
+  if (!request || existing || cacheLookupPending) return
 
-  translationPending.value = true
+  translationGenerationPending.value = true
   try {
-    const res = await $fetch<{
-      title: string | null
-      description: string | null
-      documentSummary: string | null
-      extractionTexts: TranslatableExtractionTexts | null
-    }>(
+    const payload = await $fetch<AuctionTranslationResponse>(
       `/api/auction/${encodeURIComponent(platform)}/${encodeURIComponent(id)}/translation`,
-      { method: 'POST', query: { lang: loc } },
+      { method: 'POST', query: { lang: request.lang } },
     )
-    // A newer (a, locale) change already superseded this request; dropping the
-    // result avoids a slow earlier response overwriting fresher content.
     if (seq !== translationSeq.value) return
-    translatedTitle.value = res.title
-    translatedDescription.value = res.description
-    translatedDocumentSummary.value = res.documentSummary
-    translatedExtractionTexts.value = res.extractionTexts
+    loadedTranslation.value = { ...request, payload }
   } catch {
     // Best-effort: keep showing the original text (see displayTitle/displayDescription).
   } finally {
-    if (seq === translationSeq.value) translationPending.value = false
+    if (seq === translationSeq.value) translationGenerationPending.value = false
   }
 }, { immediate: true })
 
