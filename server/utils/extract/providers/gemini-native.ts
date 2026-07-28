@@ -70,6 +70,34 @@ async function paceNextRequest(): Promise<void> {
   await run
 }
 
+function geminiErrorDetails(err: unknown): unknown[] {
+  const details = (err as { data?: { error?: { details?: unknown } } })?.data?.error?.details
+  return Array.isArray(details) ? details : []
+}
+
+export function isGeminiDailyQuotaError(err: unknown): boolean {
+  return geminiErrorDetails(err).some((detail) => {
+    const violations = (detail as { violations?: unknown })?.violations
+    if (!Array.isArray(violations)) return false
+    return violations.some((violation) => {
+      const quotaId = (violation as { quotaId?: unknown })?.quotaId
+      return typeof quotaId === 'string' && quotaId.includes('PerDay')
+    })
+  })
+}
+
+function geminiRetryDelayMs(err: unknown): number | null {
+  for (const detail of geminiErrorDetails(err)) {
+    const retryDelay = (detail as { retryDelay?: unknown })?.retryDelay
+    if (typeof retryDelay !== 'string') continue
+    const match = retryDelay.match(/^(\d+(?:\.\d+)?)s$/)
+    if (!match) continue
+    const seconds = Number(match[1])
+    if (Number.isFinite(seconds) && seconds > 0) return Math.ceil(seconds * 1000)
+  }
+  return null
+}
+
 export class GeminiNativeProvider implements ExtractionProvider {
   constructor(private config: LlmConfig) {}
 
@@ -105,8 +133,14 @@ export class GeminiNativeProvider implements ExtractionProvider {
         break
       } catch (err) {
         if (isRateLimitError(err)) {
+          if (isGeminiDailyQuotaError(err)) {
+            console.warn('[extract/llm] gemini daily quota exhausted')
+            throw err
+          }
           if (attempt < MAX_RETRIES) {
             console.warn(`[extract/llm] gemini 429, retry ${attempt + 1}/${MAX_RETRIES}`)
+            const retryDelayMs = geminiRetryDelayMs(err)
+            if (retryDelayMs != null) await sleep(retryDelayMs + 1000)
             continue
           }
           // Retries exhausted on a persistent rate limit — a capacity

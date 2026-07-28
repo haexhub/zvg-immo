@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ExtractionRequest } from '../llm'
-import { parseGeminiExtractionResponse, toGeminiParts } from './gemini-native'
+import { isGeminiDailyQuotaError, parseGeminiExtractionResponse, toGeminiParts } from './gemini-native'
 
 describe('toGeminiParts', () => {
   it('translates text, image and document parts to Gemini parts', () => {
@@ -54,6 +54,22 @@ describe('GeminiNativeProvider.extract — 429 pacing/retry', () => {
 
   function error(status: number) {
     return Object.assign(new Error(`http ${status}`), { response: { status } })
+  }
+
+  function dailyQuotaError() {
+    return Object.assign(new Error('http 429'), {
+      response: { status: 429 },
+      data: {
+        error: {
+          details: [
+            {
+              '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+              violations: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' }],
+            },
+          ],
+        },
+      },
+    })
   }
 
   beforeEach(() => {
@@ -130,6 +146,17 @@ describe('GeminiNativeProvider.extract — 429 pacing/retry', () => {
     expect(fetchMock).toHaveBeenCalledTimes(4) // 1 initial attempt + 3 retries
   })
 
+  it('does not retry Gemini daily quota exhaustion', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(dailyQuotaError())
+    vi.stubGlobal('$fetch', fetchMock)
+    const provider = await freshProvider()
+    const promise = provider.extract(req)
+    promise.catch(() => {})
+    await vi.runAllTimersAsync()
+    await expect(promise).rejects.toThrow('http 429')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('does not retry a non-429 failure', async () => {
     const fetchMock = vi.fn().mockRejectedValue(error(500))
     vi.stubGlobal('$fetch', fetchMock)
@@ -154,5 +181,35 @@ describe('GeminiNativeProvider.extract — 429 pacing/retry', () => {
     await Promise.all([p1, p2])
     expect(startTimes).toHaveLength(2)
     expect(startTimes[1]! - startTimes[0]!).toBeGreaterThanOrEqual(12_500)
+  })
+})
+
+describe('isGeminiDailyQuotaError', () => {
+  it('detects the free-tier per-day quota id', () => {
+    expect(isGeminiDailyQuotaError({
+      data: {
+        error: {
+          details: [
+            {
+              violations: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' }],
+            },
+          ],
+        },
+      },
+    })).toBe(true)
+  })
+
+  it('ignores non-daily quota errors', () => {
+    expect(isGeminiDailyQuotaError({
+      data: {
+        error: {
+          details: [
+            {
+              violations: [{ quotaId: 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier' }],
+            },
+          ],
+        },
+      },
+    })).toBe(false)
   })
 })

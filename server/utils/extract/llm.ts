@@ -776,9 +776,11 @@ export function resolveLlmConfig(
 export async function extractByLlm(
   input: LlmInput,
   config: LlmConfig,
+  opts: { onProviderAttempt?: () => void } = {},
 ): Promise<ClampedExtraction | null> {
   const parts = buildParts(input)
   if (parts.length === 0) return null
+  opts.onProviderAttempt?.()
   const raw = await getProvider(config).extract({
     systemPrompt: SYSTEM_PROMPT,
     schema: UNIVERSAL_AUCTION_SCHEMA,
