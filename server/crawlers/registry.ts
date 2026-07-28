@@ -386,6 +386,9 @@ export interface CrawlAllOptions {
   country?: string | null
   /** Max parallel region fetches across all platforms. */
   regionConcurrency?: number
+  /** Called after each region attempt (success or failure) completes, for
+   *  callers that want to report live crawl progress (see enrich.ts). */
+  onRegionDone?: (done: number, total: number) => void
 }
 
 /**
@@ -409,6 +412,7 @@ export async function crawlAll(
   const errors: { country: string; region: string; message: string }[] = []
 
   let cursor = 0
+  let regionsDone = 0
   async function worker() {
     while (cursor < all.length) {
       const idx = cursor++
@@ -429,6 +433,7 @@ export async function crawlAll(
           message: (err as Error).message,
         })
       }
+      opts.onRegionDone?.(++regionsDone, all.length)
     }
   }
   await Promise.all(Array.from({ length: concurrency }, worker))

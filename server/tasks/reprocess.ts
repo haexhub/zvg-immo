@@ -51,7 +51,7 @@ import { interleaveByPlatform } from '~/server/utils/interleave-by-platform'
 import { isSafePathSegment } from '~/server/utils/path-segment'
 import { mimeTypeFor } from '~/server/utils/image-storage'
 import { normalizePhoto } from '~/lib/photo'
-import { recordTaskRunEnd, recordTaskRunStart } from '~/server/utils/task-runs'
+import { recordTaskRunEnd, recordTaskRunProgress, recordTaskRunStart } from '~/server/utils/task-runs'
 import {
   ensureEnabledCountriesLoaded,
   getEnabledCountryCodes,
@@ -685,6 +685,8 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
         console.warn('[reprocess] LLM provider rate-limited — stopping this run early')
         break
       }
+    } finally {
+      void recordTaskRunProgress('reprocess', { candidatesTotal: candidates.length, processed, skipped, llmCalls })
     }
   }
 
