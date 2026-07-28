@@ -8,6 +8,7 @@ import { extractPdfTextFromBuffer } from '../utils/extract/pdf-text'
 import { renderPdfPagesJpeg } from '../utils/extract/pdf-render'
 import { readExtractionCache, writeExtractionCache } from '../utils/extraction-cache'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
+import { ensureEnabledCountriesLoaded, getEnabledCountryCodes, isCountryEnabled } from '../crawlers/registry'
 import { readFile } from 'node:fs/promises'
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -15,6 +16,11 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   return { ...actual, readFile: vi.fn(actual.readFile) }
 })
 vi.mock('../utils/db', () => ({ getPool: vi.fn() }))
+vi.mock('../crawlers/registry', () => ({
+  ensureEnabledCountriesLoaded: vi.fn(async () => ['se']),
+  getEnabledCountryCodes: vi.fn(() => ['se']),
+  isCountryEnabled: vi.fn((country: string) => country === 'se'),
+}))
 vi.mock('../utils/storage-download', () => ({
   findLatestCapture: vi.fn(),
   downloadBlob: vi.fn(),
@@ -853,6 +859,9 @@ describe('reprocessAuction: candidate photo tolerance and curation remap', () =>
 
 describe('runReprocess', () => {
   beforeEach(() => {
+    vi.mocked(ensureEnabledCountriesLoaded).mockResolvedValue(['se'])
+    vi.mocked(getEnabledCountryCodes).mockReturnValue(['se'])
+    vi.mocked(isCountryEnabled).mockImplementation((country) => country === 'se')
     vi.mocked(readExtractionCache).mockResolvedValue({})
     vi.mocked(readAuctionSnapshot).mockResolvedValue({})
     vi.mocked(writeExtractionCache).mockResolvedValue(true)
@@ -874,7 +883,7 @@ describe('runReprocess', () => {
     expect(result).toEqual({ candidates: 0, processed: 0, skipped: 0, llmCalls: 0, durationMs: expect.any(Number) })
   })
 
-  it('scopes the candidate query to whatever filters were given, with no country default', async () => {
+  it('scopes the candidate query to enabled countries plus whatever filters were given', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [] })
     vi.mocked(getPool).mockReturnValue({ query } as never)
 
@@ -882,21 +891,43 @@ describe('runReprocess', () => {
 
     const [sql, params] = query.mock.calls[0]!
     expect(sql).toContain("kind = 'auction'")
-    expect(sql).not.toContain('country')
-    expect(sql).toContain('platform = $1')
-    expect(sql).toContain('external_id = $2')
-    expect(params).toEqual(['zvg-portal', '7265'])
+    expect(sql).toContain('country = $1')
+    expect(sql).toContain('platform = $2')
+    expect(sql).toContain('external_id = $3')
+    expect(params).toEqual(['se', 'zvg-portal', '7265'])
   })
 
-  it('adds a country filter only when explicitly given', async () => {
+  it('uses all enabled countries when no explicit country is given', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [] })
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+    vi.mocked(getEnabledCountryCodes).mockReturnValue(['se', 'dk'])
+
+    await runReprocess({})
+
+    const [sql, params] = query.mock.calls[0]!
+    expect(sql).toContain('country = ANY($1)')
+    expect(params).toEqual([['se', 'dk']])
+  })
+
+  it('uses an explicitly selected country only when that country is enabled', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [] })
     vi.mocked(getPool).mockReturnValue({ query } as never)
 
-    await runReprocess({ country: 'de' })
+    await runReprocess({ country: 'SE' })
 
     const [sql, params] = query.mock.calls[0]!
     expect(sql).toContain('country = $1')
-    expect(params).toEqual(['de'])
+    expect(params).toEqual(['se'])
+  })
+
+  it('returns no candidates for an explicitly selected disabled country', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [] })
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+
+    const result = await runReprocess({ country: 'de' })
+
+    expect(result).toEqual({ candidates: 0, processed: 0, skipped: 0, llmCalls: 0, durationMs: expect.any(Number) })
+    expect(query).not.toHaveBeenCalled()
   })
 
   it('skips already-complete entries by default and processes them when forced', async () => {

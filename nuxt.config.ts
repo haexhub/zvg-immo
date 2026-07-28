@@ -215,9 +215,10 @@ export default defineNuxtConfig({
       // interval — an always-on background watch for new/updated auctions.
       '0 * * * *': ['refresh'],
       // Hourly, offset 15 min from refresh: runs regex rules + the LLM against
-      // whatever 'enrich' has archived so far, across every country — entirely
-      // independent of enrich's own schedule (see server/tasks/reprocess.ts).
-      // A stalled/rate-limited LLM only delays this task, never crawling.
+      // whatever 'enrich' has archived so far, scoped to the enabled admin
+      // data sources — independent of enrich's own schedule (see
+      // server/tasks/reprocess.ts). A stalled/rate-limited LLM only delays
+      // this task, never crawling.
       '15 * * * *': ['reprocess'],
       // Every 30 minutes: check in-flight LLM Batch API jobs submitted by
       // explicit batch runs (see server/utils/extract/llm-batch.ts) and merge
