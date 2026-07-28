@@ -5,6 +5,7 @@
 // that Gemini reads scanned Gutachten correctly without a rasterize/OCR step.
 
 import type { ContentPart, ExtractionProvider, ExtractionRequest, LlmConfig } from '../llm'
+import { isRateLimitError } from '../llm'
 import { toGeminiSchema } from './gemini-schema'
 
 type GeminiPart = { text: string } | { inlineData: { mimeType: string; data: string } }
@@ -103,10 +104,17 @@ export class GeminiNativeProvider implements ExtractionProvider {
         })
         break
       } catch (err) {
-        const status = (err as { response?: { status?: number } })?.response?.status
-        if (status === 429 && attempt < MAX_RETRIES) {
-          console.warn(`[extract/llm] gemini 429, retry ${attempt + 1}/${MAX_RETRIES}`)
-          continue
+        if (isRateLimitError(err)) {
+          if (attempt < MAX_RETRIES) {
+            console.warn(`[extract/llm] gemini 429, retry ${attempt + 1}/${MAX_RETRIES}`)
+            continue
+          }
+          // Retries exhausted on a persistent rate limit — a capacity
+          // problem, not evidence this auction/document is bad. Rethrow
+          // (see isRateLimitError()) instead of returning null so it isn't
+          // counted toward the retry-lockout.
+          console.warn(`[extract/llm] gemini 429, giving up after ${MAX_RETRIES} retries`)
+          throw err
         }
         console.warn(`[extract/llm] request failed: ${(err as Error).message}`)
         return null

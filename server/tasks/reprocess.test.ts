@@ -948,6 +948,40 @@ describe('runReprocess', () => {
     expect(writeExtractionCache).toHaveBeenCalledWith({ 'zvg-portal:7265': expect.objectContaining({ propertyType: 'einfamilienhaus' }) })
   })
 
+  it('counts a rate limit failure as skipped and leaves the cache entry (and llmFailures) untouched', async () => {
+    // A capacity outage (see llm.ts's isRateLimitError()) must never count
+    // toward MAX_LLM_FAILURES — otherwise a few hours of rate-limiting
+    // permanently downgrades every affected auction to rules-only, with no
+    // recovery even once the outage clears (the prod incident this guards).
+    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { baseUrl: 'http://proxy' } }))
+    const auction = makeAuction()
+    const query = vi.fn().mockResolvedValue({ rows: [{ platform: 'zvg-portal', external_id: '7265' }] })
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
+      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
+    )
+    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
+    vi.mocked(extractByLlm).mockRejectedValue(Object.assign(new Error('http 429'), { response: { status: 429 } }))
+
+    const prior: AuctionExtraction = {
+      propertyType: null,
+      landAreaSqm: null,
+      livingAreaSqm: null,
+      rooms: null,
+      units: null,
+      source: 'rules',
+      confidence: 'low',
+      llmFailures: 2,
+      at: '2026-07-01T00:00:00.000Z',
+    }
+    vi.mocked(readExtractionCache).mockResolvedValue({ 'zvg-portal:7265': prior })
+
+    const result = await runReprocess({})
+
+    expect(result).toEqual({ candidates: 1, processed: 0, skipped: 1, llmCalls: 0, durationMs: expect.any(Number) })
+    expect(writeExtractionCache).not.toHaveBeenCalled()
+  })
+
   it('reprocesses an otherwise-complete entry without force when enrich.ts archived a newer document set', async () => {
     const auction = makeAuction({
       title: 'Einfamilienhaus',

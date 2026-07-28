@@ -5,7 +5,7 @@
 // GeminiNativeProvider.
 
 import type { ContentPart, ExtractionProvider, ExtractionRequest, LlmConfig } from '../llm'
-import { parseExtractionResponse } from '../llm'
+import { isRateLimitError, parseExtractionResponse } from '../llm'
 
 type ClaudeContentBlock =
   | { type: 'text'; text: string }
@@ -64,6 +64,9 @@ export class ClaudeProxyProvider implements ExtractionProvider {
         signal: AbortSignal.timeout(60_000),
       })
     } catch (err) {
+      // Rethrow a rate limit/quota error instead of swallowing it to null —
+      // see isRateLimitError() — so it isn't counted toward the retry-lockout.
+      if (isRateLimitError(err)) throw err
       console.warn(`[extract/llm] request failed: ${(err as Error).message}`)
       return null
     }
