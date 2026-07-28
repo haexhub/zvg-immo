@@ -992,7 +992,10 @@ describe('runReprocess', () => {
       kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
     )
     vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
-    vi.mocked(extractByLlm).mockRejectedValue(Object.assign(new Error('http 429'), { response: { status: 429 } }))
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+      opts?.onProviderAttempt?.()
+      throw Object.assign(new Error('http 429'), { response: { status: 429 } })
+    })
 
     const prior: AuctionExtraction = {
       propertyType: null,
@@ -1009,7 +1012,36 @@ describe('runReprocess', () => {
 
     const result = await runReprocess({})
 
-    expect(result).toEqual({ candidates: 1, processed: 0, skipped: 1, llmCalls: 0, durationMs: expect.any(Number) })
+    expect(result).toEqual({ candidates: 1, processed: 0, skipped: 1, llmCalls: 1, durationMs: expect.any(Number) })
+    expect(writeExtractionCache).not.toHaveBeenCalled()
+  })
+
+  it('stops the current sync run after a provider rate limit instead of spending every candidate', async () => {
+    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { baseUrl: 'http://proxy' } }))
+    const auction = makeAuction()
+    const query = vi.fn().mockResolvedValue({
+      rows: [
+        { platform: 'zvg-portal', external_id: '1' },
+        { platform: 'zvg-portal', external_id: '2' },
+      ],
+    })
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+    vi.mocked(findLatestCapture).mockResolvedValue({
+      contentHash: 'abc',
+      sourceUrl: null,
+      capturedAt: '2026-07-01T00:00:00.000Z',
+    })
+    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+      opts?.onProviderAttempt?.()
+      throw Object.assign(new Error('http 429'), { response: { status: 429 } })
+    })
+    vi.mocked(readExtractionCache).mockResolvedValue({})
+
+    const result = await runReprocess({})
+
+    expect(result).toEqual({ candidates: 2, processed: 0, skipped: 1, llmCalls: 1, durationMs: expect.any(Number) })
+    expect(extractByLlm).toHaveBeenCalledTimes(1)
     expect(writeExtractionCache).not.toHaveBeenCalled()
   })
 
