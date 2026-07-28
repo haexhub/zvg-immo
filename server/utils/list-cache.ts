@@ -15,10 +15,10 @@ import { ensureEnabledCountriesLoaded, isCountryEnabled } from '../crawlers/regi
 import { getPool } from './db'
 
 const COUNTRY_LIST_CACHE_VERSION: Partial<Record<string, number>> = {
-  // v1: Sweden crawler started preferring Kronofogden's embedded showingAddress
-  // with postcodes, so old list-cache rows would keep less precise geocoding
-  // input alive until manually rebuilt.
-  se: 1,
+  // v2: Sweden list rows moved from one national se/all cache to per-län
+  // filtered rows; old se/all rows would otherwise duplicate every listing in
+  // country-scoped reads.
+  se: 2,
 }
 
 function countryListCacheVersion(country: string): number | null {

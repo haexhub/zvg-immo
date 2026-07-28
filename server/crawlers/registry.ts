@@ -1,5 +1,5 @@
 import type { Auction, CrawlResult } from '~/types/auction'
-import { MULTI_PLATFORM } from '~/lib/auction-constants'
+import { MULTI_PLATFORM, isAllScope } from '~/lib/auction-constants'
 import { deriveMarketValueEur, getRates } from '../utils/exchange-rate'
 import { COUNTRY_NAMES } from '../utils/countries'
 import { getPool } from '../utils/db'
@@ -223,6 +223,7 @@ export function getCrawlersForRegion(country: string, regionCode: string): Platf
   // single-region path.
   if (!enabledCountries.has(c)) return []
   const r = regionCode.toLowerCase()
+  if (isAllScope(r)) return platforms.filter((p) => p.country === c)
   return platforms.filter(
     (p) => p.country === c && p.regions.some((reg) => reg.code === r),
   )

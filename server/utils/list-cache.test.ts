@@ -149,7 +149,7 @@ describe('writeListCache', () => {
 
     await writeListCache('se', 'all', seAll)
 
-    expect(pool.upserted[0]?.result.listCacheVersion).toBe(1)
+    expect(pool.upserted[0]?.result.listCacheVersion).toBe(2)
   })
 })
 
@@ -169,7 +169,7 @@ describe('readMergedListCache', () => {
 
   it('excludes stale country-versioned rows from merged results', async () => {
     const { getPool } = await import('./db')
-    const freshSe = { ...seAll, listCacheVersion: 1 }
+    const freshSe = { ...seAll, listCacheVersion: 2 }
     const pool = makeFakePool([
       { country: 'de', region: 'by', result: deBy, fetched_at: deBy.fetchedAt },
       { country: 'se', region: 'all', result: seAll, fetched_at: seAll.fetchedAt },
@@ -187,7 +187,7 @@ describe('readMergedListCache', () => {
     const olderSe = {
       ...seAll,
       fetchedAt: '2026-01-01T00:00:00.000Z',
-      listCacheVersion: 1,
+      listCacheVersion: 2,
       auctions: [
         { platform: 'se-kronofogden', externalId: '3', title: 'old' },
         { platform: 'se-kronofogden', externalId: '4' },
@@ -196,7 +196,7 @@ describe('readMergedListCache', () => {
     const newerSe = {
       ...seAll,
       fetchedAt: '2026-01-01T01:00:00.000Z',
-      listCacheVersion: 1,
+      listCacheVersion: 2,
       auctions: [
         { platform: 'se-kronofogden', externalId: '3', title: 'new' },
       ] as CrawlResult['auctions'],

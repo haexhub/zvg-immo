@@ -316,6 +316,7 @@ describe('fetchAllListings', () => {
     const result = await fetchAllListings('se-kronofogden')
 
     expect(result.auctions[0]?.address).toBe('Kvarnbyn 76, 937 94 Burträsk')
+    expect(result.auctions[0]?.region).toBe('Västerbotten')
   })
 
   it('stores the total farm area as source land area', async () => {
@@ -339,6 +340,32 @@ describe('fetchAllListings', () => {
     expect(result.auctions[0]?.sourceLandAreaSqm).toBe(181000)
     expect(result.auctions[0]?.sourceLivingAreaSqm).toBe(80)
     expect(result.auctions[0]?.sourceRooms).toBe(3)
+    expect(result.auctions[0]?.region).toBe('Jämtland')
+  })
+
+  it('filters the national Kronofogden feed to the requested Swedish county', async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const href = String(url)
+      if (href === `${BASE}/Sokfastigheterbostadsratter.html?query=*`) {
+        return new Response(searchHtml(['101784', '101765'], 2), { status: 200 })
+      }
+      if (href === `${BASE}/22660.html?query=*`) {
+        return new Response(searchHtml([], 0), { status: 200 })
+      }
+      if (href === `${BASE}/101784.html`) {
+        return new Response(detailHtmlWithShowingAddress('101784'), { status: 200 })
+      }
+      if (href === `${BASE}/101765.html`) {
+        return new Response(detailHtmlWithFarmArea('101765'), { status: 200 })
+      }
+      return new Response('not found', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await fetchAllListings('se-kronofogden', 'vasterbotten')
+
+    expect(result.auctions.map((a) => a.externalId)).toEqual(['101784'])
+    expect(result.auctions[0]?.region).toBe('Västerbotten')
   })
 
   it('stores Kronofogden gallery URLs for the native photo pipeline', async () => {
