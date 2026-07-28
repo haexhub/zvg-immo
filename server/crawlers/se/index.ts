@@ -1,15 +1,16 @@
 import type { CrawlResult } from '~/types/auction'
 import { createCrawlResult, type CrawlOptions, type PlatformCrawler } from '../types'
-import { PLATFORM_ID, SE_BASE, COUNTRY, SE_REGIONS } from './constants'
+import { PLATFORM_ID, SE_BASE, COUNTRY, SE_REGIONS, regionNameForRegionCode } from './constants'
 import { fetchAllListings, fetchListingById } from './list'
 
-async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
-  const { auctions, total } = await fetchAllListings(PLATFORM_ID)
+async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
+  const { auctions, total } = await fetchAllListings(PLATFORM_ID, opts.region)
+  const regionName = regionNameForRegionCode(opts.region)
   return createCrawlResult({
     platform: PLATFORM_ID,
     source: SE_BASE,
     country: COUNTRY,
-    regions: SE_REGIONS,
+    regions: regionName ? [{ code: opts.region, name: regionName }] : SE_REGIONS,
     totalReported: total,
     auctions,
   })

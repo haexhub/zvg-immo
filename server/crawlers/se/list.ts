@@ -1,14 +1,24 @@
 import { load } from 'cheerio'
 import type { Attachment, Auction } from '~/types/auction'
 import { findTotalLandAreaSqm } from '~/server/utils/extract/sizes'
-import { SE_BASE, COUNTRY } from './constants'
+import { SE_BASE, COUNTRY, regionNameForKommun, regionNameForRegionCode } from './constants'
 import { extractFact, parseSekAmount, extractBody, parseStorlek, cleanCategory, cleanKronofogdenAddress, extractShowingAddress } from './text'
 
 const DETAIL_CONCURRENCY = 4
+const ALL_LISTINGS_CACHE_MS = 5 * 60_000
 const SEARCH_PATHS = [
   '/Sokfastigheterbostadsratter.html',
   '/22660.html',
 ] as const
+
+let allListingsCache:
+  | {
+    platformId: string
+    fetchRef: typeof fetch
+    expiresAt: number
+    promise: Promise<{ auctions: Auction[]; total: number | null }>
+  }
+  | null = null
 
 async function htmlFetch(url: string): Promise<string> {
   const res = await fetch(url, {
@@ -178,6 +188,7 @@ function mapDetail(id: string, html: string, platformId: string): Auction | null
   const address = extractFact(html, 'Adress')
   const showingAddress = extractShowingAddress(html)
   const kommun = extractFact(html, 'Kommun')
+  const regionName = regionNameForKommun(kommun) ?? 'Schweden'
   const marknadsvardRaw = extractFact(html, 'Marknadsvarde')
   const arendenummer = extractFact(html, 'Arendenummer') ?? ''
   const storlek = extractFact(html, 'Storlek')
@@ -257,7 +268,7 @@ function mapDetail(id: string, html: string, platformId: string): Auction | null
   return {
     platform: platformId,
     country: COUNTRY,
-    region: 'all',
+    region: regionName,
     externalId: id,
     caseNumber: arendenummer,
     authority: 'Kronofogden',
@@ -287,6 +298,49 @@ function mapDetail(id: string, html: string, platformId: string): Auction | null
 }
 
 export async function fetchAllListings(
+  platformId: string,
+  regionCode = 'all',
+): Promise<{ auctions: Auction[]; total: number | null }> {
+  const all = await fetchAllListingsUnfiltered(platformId)
+  const regionName = regionNameForRegionCode(regionCode)
+  const auctions = regionName
+    ? all.auctions.filter((auction) => auction.region === regionName)
+    : all.auctions
+  return {
+    auctions: auctions.map((auction) => ({ ...auction })),
+    total: auctions.length,
+  }
+}
+
+async function fetchAllListingsUnfiltered(
+  platformId: string,
+): Promise<{ auctions: Auction[]; total: number | null }> {
+  const now = Date.now()
+  if (
+    allListingsCache
+    && allListingsCache.platformId === platformId
+    && allListingsCache.fetchRef === fetch
+    && allListingsCache.expiresAt > now
+  ) {
+    return allListingsCache.promise
+  }
+
+  const promise = fetchAllListingsFresh(platformId)
+  allListingsCache = {
+    platformId,
+    fetchRef: fetch,
+    expiresAt: now + ALL_LISTINGS_CACHE_MS,
+    promise,
+  }
+  try {
+    return await promise
+  } catch (error) {
+    if (allListingsCache?.promise === promise) allListingsCache = null
+    throw error
+  }
+}
+
+async function fetchAllListingsFresh(
   platformId: string,
 ): Promise<{ auctions: Auction[]; total: number | null }> {
   const searchResults = await Promise.all(
