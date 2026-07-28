@@ -34,6 +34,14 @@ export interface ExtractDocumentPhotosOptions {
   maxPhotos?: number
 }
 
+function maxPhotosLimit(maxPhotos: number | undefined): number {
+  return maxPhotos ?? Number.POSITIVE_INFINITY
+}
+
+function childPhotoOptions(destDir: string, maxPhotos: number | undefined): ExtractDocumentPhotosOptions {
+  return maxPhotos == null ? { destDir } : { destDir, maxPhotos }
+}
+
 function formatOf(att: Attachment): DocumentImageFormat | null {
   const haystack = `${att.filename} ${att.proxyUrl} ${att.fileId}`.toLowerCase()
   if (/\.(?:pdf)(?:[\s?#]|$)/.test(haystack) || /(?:^|[/.?=&_-])pdf(?:[\s?#&._=-]|$)/.test(haystack)) return 'pdf'
@@ -179,8 +187,9 @@ async function writeImageBytes(entries: readonly Buffer[], opts: ExtractDocument
   await mkdir(opts.destDir, { recursive: true })
   const seen = new Set<string>()
   const written: string[] = []
+  const maxPhotos = maxPhotosLimit(opts.maxPhotos)
   for (const bytes of entries) {
-    if (written.length >= (opts.maxPhotos ?? 12)) break
+    if (written.length >= maxPhotos) break
     if (!isLikelyPhoto(bytes)) continue
     const ext = detectImageExt(bytes)
     if (!ext) continue
@@ -304,7 +313,7 @@ async function extractHtmlPhotos(proxyUrl: string, opts: ExtractDocumentPhotosOp
   try {
     downloaded = await downloadNativeImages(pinned.urls, {
       destDir: opts.destDir,
-      maxImages: opts.maxPhotos,
+      maxImages: maxPhotosLimit(opts.maxPhotos),
       dispatcher: pinned.dispatcher,
       redirect: 'manual',
     })
@@ -330,18 +339,19 @@ export async function extractDocumentPhotos(
   const candidates = pickDocumentImageCandidates(attachments)
   const photos: string[] = []
   let failed = false
+  const maxPhotos = maxPhotosLimit(opts.maxPhotos)
 
   for (const candidate of candidates) {
-    if (photos.length >= (opts.maxPhotos ?? 12)) break
-    const maxPhotos = (opts.maxPhotos ?? 12) - photos.length
+    if (photos.length >= maxPhotos) break
+    const remainingPhotos = Number.isFinite(maxPhotos) ? maxPhotos - photos.length : undefined
     const format = formatOf(candidate)
     try {
       const found = format === 'pdf'
-        ? await extractPdfPhotos(candidate.proxyUrl, { destDir: opts.destDir, maxPhotos })
+        ? await extractPdfPhotos(candidate.proxyUrl, childPhotoOptions(opts.destDir, remainingPhotos))
         : format === 'docx'
-          ? await extractDocxPhotos(candidate.proxyUrl, { destDir: opts.destDir, maxPhotos })
+          ? await extractDocxPhotos(candidate.proxyUrl, childPhotoOptions(opts.destDir, remainingPhotos))
           : format === 'html'
-            ? await extractHtmlPhotos(candidate.proxyUrl, { destDir: opts.destDir, maxPhotos })
+            ? await extractHtmlPhotos(candidate.proxyUrl, childPhotoOptions(opts.destDir, remainingPhotos))
             : []
       for (const name of found) if (!photos.includes(name)) photos.push(name)
     } catch {

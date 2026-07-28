@@ -5,12 +5,12 @@
 // list of filenames is returned for the extraction cache.
 
 import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { extname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { fetchPdfBuffer } from './pdf-text'
+import { imageContentHash } from './image-bytes'
 
 const exec = promisify(execFile)
 
@@ -27,8 +27,6 @@ export const DEFAULT_FILTER = {
   squareAspectMin: 0.85,
   squareAspectMax: 1.15,
 } as const
-
-const DEFAULT_MAX_PHOTOS = 12
 
 export interface PdfImageInfo {
   page: number
@@ -197,10 +195,10 @@ export async function extractPdfPhotos(
       const file = fileByPageNum.get(`${info.page}:${info.num}`)
       if (!file) continue
       const bytes = await readFile(join(workDir, file))
-      const hash = createHash('md5').update(bytes).digest('hex')
+      const hash = imageContentHash(bytes)
       withBytes.push({ file, bytes, hash })
     }
-    const deduped = dedupByHash(withBytes).slice(0, opts.maxPhotos ?? DEFAULT_MAX_PHOTOS)
+    const deduped = dedupByHash(withBytes).slice(0, opts.maxPhotos ?? Number.POSITIVE_INFINITY)
     if (deduped.length === 0) return []
 
     await mkdir(opts.destDir, { recursive: true })
