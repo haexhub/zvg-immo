@@ -40,7 +40,6 @@ const SYSTEM_PROMPT =
 // concurrent LLM work.
 const inflight = new Map<string, Promise<TranslationResult>>()
 const MAX_INFLIGHT = 4
-const MAX_TRANSLATION_ATTEMPTS = 2
 const TRANSLATION_RATE_LIMIT = { max: 30, windowMs: 60 * 60 * 1000, maxKeys: 10_000 }
 const translationRateLimit = createInMemoryRateLimitState()
 
@@ -85,49 +84,16 @@ async function tryTranslate(
   extractionTexts: ReturnType<typeof extractTranslatableExtractionTexts>,
   targetLang: ContentTargetLang,
   config: Parameters<typeof callTranslationLlm>[6],
-  attempts = MAX_TRANSLATION_ATTEMPTS,
 ): Promise<TranslationResult | null> {
-  const prompt = buildPrompt(title, description, documentSummary, extractionTexts, targetLang)
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const result = await callTranslationLlm(
-      SYSTEM_PROMPT,
-      prompt,
-      title,
-      description,
-      documentSummary,
-      extractionTexts,
-      config,
-      targetLang,
-    )
-    if (result) return result
-  }
-  return null
-}
-
-async function tryTranslateInParts(
-  title: string | null,
-  description: string | null,
-  documentSummary: string | null,
-  extractionTexts: ReturnType<typeof extractTranslatableExtractionTexts>,
-  targetLang: ContentTargetLang,
-  config: Parameters<typeof callTranslationLlm>[6],
-): Promise<TranslationResult | null> {
-  const textResult = title != null || description != null || documentSummary != null
-    ? await tryTranslate(title, description, documentSummary, null, targetLang, config)
-    : { title: null, description: null, documentSummary: null, extractionTexts: null }
-  if (!textResult) return null
-
-  const extractionResult = extractionTexts
-    ? await tryTranslate(null, null, null, extractionTexts, targetLang, config)
-    : { title: null, description: null, documentSummary: null, extractionTexts: null }
-  if (!extractionResult) return null
-
-  return {
-    title: textResult.title,
-    description: textResult.description,
-    documentSummary: textResult.documentSummary,
-    extractionTexts: extractionResult.extractionTexts,
-  }
+  return await callTranslationLlm(
+    SYSTEM_PROMPT,
+    buildPrompt(title, description, documentSummary, extractionTexts, targetLang),
+    title,
+    description,
+    documentSummary,
+    extractionTexts,
+    config,
+  )
 }
 
 export default defineEventHandler(async (event) => {
@@ -225,7 +191,6 @@ export default defineEventHandler(async (event) => {
 
   const gen = (async () => {
     const result = await tryTranslate(title, description, documentSummary, extractionTexts, targetLang, config)
-      ?? await tryTranslateInParts(title, description, documentSummary, extractionTexts, targetLang, config)
     if (!result) {
       throw createError({ statusCode: 502, statusMessage: 'LLM did not return a translation' })
     }

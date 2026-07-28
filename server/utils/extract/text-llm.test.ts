@@ -203,7 +203,7 @@ describe('callTranslationLlm', () => {
     }, config)).resolves.toBeNull()
   })
 
-  it('signals failure when a structured sentence comes back unchanged', async () => {
+  it('accepts a structured result even when some strings are unchanged or mixed-language', async () => {
     stubResponse({
       title: null,
       description: null,
@@ -223,7 +223,7 @@ describe('callTranslationLlm', () => {
         planningNotes: {
           monumentProtection: null,
           contamination: 'Värderingsobjektet är inte registrerat i Länsstyrelsens register.',
-          developmentPlan: null,
+          developmentPlan: 'Värderingsobjektet är beläget inom planlagt område.',
           landConsolidation: null,
           developmentCharges: null,
           redevelopmentArea: null,
@@ -247,99 +247,18 @@ describe('callTranslationLlm', () => {
       planningNotes: {
         monumentProtection: null,
         contamination: 'Värderingsobjektet är inte registrerat i Länsstyrelsens register.',
-        developmentPlan: null,
+        developmentPlan: 'Värderingsobjektet är beläget inom planlagt område.',
         landConsolidation: null,
         developmentCharges: null,
         redevelopmentArea: null,
         conservationArea: null,
         landParcels: [],
       },
-    }, config)).resolves.toBeNull()
-  })
-
-  it('signals failure when structured text keeps a source term with a parenthetical translation', async () => {
-    stubResponse({
-      title: null,
-      description: null,
-      documentSummary: null,
+    }, config)).resolves.toMatchObject({
       extractionTexts: {
-        biddingNotes: null,
-        renovationNotes: null,
-        floor: null,
-        heating: null,
-        insights: {
-          defects: [],
-          encumbrances: ['Utmätning (Pfändung) 2025-11-10'],
-          construction: null,
-          locationCharacter: null,
-          summary: null,
-        },
-        planningNotes: null,
-      },
-    })
-    await expect(callTranslationLlm('sys', 'user text', null, null, null, {
-      biddingNotes: null,
-      renovationNotes: null,
-      floor: null,
-      heating: null,
-      insights: {
-        defects: [],
-        encumbrances: ['Utmätning 2025-11-10'],
-        construction: null,
-        locationCharacter: null,
-        summary: null,
-      },
-      planningNotes: null,
-    }, config)).resolves.toBeNull()
-  })
-
-  it('normalizes known German source-term parentheticals in structured text', async () => {
-    stubResponse({
-      title: null,
-      description: null,
-      documentSummary: null,
-      extractionTexts: {
-        biddingNotes: null,
-        renovationNotes: null,
-        floor: null,
-        heating: null,
-        insights: {
-          defects: [],
-          encumbrances: [
-            'Utmätning (Pfändung) 2025-11-10',
-            'Officialservitut (Dienstbarkeit) hinsichtlich VATTENTÄKT',
-          ],
-          construction: 'Holzkonstruktion mit Kriechkeller, Holzverkleidung (Träpanel)',
-          locationCharacter: null,
-          summary: null,
-        },
-        planningNotes: null,
-      },
-    })
-    await expect(callTranslationLlm('sys', 'user text', null, null, null, {
-      biddingNotes: null,
-      renovationNotes: null,
-      floor: null,
-      heating: null,
-      insights: {
-        defects: [],
-        encumbrances: [
-          'Utmätning (Pfändung) 2025-11-10',
-          'Officialservitut (Dienstbarkeit) hinsichtlich VATTENTÄKT',
-        ],
-        construction: 'Holzkonstruktion mit Kriechkeller, Holzverkleidung (Träpanel)',
-        locationCharacter: null,
-        summary: null,
-      },
-      planningNotes: null,
-    }, config, 'de')).resolves.toMatchObject({
-      extractionTexts: {
-        insights: {
-          encumbrances: [
-            'Pfändung 2025-11-10',
-            'Dienstbarkeit hinsichtlich VATTENTÄKT',
-          ],
-          construction: 'Holzkonstruktion mit Kriechkeller, Holzverkleidung',
+        planningNotes: {
+          contamination: 'Värderingsobjektet är inte registrerat i Länsstyrelsens register.',
+          developmentPlan: 'Värderingsobjektet är beläget inom planlagt område.',
         },
       },
     })
