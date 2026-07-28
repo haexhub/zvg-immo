@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { auctionCategory, filterAuctions, scopeByCountryRegion, type AuctionFilters } from './auction-filters'
+import { auctionCategory, filterAuctions, hasCompletedLlmAnalysis, scopeByCountryRegion, type AuctionFilters } from './auction-filters'
 import type { Auction } from '~/types/auction'
 
 function makeAuction(overrides: Partial<Auction> = {}): Auction {
@@ -142,7 +142,7 @@ describe('filterAuctions', () => {
     expect(result.map((a) => a.externalId)).toEqual(['2'])
   })
 
-  it('filters hideRulesOnly, treating missing extraction the same as rules-only', () => {
+  it('filters hideRulesOnly, treating only entries without a completed LLM pass as rules-only', () => {
     const items = [
       makeAuction({ externalId: '1', extraction: {
         propertyType: null, landAreaSqm: null, livingAreaSqm: null, rooms: null,
@@ -153,9 +153,33 @@ describe('filterAuctions', () => {
         units: null, source: 'llm', confidence: 'high', at: '2024-01-01T00:00:00Z',
       } }),
       makeAuction({ externalId: '3', extraction: null }),
+      makeAuction({ externalId: '4', extraction: {
+        propertyType: 'einfamilienhaus', landAreaSqm: 700, livingAreaSqm: null, rooms: null,
+        units: null, source: 'rules', confidence: 'high', at: '2024-01-01T00:00:00Z',
+        llmAnalyzedAt: '2024-01-01T00:00:00Z',
+      } }),
+      makeAuction({ externalId: '5', extraction: {
+        propertyType: 'einfamilienhaus', landAreaSqm: 700, livingAreaSqm: null, rooms: null,
+        units: null, source: 'rules', confidence: 'high', at: '2024-01-01T00:00:00Z',
+        condition: null,
+      } }),
     ]
     const result = filterAuctions(items, { ...BASE_FILTERS, hideRulesOnly: true })
-    expect(result.map((a) => a.externalId)).toEqual(['2'])
+    expect(result.map((a) => a.externalId)).toEqual(['2', '4', '5'])
+  })
+
+  it('detects completed LLM analysis even when confident rules kept the source', () => {
+    expect(hasCompletedLlmAnalysis({
+      propertyType: 'einfamilienhaus',
+      landAreaSqm: 1316,
+      livingAreaSqm: 180,
+      rooms: null,
+      units: null,
+      source: 'rules',
+      confidence: 'high',
+      at: '2026-07-28T20:38:01.425Z',
+      llmAnalyzedAt: '2026-07-28T20:38:01.425Z',
+    })).toBe(true)
   })
 
   it('filters by Verkehrswert range, excluding null values once a bound is set', () => {

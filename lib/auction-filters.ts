@@ -4,7 +4,7 @@
 // (pages/index.vue) and — starting Phase 3 — a server-side alert matcher can
 // share without duplicating the rules.
 
-import type { Auction } from '~/types/auction'
+import type { Auction, AuctionExtraction } from '~/types/auction'
 import { ALL_PROPERTY_TYPE_CATEGORIES, classifyPropertyType, type PropertyTypeCategory } from '~/lib/property-type'
 import { CONDITIONS } from '~/lib/condition'
 
@@ -32,9 +32,8 @@ export interface AuctionFilters {
   features: string[]
   onlyWithPhotos: boolean
   includeCancelled: boolean
-  /** Hides auctions whose extraction never had an LLM field succeed
-   *  (`extraction.source === 'rules'`, regex/rules-only). Auctions with no
-   *  extraction at all are also hidden — treated the same as rules-only. */
+  /** Hides auctions whose extraction never had a completed LLM pass. Auctions
+   *  with no extraction at all are also hidden — treated the same as rules-only. */
   hideRulesOnly: boolean
   priceMin: number | null
   priceMax: number | null
@@ -78,6 +77,27 @@ export function auctionCategory(a: Auction): PropertyTypeCategory {
 
 const CONDITION_RANK = new Map<string, number>(CONDITIONS.map((c, i) => [c, i]))
 
+export function hasCompletedLlmAnalysis(e: AuctionExtraction | null | undefined): boolean {
+  if (!e) return false
+  return !!e.llmAnalyzedAt ||
+    e.source === 'llm' ||
+    e.condition !== undefined ||
+    e.features !== undefined ||
+    e.bedrooms !== undefined ||
+    e.bathrooms !== undefined ||
+    e.floor !== undefined ||
+    e.bathroomHasTub !== undefined ||
+    e.bathroomHasShower !== undefined ||
+    e.heating !== undefined ||
+    e.yearBuilt !== undefined ||
+    e.lastRenovationYear !== undefined ||
+    e.renovationNotes !== undefined ||
+    e.insights !== undefined ||
+    e.planningNotes !== undefined ||
+    e.documentSummary !== undefined ||
+    e.marketValueEur !== undefined
+}
+
 export function filterAuctions<T extends Auction>(items: T[], filters: AuctionFilters): T[] {
   const q = filters.search.trim().toLowerCase()
   const minConditionRank = filters.condition !== 'all' ? CONDITION_RANK.get(filters.condition) : undefined
@@ -94,7 +114,7 @@ export function filterAuctions<T extends Auction>(items: T[], filters: AuctionFi
       if (!filters.features.some((f) => have.includes(f))) return false
     }
     if (filters.onlyWithPhotos && a.photoCount === 0) return false
-    if (filters.hideRulesOnly && a.extraction?.source !== 'llm') return false
+    if (filters.hideRulesOnly && !hasCompletedLlmAnalysis(a.extraction)) return false
     if (filters.priceMin != null && (a.marketValueEur == null || a.marketValueEur < filters.priceMin)) return false
     if (filters.priceMax != null && (a.marketValueEur == null || a.marketValueEur > filters.priceMax)) return false
     if (filters.landMin != null || filters.landMax != null) {
