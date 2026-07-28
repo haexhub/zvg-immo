@@ -54,7 +54,7 @@ import {
 import { cacheKey, readVerkehrswertCache } from '~/server/utils/verkehrswert-cache'
 import { applyDescriptionMarketValue } from '~/server/utils/description-market-value'
 import { normalizeAuctionDescription, normalizeAuctionDescriptions } from '~/server/utils/description-normalization'
-import { recordTaskRunEnd, recordTaskRunStart } from '~/server/utils/task-runs'
+import { recordTaskRunEnd, recordTaskRunProgress, recordTaskRunStart } from '~/server/utils/task-runs'
 
 const IMAGES_DIR = join(process.cwd(), '.cache_zvg', 'images')
 
@@ -115,7 +115,18 @@ export async function runEnrich(opts: EnrichOptions = {}) {
     const startedAt = Date.now()
     console.log(`[enrich] start${opts.country ? ` (country=${opts.country})` : ''}`)
 
-    const result = await crawlAll({ immobilienOnly: true, enrichDetails: false, country: opts.country })
+    let regionsDone = 0
+    let regionsTotal = 0
+    const result = await crawlAll({
+      immobilienOnly: true,
+      enrichDetails: false,
+      country: opts.country,
+      onRegionDone: (done, total) => {
+        regionsDone = done
+        regionsTotal = total
+        void recordTaskRunProgress('enrich', { regionsDone, regionsTotal, archivedDone: 0, archivedTotal: 0 })
+      },
+    })
     const cache = await readExtractionCache()
     const previousSnapshot = await readAuctionSnapshot()
     const byPlatform = new Map(platforms.map((p) => [p.id, p]))
@@ -403,6 +414,12 @@ export async function runEnrich(opts: EnrichOptions = {}) {
         cache[key] = entry
         dirty[key] = entry
         archived++
+        void recordTaskRunProgress('enrich', {
+          regionsDone,
+          regionsTotal,
+          archivedDone: archived,
+          archivedTotal: todo.length,
+        })
         if (archived % FLUSH_EVERY === 0) {
           const toFlush = dirty
           dirty = {}

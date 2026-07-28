@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { ArrowLeft, Download, ExternalLink, Loader2, Pencil, RefreshCw, Trash2 } from 'lucide-vue-next'
+import { ArrowLeft, ExternalLink, Loader2, Pencil, RefreshCw, Trash2 } from 'lucide-vue-next'
 import type { ClaudeSetupStatus } from '~/server/api/settings/claude/status.get'
 import type { AdminLawyer } from '~/server/api/settings/lawyers/index.get'
 import type { LlmExecutionMode, LlmMaxTokensKind, LlmProvider, LlmProviderScope } from '~/server/utils/app-settings'
-import type { CountryRebuildResult } from '~/server/utils/country-rebuild'
 import type { CountrySourceSetting, CountrySourceSettings } from '~/server/utils/country-source-settings'
 
 const { t } = useI18n()
@@ -716,6 +715,7 @@ interface TaskRunStatus {
   lastResult: Record<string, number> | null
   lastError: string | null
   lastWarning: string | null
+  progress: Record<string, number> | null
 }
 interface LlmBatchJobsOverview {
   totalJobs: number
@@ -766,6 +766,11 @@ async function loadLlmBatchJobs(): Promise<void> {
   llmBatchJobsError.value = null
   try {
     llmBatchJobs.value = await $fetch<LlmBatchJobsOverview>('/api/settings/llm-batch-jobs', { cache: 'no-store' })
+    // Covers a page load/login while the global cron (or another tab's
+    // manual trigger) is already running — not just this tab's own click.
+    if (llmBatchJobs.value.enrichStatus.status === 'running' || llmBatchJobs.value.reprocessStatus.status === 'running') {
+      startProgressPolling()
+    }
   } catch (err) {
     llmBatchJobsError.value = normalizeSettingsError(err, t('settings.llmBatch.loadError'))
   } finally {
@@ -805,11 +810,11 @@ async function runReprocessTest(): Promise<void> {
 }
 
 // Datenquellen: persistent aktivierte Länder-Crawler. Die Registry setzt eine
-// gespeicherte Änderung sofort um; der nächste reguläre/manuelle Refresh füllt
-// den Cache einer neu aktivierten Quelle. rebuildCountrySource (Crawler, siehe
-// unten) löscht Cache-/Extraktionsdaten und crawlt neu; enrichCountrySource
-// stößt stattdessen den nicht-destruktiven Enrich-Task (Foto-/Dokumenten-
-// Pipeline, server/tasks/enrich.ts) für nur dieses Land an.
+// gespeicherte Änderung sofort um. enrichCountrySource stößt den
+// nicht-destruktiven Enrich-Task (Crawl/Archiv, server/tasks/enrich.ts) und
+// anschließend den Reprocess-Task (Extraktion) für nur dieses Land an —
+// destruktiver Rebuild (Cache löschen + neu crawlen) bleibt als
+// Recovery-Tool nur im Backend (rebuild.post.ts), ohne UI-Button.
 interface EnrichRunResult {
   crawled: number
   todo: number
@@ -824,9 +829,6 @@ const countrySourcesPending = ref(false)
 const countrySourcesError = ref<string | null>(null)
 const countrySourcesSaved = ref(false)
 const countrySourcesLoaded = ref(false)
-const countryRebuildPending = ref<string | null>(null)
-const countryRebuildError = ref<string | null>(null)
-const countryRebuildResult = ref<CountryRebuildResult | null>(null)
 const countryEnrichPending = ref<string | null>(null)
 const countryEnrichError = ref<string | null>(null)
 const countryEnrichResult = ref<EnrichRunResult & { country: string } | null>(null)
@@ -875,23 +877,26 @@ async function saveCountrySources(): Promise<void> {
   }
 }
 
-async function rebuildCountrySource(source: CountrySourceSetting): Promise<void> {
-  if (!source.enabled || countryRebuildPending.value) return
-  const label = countryLabel(source.code, source.name)
-  if (!window.confirm(t('settings.sources.rebuildConfirm', { country: label }))) return
-
-  countryRebuildPending.value = source.code
-  countryRebuildError.value = null
-  countryRebuildResult.value = null
-  try {
-    countryRebuildResult.value = await $fetch<CountryRebuildResult>(
-      `/api/settings/countries/${source.code}/rebuild`,
-      { method: 'POST' },
-    )
-  } catch (err) {
-    countryRebuildError.value = normalizeSettingsError(err, t('settings.sources.rebuildError'))
-  } finally {
-    countryRebuildPending.value = null
+// Separate from `pollTimer` above (the Claude-OAuth-Flow poll) — polls the
+// enrich/reprocess task status every 3s while either is running, so both the
+// global hourly cron run and a manual per-country click show live progress.
+// Always refreshes first, then decides whether to keep going, since polling
+// can start (right after a click) before the freshly triggered run's
+// 'running' status has even been fetched once.
+let progressPollTimer: ReturnType<typeof setInterval> | null = null
+function startProgressPolling(): void {
+  if (progressPollTimer) return
+  progressPollTimer = setInterval(async () => {
+    await loadLlmBatchJobs()
+    const running = llmBatchJobs.value?.enrichStatus.status === 'running'
+      || llmBatchJobs.value?.reprocessStatus.status === 'running'
+    if (!running) stopProgressPolling()
+  }, 3000)
+}
+function stopProgressPolling(): void {
+  if (progressPollTimer) {
+    clearInterval(progressPollTimer)
+    progressPollTimer = null
   }
 }
 
@@ -901,6 +906,7 @@ async function enrichCountrySource(source: CountrySourceSetting): Promise<void> 
   countryEnrichPending.value = source.code
   countryEnrichError.value = null
   countryEnrichResult.value = null
+  startProgressPolling()
   try {
     const res = await $fetch<{ result: EnrichRunResult }>(
       `/api/settings/countries/${source.code}/enrich`,
@@ -952,6 +958,7 @@ async function saveDisplaySettings(): Promise<void> {
 
 onMounted(probeSession)
 onBeforeUnmount(stopPolling)
+onBeforeUnmount(stopProgressPolling)
 </script>
 
 <template>
@@ -1590,17 +1597,8 @@ onBeforeUnmount(stopPolling)
           </p>
 
           <p v-if="countrySourcesError" class="text-sm text-destructive">{{ countrySourcesError }}</p>
-          <p v-if="countryRebuildError" class="text-sm text-destructive">{{ countryRebuildError }}</p>
           <p v-if="countryEnrichError" class="text-sm text-destructive">{{ countryEnrichError }}</p>
           <p v-if="countrySourcesSaved" class="text-sm text-emerald-600 dark:text-emerald-500">{{ $t('settings.sources.saved') }}</p>
-          <p v-if="countryRebuildResult" class="text-sm text-emerald-600 dark:text-emerald-500">
-            {{ $t('settings.sources.rebuildDone', {
-              country: countryLabel(countryRebuildResult.country),
-              auctions: countryRebuildResult.crawled.auctions,
-              ok: countryRebuildResult.crawled.ok,
-              failed: countryRebuildResult.crawled.failed,
-            }) }}
-          </p>
           <p v-if="countryEnrichResult" class="text-sm text-emerald-600 dark:text-emerald-500">
             {{ $t('settings.sources.enrichDone', {
               country: countryLabel(countryEnrichResult.country),
@@ -1622,6 +1620,14 @@ onBeforeUnmount(stopPolling)
                 duration: Math.round((llmBatchJobs.enrichStatus.lastResult?.durationMs ?? 0) / 1000),
               }) }}
             </p>
+            <p v-if="llmBatchJobs.enrichStatus.status === 'running' && llmBatchJobs.enrichStatus.progress" class="text-muted-foreground">
+              {{ $t('settings.sources.enrichStatusProgress', {
+                regionsDone: llmBatchJobs.enrichStatus.progress.regionsDone ?? 0,
+                regionsTotal: llmBatchJobs.enrichStatus.progress.regionsTotal ?? 0,
+                archivedDone: llmBatchJobs.enrichStatus.progress.archivedDone ?? 0,
+                archivedTotal: llmBatchJobs.enrichStatus.progress.archivedTotal ?? 0,
+              }) }}
+            </p>
             <p v-if="llmBatchJobs.enrichStatus.lastError" class="text-destructive">
               {{ $t('settings.sources.enrichStatusLastError', { message: llmBatchJobs.enrichStatus.lastError }) }}
             </p>
@@ -1637,6 +1643,14 @@ onBeforeUnmount(stopPolling)
                 processed: llmBatchJobs.reprocessStatus.lastResult?.processed ?? 0,
                 llmCalls: llmBatchJobs.reprocessStatus.lastResult?.llmCalls ?? 0,
                 duration: Math.round((llmBatchJobs.reprocessStatus.lastResult?.durationMs ?? 0) / 1000),
+              }) }}
+            </p>
+            <p v-if="llmBatchJobs.reprocessStatus.status === 'running' && llmBatchJobs.reprocessStatus.progress" class="text-muted-foreground">
+              {{ $t('settings.sources.llmStatusProgress', {
+                processed: llmBatchJobs.reprocessStatus.progress.processed ?? 0,
+                candidatesTotal: llmBatchJobs.reprocessStatus.progress.candidatesTotal ?? 0,
+                llmCalls: llmBatchJobs.reprocessStatus.progress.llmCalls ?? 0,
+                skipped: llmBatchJobs.reprocessStatus.progress.skipped ?? 0,
               }) }}
             </p>
             <p v-if="llmBatchJobs.reprocessStatus.lastWarning" class="text-amber-600 dark:text-amber-400">
@@ -1663,7 +1677,7 @@ onBeforeUnmount(stopPolling)
                 <button
                   type="button"
                   class="min-w-0 flex-1 text-left disabled:cursor-not-allowed disabled:opacity-60"
-                  :disabled="countrySourcesPending || countryRebuildPending !== null"
+                  :disabled="countrySourcesPending"
                   @click="toggleCountrySource(source.code)"
                 >
                   <span class="block text-sm font-medium">
@@ -1684,21 +1698,8 @@ onBeforeUnmount(stopPolling)
                   @click="enrichCountrySource(source)"
                 >
                   <Loader2 v-if="countryEnrichPending === source.code" class="h-4 w-4 animate-spin" />
-                  <Download v-else class="h-4 w-4" />
-                  {{ countryEnrichPending === source.code ? $t('settings.sources.enriching') : $t('settings.sources.enrich') }}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  class="shrink-0"
-                  :title="$t('settings.sources.rebuildTitle')"
-                  :disabled="!source.enabled || countrySourcesPending || countryRebuildPending !== null"
-                  @click="rebuildCountrySource(source)"
-                >
-                  <Loader2 v-if="countryRebuildPending === source.code" class="h-4 w-4 animate-spin" />
                   <RefreshCw v-else class="h-4 w-4" />
-                  {{ countryRebuildPending === source.code ? $t('settings.sources.rebuilding') : $t('settings.sources.rebuild') }}
+                  {{ countryEnrichPending === source.code ? $t('settings.sources.enriching') : $t('settings.sources.enrich') }}
                 </Button>
               </div>
             </div>

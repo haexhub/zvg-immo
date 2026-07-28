@@ -21,6 +21,9 @@ export interface TaskRunStatus {
   lastResult: TaskRunSummary | null
   lastError: string | null
   lastWarning: string | null
+  /** Numeric progress snapshot of the run currently in flight — null when
+   *  idle or before the first progress report of a fresh run. */
+  progress: TaskRunSummary | null
 }
 
 const TASK_RUN_STATUS_KEY = 'task_run_status'
@@ -32,7 +35,14 @@ const IDLE_STATUS: TaskRunStatus = {
   lastResult: null,
   lastError: null,
   lastWarning: null,
+  progress: null,
 }
+
+// Per-task last progress-write timestamp (ms), so a fast-moving loop (e.g. a
+// 300-item reprocess run) doesn't turn every processed item into its own
+// Postgres write.
+const PROGRESS_THROTTLE_MS = 1500
+const lastProgressWriteAt = new Map<TrackedTask, number>()
 
 let memoryTaskRunStatus: Record<string, TaskRunStatus> = {}
 
@@ -57,6 +67,7 @@ function coerceTaskRunStatus(value: unknown): TaskRunStatus {
     lastResult: coerceSummary(v.lastResult),
     lastError: typeof v.lastError === 'string' && v.lastError ? v.lastError : null,
     lastWarning: typeof v.lastWarning === 'string' && v.lastWarning ? v.lastWarning : null,
+    progress: coerceSummary(v.progress),
   }
 }
 
@@ -117,7 +128,9 @@ export async function recordTaskRunStart(task: TrackedTask): Promise<void> {
     startedAt: new Date().toISOString(),
     lastError: null,
     lastWarning: null,
+    progress: null,
   })
+  lastProgressWriteAt.delete(task)
 }
 
 export async function recordTaskRunEnd(
@@ -132,5 +145,21 @@ export async function recordTaskRunEnd(
     lastResult: 'result' in outcome ? outcome.result : current.lastResult,
     lastError: 'error' in outcome ? outcome.error : null,
     lastWarning: 'result' in outcome ? outcome.warning ?? null : null,
+    progress: null,
   })
+  lastProgressWriteAt.delete(task)
+}
+
+/** Updates only `progress`, leaving `status`/`startedAt`/`lastResult`
+ *  untouched — for a long-running loop (crawlAll's regions, enrich's
+ *  per-auction worker, reprocess's per-candidate loop) to report how far
+ *  along it is while it's still running. Throttled per task so a fast loop
+ *  doesn't turn every item into its own Postgres write. */
+export async function recordTaskRunProgress(task: TrackedTask, progress: TaskRunSummary): Promise<void> {
+  const now = Date.now()
+  const last = lastProgressWriteAt.get(task) ?? 0
+  if (now - last < PROGRESS_THROTTLE_MS) return
+  lastProgressWriteAt.set(task, now)
+  const current = await getTaskRunStatus(task)
+  await writeTaskRunStatus(task, { ...current, progress })
 }

@@ -30,6 +30,7 @@ const IDLE_STATUS = {
   lastResult: null,
   lastError: null,
   lastWarning: null,
+  progress: null,
 }
 
 const SUMMARY = {
@@ -68,6 +69,7 @@ describe('task-runs', () => {
     expect(running.status).toBe('running')
     expect(typeof running.startedAt).toBe('string')
     expect(running.lastResult).toBeNull()
+    expect(running.progress).toBeNull()
 
     await recordTaskRunEnd('enrich', { result: SUMMARY })
     const finished = await getTaskRunStatus('enrich')
@@ -77,6 +79,38 @@ describe('task-runs', () => {
     expect(finished.lastResult).toEqual(SUMMARY)
     expect(finished.lastError).toBeNull()
     expect(finished.lastWarning).toBeNull()
+    expect(finished.progress).toBeNull()
+  })
+
+  it('reports throttled progress while a run is in flight, then clears it on finish', async () => {
+    const { getPool } = await import('./db')
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { getTaskRunStatus, recordTaskRunStart, recordTaskRunEnd, recordTaskRunProgress } = await import('./task-runs')
+    const nowSpy = vi.spyOn(Date, 'now')
+
+    const T0 = 10_000_000
+    nowSpy.mockReturnValue(T0)
+    await recordTaskRunStart('reprocess')
+
+    nowSpy.mockReturnValue(T0 + 2000)
+    await recordTaskRunProgress('reprocess', { candidatesTotal: 10, processed: 1 })
+    expect((await getTaskRunStatus('reprocess')).progress).toEqual({ candidatesTotal: 10, processed: 1 })
+
+    // Within the throttle window — dropped, last write wins.
+    nowSpy.mockReturnValue(T0 + 2100)
+    await recordTaskRunProgress('reprocess', { candidatesTotal: 10, processed: 2 })
+    expect((await getTaskRunStatus('reprocess')).progress).toEqual({ candidatesTotal: 10, processed: 1 })
+
+    // Past the throttle window — applied.
+    nowSpy.mockReturnValue(T0 + 3700)
+    await recordTaskRunProgress('reprocess', { candidatesTotal: 10, processed: 3 })
+    expect((await getTaskRunStatus('reprocess')).progress).toEqual({ candidatesTotal: 10, processed: 3 })
+
+    await recordTaskRunEnd('reprocess', { result: { processed: 3 } })
+    expect((await getTaskRunStatus('reprocess')).progress).toBeNull()
+
+    nowSpy.mockRestore()
   })
 
   it('records a successful run warning for admin visibility', async () => {
