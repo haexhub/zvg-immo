@@ -58,14 +58,20 @@ const TRANSLATION_SCHEMA = {
         biddingNotes: { type: ['string', 'null'] },
         renovationNotes: { type: ['string', 'null'] },
         floor: { type: ['string', 'null'] },
-        heating: { type: ['string', 'null'] },
+        heating: {
+          type: ['string', 'null'],
+          description: 'Translate as short user-facing amenity text, preserving the technical meaning.',
+        },
         insights: {
           type: ['object', 'null'],
           additionalProperties: false,
           properties: {
             defects: { type: 'array', items: { type: 'string' } },
             encumbrances: { type: 'array', items: { type: 'string' } },
-            construction: { type: ['string', 'null'] },
+            construction: {
+              type: ['string', 'null'],
+              description: 'Translate construction/material/foundation/window/roof terms into the target language when possible.',
+            },
             locationCharacter: { type: ['string', 'null'] },
             summary: { type: ['string', 'null'] },
           },

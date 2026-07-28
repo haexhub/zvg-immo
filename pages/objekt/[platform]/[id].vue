@@ -11,6 +11,7 @@ import { isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-lan
 import {
   applyTranslatedExtractionTexts,
   extractTranslatableExtractionTexts,
+  TRANSLATABLE_EXTRACTION_TEXTS_VERSION,
   type TranslatableExtractionTexts,
 } from '~/lib/extraction-translation'
 import { safeHref } from '~/lib/utils'
@@ -85,6 +86,7 @@ function translationSourceKey(val: AuctionDetail): string {
     description: val.description,
     documentSummary: val.extraction?.documentSummary ?? null,
     extractionTexts: extractTranslatableExtractionTexts(val.extraction),
+    extractionTextsVersion: TRANSLATABLE_EXTRACTION_TEXTS_VERSION,
     documentSetHash: val.extraction?.documentSetHash ?? null,
     documentSetVersion: val.extraction?.documentSetVersion ?? null,
   })

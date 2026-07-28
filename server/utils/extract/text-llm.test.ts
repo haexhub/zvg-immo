@@ -93,11 +93,11 @@ describe('callTranslationLlm', () => {
       biddingNotes: null,
       renovationNotes: 'Visst underhållsbehov finna',
       floor: null,
-      heating: null,
+      heating: 'Fjärrvärme',
       insights: {
         defects: ['Äldre fastighet med äldre ytlager'],
         encumbrances: ['Utmätning jämte ränta och kostnader'],
-        construction: 'Källargrund, stomme av trä',
+        construction: 'Torpargrund, trästomme',
         locationCharacter: 'Beläget inom planlagt område',
         summary: null,
       },
@@ -120,11 +120,11 @@ describe('callTranslationLlm', () => {
         biddingNotes: null,
         renovationNotes: 'Gewisser Instandhaltungsbedarf vorhanden',
         floor: null,
-        heating: null,
+        heating: 'Fernwärme',
         insights: {
           defects: ['Ältere Immobilie mit älteren Oberflächen'],
           encumbrances: ['Pfändung zuzüglich Zinsen und Kosten'],
-          construction: 'Kellergründung, Holztragwerk',
+          construction: 'Kriechkellerfundament, Holztragwerk',
           locationCharacter: 'Innerhalb eines beplanten Gebiets gelegen',
           summary: null,
         },
@@ -144,9 +144,10 @@ describe('callTranslationLlm', () => {
     await expect(callTranslationLlm('sys', 'user text', null, null, null, source, config)).resolves.toMatchObject({
       extractionTexts: {
         renovationNotes: 'Gewisser Instandhaltungsbedarf vorhanden',
+        heating: 'Fernwärme',
         insights: {
           defects: ['Ältere Immobilie mit älteren Oberflächen'],
-          construction: 'Kellergründung, Holztragwerk',
+          construction: 'Kriechkellerfundament, Holztragwerk',
         },
         planningNotes: {
           monumentProtection: 'Keine Informationen',
