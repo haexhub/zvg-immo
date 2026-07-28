@@ -23,8 +23,17 @@ import type { Auction, AuctionExtraction } from '~/types/auction'
 import { getPool } from './db'
 import { cacheKey } from './verkehrswert-cache'
 import { normalizePhoto, sortCuratedPhotos } from '~/lib/photo'
+import { withDerivedExtractionFields } from './extract/merge-llm-result'
 
 export type ExtractionCache = Record<string, AuctionExtraction>
+
+function normalizeExtractionEntries(entries: ExtractionCache): ExtractionCache {
+  const normalized: ExtractionCache = {}
+  for (const [key, entry] of Object.entries(entries)) {
+    normalized[key] = withDerivedExtractionFields(entry)
+  }
+  return normalized
+}
 
 /**
  * Apply the extraction cache to a set of auctions (mutates in place). Synthesises
@@ -36,6 +45,7 @@ export function applyExtractionToAuctions(auctions: Auction[], cache: Extraction
   for (const a of auctions) {
     const hit = cache[cacheKey(a.platform, a.externalId)]
     if (!hit) continue
+    const normalizedHit = withDerivedExtractionFields(hit)
     // Normalize on read: older cache rows hold bare filename strings, newer
     // ones CuratedPhoto objects (see lib/photo.ts). Expose the normalized array
     // through `a.extraction` too, so consumers never see raw legacy strings
@@ -44,8 +54,8 @@ export function applyExtractionToAuctions(auctions: Auction[], cache: Extraction
     // so `photos[0]` below is the best thumbnail candidate across every
     // platform, not just whichever page/file the crawler or pdfimages
     // happened to return first.
-    const photos = sortCuratedPhotos((hit.photos ?? []).map(normalizePhoto))
-    a.extraction = photos.length > 0 ? { ...hit, photos } : hit
+    const photos = sortCuratedPhotos((normalizedHit.photos ?? []).map(normalizePhoto))
+    a.extraction = photos.length > 0 ? { ...normalizedHit, photos } : normalizedHit
     // WP-3: zvg-portal/DE has no structural Verkehrswert source (unlike
     // AT-Edikte/Biddit, whose overlay runs before this and already set
     // a.marketValueEur — see verkehrswert-cache.ts) — the LLM-extracted value
@@ -54,9 +64,9 @@ export function applyExtractionToAuctions(auctions: Auction[], cache: Extraction
     // auction's native currency (see llm.ts), not converted — only safe to
     // apply here for EUR-native platforms (a.currency unset); everywhere else
     // it would silently misrepresent a foreign-currency figure as EUR.
-    if (a.currency == null && a.marketValueEur == null && hit.marketValueEur != null) {
-      a.marketValueEur = hit.marketValueEur
-      a.marketValueText = hit.marketValueText ?? null
+    if (a.currency == null && a.marketValueEur == null && normalizedHit.marketValueEur != null) {
+      a.marketValueEur = normalizedHit.marketValueEur
+      a.marketValueText = normalizedHit.marketValueText ?? null
     }
     if (photos.length === 0) continue
     if (!a.thumbnailUrl) {
@@ -95,7 +105,7 @@ async function loadExtractionCache(): Promise<ExtractionCache> {
   )
   const cache: ExtractionCache = {}
   for (const row of rows) {
-    cache[cacheKey(row.platform, row.external_id)] = row.extraction
+    cache[cacheKey(row.platform, row.external_id)] = withDerivedExtractionFields(row.extraction)
   }
   return cache
 }
@@ -112,9 +122,10 @@ async function loadExtractionCache(): Promise<ExtractionCache> {
  * flush instead of silently losing it.
  */
 export async function writeExtractionCache(entries: ExtractionCache): Promise<boolean> {
+  const normalizedEntries = normalizeExtractionEntries(entries)
   const cache = await readExtractionCache()
-  Object.assign(cache, entries)
-  return writeExtractionCacheToDb(entries)
+  Object.assign(cache, normalizedEntries)
+  return writeExtractionCacheToDb(normalizedEntries)
 }
 
 // 3 params per row (platform, external_id, extraction) × 5000 rows = 15000

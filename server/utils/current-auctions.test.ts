@@ -76,6 +76,39 @@ describe('auctionToCurrentRow', () => {
     expect(row.extraction_confidence).toBe('high')
   })
 
+  it('derives missing land_area_sqm from complete parcel data before flattening for any platform', () => {
+    const a = makeAuction({
+      platform: 'generic-source',
+      extraction: {
+        propertyType: 'einfamilienhaus',
+        landAreaSqm: null,
+        livingAreaSqm: 180,
+        rooms: null,
+        units: null,
+        planningNotes: {
+          monumentProtection: null,
+          contamination: null,
+          developmentPlan: null,
+          landConsolidation: null,
+          developmentCharges: null,
+          redevelopmentArea: null,
+          conservationArea: null,
+          landParcels: [
+            { label: 'Parcelle A', areaSqm: 500, use: null },
+            { label: 'Parcelle B', areaSqm: 816, use: null },
+          ],
+        },
+        source: 'rules',
+        confidence: 'high',
+        at: '2026-07-21T00:00:00.000Z',
+      },
+    })
+
+    const row = auctionToCurrentRow(a, '2026-07-21T00:00:00.000Z')
+
+    expect(row.land_area_sqm).toBe(1316)
+  })
+
   it('nulls extraction-derived fields when there is no extraction yet', () => {
     const row = auctionToCurrentRow(makeAuction(), '2026-07-21T00:00:00.000Z')
     expect(row.property_type).toBeNull()

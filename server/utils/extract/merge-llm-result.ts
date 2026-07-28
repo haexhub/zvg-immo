@@ -1,9 +1,9 @@
 // Shared merge step between rules-derived fields and an LLM extraction
 // attempt — factored out because enrich.ts, reprocess.ts and (with the
 // LLM Batch API) llm-batch-poll.ts all need the exact same precedence
-// rules: structured/rules values win when present, the LLM only fills gaps
-// (and only contributes propertyType/sizes at all when rules weren't already
-// confident), while condition/features/yearBuilt/lastRenovationYear/
+// rules: structured/rules values win when present, the LLM fills gaps
+// (propertyType/source only change when rules weren't already confident),
+// while condition/features/yearBuilt/lastRenovationYear/
 // renovationNotes/insights/marketValueEur/marketValueText are LLM-only and
 // always take the latest call's result. Pure function, no I/O — easy to
 // unit-test independently of any provider or cache.
@@ -46,6 +46,31 @@ export interface MergeInputFields {
    *  is allowed to contribute propertyType/sizes/securityDeposit, or only
    *  the LLM-only fields. */
   confident: boolean
+}
+
+export function deriveLandAreaSqmFromPlanningNotes(planningNotes: PlanningNotes | null | undefined): number | null {
+  const parcels = planningNotes?.landParcels
+  if (!parcels?.length) return null
+  let total = 0
+  for (const parcel of parcels) {
+    const area = parcel.areaSqm
+    if (typeof area !== 'number' || !Number.isFinite(area) || area <= 0) return null
+    total += area
+  }
+  return total > 0 ? Math.round(total * 100) / 100 : null
+}
+
+export function withDerivedExtractionFields(entry: AuctionExtraction): AuctionExtraction {
+  const derivedLandAreaSqm = entry.landAreaSqm ?? deriveLandAreaSqmFromPlanningNotes(entry.planningNotes)
+  if (derivedLandAreaSqm == null || derivedLandAreaSqm === entry.landAreaSqm) return entry
+
+  const hasType = entry.propertyType != null && entry.propertyType !== 'sonstiges'
+  const hasArea = derivedLandAreaSqm != null || entry.livingAreaSqm != null
+  return {
+    ...entry,
+    landAreaSqm: derivedLandAreaSqm,
+    confidence: hasType && hasArea ? 'high' : entry.confidence,
+  }
 }
 
 /**
@@ -92,21 +117,20 @@ export function mergeLlmResult(
   let marketValueText = base.marketValueText
 
   if (llm) {
-    // Only let the LLM contribute propertyType/sizes when rules didn't
-    // already resolve them confidently — otherwise this call ran purely to
-    // backfill condition/features/yearBuilt/insights, and `source` must stay
-    // 'rules' so needsLlmRetry / the UI's low-confidence notice don't misfire
-    // on an otherwise-confident entry.
+    // Only let the LLM change propertyType/source when rules didn't already
+    // resolve a confident base entry. Missing area gaps are still filled below:
+    // a single rules area (e.g. living area) can make the base confident even
+    // though the complementary land area is present in the documents.
     if (!mergedConfident) {
       source = 'llm'
       propertyType = propertyType != null && propertyType !== 'sonstiges' ? propertyType : llm.propertyType
-      landAreaSqm = landAreaSqm ?? llm.landAreaSqm
-      livingAreaSqm = livingAreaSqm ?? llm.livingAreaSqm
       rooms = rooms ?? llm.rooms
       units = units ?? llm.units
       securityDeposit = securityDeposit ?? llm.securityDeposit
       biddingNotes = llm.biddingNotes
     }
+    landAreaSqm = landAreaSqm ?? llm.landAreaSqm
+    livingAreaSqm = livingAreaSqm ?? llm.livingAreaSqm
     bedrooms = llm.bedrooms
     bathrooms = llm.bathrooms
     floor = llm.floor
@@ -133,7 +157,7 @@ export function mergeLlmResult(
   // applies. Bump only on an actual request failure.
   const llmFailures = llm === null ? prevFailures + 1 : 0
 
-  return {
+  return withDerivedExtractionFields({
     propertyType,
     landAreaSqm,
     livingAreaSqm,
@@ -168,5 +192,5 @@ export function mergeLlmResult(
     ...(llm ? { llmAnalyzedAt: at } : {}),
     ...(llmFailures > 0 ? { llmFailures } : {}),
     ...(priorEntry?.photoFailures ? { photoFailures: priorEntry.photoFailures } : {}),
-  }
+  })
 }

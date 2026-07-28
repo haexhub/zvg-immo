@@ -92,6 +92,37 @@ describe('readExtractionCache', () => {
     expect(cache['zvg-portal:7265']).toEqual(extraction)
   })
 
+  it('normalizes derived parcel land area while loading rows for any platform', async () => {
+    const { getPool } = await import('./db')
+    const pool = makeFakePool([{
+      platform: 'generic-source',
+      external_id: '7265',
+      extraction: {
+        ...extraction,
+        landAreaSqm: null,
+        planningNotes: {
+          monumentProtection: null,
+          contamination: null,
+          developmentPlan: null,
+          landConsolidation: null,
+          developmentCharges: null,
+          redevelopmentArea: null,
+          conservationArea: null,
+          landParcels: [
+            { label: 'Parcelle A', areaSqm: 500, use: null },
+            { label: 'Parcelle B', areaSqm: 816, use: null },
+          ],
+        },
+      },
+    }])
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { readExtractionCache } = await import('./extraction-cache')
+
+    const cache = await readExtractionCache()
+
+    expect(cache['generic-source:7265']?.landAreaSqm).toBe(1316)
+  })
+
   it('serves subsequent calls from memory without re-querying Postgres', async () => {
     const { getPool } = await import('./db')
     const pool = makeFakePool([{ platform: 'zvg-portal', external_id: '7265', extraction }])
@@ -148,6 +179,35 @@ describe('writeExtractionCache', () => {
     expect(pool.upserted).toEqual([{ platform: 'zvg-portal', external_id: '2222', extraction: second }])
   })
 
+  it('persists normalized derived parcel land area on write for any platform', async () => {
+    const { getPool } = await import('./db')
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { writeExtractionCache } = await import('./extraction-cache')
+
+    await writeExtractionCache({
+      'generic-source:2222': {
+        ...extraction,
+        landAreaSqm: null,
+        planningNotes: {
+          monumentProtection: null,
+          contamination: null,
+          developmentPlan: null,
+          landConsolidation: null,
+          developmentCharges: null,
+          redevelopmentArea: null,
+          conservationArea: null,
+          landParcels: [
+            { label: 'Parcelle A', areaSqm: 500, use: null },
+            { label: 'Parcelle B', areaSqm: 816, use: null },
+          ],
+        },
+      },
+    })
+
+    expect(pool.upserted[0]?.extraction.landAreaSqm).toBe(1316)
+  })
+
   it('merges written entries into the in-process cache for subsequent reads', async () => {
     const { getPool } = await import('./db')
     const pool = makeFakePool()
@@ -173,6 +233,30 @@ describe('writeExtractionCache', () => {
 })
 
 describe('applyExtractionToAuctions — marketValueEur precedence (WP-3)', () => {
+  it('derives missing landAreaSqm from complete landParcels before exposing the extraction', () => {
+    const auction = makeAuction()
+    const cache: ExtractionCache = {
+      'zvg-portal:14409': {
+        ...extraction,
+        landAreaSqm: null,
+        planningNotes: {
+          monumentProtection: null,
+          contamination: null,
+          developmentPlan: null,
+          landConsolidation: null,
+          developmentCharges: null,
+          redevelopmentArea: null,
+          conservationArea: null,
+          landParcels: [{ label: '743/1', areaSqm: 1316, use: null }],
+        },
+      },
+    }
+
+    applyExtractionToAuctions([auction], cache)
+
+    expect(auction.extraction?.landAreaSqm).toBe(1316)
+  })
+
   it('fills marketValueEur/marketValueText from the LLM extraction when the auction has none', () => {
     const auction = makeAuction()
     const cache: ExtractionCache = {
