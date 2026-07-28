@@ -112,13 +112,21 @@ describe('GeminiNativeProvider.extract — 429 pacing/retry', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 
-  it('gives up after MAX_RETRIES consecutive 429s and returns null', async () => {
+  it('gives up after MAX_RETRIES consecutive 429s and rethrows instead of returning null', async () => {
+    // Rethrown (not swallowed to null) so reprocess.ts's per-candidate catch
+    // skips the attempt without counting it toward llmFailures — a capacity
+    // outage must never permanently downgrade an auction to rules-only.
     const fetchMock = vi.fn().mockRejectedValue(error(429))
     vi.stubGlobal('$fetch', fetchMock)
     const provider = await freshProvider()
     const promise = provider.extract(req)
+    // Attach a handler before the timers drain — the rejection settles
+    // mid-drain, and without this Node briefly flags it as an unhandled
+    // rejection (only a harness timing artifact, not a real bug) before the
+    // `expect(...).rejects` below attaches its own handler.
+    promise.catch(() => {})
     await vi.runAllTimersAsync()
-    await expect(promise).resolves.toBeNull()
+    await expect(promise).rejects.toThrow('http 429')
     expect(fetchMock).toHaveBeenCalledTimes(4) // 1 initial attempt + 3 retries
   })
 

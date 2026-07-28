@@ -571,6 +571,12 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
         await writeAuctionSnapshot([updated])
       }
     } catch (err) {
+      // Also where a rate limit/quota error (see llm.ts's isRateLimitError())
+      // lands: reprocessAuction/extractByLlm deliberately let it propagate
+      // here instead of resolving to null, so `cache[key]` is left untouched
+      // — a capacity outage must never count toward llmFailures/
+      // MAX_LLM_FAILURES, or it would permanently downgrade the auction to
+      // rules-only once the limit is hit, long after the outage clears.
       console.warn(`[reprocess] failed for ${platform}:${externalId}: ${(err as Error).message}`)
       skipped++
     }

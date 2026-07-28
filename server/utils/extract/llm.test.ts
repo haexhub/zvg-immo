@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildParts,
   clampExtraction,
+  isRateLimitError,
   parseExtractionResponse,
   resolveLlmConfig,
   SYSTEM_PROMPT,
@@ -10,6 +11,18 @@ import {
   UNIVERSAL_AUCTION_SCHEMA_NAME,
   UNIVERSAL_AUCTION_SCHEMA_VERSION,
 } from './llm'
+
+describe('isRateLimitError', () => {
+  it('recognizes an HTTP 429 $fetch error', () => {
+    expect(isRateLimitError(Object.assign(new Error('http 429'), { response: { status: 429 } }))).toBe(true)
+  })
+
+  it('rejects other statuses and non-fetch errors', () => {
+    expect(isRateLimitError(Object.assign(new Error('http 500'), { response: { status: 500 } }))).toBe(false)
+    expect(isRateLimitError(new Error('network error'))).toBe(false)
+    expect(isRateLimitError(null)).toBe(false)
+  })
+})
 
 describe('universal auction extraction schema', () => {
   it('exposes the canonical schema identity and required fields', () => {

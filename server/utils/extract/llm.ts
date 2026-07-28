@@ -87,9 +87,23 @@ export interface ExtractionRequest {
 /** Narrow seam between prompt/schema building (provider-agnostic) and the
  *  wire format a specific backend expects. Swapping or adding a provider
  *  means writing a new implementation of this interface, not touching
- *  buildParts/clampExtraction. */
+ *  buildParts/clampExtraction. Implementations resolve to null for a request
+ *  failure or unparseable response, but must throw (not swallow to null) when
+ *  the failure is a rate limit/quota error — see isRateLimitError(). */
 export interface ExtractionProvider {
   extract(req: ExtractionRequest): Promise<Record<string, unknown> | null>
+}
+
+/** Whether a thrown $fetch error was an HTTP 429 (rate limit/quota exceeded).
+ *  Providers rethrow rather than swallow this to null so a capacity outage
+ *  (observed in prod on Gemini's free tier — see gemini-native.ts) never
+ *  counts toward extraction's retry-lockout: reprocess.ts's per-candidate
+ *  try/catch skips a thrown error without touching the cache entry, leaving
+ *  `llmFailures` untouched so the auction is retried again next run instead
+ *  of being permanently downgraded to rules-only after MAX_LLM_FAILURES
+ *  unrelated capacity failures. */
+export function isRateLimitError(err: unknown): boolean {
+  return (err as { response?: { status?: number } })?.response?.status === 429
 }
 
 export interface ClampedExtraction {
@@ -755,7 +769,10 @@ export function resolveLlmConfig(
   }
 }
 
-/** Returns null on empty input, request failure, or unparseable response. */
+/** Returns null on empty input, request failure, or unparseable response.
+ *  Throws instead when the provider hit a rate limit/quota error — see
+ *  isRateLimitError(); left unhandled so it reaches reprocess.ts's per-
+ *  candidate catch, which skips the attempt without counting a failure. */
 export async function extractByLlm(
   input: LlmInput,
   config: LlmConfig,
