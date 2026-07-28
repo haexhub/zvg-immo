@@ -78,6 +78,58 @@ function clientKey(event: H3Event): string {
   return event.node.req.socket.remoteAddress ?? 'unknown'
 }
 
+async function tryTranslate(
+  title: string | null,
+  description: string | null,
+  documentSummary: string | null,
+  extractionTexts: ReturnType<typeof extractTranslatableExtractionTexts>,
+  targetLang: ContentTargetLang,
+  config: Parameters<typeof callTranslationLlm>[6],
+  attempts = MAX_TRANSLATION_ATTEMPTS,
+): Promise<TranslationResult | null> {
+  const prompt = buildPrompt(title, description, documentSummary, extractionTexts, targetLang)
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const result = await callTranslationLlm(
+      SYSTEM_PROMPT,
+      prompt,
+      title,
+      description,
+      documentSummary,
+      extractionTexts,
+      config,
+      targetLang,
+    )
+    if (result) return result
+  }
+  return null
+}
+
+async function tryTranslateInParts(
+  title: string | null,
+  description: string | null,
+  documentSummary: string | null,
+  extractionTexts: ReturnType<typeof extractTranslatableExtractionTexts>,
+  targetLang: ContentTargetLang,
+  config: Parameters<typeof callTranslationLlm>[6],
+): Promise<TranslationResult | null> {
+  const textResult = title != null || description != null || documentSummary != null
+    ? await tryTranslate(title, description, documentSummary, null, targetLang, config)
+    : { title: null, description: null, documentSummary: null, extractionTexts: null }
+  if (!textResult) return null
+
+  const extractionResult = extractionTexts
+    ? await tryTranslate(null, null, null, extractionTexts, targetLang, config)
+    : { title: null, description: null, documentSummary: null, extractionTexts: null }
+  if (!extractionResult) return null
+
+  return {
+    title: textResult.title,
+    description: textResult.description,
+    documentSummary: textResult.documentSummary,
+    extractionTexts: extractionResult.extractionTexts,
+  }
+}
+
 export default defineEventHandler(async (event) => {
   const platform = String(event.context.params?.platform ?? '')
   const id = String(event.context.params?.id ?? '')
@@ -172,19 +224,8 @@ export default defineEventHandler(async (event) => {
   recordInMemoryRateLimitHit(translationRateLimit, requester, now, TRANSLATION_RATE_LIMIT)
 
   const gen = (async () => {
-    const prompt = buildPrompt(title, description, documentSummary, extractionTexts, targetLang)
-    let result: TranslationResult | null = null
-    for (let attempt = 0; attempt < MAX_TRANSLATION_ATTEMPTS && !result; attempt += 1) {
-      result = await callTranslationLlm(
-        SYSTEM_PROMPT,
-        prompt,
-        title,
-        description,
-        documentSummary,
-        extractionTexts,
-        config,
-      )
-    }
+    const result = await tryTranslate(title, description, documentSummary, extractionTexts, targetLang, config)
+      ?? await tryTranslateInParts(title, description, documentSummary, extractionTexts, targetLang, config)
     if (!result) {
       throw createError({ statusCode: 502, statusMessage: 'LLM did not return a translation' })
     }
