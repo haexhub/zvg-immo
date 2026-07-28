@@ -258,7 +258,7 @@ describe('runLlmBatchPoll', () => {
 
     const result = await runLlmBatchPoll()
 
-    expect(result).toEqual({ checked: 1, merged: 1 })
+    expect(result).toEqual({ checked: 1, merged: 0 })
     expect(writeAuctionSnapshot).not.toHaveBeenCalled()
     expect(markLlmBatchJobResolved).not.toHaveBeenCalled()
   })

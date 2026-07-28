@@ -14,7 +14,6 @@ import {
   applyExtractionToAuctions,
   readExtractionCache,
   writeExtractionCache,
-  type ExtractionCache,
 } from '../utils/extraction-cache'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
 import {
@@ -143,9 +142,8 @@ export async function runLlmBatchPoll(): Promise<{ checked: number; merged: numb
       }
 
       const results = await fetchLlmBatchResults(job.jobName, poll.resultFileName, llmConfig, job.customIdMap)
-      const dirty: ExtractionCache = {}
       const snapshot = await readAuctionSnapshot()
-      const snapshotUpdates: Auction[] = []
+      let cacheWriteFailed = false
 
       for (const { key, extraction } of results) {
         if (!splitKey(key)) continue
@@ -155,23 +153,23 @@ export async function runLlmBatchPoll(): Promise<{ checked: number; merged: numb
         // marker is dropped here simply by not carrying it forward.
         const mergedEntry = mergeLlmResult(priorEntry, toMergeFields(priorEntry), extraction, at, priorEntry.photos)
         cache[key] = mergedEntry
-        dirty[key] = mergedEntry
-        merged++
+        const cacheWritten = await writeExtractionCache({ [key]: mergedEntry })
+        if (!cacheWritten) {
+          cacheWriteFailed = true
+          console.warn(`[llm-batch-poll] cache write failed for ${key} in job ${job.jobName} — leaving job for next tick`)
+          break
+        }
 
         const snapshotEntry = snapshot[key]
         if (snapshotEntry) {
           const updated: Auction = { ...snapshotEntry }
           applyExtractionToAuctions([updated], { [key]: mergedEntry })
-          snapshotUpdates.push(updated)
+          await writeAuctionSnapshot([updated])
         }
+        merged++
       }
 
-      const cacheWritten = Object.keys(dirty).length === 0 || (await writeExtractionCache(dirty))
-      if (!cacheWritten) {
-        console.warn(`[llm-batch-poll] cache write failed for job ${job.jobName} — leaving job for next tick`)
-        continue
-      }
-      if (snapshotUpdates.length > 0) await writeAuctionSnapshot(snapshotUpdates)
+      if (cacheWriteFailed) continue
       await markLlmBatchJobResolved(job.jobName, 'succeeded', at)
       console.log(`[llm-batch-poll] job ${job.jobName} succeeded — merged ${results.length} items`)
     } catch (err) {
