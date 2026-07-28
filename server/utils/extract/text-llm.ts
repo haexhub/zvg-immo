@@ -126,16 +126,65 @@ export interface TranslationResult {
   extractionTexts: TranslatableExtractionTexts | null
 }
 
-function translatedString(raw: unknown, source: string | null): string | null | undefined {
+function normalizedComparable(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().toLocaleLowerCase()
+}
+
+function wordCount(value: string): number {
+  return value.split(/\s+/).filter(Boolean).length
+}
+
+function isUnchangedSentence(source: string, translated: string): boolean {
+  if (normalizedComparable(source) !== normalizedComparable(translated)) return false
+  const letterCount = [...source.matchAll(/\p{L}/gu)].length
+  return letterCount >= 24 && wordCount(source) >= 4
+}
+
+function firstSignificantWord(value: string): string | null {
+  for (const match of value.matchAll(/\p{L}[\p{L}\p{M}-]*/gu)) {
+    const word = match[0]
+    if ([...word.matchAll(/\p{L}/gu)].length >= 5) return normalizedComparable(word)
+  }
+  return null
+}
+
+function hasSourceTermWithParentheticalTranslation(source: string, translated: string): boolean {
+  if (!translated.includes('(')) return false
+
+  const sourceNorm = normalizedComparable(source)
+  for (const match of translated.matchAll(/\(([^)]{4,})\)/g)) {
+    const parenthetical = match[1] ?? ''
+    if ([...parenthetical.matchAll(/\p{L}/gu)].length >= 4 && sourceNorm.includes(normalizedComparable(parenthetical))) {
+      return true
+    }
+  }
+
+  const sourceWord = firstSignificantWord(source)
+  const translatedWord = firstSignificantWord(translated)
+  return sourceWord != null && sourceWord === translatedWord && normalizedComparable(source) !== normalizedComparable(translated)
+}
+
+function hasInvalidStructuredTranslation(source: string, translated: string): boolean {
+  return isUnchangedSentence(source, translated) || hasSourceTermWithParentheticalTranslation(source, translated)
+}
+
+function translatedString(
+  raw: unknown,
+  source: string | null,
+  opts: { rejectUnchangedSentence?: boolean } = {},
+): string | null | undefined {
   const value = typeof raw === 'string' ? raw.trim() : null
   if (source != null && !value) return undefined
+  if (source != null && value && opts.rejectUnchangedSentence !== false && hasInvalidStructuredTranslation(source, value)) {
+    return undefined
+  }
   return source == null ? null : value
 }
 
 function translatedStringArray(raw: unknown, source: string[]): string[] | null {
   if (!Array.isArray(raw) || raw.length !== source.length) return null
   const out = raw.map((value) => (typeof value === 'string' ? value.trim() : ''))
-  return out.every(Boolean) ? out : null
+  return out.every((value, i) => Boolean(value) && !hasInvalidStructuredTranslation(source[i] ?? '', value)) ? out : null
 }
 
 function translatedInsights(raw: unknown, source: TranslatableInsightsTexts | null): TranslatableInsightsTexts | null | undefined {
@@ -172,7 +221,9 @@ function translatedPlanningNotes(
   const landParcels = rawParcels.map((rawParcel, i) => {
     if (!rawParcel || typeof rawParcel !== 'object') return undefined
     const rawParcelObj = rawParcel as Record<string, unknown>
-    const label = translatedString(rawParcelObj.label, source.landParcels[i]?.label ?? null)
+    const label = translatedString(rawParcelObj.label, source.landParcels[i]?.label ?? null, {
+      rejectUnchangedSentence: false,
+    })
     const use = translatedString(rawParcelObj.use, source.landParcels[i]?.use ?? null)
     if (label === undefined || use === undefined) return undefined
     return { label, use }
