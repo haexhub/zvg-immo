@@ -754,6 +754,7 @@
     "showPhoto": "Foto {n} anzeigen",
     "fallbackTitle": "Immobilie",
     "autoTranslatedHint": "Automatisch übersetzt",
+    "translationPendingHint": "Übersetzung läuft",
     "auctionDataTitle": "Auktionsdaten",
     "propertyDataTitle": "Objektdaten",
     "courtInfoTitle": "Gerichtsinformationen",

@@ -754,6 +754,7 @@
     "showPhoto": "Show photo {n}",
     "fallbackTitle": "Property",
     "autoTranslatedHint": "Automatically translated",
+    "translationPendingHint": "Translating",
     "auctionDataTitle": "Auction data",
     "propertyDataTitle": "Property data",
     "courtInfoTitle": "Court information",
