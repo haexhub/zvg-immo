@@ -67,8 +67,8 @@ interface FakeCaptureRow {
 
 /** Minimal in-memory stand-in for the `pg` Pool, matching the exact queries
  *  raw-archive.ts issues (checked via the SQL prefix). Models the current
- *  archive uniqueness: auctions by identity, documents/detail captures by
- *  identity+sourceUrl. */
+ *  archive uniqueness: auctions by identity+contentHash (append-only),
+ *  documents/detail captures by identity+sourceUrl+contentHash. */
 function makeFakePool() {
   const blobs = new Map<string, FakeBlobRow>()
   const captures = new Map<string, FakeCaptureRow>()
@@ -108,7 +108,7 @@ function makeFakePool() {
         ]
       const key =
         kind === 'auction'
-          ? `${kind}|${platform}|${externalId}`
+          ? `${kind}|${platform}|${externalId}|${contentHash}`
           : `${kind}|${platform}|${externalId}|${sourceUrl ?? ''}|${contentHash}`
       captures.set(key, { capturedAt, region, caseNumber, authority, contentHash, sourceUrl })
       return { rows: [], rowCount: 1 }
@@ -321,7 +321,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     // Both calls upsert (no fast-path skip) but land on the same row — the
     // unique index, not a pre-check, is what prevents a duplicate.
     expect(pool.captures.size).toBe(1)
-    expect(pool.captures.get('auction|test|1')).toMatchObject({ capturedAt: '2026-07-20T00:00:00.000Z' })
+    expect(pool.captures.get('auction|test|1|hash-a')).toMatchObject({ capturedAt: '2026-07-20T00:00:00.000Z' })
   })
 
   it('recordCapture refreshes metadata even when the content_hash is unchanged', async () => {
@@ -371,7 +371,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     expect(pool.captures.has('document|test|1|https://example.test/notice.pdf|hash-a')).toBe(true)
   })
 
-  it('recordCapture overwrites the current row when the content_hash changes', async () => {
+  it('recordCapture appends a new version when the content_hash changes', async () => {
     const pool = makeFakePool()
     vi.mocked(getPool).mockReturnValue(pool as never)
 
@@ -384,8 +384,12 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     await recordCapture({ ...base, capturedAt: '2026-07-19T00:00:00.000Z', contentHash: 'hash-a' })
     await recordCapture({ ...base, capturedAt: '2026-07-20T00:00:00.000Z', contentHash: 'hash-b' })
 
-    expect(pool.captures.size).toBe(1)
-    expect(pool.captures.get('auction|test|1')).toMatchObject({
+    expect(pool.captures.size).toBe(2)
+    expect(pool.captures.get('auction|test|1|hash-a')).toMatchObject({
+      contentHash: 'hash-a',
+      capturedAt: '2026-07-19T00:00:00.000Z',
+    })
+    expect(pool.captures.get('auction|test|1|hash-b')).toMatchObject({
       contentHash: 'hash-b',
       capturedAt: '2026-07-20T00:00:00.000Z',
     })
@@ -443,7 +447,8 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
 
     expect(pool.blobs.size).toBe(1)
     expect(pool.captures.size).toBe(1)
-    expect(pool.captures.get('auction|test|42')).toMatchObject({
+    const [hash] = pool.blobs.keys()
+    expect(pool.captures.get(`auction|test|42|${hash}`)).toMatchObject({
       capturedAt: '2026-07-20T12:00:00.000Z',
     })
   })
@@ -459,9 +464,14 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     )
 
     expect(pool.blobs.size).toBe(2)
-    expect(pool.captures.size).toBe(1) // same identity, latest capture overwritten
-    expect(pool.captures.get('auction|test|42')).toMatchObject({
-      contentHash: expect.any(String),
+    expect(pool.captures.size).toBe(2) // new content_hash, new version appended
+    const [firstHash, secondHash] = pool.blobs.keys()
+    expect(pool.captures.get(`auction|test|42|${firstHash}`)).toMatchObject({
+      contentHash: firstHash,
+      capturedAt: '2026-07-19T00:00:00.000Z',
+    })
+    expect(pool.captures.get(`auction|test|42|${secondHash}`)).toMatchObject({
+      contentHash: secondHash,
       capturedAt: '2026-07-19T00:05:00.000Z',
     })
     const captureInserts = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO raw_captures'))

@@ -327,11 +327,11 @@ BEGIN
   END IF;
 END $$;
 -- The old uniqueness model keyed all captures by content_hash alone. The new
--- model keeps auction rows current and document rows deduplicated by both
--- source URL and bytes.
+-- model deduplicates auction rows by identity+content_hash (append-only, a
+-- new version per real change) and document rows by source URL+bytes.
 DROP INDEX IF EXISTS idx_capt_unique;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_capt_unique_auction_current
-  ON raw_captures (kind, platform, external_id)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_capt_unique_auction_hash
+  ON raw_captures (kind, platform, external_id, content_hash)
   WHERE kind = 'auction';
 CREATE UNIQUE INDEX IF NOT EXISTS idx_capt_unique_source_hash
   ON raw_captures (kind, platform, external_id, (COALESCE(source_url, '')), content_hash)
@@ -603,3 +603,18 @@ CREATE INDEX IF NOT EXISTS idx_capt_country_region_time ON raw_captures (country
 UPDATE raw_captures rc SET region = a.region
 FROM auctions a
 WHERE rc.region IS NULL AND rc.platform = a.platform AND rc.external_id = a.external_id;
+
+-- Rollback von PR #186 (27.7.2026): der "aktueller Stand"-Index für
+-- kind='auction' hat das vorherige append-only-Verhalten (eine neue Zeile
+-- pro echter Content-Änderung, wie es document/detail_html/document_text
+-- weiterhin haben) versehentlich durch ein reines Überschreiben ersetzt und
+-- damit die historischen Auktions-Versionen unwiederbringlich gelöscht. Die
+-- kanonische Index-Deklaration oben (idx_capt_unique_auction_hash) ist bereits
+-- auf das append-only-Verhalten zurückgestellt; hier nur noch der einmalige
+-- Drop des jetzt obsoleten Index für Datenbanken, die PR #186 bereits
+-- durchlaufen haben — ohne diesen würde die obige CREATE-Anweisung auf
+-- solchen Datenbanken nie greifen, weil idx_capt_unique_auction_current dort
+-- schon existiert. Der Cleanup von PR #186 hat bereits jede Auktion auf genau
+-- eine Zeile reduziert, daher kann der neue Unique-Index beim Anlegen nicht
+-- auf Duplikate stoßen.
+DROP INDEX IF EXISTS idx_capt_unique_auction_current;
