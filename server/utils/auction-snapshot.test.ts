@@ -68,6 +68,54 @@ describe('mergePreservedDetail — structured source fields', () => {
   })
 })
 
+describe('mergePreservedDetail — extraction', () => {
+  it('carries the previous extraction forward when the fresh crawl has none', () => {
+    // enrich.ts (crawl/archive) never sets `.extraction` — only reprocess.ts
+    // does. Without this, every crawl-only snapshot write would wipe out
+    // reprocess.ts's work until it happens to run again.
+    const priorExtraction = {
+      propertyType: 'einfamilienhaus' as const,
+      landAreaSqm: 500,
+      livingAreaSqm: 120,
+      rooms: 4,
+      units: 1,
+      source: 'llm' as const,
+      confidence: 'high' as const,
+      at: '2026-07-01T00:00:00.000Z',
+    }
+    const next = mergePreservedDetail(auction(), auction({ extraction: priorExtraction }))
+    expect(next.extraction).toEqual(priorExtraction)
+  })
+
+  it('keeps the fresh extraction when the crawl already carries one', () => {
+    const staleExtraction = {
+      propertyType: null,
+      landAreaSqm: null,
+      livingAreaSqm: null,
+      rooms: null,
+      units: null,
+      source: 'rules' as const,
+      confidence: 'low' as const,
+      at: '2026-06-01T00:00:00.000Z',
+    }
+    const freshExtraction = {
+      propertyType: 'eigentumswohnung' as const,
+      landAreaSqm: null,
+      livingAreaSqm: 80,
+      rooms: 3,
+      units: 1,
+      source: 'llm' as const,
+      confidence: 'high' as const,
+      at: '2026-07-01T00:00:00.000Z',
+    }
+    const next = mergePreservedDetail(
+      auction({ extraction: freshExtraction }),
+      auction({ extraction: staleExtraction }),
+    )
+    expect(next.extraction).toEqual(freshExtraction)
+  })
+})
+
 describe('mergePreservedDetail — photoUrls and photoCount', () => {
   it('restores the gallery and keeps photoCount consistent with it', () => {
     const next = mergePreservedDetail(

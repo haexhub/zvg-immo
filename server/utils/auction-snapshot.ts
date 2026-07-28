@@ -179,6 +179,13 @@ export function mergePreservedDetail(next: Auction, prev: Auction): Auction {
     next.lat = prev.lat
     next.lng = prev.lng
   }
+  // The crawl/archive task (enrich.ts) never sets this — it's populated
+  // read-only from extraction_cache by whichever task last ran extraction
+  // (reprocess.ts). Without this, every crawl-only snapshot write would wipe
+  // out the extraction that task produced until it happens to run again.
+  if (next.extraction == null && prev.extraction != null) {
+    next.extraction = prev.extraction
+  }
   return next
 }
 

@@ -362,9 +362,9 @@
     "llmBatch": {
       "title": "LLM-Batch-Pipeline",
       "description": "Offene Batch-Jobs, die an einen LLM-Provider übergeben wurden und noch auf Ergebnisse warten.",
-      "enrichRunning": "Enrich läuft seit {at}",
-      "enrichLastRun": "Zuletzt gelaufen: {at} — {enriched} angereichert, {llmCalls} LLM-Aufrufe, {duration}s",
-      "enrichLastError": "Letzter Lauf fehlgeschlagen: {message}",
+      "reprocessRunning": "Extraktion läuft seit {at}",
+      "reprocessLastRun": "Zuletzt gelaufen: {at} — {processed} verarbeitet, {llmCalls} LLM-Aufrufe, {duration}s",
+      "reprocessLastError": "Letzter Lauf fehlgeschlagen: {message}",
       "refresh": "Aktualisieren",
       "loadError": "Batch-Pipeline konnte nicht geladen werden.",
       "empty": "Keine offenen Batch-Requests.",

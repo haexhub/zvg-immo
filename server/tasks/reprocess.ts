@@ -1,18 +1,31 @@
-// WP-6 (docs/plans/2026-07-22-supabase-full-migration-de.md, decision E2):
-// re-runs rules/LLM extraction against already-archived captures instead of
-// live-fetching from the upstream portals. Lets the extraction prompts/rules
-// be iterated on (new fields, better prompts) against the frozen archive
-// without hammering the portals — the coupled crawl+archive+parse path in
-// enrich.ts stays the way first-time listings get discovered and archived.
+// Extraction task — runs regex rules and (when configured) an LLM against
+// already-archived captures (raw_captures/raw_document_sets), never against a
+// live portal fetch. Fully decoupled from server/tasks/enrich.ts (the crawl/
+// archive task): the two never call each other and don't share a schedule —
+// this task finds its own work by comparing, for every archived auction,
+// `archivedDocumentSetHash` (what enrich.ts last archived) against
+// `documentSetHash` (what this task last actually parsed). That's also why
+// an LLM outage or an exhausted token budget only ever delays this task,
+// never enrich.ts — crawling/archiving doesn't depend on this running at all.
 //
-// No cron entry in nuxt.config.ts's scheduledTasks — this is a manually
-// triggered lever (`runTask('reprocess', { payload })` or Nitro's task-run
-// endpoint), not a standing background job.
+// A changed archived hash means the underlying documents were added,
+// changed, or removed since the last successful parse — the extraction-owned
+// fields (propertyType, condition, features, marketValueEur, ...) are
+// rebuilt from scratch from the new documents rather than merged with stale
+// facts from a withdrawn/updated one (a null-out, not a real DB delete: the
+// next successful merge simply doesn't carry the old values forward).
+//
+// Runs on its own schedule (nuxt.config.ts's scheduledTasks) across every
+// country. Also invokable manually/scoped — `runTask('reprocess', {payload})`
+// or the Nitro task-run endpoint — for iterating on prompts/rules against the
+// frozen archive, or spot-checking a single auction/platform/country.
 
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import type { Auction, AuctionExtraction, CuratedPhoto } from '~/types/auction'
 import { getPool } from '~/server/utils/db'
 import { extractByRules } from '~/server/utils/extract/rules'
-import { extractByLlm, type LlmConfig, type LlmInput } from '~/server/utils/extract/llm'
+import { extractByLlm, type LlmConfig, type LlmInput, type PhotoCuration } from '~/server/utils/extract/llm'
 import { prepareArchivedLlmDocuments } from '~/server/utils/extract/llm-documents'
 import {
   isLlmBatchPending,
@@ -33,13 +46,22 @@ import {
 import { readAuctionSnapshot, writeAuctionSnapshot } from '~/server/utils/auction-snapshot'
 import { downloadBlob, findLatestCapture } from '~/server/utils/storage-download'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
+import { interleaveByPlatform } from '~/server/utils/interleave-by-platform'
+import { isSafePathSegment } from '~/server/utils/path-segment'
+import { mimeTypeFor } from '~/server/utils/image-storage'
 import { normalizePhoto } from '~/lib/photo'
+import { recordTaskRunEnd, recordTaskRunStart } from '~/server/utils/task-runs'
 
-const DEFAULT_COUNTRY = 'de'
+const IMAGES_DIR = join(process.cwd(), '.cache_zvg', 'images')
 const DEFAULT_MAX_LLM_PER_RUN = 300
+// Cap on candidate photos sent to the LLM for curation per call — a Gutachten
+// with dozens of embedded rasters would otherwise blow the token budget.
+const MAX_CANDIDATE_PHOTOS = 8
+
+let running = false
 
 export interface ReprocessOptions {
-  /** ISO-3166-1 alpha-2, lowercase. Defaults to 'de' (this WP's scope). */
+  /** ISO-3166-1 alpha-2, lowercase. Omit to scan every archived country. */
   country?: string
   platform?: string
   externalId?: string
@@ -51,15 +73,15 @@ export interface ReprocessOptions {
    *  by accident. */
   force?: boolean
   /** Cap the number of candidates considered (SQL LIMIT), for a bounded spot
-   *  check before committing to a full country run — e.g. verifying a new
+   *  check before committing to a full run — e.g. verifying a new
    *  provider/model config against a handful of auctions first. */
   limit?: number
   /** Submit eligible candidates to the configured provider's Batch API
    *  instead of extracting each one synchronously. Default false (unchanged
-   *  synchronous behavior) — this is a manually triggered debug/backfill
+   *  synchronous behavior) — this is also a manually triggered debug/backfill
    *  tool where an immediate result is usually wanted; opt in only for a
-   *  deliberate full-country batch run. Only takes effect when llm-batch.ts
-   *  knows how to batch the configured provider. */
+   *  deliberate full batch run. Only takes effect when llm-batch.ts knows how
+   *  to batch the configured provider. */
   batch?: boolean
 }
 
@@ -68,6 +90,7 @@ export interface ReprocessResult {
   processed: number
   skipped: number
   llmCalls: number
+  durationMs: number
 }
 
 function readMaxLlmPerRun(): number {
@@ -85,7 +108,7 @@ async function findCandidates(opts: ReprocessOptions): Promise<Candidate[]> {
   if (!db) return []
   const conditions = ["kind = 'auction'"]
   const params: unknown[] = []
-  conditions.push(`country = $${params.push(opts.country ?? DEFAULT_COUNTRY)}`)
+  if (opts.country) conditions.push(`country = $${params.push(opts.country)}`)
   if (opts.platform) conditions.push(`platform = $${params.push(opts.platform)}`)
   if (opts.externalId) conditions.push(`external_id = $${params.push(opts.externalId)}`)
   if (opts.caseNumber) conditions.push(`case_number = $${params.push(opts.caseNumber)}`)
@@ -97,12 +120,64 @@ async function findCandidates(opts: ReprocessOptions): Promise<Candidate[]> {
   return rows.map((r) => ({ platform: r.platform, externalId: r.external_id }))
 }
 
+/** Whether enrich.ts has archived a document set for this auction that this
+ *  task hasn't parsed yet — the two hashes are written by different tasks on
+ *  different schedules (see this file's header) and only diverge when
+ *  documents were added/changed/removed since the last successful parse. */
+function hasNewArchivedDocuments(priorEntry: AuctionExtraction | undefined): boolean {
+  return (
+    !!priorEntry?.archivedDocumentSetHash &&
+    priorEntry.archivedDocumentSetHash !== priorEntry.documentSetHash
+  )
+}
+
+/** Overlays the LLM's index-based curation onto enrich.ts's default-
+ *  categorized photo list, keeping each entry's `file` — the LLM never sees
+ *  real filenames, only its position in the `candidateImages` that were sent
+ *  (see `LlmInput.candidateImages`). An index outside `base` (stale/
+ *  hallucinated) is ignored rather than throwing. */
+function applyPhotoCuration(base: CuratedPhoto[], curation: PhotoCuration[]): CuratedPhoto[] {
+  if (!curation.length) return base
+  const out = [...base]
+  for (const c of curation) {
+    const prior = out[c.photoIndex]
+    if (!prior) continue
+    out[c.photoIndex] = { file: prior.file, category: c.category, caption: c.caption, isPropertyPhoto: c.isPropertyPhoto }
+  }
+  return out
+}
+
+async function buildCandidateImages(
+  platform: string,
+  externalId: string,
+  photos: CuratedPhoto[] | undefined,
+): Promise<{ label: string; mimeType: string; data: string }[] | undefined> {
+  if (!photos?.length || !isSafePathSegment(platform) || !isSafePathSegment(externalId)) return undefined
+  const destDir = join(IMAGES_DIR, platform, externalId)
+  const capped = photos.slice(0, MAX_CANDIDATE_PHOTOS)
+  try {
+    return await Promise.all(
+      capped.map(async (photo) => ({
+        label: photo.file,
+        mimeType: mimeTypeFor(photo.file),
+        data: (await readFile(join(destDir, photo.file))).toString('base64'),
+      })),
+    )
+  } catch (err) {
+    console.warn(`[reprocess] candidate image read failed for ${platform}:${externalId}: ${(err as Error).message}`)
+    return undefined
+  }
+}
+
 /**
  * Re-derives one auction's rules/structured fields and (when an LLM is
  * configured) its LLM request input from its archived captures — the
  * fetch+rules step shared by both the synchronous path (reprocessAuction)
- * and explicit Batch opt-in path (runReprocess) below. Returns null when
- * the auction capture can't be found or read.
+ * and the explicit Batch opt-in path (runReprocess) below. `priorEntry` is
+ * always the *raw* cache entry (photos/archivedDocumentSetHash are read from
+ * it regardless of a document-set change); the extraction-owned fields below
+ * fall back to it only when the document set hasn't changed since the last
+ * parse. Returns null when the auction capture can't be found or read.
  */
 async function buildReprocessInput(
   platform: string,
@@ -110,7 +185,7 @@ async function buildReprocessInput(
   priorEntry: AuctionExtraction | undefined,
   llmConfig: LlmConfig | null,
   opts: { nativeDocuments?: boolean } = {},
-): Promise<{ fields: MergeInputFields; input: LlmInput | null; photos: CuratedPhoto[] | undefined } | null> {
+): Promise<{ fields: MergeInputFields; input: LlmInput | null; documentSetChanged: boolean } | null> {
   const auctionCapture = await findLatestCapture('auction', platform, externalId)
   if (!auctionCapture) return null
   const auctionBytes = await downloadBlob(auctionCapture.contentHash)
@@ -123,6 +198,9 @@ async function buildReprocessInput(
     return null
   }
 
+  const documentSetChanged = hasNewArchivedDocuments(priorEntry)
+  const effectivePriorEntry = documentSetChanged ? undefined : priorEntry
+
   const rules = extractByRules({ title: auction.title, description: auction.description })
   const propertyType = rules.propertyType
   const landAreaSqm = auction.sourceLandAreaSqm ?? rules.landAreaSqm
@@ -134,22 +212,22 @@ async function buildReprocessInput(
     rooms: auction.sourceRooms ?? rules.rooms,
     units: rules.units,
     securityDeposit: auction.sourceSecurityDeposit ?? rules.securityDeposit,
-    condition: priorEntry?.condition,
-    features: priorEntry?.features,
-    bedrooms: priorEntry?.bedrooms,
-    bathrooms: priorEntry?.bathrooms,
-    floor: priorEntry?.floor,
-    bathroomHasTub: priorEntry?.bathroomHasTub,
-    bathroomHasShower: priorEntry?.bathroomHasShower,
-    heating: priorEntry?.heating,
-    yearBuilt: priorEntry?.yearBuilt,
-    lastRenovationYear: priorEntry?.lastRenovationYear,
-    renovationNotes: priorEntry?.renovationNotes,
-    insights: priorEntry?.insights,
-    planningNotes: priorEntry?.planningNotes,
-    documentSummary: priorEntry?.documentSummary,
-    marketValueEur: priorEntry?.marketValueEur,
-    marketValueText: priorEntry?.marketValueText,
+    condition: effectivePriorEntry?.condition,
+    features: effectivePriorEntry?.features,
+    bedrooms: effectivePriorEntry?.bedrooms,
+    bathrooms: effectivePriorEntry?.bathrooms,
+    floor: effectivePriorEntry?.floor,
+    bathroomHasTub: effectivePriorEntry?.bathroomHasTub,
+    bathroomHasShower: effectivePriorEntry?.bathroomHasShower,
+    heating: effectivePriorEntry?.heating,
+    yearBuilt: effectivePriorEntry?.yearBuilt,
+    lastRenovationYear: effectivePriorEntry?.lastRenovationYear,
+    renovationNotes: effectivePriorEntry?.renovationNotes,
+    insights: effectivePriorEntry?.insights,
+    planningNotes: effectivePriorEntry?.planningNotes,
+    documentSummary: effectivePriorEntry?.documentSummary,
+    marketValueEur: effectivePriorEntry?.marketValueEur,
+    marketValueText: effectivePriorEntry?.marketValueText,
     confident:
       rules.confident || (propertyType != null && propertyType !== 'sonstiges' && (landAreaSqm != null || livingAreaSqm != null)),
   }
@@ -161,29 +239,36 @@ async function buildReprocessInput(
     // PDFs. DOCX/HTML/text/image attachments are still normalized by
     // prepareArchivedLlmDocuments so every archived attachment can contribute.
     const usingNativeDoc = opts.nativeDocuments ?? llmConfig.provider === 'gemini-native'
+    const candidateImages = await buildCandidateImages(platform, externalId, priorEntry?.photos?.map(normalizePhoto))
+    // Always read the *latest archived* set (enrich.ts's bookkeeping), not
+    // this task's own documentSetHash — that would re-read the version we
+    // already parsed instead of picking up a just-archived change.
     const documentParts = await prepareArchivedLlmDocuments(auction, {
       nativeDocuments: usingNativeDoc,
-      documentSetHash: priorEntry?.documentSetHash,
-      documentSetVersion: priorEntry?.documentSetVersion,
+      documentSetHash: priorEntry?.archivedDocumentSetHash,
+      documentSetVersion: priorEntry?.archivedDocumentSetVersion,
     })
     input = {
       title: auction.title,
       description: auction.description,
       ...documentParts.input,
+      candidateImages,
     }
   }
 
-  return { fields, input, photos: priorEntry?.photos?.map(normalizePhoto) }
+  return { fields, input, documentSetChanged }
 }
 
 /** Rules-only entry for a candidate no LLM attempt was made for (LLM
  *  disabled, or — in batch mode — an attempt was only just submitted and not
  *  yet resolved). Failure counter carried forward unchanged, since no
- *  attempt happened. */
+ *  attempt happened. Crawl-owned fields (photos/archivedDocumentSetHash/...)
+ *  are always carried forward from the *raw* priorEntry regardless of a
+ *  document-set change — this task never touches them except passing them
+ *  through untouched. */
 function buildRulesOnlyEntry(
   fields: MergeInputFields,
   priorEntry: AuctionExtraction | undefined,
-  photos: CuratedPhoto[] | undefined,
   at: string,
 ): AuctionExtraction {
   const hasType = fields.propertyType != null && fields.propertyType !== 'sonstiges'
@@ -215,9 +300,13 @@ function buildRulesOnlyEntry(
     marketValueText: fields.marketValueText,
     source: 'rules',
     confidence: hasType && hasArea ? 'high' : 'low',
-    photos,
+    photos: priorEntry?.photos,
     photosCheckedAt: priorEntry?.photosCheckedAt,
     photoPipelineVersion: priorEntry?.photoPipelineVersion,
+    documentSetHash: priorEntry?.documentSetHash ?? null,
+    documentSetVersion: priorEntry?.documentSetVersion ?? null,
+    archivedDocumentSetHash: priorEntry?.archivedDocumentSetHash ?? null,
+    archivedDocumentSetVersion: priorEntry?.archivedDocumentSetVersion ?? null,
     at,
     ...(prevFailures > 0 ? { llmFailures: prevFailures } : {}),
     ...(priorEntry?.photoFailures ? { photoFailures: priorEntry.photoFailures } : {}),
@@ -228,14 +317,11 @@ function buildRulesOnlyEntry(
  * Re-derives one auction's AuctionExtraction from its archived 'auction'
  * capture (title/description/attachments — the same shape enrichOne would
  * have produced) and, if needed, its archived 'document' capture (the best
- * appraisal PDF's raw bytes). Mirrors enrich.ts's rules → LLM(text) →
- * LLM(vision) cascade, just against archived bytes instead of a live fetch —
- * no photo pipeline (out of scope for E2) and no detail-fetch bookkeeping
- * (the archived capture already *is* the fetched detail data). Additionally
- * feeds a gemini-native call the raw PDF bytes directly (native document
- * understanding) instead of pdftotext/rendered pages — enrich.ts doesn't do
- * this yet, see WP-E follow-up.
- * Returns null when the auction/PDF capture can't be found or read.
+ * appraisal PDF's raw bytes). Mirrors enrich.ts's former rules → LLM(text) →
+ * LLM(vision) cascade, just against archived bytes instead of a live fetch,
+ * plus photo curation (enrich.ts downloads/mines the files; this call only
+ * refines their category/caption via the LLM's photoCuration). Returns null
+ * when the auction/PDF capture can't be found or read.
  */
 export async function reprocessAuction(
   platform: string,
@@ -248,32 +334,66 @@ export async function reprocessAuction(
   if (!base) return null
 
   if (!llmConfig) {
-    return { entry: buildRulesOnlyEntry(base.fields, priorEntry, base.photos, at), llmCalled: false }
+    return { entry: buildRulesOnlyEntry(base.fields, priorEntry, at), llmCalled: false }
   }
 
   const llm = await extractByLlm(base.input!, llmConfig)
-  return { entry: mergeLlmResult(priorEntry, base.fields, llm, at, base.photos), llmCalled: true }
+  let curatedPhotos = priorEntry?.photos?.map(normalizePhoto)
+  if (llm && curatedPhotos && base.input?.candidateImages?.length && llm.photoCuration.length) {
+    curatedPhotos = applyPhotoCuration(curatedPhotos, llm.photoCuration)
+  }
+  const effectivePriorEntry = base.documentSetChanged ? undefined : priorEntry
+  const entry: AuctionExtraction = {
+    ...mergeLlmResult(effectivePriorEntry, base.fields, llm, at, curatedPhotos),
+    // mergeLlmResult carries photosCheckedAt/photoPipelineVersion/photoFailures
+    // forward from its priorEntry argument already; override documentSetHash
+    // to mark "parsed up to the currently archived version" and pass the
+    // crawl-owned archived* fields through untouched — this task never sets
+    // them, only enrich.ts does.
+    documentSetHash: priorEntry?.archivedDocumentSetHash ?? null,
+    documentSetVersion: priorEntry?.archivedDocumentSetVersion ?? null,
+    archivedDocumentSetHash: priorEntry?.archivedDocumentSetHash ?? null,
+    archivedDocumentSetVersion: priorEntry?.archivedDocumentSetVersion ?? null,
+  }
+  return { entry, llmCalled: true }
 }
 
 export default defineTask({
   meta: {
     name: 'reprocess',
     description:
-      'Re-run rules/LLM extraction (incl. vision) against archived raw_captures — no live portal fetch. Manually triggered, for iterating on extraction prompts/rules.',
+      'Run rules/LLM extraction (incl. vision) against archived raw_captures — no live portal fetch. Scheduled across all countries; also invokable manually/scoped.',
   },
   async run(event) {
-    return { result: await runReprocess((event?.payload ?? {}) as ReprocessOptions) }
+    if (running) {
+      console.warn('[reprocess] previous run still in progress — skipping')
+      return { result: undefined }
+    }
+    running = true
+    try {
+      await recordTaskRunStart('reprocess')
+      const result = await runReprocess((event?.payload ?? {}) as ReprocessOptions)
+      await recordTaskRunEnd('reprocess', { result: { ...result } })
+      return { result }
+    } catch (err) {
+      await recordTaskRunEnd('reprocess', { error: (err as Error).message })
+      throw err
+    } finally {
+      running = false
+    }
   },
 })
 
 export async function runReprocess(opts: ReprocessOptions = {}): Promise<ReprocessResult> {
+  const startedAt = Date.now()
   if (opts.force && !opts.platform && !opts.externalId && !opts.caseNumber && !opts.limit) {
     throw new Error(
-      '[reprocess] force requires platform/externalId/caseNumber or limit — an unbounded forced run would re-spend the LLM budget on every already-extracted auction',
+      '[reprocess] force requires platform/externalId/caseNumber or limit — an unbounded forced re-run would re-spend the LLM budget on every already-extracted auction',
     )
   }
 
-  const candidates = await findCandidates(opts)
+  const rawCandidates = await findCandidates(opts)
+  const candidates = interleaveByPlatform(rawCandidates)
   const cache = await readExtractionCache()
   const llmConfig = await readExtractionLlmConfig()
   const executionMode = await readLlmExecutionMode()
@@ -295,6 +415,14 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
     )
   }
   const useBatch = batchRequested && supportsLlmBatch(llmConfig) && !batchProviderBroken
+
+  // maxLlmPerRun is shared across all platforms; a per-platform cap keeps one
+  // huge platform's backlog from burning through the whole budget before
+  // smaller platforms' listings are ever reached (same rationale enrich.ts
+  // used to apply — see interleave-by-platform.ts).
+  const llmPlatformCount = new Set(candidates.map((c) => c.platform)).size || 1
+  const llmCapPerPlatform = Math.max(1, Math.ceil(maxLlmPerRun / llmPlatformCount))
+  const llmCallsByPlatform = new Map<string, number>()
 
   let processed = 0
   let skipped = 0
@@ -327,7 +455,8 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
         opts.force ||
         ((!priorEntry ||
           (priorEntry.source === 'rules' && priorEntry.confidence === 'low') ||
-          (llmConfig != null && hasMissingLlmOnlyField)) &&
+          (llmConfig != null && hasMissingLlmOnlyField) ||
+          hasNewArchivedDocuments(priorEntry)) &&
           (priorEntry?.llmFailures ?? 0) < MAX_LLM_FAILURES &&
           !isLlmBatchPending(priorEntry))
       if (!eligible) {
@@ -335,7 +464,11 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
         continue
       }
 
-      if (useBatch) {
+      const platformLlmCalls = llmCallsByPlatform.get(platform) ?? 0
+      const llmReady = !!llmConfig && llmCalls < maxLlmPerRun && platformLlmCalls < llmCapPerPlatform
+      const useLlm = llmReady ? llmConfig : null
+
+      if (useBatch && llmReady) {
         const base = await buildReprocessInput(platform, externalId, priorEntry, llmConfig, {
           nativeDocuments: supportsNativeBatchDocuments(llmConfig),
         })
@@ -343,8 +476,14 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
           skipped++
           continue
         }
+        llmCalls++
+        llmCallsByPlatform.set(platform, platformLlmCalls + 1)
         batchItems.push({ key, input: base.input })
-        const entry = buildRulesOnlyEntry(base.fields, priorEntry, base.photos, at)
+        const entry = {
+          ...buildRulesOnlyEntry(base.fields, priorEntry, at),
+          documentSetHash: priorEntry?.archivedDocumentSetHash ?? null,
+          documentSetVersion: priorEntry?.archivedDocumentSetVersion ?? null,
+        }
         cache[key] = entry
         dirty[key] = entry
         processed++
@@ -359,13 +498,15 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
         continue
       }
 
-      const useLlm = llmConfig && llmCalls < maxLlmPerRun ? llmConfig : null
       const result = await reprocessAuction(platform, externalId, priorEntry, useLlm, at)
       if (!result) {
         skipped++
         continue
       }
-      if (result.llmCalled) llmCalls++
+      if (result.llmCalled) {
+        llmCalls++
+        llmCallsByPlatform.set(platform, platformLlmCalls + 1)
+      }
 
       cache[key] = result.entry
       dirty[key] = result.entry
@@ -373,8 +514,8 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
 
       // Keep the detail page (which reads auction_snapshot directly, not the
       // extraction_cache overlay) in sync for auctions actually touched here —
-      // cheap since WP-5 made auction_snapshot a per-row Postgres upsert rather
-      // than a whole-crawl JSON rewrite.
+      // cheap since auction_snapshot is a per-row Postgres upsert rather than
+      // a whole-crawl JSON rewrite.
       const snapshot = await readAuctionSnapshot()
       const snapshotEntry = snapshot[key]
       if (snapshotEntry) {
@@ -391,9 +532,10 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
   if (batchItems.length > 0 && llmConfig) {
     const submission = await submitLlmBatch(batchItems, llmConfig, 'reprocess')
     if (submission) {
-      // Same rationale as enrich.ts: mark every submitted item so a second
-      // runReprocess({ batch: true }) call doesn't re-submit it to a new job
-      // while this one is still in flight (job submission isn't idempotent).
+      // Same rationale enrich.ts used to apply: mark every submitted item so
+      // a second runReprocess({ batch: true }) call doesn't re-submit it to a
+      // new job while this one is still in flight (job submission isn't
+      // idempotent).
       for (const item of submission.submitted) {
         const priorItemEntry = cache[item.key]
         if (!priorItemEntry) continue
@@ -412,8 +554,9 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
 
   if (Object.keys(dirty).length > 0) await writeExtractionCache(dirty)
 
+  const durationMs = Date.now() - startedAt
   console.log(
-    `[reprocess] candidates=${candidates.length} processed=${processed} skipped=${skipped} llmCalls=${llmCalls}`,
+    `[reprocess] candidates=${candidates.length} processed=${processed} skipped=${skipped} llmCalls=${llmCalls} in ${(durationMs / 1000).toFixed(0)}s`,
   )
-  return { candidates: candidates.length, processed, skipped, llmCalls }
+  return { candidates: candidates.length, processed, skipped, llmCalls, durationMs }
 }

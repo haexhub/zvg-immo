@@ -706,22 +706,18 @@ interface LlmBatchCapability {
   checkedAt: string
   source: 'enrich' | 'reprocess' | 'config'
 }
-interface EnrichRunSummary {
-  crawled: number
-  new: number
-  cached: number
-  enriched: number
+interface ReprocessRunSummary {
+  candidates: number
+  processed: number
+  skipped: number
   llmCalls: number
-  photoExtractions: number
-  photosTotal: number
-  confident: number
   durationMs: number
 }
 interface TaskRunStatus {
   status: 'idle' | 'running'
   startedAt: string | null
   finishedAt: string | null
-  lastResult: EnrichRunSummary | null
+  lastResult: ReprocessRunSummary | null
   lastError: string | null
 }
 interface LlmBatchJobsOverview {
@@ -739,7 +735,7 @@ interface LlmBatchJobsOverview {
   jobs: LlmBatchJobOverviewItem[]
   recentJobs: LlmBatchJobOverviewItem[]
   capabilities: Record<string, LlmBatchCapability>
-  enrichStatus: TaskRunStatus
+  reprocessStatus: TaskRunStatus
 }
 const reprocessLimit = ref('10')
 const reprocessCountry = ref('de')
@@ -1366,20 +1362,20 @@ onBeforeUnmount(stopPolling)
           </p>
           <p v-if="llmBatchJobsError" class="text-sm text-destructive">{{ llmBatchJobsError }}</p>
 
-          <div v-if="llmBatchJobs?.enrichStatus" class="text-sm space-y-1">
-            <p v-if="llmBatchJobs.enrichStatus.status === 'running'">
-              {{ $t('settings.llmBatch.enrichRunning', { at: formatBatchDate(llmBatchJobs.enrichStatus.startedAt) }) }}
+          <div v-if="llmBatchJobs?.reprocessStatus" class="text-sm space-y-1">
+            <p v-if="llmBatchJobs.reprocessStatus.status === 'running'">
+              {{ $t('settings.llmBatch.reprocessRunning', { at: formatBatchDate(llmBatchJobs.reprocessStatus.startedAt) }) }}
             </p>
-            <p v-else-if="llmBatchJobs.enrichStatus.finishedAt" class="text-muted-foreground">
-              {{ $t('settings.llmBatch.enrichLastRun', {
-                at: formatBatchDate(llmBatchJobs.enrichStatus.finishedAt),
-                enriched: llmBatchJobs.enrichStatus.lastResult?.enriched ?? 0,
-                llmCalls: llmBatchJobs.enrichStatus.lastResult?.llmCalls ?? 0,
-                duration: Math.round((llmBatchJobs.enrichStatus.lastResult?.durationMs ?? 0) / 1000),
+            <p v-else-if="llmBatchJobs.reprocessStatus.finishedAt" class="text-muted-foreground">
+              {{ $t('settings.llmBatch.reprocessLastRun', {
+                at: formatBatchDate(llmBatchJobs.reprocessStatus.finishedAt),
+                processed: llmBatchJobs.reprocessStatus.lastResult?.processed ?? 0,
+                llmCalls: llmBatchJobs.reprocessStatus.lastResult?.llmCalls ?? 0,
+                duration: Math.round((llmBatchJobs.reprocessStatus.lastResult?.durationMs ?? 0) / 1000),
               }) }}
             </p>
-            <p v-if="llmBatchJobs.enrichStatus.lastError" class="text-destructive">
-              {{ $t('settings.llmBatch.enrichLastError', { message: llmBatchJobs.enrichStatus.lastError }) }}
+            <p v-if="llmBatchJobs.reprocessStatus.lastError" class="text-destructive">
+              {{ $t('settings.llmBatch.reprocessLastError', { message: llmBatchJobs.reprocessStatus.lastError }) }}
             </p>
           </div>
 

@@ -203,8 +203,10 @@ export default defineNuxtConfig({
       // Every 6 hours: re-crawl and fill in missing geocodes. After the first
       // bulk run the cache is hot; subsequent ticks finish in seconds.
       '0 */6 * * *': ['geocode'],
-      // Offset 30 min from geocode so the two full crawls don't overlap. Fills
-      // the extraction cache (property type + sizes) for new listings.
+      // Offset 30 min from geocode so the two full crawls don't overlap. Crawls,
+      // fetches detail pages, and downloads/archives documents + photos for new
+      // or changed listings — no extraction here (see 'reprocess' below), so
+      // this keeps making progress regardless of LLM availability/budget.
       '30 */6 * * *': ['enrich'],
       // Hourly: crawl regions due for a refresh and write the persistent list
       // cache so /api/auctions serves from disk instead of hitting upstream on
@@ -212,6 +214,11 @@ export default defineNuxtConfig({
       // robust portals refresh hourly while rate-limited ones stay on a longer
       // interval — an always-on background watch for new/updated auctions.
       '0 * * * *': ['refresh'],
+      // Hourly, offset 15 min from refresh: runs regex rules + the LLM against
+      // whatever 'enrich' has archived so far, across every country — entirely
+      // independent of enrich's own schedule (see server/tasks/reprocess.ts).
+      // A stalled/rate-limited LLM only delays this task, never crawling.
+      '15 * * * *': ['reprocess'],
       // Every 30 minutes: check in-flight LLM Batch API jobs submitted by
       // explicit batch runs (see server/utils/extract/llm-batch.ts) and merge
       // completed results — jobs often finish well under the 24h SLA, so a
