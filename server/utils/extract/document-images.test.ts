@@ -177,7 +177,7 @@ describe('extractDocumentPhotos', () => {
     ], { destDir })
 
     expect(files).toEqual(['pdf-photo.jpg'])
-    expect(extractPdfPhotos).toHaveBeenCalledWith('https://example.test/report.pdf', { destDir, maxPhotos: 12 })
+    expect(extractPdfPhotos).toHaveBeenCalledWith('https://example.test/report.pdf', { destDir })
   })
 
   it('extracts embedded DOCX media from word/media into content-addressable image files', async () => {

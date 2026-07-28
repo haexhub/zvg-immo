@@ -82,4 +82,34 @@ describe('auctionPhotoUrls', () => {
       ),
     ).toEqual(['/same.jpg'])
   })
+
+  it('does not infer native-gallery coverage from hash-like local document filenames', () => {
+    expect(
+      auctionPhotoUrls(
+        auction({
+          photoUrls: ['https://zvg.test/1.jpg', 'https://zvg.test/2.jpg'],
+          extraction: {
+            propertyType: null,
+            landAreaSqm: null,
+            livingAreaSqm: null,
+            rooms: null,
+            units: null,
+            source: 'rules',
+            confidence: 'low',
+            photos: [
+              { file: '1111111111111111.jpg', category: 'aussen', caption: null, isPropertyPhoto: true },
+              { file: '2222222222222222.jpg', category: 'innen', caption: null, isPropertyPhoto: true },
+            ],
+            photosCheckedAt: '2026-07-25T00:00:00.000Z',
+            at: '2026-07-25T00:00:00.000Z',
+          },
+        }),
+      ),
+    ).toEqual([
+      'https://zvg.test/1.jpg',
+      'https://zvg.test/2.jpg',
+      '/api/auction-image/mv-zvgcom/210678/1111111111111111.jpg',
+      '/api/auction-image/mv-zvgcom/210678/2222222222222222.jpg',
+    ])
+  })
 })

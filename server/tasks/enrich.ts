@@ -66,13 +66,13 @@ const FLUSH_EVERY = 200
 // immediately (photosCheckedAt gets set); this bound only guards against
 // persistent errors.
 const MAX_PHOTO_FAILURES = 3
-const PHOTO_PIPELINE_VERSION = 2
-const KRONOFOGDEN_GALLERY_PHOTO_PIPELINE_VERSION = 3
-// Cap on photos mined across *all* candidate documents for one listing.
-// Gutachten/Exposés are frequently split across PDF/DOCX/HTML attachments
-// (Teil 1, Teil 2, Anlagen), so mining stops only once this many are found
-// or every candidate has been tried — not after the first document.
-const MAX_DOCUMENT_PHOTOS_PER_LISTING = 12
+const PHOTO_PIPELINE_VERSION = 3
+const KRONOFOGDEN_GALLERY_PHOTO_PIPELINE_VERSION = 5
+const CONTENT_HASH_IMAGE_FILE_RE = /^([0-9a-f]{8,32})\.(?:jpe?g|png|webp)$/i
+
+function imageContentHashFromFilename(name: string): string | null {
+  return CONTENT_HASH_IMAGE_FILE_RE.exec(name)?.[1] ?? null
+}
 
 // Guards against overlapping runs: a cold-start bootstrap run (many detail
 // fetches + document downloads) can still be active when the cron tick
@@ -174,7 +174,7 @@ export async function runEnrich(opts: EnrichOptions = {}) {
       return (
         hit != null &&
         pipelineDue &&
-        (photos === 0 || nativePhotoUrls(a).length > 0) &&
+        (photos === 0 || nativePhotoUrls(a).length > 0 || a.attachments.length > 0) &&
         (hit.photoFailures ?? 0) < MAX_PHOTO_FAILURES
       )
     }
@@ -286,11 +286,11 @@ export async function runEnrich(opts: EnrichOptions = {}) {
           }
         }
 
-        // Photo pipeline — native image URLs first, PDF/document mining as a
-        // fallback. Downloads/mines files onto local disk (mirrored to the
-        // images bucket when configured) and records a deterministic,
-        // uncategorized CuratedPhoto list; reprocess.ts's LLM call later
-        // refines the categories, it never (re)downloads the files.
+        // Photo pipeline — mirror native image URLs first, then mine every
+        // document candidate. Native URLs stay in `auction.photoUrls` for
+        // display; `extraction.photos` stores document-derived images only
+        // after dropping exact byte duplicates whose content hash matches a
+        // mirrored native image.
         let curatedPhotos: CuratedPhoto[] | undefined
         let photosCheckedAt = priorEntry?.photosCheckedAt
         let photoFailures = priorEntry?.photoFailures ?? 0
@@ -298,21 +298,39 @@ export async function runEnrich(opts: EnrichOptions = {}) {
         if (needsPhotoBackfill(a) && isSafePathSegment(a.platform) && isSafePathSegment(a.externalId)) {
           const destDir = join(IMAGES_DIR, a.platform, a.externalId)
           const priorPhotos = priorEntry?.photos?.map(normalizePhoto) ?? []
-          let photos = priorPhotos.map((photo) => photo.file)
+          const targetVersion = targetPhotoPipelineVersion(a)
+          const rebuildingPhotoSet = (priorEntry?.photoPipelineVersion ?? 1) < targetVersion
+          let photos = rebuildingPhotoSet ? [] : priorPhotos.map((photo) => photo.file)
           let newlyDownloadedPhotos: string[] = []
           const nativeFotoUrls = nativePhotoUrls(a)
+          const nativePhotoHashes = new Set<string>()
+          const addNewlyDownloadedPhotos = (names: readonly string[]) => {
+            newlyDownloadedPhotos = [...new Set([...newlyDownloadedPhotos, ...names])]
+          }
+          const addDisplayedPhotos = (names: readonly string[]) => {
+            photos = [...new Set([...photos, ...names])]
+          }
           try {
             if (nativeFotoUrls.length > 0) {
-              newlyDownloadedPhotos = await downloadNativeImages([...new Set(nativeFotoUrls)], { destDir })
-              photos = [...new Set([...photos, ...newlyDownloadedPhotos])]
+              const nativePhotos = await downloadNativeImages([...new Set(nativeFotoUrls)], { destDir })
+              addNewlyDownloadedPhotos(nativePhotos)
+              for (const name of nativePhotos) {
+                const hash = imageContentHashFromFilename(name)
+                if (hash) nativePhotoHashes.add(hash)
+              }
             }
-            if (photos.length === 0 && a.attachments.length > 0) {
+            if (a.attachments.length > 0) {
               photoExtractions++
-              newlyDownloadedPhotos = await extractDocumentPhotos(a.attachments, {
+              const documentPhotos = await extractDocumentPhotos(a.attachments, {
                 destDir,
-                maxPhotos: MAX_DOCUMENT_PHOTOS_PER_LISTING,
               })
-              photos = newlyDownloadedPhotos
+              addNewlyDownloadedPhotos(documentPhotos)
+              addDisplayedPhotos(
+                documentPhotos.filter((name) => {
+                  const hash = imageContentHashFromFilename(name)
+                  return !hash || !nativePhotoHashes.has(hash)
+                }),
+              )
             }
             photosTotal += photos.length
             // Mirror the freshly written files into the images bucket (WP-4) so
@@ -337,6 +355,9 @@ export async function runEnrich(opts: EnrichOptions = {}) {
             console.warn(
               `[enrich] photo extraction failed for ${a.platform}:${a.externalId}: ${(err as Error).message}`,
             )
+            if (photos.length === 0 && priorPhotos.length > 0) {
+              photos = priorPhotos.map((photo) => photo.file)
+            }
           }
           curatedPhotos = photos.length > 0
             ? photos.map((name) => priorPhotos.find((photo) => photo.file === name) ?? normalizePhoto(name))

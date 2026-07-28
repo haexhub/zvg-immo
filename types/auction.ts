@@ -162,9 +162,9 @@ export interface Auction {
   sourceLandAreaSqm?: number | null
   sourceRooms?: number | null
   /** Direct upstream image URLs (the full gallery, not just the thumbnail).
-   *  Mirrored into the local image cache by the enrich task, which turns them
-   *  into `extraction.photos`. Crawlers setting this should also set
-   *  `photoCount` accordingly. */
+   *  Mirrored into the local image cache by the enrich task for storage and
+   *  content-hash dedupe against document-extracted photos. Crawlers setting
+   *  this should also set `photoCount` accordingly. */
   photoUrls?: string[]
   /** Coordinates provided by the source platform — spares a geocoder lookup.
    *  Overlaid as-is by /api/auctions-geo. */

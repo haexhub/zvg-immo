@@ -219,7 +219,7 @@ describe('runEnrich photo backfill (WP-1)', () => {
         documentSetHash: 'prior-set',
         documentSetVersion: 1,
         photosCheckedAt: '2026-07-20T00:00:00.000Z',
-        photoPipelineVersion: 2,
+        photoPipelineVersion: 3,
         at: '2026-07-01T00:00:00.000Z',
       },
     }
@@ -330,11 +330,9 @@ describe('runEnrich photo backfill (WP-1)', () => {
 
     expect(downloadNativeImages).toHaveBeenCalledTimes(1)
     const written = vi.mocked(writeExtractionCache).mock.calls[0]?.[0] as ExtractionCache
-    expect(written['zvg-portal:14409']?.photos).toEqual([
-      { file: 'foto1.jpg', category: 'sonstiges', caption: null, isPropertyPhoto: true },
-    ])
+    expect(written['zvg-portal:14409']?.photos).toBeUndefined()
     expect(written['zvg-portal:14409']?.photosCheckedAt).toBeTruthy()
-    expect(written['zvg-portal:14409']?.photoPipelineVersion).toBe(2)
+    expect(written['zvg-portal:14409']?.photoPipelineVersion).toBe(3)
   })
 
   it('does not re-attempt the photo pipeline once photosCheckedAt is set for the current pipeline version', async () => {
@@ -353,7 +351,7 @@ describe('runEnrich photo backfill (WP-1)', () => {
         confidence: 'low',
         photos: undefined,
         photosCheckedAt: '2026-07-20T00:00:00.000Z',
-        photoPipelineVersion: 2,
+        photoPipelineVersion: 3,
         at: '2026-07-01T00:00:00.000Z',
       },
     }
@@ -364,7 +362,7 @@ describe('runEnrich photo backfill (WP-1)', () => {
     expect(downloadNativeImages).not.toHaveBeenCalled()
   })
 
-  it('does not re-attempt unchanged native-photo entries from other platforms just because Kronofogden moved to version 3', async () => {
+  it('does not re-attempt unchanged native-photo entries from other platforms just because Kronofogden moved to version 5', async () => {
     const auction = makeAuction({
       photoUrls: ['https://zvg-portal.de/foto1.jpg'],
     })
@@ -382,7 +380,7 @@ describe('runEnrich photo backfill (WP-1)', () => {
         confidence: 'high',
         photos: [{ file: 'foto1.jpg', category: 'sonstiges', caption: null, isPropertyPhoto: true }],
         photosCheckedAt: '2026-07-20T00:00:00.000Z',
-        photoPipelineVersion: 2,
+        photoPipelineVersion: 3,
         at: '2026-07-01T00:00:00.000Z',
       },
     }
@@ -420,7 +418,7 @@ describe('runEnrich photo backfill (WP-1)', () => {
 
     expect(downloadNativeImages).toHaveBeenCalledTimes(1)
     const written = vi.mocked(writeExtractionCache).mock.calls[0]?.[0] as ExtractionCache
-    expect(written['zvg-portal:14409']?.photoPipelineVersion).toBe(2)
+    expect(written['zvg-portal:14409']?.photoPipelineVersion).toBe(3)
   })
 
   it('bumps photoFailures and leaves photosCheckedAt unset when the pipeline throws', async () => {
@@ -626,10 +624,10 @@ describe('runEnrich photo backfill (WP-1)', () => {
     expect(written['zvg-portal:14409']?.photos).toEqual([
       { file: 'bov-photo.jpg', category: 'sonstiges', caption: null, isPropertyPhoto: true },
     ])
-    expect(written['zvg-portal:14409']?.photoPipelineVersion).toBe(2)
+    expect(written['zvg-portal:14409']?.photoPipelineVersion).toBe(3)
   })
 
-  it('merges newly exposed native gallery photos into existing document photos', async () => {
+  it('rebuilds legacy native-gallery entries with hash-deduped document photos', async () => {
     const auction = makeAuction({
       platform: 'se-kronofogden',
       photoUrls: ['https://auktionstorget.kronofogden.se/images/200.abc/1/Bild%201.jpg'],
@@ -663,17 +661,17 @@ describe('runEnrich photo backfill (WP-1)', () => {
       },
     }
     vi.mocked(readExtractionCache).mockResolvedValue(cache)
-    vi.mocked(downloadNativeImages).mockResolvedValue(['native-photo.jpg'])
+    vi.mocked(downloadNativeImages).mockResolvedValue(['1111111111111111.jpg'])
+    vi.mocked(extractDocumentPhotos).mockResolvedValue(['1111111111111111.jpg', '2222222222222222.jpg'])
 
     await runEnrich()
 
     expect(downloadNativeImages).toHaveBeenCalledTimes(1)
-    expect(extractDocumentPhotos).not.toHaveBeenCalled()
+    expect(extractDocumentPhotos).toHaveBeenCalledTimes(1)
     const written = vi.mocked(writeExtractionCache).mock.calls[0]?.[0] as ExtractionCache
     expect(written['se-kronofogden:14409']?.photos).toEqual([
-      { file: 'pdf-photo.jpg', category: 'aussen', caption: 'PDF', isPropertyPhoto: true },
-      { file: 'native-photo.jpg', category: 'sonstiges', caption: null, isPropertyPhoto: true },
+      { file: '2222222222222222.jpg', category: 'sonstiges', caption: null, isPropertyPhoto: true },
     ])
-    expect(written['se-kronofogden:14409']?.photoPipelineVersion).toBe(3)
+    expect(written['se-kronofogden:14409']?.photoPipelineVersion).toBe(5)
   })
 })
