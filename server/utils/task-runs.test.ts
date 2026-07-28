@@ -29,6 +29,7 @@ const IDLE_STATUS = {
   finishedAt: null,
   lastResult: null,
   lastError: null,
+  lastWarning: null,
 }
 
 const SUMMARY = {
@@ -75,6 +76,21 @@ describe('task-runs', () => {
     expect(finished.startedAt).toBe(running.startedAt)
     expect(finished.lastResult).toEqual(SUMMARY)
     expect(finished.lastError).toBeNull()
+    expect(finished.lastWarning).toBeNull()
+  })
+
+  it('records a successful run warning for admin visibility', async () => {
+    const { getPool } = await import('./db')
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { getTaskRunStatus, recordTaskRunStart, recordTaskRunEnd } = await import('./task-runs')
+
+    await recordTaskRunStart('reprocess')
+    await recordTaskRunEnd('reprocess', { result: { processed: 0, skipped: 1, llmCalls: 1 }, warning: 'LLM-Rate-Limit: gemini-native/gemini-3.6-flash.' })
+
+    const status = await getTaskRunStatus('reprocess')
+    expect(status.status).toBe('idle')
+    expect(status.lastWarning).toBe('LLM-Rate-Limit: gemini-native/gemini-3.6-flash.')
   })
 
   it('records a failed run without discarding the previous successful result', async () => {
@@ -92,6 +108,7 @@ describe('task-runs', () => {
     const status = await getTaskRunStatus('enrich')
     expect(status.status).toBe('idle')
     expect(status.lastError).toBe('crawl failed: timeout')
+    expect(status.lastWarning).toBeNull()
     // A failed run keeps the last known-good result visible instead of
     // wiping it, so /settings still shows what the pipeline last produced.
     expect(status.lastResult).toEqual(SUMMARY)
