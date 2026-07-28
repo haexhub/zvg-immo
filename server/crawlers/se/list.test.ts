@@ -195,6 +195,45 @@ describe('extractKronofogdenPhotoUrls', () => {
       `${BASE}/images/200.aaa/1781605779295/1.jpg`,
     ])
   })
+
+  it('recognizes closing div tags with whitespace before the angle bracket', () => {
+    const html = `
+      <div id="galleria">
+        <img src="/images/200.aaa/1781605779295/1.jpg">
+      </div >
+      <img src="/images/18.static/1/2.jpg">
+    `
+
+    expect(extractKronofogdenPhotoUrls(html)).toEqual([
+      `${BASE}/images/200.aaa/1781605779295/1.jpg`,
+    ])
+  })
+
+  it('falls back to strict filename matching when the galleria close tag is missing (fails closed)', () => {
+    const html = `
+      <div id="galleria">
+        <img src="/images/200.aaa/1781605779295/1.jpg">
+        <img src="/images/200.bbb/1781594534027/Bild-002.jpg">
+    `
+
+    expect(extractKronofogdenPhotoUrls(html)).toEqual([
+      `${BASE}/images/200.bbb/1781594534027/Bild-002.jpg`,
+    ])
+  })
+
+  it('preserves DOM order when a src candidate precedes a srcset candidate', () => {
+    const html = `
+      <div id="galleria">
+        <img src="/images/200.aaa/1781605779295/1.jpg">
+        <img srcset="/images/200.bbb/1781594534027/2.jpg 1024w">
+      </div>
+    `
+
+    expect(extractKronofogdenPhotoUrls(html)).toEqual([
+      `${BASE}/images/200.aaa/1781605779295/1.jpg`,
+      `${BASE}/images/200.bbb/1781594534027/2.jpg`,
+    ])
+  })
 })
 
 describe('fetchAllListings', () => {

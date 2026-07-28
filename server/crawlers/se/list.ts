@@ -101,23 +101,24 @@ function toAbsoluteListingImageUrl(raw: string, scopedToGallery: boolean): strin
  *  regex (which would stop at the first nested `</div>`) or taking the rest
  *  of the document (which would also sweep up unrelated images, e.g. footer
  *  logos/banners, appearing later on the page). Returns null if no galleria
- *  div is present. */
+ *  div is present, or if its matching close tag can't be found (fail closed
+ *  rather than falling back to unrelated later content). */
 function extractGalleriaContent(html: string): string | null {
   const openMatch = /<div\b[^>]*\bid=["']galleria["'][^>]*>/i.exec(html)
   if (!openMatch) return null
   const start = openMatch.index + openMatch[0].length
-  const tagRe = /<div\b|<\/div>/gi
+  const tagRe = /<div\b|<\/div\s*>/gi
   tagRe.lastIndex = start
   let depth = 1
   let match: RegExpExecArray | null
   while ((match = tagRe.exec(html))) {
-    if (match[0].toLowerCase() === '</div>') {
+    if (match[0].startsWith('</')) {
       if (--depth === 0) return html.slice(start, match.index)
     } else {
       depth++
     }
   }
-  return html.slice(start)
+  return null
 }
 
 export function extractKronofogdenPhotoUrls(html: string): string[] {
@@ -137,17 +138,23 @@ export function extractKronofogdenPhotoUrls(html: string): string[] {
     if (!current || width > current.width) bestByImage.set(key, { url, width })
   }
 
-  for (const match of source.matchAll(/\bsrcset\s*=\s*["']([^"']+)["']/gi)) {
-    const srcset = decodeHtmlAttribute(match[1] ?? '')
-    for (const candidate of srcset.split(',')) {
-      const m = candidate.trim().match(/^(\S+)(?:\s+(\d+)w)?$/i)
-      if (!m?.[1]) continue
-      add(m[1], m[2] ? Number.parseInt(m[2], 10) : 0)
+  // A single pass in source order, so a gallery image found via `src`
+  // followed by one found via `srcset` keeps that order — scanning srcset
+  // separately first would reverse it (Map preserves first-insertion order).
+  for (const match of source.matchAll(/\b(srcset|src|href|data-[\w-]+)\s*=\s*["']([^"']+)["']/gi)) {
+    const attr = match[1]!.toLowerCase()
+    const value = match[2]
+    if (!value) continue
+    if (attr === 'srcset') {
+      const srcset = decodeHtmlAttribute(value)
+      for (const candidate of srcset.split(',')) {
+        const m = candidate.trim().match(/^(\S+)(?:\s+(\d+)w)?$/i)
+        if (!m?.[1]) continue
+        add(m[1], m[2] ? Number.parseInt(m[2], 10) : 0)
+      }
+    } else {
+      add(value)
     }
-  }
-
-  for (const match of source.matchAll(/\b(?:src|href|data-[\w-]+)\s*=\s*["']([^"']+)["']/gi)) {
-    if (match[1]) add(match[1])
   }
 
   return [...bestByImage.values()].map((entry) => entry.url)
