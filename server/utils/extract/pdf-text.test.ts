@@ -8,7 +8,8 @@ import { getPool } from '../db'
 vi.mock('../db', () => ({ getPool: vi.fn() }))
 
 // Imported after the mock so the module under test picks up the mocked getPool.
-const { fetchPdfBuffer, pdfToText, pickAllPdfs, pickRelevantPdfs } = await import('./pdf-text')
+const { fetchPdfBuffer, pdfHasSuspiciousCjkEncoding, pdfToText, pickAllPdfs, pickRelevantPdfs } =
+  await import('./pdf-text')
 
 const CACHE_DIR = join(process.cwd(), '.cache_zvg', 'pdftext')
 const FAKE_PDF = Buffer.from('%PDF-1.4\n%%EOF')
@@ -86,6 +87,43 @@ describe('pickAllPdfs', () => {
       attachment('announcement', 'notice.pdf', '/notice.pdf'),
       attachment('other', 'bidding.pdf', '/bidding.pdf'),
     ])
+  })
+})
+
+// A minimal Type0/CID font declaring Adobe's predefined Shift-JIS CMap —
+// mirrors what a misconfigured scanner OCR tool embeds when it mismaps
+// non-Latin text onto a CJK font. No real glyph data needed since pdffonts
+// only inspects the font dictionary, not the content stream.
+const CJK_ENCODED_PDF = Buffer.from(
+  [
+    '%PDF-1.4',
+    '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj',
+    '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj',
+    '3 0 obj<</Type/Page/Parent 2 0 R/Resources<</Font<</F1 4 0 R>>>>/MediaBox[0 0 200 200]/Contents 7 0 R>>endobj',
+    '4 0 obj<</Type/Font/Subtype/Type0/BaseFont/MS-Gothic/Encoding/90ms-RKSJ-H/DescendantFonts[5 0 R]>>endobj',
+    '5 0 obj<</Type/Font/Subtype/CIDFontType2/BaseFont/MS-Gothic/CIDSystemInfo<</Registry(Adobe)/Ordering(Japan1)/Supplement 2>>/FontDescriptor 6 0 R/DW 1000>>endobj',
+    '6 0 obj<</Type/FontDescriptor/FontName/MS-Gothic/Flags 4/FontBBox[0 0 1000 1000]/ItalicAngle 0/Ascent 1000/Descent 0/CapHeight 1000/StemV 80>>endobj',
+    '7 0 obj<</Length 44>>',
+    'stream',
+    'BT /F1 24 Tf 10 100 Td <8140> Tj ET',
+    'endstream',
+    'endobj',
+    'trailer<</Size 8/Root 1 0 R>>',
+    '%%EOF',
+  ].join('\n'),
+)
+
+describe('pdfHasSuspiciousCjkEncoding', () => {
+  it('trusts a normal Standard-encoded font', async () => {
+    await expect(pdfHasSuspiciousCjkEncoding(PDF_WITH_TEXT)).resolves.toBe(true)
+  })
+
+  it('flags a font using a CJK CID encoding', async () => {
+    await expect(pdfHasSuspiciousCjkEncoding(CJK_ENCODED_PDF)).resolves.toBe(false)
+  })
+
+  it('fails open on an unreadable PDF', async () => {
+    await expect(pdfHasSuspiciousCjkEncoding(FAKE_PDF)).resolves.toBe(true)
   })
 })
 
