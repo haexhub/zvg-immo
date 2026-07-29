@@ -57,6 +57,9 @@ export interface ExternalEnrichmentOptions {
   locationContextAdapters?: LocationContextAdapter[]
   now?: Date
   limit?: number
+  country?: string
+  platform?: string
+  externalId?: string
 }
 
 export interface ExternalEnrichmentSummary {
@@ -79,14 +82,14 @@ export default defineTask({
     name: 'external-enrichment',
     description: 'Refresh cached external market and natural-hazard overlays for auction detail pages.',
   },
-  async run() {
+  async run(event) {
     if (running) {
       console.warn('[external-enrichment] previous run still in progress — skipping')
       return { result: undefined }
     }
     running = true
     try {
-      return { result: await runExternalEnrichment() }
+      return { result: await runExternalEnrichment((event?.payload ?? {}) as ExternalEnrichmentOptions) }
     } finally {
       running = false
     }
@@ -120,7 +123,7 @@ export async function runExternalEnrichment(
   const hazardAdapters = options.hazardAdapters ?? await defaultHazardAdapters(checkedAt)
   const locationContextAdapters = options.locationContextAdapters ?? defaultLocationContextAdapters(checkedAt)
 
-  for (const rawAuction of Object.values(snapshot)) {
+  for (const rawAuction of Object.values(snapshot).filter((auction) => inScope(auction, options))) {
     if (options.limit != null && summary.processed >= options.limit) break
     const point = await resolvePoint(rawAuction)
     if (!point) {
@@ -168,6 +171,13 @@ export async function runExternalEnrichment(
   summary.written = ok ? Object.keys(entries).length : 0
   summary.durationMs = Date.now() - startedAt
   return summary
+}
+
+function inScope(auction: Auction, options: ExternalEnrichmentOptions): boolean {
+  if (options.country && auction.country.toLowerCase() !== options.country.trim().toLowerCase()) return false
+  if (options.platform && auction.platform !== options.platform) return false
+  if (options.externalId && auction.externalId !== options.externalId) return false
+  return true
 }
 
 async function resolvePoint(auction: Auction): Promise<{ lat: number; lng: number } | null> {

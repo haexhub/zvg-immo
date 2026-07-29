@@ -32,5 +32,8 @@ export default defineEventHandler(async (event) => {
   void runTask('reprocess', { payload: { country, force: forceExtraction } }).catch((err: unknown) => {
     console.error('[settings/enrich] reprocess trigger failed:', (err as Error).message)
   })
+  void runTask('external-enrichment', { payload: { country } }).catch((err: unknown) => {
+    console.error('[settings/enrich] external enrichment trigger failed:', (err as Error).message)
+  })
   return outcome
 })

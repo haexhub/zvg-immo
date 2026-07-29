@@ -11,7 +11,7 @@ afterEach(() => {
 describe('/api/settings/external-data/enrichment', () => {
   it('runs external enrichment with an optional limit', async () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
-    vi.stubGlobal('readBody', vi.fn(async () => ({ limit: 25 })))
+    vi.stubGlobal('readBody', vi.fn(async () => ({ limit: 25, country: 'se' })))
     vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
     const { runExternalEnrichment } = await import('~/server/tasks/external-enrichment')
     vi.mocked(runExternalEnrichment).mockResolvedValue({
@@ -30,7 +30,12 @@ describe('/api/settings/external-data/enrichment', () => {
     const handler = (await import('./enrichment.post')).default as unknown as (event: unknown) => Promise<unknown>
 
     await expect(handler({})).resolves.toMatchObject({ processed: 25 })
-    expect(runExternalEnrichment).toHaveBeenCalledWith({ limit: 25 })
+    expect(runExternalEnrichment).toHaveBeenCalledWith({
+      limit: 25,
+      country: 'se',
+      platform: undefined,
+      externalId: undefined,
+    })
   })
 
   it('rejects an invalid limit', async () => {
