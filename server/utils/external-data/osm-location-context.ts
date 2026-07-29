@@ -33,6 +33,8 @@ export interface OsmLocationContextOptions {
 
 interface OverpassResponse {
   elements?: OsmElement[]
+  /** Set instead of an error status when a query dies server-side. */
+  remark?: string
 }
 
 interface OsmElement {
@@ -263,7 +265,17 @@ async function postOverpass(
         parseRetryAfterMs(res.headers.get('retry-after')),
       )
     }
-    return await res.json() as OverpassResponse
+    const payload = await res.json() as OverpassResponse
+    // An overloaded instance also reports a died query as HTTP 200 with a
+    // `remark` and whatever it had collected so far. Without this the retry
+    // work above is bypassed entirely: the auction is stored as successfully
+    // enriched with a truncated or empty element set, which is the silent
+    // failure this adapter exists to remove. No status, so isRetryable()
+    // treats it as transient.
+    if (payload.remark && /runtime error|timed out|out of memory/i.test(payload.remark)) {
+      throw new OverpassRequestError(`Overpass runtime error: ${payload.remark}`, null, null)
+    }
+    return payload
   } finally {
     clearTimeout(timer)
   }
@@ -295,6 +307,10 @@ const PLACE_RADIUS_METERS = 30_000
 const NOISY_ROAD_RADIUS_METERS = 8_000
 const MINOR_ROAD_RADIUS_METERS = 5_000
 const OFFICE_RADIUS_METERS = 1_500
+// Both feed a signal that is a bare existence check, so buildLocationContext
+// clips to these rather than letting the bbox corners decide — see the clips.
+const FERRY_RADIUS_METERS = 10_000
+const HEAVY_INDUSTRY_RADIUS_METERS = 5_000
 
 /** Bounding box enclosing `radiusMeters` around `point`, as Overpass's
  *  (south,west,north,east) filter.
@@ -306,11 +322,13 @@ const OFFICE_RADIUS_METERS = 1_500
  *  timeout is what the endpoint sees as `[timeout:]`, and a query that cannot
  *  finish inside it can only ever return 504.
  *
- *  A bbox is a superset of the circle (out to the corners). That is safe
- *  because distances are computed client-side in locateElement() and every
- *  derived signal applies its own explicit metre threshold; the radii here only
- *  govern how much data is fetched. nearbyPlaces() is the one consumer with no
- *  threshold of its own, so it clips to PLACE_RADIUS_METERS itself. */
+ *  A bbox is a superset of the circle (out to the corners, ~1.41x the radius).
+ *  That is safe for any consumer applying its own metre threshold, since
+ *  distances are computed client-side in locateElement() and the radii here only
+ *  govern how much data is fetched. The consumers that assert existence rather
+ *  than a distance would otherwise silently widen, so each clips to its own
+ *  radius: nearbyPlaces() to PLACE_RADIUS_METERS, 'heavy_industry_mapped' to
+ *  HEAVY_INDUSTRY_RADIUS_METERS, and ferry access to FERRY_RADIUS_METERS. */
 function bbox(point: Point, radiusMeters: number): string {
   const dLat = radiusMeters / 111_320
   const dLng = radiusMeters / (111_320 * Math.max(Math.cos((point.lat * Math.PI) / 180), 0.01))
@@ -329,15 +347,15 @@ function buildQuery(point: Point, timeoutMs: number): string {
   nwr(${at(3000)})["public_transport"~"^(platform|stop_position|station)$"];
   node(${at(3000)})["highway"="bus_stop"];
   nwr(${at(3000)})["railway"~"^(station|halt|tram_stop)$"];
-  nwr(${at(10000)})["amenity"="ferry_terminal"];
-  nwr(${at(10000)})["route"="ferry"];
+  nwr(${at(FERRY_RADIUS_METERS)})["amenity"="ferry_terminal"];
+  nwr(${at(FERRY_RADIUS_METERS)})["route"="ferry"];
   nwr(${at(15000)})["aeroway"~"^(aerodrome|runway|helipad|heliport)$"];
   way(${at(NOISY_ROAD_RADIUS_METERS)})["highway"~"^(motorway|trunk|primary)$"];
   way(${at(MINOR_ROAD_RADIUS_METERS)})["highway"~"^(secondary|tertiary)$"];
   nwr(${at(5000)})["landuse"~"^(industrial|commercial|retail|quarry|landfill|brownfield)$"];
-  nwr(${at(5000)})["industrial"];
-  nwr(${at(5000)})["man_made"~"^(works|wastewater_plant|petroleum_well|mineshaft)$"];
-  nwr(${at(5000)})["power"~"^(plant|generator|substation)$"];
+  nwr(${at(HEAVY_INDUSTRY_RADIUS_METERS)})["industrial"];
+  nwr(${at(HEAVY_INDUSTRY_RADIUS_METERS)})["man_made"~"^(works|wastewater_plant|petroleum_well|mineshaft)$"];
+  nwr(${at(HEAVY_INDUSTRY_RADIUS_METERS)})["power"~"^(plant|generator|substation)$"];
   nwr(${at(5000)})["amenity"~"^(waste_transfer_station|recycling|ferry_terminal)$"];
   nwr(${at(10000)})["amenity"~"^(college|university)$"];
   nwr(${at(OFFICE_RADIUS_METERS)})["office"];
@@ -360,8 +378,13 @@ export function buildLocationContext(point: Point, elements: OsmElement[], check
   const places = nearbyPlaces(located)
   const stopElements = located.filter(isTransitStop)
   const railElements = located.filter(isRailStation)
-  const ferryTerminalElements = located.filter(hasTag('amenity', 'ferry_terminal'))
-  const ferryRouteElements = located.filter(hasTag('route', 'ferry'))
+  // Clipped: hasFerryRouteNearby and ferryAccessLikely() only ask whether one
+  // exists, so without this the bbox corners would report ferry access for a
+  // terminal 14 km out.
+  const ferryTerminalElements = located.filter((element) =>
+    element.distanceMeters <= FERRY_RADIUS_METERS && hasTag('amenity', 'ferry_terminal')(element))
+  const ferryRouteElements = located.filter((element) =>
+    element.distanceMeters <= FERRY_RADIUS_METERS && hasTag('route', 'ferry')(element))
   const majorRoadElements = located.filter((element) => MAJOR_ROADS.has(element.tags?.highway ?? ''))
   const noisyRoadElements = located.filter((element) => NOISY_ROADS.has(element.tags?.highway ?? ''))
   const airportElements = uniqueLocated(located.filter(isAirport))
@@ -369,7 +392,10 @@ export function buildLocationContext(point: Point, elements: OsmElement[], check
   const helipadElements = uniqueLocated(located.filter(isHelipad))
   const industrialElements = uniqueLocated(located.filter(isIndustrial))
   const commercialElements = uniqueLocated(located.filter(isCommercial))
-  const heavyIndustryElements = uniqueLocated(located.filter(isHeavyIndustry))
+  // Clipped: environmentContext() raises 'heavy_industry_mapped' on existence
+  // alone, so a power plant 7 km out would otherwise flag the property.
+  const heavyIndustryElements = uniqueLocated(located.filter((element) =>
+    element.distanceMeters <= HEAVY_INDUSTRY_RADIUS_METERS && isHeavyIndustry(element)))
   const universityElements = uniqueLocated(located.filter(isUniversity))
   const schoolOrChildcareElements = uniqueLocated(located.filter(isSchoolOrChildcare))
   const workplaceElements = uniqueLocated(located.filter(isWorkplaceSignal))
