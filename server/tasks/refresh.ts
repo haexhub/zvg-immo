@@ -14,8 +14,7 @@ import { recordObservations } from '../utils/history'
 import { archiveAuction } from '../utils/raw-archive'
 import { regionListCacheAgeMs, writeListCache } from '../utils/list-cache'
 import { drainOutbox } from '../utils/storage-uploader'
-
-let running = false
+import { runExclusiveTask, throwIfTaskAborted } from '../utils/exclusive-task'
 
 export default defineTask({
   meta: {
@@ -23,20 +22,11 @@ export default defineTask({
     description: 'Crawl all registered regions and persist results to the list cache.',
   },
   async run() {
-    if (running) {
-      console.warn('[refresh] previous run still in progress — skipping')
-      return { result: undefined }
-    }
-    running = true
-    try {
-      return await runRefresh()
-    } finally {
-      running = false
-    }
+    return await runExclusiveTask('refresh', runRefresh)
   },
 })
 
-async function runRefresh() {
+async function runRefresh(signal: AbortSignal) {
   const startedAt = Date.now()
   const capturedAt = new Date(startedAt).toISOString()
   await ensureEnabledCountriesLoaded()
@@ -45,11 +35,13 @@ async function runRefresh() {
 
   let ok = 0
   let failed = 0
+  const failureMessages: string[] = []
   let skipped = 0
   let cursor = 0
 
   async function worker() {
     while (cursor < regions.length) {
+      throwIfTaskAborted(signal)
       const idx = cursor++
       const r = regions[idx]
       if (!r) continue
@@ -69,18 +61,22 @@ async function runRefresh() {
           immobilienOnly: true,
           enrichDetails: false,
         })
+        throwIfTaskAborted(signal)
         await writeListCache(r.country, r.code, result)
-        // Best-effort history + alert-matching + raw-archive writes — must
-        // never fail the crawl (all three already swallow their own errors
-        // internally).
+        // History and raw-archive writes are part of a successful crawl: their
+        // failures propagate into this region's visible failure result.
+        // Alert delivery remains independently fault-tolerant.
         await recordObservations(result, capturedAt)
         await matchAlerts(r.country, r.code, result)
         for (const a of result.auctions) {
+          throwIfTaskAborted(signal)
           await archiveAuction(a, capturedAt)
         }
         ok++
       } catch (err) {
-        console.warn(`[refresh] ${r.country}/${r.code}: ${(err as Error).message}`)
+        const message = `${r.country}/${r.code}: ${(err as Error).message}`
+        console.warn(`[refresh] ${message}`)
+        failureMessages.push(message)
         failed++
       }
     }
@@ -95,10 +91,16 @@ async function runRefresh() {
   if (upload.uploaded > 0 || upload.failed > 0) {
     console.log(`[refresh] archive upload: ${upload.uploaded} ok, ${upload.failed} failed`)
   }
+  if (upload.failed > 0) {
+    failureMessages.push(`${upload.failed} Roharchiv-Upload(s) fehlgeschlagen`)
+  }
 
   const durationMs = Date.now() - startedAt
   console.log(
     `[refresh] done in ${(durationMs / 1000).toFixed(0)}s — ${ok} ok, ${failed} failed, ${skipped} skipped`,
   )
+  if (failureMessages.length > 0) {
+    throw new Error(`${failureMessages.length} Refresh-Fehler: ${failureMessages.slice(0, 20).join('; ')}`)
+  }
   return { result: { ok, failed, skipped, durationMs } }
 }

@@ -17,6 +17,7 @@ import type { Auction } from '~/types/auction'
 import { getPool } from './db'
 import { cacheKey } from './verkehrswert-cache'
 import { normalizeAuctionDescription } from './description-normalization'
+import { normalizePublicAuctionLinks } from './public-auction-links'
 
 export type AuctionSnapshot = Record<string, Auction>
 
@@ -69,7 +70,7 @@ export async function readAuctionSnapshot(): Promise<AuctionSnapshot> {
   } catch (err) {
     console.warn(`[auction-snapshot] read failed: ${(err as Error).message}`)
     cachePromise = null
-    return {}
+    throw err
   }
 }
 
@@ -83,6 +84,7 @@ async function loadAuctionSnapshot(): Promise<AuctionSnapshot> {
   for (const row of rows) {
     normalizeLegacyAuction(row.auction as unknown as Record<string, unknown>)
     normalizeAuctionDescription(row.auction)
+    normalizePublicAuctionLinks(row.auction)
     snapshot[cacheKey(row.platform, row.external_id)] = row.auction
   }
   return snapshot
@@ -233,6 +235,7 @@ export async function writeAuctionSnapshot(auctions: Auction[]): Promise<void> {
     const prev = previous[key]
     merged[key] = prev ? mergePreservedDetail(a, prev) : a
     normalizeAuctionDescription(merged[key])
+    normalizePublicAuctionLinks(merged[key])
   }
   // Update the shared in-process cache immediately, mirroring
   // extraction-cache.ts's writeExtractionCache. A platform absent from this
@@ -253,12 +256,8 @@ async function upsertAuctionSnapshot(rows: Auction[]): Promise<void> {
   const db = getPool()
   if (!db) return
   if (rows.length === 0) return
-  try {
-    for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
-      await upsertChunk(db, rows.slice(i, i + CHUNK_SIZE))
-    }
-  } catch (err) {
-    console.warn(`[auction-snapshot] upsert failed: ${(err as Error).message}`)
+  for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+    await upsertChunk(db, rows.slice(i, i + CHUNK_SIZE))
   }
 }
 

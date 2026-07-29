@@ -1,111 +1,154 @@
-// Returns the same list as /api/auctions but with each auction enriched with
-// lat/lng coordinates obtained from OpenStreetMap Nominatim. Geocoding is
-// disk-cached so repeat calls are fast; the first cold run can take a couple
-// of minutes due to Nominatim's 1 req/s rate limit.
+import { geocodeAddress, geocodeStatus } from '~/server/utils/geocode'
+import { getPool } from '~/server/utils/db'
 
-import { geocodeAddress, geocodeStatus } from '../utils/geocode'
-import { readAuctionSnapshot } from '../utils/auction-snapshot'
-import { cacheKey } from '../utils/verkehrswert-cache'
-import type { Auction, CrawlResult } from '~/types/auction'
-import { isValidScopeParam, scopeParam } from '~/lib/auction-constants'
-
-export interface GeoAuction extends Auction {
-  lat: number | null
-  lng: number | null
-  /** Whether /api/auction/[platform]/[id] can serve this auction yet — false
-   *  for listings crawled since the last enrich run, before they land in the
-   *  snapshot the detail page reads from. */
-  detailAvailable: boolean
+export interface GeoAuction {
+  platform: string
+  externalId: string
+  country: string
+  region: string
+  lat: number
+  lng: number
 }
 
-export interface GeoCrawlResult extends Omit<CrawlResult, 'auctions'> {
+export interface GeoCrawlResult {
   auctions: GeoAuction[]
+  total: number
   geocodedCount: number
-  /** Addresses tried against Nominatim without a hit (cached as notFound).
-   *  Once this + geocodedCount equals auctions.length there is nothing left
-   *  to attempt — the client stops showing "läuft …". */
   unresolvableCount: number
+  fetchedAt: string
+}
+
+interface MarkerRow {
+  platform: string
+  external_id: string
+  country: string
+  region: string
+  address: string | null
+  lat: string | number | null
+  lng: string | number | null
+}
+
+function commaList(value: unknown): string[] {
+  const raw = Array.isArray(value) ? value.join(',') : String(value ?? '')
+  return [...new Set(raw.split(',').map((entry) => entry.trim()).filter(Boolean))]
+}
+
+function finiteNumber(value: unknown): number | null {
+  if (value == null || value === '') return null
+  const parsed = Number(Array.isArray(value) ? value[0] : value)
+  return Number.isFinite(parsed) ? parsed : null
 }
 
 export default defineEventHandler(async (event): Promise<GeoCrawlResult> => {
-  const query = getQuery(event)
-  const country = scopeParam(query.country)
-  const region = scopeParam(query.region)
-  if (!isValidScopeParam(country) || !isValidScopeParam(region)) {
-    throw createError({ statusCode: 400, statusMessage: 'invalid country/region' })
+  const db = getPool()
+  if (!db) {
+    throw createError({ statusCode: 503, statusMessage: 'Auktionsdatenbank ist nicht konfiguriert' })
   }
-  const immobilienOnly = query.immo !== '0'
-  // ?fetch=0 → use only cached geocodes (instant). ?fetch=1 (default) → fall back to Nominatim
-  // for missing addresses (subject to 1 req/s rate limit, slow on cold start).
-  const fetchMissing = query.fetch !== '0'
 
-  // Reuse the /api/auctions handler instead of calling crawlAll directly.
-  // That route is SWR-cached (see nuxt.config.ts), so a hot cache returns in
-  // a few ms. Calling crawlAll here would re-run the full multi-state crawl
-  // on every request and time out behind Traefik in production.
-  const [result, snapshot] = await Promise.all([
-    $fetch<CrawlResult>('/api/auctions', {
-      query: { country, region, immo: immobilienOnly ? '1' : '0' },
-    }),
-    readAuctionSnapshot(),
-  ])
+  const query = getQuery(event)
+  const values: unknown[] = []
+  const where: string[] = []
+  const add = (value: unknown): string => {
+    values.push(value)
+    return `$${values.length}`
+  }
 
-  // Cache reads dominate this loop (thousands of auctions on the "all
-  // countries" view), so resolve them concurrently instead of one at a time.
-  // Actual Nominatim/LocationIQ requests stay safely throttled regardless of
-  // concurrency here — geocodeOnce serialises them through a shared queue.
-  const enriched: GeoAuction[] = new Array(result.auctions.length)
+  const countries = commaList(query.country).filter((entry) => /^[a-z]{2}$/i.test(entry))
+  if (countries.length) where.push(`a.country = ANY(${add(countries)}::text[])`)
+  const regions = commaList(query.regionNames)
+  if (regions.length) where.push(`(a.country || ':' || a.region) = ANY(${add(regions)}::text[])`)
+  const search = String(query.q ?? '').trim()
+  if (search) {
+    where.push(`concat_ws(' ', a.case_number, a.authority, a.title, a.address, a.description) ILIKE ${add(`%${search}%`)}`)
+  }
+  const authority = String(query.authority ?? '')
+  if (authority && authority !== 'all') where.push(`a.authority = ${add(authority)}`)
+  const category = String(query.category ?? '')
+  if (category && category !== 'all') where.push(`a.property_type = ${add(category)}`)
+  const condition = String(query.condition ?? '')
+  if (condition && condition !== 'all') where.push(`a.condition #>> '{}' = ${add(condition)}`)
+  const features = commaList(query.features)
+  if (features.length) where.push(`a.features && ${add(features)}::text[]`)
+  if (String(query.photos ?? '') === '1') where.push('a.photo_count > 0')
+  if (String(query.cancelled ?? '') !== '1') where.push('a.cancelled = false')
+  if (String(query.llmOnly ?? '') === '1') {
+    where.push(`(
+      a.extraction_source = 'llm'
+      OR ec.extraction ? 'llmAnalyzedAt'
+      OR ec.extraction ? 'condition'
+      OR ec.extraction ? 'features'
+      OR ec.extraction ? 'insights'
+    )`)
+  }
+  const ranges: Array<[unknown, string, '>=' | '<=']> = [
+    [query.priceMin, 'a.market_value_eur', '>='],
+    [query.priceMax, 'a.market_value_eur', '<='],
+    [query.landMin, 'a.land_area_sqm', '>='],
+    [query.landMax, 'a.land_area_sqm', '<='],
+    [query.livMin, 'a.living_area_sqm', '>='],
+    [query.livMax, 'a.living_area_sqm', '<='],
+    [query.yearBuiltMin, 'a.year_built', '>='],
+    [query.yearBuiltMax, 'a.year_built', '<='],
+    [query.renovationYearMin, 'a.last_renovation_year', '>='],
+    [query.renovationYearMax, 'a.last_renovation_year', '<='],
+  ]
+  for (const [raw, column, operator] of ranges) {
+    const value = finiteNumber(raw)
+    if (value != null) where.push(`${column} ${operator} ${add(value)}`)
+  }
+
+  const { rows } = await db.query<MarkerRow>(
+    `SELECT a.platform, a.external_id, a.country, a.region, a.address, a.lat, a.lng
+     FROM auctions a
+     LEFT JOIN extraction_cache ec
+       ON ec.platform = a.platform AND ec.external_id = a.external_id
+     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+     ORDER BY a.platform, a.external_id`,
+    values,
+  )
+
+  const fetchMissing = query.fetch === '1'
+  const markers: Array<GeoAuction | undefined> = new Array(rows.length)
   let unresolvableCount = 0
-  const CONCURRENCY = 16
   let cursor = 0
-
-  // A client that gives up (tab closed, request aborted, load-balancer
-  // timeout) still leaves this loop running server-side — with fetch=1 and a
-  // large cold backlog it can otherwise keep churning through the shared
-  // geocode rate limiter for minutes after nobody's listening. Stop
-  // dispatching new lookups once the connection drops; whatever's already
-  // in flight still finishes and gets cached.
   let aborted = false
   event.node.req.on('close', () => {
     aborted = true
   })
 
   async function worker(): Promise<void> {
-    while (cursor < result.auctions.length) {
-      if (aborted) return
-      const idx = cursor++
-      const a = result.auctions[idx]!
-      const snapshotHit = snapshot[cacheKey(a.platform, a.externalId)]
-      const detailAvailable = snapshotHit != null
-      // Source-provided coordinates beat a geocoder guess — and cost nothing.
-      // List-crawl coords sit on the auction itself; enrichOne-provided ones
-      // only exist in the snapshot (the /api/auctions list cache is built
-      // without detail fetches). Resolved as a pair from ONE source — mixing
-      // a fresh lat with a snapshot lng could pair mismatched coordinates.
-      const src =
-        a.lat != null && a.lng != null
-          ? { lat: a.lat, lng: a.lng }
-          : snapshotHit?.lat != null && snapshotHit.lng != null
-            ? { lat: snapshotHit.lat, lng: snapshotHit.lng }
-            : null
-      if (src) {
-        enriched[idx] = { ...a, lat: src.lat, lng: src.lng, detailAvailable }
-        continue
+    while (cursor < rows.length && !aborted) {
+      const index = cursor++
+      const row = rows[index]!
+      let lat = finiteNumber(row.lat)
+      let lng = finiteNumber(row.lng)
+      if ((lat == null || lng == null) && row.address) {
+        const point = await geocodeAddress(row.address, row.country, { fetchMissing })
+        lat = point?.lat ?? null
+        lng = point?.lng ?? null
+        if (!point && await geocodeStatus(row.address, row.country) === 'unresolvable') {
+          unresolvableCount++
+        }
       }
-      const point = await geocodeAddress(a.address, a.country, { fetchMissing })
-      enriched[idx] = { ...a, lat: point?.lat ?? null, lng: point?.lng ?? null, detailAvailable }
-      if (point == null) {
-        const status = await geocodeStatus(a.address, a.country)
-        if (status === 'unresolvable') unresolvableCount++
+      if (lat == null || lng == null) continue
+      markers[index] = {
+        platform: row.platform,
+        externalId: row.external_id,
+        country: row.country,
+        region: row.region,
+        lat,
+        lng,
       }
     }
   }
-  await Promise.all(Array.from({ length: CONCURRENCY }, worker))
-
+  await Promise.all(Array.from({ length: 16 }, worker))
+  const auctions = markers.filter((marker): marker is GeoAuction => marker != null)
+  setResponseHeader(event, 'cache-control', 'no-store')
   return {
-    ...result,
-    auctions: enriched,
-    geocodedCount: enriched.filter((a) => a.lat != null).length,
+    auctions,
+    total: rows.length,
+    geocodedCount: auctions.length,
     unresolvableCount,
+    fetchedAt: new Date().toISOString(),
   }
 })

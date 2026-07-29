@@ -392,6 +392,8 @@ export interface CrawlAllOptions {
   onRegionDone?: (done: number, total: number) => void
   /** Called for each successful regional crawl before it is merged. */
   onRegionResult?: (country: string, region: string, result: CrawlResult) => void | Promise<void>
+  /** Cooperative cancellation used by exclusive scheduled/manual jobs. */
+  signal?: AbortSignal
 }
 
 /**
@@ -418,6 +420,7 @@ export async function crawlAll(
   let regionsDone = 0
   async function worker() {
     while (cursor < all.length) {
+      opts.signal?.throwIfAborted()
       const idx = cursor++
       const r = all[idx]
       if (!r) continue
@@ -428,9 +431,11 @@ export async function crawlAll(
           immobilienOnly: opts.immobilienOnly,
           enrichDetails: opts.enrichDetails,
         })
+        opts.signal?.throwIfAborted()
         await opts.onRegionResult?.(r.country, r.code, result)
         results.push(result)
       } catch (err) {
+        if (opts.signal?.aborted) opts.signal.throwIfAborted()
         errors.push({
           country: r.country,
           region: r.code,

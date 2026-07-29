@@ -5,7 +5,7 @@
 // that Gemini reads scanned Gutachten correctly without a rasterize/OCR step.
 
 import type { ContentPart, ExtractionProvider, ExtractionRequest, LlmConfig } from '../llm'
-import { isRateLimitError } from '../llm'
+import { isRateLimitError, LlmProviderError } from '../llm'
 import { toGeminiSchema } from './gemini-schema'
 
 type GeminiPart = { text: string } | { inlineData: { mimeType: string; data: string } }
@@ -116,10 +116,11 @@ export class GeminiNativeProvider implements ExtractionProvider {
           console.warn(`[extract/llm] gemini 429, giving up after ${MAX_RETRIES} retries`)
           throw err
         }
-        console.warn(`[extract/llm] request failed: ${(err as Error).message}`)
-        return null
+        throw new LlmProviderError('gemini-native', (err as Error).message, { cause: err })
       }
     }
-    return parseGeminiExtractionResponse(resp)
+    const parsed = parseGeminiExtractionResponse(resp)
+    if (!parsed) throw new LlmProviderError('gemini-native', 'ungültige oder leere Provider-Antwort')
+    return parsed
   }
 }

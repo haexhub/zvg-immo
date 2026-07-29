@@ -9,6 +9,7 @@ import {
   getStoredExternalDataSourceConfig,
   resolveExternalDataSourceConfig,
 } from '~/server/utils/external-data/config'
+import { runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-task'
 
 const EU_FLOOD_RISK_SOURCE_ID = 'eu-flood-risk-areas'
 
@@ -70,7 +71,11 @@ export default defineTask({
     if (!payload.cachePath?.trim() && !(await configuredCachePath())) {
       return { result: { skipped: `${EU_FLOOD_RISK_SOURCE_ID} has no configured cache path` } }
     }
-    return { result: await runImportEuFloodRiskCache(payload) }
+    return await runExclusiveTask('import-eu-flood-risk-cache', async (signal) => {
+      const result = await runImportEuFloodRiskCache(payload)
+      throwIfTaskAborted(signal)
+      return { result }
+    })
   },
 })
 

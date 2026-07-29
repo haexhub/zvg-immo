@@ -67,6 +67,20 @@ export interface LlmConfig {
   maxTokens?: number
 }
 
+export class LlmProviderError extends Error {
+  readonly provider: string
+
+  constructor(provider: string, message: string, options?: { cause?: unknown }) {
+    super(`${provider}: ${message}`, options)
+    this.name = 'LlmProviderError'
+    this.provider = provider
+  }
+}
+
+export function isLlmProviderError(error: unknown): error is LlmProviderError {
+  return error instanceof LlmProviderError
+}
+
 /** Provider-neutral request content — a specific backend's provider
  *  implementation translates this into its own wire format (e.g. Claude's
  *  content blocks, OpenAI's `image_url`, Gemini's `inlineData`).

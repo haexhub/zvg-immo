@@ -1,7 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('~/server/tasks/import-eu-flood-risk-cache', () => ({ runImportEuFloodRiskCache: vi.fn() }))
-
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.resetModules()
@@ -22,8 +20,7 @@ describe('/api/settings/external-data/eu-flood-risk-cache', () => {
     })))
     vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
 
-    const { runImportEuFloodRiskCache } = await import('~/server/tasks/import-eu-flood-risk-cache')
-    vi.mocked(runImportEuFloodRiskCache).mockResolvedValue({
+    const runTask = vi.fn().mockResolvedValue({ result: {
       cachePath: '/cache/eu-flood-risk.geojson',
       serviceUrl: 'https://example.test/MapServer/2',
       sourceVersion: 'flood-v1',
@@ -31,19 +28,22 @@ describe('/api/settings/external-data/eu-flood-risk-cache', () => {
       fetched: 2,
       normalized: 2,
       pages: 1,
-    })
+    } })
+    vi.stubGlobal('runTask', runTask)
 
     const handler = (await import('./eu-flood-risk-cache.post')).default as unknown as (event: unknown) => Promise<unknown>
 
     await expect(handler({})).resolves.toMatchObject({ normalized: 2 })
-    expect(runImportEuFloodRiskCache).toHaveBeenCalledWith({
-      cachePath: '/cache/eu-flood-risk.geojson',
-      serviceUrl: 'https://example.test/MapServer/2',
-      sourceVersion: 'flood-v1',
-      generatedAt: '2026-07-27T00:00:00.000Z',
-      pageSize: 100,
-      maxPages: 2,
-      countryCodes: ['de', 'fr'],
+    expect(runTask).toHaveBeenCalledWith('import-eu-flood-risk-cache', {
+      payload: {
+        cachePath: '/cache/eu-flood-risk.geojson',
+        serviceUrl: 'https://example.test/MapServer/2',
+        sourceVersion: 'flood-v1',
+        generatedAt: '2026-07-27T00:00:00.000Z',
+        pageSize: 100,
+        maxPages: 2,
+        countryCodes: ['de', 'fr'],
+      },
     })
   })
 

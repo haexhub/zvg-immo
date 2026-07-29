@@ -1,7 +1,6 @@
-import {
-  runExternalEnrichment,
-  type ExternalEnrichmentOptions,
-  type ExternalEnrichmentSummary,
+import type {
+  ExternalEnrichmentOptions,
+  ExternalEnrichmentSummary,
 } from '~/server/tasks/external-enrichment'
 
 const MAX_LIMIT = 1000
@@ -12,7 +11,10 @@ export default defineEventHandler(async (event): Promise<ExternalEnrichmentSumma
   const country = optionalToken(body.country, 'country')
   const platform = optionalToken(body.platform, 'platform')
   const externalId = optionalToken(body.externalId, 'externalId')
-  return await runExternalEnrichment({ limit, country, platform, externalId } satisfies ExternalEnrichmentOptions)
+  const outcome = await runTask('external-enrichment', {
+    payload: { limit, country, platform, externalId } satisfies ExternalEnrichmentOptions,
+  }) as { result: ExternalEnrichmentSummary }
+  return outcome.result
 })
 
 function optionalLimit(value: unknown): number | undefined {

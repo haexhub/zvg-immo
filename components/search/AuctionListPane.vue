@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { Star } from 'lucide-vue-next'
 import { auctionKey } from '~/lib/auction-key'
-import { auctionPhotoUrls } from '~/lib/auction-photos'
-import type { Auction } from '~/types/auction'
+import type { AuctionSummary } from '~/server/api/auctions.get'
 
 const props = defineProps<{
-  auctions: Auction[]
+  auctions: AuctionSummary[]
   totalCount: number
   pending: boolean
   loggedIn: boolean
@@ -15,7 +14,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'toggle-watchlist', auction: Auction): void
+  (e: 'toggle-watchlist', auction: AuctionSummary): void
   (e: 'load-more'): void
   (e: 'auction-hover', key: string | null): void
 }>()
@@ -26,20 +25,7 @@ const { currency, eurToDisplay, nativeToDisplay } = useCurrencyDisplay()
 const conditionLabel = useConditionLabel()
 const featureLabel = useFeatureLabel()
 
-const photosByAuction = computed(() => {
-  const photos = new Map<string, string[]>()
-  for (const auction of props.auctions) {
-    photos.set(auctionKey(auction), auctionPhotoUrls(auction))
-  }
-  return photos
-})
-
-/** Returns the stable, deduplicated gallery prepared for one search card. */
-function cardPhotos(a: Auction): string[] {
-  return photosByAuction.value.get(auctionKey(a)) ?? []
-}
-
-function cardAltBase(a: Auction): string {
+function cardAltBase(a: AuctionSummary): string {
   return a.title || a.address || t('search.unknownPropertyType')
 }
 
@@ -54,7 +40,7 @@ watch(() => props.scrollTargetKey, async (key) => {
   el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
 })
 
-function detailPath(a: Auction): string {
+function detailPath(a: AuctionSummary): string {
   return `/objekt/${encodeURIComponent(a.platform)}/${encodeURIComponent(a.externalId)}`
 }
 
@@ -69,10 +55,10 @@ function formatPrice(marketValueEur: number | null): string {
 // EUR-native auction viewed in a non-EUR currency) — see i18n design doc
 // Baustein C: "Original + konvertierter Nutzerwert, die Versteigerung läuft
 // in der Originalwährung".
-function originalPriceText(a: Auction): string | null {
+function originalPriceText(a: AuctionSummary): string | null {
   return a.marketValueText ?? null
 }
-function showOriginalPrice(a: Auction): boolean {
+function showOriginalPrice(a: AuctionSummary): boolean {
   return originalPriceText(a) != null
     && eurToDisplay(a.marketValueEur) != null
     && (a.currency ?? 'EUR') !== currency.value
@@ -84,7 +70,7 @@ function showOriginalPrice(a: Auction): boolean {
 // null/false there and the card looks exactly as before. Prefer the live
 // currentBid over startingBid, matching the price row's own
 // marketValueEur-over-marketValueText precedence.
-function bidLine(a: Auction): string | null {
+function bidLine(a: AuctionSummary): string | null {
   const amount = a.currentBid ?? a.startingBid
   if (amount == null) return null
   const converted = nativeToDisplay(amount, a.currency)
@@ -117,11 +103,14 @@ function bidLine(a: Auction): string | null {
           }"
         >
           <div class="relative border-b">
-            <SearchAuctionCardGallery
-              v-if="cardPhotos(a).length"
-              :photos="cardPhotos(a)"
-              :alt-base="cardAltBase(a)"
-            />
+            <img
+              v-if="a.thumbnailUrl"
+              :src="a.thumbnailUrl"
+              :alt="cardAltBase(a)"
+              class="aspect-16/10 h-full w-full object-cover"
+              loading="lazy"
+              referrerpolicy="no-referrer"
+            >
             <div v-else class="flex aspect-16/10 items-center justify-center bg-muted text-muted-foreground text-sm">
               {{ $t('search.noPhoto') }}
             </div>

@@ -1,7 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('~/server/tasks/external-enrichment', () => ({ runExternalEnrichment: vi.fn() }))
-
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.resetModules()
@@ -13,8 +11,7 @@ describe('/api/settings/external-data/enrichment', () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     vi.stubGlobal('readBody', vi.fn(async () => ({ limit: 25, country: 'se' })))
     vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
-    const { runExternalEnrichment } = await import('~/server/tasks/external-enrichment')
-    vi.mocked(runExternalEnrichment).mockResolvedValue({
+    const runTask = vi.fn().mockResolvedValue({ result: {
       processed: 25,
       written: 10,
       skippedMissingCoordinates: 0,
@@ -25,16 +22,19 @@ describe('/api/settings/external-data/enrichment', () => {
       staleResults: 0,
       providerFailures: 0,
       durationMs: 123,
-    })
+    } })
+    vi.stubGlobal('runTask', runTask)
 
     const handler = (await import('./enrichment.post')).default as unknown as (event: unknown) => Promise<unknown>
 
     await expect(handler({})).resolves.toMatchObject({ processed: 25 })
-    expect(runExternalEnrichment).toHaveBeenCalledWith({
-      limit: 25,
-      country: 'se',
-      platform: undefined,
-      externalId: undefined,
+    expect(runTask).toHaveBeenCalledWith('external-enrichment', {
+      payload: {
+        limit: 25,
+        country: 'se',
+        platform: undefined,
+        externalId: undefined,
+      },
     })
   })
 

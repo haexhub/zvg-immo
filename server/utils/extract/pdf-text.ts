@@ -2,10 +2,10 @@
 // (already in the runtime image, used by /api/zvg-thumb). Results are cached on
 // disk keyed by the attachment URL so a re-processed auction never re-downloads.
 //
-// Attachment URLs differ by platform: zvg-portal stores a relative
-// `/api/zvg-proxy?…` path (the upstream needs a specific Referer), while AT,
-// zvbawü and Biddit store absolute, directly-fetchable URLs. resolveSource
-// handles both.
+// Attachment URLs differ by platform. ZVG Portal uses an absolute source URL
+// that needs a specific Referer, while AT, zvbawü and Biddit are directly
+// fetchable. resolveSource also understands legacy persisted proxy strings
+// during the database transition; they are never exposed by public APIs.
 
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
@@ -19,6 +19,7 @@ import { archiveDocument, archiveDocumentText, type DocumentIdentity } from '../
 
 const exec = promisify(execFile)
 const CACHE_DIR = join(process.cwd(), '.cache_zvg', 'pdftext')
+const MAX_PDF_BYTES = 50 * 1024 * 1024
 
 /** Attachment kinds whose PDF most likely carries the size/type facts, best first. */
 const PDF_KIND_PRIORITY = ['appraisal', 'brochure', 'announcement', 'other'] as const
@@ -85,6 +86,12 @@ function resolveSource(proxyUrl: string): { url: string; headers: Record<string,
     const url = `${ZVG_BASE}/index.php?button=showAnhang&land_abk=${q.get('land_abk')}&file_id=${q.get('file_id')}&zvg_id=${q.get('zvg_id')}`
     return { url, headers: { 'User-Agent': UA, Accept: 'application/pdf,*/*', Referer: `${ZVG_BASE}/index.php?button=Suchen` } }
   }
+  if (proxyUrl.startsWith(`${ZVG_BASE}/`)) {
+    return {
+      url: proxyUrl,
+      headers: { 'User-Agent': UA, Accept: 'application/pdf,*/*', Referer: `${ZVG_BASE}/index.php?button=Suchen` },
+    }
+  }
   return { url: proxyUrl, headers: { 'User-Agent': UA, Accept: 'application/pdf,*/*' } }
 }
 
@@ -101,7 +108,30 @@ export async function fetchPdfBuffer(proxyUrl: string): Promise<Buffer | null> {
     // one stuck request stalls the whole run).
     const res = await fetch(url, { headers, signal: AbortSignal.timeout(30_000) })
     if (!res.ok) return null
-    buf = Buffer.from(await res.arrayBuffer())
+    const contentLength = Number(res.headers.get('content-length') ?? '')
+    if (Number.isFinite(contentLength) && contentLength > MAX_PDF_BYTES) {
+      await res.body?.cancel().catch(() => undefined)
+      return null
+    }
+    if (!res.body) {
+      buf = Buffer.from(await res.arrayBuffer())
+      if (buf.length > MAX_PDF_BYTES) return null
+    } else {
+      const reader = res.body.getReader()
+      const chunks: Uint8Array[] = []
+      let total = 0
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        total += value.byteLength
+        if (total > MAX_PDF_BYTES) {
+          await reader.cancel().catch(() => undefined)
+          return null
+        }
+        chunks.push(value)
+      }
+      buf = Buffer.concat(chunks, total)
+    }
   } catch {
     return null
   }

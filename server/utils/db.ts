@@ -31,5 +31,22 @@ export async function runMigrations(): Promise<void> {
   const db = getPool()
   if (!db) return
   const schema = await readFile(join(process.cwd(), 'server/db/schema.sql'), 'utf8')
-  await db.query(schema)
+  const client = await db.connect()
+  let locked = false
+  try {
+    // All replicas share this session-scoped lock. It prevents two app
+    // instances started by the same deployment from applying the large,
+    // idempotent schema file concurrently and racing on conditional DDL.
+    await client.query(`SELECT pg_advisory_lock(hashtext('zvg-immo:schema-migrations'))`)
+    locked = true
+    await client.query(schema)
+  } finally {
+    try {
+      if (locked) {
+        await client.query(`SELECT pg_advisory_unlock(hashtext('zvg-immo:schema-migrations'))`)
+      }
+    } finally {
+      client.release()
+    }
+  }
 }

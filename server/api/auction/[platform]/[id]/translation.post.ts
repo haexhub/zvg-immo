@@ -7,14 +7,21 @@
 // documents do. Auctions whose country's primary language already matches the
 // target are passed through without an LLM call.
 
-import { setResponseHeader, setResponseStatus, type H3Event } from 'h3'
+import { setResponseHeader, setResponseStatus } from 'h3'
 import type { Pool } from 'pg'
 import { readAuctionSnapshot } from '~/server/utils/auction-snapshot'
 import { isSafePathSegment } from '~/server/utils/path-segment'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 import { getPool } from '~/server/utils/db'
 import { sha256Hex } from '~/server/utils/raw-archive'
-import { readContentTranslation, writeContentTranslation } from '~/server/utils/content-translation'
+import {
+  claimAuctionTranslation,
+  completeAuctionTranslation,
+  failAuctionTranslation,
+  readAuctionTranslation,
+  readContentTranslation,
+  writeContentTranslation,
+} from '~/server/utils/content-translation'
 import { getLlmMaxTokens, getLlmProviderOverride } from '~/server/utils/app-settings'
 import { resolveLlmConfig } from '~/server/utils/extract/llm'
 import { callTranslationLlm, type TranslationResult } from '~/server/utils/extract/text-llm'
@@ -25,6 +32,7 @@ import {
   createInMemoryRateLimitState,
   recordInMemoryRateLimitHit,
 } from '~/server/utils/in-memory-rate-limit'
+import { requestClientIp } from '~/server/utils/request-client-ip'
 
 const SUPPORTED_TARGET_LANGS = new Set<ContentTargetLang>(['de', 'en'])
 
@@ -63,18 +71,6 @@ function buildPrompt(
     `EXTRACTION_TEXTS_JSON:\n${JSON.stringify(extractionTexts ?? null, null, 2)}`,
   ]
   return lines.join('\n')
-}
-
-function clientKey(event: H3Event): string {
-  const trustForwardedFor = String(useRuntimeConfig().trustForwardedFor ?? '') === '1'
-  if (trustForwardedFor) {
-    const forwarded = getRequestHeader(event, 'x-forwarded-for')
-    const first = forwarded?.split(',')[0]?.trim()
-    if (first) return first
-    const realIp = getRequestHeader(event, 'x-real-ip')?.trim()
-    if (realIp) return realIp
-  }
-  return event.node.req.socket.remoteAddress ?? 'unknown'
 }
 
 async function tryTranslate(
@@ -137,23 +133,41 @@ export default defineEventHandler(async (event) => {
     documentSetHash: auction.extraction?.documentSetHash ?? null,
     documentSetVersion: auction.extraction?.documentSetVersion ?? null,
   })))
-  const inflightKey = `${contentHash}:${targetLang}`
+  // Dedupe only the same auction/language. A content-hash key could let a
+  // second auction hitchhike on another auction's in-flight promise without
+  // ever creating its own durable once-only row.
+  const inflightKey = `${platform}:${id}:${targetLang}`
 
   const db: Pool | null = getPool()
   if (!db) {
     throw createError({ statusCode: 503, statusMessage: 'translation cache not configured' })
   }
 
-  const cached = await readContentTranslation(db, contentHash, targetLang)
-  if (cached) {
+  const stored = await readAuctionTranslation(db, platform, id, targetLang)
+  if (stored?.status === 'completed') {
     setResponseHeader(event, 'x-zvg-translation-cache', 'hit')
     return {
-      title: cached.title,
-      description: cached.description,
-      documentSummary: cached.documentSummary,
-      extractionTexts: cached.extractionTexts,
+      title: stored.title,
+      description: stored.description,
+      documentSummary: stored.documentSummary,
+      extractionTexts: stored.extractionTexts,
       translated: true,
     }
+  }
+  if (stored?.status === 'failed') {
+    throw createError({
+      statusCode: 502,
+      statusMessage: 'Übersetzung fehlgeschlagen',
+      data: { detail: stored.errorMessage ?? 'Unbekannter Übersetzungsfehler' },
+    })
+  }
+  if (stored?.status === 'pending') {
+    setResponseHeader(event, 'x-zvg-translation-cache', 'inflight')
+    if (cacheOnly) {
+      setResponseStatus(event, 204)
+      return null
+    }
+    throw createError({ statusCode: 409, statusMessage: 'Übersetzung läuft bereits' })
   }
 
   const existing = inflight.get(inflightKey)
@@ -170,41 +184,64 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 429, statusMessage: 'translation generation busy, retry shortly' })
   }
 
-  const llmCfg = useRuntimeConfig().extractLlm as
-    | { provider?: string; baseUrl?: string; apiKey?: string; model?: string }
-    | undefined
-  const translationOverride = await getLlmProviderOverride(db, 'translation').catch(() => null)
-  const extractionOverride = translationOverride ? null : await getLlmProviderOverride(db, 'extraction').catch(() => null)
-  const config = resolveLlmConfig(translationOverride ?? extractionOverride ?? llmCfg, {
-    maxTokens: await getLlmMaxTokens(db, 'translation'),
-  })
-  if (!config) {
-    throw createError({ statusCode: 503, statusMessage: 'LLM not configured' })
-  }
-
   const now = Date.now()
-  const requester = clientKey(event)
+  const requester = requestClientIp(event)
   if (!checkInMemoryRateLimit(translationRateLimit, requester, now, TRANSLATION_RATE_LIMIT)) {
     throw createError({ statusCode: 429, statusMessage: 'translation rate limit exceeded' })
   }
   recordInMemoryRateLimitHit(translationRateLimit, requester, now, TRANSLATION_RATE_LIMIT)
 
+  const claimed = await claimAuctionTranslation(db, platform, id, targetLang, contentHash)
+  if (!claimed) {
+    throw createError({ statusCode: 409, statusMessage: 'Übersetzung wurde bereits angestoßen' })
+  }
+
   const gen = (async () => {
-    const result = await tryTranslate(title, description, documentSummary, extractionTexts, targetLang, config)
-    if (!result) {
-      throw createError({ statusCode: 502, statusMessage: 'LLM did not return a translation' })
+    try {
+      const cached = await readContentTranslation(db, contentHash, targetLang)
+      if (cached) {
+        await completeAuctionTranslation(db, platform, id, targetLang, cached)
+        setResponseHeader(event, 'x-zvg-translation-cache', 'hit')
+        return cached
+      }
+
+      const llmCfg = useRuntimeConfig().extractLlm as
+        | { provider?: string; baseUrl?: string; apiKey?: string; model?: string }
+        | undefined
+      const translationOverride = await getLlmProviderOverride(db, 'translation')
+      const extractionOverride = translationOverride ? null : await getLlmProviderOverride(db, 'extraction')
+      const config = resolveLlmConfig(translationOverride ?? extractionOverride ?? llmCfg, {
+        maxTokens: await getLlmMaxTokens(db, 'translation'),
+      })
+      if (!config) {
+        throw new Error('LLM ist nicht konfiguriert')
+      }
+
+      const result = await tryTranslate(title, description, documentSummary, extractionTexts, targetLang, config)
+      if (!result) {
+        throw new Error('LLM hat keine gültige Übersetzung geliefert')
+      }
+      await writeContentTranslation(
+        db,
+        contentHash,
+        targetLang,
+        result.title,
+        result.description,
+        result.documentSummary,
+        result.extractionTexts,
+      )
+      await completeAuctionTranslation(db, platform, id, targetLang, result)
+      setResponseHeader(event, 'x-zvg-translation-cache', 'generated')
+      return result
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      await failAuctionTranslation(db, platform, id, targetLang, message)
+      throw createError({
+        statusCode: 502,
+        statusMessage: 'Übersetzung fehlgeschlagen',
+        data: { detail: message },
+      })
     }
-    await writeContentTranslation(
-      db,
-      contentHash,
-      targetLang,
-      result.title,
-      result.description,
-      result.documentSummary,
-      result.extractionTexts,
-    )
-    setResponseHeader(event, 'x-zvg-translation-cache', 'generated')
-    return result
   })()
 
   inflight.set(inflightKey, gen)

@@ -78,11 +78,12 @@ export interface ExternalEnrichmentSummary {
   locationContexts: number
   staleResults: number
   providerFailures: number
+  /** Concrete, user-displayable failures retained for partial runs. */
+  errors: string[]
   durationMs: number
 }
 
-let queueTail: Promise<void> = Promise.resolve()
-let queuedRuns = 0
+import { runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-task'
 
 export default defineTask({
   meta: {
@@ -91,25 +92,15 @@ export default defineTask({
   },
   async run(event) {
     const options = (event?.payload ?? {}) as ExternalEnrichmentOptions
-    const previous = queueTail
-    let releaseQueue!: () => void
-    queueTail = new Promise<void>((resolve) => { releaseQueue = resolve })
-    if (queuedRuns > 0) {
-      console.warn(`[external-enrichment] queued ${scopeLabel(options)} behind ${queuedRuns} active/pending run(s)`)
-    }
-    queuedRuns++
-    try {
-      await previous
-      return { result: await runExternalEnrichment(options) }
-    } finally {
-      queuedRuns--
-      releaseQueue()
-    }
+    return await runExclusiveTask('external-enrichment', async (signal) => ({
+      result: await runExternalEnrichment(options, signal),
+    }))
   },
 })
 
 export async function runExternalEnrichment(
   options: ExternalEnrichmentOptions = {},
+  signal?: AbortSignal,
 ): Promise<ExternalEnrichmentSummary> {
   const startedAt = Date.now()
   const now = options.now ?? new Date()
@@ -127,16 +118,19 @@ export async function runExternalEnrichment(
     locationContexts: 0,
     staleResults: 0,
     providerFailures: 0,
+    errors: [],
     durationMs: 0,
   }
 
   const db = getPool()
   const marketAdapters = options.marketAdapters ?? await defaultMarketAdapters(db)
   const landValueAdapters = options.landValueAdapters ?? []
-  const hazardAdapters = options.hazardAdapters ?? await defaultHazardAdapters(db, checkedAt)
+  const hazardAdapters = options.hazardAdapters ?? await defaultHazardAdapters(db, checkedAt, summary)
   const locationContextAdapters = options.locationContextAdapters ?? await defaultLocationContextAdapters(db, checkedAt)
+  throwIfTaskAborted(signal)
 
   for (const rawAuction of Object.values(snapshot).filter((auction) => inScope(auction, options))) {
+    throwIfTaskAborted(signal)
     if (options.limit != null && summary.processed >= options.limit) break
     const point = await resolvePoint(rawAuction)
     if (!point) {
@@ -149,9 +143,13 @@ export async function runExternalEnrichment(
     const previous = existing[key]
 
     const marketComparison = await firstMarketComparison(auction, marketAdapters, summary)
+    throwIfTaskAborted(signal)
     const landValueBaseline = await firstLandValueBaseline(auction, landValueAdapters, summary)
+    throwIfTaskAborted(signal)
     const hazards = await allHazards(auction, hazardAdapters, summary)
+    throwIfTaskAborted(signal)
     const locationContext = await firstLocationContext(auction, locationContextAdapters, summary)
+    throwIfTaskAborted(signal)
 
     if (marketComparison) summary.marketComparisons++
     if (landValueBaseline) summary.landValueBaselines++
@@ -180,8 +178,13 @@ export async function runExternalEnrichment(
     }
   }
 
+  throwIfTaskAborted(signal)
   const ok = await writeLocationEnrichmentCache(entries)
+  throwIfTaskAborted(signal)
   summary.written = ok ? Object.keys(entries).length : 0
+  if (!ok && Object.keys(entries).length > 0) {
+    summary.errors.push('Externe Anreicherungsdaten konnten nicht gespeichert werden.')
+  }
   summary.durationMs = Date.now() - startedAt
   return summary
 }
@@ -221,8 +224,7 @@ async function firstMarketComparison(
       const result = await adapter.compare(auction)
       if (result) return result
     } catch (err) {
-      summary.providerFailures++
-      console.warn(`[external-enrichment] ${adapter.id} market failed for ${auction.platform}/${auction.externalId}: ${(err as Error).message}`)
+      recordProviderFailure(summary, adapter.id, 'market', auction, err)
     }
   }
   return null
@@ -239,8 +241,7 @@ async function firstLandValueBaseline(
       const result = await adapter.baseline(auction)
       if (result) return result
     } catch (err) {
-      summary.providerFailures++
-      console.warn(`[external-enrichment] ${adapter.id} land baseline failed for ${auction.platform}/${auction.externalId}: ${(err as Error).message}`)
+      recordProviderFailure(summary, adapter.id, 'land baseline', auction, err)
     }
   }
   return null
@@ -257,8 +258,7 @@ async function allHazards(
     try {
       out.push(...await adapter.assess(auction))
     } catch (err) {
-      summary.providerFailures++
-      console.warn(`[external-enrichment] ${adapter.id} hazards failed for ${auction.platform}/${auction.externalId}: ${(err as Error).message}`)
+      recordProviderFailure(summary, adapter.id, 'hazards', auction, err)
     }
   }
   return out
@@ -275,11 +275,25 @@ async function firstLocationContext(
       const result = await adapter.context(auction)
       if (result) return result
     } catch (err) {
-      summary.providerFailures++
-      console.warn(`[external-enrichment] ${adapter.id} location context failed for ${auction.platform}/${auction.externalId}: ${(err as Error).message}`)
+      recordProviderFailure(summary, adapter.id, 'location context', auction, err)
     }
   }
   return null
+}
+
+function recordProviderFailure(
+  summary: ExternalEnrichmentSummary,
+  adapterId: string,
+  kind: string,
+  auction: Auction,
+  error: unknown,
+): void {
+  summary.providerFailures++
+  const message = `${adapterId} ${kind} für ${auction.platform}/${auction.externalId}: ${
+    error instanceof Error ? error.message : String(error)
+  }`
+  if (summary.errors.length < 100) summary.errors.push(message)
+  console.warn(`[external-enrichment] ${message}`)
 }
 
 function sourceVersion(adapters: Array<{ id: string; sourceVersion: string }>): string {
@@ -318,7 +332,11 @@ async function defaultMarketAdapters(db: Pool | null): Promise<MarketComparisonA
   return adapters
 }
 
-async function defaultHazardAdapters(db: Pool | null, checkedAt: string): Promise<HazardAssessmentAdapter[]> {
+async function defaultHazardAdapters(
+  db: Pool | null,
+  checkedAt: string,
+  summary: ExternalEnrichmentSummary,
+): Promise<HazardAssessmentAdapter[]> {
   const adapters: HazardAssessmentAdapter[] = []
   const values = await resolvedSourceValues(db, 'eu-flood-risk-areas')
   if (values) {
@@ -327,18 +345,21 @@ async function defaultHazardAdapters(db: Pool | null, checkedAt: string): Promis
     // points at a file that doesn't exist yet — and unlike fr-dvf's
     // readJsonCache, createEuFloodRiskFileAdapter reads it eagerly and throws
     // on ENOENT/corrupt JSON. Skip only this source instead of rejecting the
-    // whole run, which would take market, location and noise enrichment down
-    // with it.
+    // whole run. Retain the concrete configuration failure in the result so
+    // the other providers can continue without hiding it from the admin.
     try {
       adapters.push(await createEuFloodRiskFileAdapter({
         geoJsonPath: String(values.geoJsonPath),
         checkedAt,
         maxCacheAgeDays: Number(values.maxCacheAgeDays),
       }))
-    } catch (err) {
-      console.warn(
-        `[external-enrichment] eu-flood-risk cache unusable at ${String(values.geoJsonPath)}: ${(err as Error).message}`,
-      )
+    } catch (error) {
+      summary.providerFailures++
+      const message = `eu-flood-risk cache ${String(values.geoJsonPath)}: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+      summary.errors.push(message)
+      console.warn(`[external-enrichment] ${message}`)
     }
   }
   return adapters
@@ -386,11 +407,7 @@ function withLocationContextEnhancers(
       if (!context) return null
       for (const enhancer of enhancers) {
         if (!enhancer.supports(auction, context)) continue
-        try {
-          context = await enhancer.enhance(auction, context)
-        } catch (err) {
-          console.warn(`[external-enrichment] ${enhancer.id} location context enhancer failed for ${auction.platform}/${auction.externalId}: ${(err as Error).message}`)
-        }
+        context = await enhancer.enhance(auction, context)
       }
       return context
     },

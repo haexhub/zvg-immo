@@ -58,6 +58,7 @@ import { writeListCache } from '~/server/utils/list-cache'
 import { applyDescriptionMarketValue } from '~/server/utils/description-market-value'
 import { normalizeAuctionDescription, normalizeAuctionDescriptions } from '~/server/utils/description-normalization'
 import { recordTaskRunEnd, recordTaskRunProgress, recordTaskRunStart } from '~/server/utils/task-runs'
+import { runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-task'
 
 const IMAGES_DIR = join(process.cwd(), '.cache_zvg', 'images')
 
@@ -81,8 +82,6 @@ function imageContentHashFromFilename(name: string): string | null {
 // fetches + document downloads) can still be active when the cron tick
 // fires. Two concurrent runs would double-fetch details and race on the
 // snapshot write.
-let running = false
-
 export interface EnrichOptions {
   /** ISO-3166-1 alpha-2, lowercase. Omit to crawl every enabled country. */
   country?: string
@@ -99,42 +98,39 @@ export default defineTask({
       'Crawl all regions, fetch detail pages, and download/archive documents + photos. No extraction — see the reprocess task.',
   },
   async run(event) {
-    if (running) {
-      console.warn('[enrich] previous run still in progress — skipping')
-      return { result: undefined }
-    }
-    running = true
-    try {
+    return await runExclusiveTask('enrich', async (signal) => {
       await recordTaskRunStart('enrich')
-      const outcome = await runEnrich((event?.payload ?? {}) as EnrichOptions)
-      await recordTaskRunEnd('enrich', { result: outcome.result })
-      return outcome
-    } catch (err) {
-      await recordTaskRunEnd('enrich', { error: (err as Error).message })
-      throw err
-    } finally {
-      running = false
-    }
+      try {
+        const outcome = await runEnrich((event?.payload ?? {}) as EnrichOptions, signal)
+        await recordTaskRunEnd('enrich', { result: outcome.result, warning: outcome.warning })
+        return outcome
+      } catch (err) {
+        await recordTaskRunEnd('enrich', { error: (err as Error).message })
+        throw err
+      }
+    })
   },
 })
 
-export async function runEnrich(opts: EnrichOptions = {}) {
+export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) {
     const startedAt = Date.now()
     const capturedAt = new Date(startedAt).toISOString()
     console.log(`[enrich] start${opts.country ? ` (country=${opts.country})` : ''}${opts.force ? ' force=true' : ''}`)
 
     let regionsDone = 0
     let regionsTotal = 0
+    const runErrors: string[] = []
     const result = await crawlAll({
       immobilienOnly: true,
       enrichDetails: false,
       country: opts.country,
+      signal,
       onRegionResult: opts.writeListCache
-        ? async (country, region, regionResult) => {
+          ? async (country, region, regionResult) => {
             await writeListCache(country, region, regionResult)
-            await recordObservations(regionResult, capturedAt)
             await matchAlerts(country, region, regionResult)
             for (const auction of regionResult.auctions) {
+              throwIfTaskAborted(signal)
               await archiveAuction(auction, capturedAt)
             }
           }
@@ -240,6 +236,7 @@ export async function runEnrich(opts: EnrichOptions = {}) {
     let cursor = 0
     async function worker() {
       while (cursor < todo.length) {
+        throwIfTaskAborted(signal)
         const a = todo[cursor++]
         if (!a) continue
         const crawler = byPlatform.get(a.platform)
@@ -267,9 +264,8 @@ export async function runEnrich(opts: EnrichOptions = {}) {
               a.sourceRooms != null ||
               (a.photoUrls?.length ?? 0) > 0 ||
               a.lat != null
-          } catch {
-            // Transient (network / BOE captcha): leave detailFetchedAt unset so
-            // this listing is retried on the next run.
+          } catch (err) {
+            runErrors.push(`Detailabruf ${a.platform}:${a.externalId}: ${(err as Error).message}`)
           }
         }
         // Runs regardless of whether this platform has its own enrichOne step
@@ -277,21 +273,19 @@ export async function runEnrich(opts: EnrichOptions = {}) {
         // final description/market-value data straight from the list crawl,
         // so these must not be skipped just because there was no separate
         // fetch to wait for.
-        let detailOk = false
         if (fetchDone) {
           try {
             normalizeAuctionDescription(a)
             applyDescriptionMarketValue(a)
             deriveMarketValueEur(a, rates)
-            detailOk = true
             a.detailFetchedAt = at
             // Re-archive now that detail data (description/attachments/
             // source*) is on the auction — a new content hash whenever
             // enrichment actually added something (see raw-archive.ts).
             await archiveAuction(a, at)
-          } catch {
-            // Transient: leave detailFetchedAt unset so this listing is
-            // retried on the next run.
+          } catch (err) {
+            a.detailFetchedAt = undefined
+            runErrors.push(`Roharchiv ${a.platform}:${a.externalId}: ${(err as Error).message}`)
           }
         }
         if (enriched) enrichedCount++
@@ -318,8 +312,15 @@ export async function runEnrich(opts: EnrichOptions = {}) {
             authority: a.authority,
           }
           const preparedDocuments = await prepareLiveLlmDocuments(a.attachments, documentIdentity, at)
-          if (preparedDocuments.documentSetComplete) {
+          if (!preparedDocuments.documentSetComplete) {
+            if (a.attachments.length > 0) {
+              runErrors.push(`Dokumentarchiv ${a.platform}:${a.externalId} ist unvollständig`)
+            }
+          } else {
             currentDocumentSet = await archiveDocumentSet(documentIdentity, preparedDocuments.documentSetItems, at)
+            if (!currentDocumentSet && a.attachments.length > 0) {
+              runErrors.push(`Dokumentmanifest ${a.platform}:${a.externalId} konnte nicht gespeichert werden`)
+            }
           }
         }
 
@@ -389,9 +390,7 @@ export async function runEnrich(opts: EnrichOptions = {}) {
             photoPipelineVersion = targetPhotoPipelineVersion(a)
           } catch (err) {
             photoFailures++
-            console.warn(
-              `[enrich] photo extraction failed for ${a.platform}:${a.externalId}: ${(err as Error).message}`,
-            )
+            runErrors.push(`Fotoextraktion ${a.platform}:${a.externalId}: ${(err as Error).message}`)
             if (photos.length === 0 && priorPhotos.length > 0) {
               photos = priorPhotos.map((photo) => photo.file)
             }
@@ -450,15 +449,15 @@ export async function runEnrich(opts: EnrichOptions = {}) {
           const toFlush = dirty
           dirty = {}
           const ok = await writeExtractionCache(toFlush)
-          // On a failed upsert, re-merge the batch into dirty so the next
-          // flush retries it instead of silently losing it from Postgres.
-          if (!ok) dirty = { ...toFlush, ...dirty }
+          if (!ok) throw new Error('Extraktions-Cache konnte nicht gespeichert werden')
         }
       }
     }
     await Promise.all(Array.from({ length: ENRICH_CONCURRENCY }, worker))
 
-    if (Object.keys(dirty).length > 0) await writeExtractionCache(dirty)
+    if (Object.keys(dirty).length > 0 && !(await writeExtractionCache(dirty))) {
+      throw new Error('Extraktions-Cache konnte nicht gespeichert werden')
+    }
 
     // Snapshot the fully decorated crawl (photo URLs + cached Verkehrswerte)
     // so /api/auction/[platform]/[id] can serve detail pages without
@@ -467,6 +466,7 @@ export async function runEnrich(opts: EnrichOptions = {}) {
     // other detail field this crawl didn't refresh.
     const vwCache = await readVerkehrswertCache()
     for (const a of result.auctions) {
+      throwIfTaskAborted(signal)
       if (a.marketValueEur != null) continue
       const hit = vwCache[cacheKey(a.platform, a.externalId)]
       if (!hit) continue
@@ -480,10 +480,15 @@ export async function runEnrich(opts: EnrichOptions = {}) {
     applyExtractionToAuctions(result.auctions, cache)
     normalizeAuctionDescriptions(result.auctions)
     await writeAuctionSnapshot(result.auctions)
+    // Record the final enriched payload, not the earlier list-only regional
+    // shape. This keeps each analytical observation complete with detail,
+    // document, photo and extraction fields available at this run.
+    await recordObservations(result, capturedAt)
     // Structured Postgres mirror for fast SQL filter queries (Daten-API, admin
     // tooling) — additive, no-op without NUXT_DATABASE_URL. See
     // server/utils/current-auctions.ts.
     await upsertCurrentAuctions(result.auctions, at)
+    runErrors.push(...result.errors.map((failure) => `${failure.country}/${failure.region}: ${failure.message}`))
 
     const durationMs = Date.now() - startedAt
     console.log(
@@ -498,7 +503,11 @@ export async function runEnrich(opts: EnrichOptions = {}) {
         enriched: enrichedCount,
         photoExtractions,
         photosTotal,
+        failed: runErrors.length,
         durationMs,
       },
+      warning: runErrors.length > 0
+        ? `${runErrors.length} Fehler: ${runErrors.slice(0, 20).join('; ')}`
+        : undefined,
     }
 }

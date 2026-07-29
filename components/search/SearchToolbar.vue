@@ -78,7 +78,7 @@ const boundToMap = defineModel<boolean>('boundToMap', { required: true })
 
     <div v-if="filteredCount" class="text-sm text-muted-foreground">
       {{ $t('search.resultsCount', { count: filteredCount }) }}<span v-if="geoData">
-        · {{ filteredGeoCount }} {{ $t('search.onMap') }} ({{ $t('search.geocoded', { done: geoData.geocodedCount, total: geoData.auctions.length }) }}<span v-if="geoData.unresolvableCount > 0">, {{ $t('search.unresolvable', { count: geoData.unresolvableCount }) }}</span><span v-if="geocodingInProgress">, {{ $t('search.geocodingRunning') }}</span>)
+        · {{ filteredGeoCount }} {{ $t('search.onMap') }} ({{ $t('search.geocoded', { done: geoData.geocodedCount, total: geoData.total }) }}<span v-if="geoData.unresolvableCount > 0">, {{ $t('search.unresolvable', { count: geoData.unresolvableCount }) }}</span><span v-if="geocodingInProgress">, {{ $t('search.geocodingRunning') }}</span>)
       </span>
     </div>
   </div>

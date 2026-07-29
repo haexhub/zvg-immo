@@ -26,7 +26,14 @@ import { join } from 'node:path'
 import type { Auction, AuctionExtraction, CuratedPhoto } from '~/types/auction'
 import { getPool } from '~/server/utils/db'
 import { extractByRules } from '~/server/utils/extract/rules'
-import { extractByLlm, isRateLimitError, type LlmConfig, type LlmInput, type PhotoCuration } from '~/server/utils/extract/llm'
+import {
+  extractByLlm,
+  isLlmProviderError,
+  isRateLimitError,
+  type LlmConfig,
+  type LlmInput,
+  type PhotoCuration,
+} from '~/server/utils/extract/llm'
 import { prepareArchivedLlmDocuments } from '~/server/utils/extract/llm-documents'
 import {
   isLlmBatchPending,
@@ -57,14 +64,13 @@ import {
   getEnabledCountryCodes,
   isCountryEnabled,
 } from '~/server/crawlers/registry'
+import { runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-task'
 
 const IMAGES_DIR = join(process.cwd(), '.cache_zvg', 'images')
 const DEFAULT_MAX_LLM_PER_RUN = 300
 // Cap on candidate photos sent to the LLM for curation per call — a Gutachten
 // with dozens of embedded rasters would otherwise blow the token budget.
 const MAX_CANDIDATE_PHOTOS = 8
-
-let running = false
 
 export interface ReprocessOptions {
   /** ISO-3166-1 alpha-2, lowercase. Omit to scan every enabled country. */
@@ -477,27 +483,22 @@ export default defineTask({
       'Run rules/LLM extraction (incl. vision) against archived raw_captures — no live portal fetch. Scheduled across all countries; also invokable manually/scoped.',
   },
   async run(event) {
-    if (running) {
-      console.warn('[reprocess] previous run still in progress — skipping')
-      return { result: undefined }
-    }
-    running = true
-    try {
+    return await runExclusiveTask('reprocess', async (signal) => {
       await recordTaskRunStart('reprocess')
-      const result = await runReprocess((event?.payload ?? {}) as ReprocessOptions)
-      const { warning, ...summary } = result
-      await recordTaskRunEnd('reprocess', { result: summary, warning })
-      return { result }
-    } catch (err) {
-      await recordTaskRunEnd('reprocess', { error: (err as Error).message })
-      throw err
-    } finally {
-      running = false
-    }
+      try {
+        const result = await runReprocess((event?.payload ?? {}) as ReprocessOptions, signal)
+        const { warning, ...summary } = result
+        await recordTaskRunEnd('reprocess', { result: summary, warning })
+        return { result }
+      } catch (err) {
+        await recordTaskRunEnd('reprocess', { error: (err as Error).message })
+        throw err
+      }
+    })
   },
 })
 
-export async function runReprocess(opts: ReprocessOptions = {}): Promise<ReprocessResult> {
+export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSignal): Promise<ReprocessResult> {
   const startedAt = Date.now()
   if (opts.force && !opts.country && !opts.platform && !opts.externalId && !opts.caseNumber && !opts.limit) {
     throw new Error(
@@ -577,6 +578,7 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
   }
 
   for (const { platform, externalId } of candidates) {
+    throwIfTaskAborted(signal)
     try {
       const key = cacheKey(platform, externalId)
       const priorEntry = cache[key]
@@ -687,6 +689,11 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
       if (isRateLimitError(err)) {
         warning = buildLlmRateLimitWarning(err, llmConfig)
         console.warn('[reprocess] LLM provider rate-limited — stopping this run early')
+        break
+      }
+      if (isLlmProviderError(err)) {
+        warning = `LLM-Providerfehler: ${err.message}`
+        console.warn('[reprocess] LLM provider unavailable — stopping this run early')
         break
       }
     } finally {

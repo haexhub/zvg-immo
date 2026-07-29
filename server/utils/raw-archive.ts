@@ -1,9 +1,10 @@
 // G1 Roh-Archiv Schicht 1: unveränderliches Archiv des vollständigen geparsten
 // Auktions-Stands (raw_blobs = content-addressed Bytes, raw_captures =
 // append-only "welche Auktions-Identität zeigt auf welchen Blob"-Index).
-// Best-effort wie recordObservations/matchAlerts: jeder exportierte Aufruf
-// fängt seine eigenen Fehler und wirft nie. No-op ohne NUXT_DATABASE_URL (see
-// server/utils/db.ts) — Blobs bleiben dann ungeschrieben, kein halbes Archiv.
+// Ohne NUXT_DATABASE_URL (siehe server/utils/db.ts) bleibt die Schicht
+// deaktiviert. Sobald eine Datenbank konfiguriert ist, werden Schreibfehler
+// bewusst weitergeworfen: Ein Crawl darf bei verlorenen Quelldaten nicht
+// fälschlich als erfolgreich erscheinen.
 //
 // Schreibpfad: Bytes zuerst in eine lokale Outbox (schnell, netzunabhängig);
 // server/utils/storage-uploader.ts drainiert sie später nach S3-compatible storage.
@@ -126,8 +127,9 @@ export function canonicalizeAuction(auction: Auction): unknown {
  * `raw_blobs` index row. Existing hashes are recognized and skipped — the
  * whole point of content-hash-dedup.
  *
- * Never throws; returns null when archiving is unavailable (no DB) or on any
- * failure — archiving is strictly best-effort and must never break a crawl.
+ * Returns null only when archiving is unavailable because no database is
+ * configured. Once a database is configured, persistence failures are thrown:
+ * a crawl must not report success after silently losing source data.
  */
 export async function archiveBlob(
   bytes: Buffer,
@@ -137,8 +139,7 @@ export async function archiveBlob(
 ): Promise<string | null> {
   const db = getPool()
   if (!db) return null
-  try {
-    const hash = sha256Hex(opts?.canonicalBytesForHash ?? bytes)
+  const hash = sha256Hex(opts?.canonicalBytesForHash ?? bytes)
 
     // Only a *confirmed* upload counts as "already archived". A Supabase
     // Storage outage before 2026-07-23 (Kong not yet routing /storage/v1/*,
@@ -173,11 +174,7 @@ export async function archiveBlob(
        ON CONFLICT (content_hash) DO UPDATE SET uploaded_at = null`,
       [hash, key, storedContentType(contentType), stored.length],
     )
-    return hash
-  } catch (err) {
-    console.warn(`[raw-archive] archiveBlob failed: ${(err as Error).message}`)
-    return null
-  }
+  return hash
 }
 
 export interface CaptureInput {
@@ -203,13 +200,12 @@ export interface CaptureInput {
  * externalId, sourceUrl, contentHash)`: repeated crawls of the same bytes
  * refresh metadata in place, but an updated document behind the same URL
  * remains as its own capture so document-set versions can still point at
- * older valid combinations. Never throws.
+ * older valid combinations. Persistence failures propagate.
  */
 export async function recordCapture(input: CaptureInput): Promise<void> {
   const db = getPool()
   if (!db) return
-  try {
-    const params = [
+  const params = [
       input.capturedAt,
       input.kind,
       input.platform,
@@ -233,17 +229,14 @@ export async function recordCapture(input: CaptureInput): Promise<void> {
         ? `(kind, platform, external_id, content_hash) WHERE kind = 'auction'`
         : `(kind, platform, external_id, (COALESCE(source_url, '')), content_hash) WHERE kind <> 'auction'`
 
-    await db.query(
-      `INSERT INTO raw_captures
-         (captured_at, kind, platform, country, region, external_id, case_number, authority, content_hash, source_url)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       ON CONFLICT ${conflictTarget} DO UPDATE SET
-         ${updateSet}`,
-      params,
-    )
-  } catch (err) {
-    console.warn(`[raw-archive] recordCapture failed: ${(err as Error).message}`)
-  }
+  await db.query(
+    `INSERT INTO raw_captures
+       (captured_at, kind, platform, country, region, external_id, case_number, authority, content_hash, source_url)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+     ON CONFLICT ${conflictTarget} DO UPDATE SET
+       ${updateSet}`,
+    params,
+  )
 }
 
 export interface DocumentIdentity {
@@ -277,7 +270,7 @@ export interface ArchivedDocumentSetResult {
  * the auction whose enrichment fetched it. Content-hash-dedup means the same
  * appraisal/document shared across multiple auctions (or re-fetched
  * unchanged on a later run) is stored once, while each referencing auction
- * still gets its own capture row. Never throws.
+ * still gets its own capture row. Persistence failures propagate.
  */
 export async function archiveDocumentBlob(
   bytes: Buffer,
@@ -318,7 +311,7 @@ export async function archiveDocument(
  * `kind='document_text'`) — the Stufe-1-Normalisierung output described in
  * docs/plans/2026-07-22-de-crawler-photos-cards-plan.md (WP-B). Lets
  * reprocessing read already-extracted text instead of re-running
- * pdftotext/OCR on the raw PDF bytes. Never throws.
+ * pdftotext/OCR on the raw PDF bytes. Persistence failures propagate.
  */
 export async function archiveDocumentText(
   text: string,
@@ -348,7 +341,7 @@ export async function archiveDocumentText(
  * Individual document bytes remain content-addressed in raw_blobs; this table
  * records which hashes were valid together for the auction. Re-seeing the same
  * set only updates last_seen_at; a changed/added/withdrawn document produces
- * the next version. Never throws.
+ * the next version. Persistence failures propagate.
  */
 export async function archiveDocumentSet(
   identity: DocumentIdentity,
@@ -357,8 +350,7 @@ export async function archiveDocumentSet(
 ): Promise<ArchivedDocumentSetResult | null> {
   const db = getPool()
   if (!db) return null
-  try {
-    const canonicalDocuments = documents
+  const canonicalDocuments = documents
       .map((doc) => canonicalize({
         kind: doc.kind,
         label: doc.label ?? null,
@@ -477,11 +469,7 @@ export async function archiveDocumentSet(
       }
     }
 
-    return null
-  } catch (err) {
-    console.warn(`[raw-archive] archiveDocumentSet failed: ${(err as Error).message}`)
-    return null
-  }
+  return null
 }
 
 /**
@@ -490,28 +478,25 @@ export async function archiveDocumentSet(
  * from `enrich.ts` after a successful `enrichOne` (detail-level) — the second
  * call produces a new content hash whenever detail data (description,
  * attachments, source* fields, ...) was added, so both the listing snapshot
- * and the enriched snapshot end up in the archive. Never throws.
+ * and the enriched snapshot end up in the archive. Persistence failures
+ * propagate.
  */
 export async function archiveAuction(auction: Auction, capturedAt: string): Promise<void> {
-  try {
-    const canonicalBytes = Buffer.from(JSON.stringify(canonicalizeAuction(auction)))
-    const bytes = Buffer.from(JSON.stringify(auction))
-    const hash = await archiveBlob(bytes, 'application/json', auction.country, { canonicalBytesForHash: canonicalBytes })
-    if (!hash) return
+  const canonicalBytes = Buffer.from(JSON.stringify(canonicalizeAuction(auction)))
+  const bytes = Buffer.from(JSON.stringify(auction))
+  const hash = await archiveBlob(bytes, 'application/json', auction.country, { canonicalBytesForHash: canonicalBytes })
+  if (!hash) return
 
-    await recordCapture({
-      capturedAt,
-      kind: 'auction',
-      platform: auction.platform,
-      country: auction.country,
-      region: auction.region,
-      externalId: auction.externalId,
-      caseNumber: auction.caseNumber || null,
-      authority: auction.authority || null,
-      contentHash: hash,
-      sourceUrl: auction.detailUrlUpstream ?? null,
-    })
-  } catch (err) {
-    console.warn(`[raw-archive] archiveAuction failed: ${(err as Error).message}`)
-  }
+  await recordCapture({
+    capturedAt,
+    kind: 'auction',
+    platform: auction.platform,
+    country: auction.country,
+    region: auction.region,
+    externalId: auction.externalId,
+    caseNumber: auction.caseNumber || null,
+    authority: auction.authority || null,
+    contentHash: hash,
+    sourceUrl: auction.detailUrlUpstream ?? null,
+  })
 }

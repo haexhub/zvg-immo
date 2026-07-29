@@ -5,8 +5,9 @@
 
 import { runMigrations } from '../utils/db'
 
-export default defineNitroPlugin(() => {
-  void runMigrations().catch((err: unknown) => {
-    console.error('[db-bootstrap] migration failed:', (err as Error).message)
-  })
+export default defineNitroPlugin(async () => {
+  // Do not advertise a ready application against a partially migrated
+  // database. A configured database is mandatory for the serving/archive
+  // paths, so migration failure must fail startup visibly.
+  await runMigrations()
 })
