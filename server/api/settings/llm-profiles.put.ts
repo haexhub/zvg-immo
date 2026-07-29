@@ -71,6 +71,7 @@ export default defineEventHandler(async (event) => {
     const message = (err as Error).message
     if (
       message === 'unsupported provider/executionMode combination' ||
+      message === 'apiKey: für diesen Provider erforderlich.' ||
       message === 'profile id: ungültiger Wert.' ||
       message === 'profile id: doppelter Wert.'
     ) {

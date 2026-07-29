@@ -543,9 +543,55 @@ describe('getLlmProviderOverride', () => {
       baseUrl: 'https://generativelanguage.googleapis.com',
       model: 'gemini-flash-latest',
       executionMode: 'sync' as const,
+      apiKey: 'secret',
     }
 
     await expect(setLlmProviderProfileSettings(db, [profile, profile], {})).rejects.toThrow('profile id: doppelter Wert.')
+  })
+
+  it('rejects a profile whose public endpoint needs an API key it does not have', async () => {
+    const db = makeFakePool() as unknown as Pool
+    await expect(setLlmProviderProfileSettings(db, [
+      {
+        id: 'translate',
+        provider: 'gemini-native',
+        baseUrl: 'https://generativelanguage.googleapis.com',
+        model: 'gemini-3.5-flash-lite',
+        executionMode: 'sync',
+      },
+    ], {})).rejects.toThrow('apiKey: für diesen Provider erforderlich.')
+  })
+
+  it('accepts a keyless profile pointing at an internal sidecar', async () => {
+    const db = makeFakePool() as unknown as Pool
+    const saved = await setLlmProviderProfileSettings(db, [
+      {
+        id: 'proxy',
+        provider: 'claude-proxy',
+        baseUrl: 'http://haex-claude-proxy:8080',
+        model: 'claude-haiku-4-5-20251001',
+        executionMode: 'sync',
+      },
+    ], {})
+    expect(saved.profiles[0]?.apiKey).toBe('')
+  })
+
+  it('keeps a profile valid when the key is only preserved from storage', async () => {
+    const db = makeFakePool() as unknown as Pool
+    const stored = {
+      id: 'gemini',
+      provider: 'gemini-native' as const,
+      baseUrl: 'https://generativelanguage.googleapis.com',
+      model: 'gemini-flash-latest',
+      executionMode: 'sync' as const,
+      apiKey: 'secret',
+    }
+    await setLlmProviderProfileSettings(db, [stored], {})
+
+    // apiKey omitted = "leave the stored key untouched"; the guard must resolve
+    // against that COALESCE, not reject the edit as keyless.
+    const saved = await setLlmProviderProfileSettings(db, [{ ...stored, apiKey: undefined, model: 'gemini-flash-next' }], {})
+    expect(saved.profiles[0]).toMatchObject({ model: 'gemini-flash-next', apiKey: 'secret' })
   })
 })
 

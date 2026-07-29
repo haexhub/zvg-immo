@@ -300,6 +300,7 @@
       "apiKeyPlaceholderSet": "•••••••• (gespeichert)",
       "apiKeyPlaceholderUnset": "kein Key gespeichert",
       "apiKeyClearOnSave": "Gespeicherten Key beim Speichern entfernen",
+      "apiKeyMissing": "Für diesen Provider ist ein API-Key erforderlich. Ohne Key schlagen alle Anfragen fehl (403).",
       "loadError": "Konfiguration konnte nicht geladen werden.",
       "saveError": "Speichern fehlgeschlagen.",
       "saved": "Gespeichert.",

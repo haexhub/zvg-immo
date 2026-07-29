@@ -10,6 +10,7 @@ import {
   type LlmProviderAssignments,
   type LlmProviderScope,
 } from '~/server/utils/app-settings'
+import { llmProviderRequiresApiKey } from '~/server/utils/llm-provider-capabilities'
 
 interface PublicLlmProviderProfile {
   id: string
@@ -19,6 +20,10 @@ interface PublicLlmProviderProfile {
   model: string
   executionMode: LlmExecutionMode
   apiKeySet: boolean
+  /** True for a profile already stored without the credentials its endpoint
+   *  needs. Save-time validation only guards new writes, so without this the
+   *  card would keep rendering an unusable profile as if it were fine. */
+  apiKeyMissing: boolean
 }
 
 function publicProfile(profile: {
@@ -38,6 +43,7 @@ function publicProfile(profile: {
     model: profile.model,
     executionMode: profile.executionMode,
     apiKeySet: !!profile.apiKey,
+    apiKeyMissing: !profile.apiKey && llmProviderRequiresApiKey(profile.provider, profile.baseUrl),
   }
 }
 
