@@ -22,6 +22,7 @@ import {
 } from '~/server/utils/external-data/config'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 import { runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-task'
+import { recordTaskRunEnd, recordTaskRunStart } from '~/server/utils/task-runs'
 
 export interface MarketComparisonAdapter {
   id: string
@@ -92,9 +93,25 @@ export default defineTask({
   },
   async run(event) {
     const options = (event?.payload ?? {}) as ExternalEnrichmentOptions
-    return await runExclusiveTask('external-enrichment', async (signal) => ({
-      result: await runExternalEnrichment(options, signal),
-    }))
+    return await runExclusiveTask('external-enrichment', async (signal) => {
+      // Recorded because /settings triggers this detached: without a persisted
+      // status a provider failure would vanish with the promise.
+      await recordTaskRunStart('external-enrichment')
+      try {
+        const result = await runExternalEnrichment(options, signal)
+        const { errors, ...summary } = result
+        await recordTaskRunEnd('external-enrichment', {
+          result: summary,
+          warning: errors.length > 0
+            ? `${errors.length} Fehler: ${errors.slice(0, 20).join('; ')}`
+            : null,
+        })
+        return { result }
+      } catch (err) {
+        await recordTaskRunEnd('external-enrichment', { error: (err as Error).message })
+        throw err
+      }
+    })
   },
 })
 

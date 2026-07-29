@@ -1,12 +1,14 @@
-// Tracks whether a scheduled Nitro task (`enrich` or `reprocess`) is running
-// right now and what its last run produced — each task's own `running` guard
-// is in-memory only, so /settings had no way to show whether the pipeline is
-// alive or stuck. Same app_settings KV + graceful in-memory-fallback pattern
-// as llm-batch-jobs.ts's recordLlmBatchCapability/getAllLlmBatchCapabilities.
+// Tracks whether a scheduled Nitro task (`enrich`, `reprocess` or
+// `external-enrichment`) is running right now and what its last run produced —
+// each task's own exclusivity guard is in-memory only, so /settings had no way
+// to show whether the pipeline is alive or stuck. This is also what makes a
+// detached (fire-and-forget) trigger safe: the run's failure lands here instead
+// of disappearing with the promise. Same app_settings KV + graceful
+// in-memory-fallback pattern as llm-batch-jobs.ts's recordLlmBatchCapability.
 
 import { getPool } from './db'
 
-export type TrackedTask = 'enrich' | 'reprocess'
+export type TrackedTask = 'enrich' | 'reprocess' | 'external-enrichment'
 
 // enrich.ts (crawl/archive) and reprocess.ts (extraction) report differently
 // shaped, purely-numeric result summaries — kept generic here rather than a

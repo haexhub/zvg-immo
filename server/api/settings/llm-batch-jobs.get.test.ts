@@ -137,9 +137,11 @@ describe('/api/settings/llm-batch-jobs', () => {
       },
       reprocessStatus: IDLE_REPROCESS_STATUS,
       enrichStatus: IDLE_REPROCESS_STATUS,
+      externalEnrichmentStatus: IDLE_REPROCESS_STATUS,
     })
     expect(getTaskRunStatus).toHaveBeenCalledWith('reprocess')
     expect(getTaskRunStatus).toHaveBeenCalledWith('enrich')
+    expect(getTaskRunStatus).toHaveBeenCalledWith('external-enrichment')
   })
 
   it('synthesizes a config-gated gemini-native capability when the free tier has never been attempted', async () => {

@@ -297,7 +297,7 @@
       "enrichTitle": "Dieses Land erneut crawlen, archivieren und extrahieren",
       "enrichError": "Aktualisierung konnte nicht gestartet werden.",
       "enrichDone": "{country}: {archived} von {crawled} Anzeigen aktualisiert ({photos} Fotos, {duration}s).",
-      "externalEnrichmentQueued": "Lagebewertung und Kartenlayer werden anschließend aktualisiert.",
+      "followUpTasksStarted": "LLM-Extraktion und Lagebewertung laufen jetzt im Hintergrund weiter — ihr Fortschritt und etwaige Fehler stehen unten.",
       "enrichStatusRunning": "Crawl/Archiv läuft seit {at} …",
       "enrichStatusLastRun": "Letzter Crawl/Archiv-Lauf: {at} — {archived} archiviert, {duration}s.",
       "enrichStatusLastError": "Crawl/Archiv zuletzt fehlgeschlagen: {message}",
@@ -308,7 +308,10 @@
       "llmStatusLastError": "LLM-Extraktion zuletzt fehlgeschlagen: {message}",
       "llmStatusLlmErrors": "{count} LLM-Anfragefehler im letzten Lauf",
       "llmStatusLastLlmError": "Letzter LLM-Fehler: {message}",
-      "llmStatusProgress": "{processed}/{candidatesTotal} verarbeitet, {llmCalls} LLM-Aufrufe, {skipped} übersprungen"
+      "llmStatusProgress": "{processed}/{candidatesTotal} verarbeitet, {llmCalls} LLM-Aufrufe, {skipped} übersprungen",
+      "externalStatusRunning": "Lagebewertung läuft seit {at} …",
+      "externalStatusLastRun": "Letzte Lagebewertung: {at} — {processed} geprüft, {written} gespeichert, {duration}s.",
+      "externalStatusLastError": "Lagebewertung zuletzt fehlgeschlagen: {message}"
     },
     "externalData": {
       "title": "Externe Datenquellen",

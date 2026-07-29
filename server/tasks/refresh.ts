@@ -99,8 +99,18 @@ async function runRefresh(signal: AbortSignal) {
   console.log(
     `[refresh] done in ${(durationMs / 1000).toFixed(0)}s — ${ok} ok, ${failed} failed, ${skipped} skipped`,
   )
+  // Individual regions fail routinely and for reasons outside our control (BOE's
+  // captcha, an upstream 429 — see server/crawlers/crawl-cadence.ts). Throwing
+  // on any of them would mark practically every hourly run as failed and make
+  // the signal worthless. Only a run that crawled nothing at all is a real
+  // outage; partial failures stay in the per-region warnings logged above.
   if (failureMessages.length > 0) {
-    throw new Error(`${failureMessages.length} Refresh-Fehler: ${failureMessages.slice(0, 20).join('; ')}`)
+    console.warn(
+      `[refresh] ${failureMessages.length} region(s) failed: ${failureMessages.slice(0, 20).join('; ')}`,
+    )
+  }
+  if (ok === 0 && failed > 0) {
+    throw new Error(`Refresh komplett fehlgeschlagen (${failed} Quellen): ${failureMessages.slice(0, 20).join('; ')}`)
   }
   return { result: { ok, failed, skipped, durationMs } }
 }
