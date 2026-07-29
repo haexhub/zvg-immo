@@ -355,6 +355,17 @@
       "llmStatusLastError": "LLM extraction last failed: {message}",
       "llmStatusProgress": "{processed}/{candidatesTotal} processed, {llmCalls} LLM calls, {skipped} skipped"
     },
+    "externalData": {
+      "title": "External data sources",
+      "description": "POI/transit, noise, flood risk and market comparison on the detail page come from these services. An empty field falls back to the deployment-configured (env var) value, if set — otherwise the source stays inactive.",
+      "configured": "Active",
+      "notConfigured": "Not configured",
+      "loadError": "Could not load data sources.",
+      "saveError": "Save failed.",
+      "saved": "Saved.",
+      "saving": "Saving …",
+      "save": "Save"
+    },
     "reprocess": {
       "title": "Reprocess test run",
       "description": "Re-run extraction for a limited number of archived auctions — e.g. to verify a new provider/model configuration before reprocessing the full dataset.",

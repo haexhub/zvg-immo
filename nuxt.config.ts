@@ -132,7 +132,11 @@ export default defineNuxtConfig({
     databaseUrl: '',
     // External market/risk datasets are ingested out-of-band into local or
     // Postgres-backed caches; detail pages only read location_enrichment.
-    // Empty values keep the external-enrichment task inert.
+    // Empty values keep the external-enrichment task inert unless overridden
+    // from /settings's "Externe Datenquellen" card (server/utils/external-
+    // data/config.ts — DB override > this env default > sources.ts's field
+    // default), the same env/DB precedence server/utils/app-settings.ts's
+    // LLM provider override already uses.
     //   NUXT_EXTERNAL_DATA_FR_DVF_CACHE_PATH=/app/.cache_zvg/external/fr-dvf.json
     //   NUXT_EXTERNAL_DATA_EU_FLOOD_RISK_GEO_JSON_PATH=/app/.cache_zvg/external/eu-flood-risk.geojson
     //   NUXT_EXTERNAL_DATA_EU_FLOOD_RISK_MAX_CACHE_AGE_DAYS=400
@@ -237,6 +241,13 @@ export default defineNuxtConfig({
       // externalData adapters this is a cheap no-op; detail pages never fetch
       // providers live.
       '15 3 * * *': ['external-enrichment'],
+      // Monthly: refresh the local EU Flood Risk Areas polygon cache (see
+      // server/tasks/import-eu-flood-risk-cache.ts) from the EEA's published
+      // service. The Floods Directive reporting cycle itself is six-yearly,
+      // so monthly is just a courtesy re-pull to catch source corrections
+      // — nowhere near a rate-limit concern for the eu-flood-risk-areas
+      // source, unlike the OSM Overpass endpoint above.
+      '30 4 1 * *': ['import-eu-flood-risk-cache'],
     },
     routeRules: {
       // /api/auctions caches inside the handler (defineCachedFunction) instead
