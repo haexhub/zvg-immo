@@ -288,7 +288,7 @@ Géorisques (FR, PPRN) and HORA/Gefahrenzonenplan (AT). The registry already ref
    a genuine request failure via `onRequestError`, kept strictly apart from the rate-limit throw path
    (which must keep skipping without counting toward `llmFailures`). `reprocess.ts` tracks
    `llmErrors`/`lastLlmError` per run and surfaces both on the reprocess status cards in `/settings`.
-2. **WP5 wildfire: Copernicus EFFIS MODIS Burnt Area, not the live Fire Weather Index forecast.**
+2. **WP5 wildfire: Copernicus EFFIS MODIS Burnt Area, not the live Fire Weather Index forecast** (PR #243).
    Two EFFIS layers were investigated live against `maps.effis.emergency.copernicus.eu`:
    - `mf010.query` (MeteoFrance FWI forecast — the "current fire danger" layer this plan originally
      wanted): WMS GetFeatureInfo tested against several European points/dates (Stockholm, Marseille,
@@ -392,9 +392,9 @@ Next recommended prompt:
 Continue docs/plans/2026-07-26-eu-market-risk-data-sources-plan.md, section
 "2026-07-29 (cont.): LLM failure observability + WP5 wildfire".
 
-State: PRs #235-#240 merged, plus the copernicus-effis wildfire PR from this same
-session. LLM failure observability is done. WP5 wildfire has a static MODIS
-burnt-area signal only — read that section before touching EFFIS again, it records
+State: PRs #235-#240 merged, PR #243 (this session's wildfire work) open. LLM
+failure observability is done. WP5 wildfire has a static MODIS burnt-area signal
+only — read that section before touching EFFIS again, it records
 why the live Fire Weather Index forecast (mf010.query) was investigated and
 rejected as unverifiable, not skipped out of laziness.
 
