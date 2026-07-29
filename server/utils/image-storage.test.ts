@@ -6,9 +6,13 @@ vi.mock('./supabase', () => ({ getServiceClient: vi.fn() }))
 const uploadMock = vi.fn(async (..._args: unknown[]): Promise<{ error: { message: string } | null }> => ({
   error: null,
 }))
-const fakeSupabase = { storage: { from: vi.fn(() => ({ upload: uploadMock })) } }
+const downloadMock = vi.fn(async (..._args: unknown[]): Promise<{ data: Blob | null; error: { message: string } | null }> => ({
+  data: null,
+  error: null,
+}))
+const fakeSupabase = { storage: { from: vi.fn(() => ({ upload: uploadMock, download: downloadMock })) } }
 
-const { imagePublicUrl, imagesBucketConfigured, uploadImage } = await import('./image-storage')
+const { downloadImage, imagePublicUrl, imagesBucketConfigured, uploadImage } = await import('./image-storage')
 
 describe('imagesBucketConfigured', () => {
   afterEach(() => vi.unstubAllGlobals())
@@ -86,5 +90,37 @@ describe('uploadImage', () => {
     uploadMock.mockResolvedValueOnce({ error: { message: 'bucket not found' } })
     vi.stubGlobal('useRuntimeConfig', () => ({ imagesBucket: 'zvg-immo-images' }))
     expect(await uploadImage(Buffer.from('x'), 'de/123/abc.jpg')).toBe(false)
+  })
+})
+
+// Vision extraction reads photos back through this once offload-images.ts has
+// dropped the local copy, so a silent null here means text-only extraction.
+describe('downloadImage', () => {
+  beforeEach(() => {
+    downloadMock.mockClear()
+    downloadMock.mockResolvedValue({ data: null, error: null })
+    vi.mocked(getServiceClient).mockReturnValue(fakeSupabase as never)
+  })
+
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('no-ops without a bucket name', async () => {
+    vi.stubGlobal('useRuntimeConfig', () => ({ imagesBucket: '' }))
+    expect(await downloadImage('de/123/abc.jpg')).toBeNull()
+    expect(downloadMock).not.toHaveBeenCalled()
+  })
+
+  it('returns the object bytes', async () => {
+    downloadMock.mockResolvedValueOnce({ data: new Blob(['photo-bytes']), error: null })
+    vi.stubGlobal('useRuntimeConfig', () => ({ imagesBucket: 'zvg-immo-images' }))
+    const bytes = await downloadImage('de/123/abc.jpg')
+    expect(bytes?.toString()).toBe('photo-bytes')
+    expect(downloadMock).toHaveBeenCalledWith('de/123/abc.jpg')
+  })
+
+  it('returns null without throwing when the object is missing', async () => {
+    downloadMock.mockResolvedValueOnce({ data: null, error: { message: 'not found' } })
+    vi.stubGlobal('useRuntimeConfig', () => ({ imagesBucket: 'zvg-immo-images' }))
+    expect(await downloadImage('de/123/abc.jpg')).toBeNull()
   })
 })

@@ -757,6 +757,8 @@ interface LlmBatchJobsOverview {
   capabilities: Record<string, LlmBatchCapability>
   reprocessStatus: TaskRunStatus
   enrichStatus: TaskRunStatus
+  externalEnrichmentStatus: TaskRunStatus
+  offloadImagesStatus: TaskRunStatus
 }
 const reprocessLimit = ref('10')
 const reprocessCountry = ref('')
@@ -791,7 +793,7 @@ async function loadLlmBatchJobs(): Promise<void> {
     llmBatchJobs.value = await $fetch<LlmBatchJobsOverview>('/api/settings/llm-batch-jobs', { cache: 'no-store' })
     // Covers a page load/login while the global cron (or another tab's
     // manual trigger) is already running — not just this tab's own click.
-    if (llmBatchJobs.value.enrichStatus.status === 'running' || llmBatchJobs.value.reprocessStatus.status === 'running') {
+    if (anyTrackedTaskRunning()) {
       startProgressPolling()
     }
   } catch (err) {
@@ -846,11 +848,8 @@ interface EnrichRunResult {
   photosTotal: number
   durationMs: number
   warning?: string | null
-  reprocess?: ReprocessResult
-  externalEnrichment?: {
-    providerFailures: number
-    errors: string[]
-  }
+  /** Reprocess + external enrichment run detached; watch their status panels. */
+  followUpTasksStarted?: boolean
 }
 const countrySources = ref<CountrySourceSetting[]>([])
 const countrySourcesPending = ref(false)
@@ -913,13 +912,20 @@ async function saveCountrySources(): Promise<void> {
 // can start (right after a click) before the freshly triggered run's
 // 'running' status has even been fetched once.
 let progressPollTimer: ReturnType<typeof setInterval> | null = null
+// External enrichment is included because /settings triggers it detached — its
+// status panel is the only place its progress and failures ever show up.
+function anyTrackedTaskRunning(): boolean {
+  const overview = llmBatchJobs.value
+  if (!overview) return false
+  return overview.enrichStatus.status === 'running'
+    || overview.reprocessStatus.status === 'running'
+    || overview.externalEnrichmentStatus.status === 'running'
+}
 function startProgressPolling(): void {
   if (progressPollTimer) return
   progressPollTimer = setInterval(async () => {
     await loadLlmBatchJobs()
-    const running = llmBatchJobs.value?.enrichStatus.status === 'running'
-      || llmBatchJobs.value?.reprocessStatus.status === 'running'
-    if (!running) stopProgressPolling()
+    if (!anyTrackedTaskRunning()) stopProgressPolling()
   }, 3000)
 }
 function stopProgressPolling(): void {
@@ -1723,16 +1729,9 @@ onBeforeUnmount(stopProgressPolling)
           <p v-if="countryEnrichResult?.warning" role="alert" class="text-sm text-amber-600 dark:text-amber-400">
             {{ countryEnrichResult.warning }}
           </p>
-          <p v-if="countryEnrichResult?.reprocess?.warning" role="alert" class="text-sm text-amber-600 dark:text-amber-400">
-            {{ countryEnrichResult.reprocess.warning }}
+          <p v-if="countryEnrichResult?.followUpTasksStarted" class="text-sm text-muted-foreground">
+            {{ $t('settings.sources.followUpTasksStarted') }}
           </p>
-          <div
-            v-if="countryEnrichResult?.externalEnrichment?.errors?.length"
-            role="alert"
-            class="space-y-1 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-          >
-            <p v-for="message in countryEnrichResult.externalEnrichment.errors" :key="message">{{ message }}</p>
-          </div>
 
           <div v-if="llmBatchJobs?.enrichStatus" class="text-sm space-y-1">
             <p v-if="llmBatchJobs.enrichStatus.status === 'running'">
@@ -1792,6 +1791,42 @@ onBeforeUnmount(stopProgressPolling)
             </p>
             <p v-if="llmBatchJobs.reprocessStatus.lastLlmError" class="text-destructive">
               {{ $t('settings.sources.llmStatusLastLlmError', { message: llmBatchJobs.reprocessStatus.lastLlmError }) }}
+            </p>
+          </div>
+
+          <div v-if="llmBatchJobs?.offloadImagesStatus?.finishedAt" class="text-sm space-y-1">
+            <p class="text-muted-foreground">
+              {{ $t('settings.sources.offloadStatusLastRun', {
+                at: formatBatchDate(llmBatchJobs.offloadImagesStatus.finishedAt),
+                removed: llmBatchJobs.offloadImagesStatus.lastResult?.removed ?? 0,
+                freedMb: Math.round((llmBatchJobs.offloadImagesStatus.lastResult?.freedBytes ?? 0) / 1024 / 1024),
+              }) }}
+            </p>
+            <p v-if="llmBatchJobs.offloadImagesStatus.lastWarning" role="alert" class="text-amber-600 dark:text-amber-400">
+              {{ llmBatchJobs.offloadImagesStatus.lastWarning }}
+            </p>
+            <p v-if="llmBatchJobs.offloadImagesStatus.lastError" role="alert" class="text-destructive">
+              {{ $t('settings.sources.offloadStatusLastError', { message: llmBatchJobs.offloadImagesStatus.lastError }) }}
+            </p>
+          </div>
+
+          <div v-if="llmBatchJobs?.externalEnrichmentStatus" class="text-sm space-y-1">
+            <p v-if="llmBatchJobs.externalEnrichmentStatus.status === 'running'">
+              {{ $t('settings.sources.externalStatusRunning', { at: formatBatchDate(llmBatchJobs.externalEnrichmentStatus.startedAt) }) }}
+            </p>
+            <p v-else-if="llmBatchJobs.externalEnrichmentStatus.finishedAt" class="text-muted-foreground">
+              {{ $t('settings.sources.externalStatusLastRun', {
+                at: formatBatchDate(llmBatchJobs.externalEnrichmentStatus.finishedAt),
+                processed: llmBatchJobs.externalEnrichmentStatus.lastResult?.processed ?? 0,
+                written: llmBatchJobs.externalEnrichmentStatus.lastResult?.written ?? 0,
+                duration: Math.round((llmBatchJobs.externalEnrichmentStatus.lastResult?.durationMs ?? 0) / 1000),
+              }) }}
+            </p>
+            <p v-if="llmBatchJobs.externalEnrichmentStatus.lastWarning" role="alert" class="text-amber-600 dark:text-amber-400">
+              {{ llmBatchJobs.externalEnrichmentStatus.lastWarning }}
+            </p>
+            <p v-if="llmBatchJobs.externalEnrichmentStatus.lastError" role="alert" class="text-destructive">
+              {{ $t('settings.sources.externalStatusLastError', { message: llmBatchJobs.externalEnrichmentStatus.lastError }) }}
             </p>
           </div>
 

@@ -297,7 +297,7 @@
       "enrichTitle": "Crawl, archive, and extract this country again",
       "enrichError": "Update could not be started.",
       "enrichDone": "{country}: updated {archived} of {crawled} listings ({photos} photos, {duration}s).",
-      "externalEnrichmentQueued": "Location scoring and map layers will refresh next.",
+      "followUpTasksStarted": "LLM extraction and location scoring now continue in the background — their progress and any errors appear below.",
       "enrichStatusRunning": "Crawl/archive running since {at} …",
       "enrichStatusLastRun": "Last crawl/archive run: {at} — {archived} archived, {duration}s.",
       "enrichStatusLastError": "Crawl/archive last failed: {message}",
@@ -308,7 +308,12 @@
       "llmStatusLastError": "LLM extraction last failed: {message}",
       "llmStatusLlmErrors": "{count} LLM request failure(s) in the last run",
       "llmStatusLastLlmError": "Last LLM error: {message}",
-      "llmStatusProgress": "{processed}/{candidatesTotal} processed, {llmCalls} LLM calls, {skipped} skipped"
+      "llmStatusProgress": "{processed}/{candidatesTotal} processed, {llmCalls} LLM calls, {skipped} skipped",
+      "externalStatusRunning": "Location scoring running since {at} …",
+      "externalStatusLastRun": "Last location scoring: {at} — {processed} checked, {written} stored, {duration}s.",
+      "externalStatusLastError": "Location scoring last failed: {message}",
+      "offloadStatusLastRun": "Photos offloaded: {at} — {removed} file(s), {freedMb} MB freed locally.",
+      "offloadStatusLastError": "Photo offload last failed: {message}"
     },
     "externalData": {
       "title": "External data sources",
