@@ -73,7 +73,20 @@ const HEAVY_INDUSTRY_TAGS = new Set([
 ])
 const BUILDING_RADIUS_METERS = 500
 const BUILDING_RADIUS_SQ_KM = Math.PI * (BUILDING_RADIUS_METERS / 1000) ** 2
-const AMENITY_KINDS: LocationAmenityKind[] = ['groceries', 'education', 'healthcare', 'pharmacy', 'banking', 'fuel', 'food', 'leisure']
+const AMENITY_KINDS: LocationAmenityKind[] = [
+  'groceries',
+  'education',
+  'healthcare',
+  'hospital',
+  'pharmacy',
+  'banking',
+  'fuel',
+  'food',
+  'restaurant',
+  'cafe',
+  'leisure',
+  'recreation',
+]
 
 export function createOsmLocationContextAdapter(options: OsmLocationContextOptions): LocationContextAdapter {
   const endpoint = options.endpoint.trim()
@@ -272,7 +285,7 @@ function hasTag(key: string, value: string): (element: LocatedElement) => boolea
 
 function amenityContext(elements: LocatedElement[]): LocationAmenitySummary[] {
   return AMENITY_KINDS.map((kind) => {
-    const matching = uniqueLocated(elements.filter((element) => amenityKind(element) === kind))
+    const matching = uniqueLocated(elements.filter((element) => matchesAmenityKind(element, kind)))
     return {
       kind,
       nearestDistanceMeters: nearestDistance(matching),
@@ -283,19 +296,29 @@ function amenityContext(elements: LocatedElement[]): LocationAmenitySummary[] {
   })
 }
 
+function matchesAmenityKind(element: LocatedElement, kind: LocationAmenityKind): boolean {
+  const matched = amenityKind(element)
+  if (matched === kind) return true
+  if (kind === 'food') return matched === 'restaurant' || matched === 'cafe'
+  if (kind === 'leisure') return matched === 'recreation'
+  return false
+}
+
 function amenityKind(element: LocatedElement): LocationAmenityKind | null {
   const amenity = element.tags?.amenity
   const shop = element.tags?.shop
   const leisure = element.tags?.leisure
   if (shop && ['supermarket', 'convenience', 'bakery', 'butcher', 'mall', 'department_store'].includes(shop)) return 'groceries'
   if (amenity && ['school', 'kindergarten', 'college', 'university'].includes(amenity)) return 'education'
-  if (amenity && ['doctors', 'clinic', 'hospital'].includes(amenity)) return 'healthcare'
+  if (amenity === 'hospital') return 'hospital'
+  if (amenity && ['doctors', 'clinic'].includes(amenity)) return 'healthcare'
   if (amenity === 'pharmacy') return 'pharmacy'
   if (amenity && ['bank', 'atm'].includes(amenity)) return 'banking'
   if (amenity === 'fuel') return 'fuel'
-  if (amenity && ['restaurant', 'cafe', 'bar', 'fast_food'].includes(amenity)) return 'food'
+  if (amenity === 'restaurant' || amenity === 'fast_food') return 'restaurant'
+  if (amenity === 'cafe' || amenity === 'bar') return 'cafe'
   if (amenity && ['library', 'community_centre'].includes(amenity)) return 'leisure'
-  if (leisure && ['park', 'sports_centre', 'playground', 'fitness_centre', 'garden'].includes(leisure)) return 'leisure'
+  if (leisure && ['park', 'sports_centre', 'playground', 'fitness_centre', 'garden'].includes(leisure)) return 'recreation'
   return null
 }
 
@@ -307,7 +330,8 @@ function mapFeatureKind(element: LocatedElement): LocationMapFeatureKind | null 
   const leisure = element.tags?.leisure
   if (shop && ['supermarket', 'convenience', 'bakery', 'butcher', 'mall', 'department_store'].includes(shop)) return 'groceries'
   if (amenity === 'pharmacy') return 'pharmacy'
-  if (amenity && ['doctors', 'clinic', 'hospital'].includes(amenity)) return 'healthcare'
+  if (amenity === 'hospital') return 'hospital'
+  if (amenity && ['doctors', 'clinic'].includes(amenity)) return 'healthcare'
   if (amenity === 'school') return 'school'
   if (amenity === 'kindergarten') return 'childcare'
   if (amenity && ['college', 'university'].includes(amenity)) return 'university'
@@ -317,6 +341,9 @@ function mapFeatureKind(element: LocatedElement): LocationMapFeatureKind | null 
   if (isCommercial(element)) return 'commercial'
   if (MAJOR_ROADS.has(highway ?? '')) return 'major_road'
   if (amenity === 'ferry_terminal' || element.tags?.route === 'ferry') return 'ferry'
+  if (amenity === 'restaurant' || amenity === 'fast_food') return 'restaurant'
+  if (amenity === 'cafe' || amenity === 'bar') return 'cafe'
+  if (leisure && ['park', 'sports_centre', 'playground', 'fitness_centre', 'garden'].includes(leisure)) return 'recreation'
   if (leisure && ['park', 'sports_centre', 'playground', 'fitness_centre', 'garden'].includes(leisure)) return 'leisure'
   return null
 }

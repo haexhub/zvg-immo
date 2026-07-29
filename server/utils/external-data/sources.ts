@@ -6,6 +6,10 @@ export type ExternalDataCapability =
   | 'land_value_baseline'
   | `hazard_${HazardKind}`
   | 'location_context'
+  | 'demographics'
+  | 'poi_places'
+  | 'transport_network'
+  | 'settlement_structure'
   | 'source_discovery'
 
 export interface ExternalDataSource {
@@ -91,12 +95,67 @@ export const EXTERNAL_DATA_SOURCES: readonly ExternalDataSource[] = [
     id: 'openstreetmap-overpass',
     label: 'OpenStreetMap / Overpass',
     countries: ['eu'],
-    capabilities: ['location_context'],
+    capabilities: ['location_context', 'poi_places', 'transport_network'],
     sourceUrl: 'https://www.openstreetmap.org/copyright',
-    licenseNote: 'OSM map tags for places, transport, roads, ferries and visible neighborhood signals; completeness varies by mapper coverage.',
+    licenseNote: 'Europe-wide open map tags for POIs, transport, roads, landuse and visible neighborhood signals; completeness varies by mapper coverage.',
     refreshCadence: 'deployment-configured / source minutely updates',
     resolution: 'object tags around auction coordinates',
     adapter: 'osmLocationContextAdapter',
+  },
+  {
+    id: 'overture-maps',
+    label: 'Overture Maps',
+    countries: ['eu'],
+    capabilities: ['poi_places', 'transport_network', 'settlement_structure'],
+    sourceUrl: 'https://docs.overturemaps.org/',
+    licenseNote: 'Global open GeoParquet datasets for places, buildings, divisions and transportation; useful as a bulk alternative/complement to live Overpass.',
+    refreshCadence: 'monthly / release cadence',
+    resolution: 'feature-level places, roads, buildings and administrative divisions',
+    adapter: 'overtureMapsAdapter',
+  },
+  {
+    id: 'eurostat-gisco-population-grid',
+    label: 'Eurostat GISCO Population Grid',
+    countries: ['eu'],
+    capabilities: ['demographics', 'settlement_structure'],
+    sourceUrl: 'https://ec.europa.eu/eurostat/web/gisco/geodata/population-distribution/population-grids',
+    licenseNote: 'Official gridded population baseline for comparable density and settlement analysis across Europe.',
+    refreshCadence: 'census / release cadence',
+    resolution: '1 km population grid',
+    adapter: 'eurostatGiscoPopulationGridAdapter',
+  },
+  {
+    id: 'eurostat-degree-urbanisation',
+    label: 'Eurostat Degree of Urbanisation',
+    countries: ['eu'],
+    capabilities: ['demographics', 'settlement_structure'],
+    sourceUrl: 'https://ec.europa.eu/eurostat/web/gisco/geodata/population-distribution/degree-urbanisation',
+    licenseNote: 'Official LAU-level urban/rural classification for comparable city/town/rural context.',
+    refreshCadence: 'source release cadence',
+    resolution: 'LAU / population-grid-derived urbanisation class',
+    adapter: 'eurostatDegreeUrbanisationAdapter',
+  },
+  {
+    id: 'eurostat-regional-demographics',
+    label: 'Eurostat Regional Demographics',
+    countries: ['eu'],
+    capabilities: ['demographics'],
+    sourceUrl: 'https://ec.europa.eu/eurostat/cache/metadata/en/demo_r_gind3_esms.htm',
+    licenseNote: 'Official NUTS 2/3 population change, births/deaths and demographic balance; good for ageing/outmigration signals above parcel level.',
+    refreshCadence: 'annual',
+    resolution: 'NUTS 2/3',
+    adapter: 'eurostatRegionalDemographicsAdapter',
+  },
+  {
+    id: 'eurostat-regional-labour-market',
+    label: 'Eurostat Regional Labour Market',
+    countries: ['eu'],
+    capabilities: ['demographics'],
+    sourceUrl: 'https://ec.europa.eu/eurostat/cache/metadata/en/reg_lmk_esms.htm',
+    licenseNote: 'Official EU-LFS regional labour market indicators, generally down to NUTS 2; use as regional employment context, not micro-location proof.',
+    refreshCadence: 'quarterly / annual',
+    resolution: 'NUTS 2',
+    adapter: 'eurostatRegionalLabourMarketAdapter',
   },
   {
     id: 'copernicus-effis',

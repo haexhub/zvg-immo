@@ -91,11 +91,15 @@ export type LocationAmenityKind =
   | 'groceries'
   | 'education'
   | 'healthcare'
+  | 'hospital'
   | 'pharmacy'
   | 'banking'
   | 'fuel'
   | 'food'
+  | 'restaurant'
+  | 'cafe'
   | 'leisure'
+  | 'recreation'
 
 export interface LocationAmenitySummary {
   kind: LocationAmenityKind
@@ -109,6 +113,7 @@ export type LocationMapFeatureKind =
   | 'groceries'
   | 'pharmacy'
   | 'healthcare'
+  | 'hospital'
   | 'school'
   | 'childcare'
   | 'public_transport'
@@ -118,6 +123,9 @@ export type LocationMapFeatureKind =
   | 'commercial'
   | 'major_road'
   | 'ferry'
+  | 'restaurant'
+  | 'cafe'
+  | 'recreation'
   | 'leisure'
 
 export interface LocationMapFeature {

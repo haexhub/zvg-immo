@@ -839,11 +839,15 @@
       "groceries": "groceries",
       "education": "education",
       "healthcare": "doctors/clinic",
+      "hospital": "hospital",
       "pharmacy": "pharmacy",
       "banking": "bank/ATM",
       "fuel": "fuel",
       "food": "food",
-      "leisure": "leisure"
+      "restaurant": "restaurants",
+      "cafe": "cafes/bars",
+      "leisure": "leisure",
+      "recreation": "recreation areas"
     },
     "locationSignal": {
       "larger_place_nearby": "larger place close by",
@@ -901,11 +905,13 @@
     "mapLayerTransport": "Public transport, rail & ferry",
     "mapLayerEducation": "Schools, childcare & universities",
     "mapLayerDailyNeeds": "Daily needs & healthcare",
+    "mapLayerRestaurantsCafes": "Restaurants & cafes",
     "mapLayerLeisure": "Leisure",
     "mapFeatureKind": {
       "groceries": "shopping/groceries",
       "pharmacy": "pharmacy",
       "healthcare": "healthcare",
+      "hospital": "hospital",
       "school": "school",
       "childcare": "childcare",
       "public_transport": "public-transport stop",
@@ -915,6 +921,9 @@
       "commercial": "commercial/retail",
       "major_road": "major/noisy road",
       "ferry": "ferry",
+      "restaurant": "restaurant",
+      "cafe": "cafe/bar",
+      "recreation": "recreation area",
       "leisure": "leisure"
     },
     "placeKind": {

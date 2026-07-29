@@ -60,7 +60,8 @@ function featureLayerLabel(feature: LocationMapFeature): string {
   if (feature.kind === 'industry' || feature.kind === 'commercial' || feature.kind === 'major_road') return t('objektDetail.mapLayerIndustryRoads')
   if (feature.kind === 'public_transport' || feature.kind === 'rail' || feature.kind === 'ferry') return t('objektDetail.mapLayerTransport')
   if (feature.kind === 'school' || feature.kind === 'childcare' || feature.kind === 'university') return t('objektDetail.mapLayerEducation')
-  if (feature.kind === 'groceries' || feature.kind === 'pharmacy' || feature.kind === 'healthcare') return t('objektDetail.mapLayerDailyNeeds')
+  if (feature.kind === 'groceries' || feature.kind === 'pharmacy' || feature.kind === 'healthcare' || feature.kind === 'hospital') return t('objektDetail.mapLayerDailyNeeds')
+  if (feature.kind === 'restaurant' || feature.kind === 'cafe') return t('objektDetail.mapLayerRestaurantsCafes')
   return t('objektDetail.mapLayerLeisure')
 }
 
@@ -71,8 +72,11 @@ function featureColor(feature: LocationMapFeature): string {
   if (feature.kind === 'public_transport' || feature.kind === 'rail') return '#2563eb'
   if (feature.kind === 'ferry') return '#0891b2'
   if (feature.kind === 'school' || feature.kind === 'childcare' || feature.kind === 'university') return '#7c3aed'
-  if (feature.kind === 'pharmacy' || feature.kind === 'healthcare') return '#16a34a'
+  if (feature.kind === 'pharmacy' || feature.kind === 'healthcare' || feature.kind === 'hospital') return '#16a34a'
   if (feature.kind === 'groceries') return '#059669'
+  if (feature.kind === 'restaurant') return '#f97316'
+  if (feature.kind === 'cafe') return '#a16207'
+  if (feature.kind === 'recreation') return '#65a30d'
   return '#64748b'
 }
 

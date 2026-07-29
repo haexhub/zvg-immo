@@ -839,11 +839,15 @@
       "groceries": "Nahversorgung",
       "education": "Bildung",
       "healthcare": "Ärzte/Klinik",
+      "hospital": "Krankenhaus",
       "pharmacy": "Apotheke",
       "banking": "Bank/ATM",
       "fuel": "Tanken",
       "food": "Gastro",
-      "leisure": "Freizeit"
+      "restaurant": "Restaurants",
+      "cafe": "Cafés/Bars",
+      "leisure": "Freizeit",
+      "recreation": "Freizeitflächen"
     },
     "locationSignal": {
       "larger_place_nearby": "größerer Ort in kurzer Distanz",
@@ -901,11 +905,13 @@
     "mapLayerTransport": "ÖPNV, Bahn & Fähre",
     "mapLayerEducation": "Schulen, Kitas & Hochschulen",
     "mapLayerDailyNeeds": "Versorgung & Gesundheit",
+    "mapLayerRestaurantsCafes": "Restaurants & Cafés",
     "mapLayerLeisure": "Freizeit",
     "mapFeatureKind": {
       "groceries": "Einkauf/Nahversorgung",
       "pharmacy": "Apotheke",
       "healthcare": "Gesundheit",
+      "hospital": "Krankenhaus",
       "school": "Schule",
       "childcare": "Kita",
       "public_transport": "ÖPNV-Halt",
@@ -915,6 +921,9 @@
       "commercial": "Gewerbe/Handel",
       "major_road": "größere/laute Straße",
       "ferry": "Fähre",
+      "restaurant": "Restaurant",
+      "cafe": "Café/Bar",
+      "recreation": "Freizeitfläche",
       "leisure": "Freizeit"
     },
     "placeKind": {

@@ -100,11 +100,15 @@ const locationContext: LocationContext = {
     { kind: 'groceries', nearestDistanceMeters: 250, countWithin1000m: 4, countWithin3000m: 12, countWithin5000m: 20 },
     { kind: 'education', nearestDistanceMeters: 500, countWithin1000m: 2, countWithin3000m: 8, countWithin5000m: 11 },
     { kind: 'healthcare', nearestDistanceMeters: 700, countWithin1000m: 1, countWithin3000m: 6, countWithin5000m: 10 },
+    { kind: 'hospital', nearestDistanceMeters: 2000, countWithin1000m: 0, countWithin3000m: 1, countWithin5000m: 2 },
     { kind: 'pharmacy', nearestDistanceMeters: 450, countWithin1000m: 2, countWithin3000m: 5, countWithin5000m: 7 },
     { kind: 'banking', nearestDistanceMeters: 300, countWithin1000m: 3, countWithin3000m: 10, countWithin5000m: 15 },
     { kind: 'fuel', nearestDistanceMeters: 1500, countWithin1000m: 0, countWithin3000m: 2, countWithin5000m: 4 },
     { kind: 'food', nearestDistanceMeters: 120, countWithin1000m: 15, countWithin3000m: 45, countWithin5000m: 80 },
+    { kind: 'restaurant', nearestDistanceMeters: 120, countWithin1000m: 10, countWithin3000m: 30, countWithin5000m: 55 },
+    { kind: 'cafe', nearestDistanceMeters: 180, countWithin1000m: 5, countWithin3000m: 15, countWithin5000m: 25 },
     { kind: 'leisure', nearestDistanceMeters: 350, countWithin1000m: 4, countWithin3000m: 18, countWithin5000m: 30 },
+    { kind: 'recreation', nearestDistanceMeters: 350, countWithin1000m: 4, countWithin3000m: 18, countWithin5000m: 30 },
   ],
   environment: {
     industrialCountWithin1000m: 0,
@@ -133,6 +137,8 @@ const locationContext: LocationContext = {
   mapFeatures: [
     { kind: 'groceries', name: 'Supermarkt', lat: 48.857, lng: 2.353, distanceMeters: 120, osmType: 'node', osmId: 1 },
     { kind: 'public_transport', name: 'Haltestelle', lat: 48.858, lng: 2.354, distanceMeters: 180, osmType: 'node', osmId: 2 },
+    { kind: 'hospital', name: 'Klinik', lat: 48.859, lng: 2.355, distanceMeters: 900, osmType: 'node', osmId: 3 },
+    { kind: 'restaurant', name: 'Bistro', lat: 48.86, lng: 2.356, distanceMeters: 220, osmType: 'node', osmId: 4 },
   ],
   quality: {
     score: 92,

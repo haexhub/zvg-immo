@@ -44,6 +44,10 @@ describe('buildLocationContext', () => {
       { type: 'way', id: 7, center: { lat: 52.0007, lon: 13.0007 }, tags: { building: 'ruins' } },
       { type: 'node', id: 8, lat: 52.0008, lon: 13.0008, tags: { shop: 'supermarket' } },
       { type: 'node', id: 9, lat: 52.0009, lon: 13.0009, tags: { amenity: 'doctors' } },
+      { type: 'node', id: 14, lat: 52.001, lon: 13.001, tags: { amenity: 'hospital', name: 'Klinik' } },
+      { type: 'node', id: 15, lat: 52.0011, lon: 13.0011, tags: { amenity: 'restaurant', name: 'Restaurant' } },
+      { type: 'node', id: 16, lat: 52.0012, lon: 13.0012, tags: { amenity: 'cafe', name: 'Cafe' } },
+      { type: 'node', id: 17, lat: 52.0013, lon: 13.0013, tags: { leisure: 'park', name: 'Park' } },
       { type: 'way', id: 10, center: { lat: 52.004, lon: 13.004 }, tags: { landuse: 'industrial', name: 'Gewerbepark' } },
       { type: 'way', id: 11, center: { lat: 52.005, lon: 13.005 }, tags: { man_made: 'works', industrial: 'factory', name: 'Werk' } },
       { type: 'node', id: 12, lat: 52.006, lon: 13.006, tags: { amenity: 'university', name: 'Uni' } },
@@ -60,6 +64,21 @@ describe('buildLocationContext', () => {
     expect(context.amenities.find((item) => item.kind === 'groceries')).toMatchObject({
       countWithin1000m: 1,
     })
+    expect(context.amenities.find((item) => item.kind === 'hospital')).toMatchObject({
+      countWithin1000m: 1,
+    })
+    expect(context.amenities.find((item) => item.kind === 'restaurant')).toMatchObject({
+      countWithin1000m: 1,
+    })
+    expect(context.amenities.find((item) => item.kind === 'cafe')).toMatchObject({
+      countWithin1000m: 1,
+    })
+    expect(context.amenities.find((item) => item.kind === 'food')).toMatchObject({
+      countWithin1000m: 2,
+    })
+    expect(context.amenities.find((item) => item.kind === 'recreation')).toMatchObject({
+      countWithin1000m: 1,
+    })
     expect(context.quality.score).toBeGreaterThan(50)
     expect(context.quality.strengths).toContain('groceries_nearby')
     expect(context.environment.heavyIndustryKinds).toContain('factory')
@@ -68,6 +87,9 @@ describe('buildLocationContext', () => {
     expect(context.demographics.reasons).toContain('university_nearby')
     expect(context.mapFeatures.some((feature) => feature.kind === 'industry')).toBe(true)
     expect(context.mapFeatures.some((feature) => feature.kind === 'commercial')).toBe(true)
+    expect(context.mapFeatures.some((feature) => feature.kind === 'hospital')).toBe(true)
+    expect(context.mapFeatures.some((feature) => feature.kind === 'restaurant')).toBe(true)
+    expect(context.mapFeatures.some((feature) => feature.kind === 'cafe')).toBe(true)
     expect(context.neighborhood.vacantOrRuinCountWithin500m).toBe(1)
     expect(context.neighborhood.notes).toContain('2 OSM-Gebaeude im 500-m-Umfeld')
   })
