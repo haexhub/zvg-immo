@@ -32,9 +32,10 @@ function makeFakePool() {
 }
 
 describe('configurableExternalDataSources', () => {
-  it('lists exactly the four sources with a real adapter', () => {
+  it('lists exactly the sources with a real adapter', () => {
     const ids = configurableExternalDataSources().map((source) => source.id).sort()
     expect(ids).toEqual([
+      'cams-air-quality',
       'eea-environmental-noise-directive',
       'eu-flood-risk-areas',
       'fr-dvf-geolocated',

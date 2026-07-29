@@ -879,6 +879,22 @@
       "lden": "Tag-Abend-Nacht",
       "lnight": "Nacht"
     },
+    "airQualityTitle": "Luftqualität",
+    "airQualityIndex": "Luftqualitätsindex (EAQI)",
+    "airQualityPm25": "Feinstaub PM2,5",
+    "airQualityPm10": "Feinstaub PM10",
+    "airQualityNo2": "Stickstoffdioxid",
+    "airQualityOzone": "Ozon",
+    "airQualityHint": "Modellierte Werte des Copernicus-Atmosphärendienstes auf einem ca. 11 km großen Raster — sie beschreiben die Umgebung, nicht das Grundstück selbst.",
+    "airQualityLevel": {
+      "good": "gut",
+      "fair": "akzeptabel",
+      "moderate": "mittelmäßig",
+      "poor": "schlecht",
+      "very_poor": "sehr schlecht",
+      "extremely_poor": "extrem schlecht",
+      "unknown": "unbekannt"
+    },
     "demographicSignalLevel": {
       "low": "schwach",
       "medium": "mittel",
@@ -962,7 +978,10 @@
       "eea_rail_noise_high": "EEA-Schienenlärm: hohe gemeldete Kontur am Standort",
       "eea_aviation_noise_low": "EEA-Fluglärm: niedrige gemeldete Kontur am Standort",
       "eea_aviation_noise_medium": "EEA-Fluglärm: merkliche gemeldete Kontur am Standort",
-      "eea_aviation_noise_high": "EEA-Fluglärm: hohe gemeldete Kontur am Standort"
+      "eea_aviation_noise_high": "EEA-Fluglärm: hohe gemeldete Kontur am Standort",
+      "air_quality_poor": "Luftqualität schlecht",
+      "air_quality_very_poor": "Luftqualität sehr schlecht",
+      "air_quality_extremely_poor": "Luftqualität extrem schlecht"
     },
     "demographicReason": {
       "university_nearby": "Hochschule/Universität im erweiterten Umfeld",

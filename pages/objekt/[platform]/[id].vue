@@ -9,6 +9,7 @@ import type { RenovationCostCategory, RenovationCostItem } from '~/lib/renovatio
 import type { AuctionDetail } from '~/server/api/auction/[platform]/[id].get'
 import type {
   Attachment,
+  LocationAirQualityLevel,
   LocationAmenityKind,
   LocationDemographicContext,
   LocationEnvironmentContext,
@@ -351,6 +352,7 @@ const locationQuality = computed(() => locationContext.value?.quality ?? null)
 const locationEnvironment = computed(() => locationContext.value?.environment ?? null)
 // Written by the EEA noise enrichment but, until now, read by nothing.
 const reportedNoise = computed(() => locationEnvironment.value?.reportedNoise ?? [])
+const airQuality = computed(() => locationEnvironment.value?.airQuality ?? null)
 const locationDemographics = computed(() => locationContext.value?.demographics ?? null)
 const neighborhoodContext = computed(() => locationContext.value?.neighborhood ?? null)
 const neighborhoodNotes = computed(() => neighborhoodContext.value?.notes ?? [])
@@ -455,6 +457,15 @@ function aviationNoiseLevelLabel(level: LocationEnvironmentContext['aviationNois
  *  contour layer was read from. bandLabel carries the dB range itself. */
 function noiseObservationLabel(observation: LocationNoiseObservation): string {
   return `${t(`objektDetail.noiseSource.${observation.source}`)} (${t(`objektDetail.noiseIndicator.${observation.indicator}`)})`
+}
+
+function airQualityLevelLabel(level: LocationAirQualityLevel): string {
+  return t(`objektDetail.airQualityLevel.${level}`)
+}
+
+/** CAMS reports every pollutant in µg/m³. */
+function formatConcentration(value: number): string {
+  return `${value.toLocaleString(intlLocale.value, { maximumFractionDigits: 1 })} µg/m³`
 }
 
 function demographicSignalLabel(level: LocationDemographicContext['youthSignal']): string {
@@ -1350,6 +1361,37 @@ useHead(() => ({
                   <p class="text-xs text-muted-foreground">
                     {{ $t('objektDetail.reportedNoiseHint') }}
                   </p>
+                </div>
+                <div v-if="airQuality" class="space-y-2">
+                  <h3 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    {{ $t('objektDetail.airQualityTitle') }}
+                  </h3>
+                  <dl class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                    <div>
+                      <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.airQualityIndex') }}</dt>
+                      <dd class="font-medium">
+                        {{ airQualityLevelLabel(airQuality.level) }}
+                        <span v-if="airQuality.index != null" class="tabular-nums text-muted-foreground">({{ airQuality.index }})</span>
+                      </dd>
+                    </div>
+                    <div v-if="airQuality.particulateMatter25 != null">
+                      <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.airQualityPm25') }}</dt>
+                      <dd class="font-medium tabular-nums">{{ formatConcentration(airQuality.particulateMatter25) }}</dd>
+                    </div>
+                    <div v-if="airQuality.particulateMatter10 != null">
+                      <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.airQualityPm10') }}</dt>
+                      <dd class="font-medium tabular-nums">{{ formatConcentration(airQuality.particulateMatter10) }}</dd>
+                    </div>
+                    <div v-if="airQuality.nitrogenDioxide != null">
+                      <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.airQualityNo2') }}</dt>
+                      <dd class="font-medium tabular-nums">{{ formatConcentration(airQuality.nitrogenDioxide) }}</dd>
+                    </div>
+                    <div v-if="airQuality.ozone != null">
+                      <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.airQualityOzone') }}</dt>
+                      <dd class="font-medium tabular-nums">{{ formatConcentration(airQuality.ozone) }}</dd>
+                    </div>
+                  </dl>
+                  <p class="text-xs text-muted-foreground">{{ $t('objektDetail.airQualityHint') }}</p>
                 </div>
                 <ul v-if="locationEnvironment.riskSignals.length" class="list-disc list-inside space-y-1 text-xs text-muted-foreground">
                   <li v-for="(item, i) in locationEnvironment.riskSignals" :key="i">{{ environmentSignalLabel(item) }}</li>

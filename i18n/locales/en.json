@@ -879,6 +879,22 @@
       "lden": "Day-evening-night",
       "lnight": "Night"
     },
+    "airQualityTitle": "Air quality",
+    "airQualityIndex": "Air quality index (EAQI)",
+    "airQualityPm25": "Particulate matter PM2.5",
+    "airQualityPm10": "Particulate matter PM10",
+    "airQualityNo2": "Nitrogen dioxide",
+    "airQualityOzone": "Ozone",
+    "airQualityHint": "Modelled values from the Copernicus Atmosphere Monitoring Service on a ~11 km grid — they describe the surrounding area, not the parcel itself.",
+    "airQualityLevel": {
+      "good": "good",
+      "fair": "fair",
+      "moderate": "moderate",
+      "poor": "poor",
+      "very_poor": "very poor",
+      "extremely_poor": "extremely poor",
+      "unknown": "unknown"
+    },
     "demographicSignalLevel": {
       "low": "weak",
       "medium": "medium",
@@ -962,7 +978,10 @@
       "eea_rail_noise_high": "EEA rail noise: high reported contour at the site",
       "eea_aviation_noise_low": "EEA aviation noise: low reported contour at the site",
       "eea_aviation_noise_medium": "EEA aviation noise: noticeable reported contour at the site",
-      "eea_aviation_noise_high": "EEA aviation noise: high reported contour at the site"
+      "eea_aviation_noise_high": "EEA aviation noise: high reported contour at the site",
+      "air_quality_poor": "Poor air quality",
+      "air_quality_very_poor": "Very poor air quality",
+      "air_quality_extremely_poor": "Extremely poor air quality"
     },
     "demographicReason": {
       "university_nearby": "university/college in the wider area",
