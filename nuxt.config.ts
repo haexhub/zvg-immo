@@ -243,9 +243,11 @@ export default defineNuxtConfig({
       '15 3 * * *': ['external-enrichment'],
       // Monthly: refresh the local EU Flood Risk Areas polygon cache (see
       // server/tasks/import-eu-flood-risk-cache.ts) from the EEA's published
-      // service. The Floods Directive reporting cycle itself is six-yearly,
-      // so monthly is just a courtesy re-pull to catch source corrections
-      // — nowhere near a rate-limit concern for the eu-flood-risk-areas
+      // service, into whatever path the eu-flood-risk-areas source resolves to
+      // — and stay inert while it has none, so this never paginates the whole
+      // EU layer into a file no adapter opens. The Floods Directive reporting
+      // cycle itself is six-yearly, so monthly is just a courtesy re-pull to
+      // catch source corrections — nowhere near a rate-limit concern for this
       // source, unlike the OSM Overpass endpoint above.
       '30 4 1 * *': ['import-eu-flood-risk-cache'],
     },

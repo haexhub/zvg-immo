@@ -321,11 +321,24 @@ async function defaultHazardAdapters(db: Pool | null, checkedAt: string): Promis
   const adapters: HazardAssessmentAdapter[] = []
   const values = await resolvedSourceValues(db, 'eu-flood-risk-areas')
   if (values) {
-    adapters.push(await createEuFloodRiskFileAdapter({
-      geoJsonPath: String(values.geoJsonPath),
-      checkedAt,
-      maxCacheAgeDays: Number(values.maxCacheAgeDays),
-    }))
+    // The polygon cache is filled out-of-band (server/tasks/import-eu-flood-
+    // risk-cache.ts), so a path that was just set from /settings legitimately
+    // points at a file that doesn't exist yet — and unlike fr-dvf's
+    // readJsonCache, createEuFloodRiskFileAdapter reads it eagerly and throws
+    // on ENOENT/corrupt JSON. Skip only this source instead of rejecting the
+    // whole run, which would take market, location and noise enrichment down
+    // with it.
+    try {
+      adapters.push(await createEuFloodRiskFileAdapter({
+        geoJsonPath: String(values.geoJsonPath),
+        checkedAt,
+        maxCacheAgeDays: Number(values.maxCacheAgeDays),
+      }))
+    } catch (err) {
+      console.warn(
+        `[external-enrichment] eu-flood-risk cache unusable at ${String(values.geoJsonPath)}: ${(err as Error).message}`,
+      )
+    }
   }
   return adapters
 }

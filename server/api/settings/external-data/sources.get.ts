@@ -25,7 +25,6 @@ export default defineEventHandler(async () => {
         label: source.label,
         sourceUrl: source.sourceUrl,
         licenseNote: source.licenseNote,
-        refreshCadence: source.refreshCadence,
         isConfigured: resolved.isConfigured,
         fields: (source.configFields ?? []).map((field) => ({
           key: field.key,

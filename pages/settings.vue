@@ -974,11 +974,12 @@ async function saveDisplaySettings(): Promise<void> {
   }
 }
 
-// Externe Datenquellen: generische Karte über server/utils/external-data/
-// config.ts's sourceFields — jede Quelle mit configFields taucht hier
-// automatisch mit ihren Feldern auf, ohne dass diese Datei sie namentlich
-// kennen muss. Ein leeres Feld beim Speichern löscht den DB-Override und
-// fällt zurück auf Env/Default (effectiveValue zeigt, was dann aktiv wird).
+// Externe Datenquellen: generische Karte über die configFields aus
+// server/utils/external-data/sources.ts — jede Quelle, die welche deklariert,
+// taucht hier automatisch mit ihren Feldern auf, ohne dass diese Datei sie
+// namentlich kennen muss. Ein leeres Feld beim Speichern löscht den
+// DB-Override und fällt zurück auf Env/Default (effectiveValue zeigt, was
+// dann aktiv wird).
 interface ExternalDataSourceField {
   key: string
   type: 'url' | 'path' | 'number'
@@ -992,7 +993,6 @@ interface ExternalDataSourceSetting {
   label: string
   sourceUrl: string
   licenseNote: string
-  refreshCadence: string
   isConfigured: boolean
   fields: ExternalDataSourceField[]
 }

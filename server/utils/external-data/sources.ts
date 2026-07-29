@@ -148,6 +148,12 @@ export const EXTERNAL_DATA_SOURCES: readonly ExternalDataSource[] = [
         type: 'number',
         runtimeConfigKey: 'euFloodRiskMaxCacheAgeDays',
         envVar: 'NUXT_EXTERNAL_DATA_EU_FLOOD_RISK_MAX_CACHE_AGE_DAYS',
+        // Just over a year: the polygon cache is refreshed monthly by
+        // server/tasks/import-eu-flood-risk-cache.ts, so tripping this gate
+        // means the importer has been failing for a long while — not that the
+        // six-year Floods Directive cycle moved on. This is the only place the
+        // default lives; eu-flood-risk.ts's isStale() treats an absent value
+        // as "never stale".
         defaultValue: 400,
       },
     ],
