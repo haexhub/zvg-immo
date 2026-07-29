@@ -90,7 +90,7 @@ export async function readAirQuality(
     particulateMatter25: numeric(current.pm2_5),
     nitrogenDioxide: numeric(current.nitrogen_dioxide),
     ozone: numeric(current.ozone),
-    observedAt: typeof current.time === 'string' && current.time ? current.time : null,
+    observedAt: observedAtIso(current.time),
     sourceLabel: SOURCE.label,
     sourceUrl: SOURCE.sourceUrl,
     checkedAt: options.checkedAt,
@@ -142,4 +142,12 @@ export function applyAirQuality(
 
 function numeric(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+/** The request asks for `timezone=UTC`, but the reply states the hour without a
+ *  zone ('2026-07-29T13:00'), which any reader would parse as local time and so
+ *  shift by the offset. Store the instant it actually is. */
+function observedAtIso(value: unknown): string | null {
+  if (typeof value !== 'string' || !value) return null
+  return /(z|[+-]\d{2}:?\d{2})$/i.test(value) ? value : `${value}Z`
 }

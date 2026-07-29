@@ -87,8 +87,21 @@ describe('readAirQuality', () => {
       particulateMatter25: 5.2,
       nitrogenDioxide: 0.8,
       ozone: 61,
-      observedAt: '2026-07-29T13:00',
+      // Requested as UTC but reported without a zone, so it is stamped here.
+      observedAt: '2026-07-29T13:00Z',
     })
+    expect(new Date(observation!.observedAt!).toISOString()).toBe('2026-07-29T13:00:00.000Z')
+  })
+
+  it('keeps a zone the service already stated', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => response({ time: '2026-07-29T15:00+02:00', pm10: 12 }))
+
+    const observation = await readAirQuality({ lat: 0, lng: 0 }, {
+      checkedAt: '2026-07-29T00:00:00.000Z',
+      fetchImpl,
+    })
+
+    expect(observation?.observedAt).toBe('2026-07-29T15:00+02:00')
   })
 
   it('returns null when the grid cell carries no values at all', async () => {
