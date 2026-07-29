@@ -260,6 +260,7 @@
       "extractionLabel": "Extraktion",
       "translationLabel": "Übersetzung",
       "usage-ideasLabel": "Nutzungsideen",
+      "renovation-cost-estimateLabel": "Sanierungskosten",
       "loadError": "Konfiguration konnte nicht geladen werden.",
       "invalidValue": "Bitte für jedes Feld eine gültige Zahl eingeben.",
       "saveError": "Speichern fehlgeschlagen.",
@@ -519,6 +520,16 @@
     "agricultural": "Landwirtschaft",
     "forestry": "Forstwirtschaft",
     "warehouse": "Lagerhaus",
+    "other": "Sonstiges"
+  },
+  "renovationCostCategory": {
+    "roof": "Dach",
+    "facade-insulation": "Fassade/Dämmung",
+    "windows": "Fenster",
+    "heating": "Heizung",
+    "electrical": "Elektrik",
+    "plumbing-bathroom": "Bad/Sanitär",
+    "flooring": "Boden",
     "other": "Sonstiges"
   },
   "attachmentKind": {
@@ -1045,6 +1056,12 @@
     "usageIdeasPending": "Ideen werden erstellt …",
     "usageIdeasError": "Nutzungsideen konnten nicht erstellt werden.",
     "usageIdeasRetry": "Erneut versuchen",
+    "renovationCostTitle": "Sanierungskosten",
+    "renovationCostGenerate": "Sanierungskosten schätzen",
+    "renovationCostPending": "Schätzung wird erstellt …",
+    "renovationCostError": "Sanierungskosten konnten nicht geschätzt werden.",
+    "renovationCostRetry": "Erneut versuchen",
+    "renovationCostEmpty": "Kein nennenswerter Sanierungsbedarf erkennbar.",
     "gallery": {
       "close": "Schließen"
     }

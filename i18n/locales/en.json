@@ -260,6 +260,7 @@
       "extractionLabel": "Extraction",
       "translationLabel": "Translation",
       "usage-ideasLabel": "Usage ideas",
+      "renovation-cost-estimateLabel": "Renovation cost",
       "loadError": "Configuration could not be loaded.",
       "invalidValue": "Please enter a valid number for every field.",
       "saveError": "Save failed.",
@@ -519,6 +520,16 @@
     "agricultural": "Agricultural use",
     "forestry": "Forestry",
     "warehouse": "Warehouse",
+    "other": "Other"
+  },
+  "renovationCostCategory": {
+    "roof": "Roof",
+    "facade-insulation": "Facade/insulation",
+    "windows": "Windows",
+    "heating": "Heating",
+    "electrical": "Electrical",
+    "plumbing-bathroom": "Plumbing/bathroom",
+    "flooring": "Flooring",
     "other": "Other"
   },
   "attachmentKind": {
@@ -1045,6 +1056,12 @@
     "usageIdeasPending": "Generating ideas …",
     "usageIdeasError": "Usage ideas could not be generated.",
     "usageIdeasRetry": "Retry",
+    "renovationCostTitle": "Renovation cost",
+    "renovationCostGenerate": "Estimate renovation cost",
+    "renovationCostPending": "Generating estimate …",
+    "renovationCostError": "Renovation cost could not be estimated.",
+    "renovationCostRetry": "Retry",
+    "renovationCostEmpty": "No significant renovation need detected.",
     "gallery": {
       "close": "Close"
     }

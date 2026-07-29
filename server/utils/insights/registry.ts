@@ -7,6 +7,7 @@
 
 import type { Auction } from '~/types/auction'
 import { usageIdeasInsight } from './usage-ideas'
+import { renovationCostEstimateInsight } from './renovation-cost-estimate'
 
 export interface InsightDefinition<T> {
   /** Stable id, used as the DB key, the API route segment and the LLM
@@ -29,7 +30,7 @@ export interface InsightDefinition<T> {
   clamp(raw: unknown): T | null
 }
 
-export const INSIGHT_REGISTRY: InsightDefinition<unknown>[] = [usageIdeasInsight]
+export const INSIGHT_REGISTRY: InsightDefinition<unknown>[] = [usageIdeasInsight, renovationCostEstimateInsight]
 
 export function getInsightDefinition(id: string): InsightDefinition<unknown> | undefined {
   return INSIGHT_REGISTRY.find((definition) => definition.id === id)
