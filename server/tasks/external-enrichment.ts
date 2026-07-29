@@ -11,6 +11,7 @@ import {
   createEuFloodRiskFileAdapter,
   DEFAULT_EU_FLOOD_RISK_MAX_CACHE_AGE_DAYS,
 } from '~/server/utils/external-data/eu-flood-risk'
+import { createEeaEnvironmentalNoiseEnhancer } from '~/server/utils/external-data/eea-environmental-noise'
 import { createOsmLocationContextAdapter } from '~/server/utils/external-data/osm-location-context'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 
@@ -42,6 +43,13 @@ export interface LocationContextAdapter {
   context(auction: Auction): Promise<LocationContext | null>
 }
 
+export interface LocationContextEnhancer {
+  id: string
+  sourceVersion: string
+  supports(auction: Auction, context: LocationContext): boolean
+  enhance(auction: Auction, context: LocationContext): Promise<LocationContext>
+}
+
 export interface ExternalEnrichmentOptions {
   marketAdapters?: MarketComparisonAdapter[]
   landValueAdapters?: LandValueBaselineAdapter[]
@@ -49,6 +57,9 @@ export interface ExternalEnrichmentOptions {
   locationContextAdapters?: LocationContextAdapter[]
   now?: Date
   limit?: number
+  country?: string
+  platform?: string
+  externalId?: string
 }
 
 export interface ExternalEnrichmentSummary {
@@ -64,23 +75,29 @@ export interface ExternalEnrichmentSummary {
   durationMs: number
 }
 
-let running = false
+let queueTail: Promise<void> = Promise.resolve()
+let queuedRuns = 0
 
 export default defineTask({
   meta: {
     name: 'external-enrichment',
     description: 'Refresh cached external market and natural-hazard overlays for auction detail pages.',
   },
-  async run() {
-    if (running) {
-      console.warn('[external-enrichment] previous run still in progress — skipping')
-      return { result: undefined }
+  async run(event) {
+    const options = (event?.payload ?? {}) as ExternalEnrichmentOptions
+    const previous = queueTail
+    let releaseQueue!: () => void
+    queueTail = new Promise<void>((resolve) => { releaseQueue = resolve })
+    if (queuedRuns > 0) {
+      console.warn(`[external-enrichment] queued ${scopeLabel(options)} behind ${queuedRuns} active/pending run(s)`)
     }
-    running = true
+    queuedRuns++
     try {
-      return { result: await runExternalEnrichment() }
+      await previous
+      return { result: await runExternalEnrichment(options) }
     } finally {
-      running = false
+      queuedRuns--
+      releaseQueue()
     }
   },
 })
@@ -112,7 +129,7 @@ export async function runExternalEnrichment(
   const hazardAdapters = options.hazardAdapters ?? await defaultHazardAdapters(checkedAt)
   const locationContextAdapters = options.locationContextAdapters ?? defaultLocationContextAdapters(checkedAt)
 
-  for (const rawAuction of Object.values(snapshot)) {
+  for (const rawAuction of Object.values(snapshot).filter((auction) => inScope(auction, options))) {
     if (options.limit != null && summary.processed >= options.limit) break
     const point = await resolvePoint(rawAuction)
     if (!point) {
@@ -160,6 +177,22 @@ export async function runExternalEnrichment(
   summary.written = ok ? Object.keys(entries).length : 0
   summary.durationMs = Date.now() - startedAt
   return summary
+}
+
+function inScope(auction: Auction, options: ExternalEnrichmentOptions): boolean {
+  if (options.country && auction.country.toLowerCase() !== options.country.trim().toLowerCase()) return false
+  if (options.platform && auction.platform !== options.platform) return false
+  if (options.externalId && auction.externalId !== options.externalId) return false
+  return true
+}
+
+function scopeLabel(options: ExternalEnrichmentOptions): string {
+  const parts = [
+    options.country ? `country=${options.country}` : null,
+    options.platform ? `platform=${options.platform}` : null,
+    options.externalId ? `externalId=${options.externalId}` : null,
+  ].filter((part): part is string => !!part)
+  return parts.length > 0 ? parts.join(',') : 'full run'
 }
 
 async function resolvePoint(auction: Auction): Promise<{ lat: number; lng: number } | null> {
@@ -277,11 +310,46 @@ function defaultLocationContextAdapters(checkedAt: string): LocationContextAdapt
   const config = useRuntimeConfig().externalData as ExternalDataRuntimeConfig | undefined
   const endpoint = stringConfig(config?.osmContextEndpoint)
   if (!endpoint) return []
-  return [createOsmLocationContextAdapter({
+  const osmAdapter = createOsmLocationContextAdapter({
     endpoint,
     checkedAt,
     timeoutMs: numberConfig(config?.osmContextTimeoutMs, 20_000),
-  })]
+  })
+  const enhancers: LocationContextEnhancer[] = []
+  const eeaNoiseServiceBaseUrl = stringConfig(config?.eeaNoiseServiceBaseUrl)
+  if (eeaNoiseServiceBaseUrl) {
+    enhancers.push(createEeaEnvironmentalNoiseEnhancer({
+      checkedAt,
+      serviceBaseUrl: eeaNoiseServiceBaseUrl,
+      timeoutMs: numberConfig(config?.eeaNoiseTimeoutMs, 10_000),
+    }))
+  }
+  return [withLocationContextEnhancers(osmAdapter, enhancers)]
+}
+
+function withLocationContextEnhancers(
+  adapter: LocationContextAdapter,
+  enhancers: LocationContextEnhancer[],
+): LocationContextAdapter {
+  if (enhancers.length === 0) return adapter
+  return {
+    id: [adapter.id, ...enhancers.map((enhancer) => enhancer.id)].join('+'),
+    sourceVersion: [adapter.sourceVersion, ...enhancers.map((enhancer) => enhancer.sourceVersion)].join(','),
+    supports: (auction) => adapter.supports(auction),
+    async context(auction) {
+      let context = await adapter.context(auction)
+      if (!context) return null
+      for (const enhancer of enhancers) {
+        if (!enhancer.supports(auction, context)) continue
+        try {
+          context = await enhancer.enhance(auction, context)
+        } catch (err) {
+          console.warn(`[external-enrichment] ${enhancer.id} location context enhancer failed for ${auction.platform}/${auction.externalId}: ${(err as Error).message}`)
+        }
+      }
+      return context
+    },
+  }
 }
 
 interface ExternalDataRuntimeConfig {
@@ -290,6 +358,8 @@ interface ExternalDataRuntimeConfig {
   euFloodRiskMaxCacheAgeDays?: number | string
   osmContextEndpoint?: string
   osmContextTimeoutMs?: number | string
+  eeaNoiseServiceBaseUrl?: string
+  eeaNoiseTimeoutMs?: number | string
 }
 
 function numberConfig(value: number | string | undefined, fallback: number): number {

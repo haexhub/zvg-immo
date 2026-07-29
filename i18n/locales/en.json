@@ -344,6 +344,7 @@
       "enrichTitle": "Crawl, archive, and extract this country again",
       "enrichError": "Update could not be started.",
       "enrichDone": "{country}: updated {archived} of {crawled} listings ({photos} photos, {duration}s).",
+      "externalEnrichmentQueued": "Location scoring and map layers will refresh next.",
       "enrichStatusRunning": "Crawl/archive running since {at} …",
       "enrichStatusLastRun": "Last crawl/archive run: {at} — {archived} archived, {duration}s.",
       "enrichStatusLastError": "Crawl/archive last failed: {message}",
@@ -888,12 +889,15 @@
       "employment_proxy_weak": "weak employment/job signals",
       "decline_risk_proxy": "outmigration/ageing risk based on proxy signals",
       "high_aviation_noise_pressure": "high aircraft-noise pressure is possible due to nearby airport/runway",
-      "medium_aviation_noise_pressure": "noticeable aircraft-noise signals nearby"
+      "medium_aviation_noise_pressure": "noticeable aircraft-noise signals nearby",
+      "high_rail_noise_pressure": "high rail-noise pressure is possible based on EEA data",
+      "medium_rail_noise_pressure": "noticeable rail-noise pressure is possible based on EEA data"
     },
     "locationCaveat": {
       "osm_heuristic": "Location rating is based on mapped OSM objects and simple distance/density heuristics.",
       "ferry_check_required": "Check ferry/island access separately: schedules, cost, seasonal operation and emergency access can be decisive.",
-      "sparse_osm_data": "Very few OSM objects may mean true remoteness or incomplete mapping."
+      "sparse_osm_data": "Very few OSM objects may mean true remoteness or incomplete mapping.",
+      "eea_end_noise_data": "EEA/END strategic noise maps were sampled at this location; national detailed maps or measurements may be more precise."
     },
     "environmentSignal": {
       "motorway_very_near": "motorway/expressway mapped very close by",
@@ -904,7 +908,16 @@
       "airport_near": "airport/aerodrome nearby",
       "runway_very_near": "runway mapped very close by",
       "runway_near": "runway in the wider area",
-      "helipad_near": "helipad/heliport mapped very close by"
+      "helipad_near": "helipad/heliport mapped very close by",
+      "eea_road_noise_low": "EEA road noise: low reported contour at the site",
+      "eea_road_noise_medium": "EEA road noise: noticeable reported contour at the site",
+      "eea_road_noise_high": "EEA road noise: high reported contour at the site",
+      "eea_rail_noise_low": "EEA rail noise: low reported contour at the site",
+      "eea_rail_noise_medium": "EEA rail noise: noticeable reported contour at the site",
+      "eea_rail_noise_high": "EEA rail noise: high reported contour at the site",
+      "eea_aviation_noise_low": "EEA aviation noise: low reported contour at the site",
+      "eea_aviation_noise_medium": "EEA aviation noise: noticeable reported contour at the site",
+      "eea_aviation_noise_high": "EEA aviation noise: high reported contour at the site"
     },
     "demographicReason": {
       "university_nearby": "university/college in the wider area",
@@ -931,6 +944,15 @@
     "mapLayerRestaurantsCafes": "Restaurants & cafes",
     "mapLayerAviation": "Airports & aircraft noise",
     "mapLayerLeisure": "Leisure",
+    "mapLayerHazardPrefix": "Hazard map",
+    "mapLayerOdorSignals": "Odour/emissions",
+    "mapLayerFloodRiskAreas": "Flood map (EU)",
+    "mapLayerNoiseRoadDay": "Noise map road Lden",
+    "mapLayerNoiseRoadNight": "Noise map road night",
+    "mapLayerNoiseRailDay": "Noise map rail Lden",
+    "mapLayerNoiseRailNight": "Noise map rail night",
+    "mapLayerNoiseAviationDay": "Noise map aviation Lden",
+    "mapLayerNoiseAviationNight": "Noise map aviation night",
     "mapFeatureKind": {
       "groceries": "shopping/groceries",
       "pharmacy": "pharmacy",

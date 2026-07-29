@@ -645,6 +645,7 @@ function environmentContext(
     nearestAirportDistanceMeters: nearestAirport,
     nearestRunwayDistanceMeters: nearestRunway,
     nearestHelipadDistanceMeters: nearestHelipad,
+    reportedNoise: [],
     riskSignals,
   }
 }

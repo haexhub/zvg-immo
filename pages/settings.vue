@@ -823,6 +823,7 @@ interface EnrichRunResult {
   photoExtractions: number
   photosTotal: number
   durationMs: number
+  externalEnrichmentQueued?: boolean
 }
 const countrySources = ref<CountrySourceSetting[]>([])
 const countrySourcesPending = ref(false)
@@ -1611,6 +1612,9 @@ onBeforeUnmount(stopProgressPolling)
               photos: countryEnrichResult.photosTotal,
               duration: Math.round(countryEnrichResult.durationMs / 1000),
             }) }}
+          </p>
+          <p v-if="countryEnrichResult?.externalEnrichmentQueued" class="text-sm text-emerald-600 dark:text-emerald-500">
+            {{ $t('settings.sources.externalEnrichmentQueued') }}
           </p>
 
           <div v-if="llmBatchJobs?.enrichStatus" class="text-sm space-y-1">

@@ -56,6 +56,10 @@ function hazardOverlayLabel(hazard: HazardAssessment): string {
   return `${t(`objektDetail.hazard.${hazard.hazard}`)}: ${t(`objektDetail.hazardStatus.${hazard.status}`)}`
 }
 
+function hazardMapLayerLabel(hazard: HazardAssessment): string {
+  return `${t(`objektDetail.mapLayerHazardPrefix`)} ${t(`objektDetail.hazard.${hazard.hazard}`)}`
+}
+
 function featureLayerLabel(feature: LocationMapFeature): string {
   if (feature.kind === 'industry' || feature.kind === 'commercial' || feature.kind === 'major_road') return t('objektDetail.mapLayerIndustryRoads')
   if (feature.kind === 'airport' || feature.kind === 'runway' || feature.kind === 'helipad') return t('objektDetail.mapLayerAviation')
@@ -95,10 +99,13 @@ function featureLabel(feature: LocationMapFeature): string {
 
 function featurePopup(feature: LocationMapFeature): string {
   const name = feature.name ? `${escapeHtml(feature.name)}<br>` : ''
-  const distance = feature.distanceMeters < 1000
-    ? t('objektDetail.distanceMeters', { meters: feature.distanceMeters.toLocaleString(undefined, { maximumFractionDigits: 0 }) })
-    : t('objektDetail.distanceKilometers', { kilometers: (feature.distanceMeters / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 }) })
-  return `${name}${escapeHtml(featureLabel(feature))}<br>${distance}`
+  return `${name}${escapeHtml(featureLabel(feature))}<br>${distanceLabel(feature.distanceMeters)}`
+}
+
+function distanceLabel(distanceMeters: number): string {
+  return distanceMeters < 1000
+    ? t('objektDetail.distanceMeters', { meters: distanceMeters.toLocaleString(undefined, { maximumFractionDigits: 0 }) })
+    : t('objektDetail.distanceKilometers', { kilometers: (distanceMeters / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 }) })
 }
 
 function escapeHtml(value: string): string {
@@ -108,6 +115,123 @@ function escapeHtml(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;')
+}
+
+function addOverlay(overlays: Record<string, L.Layer>, label: string, layer: L.Layer): void {
+  let key = label
+  let index = 2
+  while (overlays[key]) {
+    key = `${label} ${index}`
+    index++
+  }
+  overlays[key] = layer
+}
+
+function arcGisImageLayer(serviceUrl: string, opacity: number, attribution: string): L.GridLayer {
+  return arcGisGridLayer(serviceUrl, 'exportImage', {}, opacity, attribution)
+}
+
+function arcGisMapLayer(serviceUrl: string, layers: string, opacity: number, attribution: string): L.GridLayer {
+  return arcGisGridLayer(serviceUrl, 'export', { layers }, opacity, attribution)
+}
+
+function arcGisGridLayer(
+  serviceUrl: string,
+  operation: 'export' | 'exportImage',
+  params: Record<string, string>,
+  opacity: number,
+  attribution: string,
+): L.GridLayer {
+  const Layer = L.GridLayer.extend({
+    createTile(this: L.GridLayer, coords: L.Coords, done: (error?: Error, tile?: HTMLElement) => void): HTMLElement {
+      const tile = document.createElement('img')
+      tile.alt = ''
+      tile.decoding = 'async'
+      tile.loading = 'lazy'
+      tile.referrerPolicy = 'no-referrer'
+      tile.onload = () => done(undefined, tile)
+      tile.onerror = () => done(new Error(`Failed to load ${serviceUrl}`), tile)
+      tile.src = arcGisExportUrl(serviceUrl, coords, this.getTileSize(), operation, params)
+      return tile
+    },
+  })
+  const ArcGisLayer = Layer as unknown as { new(options: L.GridLayerOptions): L.GridLayer }
+  return new ArcGisLayer({
+    opacity,
+    attribution,
+    minZoom: 6,
+    maxZoom: 18,
+  }) as L.GridLayer
+}
+
+function arcGisExportUrl(
+  serviceUrl: string,
+  coords: L.Coords,
+  tileSize: L.Point,
+  operation: 'export' | 'exportImage',
+  extraParams: Record<string, string> = {},
+): string {
+  const nwPoint = coords.scaleBy(tileSize)
+  const sePoint = nwPoint.add(tileSize)
+  const nw = L.CRS.EPSG3857.project(L.CRS.EPSG3857.pointToLatLng(nwPoint, coords.z))
+  const se = L.CRS.EPSG3857.project(L.CRS.EPSG3857.pointToLatLng(sePoint, coords.z))
+  const url = new URL(`${serviceUrl.replace(/\/+$/, '')}/${operation}`)
+  url.searchParams.set('bbox', `${nw.x},${se.y},${se.x},${nw.y}`)
+  url.searchParams.set('bboxSR', '3857')
+  url.searchParams.set('imageSR', '3857')
+  url.searchParams.set('size', `${tileSize.x},${tileSize.y}`)
+  url.searchParams.set('format', 'png32')
+  url.searchParams.set('transparent', 'true')
+  url.searchParams.set('f', 'image')
+  for (const [key, value] of Object.entries(extraParams)) {
+    url.searchParams.set(key, value)
+  }
+  return url.toString()
+}
+
+function addEnvironmentalMapLayers(overlays: Record<string, L.Layer>): void {
+  const noiseBase = 'https://noise.discomap.eea.europa.eu/arcgis/rest/services/noiseStoryMap'
+  const noiseAttribution = 'EEA Environmental Noise Directive'
+  addOverlay(overlays, t('objektDetail.mapLayerNoiseRoadDay'), arcGisImageLayer(`${noiseBase}/NoiseContours_road_lden/ImageServer`, 0.55, noiseAttribution))
+  addOverlay(overlays, t('objektDetail.mapLayerNoiseRoadNight'), arcGisImageLayer(`${noiseBase}/NoiseContours_road_lnight/ImageServer`, 0.55, noiseAttribution))
+  addOverlay(overlays, t('objektDetail.mapLayerNoiseRailDay'), arcGisImageLayer(`${noiseBase}/NoiseContours_rail_lden/ImageServer`, 0.55, noiseAttribution))
+  addOverlay(overlays, t('objektDetail.mapLayerNoiseRailNight'), arcGisImageLayer(`${noiseBase}/NoiseContours_rail_lnight/ImageServer`, 0.55, noiseAttribution))
+  addOverlay(overlays, t('objektDetail.mapLayerNoiseAviationDay'), arcGisImageLayer(`${noiseBase}/NoiseContours_air_lden/ImageServer`, 0.55, noiseAttribution))
+  addOverlay(overlays, t('objektDetail.mapLayerNoiseAviationNight'), arcGisImageLayer(`${noiseBase}/NoiseContours_air_lnight/ImageServer`, 0.55, noiseAttribution))
+  addOverlay(
+    overlays,
+    t('objektDetail.mapLayerFloodRiskAreas'),
+    arcGisMapLayer(
+      'https://water.discomap.eea.europa.eu/arcgis/rest/services/FloodsDirective/FloodsRiskZone_WM/MapServer',
+      'show:2',
+      0.5,
+      'EEA Floods Directive',
+    ),
+  )
+}
+
+function odorSignalLayer(): L.Layer | null {
+  const environment = props.locationContext?.environment
+  if (!environment) return null
+  const signals = [
+    environment.nearestHeavyIndustryDistanceMeters,
+    environment.nearestIndustrialDistanceMeters,
+  ].filter((distance): distance is number => distance != null)
+  const nearest = signals.length ? Math.min(...signals) : null
+  if (nearest == null || nearest > 5_000) return null
+  const radius = Math.min(Math.max(nearest, 300), 5_000)
+  const label = t('objektDetail.mapLayerOdorSignals')
+  return L.layerGroup([
+    L.circle([props.lat, props.lng], {
+      radius,
+      color: '#7f1d1d',
+      weight: 2,
+      opacity: 0.85,
+      fillColor: '#ef4444',
+      fillOpacity: nearest <= 1000 ? 0.12 : 0.06,
+      dashArray: '4 6',
+    }).bindPopup(`${label}<br>${distanceLabel(nearest)}`),
+  ])
 }
 
 onMounted(async () => {
@@ -152,6 +276,7 @@ onMounted(async () => {
     layers['Satellit (Länder-Tiles)'] = L.layerGroup([esriImagery, countryImagery, placeLabels])
   }
   const overlays: Record<string, L.Layer> = {}
+  addEnvironmentalMapLayers(overlays)
   const featureGroups: Record<string, L.LayerGroup> = {}
   for (const feature of props.locationContext?.mapFeatures ?? []) {
     const label = featureLayerLabel(feature)
@@ -170,9 +295,11 @@ onMounted(async () => {
       .addTo(group)
   }
   for (const [label, group] of Object.entries(featureGroups)) {
-    overlays[label] = group
+    addOverlay(overlays, label, group)
     group.addTo(map)
   }
+  const odorLayer = odorSignalLayer()
+  if (odorLayer) addOverlay(overlays, t('objektDetail.mapLayerOdorSignals'), odorLayer)
   for (const hazard of props.hazards ?? []) {
     const color = hazardColor(hazard)
     const group = L.layerGroup([
@@ -195,9 +322,9 @@ onMounted(async () => {
         fillOpacity: 0.9,
       }),
     ])
-    overlays[hazardOverlayLabel(hazard)] = group
+    addOverlay(overlays, hazardMapLayerLabel(hazard), group)
   }
-  L.control.layers(layers, overlays, { position: 'topright' }).addTo(map)
+  L.control.layers(layers, overlays, { position: 'topright', collapsed: true }).addTo(map)
   const marker = L.marker([props.lat, props.lng], { icon: markerIcon })
   if (props.label) marker.bindTooltip(props.label)
   marker.addTo(map)
@@ -214,3 +341,12 @@ onBeforeUnmount(() => {
 <template>
   <div ref="mapEl" class="h-72 w-full rounded-xl border shadow-sm overflow-hidden" />
 </template>
+
+<style scoped>
+:deep(.leaflet-control-layers-expanded) {
+  max-height: 15rem;
+  overflow-y: auto;
+  font-size: 12px;
+  line-height: 1.25;
+}
+</style>

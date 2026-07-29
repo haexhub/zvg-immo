@@ -157,7 +157,25 @@ export interface LocationEnvironmentContext {
   nearestAirportDistanceMeters: number | null
   nearestRunwayDistanceMeters: number | null
   nearestHelipadDistanceMeters: number | null
+  reportedNoise?: LocationNoiseObservation[]
   riskSignals: string[]
+}
+
+export type LocationNoiseSource = 'road' | 'rail' | 'aviation' | 'industry'
+export type LocationNoiseIndicator = 'lden' | 'lnight'
+
+export interface LocationNoiseObservation {
+  source: LocationNoiseSource
+  indicator: LocationNoiseIndicator
+  level: 'low' | 'medium' | 'high' | 'unknown'
+  bandLabel: string
+  minDb: number | null
+  maxDb: number | null
+  value: number
+  sourceLayerName: string | null
+  sourceLabel: string
+  sourceUrl: string
+  checkedAt: string
 }
 
 export interface LocationDemographicContext {
