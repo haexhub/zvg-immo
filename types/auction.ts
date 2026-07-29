@@ -56,6 +56,136 @@ export interface HazardAssessment {
   stale?: boolean
 }
 
+export type NearbyPlaceKind =
+  | 'city'
+  | 'town'
+  | 'suburb'
+  | 'village'
+  | 'hamlet'
+  | 'island'
+  | 'municipality'
+  | 'unknown'
+
+export interface NearbyPlace {
+  name: string
+  kind: NearbyPlaceKind
+  distanceMeters: number
+  population: number | null
+}
+
+export interface LocationMobilityContext {
+  publicTransportLevel: 'none' | 'limited' | 'good' | 'excellent' | 'unknown'
+  nearestStopDistanceMeters: number | null
+  stopCountWithin1000m: number
+  stopCountWithin3000m: number
+  nearestRailStationDistanceMeters: number | null
+  roadAccessLevel: 'remote' | 'local' | 'regional' | 'major' | 'unknown'
+  nearestMajorRoadDistanceMeters: number | null
+  majorRoadKinds: string[]
+  nearestFerryTerminalDistanceMeters: number | null
+  hasFerryRouteNearby: boolean
+  ferryAccessLikely: boolean
+}
+
+export type LocationAmenityKind =
+  | 'groceries'
+  | 'education'
+  | 'healthcare'
+  | 'pharmacy'
+  | 'banking'
+  | 'fuel'
+  | 'food'
+  | 'leisure'
+
+export interface LocationAmenitySummary {
+  kind: LocationAmenityKind
+  nearestDistanceMeters: number | null
+  countWithin1000m: number
+  countWithin3000m: number
+  countWithin5000m: number
+}
+
+export type LocationMapFeatureKind =
+  | 'groceries'
+  | 'pharmacy'
+  | 'healthcare'
+  | 'school'
+  | 'childcare'
+  | 'public_transport'
+  | 'rail'
+  | 'university'
+  | 'industry'
+  | 'commercial'
+  | 'major_road'
+  | 'ferry'
+  | 'leisure'
+
+export interface LocationMapFeature {
+  kind: LocationMapFeatureKind
+  name: string | null
+  lat: number
+  lng: number
+  distanceMeters: number
+  osmType: 'node' | 'way' | 'relation'
+  osmId: number
+}
+
+export interface LocationEnvironmentContext {
+  industrialCountWithin1000m: number
+  industrialCountWithin3000m: number
+  commercialCountWithin1000m: number
+  commercialCountWithin3000m: number
+  nearestIndustrialDistanceMeters: number | null
+  nearestCommercialDistanceMeters: number | null
+  nearestHeavyIndustryDistanceMeters: number | null
+  heavyIndustryKinds: string[]
+  noisyRoadLevel: 'low' | 'medium' | 'high' | 'unknown'
+  nearestMotorwayDistanceMeters: number | null
+  nearestPrimaryRoadDistanceMeters: number | null
+  riskSignals: string[]
+}
+
+export interface LocationDemographicContext {
+  youthSignal: 'low' | 'medium' | 'high' | 'unknown'
+  employmentSignal: 'low' | 'medium' | 'high' | 'unknown'
+  declineRisk: 'low' | 'medium' | 'high' | 'unknown'
+  universityDistanceMeters: number | null
+  schoolOrChildcareCountWithin3000m: number
+  workplaceSignalCountWithin5000m: number
+  reasons: string[]
+  caveats: string[]
+}
+
+export interface NeighborhoodContext {
+  settlementPattern: 'urban' | 'suburban' | 'town' | 'village' | 'rural' | 'remote' | 'island' | 'unknown'
+  buildingCountWithin500m: number
+  buildingDensityPerSqKm: number | null
+  amenityCountWithin1000m: number
+  vacantOrRuinCountWithin500m: number
+  notes: string[]
+}
+
+export interface LocationQualityAssessment {
+  score: number
+  verdict: 'excellent' | 'good' | 'average' | 'weak' | 'isolated' | 'unknown'
+  strengths: string[]
+  weaknesses: string[]
+  caveats: string[]
+}
+
+export interface LocationContext {
+  nearbyPlaces: NearbyPlace[]
+  mobility: LocationMobilityContext
+  amenities: LocationAmenitySummary[]
+  environment: LocationEnvironmentContext
+  demographics: LocationDemographicContext
+  mapFeatures: LocationMapFeature[]
+  neighborhood: NeighborhoodContext
+  quality: LocationQualityAssessment
+  source: DataSourceAttribution
+  checkedAt: string
+}
+
 export interface LocationEnrichment {
   platform: string
   externalId: string
@@ -64,6 +194,7 @@ export interface LocationEnrichment {
   marketComparison?: MarketComparison | null
   landValueBaseline?: LandValueBaseline | null
   hazards?: HazardAssessment[] | null
+  locationContext?: LocationContext | null
   checkedAt: string
   sourceVersion: string
 }

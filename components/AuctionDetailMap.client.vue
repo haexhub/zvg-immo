@@ -5,7 +5,7 @@ import iconUrl from 'leaflet/dist/images/marker-icon.png'
 import iconRetinaUrl from 'leaflet/dist/images/marker-icon-2x.png'
 import shadowUrl from 'leaflet/dist/images/marker-shadow.png'
 import { createCountryImageryLayer } from '~/lib/countryImagery'
-import type { HazardAssessment } from '~/types/auction'
+import type { HazardAssessment, LocationContext, LocationMapFeature } from '~/types/auction'
 
 const props = defineProps<{
   lat: number
@@ -13,6 +13,7 @@ const props = defineProps<{
   label?: string
   country?: string
   hazards?: HazardAssessment[] | null
+  locationContext?: LocationContext | null
 }>()
 
 const { t } = useI18n()
@@ -53,6 +54,53 @@ function hazardRadius(hazard: HazardAssessment): number {
 
 function hazardOverlayLabel(hazard: HazardAssessment): string {
   return `${t(`objektDetail.hazard.${hazard.hazard}`)}: ${t(`objektDetail.hazardStatus.${hazard.status}`)}`
+}
+
+function featureLayerLabel(feature: LocationMapFeature): string {
+  if (feature.kind === 'industry' || feature.kind === 'commercial' || feature.kind === 'major_road') return t('objektDetail.mapLayerIndustryRoads')
+  if (feature.kind === 'public_transport' || feature.kind === 'rail' || feature.kind === 'ferry') return t('objektDetail.mapLayerTransport')
+  if (feature.kind === 'school' || feature.kind === 'childcare' || feature.kind === 'university') return t('objektDetail.mapLayerEducation')
+  if (feature.kind === 'groceries' || feature.kind === 'pharmacy' || feature.kind === 'healthcare') return t('objektDetail.mapLayerDailyNeeds')
+  return t('objektDetail.mapLayerLeisure')
+}
+
+function featureColor(feature: LocationMapFeature): string {
+  if (feature.kind === 'industry') return '#dc2626'
+  if (feature.kind === 'commercial') return '#ea580c'
+  if (feature.kind === 'major_road') return '#9333ea'
+  if (feature.kind === 'public_transport' || feature.kind === 'rail') return '#2563eb'
+  if (feature.kind === 'ferry') return '#0891b2'
+  if (feature.kind === 'school' || feature.kind === 'childcare' || feature.kind === 'university') return '#7c3aed'
+  if (feature.kind === 'pharmacy' || feature.kind === 'healthcare') return '#16a34a'
+  if (feature.kind === 'groceries') return '#059669'
+  return '#64748b'
+}
+
+function featureRadius(feature: LocationMapFeature): number {
+  if (feature.kind === 'major_road') return 8
+  if (feature.kind === 'industry' || feature.kind === 'commercial') return 7
+  return 6
+}
+
+function featureLabel(feature: LocationMapFeature): string {
+  return t(`objektDetail.mapFeatureKind.${feature.kind}`)
+}
+
+function featurePopup(feature: LocationMapFeature): string {
+  const name = feature.name ? `${escapeHtml(feature.name)}<br>` : ''
+  const distance = feature.distanceMeters < 1000
+    ? t('objektDetail.distanceMeters', { meters: feature.distanceMeters.toLocaleString(undefined, { maximumFractionDigits: 0 }) })
+    : t('objektDetail.distanceKilometers', { kilometers: (feature.distanceMeters / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 }) })
+  return `${name}${escapeHtml(featureLabel(feature))}<br>${distance}`
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
 }
 
 onMounted(async () => {
@@ -97,6 +145,27 @@ onMounted(async () => {
     layers['Satellit (Länder-Tiles)'] = L.layerGroup([esriImagery, countryImagery, placeLabels])
   }
   const overlays: Record<string, L.Layer> = {}
+  const featureGroups: Record<string, L.LayerGroup> = {}
+  for (const feature of props.locationContext?.mapFeatures ?? []) {
+    const label = featureLayerLabel(feature)
+    const group = featureGroups[label] ?? L.layerGroup()
+    featureGroups[label] = group
+    const color = featureColor(feature)
+    L.circleMarker([feature.lat, feature.lng], {
+      radius: featureRadius(feature),
+      color,
+      weight: 2,
+      opacity: 0.9,
+      fillColor: color,
+      fillOpacity: feature.kind === 'major_road' ? 0.45 : 0.75,
+    })
+      .bindPopup(featurePopup(feature))
+      .addTo(group)
+  }
+  for (const [label, group] of Object.entries(featureGroups)) {
+    overlays[label] = group
+    group.addTo(map)
+  }
   for (const hazard of props.hazards ?? []) {
     const color = hazardColor(hazard)
     const group = L.layerGroup([

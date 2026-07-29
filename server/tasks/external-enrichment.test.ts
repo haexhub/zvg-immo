@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { join } from 'node:path'
-import type { Auction, HazardAssessment, LandValueBaseline, MarketComparison } from '~/types/auction'
+import type { Auction, HazardAssessment, LandValueBaseline, LocationContext, MarketComparison } from '~/types/auction'
 
 vi.mock('~/server/utils/auction-snapshot', () => ({ readAuctionSnapshot: vi.fn() }))
 vi.mock('~/server/utils/geocode', () => ({ geocodeAddress: vi.fn() }))
@@ -73,6 +73,83 @@ const hazard: HazardAssessment = {
   checkedAt: '2026-07-26T00:00:00.000Z',
 }
 
+const locationContext: LocationContext = {
+  nearbyPlaces: [{ name: 'Paris', kind: 'city', distanceMeters: 500, population: 2_100_000 }],
+  mobility: {
+    publicTransportLevel: 'excellent',
+    nearestStopDistanceMeters: 120,
+    stopCountWithin1000m: 25,
+    stopCountWithin3000m: 80,
+    nearestRailStationDistanceMeters: 300,
+    roadAccessLevel: 'major',
+    nearestMajorRoadDistanceMeters: 450,
+    majorRoadKinds: ['primary'],
+    nearestFerryTerminalDistanceMeters: null,
+    hasFerryRouteNearby: false,
+    ferryAccessLikely: false,
+  },
+  neighborhood: {
+    settlementPattern: 'urban',
+    buildingCountWithin500m: 180,
+    buildingDensityPerSqKm: 229,
+    amenityCountWithin1000m: 45,
+    vacantOrRuinCountWithin500m: 0,
+    notes: ['180 OSM-Gebaeude im 500-m-Umfeld'],
+  },
+  amenities: [
+    { kind: 'groceries', nearestDistanceMeters: 250, countWithin1000m: 4, countWithin3000m: 12, countWithin5000m: 20 },
+    { kind: 'education', nearestDistanceMeters: 500, countWithin1000m: 2, countWithin3000m: 8, countWithin5000m: 11 },
+    { kind: 'healthcare', nearestDistanceMeters: 700, countWithin1000m: 1, countWithin3000m: 6, countWithin5000m: 10 },
+    { kind: 'pharmacy', nearestDistanceMeters: 450, countWithin1000m: 2, countWithin3000m: 5, countWithin5000m: 7 },
+    { kind: 'banking', nearestDistanceMeters: 300, countWithin1000m: 3, countWithin3000m: 10, countWithin5000m: 15 },
+    { kind: 'fuel', nearestDistanceMeters: 1500, countWithin1000m: 0, countWithin3000m: 2, countWithin5000m: 4 },
+    { kind: 'food', nearestDistanceMeters: 120, countWithin1000m: 15, countWithin3000m: 45, countWithin5000m: 80 },
+    { kind: 'leisure', nearestDistanceMeters: 350, countWithin1000m: 4, countWithin3000m: 18, countWithin5000m: 30 },
+  ],
+  environment: {
+    industrialCountWithin1000m: 0,
+    industrialCountWithin3000m: 1,
+    commercialCountWithin1000m: 2,
+    commercialCountWithin3000m: 6,
+    nearestIndustrialDistanceMeters: 1800,
+    nearestCommercialDistanceMeters: 300,
+    nearestHeavyIndustryDistanceMeters: null,
+    heavyIndustryKinds: [],
+    noisyRoadLevel: 'medium',
+    nearestMotorwayDistanceMeters: 2200,
+    nearestPrimaryRoadDistanceMeters: 600,
+    riskSignals: ['motorway_near'],
+  },
+  demographics: {
+    youthSignal: 'high',
+    employmentSignal: 'high',
+    declineRisk: 'low',
+    universityDistanceMeters: 1200,
+    schoolOrChildcareCountWithin3000m: 12,
+    workplaceSignalCountWithin5000m: 35,
+    reasons: ['university_nearby', 'many_workplace_signals'],
+    caveats: ['demographic_proxy_only'],
+  },
+  mapFeatures: [
+    { kind: 'groceries', name: 'Supermarkt', lat: 48.857, lng: 2.353, distanceMeters: 120, osmType: 'node', osmId: 1 },
+    { kind: 'public_transport', name: 'Haltestelle', lat: 48.858, lng: 2.354, distanceMeters: 180, osmType: 'node', osmId: 2 },
+  ],
+  quality: {
+    score: 92,
+    verdict: 'excellent',
+    strengths: ['excellent_public_transport'],
+    weaknesses: [],
+    caveats: ['osm_heuristic'],
+  },
+  source: {
+    id: 'openstreetmap-overpass',
+    label: 'OpenStreetMap / Overpass',
+    url: 'https://example.test/osm',
+    licenseNote: 'Fixture',
+  },
+  checkedAt: '2026-07-26T00:00:00.000Z',
+}
+
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.resetModules()
@@ -117,6 +194,7 @@ describe('runExternalEnrichment', () => {
       marketComparisons: 1,
       landValueBaselines: 1,
       hazards: 1,
+      locationContexts: 0,
       staleResults: 0,
       providerFailures: 0,
     })
@@ -129,6 +207,7 @@ describe('runExternalEnrichment', () => {
         marketComparison,
         landValueBaseline,
         hazards: [hazard],
+        locationContext: null,
         checkedAt: '2026-07-26T00:00:00.000Z',
         sourceVersion: 'dvf-fixture@v1,boris-fixture@v1,flood-fixture@v1',
       },
@@ -251,6 +330,37 @@ describe('runExternalEnrichment', () => {
 
     expect(summary.hazards).toBe(1)
     expect(summary.staleResults).toBe(1)
+  })
+
+  it('writes location context from adapter and preserves it in the source version', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { readAuctionSnapshot } = await import('~/server/utils/auction-snapshot')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionSnapshot).mockResolvedValue({ 'test:42': auction() })
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    const summary = await runExternalEnrichment({
+      marketAdapters: [],
+      landValueAdapters: [],
+      hazardAdapters: [],
+      locationContextAdapters: [{
+        id: 'osm-fixture',
+        sourceVersion: 'v1',
+        supports: () => true,
+        context: vi.fn(async () => locationContext),
+      }],
+    })
+
+    expect(summary.locationContexts).toBe(1)
+    expect(summary.written).toBe(1)
+    expect(writeLocationEnrichmentCache).toHaveBeenCalledWith({
+      'test:42': expect.objectContaining({
+        locationContext,
+        sourceVersion: 'osm-fixture@v1',
+      }),
+    })
   })
 
   it('can limit processed auctions for manual spot runs', async () => {

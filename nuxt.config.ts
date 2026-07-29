@@ -136,10 +136,15 @@ export default defineNuxtConfig({
     //   NUXT_EXTERNAL_DATA_FR_DVF_CACHE_PATH=/app/.cache_zvg/external/fr-dvf.json
     //   NUXT_EXTERNAL_DATA_EU_FLOOD_RISK_GEO_JSON_PATH=/app/.cache_zvg/external/eu-flood-risk.geojson
     //   NUXT_EXTERNAL_DATA_EU_FLOOD_RISK_MAX_CACHE_AGE_DAYS=400
+    //   NUXT_EXTERNAL_DATA_OSM_CONTEXT_ENDPOINT=https://overpass-api.de/api/interpreter
+    // Leave the OSM endpoint empty unless your deployment cadence is polite
+    // enough for the selected Overpass instance or you run your own mirror.
     externalData: {
       frDvfCachePath: '',
       euFloodRiskGeoJsonPath: '',
       euFloodRiskMaxCacheAgeDays: 400,
+      osmContextEndpoint: '',
+      osmContextTimeoutMs: 20_000,
     },
     // G1 Roh-Archiv (WP-3): Supabase Storage bucket for archived crawl
     // snapshots (server/utils/raw-archive.ts, storage-uploader.ts). Empty →

@@ -1,4 +1,4 @@
-import type { Auction, HazardAssessment, LandValueBaseline, MarketComparison } from '~/types/auction'
+import type { Auction, HazardAssessment, LandValueBaseline, LocationContext, MarketComparison } from '~/types/auction'
 import { readAuctionSnapshot } from '~/server/utils/auction-snapshot'
 import { geocodeAddress } from '~/server/utils/geocode'
 import {
@@ -11,6 +11,7 @@ import {
   createEuFloodRiskFileAdapter,
   DEFAULT_EU_FLOOD_RISK_MAX_CACHE_AGE_DAYS,
 } from '~/server/utils/external-data/eu-flood-risk'
+import { createOsmLocationContextAdapter } from '~/server/utils/external-data/osm-location-context'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 
 export interface MarketComparisonAdapter {
@@ -34,10 +35,18 @@ export interface HazardAssessmentAdapter {
   assess(auction: Auction): Promise<HazardAssessment[]>
 }
 
+export interface LocationContextAdapter {
+  id: string
+  sourceVersion: string
+  supports(auction: Auction): boolean
+  context(auction: Auction): Promise<LocationContext | null>
+}
+
 export interface ExternalEnrichmentOptions {
   marketAdapters?: MarketComparisonAdapter[]
   landValueAdapters?: LandValueBaselineAdapter[]
   hazardAdapters?: HazardAssessmentAdapter[]
+  locationContextAdapters?: LocationContextAdapter[]
   now?: Date
   limit?: number
 }
@@ -49,6 +58,7 @@ export interface ExternalEnrichmentSummary {
   marketComparisons: number
   landValueBaselines: number
   hazards: number
+  locationContexts: number
   staleResults: number
   providerFailures: number
   durationMs: number
@@ -91,6 +101,7 @@ export async function runExternalEnrichment(
     marketComparisons: 0,
     landValueBaselines: 0,
     hazards: 0,
+    locationContexts: 0,
     staleResults: 0,
     providerFailures: 0,
     durationMs: 0,
@@ -99,6 +110,7 @@ export async function runExternalEnrichment(
   const marketAdapters = options.marketAdapters ?? await defaultMarketAdapters()
   const landValueAdapters = options.landValueAdapters ?? []
   const hazardAdapters = options.hazardAdapters ?? await defaultHazardAdapters(checkedAt)
+  const locationContextAdapters = options.locationContextAdapters ?? defaultLocationContextAdapters(checkedAt)
 
   for (const rawAuction of Object.values(snapshot)) {
     if (options.limit != null && summary.processed >= options.limit) break
@@ -115,13 +127,15 @@ export async function runExternalEnrichment(
     const marketComparison = await firstMarketComparison(auction, marketAdapters, summary)
     const landValueBaseline = await firstLandValueBaseline(auction, landValueAdapters, summary)
     const hazards = await allHazards(auction, hazardAdapters, summary)
+    const locationContext = await firstLocationContext(auction, locationContextAdapters, summary)
 
     if (marketComparison) summary.marketComparisons++
     if (landValueBaseline) summary.landValueBaselines++
     summary.hazards += hazards.length
+    if (locationContext) summary.locationContexts++
     summary.staleResults += hazards.filter((hazard) => hazard.stale).length
 
-    if (!marketComparison && !landValueBaseline && hazards.length === 0) continue
+    if (!marketComparison && !landValueBaseline && hazards.length === 0 && !locationContext) continue
 
     entries[key] = {
       platform: auction.platform,
@@ -131,11 +145,13 @@ export async function runExternalEnrichment(
       marketComparison: marketComparison ?? previous?.marketComparison ?? null,
       landValueBaseline: landValueBaseline ?? previous?.landValueBaseline ?? null,
       hazards: hazards.length > 0 ? hazards : previous?.hazards ?? null,
+      locationContext: locationContext ?? previous?.locationContext ?? null,
       checkedAt,
       sourceVersion: sourceVersion([
         ...marketAdapters,
         ...landValueAdapters,
         ...hazardAdapters,
+        ...locationContextAdapters,
       ]),
     }
   }
@@ -208,6 +224,24 @@ async function allHazards(
   return out
 }
 
+async function firstLocationContext(
+  auction: Auction,
+  adapters: LocationContextAdapter[],
+  summary: ExternalEnrichmentSummary,
+): Promise<LocationContext | null> {
+  for (const adapter of adapters) {
+    if (!adapter.supports(auction)) continue
+    try {
+      const result = await adapter.context(auction)
+      if (result) return result
+    } catch (err) {
+      summary.providerFailures++
+      console.warn(`[external-enrichment] ${adapter.id} location context failed for ${auction.platform}/${auction.externalId}: ${(err as Error).message}`)
+    }
+  }
+  return null
+}
+
 function sourceVersion(adapters: Array<{ id: string; sourceVersion: string }>): string {
   return adapters.length > 0
     ? adapters.map((adapter) => `${adapter.id}@${adapter.sourceVersion}`).join(',')
@@ -238,10 +272,24 @@ async function defaultHazardAdapters(checkedAt: string): Promise<HazardAssessmen
   return adapters
 }
 
+function defaultLocationContextAdapters(checkedAt: string): LocationContextAdapter[] {
+  if (typeof useRuntimeConfig !== 'function') return []
+  const config = useRuntimeConfig().externalData as ExternalDataRuntimeConfig | undefined
+  const endpoint = stringConfig(config?.osmContextEndpoint)
+  if (!endpoint) return []
+  return [createOsmLocationContextAdapter({
+    endpoint,
+    checkedAt,
+    timeoutMs: numberConfig(config?.osmContextTimeoutMs, 20_000),
+  })]
+}
+
 interface ExternalDataRuntimeConfig {
   frDvfCachePath?: string
   euFloodRiskGeoJsonPath?: string
   euFloodRiskMaxCacheAgeDays?: number | string
+  osmContextEndpoint?: string
+  osmContextTimeoutMs?: number | string
 }
 
 function numberConfig(value: number | string | undefined, fallback: number): number {
@@ -251,4 +299,8 @@ function numberConfig(value: number | string | undefined, fallback: number): num
     if (Number.isFinite(parsed) && parsed > 0) return parsed
   }
   return fallback
+}
+
+function stringConfig(value: string | undefined): string {
+  return typeof value === 'string' ? value.trim() : ''
 }

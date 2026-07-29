@@ -5,6 +5,7 @@ export type ExternalDataCapability =
   | 'market_transactions'
   | 'land_value_baseline'
   | `hazard_${HazardKind}`
+  | 'location_context'
   | 'source_discovery'
 
 export interface ExternalDataSource {
@@ -85,6 +86,17 @@ export const EXTERNAL_DATA_SOURCES: readonly ExternalDataSource[] = [
     refreshCadence: 'six-year Floods Directive cycle / source updates',
     resolution: 'potential significant flood risk areas',
     adapter: 'euFloodRiskAreasAdapter',
+  },
+  {
+    id: 'openstreetmap-overpass',
+    label: 'OpenStreetMap / Overpass',
+    countries: ['eu'],
+    capabilities: ['location_context'],
+    sourceUrl: 'https://www.openstreetmap.org/copyright',
+    licenseNote: 'OSM map tags for places, transport, roads, ferries and visible neighborhood signals; completeness varies by mapper coverage.',
+    refreshCadence: 'deployment-configured / source minutely updates',
+    resolution: 'object tags around auction coordinates',
+    adapter: 'osmLocationContextAdapter',
   },
   {
     id: 'copernicus-effis',
