@@ -56,7 +56,7 @@ import { downloadBlob, findLatestCapture } from '~/server/utils/storage-download
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 import { interleaveByPlatform } from '~/server/utils/interleave-by-platform'
 import { isSafePathSegment } from '~/server/utils/path-segment'
-import { mimeTypeFor } from '~/server/utils/image-storage'
+import { downloadImage, mimeTypeFor } from '~/server/utils/image-storage'
 import { normalizePhoto } from '~/lib/photo'
 import { recordTaskRunEnd, recordTaskRunProgress, recordTaskRunStart } from '~/server/utils/task-runs'
 import {
@@ -244,18 +244,20 @@ async function buildCandidateImages(
   const capped = photos.slice(0, MAX_CANDIDATE_PHOTOS)
   const read = await Promise.all(
     capped.map(async (photo, sourceIndex) => {
-      try {
-        return {
-          sourceIndex,
-          label: photo.file,
-          mimeType: mimeTypeFor(photo.file),
-          data: (await readFile(join(destDir, photo.file))).toString('base64'),
-        }
-      } catch (err) {
-        console.warn(
-          `[reprocess] candidate image read failed for ${platform}:${externalId}/${photo.file}: ${(err as Error).message}`,
-        )
+      // Local cache first, then the images bucket: an ended auction's photos may
+      // have been offloaded (server/tasks/offload-images.ts), and falling
+      // through to text-only extraction would silently produce a worse result.
+      let bytes = await readFile(join(destDir, photo.file)).catch(() => null)
+      if (!bytes) bytes = await downloadImage(`${platform}/${externalId}/${photo.file}`)
+      if (!bytes) {
+        console.warn(`[reprocess] candidate image unavailable for ${platform}:${externalId}/${photo.file}`)
         return null
+      }
+      return {
+        sourceIndex,
+        label: photo.file,
+        mimeType: mimeTypeFor(photo.file),
+        data: bytes.toString('base64'),
       }
     }),
   )

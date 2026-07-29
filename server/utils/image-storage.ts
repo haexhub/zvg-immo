@@ -52,6 +52,28 @@ export function imagePublicUrl(key: string): string | null {
 }
 
 /**
+ * Reads `key` back out of the images bucket. Needed because the local cache is
+ * no longer guaranteed to hold a photo: server/tasks/offload-images.ts drops the
+ * local copy of ended auctions once it is in the bucket, and vision extraction
+ * must still be able to see those pictures. Null when the bucket isn't
+ * configured or the object isn't there; never throws.
+ */
+export async function downloadImage(key: string): Promise<Buffer | null> {
+  const bucket = bucketName()
+  if (!bucket) return null
+  const supabase = getServiceClient()
+  if (!supabase) return null
+  try {
+    const { data, error } = await supabase.storage.from(bucket).download(key)
+    if (error || !data) return null
+    return Buffer.from(await data.arrayBuffer())
+  } catch (err) {
+    console.warn(`[image-storage] download failed for ${key}: ${(err as Error).message}`)
+    return null
+  }
+}
+
+/**
  * Uploads `bytes` to `key` in the images bucket. Returns whether the upload
  * succeeded; never throws. `upsert: true` because filenames are
  * content-addressed (same bytes → same key), so re-uploads are idempotent.
