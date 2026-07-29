@@ -94,7 +94,7 @@ const locationContext: LocationContext = {
     buildingDensityPerSqKm: 229,
     amenityCountWithin1000m: 45,
     vacantOrRuinCountWithin500m: 0,
-    notes: ['180 OSM-Gebaeude im 500-m-Umfeld'],
+    notes: [{ code: 'building_count_500m', params: { count: 180 } }],
   },
   amenities: [
     { kind: 'groceries', nearestDistanceMeters: 250, countWithin1000m: 4, countWithin3000m: 12, countWithin5000m: 20 },

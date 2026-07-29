@@ -869,7 +869,7 @@
       "limited_public_transport": "nur eingeschränkte ÖPNV-Signale",
       "no_public_transport": "keine ÖPNV-Haltestelle im 3-km-Umfeld kartiert",
       "major_road_access": "größere Straße gut erreichbar",
-      "remote_road_access": "keine größere Straße im 5-km-Umfeld kartiert",
+      "remote_road_access": "keine größere Straße im 8-km-Umfeld kartiert",
       "groceries_nearby": "Nahversorgung fuß-/radnah kartiert",
       "no_groceries": "keine Nahversorgung im 5-km-Umfeld kartiert",
       "no_healthcare": "keine medizinische Grundversorgung im 5-km-Umfeld kartiert",
@@ -916,6 +916,13 @@
     },
     "demographicCaveat": {
       "demographic_proxy_only": "Demografie ist hier eine Proxy-Einschätzung aus OSM-Signalen; amtliche Alters-, Wanderungs- und Beschäftigungsdaten sind noch nicht eingebunden."
+    },
+    "neighborhoodNote": {
+      "building_count_500m": "{count} OSM-Gebäude im 500-m-Umfeld",
+      "amenity_count_1000m": "{count} kartierte Einrichtungen im 1-km-Umfeld",
+      "vacant_or_ruin_count_500m": "{count} OSM-Objekte mit Leerstands-/Ruinen-Signal im 500-m-Umfeld",
+      "nearest_place": "Nächster kartierter Ort: {name}",
+      "sparse_osm_neighborhood": "In OSM sind im nahen Umfeld nur wenige auswertbare Objekte kartiert."
     },
     "mapLayerIndustryRoads": "Industrie, Gewerbe & laute Straßen",
     "mapLayerTransport": "ÖPNV, Bahn & Fähre",

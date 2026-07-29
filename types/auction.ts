@@ -171,13 +171,18 @@ export interface LocationDemographicContext {
   caveats: string[]
 }
 
+export interface LocationContextNote {
+  code: string
+  params?: Record<string, number | string>
+}
+
 export interface NeighborhoodContext {
   settlementPattern: 'urban' | 'suburban' | 'town' | 'village' | 'rural' | 'remote' | 'island' | 'unknown'
   buildingCountWithin500m: number
   buildingDensityPerSqKm: number | null
   amenityCountWithin1000m: number
   vacantOrRuinCountWithin500m: number
-  notes: string[]
+  notes: LocationContextNote[]
 }
 
 export interface LocationQualityAssessment {

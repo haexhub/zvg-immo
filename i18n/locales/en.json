@@ -869,7 +869,7 @@
       "limited_public_transport": "limited public-transport signals",
       "no_public_transport": "no mapped public-transport stop within 3 km",
       "major_road_access": "major road is easy to reach",
-      "remote_road_access": "no major road mapped within 5 km",
+      "remote_road_access": "no major road mapped within 8 km",
       "groceries_nearby": "groceries mapped within walking/cycling range",
       "no_groceries": "no grocery option mapped within 5 km",
       "no_healthcare": "no basic healthcare mapped within 5 km",
@@ -916,6 +916,13 @@
     },
     "demographicCaveat": {
       "demographic_proxy_only": "Demographics are a proxy estimate from OSM signals here; official age, migration and employment data is not integrated yet."
+    },
+    "neighborhoodNote": {
+      "building_count_500m": "{count} OSM buildings within 500 m",
+      "amenity_count_1000m": "{count} mapped amenities within 1 km",
+      "vacant_or_ruin_count_500m": "{count} OSM objects with vacancy/ruin signals within 500 m",
+      "nearest_place": "Nearest mapped place: {name}",
+      "sparse_osm_neighborhood": "OSM has only a few evaluable objects mapped nearby."
     },
     "mapLayerIndustryRoads": "Industry, commercial & noisy roads",
     "mapLayerTransport": "Public transport, rail & ferry",

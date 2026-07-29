@@ -325,6 +325,7 @@ const locationQuality = computed(() => locationContext.value?.quality ?? null)
 const locationEnvironment = computed(() => locationContext.value?.environment ?? null)
 const locationDemographics = computed(() => locationContext.value?.demographics ?? null)
 const neighborhoodContext = computed(() => locationContext.value?.neighborhood ?? null)
+const neighborhoodNotes = computed(() => neighborhoodContext.value?.notes ?? [])
 
 function marketVerdictClass(verdict: string): string {
   if (verdict === 'cheaper') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
@@ -409,7 +410,9 @@ function locationCaveatLabel(code: string): string {
 }
 
 function amenityKindLabel(kind: LocationAmenityKind): string {
-  return t(`objektDetail.amenityKind.${kind}`)
+  const key = `objektDetail.amenityKind.${kind}`
+  const translated = t(key)
+  return translated === key ? kind : translated
 }
 
 function noisyRoadLevelLabel(level: LocationEnvironmentContext['noisyRoadLevel']): string {
@@ -444,6 +447,13 @@ function demographicCaveatLabel(code: string): string {
   const key = `objektDetail.demographicCaveat.${code}`
   const translated = t(key)
   return translated === key ? code : translated
+}
+
+function neighborhoodNoteLabel(note: NeighborhoodContext['notes'][number] | string): string {
+  if (typeof note === 'string') return note
+  const key = `objektDetail.neighborhoodNote.${note.code}`
+  const translated = t(key, note.params ?? {})
+  return translated === key ? note.code : translated
 }
 
 function formatPopulation(place: NearbyPlace): string | null {
@@ -1058,7 +1068,6 @@ useHead(() => ({
           <div v-if="locationContext" class="lg:col-span-2 space-y-4">
             <DetailSectionCard v-if="locationQuality" :title="$t('objektDetail.locationQualityTitle')">
               <div class="space-y-3">
-              <div v-if="locationQuality" class="space-y-3">
                 <div class="flex flex-wrap items-center justify-between gap-2">
                   <Badge variant="outline" :class="locationQualityClass(locationQuality.verdict)">
                     {{ locationQualityLabel(locationQuality.verdict) }}
@@ -1079,7 +1088,6 @@ useHead(() => ({
                     </ul>
                   </div>
                 </div>
-              </div>
               </div>
             </DetailSectionCard>
 
@@ -1147,7 +1155,6 @@ useHead(() => ({
 
             <DetailSectionCard v-if="locationEnvironment" :title="$t('objektDetail.environmentTitle')">
               <div class="space-y-3">
-              <div v-if="locationEnvironment" class="space-y-3">
                 <dl class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
                   <div>
                     <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.noisyRoads') }}</dt>
@@ -1194,12 +1201,10 @@ useHead(() => ({
                   <li v-for="(item, i) in locationEnvironment.riskSignals" :key="i">{{ environmentSignalLabel(item) }}</li>
                 </ul>
               </div>
-              </div>
             </DetailSectionCard>
 
             <DetailSectionCard v-if="locationDemographics" :title="$t('objektDetail.demographicsTitle')">
               <div class="space-y-3">
-              <div v-if="locationDemographics" class="space-y-3">
                 <dl class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
                   <div>
                     <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.youthSignal') }}</dt>
@@ -1229,7 +1234,6 @@ useHead(() => ({
                 <ul v-if="locationDemographics.reasons.length" class="list-disc list-inside space-y-1 text-xs text-muted-foreground">
                   <li v-for="(item, i) in locationDemographics.reasons" :key="i">{{ demographicReasonLabel(item) }}</li>
                 </ul>
-              </div>
               </div>
             </DetailSectionCard>
 
@@ -1268,6 +1272,9 @@ useHead(() => ({
                     <dd class="font-medium tabular-nums">{{ neighborhoodContext.vacantOrRuinCountWithin500m.toLocaleString(intlLocale) }}</dd>
                   </div>
                 </dl>
+                <ul v-if="neighborhoodNotes.length" class="list-disc list-inside space-y-1 text-xs text-muted-foreground">
+                  <li v-for="(item, i) in neighborhoodNotes" :key="i">{{ neighborhoodNoteLabel(item) }}</li>
+                </ul>
               </div>
               </div>
             </DetailSectionCard>

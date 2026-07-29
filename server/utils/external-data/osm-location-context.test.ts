@@ -101,7 +101,15 @@ describe('buildLocationContext', () => {
     expect(context.mapFeatures.some((feature) => feature.kind === 'restaurant')).toBe(true)
     expect(context.mapFeatures.some((feature) => feature.kind === 'cafe')).toBe(true)
     expect(context.neighborhood.vacantOrRuinCountWithin500m).toBe(1)
-    expect(context.neighborhood.notes).toContain('2 OSM-Gebaeude im 500-m-Umfeld')
+    expect(context.neighborhood.notes).toContainEqual({ code: 'building_count_500m', params: { count: 2 } })
+  })
+
+  it('keeps local road access reachable for larger roads outside the regional cutoff', () => {
+    const context = buildLocationContext({ lat: 52, lng: 13 }, [
+      { type: 'way', id: 1, center: { lat: 52.0585, lon: 13 }, tags: { highway: 'secondary', name: 'L 42' } },
+    ], '2026-07-26T00:00:00.000Z')
+
+    expect(context.mobility.roadAccessLevel).toBe('local')
   })
 })
 
@@ -126,8 +134,27 @@ describe('createOsmLocationContextAdapter', () => {
     )
     const request = fetchImpl.mock.calls[0]?.[1]
     if (!request) throw new Error('missing fetch request options')
-    expect((request.body as URLSearchParams).get('data')).toContain('around:30000,52.000000,13.000000')
+    const query = (request.body as URLSearchParams).get('data')
+    expect(query).toContain('[out:json][timeout:20]')
+    expect(query).toContain('around:30000,52.000000,13.000000')
+    expect(query).toContain('way(around:8000,52.000000,13.000000)')
     expect(context?.nearbyPlaces[0]?.name).toBe('Berlin')
+  })
+
+  it('uses the configured client timeout in the Overpass query timeout', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ elements: [] }), { status: 200 }))
+    const adapter = createOsmLocationContextAdapter({
+      endpoint: 'https://overpass.example.test/api/interpreter',
+      checkedAt: '2026-07-26T00:00:00.000Z',
+      timeoutMs: 12_000,
+      fetchImpl,
+    })
+
+    await adapter.context(auction())
+
+    const request = fetchImpl.mock.calls[0]?.[1]
+    if (!request) throw new Error('missing fetch request options')
+    expect((request.body as URLSearchParams).get('data')).toContain('[out:json][timeout:12]')
   })
 
   it('stays unsupported without endpoint or coordinates', () => {

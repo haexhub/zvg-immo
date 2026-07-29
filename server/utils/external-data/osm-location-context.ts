@@ -96,7 +96,8 @@ export function createOsmLocationContextAdapter(options: OsmLocationContextOptio
     supports: (auction) => !!endpoint && isFinitePoint(auction),
     async context(auction) {
       const point = { lat: auction.lat!, lng: auction.lng! }
-      const response = await postOverpass(endpoint, buildQuery(point), options.fetchImpl ?? fetch, options.timeoutMs ?? 20_000)
+      const timeoutMs = options.timeoutMs ?? 20_000
+      const response = await postOverpass(endpoint, buildQuery(point, timeoutMs), options.fetchImpl ?? fetch, timeoutMs)
       return buildLocationContext(point, response.elements ?? [], options.checkedAt)
     },
   }
@@ -132,11 +133,12 @@ async function postOverpass(
   }
 }
 
-function buildQuery(point: Point): string {
+function buildQuery(point: Point, timeoutMs: number): string {
   const lat = point.lat.toFixed(6)
   const lng = point.lng.toFixed(6)
+  const overpassTimeoutSec = Math.max(1, Math.floor(timeoutMs / 1000))
   return `
-[out:json][timeout:25];
+[out:json][timeout:${overpassTimeoutSec}];
 (
   nwr(around:30000,${lat},${lng})["place"~"^(city|town|suburb|village|hamlet|island|municipality)$"];
   nwr(around:3000,${lat},${lng})["public_transport"~"^(platform|stop_position|station)$"];
@@ -145,7 +147,7 @@ function buildQuery(point: Point): string {
   nwr(around:10000,${lat},${lng})["amenity"="ferry_terminal"];
   nwr(around:10000,${lat},${lng})["route"="ferry"];
   nwr(around:15000,${lat},${lng})["aeroway"~"^(aerodrome|runway|helipad|heliport)$"];
-  way(around:5000,${lat},${lng})["highway"~"^(motorway|trunk|primary|secondary|tertiary)$"];
+  way(around:8000,${lat},${lng})["highway"~"^(motorway|trunk|primary|secondary|tertiary)$"];
   nwr(around:5000,${lat},${lng})["landuse"~"^(industrial|commercial|retail|quarry|landfill|brownfield)$"];
   nwr(around:5000,${lat},${lng})["industrial"];
   nwr(around:5000,${lat},${lng})["man_made"~"^(works|wastewater_plant|petroleum_well|mineshaft)$"];
@@ -822,12 +824,12 @@ function neighborhoodContext(
   const density = Math.round(buildingCount / BUILDING_RADIUS_SQ_KM)
   const nearestPlace = places[0]
   const settlementPattern = inferSettlementPattern(places, density, amenityCount)
-  const notes: string[] = []
-  if (buildingCount > 0) notes.push(`${buildingCount} OSM-Gebaeude im 500-m-Umfeld`)
-  if (amenityCount > 0) notes.push(`${amenityCount} kartierte Einrichtungen im 1-km-Umfeld`)
-  if (vacantOrRuinCount > 0) notes.push(`${vacantOrRuinCount} OSM-Objekte mit Leerstands-/Ruinen-Signal im 500-m-Umfeld`)
-  if (nearestPlace) notes.push(`Naechster kartierter Ort: ${nearestPlace.name}`)
-  if (notes.length === 0) notes.push('In OSM sind im nahen Umfeld nur wenige auswertbare Objekte kartiert.')
+  const notes: NeighborhoodContext['notes'] = []
+  if (buildingCount > 0) notes.push({ code: 'building_count_500m', params: { count: buildingCount } })
+  if (amenityCount > 0) notes.push({ code: 'amenity_count_1000m', params: { count: amenityCount } })
+  if (vacantOrRuinCount > 0) notes.push({ code: 'vacant_or_ruin_count_500m', params: { count: vacantOrRuinCount } })
+  if (nearestPlace) notes.push({ code: 'nearest_place', params: { name: nearestPlace.name } })
+  if (notes.length === 0) notes.push({ code: 'sparse_osm_neighborhood' })
   return {
     settlementPattern,
     buildingCountWithin500m: buildingCount,
