@@ -393,6 +393,42 @@ describe('runExternalEnrichment', () => {
     expect(summary.written).toBe(1)
   })
 
+  it('writes wildfire hazards from the default configured EFFIS burnt-area cache adapter', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    vi.stubGlobal('useRuntimeConfig', () => ({
+      externalData: {
+        frDvfCachePath: '',
+        copernicusEffisCachePath: join(process.cwd(), 'server/utils/external-data/fixtures/copernicus-effis-burnt-area.fixture.json'),
+      },
+    }))
+    const { readAuctionSnapshot } = await import('~/server/utils/auction-snapshot')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionSnapshot).mockResolvedValue({ 'test:42': auction() })
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    const summary = await runExternalEnrichment({
+      now: new Date('2026-07-26T00:00:00.000Z'),
+      marketAdapters: [],
+      landValueAdapters: [],
+    })
+
+    expect(summary).toMatchObject({ processed: 1, written: 1, hazards: 1, providerFailures: 0 })
+    expect(writeLocationEnrichmentCache).toHaveBeenCalledWith({
+      'test:42': expect.objectContaining({
+        hazards: [expect.objectContaining({
+          hazard: 'wildfire',
+          status: 'inside',
+          severity: 'low',
+          sourceLabel: 'Copernicus EFFIS MODIS Burnt Area',
+          checkedAt: '2026-07-26T00:00:00.000Z',
+        })],
+        sourceVersion: expect.stringContaining('copernicus-effis-burnt-area-file-cache@'),
+      }),
+    })
+  })
+
   it('counts stale hazard results separately', async () => {
     vi.stubGlobal('defineTask', (def: unknown) => def)
     const { readAuctionSnapshot } = await import('~/server/utils/auction-snapshot')

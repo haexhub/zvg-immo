@@ -144,6 +144,8 @@ export default defineNuxtConfig({
     // Leave the OSM endpoint empty unless your deployment cadence is polite
     // enough for the selected Overpass instance or you run your own mirror.
     //   NUXT_EXTERNAL_DATA_EEA_NOISE_SERVICE_BASE_URL=https://noise.discomap.eea.europa.eu/arcgis/rest/services/noiseStoryMap
+    //   NUXT_EXTERNAL_DATA_COPERNICUS_EFFIS_CACHE_PATH=/app/.cache_zvg/external/copernicus-effis.json
+    //   NUXT_EXTERNAL_DATA_COPERNICUS_EFFIS_MAX_CACHE_AGE_DAYS=400
     externalData: {
       frDvfCachePath: '',
       euFloodRiskGeoJsonPath: '',
@@ -156,6 +158,8 @@ export default defineNuxtConfig({
       // carries a working default and needs no deployment config.
       camsAirQualityServiceUrl: 'https://air-quality-api.open-meteo.com/v1/air-quality',
       camsAirQualityTimeoutMs: 10_000,
+      copernicusEffisCachePath: '',
+      copernicusEffisMaxCacheAgeDays: 400,
     },
     // G1 Roh-Archiv (WP-3): Supabase Storage bucket for archived crawl
     // snapshots (server/utils/raw-archive.ts, storage-uploader.ts). Empty →
@@ -254,6 +258,13 @@ export default defineNuxtConfig({
       // catch source corrections — nowhere near a rate-limit concern for this
       // source, unlike the OSM Overpass endpoint above.
       '30 4 1 * *': ['import-eu-flood-risk-cache'],
+      // Monthly, offset from the flood importer: refresh the local Copernicus
+      // EFFIS MODIS burnt-area polygon cache (see server/tasks/import-
+      // copernicus-effis-cache.ts) into whatever path the copernicus-effis
+      // source resolves to — stays inert while unconfigured, same contract.
+      // New fire seasons land in the source roughly annually, so monthly is
+      // a courtesy re-pull, not a rate-limit concern.
+      '0 5 1 * *': ['import-copernicus-effis-cache'],
     },
     routeRules: {
       // /api/auctions caches inside the handler (defineCachedFunction) instead

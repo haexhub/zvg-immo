@@ -36,6 +36,7 @@ describe('configurableExternalDataSources', () => {
     const ids = configurableExternalDataSources().map((source) => source.id).sort()
     expect(ids).toEqual([
       'cams-air-quality',
+      'copernicus-effis',
       'eea-environmental-noise-directive',
       'eu-flood-risk-areas',
       'fr-dvf-geolocated',
