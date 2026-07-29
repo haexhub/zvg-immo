@@ -27,6 +27,7 @@ export const COUNTRY_NAMES: Record<string, string> = {
   gr: 'Griechenland',
   gb: 'Vereinigtes Königreich',
   us: 'USA',
+  bg: 'Bulgarien',
 }
 
 /** German display name for an ISO alpha-2 code, falling back to the
