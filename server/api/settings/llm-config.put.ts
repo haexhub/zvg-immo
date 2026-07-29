@@ -3,9 +3,7 @@
 // dashboard typo can't silence every LLM call or blow up cost.
 
 import { getPool } from '../../utils/db'
-import { getAllLlmMaxTokens, setLlmMaxTokens, type LlmMaxTokensKind } from '../../utils/app-settings'
-
-const KINDS: LlmMaxTokensKind[] = ['extraction', 'summary', 'translation']
+import { getAllLlmMaxTokens, KINDS, setLlmMaxTokens, type LlmMaxTokensKind } from '../../utils/app-settings'
 
 export default defineEventHandler(async (event): Promise<Record<LlmMaxTokensKind, number>> => {
   const db = getPool()

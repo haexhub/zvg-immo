@@ -4,6 +4,7 @@ import { MAX_LLM_FAILURES } from '~/lib/llm-limits'
 import { hasCompletedLlmAnalysis as extractionHasCompletedLlmAnalysis } from '~/lib/auction-filters'
 import { classifyPropertyType } from '~/lib/property-type'
 import type { Feature } from '~/lib/features'
+import type { UsageIdea, UsageIdeaType } from '~/lib/usage-idea'
 import type { AuctionDetail } from '~/server/api/auction/[platform]/[id].get'
 import type {
   Attachment,
@@ -37,11 +38,16 @@ import {
   ChefHat,
   Flame,
   Heater,
+  Home,
   Layers3,
+  Lightbulb,
+  Loader2,
   Mountain,
   ParkingSquare,
   ShowerHead,
   ShieldAlert,
+  Sprout,
+  Tractor,
   TreePine,
   Warehouse,
   Waves,
@@ -57,6 +63,13 @@ const propertyTypeLabel = usePropertyTypeLabel()
 const attachmentKindLabelFn = useAttachmentKindLabel()
 const conditionLabel = useConditionLabel()
 const featureLabel = useFeatureLabel()
+const usageIdeaTypeLabel = useUsageIdeaTypeLabel()
+const {
+  payload: usageIdeas,
+  pending: usageIdeasPending,
+  error: usageIdeasError,
+  generate: generateUsageIdeas,
+} = useAuctionInsight<UsageIdea[]>('usage-ideas', platform, id)
 const MARKET_COMPARISON_MIN_SAMPLES = 5
 
 const { data: a, error, pending } = await useFetch<AuctionDetail | null>(
@@ -514,6 +527,17 @@ const FEATURE_ICONS: Partial<Record<Feature, Component>> = {
   fussbodenheizung: Heater,
   denkmalschutz: BrickWall,
   vermietet: Building2,
+}
+
+const USAGE_IDEA_ICONS: Partial<Record<UsageIdeaType, Component>> = {
+  'owner-occupation': Home,
+  'owner-occupation-with-sublet': Layers3,
+  'vacation-rental': Waves,
+  farm: Tractor,
+  agricultural: Sprout,
+  forestry: TreePine,
+  warehouse: Warehouse,
+  other: Lightbulb,
 }
 
 const amenityItems = computed<AmenityItem[]>(() => {
@@ -987,6 +1011,30 @@ useHead(() => ({
                 </li>
               </ul>
               <p v-else class="text-sm text-muted-foreground">{{ $t('objektDetail.noKnownParcels') }}</p>
+            </DetailSectionCard>
+            <DetailSectionCard :title="$t('objektDetail.usageIdeasTitle')">
+              <ul v-if="usageIdeas?.length" class="space-y-3 text-sm">
+                <li v-for="(idea, i) in usageIdeas" :key="i" class="flex items-start gap-3">
+                  <component :is="USAGE_IDEA_ICONS[idea.type] ?? Lightbulb" class="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                  <div class="min-w-0">
+                    <p class="font-medium leading-snug">{{ usageIdeaTypeLabel(idea.type, idea.label) }}</p>
+                    <p class="mt-0.5 text-xs leading-relaxed text-muted-foreground">{{ idea.rationale }}</p>
+                  </div>
+                </li>
+              </ul>
+              <p v-else-if="usageIdeasError" class="text-sm text-destructive">{{ $t('objektDetail.usageIdeasError') }}</p>
+              <div
+                v-else-if="usageIdeasPending"
+                class="inline-flex items-center gap-1.5 text-sm text-muted-foreground"
+                role="status"
+                aria-live="polite"
+              >
+                <Loader2 class="h-3.5 w-3.5 animate-spin text-primary" aria-hidden="true" />
+                <span>{{ $t('objektDetail.usageIdeasPending') }}</span>
+              </div>
+              <Button v-else type="button" size="sm" variant="outline" @click="generateUsageIdeas">
+                {{ $t('objektDetail.usageIdeasGenerate') }}
+              </Button>
             </DetailSectionCard>
           </div>
         </div>

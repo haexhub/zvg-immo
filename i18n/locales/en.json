@@ -258,8 +258,8 @@
       "title": "LLM configuration",
       "description": "Max output tokens limit per use case — takes effect on the next LLM call, no redeploy needed.",
       "extractionLabel": "Extraction",
-      "summaryLabel": "Summary",
       "translationLabel": "Translation",
+      "usage-ideasLabel": "Usage ideas",
       "loadError": "Configuration could not be loaded.",
       "invalidValue": "Please enter a valid number for every field.",
       "saveError": "Save failed.",
@@ -510,6 +510,16 @@
     "fussbodenheizung": "Underfloor heating",
     "denkmalschutz": "Listed building",
     "vermietet": "Tenanted"
+  },
+  "usageIdeaType": {
+    "owner-occupation": "Owner occupation",
+    "owner-occupation-with-sublet": "Owner occupation with sublet",
+    "vacation-rental": "Vacation rental",
+    "farm": "Farm",
+    "agricultural": "Agricultural use",
+    "forestry": "Forestry",
+    "warehouse": "Warehouse",
+    "other": "Other"
   },
   "attachmentKind": {
     "announcement": "Announcement",
@@ -1030,6 +1040,10 @@
     "developmentCharges": "Development charges",
     "redevelopmentArea": "Redevelopment area",
     "conservationArea": "Conservation area",
+    "usageIdeasTitle": "Usage ideas",
+    "usageIdeasGenerate": "Suggest usage ideas",
+    "usageIdeasPending": "Generating ideas …",
+    "usageIdeasError": "Usage ideas could not be generated.",
     "gallery": {
       "close": "Close"
     }
