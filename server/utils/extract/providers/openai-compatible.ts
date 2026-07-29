@@ -45,7 +45,10 @@ export function parseOpenAiExtractionResponse(resp: unknown): Record<string, unk
 export class OpenAiCompatibleProvider implements ExtractionProvider {
   constructor(private config: LlmConfig) {}
 
-  async extract(req: ExtractionRequest): Promise<Record<string, unknown> | null> {
+  async extract(
+    req: ExtractionRequest,
+    opts?: { onRequestError?: (err: unknown) => void },
+  ): Promise<Record<string, unknown> | null> {
     const body = {
       model: this.config.model,
       // Raised from 512: the response now also carries `insights` (up to two
@@ -79,6 +82,7 @@ export class OpenAiCompatibleProvider implements ExtractionProvider {
       // see isRateLimitError() — so it isn't counted toward the retry-lockout.
       if (isRateLimitError(err)) throw err
       console.warn(`[extract/llm] request failed: ${(err as Error).message}`)
+      opts?.onRequestError?.(err)
       return null
     }
     return parseOpenAiExtractionResponse(resp)

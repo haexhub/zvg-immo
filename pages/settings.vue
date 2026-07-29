@@ -702,7 +702,9 @@ interface ReprocessResult {
   processed: number
   skipped: number
   llmCalls: number
+  llmErrors: number
   warning?: string | null
+  lastLlmError?: string | null
 }
 interface LlmBatchJobOverviewItem {
   jobName: string
@@ -732,6 +734,7 @@ interface TaskRunStatus {
   lastResult: Record<string, number> | null
   lastError: string | null
   lastWarning: string | null
+  lastLlmError: string | null
   progress: Record<string, number> | null
 }
 interface LlmBatchJobsOverview {
@@ -1510,6 +1513,12 @@ onBeforeUnmount(stopProgressPolling)
             <p v-if="llmBatchJobs.reprocessStatus.lastWarning" class="text-amber-600 dark:text-amber-400">
               {{ $t('settings.llmBatch.reprocessLastWarning', { message: llmBatchJobs.reprocessStatus.lastWarning }) }}
             </p>
+            <p v-if="llmBatchJobs.reprocessStatus.lastResult?.llmErrors" class="text-destructive">
+              {{ $t('settings.llmBatch.reprocessLlmErrors', { count: llmBatchJobs.reprocessStatus.lastResult.llmErrors }) }}
+            </p>
+            <p v-if="llmBatchJobs.reprocessStatus.lastLlmError" class="text-destructive">
+              {{ $t('settings.llmBatch.reprocessLastLlmError', { message: llmBatchJobs.reprocessStatus.lastLlmError }) }}
+            </p>
           </div>
 
           <div class="grid grid-cols-2 gap-3 text-sm">
@@ -1670,9 +1679,14 @@ onBeforeUnmount(stopProgressPolling)
             <dd>{{ reprocessResult.skipped }}</dd>
             <dt class="text-muted-foreground">{{ $t('settings.reprocess.llmCalls') }}</dt>
             <dd>{{ reprocessResult.llmCalls }}</dd>
+            <dt class="text-muted-foreground">{{ $t('settings.reprocess.llmErrors') }}</dt>
+            <dd>{{ reprocessResult.llmErrors }}</dd>
           </dl>
           <p v-if="reprocessResult?.warning" class="text-sm text-amber-600 dark:text-amber-400">
             {{ $t('settings.reprocess.warning', { message: reprocessResult.warning }) }}
+          </p>
+          <p v-if="reprocessResult?.lastLlmError" class="text-sm text-destructive">
+            {{ $t('settings.reprocess.lastLlmError', { message: reprocessResult.lastLlmError }) }}
           </p>
         </CardContent>
       </Card>
@@ -1751,6 +1765,12 @@ onBeforeUnmount(stopProgressPolling)
             </p>
             <p v-if="llmBatchJobs.reprocessStatus.lastError" class="text-destructive">
               {{ $t('settings.sources.llmStatusLastError', { message: llmBatchJobs.reprocessStatus.lastError }) }}
+            </p>
+            <p v-if="llmBatchJobs.reprocessStatus.lastResult?.llmErrors" class="text-destructive">
+              {{ $t('settings.sources.llmStatusLlmErrors', { count: llmBatchJobs.reprocessStatus.lastResult.llmErrors }) }}
+            </p>
+            <p v-if="llmBatchJobs.reprocessStatus.lastLlmError" class="text-destructive">
+              {{ $t('settings.sources.llmStatusLastLlmError', { message: llmBatchJobs.reprocessStatus.lastLlmError }) }}
             </p>
           </div>
 

@@ -886,6 +886,7 @@ describe('runReprocess', () => {
       processed: 0,
       skipped: 0,
       llmCalls: 0,
+      llmErrors: 0,
       durationMs: expect.any(Number),
     })
 
@@ -921,7 +922,7 @@ describe('runReprocess', () => {
   it('returns all-zero without a configured DB pool', async () => {
     vi.mocked(getPool).mockReturnValue(null)
     const result = await runReprocess({})
-    expect(result).toEqual({ candidates: 0, processed: 0, skipped: 0, llmCalls: 0, durationMs: expect.any(Number) })
+    expect(result).toEqual({ candidates: 0, processed: 0, skipped: 0, llmCalls: 0, llmErrors: 0, durationMs: expect.any(Number) })
   })
 
   it('scopes the candidate query to enabled countries plus whatever filters were given', async () => {
@@ -967,7 +968,7 @@ describe('runReprocess', () => {
 
     const result = await runReprocess({ country: 'de' })
 
-    expect(result).toEqual({ candidates: 0, processed: 0, skipped: 0, llmCalls: 0, durationMs: expect.any(Number) })
+    expect(result).toEqual({ candidates: 0, processed: 0, skipped: 0, llmCalls: 0, llmErrors: 0, durationMs: expect.any(Number) })
     expect(query).not.toHaveBeenCalled()
   })
 
@@ -1012,7 +1013,7 @@ describe('runReprocess', () => {
     vi.mocked(readExtractionCache).mockResolvedValue({ 'zvg-portal:7265': completeEntry })
 
     const skippedResult = await runReprocess({})
-    expect(skippedResult).toEqual({ candidates: 1, processed: 0, skipped: 1, llmCalls: 0, durationMs: expect.any(Number) })
+    expect(skippedResult).toEqual({ candidates: 1, processed: 0, skipped: 1, llmCalls: 0, llmErrors: 0, durationMs: expect.any(Number) })
     expect(writeExtractionCache).not.toHaveBeenCalled()
 
     const forcedResult = await runReprocess({ platform: 'zvg-portal', force: true })
@@ -1076,12 +1077,40 @@ describe('runReprocess', () => {
       processed: 0,
       skipped: 1,
       llmCalls: 1,
+      llmErrors: 0,
       durationMs: expect.any(Number),
       warning: expect.stringContaining('GenerateRequestsPerDayPerProjectPerModel-FreeTier'),
     })
     expect(result.warning).toContain('gemini-3.6-flash')
     expect(result.warning).toContain('Limit 20')
     expect(writeExtractionCache).not.toHaveBeenCalled()
+  })
+
+  it('counts a genuine provider request failure toward llmErrors and records the last message, unlike a rate limit', async () => {
+    // The prod incident this covers: a provider request that fails outright
+    // (e.g. 403 from a misconfigured key) was previously indistinguishable
+    // from "the LLM returned nothing" — 69/69 calls failed with zero visible
+    // errors in the reprocess status. onProviderError (see llm.ts) fires only
+    // for this case, never for the rate-limit throw above.
+    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { baseUrl: 'http://proxy' } }))
+    const auction = makeAuction()
+    const query = vi.fn().mockResolvedValue({ rows: [{ platform: 'zvg-portal', external_id: '7265' }] })
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
+      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
+    )
+    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+      opts?.onProviderAttempt?.()
+      opts?.onProviderError?.(new Error('403 unregistered callers'))
+      return null
+    })
+
+    const result = await runReprocess({})
+
+    expect(result).toMatchObject({ candidates: 1, llmCalls: 1, llmErrors: 1 })
+    expect(result.lastLlmError).toContain('zvg-portal:7265')
+    expect(result.lastLlmError).toContain('403 unregistered callers')
   })
 
   it('stops the current sync run after a provider rate limit instead of spending every candidate', async () => {
@@ -1113,6 +1142,7 @@ describe('runReprocess', () => {
       processed: 0,
       skipped: 1,
       llmCalls: 1,
+      llmErrors: 0,
       durationMs: expect.any(Number),
       warning: expect.stringContaining('LLM-Rate-Limit'),
     })
@@ -1159,7 +1189,7 @@ describe('runReprocess', () => {
     vi.mocked(readExtractionCache).mockResolvedValue({ 'zvg-portal:7265': completeButStaleEntry })
 
     const result = await runReprocess({})
-    expect(result).toEqual({ candidates: 1, processed: 1, skipped: 0, llmCalls: 0, durationMs: expect.any(Number) })
+    expect(result).toEqual({ candidates: 1, processed: 1, skipped: 0, llmCalls: 0, llmErrors: 0, durationMs: expect.any(Number) })
   })
 
   it('backfills an entry whose only missing LLM field is renovationNotes', async () => {
@@ -1224,7 +1254,7 @@ describe('runReprocess', () => {
     vi.mocked(readExtractionCache).mockResolvedValue({ 'zvg-portal:7265': missingRenovationNotesEntry })
 
     const result = await runReprocess({})
-    expect(result).toEqual({ candidates: 1, processed: 1, skipped: 0, llmCalls: 1, durationMs: expect.any(Number) })
+    expect(result).toEqual({ candidates: 1, processed: 1, skipped: 0, llmCalls: 1, llmErrors: 0, durationMs: expect.any(Number) })
     expect(writeExtractionCache).toHaveBeenCalledWith({
       'zvg-portal:7265': expect.objectContaining({ renovationNotes: 'Dach erneuert' }),
     })
@@ -1287,7 +1317,7 @@ describe('runReprocess', () => {
 
     const result = await runReprocess({})
 
-    expect(result).toEqual({ candidates: 1, processed: 0, skipped: 1, llmCalls: 0, durationMs: expect.any(Number) })
+    expect(result).toEqual({ candidates: 1, processed: 0, skipped: 1, llmCalls: 0, llmErrors: 0, durationMs: expect.any(Number) })
     expect(findLatestCapture).not.toHaveBeenCalled()
     expect(writeExtractionCache).not.toHaveBeenCalled()
   })
@@ -1363,7 +1393,7 @@ describe('runReprocess', () => {
 
     const result = await runReprocess({})
 
-    expect(result).toEqual({ candidates: 1, processed: 1, skipped: 0, llmCalls: 1, durationMs: expect.any(Number) })
+    expect(result).toEqual({ candidates: 1, processed: 1, skipped: 0, llmCalls: 1, llmErrors: 0, durationMs: expect.any(Number) })
     expect(writeExtractionCache).toHaveBeenCalledWith({
       'zvg-portal:7265': expect.objectContaining({
         marketValueEur: 78_000,
@@ -1421,7 +1451,7 @@ describe('runReprocess', () => {
     vi.mocked(readExtractionCache).mockResolvedValue({ 'zvg-portal:7265': exhaustedEntry })
 
     const skippedResult = await runReprocess({})
-    expect(skippedResult).toEqual({ candidates: 1, processed: 0, skipped: 1, llmCalls: 0, durationMs: expect.any(Number) })
+    expect(skippedResult).toEqual({ candidates: 1, processed: 0, skipped: 1, llmCalls: 0, llmErrors: 0, durationMs: expect.any(Number) })
     expect(writeExtractionCache).not.toHaveBeenCalled()
 
     const forcedResult = await runReprocess({ platform: 'zvg-portal', force: true })
@@ -1446,7 +1476,7 @@ describe('runReprocess', () => {
 
     const result = await runReprocess({})
 
-    expect(result).toEqual({ candidates: 2, processed: 1, skipped: 1, llmCalls: 0, durationMs: expect.any(Number) })
+    expect(result).toEqual({ candidates: 2, processed: 1, skipped: 1, llmCalls: 0, llmErrors: 0, durationMs: expect.any(Number) })
     expect(writeExtractionCache).toHaveBeenCalledWith({
       'zvg-portal:1': expect.objectContaining({ propertyType: null }),
     })

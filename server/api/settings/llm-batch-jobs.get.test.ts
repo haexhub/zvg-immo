@@ -16,6 +16,7 @@ const IDLE_REPROCESS_STATUS = {
   lastResult: null,
   lastError: null,
   lastWarning: null,
+  lastLlmError: null,
   progress: null,
 }
 
@@ -200,6 +201,7 @@ describe('/api/settings/llm-batch-jobs', () => {
       lastResult: null,
       lastError: null,
       lastWarning: null,
+      lastLlmError: null,
       progress: null,
     }
     vi.mocked(getTaskRunStatus).mockResolvedValue(runningStatus)

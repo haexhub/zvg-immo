@@ -31,8 +31,8 @@ export default defineEventHandler(async (event) => {
   try {
     await recordTaskRunStart('reprocess')
     const result = await runReprocess(opts)
-    const { warning, ...summary } = result
-    await recordTaskRunEnd('reprocess', { result: summary, warning })
+    const { warning, lastLlmError, ...summary } = result
+    await recordTaskRunEnd('reprocess', { result: summary, warning, llmError: lastLlmError })
     return result
   } catch (err) {
     await recordTaskRunEnd('reprocess', { error: (err as Error).message })

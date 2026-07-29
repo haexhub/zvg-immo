@@ -30,6 +30,7 @@ const IDLE_STATUS = {
   lastResult: null,
   lastError: null,
   lastWarning: null,
+  lastLlmError: null,
   progress: null,
 }
 

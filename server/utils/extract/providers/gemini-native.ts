@@ -73,7 +73,10 @@ async function paceNextRequest(): Promise<void> {
 export class GeminiNativeProvider implements ExtractionProvider {
   constructor(private config: LlmConfig) {}
 
-  async extract(req: ExtractionRequest): Promise<Record<string, unknown> | null> {
+  async extract(
+    req: ExtractionRequest,
+    opts?: { onRequestError?: (err: unknown) => void },
+  ): Promise<Record<string, unknown> | null> {
     const model = this.config.model || DEFAULT_MODEL
     const body = {
       systemInstruction: { parts: [{ text: req.systemPrompt }] },
@@ -117,6 +120,7 @@ export class GeminiNativeProvider implements ExtractionProvider {
           throw err
         }
         console.warn(`[extract/llm] request failed: ${(err as Error).message}`)
+        opts?.onRequestError?.(err)
         return null
       }
     }

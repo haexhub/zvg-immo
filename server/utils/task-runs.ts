@@ -21,6 +21,13 @@ export interface TaskRunStatus {
   lastResult: TaskRunSummary | null
   lastError: string | null
   lastWarning: string | null
+  /** Last LLM provider request failure (network/HTTP error, e.g. a 403 from
+   *  a misconfigured key) from the current or most recent run. Distinct from
+   *  `lastError` (the whole task throwing) and `lastWarning` (a rate-limit
+   *  backoff) — a run can finish "successfully" while every individual LLM
+   *  call failed, which is exactly what this field is for. Null when the
+   *  run's LLM calls (if any) haven't failed. */
+  lastLlmError: string | null
   /** Numeric progress snapshot of the run currently in flight — null when
    *  idle or before the first progress report of a fresh run. */
   progress: TaskRunSummary | null
@@ -35,6 +42,7 @@ const IDLE_STATUS: TaskRunStatus = {
   lastResult: null,
   lastError: null,
   lastWarning: null,
+  lastLlmError: null,
   progress: null,
 }
 
@@ -84,6 +92,7 @@ function coerceTaskRunStatus(value: unknown): TaskRunStatus {
     lastResult: coerceSummary(v.lastResult),
     lastError: typeof v.lastError === 'string' && v.lastError ? v.lastError : null,
     lastWarning: typeof v.lastWarning === 'string' && v.lastWarning ? v.lastWarning : null,
+    lastLlmError: typeof v.lastLlmError === 'string' && v.lastLlmError ? v.lastLlmError : null,
     progress: coerceSummary(v.progress),
   }
 }
@@ -147,6 +156,7 @@ export async function recordTaskRunStart(task: TrackedTask): Promise<void> {
       startedAt: new Date().toISOString(),
       lastError: null,
       lastWarning: null,
+      lastLlmError: null,
       progress: null,
     })
   })
@@ -154,7 +164,7 @@ export async function recordTaskRunStart(task: TrackedTask): Promise<void> {
 
 export async function recordTaskRunEnd(
   task: TrackedTask,
-  outcome: { result: TaskRunSummary; warning?: string | null } | { error: string },
+  outcome: { result: TaskRunSummary; warning?: string | null; llmError?: string | null } | { error: string },
 ): Promise<void> {
   lastProgressWriteAt.delete(task)
   await enqueue(task, async () => {
@@ -166,6 +176,7 @@ export async function recordTaskRunEnd(
       lastResult: 'result' in outcome ? outcome.result : current.lastResult,
       lastError: 'error' in outcome ? outcome.error : null,
       lastWarning: 'result' in outcome ? outcome.warning ?? null : null,
+      lastLlmError: 'result' in outcome ? (outcome.llmError ?? null) : current.lastLlmError,
       progress: null,
     })
   })
@@ -178,13 +189,21 @@ export async function recordTaskRunEnd(
  *  doesn't turn every item into its own Postgres write; queued behind
  *  start/end (see `enqueue`) so a throttled-through call can never land after
  *  the run's own end write. */
-export async function recordTaskRunProgress(task: TrackedTask, progress: TaskRunSummary): Promise<void> {
+export async function recordTaskRunProgress(
+  task: TrackedTask,
+  progress: TaskRunSummary,
+  extra: { lastLlmError?: string | null } = {},
+): Promise<void> {
   const now = Date.now()
   const last = lastProgressWriteAt.get(task) ?? 0
   if (now - last < PROGRESS_THROTTLE_MS) return
   lastProgressWriteAt.set(task, now)
   await enqueue(task, async () => {
     const current = await getTaskRunStatus(task)
-    await writeTaskRunStatus(task, { ...current, progress })
+    await writeTaskRunStatus(task, {
+      ...current,
+      progress,
+      ...(extra.lastLlmError !== undefined ? { lastLlmError: extra.lastLlmError } : {}),
+    })
   })
 }

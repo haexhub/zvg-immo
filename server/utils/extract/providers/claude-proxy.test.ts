@@ -25,4 +25,17 @@ describe('ClaudeProxyProvider.extract', () => {
     const provider = new ClaudeProxyProvider(config)
     await expect(provider.extract(req)).resolves.toBeNull()
   })
+
+  it('calls onRequestError for a non-429 failure but not for a 429 (which rethrows instead)', async () => {
+    vi.stubGlobal('$fetch', vi.fn().mockRejectedValue(error(500)))
+    const provider = new ClaudeProxyProvider(config)
+    const onRequestError = vi.fn()
+    await provider.extract(req, { onRequestError })
+    expect(onRequestError).toHaveBeenCalledTimes(1)
+
+    vi.stubGlobal('$fetch', vi.fn().mockRejectedValue(error(429)))
+    const rateLimitedOnRequestError = vi.fn()
+    await expect(provider.extract(req, { onRequestError: rateLimitedOnRequestError })).rejects.toThrow('http 429')
+    expect(rateLimitedOnRequestError).not.toHaveBeenCalled()
+  })
 })
