@@ -139,12 +139,15 @@ export default defineNuxtConfig({
     //   NUXT_EXTERNAL_DATA_OSM_CONTEXT_ENDPOINT=https://overpass-api.de/api/interpreter
     // Leave the OSM endpoint empty unless your deployment cadence is polite
     // enough for the selected Overpass instance or you run your own mirror.
+    //   NUXT_EXTERNAL_DATA_EEA_NOISE_SERVICE_BASE_URL=https://noise.discomap.eea.europa.eu/arcgis/rest/services/noiseStoryMap
     externalData: {
       frDvfCachePath: '',
       euFloodRiskGeoJsonPath: '',
       euFloodRiskMaxCacheAgeDays: 400,
       osmContextEndpoint: '',
       osmContextTimeoutMs: 20_000,
+      eeaNoiseServiceBaseUrl: '',
+      eeaNoiseTimeoutMs: 10_000,
     },
     // G1 Roh-Archiv (WP-3): Supabase Storage bucket for archived crawl
     // snapshots (server/utils/raw-archive.ts, storage-uploader.ts). Empty →

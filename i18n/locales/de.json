@@ -888,12 +888,15 @@
       "employment_proxy_weak": "schwache Arbeitsmarkt-/Job-Signale",
       "decline_risk_proxy": "Abwanderungs-/Alterungsrisiko nach Proxy-Signalen",
       "high_aviation_noise_pressure": "hohe Fluglärmbelastung durch Nähe zu Flugplatz/Startbahn möglich",
-      "medium_aviation_noise_pressure": "merkliche Fluglärm-Signale im Umfeld"
+      "medium_aviation_noise_pressure": "merkliche Fluglärm-Signale im Umfeld",
+      "high_rail_noise_pressure": "hohe Schienenlärmbelastung nach EEA-Daten möglich",
+      "medium_rail_noise_pressure": "merkliche Schienenlärmbelastung nach EEA-Daten möglich"
     },
     "locationCaveat": {
       "osm_heuristic": "Lagebewertung basiert auf kartierten OSM-Objekten und einfachen Distanz-/Dichte-Heuristiken.",
       "ferry_check_required": "Fähr-/Insellage separat prüfen: Takte, Kosten, Saisonbetrieb und Notfallzugang können entscheidend sein.",
-      "sparse_osm_data": "Sehr wenige OSM-Objekte können echte Abgelegenheit oder lückenhafte Kartierung bedeuten."
+      "sparse_osm_data": "Sehr wenige OSM-Objekte können echte Abgelegenheit oder lückenhafte Kartierung bedeuten.",
+      "eea_end_noise_data": "Strategische Lärmkarten der EEA/END wurden punktuell eingebunden; nationale Detailkarten oder Messungen können genauer sein."
     },
     "environmentSignal": {
       "motorway_very_near": "Autobahn/Schnellstraße sehr nah kartiert",
@@ -904,7 +907,16 @@
       "airport_near": "Flughafen/Flugplatz im nahen Umfeld",
       "runway_very_near": "Start-/Landebahn sehr nah kartiert",
       "runway_near": "Start-/Landebahn im erweiterten Umfeld",
-      "helipad_near": "Helipad/Heliport sehr nah kartiert"
+      "helipad_near": "Helipad/Heliport sehr nah kartiert",
+      "eea_road_noise_low": "EEA-Straßenlärm: niedrige gemeldete Kontur am Standort",
+      "eea_road_noise_medium": "EEA-Straßenlärm: merkliche gemeldete Kontur am Standort",
+      "eea_road_noise_high": "EEA-Straßenlärm: hohe gemeldete Kontur am Standort",
+      "eea_rail_noise_low": "EEA-Schienenlärm: niedrige gemeldete Kontur am Standort",
+      "eea_rail_noise_medium": "EEA-Schienenlärm: merkliche gemeldete Kontur am Standort",
+      "eea_rail_noise_high": "EEA-Schienenlärm: hohe gemeldete Kontur am Standort",
+      "eea_aviation_noise_low": "EEA-Fluglärm: niedrige gemeldete Kontur am Standort",
+      "eea_aviation_noise_medium": "EEA-Fluglärm: merkliche gemeldete Kontur am Standort",
+      "eea_aviation_noise_high": "EEA-Fluglärm: hohe gemeldete Kontur am Standort"
     },
     "demographicReason": {
       "university_nearby": "Hochschule/Universität im erweiterten Umfeld",

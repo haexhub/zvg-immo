@@ -11,6 +11,7 @@ import {
   createEuFloodRiskFileAdapter,
   DEFAULT_EU_FLOOD_RISK_MAX_CACHE_AGE_DAYS,
 } from '~/server/utils/external-data/eu-flood-risk'
+import { createEeaEnvironmentalNoiseEnhancer } from '~/server/utils/external-data/eea-environmental-noise'
 import { createOsmLocationContextAdapter } from '~/server/utils/external-data/osm-location-context'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 
@@ -40,6 +41,13 @@ export interface LocationContextAdapter {
   sourceVersion: string
   supports(auction: Auction): boolean
   context(auction: Auction): Promise<LocationContext | null>
+}
+
+export interface LocationContextEnhancer {
+  id: string
+  sourceVersion: string
+  supports(auction: Auction, context: LocationContext): boolean
+  enhance(auction: Auction, context: LocationContext): Promise<LocationContext>
 }
 
 export interface ExternalEnrichmentOptions {
@@ -277,11 +285,46 @@ function defaultLocationContextAdapters(checkedAt: string): LocationContextAdapt
   const config = useRuntimeConfig().externalData as ExternalDataRuntimeConfig | undefined
   const endpoint = stringConfig(config?.osmContextEndpoint)
   if (!endpoint) return []
-  return [createOsmLocationContextAdapter({
+  const osmAdapter = createOsmLocationContextAdapter({
     endpoint,
     checkedAt,
     timeoutMs: numberConfig(config?.osmContextTimeoutMs, 20_000),
-  })]
+  })
+  const enhancers: LocationContextEnhancer[] = []
+  const eeaNoiseServiceBaseUrl = stringConfig(config?.eeaNoiseServiceBaseUrl)
+  if (eeaNoiseServiceBaseUrl) {
+    enhancers.push(createEeaEnvironmentalNoiseEnhancer({
+      checkedAt,
+      serviceBaseUrl: eeaNoiseServiceBaseUrl,
+      timeoutMs: numberConfig(config?.eeaNoiseTimeoutMs, 10_000),
+    }))
+  }
+  return [withLocationContextEnhancers(osmAdapter, enhancers)]
+}
+
+function withLocationContextEnhancers(
+  adapter: LocationContextAdapter,
+  enhancers: LocationContextEnhancer[],
+): LocationContextAdapter {
+  if (enhancers.length === 0) return adapter
+  return {
+    id: [adapter.id, ...enhancers.map((enhancer) => enhancer.id)].join('+'),
+    sourceVersion: [adapter.sourceVersion, ...enhancers.map((enhancer) => enhancer.sourceVersion)].join(','),
+    supports: (auction) => adapter.supports(auction),
+    async context(auction) {
+      let context = await adapter.context(auction)
+      if (!context) return null
+      for (const enhancer of enhancers) {
+        if (!enhancer.supports(auction, context)) continue
+        try {
+          context = await enhancer.enhance(auction, context)
+        } catch (err) {
+          console.warn(`[external-enrichment] ${enhancer.id} location context enhancer failed for ${auction.platform}/${auction.externalId}: ${(err as Error).message}`)
+        }
+      }
+      return context
+    },
+  }
 }
 
 interface ExternalDataRuntimeConfig {
@@ -290,6 +333,8 @@ interface ExternalDataRuntimeConfig {
   euFloodRiskMaxCacheAgeDays?: number | string
   osmContextEndpoint?: string
   osmContextTimeoutMs?: number | string
+  eeaNoiseServiceBaseUrl?: string
+  eeaNoiseTimeoutMs?: number | string
 }
 
 function numberConfig(value: number | string | undefined, fallback: number): number {
