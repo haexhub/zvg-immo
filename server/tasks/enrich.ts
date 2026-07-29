@@ -145,6 +145,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
     const previousSnapshot = await readAuctionSnapshot()
     const byPlatform = new Map(platforms.map((p) => [p.id, p]))
     const rates = await getRates()
+    const vwCache = await readVerkehrswertCache()
 
     // Two independent reasons to (re)fetch detail: no detail fetch recorded
     // yet, OR the previous snapshot never recorded one (`detailFetchedAt`
@@ -439,6 +440,26 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
         cache[key] = entry
         dirty[key] = entry
         archived++
+        // Make this auction visible right away instead of waiting for the
+        // whole run to finish — otherwise a freshly activated country shows
+        // nothing in /search until every single listing has been (re)archived,
+        // even though most of the work is already done. writeAuctionSnapshot/
+        // upsertCurrentAuctions both upsert row-by-row, so a partial batch of
+        // one is as safe as the final full-batch write below.
+        try {
+          if (a.marketValueEur == null) {
+            const vwHit = vwCache[cacheKey(a.platform, a.externalId)]
+            if (vwHit) {
+              a.marketValueEur = vwHit.marketValueEur
+              a.marketValueText = vwHit.marketValueText
+            }
+          }
+          applyExtractionToAuctions([a], cache)
+          await writeAuctionSnapshot([a])
+          await upsertCurrentAuctions([a], at)
+        } catch (err) {
+          runErrors.push(`Snapshot ${a.platform}:${a.externalId}: ${(err as Error).message}`)
+        }
         void recordTaskRunProgress('enrich', {
           regionsDone,
           regionsTotal,
@@ -463,8 +484,9 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
     // so /api/auction/[platform]/[id] can serve detail pages without
     // re-running the crawlers. writeAuctionSnapshot's merge preserves the
     // previous snapshot's `.extraction` (this task never sets it) and any
-    // other detail field this crawl didn't refresh.
-    const vwCache = await readVerkehrswertCache()
+    // other detail field this crawl didn't refresh. Also acts as a catch-all
+    // for listings the per-item write above already covered (idempotent) and
+    // for non-`todo` listings whose cached Verkehrswert only just arrived.
     for (const a of result.auctions) {
       throwIfTaskAborted(signal)
       if (a.marketValueEur != null) continue
