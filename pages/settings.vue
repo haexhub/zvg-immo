@@ -357,6 +357,13 @@ const llmConfig = ref<Record<LlmMaxTokensKind, string>>({})
 const llmConfigError = ref<string | null>(null)
 const llmConfigSaved = ref(false)
 const llmConfigPending = ref(false)
+// Guards saveLlmConfig against submitting before the GET below has populated
+// llmConfig — the card renders as soon as `authed` flips true, which is
+// before this await resolves, so an empty-object PUT is otherwise reachable.
+const llmConfigLoaded = ref(false)
+const llmConfigSaveDisabled = computed(
+  () => llmConfigPending.value || !llmConfigLoaded.value || Object.keys(llmConfig.value).length === 0,
+)
 
 function llmKindLabel(kind: string): string {
   const key = `settings.llm.${kind}Label`
@@ -368,6 +375,7 @@ async function loadLlmConfig(): Promise<void> {
     const res = await $fetch<Record<LlmMaxTokensKind, number>>('/api/settings/llm-config')
     llmConfig.value = Object.fromEntries(Object.entries(res).map(([kind, value]) => [kind, String(value)]))
     llmConfigError.value = null
+    llmConfigLoaded.value = true
   } catch (err) {
     llmConfigError.value = normalizeSettingsError(err, t('settings.llm.loadError'))
   }
@@ -1112,7 +1120,7 @@ onBeforeUnmount(stopProgressPolling)
               <Input v-model="llmConfig[kind]" type="number" min="256" max="32768" step="1" />
             </div>
             <div class="sm:col-span-2">
-              <Button type="submit" :disabled="llmConfigPending">
+              <Button type="submit" :disabled="llmConfigSaveDisabled">
                 {{ llmConfigPending ? $t('settings.llm.saving') : $t('settings.llm.save') }}
               </Button>
             </div>

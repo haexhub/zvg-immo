@@ -1022,7 +1022,12 @@ useHead(() => ({
                   </div>
                 </li>
               </ul>
-              <p v-else-if="usageIdeasError" class="text-sm text-destructive">{{ $t('objektDetail.usageIdeasError') }}</p>
+              <div v-else-if="usageIdeasError" class="flex items-center gap-2">
+                <p class="text-sm text-destructive">{{ $t('objektDetail.usageIdeasError') }}</p>
+                <Button type="button" size="sm" variant="outline" @click="generateUsageIdeas">
+                  {{ $t('objektDetail.usageIdeasRetry') }}
+                </Button>
+              </div>
               <div
                 v-else-if="usageIdeasPending"
                 class="inline-flex items-center gap-1.5 text-sm text-muted-foreground"

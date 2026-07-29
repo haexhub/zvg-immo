@@ -94,26 +94,30 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 429, statusMessage: 'insight generation busy, retry shortly' })
   }
 
-  const llmCfg = useRuntimeConfig().extractLlm as
-    | { provider?: string; baseUrl?: string; apiKey?: string; model?: string }
-    | undefined
-  const providerOverride = await getLlmProviderOverride(db, 'extraction').catch(() => null)
-  const config = resolveLlmConfig(providerOverride ?? llmCfg, {
-    maxTokens: await getLlmMaxTokens(db, insightId),
-  })
-  if (!config) {
-    throw createError({ statusCode: 503, statusMessage: 'LLM not configured' })
-  }
-
-  const now = Date.now()
-  const rateLimitKey = `${insightId}:${clientKey(event)}`
-  const rateLimitOpts = { max: definition.rateLimitPerHourPerIp, windowMs: RATE_LIMIT_WINDOW_MS }
-  if (!checkInMemoryRateLimit(insightRateLimit, rateLimitKey, now, rateLimitOpts)) {
-    throw createError({ statusCode: 429, statusMessage: 'insight rate limit exceeded' })
-  }
-  recordInMemoryRateLimitHit(insightRateLimit, rateLimitKey, now, rateLimitOpts)
-
+  // Everything below is async (or depends on an async result), so it must run
+  // inside `gen` — not between the inflight check above and inflight.set()
+  // below — otherwise two concurrent misses for the same key both slip past
+  // the check before either registers, and both fire an LLM call.
   const gen = (async () => {
+    const llmCfg = useRuntimeConfig().extractLlm as
+      | { provider?: string; baseUrl?: string; apiKey?: string; model?: string }
+      | undefined
+    const providerOverride = await getLlmProviderOverride(db, 'extraction').catch(() => null)
+    const config = resolveLlmConfig(providerOverride ?? llmCfg, {
+      maxTokens: await getLlmMaxTokens(db, insightId),
+    })
+    if (!config) {
+      throw createError({ statusCode: 503, statusMessage: 'LLM not configured' })
+    }
+
+    const now = Date.now()
+    const rateLimitKey = `${insightId}:${clientKey(event)}`
+    const rateLimitOpts = { max: definition.rateLimitPerHourPerIp, windowMs: RATE_LIMIT_WINDOW_MS }
+    if (!checkInMemoryRateLimit(insightRateLimit, rateLimitKey, now, rateLimitOpts)) {
+      throw createError({ statusCode: 429, statusMessage: 'insight rate limit exceeded' })
+    }
+    recordInMemoryRateLimitHit(insightRateLimit, rateLimitKey, now, rateLimitOpts)
+
     const { systemPrompt, userText } = definition.buildPrompt(auction)
     const raw = await getProvider(config).extract({
       systemPrompt,

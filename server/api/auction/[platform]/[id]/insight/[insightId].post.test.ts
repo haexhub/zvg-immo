@@ -198,6 +198,26 @@ describe('/api/auction/:platform/:id/insight/:insightId', () => {
     await expect(callHandler(handler, 'usage-ideas')).rejects.toMatchObject({ statusCode: 503 })
   })
 
+  it('deduplicates two concurrent requests for the same insight+content-hash', async () => {
+    const { getInsightDefinition } = await import('~/server/utils/insights/registry')
+    vi.mocked(getInsightDefinition).mockReturnValue(testDefinition())
+    const { handler, writeInsight, getProvider } = await loadHandler()
+
+    let resolveExtract!: (value: unknown) => void
+    const deferred = new Promise((resolve) => { resolveExtract = resolve })
+    const extract = vi.fn().mockReturnValue(deferred)
+    getProvider.mockReturnValue({ extract })
+
+    const first = callHandler(handler, 'usage-ideas')
+    const second = callHandler(handler, 'usage-ideas')
+    resolveExtract({ ideas: [{ type: 'owner-occupation' }] })
+
+    const [firstResult, secondResult] = await Promise.all([first, second])
+    expect(firstResult).toEqual(secondResult)
+    expect(extract).toHaveBeenCalledTimes(1)
+    expect(writeInsight).toHaveBeenCalledTimes(1)
+  })
+
   it('rate-limits per insightId independently, so one insight cannot exhaust another\'s budget', async () => {
     const { getInsightDefinition } = await import('~/server/utils/insights/registry')
     const definitions: Record<string, InsightDefinition<unknown>> = {

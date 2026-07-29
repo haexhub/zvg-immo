@@ -1044,6 +1044,7 @@
     "usageIdeasGenerate": "Nutzungsideen vorschlagen",
     "usageIdeasPending": "Ideen werden erstellt …",
     "usageIdeasError": "Nutzungsideen konnten nicht erstellt werden.",
+    "usageIdeasRetry": "Erneut versuchen",
     "gallery": {
       "close": "Schließen"
     }
