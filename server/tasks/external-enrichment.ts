@@ -10,6 +10,7 @@ import {
 } from '~/server/utils/external-data/location-enrichment'
 import { createDvfFileMarketAdapter } from '~/server/utils/external-data/fr-dvf-cache'
 import { createEuFloodRiskFileAdapter } from '~/server/utils/external-data/eu-flood-risk'
+import { createCopernicusEffisBurntAreaFileAdapter } from '~/server/utils/external-data/copernicus-effis'
 import { createEeaEnvironmentalNoiseEnhancer } from '~/server/utils/external-data/eea-environmental-noise'
 import { createCamsAirQualityEnhancer } from '~/server/utils/external-data/cams-air-quality'
 import { createOsmLocationContextAdapter } from '~/server/utils/external-data/osm-location-context'
@@ -359,6 +360,23 @@ async function defaultHazardAdapters(
       }`
       summary.errors.push(message)
       console.warn(`[external-enrichment] ${message}`)
+    }
+  }
+  const effisValues = await resolvedSourceValues(db, 'copernicus-effis')
+  if (effisValues) {
+    // Same rationale as the flood cache above: the burnt-area cache is filled
+    // out-of-band (import-copernicus-effis-cache.ts) and a path just set from
+    // /settings can legitimately not exist yet.
+    try {
+      adapters.push(await createCopernicusEffisBurntAreaFileAdapter({
+        cachePath: String(effisValues.cachePath),
+        checkedAt,
+        maxCacheAgeDays: Number(effisValues.maxCacheAgeDays),
+      }))
+    } catch (err) {
+      console.warn(
+        `[external-enrichment] copernicus-effis cache unusable at ${String(effisValues.cachePath)}: ${(err as Error).message}`,
+      )
     }
   }
   return adapters

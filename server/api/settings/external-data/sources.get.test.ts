@@ -22,6 +22,7 @@ describe('GET /api/settings/external-data/sources', () => {
 
     expect(sources.map((source) => source.id).sort()).toEqual([
       'cams-air-quality',
+      'copernicus-effis',
       'eea-environmental-noise-directive',
       'eu-flood-risk-areas',
       'fr-dvf-geolocated',

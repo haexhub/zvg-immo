@@ -274,14 +274,45 @@ Géorisques (FR, PPRN) and HORA/Gefahrenzonenplan (AT). The registry already ref
 
 ### Known gaps after 2026-07-29
 
-- `extractByLlm` maps any provider request failure to `null`, so a 403 is indistinguishable from
-  "the LLM returned nothing". The reprocess status reported `69 processed / 69 LLM calls` with no
-  error while all 69 calls were failing. PR #235 prevents the misconfiguration but does not fix this
-  observability gap.
-- WP5 wildfire (Copernicus EFFIS) still has no adapter.
 - `overpass-api.de` is a shared community instance with 2 slots per IP. Fine at current volume;
   Europe-wide enrichment will want a self-hosted instance. The endpoint is admin-configurable, so
   that is a config change, not a code change.
+- WP5 wildfire has a static historical signal only (see below), not a live current-danger forecast.
+
+### 2026-07-29 (cont.): LLM failure observability + WP5 wildfire
+
+1. **LLM provider request failures are now counted separately from empty results** (PR #240).
+   `extractByLlm` used to map any provider request failure (network error, 403, 5xx) to the same
+   `null` as an empty/unparseable response, so the reprocess status could report `N processed / N
+   LLM calls` with zero visible errors while every call was failing. The three providers now report
+   a genuine request failure via `onRequestError`, kept strictly apart from the rate-limit throw path
+   (which must keep skipping without counting toward `llmFailures`). `reprocess.ts` tracks
+   `llmErrors`/`lastLlmError` per run and surfaces both on the reprocess status cards in `/settings`.
+2. **WP5 wildfire: Copernicus EFFIS MODIS Burnt Area, not the live Fire Weather Index forecast** (PR #243).
+   Two EFFIS layers were investigated live against `maps.effis.emergency.copernicus.eu`:
+   - `mf010.query` (MeteoFrance FWI forecast — the "current fire danger" layer this plan originally
+     wanted): WMS GetFeatureInfo tested against several European points/dates (Stockholm, Marseille,
+     Athens; 2022–2026) in `text/plain`, `text/html` and GML info formats. Every response was either
+     empty or an unfilled HTML template (`[FWI]`/`[DANGER_RISK]` placeholders never substituted) — no
+     resolved value was ever obtained. Treated as unverified and not shipped, the same standard this
+     plan already applied to EAWS avalanche.
+   - `modis.ba.poly` (JRC MODIS Burnt Area, 2016–present): verified live via WFS 1.1.0
+     GetFeature/GML3 — real polygons with FIREDATE/COUNTRY/AREA_HA attributes.
+     `outputformat=json`/`application/json` 502s on this MapServer instance for every typename
+     tried; only GML3 output works. BBOX axis order follows the declared CRS (EPSG:4326 → lat,lng;
+     CRS84 → lng,lat), confirmed by requesting the identical box both ways. `CQL_FILTER` is accepted
+     but silently ignored — a country filter still returned other countries — so only BBOX actually
+     scopes results.
+   Implemented as a point-in-polygon hazard adapter mirroring `eu-flood-risk.ts`'s file-cache pattern
+   exactly (reusing its `pointInPolygon`/`distanceToPolygonMeters`). This is a static/slowly-changing
+   susceptibility signal — new fire seasons land in the source roughly annually — not the short-TTL
+   forecast this plan envisioned; that gap is intentional, not an oversight, and is why the source's
+   own registry label calls it out as "MODIS Burnt Area", not "fire danger". `high` severity reuses
+   EFFIS's own public "large fire" (>500 ha) threshold from its annual reports; `medium`/`low` below
+   that are this adapter's own bucketing (no EFFIS-documented boundary backs the split), and severity
+   is `unknown` only when the matched zone carries no `AREA_HA`. No UI changes were needed: the
+   "Naturgefahren" card and its icon/label/status/severity translations were already generic across
+   every `HazardKind` since WP1/WP4, wildfire included.
 
 ### Earlier status
 
@@ -360,32 +391,24 @@ Next recommended prompt:
 
 ```text
 Continue docs/plans/2026-07-26-eu-market-risk-data-sources-plan.md, section
-"Known gaps after 2026-07-29".
+"2026-07-29 (cont.): LLM failure observability + WP5 wildfire".
 
-State: PRs #235-#238 are open and unmerged (LLM key validation, Overpass bbox fix,
-noise UI, CAMS air quality). Read the plan's 2026-07-29 status section first — it
-records the measured root causes, so do not re-diagnose them.
+State: PRs #235-#240 merged, PR #243 (this session's wildfire work) open. LLM
+failure observability is done. WP5 wildfire has a static MODIS burnt-area signal
+only — read that section before touching EFFIS again, it records
+why the live Fire Weather Index forecast (mf010.query) was investigated and
+rejected as unverifiable, not skipped out of laziness.
 
-Priority 1 — LLM failure observability. extractByLlm maps any provider request
-failure to null, so a 403 is indistinguishable from "no result": the reprocess
-status reported "69 processed / 69 LLM calls" with zero errors while all 69 were
-failing with 403. Make provider HTTP/network failures distinguishable from an
-empty result and surface a per-run failure count and last error in the /settings
-reprocess and enrich status cards. Do not change the rate-limit path: isRateLimitError
-throws on purpose so reprocess.ts skips without counting a failure
-(see the llm-ratelimit-failure-lockout-bug memory).
-
-Priority 2 — WP5 wildfire via Copernicus EFFIS. Follow the cams-air-quality entry
-in server/utils/external-data/sources.ts as the pattern. Requirements:
-- pick a concrete EFFIS service layer and cache shape before writing code
-- keep current fire danger on a short TTL and distinguish it from static
-  wildfire susceptibility/risk
-- unsupported or stale sources must yield `unknown`, never `outside`
-- ship the UI in the same PR; an enrichment field with no .vue reader is not done
-  (see the enrichment-data-without-ui-reader memory)
-
-Do not implement avalanche from EAWS — its micro-regions carry only a region id and
-would flag every alpine property red. Parcel-level needs Georisques (FR) or HORA (AT).
+Remaining candidates, roughly in priority order:
+- Expand country adapters per "Recommended order" item 5 — pick the next country by
+  actual crawler volume (check current_auctions row counts per country), not by
+  guesswork.
+- Open questions still unanswered: Postgres-only vs. disk-cache-for-local-dev,
+  commercial asking-price APIs (allow labelled, or hide comparison?), PostGIS vs.
+  the current lightweight GeoJSON/point-in-polygon approach as volume grows.
+- If EFFIS's live FWI forecast becomes worth revisiting, it needs a different access
+  path than the WMS GetFeatureInfo interface tested here — that one didn't return
+  resolved values across multiple points/dates/formats in this session.
 
 Constraints: new worktree + branch per independent task, one PR each, never merge
 yourself, no Claude references in commits. Keep detail pages cache-only; no live
