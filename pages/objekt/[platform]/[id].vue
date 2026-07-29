@@ -5,6 +5,7 @@ import { hasCompletedLlmAnalysis as extractionHasCompletedLlmAnalysis } from '~/
 import { classifyPropertyType } from '~/lib/property-type'
 import type { Feature } from '~/lib/features'
 import type { UsageIdea, UsageIdeaType } from '~/lib/usage-idea'
+import type { RenovationCostCategory, RenovationCostItem } from '~/lib/renovation-cost'
 import type { AuctionDetail } from '~/server/api/auction/[platform]/[id].get'
 import type {
   Attachment,
@@ -31,6 +32,7 @@ import {
   Accessibility,
   ArrowLeft,
   Bath,
+  Blinds,
   BrickWall,
   Building2,
   CalendarPlus,
@@ -47,10 +49,13 @@ import {
   ShowerHead,
   ShieldAlert,
   Sprout,
+  SquareStack,
   Tractor,
   TreePine,
   Warehouse,
   Waves,
+  Wrench,
+  Zap,
 } from 'lucide-vue-next'
 
 const route = useRoute()
@@ -64,12 +69,19 @@ const attachmentKindLabelFn = useAttachmentKindLabel()
 const conditionLabel = useConditionLabel()
 const featureLabel = useFeatureLabel()
 const usageIdeaTypeLabel = useUsageIdeaTypeLabel()
+const renovationCostCategoryLabel = useRenovationCostCategoryLabel()
 const {
   payload: usageIdeas,
   pending: usageIdeasPending,
   error: usageIdeasError,
   generate: generateUsageIdeas,
 } = useAuctionInsight<UsageIdea[]>('usage-ideas', platform, id)
+const {
+  payload: renovationCost,
+  pending: renovationCostPending,
+  error: renovationCostError,
+  generate: generateRenovationCost,
+} = useAuctionInsight<RenovationCostItem[]>('renovation-cost-estimate', platform, id)
 const MARKET_COMPARISON_MIN_SAMPLES = 5
 
 const { data: a, error, pending } = await useFetch<AuctionDetail | null>(
@@ -538,6 +550,26 @@ const USAGE_IDEA_ICONS: Partial<Record<UsageIdeaType, Component>> = {
   forestry: TreePine,
   warehouse: Warehouse,
   other: Lightbulb,
+}
+
+const RENOVATION_COST_ICONS: Partial<Record<RenovationCostCategory, Component>> = {
+  roof: Home,
+  'facade-insulation': BrickWall,
+  windows: Blinds,
+  heating: Heater,
+  electrical: Zap,
+  'plumbing-bathroom': Bath,
+  flooring: SquareStack,
+  other: Wrench,
+}
+
+function formatCostRange(costMinEur: number, costMaxEur: number): string {
+  const min = eurToDisplay(costMinEur)
+  const max = eurToDisplay(costMaxEur)
+  if (min == null || max == null) return '–'
+  const fmt = (n: number) =>
+    n.toLocaleString(intlLocale.value, { style: 'currency', currency: currency.value, maximumFractionDigits: 0 })
+  return min === max ? fmt(min) : `${fmt(min)} – ${fmt(max)}`
 }
 
 const amenityItems = computed<AmenityItem[]>(() => {
@@ -1039,6 +1071,43 @@ useHead(() => ({
               </div>
               <Button v-else type="button" size="sm" variant="outline" @click="generateUsageIdeas">
                 {{ $t('objektDetail.usageIdeasGenerate') }}
+              </Button>
+            </DetailSectionCard>
+            <DetailSectionCard :title="$t('objektDetail.renovationCostTitle')">
+              <ul v-if="renovationCost?.length" class="space-y-3 text-sm">
+                <li v-for="(item, i) in renovationCost" :key="i" class="flex items-start gap-3">
+                  <component :is="RENOVATION_COST_ICONS[item.category] ?? Wrench" class="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-baseline justify-between gap-3">
+                      <p class="font-medium leading-snug">{{ renovationCostCategoryLabel(item.category, item.label) }}</p>
+                      <span class="shrink-0 text-xs font-medium tabular-nums text-foreground/90">
+                        {{ formatCostRange(item.costMinEur, item.costMaxEur) }}
+                      </span>
+                    </div>
+                    <p class="mt-0.5 text-xs leading-relaxed text-muted-foreground">{{ item.rationale }}</p>
+                  </div>
+                </li>
+              </ul>
+              <p v-else-if="renovationCost" class="text-sm text-muted-foreground">
+                {{ $t('objektDetail.renovationCostEmpty') }}
+              </p>
+              <div v-else-if="renovationCostError" class="flex items-center gap-2">
+                <p class="text-sm text-destructive">{{ $t('objektDetail.renovationCostError') }}</p>
+                <Button type="button" size="sm" variant="outline" @click="generateRenovationCost">
+                  {{ $t('objektDetail.renovationCostRetry') }}
+                </Button>
+              </div>
+              <div
+                v-else-if="renovationCostPending"
+                class="inline-flex items-center gap-1.5 text-sm text-muted-foreground"
+                role="status"
+                aria-live="polite"
+              >
+                <Loader2 class="h-3.5 w-3.5 animate-spin text-primary" aria-hidden="true" />
+                <span>{{ $t('objektDetail.renovationCostPending') }}</span>
+              </div>
+              <Button v-else type="button" size="sm" variant="outline" @click="generateRenovationCost">
+                {{ $t('objektDetail.renovationCostGenerate') }}
               </Button>
             </DetailSectionCard>
           </div>

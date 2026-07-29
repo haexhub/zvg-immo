@@ -169,6 +169,7 @@ describe('getAllLlmMaxTokens', () => {
     expect(await getAllLlmMaxTokens(db)).toEqual({
       extraction: DEFAULT_LLM_MAX_TOKENS.extraction,
       'usage-ideas': DEFAULT_LLM_MAX_TOKENS['usage-ideas'],
+      'renovation-cost-estimate': DEFAULT_LLM_MAX_TOKENS['renovation-cost-estimate'],
       translation: 16_000,
     })
   })

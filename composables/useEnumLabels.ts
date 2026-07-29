@@ -53,3 +53,11 @@ export function useUsageIdeaTypeLabel() {
     return te(key) ? t(key) : (fallback ?? id)
   }
 }
+
+export function useRenovationCostCategoryLabel() {
+  const { t, te } = useI18n()
+  return (id: string, fallback?: string): string => {
+    const key = `renovationCostCategory.${id}`
+    return te(key) ? t(key) : (fallback ?? id)
+  }
+}
