@@ -782,7 +782,11 @@
     "amenityCounts": "{near} within 1 km, {wider} within 5 km",
     "environmentTitle": "Commercial, industry & noise",
     "noisyRoads": "Road noise",
+    "aviationNoise": "Aircraft noise",
     "nearestMotorway": "Motorway / expressway",
+    "nearestAirport": "Airport/aerodrome",
+    "nearestRunway": "Runway",
+    "nearestHelipad": "Helipad/heliport",
     "nearestIndustrial": "Industrial/commercial",
     "nearestHeavyIndustry": "Heavy industry",
     "commercialAreas": "Commercial/retail within 3 km",
@@ -818,6 +822,12 @@
       "unknown": "unknown location"
     },
     "noisyRoadLevel": {
+      "low": "low",
+      "medium": "noticeable",
+      "high": "high",
+      "unknown": "unknown"
+    },
+    "aviationNoiseLevel": {
       "low": "low",
       "medium": "noticeable",
       "high": "high",
@@ -876,7 +886,9 @@
       "youthful_demographic_proxy": "young/dynamic location signals",
       "employment_proxy_strong": "strong employment/job signals",
       "employment_proxy_weak": "weak employment/job signals",
-      "decline_risk_proxy": "outmigration/ageing risk based on proxy signals"
+      "decline_risk_proxy": "outmigration/ageing risk based on proxy signals",
+      "high_aviation_noise_pressure": "high aircraft-noise pressure is possible due to nearby airport/runway",
+      "medium_aviation_noise_pressure": "noticeable aircraft-noise signals nearby"
     },
     "locationCaveat": {
       "osm_heuristic": "Location rating is based on mapped OSM objects and simple distance/density heuristics.",
@@ -888,7 +900,11 @@
       "motorway_near": "motorway/expressway in the nearby area",
       "primary_road_very_near": "primary road mapped very close by",
       "heavy_industry_mapped": "heavy industry/facility mapped nearby",
-      "industrial_area_nearby": "industrial/commercial area nearby"
+      "industrial_area_nearby": "industrial/commercial area nearby",
+      "airport_near": "airport/aerodrome nearby",
+      "runway_very_near": "runway mapped very close by",
+      "runway_near": "runway in the wider area",
+      "helipad_near": "helipad/heliport mapped very close by"
     },
     "demographicReason": {
       "university_nearby": "university/college in the wider area",
@@ -906,6 +922,7 @@
     "mapLayerEducation": "Schools, childcare & universities",
     "mapLayerDailyNeeds": "Daily needs & healthcare",
     "mapLayerRestaurantsCafes": "Restaurants & cafes",
+    "mapLayerAviation": "Airports & aircraft noise",
     "mapLayerLeisure": "Leisure",
     "mapFeatureKind": {
       "groceries": "shopping/groceries",
@@ -920,6 +937,9 @@
       "industry": "industry",
       "commercial": "commercial/retail",
       "major_road": "major/noisy road",
+      "airport": "airport/aerodrome",
+      "runway": "runway",
+      "helipad": "helipad/heliport",
       "ferry": "ferry",
       "restaurant": "restaurant",
       "cafe": "cafe/bar",

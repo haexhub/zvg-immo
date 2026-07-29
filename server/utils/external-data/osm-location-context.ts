@@ -144,6 +144,7 @@ function buildQuery(point: Point): string {
   nwr(around:3000,${lat},${lng})["railway"~"^(station|halt|tram_stop)$"];
   nwr(around:10000,${lat},${lng})["amenity"="ferry_terminal"];
   nwr(around:10000,${lat},${lng})["route"="ferry"];
+  nwr(around:15000,${lat},${lng})["aeroway"~"^(aerodrome|runway|helipad|heliport)$"];
   way(around:5000,${lat},${lng})["highway"~"^(motorway|trunk|primary|secondary|tertiary)$"];
   nwr(around:5000,${lat},${lng})["landuse"~"^(industrial|commercial|retail|quarry|landfill|brownfield)$"];
   nwr(around:5000,${lat},${lng})["industrial"];
@@ -175,6 +176,9 @@ export function buildLocationContext(point: Point, elements: OsmElement[], check
   const ferryRouteElements = located.filter(hasTag('route', 'ferry'))
   const majorRoadElements = located.filter((element) => MAJOR_ROADS.has(element.tags?.highway ?? ''))
   const noisyRoadElements = located.filter((element) => NOISY_ROADS.has(element.tags?.highway ?? ''))
+  const airportElements = uniqueLocated(located.filter(isAirport))
+  const runwayElements = uniqueLocated(located.filter(isRunway))
+  const helipadElements = uniqueLocated(located.filter(isHelipad))
   const industrialElements = uniqueLocated(located.filter(isIndustrial))
   const commercialElements = uniqueLocated(located.filter(isCommercial))
   const heavyIndustryElements = uniqueLocated(located.filter(isHeavyIndustry))
@@ -199,7 +203,11 @@ export function buildLocationContext(point: Point, elements: OsmElement[], check
     hasFerryRouteNearby: ferryRouteElements.length > 0,
     ferryAccessLikely: ferryAccessLikely(places, ferryTerminalElements, ferryRouteElements),
   }
-  const environment = environmentContext(industrialElements, commercialElements, heavyIndustryElements, noisyRoadElements)
+  const environment = environmentContext(industrialElements, commercialElements, heavyIndustryElements, noisyRoadElements, {
+    airportElements,
+    runwayElements,
+    helipadElements,
+  })
   const demographics = demographicContext(places, mobility, amenitySummaries, neighborhood, {
     universityElements,
     schoolOrChildcareElements,
@@ -218,6 +226,9 @@ export function buildLocationContext(point: Point, elements: OsmElement[], check
       commercialElements,
       majorRoadElements,
       ferryTerminalElements,
+      airportElements,
+      runwayElements,
+      helipadElements,
     }),
     neighborhood,
     quality: qualityAssessment(places, mobility, amenitySummaries, neighborhood, environment, demographics),
@@ -340,6 +351,9 @@ function mapFeatureKind(element: LocatedElement): LocationMapFeatureKind | null 
   if (isIndustrial(element) || isHeavyIndustry(element)) return 'industry'
   if (isCommercial(element)) return 'commercial'
   if (MAJOR_ROADS.has(highway ?? '')) return 'major_road'
+  if (isAirport(element)) return 'airport'
+  if (isRunway(element)) return 'runway'
+  if (isHelipad(element)) return 'helipad'
   if (amenity === 'ferry_terminal' || element.tags?.route === 'ferry') return 'ferry'
   if (amenity === 'restaurant' || amenity === 'fast_food') return 'restaurant'
   if (amenity === 'cafe' || amenity === 'bar') return 'cafe'
@@ -354,6 +368,9 @@ function mapFeatures(input: {
   commercialElements: LocatedElement[]
   majorRoadElements: LocatedElement[]
   ferryTerminalElements: LocatedElement[]
+  airportElements: LocatedElement[]
+  runwayElements: LocatedElement[]
+  helipadElements: LocatedElement[]
 }): LocationMapFeature[] {
   const combined = uniqueLocated([
     ...input.located.filter((element) => mapFeatureKind(element) != null),
@@ -361,6 +378,9 @@ function mapFeatures(input: {
     ...input.commercialElements,
     ...input.majorRoadElements,
     ...input.ferryTerminalElements,
+    ...input.airportElements,
+    ...input.runwayElements,
+    ...input.helipadElements,
   ])
   return combined
     .map((element): LocationMapFeature | null => {
@@ -383,6 +403,7 @@ function mapFeatures(input: {
 
 function featureRank(kind: LocationMapFeatureKind): number {
   if (kind === 'industry' || kind === 'commercial' || kind === 'major_road') return 0
+  if (kind === 'airport' || kind === 'runway' || kind === 'helipad') return 0
   if (kind === 'groceries' || kind === 'pharmacy' || kind === 'healthcare') return 1
   if (kind === 'public_transport' || kind === 'rail') return 2
   if (kind === 'school' || kind === 'childcare' || kind === 'university') return 3
@@ -507,6 +528,13 @@ function qualityAssessment(
     score -= 4
     weaknesses.push('medium_noise_road_pressure')
   }
+  if (environment.aviationNoiseLevel === 'high') {
+    score -= 10
+    weaknesses.push('high_aviation_noise_pressure')
+  } else if (environment.aviationNoiseLevel === 'medium') {
+    score -= 4
+    weaknesses.push('medium_aviation_noise_pressure')
+  }
   if (environment.nearestHeavyIndustryDistanceMeters != null && environment.nearestHeavyIndustryDistanceMeters <= 3000) {
     score -= 10
     weaknesses.push('heavy_industry_nearby')
@@ -575,6 +603,11 @@ function environmentContext(
   commercialElements: LocatedElement[],
   heavyIndustryElements: LocatedElement[],
   noisyRoadElements: LocatedElement[],
+  aviation: {
+    airportElements: LocatedElement[]
+    runwayElements: LocatedElement[]
+    helipadElements: LocatedElement[]
+  },
 ): LocationEnvironmentContext {
   const motorwayElements = noisyRoadElements.filter((element) => element.tags?.highway === 'motorway' || element.tags?.highway === 'trunk')
   const primaryRoadElements = noisyRoadElements.filter((element) => element.tags?.highway === 'primary')
@@ -584,6 +617,13 @@ function environmentContext(
   if (nearestMotorway != null && nearestMotorway <= 1000) riskSignals.push('motorway_very_near')
   else if (nearestMotorway != null && nearestMotorway <= 2500) riskSignals.push('motorway_near')
   if (nearestPrimary != null && nearestPrimary <= 500) riskSignals.push('primary_road_very_near')
+  const nearestAirport = nearestDistance(aviation.airportElements)
+  const nearestRunway = nearestDistance(aviation.runwayElements)
+  const nearestHelipad = nearestDistance(aviation.helipadElements)
+  if (nearestRunway != null && nearestRunway <= 3000) riskSignals.push('runway_very_near')
+  else if (nearestRunway != null && nearestRunway <= 8000) riskSignals.push('runway_near')
+  if (nearestAirport != null && nearestAirport <= 5000) riskSignals.push('airport_near')
+  if (nearestHelipad != null && nearestHelipad <= 1000) riskSignals.push('helipad_near')
   if (nearestDistance(heavyIndustryElements) != null) riskSignals.push('heavy_industry_mapped')
   if (industrialElements.some((element) => element.distanceMeters <= 1000)) riskSignals.push('industrial_area_nearby')
 
@@ -597,8 +637,12 @@ function environmentContext(
     nearestHeavyIndustryDistanceMeters: nearestDistance(heavyIndustryElements),
     heavyIndustryKinds: [...new Set(heavyIndustryElements.flatMap(heavyIndustryKinds))].sort(),
     noisyRoadLevel: noisyRoadLevel(nearestMotorway, nearestPrimary),
+    aviationNoiseLevel: aviationNoiseLevel(nearestAirport, nearestRunway, nearestHelipad),
     nearestMotorwayDistanceMeters: nearestMotorway,
     nearestPrimaryRoadDistanceMeters: nearestPrimary,
+    nearestAirportDistanceMeters: nearestAirport,
+    nearestRunwayDistanceMeters: nearestRunway,
+    nearestHelipadDistanceMeters: nearestHelipad,
     riskSignals,
   }
 }
@@ -609,6 +653,16 @@ function noisyRoadLevel(
 ): LocationEnvironmentContext['noisyRoadLevel'] {
   if ((nearestMotorway != null && nearestMotorway <= 1000) || (nearestPrimary != null && nearestPrimary <= 250)) return 'high'
   if ((nearestMotorway != null && nearestMotorway <= 2500) || (nearestPrimary != null && nearestPrimary <= 750)) return 'medium'
+  return 'low'
+}
+
+function aviationNoiseLevel(
+  nearestAirport: number | null,
+  nearestRunway: number | null,
+  nearestHelipad: number | null,
+): LocationEnvironmentContext['aviationNoiseLevel'] {
+  if ((nearestRunway != null && nearestRunway <= 3000) || (nearestAirport != null && nearestAirport <= 3000)) return 'high'
+  if ((nearestRunway != null && nearestRunway <= 8000) || (nearestAirport != null && nearestAirport <= 8000) || (nearestHelipad != null && nearestHelipad <= 1000)) return 'medium'
   return 'low'
 }
 
@@ -735,6 +789,18 @@ function isWorkplaceSignal(element: LocatedElement): boolean {
     || element.tags?.amenity === 'hospital'
     || element.tags?.shop === 'mall'
     || element.tags?.shop === 'department_store'
+}
+
+function isAirport(element: LocatedElement): boolean {
+  return element.tags?.aeroway === 'aerodrome'
+}
+
+function isRunway(element: LocatedElement): boolean {
+  return element.tags?.aeroway === 'runway'
+}
+
+function isHelipad(element: LocatedElement): boolean {
+  return element.tags?.aeroway === 'helipad' || element.tags?.aeroway === 'heliport'
 }
 
 function ferryAccessLikely(

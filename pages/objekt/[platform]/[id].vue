@@ -416,6 +416,10 @@ function noisyRoadLevelLabel(level: LocationEnvironmentContext['noisyRoadLevel']
   return t(`objektDetail.noisyRoadLevel.${level}`)
 }
 
+function aviationNoiseLevelLabel(level: LocationEnvironmentContext['aviationNoiseLevel']): string {
+  return t(`objektDetail.aviationNoiseLevel.${level}`)
+}
+
 function demographicSignalLabel(level: LocationDemographicContext['youthSignal']): string {
   return t(`objektDetail.demographicSignalLevel.${level}`)
 }
@@ -1150,8 +1154,24 @@ useHead(() => ({
                     <dd class="font-medium">{{ noisyRoadLevelLabel(locationEnvironment.noisyRoadLevel) }}</dd>
                   </div>
                   <div>
+                    <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.aviationNoise') }}</dt>
+                    <dd class="font-medium">{{ aviationNoiseLevelLabel(locationEnvironment.aviationNoiseLevel) }}</dd>
+                  </div>
+                  <div>
                     <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.nearestMotorway') }}</dt>
                     <dd class="font-medium tabular-nums">{{ formatDistance(locationEnvironment.nearestMotorwayDistanceMeters) }}</dd>
+                  </div>
+                  <div>
+                    <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.nearestAirport') }}</dt>
+                    <dd class="font-medium tabular-nums">{{ formatDistance(locationEnvironment.nearestAirportDistanceMeters) }}</dd>
+                  </div>
+                  <div>
+                    <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.nearestRunway') }}</dt>
+                    <dd class="font-medium tabular-nums">{{ formatDistance(locationEnvironment.nearestRunwayDistanceMeters) }}</dd>
+                  </div>
+                  <div>
+                    <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.nearestHelipad') }}</dt>
+                    <dd class="font-medium tabular-nums">{{ formatDistance(locationEnvironment.nearestHelipadDistanceMeters) }}</dd>
                   </div>
                   <div>
                     <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.nearestIndustrial') }}</dt>

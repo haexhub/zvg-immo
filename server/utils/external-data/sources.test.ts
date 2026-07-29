@@ -19,6 +19,8 @@ describe('external data source registry', () => {
 
   it('can select sources by capability', () => {
     expect(sourcesForCapability('hazard_flood').map((source) => source.id)).toContain('eu-flood-risk-areas')
+    expect(sourcesForCapability('noise_airport').map((source) => source.id)).toContain('eea-environmental-noise-directive')
+    expect(sourcesForCapability('flight_routes').map((source) => source.id)).toEqual(['eurocontrol-adrr', 'opensky-network'])
     expect(sourcesForCapability('market_transactions').map((source) => source.id)).toEqual(['fr-dvf-geolocated'])
   })
 })

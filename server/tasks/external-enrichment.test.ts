@@ -120,9 +120,13 @@ const locationContext: LocationContext = {
     nearestHeavyIndustryDistanceMeters: null,
     heavyIndustryKinds: [],
     noisyRoadLevel: 'medium',
+    aviationNoiseLevel: 'medium',
     nearestMotorwayDistanceMeters: 2200,
     nearestPrimaryRoadDistanceMeters: 600,
-    riskSignals: ['motorway_near'],
+    nearestAirportDistanceMeters: 6500,
+    nearestRunwayDistanceMeters: 7200,
+    nearestHelipadDistanceMeters: null,
+    riskSignals: ['motorway_near', 'runway_near'],
   },
   demographics: {
     youthSignal: 'high',
@@ -139,6 +143,7 @@ const locationContext: LocationContext = {
     { kind: 'public_transport', name: 'Haltestelle', lat: 48.858, lng: 2.354, distanceMeters: 180, osmType: 'node', osmId: 2 },
     { kind: 'hospital', name: 'Klinik', lat: 48.859, lng: 2.355, distanceMeters: 900, osmType: 'node', osmId: 3 },
     { kind: 'restaurant', name: 'Bistro', lat: 48.86, lng: 2.356, distanceMeters: 220, osmType: 'node', osmId: 4 },
+    { kind: 'runway', name: 'Runway 08/26', lat: 48.87, lng: 2.37, distanceMeters: 7200, osmType: 'way', osmId: 5 },
   ],
   quality: {
     score: 92,

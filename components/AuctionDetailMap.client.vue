@@ -58,6 +58,7 @@ function hazardOverlayLabel(hazard: HazardAssessment): string {
 
 function featureLayerLabel(feature: LocationMapFeature): string {
   if (feature.kind === 'industry' || feature.kind === 'commercial' || feature.kind === 'major_road') return t('objektDetail.mapLayerIndustryRoads')
+  if (feature.kind === 'airport' || feature.kind === 'runway' || feature.kind === 'helipad') return t('objektDetail.mapLayerAviation')
   if (feature.kind === 'public_transport' || feature.kind === 'rail' || feature.kind === 'ferry') return t('objektDetail.mapLayerTransport')
   if (feature.kind === 'school' || feature.kind === 'childcare' || feature.kind === 'university') return t('objektDetail.mapLayerEducation')
   if (feature.kind === 'groceries' || feature.kind === 'pharmacy' || feature.kind === 'healthcare' || feature.kind === 'hospital') return t('objektDetail.mapLayerDailyNeeds')
@@ -69,6 +70,8 @@ function featureColor(feature: LocationMapFeature): string {
   if (feature.kind === 'industry') return '#dc2626'
   if (feature.kind === 'commercial') return '#ea580c'
   if (feature.kind === 'major_road') return '#9333ea'
+  if (feature.kind === 'airport' || feature.kind === 'runway') return '#be123c'
+  if (feature.kind === 'helipad') return '#e11d48'
   if (feature.kind === 'public_transport' || feature.kind === 'rail') return '#2563eb'
   if (feature.kind === 'ferry') return '#0891b2'
   if (feature.kind === 'school' || feature.kind === 'childcare' || feature.kind === 'university') return '#7c3aed'

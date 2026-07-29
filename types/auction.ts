@@ -122,6 +122,9 @@ export type LocationMapFeatureKind =
   | 'industry'
   | 'commercial'
   | 'major_road'
+  | 'airport'
+  | 'runway'
+  | 'helipad'
   | 'ferry'
   | 'restaurant'
   | 'cafe'
@@ -148,8 +151,12 @@ export interface LocationEnvironmentContext {
   nearestHeavyIndustryDistanceMeters: number | null
   heavyIndustryKinds: string[]
   noisyRoadLevel: 'low' | 'medium' | 'high' | 'unknown'
+  aviationNoiseLevel: 'low' | 'medium' | 'high' | 'unknown'
   nearestMotorwayDistanceMeters: number | null
   nearestPrimaryRoadDistanceMeters: number | null
+  nearestAirportDistanceMeters: number | null
+  nearestRunwayDistanceMeters: number | null
+  nearestHelipadDistanceMeters: number | null
   riskSignals: string[]
 }
 

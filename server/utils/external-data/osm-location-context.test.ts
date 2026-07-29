@@ -52,6 +52,9 @@ describe('buildLocationContext', () => {
       { type: 'way', id: 11, center: { lat: 52.005, lon: 13.005 }, tags: { man_made: 'works', industrial: 'factory', name: 'Werk' } },
       { type: 'node', id: 12, lat: 52.006, lon: 13.006, tags: { amenity: 'university', name: 'Uni' } },
       { type: 'way', id: 13, center: { lat: 52.007, lon: 13.007 }, tags: { landuse: 'commercial', name: 'Bueropark' } },
+      { type: 'node', id: 18, lat: 52.02, lon: 13.02, tags: { aeroway: 'aerodrome', name: 'Flugplatz Musterstadt' } },
+      { type: 'way', id: 19, center: { lat: 52.018, lon: 13.018 }, tags: { aeroway: 'runway', ref: '08/26' } },
+      { type: 'node', id: 20, lat: 52.0014, lon: 13.0014, tags: { aeroway: 'helipad', name: 'Kliniklandeplatz' } },
     ], '2026-07-26T00:00:00.000Z')
 
     expect(context.nearbyPlaces[0]).toMatchObject({
@@ -83,10 +86,17 @@ describe('buildLocationContext', () => {
     expect(context.quality.strengths).toContain('groceries_nearby')
     expect(context.environment.heavyIndustryKinds).toContain('factory')
     expect(context.environment.noisyRoadLevel).toBe('medium')
+    expect(context.environment.aviationNoiseLevel).toBe('high')
+    expect(context.environment.riskSignals).toContain('runway_very_near')
+    expect(context.environment.riskSignals).toContain('airport_near')
+    expect(context.environment.riskSignals).toContain('helipad_near')
     expect(context.demographics.youthSignal).toBe('high')
     expect(context.demographics.reasons).toContain('university_nearby')
     expect(context.mapFeatures.some((feature) => feature.kind === 'industry')).toBe(true)
     expect(context.mapFeatures.some((feature) => feature.kind === 'commercial')).toBe(true)
+    expect(context.mapFeatures.some((feature) => feature.kind === 'airport')).toBe(true)
+    expect(context.mapFeatures.some((feature) => feature.kind === 'runway')).toBe(true)
+    expect(context.mapFeatures.some((feature) => feature.kind === 'helipad')).toBe(true)
     expect(context.mapFeatures.some((feature) => feature.kind === 'hospital')).toBe(true)
     expect(context.mapFeatures.some((feature) => feature.kind === 'restaurant')).toBe(true)
     expect(context.mapFeatures.some((feature) => feature.kind === 'cafe')).toBe(true)

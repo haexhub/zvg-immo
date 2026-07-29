@@ -10,6 +10,8 @@ export type ExternalDataCapability =
   | 'poi_places'
   | 'transport_network'
   | 'settlement_structure'
+  | 'noise_airport'
+  | 'flight_routes'
   | 'source_discovery'
 
 export interface ExternalDataSource {
@@ -156,6 +158,39 @@ export const EXTERNAL_DATA_SOURCES: readonly ExternalDataSource[] = [
     refreshCadence: 'quarterly / annual',
     resolution: 'NUTS 2',
     adapter: 'eurostatRegionalLabourMarketAdapter',
+  },
+  {
+    id: 'eea-environmental-noise-directive',
+    label: 'EEA Environmental Noise Directive data',
+    countries: ['eu'],
+    capabilities: ['noise_airport', 'transport_network'],
+    sourceUrl: 'https://www.eea.europa.eu/data-and-maps/data/data-on-noise-exposure-8',
+    licenseNote: 'Europe-wide reported strategic noise exposure for major roads, railways, airports and agglomerations under the Environmental Noise Directive.',
+    refreshCadence: 'five-year END reporting cycle / EEA releases',
+    resolution: 'reported airport/road/rail/industry noise exposure and contour context',
+    adapter: 'eeaEnvironmentalNoiseAdapter',
+  },
+  {
+    id: 'eurocontrol-adrr',
+    label: 'EUROCONTROL Aviation Data Repository for Research',
+    countries: ['eu'],
+    capabilities: ['flight_routes'],
+    sourceUrl: 'https://www.eurocontrol.int/dashboard/aviation-data-research',
+    licenseNote: 'Research access to planned and actual flight trajectories, airspace structure and route network data; access and usage terms must be checked before production use.',
+    refreshCadence: 'provider release cadence',
+    resolution: 'flight trajectory / route network',
+    adapter: 'eurocontrolAdrrAdapter',
+  },
+  {
+    id: 'opensky-network',
+    label: 'OpenSky Network',
+    countries: ['eu'],
+    capabilities: ['flight_routes'],
+    sourceUrl: 'https://opensky-network.org/data',
+    licenseNote: 'Crowdsourced ADS-B/Mode S flight tracking data; useful for route density research, with coverage and licensing constraints.',
+    refreshCadence: 'live / historical database',
+    resolution: 'aircraft position observations / reconstructed trajectories',
+    adapter: 'openskyFlightRouteAdapter',
   },
   {
     id: 'copernicus-effis',
