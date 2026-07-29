@@ -45,11 +45,15 @@ export default defineTask({
       await recordTaskRunStart('offload-images')
       try {
         const result = await runOffloadImages(signal)
+        // An inactive run reports zeros, which on its own reads like a
+        // successful no-work run — say why instead.
+        const inactive = offloadInactiveReason()
         await recordTaskRunEnd('offload-images', {
           result: { ...result },
-          warning: result.failed > 0
-            ? `${result.failed} Datei(en) konnten nicht ausgelagert werden — bleiben lokal liegen.`
-            : null,
+          warning: inactive
+            ?? (result.failed > 0
+              ? `${result.failed} Datei(en) konnten nicht ausgelagert werden — bleiben lokal liegen.`
+              : null),
         })
         return { result }
       } catch (err) {
@@ -59,6 +63,22 @@ export default defineTask({
     })
   },
 })
+
+/**
+ * Why this task cannot move anything right now, or null when it is ready.
+ * Both conditions would otherwise make it destroy the only copy of a photo, so
+ * they are hard stops rather than degraded modes — and they are reported, since
+ * "0 files offloaded" is indistinguishable from a healthy idle run.
+ */
+export function offloadInactiveReason(): string | null {
+  if (!imagesBucketConfigured()) {
+    return 'Foto-Auslagerung inaktiv: kein Images-Bucket konfiguriert (NUXT_IMAGES_BUCKET). Fotos bleiben lokal.'
+  }
+  if (!getPool()) {
+    return 'Foto-Auslagerung inaktiv: keine Datenbank konfiguriert. Fotos bleiben lokal.'
+  }
+  return null
+}
 
 /** Auctions whose date has passed long enough to offload, keyed platform:id. */
 async function endedBefore(cutoffIso: string): Promise<Set<string>> {
@@ -102,17 +122,12 @@ export async function runOffloadImages(signal?: AbortSignal): Promise<OffloadIma
     durationMs: 0,
   }
 
-  // Must be the first check: without a bucket the local file is the only copy.
-  if (!imagesBucketConfigured()) {
-    console.warn('[offload-images] no images bucket configured — nothing offloaded')
-    result.durationMs = Date.now() - startedAt
-    return result
-  }
-  // Without the serving table there is no way to tell an ended auction from a
-  // running one, and every directory would look orphaned — see below. Refuse
-  // rather than drain the whole cache on a guess.
-  if (!getPool()) {
-    console.warn('[offload-images] no database configured — nothing offloaded')
+  // Must come first. Without a bucket the local file is the only copy, and
+  // without the serving table every directory looks orphaned (see below), so
+  // either would turn this task into a cache wipe.
+  const inactive = offloadInactiveReason()
+  if (inactive) {
+    console.warn(`[offload-images] ${inactive}`)
     result.durationMs = Date.now() - startedAt
     return result
   }

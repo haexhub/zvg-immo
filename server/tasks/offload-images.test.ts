@@ -122,6 +122,21 @@ describe('runOffloadImages', () => {
     expect(await remaining('42')).toEqual(['aabbccdd.jpg'])
   })
 
+  it('names the reason it is inactive, so a zero run is not mistaken for a healthy one', async () => {
+    vi.mocked(imagesBucketConfigured).mockReturnValue(false)
+    vi.mocked(getPool).mockReturnValue(poolReturning([auction('42')]) as never)
+    const { offloadInactiveReason } = await import('./offload-images')
+
+    expect(offloadInactiveReason()).toContain('NUXT_IMAGES_BUCKET')
+
+    vi.mocked(imagesBucketConfigured).mockReturnValue(true)
+    vi.mocked(getPool).mockReturnValue(null)
+    expect(offloadInactiveReason()).toContain('keine Datenbank')
+
+    vi.mocked(getPool).mockReturnValue(poolReturning([auction('42')]) as never)
+    expect(offloadInactiveReason()).toBeNull()
+  })
+
   it('offloads photos of an auction the serving table no longer knows', async () => {
     // Orphaned cache: it can never be served from disk again, so the date is moot.
     vi.mocked(getPool).mockReturnValue(poolReturning([auction('42')], []) as never)
