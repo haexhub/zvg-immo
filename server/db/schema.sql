@@ -43,10 +43,10 @@ DROP POLICY IF EXISTS own_rows ON watchlist_items;
 CREATE POLICY own_rows ON saved_searches FOR ALL USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
 CREATE POLICY own_rows ON watchlist_items FOR ALL USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
 
--- Phase 3: append-only auction history for Grafana + the alert matcher. One
--- row per auction per `refresh` run (server/utils/history.ts), never
--- updated — plain table, no hypertable/Timescale (current row volumes don't
--- justify the extension dependency on the self-host stack).
+-- Phase 3: append-only auction history for Grafana + analyses. Refresh writes
+-- the listing-level state and enrich writes the final detail-decorated state
+-- (server/utils/history.ts). Plain table, no hypertable/Timescale (current row
+-- volumes don't justify the extension dependency on the self-host stack).
 CREATE TABLE IF NOT EXISTS auction_observations (
   id                bigserial PRIMARY KEY,
   captured_at       timestamptz NOT NULL,
@@ -70,6 +70,11 @@ CREATE TABLE IF NOT EXISTS auction_observations (
   auction_date_iso  timestamptz,
   cancelled         boolean NOT NULL
 );
+-- The typed columns above keep common time-series queries fast. `payload`
+-- preserves the complete parsed source record for every observation so new
+-- fields can be analysed historically without having to predict them here.
+-- It is intentionally append-only together with the rest of the row.
+ALTER TABLE auction_observations ADD COLUMN IF NOT EXISTS payload jsonb;
 CREATE INDEX IF NOT EXISTS idx_obs_country_region_time ON auction_observations (country, region, captured_at DESC);
 CREATE INDEX IF NOT EXISTS idx_obs_platform_zvgid_time ON auction_observations (platform, external_id, captured_at DESC);
 CREATE INDEX IF NOT EXISTS idx_obs_az_time ON auction_observations (authority, case_number, captured_at DESC);
@@ -412,6 +417,31 @@ ALTER TABLE content_translations ADD COLUMN IF NOT EXISTS extraction_texts jsonb
 -- der Backend-Zugriff läuft als Table-Owner und umgeht RLS ohnehin.
 ALTER TABLE content_translations ENABLE ROW LEVEL SECURITY;
 
+-- A translation is claimed exactly once per auction and target language.
+-- content_translations remains the content-addressed value store; this table
+-- is the durable auction-level gate that prevents a changed source payload,
+-- another app instance, or a concurrent request from starting a second LLM
+-- translation. Failed attempts are retained with their error instead of being
+-- silently treated as a cache miss.
+CREATE TABLE IF NOT EXISTS auction_translations (
+  platform          text NOT NULL,
+  external_id       text NOT NULL,
+  lang              text NOT NULL,
+  content_hash      text NOT NULL,
+  status            text NOT NULL CHECK (status IN ('pending', 'completed', 'failed')),
+  title             text,
+  description       text,
+  document_summary  text,
+  extraction_texts  jsonb,
+  error_message     text,
+  started_at        timestamptz NOT NULL DEFAULT now(),
+  completed_at      timestamptz,
+  PRIMARY KEY (platform, external_id, lang)
+);
+CREATE INDEX IF NOT EXISTS idx_auction_translations_status
+  ON auction_translations (status, started_at);
+ALTER TABLE auction_translations ENABLE ROW LEVEL SECURITY;
+
 -- Datenqualitäts-Offensive: strukturierte "aktueller Zustand pro Auktion"-
 -- Tabelle, additiv neben der bestehenden JSON-Snapshot-Pipeline
 -- (auction-snapshot.ts). auction_observations (oben) ist ein Append-only-
@@ -419,9 +449,8 @@ ALTER TABLE content_translations ENABLE ROW LEVEL SECURITY;
 -- schnell filtern könnte, ohne jeden Lauf mitzuzählen. Diese Tabelle wird pro
 -- Auktion upgeserted (server/utils/current-auctions.ts, aufgerufen aus
 -- server/tasks/enrich.ts direkt neben writeAuctionSnapshot) und dient
--- zunächst als Parallel-Spiegel für schnelle SQL-Abfragen (Daten-API,
--- Admin-Tooling, künftige serverseitige Suche) — /api/auctions liest weiterhin
--- vom JSON-Snapshot, das umzustellen ist ein separater Folge-Schritt.
+-- als SQL-Spiegel für schnelle Abfragen und die serverseitig gefilterten,
+-- paginierten Such-/Marker-APIs.
 CREATE TABLE IF NOT EXISTS auctions (
   platform              text NOT NULL,
   external_id           text NOT NULL,
@@ -458,8 +487,8 @@ CREATE INDEX IF NOT EXISTS idx_auctions_country_region ON auctions (country, reg
 CREATE INDEX IF NOT EXISTS idx_auctions_property_type ON auctions (property_type);
 CREATE INDEX IF NOT EXISTS idx_auctions_living_area ON auctions (living_area_sqm);
 CREATE INDEX IF NOT EXISTS idx_auctions_land_area ON auctions (land_area_sqm);
--- Server-intern befüllt (öffentliche Lese-APIs bleiben vorerst auf dem
--- JSON-Snapshot) — RLS trotzdem an, ohne Policies (Default-Deny), sonst
+-- Server-intern befüllt; öffentliche APIs lesen nur über kontrollierte
+-- Server-DTOs. RLS trotzdem an, ohne Policies (Default-Deny), sonst
 -- läse/schriebe PostgREST-anon/authenticated direkt mit.
 ALTER TABLE auctions ENABLE ROW LEVEL SECURITY;
 

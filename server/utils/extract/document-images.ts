@@ -71,6 +71,12 @@ function resolveDocumentSource(proxyUrl: string, accept: string): { url: string;
     const url = `${ZVG_BASE}/index.php?button=showAnhang&land_abk=${q.get('land_abk')}&file_id=${q.get('file_id')}&zvg_id=${q.get('zvg_id')}`
     return { url, headers: { 'User-Agent': UA, Accept: accept, Referer: `${ZVG_BASE}/index.php?button=Suchen` } }
   }
+  if (proxyUrl.startsWith(`${ZVG_BASE}/`)) {
+    return {
+      url: proxyUrl,
+      headers: { 'User-Agent': UA, Accept: accept, Referer: `${ZVG_BASE}/index.php?button=Suchen` },
+    }
+  }
   return { url: proxyUrl, headers: { 'User-Agent': UA, Accept: accept } }
 }
 

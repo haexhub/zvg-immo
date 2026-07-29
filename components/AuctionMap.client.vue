@@ -75,7 +75,7 @@ function mountLotPopover(el: HTMLElement, a: GeoAuction): VueApp {
     t,
     intlLocale: intlLocale.value,
     currency: currency.value,
-    convertedMarketValue: eurToDisplay(a.marketValueEur),
+    convertEur: eurToDisplay,
   })
   app.mount(el)
   return app
@@ -130,7 +130,7 @@ function createMarker(a: GeoAuction, lat: number, lng: number): AuctionMarker {
   const marker = L.marker([lat, lng], {
     icon: active ? activeMarkerIcon : markerIcon,
     zIndexOffset: active ? 1000 : 0,
-    title: `${a.title ?? ''} · ${a.address ?? ''}`,
+    title: `${a.platform} · ${a.externalId}`,
   }) as AuctionMarker
   if (active) lastActiveKey = key
   marker.auctionKey = key

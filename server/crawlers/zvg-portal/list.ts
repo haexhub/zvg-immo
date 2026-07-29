@@ -98,10 +98,7 @@ export function parseAuctionsHtml(html: string, landAbk: string, platformId: str
     if (pdfMatch?.[1]) {
       const raw = pdfMatch[1].trim().replace(/\s+$/, '')
       pdfUrlUpstream = `${ZVG_BASE}/${raw.replace(/^\/+/, '')}`
-      const fileIdMatch = raw.match(/file_id=(\d+)/)
-      if (fileIdMatch?.[1] && zvgIdMatch) {
-        pdfUrl = `/api/zvg-proxy?button=showAnhang&land_abk=${landAbk}&file_id=${fileIdMatch[1]}&zvg_id=${zvgIdMatch}`
-      }
+      pdfUrl = pdfUrlUpstream
     }
 
     const detailUrlUpstream = detailHref
@@ -110,9 +107,10 @@ export function parseAuctionsHtml(html: string, landAbk: string, platformId: str
         ? `${ZVG_BASE}/index.php?button=showZvg&zvg_id=${zvgIdMatch}&land_abk=${landAbk}`
         : `${ZVG_BASE}/index.php?button=Termine+suchen`
 
-    const detailUrl = zvgIdMatch
-      ? `/api/zvg-proxy?button=showZvg&zvg_id=${zvgIdMatch}&land_abk=${landAbk}`
-      : detailUrlUpstream
+    // The app has one canonical detail page assembled from stored data.
+    // Upstream HTML is retained only as crawler/archive metadata and is never
+    // exposed through a same-origin proxy.
+    const detailUrl = null
 
     auctions.push({
       platform: platformId,

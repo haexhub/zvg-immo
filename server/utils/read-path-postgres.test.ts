@@ -111,7 +111,8 @@ describe('WP-5 read path — zvg-portal/7265 comes exclusively from Postgres', (
     const hit = snapshot['zvg-portal:7265']
     expect(hit).toEqual(auction7265)
     expect(hit?.attachments).toHaveLength(1)
-    expect(hit?.pdfUrl).toBe('/api/zvg-proxy?u=x.pdf')
+    expect(hit?.pdfUrl).toBe('https://zvg-portal.de/x.pdf')
+    expect(hit?.detailUrl).toBeNull()
     expect(hit?.lat).toBe(48.137)
     expect(hit?.lng).toBe(11.575)
   })

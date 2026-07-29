@@ -1,181 +1,184 @@
-import type { CrawlResult } from '~/types/auction'
-import {
-  crawlAll,
-  crawlSingle,
-  ensureEnabledCountriesLoaded,
-  getEnabledCountryCodes,
-  isCountryEnabled,
-} from '../crawlers/registry'
-import { cacheKey, readVerkehrswertCache } from '../utils/verkehrswert-cache'
-import { applyExtractionToAuctions, readExtractionCache } from '../utils/extraction-cache'
-import { applySnapshotPhotosToAuctions, readAuctionSnapshot } from '../utils/auction-snapshot'
-import { readListCache, readMergedListCache, writeListCache } from '../utils/list-cache'
-import { MULTI_PLATFORM, isAllScope, isValidScopeParam, scopeParam } from '~/lib/auction-constants'
-import { applyDescriptionMarketValue } from '../utils/description-market-value'
+import type { AuctionExtraction } from '~/types/auction'
+import { getPool } from '~/server/utils/db'
+import { buildAuctionSearchFilter, finiteNumber } from '~/server/utils/auction-search-filters'
 
-// Live-crawl fallback — only used on cold cache (startup before first refresh
-// completes) or for immo=false requests which aren't cached. Short in-memory
-// SWR prevents a thundering herd when the disk cache is not yet warm.
-const cachedCrawl = defineCachedFunction(
-  async (country: string, region: string, immobilienOnly: boolean): Promise<CrawlResult> => {
-    if (isAllScope(country)) {
-      return crawlAll({ immobilienOnly, enrichDetails: false })
-    }
-    if (isAllScope(region)) {
-      return crawlAll({ immobilienOnly, country, enrichDetails: false })
-    }
-    return crawlSingle({ country, region, immobilienOnly })
-  },
-  {
-    name: 'auctions-crawl',
-    maxAge: 1800,
-    swr: true,
-    getKey: (country, region, immobilienOnly) =>
-      `${getEnabledCountryCodes().sort().join(',')}:${country}:${region}:${immobilienOnly ? '1' : '0'}`,
-  },
-)
+export interface AuctionSummary {
+  platform: string
+  country: string
+  region: string
+  externalId: string
+  caseNumber: string
+  authority: string
+  title: string | null
+  address: string | null
+  marketValue: number | null
+  currency: string | null
+  marketValueEur: number | null
+  marketValueText: string | null
+  startingBid: number | null
+  currentBid: number | null
+  auctionDateIso: string | null
+  auctionDateText: string | null
+  cancelled: boolean
+  photoCount: number
+  /** Exactly one preview image. Galleries are detail-page-only. */
+  thumbnailUrl: string | null
+  extraction: Pick<
+    AuctionExtraction,
+    | 'propertyType'
+    | 'landAreaSqm'
+    | 'livingAreaSqm'
+    | 'yearBuilt'
+    | 'lastRenovationYear'
+    | 'condition'
+    | 'features'
+    | 'source'
+    | 'llmAnalyzedAt'
+  > | null
+}
 
-export default defineEventHandler(async (event): Promise<CrawlResult> => {
-  await ensureEnabledCountriesLoaded()
+export interface AuctionSearchResponse {
+  auctions: AuctionSummary[]
+  total: number
+  active: number
+  cancelled: number
+  page: number
+  pageSize: number
+  fetchedAt: string
+  facets: {
+    authorities: string[]
+    categories: Array<{ id: string; count: number }>
+  }
+}
+
+interface SearchRow {
+  platform: string
+  country: string
+  region: string
+  external_id: string
+  case_number: string
+  authority: string
+  title: string | null
+  address: string | null
+  market_value: string | number | null
+  currency: string | null
+  market_value_eur: string | number | null
+  market_value_text: string | null
+  starting_bid: string | number | null
+  current_bid: string | number | null
+  auction_date_iso: string | null
+  auction_date_text: string | null
+  cancelled: boolean
+  photo_count: number
+  thumbnail_url: string | null
+  extraction: AuctionExtraction | null
+}
+
+function summary(row: SearchRow): AuctionSummary {
+  const extraction = row.extraction
+  return {
+    platform: row.platform,
+    country: row.country,
+    region: row.region,
+    externalId: row.external_id,
+    caseNumber: row.case_number,
+    authority: row.authority,
+    title: row.title,
+    address: row.address,
+    marketValue: finiteNumber(row.market_value),
+    currency: row.currency,
+    marketValueEur: finiteNumber(row.market_value_eur),
+    marketValueText: row.market_value_text,
+    startingBid: finiteNumber(row.starting_bid),
+    currentBid: finiteNumber(row.current_bid),
+    auctionDateIso: row.auction_date_iso,
+    auctionDateText: row.auction_date_text,
+    cancelled: row.cancelled,
+    photoCount: row.photo_count,
+    thumbnailUrl: row.thumbnail_url,
+    extraction: extraction
+      ? {
+          propertyType: extraction.propertyType,
+          landAreaSqm: extraction.landAreaSqm,
+          livingAreaSqm: extraction.livingAreaSqm,
+          yearBuilt: extraction.yearBuilt,
+          lastRenovationYear: extraction.lastRenovationYear,
+          condition: extraction.condition,
+          features: extraction.features,
+          source: extraction.source,
+          llmAnalyzedAt: extraction.llmAnalyzedAt,
+        }
+      : null,
+  }
+}
+
+export default defineEventHandler(async (event): Promise<AuctionSearchResponse> => {
+  const db = getPool()
+  if (!db) {
+    throw createError({ statusCode: 503, statusMessage: 'Auktionsdatenbank ist nicht konfiguriert' })
+  }
+
   const query = getQuery(event)
-  const country = scopeParam(query.country)
-  const region = scopeParam(query.region)
-  if (!isValidScopeParam(country) || !isValidScopeParam(region)) {
-    throw createError({ statusCode: 400, statusMessage: 'invalid country/region' })
-  }
-  const immobilienOnly = query.immo !== '0'
-  // Paused country requested directly (permalink, saved search, hand-typed URL):
-  // return an empty result instead of live-crawling it via the fallback below.
-  // The 'all' scope stays allowed — it only aggregates enabled countries.
-  if (!isAllScope(country) && !isCountryEnabled(country)) {
-    return {
-      platform: MULTI_PLATFORM,
-      source: '',
-      countries: [country],
-      regions: [region],
-      fetchedAt: new Date().toISOString(),
-      totalReported: null,
-      auctions: [],
-    }
-  }
-  try {
-    let result: CrawlResult | null = null
+  const { predicate, values: filterValues } = await buildAuctionSearchFilter(db, query)
+  const pageSize = Math.min(60, Math.max(1, Math.trunc(finiteNumber(query.pageSize) ?? 30)))
+  const page = Math.max(1, Math.trunc(finiteNumber(query.page) ?? 1))
+  const offset = (page - 1) * pageSize
+  const sort = String(query.sort ?? 'default')
+  const orderBy = sort === 'dateAsc'
+    ? 'a.auction_date_iso ASC NULLS LAST, a.platform, a.external_id'
+    : sort === 'priceAsc'
+      ? 'a.market_value_eur ASC NULLS LAST, a.platform, a.external_id'
+      : sort === 'priceDesc'
+        ? 'a.market_value_eur DESC NULLS LAST, a.platform, a.external_id'
+        : 'a.photo_count DESC, a.updated_at DESC, a.platform, a.external_id'
 
-    // Serve immo=true requests from the persistent disk cache written by the
-    // refresh task. immo=false falls through to the live-crawl path below.
-    if (immobilienOnly) {
-      if (isAllScope(country)) {
-        result = await readMergedListCache()
-      } else if (isAllScope(region)) {
-        result = await readMergedListCache(country)
-      } else {
-        result = await readListCache(country, region)
-      }
-    }
+  const from = `FROM auctions a
+    LEFT JOIN extraction_cache ec
+      ON ec.platform = a.platform AND ec.external_id = a.external_id
+    LEFT JOIN auction_snapshot s
+      ON s.platform = a.platform AND s.external_id = a.external_id`
+  const rowsSql = `SELECT
+      a.platform, a.country, a.region, a.external_id, a.case_number, a.authority,
+      a.title, a.address, a.market_value, a.currency, a.market_value_eur,
+      s.auction->>'marketValueText' AS market_value_text,
+      a.starting_bid, a.current_bid, a.auction_date_iso,
+      s.auction->>'auctionDateText' AS auction_date_text,
+      a.cancelled, a.photo_count, a.thumbnail_url, ec.extraction
+    ${from} ${predicate}
+    ORDER BY ${orderBy}
+    LIMIT $${filterValues.length + 1} OFFSET $${filterValues.length + 2}`
+  const statsSql = `SELECT
+      count(*)::int AS total,
+      count(*) FILTER (WHERE a.cancelled = false)::int AS active,
+      count(*) FILTER (WHERE a.cancelled = true)::int AS cancelled
+    ${from} ${predicate}`
+  const authoritiesSql = `SELECT DISTINCT a.authority ${from} ${
+    predicate ? `${predicate} AND a.authority <> ''` : `WHERE a.authority <> ''`
+  } ORDER BY a.authority`
+  const categoriesSql = `SELECT a.property_type AS id, count(*)::int AS count
+    ${from} ${predicate ? `${predicate} AND a.property_type IS NOT NULL` : `WHERE a.property_type IS NOT NULL`}
+    GROUP BY a.property_type ORDER BY count DESC, a.property_type`
 
-    if (!result) {
-      // Cold cache (startup), unknown region, or immo=false: live crawl.
-      result = await cachedCrawl(country, region, immobilienOnly)
-      // Warm the disk cache for individual regions so the next immo=true
-      // request is served instantly without waiting for the refresh task.
-      if (immobilienOnly && !isAllScope(country) && !isAllScope(region)) {
-        writeListCache(country, region, result).catch((err: unknown) => {
-          console.warn(
-            `[api/auctions] list-cache write ${country}/${region}: ${(err as Error).message}`,
-          )
-        })
-      }
-    }
-
-    // The overlays mutate the result in-place (fill nulls only) — safe for
-    // both the cached and live-crawl paths. Snapshot photos run before the
-    // extraction overlay so a native photo (Foto.pdf render, gallery URL)
-    // takes priority over PDF-mined photos, matching the enrich task's own
-    // preference order (see server/tasks/enrich.ts's photo pipeline).
-    await overlayCachedVerkehrswert(result)
-    await overlaySnapshotPhotos(result)
-    await overlayExtraction(result)
-    return result
-  } catch (err) {
-    // Normalize: thrown values aren't guaranteed to be Errors.
-    const msg =
-      typeof err === 'string'
-        ? err
-        : err instanceof Error
-          ? err.message
-          : String(err)
-    // Upstream rate-limit responses (BOE's captcha page or an HTTP 429) are
-    // temporary and self-clear within minutes. Surfacing them as 502 makes
-    // the whole map view break for that provincia, including the geocoding
-    // data we already have. Degrade gracefully: log server-side, return an
-    // empty result so the rest of the UI keeps working.
-    const lower = msg.toLowerCase()
-    const rateLimited =
-      lower.includes('captcha') || lower.includes('rate limit') || /\b429\b/.test(msg)
-    if (rateLimited) {
-      console.warn(`[api/auctions] ${country}/${region} rate-limited: ${msg}`)
-      // Not cached: cachedCrawl above only stores successful results, and this
-      // header keeps browsers/proxies from holding on to the empty response.
-      setResponseHeader(event, 'cache-control', 'no-store, max-age=0')
-      return {
-        platform: MULTI_PLATFORM,
-        source: '',
-        countries: [country],
-        regions: [region],
-        fetchedAt: new Date().toISOString(),
-        totalReported: null,
-        auctions: [],
-      }
-    }
-    throw createError({
-      statusCode: 502,
-      statusMessage: 'Crawler-Quelle nicht erreichbar',
-      data: { detail: msg },
-    })
+  // Facet queries reuse the filter parameters but not LIMIT/OFFSET.
+  const [rowsResult, statsResult, authoritiesResult, categoriesResult] = await Promise.all([
+    db.query<SearchRow>(rowsSql, [...filterValues, pageSize, offset]),
+    db.query<{ total: number; active: number; cancelled: number }>(statsSql, filterValues),
+    db.query<{ authority: string }>(authoritiesSql, filterValues),
+    db.query<{ id: string; count: number }>(categoriesSql, filterValues),
+  ])
+  const stats = statsResult.rows[0] ?? { total: 0, active: 0, cancelled: 0 }
+  setResponseHeader(event, 'cache-control', 'no-store')
+  return {
+    auctions: rowsResult.rows.map(summary),
+    total: stats.total,
+    active: stats.active,
+    cancelled: stats.cancelled,
+    page,
+    pageSize,
+    fetchedAt: new Date().toISOString(),
+    facets: {
+      authorities: authoritiesResult.rows.map((row) => row.authority),
+      categories: categoriesResult.rows,
+    },
   }
 })
-
-async function overlayCachedVerkehrswert(result: CrawlResult): Promise<void> {
-  const needsOverlay = result.auctions.some((a) => a.marketValueEur == null)
-  if (!needsOverlay) return
-  const [cache, snapshot] = await Promise.all([
-    readVerkehrswertCache(),
-    readAuctionSnapshot(),
-  ])
-  for (const a of result.auctions) {
-    if (a.marketValueEur != null) continue
-    const hit = cache[cacheKey(a.platform, a.externalId)]
-    if (hit?.marketValueEur != null) {
-      a.marketValueEur = hit.marketValueEur
-      a.marketValueText = hit.marketValueText
-      continue
-    }
-    const snapshotHit = snapshot[cacheKey(a.platform, a.externalId)]
-    if (!snapshotHit) continue
-    const candidate = { ...snapshotHit }
-    applyDescriptionMarketValue(candidate)
-    if (candidate.marketValueEur == null) continue
-    a.marketValueEur = candidate.marketValueEur
-    a.marketValueText = candidate.marketValueText
-  }
-}
-
-// Decorate list-crawl auctions with the thumbnailUrl/photoCount/photoUrls the
-// enrich task's detail fetch found and persisted to auction_snapshot — the
-// list crawl itself never carries these for platforms whose photos only
-// surface on the detail page (e.g. zvg-portal's Foto.pdf render, see
-// crawlers/zvg-portal/list.ts vs. index.ts's applyDetail). Read-only, like the
-// Verkehrswert overlay: a cache miss just leaves the list-crawl value in place.
-async function overlaySnapshotPhotos(result: CrawlResult): Promise<void> {
-  const snapshot = await readAuctionSnapshot()
-  applySnapshotPhotosToAuctions(result.auctions, snapshot)
-}
-
-// Decorate auctions with the structured fields (property type + sizes) produced
-// by the enrich task. Read-only, like the Verkehrswert overlay: a cache miss
-// just leaves `extraction` undefined.
-async function overlayExtraction(result: CrawlResult): Promise<void> {
-  const cache = await readExtractionCache()
-  if (Object.keys(cache).length === 0) return
-  applyExtractionToAuctions(result.auctions, cache)
-}

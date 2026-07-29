@@ -1,7 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('~/server/tasks/import-fr-dvf-cache', () => ({ runImportFrDvfCache: vi.fn() }))
-
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.resetModules()
@@ -19,8 +17,7 @@ describe('/api/settings/external-data/fr-dvf-cache', () => {
     })))
     vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
 
-    const { runImportFrDvfCache } = await import('~/server/tasks/import-fr-dvf-cache')
-    vi.mocked(runImportFrDvfCache).mockResolvedValue({
+    const runTask = vi.fn().mockResolvedValue({ result: {
       csvPath: '/data/dvf.csv',
       cachePath: '/cache/fr-dvf.json',
       sourceVersion: 'dvf-2025',
@@ -28,16 +25,19 @@ describe('/api/settings/external-data/fr-dvf-cache', () => {
       normalized: 1,
       dropped: 1,
       generatedAt: '2026-07-26T00:00:00.000Z',
-    })
+    } })
+    vi.stubGlobal('runTask', runTask)
 
     const handler = (await import('./fr-dvf-cache.post')).default as unknown as (event: unknown) => Promise<unknown>
 
     await expect(handler({})).resolves.toMatchObject({ normalized: 1 })
-    expect(runImportFrDvfCache).toHaveBeenCalledWith({
-      csvPath: '/data/dvf.csv',
-      cachePath: '/cache/fr-dvf.json',
-      sourceVersion: 'dvf-2025',
-      generatedAt: '2026-07-26T00:00:00.000Z',
+    expect(runTask).toHaveBeenCalledWith('import-fr-dvf-cache', {
+      payload: {
+        csvPath: '/data/dvf.csv',
+        cachePath: '/cache/fr-dvf.json',
+        sourceVersion: 'dvf-2025',
+        generatedAt: '2026-07-26T00:00:00.000Z',
+      },
     })
   })
 

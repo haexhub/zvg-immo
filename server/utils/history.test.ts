@@ -52,6 +52,7 @@ describe('auctionToObservationRow', () => {
       currency: null,
       auction_date_iso: '2026-08-01T09:00:00.000Z',
       cancelled: false,
+      payload: auction(),
     })
   })
 

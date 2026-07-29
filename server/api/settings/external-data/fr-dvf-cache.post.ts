@@ -1,7 +1,6 @@
-import {
-  runImportFrDvfCache,
-  type ImportFrDvfCachePayload,
-  type ImportFrDvfCacheSummary,
+import type {
+  ImportFrDvfCachePayload,
+  ImportFrDvfCacheSummary,
 } from '~/server/tasks/import-fr-dvf-cache'
 
 export default defineEventHandler(async (event): Promise<ImportFrDvfCacheSummary> => {
@@ -18,5 +17,6 @@ export default defineEventHandler(async (event): Promise<ImportFrDvfCacheSummary
     generatedAt: typeof body.generatedAt === 'string' && body.generatedAt.trim() ? body.generatedAt : undefined,
   }
 
-  return await runImportFrDvfCache(payload)
+  const outcome = await runTask('import-fr-dvf-cache', { payload: { ...payload } }) as { result: ImportFrDvfCacheSummary }
+  return outcome.result
 })

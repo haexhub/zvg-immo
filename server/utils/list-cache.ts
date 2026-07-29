@@ -13,6 +13,12 @@ import { auctionKey } from '~/lib/auction-key'
 import { MULTI_PLATFORM } from '~/lib/auction-constants'
 import { ensureEnabledCountriesLoaded, isCountryEnabled } from '../crawlers/registry'
 import { getPool } from './db'
+import { normalizePublicAuctionLinks } from './public-auction-links'
+
+function normalizeResultLinks(result: CrawlResult): CrawlResult {
+  result.auctions.forEach(normalizePublicAuctionLinks)
+  return result
+}
 
 const COUNTRY_LIST_CACHE_VERSION: Partial<Record<string, number>> = {
   // v2: Sweden list rows moved from one national se/all cache to per-län
@@ -60,7 +66,7 @@ export async function readListCache(country: string, region: string): Promise<Cr
       [country, region],
     )
     const result = rows[0]?.result ?? null
-    return result && isFreshCountryListCache(country, result) ? result : null
+    return result && isFreshCountryListCache(country, result) ? normalizeResultLinks(result) : null
   } catch (err) {
     console.warn(`[list-cache] read ${country}/${region}: ${(err as Error).message}`)
     return null
@@ -152,7 +158,7 @@ export async function readMergedListCache(country?: string): Promise<CrawlResult
     // Same pause-must-hide-not-just-stop-refreshing rationale as readListCache.
     const results = rows
       .filter((r) => isCountryEnabled(r.country) && isFreshCountryListCache(r.country, r.result))
-      .map((r) => r.result)
+      .map((r) => normalizeResultLinks(r.result))
     if (results.length === 0) return null
 
     return {

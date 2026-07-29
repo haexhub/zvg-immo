@@ -282,6 +282,7 @@ describe('runExternalEnrichment', () => {
     })
 
     expect(summary.providerFailures).toBe(1)
+    expect(summary.errors).toEqual(['failing market für test/42: boom'])
     expect(summary.marketComparisons).toBe(1)
     expect(summary.written).toBe(1)
   })
@@ -391,6 +392,8 @@ describe('runExternalEnrichment', () => {
     expect(summary.hazards).toBe(0)
     expect(summary.locationContexts).toBe(1)
     expect(summary.written).toBe(1)
+    expect(summary.providerFailures).toBe(1)
+    expect(summary.errors[0]).toContain('nonexistent.geojson')
   })
 
   it('counts stale hazard results separately', async () => {
@@ -528,7 +531,7 @@ describe('runExternalEnrichment', () => {
     expect(contextAdapter.context).toHaveBeenCalledTimes(1)
 
     releaseFirst()
-    await expect(first).resolves.toMatchObject({ result: expect.objectContaining({ processed: 1 }) })
+    await expect(first).rejects.toThrow('external-enrichment wurde durch einen neueren Lauf beendet')
     await expect(second).resolves.toMatchObject({ result: expect.objectContaining({ processed: 1 }) })
     expect(contextAdapter.context).toHaveBeenCalledTimes(2)
   })

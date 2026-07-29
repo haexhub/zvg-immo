@@ -22,6 +22,7 @@ import {
   markLlmBatchJobResolved,
   type LlmBatchJob,
 } from '../utils/llm-batch-jobs'
+import { runExclusiveTask, throwIfTaskAborted } from '../utils/exclusive-task'
 
 const DEFAULT_GEMINI_FREE_BATCH_POLL_INTERVAL_HOURS = 6
 
@@ -104,12 +105,15 @@ export default defineTask({
     description: 'Poll in-flight LLM Batch API jobs and merge completed results into extraction_cache/auction_snapshot.',
   },
   async run() {
-    return { result: await runLlmBatchPoll() }
+    return await runExclusiveTask('llm-batch-poll', async (signal) => ({
+      result: await runLlmBatchPoll(signal),
+    }))
   },
 })
 
-export async function runLlmBatchPoll(): Promise<{ checked: number; merged: number }> {
+export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: number; merged: number }> {
   const jobs = await listPendingLlmBatchJobs()
+  throwIfTaskAborted(signal)
   if (jobs.length === 0) return { checked: 0, merged: 0 }
 
   const llmConfig = await readExtractionLlmConfig()
@@ -119,16 +123,19 @@ export async function runLlmBatchPoll(): Promise<{ checked: number; merged: numb
   }
 
   const cache = await readExtractionCache()
+  throwIfTaskAborted(signal)
   const at = new Date().toISOString()
   const now = Date.parse(at)
   let merged = 0
   let checked = 0
 
   for (const job of jobs) {
+    throwIfTaskAborted(signal)
     if (shouldSkipGeminiFreePoll(job, now)) continue
     checked++
     try {
       const poll = await pollLlmBatch(job.jobName, llmConfig)
+      throwIfTaskAborted(signal)
       await markLlmBatchJobChecked(job.jobName, at)
       if (poll.state === 'pending') continue
 
@@ -142,10 +149,12 @@ export async function runLlmBatchPoll(): Promise<{ checked: number; merged: numb
       }
 
       const results = await fetchLlmBatchResults(job.jobName, poll.resultFileName, llmConfig, job.customIdMap)
+      throwIfTaskAborted(signal)
       const snapshot = await readAuctionSnapshot()
       let cacheWriteFailed = false
 
       for (const { key, extraction } of results) {
+        throwIfTaskAborted(signal)
         if (!splitKey(key)) continue
         const priorEntry = cache[key]
         if (!priorEntry) continue

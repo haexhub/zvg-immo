@@ -378,6 +378,19 @@ describe('readAuctionSnapshot / writeAuctionSnapshot (Postgres-backed)', () => {
     expect(pool.query).toHaveBeenCalledTimes(1)
   })
 
+  it('surfaces a read failure and retries instead of pretending the snapshot is empty', async () => {
+    const { getPool } = await import('./db')
+    const query = vi.fn()
+      .mockRejectedValueOnce(new Error('database unavailable'))
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+    const { readAuctionSnapshot } = await import('./auction-snapshot')
+
+    await expect(readAuctionSnapshot()).rejects.toThrow('database unavailable')
+    await expect(readAuctionSnapshot()).resolves.toEqual({})
+    expect(query).toHaveBeenCalledTimes(2)
+  })
+
   it('is a no-op towards Postgres without a configured pool, but still updates the in-process cache', async () => {
     const { getPool } = await import('./db')
     vi.mocked(getPool).mockReturnValue(null)
@@ -403,12 +416,12 @@ describe('readAuctionSnapshot / writeAuctionSnapshot (Postgres-backed)', () => {
     expect(pool.upserted[0]?.auction.attachments).toEqual(prev.attachments)
   })
 
-  it('never throws when the upsert query fails', async () => {
+  it('surfaces an upsert failure so a run cannot report success after data loss', async () => {
     const { getPool } = await import('./db')
     vi.mocked(getPool).mockReturnValue({ query: vi.fn().mockRejectedValue(new Error('connection reset')) } as never)
     const { writeAuctionSnapshot } = await import('./auction-snapshot')
 
-    await expect(writeAuctionSnapshot([auction()])).resolves.toBeUndefined()
+    await expect(writeAuctionSnapshot([auction()])).rejects.toThrow('connection reset')
   })
 
   it('leaves an untouched platform\'s previous entry in place (row-level upsert, no carry-forward needed)', async () => {

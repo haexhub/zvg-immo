@@ -201,9 +201,9 @@ describe('upsertCurrentAuctions', () => {
     ])
   })
 
-  it('never throws when the query fails', async () => {
+  it('surfaces a query failure so a run cannot report success after data loss', async () => {
     const pool = { query: vi.fn().mockRejectedValue(new Error('connection reset')) }
     vi.mocked(getPool).mockReturnValue(pool as never)
-    await expect(upsertCurrentAuctions([makeAuction()], '2026-07-21T00:00:00.000Z')).resolves.toBeUndefined()
+    await expect(upsertCurrentAuctions([makeAuction()], '2026-07-21T00:00:00.000Z')).rejects.toThrow('connection reset')
   })
 })

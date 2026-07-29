@@ -1,5 +1,6 @@
 import { join } from 'node:path'
 import { importDvfCsvFileToCache } from '~/server/utils/external-data/fr-dvf-cache'
+import { runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-task'
 
 export interface ImportFrDvfCachePayload {
   csvPath?: string
@@ -26,7 +27,11 @@ export default defineTask({
     description: 'Import a French DVF CSV export into the local external-data market cache.',
   },
   async run(event) {
-    return { result: await runImportFrDvfCache((event?.payload ?? {}) as ImportFrDvfCachePayload) }
+    return await runExclusiveTask('import-fr-dvf-cache', async (signal) => {
+      const result = await runImportFrDvfCache((event?.payload ?? {}) as ImportFrDvfCachePayload)
+      throwIfTaskAborted(signal)
+      return { result }
+    })
   },
 })
 

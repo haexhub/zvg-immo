@@ -842,7 +842,12 @@ interface EnrichRunResult {
   photoExtractions: number
   photosTotal: number
   durationMs: number
-  externalEnrichmentQueued?: boolean
+  warning?: string | null
+  reprocess?: ReprocessResult
+  externalEnrichment?: {
+    providerFailures: number
+    errors: string[]
+  }
 }
 const countrySources = ref<CountrySourceSetting[]>([])
 const countrySourcesPending = ref(false)
@@ -1701,9 +1706,19 @@ onBeforeUnmount(stopProgressPolling)
               duration: Math.round(countryEnrichResult.durationMs / 1000),
             }) }}
           </p>
-          <p v-if="countryEnrichResult?.externalEnrichmentQueued" class="text-sm text-emerald-600 dark:text-emerald-500">
-            {{ $t('settings.sources.externalEnrichmentQueued') }}
+          <p v-if="countryEnrichResult?.warning" role="alert" class="text-sm text-amber-600 dark:text-amber-400">
+            {{ countryEnrichResult.warning }}
           </p>
+          <p v-if="countryEnrichResult?.reprocess?.warning" role="alert" class="text-sm text-amber-600 dark:text-amber-400">
+            {{ countryEnrichResult.reprocess.warning }}
+          </p>
+          <div
+            v-if="countryEnrichResult?.externalEnrichment?.errors?.length"
+            role="alert"
+            class="space-y-1 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+          >
+            <p v-for="message in countryEnrichResult.externalEnrichment.errors" :key="message">{{ message }}</p>
+          </div>
 
           <div v-if="llmBatchJobs?.enrichStatus" class="text-sm space-y-1">
             <p v-if="llmBatchJobs.enrichStatus.status === 'running'">
@@ -1726,6 +1741,9 @@ onBeforeUnmount(stopProgressPolling)
             </p>
             <p v-if="llmBatchJobs.enrichStatus.lastError" class="text-destructive">
               {{ $t('settings.sources.enrichStatusLastError', { message: llmBatchJobs.enrichStatus.lastError }) }}
+            </p>
+            <p v-if="llmBatchJobs.enrichStatus.lastWarning" class="text-amber-600 dark:text-amber-400">
+              {{ llmBatchJobs.enrichStatus.lastWarning }}
             </p>
           </div>
 

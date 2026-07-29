@@ -18,7 +18,7 @@ function applyDetail(auction: Auction, info: DetailInfo, landAbk: string): void 
 }
 
 async function enrichOne(auction: Auction): Promise<void> {
-  const landAbk = new URLSearchParams((auction.detailUrl ?? '').split('?')[1] ?? '').get('land_abk')
+  const landAbk = new URLSearchParams((auction.detailUrlUpstream ?? '').split('?')[1] ?? '').get('land_abk')
   // Missing land_abk / non-numeric externalId is permanent — nothing to fetch, ever.
   if (!landAbk || !/^\d+$/.test(auction.externalId)) return
   const r = await enrichInBatches([auction], landAbk, (a, info) => applyDetail(a, info, landAbk))

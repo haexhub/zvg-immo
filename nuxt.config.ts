@@ -256,11 +256,11 @@ export default defineNuxtConfig({
       '30 4 1 * *': ['import-eu-flood-risk-cache'],
     },
     routeRules: {
-      // /api/auctions caches inside the handler (defineCachedFunction) instead
-      // of an SWR route rule: the route-rule cache would also pin the graceful
-      // empty response a rate-limited crawl returns. The geo endpoint just
-      // decorates with cached lookups, so it must not be cached independently —
-      // that would freeze geocodedCount after the first hit.
+      // /api/auctions and /api/auctions-geo query Postgres per request and send
+      // no-store themselves: their results depend on the full filter/pagination
+      // query and, for the geo endpoint, on a geocode cache that grows while the
+      // client polls — an SWR route rule would freeze geocodedCount after the
+      // first hit.
       // /api/regions and /api/stats depend on the admin-enabled country scope
       // and must reflect changes immediately; those handlers send no-store.
       // WP-7: rate table refreshes at most every 24h anyway (exchange-rate.ts's

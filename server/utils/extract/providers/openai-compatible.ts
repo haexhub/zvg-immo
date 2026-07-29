@@ -4,7 +4,7 @@
 // is a baseUrl/apiKey/model config change, never a new class.
 
 import type { ContentPart, ExtractionProvider, ExtractionRequest, LlmConfig } from '../llm'
-import { isRateLimitError, UNIVERSAL_AUCTION_SCHEMA_NAME } from '../llm'
+import { isRateLimitError, LlmProviderError, UNIVERSAL_AUCTION_SCHEMA_NAME } from '../llm'
 
 type OpenAiContentPart =
   | { type: 'text'; text: string }
@@ -78,9 +78,10 @@ export class OpenAiCompatibleProvider implements ExtractionProvider {
       // Rethrow a rate limit/quota error instead of swallowing it to null —
       // see isRateLimitError() — so it isn't counted toward the retry-lockout.
       if (isRateLimitError(err)) throw err
-      console.warn(`[extract/llm] request failed: ${(err as Error).message}`)
-      return null
+      throw new LlmProviderError('openai-compatible', (err as Error).message, { cause: err })
     }
-    return parseOpenAiExtractionResponse(resp)
+    const parsed = parseOpenAiExtractionResponse(resp)
+    if (!parsed) throw new LlmProviderError('openai-compatible', 'ungültige oder leere Provider-Antwort')
+    return parsed
   }
 }

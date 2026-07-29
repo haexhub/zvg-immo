@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import type { Auction, CrawlResult } from '~/types/auction'
+import type { AuctionSearchResponse, AuctionSummary } from '~/server/api/auctions.get'
 import type { GeoAuction, GeoCrawlResult } from '~/server/api/auctions-geo.get'
 import type { CountryEntry } from '~/server/crawlers/registry'
 import { ALL_SCOPE, isAllScope } from '~/lib/auction-constants'
 import { auctionKey } from '~/lib/auction-key'
-import { filterAuctions, scopeByCountryRegion, auctionCategory, type AuctionFilters } from '~/lib/auction-filters'
 import type { SavedSearch } from '~/server/api/saved-searches/index.get'
 import type { WatchlistItem } from '~/server/api/watchlist/index.get'
 import { useMediaQuery, refDebounced } from '@vueuse/core'
+import { apiErrorMessage } from '~/lib/api-error'
 
 definePageMeta({ layout: 'search' })
 
@@ -106,30 +106,24 @@ watch(selectedCountries, () => {
   selectedRegionKeys.value = selectedRegionKeys.value.filter((k) => valid.has(k))
 })
 
-// The /api/auctions and /api/auctions-geo endpoints only understand a single
-// {country, region} pair (or ALL_SCOPE). For an actual multi-select we fetch the
-// broadest dataset that still covers every selection and filter the rest
-// client-side in applyFilters() — exactly one country picked can still use
-// the fast region- or country-scoped disk cache; anything broader (0 or 2+
-// countries) falls back to the merged ALL_SCOPE cache, which is itself disk-cached
-// and fast, just less scoped.
-const serverCountry = computed(() => (selectedCountries.value.length === 1 ? selectedCountries.value[0]! : ALL_SCOPE))
-const serverRegion = computed(() => {
-  if (selectedCountries.value.length !== 1) return ALL_SCOPE
-  const country = selectedCountries.value[0]!
-  const codes = selectedRegionKeys.value
-    .filter((k) => k.startsWith(`${country}:`))
-    .map((k) => k.slice(country.length + 1))
-  return codes.length === 1 ? codes[0]! : ALL_SCOPE
-})
-
 const queryParams = computed(() => ({
-  country: serverCountry.value,
-  region: serverRegion.value,
+  ...route.query,
+  country: selectedCountries.value.length ? selectedCountries.value.join(',') : undefined,
+  regionNames: selectedRegionKeys.value
+    .map((key) => {
+      const region = availableRegions.value.find((entry) => entry.key === key)
+      return region ? `${region.country}:${region.name}` : null
+    })
+    .filter((value): value is string => value != null)
+    .join(',') || undefined,
+  page: 1,
+  pageSize: 30,
 }))
 
-// Lazy fetch so SSR doesn't block on a cold multi-region crawl.
-const { data, pending, error, refresh } = useLazyFetch<CrawlResult | null>('/api/auctions', {
+// Search results are filtered and paginated in Postgres. Only compact card
+// summaries reach the browser; detail text, documents and galleries stay on
+// the per-auction endpoint.
+const { data, pending, error, refresh } = useLazyFetch<AuctionSearchResponse | null>('/api/auctions', {
   query: queryParams,
   default: () => null,
 })
@@ -157,11 +151,10 @@ const {
   error: geoError,
   execute: loadGeo,
 } = useFetch<GeoCrawlResult | null>('/api/auctions-geo', {
-  query: {
-    country: serverCountry,
-    region: serverRegion,
+  query: computed(() => ({
+    ...queryParams.value,
     fetch: '0',
-  },
+  })),
   default: () => null,
   immediate: false,
 })
@@ -178,39 +171,38 @@ watch(mapVisible, (visible) => {
 const geocodingInProgress = computed(() => {
   if (!geoData.value) return false
   const done = geoData.value.geocodedCount + geoData.value.unresolvableCount
-  return done < geoData.value.auctions.length
+  return done < geoData.value.total
 })
 
 let geoPollTimer: ReturnType<typeof setInterval> | null = null
 let pollInFlight = false
+const geoBackgroundError = ref<{ message: string } | null>(null)
 async function pollGeoOnce(): Promise<void> {
   // Direct $fetch bypasses the useFetch payload cache that holds the first
   // hydration snapshot — refresh() alone keeps returning the stale value.
   // Snapshot the selection so a stale response never overwrites data the
   // user requested for a different country/region mid-flight.
-  const country = serverCountry.value
-  const region = serverRegion.value
+  const requestQuery = { ...queryParams.value }
   const fetchParam = shouldFetchMissingGeo.value ? '1' : '0'
   pollInFlight = true
+  geoBackgroundError.value = null
   try {
     const fresh = await $fetch<GeoCrawlResult>('/api/auctions-geo', {
       query: {
-        country,
-        region,
+        ...requestQuery,
         fetch: fetchParam,
       },
       // Bypass the HTTP cache so each poll sees the growing geocode cache.
       cache: 'no-store',
     })
     if (
-      country === serverCountry.value
-      && region === serverRegion.value
+      JSON.stringify(requestQuery) === JSON.stringify(queryParams.value)
       && fetchParam === (shouldFetchMissingGeo.value ? '1' : '0')
     ) {
       geoData.value = fresh
     }
-  } catch {
-    // Ignore transient poll errors; the next tick will retry.
+  } catch (err) {
+    geoBackgroundError.value = { message: apiErrorMessage(err, t('search.geoError')) }
   } finally {
     pollInFlight = false
   }
@@ -365,45 +357,15 @@ const headerLabel = computed(() => {
     : selectedCountryLabel.value
 })
 
-// Matches the fetched data's `region` field (a display name, e.g. "Sachsen")
-// against the selected region keys (`${countryCode}:${regionCode}` pairs) —
-// needed because the API/cache only scope by a single country+region and
-// selecting several regions (or several countries) requires filtering the
-// broader fetch client-side.
-const selectedRegionNameKeys = computed<Set<string> | null>(() => {
-  if (selectedRegionKeys.value.length === 0) return null
-  const set = new Set<string>()
-  for (const key of selectedRegionKeys.value) {
-    const r = availableRegions.value.find((r) => r.key === key)
-    if (r) set.add(`${r.country}:${r.name}`)
-  }
-  return set
-})
-
-// Restricts to the selected countries/regions only — needed because a
-// multi-select (or "all") fetch returns a broader dataset than the current
-// selection. Used both as the base for the full filterAuctions() pass and for
-// deriving the court/Objektart filter options, which must reflect only the
-// selected countries/regions, not everything that happened to be fetched.
-const scopedAuctions = computed<Auction[]>(() => (
-  data.value ? scopeByCountryRegion(data.value.auctions, selectedCountries.value, selectedRegionNameKeys.value) : []
-))
-
 const courts = computed<string[]>(() => {
-  return [...new Set(scopedAuctions.value.map((a) => a.authority).filter(Boolean))].sort()
+  return data.value?.facets.authorities ?? []
 })
 
 // Counts of normalized Objektart categories. Sorted by descending count so
 // the most common categories show up first in the dropdown.
 const kategorienMitCount = computed<{ id: string; label: string; count: number }[]>(() => {
-  const counts = new Map<string, number>()
-  for (const a of scopedAuctions.value) {
-    if (a.cancelled) continue
-    const id = auctionCategory(a).id
-    counts.set(id, (counts.get(id) ?? 0) + 1)
-  }
-  return [...counts.entries()]
-    .map(([id, count]) => ({ id, label: propertyTypeLabel(id), count }))
+  return (data.value?.facets.categories ?? [])
+    .map(({ id, count }) => ({ id, label: propertyTypeLabel(id), count }))
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, locale.value))
 })
 
@@ -437,39 +399,11 @@ function numOrNull(v: unknown): number | null {
   return typeof v === 'number' && !Number.isNaN(v) ? v : null
 }
 
-// Explicit filter object for lib/auction-filters.ts's pure filterAuctions() —
-// replaces the ~12 reactive refs applyFilters() used to close over directly.
-const currentFilters = computed<AuctionFilters>(() => ({
-  countries: selectedCountries.value,
-  regionNameKeys: selectedRegionNameKeys.value,
-  search: debouncedSearch.value,
-  authority: authorityFilter.value,
-  category: categoryFilter.value,
-  condition: conditionFilter.value,
-  features: featuresFilter.value,
-  onlyWithPhotos: onlyWithPhotos.value,
-  includeCancelled: includeCancelled.value,
-  hideRulesOnly: hideRulesOnly.value,
-  priceMin: numOrNull(priceMin.value),
-  priceMax: numOrNull(priceMax.value),
-  landMin: numOrNull(landAreaMin.value),
-  landMax: numOrNull(landAreaMax.value),
-  livMin: numOrNull(livingAreaMin.value),
-  livMax: numOrNull(livingAreaMax.value),
-  yearBuiltMin: numOrNull(yearBuiltMin.value),
-  yearBuiltMax: numOrNull(yearBuiltMax.value),
-  renovationYearMin: numOrNull(renovationYearMin.value),
-  renovationYearMax: numOrNull(renovationYearMax.value),
-}))
-
-const filtered = computed<Auction[]>(() => {
-  if (!data.value) return []
-  return filterAuctions(data.value.auctions, currentFilters.value)
-})
+const filtered = computed<AuctionSummary[]>(() => data.value?.auctions ?? [])
 
 const filteredGeo = computed<GeoAuction[]>(() => {
   if (!geoData.value) return []
-  return filterAuctions<GeoAuction>(geoData.value.auctions, currentFilters.value).filter((a) => a.lat != null && a.lng != null)
+  return geoData.value.auctions
 })
 
 // "Kartenbereich": when on, the list is restricted to auctions whose
@@ -481,53 +415,45 @@ const mapBounds = ref<MapBounds | null>(null)
 const boundToMap = ref(route.query.boundToMap === '1')
 const sortBy = ref<SortBy>(querySortBy())
 
-const listBase = computed<Auction[]>(() => {
+const listBase = computed<AuctionSummary[]>(() => {
   if (boundToMap.value && mapBounds.value) {
     const b = mapBounds.value
-    return filteredGeo.value.filter((a) =>
-      a.lat! >= b.south && a.lat! <= b.north && a.lng! >= b.west && a.lng! <= b.east)
+    const visibleKeys = new Set(filteredGeo.value
+      .filter((a) => a.lat >= b.south && a.lat <= b.north && a.lng >= b.west && a.lng <= b.east)
+      .map(auctionKey))
+    return filtered.value.filter((auction) => visibleKeys.has(auctionKey(auction)))
   }
   return filtered.value
 })
-
-// Nulls sort last regardless of direction.
-function auctionDateKey(a: Auction): number {
-  if (!a.auctionDateIso) return Number.POSITIVE_INFINITY
-  const t = Date.parse(a.auctionDateIso)
-  return Number.isNaN(t) ? Number.POSITIVE_INFINITY : t
-}
-// "Fotos zuerst" only applies to the default sort — an explicit price/date
-// choice is the user overriding relevance ordering, so it stays untouched.
-function hasImages(a: Auction): boolean {
-  return a.photoCount > 0 || !!a.thumbnailUrl
-}
-const sortedList = computed<Auction[]>(() => {
-  const arr = listBase.value
-  switch (sortBy.value) {
-    case 'dateAsc':
-      return [...arr].sort((a, b) => auctionDateKey(a) - auctionDateKey(b))
-    case 'priceAsc':
-      return [...arr].sort((a, b) => (a.marketValueEur ?? Number.POSITIVE_INFINITY) - (b.marketValueEur ?? Number.POSITIVE_INFINITY))
-    case 'priceDesc':
-      return [...arr].sort((a, b) => (b.marketValueEur ?? Number.NEGATIVE_INFINITY) - (a.marketValueEur ?? Number.NEGATIVE_INFINITY))
-    default:
-      // Stable sort: auctions keep their relative order within each group.
-      return [...arr].sort((a, b) => Number(hasImages(b)) - Number(hasImages(a)))
-  }
-})
+const sortedList = computed<AuctionSummary[]>(() => listBase.value)
 
 // The list view used to render every filtered auction as a full card in one
 // go — with the "all countries" default that's ~14.7k cards (~45MB of SSR
 // HTML) before the client even hydrates and switches to the map. Page it
 // instead: render a bounded slice and grow it on demand.
 const LIST_PAGE_SIZE = 30
-const visibleCount = ref(LIST_PAGE_SIZE)
-watch(sortedList, () => {
-  visibleCount.value = LIST_PAGE_SIZE
-})
-const visibleAuctions = computed<Auction[]>(() => sortedList.value.slice(0, visibleCount.value))
-function loadMore(): void {
-  visibleCount.value += LIST_PAGE_SIZE
+const loadMorePending = ref(false)
+const listActionError = ref<string | null>(null)
+const visibleAuctions = computed<AuctionSummary[]>(() => sortedList.value)
+async function loadMore(): Promise<void> {
+  if (!data.value || loadMorePending.value || data.value.auctions.length >= data.value.total) return
+  loadMorePending.value = true
+  listActionError.value = null
+  try {
+    const nextPage = Math.floor(data.value.auctions.length / LIST_PAGE_SIZE) + 1
+    const next = await $fetch<AuctionSearchResponse>('/api/auctions', {
+      query: { ...queryParams.value, page: nextPage, pageSize: LIST_PAGE_SIZE },
+      cache: 'no-store',
+    })
+    data.value = {
+      ...next,
+      auctions: [...data.value.auctions, ...next.auctions],
+    }
+  } catch (err) {
+    listActionError.value = apiErrorMessage(err, 'Weitere Auktionen konnten nicht geladen werden.')
+  } finally {
+    loadMorePending.value = false
+  }
 }
 
 const hoveredAuctionKey = ref<string | null>(null)
@@ -535,11 +461,9 @@ const selectedAuctionKey = ref<string | null>(null)
 const scrollTargetKey = ref<string | null>(null)
 const activeAuctionKey = computed(() => hoveredAuctionKey.value ?? selectedAuctionKey.value)
 
+// The list renders the whole server page, so revealing an auction is just a
+// scroll — no visibleCount growing like the client-side paging used to need.
 function revealAuctionInList(key: string): void {
-  const idx = sortedList.value.findIndex((a) => auctionKey(a) === key)
-  if (idx >= 0 && idx >= visibleCount.value) {
-    visibleCount.value = idx + 1
-  }
   scrollTargetKey.value = key
 }
 
@@ -572,11 +496,10 @@ const geoFitKey = computed(() => `${selectedCountries.value.join(',')}:${selecte
 
 const totals = computed(() => {
   if (!data.value) return { gesamt: 0, aktiv: 0, cancelled: 0 }
-  const cancelled = data.value.auctions.filter((a) => a.cancelled).length
   return {
-    gesamt: data.value.auctions.length,
-    aktiv: data.value.auctions.length - cancelled,
-    cancelled,
+    gesamt: data.value.total,
+    aktiv: data.value.active,
+    cancelled: data.value.cancelled,
   }
 })
 
@@ -725,13 +648,13 @@ async function loadWatchlist(): Promise<void> {
   try {
     const items = await authFetch<WatchlistItem[]>('/api/watchlist')
     watchlistIds.value = new Map(items.map((i) => [auctionKey(i), i.id]))
-  } catch {
-    // Ignore transient load errors — the star just falls back to "off".
+  } catch (err) {
+    listActionError.value = apiErrorMessage(err, 'Die Merkliste konnte nicht geladen werden.')
   }
 }
 watch(user, () => loadWatchlist(), { immediate: true })
 
-async function toggleWatchlist(a: Auction): Promise<void> {
+async function toggleWatchlist(a: AuctionSummary): Promise<void> {
   if (!user.value) return
   const key = auctionKey(a)
   const existingId = watchlistIds.value.get(key)
@@ -750,8 +673,8 @@ async function toggleWatchlist(a: Auction): Promise<void> {
       next.set(key, item.id)
       watchlistIds.value = next
     }
-  } catch {
-    // Ignore transient errors; the star simply doesn't toggle this click.
+  } catch (err) {
+    listActionError.value = apiErrorMessage(err, 'Die Merkliste konnte nicht geändert werden.')
   }
 }
 </script>
@@ -774,7 +697,7 @@ async function toggleWatchlist(a: Auction): Promise<void> {
       v-model:search="search"
       v-model:sort-by="sortBy"
       v-model:bound-to-map="boundToMap"
-      :filtered-count="sortedList.length"
+      :filtered-count="data?.total ?? 0"
       :geo-data="geoData"
       :filtered-geo-count="filteredGeo.length"
       :geocoding-in-progress="geocodingInProgress"
@@ -788,6 +711,9 @@ async function toggleWatchlist(a: Auction): Promise<void> {
     <p v-if="pending && !data" class="py-12 text-center text-muted-foreground">{{ $t('search.loadingData') }}</p>
     <p v-else-if="error" class="py-12 text-center text-destructive">
       {{ $t('search.loadError', { msg: error.statusMessage || error.message }) }}
+    </p>
+    <p v-if="listActionError" role="alert" class="mb-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+      {{ listActionError }}
     </p>
     <p
       v-if="selectedCountries.length === 0 && pending"
@@ -805,7 +731,7 @@ async function toggleWatchlist(a: Auction): Promise<void> {
           :fit-key="geoFitKey"
           :geo-pending="geoPending"
           :has-geo-data="!!geoData"
-          :geo-error="geoError"
+          :geo-error="geoError ?? geoBackgroundError"
           :active-auction-key="activeAuctionKey"
           @bounds-change="mapBounds = $event"
           @auction-hover="handleMapAuctionHover"
@@ -814,7 +740,7 @@ async function toggleWatchlist(a: Auction): Promise<void> {
         <SearchAuctionListPane
           class="flex-1 min-h-0"
           :auctions="visibleAuctions"
-          :total-count="sortedList.length"
+          :total-count="boundToMap ? sortedList.length : (data?.total ?? 0)"
           :pending="pending"
           :logged-in="!!user"
           :watchlist-ids="watchlistIds"
@@ -829,7 +755,7 @@ async function toggleWatchlist(a: Auction): Promise<void> {
         v-else
         v-model="view"
         :auctions="visibleAuctions"
-        :total-count="sortedList.length"
+        :total-count="boundToMap ? sortedList.length : (data?.total ?? 0)"
         :pending="pending"
         :logged-in="!!user"
         :watchlist-ids="watchlistIds"
@@ -840,7 +766,7 @@ async function toggleWatchlist(a: Auction): Promise<void> {
         :geo-fit-key="geoFitKey"
         :geo-pending="geoPending"
         :geo-data="geoData"
-        :geo-error="geoError"
+        :geo-error="geoError ?? geoBackgroundError"
         @toggle-watchlist="toggleWatchlist"
         @load-more="loadMore"
         @bounds-change="mapBounds = $event"
