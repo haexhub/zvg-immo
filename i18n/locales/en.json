@@ -311,7 +311,9 @@
       "llmStatusProgress": "{processed}/{candidatesTotal} processed, {llmCalls} LLM calls, {skipped} skipped",
       "externalStatusRunning": "Location scoring running since {at} …",
       "externalStatusLastRun": "Last location scoring: {at} — {processed} checked, {written} stored, {duration}s.",
-      "externalStatusLastError": "Location scoring last failed: {message}"
+      "externalStatusLastError": "Location scoring last failed: {message}",
+      "offloadStatusLastRun": "Photos offloaded: {at} — {removed} file(s), {freedMb} MB freed locally.",
+      "offloadStatusLastError": "Photo offload last failed: {message}"
     },
     "externalData": {
       "title": "External data sources",

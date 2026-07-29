@@ -758,6 +758,7 @@ interface LlmBatchJobsOverview {
   reprocessStatus: TaskRunStatus
   enrichStatus: TaskRunStatus
   externalEnrichmentStatus: TaskRunStatus
+  offloadImagesStatus: TaskRunStatus
 }
 const reprocessLimit = ref('10')
 const reprocessCountry = ref('')
@@ -1790,6 +1791,22 @@ onBeforeUnmount(stopProgressPolling)
             </p>
             <p v-if="llmBatchJobs.reprocessStatus.lastLlmError" class="text-destructive">
               {{ $t('settings.sources.llmStatusLastLlmError', { message: llmBatchJobs.reprocessStatus.lastLlmError }) }}
+            </p>
+          </div>
+
+          <div v-if="llmBatchJobs?.offloadImagesStatus?.finishedAt" class="text-sm space-y-1">
+            <p class="text-muted-foreground">
+              {{ $t('settings.sources.offloadStatusLastRun', {
+                at: formatBatchDate(llmBatchJobs.offloadImagesStatus.finishedAt),
+                removed: llmBatchJobs.offloadImagesStatus.lastResult?.removed ?? 0,
+                freedMb: Math.round((llmBatchJobs.offloadImagesStatus.lastResult?.freedBytes ?? 0) / 1024 / 1024),
+              }) }}
+            </p>
+            <p v-if="llmBatchJobs.offloadImagesStatus.lastWarning" role="alert" class="text-amber-600 dark:text-amber-400">
+              {{ llmBatchJobs.offloadImagesStatus.lastWarning }}
+            </p>
+            <p v-if="llmBatchJobs.offloadImagesStatus.lastError" role="alert" class="text-destructive">
+              {{ $t('settings.sources.offloadStatusLastError', { message: llmBatchJobs.offloadImagesStatus.lastError }) }}
             </p>
           </div>
 

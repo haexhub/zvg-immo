@@ -59,6 +59,9 @@ export interface LlmBatchJobsOverview {
   // The external market/hazard overlay task's status. /settings triggers it
   // detached, so this is the only place its failures surface.
   externalEnrichmentStatus: TaskRunStatus
+  // Photo offload to the images bucket — scheduled only, so its status is the
+  // one place to see whether the server volume is actually being drained.
+  offloadImagesStatus: TaskRunStatus
 }
 
 const MAX_KEYS_PER_GROUP = 200
@@ -90,13 +93,22 @@ function hasMissingLlmFields(entry: AuctionExtraction): boolean {
 }
 
 export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
-  const [jobs, recentJobs, capabilities, reprocessStatus, enrichStatus, externalEnrichmentStatus] = await Promise.all([
+  const [
+    jobs,
+    recentJobs,
+    capabilities,
+    reprocessStatus,
+    enrichStatus,
+    externalEnrichmentStatus,
+    offloadImagesStatus,
+  ] = await Promise.all([
     listPendingLlmBatchJobs(),
     listRecentLlmBatchJobs(20),
     getAllLlmBatchCapabilities(),
     getTaskRunStatus('reprocess'),
     getTaskRunStatus('enrich'),
     getTaskRunStatus('external-enrichment'),
+    getTaskRunStatus('offload-images'),
   ])
   // supportsLlmBatch() gates gemini-native on isGeminiBatchTierPaid() (see
   // llm-batch.ts), so on the free tier a real batch submit never happens and
@@ -192,5 +204,6 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
     reprocessStatus,
     enrichStatus,
     externalEnrichmentStatus,
+    offloadImagesStatus,
   }
 })

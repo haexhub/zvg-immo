@@ -265,6 +265,12 @@ export default defineNuxtConfig({
       // New fire seasons land in the source roughly annually, so monthly is
       // a courtesy re-pull, not a rate-limit concern.
       '0 5 1 * *': ['import-copernicus-effis-cache'],
+      // Daily at a quiet hour: move ended auctions' cached photos into the
+      // images bucket and drop the local copies (server/tasks/offload-images.ts).
+      // The local image cache is by far the largest thing on the server volume,
+      // and it only ever grows — every past auction keeps its photos forever.
+      // Inert until NUXT_IMAGES_BUCKET is configured.
+      '45 4 * * *': ['offload-images'],
     },
     routeRules: {
       // /api/auctions and /api/auctions-geo query Postgres per request and send
