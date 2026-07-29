@@ -53,7 +53,7 @@ describe('resolveExternalDataSourceConfig', () => {
   it('falls back to the field default when neither DB nor env is set', () => {
     const resolved = resolveExternalDataSourceConfig(source, {}, {})
     expect(resolved.values.endpoint).toBe('')
-    expect(resolved.values.timeoutMs).toBe(20_000)
+    expect(resolved.values.timeoutMs).toBe(120_000)
     expect(resolved.isConfigured).toBe(false)
   })
 

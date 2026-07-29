@@ -182,7 +182,10 @@ export const EXTERNAL_DATA_SOURCES: readonly ExternalDataSource[] = [
         type: 'number',
         runtimeConfigKey: 'osmContextTimeoutMs',
         envVar: 'NUXT_EXTERNAL_DATA_OSM_CONTEXT_TIMEOUT_MS',
-        defaultValue: 20_000,
+        // Doubles as the query's own `[timeout:]`, so it must exceed the
+        // server-side execution time — see DEFAULT_TIMEOUT_MS in
+        // osm-location-context.ts.
+        defaultValue: 120_000,
       },
     ],
   },
