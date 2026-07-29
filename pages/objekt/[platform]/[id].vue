@@ -13,6 +13,7 @@ import type {
   LocationDemographicContext,
   LocationEnvironmentContext,
   LocationMobilityContext,
+  LocationNoiseObservation,
   NearbyPlace,
   NearbyPlaceKind,
   NeighborhoodContext,
@@ -348,6 +349,8 @@ const locationMobility = computed(() => locationContext.value?.mobility ?? null)
 const locationAmenities = computed(() => locationContext.value?.amenities ?? [])
 const locationQuality = computed(() => locationContext.value?.quality ?? null)
 const locationEnvironment = computed(() => locationContext.value?.environment ?? null)
+// Written by the EEA noise enrichment but, until now, read by nothing.
+const reportedNoise = computed(() => locationEnvironment.value?.reportedNoise ?? [])
 const locationDemographics = computed(() => locationContext.value?.demographics ?? null)
 const neighborhoodContext = computed(() => locationContext.value?.neighborhood ?? null)
 const neighborhoodNotes = computed(() => neighborhoodContext.value?.notes ?? [])
@@ -446,6 +449,12 @@ function noisyRoadLevelLabel(level: LocationEnvironmentContext['noisyRoadLevel']
 
 function aviationNoiseLevelLabel(level: LocationEnvironmentContext['aviationNoiseLevel']): string {
   return t(`objektDetail.aviationNoiseLevel.${level}`)
+}
+
+/** "Strassenverkehr (Tag-Abend-Nacht)" — the source/indicator pair the EEA
+ *  contour layer was read from. bandLabel carries the dB range itself. */
+function noiseObservationLabel(observation: LocationNoiseObservation): string {
+  return `${t(`objektDetail.noiseSource.${observation.source}`)} (${t(`objektDetail.noiseIndicator.${observation.indicator}`)})`
 }
 
 function demographicSignalLabel(level: LocationDemographicContext['youthSignal']): string {
@@ -1324,6 +1333,24 @@ useHead(() => ({
                     <dd class="font-medium tabular-nums">{{ locationEnvironment.industrialCountWithin3000m.toLocaleString(intlLocale) }}</dd>
                   </div>
                 </dl>
+                <div v-if="reportedNoise.length" class="space-y-2">
+                  <h3 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    {{ $t('objektDetail.reportedNoiseTitle') }}
+                  </h3>
+                  <ul class="divide-y rounded-md border text-sm">
+                    <li
+                      v-for="observation in reportedNoise"
+                      :key="`${observation.source}-${observation.indicator}`"
+                      class="flex items-center justify-between gap-3 px-3 py-2"
+                    >
+                      <span>{{ noiseObservationLabel(observation) }}</span>
+                      <span class="shrink-0 font-medium tabular-nums">{{ observation.bandLabel }}</span>
+                    </li>
+                  </ul>
+                  <p class="text-xs text-muted-foreground">
+                    {{ $t('objektDetail.reportedNoiseHint') }}
+                  </p>
+                </div>
                 <ul v-if="locationEnvironment.riskSignals.length" class="list-disc list-inside space-y-1 text-xs text-muted-foreground">
                   <li v-for="(item, i) in locationEnvironment.riskSignals" :key="i">{{ environmentSignalLabel(item) }}</li>
                 </ul>

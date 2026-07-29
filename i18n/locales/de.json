@@ -867,6 +867,18 @@
       "high": "hoch",
       "unknown": "unbekannt"
     },
+    "reportedNoiseTitle": "Gemeldete Lärmbelastung (EU-Umgebungslärmrichtlinie)",
+    "reportedNoiseHint": "Amtlich gemeldete Lärmkonturen der EU-Umgebungslärmrichtlinie. Nur für kartierte Ballungsräume und Hauptverkehrswege verfügbar.",
+    "noiseSource": {
+      "road": "Straßenverkehr",
+      "rail": "Schienenverkehr",
+      "aviation": "Luftverkehr",
+      "industry": "Industrie"
+    },
+    "noiseIndicator": {
+      "lden": "Tag-Abend-Nacht",
+      "lnight": "Nacht"
+    },
     "demographicSignalLevel": {
       "low": "schwach",
       "medium": "mittel",
