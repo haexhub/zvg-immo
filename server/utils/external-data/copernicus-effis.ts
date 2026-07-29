@@ -100,15 +100,22 @@ export const COPERNICUS_EFFIS_WFS_URL = 'https://maps.effis.emergency.copernicus
 const EFFIS_SOURCE = EXTERNAL_DATA_SOURCES.find((source) => source.id === 'copernicus-effis')!
 // EFFIS's own "Forest Fires in Europe" annual reports define a "large fire"
 // as one burning more than 500 ha — the only publicly documented severity
-// boundary for this dataset, so severity reuses that threshold rather than
-// an invented scale. Below the medium threshold, or when AREA_HA is missing,
-// severity is 'unknown' rather than guessed.
+// boundary for this dataset, so 'high' reuses that threshold rather than an
+// invented one. 'medium'/'low' below it are this adapter's own bucketing
+// (no EFFIS-documented boundary backs the 50 ha split) purely so a known-but-
+// small burnt area doesn't read the same as one with no area figure at all;
+// only a missing AREA_HA maps to 'unknown'.
 const LARGE_FIRE_HA = 500
 const MEDIUM_FIRE_HA = 50
 
 export async function readBurntAreaCache(path: string, sourceVersion?: string): Promise<BurntAreaCollection> {
-  const raw = JSON.parse(await readFile(path, 'utf8')) as BurntAreaCollection
-  return { ...raw, sourceVersion: sourceVersion ?? raw.sourceVersion }
+  const parsed = JSON.parse(await readFile(path, 'utf8')) as Partial<BurntAreaCollection> | null
+  const zones = Array.isArray(parsed?.zones) ? parsed.zones : []
+  return {
+    sourceVersion: sourceVersion ?? parsed?.sourceVersion ?? 'unknown',
+    generatedAt: parsed?.generatedAt ?? new Date(0).toISOString(),
+    zones,
+  }
 }
 
 /** Parses a WFS GetFeature GML3 response for modis.ba.poly into normalized

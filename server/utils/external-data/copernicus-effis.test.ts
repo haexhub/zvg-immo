@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -259,5 +259,20 @@ describe('importCopernicusEffisBurntAreaCache', () => {
       serviceUrl: 'https://example.test/effis',
       fetchImpl: fetchImpl as unknown as typeof fetch,
     })).rejects.toThrow('500')
+  })
+})
+
+describe('readBurntAreaCache', () => {
+  it('degrades a malformed cache file to zero zones instead of throwing', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'zvg-effis-'))
+    const cachePath = join(tmp, 'copernicus-effis.json')
+    await writeFile(cachePath, JSON.stringify({}), 'utf8')
+
+    const collection = await readBurntAreaCache(cachePath)
+    expect(collection.zones).toEqual([])
+    expect(buildWildfireHazardAssessment(auction(), collection, { checkedAt })).toMatchObject({
+      status: 'unknown',
+      severity: 'unknown',
+    })
   })
 })

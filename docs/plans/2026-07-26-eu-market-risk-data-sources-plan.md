@@ -307,9 +307,10 @@ Géorisques (FR, PPRN) and HORA/Gefahrenzonenplan (AT). The registry already ref
    exactly (reusing its `pointInPolygon`/`distanceToPolygonMeters`). This is a static/slowly-changing
    susceptibility signal — new fire seasons land in the source roughly annually — not the short-TTL
    forecast this plan envisioned; that gap is intentional, not an oversight, and is why the source's
-   own registry label calls it out as "MODIS Burnt Area", not "fire danger". Severity reuses EFFIS's
-   own public "large fire" (>500 ha) threshold from its annual reports rather than an invented scale,
-   and is `unknown` when the matched zone carries no `AREA_HA`. No UI changes were needed: the
+   own registry label calls it out as "MODIS Burnt Area", not "fire danger". `high` severity reuses
+   EFFIS's own public "large fire" (>500 ha) threshold from its annual reports; `medium`/`low` below
+   that are this adapter's own bucketing (no EFFIS-documented boundary backs the split), and severity
+   is `unknown` only when the matched zone carries no `AREA_HA`. No UI changes were needed: the
    "Naturgefahren" card and its icon/label/status/severity translations were already generic across
    every `HazardKind` since WP1/WP4, wildfire included.
 
