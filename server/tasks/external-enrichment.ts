@@ -11,6 +11,7 @@ import {
 import { createDvfFileMarketAdapter } from '~/server/utils/external-data/fr-dvf-cache'
 import { createEuFloodRiskFileAdapter } from '~/server/utils/external-data/eu-flood-risk'
 import { createEeaEnvironmentalNoiseEnhancer } from '~/server/utils/external-data/eea-environmental-noise'
+import { createCamsAirQualityEnhancer } from '~/server/utils/external-data/cams-air-quality'
 import { createOsmLocationContextAdapter } from '~/server/utils/external-data/osm-location-context'
 import {
   getStoredExternalDataSourceConfig,
@@ -358,6 +359,14 @@ async function defaultLocationContextAdapters(db: Pool | null, checkedAt: string
       checkedAt,
       serviceBaseUrl: String(eeaValues.serviceBaseUrl),
       timeoutMs: Number(eeaValues.timeoutMs),
+    }))
+  }
+  const airQualityValues = await resolvedSourceValues(db, 'cams-air-quality')
+  if (airQualityValues) {
+    enhancers.push(createCamsAirQualityEnhancer({
+      checkedAt,
+      serviceUrl: String(airQualityValues.serviceUrl),
+      timeoutMs: Number(airQualityValues.timeoutMs),
     }))
   }
   return [withLocationContextEnhancers(osmAdapter, enhancers)]

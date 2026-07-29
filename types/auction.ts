@@ -158,7 +158,33 @@ export interface LocationEnvironmentContext {
   nearestRunwayDistanceMeters: number | null
   nearestHelipadDistanceMeters: number | null
   reportedNoise?: LocationNoiseObservation[]
+  airQuality?: LocationAirQualityObservation | null
   riskSignals: string[]
+}
+
+/** European Air Quality Index bands, as published by the EEA. */
+export type LocationAirQualityLevel =
+  | 'good'
+  | 'fair'
+  | 'moderate'
+  | 'poor'
+  | 'very_poor'
+  | 'extremely_poor'
+  | 'unknown'
+
+export interface LocationAirQualityObservation {
+  /** European AQI value; null when the grid has no value for this point. */
+  index: number | null
+  level: LocationAirQualityLevel
+  particulateMatter10: number | null
+  particulateMatter25: number | null
+  nitrogenDioxide: number | null
+  ozone: number | null
+  /** Timestamp of the modelled hour the values describe. */
+  observedAt: string | null
+  sourceLabel: string
+  sourceUrl: string
+  checkedAt: string
 }
 
 export type LocationNoiseSource = 'road' | 'rail' | 'aviation' | 'industry'

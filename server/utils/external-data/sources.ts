@@ -11,6 +11,7 @@ export type ExternalDataCapability =
   | 'transport_network'
   | 'settlement_structure'
   | 'noise_airport'
+  | 'air_quality'
   | 'flight_routes'
   | 'source_discovery'
 
@@ -268,6 +269,37 @@ export const EXTERNAL_DATA_SOURCES: readonly ExternalDataSource[] = [
         type: 'number',
         runtimeConfigKey: 'eeaNoiseTimeoutMs',
         envVar: 'NUXT_EXTERNAL_DATA_EEA_NOISE_TIMEOUT_MS',
+        defaultValue: 10_000,
+      },
+    ],
+  },
+  {
+    id: 'cams-air-quality',
+    label: 'Copernicus CAMS European Air Quality (via Open-Meteo)',
+    countries: ['eu'],
+    capabilities: ['air_quality'],
+    sourceUrl: 'https://open-meteo.com/en/docs/air-quality-api',
+    licenseNote: 'Copernicus Atmosphere Monitoring Service European air quality analysis, redistributed by Open-Meteo under CC-BY-4.0. Modelled on a ~11 km grid, so it describes the surrounding area rather than the parcel.',
+    refreshCadence: 'hourly model runs',
+    resolution: '~11 km CAMS grid cell around the auction coordinates',
+    adapter: 'camsAirQualityAdapter',
+    // Both fields carry a working default, so this source needs no admin setup
+    // to function — unlike the keyed/endpoint-specific sources above, the API
+    // is public and unauthenticated.
+    configFields: [
+      {
+        key: 'serviceUrl',
+        type: 'url',
+        runtimeConfigKey: 'camsAirQualityServiceUrl',
+        envVar: 'NUXT_EXTERNAL_DATA_CAMS_AIR_QUALITY_SERVICE_URL',
+        defaultValue: 'https://air-quality-api.open-meteo.com/v1/air-quality',
+        required: true,
+      },
+      {
+        key: 'timeoutMs',
+        type: 'number',
+        runtimeConfigKey: 'camsAirQualityTimeoutMs',
+        envVar: 'NUXT_EXTERNAL_DATA_CAMS_AIR_QUALITY_TIMEOUT_MS',
         defaultValue: 10_000,
       },
     ],

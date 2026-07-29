@@ -21,11 +21,14 @@ describe('GET /api/settings/external-data/sources', () => {
     const { sources } = await handler()
 
     expect(sources.map((source) => source.id).sort()).toEqual([
+      'cams-air-quality',
       'eea-environmental-noise-directive',
       'eu-flood-risk-areas',
       'fr-dvf-geolocated',
       'openstreetmap-overpass',
     ])
+    // Public API with a working default, so it is usable with no config at all.
+    expect(sources.find((source) => source.id === 'cams-air-quality')!.isConfigured).toBe(true)
     const osm = sources.find((source) => source.id === 'openstreetmap-overpass')!
     expect(osm.isConfigured).toBe(true)
     expect(osm.fields.find((field) => field.key === 'endpoint')?.effectiveValue).toBe('https://overpass-api.de/api/interpreter')

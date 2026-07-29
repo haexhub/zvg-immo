@@ -152,6 +152,10 @@ export default defineNuxtConfig({
       osmContextTimeoutMs: 120_000,
       eeaNoiseServiceBaseUrl: '',
       eeaNoiseTimeoutMs: 10_000,
+      // Public, unauthenticated API, so unlike the entries above this one
+      // carries a working default and needs no deployment config.
+      camsAirQualityServiceUrl: 'https://air-quality-api.open-meteo.com/v1/air-quality',
+      camsAirQualityTimeoutMs: 10_000,
     },
     // G1 Roh-Archiv (WP-3): Supabase Storage bucket for archived crawl
     // snapshots (server/utils/raw-archive.ts, storage-uploader.ts). Empty →

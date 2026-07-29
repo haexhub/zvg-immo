@@ -862,6 +862,7 @@ function environmentContext(
     nearestRunwayDistanceMeters: nearestRunway,
     nearestHelipadDistanceMeters: nearestHelipad,
     reportedNoise: [],
+    airQuality: null,
     riskSignals,
   }
 }
