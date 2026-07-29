@@ -415,6 +415,50 @@ describe('runExternalEnrichment', () => {
     })
   })
 
+  it('queues overlapping task triggers instead of dropping the later scope', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { readAuctionSnapshot } = await import('~/server/utils/auction-snapshot')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionSnapshot).mockResolvedValue({
+      'se-kronofogden:1': auction({ platform: 'se-kronofogden', country: 'se', externalId: '1' }),
+    })
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+
+    let releaseFirst!: () => void
+    const firstRunBlocks = new Promise<void>((resolve) => { releaseFirst = resolve })
+    const contextAdapter = {
+      id: 'osm-fixture',
+      sourceVersion: 'v1',
+      supports: vi.fn(() => true),
+      context: vi.fn(async () => {
+        if (contextAdapter.context.mock.calls.length === 1) await firstRunBlocks
+        return locationContext
+      }),
+    }
+
+    const task = (await import('./external-enrichment')).default as {
+      run(event?: { payload?: Record<string, unknown> }): Promise<{ result: unknown }>
+    }
+    const payload = {
+      country: 'se',
+      marketAdapters: [],
+      landValueAdapters: [],
+      hazardAdapters: [],
+      locationContextAdapters: [contextAdapter],
+    }
+    const first = task.run({ payload })
+    await vi.waitFor(() => expect(contextAdapter.context).toHaveBeenCalledTimes(1))
+    const second = task.run({ payload })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(contextAdapter.context).toHaveBeenCalledTimes(1)
+
+    releaseFirst()
+    await expect(first).resolves.toMatchObject({ result: expect.objectContaining({ processed: 1 }) })
+    await expect(second).resolves.toMatchObject({ result: expect.objectContaining({ processed: 1 }) })
+    expect(contextAdapter.context).toHaveBeenCalledTimes(2)
+  })
+
   it('can limit processed auctions for manual spot runs', async () => {
     vi.stubGlobal('defineTask', (def: unknown) => def)
     const { readAuctionSnapshot } = await import('~/server/utils/auction-snapshot')

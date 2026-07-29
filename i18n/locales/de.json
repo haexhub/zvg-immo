@@ -344,6 +344,7 @@
       "enrichTitle": "Dieses Land erneut crawlen, archivieren und extrahieren",
       "enrichError": "Aktualisierung konnte nicht gestartet werden.",
       "enrichDone": "{country}: {archived} von {crawled} Anzeigen aktualisiert ({photos} Fotos, {duration}s).",
+      "externalEnrichmentQueued": "Lagebewertung und Kartenlayer werden anschließend aktualisiert.",
       "enrichStatusRunning": "Crawl/Archiv läuft seit {at} …",
       "enrichStatusLastRun": "Letzter Crawl/Archiv-Lauf: {at} — {archived} archiviert, {duration}s.",
       "enrichStatusLastError": "Crawl/Archiv zuletzt fehlgeschlagen: {message}",

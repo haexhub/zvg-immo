@@ -67,11 +67,18 @@ export async function readNoiseObservations(
   options: EeaEnvironmentalNoiseOptions,
 ): Promise<LocationNoiseObservation[]> {
   const fetchImpl = options.fetchImpl ?? fetch
-  const responses = await Promise.all(layers.map(async (layer) => {
+  const results = await Promise.allSettled(layers.map(async (layer) => {
     const response = await identifyNoiseValue(point, layer, fetchImpl, options.timeoutMs ?? 10_000)
     return noiseObservation(layer, response, options.checkedAt)
   }))
-  return responses.filter((observation): observation is LocationNoiseObservation => observation != null)
+  return results.flatMap((result, index) => {
+    if (result.status === 'rejected') {
+      const layer = layers[index]
+      console.warn(`[eea-environmental-noise] ${layer?.source ?? 'unknown'}/${layer?.indicator ?? 'unknown'} identify failed: ${(result.reason as Error)?.message ?? result.reason}`)
+      return []
+    }
+    return result.value ? [result.value] : []
+  })
 }
 
 export function applyEnvironmentalNoise(

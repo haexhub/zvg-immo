@@ -168,6 +168,47 @@ describe('readNoiseObservations', () => {
 
     expect(observations).toEqual([])
   })
+
+  it('keeps successful layer observations when another layer fails', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const fetchImpl = vi.fn<typeof fetch>(async (url) => {
+      if (String(url).includes('NoiseContours_rail_lden')) {
+        return new Response('unavailable', { status: 503 })
+      }
+      return new Response(JSON.stringify({
+        value: '3',
+        catalogItems: {
+          features: [{ attributes: { Name: 'DE_DF4_8_roadNoise_Lden_DE' } }],
+        },
+      }), { status: 200 })
+    })
+
+    const observations = await readNoiseObservations(
+      { lat: 52.52, lng: 13.405 },
+      [
+        {
+          source: 'road',
+          indicator: 'lden',
+          imageServerUrl: 'https://noise.example.test/NoiseContours_road_lden/ImageServer',
+        },
+        {
+          source: 'rail',
+          indicator: 'lden',
+          imageServerUrl: 'https://noise.example.test/NoiseContours_rail_lden/ImageServer',
+        },
+      ],
+      {
+        checkedAt: '2026-07-29T00:00:00.000Z',
+        fetchImpl,
+      },
+    )
+
+    expect(observations).toEqual([expect.objectContaining({
+      source: 'road',
+      level: 'medium',
+    })])
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('rail/lden identify failed'))
+  })
 })
 
 describe('applyEnvironmentalNoise', () => {

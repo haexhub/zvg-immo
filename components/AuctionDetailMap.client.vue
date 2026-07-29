@@ -99,10 +99,7 @@ function featureLabel(feature: LocationMapFeature): string {
 
 function featurePopup(feature: LocationMapFeature): string {
   const name = feature.name ? `${escapeHtml(feature.name)}<br>` : ''
-  const distance = feature.distanceMeters < 1000
-    ? t('objektDetail.distanceMeters', { meters: feature.distanceMeters.toLocaleString(undefined, { maximumFractionDigits: 0 }) })
-    : t('objektDetail.distanceKilometers', { kilometers: (feature.distanceMeters / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 }) })
-  return `${name}${escapeHtml(featureLabel(feature))}<br>${distance}`
+  return `${name}${escapeHtml(featureLabel(feature))}<br>${distanceLabel(feature.distanceMeters)}`
 }
 
 function distanceLabel(distanceMeters: number): string {
@@ -327,7 +324,7 @@ onMounted(async () => {
     ])
     addOverlay(overlays, hazardMapLayerLabel(hazard), group)
   }
-  L.control.layers(layers, overlays, { position: 'topright', collapsed: false }).addTo(map)
+  L.control.layers(layers, overlays, { position: 'topright', collapsed: true }).addTo(map)
   const marker = L.marker([props.lat, props.lng], { icon: markerIcon })
   if (props.label) marker.bindTooltip(props.label)
   marker.addTo(map)

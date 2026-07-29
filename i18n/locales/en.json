@@ -344,6 +344,7 @@
       "enrichTitle": "Crawl, archive, and extract this country again",
       "enrichError": "Update could not be started.",
       "enrichDone": "{country}: updated {archived} of {crawled} listings ({photos} photos, {duration}s).",
+      "externalEnrichmentQueued": "Location scoring and map layers will refresh next.",
       "enrichStatusRunning": "Crawl/archive running since {at} …",
       "enrichStatusLastRun": "Last crawl/archive run: {at} — {archived} archived, {duration}s.",
       "enrichStatusLastError": "Crawl/archive last failed: {message}",
@@ -896,7 +897,7 @@
       "osm_heuristic": "Location rating is based on mapped OSM objects and simple distance/density heuristics.",
       "ferry_check_required": "Check ferry/island access separately: schedules, cost, seasonal operation and emergency access can be decisive.",
       "sparse_osm_data": "Very few OSM objects may mean true remoteness or incomplete mapping.",
-      "eea_end_noise_data": "EEA/END strategic noise maps were sampled at the point; national detailed maps or measurements may be more precise."
+      "eea_end_noise_data": "EEA/END strategic noise maps were sampled at this location; national detailed maps or measurements may be more precise."
     },
     "environmentSignal": {
       "motorway_very_near": "motorway/expressway mapped very close by",

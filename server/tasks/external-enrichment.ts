@@ -75,7 +75,8 @@ export interface ExternalEnrichmentSummary {
   durationMs: number
 }
 
-let running = false
+let queueTail: Promise<void> = Promise.resolve()
+let queuedRuns = 0
 
 export default defineTask({
   meta: {
@@ -83,15 +84,20 @@ export default defineTask({
     description: 'Refresh cached external market and natural-hazard overlays for auction detail pages.',
   },
   async run(event) {
-    if (running) {
-      console.warn('[external-enrichment] previous run still in progress — skipping')
-      return { result: undefined }
+    const options = (event?.payload ?? {}) as ExternalEnrichmentOptions
+    const previous = queueTail
+    let releaseQueue!: () => void
+    queueTail = new Promise<void>((resolve) => { releaseQueue = resolve })
+    if (queuedRuns > 0) {
+      console.warn(`[external-enrichment] queued ${scopeLabel(options)} behind ${queuedRuns} active/pending run(s)`)
     }
-    running = true
+    queuedRuns++
     try {
-      return { result: await runExternalEnrichment((event?.payload ?? {}) as ExternalEnrichmentOptions) }
+      await previous
+      return { result: await runExternalEnrichment(options) }
     } finally {
-      running = false
+      queuedRuns--
+      releaseQueue()
     }
   },
 })
@@ -178,6 +184,15 @@ function inScope(auction: Auction, options: ExternalEnrichmentOptions): boolean 
   if (options.platform && auction.platform !== options.platform) return false
   if (options.externalId && auction.externalId !== options.externalId) return false
   return true
+}
+
+function scopeLabel(options: ExternalEnrichmentOptions): string {
+  const parts = [
+    options.country ? `country=${options.country}` : null,
+    options.platform ? `platform=${options.platform}` : null,
+    options.externalId ? `externalId=${options.externalId}` : null,
+  ].filter((part): part is string => !!part)
+  return parts.length > 0 ? parts.join(',') : 'full run'
 }
 
 async function resolvePoint(auction: Auction): Promise<{ lat: number; lng: number } | null> {
