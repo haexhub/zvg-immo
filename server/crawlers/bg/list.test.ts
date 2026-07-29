@@ -1,5 +1,16 @@
-import { describe, expect, it } from 'vitest'
-import { mapAnnouncement, type BgAnnouncement } from './list'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { fetchAllListings, mapAnnouncement, type BgAnnouncement } from './list'
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+function stubAnnouncements(body: unknown): void {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(body)))
+}
 
 function makeAnnouncement(overrides: Partial<BgAnnouncement> = {}): BgAnnouncement {
   return {
@@ -75,5 +86,21 @@ describe('mapAnnouncement', () => {
     const a = mapAnnouncement(makeAnnouncement(), 'bg-zapori')
     expect(a.detailUrl).toBe('https://zapori.mjs.bg/#/announcements/display/3505')
     expect(a.detailUrlUpstream).toBe('https://zapori.mjs.bg/#/announcements/display/3505')
+  })
+})
+
+describe('fetchAllListings', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('drops announcements whose auction date has already passed', async () => {
+    stubAnnouncements([
+      makeAnnouncement({ id: 1, auctionStartDate: '2024-04-02T08:00:00Z' }),
+      makeAnnouncement({ id: 2, auctionStartDate: '2099-01-01T08:00:00Z' }),
+      makeAnnouncement({ id: 3, auctionStartDate: null }),
+    ])
+    const { auctions } = await fetchAllListings('bg-zapori')
+    expect(auctions.map((a) => a.externalId)).toEqual(['2', '3'])
   })
 })
