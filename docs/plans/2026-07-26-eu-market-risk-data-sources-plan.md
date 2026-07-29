@@ -217,6 +217,74 @@ EU-level official data is useful for trend context, but generally too coarse for
 
 ## Implementation status
 
+Updated: 2026-07-29
+
+### 2026-07-29: why nothing was visible in production, and what fixed it
+
+Everything below the 2026-07-27 heading was implemented and deployed, yet detail pages still showed
+"Für diesen Standort liegen noch keine externen Standortdetails vor." and the map had no overlays.
+Production ran the current `main`; there was no code regression. Four independent causes:
+
+1. **The Overpass query could never complete** (PR #236). 48h of logs: 69 attempts, 0 successes
+   (36 `fetch failed`, 14x 429, 10x timeout, 9x 504). Measured live against `overpass-api.de` for one
+   Swedish auction: the query needed **60.6 s** of server-side execution as `around:` sub-queries
+   versus **6.3 s** as bounding boxes (identical sub-queries, 1394 elements) — `around:` forces a
+   linear scan, a bbox uses the spatial index. Critically, `osmContextTimeoutMs` is also emitted as
+   the query's own `[timeout:]`, so the 20 s default made 504 the only possible outcome. Retries then
+   consumed the per-IP slots (`/api/status` reports `Rate limit: 2`), producing the 429s, after which
+   the endpoint refused us outright. Fixed by bbox selection, a 120 s default timeout, retry with
+   backoff honouring `Retry-After`, a 2 s request gate, and a give-up counter after 5 consecutive
+   failed auctions so a blocked endpoint cannot stretch the daily run into the next tick.
+   `nearbyPlaces()` now clips to its radius explicitly, since a bbox is a superset of the circle and
+   it is the one consumer with no metre threshold of its own.
+2. **The noise data had no UI reader** (PR #237). `environment.reportedNoise` was written on every
+   run and read by nothing — the environment card rendered only the OSM-derived road/aviation levels.
+   So the noise layer would have stayed empty even after fix 1.
+3. **Air quality did not exist at all** (PR #238), in any layer: no capability, no type, no registry
+   entry, no adapter, no UI. Added end to end using the Copernicus CAMS European analysis via
+   Open-Meteo's public keyless API (verified: 200 in 0.08 s, `european_aqi` plus PM10/PM2.5/NO2/ozone).
+   Modelled as a `LocationContextEnhancer` like the EEA noise enricher, not a hazard adapter, because
+   the hazard overlays draw a containment circle that would misrepresent a ~11 km grid average.
+4. **The flood cache file was never imported.** `eu-flood-risk cache unusable at
+   /app/.cache_zvg/external/eu-flood-risk.geojson: ENOENT`, so the hazard adapter was skipped on
+   every run. The import task is monthly (`30 4 1 * *`), so it needs one manual trigger via
+   `POST /api/settings/external-data/eu-flood-risk-cache` to become active before the 1st.
+
+Config was **not** the remaining blocker: the `NUXT_EXTERNAL_DATA_*` env vars are set in production
+and `app_settings` holds zero `external_data_config_*` rows, so the sources resolve through the env
+fallback layer. "Configured according to the admin UI" did not mean "returning data".
+
+Also fixed alongside, because it broke translation for every auction: the DB LLM profile assigned to
+the `translation` scope had an empty API key, and `resolveLlmConfig(translationOverride ??
+extractionOverride ?? llmCfg)` picks one object wholesale rather than merging per field, so the
+working env key was never consulted. `gemini-native` sends `x-goog-api-key: ''`, which Google answers
+with 403 `unregistered callers`. PR #235 rejects a keyless profile at save time for public endpoints
+(internal sidecars stay legitimately keyless) and exposes `apiKeyMissing` so an already-broken
+profile is visible rather than only guarded on the next write.
+
+### WP5 avalanche: deliberately not implemented
+
+EAWS publishes micro-region polygons whose features carry only a bare region id
+(`{"id":"AD-01"}`, 16.4 MB). Containment would therefore mean "this area has an avalanche forecast" —
+hundreds of km² including valley floors with no exposure — and `hazardColor` renders `inside` in red,
+so every alpine property would be flagged. This matches WP5's own rule that unsupported sources must
+yield `unknown`, never `outside`. Parcel-level avalanche risk requires national hazard zoning:
+Géorisques (FR, PPRN) and HORA/Gefahrenzonenplan (AT). The registry already reflects this split —
+`eaws` is `source_discovery` only, `at-hora` carries `hazard_avalanche`.
+
+### Known gaps after 2026-07-29
+
+- `extractByLlm` maps any provider request failure to `null`, so a 403 is indistinguishable from
+  "the LLM returned nothing". The reprocess status reported `69 processed / 69 LLM calls` with no
+  error while all 69 calls were failing. PR #235 prevents the misconfiguration but does not fix this
+  observability gap.
+- WP5 wildfire (Copernicus EFFIS) still has no adapter.
+- `overpass-api.de` is a shared community instance with 2 slots per IP. Fine at current volume;
+  Europe-wide enrichment will want a self-hosted instance. The endpoint is admin-configurable, so
+  that is a config change, not a code change.
+
+### Earlier status
+
 Updated: 2026-07-27
 
 Completed in the current implementation branch:
@@ -291,29 +359,45 @@ Verification completed:
 Next recommended prompt:
 
 ```text
-Continue implementing docs/plans/2026-07-26-eu-market-risk-data-sources-plan.md.
+Continue docs/plans/2026-07-26-eu-market-risk-data-sources-plan.md, section
+"Known gaps after 2026-07-29".
 
-Current branch already has:
-- external-data source registry and typed LocationEnrichment model
-- Postgres-backed location_enrichment cache and detail API overlay
-- detail-page cards for market comparison, BORIS-D land-value baseline and hazards
-- France DVF CSV import/cache path and file-cache market adapter
-- import-fr-dvf-cache Nitro task + protected settings endpoint
-- external-enrichment task + protected manual endpoint + daily no-op-safe schedule
-- EU Flood Risk Areas GeoJSON cache evaluation and official ArcGIS REST import path
-- tests and typecheck passing
+State: PRs #235-#238 are open and unmerged (LLM key validation, Overpass bbox fix,
+noise UI, CAMS air quality). Read the plan's 2026-07-29 status section first — it
+records the measured root causes, so do not re-diagnose them.
 
-Next focus:
-Implement WP5 wildfire/avalanche v1:
-- add an EFFIS adapter/import path only after choosing a concrete service layer and cache shape for raster/time-varying fire danger
-- keep current fire danger on a short TTL and distinguish it from static wildfire susceptibility/risk
-- add avalanche/national-service discovery first; only implement a country adapter where an authoritative public endpoint is confirmed
-- unsupported or stale wildfire/avalanche sources must yield `unknown`, never `outside`
-Keep detail pages cache-only; no live external fetch from the API route.
+Priority 1 — LLM failure observability. extractByLlm maps any provider request
+failure to null, so a 403 is indistinguishable from "no result": the reprocess
+status reported "69 processed / 69 LLM calls" with zero errors while all 69 were
+failing with 403. Make provider HTTP/network failures distinguishable from an
+empty result and surface a per-run failure count and last error in the /settings
+reprocess and enrich status cards. Do not change the rate-limit path: isRateLimitError
+throws on purpose so reprocess.ts skips without counting a failure
+(see the llm-ratelimit-failure-lockout-bug memory).
+
+Priority 2 — WP5 wildfire via Copernicus EFFIS. Follow the cams-air-quality entry
+in server/utils/external-data/sources.ts as the pattern. Requirements:
+- pick a concrete EFFIS service layer and cache shape before writing code
+- keep current fire danger on a short TTL and distinguish it from static
+  wildfire susceptibility/risk
+- unsupported or stale sources must yield `unknown`, never `outside`
+- ship the UI in the same PR; an enrichment field with no .vue reader is not done
+  (see the enrichment-data-without-ui-reader memory)
+
+Do not implement avalanche from EAWS — its micro-regions carry only a region id and
+would flag every alpine property red. Parcel-level needs Georisques (FR) or HORA (AT).
+
+Constraints: new worktree + branch per independent task, one PR each, never merge
+yourself, no Claude references in commits. Keep detail pages cache-only; no live
+external fetch from the API route.
 ```
 
 ## Open questions
 
+- Should the OSM Overpass endpoint move to a self-hosted instance? The public one allows 2 slots per
+  IP, which bounds Europe-wide enrichment. Config-only change.
+- Answered 2026-07-29: avalanche via EAWS is rejected as too coarse; parcel-level needs national
+  sources (Géorisques FR, HORA AT).
 - Should external data live in Postgres only, or also in a disk cache for local development without DB?
 - Which countries are top priority after DE/FR/AT based on actual crawler volume?
 - Should commercial asking-price APIs be allowed when no official national transaction data exists, or should the UI hide comparison instead?
