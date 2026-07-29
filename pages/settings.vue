@@ -5,7 +5,7 @@ import type { AdminLawyer } from '~/server/api/settings/lawyers/index.get'
 import type { LlmExecutionMode, LlmMaxTokensKind, LlmProvider, LlmProviderScope } from '~/server/utils/app-settings'
 import type { CountrySourceSetting, CountrySourceSettings } from '~/server/utils/country-source-settings'
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const countryLabel = useCountryLabel()
 useHead({ title: t('settings.title') })
 
@@ -348,21 +348,34 @@ async function deleteLawyer(l: AdminLawyer): Promise<void> {
 }
 
 // LLM-Konfiguration: Max-Output-Tokens pro Anwendungsfall, gegen
-// /api/settings/llm-config (gleiches settings-auth-Muster wie oben).
-const llmConfig = ref<Record<LlmMaxTokensKind, string>>({ extraction: '', summary: '', translation: '' })
+// /api/settings/llm-config (gleiches settings-auth-Muster wie oben). Die
+// Kind-Liste kommt generisch aus der GET-Response (extraction/translation
+// plus ein Eintrag pro registriertem Insight, siehe app-settings.ts'
+// KINDS) — kein Server-only-Registry-Import auf der Client-Seite nötig,
+// und ein neuer Insight erscheint hier automatisch ohne Template-Änderung.
+const llmConfig = ref<Record<LlmMaxTokensKind, string>>({})
 const llmConfigError = ref<string | null>(null)
 const llmConfigSaved = ref(false)
 const llmConfigPending = ref(false)
+// Guards saveLlmConfig against submitting before the GET below has populated
+// llmConfig — the card renders as soon as `authed` flips true, which is
+// before this await resolves, so an empty-object PUT is otherwise reachable.
+const llmConfigLoaded = ref(false)
+const llmConfigSaveDisabled = computed(
+  () => llmConfigPending.value || !llmConfigLoaded.value || Object.keys(llmConfig.value).length === 0,
+)
+
+function llmKindLabel(kind: string): string {
+  const key = `settings.llm.${kind}Label`
+  return te(key) ? t(key) : kind
+}
 
 async function loadLlmConfig(): Promise<void> {
   try {
     const res = await $fetch<Record<LlmMaxTokensKind, number>>('/api/settings/llm-config')
-    llmConfig.value = {
-      extraction: String(res.extraction),
-      summary: String(res.summary),
-      translation: String(res.translation),
-    }
+    llmConfig.value = Object.fromEntries(Object.entries(res).map(([kind, value]) => [kind, String(value)]))
     llmConfigError.value = null
+    llmConfigLoaded.value = true
   } catch (err) {
     llmConfigError.value = normalizeSettingsError(err, t('settings.llm.loadError'))
   }
@@ -375,12 +388,14 @@ function parseLlmMaxTokens(raw: string): number | null {
 }
 
 async function saveLlmConfig(): Promise<void> {
-  const extraction = parseLlmMaxTokens(llmConfig.value.extraction)
-  const summary = parseLlmMaxTokens(llmConfig.value.summary)
-  const translation = parseLlmMaxTokens(llmConfig.value.translation)
-  if (extraction === null || summary === null || translation === null) {
-    llmConfigError.value = t('settings.llm.invalidValue')
-    return
+  const parsed: Record<string, number> = {}
+  for (const [kind, raw] of Object.entries(llmConfig.value)) {
+    const value = parseLlmMaxTokens(raw)
+    if (value === null) {
+      llmConfigError.value = t('settings.llm.invalidValue')
+      return
+    }
+    parsed[kind] = value
   }
 
   llmConfigPending.value = true
@@ -389,13 +404,9 @@ async function saveLlmConfig(): Promise<void> {
   try {
     const res = await $fetch<Record<LlmMaxTokensKind, number>>('/api/settings/llm-config', {
       method: 'PUT',
-      body: { extraction, summary, translation },
+      body: parsed,
     })
-    llmConfig.value = {
-      extraction: String(res.extraction),
-      summary: String(res.summary),
-      translation: String(res.translation),
-    }
+    llmConfig.value = Object.fromEntries(Object.entries(res).map(([kind, value]) => [kind, String(value)]))
     llmConfigSaved.value = true
   } catch (err) {
     llmConfigError.value = normalizeSettingsError(err, t('settings.llm.saveError'))
@@ -1104,16 +1115,12 @@ onBeforeUnmount(stopProgressPolling)
           <p v-if="llmConfigSaved" class="text-sm text-emerald-600 dark:text-emerald-500">{{ $t('settings.llm.saved') }}</p>
 
           <form class="grid grid-cols-1 sm:grid-cols-2 gap-3" @submit.prevent="saveLlmConfig">
-            <div class="space-y-1">
-              <Label>{{ $t('settings.llm.extractionLabel') }}</Label>
-              <Input v-model="llmConfig.extraction" type="number" min="256" max="32768" step="1" />
-            </div>
-            <div class="space-y-1">
-              <Label>{{ $t('settings.llm.translationLabel') }}</Label>
-              <Input v-model="llmConfig.translation" type="number" min="256" max="32768" step="1" />
+            <div v-for="kind in Object.keys(llmConfig)" :key="kind" class="space-y-1">
+              <Label>{{ llmKindLabel(kind) }}</Label>
+              <Input v-model="llmConfig[kind]" type="number" min="256" max="32768" step="1" />
             </div>
             <div class="sm:col-span-2">
-              <Button type="submit" :disabled="llmConfigPending">
+              <Button type="submit" :disabled="llmConfigSaveDisabled">
                 {{ llmConfigPending ? $t('settings.llm.saving') : $t('settings.llm.save') }}
               </Button>
             </div>

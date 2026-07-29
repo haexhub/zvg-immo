@@ -258,8 +258,8 @@
       "title": "LLM-Konfiguration",
       "description": "Max-Output-Tokens-Grenze pro Anwendungsfall — wirkt sofort für den nächsten LLM-Call, kein Redeploy nötig.",
       "extractionLabel": "Extraktion",
-      "summaryLabel": "Zusammenfassung",
       "translationLabel": "Übersetzung",
+      "usage-ideasLabel": "Nutzungsideen",
       "loadError": "Konfiguration konnte nicht geladen werden.",
       "invalidValue": "Bitte für jedes Feld eine gültige Zahl eingeben.",
       "saveError": "Speichern fehlgeschlagen.",
@@ -510,6 +510,16 @@
     "fussbodenheizung": "Fußbodenheizung",
     "denkmalschutz": "Denkmalschutz",
     "vermietet": "Vermietet"
+  },
+  "usageIdeaType": {
+    "owner-occupation": "Eigennutzung",
+    "owner-occupation-with-sublet": "Eigennutzung mit Untervermietung",
+    "vacation-rental": "Ferienwohnung",
+    "farm": "Bauernhof",
+    "agricultural": "Landwirtschaft",
+    "forestry": "Forstwirtschaft",
+    "warehouse": "Lagerhaus",
+    "other": "Sonstiges"
   },
   "attachmentKind": {
     "announcement": "Bekanntmachung",
@@ -1030,6 +1040,11 @@
     "developmentCharges": "Erschließungs-/Ausbaubeiträge",
     "redevelopmentArea": "Sanierungsgebiet",
     "conservationArea": "Erhaltungsgebiet",
+    "usageIdeasTitle": "Nutzungsideen",
+    "usageIdeasGenerate": "Nutzungsideen vorschlagen",
+    "usageIdeasPending": "Ideen werden erstellt …",
+    "usageIdeasError": "Nutzungsideen konnten nicht erstellt werden.",
+    "usageIdeasRetry": "Erneut versuchen",
     "gallery": {
       "close": "Schließen"
     }

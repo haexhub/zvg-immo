@@ -45,3 +45,11 @@ export function useFeatureLabel() {
     return te(key) ? t(key) : (fallback ?? id)
   }
 }
+
+export function useUsageIdeaTypeLabel() {
+  const { t, te } = useI18n()
+  return (id: string, fallback?: string): string => {
+    const key = `usageIdeaType.${id}`
+    return te(key) ? t(key) : (fallback ?? id)
+  }
+}

@@ -7,8 +7,14 @@
 
 import type { Pool } from 'pg'
 import { supportsLlmProviderExecutionMode } from './llm-provider-capabilities'
+import { INSIGHT_REGISTRY } from './insights/registry'
 
-export type LlmMaxTokensKind = 'extraction' | 'summary' | 'translation'
+// Widened to `string` rather than a closed union of insight ids: insight
+// definitions carry a plain `id: string`, so a type-level union built from
+// them would collapse to `string` anyway. Kind ids are validated at runtime
+// against KINDS below instead (same as every other value this module reads
+// from app_settings).
+export type LlmMaxTokensKind = 'extraction' | 'translation' | string
 export type LlmProviderScope = 'extraction' | 'translation'
 
 export const DEFAULT_ENABLED_COUNTRIES = ['de', 'se'] as const
@@ -42,16 +48,20 @@ export async function setEnabledCountries(db: Pool, countries: readonly string[]
   )
 }
 
-const KINDS: LlmMaxTokensKind[] = ['extraction', 'summary', 'translation']
+// Single source of truth for valid kinds: the two fixed use-cases plus one
+// per registered insight (server/utils/insights/registry.ts) — adding an
+// insight registers its settings kind automatically, no second place to edit.
+export const KINDS: LlmMaxTokensKind[] = ['extraction', 'translation', ...INSIGHT_REGISTRY.map((d) => d.id)]
 
-// Exactly today's hard-coded values (the provider fallbacks in
-// claude-proxy.ts/openai-compatible.ts/gemini-native.ts, and the
-// resolveLlmConfig() overrides in summary.post.ts/translation.post.ts) — a
-// fresh install with no app_settings row is not a behavior change.
+// Exactly today's hard-coded values for extraction/translation (the provider
+// fallbacks in claude-proxy.ts/openai-compatible.ts/gemini-native.ts, and the
+// resolveLlmConfig() overrides in translation.post.ts) plus each insight's own
+// declared default — a fresh install with no app_settings row is not a
+// behavior change.
 export const DEFAULT_LLM_MAX_TOKENS: Record<LlmMaxTokensKind, number> = {
   extraction: 4096,
-  summary: 1024,
   translation: 8192,
+  ...Object.fromEntries(INSIGHT_REGISTRY.map((d) => [d.id, d.maxTokensDefault])),
 }
 
 // Guards against a fat-fingered dashboard value silencing every LLM call
@@ -69,7 +79,11 @@ function clamp(value: number): number {
 }
 
 function coerce(value: unknown, kind: LlmMaxTokensKind): number {
-  return typeof value === 'number' && Number.isFinite(value) ? clamp(value) : DEFAULT_LLM_MAX_TOKENS[kind]
+  if (typeof value === 'number' && Number.isFinite(value)) return clamp(value)
+  // DEFAULT_LLM_MAX_TOKENS[kind] is only `undefined` for a kind that isn't
+  // registered at all (impossible for any caller going through KINDS) —
+  // noUncheckedIndexedAccess just can't prove that from a widened string key.
+  return DEFAULT_LLM_MAX_TOKENS[kind] ?? clamp(MIN_MAX_TOKENS)
 }
 
 export async function getLlmMaxTokens(db: Pool, kind: LlmMaxTokensKind): Promise<number> {

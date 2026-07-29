@@ -618,3 +618,16 @@ WHERE rc.region IS NULL AND rc.platform = a.platform AND rc.external_id = a.exte
 -- eine Zeile reduziert, daher kann der neue Unique-Index beim Anlegen nicht
 -- auf Duplikate stoßen.
 DROP INDEX IF EXISTS idx_capt_unique_auction_current;
+
+-- Generisches Cache für on-demand LLM-Insight-Karten (Nutzungsideen, später
+-- Sanierungskosten, Anschlüsse, ...). Ein Table für jedes künftige Insight
+-- statt einem Table pro Feature. Immutabel pro (insight_id, content_hash),
+-- gleicher Vertrag wie content_translations.
+CREATE TABLE IF NOT EXISTS auction_insights (
+  insight_id    text NOT NULL,
+  content_hash  text NOT NULL,
+  payload       jsonb NOT NULL,
+  at            timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (insight_id, content_hash)
+);
+ALTER TABLE auction_insights ENABLE ROW LEVEL SECURITY;
