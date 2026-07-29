@@ -21,6 +21,14 @@ export interface OsmLocationContextOptions {
   checkedAt: string
   timeoutMs?: number
   fetchImpl?: typeof fetch
+  /** Minimum spacing between requests from this adapter instance. */
+  minRequestIntervalMs?: number
+  /** Total attempts per auction, including the first. */
+  maxAttempts?: number
+  /** Injectable so tests exercise the backoff without real delays. */
+  sleepImpl?: (ms: number) => Promise<void>
+  /** Consecutive fully-failed auctions after which the run stops trying. */
+  giveUpAfterConsecutiveFailures?: number
 }
 
 interface OverpassResponse {
@@ -90,17 +98,139 @@ const AMENITY_KINDS: LocationAmenityKind[] = [
 
 export function createOsmLocationContextAdapter(options: OsmLocationContextOptions): LocationContextAdapter {
   const endpoint = options.endpoint.trim()
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  const fetchImpl = options.fetchImpl ?? fetch
+  const sleepImpl = options.sleepImpl ?? sleep
+  // One gate per adapter instance. external-enrichment.ts builds the adapter
+  // once per run and walks auctions sequentially, so spacing requests here
+  // paces the whole run.
+  const gate = createRequestGate(options.minRequestIntervalMs ?? DEFAULT_MIN_REQUEST_INTERVAL_MS, sleepImpl)
+  const giveUpAfter = options.giveUpAfterConsecutiveFailures ?? DEFAULT_GIVE_UP_AFTER_CONSECUTIVE_FAILURES
+  // Retrying with backoff turns a hard endpoint block into a very long run
+  // (every auction burning its full attempt budget), which would overlap the
+  // next scheduled tick. Once this many auctions in a row have exhausted their
+  // retries the endpoint is refusing us wholesale, so stop paying for it and
+  // let the run finish — the next tick starts with a clean counter.
+  let consecutiveFailures = 0
   return {
     id: 'osm-location-context',
     sourceVersion: 'osm-overpass-v1',
     supports: (auction) => !!endpoint && isFinitePoint(auction),
     async context(auction) {
+      if (consecutiveFailures >= giveUpAfter) {
+        throw new Error(`Overpass unavailable, skipped after ${consecutiveFailures} consecutive failures`)
+      }
       const point = { lat: auction.lat!, lng: auction.lng! }
-      const timeoutMs = options.timeoutMs ?? 20_000
-      const response = await postOverpass(endpoint, buildQuery(point, timeoutMs), options.fetchImpl ?? fetch, timeoutMs)
-      return buildLocationContext(point, response.elements ?? [], options.checkedAt)
+      try {
+        const response = await postOverpassWithRetry(
+          endpoint,
+          buildQuery(point, timeoutMs),
+          fetchImpl,
+          timeoutMs,
+          { gate, sleepImpl, maxAttempts: options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS },
+        )
+        consecutiveFailures = 0
+        return buildLocationContext(point, response.elements ?? [], options.checkedAt)
+      } catch (err) {
+        consecutiveFailures++
+        throw err
+      }
     },
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** Serializes callers and keeps at least `minIntervalMs` between releases, so
+ *  a run of auctions trickles into the endpoint instead of arriving as a burst
+ *  that trips the per-IP quota. */
+function createRequestGate(minIntervalMs: number, sleepImpl: (ms: number) => Promise<void>): () => Promise<void> {
+  let previous: Promise<void> = Promise.resolve()
+  let lastStartedAt = 0
+  return () => {
+    const mine = previous.then(async () => {
+      const wait = lastStartedAt + minIntervalMs - Date.now()
+      if (wait > 0) await sleepImpl(wait)
+      lastStartedAt = Date.now()
+    })
+    previous = mine.catch(() => undefined)
+    return mine
+  }
+}
+
+class OverpassRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number | null,
+    readonly retryAfterMs: number | null,
+  ) {
+    super(message)
+    this.name = 'OverpassRequestError'
+  }
+}
+
+// 429 is the per-IP quota, 504 the endpoint giving up on a query, and
+// 502/503 a busy instance — all transient, all previously fatal for the
+// auction being enriched. A network-level failure ('fetch failed') and the
+// local timeout abort are retried too: production saw those immediately after
+// a burst of 429s, i.e. as the same overload.
+const RETRYABLE_STATUSES = new Set([429, 502, 503, 504])
+// The client timeout is also what the endpoint receives as `[timeout:]`, so it
+// is an upper bound on the query, not just on the wait. Measured server-side
+// execution for one auction is ~9 s once the query uses bboxes, but a busy
+// instance queues before it starts work; the old 20 s could not even fit the
+// pre-bbox 60 s query, which is why every production call returned 504.
+const DEFAULT_TIMEOUT_MS = 120_000
+const DEFAULT_MIN_REQUEST_INTERVAL_MS = 2_000
+const DEFAULT_MAX_ATTEMPTS = 4
+const BACKOFF_BASE_MS = 5_000
+const MAX_BACKOFF_MS = 60_000
+const DEFAULT_GIVE_UP_AFTER_CONSECUTIVE_FAILURES = 5
+
+function isRetryable(err: unknown): boolean {
+  if (err instanceof OverpassRequestError) {
+    return err.status == null || RETRYABLE_STATUSES.has(err.status)
+  }
+  return true
+}
+
+function backoffMs(attempt: number, err: unknown): number {
+  const suggested = err instanceof OverpassRequestError ? err.retryAfterMs : null
+  // Retry-After is authoritative for 429 — Overpass reports when the slot
+  // frees up, and guessing shorter just burns another rejection.
+  const base = suggested ?? BACKOFF_BASE_MS * 2 ** (attempt - 1)
+  return Math.min(base, MAX_BACKOFF_MS)
+}
+
+async function postOverpassWithRetry(
+  endpoint: string,
+  query: string,
+  fetchImpl: typeof fetch,
+  timeoutMs: number,
+  opts: { gate: () => Promise<void>; sleepImpl: (ms: number) => Promise<void>; maxAttempts: number },
+): Promise<OverpassResponse> {
+  let lastError: unknown
+  for (let attempt = 1; attempt <= opts.maxAttempts; attempt++) {
+    await opts.gate()
+    try {
+      return await postOverpass(endpoint, query, fetchImpl, timeoutMs)
+    } catch (err) {
+      lastError = err
+      if (attempt === opts.maxAttempts || !isRetryable(err)) throw err
+      await opts.sleepImpl(backoffMs(attempt, err))
+    }
+  }
+  throw lastError
+}
+
+function parseRetryAfterMs(value: string | null): number | null {
+  if (!value) return null
+  const seconds = Number(value)
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000)
+  const date = Date.parse(value)
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : null
 }
 
 function isFinitePoint(auction: Auction): boolean {
@@ -126,44 +256,100 @@ async function postOverpass(
       },
       signal: controller.signal,
     })
-    if (!res.ok) throw new Error(`Overpass returned ${res.status}`)
+    if (!res.ok) {
+      throw new OverpassRequestError(
+        `Overpass returned ${res.status}`,
+        res.status,
+        parseRetryAfterMs(res.headers.get('retry-after')),
+      )
+    }
     return await res.json() as OverpassResponse
   } finally {
     clearTimeout(timer)
   }
 }
 
+// The public Overpass instance bills per-IP by execution time and result size,
+// and the original single query blew that budget on every call: 69 of 69
+// production auctions failed with 429/504/timeout, so no detail page ever
+// received location data. Three sub-queries caused nearly all of it — `place`
+// via `nwr` (pulling in city boundary relations and their geometry), every road
+// class down to tertiary across 8 km, and the unbounded `office` key across
+// 5 km. Each is narrowed below to the range the context builder actually reads,
+// so no derived signal changes:
+//
+// - places stay at 30 km (nearbyPlaces reports them up to that range) but as
+//   nodes only — place nodes carry name/place/population, which is all
+//   nearbyPlaces() reads, while the relations added geometry and no signal.
+// - motorway/trunk/primary stay at 8 km, so roadAccessLevel()'s kind check and
+//   environmentContext()'s 1000/2500 m noise thresholds are untouched.
+// - secondary/tertiary drop to 5 km, matching roadAccessLevel()'s own
+//   `nearest <= 5000` cutoff. The one behaviour change: a property whose only
+//   major road is a secondary/tertiary 5-8 km out now reports 'remote' instead
+//   of 'local'.
+// - `office` drops to 1.5 km. isCommercial() is also satisfied by
+//   landuse=commercial|retail (still 5 km), so the coarse "commercial nearby"
+//   signal is unchanged; only individual far-away office POIs are dropped, and
+//   environmentContext() only counts those within 1000/3000 m anyway.
+const PLACE_RADIUS_METERS = 30_000
+const NOISY_ROAD_RADIUS_METERS = 8_000
+const MINOR_ROAD_RADIUS_METERS = 5_000
+const OFFICE_RADIUS_METERS = 1_500
+
+/** Bounding box enclosing `radiusMeters` around `point`, as Overpass's
+ *  (south,west,north,east) filter.
+ *
+ *  Selection is by bbox rather than `around:` because `around:` forces a linear
+ *  scan while a bbox uses the spatial index. Measured against overpass-api.de
+ *  for one Swedish auction, the identical set of sub-queries runs in 8.7 s as
+ *  bboxes versus 60.6 s as `around:` — decisive here, because the client
+ *  timeout is what the endpoint sees as `[timeout:]`, and a query that cannot
+ *  finish inside it can only ever return 504.
+ *
+ *  A bbox is a superset of the circle (out to the corners). That is safe
+ *  because distances are computed client-side in locateElement() and every
+ *  derived signal applies its own explicit metre threshold; the radii here only
+ *  govern how much data is fetched. nearbyPlaces() is the one consumer with no
+ *  threshold of its own, so it clips to PLACE_RADIUS_METERS itself. */
+function bbox(point: Point, radiusMeters: number): string {
+  const dLat = radiusMeters / 111_320
+  const dLng = radiusMeters / (111_320 * Math.max(Math.cos((point.lat * Math.PI) / 180), 0.01))
+  return [point.lat - dLat, point.lng - dLng, point.lat + dLat, point.lng + dLng]
+    .map((value) => value.toFixed(6))
+    .join(',')
+}
+
 function buildQuery(point: Point, timeoutMs: number): string {
-  const lat = point.lat.toFixed(6)
-  const lng = point.lng.toFixed(6)
   const overpassTimeoutSec = Math.max(1, Math.floor(timeoutMs / 1000))
+  const at = (radiusMeters: number) => bbox(point, radiusMeters)
   return `
 [out:json][timeout:${overpassTimeoutSec}];
 (
-  nwr(around:30000,${lat},${lng})["place"~"^(city|town|suburb|village|hamlet|island|municipality)$"];
-  nwr(around:3000,${lat},${lng})["public_transport"~"^(platform|stop_position|station)$"];
-  node(around:3000,${lat},${lng})["highway"="bus_stop"];
-  nwr(around:3000,${lat},${lng})["railway"~"^(station|halt|tram_stop)$"];
-  nwr(around:10000,${lat},${lng})["amenity"="ferry_terminal"];
-  nwr(around:10000,${lat},${lng})["route"="ferry"];
-  nwr(around:15000,${lat},${lng})["aeroway"~"^(aerodrome|runway|helipad|heliport)$"];
-  way(around:8000,${lat},${lng})["highway"~"^(motorway|trunk|primary|secondary|tertiary)$"];
-  nwr(around:5000,${lat},${lng})["landuse"~"^(industrial|commercial|retail|quarry|landfill|brownfield)$"];
-  nwr(around:5000,${lat},${lng})["industrial"];
-  nwr(around:5000,${lat},${lng})["man_made"~"^(works|wastewater_plant|petroleum_well|mineshaft)$"];
-  nwr(around:5000,${lat},${lng})["power"~"^(plant|generator|substation)$"];
-  nwr(around:5000,${lat},${lng})["amenity"~"^(waste_transfer_station|recycling|ferry_terminal)$"];
-  nwr(around:10000,${lat},${lng})["amenity"~"^(college|university)$"];
-  nwr(around:5000,${lat},${lng})["office"];
-  nwr(around:500,${lat},${lng})["building"];
-  nwr(around:5000,${lat},${lng})["amenity"~"^(school|kindergarten|college|university|doctors|clinic|hospital|pharmacy|bank|atm|fuel|restaurant|cafe|bar|fast_food|post_office|library|community_centre)$"];
-  nwr(around:5000,${lat},${lng})["shop"~"^(supermarket|convenience|bakery|butcher|mall|department_store)$"];
-  nwr(around:5000,${lat},${lng})["leisure"~"^(park|sports_centre|playground|fitness_centre|garden)$"];
-  nwr(around:500,${lat},${lng})["abandoned"];
-  nwr(around:500,${lat},${lng})["disused"];
-  nwr(around:500,${lat},${lng})["ruins"];
-  nwr(around:500,${lat},${lng})["building"~"^(ruins|collapsed|abandoned)$"];
-  nwr(around:500,${lat},${lng})["historic"="ruins"];
+  node(${at(PLACE_RADIUS_METERS)})["place"~"^(city|town|suburb|village|hamlet|island|municipality)$"];
+  nwr(${at(3000)})["public_transport"~"^(platform|stop_position|station)$"];
+  node(${at(3000)})["highway"="bus_stop"];
+  nwr(${at(3000)})["railway"~"^(station|halt|tram_stop)$"];
+  nwr(${at(10000)})["amenity"="ferry_terminal"];
+  nwr(${at(10000)})["route"="ferry"];
+  nwr(${at(15000)})["aeroway"~"^(aerodrome|runway|helipad|heliport)$"];
+  way(${at(NOISY_ROAD_RADIUS_METERS)})["highway"~"^(motorway|trunk|primary)$"];
+  way(${at(MINOR_ROAD_RADIUS_METERS)})["highway"~"^(secondary|tertiary)$"];
+  nwr(${at(5000)})["landuse"~"^(industrial|commercial|retail|quarry|landfill|brownfield)$"];
+  nwr(${at(5000)})["industrial"];
+  nwr(${at(5000)})["man_made"~"^(works|wastewater_plant|petroleum_well|mineshaft)$"];
+  nwr(${at(5000)})["power"~"^(plant|generator|substation)$"];
+  nwr(${at(5000)})["amenity"~"^(waste_transfer_station|recycling|ferry_terminal)$"];
+  nwr(${at(10000)})["amenity"~"^(college|university)$"];
+  nwr(${at(OFFICE_RADIUS_METERS)})["office"];
+  nwr(${at(BUILDING_RADIUS_METERS)})["building"];
+  nwr(${at(5000)})["amenity"~"^(school|kindergarten|college|university|doctors|clinic|hospital|pharmacy|bank|atm|fuel|restaurant|cafe|bar|fast_food|post_office|library|community_centre)$"];
+  nwr(${at(5000)})["shop"~"^(supermarket|convenience|bakery|butcher|mall|department_store)$"];
+  nwr(${at(5000)})["leisure"~"^(park|sports_centre|playground|fitness_centre|garden)$"];
+  nwr(${at(500)})["abandoned"];
+  nwr(${at(500)})["disused"];
+  nwr(${at(500)})["ruins"];
+  nwr(${at(500)})["building"~"^(ruins|collapsed|abandoned)$"];
+  nwr(${at(500)})["historic"="ruins"];
 );
 out center tags;
 `.trim()
@@ -248,7 +434,11 @@ function locateElement(origin: Point, element: OsmElement): LocatedElement | nul
 }
 
 function nearbyPlaces(elements: LocatedElement[]): NearbyPlace[] {
-  return uniqueLocated(elements.filter((element) => PLACE_KINDS.has(placeKind(element.tags?.place))))
+  // Clipped to the circle: unlike every other consumer this has no metre
+  // threshold of its own, so the bbox corners would otherwise surface places
+  // out to ~42 km in a list documented as 30 km.
+  return uniqueLocated(elements.filter((element) =>
+    PLACE_KINDS.has(placeKind(element.tags?.place)) && element.distanceMeters <= PLACE_RADIUS_METERS))
     .map((element) => ({
       name: nameOf(element),
       kind: placeKind(element.tags?.place),

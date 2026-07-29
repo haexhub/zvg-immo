@@ -149,7 +149,7 @@ export default defineNuxtConfig({
       euFloodRiskGeoJsonPath: '',
       euFloodRiskMaxCacheAgeDays: 400,
       osmContextEndpoint: '',
-      osmContextTimeoutMs: 20_000,
+      osmContextTimeoutMs: 120_000,
       eeaNoiseServiceBaseUrl: '',
       eeaNoiseTimeoutMs: 10_000,
     },

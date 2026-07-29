@@ -2,6 +2,16 @@ import { describe, expect, it, vi } from 'vitest'
 import { buildLocationContext, createOsmLocationContextAdapter } from './osm-location-context'
 import type { Auction } from '~/types/auction'
 
+/** Latitude span of the bbox on the sub-query line ending in `marker`, so radius
+ *  relationships can be asserted without restating the projection maths. */
+function bboxWidthDeg(query: string, marker: string): number {
+  const line = query.split('\n').find((candidate) => candidate.includes(marker))
+  if (!line) throw new Error(`no sub-query for ${marker}`)
+  const coords = line.match(/\((-?[\d.]+),(-?[\d.]+),(-?[\d.]+),(-?[\d.]+)\)/)
+  if (!coords) throw new Error(`no bbox for ${marker}`)
+  return Number(coords[3]) - Number(coords[1])
+}
+
 function auction(overrides: Partial<Auction> = {}): Auction {
   return {
     platform: 'test',
@@ -135,9 +145,9 @@ describe('createOsmLocationContextAdapter', () => {
     const request = fetchImpl.mock.calls[0]?.[1]
     if (!request) throw new Error('missing fetch request options')
     const query = (request.body as URLSearchParams).get('data')
-    expect(query).toContain('[out:json][timeout:20]')
-    expect(query).toContain('around:30000,52.000000,13.000000')
-    expect(query).toContain('way(around:8000,52.000000,13.000000)')
+    expect(query).toContain('[out:json][timeout:120]')
+    // 30 km of latitude either side of the point => ~0.539 deg of span
+    expect(bboxWidthDeg(query ?? '', '["place"')).toBeCloseTo((2 * 30_000) / 111_320, 3)
     expect(context?.nearbyPlaces[0]?.name).toBe('Berlin')
   })
 
@@ -169,5 +179,193 @@ describe('createOsmLocationContextAdapter', () => {
 
     expect(withEndpoint.supports(auction({ lat: null, lng: null }))).toBe(false)
     expect(withoutEndpoint.supports(auction())).toBe(false)
+  })
+
+  it('narrows the sub-queries that overloaded the public endpoint', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ elements: [] }), { status: 200 }))
+    const adapter = createOsmLocationContextAdapter({
+      endpoint: 'https://overpass.example.test/api/interpreter',
+      checkedAt: '2026-07-26T00:00:00.000Z',
+      fetchImpl,
+    })
+
+    await adapter.context(auction())
+    const query = (fetchImpl.mock.calls[0]?.[1]?.body as URLSearchParams).get('data') ?? ''
+
+    // bbox selection throughout: `around:` forces a linear scan and made the
+    // query unable to finish inside any sane timeout.
+    expect(query).not.toContain('around:')
+    // places as nodes only — the nwr variant dragged in boundary relations
+    expect(query).toMatch(/node\([\d.,-]+\)\["place"/)
+    expect(query).not.toMatch(/nwr\([\d.,-]+\)\["place"/)
+    // noise-relevant classes keep their range, minor classes shrink to 5 km
+    expect(query).toContain('["highway"~"^(motorway|trunk|primary)$"]')
+    expect(query).toContain('["highway"~"^(secondary|tertiary)$"]')
+    expect(bboxWidthDeg(query, '["highway"~"^(motorway|trunk|primary)$"]'))
+      .toBeGreaterThan(bboxWidthDeg(query, '["highway"~"^(secondary|tertiary)$"]'))
+    // the unbounded office key no longer spans 5 km
+    expect(bboxWidthDeg(query, '["office"]'))
+      .toBeLessThan(bboxWidthDeg(query, '["industrial"]'))
+  })
+
+  describe('throttling and retry', () => {
+    function okResponse(): Response {
+      return new Response(JSON.stringify({ elements: [] }), { status: 200 })
+    }
+
+    it('retries a 429 instead of losing the auction', async () => {
+      const fetchImpl = vi.fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response('rate limited', { status: 429 }))
+        .mockResolvedValueOnce(okResponse())
+      const sleepImpl = vi.fn(async () => undefined)
+      const adapter = createOsmLocationContextAdapter({
+        endpoint: 'https://overpass.example.test/api/interpreter',
+        checkedAt: '2026-07-26T00:00:00.000Z',
+        fetchImpl,
+        sleepImpl,
+      })
+
+      const context = await adapter.context(auction())
+
+      expect(context).not.toBeNull()
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+    })
+
+    it.each([[504], [502], [503]])('retries a transient %i', async (status) => {
+      const fetchImpl = vi.fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response('busy', { status }))
+        .mockResolvedValueOnce(okResponse())
+      const adapter = createOsmLocationContextAdapter({
+        endpoint: 'https://overpass.example.test/api/interpreter',
+        checkedAt: '2026-07-26T00:00:00.000Z',
+        fetchImpl,
+        sleepImpl: async () => undefined,
+      })
+
+      await expect(adapter.context(auction())).resolves.not.toBeNull()
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+    })
+
+    it('retries a network-level failure', async () => {
+      const fetchImpl = vi.fn<typeof fetch>()
+        .mockRejectedValueOnce(new TypeError('fetch failed'))
+        .mockResolvedValueOnce(okResponse())
+      const adapter = createOsmLocationContextAdapter({
+        endpoint: 'https://overpass.example.test/api/interpreter',
+        checkedAt: '2026-07-26T00:00:00.000Z',
+        fetchImpl,
+        sleepImpl: async () => undefined,
+      })
+
+      await expect(adapter.context(auction())).resolves.not.toBeNull()
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+    })
+
+    it('honours Retry-After over its own backoff', async () => {
+      const fetchImpl = vi.fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response('rate limited', { status: 429, headers: { 'retry-after': '7' } }))
+        .mockResolvedValueOnce(okResponse())
+      const sleepImpl = vi.fn(async () => undefined)
+      const adapter = createOsmLocationContextAdapter({
+        endpoint: 'https://overpass.example.test/api/interpreter',
+        checkedAt: '2026-07-26T00:00:00.000Z',
+        fetchImpl,
+        minRequestIntervalMs: 0,
+        sleepImpl,
+      })
+
+      await adapter.context(auction())
+
+      expect(sleepImpl).toHaveBeenCalledWith(7_000)
+    })
+
+    it('does not retry a client error it cannot recover from', async () => {
+      const fetchImpl = vi.fn<typeof fetch>(async () => new Response('bad query', { status: 400 }))
+      const adapter = createOsmLocationContextAdapter({
+        endpoint: 'https://overpass.example.test/api/interpreter',
+        checkedAt: '2026-07-26T00:00:00.000Z',
+        fetchImpl,
+        sleepImpl: async () => undefined,
+      })
+
+      await expect(adapter.context(auction())).rejects.toThrow('Overpass returned 400')
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+    })
+
+    it('gives up after the attempt budget and surfaces the last error', async () => {
+      const fetchImpl = vi.fn<typeof fetch>(async () => new Response('rate limited', { status: 429 }))
+      const adapter = createOsmLocationContextAdapter({
+        endpoint: 'https://overpass.example.test/api/interpreter',
+        checkedAt: '2026-07-26T00:00:00.000Z',
+        fetchImpl,
+        maxAttempts: 3,
+        sleepImpl: async () => undefined,
+      })
+
+      await expect(adapter.context(auction())).rejects.toThrow('Overpass returned 429')
+      expect(fetchImpl).toHaveBeenCalledTimes(3)
+    })
+
+    it('stops hitting an endpoint that refuses every auction', async () => {
+      const fetchImpl = vi.fn<typeof fetch>(async () => new Response('rate limited', { status: 429 }))
+      const adapter = createOsmLocationContextAdapter({
+        endpoint: 'https://overpass.example.test/api/interpreter',
+        checkedAt: '2026-07-26T00:00:00.000Z',
+        fetchImpl,
+        maxAttempts: 2,
+        giveUpAfterConsecutiveFailures: 2,
+        sleepImpl: async () => undefined,
+      })
+
+      await expect(adapter.context(auction({ externalId: '1' }))).rejects.toThrow('Overpass returned 429')
+      await expect(adapter.context(auction({ externalId: '2' }))).rejects.toThrow('Overpass returned 429')
+      expect(fetchImpl).toHaveBeenCalledTimes(4)
+
+      // Budget spent: further auctions fail without touching the network.
+      await expect(adapter.context(auction({ externalId: '3' }))).rejects.toThrow('Overpass unavailable')
+      expect(fetchImpl).toHaveBeenCalledTimes(4)
+    })
+
+    it('resets the give-up counter after a success', async () => {
+      const fetchImpl = vi.fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response('rate limited', { status: 429 }))
+        .mockResolvedValueOnce(okResponse())
+        .mockResolvedValue(new Response('rate limited', { status: 429 }))
+      const adapter = createOsmLocationContextAdapter({
+        endpoint: 'https://overpass.example.test/api/interpreter',
+        checkedAt: '2026-07-26T00:00:00.000Z',
+        fetchImpl,
+        maxAttempts: 1,
+        giveUpAfterConsecutiveFailures: 2,
+        sleepImpl: async () => undefined,
+      })
+
+      await expect(adapter.context(auction({ externalId: '1' }))).rejects.toThrow('Overpass returned 429')
+      await expect(adapter.context(auction({ externalId: '2' }))).resolves.not.toBeNull()
+      // Counter cleared, so the next two failures are attempted rather than skipped.
+      await expect(adapter.context(auction({ externalId: '3' }))).rejects.toThrow('Overpass returned 429')
+      await expect(adapter.context(auction({ externalId: '4' }))).rejects.toThrow('Overpass returned 429')
+      await expect(adapter.context(auction({ externalId: '5' }))).rejects.toThrow('Overpass unavailable')
+    })
+
+    it('spaces consecutive auctions by the configured interval', async () => {
+      const fetchImpl = vi.fn<typeof fetch>(async () => okResponse())
+      const waits: number[] = []
+      const adapter = createOsmLocationContextAdapter({
+        endpoint: 'https://overpass.example.test/api/interpreter',
+        checkedAt: '2026-07-26T00:00:00.000Z',
+        fetchImpl,
+        minRequestIntervalMs: 2_000,
+        sleepImpl: async (ms) => { waits.push(ms) },
+      })
+
+      await adapter.context(auction())
+      await adapter.context(auction({ externalId: '43' }))
+
+      // First call goes straight through; the second is held back.
+      expect(waits).toHaveLength(1)
+      expect(waits[0]).toBeGreaterThan(0)
+      expect(waits[0]).toBeLessThanOrEqual(2_000)
+    })
   })
 })
