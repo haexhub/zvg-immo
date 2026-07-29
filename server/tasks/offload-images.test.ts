@@ -137,6 +137,22 @@ describe('runOffloadImages', () => {
     expect(offloadInactiveReason()).toBeNull()
   })
 
+  it('refuses to offload when the serving table returns zero rows, instead of treating everything as orphaned', async () => {
+    // A reachable pool with an empty auctions table (fresh restore, wrong DB,
+    // pending migration) must not look identical to "everything is orphaned" —
+    // that would wipe active auctions' photos too.
+    vi.mocked(getPool).mockReturnValue(poolReturning([], []) as never)
+    await seedImage('42', 'aabbccdd.jpg')
+    const { runOffloadImages } = await import('./offload-images')
+
+    const result = await runOffloadImages()
+
+    expect(result.removed).toBe(0)
+    expect(uploadImage).not.toHaveBeenCalled()
+    expect(result.warning).toContain('0 Einträge')
+    expect(await remaining('42')).toEqual(['aabbccdd.jpg'])
+  })
+
   it('offloads photos of an auction the serving table no longer knows', async () => {
     // Orphaned cache: it can never be served from disk again, so the date is moot.
     vi.mocked(getPool).mockReturnValue(poolReturning([auction('42')], []) as never)

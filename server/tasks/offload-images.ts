@@ -33,6 +33,7 @@ export interface OffloadImagesResult {
   failed: number
   freedBytes: number
   durationMs: number
+  warning?: string
 }
 
 export default defineTask({
@@ -48,9 +49,11 @@ export default defineTask({
         // An inactive run reports zeros, which on its own reads like a
         // successful no-work run — say why instead.
         const inactive = offloadInactiveReason()
+        const { warning, ...summary } = result
         await recordTaskRunEnd('offload-images', {
-          result: { ...result },
+          result: summary,
           warning: inactive
+            ?? warning
             ?? (result.failed > 0
               ? `${result.failed} Datei(en) konnten nicht ausgelagert werden — bleiben lokal liegen.`
               : null),
@@ -134,6 +137,19 @@ export async function runOffloadImages(signal?: AbortSignal): Promise<OffloadIma
 
   const cutoff = new Date(startedAt - OFFLOAD_AFTER_DAYS * 24 * 60 * 60 * 1000).toISOString()
   const [ended, known] = await Promise.all([endedBefore(cutoff), knownAuctions()])
+
+  // A reachable pool that reports zero auctions (empty/misconfigured DB,
+  // pre-migration, replica lag) is indistinguishable from "no auctions are
+  // known" — every local directory would then look orphaned and get
+  // offloaded regardless of `ended`, including active ones. Treat it as the
+  // same hard stop as no pool/no bucket rather than trusting an empty table.
+  if (known.size === 0) {
+    const warning = 'Foto-Auslagerung übersprungen: Tabelle "auctions" meldet 0 Einträge — wirkt wie eine leere/falsche Datenbank, nicht wie ein echter Leerstand. Fotos bleiben lokal.'
+    console.warn(`[offload-images] ${warning}`)
+    result.durationMs = Date.now() - startedAt
+    result.warning = warning
+    return result
+  }
 
   for (const platform of await listDirs(IMAGES_DIR)) {
     if (!isSafePathSegment(platform)) continue
