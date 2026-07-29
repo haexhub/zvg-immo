@@ -54,10 +54,10 @@ describe('OpenAiCompatibleProvider.extract', () => {
     await expect(provider.extract(req)).rejects.toThrow('http 429')
   })
 
-  it('returns null for a non-429 request failure', async () => {
+  it('surfaces a non-429 request failure', async () => {
     vi.stubGlobal('$fetch', vi.fn().mockRejectedValue(error(500)))
     const provider = new OpenAiCompatibleProvider(config)
-    await expect(provider.extract(req)).resolves.toBeNull()
+    await expect(provider.extract(req)).rejects.toMatchObject({ name: 'LlmProviderError' })
   })
 
   it('calls onRequestError for a non-429 failure but not for a 429 (which rethrows instead)', async () => {

@@ -29,6 +29,7 @@ import {
   type TranslatableExtractionTexts,
 } from '~/lib/extraction-translation'
 import { safeHref } from '~/lib/utils'
+import { apiErrorMessage } from '~/lib/api-error'
 import { googleCalendarUrl, icsDataUrl, outlookCalendarUrl } from '~/lib/calendar-links'
 import {
   Accessibility,
@@ -142,6 +143,7 @@ function translationRequest(val: AuctionDetail | null, loc: string): { lang: Con
 // untranslated. The cached translation is part of Nuxt async data so a page
 // reload can hydrate an existing cache hit without flashing the source text.
 const currentTranslationRequest = computed(() => translationRequest(a.value, locale.value))
+const translationError = ref<string | null>(null)
 const { data: loadedTranslation, pending: translationFetchPending } = await useAsyncData<LoadedAuctionTranslation | null>(
   `auction-translation:${platform}:${id}`,
   async () => {
@@ -154,8 +156,8 @@ const { data: loadedTranslation, pending: translationFetchPending } = await useA
       )
       if (!payload) return null
       return { ...request, payload }
-    } catch {
-      // Best-effort: keep showing the original text (see displayTitle/displayDescription).
+    } catch (err) {
+      translationError.value = apiErrorMessage(err, t('objektDetail.translationError'))
       return null
     }
   },
@@ -225,6 +227,7 @@ watch([currentTranslationRequest, activeTranslation, translationFetchPending], a
   if (!request || existing || cacheLookupPending) return
 
   translationGenerationPending.value = true
+  translationError.value = null
   try {
     const payload = await $fetch<AuctionTranslationResponse>(
       `/api/auction/${encodeURIComponent(platform)}/${encodeURIComponent(id)}/translation`,
@@ -232,8 +235,10 @@ watch([currentTranslationRequest, activeTranslation, translationFetchPending], a
     )
     if (seq !== translationSeq.value) return
     loadedTranslation.value = { ...request, payload }
-  } catch {
-    // Best-effort: keep showing the original text (see displayTitle/displayDescription).
+  } catch (err) {
+    if (seq === translationSeq.value) {
+      translationError.value = apiErrorMessage(err, t('objektDetail.translationError'))
+    }
   } finally {
     if (seq === translationSeq.value) translationGenerationPending.value = false
   }
@@ -731,6 +736,9 @@ useHead(() => ({
           <span v-if="titleTranslated" class="text-xs text-muted-foreground">({{ $t('objektDetail.autoTranslatedHint') }})</span>
         </div>
         <p v-if="a.address" class="text-muted-foreground">{{ a.address }}</p>
+        <p v-if="translationError" role="alert" class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {{ translationError }}
+        </p>
       </header>
 
       <AuctionPhotoGallery :photos="photoUrls" :alt-base="displayTitle || $t('objektDetail.fallbackTitle')" />
@@ -1075,7 +1083,7 @@ useHead(() => ({
                 </li>
               </ul>
               <div v-else-if="usageIdeasError" class="flex items-center gap-2">
-                <p class="text-sm text-destructive">{{ $t('objektDetail.usageIdeasError') }}</p>
+                <p class="text-sm text-destructive">{{ usageIdeasError }}</p>
                 <Button type="button" size="sm" variant="outline" @click="generateUsageIdeas">
                   {{ $t('objektDetail.usageIdeasRetry') }}
                 </Button>
@@ -1117,7 +1125,7 @@ useHead(() => ({
                 {{ $t('objektDetail.renovationCostEmpty') }}
               </p>
               <div v-else-if="renovationCostError" class="flex items-center gap-2">
-                <p class="text-sm text-destructive">{{ $t('objektDetail.renovationCostError') }}</p>
+                <p class="text-sm text-destructive">{{ renovationCostError }}</p>
                 <Button type="button" size="sm" variant="outline" @click="generateRenovationCost">
                   {{ $t('objektDetail.renovationCostRetry') }}
                 </Button>
@@ -1182,10 +1190,7 @@ useHead(() => ({
           </DetailSectionCard>
 
           <DetailSectionCard :title="$t('objektDetail.sourcesDisclaimerTitle')">
-            <div v-if="a.detailUrlUpstream || a.pdfUrlUpstream" class="mb-2 flex flex-wrap gap-2">
-              <Button v-if="a.detailUrlUpstream" as-child variant="outline" size="sm">
-                <a :href="safeHref(a.detailUrlUpstream)" target="_blank" rel="noopener">{{ $t('objektDetail.openDetailPage') }}</a>
-              </Button>
+            <div v-if="a.pdfUrlUpstream" class="mb-2 flex flex-wrap gap-2">
               <Button v-if="a.pdfUrlUpstream" as-child variant="outline" size="sm">
                 <a :href="safeHref(a.pdfUrlUpstream)" target="_blank" rel="noopener">{{ $t('objektDetail.announcementOriginal') }}</a>
               </Button>

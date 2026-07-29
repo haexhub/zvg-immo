@@ -6,7 +6,8 @@ import 'swiper/css/navigation'
 import 'swiper/css/pagination'
 import type { Attachment } from '~/types/auction'
 import type { GeoAuction } from '~/server/api/auctions-geo.get'
-import type { AuctionPhotoDetail } from '~/server/api/auction-detail.get'
+import type { AuctionDetail } from '~/server/api/auction/[platform]/[id].get'
+import { apiErrorMessage } from '~/lib/api-error'
 
 // Mounted into its own detached Vue app by AuctionMap.client.vue's Leaflet
 // popup (see mountLotPopover() there) — that app never installs the Nuxt i18n
@@ -19,11 +20,10 @@ const props = defineProps<{
   /** Viewer's display currency (WP-7) — pre-resolved by the parent since this
    *  detached app has no Nuxt context to call useCurrencyDisplay() itself. */
   currency: string
-  /** auction.marketValueEur already converted to `currency` by the parent. */
-  convertedMarketValue: number | null
+  /** Currency conversion stays in the Nuxt parent; this detached app receives
+   *  the already configured converter and applies it after lazy detail load. */
+  convertEur: (value: number | null) => number | null
 }>()
-
-const LAZY_PLATFORMS = new Set(['at-edikte', 'biddit', 'zvg-portal'])
 
 function extractPhotos(atts: Attachment[]): Attachment[] {
   return atts.filter((a) => a.kind === 'photo')
@@ -39,26 +39,22 @@ function slideSrc(a: Attachment): string {
   return a.proxyUrl
 }
 
-const photos = ref<Attachment[]>(extractPhotos(props.auction.attachments))
-const thumbnailUrl = ref<string | null>(props.auction.thumbnailUrl)
-const loading = ref(false)
+const detail = ref<AuctionDetail | null>(null)
+const photos = ref<Attachment[]>([])
+const thumbnailUrl = ref<string | null>(null)
+const loading = ref(true)
+const loadError = ref<string | null>(null)
 
 onMounted(async () => {
-  if (photos.value.length > 0) return
-  if (!LAZY_PLATFORMS.has(props.auction.platform)) return
-  loading.value = true
   try {
-    const detail = await $fetch<AuctionPhotoDetail>('/api/auction-detail', {
-      query: {
-        platform: props.auction.platform,
-        externalId: props.auction.externalId,
-        region: props.auction.region,
-      },
-    })
-    photos.value = extractPhotos(detail.attachments)
-    if (detail.thumbnailUrl) thumbnailUrl.value = detail.thumbnailUrl
-  } catch {
-    // Silent; user can still open the detail link.
+    const value = await $fetch<AuctionDetail>(
+      `/api/auction/${encodeURIComponent(props.auction.platform)}/${encodeURIComponent(props.auction.externalId)}`,
+    )
+    detail.value = value
+    photos.value = extractPhotos(value.attachments)
+    thumbnailUrl.value = value.thumbnailUrl
+  } catch (err) {
+    loadError.value = apiErrorMessage(err, 'Objektdetails konnten nicht geladen werden.')
   } finally {
     loading.value = false
   }
@@ -95,45 +91,40 @@ const swiperModules = [Navigation, Pagination, Keyboard]
       >
         <SwiperSlide v-for="(p, i) in photos" :key="p.fileId || i">
           <a :href="p.proxyUrl" target="_blank" rel="noopener">
-            <img :src="slideSrc(p)" referrerpolicy="no-referrer" loading="lazy" :alt="t('lotPopover.photoAlt', { n: i + 1, title: auction.title ?? t('lotPopover.untitled') })">
+            <img :src="slideSrc(p)" referrerpolicy="no-referrer" loading="lazy" :alt="t('lotPopover.photoAlt', { n: i + 1, title: detail?.title ?? t('lotPopover.untitled') })">
           </a>
         </SwiperSlide>
       </Swiper>
     </div>
     <div v-else-if="loading" class="lot-popover__placeholder">{{ t('lotPopover.loadingPhotos') }}</div>
+    <p v-else-if="loadError" class="lot-popover__error">{{ loadError }}</p>
     <div v-else-if="thumbnailUrl" class="lot-popover__media">
-      <a :href="auction.detailUrl ?? undefined" target="_blank" rel="noopener">
-        <img :src="thumbnailUrl" referrerpolicy="no-referrer" class="lot-popover__thumb">
-      </a>
+      <img :src="thumbnailUrl" referrerpolicy="no-referrer" class="lot-popover__thumb">
     </div>
 
-    <div class="lot-popover__title">{{ auction.title ?? t('lotPopover.untitled') }}</div>
-    <div class="lot-popover__address">{{ auction.address ?? '' }}</div>
+    <div class="lot-popover__title">{{ detail?.title ?? t('lotPopover.untitled') }}</div>
+    <div class="lot-popover__address">{{ detail?.address ?? '' }}</div>
 
     <div class="lot-popover__grid">
       <div>
         <div class="lot-popover__grid-label">{{ t('lotPopover.auctionDate') }}</div>
-        {{ formatDate(auction.auctionDateIso, auction.auctionDateText) }}
+        {{ formatDate(detail?.auctionDateIso ?? null, detail?.auctionDateText ?? null) }}
       </div>
       <div>
         <div class="lot-popover__grid-label">{{ t('lotPopover.marketValue') }}</div>
-        {{ props.convertedMarketValue != null ? formatPrice(props.convertedMarketValue) : (auction.marketValueText ?? '–') }}
+        {{ detail ? (props.convertEur(detail.marketValueEur) != null ? formatPrice(props.convertEur(detail.marketValueEur)) : (detail.marketValueText ?? '–')) : '–' }}
       </div>
     </div>
 
     <div class="lot-popover__cta">
-      <a
-        v-if="auction.detailAvailable"
-        :href="`/objekt/${encodeURIComponent(auction.platform)}/${encodeURIComponent(auction.externalId)}`"
-      >{{ t('lotPopover.viewDetails') }}</a>
-      <span v-else class="lot-popover__cta-disabled" :title="t('lotPopover.detailsProcessing')">{{ t('lotPopover.detailsUnavailable') }}</span>
+      <a :href="`/objekt/${encodeURIComponent(auction.platform)}/${encodeURIComponent(auction.externalId)}`">
+        {{ t('lotPopover.viewDetails') }}
+      </a>
     </div>
 
     <div class="lot-popover__footer">
-      <span class="lot-popover__source">{{ auction.authority }} · {{ auction.caseNumber }}</span><br>
-      <a v-if="auction.pdfUrl" :href="auction.pdfUrl" target="_blank" rel="noopener">{{ t('lotPopover.announcement') }}</a>
-      <span v-if="auction.pdfUrl && auction.detailUrl"> · </span>
-      <a v-if="auction.detailUrl" :href="auction.detailUrl" target="_blank" rel="noopener">{{ t('lotPopover.source') }}</a>
+      <span v-if="detail" class="lot-popover__source">{{ detail.authority }} · {{ detail.caseNumber }}</span><br>
+      <a v-if="detail?.pdfUrl" :href="detail.pdfUrl" target="_blank" rel="noopener">{{ t('lotPopover.announcement') }}</a>
     </div>
   </div>
 </template>
@@ -193,6 +184,10 @@ const swiperModules = [Navigation, Pagination, Keyboard]
   color: #6b7280;
   background: #f3f4f6;
   border-radius: 6px;
+  margin-bottom: 0.5rem;
+}
+.lot-popover__error {
+  color: #b91c1c;
   margin-bottom: 0.5rem;
 }
 .lot-popover__title {

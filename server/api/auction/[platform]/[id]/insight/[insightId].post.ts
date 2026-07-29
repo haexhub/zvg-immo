@@ -7,7 +7,7 @@
 // translation.post.ts, so a transient failure can always be retried instead of
 // permanently locking that content-hash out of ever getting a real insight.
 
-import { setResponseHeader, type H3Event } from 'h3'
+import { setResponseHeader } from 'h3'
 import type { Pool } from 'pg'
 import { readAuctionSnapshot } from '~/server/utils/auction-snapshot'
 import { isSafePathSegment } from '~/server/utils/path-segment'
@@ -23,6 +23,7 @@ import {
   createInMemoryRateLimitState,
   recordInMemoryRateLimitHit,
 } from '~/server/utils/in-memory-rate-limit'
+import { requestClientIp } from '~/server/utils/request-client-ip'
 
 // Dedupe concurrent misses for the same insight+content-hash and cap total
 // concurrent LLM work — same constant as translation.post.ts.
@@ -33,18 +34,6 @@ const MAX_INFLIGHT = 4
 // (see below) so two insights with different limits never share a budget.
 const insightRateLimit = createInMemoryRateLimitState()
 const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000
-
-function clientKey(event: H3Event): string {
-  const trustForwardedFor = String(useRuntimeConfig().trustForwardedFor ?? '') === '1'
-  if (trustForwardedFor) {
-    const forwarded = getRequestHeader(event, 'x-forwarded-for')
-    const first = forwarded?.split(',')[0]?.trim()
-    if (first) return first
-    const realIp = getRequestHeader(event, 'x-real-ip')?.trim()
-    if (realIp) return realIp
-  }
-  return event.node.req.socket.remoteAddress ?? 'unknown'
-}
 
 export default defineEventHandler(async (event) => {
   const platform = String(event.context.params?.platform ?? '')
@@ -111,7 +100,7 @@ export default defineEventHandler(async (event) => {
     }
 
     const now = Date.now()
-    const rateLimitKey = `${insightId}:${clientKey(event)}`
+    const rateLimitKey = `${insightId}:${requestClientIp(event)}`
     const rateLimitOpts = { max: definition.rateLimitPerHourPerIp, windowMs: RATE_LIMIT_WINDOW_MS }
     if (!checkInMemoryRateLimit(insightRateLimit, rateLimitKey, now, rateLimitOpts)) {
       throw createError({ statusCode: 429, statusMessage: 'insight rate limit exceeded' })

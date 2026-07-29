@@ -272,7 +272,7 @@ export interface Attachment {
   sizeBytes: number | null
   fileId: string
   /** URL the app fetches the file from: either a local proxy path (platforms
-   *  whose upstream requires a specific Referer, e.g. /api/zvg-proxy?…) or the
+   *  whose upstream requires a specific Referer) or the
    *  direct upstream URL when the file is publicly fetchable without one. */
   proxyUrl: string
 }

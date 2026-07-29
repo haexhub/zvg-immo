@@ -3,7 +3,6 @@ import { Menu } from 'lucide-vue-next'
 
 const navItems = [
   { to: '/search', labelKey: 'nav.search' },
-  { to: '/#pricing', labelKey: 'nav.pricing' },
   { to: '/#archive', labelKey: 'nav.archive' },
   { to: '/#calculator', labelKey: 'nav.calculator' },
 ]

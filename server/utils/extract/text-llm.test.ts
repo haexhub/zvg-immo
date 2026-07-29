@@ -48,9 +48,9 @@ describe('callSummaryLlm', () => {
     await expect(callSummaryLlm('sys', 'user text', openAiConfig)).resolves.toBeNull()
   })
 
-  it('returns null on request failure', async () => {
+  it('surfaces request failure', async () => {
     vi.stubGlobal('$fetch', vi.fn().mockRejectedValue(new Error('boom')))
-    await expect(callSummaryLlm('sys', 'user text', openAiConfig)).resolves.toBeNull()
+    await expect(callSummaryLlm('sys', 'user text', openAiConfig)).rejects.toMatchObject({ name: 'LlmProviderError' })
   })
 })
 
@@ -312,8 +312,8 @@ describe('callTranslationLlm', () => {
     })
   })
 
-  it('returns null on request failure', async () => {
+  it('surfaces request failure', async () => {
     vi.stubGlobal('$fetch', vi.fn().mockRejectedValue(new Error('boom')))
-    await expect(callTranslationLlm('sys', 'user text', 'House', 'desc', null, null, config)).resolves.toBeNull()
+    await expect(callTranslationLlm('sys', 'user text', 'House', 'desc', null, null, config)).rejects.toMatchObject({ name: 'LlmProviderError' })
   })
 })

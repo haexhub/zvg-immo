@@ -6,8 +6,7 @@
 // auctions) without either waiting for the next cron tick or an unbounded
 // country-wide run.
 
-import { runReprocess, type ReprocessOptions } from '~/server/tasks/reprocess'
-import { recordTaskRunEnd, recordTaskRunStart } from '~/server/utils/task-runs'
+import type { ReprocessOptions, ReprocessResult } from '~/server/tasks/reprocess'
 
 const MAX_LIMIT = 200
 
@@ -28,14 +27,6 @@ export default defineEventHandler(async (event) => {
     batch: typeof body.batch === 'boolean' ? body.batch : undefined,
   }
 
-  try {
-    await recordTaskRunStart('reprocess')
-    const result = await runReprocess(opts)
-    const { warning, lastLlmError, ...summary } = result
-    await recordTaskRunEnd('reprocess', { result: summary, warning, llmError: lastLlmError })
-    return result
-  } catch (err) {
-    await recordTaskRunEnd('reprocess', { error: (err as Error).message })
-    throw err
-  }
+  const outcome = await runTask('reprocess', { payload: { ...opts } }) as { result: ReprocessResult }
+  return outcome.result
 })

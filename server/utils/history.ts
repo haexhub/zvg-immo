@@ -1,7 +1,7 @@
-// Appends one row per auction to auction_observations (Postgres) on every
-// `refresh` run — the append-only history the JSON list cache doesn't keep
-// (list-cache.ts overwrites the previous run's snapshot). No-op when
-// Postgres isn't configured (see server/utils/db.ts).
+// Appends one row per auction to auction_observations (Postgres) for crawler
+// runs. Refresh records the list-level source view; enrich records the final
+// detail/extraction-decorated payload. This is the append-only history the
+// serving tables do not keep. No-op when Postgres isn't configured.
 
 import type { Pool } from 'pg'
 import type { Auction, CrawlResult } from '~/types/auction'
@@ -27,6 +27,7 @@ const COLUMNS = [
   'currency',
   'auction_date_iso',
   'cancelled',
+  'payload',
 ] as const
 
 export type ObservationRow = {
@@ -48,6 +49,7 @@ export type ObservationRow = {
   currency: string | null
   auction_date_iso: string | null
   cancelled: boolean
+  payload: Auction
 }
 
 export function auctionToObservationRow(a: Auction, capturedAt: string): ObservationRow {
@@ -70,6 +72,7 @@ export function auctionToObservationRow(a: Auction, capturedAt: string): Observa
     currency: a.currency ?? null,
     auction_date_iso: a.auctionDateIso,
     cancelled: a.cancelled,
+    payload: a,
   }
 }
 
@@ -86,12 +89,8 @@ export async function recordObservations(result: CrawlResult, capturedAt: string
   applyExtractionToAuctions(result.auctions, cache)
   const rows = result.auctions.map((a) => auctionToObservationRow(a, capturedAt))
 
-  try {
-    for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
-      await insertChunk(db, rows.slice(i, i + CHUNK_SIZE))
-    }
-  } catch (err) {
-    console.warn(`[history] insert failed: ${(err as Error).message}`)
+  for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+    await insertChunk(db, rows.slice(i, i + CHUNK_SIZE))
   }
 }
 
@@ -101,7 +100,7 @@ async function insertChunk(db: Pool, rows: ObservationRow[]): Promise<void> {
   for (const row of rows) {
     const placeholders = COLUMNS.map((_, i) => `$${values.length + i + 1}`)
     tuples.push(`(${placeholders.join(', ')})`)
-    values.push(...COLUMNS.map((col) => row[col]))
+    values.push(...COLUMNS.map((col) => col === 'payload' ? JSON.stringify(row.payload) : row[col]))
   }
   const sql = `INSERT INTO auction_observations (${COLUMNS.join(', ')}) VALUES ${tuples.join(', ')}`
   await db.query(sql, values)

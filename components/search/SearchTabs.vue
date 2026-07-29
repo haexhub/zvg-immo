@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import type { Auction } from '~/types/auction'
+import type { AuctionSummary } from '~/server/api/auctions.get'
 import type { GeoAuction, GeoCrawlResult } from '~/server/api/auctions-geo.get'
 
 defineProps<{
-  auctions: Auction[]
+  auctions: AuctionSummary[]
   totalCount: number
   pending: boolean
   loggedIn: boolean
@@ -19,7 +19,7 @@ defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'toggle-watchlist', auction: Auction): void
+  (e: 'toggle-watchlist', auction: AuctionSummary): void
   (e: 'load-more'): void
   (e: 'bounds-change', bounds: { north: number; south: number; east: number; west: number }): void
   (e: 'auction-hover', key: string | null): void

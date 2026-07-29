@@ -82,7 +82,7 @@ export async function fetchDetailPage(
       filename,
       sizeBytes: parseFileSize(sizeText),
       fileId,
-      proxyUrl: `/api/zvg-proxy?button=showAnhang&land_abk=${landAbk}&file_id=${fileId}&zvg_id=${zvgId}`,
+      proxyUrl: new URL(href, `${ZVG_BASE}/index.php`).toString(),
     })
   })
 

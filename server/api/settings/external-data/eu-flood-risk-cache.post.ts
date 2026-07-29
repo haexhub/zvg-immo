@@ -1,7 +1,6 @@
-import {
-  runImportEuFloodRiskCache,
-  type ImportEuFloodRiskCachePayload,
-  type ImportEuFloodRiskCacheTaskSummary,
+import type {
+  ImportEuFloodRiskCachePayload,
+  ImportEuFloodRiskCacheTaskSummary,
 } from '~/server/tasks/import-eu-flood-risk-cache'
 
 const MAX_PAGE_SIZE = 10_000
@@ -20,7 +19,8 @@ export default defineEventHandler(async (event): Promise<ImportEuFloodRiskCacheT
     countryCodes: optionalCountryCodes(body.countryCodes),
   }
 
-  return await runImportEuFloodRiskCache(payload)
+  const outcome = await runTask('import-eu-flood-risk-cache', { payload: { ...payload } }) as { result: ImportEuFloodRiskCacheTaskSummary }
+  return outcome.result
 })
 
 function optionalString(value: unknown): string | undefined {

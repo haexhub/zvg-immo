@@ -147,17 +147,17 @@ describe('runEnrich country scoping', () => {
     expect(crawlAll).toHaveBeenCalledWith(expect.objectContaining({ country: undefined }))
   })
 
-  it('can persist the regional crawl result to list cache/history/alerts for a manual source update', async () => {
+  it('persists list cache/alerts per region and records the final enriched result for history', async () => {
     const auction = makeAuction()
     const regionResult = mockCrawl([auction])
     const { crawlAll } = await import('../crawlers/registry')
-    vi.mocked(crawlAll).mockResolvedValue(mockCrawl([]))
+    vi.mocked(crawlAll).mockImplementation(async (opts) => {
+      await opts?.onRegionResult?.('se', 'all', regionResult)
+      return regionResult
+    })
     vi.mocked(readExtractionCache).mockResolvedValue({})
 
     await runEnrich({ country: 'se', force: true, writeListCache: true })
-
-    const opts = vi.mocked(crawlAll).mock.calls[0]?.[0]
-    await opts?.onRegionResult?.('se', 'all', regionResult)
 
     expect(writeListCache).toHaveBeenCalledWith('se', 'all', regionResult)
     expect(recordObservations).toHaveBeenCalledWith(regionResult, expect.any(String))

@@ -8,7 +8,7 @@ import { getPool } from '../db'
 vi.mock('../db', () => ({ getPool: vi.fn() }))
 
 // Imported after the mock so the module under test picks up the mocked getPool.
-const { pdfToText, pickAllPdfs, pickRelevantPdfs } = await import('./pdf-text')
+const { fetchPdfBuffer, pdfToText, pickAllPdfs, pickRelevantPdfs } = await import('./pdf-text')
 
 const CACHE_DIR = join(process.cwd(), '.cache_zvg', 'pdftext')
 const FAKE_PDF = Buffer.from('%PDF-1.4\n%%EOF')
@@ -86,6 +86,24 @@ describe('pickAllPdfs', () => {
       attachment('announcement', 'notice.pdf', '/notice.pdf'),
       attachment('other', 'bidding.pdf', '/bidding.pdf'),
     ])
+  })
+})
+
+describe('fetchPdfBuffer resource bounds', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('rejects an oversized response before buffering its body', async () => {
+    const cancel = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      headers: new Headers({ 'content-length': String(51 * 1024 * 1024) }),
+      body: { cancel },
+    }))
+
+    await expect(fetchPdfBuffer('https://example.test/oversized.pdf')).resolves.toBeNull()
+    expect(cancel).toHaveBeenCalledOnce()
   })
 })
 

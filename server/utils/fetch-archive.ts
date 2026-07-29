@@ -16,7 +16,8 @@ import { archiveBlob, recordCapture } from './raw-archive'
 
 /**
  * Archives raw detail-capture bytes (kind='detail_html'), keyed on
- * `(platform, externalId)`. Never throws — best-effort like archiveDocument.
+ * `(platform, externalId)`. Persistence failures propagate when the archive
+ * is configured, so crawler status cannot hide source-data loss.
  */
 export async function archiveDetailCapture(
   bytes: Buffer,
