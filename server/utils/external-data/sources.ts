@@ -5,6 +5,13 @@ export type ExternalDataCapability =
   | 'market_transactions'
   | 'land_value_baseline'
   | `hazard_${HazardKind}`
+  | 'location_context'
+  | 'demographics'
+  | 'poi_places'
+  | 'transport_network'
+  | 'settlement_structure'
+  | 'noise_airport'
+  | 'flight_routes'
   | 'source_discovery'
 
 export interface ExternalDataSource {
@@ -85,6 +92,105 @@ export const EXTERNAL_DATA_SOURCES: readonly ExternalDataSource[] = [
     refreshCadence: 'six-year Floods Directive cycle / source updates',
     resolution: 'potential significant flood risk areas',
     adapter: 'euFloodRiskAreasAdapter',
+  },
+  {
+    id: 'openstreetmap-overpass',
+    label: 'OpenStreetMap / Overpass',
+    countries: ['eu'],
+    capabilities: ['location_context', 'poi_places', 'transport_network'],
+    sourceUrl: 'https://www.openstreetmap.org/copyright',
+    licenseNote: 'Europe-wide open map tags for POIs, transport, roads, landuse and visible neighborhood signals; completeness varies by mapper coverage.',
+    refreshCadence: 'deployment-configured / source minutely updates',
+    resolution: 'object tags around auction coordinates',
+    adapter: 'osmLocationContextAdapter',
+  },
+  {
+    id: 'overture-maps',
+    label: 'Overture Maps',
+    countries: ['eu'],
+    capabilities: ['poi_places', 'transport_network', 'settlement_structure'],
+    sourceUrl: 'https://docs.overturemaps.org/',
+    licenseNote: 'Global open GeoParquet datasets for places, buildings, divisions and transportation; useful as a bulk alternative/complement to live Overpass.',
+    refreshCadence: 'monthly / release cadence',
+    resolution: 'feature-level places, roads, buildings and administrative divisions',
+    adapter: 'overtureMapsAdapter',
+  },
+  {
+    id: 'eurostat-gisco-population-grid',
+    label: 'Eurostat GISCO Population Grid',
+    countries: ['eu'],
+    capabilities: ['demographics', 'settlement_structure'],
+    sourceUrl: 'https://ec.europa.eu/eurostat/web/gisco/geodata/population-distribution/population-grids',
+    licenseNote: 'Official gridded population baseline for comparable density and settlement analysis across Europe.',
+    refreshCadence: 'census / release cadence',
+    resolution: '1 km population grid',
+    adapter: 'eurostatGiscoPopulationGridAdapter',
+  },
+  {
+    id: 'eurostat-degree-urbanisation',
+    label: 'Eurostat Degree of Urbanisation',
+    countries: ['eu'],
+    capabilities: ['demographics', 'settlement_structure'],
+    sourceUrl: 'https://ec.europa.eu/eurostat/web/gisco/geodata/population-distribution/degree-urbanisation',
+    licenseNote: 'Official LAU-level urban/rural classification for comparable city/town/rural context.',
+    refreshCadence: 'source release cadence',
+    resolution: 'LAU / population-grid-derived urbanisation class',
+    adapter: 'eurostatDegreeUrbanisationAdapter',
+  },
+  {
+    id: 'eurostat-regional-demographics',
+    label: 'Eurostat Regional Demographics',
+    countries: ['eu'],
+    capabilities: ['demographics'],
+    sourceUrl: 'https://ec.europa.eu/eurostat/cache/metadata/en/demo_r_gind3_esms.htm',
+    licenseNote: 'Official NUTS 2/3 population change, births/deaths and demographic balance; good for ageing/outmigration signals above parcel level.',
+    refreshCadence: 'annual',
+    resolution: 'NUTS 2/3',
+    adapter: 'eurostatRegionalDemographicsAdapter',
+  },
+  {
+    id: 'eurostat-regional-labour-market',
+    label: 'Eurostat Regional Labour Market',
+    countries: ['eu'],
+    capabilities: ['demographics'],
+    sourceUrl: 'https://ec.europa.eu/eurostat/cache/metadata/en/reg_lmk_esms.htm',
+    licenseNote: 'Official EU-LFS regional labour market indicators, generally down to NUTS 2; use as regional employment context, not micro-location proof.',
+    refreshCadence: 'quarterly / annual',
+    resolution: 'NUTS 2',
+    adapter: 'eurostatRegionalLabourMarketAdapter',
+  },
+  {
+    id: 'eea-environmental-noise-directive',
+    label: 'EEA Environmental Noise Directive data',
+    countries: ['eu'],
+    capabilities: ['noise_airport', 'transport_network'],
+    sourceUrl: 'https://www.eea.europa.eu/data-and-maps/data/data-on-noise-exposure-8',
+    licenseNote: 'Europe-wide reported strategic noise exposure for major roads, railways, airports and agglomerations under the Environmental Noise Directive.',
+    refreshCadence: 'five-year END reporting cycle / EEA releases',
+    resolution: 'reported airport/road/rail/industry noise exposure and contour context',
+    adapter: 'eeaEnvironmentalNoiseAdapter',
+  },
+  {
+    id: 'eurocontrol-adrr',
+    label: 'EUROCONTROL Aviation Data Repository for Research',
+    countries: ['eu'],
+    capabilities: ['flight_routes'],
+    sourceUrl: 'https://www.eurocontrol.int/dashboard/aviation-data-research',
+    licenseNote: 'Research access to planned and actual flight trajectories, airspace structure and route network data; access and usage terms must be checked before production use.',
+    refreshCadence: 'provider release cadence',
+    resolution: 'flight trajectory / route network',
+    adapter: 'eurocontrolAdrrAdapter',
+  },
+  {
+    id: 'opensky-network',
+    label: 'OpenSky Network',
+    countries: ['eu'],
+    capabilities: ['flight_routes'],
+    sourceUrl: 'https://opensky-network.org/data',
+    licenseNote: 'Crowdsourced ADS-B/Mode S flight tracking data; useful for route density research, with coverage and licensing constraints.',
+    refreshCadence: 'live / historical database',
+    resolution: 'aircraft position observations / reconstructed trajectories',
+    adapter: 'openskyFlightRouteAdapter',
   },
   {
     id: 'copernicus-effis',
