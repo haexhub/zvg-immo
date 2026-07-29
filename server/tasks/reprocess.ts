@@ -672,7 +672,8 @@ export async function runReprocess(opts: ReprocessOptions = {}): Promise<Reproce
         },
         onLlmError: (err) => {
           llmErrors++
-          lastLlmError = `${platform}:${externalId}: ${(err as Error).message}`
+          const message = err instanceof Error ? err.message : String(err)
+          lastLlmError = `${platform}:${externalId}: ${message}`
         },
       })
       if (!result) {

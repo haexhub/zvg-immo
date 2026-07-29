@@ -383,7 +383,7 @@
       "processed": "Processed",
       "skipped": "Skipped",
       "llmCalls": "LLM calls",
-      "llmErrors": "LLM errors",
+      "llmErrors": "LLM request errors",
       "warning": "Notice: {message}",
       "lastLlmError": "Last LLM error: {message}",
       "batchLabel": "Submit via Batch API (checks whether batch currently works for this provider)"
