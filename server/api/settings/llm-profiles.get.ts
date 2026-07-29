@@ -42,8 +42,10 @@ function publicProfile(profile: {
     baseUrl: profile.baseUrl,
     model: profile.model,
     executionMode: profile.executionMode,
-    apiKeySet: !!profile.apiKey,
-    apiKeyMissing: !profile.apiKey && llmProviderRequiresApiKey(profile.provider, profile.baseUrl),
+    // Trimmed: a stored "   " is as unusable as an empty key, so it must not
+    // read as set here or the card would hide the warning below.
+    apiKeySet: !!profile.apiKey.trim(),
+    apiKeyMissing: !profile.apiKey.trim() && llmProviderRequiresApiKey(profile.provider, profile.baseUrl),
   }
 }
 

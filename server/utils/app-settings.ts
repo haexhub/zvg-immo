@@ -274,7 +274,7 @@ export async function setLlmProviderProfileSettings(
     const current = existing.get(id)
     const executionMode = input.executionMode ?? current?.executionMode ?? DEFAULT_LLM_EXECUTION_MODE
     const apiKey = input.apiKey ?? current?.apiKey ?? ''
-    if (!apiKey && llmProviderRequiresApiKey(input.provider, input.baseUrl)) {
+    if (!apiKey.trim() && llmProviderRequiresApiKey(input.provider, input.baseUrl)) {
       throw new Error('apiKey: für diesen Provider erforderlich.')
     }
     if (!supportsLlmProviderExecutionMode(input.provider, executionMode, apiKey, input.baseUrl)) {

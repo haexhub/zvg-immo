@@ -562,6 +562,20 @@ describe('getLlmProviderOverride', () => {
     ], {})).rejects.toThrow('apiKey: für diesen Provider erforderlich.')
   })
 
+  it('rejects a whitespace-only key, which is as unusable as no key at all', async () => {
+    const db = makeFakePool() as unknown as Pool
+    await expect(setLlmProviderProfileSettings(db, [
+      {
+        id: 'translate',
+        provider: 'gemini-native',
+        baseUrl: 'https://generativelanguage.googleapis.com',
+        model: 'gemini-3.5-flash-lite',
+        executionMode: 'sync',
+        apiKey: '   ',
+      },
+    ], {})).rejects.toThrow('apiKey: für diesen Provider erforderlich.')
+  })
+
   it('accepts a keyless profile pointing at an internal sidecar', async () => {
     const db = makeFakePool() as unknown as Pool
     const saved = await setLlmProviderProfileSettings(db, [

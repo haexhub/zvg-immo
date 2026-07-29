@@ -34,10 +34,20 @@ function isPublicEndpoint(baseUrl: string): boolean {
     return false
   }
   const host = hostname.replace(/^\[|\]$/g, '')
-  if (host === 'localhost' || host === '::1' || !host.includes('.')) return false
+  if (host === 'localhost') return false
+  // An IPv6 literal carries no dot, so it has to be classified before the
+  // dotless-host exemption below — otherwise a globally routable address would
+  // be read as a container name and saved keyless.
+  if (host.includes(':')) return !isPrivateIpv6(host)
+  if (!host.includes('.')) return false
   if (/^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host)) return false
   if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return false
   return true
+}
+
+/** ::1 loopback, :: unspecified, fc00::/7 unique-local, fe80::/10 link-local. */
+function isPrivateIpv6(host: string): boolean {
+  return host === '::1' || host === '::' || /^f[cd]/.test(host) || /^fe[89ab]/.test(host)
 }
 
 export function supportsLlmProviderExecutionMode(

@@ -22,6 +22,17 @@ describe('llmProviderRequiresApiKey', () => {
     expect(llmProviderRequiresApiKey('claude-proxy', baseUrl)).toBe(false)
   })
 
+  it.each([
+    ['IPv6 unique-local fd00::/8', 'http://[fd12:3456::1]:8080'],
+    ['IPv6 link-local fe80::/10', 'http://[fe80::1]:8080'],
+  ])('exempts a private IPv6 range (%s)', (_label, baseUrl) => {
+    expect(llmProviderRequiresApiKey('claude-proxy', baseUrl)).toBe(false)
+  })
+
+  it('requires a key for a globally routable IPv6 literal, which carries no dot either', () => {
+    expect(llmProviderRequiresApiKey('openai-compatible', 'http://[2001:4860:4860::8888]:8080')).toBe(true)
+  })
+
   it('treats 172.32/12 as public — just outside the private range', () => {
     expect(llmProviderRequiresApiKey('openai-compatible', 'http://172.32.0.1:8080')).toBe(true)
   })

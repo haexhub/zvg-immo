@@ -1305,7 +1305,7 @@ onBeforeUnmount(stopProgressPolling)
                   <Checkbox v-model="profile.clearApiKey" />
                   {{ $t('settings.llmProvider.apiKeyClearOnSave') }}
                 </Label>
-                <p v-if="profile.apiKeyMissing && !profile.apiKey" class="text-xs text-destructive">
+                <p v-if="profile.apiKeyMissing && !profile.apiKey.trim()" class="text-xs text-destructive">
                   {{ $t('settings.llmProvider.apiKeyMissing') }}
                 </p>
               </div>
