@@ -1084,7 +1084,12 @@ useHead(() => ({
                         {{ formatCostRange(item.costMinEur, item.costMaxEur) }}
                       </span>
                     </div>
-                    <p class="mt-0.5 text-xs leading-relaxed text-muted-foreground">{{ item.rationale }}</p>
+                    <p class="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                      {{ item.rationale }}
+                      <span v-if="item.confidence">
+                        ({{ item.confidence === 'high' ? $t('objektDetail.confidenceHigh') : $t('objektDetail.confidenceLow') }})
+                      </span>
+                    </p>
                   </div>
                 </li>
               </ul>

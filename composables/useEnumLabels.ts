@@ -57,6 +57,10 @@ export function useUsageIdeaTypeLabel() {
 export function useRenovationCostCategoryLabel() {
   const { t, te } = useI18n()
   return (id: string, fallback?: string): string => {
+    // 'other' is the catch-all category — its whole point is that label/
+    // rationale name the specific thing found, so the generic "Sonstiges"
+    // translation must not shadow that specific fallback label.
+    if (id === 'other' && fallback) return fallback
     const key = `renovationCostCategory.${id}`
     return te(key) ? t(key) : (fallback ?? id)
   }
