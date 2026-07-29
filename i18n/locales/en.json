@@ -867,6 +867,18 @@
       "high": "high",
       "unknown": "unknown"
     },
+    "reportedNoiseTitle": "Reported noise exposure (EU Environmental Noise Directive)",
+    "reportedNoiseHint": "Officially reported noise contours under the EU Environmental Noise Directive. Only available for mapped agglomerations and major transport routes.",
+    "noiseSource": {
+      "road": "Road traffic",
+      "rail": "Rail traffic",
+      "aviation": "Air traffic",
+      "industry": "Industry"
+    },
+    "noiseIndicator": {
+      "lden": "Day-evening-night",
+      "lnight": "Night"
+    },
     "demographicSignalLevel": {
       "low": "weak",
       "medium": "medium",
