@@ -8,6 +8,10 @@ vi.mock('~/server/utils/external-data/location-enrichment', () => ({
   readLocationEnrichmentCache: vi.fn(),
   writeLocationEnrichmentCache: vi.fn(),
 }))
+// No Postgres in tests by default — matches getPool()'s own "no databaseUrl
+// configured" contract instead of the real module memoizing a Pool (or null)
+// for the whole file the first time any test happens to call it.
+vi.mock('~/server/utils/db', () => ({ getPool: vi.fn(() => null) }))
 
 function auction(overrides: Partial<Auction> = {}): Auction {
   return {
@@ -161,8 +165,13 @@ const locationContext: LocationContext = {
   checkedAt: '2026-07-26T00:00:00.000Z',
 }
 
-afterEach(() => {
+afterEach(async () => {
   vi.unstubAllGlobals()
+  // clearAllMocks only drops recorded calls, so a getPool() stubbed with a
+  // fake app_settings pool would otherwise keep serving DB overrides to every
+  // later test in this file.
+  const { getPool } = await import('~/server/utils/db')
+  vi.mocked(getPool).mockReturnValue(null)
   vi.resetModules()
   vi.clearAllMocks()
 })
@@ -317,6 +326,71 @@ describe('runExternalEnrichment', () => {
         sourceVersion: expect.stringContaining('eu-flood-risk-file-cache@'),
       }),
     })
+  })
+
+  it('an admin-configured DB override wins over the env-configured GeoJSON path', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    vi.stubGlobal('useRuntimeConfig', () => ({
+      externalData: { frDvfCachePath: '', euFloodRiskGeoJsonPath: join(process.cwd(), 'nonexistent.geojson') },
+    }))
+    const { readAuctionSnapshot } = await import('~/server/utils/auction-snapshot')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionSnapshot).mockResolvedValue({ 'test:42': auction() })
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+
+    const { getPool } = await import('~/server/utils/db')
+    const overridePath = join(process.cwd(), 'server/utils/external-data/fixtures/eu-flood-risk-zones.fixture.geojson')
+    const rows = new Map<string, unknown>([['external_data_config_eu-flood-risk-areas', { geoJsonPath: overridePath }]])
+    vi.mocked(getPool).mockReturnValue({
+      query: async (sql: string, params: unknown[] = []) => {
+        const [key] = params as [string]
+        return sql.includes('SELECT value FROM app_settings WHERE key =') && rows.has(key)
+          ? { rows: [{ value: rows.get(key) }] }
+          : { rows: [] }
+      },
+    } as never)
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    const summary = await runExternalEnrichment({
+      now: new Date('2026-07-26T00:00:00.000Z'),
+      marketAdapters: [],
+      landValueAdapters: [],
+    })
+
+    expect(summary.hazards).toBe(1)
+  })
+
+  it('skips only the flood source when its configured GeoJSON cache is missing', async () => {
+    // The polygon cache is imported out-of-band, so a path set from /settings
+    // is legitimately absent until the first import succeeds. That must not
+    // reject the whole run and take market/location enrichment with it.
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    vi.stubGlobal('useRuntimeConfig', () => ({
+      externalData: { euFloodRiskGeoJsonPath: join(process.cwd(), 'nonexistent.geojson') },
+    }))
+    const { readAuctionSnapshot } = await import('~/server/utils/auction-snapshot')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionSnapshot).mockResolvedValue({ 'test:42': auction() })
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    const summary = await runExternalEnrichment({
+      now: new Date('2026-07-26T00:00:00.000Z'),
+      marketAdapters: [],
+      landValueAdapters: [],
+      locationContextAdapters: [{
+        id: 'osm-fixture',
+        sourceVersion: 'v1',
+        supports: () => true,
+        context: vi.fn(async () => locationContext),
+      }],
+    })
+
+    expect(summary.hazards).toBe(0)
+    expect(summary.locationContexts).toBe(1)
+    expect(summary.written).toBe(1)
   })
 
   it('counts stale hazard results separately', async () => {

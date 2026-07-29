@@ -356,6 +356,17 @@
       "llmStatusLastError": "LLM-Extraktion zuletzt fehlgeschlagen: {message}",
       "llmStatusProgress": "{processed}/{candidatesTotal} verarbeitet, {llmCalls} LLM-Aufrufe, {skipped} übersprungen"
     },
+    "externalData": {
+      "title": "Externe Datenquellen",
+      "description": "POI/ÖPNV, Lärm, Hochwasser und Marktvergleich auf der Detailseite kommen aus diesen Diensten. Ein leeres Feld übernimmt den per Deployment (Env-Var) gesetzten Wert, sofern vorhanden — sonst bleibt die Quelle inaktiv.",
+      "configured": "Aktiv",
+      "notConfigured": "Nicht konfiguriert",
+      "loadError": "Datenquellen konnten nicht geladen werden.",
+      "saveError": "Speichern fehlgeschlagen.",
+      "saved": "Gespeichert.",
+      "saving": "Speichere …",
+      "save": "Speichern"
+    },
     "reprocess": {
       "title": "Reprocess-Testlauf",
       "description": "Extraktion für eine begrenzte Anzahl Auktionen aus dem Archiv neu laufen lassen — z. B. um eine neue Provider-/Modell-Konfiguration zu verifizieren, bevor der volle Bestand neu verarbeitet wird.",

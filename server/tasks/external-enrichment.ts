@@ -1,18 +1,23 @@
+import type { Pool } from 'pg'
 import type { Auction, HazardAssessment, LandValueBaseline, LocationContext, MarketComparison } from '~/types/auction'
 import { readAuctionSnapshot } from '~/server/utils/auction-snapshot'
 import { geocodeAddress } from '~/server/utils/geocode'
+import { getPool } from '~/server/utils/db'
 import {
   readLocationEnrichmentCache,
   writeLocationEnrichmentCache,
   type LocationEnrichmentCache,
 } from '~/server/utils/external-data/location-enrichment'
 import { createDvfFileMarketAdapter } from '~/server/utils/external-data/fr-dvf-cache'
-import {
-  createEuFloodRiskFileAdapter,
-  DEFAULT_EU_FLOOD_RISK_MAX_CACHE_AGE_DAYS,
-} from '~/server/utils/external-data/eu-flood-risk'
+import { createEuFloodRiskFileAdapter } from '~/server/utils/external-data/eu-flood-risk'
 import { createEeaEnvironmentalNoiseEnhancer } from '~/server/utils/external-data/eea-environmental-noise'
 import { createOsmLocationContextAdapter } from '~/server/utils/external-data/osm-location-context'
+import {
+  getStoredExternalDataSourceConfig,
+  getConfigurableExternalDataSource,
+  resolveExternalDataSourceConfig,
+  type ExternalDataSourceConfigValues,
+} from '~/server/utils/external-data/config'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 
 export interface MarketComparisonAdapter {
@@ -124,10 +129,11 @@ export async function runExternalEnrichment(
     durationMs: 0,
   }
 
-  const marketAdapters = options.marketAdapters ?? await defaultMarketAdapters()
+  const db = getPool()
+  const marketAdapters = options.marketAdapters ?? await defaultMarketAdapters(db)
   const landValueAdapters = options.landValueAdapters ?? []
-  const hazardAdapters = options.hazardAdapters ?? await defaultHazardAdapters(checkedAt)
-  const locationContextAdapters = options.locationContextAdapters ?? defaultLocationContextAdapters(checkedAt)
+  const hazardAdapters = options.hazardAdapters ?? await defaultHazardAdapters(db, checkedAt)
+  const locationContextAdapters = options.locationContextAdapters ?? await defaultLocationContextAdapters(db, checkedAt)
 
   for (const rawAuction of Object.values(snapshot).filter((auction) => inScope(auction, options))) {
     if (options.limit != null && summary.processed >= options.limit) break
@@ -281,47 +287,77 @@ function sourceVersion(adapters: Array<{ id: string; sourceVersion: string }>): 
     : 'no-adapters'
 }
 
-async function defaultMarketAdapters(): Promise<MarketComparisonAdapter[]> {
-  if (typeof useRuntimeConfig !== 'function') return []
-  const config = useRuntimeConfig().externalData as ExternalDataRuntimeConfig | undefined
+// Every default*Adapters function below resolves its source(s) through this
+// one path — DB override (app_settings, /settings) > env runtimeConfig
+// (nuxt.config.ts's externalData.*) > the field's own default, exactly the
+// generic contract server/utils/external-data/config.ts documents. A source
+// with no configFields, or whose required fields resolve empty everywhere,
+// yields `null` and is left out — same graceful-degrade as before, now
+// driven by the registry instead of one hand-written check per source.
+async function resolvedSourceValues(
+  db: Pool | null,
+  sourceId: string,
+): Promise<ExternalDataSourceConfigValues | null> {
+  const source = getConfigurableExternalDataSource(sourceId)
+  if (!source) return null
+  const stored = db ? await getStoredExternalDataSourceConfig(db, sourceId) : {}
+  const runtimeConfig = typeof useRuntimeConfig === 'function'
+    ? (useRuntimeConfig().externalData as Record<string, string | number | undefined> | undefined) ?? {}
+    : {}
+  const resolved = resolveExternalDataSourceConfig(source, stored, runtimeConfig)
+  return resolved.isConfigured ? resolved.values : null
+}
+
+async function defaultMarketAdapters(db: Pool | null): Promise<MarketComparisonAdapter[]> {
   const adapters: MarketComparisonAdapter[] = []
-  if (config?.frDvfCachePath) {
-    adapters.push(await createDvfFileMarketAdapter({ cachePath: config.frDvfCachePath }))
+  const values = await resolvedSourceValues(db, 'fr-dvf-geolocated')
+  if (values) {
+    adapters.push(await createDvfFileMarketAdapter({ cachePath: String(values.cachePath) }))
   }
   return adapters
 }
 
-async function defaultHazardAdapters(checkedAt: string): Promise<HazardAssessmentAdapter[]> {
-  if (typeof useRuntimeConfig !== 'function') return []
-  const config = useRuntimeConfig().externalData as ExternalDataRuntimeConfig | undefined
+async function defaultHazardAdapters(db: Pool | null, checkedAt: string): Promise<HazardAssessmentAdapter[]> {
   const adapters: HazardAssessmentAdapter[] = []
-  if (config?.euFloodRiskGeoJsonPath) {
-    adapters.push(await createEuFloodRiskFileAdapter({
-      geoJsonPath: config.euFloodRiskGeoJsonPath,
-      checkedAt,
-      maxCacheAgeDays: numberConfig(config.euFloodRiskMaxCacheAgeDays, DEFAULT_EU_FLOOD_RISK_MAX_CACHE_AGE_DAYS),
-    }))
+  const values = await resolvedSourceValues(db, 'eu-flood-risk-areas')
+  if (values) {
+    // The polygon cache is filled out-of-band (server/tasks/import-eu-flood-
+    // risk-cache.ts), so a path that was just set from /settings legitimately
+    // points at a file that doesn't exist yet — and unlike fr-dvf's
+    // readJsonCache, createEuFloodRiskFileAdapter reads it eagerly and throws
+    // on ENOENT/corrupt JSON. Skip only this source instead of rejecting the
+    // whole run, which would take market, location and noise enrichment down
+    // with it.
+    try {
+      adapters.push(await createEuFloodRiskFileAdapter({
+        geoJsonPath: String(values.geoJsonPath),
+        checkedAt,
+        maxCacheAgeDays: Number(values.maxCacheAgeDays),
+      }))
+    } catch (err) {
+      console.warn(
+        `[external-enrichment] eu-flood-risk cache unusable at ${String(values.geoJsonPath)}: ${(err as Error).message}`,
+      )
+    }
   }
   return adapters
 }
 
-function defaultLocationContextAdapters(checkedAt: string): LocationContextAdapter[] {
-  if (typeof useRuntimeConfig !== 'function') return []
-  const config = useRuntimeConfig().externalData as ExternalDataRuntimeConfig | undefined
-  const endpoint = stringConfig(config?.osmContextEndpoint)
-  if (!endpoint) return []
+async function defaultLocationContextAdapters(db: Pool | null, checkedAt: string): Promise<LocationContextAdapter[]> {
+  const osmValues = await resolvedSourceValues(db, 'openstreetmap-overpass')
+  if (!osmValues) return []
   const osmAdapter = createOsmLocationContextAdapter({
-    endpoint,
+    endpoint: String(osmValues.endpoint),
     checkedAt,
-    timeoutMs: numberConfig(config?.osmContextTimeoutMs, 20_000),
+    timeoutMs: Number(osmValues.timeoutMs),
   })
   const enhancers: LocationContextEnhancer[] = []
-  const eeaNoiseServiceBaseUrl = stringConfig(config?.eeaNoiseServiceBaseUrl)
-  if (eeaNoiseServiceBaseUrl) {
+  const eeaValues = await resolvedSourceValues(db, 'eea-environmental-noise-directive')
+  if (eeaValues) {
     enhancers.push(createEeaEnvironmentalNoiseEnhancer({
       checkedAt,
-      serviceBaseUrl: eeaNoiseServiceBaseUrl,
-      timeoutMs: numberConfig(config?.eeaNoiseTimeoutMs, 10_000),
+      serviceBaseUrl: String(eeaValues.serviceBaseUrl),
+      timeoutMs: Number(eeaValues.timeoutMs),
     }))
   }
   return [withLocationContextEnhancers(osmAdapter, enhancers)]
@@ -350,27 +386,4 @@ function withLocationContextEnhancers(
       return context
     },
   }
-}
-
-interface ExternalDataRuntimeConfig {
-  frDvfCachePath?: string
-  euFloodRiskGeoJsonPath?: string
-  euFloodRiskMaxCacheAgeDays?: number | string
-  osmContextEndpoint?: string
-  osmContextTimeoutMs?: number | string
-  eeaNoiseServiceBaseUrl?: string
-  eeaNoiseTimeoutMs?: number | string
-}
-
-function numberConfig(value: number | string | undefined, fallback: number): number {
-  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value
-  if (typeof value === 'string' && value.trim()) {
-    const parsed = Number(value)
-    if (Number.isFinite(parsed) && parsed > 0) return parsed
-  }
-  return fallback
-}
-
-function stringConfig(value: string | undefined): string {
-  return typeof value === 'string' ? value.trim() : ''
 }

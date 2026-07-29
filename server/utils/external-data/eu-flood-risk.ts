@@ -72,7 +72,6 @@ export interface ImportEuFloodRiskCacheSummary {
 
 const DEFAULT_NEARBY_DISTANCE_METERS = 1_000
 const DEFAULT_PAGE_SIZE = 2_000
-export const DEFAULT_EU_FLOOD_RISK_MAX_CACHE_AGE_DAYS = 400
 export const EU_FLOOD_RISK_SOURCE_VERSION = 'eea-floods-ref-v03-r00-2025-08-05'
 export const EU_FLOOD_RISK_POLYGON_LAYER_URL =
   'https://water.discomap.eea.europa.eu/arcgis/rest/services/FloodsDirective/FloodsRiskZone_WM/MapServer/2'

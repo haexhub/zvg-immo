@@ -14,6 +14,34 @@ export type ExternalDataCapability =
   | 'flight_routes'
   | 'source_discovery'
 
+export type ExternalDataConfigFieldType = 'url' | 'path' | 'number'
+
+// One entry per adapter-constructor argument that today only comes from
+// nuxt.config.ts's externalData.* runtime config (env-var-only, requires a
+// redeploy to change). Declaring the field here is what makes a source
+// admin-configurable from /settings — server/utils/external-data/config.ts
+// resolves DB override > this runtimeConfigKey > defaultValue generically
+// for every field of every source, and the /settings card renders whatever
+// fields a source declares without per-source UI code.
+export interface ExternalDataConfigField {
+  /** Stored under this key in the source's app_settings row and passed
+   *  through to the adapter factory in server/tasks/external-enrichment.ts. */
+  key: string
+  type: ExternalDataConfigFieldType
+  /** Matches a property of nuxt.config.ts's runtimeConfig.externalData —
+   *  the env-configured fallback when no DB override is set. */
+  runtimeConfigKey: string
+  /** The NUXT_EXTERNAL_DATA_* var backing runtimeConfigKey, shown in
+   *  /settings so an operator can see how to set it via deployment config
+   *  instead. */
+  envVar: string
+  defaultValue: string | number
+  /** No value from DB, env or defaultValue → the source is left out of the
+   *  adapter list entirely (same graceful-degrade contract nuxt.config.ts
+   *  documents today for empty externalData.* values). */
+  required?: boolean
+}
+
 export interface ExternalDataSource {
   id: string
   label: string
@@ -24,6 +52,10 @@ export interface ExternalDataSource {
   refreshCadence: string
   resolution: string
   adapter: string
+  /** Present only for sources with a real adapter implementation — the ~13
+   *  other registry entries are discovery/documentation only and have
+   *  nothing to configure. */
+  configFields?: ExternalDataConfigField[]
 }
 
 export const EXTERNAL_DATA_SOURCES: readonly ExternalDataSource[] = [
@@ -70,6 +102,16 @@ export const EXTERNAL_DATA_SOURCES: readonly ExternalDataSource[] = [
     refreshCadence: 'semi-annual / source published files',
     resolution: 'transaction / parcel-derived location',
     adapter: 'frDvfGeolocatedAdapter',
+    configFields: [
+      {
+        key: 'cachePath',
+        type: 'path',
+        runtimeConfigKey: 'frDvfCachePath',
+        envVar: 'NUXT_EXTERNAL_DATA_FR_DVF_CACHE_PATH',
+        defaultValue: '',
+        required: true,
+      },
+    ],
   },
   {
     id: 'de-boris-d',
@@ -92,6 +134,29 @@ export const EXTERNAL_DATA_SOURCES: readonly ExternalDataSource[] = [
     refreshCadence: 'six-year Floods Directive cycle / source updates',
     resolution: 'potential significant flood risk areas',
     adapter: 'euFloodRiskAreasAdapter',
+    configFields: [
+      {
+        key: 'geoJsonPath',
+        type: 'path',
+        runtimeConfigKey: 'euFloodRiskGeoJsonPath',
+        envVar: 'NUXT_EXTERNAL_DATA_EU_FLOOD_RISK_GEO_JSON_PATH',
+        defaultValue: '',
+        required: true,
+      },
+      {
+        key: 'maxCacheAgeDays',
+        type: 'number',
+        runtimeConfigKey: 'euFloodRiskMaxCacheAgeDays',
+        envVar: 'NUXT_EXTERNAL_DATA_EU_FLOOD_RISK_MAX_CACHE_AGE_DAYS',
+        // Just over a year: the polygon cache is refreshed monthly by
+        // server/tasks/import-eu-flood-risk-cache.ts, so tripping this gate
+        // means the importer has been failing for a long while — not that the
+        // six-year Floods Directive cycle moved on. This is the only place the
+        // default lives; eu-flood-risk.ts's isStale() treats an absent value
+        // as "never stale".
+        defaultValue: 400,
+      },
+    ],
   },
   {
     id: 'openstreetmap-overpass',
@@ -103,6 +168,23 @@ export const EXTERNAL_DATA_SOURCES: readonly ExternalDataSource[] = [
     refreshCadence: 'deployment-configured / source minutely updates',
     resolution: 'object tags around auction coordinates',
     adapter: 'osmLocationContextAdapter',
+    configFields: [
+      {
+        key: 'endpoint',
+        type: 'url',
+        runtimeConfigKey: 'osmContextEndpoint',
+        envVar: 'NUXT_EXTERNAL_DATA_OSM_CONTEXT_ENDPOINT',
+        defaultValue: '',
+        required: true,
+      },
+      {
+        key: 'timeoutMs',
+        type: 'number',
+        runtimeConfigKey: 'osmContextTimeoutMs',
+        envVar: 'NUXT_EXTERNAL_DATA_OSM_CONTEXT_TIMEOUT_MS',
+        defaultValue: 20_000,
+      },
+    ],
   },
   {
     id: 'overture-maps',
@@ -169,6 +251,23 @@ export const EXTERNAL_DATA_SOURCES: readonly ExternalDataSource[] = [
     refreshCadence: 'five-year END reporting cycle / EEA releases',
     resolution: 'reported airport/road/rail/industry noise exposure and contour context',
     adapter: 'eeaEnvironmentalNoiseAdapter',
+    configFields: [
+      {
+        key: 'serviceBaseUrl',
+        type: 'url',
+        runtimeConfigKey: 'eeaNoiseServiceBaseUrl',
+        envVar: 'NUXT_EXTERNAL_DATA_EEA_NOISE_SERVICE_BASE_URL',
+        defaultValue: '',
+        required: true,
+      },
+      {
+        key: 'timeoutMs',
+        type: 'number',
+        runtimeConfigKey: 'eeaNoiseTimeoutMs',
+        envVar: 'NUXT_EXTERNAL_DATA_EEA_NOISE_TIMEOUT_MS',
+        defaultValue: 10_000,
+      },
+    ],
   },
   {
     id: 'eurocontrol-adrr',
