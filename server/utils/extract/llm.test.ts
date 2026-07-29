@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   buildParts,
   clampExtraction,
+  extractByLlm,
   isRateLimitError,
   parseExtractionResponse,
   resolveLlmConfig,
@@ -21,6 +22,36 @@ describe('isRateLimitError', () => {
     expect(isRateLimitError(Object.assign(new Error('http 500'), { response: { status: 500 } }))).toBe(false)
     expect(isRateLimitError(new Error('network error'))).toBe(false)
     expect(isRateLimitError(null)).toBe(false)
+  })
+})
+
+describe('extractByLlm', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('forwards a genuine provider request failure to onProviderError and resolves to null', async () => {
+    vi.stubGlobal(
+      '$fetch',
+      vi.fn().mockRejectedValue(Object.assign(new Error('http 403'), { response: { status: 403 } })),
+    )
+    const onProviderError = vi.fn()
+    const result = await extractByLlm(
+      { title: 'Titel', description: 'Beschreibung' },
+      { baseUrl: 'https://openai.example', model: 'gpt' },
+      { onProviderError },
+    )
+    expect(result).toBeNull()
+    expect(onProviderError).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not call onProviderError when there is nothing to send (no attempt made)', async () => {
+    const onProviderError = vi.fn()
+    const result = await extractByLlm({ title: null, description: null }, { baseUrl: 'https://openai.example', model: 'gpt' }, {
+      onProviderError,
+    })
+    expect(result).toBeNull()
+    expect(onProviderError).not.toHaveBeenCalled()
   })
 })
 

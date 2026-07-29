@@ -306,6 +306,8 @@
       "llmStatusLastRun": "Letzte LLM-Extraktion: {at} — {processed} verarbeitet, {llmCalls} LLM-Aufrufe, {duration}s.",
       "llmStatusLastWarning": "LLM-Hinweis: {message}",
       "llmStatusLastError": "LLM-Extraktion zuletzt fehlgeschlagen: {message}",
+      "llmStatusLlmErrors": "{count} LLM-Anfragefehler im letzten Lauf",
+      "llmStatusLastLlmError": "Letzter LLM-Fehler: {message}",
       "llmStatusProgress": "{processed}/{candidatesTotal} verarbeitet, {llmCalls} LLM-Aufrufe, {skipped} übersprungen"
     },
     "externalData": {
@@ -332,7 +334,9 @@
       "processed": "Verarbeitet",
       "skipped": "Übersprungen",
       "llmCalls": "LLM-Aufrufe",
+      "llmErrors": "LLM-Anfragefehler",
       "warning": "Hinweis: {message}",
+      "lastLlmError": "Letzter LLM-Fehler: {message}",
       "batchLabel": "Über Batch API einreichen (prüft, ob Batch für diesen Provider aktuell funktioniert)"
     },
     "llmBatch": {
@@ -342,6 +346,8 @@
       "reprocessLastRun": "Zuletzt gelaufen: {at} — {processed} verarbeitet, {llmCalls} LLM-Aufrufe, {duration}s",
       "reprocessLastError": "Letzter Lauf fehlgeschlagen: {message}",
       "reprocessLastWarning": "Letzter Lauf mit Hinweis: {message}",
+      "reprocessLlmErrors": "{count} LLM-Anfragefehler im letzten Lauf",
+      "reprocessLastLlmError": "Letzter LLM-Fehler: {message}",
       "refresh": "Aktualisieren",
       "loadError": "Batch-Pipeline konnte nicht geladen werden.",
       "empty": "Keine offenen Batch-Requests.",

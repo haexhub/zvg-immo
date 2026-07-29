@@ -306,6 +306,8 @@
       "llmStatusLastRun": "Last LLM extraction: {at} — {processed} processed, {llmCalls} LLM calls, {duration}s.",
       "llmStatusLastWarning": "LLM notice: {message}",
       "llmStatusLastError": "LLM extraction last failed: {message}",
+      "llmStatusLlmErrors": "{count} LLM request failure(s) in the last run",
+      "llmStatusLastLlmError": "Last LLM error: {message}",
       "llmStatusProgress": "{processed}/{candidatesTotal} processed, {llmCalls} LLM calls, {skipped} skipped"
     },
     "externalData": {
@@ -332,7 +334,9 @@
       "processed": "Processed",
       "skipped": "Skipped",
       "llmCalls": "LLM calls",
+      "llmErrors": "LLM request errors",
       "warning": "Notice: {message}",
+      "lastLlmError": "Last LLM error: {message}",
       "batchLabel": "Submit via Batch API (checks whether batch currently works for this provider)"
     },
     "llmBatch": {
@@ -342,6 +346,8 @@
       "reprocessLastRun": "Last run: {at} — {processed} processed, {llmCalls} LLM calls, {duration}s",
       "reprocessLastError": "Last run failed: {message}",
       "reprocessLastWarning": "Last run notice: {message}",
+      "reprocessLlmErrors": "{count} LLM request failure(s) in the last run",
+      "reprocessLastLlmError": "Last LLM error: {message}",
       "refresh": "Refresh",
       "loadError": "Could not load the batch pipeline.",
       "empty": "No open batch requests.",

@@ -102,8 +102,18 @@ export interface ReprocessResult {
   processed: number
   skipped: number
   llmCalls: number
+  /** Count of LLM calls this run where the provider request itself failed
+   *  (network/HTTP error, e.g. an unauthenticated-caller 403) — distinct from
+   *  a call that succeeded but returned an empty/unparseable result. See
+   *  ExtractionProvider.extract()'s onRequestError in llm.ts. */
+  llmErrors: number
   durationMs: number
   warning?: string
+  /** Message from the most recent llmErrors failure this run, so a run that
+   *  "completed" while every LLM call errored is visible instead of looking
+   *  identical to a healthy rules-only run (observed in prod: 69 processed /
+   *  69 llmCalls with zero visible errors while all 69 were failing 403s). */
+  lastLlmError?: string
 }
 
 function readMaxLlmPerRun(): number {
@@ -433,7 +443,7 @@ export async function reprocessAuction(
   priorEntry: AuctionExtraction | undefined,
   llmConfig: LlmConfig | null,
   at: string,
-  opts: { onLlmAttempt?: () => void } = {},
+  opts: { onLlmAttempt?: () => void; onLlmError?: (err: unknown) => void } = {},
 ): Promise<{ entry: AuctionExtraction; llmCalled: boolean } | null> {
   const base = await buildReprocessInput(platform, externalId, priorEntry, llmConfig)
   if (!base) return null
@@ -442,7 +452,10 @@ export async function reprocessAuction(
     return { entry: buildRulesOnlyEntry(base.fields, priorEntry, at), llmCalled: false }
   }
 
-  const llm = await extractByLlm(base.input!, llmConfig, { onProviderAttempt: opts.onLlmAttempt })
+  const llm = await extractByLlm(base.input!, llmConfig, {
+    onProviderAttempt: opts.onLlmAttempt,
+    onProviderError: opts.onLlmError,
+  })
   let curatedPhotos = priorEntry?.photos?.map(normalizePhoto)
   if (llm && curatedPhotos && base.input?.candidateImages?.length && llm.photoCuration.length) {
     // llm.photoCuration's photoIndex is relative to the candidateImages that
@@ -487,8 +500,8 @@ export default defineTask({
       await recordTaskRunStart('reprocess')
       try {
         const result = await runReprocess((event?.payload ?? {}) as ReprocessOptions, signal)
-        const { warning, ...summary } = result
-        await recordTaskRunEnd('reprocess', { result: summary, warning })
+        const { warning, lastLlmError, ...summary } = result
+        await recordTaskRunEnd('reprocess', { result: summary, warning, llmError: lastLlmError })
         return { result }
       } catch (err) {
         await recordTaskRunEnd('reprocess', { error: (err as Error).message })
@@ -512,7 +525,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
   if (candidates.length === 0) {
     const durationMs = Date.now() - startedAt
     console.log(`[reprocess] candidates=0 processed=0 skipped=0 llmCalls=0 in ${(durationMs / 1000).toFixed(0)}s`)
-    return { candidates: 0, processed: 0, skipped: 0, llmCalls: 0, durationMs }
+    return { candidates: 0, processed: 0, skipped: 0, llmCalls: 0, llmErrors: 0, durationMs }
   }
   const cache = await readExtractionCache()
   const llmConfig = await readExtractionLlmConfig()
@@ -554,6 +567,8 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
   let processed = 0
   let skipped = 0
   let llmCalls = 0
+  let llmErrors = 0
+  let lastLlmError: string | undefined
   let warning: string | undefined
   const dirty: ExtractionCache = {}
   const batchItems: { key: string; input: LlmInput }[] = []
@@ -657,6 +672,11 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
           llmCalls++
           llmCallsByPlatform.set(platform, platformLlmCalls + 1)
         },
+        onLlmError: (err) => {
+          llmErrors++
+          const message = err instanceof Error ? err.message : String(err)
+          lastLlmError = `${platform}:${externalId}: ${message}`
+        },
       })
       if (!result) {
         skipped++
@@ -697,7 +717,11 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
         break
       }
     } finally {
-      void recordTaskRunProgress('reprocess', { candidatesTotal: candidates.length, processed, skipped, llmCalls })
+      void recordTaskRunProgress(
+        'reprocess',
+        { candidatesTotal: candidates.length, processed, skipped, llmCalls, llmErrors },
+        { lastLlmError },
+      )
     }
   }
 
@@ -728,7 +752,16 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
 
   const durationMs = Date.now() - startedAt
   console.log(
-    `[reprocess] candidates=${candidates.length} processed=${processed} skipped=${skipped} llmCalls=${llmCalls} in ${(durationMs / 1000).toFixed(0)}s`,
+    `[reprocess] candidates=${candidates.length} processed=${processed} skipped=${skipped} llmCalls=${llmCalls} llmErrors=${llmErrors} in ${(durationMs / 1000).toFixed(0)}s`,
   )
-  return { candidates: candidates.length, processed, skipped, llmCalls, durationMs, ...(warning ? { warning } : {}) }
+  return {
+    candidates: candidates.length,
+    processed,
+    skipped,
+    llmCalls,
+    llmErrors,
+    durationMs,
+    ...(warning ? { warning } : {}),
+    ...(lastLlmError ? { lastLlmError } : {}),
+  }
 }

@@ -29,7 +29,10 @@ function toClaudeContent(parts: ContentPart[]): ClaudeContentBlock[] {
 export class ClaudeProxyProvider implements ExtractionProvider {
   constructor(private config: LlmConfig) {}
 
-  async extract(req: ExtractionRequest): Promise<Record<string, unknown> | null> {
+  async extract(
+    req: ExtractionRequest,
+    opts?: { onRequestError?: (err: unknown) => void },
+  ): Promise<Record<string, unknown> | null> {
     const body = {
       model: this.config.model,
       // Raised from 512: the response now also carries `insights` (up to two
@@ -67,7 +70,13 @@ export class ClaudeProxyProvider implements ExtractionProvider {
       // Rethrow a rate limit/quota error instead of swallowing it to null —
       // see isRateLimitError() — so it isn't counted toward the retry-lockout.
       if (isRateLimitError(err)) throw err
-      throw new LlmProviderError('claude-proxy', (err as Error).message, { cause: err })
+      // A caller that passes onRequestError (extractByLlm) wants to keep
+      // batching past a single failed candidate; one that doesn't (e.g.
+      // callSummaryLlm/callTranslationLlm) wants the failure to reject.
+      if (!opts?.onRequestError) throw new LlmProviderError('claude-proxy', (err as Error).message, { cause: err })
+      console.warn(`[extract/llm] request failed: ${(err as Error).message}`)
+      opts.onRequestError(err)
+      return null
     }
     const parsed = parseExtractionResponse(resp)
     if (!parsed) throw new LlmProviderError('claude-proxy', 'ungültige oder leere Provider-Antwort')

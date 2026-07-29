@@ -103,9 +103,16 @@ export interface ExtractionRequest {
  *  means writing a new implementation of this interface, not touching
  *  buildParts/clampExtraction. Implementations resolve to null for a request
  *  failure or unparseable response, but must throw (not swallow to null) when
- *  the failure is a rate limit/quota error — see isRateLimitError(). */
+ *  the failure is a rate limit/quota error — see isRateLimitError(). `opts.
+ *  onRequestError` fires only for an actual request failure (network/HTTP
+ *  error), never for an empty/unparseable response — reprocess.ts uses it to
+ *  tell "the provider errored" apart from "the provider returned nothing",
+ *  which extractByLlm's null return can't distinguish on its own. */
 export interface ExtractionProvider {
-  extract(req: ExtractionRequest): Promise<Record<string, unknown> | null>
+  extract(
+    req: ExtractionRequest,
+    opts?: { onRequestError?: (err: unknown) => void },
+  ): Promise<Record<string, unknown> | null>
 }
 
 /** Whether a thrown $fetch error was an HTTP 429 (rate limit/quota exceeded).
@@ -786,19 +793,21 @@ export function resolveLlmConfig(
 /** Returns null on empty input, request failure, or unparseable response.
  *  Throws instead when the provider hit a rate limit/quota error — see
  *  isRateLimitError(); left unhandled so it reaches reprocess.ts's per-
- *  candidate catch, which skips the attempt without counting a failure. */
+ *  candidate catch, which skips the attempt without counting a failure.
+ *  `onProviderError` (see ExtractionProvider) only fires for a genuine
+ *  request failure, not for parts.length === 0 (no attempt was made) or an
+ *  empty/unparseable response. */
 export async function extractByLlm(
   input: LlmInput,
   config: LlmConfig,
-  opts: { onProviderAttempt?: () => void } = {},
+  opts: { onProviderAttempt?: () => void; onProviderError?: (err: unknown) => void } = {},
 ): Promise<ClampedExtraction | null> {
   const parts = buildParts(input)
   if (parts.length === 0) return null
   opts.onProviderAttempt?.()
-  const raw = await getProvider(config).extract({
-    systemPrompt: SYSTEM_PROMPT,
-    schema: UNIVERSAL_AUCTION_SCHEMA,
-    parts,
-  })
+  const raw = await getProvider(config).extract(
+    { systemPrompt: SYSTEM_PROMPT, schema: UNIVERSAL_AUCTION_SCHEMA, parts },
+    { onRequestError: opts.onProviderError },
+  )
   return raw ? clampExtraction(raw) : null
 }

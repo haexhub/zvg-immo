@@ -142,6 +142,24 @@ describe('GeminiNativeProvider.extract — 429 pacing/retry', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  it('calls onRequestError for a non-429 failure but not for a 429 (which rethrows instead)', async () => {
+    vi.stubGlobal('$fetch', vi.fn().mockRejectedValue(error(500)))
+    const provider = await freshProvider()
+    const onRequestError = vi.fn()
+    const promise = provider.extract(req, { onRequestError })
+    await vi.runAllTimersAsync()
+    await promise
+    expect(onRequestError).toHaveBeenCalledTimes(1)
+
+    vi.stubGlobal('$fetch', vi.fn().mockRejectedValue(error(429)))
+    const rateLimitedOnRequestError = vi.fn()
+    const rateLimitedPromise = provider.extract(req, { onRequestError: rateLimitedOnRequestError })
+    rateLimitedPromise.catch(() => {})
+    await vi.runAllTimersAsync()
+    await expect(rateLimitedPromise).rejects.toThrow('http 429')
+    expect(rateLimitedOnRequestError).not.toHaveBeenCalled()
+  })
+
   it('paces concurrent calls at least MIN_REQUEST_GAP_MS apart', async () => {
     const startTimes: number[] = []
     const fetchMock = vi.fn().mockImplementation(async () => {
