@@ -11,6 +11,10 @@ import { Pool } from 'pg'
 
 let pool: Pool | null | undefined
 
+// ~60s of patience for a concurrently migrating instance to finish.
+const MIGRATION_LOCK_ATTEMPTS = 60
+const MIGRATION_LOCK_RETRY_MS = 1_000
+
 function readDatabaseUrl(): string | null {
   const url = useRuntimeConfig().databaseUrl as string | undefined
   return url || null
@@ -37,8 +41,17 @@ export async function runMigrations(): Promise<void> {
     // All replicas share this session-scoped lock. It prevents two app
     // instances started by the same deployment from applying the large,
     // idempotent schema file concurrently and racing on conditional DDL.
-    await client.query(`SELECT pg_advisory_lock(hashtext('zvg-immo:schema-migrations'))`)
-    locked = true
+    // The try-variant is polled rather than blocking on pg_advisory_lock,
+    // because the pool's query_timeout would abort a blocking wait and make the
+    // second instance of an overlapping deploy fail its migration outright.
+    for (let attempt = 0; attempt < MIGRATION_LOCK_ATTEMPTS && !locked; attempt++) {
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, MIGRATION_LOCK_RETRY_MS))
+      const { rows } = await client.query<{ locked: boolean }>(
+        `SELECT pg_try_advisory_lock(hashtext('zvg-immo:schema-migrations')) AS locked`,
+      )
+      locked = rows[0]?.locked === true
+    }
+    if (!locked) throw new Error('schema migration lock is still held by another instance')
     await client.query(schema)
   } finally {
     try {

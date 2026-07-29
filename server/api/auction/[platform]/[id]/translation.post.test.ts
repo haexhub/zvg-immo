@@ -37,6 +37,9 @@ vi.mock('~/server/utils/extract/text-llm', () => ({
   callTranslationLlm: vi.fn(),
 }))
 
+/** Ownership token claimAuctionTranslation hands back (its row's started_at). */
+const CLAIM = { startedAt: new Date('2026-07-29T10:00:00.000Z') }
+
 function auction(overrides: Partial<Auction> = {}): Auction {
   return {
     platform: 'se-kronofogden',
@@ -121,7 +124,7 @@ async function loadHandler(query: Record<string, string> = { lang: 'de' }) {
   vi.mocked(readAuctionSnapshot).mockResolvedValue({ 'se-kronofogden:101738': auction() })
   vi.mocked(getPool).mockReturnValue({} as Pool)
   vi.mocked(readAuctionTranslation).mockResolvedValue(null)
-  vi.mocked(claimAuctionTranslation).mockResolvedValue(true)
+  vi.mocked(claimAuctionTranslation).mockResolvedValue(CLAIM)
   vi.mocked(completeAuctionTranslation).mockResolvedValue(undefined)
   vi.mocked(failAuctionTranslation).mockResolvedValue(undefined)
   vi.mocked(readContentTranslation).mockResolvedValue(null)
@@ -202,6 +205,7 @@ describe('/api/auction/:platform/:id/translation', () => {
       'se-kronofogden',
       '101738',
       'de',
+      CLAIM,
       payload,
     )
   })
@@ -213,6 +217,8 @@ describe('/api/auction/:platform/:id/translation', () => {
       contentHash: 'original-content-hash',
       status: 'completed' as const,
       errorMessage: null,
+      claimStale: false,
+      retryDue: true,
       title: 'Dauerhaft gespeicherter Titel',
       description: 'Dauerhaft gespeicherte Beschreibung',
       documentSummary: null,
@@ -236,7 +242,7 @@ describe('/api/auction/:platform/:id/translation', () => {
     expect(callTranslationLlm).not.toHaveBeenCalled()
   })
 
-  it('does not retry a translation whose single persistent attempt failed', async () => {
+  it('serves the stored error instead of retrying while the retry window is closed', async () => {
     const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
     const { readAuctionTranslation, claimAuctionTranslation } = await import('~/server/utils/content-translation')
     const handler = await loadHandler()
@@ -244,6 +250,8 @@ describe('/api/auction/:platform/:id/translation', () => {
       contentHash: 'failed-content-hash',
       status: 'failed',
       errorMessage: 'Provider nicht erreichbar',
+      claimStale: false,
+      retryDue: false,
       title: null,
       description: null,
       documentSummary: null,
@@ -262,11 +270,72 @@ describe('/api/auction/:platform/:id/translation', () => {
     expect(callTranslationLlm).not.toHaveBeenCalled()
   })
 
+  it('retries a failed attempt once its retry window opened — a provider outage must not lock the auction out', async () => {
+    const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
+    const { readAuctionTranslation, claimAuctionTranslation } = await import('~/server/utils/content-translation')
+    const handler = await loadHandler()
+    vi.mocked(readAuctionTranslation).mockResolvedValue({
+      contentHash: 'failed-content-hash',
+      status: 'failed',
+      errorMessage: 'Provider nicht erreichbar',
+      claimStale: true,
+      retryDue: true,
+      title: null,
+      description: null,
+      documentSummary: null,
+      extractionTexts: null,
+    })
+    vi.mocked(callTranslationLlm).mockResolvedValue({
+      title: 'Retried title',
+      description: 'Retried description',
+      documentSummary: null,
+      extractionTexts: null,
+    })
+
+    await expect(handler({
+      context: { params: { platform: 'se-kronofogden', id: '101738' } },
+      node: { req: { socket: { remoteAddress: '127.0.0.1' } } },
+    })).resolves.toMatchObject({ title: 'Retried title', translated: true })
+
+    expect(claimAuctionTranslation).toHaveBeenCalledOnce()
+    expect(callTranslationLlm).toHaveBeenCalledOnce()
+  })
+
+  it('takes over an abandoned pending claim whose lease expired', async () => {
+    const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
+    const { readAuctionTranslation, claimAuctionTranslation } = await import('~/server/utils/content-translation')
+    const handler = await loadHandler()
+    vi.mocked(readAuctionTranslation).mockResolvedValue({
+      contentHash: 'stale-content-hash',
+      status: 'pending',
+      errorMessage: null,
+      claimStale: true,
+      retryDue: false,
+      title: null,
+      description: null,
+      documentSummary: null,
+      extractionTexts: null,
+    })
+    vi.mocked(callTranslationLlm).mockResolvedValue({
+      title: 'Recovered title',
+      description: 'Recovered description',
+      documentSummary: null,
+      extractionTexts: null,
+    })
+
+    await expect(handler({
+      context: { params: { platform: 'se-kronofogden', id: '101738' } },
+      node: { req: { socket: { remoteAddress: '127.0.0.1' } } },
+    })).resolves.toMatchObject({ title: 'Recovered title', translated: true })
+
+    expect(claimAuctionTranslation).toHaveBeenCalledOnce()
+  })
+
   it('does not call the provider when another request won the atomic claim', async () => {
     const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
     const { claimAuctionTranslation } = await import('~/server/utils/content-translation')
     const handler = await loadHandler()
-    vi.mocked(claimAuctionTranslation).mockResolvedValue(false)
+    vi.mocked(claimAuctionTranslation).mockResolvedValue(null)
 
     await expect(handler({
       context: { params: { platform: 'se-kronofogden', id: '101738' } },

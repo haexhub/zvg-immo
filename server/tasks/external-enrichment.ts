@@ -20,6 +20,7 @@ import {
   type ExternalDataSourceConfigValues,
 } from '~/server/utils/external-data/config'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
+import { runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-task'
 
 export interface MarketComparisonAdapter {
   id: string
@@ -82,8 +83,6 @@ export interface ExternalEnrichmentSummary {
   errors: string[]
   durationMs: number
 }
-
-import { runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-task'
 
 export default defineTask({
   meta: {

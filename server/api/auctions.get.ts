@@ -1,5 +1,6 @@
 import type { AuctionExtraction } from '~/types/auction'
 import { getPool } from '~/server/utils/db'
+import { buildAuctionSearchFilter, finiteNumber } from '~/server/utils/auction-search-filters'
 
 export interface AuctionSummary {
   platform: string
@@ -73,22 +74,6 @@ interface SearchRow {
   extraction: AuctionExtraction | null
 }
 
-function finiteNumber(value: unknown): number | null {
-  if (value == null) return null
-  const parsed = Number(value)
-  return Number.isFinite(parsed) ? parsed : null
-}
-
-function commaList(value: unknown): string[] {
-  const raw = Array.isArray(value) ? value.join(',') : String(value ?? '')
-  return [...new Set(raw.split(',').map((entry) => entry.trim()).filter(Boolean))]
-}
-
-function optionalNumber(value: unknown): number | null {
-  if (value == null || value === '') return null
-  return finiteNumber(Array.isArray(value) ? value[0] : value)
-}
-
 function summary(row: SearchRow): AuctionSummary {
   const extraction = row.extraction
   return {
@@ -134,61 +119,7 @@ export default defineEventHandler(async (event): Promise<AuctionSearchResponse> 
   }
 
   const query = getQuery(event)
-  const values: unknown[] = []
-  const where: string[] = []
-  const add = (value: unknown): string => {
-    values.push(value)
-    return `$${values.length}`
-  }
-
-  const countries = commaList(query.country).filter((entry) => /^[a-z]{2}$/i.test(entry))
-  if (countries.length) where.push(`a.country = ANY(${add(countries)}::text[])`)
-  const regionNames = commaList(query.regionNames)
-  if (regionNames.length) where.push(`(a.country || ':' || a.region) = ANY(${add(regionNames)}::text[])`)
-
-  const search = String(query.q ?? '').trim()
-  if (search) {
-    const p = add(`%${search}%`)
-    where.push(`concat_ws(' ', a.case_number, a.authority, a.title, a.address, a.description) ILIKE ${p}`)
-  }
-  const authority = String(query.authority ?? '')
-  if (authority && authority !== 'all') where.push(`a.authority = ${add(authority)}`)
-  const category = String(query.category ?? '')
-  if (category && category !== 'all') where.push(`a.property_type = ${add(category)}`)
-  const condition = String(query.condition ?? '')
-  if (condition && condition !== 'all') where.push(`a.condition #>> '{}' = ${add(condition)}`)
-  const features = commaList(query.features)
-  if (features.length) where.push(`a.features && ${add(features)}::text[]`)
-  if (String(query.photos ?? '') === '1') where.push('a.photo_count > 0')
-  if (String(query.cancelled ?? '') !== '1') where.push('a.cancelled = false')
-  if (String(query.llmOnly ?? '') === '1') {
-    where.push(`(
-      a.extraction_source = 'llm'
-      OR ec.extraction ? 'llmAnalyzedAt'
-      OR ec.extraction ? 'condition'
-      OR ec.extraction ? 'features'
-      OR ec.extraction ? 'insights'
-    )`)
-  }
-
-  const ranges: Array<[unknown, string, '>=' | '<=']> = [
-    [query.priceMin, 'a.market_value_eur', '>='],
-    [query.priceMax, 'a.market_value_eur', '<='],
-    [query.landMin, 'a.land_area_sqm', '>='],
-    [query.landMax, 'a.land_area_sqm', '<='],
-    [query.livMin, 'a.living_area_sqm', '>='],
-    [query.livMax, 'a.living_area_sqm', '<='],
-    [query.yearBuiltMin, 'a.year_built', '>='],
-    [query.yearBuiltMax, 'a.year_built', '<='],
-    [query.renovationYearMin, 'a.last_renovation_year', '>='],
-    [query.renovationYearMax, 'a.last_renovation_year', '<='],
-  ]
-  for (const [raw, column, operator] of ranges) {
-    const value = optionalNumber(raw)
-    if (value != null) where.push(`${column} ${operator} ${add(value)}`)
-  }
-
-  const predicate = where.length ? `WHERE ${where.join(' AND ')}` : ''
+  const { predicate, values: filterValues } = await buildAuctionSearchFilter(db, query)
   const pageSize = Math.min(60, Math.max(1, Math.trunc(finiteNumber(query.pageSize) ?? 30)))
   const page = Math.max(1, Math.trunc(finiteNumber(query.page) ?? 1))
   const offset = (page - 1) * pageSize
@@ -215,7 +146,7 @@ export default defineEventHandler(async (event): Promise<AuctionSearchResponse> 
       a.cancelled, a.photo_count, a.thumbnail_url, ec.extraction
     ${from} ${predicate}
     ORDER BY ${orderBy}
-    LIMIT ${add(pageSize)} OFFSET ${add(offset)}`
+    LIMIT $${filterValues.length + 1} OFFSET $${filterValues.length + 2}`
   const statsSql = `SELECT
       count(*)::int AS total,
       count(*) FILTER (WHERE a.cancelled = false)::int AS active,
@@ -229,10 +160,8 @@ export default defineEventHandler(async (event): Promise<AuctionSearchResponse> 
     GROUP BY a.property_type ORDER BY count DESC, a.property_type`
 
   // Facet queries reuse the filter parameters but not LIMIT/OFFSET.
-  const filterValueCount = values.length - 2
-  const filterValues = values.slice(0, filterValueCount)
   const [rowsResult, statsResult, authoritiesResult, categoriesResult] = await Promise.all([
-    db.query<SearchRow>(rowsSql, values),
+    db.query<SearchRow>(rowsSql, [...filterValues, pageSize, offset]),
     db.query<{ total: number; active: number; cancelled: number }>(statsSql, filterValues),
     db.query<{ authority: string }>(authoritiesSql, filterValues),
     db.query<{ id: string; count: number }>(categoriesSql, filterValues),

@@ -154,14 +154,18 @@ export default defineEventHandler(async (event) => {
       translated: true,
     }
   }
-  if (stored?.status === 'failed') {
+  // A failed attempt is served as its error until the retry window opens; a
+  // pending claim blocks until its lease expires. Both then fall through to
+  // claimAuctionTranslation, which takes the stale row over — a transient
+  // provider failure must not lock this auction out permanently.
+  if (stored?.status === 'failed' && !stored.retryDue) {
     throw createError({
       statusCode: 502,
       statusMessage: 'Übersetzung fehlgeschlagen',
       data: { detail: stored.errorMessage ?? 'Unbekannter Übersetzungsfehler' },
     })
   }
-  if (stored?.status === 'pending') {
+  if (stored?.status === 'pending' && !stored.claimStale) {
     setResponseHeader(event, 'x-zvg-translation-cache', 'inflight')
     if (cacheOnly) {
       setResponseStatus(event, 204)
@@ -191,8 +195,8 @@ export default defineEventHandler(async (event) => {
   }
   recordInMemoryRateLimitHit(translationRateLimit, requester, now, TRANSLATION_RATE_LIMIT)
 
-  const claimed = await claimAuctionTranslation(db, platform, id, targetLang, contentHash)
-  if (!claimed) {
+  const claim = await claimAuctionTranslation(db, platform, id, targetLang, contentHash)
+  if (!claim) {
     throw createError({ statusCode: 409, statusMessage: 'Übersetzung wurde bereits angestoßen' })
   }
 
@@ -200,7 +204,7 @@ export default defineEventHandler(async (event) => {
     try {
       const cached = await readContentTranslation(db, contentHash, targetLang)
       if (cached) {
-        await completeAuctionTranslation(db, platform, id, targetLang, cached)
+        await completeAuctionTranslation(db, platform, id, targetLang, claim, cached)
         setResponseHeader(event, 'x-zvg-translation-cache', 'hit')
         return cached
       }
@@ -230,12 +234,12 @@ export default defineEventHandler(async (event) => {
         result.documentSummary,
         result.extractionTexts,
       )
-      await completeAuctionTranslation(db, platform, id, targetLang, result)
+      await completeAuctionTranslation(db, platform, id, targetLang, claim, result)
       setResponseHeader(event, 'x-zvg-translation-cache', 'generated')
       return result
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      await failAuctionTranslation(db, platform, id, targetLang, message)
+      await failAuctionTranslation(db, platform, id, targetLang, claim, message)
       throw createError({
         statusCode: 502,
         statusMessage: 'Übersetzung fehlgeschlagen',

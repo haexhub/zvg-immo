@@ -66,6 +66,24 @@ describe('runExclusiveTask', () => {
     expect(started).toEqual(['first', 'newest'])
   })
 
+  it('rejects a superseded run that ignored the signal and returned normally', async () => {
+    let releaseFirst!: () => void
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+
+    // Deliberately never inspects the signal — the wrapper has to catch this.
+    const first = runExclusiveTask('ignores-signal-test', async () => {
+      await firstGate
+      return 'first'
+    })
+    const second = runExclusiveTask('ignores-signal-test', async () => 'second')
+    releaseFirst()
+
+    await expect(first).rejects.toBeInstanceOf(TaskSupersededError)
+    await expect(second).resolves.toBe('second')
+  })
+
   it('allows different task names to run independently', async () => {
     const [refresh, enrich] = await Promise.all([
       runExclusiveTask('refresh-independent', async () => 'refresh'),

@@ -34,7 +34,12 @@ export async function runExclusiveTask<T>(
   promise = (async () => {
     await previous?.promise.catch(() => undefined)
     if (generations.get(task) !== generation) throw new TaskSupersededError(task)
-    return await operation(controller.signal)
+    const result = await operation(controller.signal)
+    // An operation can observe the abort and still return normally (or ignore
+    // the signal entirely). Re-check here so a superseded run never reports
+    // success for work a newer run has already taken over.
+    throwIfTaskAborted(controller.signal)
+    return result
   })()
 
   activeTasks.set(task, { controller, promise, generation })

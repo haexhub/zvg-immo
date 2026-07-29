@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('~/server/utils/db', () => ({ getPool: vi.fn() }))
+// Collaborators of the shared filter builder: the enabled-country scope and the
+// admin-configured hideRulesOnly default.
+vi.mock('~/server/crawlers/registry', () => ({
+  ensureEnabledCountriesLoaded: vi.fn(async () => ['de']),
+  getEnabledCountryCodes: vi.fn(() => ['de']),
+}))
+vi.mock('~/server/utils/app-settings', () => ({
+  getHideRulesOnlyAuctions: vi.fn(async () => false),
+}))
 
 afterEach(() => {
   vi.unstubAllGlobals()

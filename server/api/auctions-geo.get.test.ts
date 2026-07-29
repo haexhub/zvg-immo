@@ -5,6 +5,13 @@ vi.mock('~/server/utils/geocode', () => ({
   geocodeAddress: vi.fn(),
   geocodeStatus: vi.fn(),
 }))
+vi.mock('~/server/crawlers/registry', () => ({
+  ensureEnabledCountriesLoaded: vi.fn(async () => ['de']),
+  getEnabledCountryCodes: vi.fn(() => ['de']),
+}))
+vi.mock('~/server/utils/app-settings', () => ({
+  getHideRulesOnlyAuctions: vi.fn(async () => false),
+}))
 
 afterEach(() => {
   vi.unstubAllGlobals()

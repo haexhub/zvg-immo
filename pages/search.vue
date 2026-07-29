@@ -461,8 +461,9 @@ const selectedAuctionKey = ref<string | null>(null)
 const scrollTargetKey = ref<string | null>(null)
 const activeAuctionKey = computed(() => hoveredAuctionKey.value ?? selectedAuctionKey.value)
 
+// The list renders the whole server page, so revealing an auction is just a
+// scroll — no visibleCount growing like the client-side paging used to need.
 function revealAuctionInList(key: string): void {
-  const idx = sortedList.value.findIndex((a) => auctionKey(a) === key)
   scrollTargetKey.value = key
 }
 

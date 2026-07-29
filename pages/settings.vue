@@ -1713,7 +1713,7 @@ onBeforeUnmount(stopProgressPolling)
             {{ countryEnrichResult.reprocess.warning }}
           </p>
           <div
-            v-if="countryEnrichResult?.externalEnrichment?.errors.length"
+            v-if="countryEnrichResult?.externalEnrichment?.errors?.length"
             role="alert"
             class="space-y-1 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
           >
