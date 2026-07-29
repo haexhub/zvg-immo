@@ -355,7 +355,9 @@ async function deleteLawyer(l: AdminLawyer): Promise<void> {
 // plus ein Eintrag pro registriertem Insight, siehe app-settings.ts'
 // KINDS) — kein Server-only-Registry-Import auf der Client-Seite nötig,
 // und ein neuer Insight erscheint hier automatisch ohne Template-Änderung.
-const llmConfig = ref<Record<LlmMaxTokensKind, string>>({})
+type LlmMaxTokensDraft = string | number
+
+const llmConfig = ref<Record<LlmMaxTokensKind, LlmMaxTokensDraft>>({})
 const llmConfigError = ref<string | null>(null)
 const llmConfigSaved = ref(false)
 const llmConfigPending = ref(false)
@@ -383,9 +385,10 @@ async function loadLlmConfig(): Promise<void> {
   }
 }
 
-function parseLlmMaxTokens(raw: string): number | null {
-  if (raw.trim() === '') return null
-  const value = Number(raw)
+function parseLlmMaxTokens(raw: LlmMaxTokensDraft): number | null {
+  const normalized = typeof raw === 'number' ? String(raw) : raw.trim()
+  if (normalized === '') return null
+  const value = Number(normalized)
   return Number.isFinite(value) ? value : null
 }
 
