@@ -6,7 +6,7 @@
 // is absent, since a fresh install has no rows yet.
 
 import type { Pool } from 'pg'
-import { supportsLlmProviderExecutionMode } from './llm-provider-capabilities'
+import { llmProviderRequiresApiKey, supportsLlmProviderExecutionMode } from './llm-provider-capabilities'
 import { INSIGHT_REGISTRY } from './insights/registry'
 
 // Widened to `string` rather than a closed union of insight ids: insight
@@ -274,6 +274,9 @@ export async function setLlmProviderProfileSettings(
     const current = existing.get(id)
     const executionMode = input.executionMode ?? current?.executionMode ?? DEFAULT_LLM_EXECUTION_MODE
     const apiKey = input.apiKey ?? current?.apiKey ?? ''
+    if (!apiKey.trim() && llmProviderRequiresApiKey(input.provider, input.baseUrl)) {
+      throw new Error('apiKey: für diesen Provider erforderlich.')
+    }
     if (!supportsLlmProviderExecutionMode(input.provider, executionMode, apiKey, input.baseUrl)) {
       throw new Error('unsupported provider/executionMode combination')
     }

@@ -460,6 +460,7 @@ interface LlmProviderProfileForm {
   executionMode: LlmExecutionMode
   apiKey: string
   apiKeySet: boolean
+  apiKeyMissing: boolean
   clearApiKey: boolean
   modelOptions: { id: string; label: string }[]
   modelOptionsPending: boolean
@@ -477,6 +478,7 @@ interface LlmProfilesResponse {
     model: string
     executionMode: LlmExecutionMode
     apiKeySet: boolean
+    apiKeyMissing: boolean
   }>
   assignments: Partial<Record<LlmProviderScope, string>>
   effective: Record<LlmProviderScope, {
@@ -503,6 +505,7 @@ function makeProfileForm(input?: Partial<LlmProviderProfileForm>): LlmProviderPr
     executionMode: input?.executionMode ?? 'sync',
     apiKey: '',
     apiKeySet: input?.apiKeySet ?? false,
+    apiKeyMissing: input?.apiKeyMissing ?? false,
     clearApiKey: false,
     modelOptions: [],
     modelOptionsPending: false,
@@ -1302,6 +1305,9 @@ onBeforeUnmount(stopProgressPolling)
                   <Checkbox v-model="profile.clearApiKey" />
                   {{ $t('settings.llmProvider.apiKeyClearOnSave') }}
                 </Label>
+                <p v-if="profile.apiKeyMissing && !profile.apiKey.trim()" class="text-xs text-destructive">
+                  {{ $t('settings.llmProvider.apiKeyMissing') }}
+                </p>
               </div>
 
               <div class="flex justify-end">

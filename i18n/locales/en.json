@@ -300,6 +300,7 @@
       "apiKeyPlaceholderSet": "•••••••• (saved)",
       "apiKeyPlaceholderUnset": "no key saved",
       "apiKeyClearOnSave": "Remove saved key on save",
+      "apiKeyMissing": "This provider requires an API key. Without one every request fails.",
       "loadError": "Configuration could not be loaded.",
       "saveError": "Save failed.",
       "saved": "Saved.",
