@@ -10,25 +10,16 @@ import type { AuctionDetail } from '~/server/api/auction/[platform]/[id].get'
 import { apiErrorMessage } from '~/lib/api-error'
 import { isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
 
-// Mounted into its own detached Vue app by AuctionMap.client.vue's Leaflet
-// popup (see mountLotPopover() there) — that app never installs the Nuxt i18n
-// plugin, so useI18n() would throw here. The parent (a real part of the Nuxt
-// tree) passes its own `t`/`intlLocale` down as plain props instead.
 const props = defineProps<{
   auction: GeoAuction
-  t: (key: string, params?: Record<string, unknown>) => string
-  intlLocale: string
-  /** Viewer's display currency (WP-7) — pre-resolved by the parent since this
-   *  detached app has no Nuxt context to call useCurrencyDisplay() itself. */
-  currency: string
-  /** Currency conversion stays in the Nuxt parent; this detached app receives
-   *  the already configured converter and applies it after lazy detail load. */
-  convertEur: (value: number | null) => number | null
   /** Viewer's target content language, or null when it isn't one of the
-   *  supported translation targets — resolved by the parent since this
-   *  detached app has no useI18n() to read the locale from itself. */
+   *  supported translation targets. */
   lang: ContentTargetLang | null
 }>()
+
+const { t } = useI18n()
+const intlLocale = useIntlLocale()
+const { currency, eurToDisplay } = useCurrencyDisplay()
 
 function extractPhotos(atts: Attachment[]): Attachment[] {
   return atts.filter((a) => a.kind === 'photo')
@@ -91,14 +82,14 @@ onMounted(async () => {
 
 function formatPrice(n: number | null): string {
   if (n == null) return '–'
-  return n.toLocaleString(props.intlLocale, { style: 'currency', currency: props.currency, maximumFractionDigits: 0 })
+  return n.toLocaleString(intlLocale.value, { style: 'currency', currency: currency.value, maximumFractionDigits: 0 })
 }
 
 function formatDate(iso: string | null, fallback: string | null): string {
   if (!iso) return fallback ?? '–'
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return fallback ?? iso
-  return d.toLocaleString(props.intlLocale, {
+  return d.toLocaleString(intlLocale.value, {
     weekday: 'short', day: '2-digit', month: 'short',
     hour: '2-digit', minute: '2-digit',
   })
@@ -141,7 +132,7 @@ const swiperModules = [Navigation, Pagination, Keyboard]
       </div>
       <div>
         <div class="lot-popover__grid-label">{{ t('lotPopover.marketValue') }}</div>
-        {{ detail ? (props.convertEur(detail.marketValueEur) != null ? formatPrice(props.convertEur(detail.marketValueEur)) : (detail.marketValueText ?? '–')) : '–' }}
+        {{ detail ? (eurToDisplay(detail.marketValueEur) != null ? formatPrice(eurToDisplay(detail.marketValueEur)) : (detail.marketValueText ?? '–')) : '–' }}
       </div>
     </div>
 

@@ -1226,7 +1226,6 @@ useHead(() => ({
               :lat="a.lat"
               :lng="a.lng"
               :label="a.address ?? undefined"
-              :country="a.country"
               :hazards="a.locationEnrichment?.hazards"
               :location-context="locationContext"
             />

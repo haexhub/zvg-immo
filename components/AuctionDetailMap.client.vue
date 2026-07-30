@@ -1,41 +1,33 @@
 <script setup lang="ts">
-import 'leaflet/dist/leaflet.css'
-import L from 'leaflet'
-import iconUrl from 'leaflet/dist/images/marker-icon.png'
-import iconRetinaUrl from 'leaflet/dist/images/marker-icon-2x.png'
-import shadowUrl from 'leaflet/dist/images/marker-shadow.png'
-import { createCountryImageryLayer } from '~/lib/countryImagery'
+import OlMap from 'ol/Map'
+import OlView from 'ol/View'
+import TileLayer from 'ol/layer/Tile'
+import VectorLayer from 'ol/layer/Vector'
+import VectorSource from 'ol/source/Vector'
+import XYZ from 'ol/source/XYZ'
+import OSM from 'ol/source/OSM'
+import { Feature } from 'ol'
+import Point from 'ol/geom/Point'
+import { circular } from 'ol/geom/Polygon'
+import { fromLonLat } from 'ol/proj'
+import { createXYZ } from 'ol/tilegrid'
+import { Circle as CircleStyle, Fill, Icon, Stroke, Style } from 'ol/style'
+import Overlay from 'ol/Overlay'
+import { defaults as defaultInteractions } from 'ol/interaction/defaults'
+import type BaseLayer from 'ol/layer/Base'
+import type { TileCoord } from 'ol/tilecoord'
+import { mapPinDataUri, MAP_PIN_ANCHOR } from '~/lib/mapPinIcon'
 import type { HazardAssessment, LocationContext, LocationMapFeature } from '~/types/auction'
 
 const props = defineProps<{
   lat: number
   lng: number
   label?: string
-  country?: string
   hazards?: HazardAssessment[] | null
   locationContext?: LocationContext | null
 }>()
 
 const { t } = useI18n()
-const markerIcon = L.icon({
-  iconUrl,
-  iconRetinaUrl,
-  shadowUrl,
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  tooltipAnchor: [16, -28],
-  shadowSize: [41, 41],
-})
-
-const mapEl = ref<HTMLDivElement | null>(null)
-let map: L.Map | null = null
-
-const runtimeConfig = useRuntimeConfig()
-const countryImageryKeys = {
-  fi: runtimeConfig.public.mmlApiKey as string,
-  dk: runtimeConfig.public.datafordelerApiKey as string,
-}
 
 function hazardColor(hazard: HazardAssessment): string {
   if (hazard.status === 'inside') return '#dc2626'
@@ -117,21 +109,46 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#039;')
 }
 
-function addOverlay(overlays: Record<string, L.Layer>, label: string, layer: L.Layer): void {
+function rgba(hex: string, alpha: number): string {
+  const n = Number.parseInt(hex.slice(1), 16)
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`
+}
+
+function circularPolygon(lng: number, lat: number, radiusMeters: number) {
+  return circular([lng, lat], radiusMeters).transform('EPSG:4326', 'EPSG:3857')
+}
+
+interface OverlayEntry {
+  key: string
+  layer: BaseLayer
+  // A ref per entry (rather than a plain boolean) so toggling one checkbox
+  // doesn't need the whole entries array/objects to be deeply reactive —
+  // that deep-proxying is what makes Vue's template type inference lose the
+  // OL layer classes' nominal (private-field-based) typing.
+  visible: Ref<boolean>
+}
+
+function addOverlayEntry(entries: OverlayEntry[], label: string, layer: BaseLayer, visible: boolean): void {
   let key = label
   let index = 2
-  while (overlays[key]) {
+  while (entries.some((e) => e.key === key)) {
     key = `${label} ${index}`
     index++
   }
-  overlays[key] = layer
+  layer.setVisible(visible)
+  entries.push({ key, layer, visible: ref(visible) })
 }
 
-function arcGisImageLayer(serviceUrl: string, opacity: number, attribution: string): L.GridLayer {
+// Esri's "export"/"exportImage" REST endpoints render a fresh image per
+// request instead of serving a pre-rendered tile pyramid, so the tile's bbox
+// has to be computed and passed as a query param on every request.
+const arcGisTileGrid = createXYZ()
+
+function arcGisImageLayer(serviceUrl: string, opacity: number, attribution: string): TileLayer<XYZ> {
   return arcGisGridLayer(serviceUrl, 'exportImage', {}, opacity, attribution)
 }
 
-function arcGisMapLayer(serviceUrl: string, layers: string, opacity: number, attribution: string): L.GridLayer {
+function arcGisMapLayer(serviceUrl: string, layers: string, opacity: number, attribution: string): TileLayer<XYZ> {
   return arcGisGridLayer(serviceUrl, 'export', { layers }, opacity, attribution)
 }
 
@@ -141,45 +158,32 @@ function arcGisGridLayer(
   params: Record<string, string>,
   opacity: number,
   attribution: string,
-): L.GridLayer {
-  const Layer = L.GridLayer.extend({
-    createTile(this: L.GridLayer, coords: L.Coords, done: (error?: Error, tile?: HTMLElement) => void): HTMLElement {
-      const tile = document.createElement('img')
-      tile.alt = ''
-      tile.decoding = 'async'
-      tile.loading = 'lazy'
-      tile.referrerPolicy = 'no-referrer'
-      tile.onload = () => done(undefined, tile)
-      tile.onerror = () => done(new Error(`Failed to load ${serviceUrl}`), tile)
-      tile.src = arcGisExportUrl(serviceUrl, coords, this.getTileSize(), operation, params)
-      return tile
-    },
-  })
-  const ArcGisLayer = Layer as unknown as { new(options: L.GridLayerOptions): L.GridLayer }
-  return new ArcGisLayer({
+): TileLayer<XYZ> {
+  return new TileLayer({
     opacity,
-    attribution,
     minZoom: 6,
     maxZoom: 18,
-  }) as L.GridLayer
+    source: new XYZ({
+      tileGrid: arcGisTileGrid,
+      attributions: attribution,
+      crossOrigin: 'anonymous',
+      tileUrlFunction: (tileCoord) => arcGisExportUrl(serviceUrl, tileCoord, operation, params),
+    }),
+  })
 }
 
 function arcGisExportUrl(
   serviceUrl: string,
-  coords: L.Coords,
-  tileSize: L.Point,
+  tileCoord: TileCoord,
   operation: 'export' | 'exportImage',
   extraParams: Record<string, string> = {},
 ): string {
-  const nwPoint = coords.scaleBy(tileSize)
-  const sePoint = nwPoint.add(tileSize)
-  const nw = L.CRS.EPSG3857.project(L.CRS.EPSG3857.pointToLatLng(nwPoint, coords.z))
-  const se = L.CRS.EPSG3857.project(L.CRS.EPSG3857.pointToLatLng(sePoint, coords.z))
+  const [minX, minY, maxX, maxY] = arcGisTileGrid.getTileCoordExtent(tileCoord)
   const url = new URL(`${serviceUrl.replace(/\/+$/, '')}/${operation}`)
-  url.searchParams.set('bbox', `${nw.x},${se.y},${se.x},${nw.y}`)
+  url.searchParams.set('bbox', `${minX},${minY},${maxX},${maxY}`)
   url.searchParams.set('bboxSR', '3857')
   url.searchParams.set('imageSR', '3857')
-  url.searchParams.set('size', `${tileSize.x},${tileSize.y}`)
+  url.searchParams.set('size', '256,256')
   url.searchParams.set('format', 'png32')
   url.searchParams.set('transparent', 'true')
   url.searchParams.set('f', 'image')
@@ -189,17 +193,17 @@ function arcGisExportUrl(
   return url.toString()
 }
 
-function addEnvironmentalMapLayers(overlays: Record<string, L.Layer>): void {
+function addEnvironmentalMapLayers(entries: OverlayEntry[]): void {
   const noiseBase = 'https://noise.discomap.eea.europa.eu/arcgis/rest/services/noiseStoryMap'
   const noiseAttribution = 'EEA Environmental Noise Directive'
-  addOverlay(overlays, t('objektDetail.mapLayerNoiseRoadDay'), arcGisImageLayer(`${noiseBase}/NoiseContours_road_lden/ImageServer`, 0.55, noiseAttribution))
-  addOverlay(overlays, t('objektDetail.mapLayerNoiseRoadNight'), arcGisImageLayer(`${noiseBase}/NoiseContours_road_lnight/ImageServer`, 0.55, noiseAttribution))
-  addOverlay(overlays, t('objektDetail.mapLayerNoiseRailDay'), arcGisImageLayer(`${noiseBase}/NoiseContours_rail_lden/ImageServer`, 0.55, noiseAttribution))
-  addOverlay(overlays, t('objektDetail.mapLayerNoiseRailNight'), arcGisImageLayer(`${noiseBase}/NoiseContours_rail_lnight/ImageServer`, 0.55, noiseAttribution))
-  addOverlay(overlays, t('objektDetail.mapLayerNoiseAviationDay'), arcGisImageLayer(`${noiseBase}/NoiseContours_air_lden/ImageServer`, 0.55, noiseAttribution))
-  addOverlay(overlays, t('objektDetail.mapLayerNoiseAviationNight'), arcGisImageLayer(`${noiseBase}/NoiseContours_air_lnight/ImageServer`, 0.55, noiseAttribution))
-  addOverlay(
-    overlays,
+  addOverlayEntry(entries, t('objektDetail.mapLayerNoiseRoadDay'), arcGisImageLayer(`${noiseBase}/NoiseContours_road_lden/ImageServer`, 0.55, noiseAttribution), false)
+  addOverlayEntry(entries, t('objektDetail.mapLayerNoiseRoadNight'), arcGisImageLayer(`${noiseBase}/NoiseContours_road_lnight/ImageServer`, 0.55, noiseAttribution), false)
+  addOverlayEntry(entries, t('objektDetail.mapLayerNoiseRailDay'), arcGisImageLayer(`${noiseBase}/NoiseContours_rail_lden/ImageServer`, 0.55, noiseAttribution), false)
+  addOverlayEntry(entries, t('objektDetail.mapLayerNoiseRailNight'), arcGisImageLayer(`${noiseBase}/NoiseContours_rail_lnight/ImageServer`, 0.55, noiseAttribution), false)
+  addOverlayEntry(entries, t('objektDetail.mapLayerNoiseAviationDay'), arcGisImageLayer(`${noiseBase}/NoiseContours_air_lden/ImageServer`, 0.55, noiseAttribution), false)
+  addOverlayEntry(entries, t('objektDetail.mapLayerNoiseAviationNight'), arcGisImageLayer(`${noiseBase}/NoiseContours_air_lnight/ImageServer`, 0.55, noiseAttribution), false)
+  addOverlayEntry(
+    entries,
     t('objektDetail.mapLayerFloodRiskAreas'),
     arcGisMapLayer(
       'https://water.discomap.eea.europa.eu/arcgis/rest/services/FloodsDirective/FloodsRiskZone_WM/MapServer',
@@ -207,146 +211,277 @@ function addEnvironmentalMapLayers(overlays: Record<string, L.Layer>): void {
       0.5,
       'EEA Floods Directive',
     ),
+    false,
   )
 }
 
-function odorSignalLayer(): L.Layer | null {
+function odorOverlayEntry(entries: OverlayEntry[]): void {
   const environment = props.locationContext?.environment
-  if (!environment) return null
+  if (!environment) return
   const signals = [
     environment.nearestHeavyIndustryDistanceMeters,
     environment.nearestIndustrialDistanceMeters,
   ].filter((distance): distance is number => distance != null)
   const nearest = signals.length ? Math.min(...signals) : null
-  if (nearest == null || nearest > 5_000) return null
+  if (nearest == null || nearest > 5_000) return
   const radius = Math.min(Math.max(nearest, 300), 5_000)
   const label = t('objektDetail.mapLayerOdorSignals')
-  return L.layerGroup([
-    L.circle([props.lat, props.lng], {
-      radius,
-      color: '#7f1d1d',
-      weight: 2,
-      opacity: 0.85,
-      fillColor: '#ef4444',
-      fillOpacity: nearest <= 1000 ? 0.12 : 0.06,
-      dashArray: '4 6',
-    }).bindPopup(`${label}<br>${distanceLabel(nearest)}`),
-  ])
+  const feature = new Feature({ geometry: circularPolygon(props.lng, props.lat, radius) })
+  feature.set('popupHtml', `${label}<br>${distanceLabel(nearest)}`)
+  const layer = new VectorLayer({
+    source: new VectorSource({ features: [feature] }),
+    style: new Style({
+      stroke: new Stroke({ color: '#7f1d1d', width: 2, lineDash: [4, 6] }),
+      fill: new Fill({ color: rgba('#ef4444', nearest <= 1000 ? 0.12 : 0.06) }),
+    }),
+  })
+  addOverlayEntry(entries, label, layer, false)
+}
+
+function hazardOverlayEntries(entries: OverlayEntry[]): void {
+  for (const hazard of props.hazards ?? []) {
+    const color = hazardColor(hazard)
+    const circleFeature = new Feature({ geometry: circularPolygon(props.lng, props.lat, hazardRadius(hazard)) })
+    circleFeature.set('popupHtml', `${hazardOverlayLabel(hazard)}<br>${t('objektDetail.hazardSeverityLabel')} ${t(`objektDetail.hazardSeverity.${hazard.severity}`)}`)
+    const dotFeature = new Feature({ geometry: new Point(fromLonLat([props.lng, props.lat])) })
+    const layer = new VectorLayer({
+      source: new VectorSource({ features: [circleFeature, dotFeature] }),
+      style: (feature) => {
+        if (feature === dotFeature) {
+          return new Style({ image: new CircleStyle({ radius: 7, fill: new Fill({ color }), stroke: new Stroke({ color, width: 2 }) }) })
+        }
+        return new Style({
+          stroke: new Stroke({ color, width: 2, lineDash: hazard.status === 'inside' ? undefined : [6, 6] }),
+          fill: new Fill({ color: rgba(color, hazard.status === 'inside' ? 0.18 : 0.08) }),
+        })
+      },
+    })
+    addOverlayEntry(entries, hazardMapLayerLabel(hazard), layer, false)
+  }
+}
+
+function featureOverlayEntries(entries: OverlayEntry[]): void {
+  const layersByLabel = new Map<string, VectorSource>()
+  for (const feature of props.locationContext?.mapFeatures ?? []) {
+    const label = featureLayerLabel(feature)
+    let source = layersByLabel.get(label)
+    if (!source) {
+      source = new VectorSource()
+      layersByLabel.set(label, source)
+    }
+    const olFeature = new Feature({ geometry: new Point(fromLonLat([feature.lng, feature.lat])) })
+    olFeature.set('data', feature)
+    olFeature.set('popupHtml', featurePopup(feature))
+    source.addFeature(olFeature)
+  }
+  for (const [label, source] of layersByLabel) {
+    const layer = new VectorLayer({
+      source,
+      style: (olFeature) => {
+        const data = olFeature.get('data') as LocationMapFeature
+        const color = featureColor(data)
+        return new Style({
+          image: new CircleStyle({
+            radius: featureRadius(data),
+            fill: new Fill({ color: rgba(color, data.kind === 'major_road' ? 0.45 : 0.75) }),
+            stroke: new Stroke({ color, width: 2 }),
+          }),
+        })
+      },
+    })
+    // Visible by default, unlike the noise/flood/hazard/odor overlays above —
+    // matches the Leaflet version, which added these straight to the map
+    // instead of only registering them with the layer-switcher control.
+    addOverlayEntry(entries, label, layer, true)
+  }
+}
+
+const mapEl = ref<HTMLDivElement | null>(null)
+const popupEl = ref<HTMLDivElement | null>(null)
+let map: OlMap | null = null
+
+const baseLayer = ref<'streets' | 'satellite'>('streets')
+const panelOpen = ref(false)
+const overlayEntries = shallowRef<OverlayEntry[]>([])
+
+function toggleOverlay(entry: OverlayEntry): void {
+  entry.visible.value = !entry.visible.value
+  entry.layer.setVisible(entry.visible.value)
 }
 
 onMounted(async () => {
   // The parent gates this component behind v-if="a.lat != null && a.lng != null".
   // The ref binding races with the v-if flip when the data arrives, so wait a
-  // tick before reading mapEl — otherwise Leaflet silently no-ops on a null el.
+  // tick before reading mapEl — otherwise OpenLayers silently no-ops on a null el.
   await nextTick()
-  if (!mapEl.value) return
-  map = L.map(mapEl.value, { scrollWheelZoom: false }).setView([props.lat, props.lng], 14)
-  const streets = L.tileLayer('https://{s}.tile.openstreetmap.de/{z}/{x}/{y}.png', {
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> Deutschland',
-    maxZoom: 18,
-  }).addTo(map)
-  const esriImagery = L.tileLayer(
-    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    {
-      attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics',
-      maxZoom: 19,
-    },
-  )
-  // A handful of countries publish free, keyless orthophotos sharper than
-  // Esri World Imagery for their own territory — layer that over Esri when
-  // available (not instead of it: the national layer stops at its country's
-  // bounds/minZoom, so Esri has to stay underneath for panning and zooming
-  // beyond them). Some of these sources have tile-alignment bugs (opaque
-  // no-data spillover into neighbouring countries) that Esri alone doesn't
-  // have, so offer a plain Esri-only view as an escape hatch.
-  const countryImagery = createCountryImageryLayer(props.country, countryImageryKeys)
-  // A full opaque basemap (like the streets layer) blended at low opacity
-  // over satellite tiles just looks washed out — this is a dedicated
-  // labels/boundaries overlay with a transparent background instead.
-  const placeLabels = L.tileLayer(
-    'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
-    {
-      attribution: 'Tiles &copy; Esri',
-      maxZoom: 19,
-    },
-  )
-  const satelliteEsriOnly = L.layerGroup([esriImagery, placeLabels])
-  const layers: Record<string, L.Layer> = { Straße: streets, 'Satellit (nur Esri)': satelliteEsriOnly }
-  if (countryImagery) {
-    layers['Satellit (Länder-Tiles)'] = L.layerGroup([esriImagery, countryImagery, placeLabels])
-  }
-  const overlays: Record<string, L.Layer> = {}
-  addEnvironmentalMapLayers(overlays)
-  const featureGroups: Record<string, L.LayerGroup> = {}
-  for (const feature of props.locationContext?.mapFeatures ?? []) {
-    const label = featureLayerLabel(feature)
-    const group = featureGroups[label] ?? L.layerGroup()
-    featureGroups[label] = group
-    const color = featureColor(feature)
-    L.circleMarker([feature.lat, feature.lng], {
-      radius: featureRadius(feature),
-      color,
-      weight: 2,
-      opacity: 0.9,
-      fillColor: color,
-      fillOpacity: feature.kind === 'major_road' ? 0.45 : 0.75,
-    })
-      .bindPopup(featurePopup(feature))
-      .addTo(group)
-  }
-  for (const [label, group] of Object.entries(featureGroups)) {
-    addOverlay(overlays, label, group)
-    group.addTo(map)
-  }
-  const odorLayer = odorSignalLayer()
-  if (odorLayer) addOverlay(overlays, t('objektDetail.mapLayerOdorSignals'), odorLayer)
-  for (const hazard of props.hazards ?? []) {
-    const color = hazardColor(hazard)
-    const group = L.layerGroup([
-      L.circle([props.lat, props.lng], {
-        radius: hazardRadius(hazard),
-        color,
-        weight: 2,
-        opacity: 0.85,
-        fillColor: color,
-        fillOpacity: hazard.status === 'inside' ? 0.18 : 0.08,
-        dashArray: hazard.status === 'inside' ? undefined : '6 6',
-      }).bindPopup(
-        `${hazardOverlayLabel(hazard)}<br>${t(`objektDetail.hazardSeverityLabel`)} ${t(`objektDetail.hazardSeverity.${hazard.severity}`)}`,
-      ),
-      L.circleMarker([props.lat, props.lng], {
-        radius: 7,
-        color,
-        weight: 2,
-        fillColor: color,
-        fillOpacity: 0.9,
-      }),
-    ])
-    addOverlay(overlays, hazardMapLayerLabel(hazard), group)
-  }
-  L.control.layers(layers, overlays, { position: 'topright', collapsed: true }).addTo(map)
-  const marker = L.marker([props.lat, props.lng], { icon: markerIcon })
-  if (props.label) marker.bindTooltip(props.label)
-  marker.addTo(map)
+  if (!mapEl.value || !popupEl.value) return
+
+  const streets = new TileLayer({ source: new OSM({ attributions: '&copy; OpenStreetMap contributors' }) })
+  const esriImagery = new TileLayer({
+    source: new XYZ({
+      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      attributions: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics',
+    }),
+  })
+  // A dedicated labels/boundaries overlay with a transparent background,
+  // paired with satellite imagery (a full opaque basemap blended at low
+  // opacity over it would just look washed out).
+  const placeLabels = new TileLayer({
+    source: new XYZ({
+      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+      attributions: 'Tiles &copy; Esri',
+    }),
+  })
+  streets.setVisible(baseLayer.value === 'streets')
+  esriImagery.setVisible(baseLayer.value !== 'streets')
+  placeLabels.setVisible(baseLayer.value !== 'streets')
+  watch(baseLayer, (value) => {
+    streets.setVisible(value === 'streets')
+    esriImagery.setVisible(value !== 'streets')
+    placeLabels.setVisible(value !== 'streets')
+  })
+
+  const entries: OverlayEntry[] = []
+  addEnvironmentalMapLayers(entries)
+  featureOverlayEntries(entries)
+  odorOverlayEntry(entries)
+  hazardOverlayEntries(entries)
+  overlayEntries.value = entries
+
+  const markerFeature = new Feature({ geometry: new Point(fromLonLat([props.lng, props.lat])) })
+  const markerLayer = new VectorLayer({
+    source: new VectorSource({ features: [markerFeature] }),
+    style: new Style({ image: new Icon({ src: mapPinDataUri('#2563eb'), anchor: MAP_PIN_ANCHOR }) }),
+  })
+
+  const popupOverlay = new Overlay({
+    element: popupEl.value,
+    offset: [0, -12],
+    positioning: 'bottom-center',
+  })
+
+  map = new OlMap({
+    target: mapEl.value,
+    interactions: defaultInteractions({ mouseWheelZoom: false }),
+    layers: [streets, esriImagery, placeLabels, ...entries.map((e) => e.layer), markerLayer],
+    overlays: [popupOverlay],
+    view: new OlView({ center: fromLonLat([props.lng, props.lat]), zoom: 14 }),
+  })
+
+  map.on('click', (evt) => {
+    const feature = map!.forEachFeatureAtPixel(evt.pixel, (f) => f)
+    const html = feature?.get('popupHtml') as string | undefined
+    if (!html) {
+      popupOverlay.setPosition(undefined)
+      return
+    }
+    popupEl.value!.innerHTML = html
+    popupOverlay.setPosition(evt.coordinate)
+  })
 })
 
 onBeforeUnmount(() => {
   if (map) {
-    map.remove()
+    map.setTarget(undefined)
     map = null
   }
 })
 </script>
 
 <template>
-  <div ref="mapEl" class="h-72 w-full rounded-xl border shadow-sm overflow-hidden" />
+  <div class="relative h-72 w-full rounded-xl border shadow-sm overflow-hidden">
+    <div ref="mapEl" class="h-full w-full" />
+    <div ref="popupEl" class="auction-detail-map-popup" />
+    <div class="auction-detail-map-layers">
+      <button type="button" class="auction-detail-map-layers__toggle" @click="panelOpen = !panelOpen">
+        Ebenen
+      </button>
+      <div v-if="panelOpen" class="auction-detail-map-layers__panel">
+        <div class="auction-detail-map-layers__group">
+          <label><input v-model="baseLayer" type="radio" value="streets"> Straße</label>
+          <label><input v-model="baseLayer" type="radio" value="satellite"> Satellit</label>
+        </div>
+        <div v-if="overlayEntries.length" class="auction-detail-map-layers__overlays">
+          <label v-for="entry in overlayEntries" :key="entry.key">
+            <input type="checkbox" :checked="entry.visible.value" @change="toggleOverlay(entry)"> {{ entry.key }}
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
 </template>
 
 <style scoped>
-:deep(.leaflet-control-layers-expanded) {
+.auction-detail-map-popup:empty {
+  display: none;
+}
+
+.auction-detail-map-popup {
+  border-radius: 8px;
+  padding: 4px 8px;
+  min-width: 140px;
+  max-width: 260px;
+  background: white;
+  font-size: 12px;
+  line-height: 1.35;
+  box-shadow: 0 4px 16px rgb(15 23 42 / 20%);
+}
+
+.auction-detail-map-layers {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.auction-detail-map-layers__toggle {
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1f2937;
+  background: white;
+  border: 1px solid rgb(15 23 42 / 15%);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgb(15 23 42 / 15%);
+  cursor: pointer;
+}
+
+.auction-detail-map-layers__panel {
+  width: 15rem;
   max-height: 15rem;
   overflow-y: auto;
+  padding: 6px 8px;
+  background: white;
+  border: 1px solid rgb(15 23 42 / 15%);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgb(15 23 42 / 15%);
   font-size: 12px;
   line-height: 1.25;
+}
+
+.auction-detail-map-layers__group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid rgb(15 23 42 / 10%);
+}
+
+.auction-detail-map-layers__overlays {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.auction-detail-map-layers label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
 }
 </style>
