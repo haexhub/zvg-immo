@@ -8,7 +8,7 @@ import { getPool } from '../db'
 vi.mock('../db', () => ({ getPool: vi.fn() }))
 
 // Imported after the mock so the module under test picks up the mocked getPool.
-const { fetchPdfBuffer, pdfHasSuspiciousCjkEncoding, pdfToText, pickAllPdfs, pickRelevantPdfs } =
+const { fetchPdfBuffer, pdfHasTrustworthyEncoding, pdfToText, pickAllPdfs, pickRelevantPdfs } =
   await import('./pdf-text')
 
 const CACHE_DIR = join(process.cwd(), '.cache_zvg', 'pdftext')
@@ -113,17 +113,17 @@ const CJK_ENCODED_PDF = Buffer.from(
   ].join('\n'),
 )
 
-describe('pdfHasSuspiciousCjkEncoding', () => {
+describe('pdfHasTrustworthyEncoding', () => {
   it('trusts a normal Standard-encoded font', async () => {
-    await expect(pdfHasSuspiciousCjkEncoding(PDF_WITH_TEXT)).resolves.toBe(true)
+    await expect(pdfHasTrustworthyEncoding(PDF_WITH_TEXT)).resolves.toBe(true)
   })
 
   it('flags a font using a CJK CID encoding', async () => {
-    await expect(pdfHasSuspiciousCjkEncoding(CJK_ENCODED_PDF)).resolves.toBe(false)
+    await expect(pdfHasTrustworthyEncoding(CJK_ENCODED_PDF)).resolves.toBe(false)
   })
 
   it('fails open on an unreadable PDF', async () => {
-    await expect(pdfHasSuspiciousCjkEncoding(FAKE_PDF)).resolves.toBe(true)
+    await expect(pdfHasTrustworthyEncoding(FAKE_PDF)).resolves.toBe(true)
   })
 })
 

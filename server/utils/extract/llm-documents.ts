@@ -11,7 +11,7 @@ import { downloadBlob, findLatestCapture, readDocumentSetItems } from '../storag
 import { detectImageExt, type ImageExt } from './image-bytes'
 import { docxBufferToText } from './docx-text'
 import { buildDocumentLlmParts } from './pdf-documents'
-import { extractPdfTextFromBuffer, pdfHasSuspiciousCjkEncoding } from './pdf-text'
+import { extractPdfTextFromBuffer, pdfHasTrustworthyEncoding } from './pdf-text'
 import { renderPdfPagesJpeg } from './pdf-render'
 import type { LlmInput } from './llm'
 
@@ -323,7 +323,7 @@ async function prepareDocument(
   // characters from pdftotext, just not real text — treat it the same as no
   // text at all so the caller falls back to rendering page images instead of
   // feeding the LLM homoglyph noise.
-  if (format === 'pdf' && text && !(await pdfHasSuspiciousCjkEncoding(bytes))) {
+  if (format === 'pdf' && text && !(await pdfHasTrustworthyEncoding(bytes))) {
     text = null
   }
   if (text?.trim() && opts.identity && opts.capturedAt) {

@@ -171,12 +171,13 @@ export async function extractPdfTextFromBuffer(buf: Buffer): Promise<string | nu
 const CJK_CID_ENCODING_RE = /RKSJ|UniGB|UniCNS|UniJIS|UniKS|EUC-|KSC/i
 
 /**
- * Whether any font in this PDF uses a CJK CID encoding — a strong signal
- * that its text layer is untrustworthy (see CJK_CID_ENCODING_RE above).
- * Fails open (true = "trust the text") so a missing/erroring `pdffonts`
- * never makes extraction worse than before this check existed.
+ * Whether this PDF's fonts look trustworthy, i.e. none uses a CJK CID
+ * encoding — a strong signal that its text layer is bogus (see
+ * CJK_CID_ENCODING_RE above). Fails open (true = "trust the text") so a
+ * missing/erroring `pdffonts` never makes extraction worse than before this
+ * check existed.
  */
-export async function pdfHasSuspiciousCjkEncoding(buf: Buffer): Promise<boolean> {
+export async function pdfHasTrustworthyEncoding(buf: Buffer): Promise<boolean> {
   const dir = await mkdtemp(join(tmpdir(), 'zvg-pdffonts-'))
   const inputPath = join(dir, 'in.pdf')
   try {
