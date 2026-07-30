@@ -147,8 +147,11 @@ async function deleteLawyer(l: AdminLawyer): Promise<void> {
     await $fetch(`/api/settings/lawyers/${l.id}`, { method: 'DELETE' })
     await loadLawyers()
   } catch (err) {
-    lawyersError.value = (err as { statusCode?: number }).statusCode === 409
-      ? ((err as { statusMessage?: string }).statusMessage ?? t('settings.lawyers.hasInquiries'))
+    const e = typeof err === 'object' && err !== null
+      ? err as { statusCode?: number; statusMessage?: string }
+      : {}
+    lawyersError.value = e.statusCode === 409
+      ? (e.statusMessage ?? t('settings.lawyers.hasInquiries'))
       : normalizeSettingsError(err, t('settings.lawyers.deleteError'))
   } finally {
     lawyersPending.value = false

@@ -236,10 +236,16 @@ export function useAuctionSearchState(options: {
     selectedRegionKeys.value = selectedRegionKeys.value.filter((k) => valid.has(k))
   })
 
-  watch([selectedCountries, selectedRegionKeys], () => {
-    authorityFilter.value = ALL_SCOPE
-    categoryFilter.value = ALL_SCOPE
-  })
+  watch(
+    [selectedCountries, selectedRegionKeys],
+    ([countries, regions], [prevCountries, prevRegions]) => {
+      const sameCountries = countries.join(',') === (prevCountries ?? []).join(',')
+      const sameRegions = regions.join(',') === (prevRegions ?? []).join(',')
+      if (sameCountries && sameRegions) return
+      authorityFilter.value = ALL_SCOPE
+      categoryFilter.value = ALL_SCOPE
+    },
+  )
 
   watch(view, () => {
     if (!mounted.value || applyingImplicitMapView) return

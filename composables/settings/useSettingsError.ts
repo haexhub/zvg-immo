@@ -7,11 +7,13 @@ export function useSettingsError() {
   const expireSession = inject(settingsSessionExpiredKey, null)
 
   function normalizeSettingsError(err: unknown, fallback: string): string {
-    if ((err as { statusCode?: number }).statusCode === 401) {
+    const e = typeof err === 'object' && err !== null
+      ? err as { statusCode?: number; data?: { statusMessage?: string }; statusMessage?: string; message?: string }
+      : {}
+    if (e.statusCode === 401) {
       expireSession?.()
-      return t('settings.claude.sessionExpired')
+      return t('settings.sessionExpired')
     }
-    const e = err as { data?: { statusMessage?: string }; statusMessage?: string; message?: string }
     return e.data?.statusMessage || e.statusMessage || e.message || fallback
   }
 

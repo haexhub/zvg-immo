@@ -8,12 +8,15 @@ const hideRulesOnlyDefault = ref(true)
 const displayError = ref<string | null>(null)
 const displaySaved = ref(false)
 const displayPending = ref(false)
+const displayLoaded = ref(false)
 
 async function loadDisplaySettings(): Promise<void> {
+  displayLoaded.value = false
   try {
     const res = await $fetch<{ hideRulesOnlyAuctions: boolean }>('/api/settings/display')
     hideRulesOnlyDefault.value = res.hideRulesOnlyAuctions
     displayError.value = null
+    displayLoaded.value = true
   } catch (err) {
     displayError.value = normalizeSettingsError(err, t('settings.display.loadError'))
   }
@@ -50,14 +53,19 @@ onMounted(loadDisplaySettings)
         {{ $t('settings.display.description') }}
       </p>
 
-      <p v-if="displayError" class="text-sm text-destructive">{{ displayError }}</p>
+      <div v-if="displayError" class="flex items-center gap-2">
+        <p class="text-sm text-destructive">{{ displayError }}</p>
+        <Button v-if="!displayLoaded" type="button" size="sm" variant="outline" @click="loadDisplaySettings">
+          {{ $t('settings.display.retry') }}
+        </Button>
+      </div>
       <p v-if="displaySaved" class="text-sm text-emerald-600 dark:text-emerald-500">{{ $t('settings.display.saved') }}</p>
 
       <form class="space-y-3" @submit.prevent="saveDisplaySettings">
         <Label class="flex items-center gap-2">
-          <Checkbox v-model="hideRulesOnlyDefault" /> {{ $t('settings.display.hideRulesOnlyLabel') }}
+          <Checkbox v-model="hideRulesOnlyDefault" :disabled="!displayLoaded || displayPending" /> {{ $t('settings.display.hideRulesOnlyLabel') }}
         </Label>
-        <Button type="submit" :disabled="displayPending">
+        <Button type="submit" :disabled="!displayLoaded || displayPending">
           {{ displayPending ? $t('settings.display.saving') : $t('settings.display.save') }}
         </Button>
       </form>

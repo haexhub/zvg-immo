@@ -8,6 +8,7 @@ export function useAuctionWatchlist(options: {
 } = {}) {
   const { user } = useAuth()
   const watchlistIds = ref<Map<string, string>>(new Map())
+  const pendingKeys = new Set<string>()
 
   async function loadWatchlist(): Promise<void> {
     if (!user.value) {
@@ -25,6 +26,8 @@ export function useAuctionWatchlist(options: {
   async function toggleWatchlist(auction: AuctionSummary): Promise<void> {
     if (!user.value) return
     const key = auctionKey(auction)
+    if (pendingKeys.has(key)) return
+    pendingKeys.add(key)
     const existingId = watchlistIds.value.get(key)
     try {
       if (existingId) {
@@ -48,6 +51,8 @@ export function useAuctionWatchlist(options: {
       }
     } catch (err) {
       options.onError?.(apiErrorMessage(err, 'Die Merkliste konnte nicht geändert werden.'))
+    } finally {
+      pendingKeys.delete(key)
     }
   }
 

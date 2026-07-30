@@ -81,7 +81,7 @@ export function useAuctionDetailFormatters() {
   }
 
   function formatLandValue(eurPerSqm: number): string {
-    return `${eurPerSqm.toLocaleString(intlLocale.value, { maximumFractionDigits: 0 })} €/m²`
+    return formatPricePerSqm(eurPerSqm)
   }
 
   function formatCostRange(costMinEur: number, costMaxEur: number): string {

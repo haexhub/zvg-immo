@@ -197,6 +197,9 @@ const landParcelItems = computed(() => props.extraction?.planningNotes?.landParc
           </div>
         </li>
       </ul>
+      <p v-else-if="usageIdeas" class="text-sm text-muted-foreground">
+        {{ $t('objektDetail.usageIdeasEmpty') }}
+      </p>
       <div v-else-if="usageIdeasError" class="flex items-center gap-2">
         <p class="text-sm text-destructive">{{ usageIdeasError }}</p>
         <Button type="button" size="sm" variant="outline" @click="emit('generateUsageIdeas')">

@@ -53,18 +53,7 @@ export interface LlmBatchJobsOverview {
   offloadImagesStatus?: TaskRunStatus
 }
 
-const llmBatchJobs = ref<LlmBatchJobsOverview | null>(null)
-const llmBatchJobsPending = ref(false)
-const llmBatchJobsError = ref<string | null>(null)
 let progressPollTimer: ReturnType<typeof setInterval> | null = null
-
-function anyTrackedTaskRunning(): boolean {
-  const overview = llmBatchJobs.value
-  if (!overview) return false
-  return overview.enrichStatus.status === 'running' ||
-    overview.reprocessStatus.status === 'running' ||
-    overview.externalEnrichmentStatus.status === 'running'
-}
 
 function formatBatchDate(iso: string | null): string {
   if (!iso) return '-'
@@ -75,6 +64,19 @@ function formatBatchDate(iso: string | null): string {
 export function useSettingsTaskOverview() {
   const { t } = useI18n()
   const { normalizeSettingsError } = useSettingsError()
+
+  const llmBatchJobs = useState<LlmBatchJobsOverview | null>('settings-llm-batch-jobs', () => null)
+  const llmBatchJobsPending = useState('settings-llm-batch-jobs-pending', () => false)
+  const llmBatchJobsError = useState<string | null>('settings-llm-batch-jobs-error', () => null)
+
+  function anyTrackedTaskRunning(): boolean {
+    const overview = llmBatchJobs.value
+    if (!overview) return false
+    return overview.enrichStatus.status === 'running' ||
+      overview.reprocessStatus.status === 'running' ||
+      overview.externalEnrichmentStatus.status === 'running' ||
+      overview.offloadImagesStatus?.status === 'running'
+  }
 
   const llmBatchBacklog = computed(() => llmBatchJobs.value?.backlog ?? {
     readyRequests: 0,

@@ -177,7 +177,7 @@ function showOriginalPrice(): boolean {
 
 function attachmentHref(att: Attachment): string | undefined {
   if (props.auction.platform === 'bg-zapori') {
-    return `/api/bg-zapori-document/${props.auction.externalId}/${att.fileId}`
+    return `/api/bg-zapori-document/${encodeURIComponent(props.auction.externalId)}/${encodeURIComponent(att.fileId)}`
   }
   return safeHref(att.proxyUrl)
 }

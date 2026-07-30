@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { ArrowLeft } from 'lucide-vue-next'
-import { settingsSessionExpiredKey } from '~/composables/settings/useSettingsError'
+import { settingsSessionExpiredKey, useSettingsError } from '~/composables/settings/useSettingsError'
 import { useSettingsTaskOverview } from '~/composables/settings/useSettingsTaskOverview'
 
 const { t } = useI18n()
-const { stopProgressPolling } = useSettingsTaskOverview()
 
 useHead({ title: t('settings.title') })
 
@@ -20,6 +19,9 @@ function clearAuthState(): void {
 }
 
 provide(settingsSessionExpiredKey, clearAuthState)
+
+const { normalizeSettingsError } = useSettingsError()
+const { stopProgressPolling } = useSettingsTaskOverview()
 
 async function probeSession(): Promise<void> {
   try {
@@ -41,9 +43,10 @@ async function login(): Promise<void> {
     passwordInput.value = ''
     authed.value = true
   } catch (err) {
-    authError.value = (err as { statusMessage?: string; message?: string }).statusMessage ||
-      (err as Error).message ||
-      t('settings.login.error')
+    const e = typeof err === 'object' && err !== null
+      ? err as { data?: { statusMessage?: string }; statusMessage?: string; message?: string }
+      : {}
+    authError.value = e.data?.statusMessage || e.statusMessage || e.message || t('settings.login.error')
   } finally {
     authPending.value = false
   }
@@ -59,9 +62,7 @@ async function logout(): Promise<void> {
       clearAuthState()
       return
     }
-    adminLogoutError.value = (err as { statusMessage?: string; message?: string }).statusMessage ||
-      (err as Error).message ||
-      t('settings.logoutAdminError')
+    adminLogoutError.value = normalizeSettingsError(err, t('settings.logoutAdminError'))
   }
 }
 

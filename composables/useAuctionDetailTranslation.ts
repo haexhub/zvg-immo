@@ -60,7 +60,7 @@ export async function useAuctionDetailTranslation(options: {
 }) {
   const { t, locale } = useI18n()
   const currentTranslationRequest = computed(() => translationRequest(options.auction.value, locale.value))
-  const translationError = ref<string | null>(null)
+  const translationError = useState<string | null>(`auction-translation-error:${options.platform}:${options.id}`, () => null)
   const { data: loadedTranslation, pending: translationFetchPending } = await useAsyncData<LoadedAuctionTranslation | null>(
     `auction-translation:${options.platform}:${options.id}`,
     async () => {
@@ -143,6 +143,8 @@ export async function useAuctionDetailTranslation(options: {
   const parcelsTranslating = computed(() => translationPending.value && !!sourceExtraction.value?.planningNotes?.landParcels?.length)
 
   const translationSeq = ref(0)
+  let disposed = false
+  onScopeDispose(() => { disposed = true })
 
   watch([currentTranslationRequest, activeTranslation, translationFetchPending], async ([request, existing, cacheLookupPending]) => {
     if (import.meta.server) return
@@ -161,18 +163,18 @@ export async function useAuctionDetailTranslation(options: {
         {
           maxPolls: TRANSLATION_PENDING_MAX_POLLS,
           retryMs: TRANSLATION_PENDING_RETRY_MS,
-          shouldContinue: () => seq === translationSeq.value,
+          shouldContinue: () => !disposed && seq === translationSeq.value,
         },
       )
       if (!payload) return
-      if (seq !== translationSeq.value) return
+      if (disposed || seq !== translationSeq.value) return
       loadedTranslation.value = { ...request, payload }
     } catch (err) {
-      if (seq === translationSeq.value) {
+      if (!disposed && seq === translationSeq.value) {
         translationError.value = apiErrorMessage(err, t('objektDetail.translationError'))
       }
     } finally {
-      if (seq === translationSeq.value) translationGenerationPending.value = false
+      if (!disposed && seq === translationSeq.value) translationGenerationPending.value = false
     }
   }, { immediate: true })
 

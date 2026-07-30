@@ -134,6 +134,7 @@
     "heading": "Einstellungen",
     "logoutAdmin": "Abmelden",
     "logoutAdminError": "Abmelden fehlgeschlagen.",
+    "sessionExpired": "Sitzung abgelaufen.",
     "login": {
       "title": "Anmeldung",
       "protected": "Diese Seite ist passwortgeschützt.",
@@ -284,7 +285,8 @@
       "saveError": "Speichern fehlgeschlagen.",
       "saved": "Gespeichert.",
       "saving": "Speichere …",
-      "save": "Speichern"
+      "save": "Speichern",
+      "retry": "Erneut versuchen"
     },
     "sources": {
       "title": "Datenquellen",
@@ -1069,6 +1071,7 @@
     "usageIdeasPending": "Ideen werden erstellt …",
     "usageIdeasError": "Nutzungsideen konnten nicht erstellt werden.",
     "usageIdeasRetry": "Erneut versuchen",
+    "usageIdeasEmpty": "Keine Nutzungsideen erkennbar.",
     "renovationCostTitle": "Sanierungskosten",
     "renovationCostGenerate": "Sanierungskosten schätzen",
     "renovationCostPending": "Schätzung wird erstellt …",
