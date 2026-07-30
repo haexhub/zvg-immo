@@ -56,7 +56,12 @@ export function applyExtractionToAuctions(auctions: Auction[], cache: Extraction
     // so `photos[0]` below is the best thumbnail candidate across every
     // platform, not just whichever page/file the crawler or pdfimages
     // happened to return first.
-    const photos = sortCuratedPhotos((normalizedHit.photos ?? []).map(normalizePhoto))
+    const seenFiles = new Set<string>()
+    const photos = sortCuratedPhotos((normalizedHit.photos ?? []).map(normalizePhoto)).filter((photo) => {
+      if (seenFiles.has(photo.file)) return false
+      seenFiles.add(photo.file)
+      return true
+    })
     a.extraction = photos.length > 0 ? { ...normalizedHit, photos } : normalizedHit
     // WP-3: zvg-portal/DE has no structural Verkehrswert source (unlike
     // AT-Edikte/Biddit, whose overlay runs before this and already set
@@ -71,7 +76,7 @@ export function applyExtractionToAuctions(auctions: Auction[], cache: Extraction
       a.marketValueText = normalizedHit.marketValueText ?? null
     }
     if (photos.length === 0) continue
-    a.thumbnailUrl = `/api/auction-image/${a.platform}/${a.externalId}/${photos[0]!.file}`
+    a.thumbnailUrl = `/api/auction-image/${encodeURIComponent(a.platform)}/${encodeURIComponent(a.externalId)}/${encodeURIComponent(photos[0]!.file)}`
     a.photoCount = photos.length
   }
 }
