@@ -1,21 +1,29 @@
-import L from 'leaflet'
+import TileLayer from 'ol/layer/Tile'
+import XYZ from 'ol/source/XYZ'
+import TileWMS from 'ol/source/TileWMS'
+import { transformExtent } from 'ol/proj'
+import type { Extent } from 'ol/extent'
+import type Tile from 'ol/Tile'
+import TileState from 'ol/TileState'
+import type { CountryBounds } from './country-bounds'
 
 /** Free national orthophoto/satellite services that beat Esri World Imagery's
- *  resolution for their own country. Each entry's `bounds` is passed straight
- *  to the Leaflet layer so it only ever requests tiles inside the country —
- *  outside that box the map falls through to Esri. A handful require a free
- *  API key the user registers for themselves (see `apiKeys` below); those
- *  entries carry a `{apiKey}` placeholder in their `url` and are skipped
- *  (falling back to Esri) until a key is supplied. */
+ *  resolution for their own country. Each entry's `bounds` restricts the
+ *  layer's rendered extent so it only ever requests tiles inside the country
+ *  — outside that box the map falls through to Esri. A handful require a
+ *  free API key the user registers for themselves (see `apiKeys` below);
+ *  those entries carry a `{apiKey}` placeholder in their `url` and are
+ *  skipped (falling back to Esri) until a key is supplied. */
 type XyzImagery = {
   kind: 'xyz'
   url: string
+  /** `{s}` placeholder values for round-robin domain sharding (parallel tile
+   *  downloads across subdomains), same idea as Leaflet's `subdomains`. */
   subdomains?: string[]
-  maxZoom: number
-  maxNativeZoom?: number
+  maxNativeZoom: number
   minZoom?: number
   attribution: string
-  bounds: L.LatLngBoundsLiteral
+  bounds: CountryBounds
   /** Server paints a solid fill color (no alpha channel) outside its actual
    *  coverage instead of returning a transparent/no-data pixel — treat
    *  near-matches to this color as no-data client-side so Esri shows through
@@ -30,10 +38,7 @@ type WmsImagery = {
   format?: string
   maxZoom: number
   attribution: string
-  bounds: L.LatLngBoundsLiteral
-  /** Some WMS servers reject Leaflet's default lowercase request parameter
-   *  names (e.g. `request=GetMap`) with a 404 and only accept them uppercase. */
-  uppercase?: boolean
+  bounds: CountryBounds
   /** Same opaque no-data spillover as the xyz entries' chromaKeyColor, for a
    *  WMS server that ignores `transparent=true` outside its real coverage. */
   chromaKeyColor?: [number, number, number]
@@ -52,42 +57,30 @@ const COUNTRY_IMAGERY: Partial<Record<string, CountryImagery>> = {
     kind: 'xyz',
     url: 'https://maps{s}.wien.gv.at/basemap/bmaporthofoto30cm/normal/google3857/{z}/{y}/{x}.jpeg',
     subdomains: ['', '1', '2', '3', '4'],
+    // Native tiles stop at 17; OL automatically upscales them for closer
+    // view zooms (the maxNativeZoom trick), so no separate maxZoom is set.
     maxNativeZoom: 17,
-    maxZoom: 19,
     attribution: 'Datenquelle: <a href="https://basemap.at">basemap.at</a>',
-    bounds: [
-      [46.35877, 8.782379],
-      [49.037872, 17.5],
-    ],
+    bounds: [[46.35877, 8.782379], [49.037872, 17.5]],
   },
   es: {
     kind: 'xyz',
     url: 'https://www.ign.es/wmts/pnoa-ma?service=WMTS&request=GetTile&version=1.0.0&layer=OI.OrthoimageCoverage&style=default&format=image/jpeg&TileMatrixSet=GoogleMapsCompatible&TileMatrix={z}&TileRow={y}&TileCol={x}',
-    maxZoom: 19,
+    maxNativeZoom: 19,
     attribution: 'PNOA cedido por &copy; Instituto Geogr&aacute;fico Nacional de Espa&ntilde;a',
     // Same spillover as the fr bbox (this one reaches into the Atlantic,
     // Morocco and southern France), but PNOA only serves opaque jpeg, filling
     // outside its real Iberian coverage with a solid dark navy (rgb 32,26,38)
     // instead of white or transparent — chroma-key that color out instead.
     chromaKeyColor: [32, 26, 38],
-    bounds: [
-      [27.6, -18.4],
-      [43.9, 4.4],
-    ],
+    bounds: [[27.6, -18.4], [43.9, 4.4]],
   },
   cz: {
     kind: 'xyz',
     url: 'https://ags.cuzk.gov.cz/arcgis1/rest/services/ORTOFOTO_WM/MapServer/tile/{z}/{y}/{x}',
-    // Cap at Esri's 19 even though the service natively serves 19+overzoom:
-    // a single layer with a higher maxZoom raises the whole map's zoom
-    // ceiling, and at zoom 20 Leaflet unloads every other imagery layer
-    // (all maxZoom 19), leaving a blank map outside Czechia.
-    maxZoom: 19,
+    maxNativeZoom: 19,
     attribution: '&copy; &Ccaron;&Uacute;ZK',
-    bounds: [
-      [48.55, 12.09],
-      [51.06, 18.87],
-    ],
+    bounds: [[48.55, 12.09], [51.06, 18.87]],
   },
   pl: {
     kind: 'wms',
@@ -99,24 +92,18 @@ const COUNTRY_IMAGERY: Partial<Record<string, CountryImagery>> = {
     format: 'image/png',
     maxZoom: 19,
     attribution: '&copy; GUGiK &ndash; geoportal.gov.pl',
-    // This server 404s on Leaflet's default lowercase request params
-    // (?request=GetMap&...) — it only accepts them uppercase.
-    uppercase: true,
     // It also ignores transparent=true far from real Polish coverage — e.g.
     // over Czech territory, which the oversized bbox reaches — painting
     // solid opaque black there instead. Chroma-key that out like the fr/es
     // entries do for their own opaque no-data fills.
     chromaKeyColor: [0, 0, 0],
-    bounds: [
-      [48.9, 14.0],
-      [54.93, 24.78],
-    ],
+    bounds: [[48.9, 14.0], [54.93, 24.78]],
   },
   fr: {
     kind: 'xyz',
     url: 'https://data.geopf.fr/wmts?SERVICE=WMTS&VERSION=1.0.0&REQUEST=GetTile&LAYER=HR.ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&TILEMATRIXSET=PM_6_19&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/jpeg',
     minZoom: 6,
-    maxZoom: 19,
+    maxNativeZoom: 19,
     attribution: '&copy; IGN-F/G&eacute;oportail',
     // Same spillover as the pl/dk bboxes (this one reaches into Belgium,
     // Luxembourg, Switzerland and northern Spain), but IGN only serves this
@@ -125,10 +112,7 @@ const COUNTRY_IMAGERY: Partial<Record<string, CountryImagery>> = {
     // instead: IGN already clips to France's real border and fills outside
     // it solid white, so treating white as no-data recovers the same effect.
     chromaKeyColor: [255, 255, 255],
-    bounds: [
-      [41.3, -5.2],
-      [51.1, 9.6],
-    ],
+    bounds: [[41.3, -5.2], [51.1, 9.6]],
   },
   be: {
     kind: 'wms',
@@ -137,10 +121,7 @@ const COUNTRY_IMAGERY: Partial<Record<string, CountryImagery>> = {
     format: 'image/png',
     maxZoom: 19,
     attribution: '&copy; NGI/IGN Belgium',
-    bounds: [
-      [49.435, 2.219],
-      [51.889, 6.459],
-    ],
+    bounds: [[49.435, 2.219], [51.889, 6.459]],
   },
   se: {
     kind: 'wms',
@@ -149,10 +130,7 @@ const COUNTRY_IMAGERY: Partial<Record<string, CountryImagery>> = {
     format: 'image/png',
     maxZoom: 19,
     attribution: '&copy; Lantm&auml;teriet',
-    bounds: [
-      [55.3, 11.0],
-      [69.1, 24.2],
-    ],
+    bounds: [[55.3, 11.0], [69.1, 24.2]],
   },
   // Requires a free, instant self-service key from
   // https://omatili.maanmittauslaitos.fi — skipped until CountryImageryKeys.fi
@@ -160,12 +138,9 @@ const COUNTRY_IMAGERY: Partial<Record<string, CountryImagery>> = {
   fi: {
     kind: 'xyz',
     url: 'https://avoin-karttakuva.maanmittauslaitos.fi/avoin/wmts/1.0.0/ortokuva/default/WGS84_Pseudo-Mercator/{z}/{y}/{x}.jpg?api-key={apiKey}',
-    maxZoom: 18,
+    maxNativeZoom: 18,
     attribution: '&copy; Maanmittauslaitos',
-    bounds: [
-      [59.6, 19.0],
-      [70.1, 31.6],
-    ],
+    bounds: [[59.6, 19.0], [70.1, 31.6]],
   },
   // Requires a free, instant self-service key from
   // https://datafordeler.dk — skipped until CountryImageryKeys.dk is set (see
@@ -179,10 +154,7 @@ const COUNTRY_IMAGERY: Partial<Record<string, CountryImagery>> = {
     format: 'image/png',
     maxZoom: 19,
     attribution: '&copy; Klimadatastyrelsen (SDFI)',
-    bounds: [
-      [54.5, 8.0],
-      [57.8, 15.2],
-    ],
+    bounds: [[54.5, 8.0], [57.8, 15.2]],
   },
 }
 
@@ -192,88 +164,64 @@ export const COUNTRY_IMAGERY_CODES = Object.keys(COUNTRY_IMAGERY)
  *  just make that country's layer skip itself — never an error. */
 export type CountryImageryKeys = Partial<Record<string, string>>
 
-type ChromaKeyTile = HTMLCanvasElement & { _img?: HTMLImageElement }
-type ChromaKeyOptions = L.TileLayerOptions & { chromaKeyColor: [number, number, number] }
-
 // JPEG re-compresses the source's flat no-data fill with a bit of noise, so
 // match nearby colors rather than requiring an exact hit.
 const CHROMA_KEY_TOLERANCE = 10
 
-/** Renders each tile onto a canvas and makes pixels near `chromaKeyColor`
- *  transparent, so a source that only offers opaque no-data fill still lets
- *  the layer underneath (Esri) show through outside its actual coverage. */
-const ChromaKeyTileLayer = L.TileLayer.extend({
-  createTile(coords: L.Coords, done: L.DoneCallback): HTMLElement {
-    const tile: ChromaKeyTile = document.createElement('canvas')
-    const size = this.getTileSize()
-    tile.width = size.x
-    tile.height = size.y
-    const ctx = tile.getContext('2d')!
-    const [kr, kg, kb] = (this.options as ChromaKeyOptions).chromaKeyColor
-    const img = new Image()
-    tile._img = img
-    img.crossOrigin = 'anonymous'
-    img.onload = () => {
-      ctx.drawImage(img, 0, 0, size.x, size.y)
+/** A tileLoadFunction (shared by the XYZ and WMS sources below) that loads
+ *  the tile off-DOM, makes near-`chromaKeyColor` pixels transparent on a
+ *  scratch canvas, then assigns the result to the tile's own tracked <img> —
+ *  OL's built-in load/error listener (already attached to that element) takes
+ *  it from there, so this never needs to touch the tile's loaded state
+ *  directly except on genuine failure. */
+function chromaKeyLoader(chromaKeyColor: [number, number, number]) {
+  const [kr, kg, kb] = chromaKeyColor
+  return (tile: Tile, src: string): void => {
+    const target = (tile as unknown as { getImage(): HTMLImageElement }).getImage()
+    const loader = new Image()
+    loader.crossOrigin = 'anonymous'
+    loader.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = loader.naturalWidth
+      canvas.height = loader.naturalHeight
+      const ctx = canvas.getContext('2d')!
+      ctx.drawImage(loader, 0, 0)
       try {
-        const frame = ctx.getImageData(0, 0, size.x, size.y)
+        const frame = ctx.getImageData(0, 0, canvas.width, canvas.height)
         const px = frame.data
         for (let i = 0; i < px.length; i += 4) {
           const r = px[i] as number
           const g = px[i + 1] as number
           const b = px[i + 2] as number
           if (
-            Math.abs(r - kr) <= CHROMA_KEY_TOLERANCE &&
-            Math.abs(g - kg) <= CHROMA_KEY_TOLERANCE &&
-            Math.abs(b - kb) <= CHROMA_KEY_TOLERANCE
-          )
+            Math.abs(r - kr) <= CHROMA_KEY_TOLERANCE
+            && Math.abs(g - kg) <= CHROMA_KEY_TOLERANCE
+            && Math.abs(b - kb) <= CHROMA_KEY_TOLERANCE
+          ) {
             px[i + 3] = 0
+          }
         }
         ctx.putImageData(frame, 0, 0)
+        target.src = canvas.toDataURL()
       } catch {
-        // Canvas tainted (response missing CORS headers) — leave it opaque.
+        // Canvas tainted (response missing CORS headers) — show the tile
+        // un-keyed rather than not at all.
+        target.src = src
       }
-      done(undefined, tile)
     }
-    img.onerror = () => {
-      if (img.crossOrigin) {
+    loader.onerror = () => {
+      if (loader.crossOrigin) {
         // Some servers don't send CORS headers — retry without crossOrigin so
         // the tile still renders (opaque, un-keyed) instead of not at all.
-        img.removeAttribute('crossOrigin')
-        img.src = this.getTileUrl(coords)
+        loader.removeAttribute('crossOrigin')
+        loader.src = src
         return
       }
-      done(new Error('tile load failed'), tile)
+      tile.setState(TileState.ERROR)
     }
-    img.src = this.getTileUrl(coords)
-    return tile
-  },
-  // The base implementation aborts stale in-flight tiles by reassigning
-  // `tile.el.src`, which no-ops on a <canvas>. Without this the underlying
-  // Image keeps downloading in the background on every fast pan/zoom.
-  _abortLoading(this: L.TileLayer) {
-    for (const key in (this as any)._tiles) {
-      const t = (this as any)._tiles[key]
-      if (t.coords.z !== (this as any)._tileZoom) {
-        const img = (t.el as ChromaKeyTile)._img
-        if (img && !img.complete) {
-          img.onload = null
-          img.onerror = null
-          img.src = L.Util.emptyImageUrl
-        }
-      }
-    }
-    L.TileLayer.prototype._abortLoading.call(this)
-  },
-}) as unknown as typeof L.TileLayer
-
-// Same chroma-key behavior, but built on L.TileLayer.WMS so it still builds
-// WMS query URLs (createTile/_abortLoading only touch getTileUrl/getTileSize,
-// which both TileLayer flavors provide).
-const ChromaKeyWmsTileLayer = L.TileLayer.WMS.extend({
-  createTile: (ChromaKeyTileLayer.prototype as any).createTile,
-  _abortLoading: (ChromaKeyTileLayer.prototype as any)._abortLoading,
-}) as unknown as typeof L.TileLayer.WMS
+    loader.src = src
+  }
+}
 
 function resolveUrl(config: CountryImagery, apiKeys: CountryImageryKeys, code: string): string | null {
   if (!config.url.includes('{apiKey}')) return config.url
@@ -282,56 +230,63 @@ function resolveUrl(config: CountryImagery, apiKeys: CountryImageryKeys, code: s
   return config.url.replace('{apiKey}', encodeURIComponent(key))
 }
 
+/** Expands a `{s}` subdomain placeholder into OL's `urls` array (each
+ *  subdomain gets its own full URL) — OL has no `{s}`/`subdomains` option
+ *  of its own, this is the equivalent of Leaflet's round-robin sharding. */
+function resolveUrls(url: string, subdomains: string[] | undefined): { url: string } | { urls: string[] } {
+  if (!subdomains?.length) return { url }
+  return { urls: subdomains.map((s) => url.replace('{s}', s)) }
+}
+
+function boundsToExtent(bounds: CountryBounds): Extent {
+  const [[south, west], [north, east]] = bounds
+  return transformExtent([west, south, east, north], 'EPSG:4326', 'EPSG:3857')
+}
+
 /** Builds a country's high-res imagery layer, or null when none is
  *  configured (or its required API key is missing) — caller should fall
  *  back to Esri in that case. */
 export function createCountryImageryLayer(
   country: string | null | undefined,
   apiKeys: CountryImageryKeys = {},
-): L.Layer | null {
+): TileLayer<XYZ | TileWMS> | null {
   if (!country) return null
   const config = COUNTRY_IMAGERY[country]
   if (!config) return null
   const url = resolveUrl(config, apiKeys, country)
   if (url == null) return null
-  const bounds = L.latLngBounds(config.bounds)
+  const extent = boundsToExtent(config.bounds)
+  const tileLoadFunction = config.chromaKeyColor ? chromaKeyLoader(config.chromaKeyColor) : undefined
+
   if (config.kind === 'wms') {
     const format = config.format ?? 'image/jpeg'
-    const WmsLayerClass = config.chromaKeyColor ? ChromaKeyWmsTileLayer : L.TileLayer.WMS
-    return new WmsLayerClass(url, {
-      layers: config.layers,
-      styles: '',
-      format,
-      // png entries chose png precisely because their bounds box overlaps
-      // neighbouring countries — request transparent no-data fill so the
-      // Esri layer underneath shows through there.
-      transparent: format === 'image/png',
-      version: '1.3.0',
-      crs: L.CRS.EPSG3857,
-      maxZoom: config.maxZoom,
-      attribution: config.attribution,
-      uppercase: config.uppercase,
-      bounds,
-      chromaKeyColor: config.chromaKeyColor,
-    } as L.WMSOptions)
+    return new TileLayer({
+      extent,
+      source: new TileWMS({
+        url,
+        params: {
+          LAYERS: config.layers,
+          FORMAT: format,
+          // png entries chose png precisely because their bounds box
+          // overlaps neighbouring countries — request transparent no-data
+          // fill so the Esri layer underneath shows through there.
+          TRANSPARENT: format === 'image/png',
+        },
+        attributions: config.attribution,
+        crossOrigin: 'anonymous',
+        tileLoadFunction,
+      }),
+    })
   }
-  const TileLayerClass = config.chromaKeyColor ? ChromaKeyTileLayer : L.TileLayer
-  return new TileLayerClass(url, {
-    subdomains: config.subdomains ?? 'abc',
+  return new TileLayer({
     minZoom: config.minZoom,
-    maxZoom: config.maxZoom,
-    maxNativeZoom: config.maxNativeZoom,
-    attribution: config.attribution,
-    bounds,
-    chromaKeyColor: config.chromaKeyColor,
-  } as L.TileLayerOptions)
-}
-
-/** All configured per-country layers stacked over Esri — each only ever
- *  requests tiles inside its own `bounds`, so this is safe to add wholesale
- *  as an overlay on a map that spans several countries at once. */
-export function createAllCountryImageryLayers(apiKeys: CountryImageryKeys = {}): L.Layer[] {
-  return COUNTRY_IMAGERY_CODES.map((code) => createCountryImageryLayer(code, apiKeys)).filter(
-    (layer): layer is L.Layer => layer !== null,
-  )
+    extent,
+    source: new XYZ({
+      ...resolveUrls(url, config.subdomains),
+      maxZoom: config.maxNativeZoom,
+      attributions: config.attribution,
+      crossOrigin: 'anonymous',
+      tileLoadFunction,
+    }),
+  })
 }
