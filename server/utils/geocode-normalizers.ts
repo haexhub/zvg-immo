@@ -14,8 +14,8 @@ const POSTAL_PATTERNS: Record<string, RegExp> = {
 
 // Country names appended to addresses that break Nominatim lookups despite
 // countrycodes= already restricting the search to the right country.
-const STRIP_COUNTRY_SUFFIX: Record<string, string> = {
-  hu: 'Ungarn',
+const STRIP_COUNTRY_SUFFIX: Record<string, RegExp> = {
+  hu: /,\s*Ungarn\s*$/,
 }
 
 // --- Lithuania (eaukcionai.lt) ---------------------------------------------
@@ -34,7 +34,8 @@ export function normalizeLtAddress(address: string): string[] {
     const parts: string[] = []
     while (i >= 0 && !LT_ADMIN.has(tokens[i]!)) parts.unshift(tokens[i--]!)
     const street = `${parts.join(' ')} ${tokens[streetIdx]} ${houseNr}`.trim()
-    const city = i >= 1 ? tokens[i - 1] : ''
+    while (i >= 0 && LT_ADMIN.has(tokens[i]!)) i--
+    const city = i >= 0 ? tokens[i] : ''
     if (city) {
       out.push(`${street}, ${city}`)
       out.push(city)
@@ -301,7 +302,7 @@ export function buildGeocodeQueries(address: string, country: string): string[] 
   if (country === 'se') return normalizeSeAddress(cleaned)
   if (country === 'bg') return normalizeBgAddress(cleaned)
   const suffix = STRIP_COUNTRY_SUFFIX[country]
-  const base = suffix ? cleaned.replace(new RegExp(`,\\s*${suffix}\\s*$`), '').trim() : cleaned
+  const base = suffix ? cleaned.replace(suffix, '').trim() : cleaned
   const queries = [base]
   const pattern = POSTAL_PATTERNS[country]
   if (pattern) {

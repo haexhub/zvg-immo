@@ -168,6 +168,7 @@ function clampPlanningNotes(raw: unknown): PlanningNotes | null {
 function clampPhotoCuration(raw: unknown): PhotoCuration[] {
   if (!Array.isArray(raw)) return []
   const out: PhotoCuration[] = []
+  const seen = new Set<number>()
   for (const item of raw) {
     if (!item || typeof item !== 'object') continue
     const r = item as Record<string, unknown>
@@ -175,6 +176,8 @@ function clampPhotoCuration(raw: unknown): PhotoCuration[] {
       ? (r.photoIndex as number)
       : null
     if (photoIndex == null) continue
+    if (seen.has(photoIndex)) continue
+    seen.add(photoIndex)
     const category = typeof r.category === 'string' && VALID_PHOTO_CATEGORIES.has(r.category)
       ? (r.category as PhotoCategory)
       : 'sonstiges'
@@ -182,8 +185,9 @@ function clampPhotoCuration(raw: unknown): PhotoCuration[] {
       photoIndex,
       category,
       caption: trimmedString(r.caption, 200),
-      isPropertyPhoto: typeof r.isPropertyPhoto === 'boolean' ? r.isPropertyPhoto : true,
+      isPropertyPhoto: typeof r.isPropertyPhoto === 'boolean' ? r.isPropertyPhoto : false,
     })
+    if (out.length >= 60) break
   }
   return out
 }
@@ -197,7 +201,7 @@ export function clampExtraction(raw: Record<string, unknown>): ClampedExtraction
   const pt = typeof raw.propertyType === 'string' && VALID_TYPES.has(raw.propertyType)
     ? (raw.propertyType as PropertyType)
     : null
-  const units = plausibleArea(raw.units, 10_000)
+  const units = plausibleCount(raw.units, 10_000)
   const biddingNotes = trimmedString(raw.biddingNotes, 300)
   const condition = typeof raw.condition === 'string' && VALID_CONDITIONS.has(raw.condition)
     ? (raw.condition as Condition)
@@ -209,16 +213,16 @@ export function clampExtraction(raw: Record<string, unknown>): ClampedExtraction
     propertyType: pt,
     landAreaSqm: plausibleArea(raw.landAreaSqm, 100_000_000),
     livingAreaSqm: plausibleArea(raw.livingAreaSqm, 1_000_000),
-    rooms: plausibleArea(raw.rooms, 100),
+    rooms: plausibleCount(raw.rooms, 100, { allowZero: true }),
     bedrooms: plausibleCount(raw.bedrooms, 100, { allowZero: true }),
-    bathrooms: plausibleArea(raw.bathrooms, 100),
+    bathrooms: plausibleCount(raw.bathrooms, 100, { allowZero: true }),
     floor: trimmedString(raw.floor, 80),
     bathroomHasTub: typeof raw.bathroomHasTub === 'boolean' ? raw.bathroomHasTub : null,
     bathroomHasShower: typeof raw.bathroomHasShower === 'boolean' ? raw.bathroomHasShower : null,
     heating: trimmedString(raw.heating, 160),
     units: units == null ? null : Math.round(units),
-    securityDeposit: plausibleArea(raw.securityDeposit, 100_000_000),
-    marketValueEur: plausibleArea(raw.marketValueEur, 1_000_000_000),
+    securityDeposit: plausibleCount(raw.securityDeposit, 100_000_000),
+    marketValueEur: plausibleCount(raw.marketValueEur, 1_000_000_000),
     marketValueText: trimmedString(raw.marketValueText, 200),
     biddingNotes,
     condition,

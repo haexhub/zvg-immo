@@ -1,13 +1,15 @@
 import { type Point } from './geo'
-import type { OverpassResponse } from './osm-location-shared'
+import {
+  BUILDING_RADIUS_METERS,
+  FERRY_RADIUS_METERS,
+  HEAVY_INDUSTRY_RADIUS_METERS,
+  PLACE_RADIUS_METERS,
+  type OverpassResponse,
+} from './osm-location-shared'
 
 const NOISY_ROAD_RADIUS_METERS = 8_000
 const MINOR_ROAD_RADIUS_METERS = 5_000
 const OFFICE_RADIUS_METERS = 1_500
-const PLACE_RADIUS_METERS = 30_000
-const FERRY_RADIUS_METERS = 10_000
-const HEAVY_INDUSTRY_RADIUS_METERS = 5_000
-const BUILDING_RADIUS_METERS = 500
 
 // 429 is the per-IP quota, 504 the endpoint giving up on a query, and
 // 502/503 a busy instance — all transient, all previously fatal for the

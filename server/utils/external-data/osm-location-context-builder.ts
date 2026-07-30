@@ -227,8 +227,8 @@ function mapFeatureKind(element: LocatedElement): LocationMapFeatureKind | null 
   if (amenity === 'ferry_terminal' || element.tags?.route === 'ferry') return 'ferry'
   if (amenity === 'restaurant' || amenity === 'fast_food') return 'restaurant'
   if (amenity === 'cafe' || amenity === 'bar') return 'cafe'
+  if (amenity && ['library', 'community_centre'].includes(amenity)) return 'leisure'
   if (leisure && ['park', 'sports_centre', 'playground', 'fitness_centre', 'garden'].includes(leisure)) return 'recreation'
-  if (leisure && ['park', 'sports_centre', 'playground', 'fitness_centre', 'garden'].includes(leisure)) return 'leisure'
   return null
 }
 
