@@ -452,6 +452,32 @@ export function normalizeSeAddress(address: string): string[] {
   return [...new Set(out)]
 }
 
+// --- Bulgaria (zapori.mjs.bg) -----------------------------------------------
+// parseBgAddress() (server/crawlers/bg/text.ts) composes addresses like
+// "ул. ОБОРИЩЕ № 90, гр. БУРГАС, Bulgarien" or "с. МЕДОВО, Bulgarien" — the
+// "гр."/"с." (city/village) and "ул."/"бул."/"кв." (street/boulevard/quarter)
+// markers plus "№" are Bulgarian conventions Nominatim's BG data never uses
+// literally; verified live that leaving them in returns zero results while
+// the bare names resolve. A city-only fallback also covers listings where the
+// precise street can't be pinned.
+const BG_CITY_RE = /(?:гр\.|с\.)\s*([^,]+)/
+const BG_STREET_RE = /(?:ул|бул|кв)\.\s*"?([^"\n,№]+?)"?\s*№\s*(\d+[a-zA-Zа-яА-Я]?)/
+// parseBgAddress() carries over the „low-high“ quotes titles wrap street
+// names in ("кв. „РУСАЛКА“ № 70") — noise for Nominatim, strip them.
+const BG_QUOTE_CHARS = /["'„“”‘’]/g
+
+export function normalizeBgAddress(address: string): string[] {
+  const city = address.match(BG_CITY_RE)?.[1]?.trim()
+  const street = address.match(BG_STREET_RE)
+  const out: string[] = []
+  if (street) {
+    const streetLine = `${street[1]!.replace(BG_QUOTE_CHARS, '').trim()} ${street[2]}`
+    out.push(city ? `${streetLine}, ${city}` : streetLine)
+  }
+  if (city) out.push(city)
+  return out.length > 0 ? [...new Set(out)] : [address]
+}
+
 /**
  * Normalises an address into a Nominatim-friendly query, optionally falling
  * back to PLZ+city if the full address fails to resolve.
@@ -464,6 +490,7 @@ function buildQueries(address: string, country: string): string[] {
   if (country === 'ee') return normalizeEeAddress(cleaned)
   if (country === 'lv') return normalizeLvAddress(cleaned)
   if (country === 'se') return normalizeSeAddress(cleaned)
+  if (country === 'bg') return normalizeBgAddress(cleaned)
   // Strip trailing country name for countries where it confuses Nominatim.
   // countrycodes= already restricts the search, so the name is redundant.
   const suffix = STRIP_COUNTRY_SUFFIX[country]
