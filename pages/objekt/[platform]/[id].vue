@@ -546,6 +546,16 @@ const flatAttachments = computed(() => groupedAttachments.value.flatMap(
   (g) => g.items.map((att) => ({ att, groupLabel: g.label })),
 ))
 
+// bg-zapori's attachment.proxyUrl is a signed upstream URL that expires —
+// route through a redirect endpoint that fetches a fresh one on click instead
+// of linking it directly (see server/api/bg-zapori-document).
+function attachmentHref(att: Attachment): string | undefined {
+  if (a.value?.platform === 'bg-zapori') {
+    return `/api/bg-zapori-document/${a.value.externalId}/${att.fileId}`
+  }
+  return safeHref(att.proxyUrl)
+}
+
 function formatLandValue(eurPerSqm: number): string {
   return `${eurPerSqm.toLocaleString(intlLocale.value, { maximumFractionDigits: 0 })} €/m²`
 }
@@ -1186,7 +1196,7 @@ useHead(() => ({
           <DetailSectionCard v-if="groupedAttachments.length > 0" :title="$t('objektDetail.filesTitle')">
             <div class="flex flex-wrap gap-2">
               <Button v-for="{ att, groupLabel } in flatAttachments" :key="att.fileId" as-child variant="outline" size="sm">
-                <a :href="safeHref(att.proxyUrl)" target="_blank" rel="noopener">
+                <a :href="attachmentHref(att)" target="_blank" rel="noopener">
                   {{ att.label || att.filename || groupLabel }}
                 </a>
               </Button>
