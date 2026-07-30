@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { normalizeLtAddress, normalizeEeAddress, normalizeLvAddress, normalizeSeAddress } from './geocode'
+import {
+  normalizeLtAddress,
+  normalizeEeAddress,
+  normalizeLvAddress,
+  normalizeSeAddress,
+  normalizeBgAddress,
+} from './geocode'
 
 // eaukcionai.lt serves addresses as a chain of genitive administrative units
 // plus a street. Nominatim only resolves the reduced "<street>, <city>" form,
@@ -187,6 +193,36 @@ describe('normalizeSeAddress', () => {
       'Stationsvägen 51, Skärblacka',
       'Skärblacka',
     ])
+  })
+})
+
+// zapori.mjs.bg (server/crawlers/bg/text.ts) composes addresses from
+// Bulgarian abbreviations — "гр."/"с." before settlement names, "ул."/"бул."/
+// "кв." before street names, "№" before house numbers — that Nominatim's BG
+// data never uses literally. Verified live: leaving them in returns zero
+// results, the stripped forms below resolve correctly.
+describe('normalizeBgAddress', () => {
+  it('strips the "с." village marker, keeping the bare settlement name', () => {
+    expect(normalizeBgAddress('с. МЕДОВО, Bulgarien')).toEqual(['МЕДОВО'])
+  })
+
+  it('strips "ул."/"№" and the "гр." city marker for a street address', () => {
+    expect(normalizeBgAddress('ул. ОБОРИЩЕ № 90, гр. БУРГАС, Bulgarien'))
+      .toEqual(['ОБОРИЩЕ 90, БУРГАС', 'БУРГАС'])
+  })
+
+  it('handles a "бул." boulevard address', () => {
+    expect(normalizeBgAddress('бул. Странджа № 16, гр.Разград, Bulgarien'))
+      .toEqual(['Странджа 16, Разград', 'Разград'])
+  })
+
+  it('handles a "кв." quarter address', () => {
+    expect(normalizeBgAddress('кв. „РУСАЛКА“ № 70, гр. СВЕТИ ВЛАС, Bulgarien'))
+      .toEqual(['РУСАЛКА 70, СВЕТИ ВЛАС', 'СВЕТИ ВЛАС'])
+  })
+
+  it('falls back to the raw address when it has no recognisable structure', () => {
+    expect(normalizeBgAddress('Bulgarien')).toEqual(['Bulgarien'])
   })
 })
 
