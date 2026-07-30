@@ -33,6 +33,7 @@ import {
   recordInMemoryRateLimitHit,
 } from '~/server/utils/in-memory-rate-limit'
 import { requestClientIp } from '~/server/utils/request-client-ip'
+import type { Auction } from '~/types/auction'
 
 const SUPPORTED_TARGET_LANGS = new Set<ContentTargetLang>(['de', 'en'])
 
@@ -121,6 +122,18 @@ export function fingerprintConfig(config: LlmConfig): string {
   })))
 }
 
+export function auctionTranslationContentHash(auction: Pick<Auction, 'title' | 'description' | 'extraction'>): string {
+  return sha256Hex(Buffer.from(JSON.stringify({
+    title: auction.title,
+    description: auction.description,
+    documentSummary: auction.extraction?.documentSummary ?? null,
+    extractionTexts: extractTranslatableExtractionTexts(auction.extraction),
+    extractionTextsVersion: TRANSLATABLE_EXTRACTION_TEXTS_VERSION,
+    documentSetHash: auction.extraction?.documentSetHash ?? null,
+    documentSetVersion: auction.extraction?.documentSetVersion ?? null,
+  })))
+}
+
 export default defineEventHandler(async (event) => {
   const platform = String(event.context.params?.platform ?? '')
   const id = String(event.context.params?.id ?? '')
@@ -153,15 +166,7 @@ export default defineEventHandler(async (event) => {
     return { title, description, documentSummary, extractionTexts, translated: false }
   }
 
-  const contentHash = sha256Hex(Buffer.from(JSON.stringify({
-    title,
-    description,
-    documentSummary,
-    extractionTexts,
-    extractionTextsVersion: TRANSLATABLE_EXTRACTION_TEXTS_VERSION,
-    documentSetHash: auction.extraction?.documentSetHash ?? null,
-    documentSetVersion: auction.extraction?.documentSetVersion ?? null,
-  })))
+  const contentHash = auctionTranslationContentHash(auction)
   // Dedupe only the same auction/language. A content-hash key could let a
   // second auction hitchhike on another auction's in-flight promise without
   // ever creating its own durable once-only row.
@@ -173,7 +178,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const stored = await readAuctionTranslation(db, platform, id, targetLang)
-  if (stored?.status === 'completed') {
+  if (stored?.status === 'completed' && stored.contentHash === contentHash) {
     setResponseHeader(event, 'x-zvg-translation-cache', 'hit')
     return {
       title: stored.title,
@@ -187,6 +192,7 @@ export default defineEventHandler(async (event) => {
   // pending claim blocks until its lease expires. Both then fall through to
   // claimAuctionTranslation, which takes the stale row over — a transient
   // provider failure must not lock this auction out permanently.
+  const existing = inflight.get(inflightKey)
   let resolvedConfig: LlmConfig | null = null
   if (stored?.status === 'failed' && !stored.retryDue) {
     resolvedConfig = await resolveActiveLlmConfig(db)
@@ -211,10 +217,12 @@ export default defineEventHandler(async (event) => {
       setResponseStatus(event, 204)
       return null
     }
+    if (existing) {
+      return { ...(await existing), translated: true }
+    }
     throw createError({ statusCode: 409, statusMessage: 'Übersetzung läuft bereits' })
   }
 
-  const existing = inflight.get(inflightKey)
   if (cacheOnly) {
     setResponseHeader(event, 'x-zvg-translation-cache', existing ? 'inflight' : 'miss')
     setResponseStatus(event, 204)

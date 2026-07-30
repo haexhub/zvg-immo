@@ -454,27 +454,37 @@ export function normalizeSeAddress(address: string): string[] {
 
 // --- Bulgaria (zapori.mjs.bg) -----------------------------------------------
 // parseBgAddress() (server/crawlers/bg/text.ts) composes addresses like
-// "ул. ОБОРИЩЕ № 90, гр. БУРГАС, Bulgarien" or "с. МЕДОВО, Bulgarien" — the
-// "гр."/"с." (city/village) and "ул."/"бул."/"кв." (street/boulevard/quarter)
-// markers plus "№" are Bulgarian conventions Nominatim's BG data never uses
-// literally; verified live that leaving them in returns zero results while
-// the bare names resolve. A city-only fallback also covers listings where the
-// precise street can't be pinned.
-const BG_CITY_RE = /(?:гр\.|с\.)\s*([^,]+)/
+// "ул. ОБОРИЩЕ № 90, гр. БУРГАС, Bulgarien", "с. МЕДОВО, Bulgarien" or
+// "местност Пазарлията, село Приселци, община Аврен, област Варна, Bulgarien".
+// Bulgarian address markers are useful for display but mostly noise for
+// Nominatim; strip them while keeping specific-to-broad fallbacks.
+const BG_SETTLEMENT_RE = /(?:гр\.|град|с\.|село)\s*([^,]+)/
 const BG_STREET_RE = /(?:ул|бул|кв)\.\s*"?([^"\n,№]+?)"?\s*№\s*(\d+[a-zA-Zа-яА-Я]?)/
+const BG_MUNICIPALITY_RE = /община\s*([^,]+)/
+const BG_PROVINCE_RE = /област\s*([^,]+)/
+const BG_LOCALITY_RE = /местност\s*([^,]+)/
 // parseBgAddress() carries over the „low-high“ quotes titles wrap street
 // names in ("кв. „РУСАЛКА“ № 70") — noise for Nominatim, strip them.
 const BG_QUOTE_CHARS = /["'„“”‘’]/g
 
 export function normalizeBgAddress(address: string): string[] {
-  const city = address.match(BG_CITY_RE)?.[1]?.trim()
+  const settlement = address.match(BG_SETTLEMENT_RE)?.[1]?.trim()
+  const municipality = address.match(BG_MUNICIPALITY_RE)?.[1]?.trim()
+  const province = address.match(BG_PROVINCE_RE)?.[1]?.trim()
+  const locality = address.match(BG_LOCALITY_RE)?.[1]?.replace(BG_QUOTE_CHARS, '').trim()
   const street = address.match(BG_STREET_RE)
   const out: string[] = []
   if (street) {
     const streetLine = `${street[1]!.replace(BG_QUOTE_CHARS, '').trim()} ${street[2]}`
-    out.push(city ? `${streetLine}, ${city}` : streetLine)
+    out.push(settlement ? `${streetLine}, ${settlement}` : streetLine)
   }
-  if (city) out.push(city)
+  if (locality && settlement) out.push(`${locality}, ${settlement}`)
+  if (locality && municipality) out.push(`${locality}, ${municipality}`)
+  if (settlement && municipality) out.push(`${settlement}, ${municipality}`)
+  if (settlement && province) out.push(`${settlement}, ${province}`)
+  if (settlement) out.push(settlement)
+  if (municipality) out.push(municipality)
+  if (province) out.push(province)
   return out.length > 0 ? [...new Set(out)] : [address]
 }
 

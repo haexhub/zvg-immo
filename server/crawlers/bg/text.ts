@@ -19,6 +19,8 @@ export function stripBgHtml(html: string | null | undefined): string {
     .replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>')
     .replace(/&bdquo;|&ldquo;|&rdquo;|&quot;/gi, '"')
+    .replace(/&ndash;/gi, '–')
+    .replace(/&frac12;/gi, '1/2')
     .replace(/[ \t]+/g, ' ')
     .replace(/\n[ \t]+/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
@@ -52,10 +54,13 @@ export function formatBgDateText(iso: string | null | undefined): string | null 
   return `${formatted} Uhr`
 }
 
-const CITY_RE = /(гр\.|с\.)\s*([А-Я][А-Яа-я]+(?:[\s-][А-Я][А-Яа-я]+){0,2})/
+const SETTLEMENT_RE = /(гр\.|град|с\.|село)\s*([А-Я][А-Яа-я]+(?:[\s-][А-Я][А-Яа-я]+){0,2})/
 // "ул." (street), "бул." (boulevard) or "кв." (quarter — older Bulgarian
 // addresses number buildings within a kvartal instead of along a street).
 const STREET_RE = /(ул|бул|кв)\.\s*"?([^"\n,]{2,60}?)"?\s*№\s*(\d+[a-zA-Zа-яА-Я]?)/
+const MUNICIPALITY_RE = /община\s+([А-Я][А-Яа-я]+(?:[\s-][А-Я][А-Яа-я]+){0,2})/
+const PROVINCE_RE = /област\s+([А-Я][А-Яа-я]+(?:[\s-][А-Я][А-Яа-я]+){0,2})/
+const LOCALITY_RE = /местност\s+"?([^",.;–-]{2,60})"?/
 
 /** Bulgaria's e-auction API never publishes a structured address — only the
  *  free-text title/description, which usually (but not always) names the
@@ -65,9 +70,15 @@ const STREET_RE = /(ул|бул|кв)\.\s*"?([^"\n,]{2,60}?)"?\s*№\s*(\d+[a-zA
 export function parseBgAddress(title: string | null, description: string | null): string | null {
   const combined = `${title ?? ''}. ${description ?? ''}`
   const street = combined.match(STREET_RE)
-  const city = combined.match(CITY_RE)
+  const settlement = combined.match(SETTLEMENT_RE)
+  const municipality = combined.match(MUNICIPALITY_RE)
+  const province = combined.match(PROVINCE_RE)
+  const locality = combined.match(LOCALITY_RE)
   const parts: string[] = []
   if (street) parts.push(`${street[1]}. ${street[2]!.trim()} № ${street[3]}`)
-  if (city) parts.push(`${city[1]} ${city[2]}`)
+  if (locality) parts.push(`местност ${locality[1]!.trim()}`)
+  if (settlement) parts.push(`${settlement[1]} ${settlement[2]}`)
+  if (municipality) parts.push(`община ${municipality[1]}`)
+  if (province) parts.push(`област ${province[1]}`)
   return parts.length > 0 ? `${parts.join(', ')}, Bulgarien` : null
 }

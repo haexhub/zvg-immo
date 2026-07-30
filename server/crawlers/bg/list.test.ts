@@ -67,6 +67,18 @@ describe('mapAnnouncement', () => {
     expect(a.address).toBe('кв. Св. Иван Рилски № 53, гр. Варна, Bulgarien')
   })
 
+  it('extracts long-form village/locality addresses from zapori descriptions', () => {
+    const a = mapAnnouncement(
+      makeAnnouncement({
+        id: 3453,
+        description:
+          '<p>1/2 идеална част от имот, находящ се в село Приселци, община Аврен, област Варна, местност &bdquo;Пазарлията&quot; &ndash; част ІІ.</p>',
+      }),
+      'bg-zapori',
+    )
+    expect(a.address).toBe('местност Пазарлията, село Приселци, община Аврен, област Варна, Bulgarien')
+  })
+
   it('leaves address null when neither title nor description name a settlement', () => {
     const a = mapAnnouncement(
       makeAnnouncement({ title: 'ПИ 61128.14.37', description: 'УПИ № III-14001 с идентификатор 61128.14.37' }),
