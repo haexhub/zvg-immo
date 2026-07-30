@@ -36,10 +36,12 @@ function normalizeExtractionEntries(entries: ExtractionCache): ExtractionCache {
 }
 
 /**
- * Apply the extraction cache to a set of auctions (mutates in place). Synthesises
- * a `thumbnailUrl` and bumps `photoCount` from `extraction.photos` when the
- * listing didn't bring its own photo attachment. Shared by the /api/auctions
- * overlay and the enrich-task snapshot writer so they stay consistent.
+ * Apply the extraction cache to a set of auctions (mutates in place).
+ * Synthesises `thumbnailUrl`/`photoCount` from `extraction.photos` whenever
+ * curated photos exist — this is the self-hosted `/api/auction-image` URL,
+ * so it always wins over whatever raw (and possibly short-lived) URL the
+ * crawler set on `a.thumbnailUrl`. Shared by the /api/auctions overlay and
+ * the enrich-task snapshot writer so they stay consistent.
  */
 export function applyExtractionToAuctions(auctions: Auction[], cache: ExtractionCache): void {
   for (const a of auctions) {
@@ -54,7 +56,12 @@ export function applyExtractionToAuctions(auctions: Auction[], cache: Extraction
     // so `photos[0]` below is the best thumbnail candidate across every
     // platform, not just whichever page/file the crawler or pdfimages
     // happened to return first.
-    const photos = sortCuratedPhotos((normalizedHit.photos ?? []).map(normalizePhoto))
+    const seenFiles = new Set<string>()
+    const photos = sortCuratedPhotos((normalizedHit.photos ?? []).map(normalizePhoto)).filter((photo) => {
+      if (seenFiles.has(photo.file)) return false
+      seenFiles.add(photo.file)
+      return true
+    })
     a.extraction = photos.length > 0 ? { ...normalizedHit, photos } : normalizedHit
     // WP-3: zvg-portal/DE has no structural Verkehrswert source (unlike
     // AT-Edikte/Biddit, whose overlay runs before this and already set
@@ -69,10 +76,8 @@ export function applyExtractionToAuctions(auctions: Auction[], cache: Extraction
       a.marketValueText = normalizedHit.marketValueText ?? null
     }
     if (photos.length === 0) continue
-    if (!a.thumbnailUrl) {
-      a.thumbnailUrl = `/api/auction-image/${a.platform}/${a.externalId}/${photos[0]!.file}`
-    }
-    if (a.photoCount < photos.length) a.photoCount = photos.length
+    a.thumbnailUrl = `/api/auction-image/${encodeURIComponent(a.platform)}/${encodeURIComponent(a.externalId)}/${encodeURIComponent(photos[0]!.file)}`
+    a.photoCount = photos.length
   }
 }
 

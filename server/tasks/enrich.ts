@@ -44,12 +44,13 @@ import {
   readExtractionCache,
   writeExtractionCache,
 } from '~/server/utils/extraction-cache'
-import { imagesBucketConfigured, uploadImage } from '~/server/utils/image-storage'
+import { imagesBucketConfigured, mimeTypeFor, uploadImage } from '~/server/utils/image-storage'
 import { interleaveByPlatform } from '~/server/utils/interleave-by-platform'
 import { isSafePathSegment } from '~/server/utils/path-segment'
 import {
   archiveAuction,
   archiveDocumentSet,
+  archivePhotoBlob,
   type ArchivedDocumentSetResult,
 } from '~/server/utils/raw-archive'
 import { cacheKey, readVerkehrswertCache } from '~/server/utils/verkehrswert-cache'
@@ -70,7 +71,7 @@ const FLUSH_EVERY = 200
 // immediately (photosCheckedAt gets set); this bound only guards against
 // persistent errors.
 const MAX_PHOTO_FAILURES = 3
-const PHOTO_PIPELINE_VERSION = 3
+const PHOTO_PIPELINE_VERSION = 4
 const KRONOFOGDEN_GALLERY_PHOTO_PIPELINE_VERSION = 5
 const CONTENT_HASH_IMAGE_FILE_RE = /^([0-9a-f]{8,32})\.(?:jpe?g|png|webp)$/i
 
@@ -295,6 +296,15 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
         }
         if (enriched) enrichedCount++
 
+        const documentIdentity = {
+          platform: a.platform,
+          country: a.country,
+          region: a.region,
+          externalId: a.externalId,
+          caseNumber: a.caseNumber,
+          authority: a.authority,
+        }
+
         // Document archiving: download every candidate attachment and store
         // its bytes (raw_document_sets/raw_document_set_items + raw_blobs).
         // Only the archived bytes matter here — reprocess.ts re-reads and
@@ -308,14 +318,6 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
             }
           : null
         if (needsDocumentSetCheck(a)) {
-          const documentIdentity = {
-            platform: a.platform,
-            country: a.country,
-            region: a.region,
-            externalId: a.externalId,
-            caseNumber: a.caseNumber,
-            authority: a.authority,
-          }
           const preparedDocuments = await prepareLiveLlmDocuments(a.attachments, documentIdentity, at)
           if (!preparedDocuments.documentSetComplete) {
             if (a.attachments.length > 0) {
@@ -357,6 +359,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
             if (nativeFotoUrls.length > 0) {
               const nativePhotos = await downloadNativeImages([...new Set(nativeFotoUrls)], { destDir })
               addNewlyDownloadedPhotos(nativePhotos)
+              addDisplayedPhotos(nativePhotos)
               for (const name of nativePhotos) {
                 const hash = imageContentHashFromFilename(name)
                 if (hash) nativePhotoHashes.add(hash)
@@ -376,16 +379,15 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
               )
             }
             photosTotal += photos.length
-            // Mirror the freshly written files into the images bucket (WP-4) so
+            // Archive every freshly downloaded photo's raw bytes (kind='photo')
+            // and mirror it into the images bucket (WP-4) when configured, so
             // /api/auction-image can fall back to Supabase once the local cache
-            // is gone. Best-effort — uploadImage never throws and no-ops
-            // without a configured bucket; skip re-reading the files off disk
-            // entirely in that (default) case.
-            if (imagesBucketConfigured()) {
-              for (const name of [...new Set(newlyDownloadedPhotos)]) {
-                const bytes = await readFile(join(destDir, name))
-                await uploadImage(bytes, `${a.platform}/${a.externalId}/${name}`)
-              }
+            // is gone. uploadImage never throws and no-ops without a configured
+            // bucket.
+            for (const name of [...new Set(newlyDownloadedPhotos)]) {
+              const bytes = await readFile(join(destDir, name))
+              await archivePhotoBlob(bytes, mimeTypeFor(name) as any, documentIdentity, at)
+              if (imagesBucketConfigured()) await uploadImage(bytes, `${a.platform}/${a.externalId}/${name}`)
             }
             // Completed without throwing — "checked", regardless of whether
             // any photos were actually found (a legitimately photo-less

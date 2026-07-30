@@ -53,6 +53,16 @@ vi.mock('../utils/raw-archive', async (importOriginal) => {
     archiveDocumentSet: vi.fn(async () => null),
   }
 })
+// archivePhotoBlob (real implementation, via getPool() mocked to null above)
+// short-circuits before touching the filesystem, but enrich.ts's own
+// readFile of the freshly downloaded file now runs unconditionally (not just
+// behind imagesBucketConfigured()) — mock it so tests whose
+// downloadNativeImages/extractDocumentPhotos mocks return filenames don't hit
+// a real (non-existent) file on disk.
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, readFile: vi.fn(async () => Buffer.from('fake-photo-bytes')) }
+})
 // defineTask is a Nitro auto-import — stub so importing the module (which
 // calls it at the top level for the default export) doesn't throw. Same
 // pattern as reprocess.test.ts.
@@ -243,7 +253,7 @@ describe('runEnrich photo backfill (WP-1)', () => {
         documentSetHash: 'prior-set',
         documentSetVersion: 1,
         photosCheckedAt: '2026-07-20T00:00:00.000Z',
-        photoPipelineVersion: 3,
+        photoPipelineVersion: 4,
         at: '2026-07-01T00:00:00.000Z',
       },
     }
@@ -354,9 +364,11 @@ describe('runEnrich photo backfill (WP-1)', () => {
 
     expect(downloadNativeImages).toHaveBeenCalledTimes(1)
     const written = vi.mocked(writeExtractionCache).mock.calls[0]?.[0] as ExtractionCache
-    expect(written['zvg-portal:14409']?.photos).toBeUndefined()
+    expect(written['zvg-portal:14409']?.photos).toEqual([
+      { file: 'foto1.jpg', category: 'sonstiges', caption: null, isPropertyPhoto: true },
+    ])
     expect(written['zvg-portal:14409']?.photosCheckedAt).toBeTruthy()
-    expect(written['zvg-portal:14409']?.photoPipelineVersion).toBe(3)
+    expect(written['zvg-portal:14409']?.photoPipelineVersion).toBe(4)
   })
 
   it('does not re-attempt the photo pipeline once photosCheckedAt is set for the current pipeline version', async () => {
@@ -375,7 +387,7 @@ describe('runEnrich photo backfill (WP-1)', () => {
         confidence: 'low',
         photos: undefined,
         photosCheckedAt: '2026-07-20T00:00:00.000Z',
-        photoPipelineVersion: 3,
+        photoPipelineVersion: 4,
         at: '2026-07-01T00:00:00.000Z',
       },
     }
@@ -404,7 +416,7 @@ describe('runEnrich photo backfill (WP-1)', () => {
         confidence: 'high',
         photos: [{ file: 'foto1.jpg', category: 'sonstiges', caption: null, isPropertyPhoto: true }],
         photosCheckedAt: '2026-07-20T00:00:00.000Z',
-        photoPipelineVersion: 3,
+        photoPipelineVersion: 4,
         at: '2026-07-01T00:00:00.000Z',
       },
     }
@@ -442,7 +454,7 @@ describe('runEnrich photo backfill (WP-1)', () => {
 
     expect(downloadNativeImages).toHaveBeenCalledTimes(1)
     const written = vi.mocked(writeExtractionCache).mock.calls[0]?.[0] as ExtractionCache
-    expect(written['zvg-portal:14409']?.photoPipelineVersion).toBe(3)
+    expect(written['zvg-portal:14409']?.photoPipelineVersion).toBe(4)
   })
 
   it('bumps photoFailures and leaves photosCheckedAt unset when the pipeline throws', async () => {
@@ -648,7 +660,7 @@ describe('runEnrich photo backfill (WP-1)', () => {
     expect(written['zvg-portal:14409']?.photos).toEqual([
       { file: 'bov-photo.jpg', category: 'sonstiges', caption: null, isPropertyPhoto: true },
     ])
-    expect(written['zvg-portal:14409']?.photoPipelineVersion).toBe(3)
+    expect(written['zvg-portal:14409']?.photoPipelineVersion).toBe(4)
   })
 
   it('rebuilds legacy native-gallery entries with hash-deduped document photos', async () => {
@@ -694,6 +706,7 @@ describe('runEnrich photo backfill (WP-1)', () => {
     expect(extractDocumentPhotos).toHaveBeenCalledTimes(1)
     const written = vi.mocked(writeExtractionCache).mock.calls[0]?.[0] as ExtractionCache
     expect(written['se-kronofogden:14409']?.photos).toEqual([
+      { file: '1111111111111111.jpg', category: 'sonstiges', caption: null, isPropertyPhoto: true },
       { file: '2222222222222222.jpg', category: 'sonstiges', caption: null, isPropertyPhoto: true },
     ])
     expect(written['se-kronofogden:14409']?.photoPipelineVersion).toBe(5)
