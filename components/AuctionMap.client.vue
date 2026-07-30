@@ -1,32 +1,55 @@
 <script setup lang="ts">
-import 'leaflet/dist/leaflet.css'
-import 'leaflet.markercluster/dist/MarkerCluster.css'
-import 'leaflet.markercluster/dist/MarkerCluster.Default.css'
-import L from 'leaflet'
-import 'leaflet.markercluster'
-import { createApp, type App as VueApp } from 'vue'
+import { Feature } from 'ol'
+import Point from 'ol/geom/Point'
+import { fromLonLat, transformExtent } from 'ol/proj'
+import { Circle as CircleStyle, Fill, Icon, Stroke, Style, Text } from 'ol/style'
 import type { GeoAuction } from '~/server/api/auctions-geo.get'
 import LotPopover from '~/components/LotPopover.vue'
 import { auctionKey } from '~/lib/auction-key'
 import { boundsForCountries } from '~/lib/country-bounds'
-import { createAllCountryImageryLayers } from '~/lib/countryImagery'
 import type { ContentTargetLang } from '~/lib/content-language'
 
-type AuctionMarker = L.Marker & { auctionKey?: string }
+const ESRI_IMAGERY_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+const ESRI_LABELS_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'
+const GERMANY_CENTER_LONLAT: [number, number] = [10.4515, 51.1657]
 
-function pinIcon(active: boolean): L.DivIcon {
-  return L.divIcon({
-    className: '',
-    html: `<span class="auction-map-pin${active ? ' is-active' : ''}"></span>`,
-    iconSize: [28, 38],
-    iconAnchor: [14, 36],
-    popupAnchor: [0, -34],
-    tooltipAnchor: [14, -28],
-  })
+// Replicates .auction-map-pin's CSS trick (rounded square, one square corner,
+// rotate(-45deg)) as a static SVG so it can be baked into an ol/style/Icon.
+function pinDataUri(color: string): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">`
+    + `<path d="M16 6 A10 10 0 0 1 26 16 A10 10 0 0 1 16 26 L6 26 L6 16 A10 10 0 0 1 16 6 Z" `
+    + `transform="rotate(-45 16 16)" fill="${color}" stroke="#fff" stroke-width="2"/>`
+    + `<circle cx="16" cy="16" r="5" fill="#fff" opacity="0.9"/>`
+    + `</svg>`
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
 }
 
-const markerIcon = pinIcon(false)
-const activeMarkerIcon = pinIcon(true)
+const PIN_COLOR = '#2563eb'
+const PIN_COLOR_ACTIVE = '#dc2626'
+// The tip of the pin sits at (16, 26) in the 32x32 icon, so the anchor
+// fraction is (0.5, 26/32) — the geo point should touch the pin's point.
+const pinStyleDefault = new Style({ image: new Icon({ src: pinDataUri(PIN_COLOR), anchor: [0.5, 26 / 32] }) })
+const pinStyleActive = new Style({ image: new Icon({ src: pinDataUri(PIN_COLOR_ACTIVE), anchor: [0.5, 26 / 32] }) })
+
+function pinStyle(active: boolean): Style {
+  return active ? pinStyleActive : pinStyleDefault
+}
+
+// ol/source/Cluster wraps every feature (even singletons) in a "cluster
+// feature" whose `features` property holds the real children — so this
+// single style function covers both individual pins and cluster badges.
+function clusterStyle(feature: any): Style {
+  const children = (feature.get('features') ?? [feature]) as Feature<Point>[]
+  if (children.length === 1) {
+    return pinStyle(children[0]!.get('active') === true)
+  }
+  const active = children.some((f) => f.get('active') === true)
+  const color = active ? PIN_COLOR_ACTIVE : PIN_COLOR
+  return new Style({
+    image: new CircleStyle({ radius: 18, fill: new Fill({ color }), stroke: new Stroke({ color: '#fff', width: 2 }) }),
+    text: new Text({ text: String(children.length), fill: new Fill({ color: '#fff' }), font: 'bold 12px sans-serif' }),
+  })
+}
 
 const props = defineProps<{
   auctions: GeoAuction[]
@@ -47,47 +70,29 @@ const emit = defineEmits<{
   (e: 'auction-select', key: string): void
 }>()
 
-const mapEl = ref<HTMLDivElement | null>(null)
-let map: L.Map | null = null
-let markersLayer: L.MarkerClusterGroup | null = null
-
-const GERMANY_CENTER: [number, number] = [51.1657, 10.4515]
-
-const runtimeConfig = useRuntimeConfig()
-const countryImageryKeys = {
-  fi: runtimeConfig.public.mmlApiKey as string,
-  dk: runtimeConfig.public.datafordelerApiKey as string,
-}
-
-const { t, locale } = useI18n()
-const intlLocale = useIntlLocale()
-const { currency, eurToDisplay } = useCurrencyDisplay()
+const { locale } = useI18n()
 
 // Only 'de'/'en' have LLM translation support (see lib/content-language.ts);
 // any other UI locale falls back to showing the auction's original title.
 function resolveContentLang(loc: string): ContentTargetLang | null {
   return loc === 'de' || loc === 'en' ? loc : null
 }
+const contentLang = computed(() => resolveContentLang(locale.value))
 
-/** Mount LotPopover.vue into a fresh container that Leaflet will inject into
- *  its popup DOM. We mount lazily on popupopen (see refreshMarkers) so the
- *  lazy /api/auction-detail fetch only fires when the user actually opens
- *  the marker, not for all 2932 pins upfront. This detached app never
- *  installs the Nuxt i18n plugin, so LotPopover can't call useI18n() itself —
- *  it gets our already-bound `t`/`intlLocale`/`lang` (and, for WP-7, `currency`/
- *  the pre-converted `marketValue`) as plain props instead. */
-function mountLotPopover(el: HTMLElement, a: GeoAuction): VueApp {
-  const app = createApp(LotPopover, {
-    auction: a,
-    t,
-    intlLocale: intlLocale.value,
-    currency: currency.value,
-    convertEur: eurToDisplay,
-    lang: resolveContentLang(locale.value),
-  })
-  app.mount(el)
-  return app
-}
+const baseLayer = ref<'streets' | 'satellite'>('streets')
+const initialCenter = fromLonLat(GERMANY_CENTER_LONLAT)
+const initialZoom = 6
+
+const mapRef = ref<any>(null)
+const vectorSourceRef = ref<any>(null)
+const clusterSourceRef = ref<any>(null)
+
+const selectedKey = ref<string | null>(null)
+const popupPosition = ref<number[] | undefined>(undefined)
+const selectedAuction = computed<GeoAuction | undefined>(() => {
+  if (!selectedKey.value) return undefined
+  return featuresByKey.get(selectedKey.value)?.get('auction') as GeoAuction | undefined
+})
 
 // True at mount and whenever the parent bumps `fitKey` (filter change). The
 // next refreshMarkers call consumes it, so polling-driven updates never reset
@@ -95,121 +100,94 @@ function mountLotPopover(el: HTMLElement, a: GeoAuction): VueApp {
 let shouldFitNext = true
 let fallbackFitKey: string | null = null
 
-// Markers keyed by `platform:externalId` so refreshMarkers can diff instead of
-// rebuilding — existing markers (and an open popup) survive poll updates.
-const markersByKey = new Map<string, AuctionMarker>()
+// Features keyed by `platform:externalId` so refreshMarkers can diff instead
+// of rebuilding — existing features (and an open popup) survive poll updates.
+const featuresByKey = new Map<string, Feature<Point>>()
 let lastActiveKey: string | null = null
-
-function applyMarkerHighlight(key: string, marker: AuctionMarker): void {
-  const active = key === props.activeAuctionKey
-  marker.setIcon(active ? activeMarkerIcon : markerIcon)
-  marker.setZIndexOffset(active ? 1000 : 0)
-}
 
 function updateMarkerHighlight(): void {
   const changedKeys = new Set([lastActiveKey, props.activeAuctionKey].filter((key): key is string => key != null))
-  const changedMarkers: AuctionMarker[] = []
-
   for (const key of changedKeys) {
-    const marker = markersByKey.get(key)
-    if (!marker) continue
-    applyMarkerHighlight(key, marker)
-    changedMarkers.push(marker)
+    const feature = featuresByKey.get(key)
+    if (!feature) continue
+    feature.set('active', key === props.activeAuctionKey)
   }
-
   lastActiveKey = props.activeAuctionKey ?? null
-  if (changedMarkers.length) markersLayer?.refreshClusters(changedMarkers)
-}
-
-function clusterIcon(cluster: L.MarkerCluster): L.DivIcon {
-  const children = cluster.getAllChildMarkers() as AuctionMarker[]
-  const active = props.activeAuctionKey != null && children.some((marker) => marker.auctionKey === props.activeAuctionKey)
-  return L.divIcon({
-    className: '',
-    html: `<span class="auction-map-cluster${active ? ' is-active' : ''}">${cluster.getChildCount()}</span>`,
-    iconSize: [36, 36],
-    iconAnchor: [18, 18],
-  })
-}
-
-function createMarker(a: GeoAuction, lat: number, lng: number): AuctionMarker {
-  const key = auctionKey(a)
-  const active = key === props.activeAuctionKey
-  const marker = L.marker([lat, lng], {
-    icon: active ? activeMarkerIcon : markerIcon,
-    zIndexOffset: active ? 1000 : 0,
-    title: `${a.platform} · ${a.externalId}`,
-  }) as AuctionMarker
-  if (active) lastActiveKey = key
-  marker.auctionKey = key
-  // Empty container; the Vue app is mounted lazily on popupopen so the
-  // /api/auction-detail fetch only fires when the popup is actually opened.
-  marker.bindPopup('<div class="lot-popover-mount"></div>', { maxWidth: 320, minWidth: 280 })
-  let app: VueApp | null = null
-  marker.on('mouseover', () => emit('auction-hover', key))
-  marker.on('mouseout', () => emit('auction-hover', null))
-  marker.on('click', () => emit('auction-select', key))
-  marker.on('popupopen', (e) => {
-    const el = e.popup.getElement()?.querySelector('.lot-popover-mount') as HTMLElement | null
-    if (!el) return
-    app = mountLotPopover(el, a)
-  })
-  marker.on('popupclose', () => {
-    if (app) {
-      app.unmount()
-      app = null
-    }
-  })
-  return marker
+  // Mirrors markersLayer.refreshClusters(changedMarkers) from the Leaflet
+  // version — forces the cluster layer to re-run the style function.
+  if (changedKeys.size) clusterSourceRef.value?.source?.refresh()
 }
 
 function emitBounds(): void {
+  const map = mapRef.value?.map
   if (!map) return
-  const b = map.getBounds()
-  emit('bounds-change', { north: b.getNorth(), south: b.getSouth(), east: b.getEast(), west: b.getWest() })
+  const size = map.getSize()
+  if (!size) return
+  const extent = map.getView().calculateExtent(size)
+  const [west, south, east, north] = transformExtent(extent, 'EPSG:3857', 'EPSG:4326') as [number, number, number, number]
+  emit('bounds-change', { north, south, east, west })
 }
 
 function fitFallbackView(): void {
+  const map = mapRef.value?.map
   if (!map) return
+  const view = map.getView()
   const bounds = boundsForCountries(props.selectedCountries ?? [])
   if (bounds) {
-    map.fitBounds(bounds, { padding: [28, 28] })
+    const [[south, west], [north, east]] = bounds
+    const extent = transformExtent([west, south, east, north], 'EPSG:4326', 'EPSG:3857')
+    view.fit(extent, { padding: [28, 28, 28, 28] })
   } else {
-    map.setView(GERMANY_CENTER, 6)
+    view.setCenter(initialCenter)
+    view.setZoom(initialZoom)
   }
 }
 
 function refreshMarkers(): void {
-  if (!map || !markersLayer) return
+  const source = vectorSourceRef.value?.source
+  const map = mapRef.value?.map
+  if (!source || !map) return
+
   const seen = new Set<string>()
-  const points: [number, number][] = []
+  let hasPoints = false
   for (const a of props.auctions) {
     if (a.lat == null || a.lng == null) continue
     const key = auctionKey(a)
     seen.add(key)
-    if (!markersByKey.has(key)) {
-      const marker = createMarker(a, a.lat, a.lng)
-      marker.addTo(markersLayer)
-      markersByKey.set(key, marker)
+    hasPoints = true
+    let feature = featuresByKey.get(key)
+    if (!feature) {
+      feature = new Feature({ geometry: new Point(fromLonLat([a.lng, a.lat])) })
+      feature.setId(key)
+      feature.set('active', key === props.activeAuctionKey)
+      if (key === props.activeAuctionKey) lastActiveKey = key
+      featuresByKey.set(key, feature)
+      source.addFeature(feature)
     }
-    points.push([a.lat, a.lng])
+    // Refreshed on every pass (not just on creation) so a popup opened after
+    // a later poll shows live data instead of the auction as it was when the
+    // marker was first created.
+    feature.set('auction', a)
   }
-  // Remove markers whose auctions dropped out (removal closes an open popup,
-  // which fires popupclose and unmounts its Vue app).
-  for (const [key, marker] of markersByKey) {
-    if (!seen.has(key)) {
-      markersLayer.removeLayer(marker)
-      markersByKey.delete(key)
+  // Remove features whose auctions dropped out; close an open popup pointing
+  // at a removed feature.
+  for (const [key, feature] of featuresByKey) {
+    if (seen.has(key)) continue
+    source.removeFeature(feature)
+    featuresByKey.delete(key)
+    if (selectedKey.value === key) {
+      selectedKey.value = null
+      popupPosition.value = undefined
     }
   }
+
   const currentFitKey = props.fitKey ?? ''
-  const canUpgradeFallbackFit = fallbackFitKey === currentFitKey && points.length > 0
+  const canUpgradeFallbackFit = fallbackFitKey === currentFitKey && hasPoints
   if (!shouldFitNext && !canUpgradeFallbackFit) return
-  if (points.length > 0) {
+  if (hasPoints) {
     shouldFitNext = false
     fallbackFitKey = null
-    const bounds = L.latLngBounds(points)
-    map.fitBounds(bounds, { padding: [40, 40], maxZoom: 12 })
+    map.getView().fit(source.getExtent(), { padding: [40, 40, 40, 40], maxZoom: 12 })
   } else {
     shouldFitNext = false
     fallbackFitKey = currentFitKey
@@ -217,80 +195,20 @@ function refreshMarkers(): void {
   }
 }
 
-onMounted(async () => {
-  // AuctionMap is a .client.vue component that only ever mounts in response
-  // to a client-side reactive change (view flips to 'map' post-hydration;
-  // there's no SSR placeholder). Being an async-loaded chunk, its template
-  // ref isn't attached yet on the tick onMounted first fires — Leaflet would
-  // silently no-op against a null container. Await a tick so the ref is set.
-  await nextTick()
-  if (!mapEl.value) return
-  map = L.map(mapEl.value, { scrollWheelZoom: true }).setView(GERMANY_CENTER, 6)
-  const streets = L.tileLayer('https://{s}.tile.openstreetmap.de/{z}/{x}/{y}.png', {
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> Deutschland',
-    maxZoom: 18,
-  }).addTo(map)
-  const esriImagery = L.tileLayer(
-    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    {
-      attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics',
-      maxZoom: 19,
-    },
-  )
-  // Free, keyless national orthophotos layered on top of Esri — each only
-  // requests tiles inside its own country's bounds, so it's safe to stack
-  // all of them even though this map spans many countries at once. Some of
-  // these sources have tile-alignment bugs (opaque no-data spillover into
-  // neighbouring countries) that Esri alone doesn't have, so offer a plain
-  // Esri-only view as an escape hatch.
-  const countryImagery = createAllCountryImageryLayers(countryImageryKeys)
-  // A full opaque basemap (like the streets layer) blended at low opacity
-  // over satellite tiles just looks washed out — this is a dedicated
-  // labels/boundaries overlay with a transparent background instead.
-  const placeLabels = L.tileLayer(
-    'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
-    {
-      attribution: 'Tiles &copy; Esri',
-      maxZoom: 19,
-    },
-  )
-  const satelliteCountryTiles = L.layerGroup([esriImagery, ...countryImagery, placeLabels])
-  const satelliteEsriOnly = L.layerGroup([esriImagery, placeLabels])
-  L.control
-    .layers(
-      {
-        Straße: streets,
-        'Satellit (Länder-Tiles)': satelliteCountryTiles,
-        'Satellit (nur Esri)': satelliteEsriOnly,
-      },
-      undefined,
-      { position: 'topright' },
-    )
-    .addTo(map)
-  // Cluster markers so only a bounded number of DOM pins render per zoom
-  // level — thousands of individual markers made pan/zoom janky. Clusters
-  // break apart on zoom-in; chunkedLoading keeps the initial add off the
-  // main thread; at close zoom (>=16) individual pins show without clustering.
-  markersLayer = L.markerClusterGroup({
-    chunkedLoading: true,
-    maxClusterRadius: 60,
-    disableClusteringAtZoom: 16,
-    iconCreateFunction: clusterIcon,
-  }).addTo(map)
-  // moveend fires for both user pan/zoom and programmatic fitBounds/setView,
-  // so this single hook covers the "search re-fit → new viewport" flow too.
-  map.on('moveend', emitBounds)
-  refreshMarkers()
-  emitBounds()
-})
-
-onBeforeUnmount(() => {
-  if (map) {
-    map.remove()
-    map = null
-    markersLayer = null
-  }
-})
+// vue3-openlayers creates the underlying ol/source/Vector asynchronously
+// (after the map/layer hierarchy above it is ready), so onMounted alone
+// would race it — wait for the exposed ref to actually resolve instead. Its
+// defineExpose'd refs are already unwrapped by Vue's proxyRefs at the
+// component-ref boundary, so `.source` is the raw VectorSource, not a Ref.
+watch(
+  () => vectorSourceRef.value?.source,
+  (source) => {
+    if (!source) return
+    refreshMarkers()
+    emitBounds()
+  },
+  { immediate: true },
+)
 
 watch(() => props.fitKey, () => {
   shouldFitNext = true
@@ -300,64 +218,115 @@ watch(() => props.fitKey, () => {
 
 watch(() => props.auctions, refreshMarkers, { deep: false })
 watch(() => props.activeAuctionKey, updateMarkerHighlight)
+
+function onMapClick(evt: any): void {
+  const map = mapRef.value?.map
+  if (!map) return
+  const clusterFeature = map.forEachFeatureAtPixel(evt.pixel, (f: any) => f)
+  if (!clusterFeature) {
+    selectedKey.value = null
+    popupPosition.value = undefined
+    return
+  }
+  const children = clusterFeature.get('features') as Feature<Point>[]
+  if (children.length > 1) {
+    // Cluster of more than one — zoom in instead of opening a popup, same as
+    // the implicit cluster-click-to-expand behaviour of the Leaflet version.
+    const view = map.getView()
+    view.animate({ center: clusterFeature.getGeometry().getCoordinates(), zoom: Math.min((view.getZoom() ?? initialZoom) + 2, 18) })
+    return
+  }
+  const key = children[0]!.getId() as string
+  selectedKey.value = key
+  popupPosition.value = clusterFeature.getGeometry().getCoordinates()
+  emit('auction-select', key)
+}
+
+let lastHoverKey: string | null = null
+function onPointerMove(evt: any): void {
+  const map = mapRef.value?.map
+  if (!map) return
+  const clusterFeature = map.forEachFeatureAtPixel(evt.pixel, (f: any) => f)
+  const children = clusterFeature?.get('features') as Feature<Point>[] | undefined
+  const key = children && children.length === 1 ? (children[0]!.getId() as string) : null
+  if (key === lastHoverKey) return
+  lastHoverKey = key
+  emit('auction-hover', key)
+}
 </script>
 
 <template>
-  <div ref="mapEl" class="isolate h-full w-full rounded-xl border shadow-sm overflow-hidden" />
+  <div class="relative isolate h-full w-full rounded-xl border shadow-sm overflow-hidden">
+    <ol-map ref="mapRef" class="h-full w-full" @click="onMapClick" @pointermove="onPointerMove" @moveend="emitBounds">
+      <ol-view :center="initialCenter" :zoom="initialZoom" projection="EPSG:3857" />
+      <ol-tile-layer v-if="baseLayer === 'streets'">
+        <ol-source-osm attributions="&copy; OpenStreetMap contributors" />
+      </ol-tile-layer>
+      <template v-else>
+        <ol-tile-layer>
+          <ol-source-xyz :url="ESRI_IMAGERY_URL" attributions="Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics" />
+        </ol-tile-layer>
+        <ol-tile-layer>
+          <ol-source-xyz :url="ESRI_LABELS_URL" attributions="Tiles &copy; Esri" />
+        </ol-tile-layer>
+      </template>
+      <ol-vector-layer :style="clusterStyle">
+        <ol-source-cluster ref="clusterSourceRef" :distance="60">
+          <ol-source-vector ref="vectorSourceRef" />
+        </ol-source-cluster>
+      </ol-vector-layer>
+      <ol-overlay v-if="selectedKey && popupPosition" :position="popupPosition" :offset="[0, -12]" positioning="bottom-center">
+        <div class="auction-map-popup">
+          <LotPopover v-if="selectedAuction" :auction="selectedAuction" :lang="contentLang" />
+        </div>
+      </ol-overlay>
+    </ol-map>
+    <div class="auction-map-baselayer-toggle">
+      <button type="button" :class="{ 'is-active': baseLayer === 'streets' }" @click="baseLayer = 'streets'">
+        Straße
+      </button>
+      <button type="button" :class="{ 'is-active': baseLayer === 'satellite' }" @click="baseLayer = 'satellite'">
+        Satellit
+      </button>
+    </div>
+  </div>
 </template>
 
 <style>
-/* Leaflet popup styling to match shadcn-style cards */
-.leaflet-popup-content-wrapper {
+.auction-map-popup {
   border-radius: 8px;
   padding: 4px;
-}
-.leaflet-popup-content {
-  margin: 8px 12px;
-}
-
-.auction-map-pin {
-  display: block;
-  width: 22px;
-  height: 22px;
-  border: 2px solid white;
-  border-radius: 9999px 9999px 9999px 0;
-  background: #2563eb;
-  box-shadow: 0 2px 8px rgb(15 23 42 / 35%);
-  transform: rotate(-45deg);
-}
-
-.auction-map-pin::after {
-  content: '';
-  position: absolute;
-  inset: 5px;
-  border-radius: 9999px;
+  min-width: 280px;
+  max-width: 320px;
   background: white;
-  opacity: 0.9;
+  box-shadow: 0 4px 16px rgb(15 23 42 / 20%);
 }
 
-.auction-map-pin.is-active {
-  background: #dc2626;
-  box-shadow: 0 0 0 4px rgb(220 38 38 / 25%), 0 4px 12px rgb(15 23 42 / 35%);
+.auction-map-baselayer-toggle {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 10;
+  display: flex;
+  overflow: hidden;
+  border-radius: 6px;
+  border: 1px solid rgb(15 23 42 / 15%);
+  background: white;
+  box-shadow: 0 2px 8px rgb(15 23 42 / 15%);
 }
 
-.auction-map-cluster {
-  display: inline-flex;
-  width: 36px;
-  height: 36px;
-  align-items: center;
-  justify-content: center;
-  border: 2px solid white;
-  border-radius: 9999px;
+.auction-map-baselayer-toggle button {
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1f2937;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.auction-map-baselayer-toggle button.is-active {
   background: #2563eb;
   color: white;
-  font-size: 0.75rem;
-  font-weight: 700;
-  box-shadow: 0 2px 10px rgb(15 23 42 / 30%);
-}
-
-.auction-map-cluster.is-active {
-  background: #dc2626;
-  box-shadow: 0 0 0 5px rgb(220 38 38 / 24%), 0 4px 12px rgb(15 23 42 / 35%);
 }
 </style>
