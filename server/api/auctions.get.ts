@@ -1,6 +1,7 @@
 import type { AuctionExtraction } from '~/types/auction'
 import { getPool } from '~/server/utils/db'
 import { buildAuctionSearchFilter, finiteNumber } from '~/server/utils/auction-search-filters'
+import { curatedAuctionPhotoUrls } from '~/lib/auction-photos'
 
 export interface AuctionSummary {
   platform: string
@@ -21,8 +22,9 @@ export interface AuctionSummary {
   auctionDateText: string | null
   cancelled: boolean
   photoCount: number
-  /** Exactly one preview image. Galleries are detail-page-only. */
   thumbnailUrl: string | null
+  /** Compact, display-ready gallery URLs for the card slider. */
+  galleryUrls: string[]
   extraction: Pick<
     AuctionExtraction,
     | 'propertyType'
@@ -96,6 +98,7 @@ function summary(row: SearchRow): AuctionSummary {
     cancelled: row.cancelled,
     photoCount: row.photo_count,
     thumbnailUrl: row.thumbnail_url,
+    galleryUrls: curatedAuctionPhotoUrls(row.platform, row.external_id, extraction?.photos, row.thumbnail_url),
     extraction: extraction
       ? {
           propertyType: extraction.propertyType,

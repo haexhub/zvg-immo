@@ -1,5 +1,10 @@
 <script setup lang="ts">
 import { Star } from 'lucide-vue-next'
+import { Swiper, SwiperSlide } from 'swiper/vue'
+import { Keyboard, Navigation, Pagination } from 'swiper/modules'
+import 'swiper/css'
+import 'swiper/css/navigation'
+import 'swiper/css/pagination'
 import { auctionKey } from '~/lib/auction-key'
 import type { AuctionSummary } from '~/server/api/auctions.get'
 
@@ -77,6 +82,8 @@ function bidLine(a: AuctionSummary): string | null {
   if (converted == null) return null
   return converted.toLocaleString(intlLocale.value, { style: 'currency', currency: currency.value, maximumFractionDigits: 0 })
 }
+
+const swiperModules = [Navigation, Pagination, Keyboard]
 </script>
 
 <template>
@@ -99,18 +106,31 @@ function bidLine(a: AuctionSummary): string | null {
           class="group h-full flex flex-col rounded-xl border bg-card text-card-foreground shadow-sm overflow-hidden transition-all hover:shadow-md"
           :class="{
             'opacity-60': a.cancelled,
-            'ring-2 ring-red-500 border-red-500 shadow-md': auctionKey(a) === props.activeAuctionKey,
+            'ring-2 ring-amber-500 border-amber-500 shadow-md': auctionKey(a) === props.activeAuctionKey,
           }"
         >
           <div class="relative border-b">
-            <img
-              v-if="a.thumbnailUrl"
-              :src="a.thumbnailUrl"
-              :alt="cardAltBase(a)"
-              class="aspect-16/10 h-full w-full object-cover"
-              loading="lazy"
-              referrerpolicy="no-referrer"
+            <Swiper
+              v-if="a.galleryUrls.length > 0"
+              :modules="swiperModules"
+              :navigation="a.galleryUrls.length > 1"
+              :pagination="a.galleryUrls.length > 1 ? { clickable: true } : false"
+              :keyboard="{ enabled: true }"
+              :loop="a.galleryUrls.length > 1"
+              :lazy-preload-prev-next="0"
+              class="auction-card-swiper aspect-16/10 w-full bg-muted"
             >
+              <SwiperSlide v-for="(url, i) in a.galleryUrls" :key="url">
+                <img
+                  :src="url"
+                  :alt="t('lotPopover.photoAlt', { n: i + 1, title: cardAltBase(a) })"
+                  class="h-full w-full object-cover"
+                  referrerpolicy="no-referrer"
+                  :loading="i === 0 ? 'eager' : 'lazy'"
+                  :fetchpriority="i === 0 ? 'high' : 'auto'"
+                >
+              </SwiperSlide>
+            </Swiper>
             <div v-else class="flex aspect-16/10 items-center justify-center bg-muted text-muted-foreground text-sm">
               {{ $t('search.noPhoto') }}
             </div>
@@ -160,3 +180,29 @@ function bidLine(a: AuctionSummary): string | null {
     </div>
   </div>
 </template>
+
+<style scoped>
+.auction-card-swiper {
+  overflow: hidden;
+}
+.auction-card-swiper :deep(.swiper-button-prev),
+.auction-card-swiper :deep(.swiper-button-next) {
+  color: #ffffff;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6));
+}
+.auction-card-swiper :deep(.swiper-button-prev)::after,
+.auction-card-swiper :deep(.swiper-button-next)::after {
+  font-size: 1rem;
+  font-weight: 700;
+}
+.auction-card-swiper :deep(.swiper-pagination) {
+  bottom: 0.35rem;
+}
+.auction-card-swiper :deep(.swiper-pagination-bullet) {
+  background: rgba(255, 255, 255, 0.85);
+  opacity: 1;
+}
+.auction-card-swiper :deep(.swiper-pagination-bullet-active) {
+  background: rgb(245 158 11);
+}
+</style>

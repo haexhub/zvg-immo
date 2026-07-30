@@ -4,11 +4,11 @@ import { Navigation, Pagination, Keyboard } from 'swiper/modules'
 import 'swiper/css'
 import 'swiper/css/navigation'
 import 'swiper/css/pagination'
-import type { Attachment } from '~/types/auction'
 import type { GeoAuction } from '~/server/api/auctions-geo.get'
 import type { AuctionDetail } from '~/server/api/auction/[platform]/[id].get'
 import { apiErrorMessage } from '~/lib/api-error'
 import { isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
+import { auctionPhotoUrls } from '~/lib/auction-photos'
 
 const props = defineProps<{
   auction: GeoAuction
@@ -21,23 +21,8 @@ const { t } = useI18n()
 const intlLocale = useIntlLocale()
 const { currency, eurToDisplay } = useCurrencyDisplay()
 
-function extractPhotos(atts: Attachment[]): Attachment[] {
-  return atts.filter((a) => a.kind === 'photo')
-}
-
-// AT-Edikte and zvg-portal publish "Foto" attachments as PDFs (one photo per
-// page). `<img src="…pdf">` fails silently in the browser, so we route those
-// through /api/pdf-thumb which rasterises the first page.
-function slideSrc(a: Attachment): string {
-  if (/\.pdf(?:[?#]|$)/i.test(a.proxyUrl)) {
-    return `/api/pdf-thumb?src=${encodeURIComponent(a.proxyUrl)}`
-  }
-  return a.proxyUrl
-}
-
 const detail = ref<AuctionDetail | null>(null)
-const photos = ref<Attachment[]>([])
-const thumbnailUrl = ref<string | null>(null)
+const photos = ref<string[]>([])
 const loading = ref(true)
 const loadError = ref<string | null>(null)
 const translatedTitle = ref<string | null>(null)
@@ -71,8 +56,7 @@ onMounted(async () => {
       `/api/auction/${encodeURIComponent(props.auction.platform)}/${encodeURIComponent(props.auction.externalId)}`,
     )
     detail.value = value
-    photos.value = extractPhotos(value.attachments)
-    thumbnailUrl.value = value.thumbnailUrl
+    photos.value = auctionPhotoUrls(value)
   } catch (err) {
     loadError.value = apiErrorMessage(err, 'Objektdetails konnten nicht geladen werden.')
   } finally {
@@ -109,18 +93,21 @@ const swiperModules = [Navigation, Pagination, Keyboard]
         :loop="photos.length > 1"
         class="lot-popover__swiper"
       >
-        <SwiperSlide v-for="(p, i) in photos" :key="p.fileId || i">
-          <a :href="p.proxyUrl" target="_blank" rel="noopener">
-            <img :src="slideSrc(p)" referrerpolicy="no-referrer" loading="lazy" :alt="t('lotPopover.photoAlt', { n: i + 1, title: displayTitle ?? t('lotPopover.untitled') })">
+        <SwiperSlide v-for="(url, i) in photos" :key="url">
+          <a :href="url" target="_blank" rel="noopener">
+            <img
+              :src="url"
+              referrerpolicy="no-referrer"
+              :loading="i === 0 ? 'eager' : 'lazy'"
+              :fetchpriority="i === 0 ? 'high' : 'auto'"
+              :alt="t('lotPopover.photoAlt', { n: i + 1, title: displayTitle ?? t('lotPopover.untitled') })"
+            >
           </a>
         </SwiperSlide>
       </Swiper>
     </div>
     <div v-else-if="loading" class="lot-popover__placeholder">{{ t('lotPopover.loadingPhotos') }}</div>
     <p v-else-if="loadError" class="lot-popover__error">{{ loadError }}</p>
-    <div v-else-if="thumbnailUrl" class="lot-popover__media">
-      <img :src="thumbnailUrl" referrerpolicy="no-referrer" class="lot-popover__thumb">
-    </div>
 
     <div class="lot-popover__title">{{ displayTitle ?? t('lotPopover.untitled') }}</div>
     <div class="lot-popover__address">{{ detail?.address ?? '' }}</div>
@@ -172,6 +159,10 @@ const swiperModules = [Navigation, Pagination, Keyboard]
   object-fit: cover;
   display: block;
 }
+.lot-popover__swiper :deep(.swiper-slide) a {
+  display: block;
+  height: 100%;
+}
 .lot-popover__swiper :deep(.swiper-button-prev),
 .lot-popover__swiper :deep(.swiper-button-next) {
   color: #ffffff;
@@ -187,14 +178,7 @@ const swiperModules = [Navigation, Pagination, Keyboard]
   opacity: 1;
 }
 .lot-popover__swiper :deep(.swiper-pagination-bullet-active) {
-  background: #2563eb;
-}
-.lot-popover__thumb {
-  width: 100%;
-  height: 120px;
-  object-fit: cover;
-  border-radius: 6px;
-  display: block;
+  background: rgb(245 158 11);
 }
 .lot-popover__placeholder {
   height: 160px;
@@ -237,7 +221,7 @@ const swiperModules = [Navigation, Pagination, Keyboard]
 .lot-popover__cta a {
   display: block;
   text-align: center;
-  background: #2563eb;
+  background: rgb(245 158 11);
   color: #fff;
   font-weight: 600;
   border-radius: 6px;
@@ -245,7 +229,7 @@ const swiperModules = [Navigation, Pagination, Keyboard]
   text-decoration: none;
 }
 .lot-popover__cta a:hover {
-  background: #1d4ed8;
+  background: rgb(217 119 6);
 }
 .lot-popover__cta-disabled {
   display: block;
