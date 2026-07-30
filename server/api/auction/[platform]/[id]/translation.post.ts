@@ -23,7 +23,7 @@ import {
   writeContentTranslation,
 } from '~/server/utils/content-translation'
 import { getLlmMaxTokens, getLlmProviderOverride } from '~/server/utils/app-settings'
-import { resolveLlmConfig } from '~/server/utils/extract/llm'
+import { resolveLlmConfig, type LlmConfig } from '~/server/utils/extract/llm'
 import { callTranslationLlm, type TranslationResult } from '~/server/utils/extract/text-llm'
 import { isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
 import { extractTranslatableExtractionTexts, TRANSLATABLE_EXTRACTION_TEXTS_VERSION } from '~/lib/extraction-translation'
@@ -92,6 +92,35 @@ async function tryTranslate(
   )
 }
 
+/** The provider/model translation.post.ts would use right now for the
+ *  'translation' scope, falling back to 'extraction' then the ENV-configured
+ *  default — same precedence as the actual translate call below. */
+async function resolveActiveLlmConfig(db: Pool): Promise<LlmConfig | null> {
+  const llmCfg = useRuntimeConfig().extractLlm as
+    | { provider?: string; baseUrl?: string; apiKey?: string; model?: string }
+    | undefined
+  const translationOverride = await getLlmProviderOverride(db, 'translation')
+  const extractionOverride = translationOverride ? null : await getLlmProviderOverride(db, 'extraction')
+  return resolveLlmConfig(translationOverride ?? extractionOverride ?? llmCfg, {
+    maxTokens: await getLlmMaxTokens(db, 'translation'),
+  })
+}
+
+/** Identifies a resolved LLM config for the retry-lockout check below — a
+ *  /settings provider/model/key change produces a different fingerprint,
+ *  which lets a previously failed attempt retry immediately instead of
+ *  waiting out content-translation.ts's RETRY_AFTER window. Hashed (rather
+ *  than storing provider/baseUrl/model/apiKey directly) so the plaintext
+ *  apiKey from app_settings never gets copied into a second column. */
+export function fingerprintConfig(config: LlmConfig): string {
+  return sha256Hex(Buffer.from(JSON.stringify({
+    provider: config.provider,
+    baseUrl: config.baseUrl,
+    model: config.model,
+    apiKey: config.apiKey ?? '',
+  })))
+}
+
 export default defineEventHandler(async (event) => {
   const platform = String(event.context.params?.platform ?? '')
   const id = String(event.context.params?.id ?? '')
@@ -158,12 +187,23 @@ export default defineEventHandler(async (event) => {
   // pending claim blocks until its lease expires. Both then fall through to
   // claimAuctionTranslation, which takes the stale row over — a transient
   // provider failure must not lock this auction out permanently.
+  let resolvedConfig: LlmConfig | null = null
   if (stored?.status === 'failed' && !stored.retryDue) {
-    throw createError({
-      statusCode: 502,
-      statusMessage: 'Übersetzung fehlgeschlagen',
-      data: { detail: stored.errorMessage ?? 'Unbekannter Übersetzungsfehler' },
-    })
+    resolvedConfig = await resolveActiveLlmConfig(db)
+    const currentFingerprint = resolvedConfig ? fingerprintConfig(resolvedConfig) : null
+    // Same config that failed before: still within the backoff window, keep
+    // replaying the stored error. A /settings provider/model/key change since
+    // the failure produces a different fingerprint — skip the wait, retry now.
+    // A null failedConfig (a row written before this fingerprint existed) is
+    // "unknown, assume unchanged" — otherwise every pre-existing failed row
+    // would bypass the backoff the first time it's touched after this ships.
+    if (stored.failedConfig == null || stored.failedConfig === currentFingerprint) {
+      throw createError({
+        statusCode: 502,
+        statusMessage: 'Übersetzung fehlgeschlagen',
+        data: { detail: stored.errorMessage ?? 'Unbekannter Übersetzungsfehler' },
+      })
+    }
   }
   if (stored?.status === 'pending' && !stored.claimStale) {
     setResponseHeader(event, 'x-zvg-translation-cache', 'inflight')
@@ -209,14 +249,13 @@ export default defineEventHandler(async (event) => {
         return cached
       }
 
-      const llmCfg = useRuntimeConfig().extractLlm as
-        | { provider?: string; baseUrl?: string; apiKey?: string; model?: string }
-        | undefined
-      const translationOverride = await getLlmProviderOverride(db, 'translation')
-      const extractionOverride = translationOverride ? null : await getLlmProviderOverride(db, 'extraction')
-      const config = resolveLlmConfig(translationOverride ?? extractionOverride ?? llmCfg, {
-        maxTokens: await getLlmMaxTokens(db, 'translation'),
-      })
+      // Reuses the config already resolved by the retry-lockout check above
+      // when present (same request), otherwise resolves it fresh here — and
+      // records it on the outer variable so a failure below fingerprints the
+      // config that actually produced it, not whatever (if anything) the
+      // pre-claim check saw.
+      resolvedConfig = resolvedConfig ?? await resolveActiveLlmConfig(db)
+      const config = resolvedConfig
       if (!config) {
         throw new Error('LLM ist nicht konfiguriert')
       }
@@ -239,7 +278,8 @@ export default defineEventHandler(async (event) => {
       return result
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      await failAuctionTranslation(db, platform, id, targetLang, claim, message)
+      const failedFingerprint = resolvedConfig ? fingerprintConfig(resolvedConfig) : null
+      await failAuctionTranslation(db, platform, id, targetLang, claim, message, failedFingerprint)
       throw createError({
         statusCode: 502,
         statusMessage: 'Übersetzung fehlgeschlagen',

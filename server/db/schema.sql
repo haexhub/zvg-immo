@@ -441,6 +441,11 @@ CREATE TABLE IF NOT EXISTS auction_translations (
 CREATE INDEX IF NOT EXISTS idx_auction_translations_status
   ON auction_translations (status, started_at);
 ALTER TABLE auction_translations ENABLE ROW LEVEL SECURITY;
+-- Fingerprint (sha256 of provider+baseUrl+model+apiKey) of the LLM config
+-- that produced a 'failed' row's error — lets a /settings provider/model
+-- switch bypass the retry-after-1h backoff immediately instead of replaying
+-- the old config's stale error for the rest of that window.
+ALTER TABLE auction_translations ADD COLUMN IF NOT EXISTS failed_config text;
 
 -- Datenqualitäts-Offensive: strukturierte "aktueller Zustand pro Auktion"-
 -- Tabelle, additiv neben der bestehenden JSON-Snapshot-Pipeline

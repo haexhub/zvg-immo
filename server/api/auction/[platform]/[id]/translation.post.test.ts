@@ -217,6 +217,7 @@ describe('/api/auction/:platform/:id/translation', () => {
       contentHash: 'original-content-hash',
       status: 'completed' as const,
       errorMessage: null,
+      failedConfig: null,
       claimStale: false,
       retryDue: true,
       title: 'Dauerhaft gespeicherter Titel',
@@ -246,10 +247,13 @@ describe('/api/auction/:platform/:id/translation', () => {
     const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
     const { readAuctionTranslation, claimAuctionTranslation } = await import('~/server/utils/content-translation')
     const handler = await loadHandler()
+    const { fingerprintConfig } = await import('./translation.post')
     vi.mocked(readAuctionTranslation).mockResolvedValue({
       contentHash: 'failed-content-hash',
       status: 'failed',
       errorMessage: 'Provider nicht erreichbar',
+      // Same config that produced the failure — still inside the backoff window.
+      failedConfig: fingerprintConfig({ provider: 'openai-compatible', baseUrl: 'https://api.example', model: 'gpt' }),
       claimStale: false,
       retryDue: false,
       title: null,
@@ -270,6 +274,103 @@ describe('/api/auction/:platform/:id/translation', () => {
     expect(callTranslationLlm).not.toHaveBeenCalled()
   })
 
+  it('still honors the backoff for a legacy failed row with no recorded config (failedConfig: null)', async () => {
+    const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
+    const { readAuctionTranslation, claimAuctionTranslation } = await import('~/server/utils/content-translation')
+    const handler = await loadHandler()
+    vi.mocked(readAuctionTranslation).mockResolvedValue({
+      contentHash: 'failed-content-hash',
+      status: 'failed',
+      errorMessage: 'Provider nicht erreichbar',
+      // Row written before failed_config existed — must not be treated as
+      // "config changed" (that would bypass the backoff for every
+      // pre-existing failure on the first request after this ships).
+      failedConfig: null,
+      claimStale: false,
+      retryDue: false,
+      title: null,
+      description: null,
+      documentSummary: null,
+      extractionTexts: null,
+    })
+
+    await expect(handler({
+      context: { params: { platform: 'se-kronofogden', id: '101738' } },
+      node: { req: { socket: { remoteAddress: '127.0.0.1' } } },
+    })).rejects.toMatchObject({
+      statusCode: 502,
+      data: { detail: 'Provider nicht erreichbar' },
+    })
+
+    expect(claimAuctionTranslation).not.toHaveBeenCalled()
+    expect(callTranslationLlm).not.toHaveBeenCalled()
+  })
+
+  it('retries immediately when the LLM config changed since the failure, even though the retry window is still closed', async () => {
+    const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
+    const { readAuctionTranslation, claimAuctionTranslation } = await import('~/server/utils/content-translation')
+    const { resolveLlmConfig } = await import('~/server/utils/extract/llm')
+    const handler = await loadHandler()
+    const { fingerprintConfig } = await import('./translation.post')
+    vi.mocked(readAuctionTranslation).mockResolvedValue({
+      contentHash: 'failed-content-hash',
+      status: 'failed',
+      errorMessage: 'Rate limit exceeded',
+      // Fingerprint of the OLD model — the assignment was switched in
+      // /settings since this failure was recorded.
+      failedConfig: fingerprintConfig({ provider: 'openai-compatible', baseUrl: 'https://api.example', model: 'gpt' }),
+      claimStale: false,
+      retryDue: false,
+      title: null,
+      description: null,
+      documentSummary: null,
+      extractionTexts: null,
+    })
+    vi.mocked(resolveLlmConfig).mockReturnValue({
+      provider: 'openai-compatible',
+      baseUrl: 'https://api.example',
+      model: 'gpt-4o-mini',
+      maxTokens: 8192,
+    })
+    vi.mocked(callTranslationLlm).mockResolvedValue({
+      title: 'Translated with the new model',
+      description: null,
+      documentSummary: null,
+      extractionTexts: null,
+    })
+
+    await expect(handler({
+      context: { params: { platform: 'se-kronofogden', id: '101738' } },
+      node: { req: { socket: { remoteAddress: '127.0.0.1' } } },
+    })).resolves.toMatchObject({ title: 'Translated with the new model', translated: true })
+
+    expect(claimAuctionTranslation).toHaveBeenCalledOnce()
+    expect(callTranslationLlm).toHaveBeenCalledOnce()
+  })
+
+  it('records the resolved config fingerprint when a translation attempt fails', async () => {
+    const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
+    const { failAuctionTranslation } = await import('~/server/utils/content-translation')
+    const handler = await loadHandler()
+    const { fingerprintConfig } = await import('./translation.post')
+    vi.mocked(callTranslationLlm).mockResolvedValue(null)
+
+    await expect(handler({
+      context: { params: { platform: 'se-kronofogden', id: '101738' } },
+      node: { req: { socket: { remoteAddress: '127.0.0.1' } } },
+    })).rejects.toMatchObject({ statusCode: 502 })
+
+    expect(failAuctionTranslation).toHaveBeenCalledWith(
+      expect.anything(),
+      'se-kronofogden',
+      '101738',
+      'de',
+      CLAIM,
+      expect.any(String),
+      fingerprintConfig({ provider: 'openai-compatible', baseUrl: 'https://api.example', model: 'gpt' }),
+    )
+  })
+
   it('retries a failed attempt once its retry window opened — a provider outage must not lock the auction out', async () => {
     const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
     const { readAuctionTranslation, claimAuctionTranslation } = await import('~/server/utils/content-translation')
@@ -278,6 +379,7 @@ describe('/api/auction/:platform/:id/translation', () => {
       contentHash: 'failed-content-hash',
       status: 'failed',
       errorMessage: 'Provider nicht erreichbar',
+      failedConfig: null,
       claimStale: true,
       retryDue: true,
       title: null,
@@ -309,6 +411,7 @@ describe('/api/auction/:platform/:id/translation', () => {
       contentHash: 'stale-content-hash',
       status: 'pending',
       errorMessage: null,
+      failedConfig: null,
       claimStale: true,
       retryDue: false,
       title: null,
