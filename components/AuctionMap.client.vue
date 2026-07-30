@@ -9,6 +9,7 @@ import { auctionKey } from '~/lib/auction-key'
 import { boundsForCountries } from '~/lib/country-bounds'
 import type { ContentTargetLang } from '~/lib/content-language'
 import { MAPTILER_ATTRIBUTION, OSM_ATTRIBUTION, mapTilerSatelliteUrl, mapTilerStreetsUrl } from '~/lib/map-tiles'
+import type { MapTilerTileMapIds } from '~/lib/map-tiles'
 import { mapPinDataUri, MAP_PIN_ANCHOR } from '~/lib/mapPinIcon'
 
 const ESRI_IMAGERY_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
@@ -66,9 +67,17 @@ const emit = defineEmits<{
 
 const { locale, t } = useI18n()
 const runtimeConfig = useRuntimeConfig()
-const mapTilerApiKey = computed(() => String(runtimeConfig.public.mapTilerApiKey || '').trim())
-const streetsTileUrl = computed(() => mapTilerApiKey.value ? mapTilerStreetsUrl(locale.value, mapTilerApiKey.value) : '')
-const satelliteTileUrl = computed(() => mapTilerApiKey.value ? mapTilerSatelliteUrl(locale.value, mapTilerApiKey.value) : '')
+const mapTilerApiKey = computed(() => String(runtimeConfig.public.maptilerApiKey || '').trim())
+const mapTilerMapIds = computed<MapTilerTileMapIds>(() => ({
+  streets: String(runtimeConfig.public.maptilerStreetsMapId || ''),
+  streetsDe: String(runtimeConfig.public.maptilerStreetsMapIdDe || ''),
+  streetsEn: String(runtimeConfig.public.maptilerStreetsMapIdEn || ''),
+  satellite: String(runtimeConfig.public.maptilerSatelliteMapId || ''),
+  satelliteDe: String(runtimeConfig.public.maptilerSatelliteMapIdDe || ''),
+  satelliteEn: String(runtimeConfig.public.maptilerSatelliteMapIdEn || ''),
+}))
+const streetsTileUrl = computed(() => mapTilerApiKey.value ? mapTilerStreetsUrl(locale.value, mapTilerApiKey.value, mapTilerMapIds.value) : '')
+const satelliteTileUrl = computed(() => mapTilerApiKey.value ? mapTilerSatelliteUrl(locale.value, mapTilerApiKey.value, mapTilerMapIds.value) : '')
 
 // Only 'de'/'en' have LLM translation support (see lib/content-language.ts);
 // any other UI locale falls back to showing the auction's original title.

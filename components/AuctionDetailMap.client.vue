@@ -17,6 +17,7 @@ import { defaults as defaultInteractions } from 'ol/interaction/defaults'
 import type BaseLayer from 'ol/layer/Base'
 import type { TileCoord } from 'ol/tilecoord'
 import { MAPTILER_ATTRIBUTION, OSM_ATTRIBUTION, mapTilerSatelliteUrl, mapTilerStreetsUrl } from '~/lib/map-tiles'
+import type { MapTilerTileMapIds } from '~/lib/map-tiles'
 import { mapPinDataUri, MAP_PIN_ANCHOR } from '~/lib/mapPinIcon'
 import type { HazardAssessment, LocationContext, LocationMapFeature } from '~/types/auction'
 
@@ -30,7 +31,15 @@ const props = defineProps<{
 
 const { t, locale } = useI18n()
 const runtimeConfig = useRuntimeConfig()
-const mapTilerApiKey = computed(() => String(runtimeConfig.public.mapTilerApiKey || '').trim())
+const mapTilerApiKey = computed(() => String(runtimeConfig.public.maptilerApiKey || '').trim())
+const mapTilerMapIds = computed<MapTilerTileMapIds>(() => ({
+  streets: String(runtimeConfig.public.maptilerStreetsMapId || ''),
+  streetsDe: String(runtimeConfig.public.maptilerStreetsMapIdDe || ''),
+  streetsEn: String(runtimeConfig.public.maptilerStreetsMapIdEn || ''),
+  satellite: String(runtimeConfig.public.maptilerSatelliteMapId || ''),
+  satelliteDe: String(runtimeConfig.public.maptilerSatelliteMapIdDe || ''),
+  satelliteEn: String(runtimeConfig.public.maptilerSatelliteMapIdEn || ''),
+}))
 
 function hazardColor(hazard: HazardAssessment): string {
   if (hazard.status === 'inside') return '#dc2626'
@@ -320,8 +329,9 @@ onMounted(async () => {
   if (!mapEl.value || !popupEl.value) return
 
   const mapTilerKey = mapTilerApiKey.value
+  const configuredMapIds = mapTilerMapIds.value
   const streetsSource = mapTilerKey
-    ? new XYZ({ url: mapTilerStreetsUrl(locale.value, mapTilerKey), attributions: MAPTILER_ATTRIBUTION })
+    ? new XYZ({ url: mapTilerStreetsUrl(locale.value, mapTilerKey, configuredMapIds), attributions: MAPTILER_ATTRIBUTION })
     : new OSM({ attributions: OSM_ATTRIBUTION })
   const streets = new TileLayer({ source: streetsSource })
   const esriImagery = new TileLayer({
@@ -340,7 +350,7 @@ onMounted(async () => {
     }),
   })
   const mapTilerHybridSource = mapTilerKey
-    ? new XYZ({ url: mapTilerSatelliteUrl(locale.value, mapTilerKey), attributions: MAPTILER_ATTRIBUTION })
+    ? new XYZ({ url: mapTilerSatelliteUrl(locale.value, mapTilerKey, configuredMapIds), attributions: MAPTILER_ATTRIBUTION })
     : null
   const mapTilerHybrid = new TileLayer({ source: mapTilerHybridSource ?? undefined })
   streets.setVisible(baseLayer.value === 'streets')
@@ -355,8 +365,8 @@ onMounted(async () => {
   })
   watch(locale, (value) => {
     if (!mapTilerKey) return
-    if (streetsSource instanceof XYZ) streetsSource.setUrl(mapTilerStreetsUrl(value, mapTilerKey))
-    mapTilerHybridSource?.setUrl(mapTilerSatelliteUrl(value, mapTilerKey))
+    if (streetsSource instanceof XYZ) streetsSource.setUrl(mapTilerStreetsUrl(value, mapTilerKey, configuredMapIds))
+    mapTilerHybridSource?.setUrl(mapTilerSatelliteUrl(value, mapTilerKey, configuredMapIds))
   })
 
   const entries: OverlayEntry[] = []

@@ -1231,17 +1231,18 @@ useHead(() => ({
         </DetailSectionCard>
       </div>
 
-      <section v-if="a.lat != null && a.lng != null" class="mt-8 space-y-5">
+      <section class="mt-8 space-y-5">
         <h2 class="text-2xl font-semibold tracking-tight">{{ $t('objektDetail.location') }}</h2>
-        <AuctionDetailMap
-          :lat="a.lat"
-          :lng="a.lng"
-          :label="a.address ?? undefined"
-          :hazards="a.locationEnrichment?.hazards"
-          :location-context="locationContext"
-        />
-        <div>
-          <div v-if="locationContext" class="space-y-6">
+        <template v-if="a.lat != null && a.lng != null">
+          <AuctionDetailMap
+            :lat="a.lat"
+            :lng="a.lng"
+            :label="a.address ?? undefined"
+            :hazards="a.locationEnrichment?.hazards"
+            :location-context="locationContext"
+          />
+          <div>
+            <div v-if="locationContext" class="space-y-6">
             <DetailSectionCard v-if="locationQuality" :title="$t('objektDetail.locationQualityTitle')">
               <div class="space-y-3">
                 <div class="flex flex-wrap items-center justify-between gap-2">
@@ -1522,10 +1523,14 @@ useHead(() => ({
               </div>
             </DetailSectionCard>
           </div>
-          <DetailSectionCard v-else :title="$t('objektDetail.nearbyPlaces')">
-            <p class="text-sm text-muted-foreground">{{ $t('objektDetail.noExternalLocationContext') }}</p>
-          </DetailSectionCard>
-        </div>
+            <DetailSectionCard v-else :title="$t('objektDetail.nearbyPlaces')">
+              <p class="text-sm text-muted-foreground">{{ $t('objektDetail.noExternalLocationContext') }}</p>
+            </DetailSectionCard>
+          </div>
+        </template>
+        <DetailSectionCard v-else :title="$t('objektDetail.nearbyPlaces')">
+          <p class="text-sm text-muted-foreground">{{ $t('objektDetail.noExternalLocationContext') }}</p>
+        </DetailSectionCard>
       </section>
 
       <footer class="mt-10 border-t pt-6 text-sm leading-relaxed text-foreground/80">
