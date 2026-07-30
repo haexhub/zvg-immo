@@ -309,7 +309,11 @@ function formatPricePerSqm(n: number | null): string {
   if (n == null) return '–'
   const converted = eurToDisplay(n)
   if (converted == null) return '–'
-  return `${converted.toLocaleString(intlLocale.value, { style: 'currency', currency: currency.value, maximumFractionDigits: 0 })}/m²`
+  // Large rural/land parcels can legitimately price out under 1 unit/m² —
+  // rounding to 0 fraction digits then displays a real price as "0", which
+  // reads as worthless rather than just cheap per square meter.
+  const maximumFractionDigits = Math.abs(converted) < 1 ? 2 : 0
+  return `${converted.toLocaleString(intlLocale.value, { style: 'currency', currency: currency.value, maximumFractionDigits })}/m²`
 }
 
 function formatPercent(n: number | null): string {
