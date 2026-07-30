@@ -8,6 +8,7 @@ import type { Attachment } from '~/types/auction'
 import type { GeoAuction } from '~/server/api/auctions-geo.get'
 import type { AuctionDetail } from '~/server/api/auction/[platform]/[id].get'
 import { apiErrorMessage } from '~/lib/api-error'
+import { isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
 
 // Mounted into its own detached Vue app by AuctionMap.client.vue's Leaflet
 // popup (see mountLotPopover() there) — that app never installs the Nuxt i18n
@@ -23,6 +24,10 @@ const props = defineProps<{
   /** Currency conversion stays in the Nuxt parent; this detached app receives
    *  the already configured converter and applies it after lazy detail load. */
   convertEur: (value: number | null) => number | null
+  /** Viewer's target content language, or null when it isn't one of the
+   *  supported translation targets — resolved by the parent since this
+   *  detached app has no useI18n() to read the locale from itself. */
+  lang: ContentTargetLang | null
 }>()
 
 function extractPhotos(atts: Attachment[]): Attachment[] {
@@ -44,8 +49,32 @@ const photos = ref<Attachment[]>([])
 const thumbnailUrl = ref<string | null>(null)
 const loading = ref(true)
 const loadError = ref<string | null>(null)
+const translatedTitle = ref<string | null>(null)
+const displayTitle = computed(() => translatedTitle.value ?? detail.value?.title ?? null)
+
+interface AuctionTranslationResponse {
+  title: string | null
+}
+
+// Loaded silently alongside the detail fetch, same as the objekt detail page
+// (pages/objekt/[platform]/[id].vue) — the address stays untranslated
+// everywhere in the app (it's a place name), only the title needs this.
+async function loadTranslation(): Promise<void> {
+  if (!props.lang || isPassthroughLanguage(props.auction.country, props.lang)) return
+  try {
+    const value = await $fetch<AuctionTranslationResponse>(
+      `/api/auction/${encodeURIComponent(props.auction.platform)}/${encodeURIComponent(props.auction.externalId)}/translation`,
+      { method: 'POST', query: { lang: props.lang } },
+    )
+    translatedTitle.value = value.title
+  } catch {
+    // Silent fallback to the original title — the compact popover has no
+    // room for a dedicated translation-error state.
+  }
+}
 
 onMounted(async () => {
+  loadTranslation()
   try {
     const value = await $fetch<AuctionDetail>(
       `/api/auction/${encodeURIComponent(props.auction.platform)}/${encodeURIComponent(props.auction.externalId)}`,
@@ -91,7 +120,7 @@ const swiperModules = [Navigation, Pagination, Keyboard]
       >
         <SwiperSlide v-for="(p, i) in photos" :key="p.fileId || i">
           <a :href="p.proxyUrl" target="_blank" rel="noopener">
-            <img :src="slideSrc(p)" referrerpolicy="no-referrer" loading="lazy" :alt="t('lotPopover.photoAlt', { n: i + 1, title: detail?.title ?? t('lotPopover.untitled') })">
+            <img :src="slideSrc(p)" referrerpolicy="no-referrer" loading="lazy" :alt="t('lotPopover.photoAlt', { n: i + 1, title: displayTitle ?? t('lotPopover.untitled') })">
           </a>
         </SwiperSlide>
       </Swiper>
@@ -102,7 +131,7 @@ const swiperModules = [Navigation, Pagination, Keyboard]
       <img :src="thumbnailUrl" referrerpolicy="no-referrer" class="lot-popover__thumb">
     </div>
 
-    <div class="lot-popover__title">{{ detail?.title ?? t('lotPopover.untitled') }}</div>
+    <div class="lot-popover__title">{{ displayTitle ?? t('lotPopover.untitled') }}</div>
     <div class="lot-popover__address">{{ detail?.address ?? '' }}</div>
 
     <div class="lot-popover__grid">
