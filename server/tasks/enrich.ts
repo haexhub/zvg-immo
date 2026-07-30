@@ -145,7 +145,11 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
     const previousSnapshot = await readAuctionSnapshot()
     const byPlatform = new Map(platforms.map((p) => [p.id, p]))
     const rates = await getRates()
-    const vwCache = await readVerkehrswertCache()
+    // Re-read below, right before the tail loop: geocode runs 30 min before
+    // enrich (see nuxt.config.ts) but can still be writing this cache while
+    // enrich's own crawl+worker phase is in flight, so a stale snapshot taken
+    // here would miss Verkehrswerte that "just arrived" mid-run.
+    let vwCache = await readVerkehrswertCache()
 
     // Two independent reasons to (re)fetch detail: no detail fetch recorded
     // yet, OR the previous snapshot never recorded one (`detailFetchedAt`
@@ -486,7 +490,9 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
     // previous snapshot's `.extraction` (this task never sets it) and any
     // other detail field this crawl didn't refresh. Also acts as a catch-all
     // for listings the per-item write above already covered (idempotent) and
-    // for non-`todo` listings whose cached Verkehrswert only just arrived.
+    // for non-`todo` listings whose cached Verkehrswert only just arrived —
+    // re-read fresh since the worker loop above may have taken a while.
+    vwCache = await readVerkehrswertCache()
     for (const a of result.auctions) {
       throwIfTaskAborted(signal)
       if (a.marketValueEur != null) continue
