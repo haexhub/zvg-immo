@@ -17,14 +17,12 @@ import { defaults as defaultInteractions } from 'ol/interaction/defaults'
 import type BaseLayer from 'ol/layer/Base'
 import type { TileCoord } from 'ol/tilecoord'
 import { mapPinDataUri, MAP_PIN_ANCHOR } from '~/lib/mapPinIcon'
-import { createCountryImageryLayer } from '~/lib/countryImagery'
 import type { HazardAssessment, LocationContext, LocationMapFeature } from '~/types/auction'
 
 const props = defineProps<{
   lat: number
   lng: number
   label?: string
-  country?: string
   hazards?: HazardAssessment[] | null
   locationContext?: LocationContext | null
 }>()
@@ -302,16 +300,9 @@ const mapEl = ref<HTMLDivElement | null>(null)
 const popupEl = ref<HTMLDivElement | null>(null)
 let map: OlMap | null = null
 
-const runtimeConfig = useRuntimeConfig()
-const countryImageryKeys = {
-  fi: runtimeConfig.public.mmlApiKey as string,
-  dk: runtimeConfig.public.datafordelerApiKey as string,
-}
-
-const baseLayer = ref<'streets' | 'satellite' | 'satellite-country'>('streets')
+const baseLayer = ref<'streets' | 'satellite'>('streets')
 const panelOpen = ref(false)
 const overlayEntries = shallowRef<OverlayEntry[]>([])
-const hasCountryImagery = ref(false)
 
 function toggleOverlay(entry: OverlayEntry): void {
   entry.visible.value = !entry.visible.value
@@ -341,23 +332,13 @@ onMounted(async () => {
       attributions: 'Tiles &copy; Esri',
     }),
   })
-  // A handful of countries publish free, keyless orthophotos sharper than
-  // Esri World Imagery for their own territory — layer that over Esri when
-  // available (not instead of it: the national layer stops at its country's
-  // bounds/minZoom, so Esri has to stay underneath for panning/zooming beyond
-  // them).
-  const countryImagery = createCountryImageryLayer(props.country, countryImageryKeys)
-  hasCountryImagery.value = countryImagery != null
-
   streets.setVisible(baseLayer.value === 'streets')
   esriImagery.setVisible(baseLayer.value !== 'streets')
   placeLabels.setVisible(baseLayer.value !== 'streets')
-  countryImagery?.setVisible(baseLayer.value === 'satellite-country')
   watch(baseLayer, (value) => {
     streets.setVisible(value === 'streets')
     esriImagery.setVisible(value !== 'streets')
     placeLabels.setVisible(value !== 'streets')
-    countryImagery?.setVisible(value === 'satellite-country')
   })
 
   const entries: OverlayEntry[] = []
@@ -382,7 +363,7 @@ onMounted(async () => {
   map = new OlMap({
     target: mapEl.value,
     interactions: defaultInteractions({ mouseWheelZoom: false }),
-    layers: [streets, esriImagery, placeLabels, countryImagery, ...entries.map((e) => e.layer), markerLayer].filter((l): l is BaseLayer => l != null),
+    layers: [streets, esriImagery, placeLabels, ...entries.map((e) => e.layer), markerLayer],
     overlays: [popupOverlay],
     view: new OlView({ center: fromLonLat([props.lng, props.lat]), zoom: 14 }),
   })
@@ -418,8 +399,7 @@ onBeforeUnmount(() => {
       <div v-if="panelOpen" class="auction-detail-map-layers__panel">
         <div class="auction-detail-map-layers__group">
           <label><input v-model="baseLayer" type="radio" value="streets"> Straße</label>
-          <label><input v-model="baseLayer" type="radio" value="satellite"> Satellit (nur Esri)</label>
-          <label v-if="hasCountryImagery"><input v-model="baseLayer" type="radio" value="satellite-country"> Satellit (Länder-Tiles)</label>
+          <label><input v-model="baseLayer" type="radio" value="satellite"> Satellit</label>
         </div>
         <div v-if="overlayEntries.length" class="auction-detail-map-layers__overlays">
           <label v-for="entry in overlayEntries" :key="entry.key">

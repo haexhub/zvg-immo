@@ -199,13 +199,6 @@ export default defineNuxtConfig({
     //   NUXT_SMTP_URL=smtps://user:pass@smtp.example.com:465
     smtpUrl: '',
     public: {
-      // Free, instant self-service keys for the per-country satellite
-      // imagery layers in lib/countryImagery.ts that require one (Finland,
-      // Denmark) — that country's layer just falls back to Esri until set.
-      //   NUXT_PUBLIC_MML_API_KEY=<from omatili.maanmittauslaitos.fi>
-      mmlApiKey: '',
-      //   NUXT_PUBLIC_DATAFORDELER_API_KEY=<from datafordeler.dk>
-      datafordelerApiKey: '',
       // Browser-side Supabase Auth (GoTrue via Kong). Empty → useAuth()'s
       // client is never created and the login/signup pages show a
       // "not configured" state instead of throwing.
