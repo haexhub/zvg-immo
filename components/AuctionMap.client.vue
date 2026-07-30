@@ -8,10 +8,14 @@ import LotPopover from '~/components/LotPopover.vue'
 import { auctionKey } from '~/lib/auction-key'
 import { boundsForCountries } from '~/lib/country-bounds'
 import type { ContentTargetLang } from '~/lib/content-language'
+import { MAPTILER_ATTRIBUTION, OSM_ATTRIBUTION, mapTilerSatelliteUrl, mapTilerStreetsUrl } from '~/lib/map-tiles'
+import type { MapTilerTileMapIds } from '~/lib/map-tiles'
 import { mapPinDataUri, MAP_PIN_ANCHOR } from '~/lib/mapPinIcon'
 
 const ESRI_IMAGERY_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
 const ESRI_LABELS_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'
+const ESRI_ATTRIBUTION = 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics'
+const ESRI_LABELS_ATTRIBUTION = 'Tiles &copy; Esri'
 // Only used before any auction data has loaded and no country is selected —
 // once either is available, refreshMarkers()/fitFallbackView() below take
 // over with a real fit (auction extent, or the selected country's bounds).
@@ -61,7 +65,19 @@ const emit = defineEmits<{
   (e: 'auction-select', key: string): void
 }>()
 
-const { locale } = useI18n()
+const { locale, t } = useI18n()
+const runtimeConfig = useRuntimeConfig()
+const mapTilerApiKey = computed(() => String(runtimeConfig.public.maptilerApiKey || '').trim())
+const mapTilerMapIds = computed<MapTilerTileMapIds>(() => ({
+  streets: String(runtimeConfig.public.maptilerStreetsMapId || ''),
+  streetsDe: String(runtimeConfig.public.maptilerStreetsMapIdDe || ''),
+  streetsEn: String(runtimeConfig.public.maptilerStreetsMapIdEn || ''),
+  satellite: String(runtimeConfig.public.maptilerSatelliteMapId || ''),
+  satelliteDe: String(runtimeConfig.public.maptilerSatelliteMapIdDe || ''),
+  satelliteEn: String(runtimeConfig.public.maptilerSatelliteMapIdEn || ''),
+}))
+const streetsTileUrl = computed(() => mapTilerApiKey.value ? mapTilerStreetsUrl(locale.value, mapTilerApiKey.value, mapTilerMapIds.value) : '')
+const satelliteTileUrl = computed(() => mapTilerApiKey.value ? mapTilerSatelliteUrl(locale.value, mapTilerApiKey.value, mapTilerMapIds.value) : '')
 
 // Only 'de'/'en' have LLM translation support (see lib/content-language.ts);
 // any other UI locale falls back to showing the auction's original title.
@@ -251,15 +267,21 @@ function onPointerMove(evt: any): void {
     <ol-map ref="mapRef" class="h-full w-full" @click="onMapClick" @pointermove="onPointerMove" @moveend="emitBounds">
       <ol-view :center="initialCenter" :zoom="initialZoom" projection="EPSG:3857" />
       <ol-tile-layer v-if="baseLayer === 'streets'">
-        <ol-source-osm attributions="&copy; OpenStreetMap contributors" />
+        <ol-source-xyz v-if="streetsTileUrl" :url="streetsTileUrl" :attributions="MAPTILER_ATTRIBUTION" />
+        <ol-source-osm v-else :attributions="OSM_ATTRIBUTION" />
       </ol-tile-layer>
       <template v-else>
-        <ol-tile-layer>
-          <ol-source-xyz :url="ESRI_IMAGERY_URL" attributions="Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics" />
+        <ol-tile-layer v-if="satelliteTileUrl">
+          <ol-source-xyz :url="satelliteTileUrl" :attributions="MAPTILER_ATTRIBUTION" />
         </ol-tile-layer>
-        <ol-tile-layer>
-          <ol-source-xyz :url="ESRI_LABELS_URL" attributions="Tiles &copy; Esri" />
-        </ol-tile-layer>
+        <template v-else>
+          <ol-tile-layer>
+            <ol-source-xyz :url="ESRI_IMAGERY_URL" :attributions="ESRI_ATTRIBUTION" />
+          </ol-tile-layer>
+          <ol-tile-layer>
+            <ol-source-xyz :url="ESRI_LABELS_URL" :attributions="ESRI_LABELS_ATTRIBUTION" />
+          </ol-tile-layer>
+        </template>
       </template>
       <ol-vector-layer :style="clusterStyle">
         <ol-source-cluster ref="clusterSourceRef" :distance="60">
@@ -274,10 +296,10 @@ function onPointerMove(evt: any): void {
     </ol-map>
     <div class="auction-map-baselayer-toggle">
       <button type="button" :class="{ 'is-active': baseLayer === 'streets' }" @click="baseLayer = 'streets'">
-        Straße
+        {{ t('map.baseLayerStreets') }}
       </button>
       <button type="button" :class="{ 'is-active': baseLayer === 'satellite' }" @click="baseLayer = 'satellite'">
-        Satellit
+        {{ t('map.baseLayerSatellite') }}
       </button>
     </div>
   </div>

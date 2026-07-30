@@ -10,6 +10,11 @@
     "calculator": "Rechner",
     "menu": "Menü"
   },
+  "map": {
+    "layers": "Ebenen",
+    "baseLayerStreets": "Straße",
+    "baseLayerSatellite": "Satellit"
+  },
   "landing": {
     "hero": {
       "eyebrow": "Zwangsversteigerungen · europaweit",
