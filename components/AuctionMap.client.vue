@@ -10,6 +10,7 @@ import LotPopover from '~/components/LotPopover.vue'
 import { auctionKey } from '~/lib/auction-key'
 import { boundsForCountries } from '~/lib/country-bounds'
 import { createAllCountryImageryLayers } from '~/lib/countryImagery'
+import type { ContentTargetLang } from '~/lib/content-language'
 
 type AuctionMarker = L.Marker & { auctionKey?: string }
 
@@ -58,16 +59,22 @@ const countryImageryKeys = {
   dk: runtimeConfig.public.datafordelerApiKey as string,
 }
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const intlLocale = useIntlLocale()
 const { currency, eurToDisplay } = useCurrencyDisplay()
+
+// Only 'de'/'en' have LLM translation support (see lib/content-language.ts);
+// any other UI locale falls back to showing the auction's original title.
+function resolveContentLang(loc: string): ContentTargetLang | null {
+  return loc === 'de' || loc === 'en' ? loc : null
+}
 
 /** Mount LotPopover.vue into a fresh container that Leaflet will inject into
  *  its popup DOM. We mount lazily on popupopen (see refreshMarkers) so the
  *  lazy /api/auction-detail fetch only fires when the user actually opens
  *  the marker, not for all 2932 pins upfront. This detached app never
  *  installs the Nuxt i18n plugin, so LotPopover can't call useI18n() itself —
- *  it gets our already-bound `t`/`intlLocale` (and, for WP-7, `currency`/
+ *  it gets our already-bound `t`/`intlLocale`/`lang` (and, for WP-7, `currency`/
  *  the pre-converted `marketValue`) as plain props instead. */
 function mountLotPopover(el: HTMLElement, a: GeoAuction): VueApp {
   const app = createApp(LotPopover, {
@@ -76,6 +83,7 @@ function mountLotPopover(el: HTMLElement, a: GeoAuction): VueApp {
     intlLocale: intlLocale.value,
     currency: currency.value,
     convertEur: eurToDisplay,
+    lang: resolveContentLang(locale.value),
   })
   app.mount(el)
   return app
