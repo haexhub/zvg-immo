@@ -25,7 +25,7 @@ import {
 import { getLlmMaxTokens, getLlmProviderOverride } from '~/server/utils/app-settings'
 import { resolveLlmConfig, type LlmConfig } from '~/server/utils/extract/llm'
 import { callTranslationLlm, type TranslationResult } from '~/server/utils/extract/text-llm'
-import { isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
+import { countryContentLanguage, isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
 import { extractTranslatableExtractionTexts, TRANSLATABLE_EXTRACTION_TEXTS_VERSION } from '~/lib/extraction-translation'
 import {
   checkInMemoryRateLimit,
@@ -38,6 +38,28 @@ import type { Auction } from '~/types/auction'
 const SUPPORTED_TARGET_LANGS = new Set<ContentTargetLang>(['de', 'en'])
 
 const LANG_NAMES: Record<ContentTargetLang, string> = { de: 'German', en: 'English' }
+const SOURCE_LANG_NAMES: Record<string, string> = {
+  bg: 'Bulgarian',
+  bs: 'Bosnian',
+  cs: 'Czech',
+  da: 'Danish',
+  de: 'German',
+  el: 'Greek',
+  en: 'English',
+  es: 'Spanish',
+  et: 'Estonian',
+  fi: 'Finnish',
+  fr: 'French',
+  hu: 'Hungarian',
+  is: 'Icelandic',
+  it: 'Italian',
+  lt: 'Lithuanian',
+  lv: 'Latvian',
+  pl: 'Polish',
+  pt: 'Portuguese',
+  sl: 'Slovenian',
+  sv: 'Swedish',
+}
 
 const SYSTEM_PROMPT =
   'Du bist ein präziser Übersetzer für Anzeigen von Immobilien-Zwangsversteigerungen. ' +
@@ -59,9 +81,14 @@ function buildPrompt(
   documentSummary: string | null,
   extractionTexts: ReturnType<typeof extractTranslatableExtractionTexts>,
   targetLang: ContentTargetLang,
+  sourceLang: string | null,
 ): string {
+  const sourceHint = sourceLang
+    ? `The source portal normally publishes this auction in ${SOURCE_LANG_NAMES[sourceLang] ?? sourceLang}. If an individual field is in another language, detect it and still translate it into ${LANG_NAMES[targetLang]}.`
+    : `Detect the source language of each field and translate it into ${LANG_NAMES[targetLang]}.`
   const lines = [
     `Translate the following real-estate foreclosure auction text fields into ${LANG_NAMES[targetLang]}.`,
+    sourceHint,
     'Return the same JSON shape. Translate every string value. Keep nulls, array order, array lengths, identifiers, dates, numbers and currencies unchanged.',
     'Do not leave whole source-language sentences unchanged. Do not write source terms followed by target-language translations in parentheses; use the target-language term directly.',
     'EXTRACTION_TEXTS_JSON contains short structured labels shown in the property detail UI. Translate heating and insights.construction as user-facing amenity text, including material, roof, window, foundation and building-services terms. Keep an original specialist term only when there is no reliable target-language equivalent.',
@@ -80,11 +107,12 @@ async function tryTranslate(
   documentSummary: string | null,
   extractionTexts: ReturnType<typeof extractTranslatableExtractionTexts>,
   targetLang: ContentTargetLang,
+  sourceLang: string | null,
   config: Parameters<typeof callTranslationLlm>[6],
 ): Promise<TranslationResult | null> {
   return await callTranslationLlm(
     SYSTEM_PROMPT,
-    buildPrompt(title, description, documentSummary, extractionTexts, targetLang),
+    buildPrompt(title, description, documentSummary, extractionTexts, targetLang, sourceLang),
     title,
     description,
     documentSummary,
@@ -158,6 +186,7 @@ export default defineEventHandler(async (event) => {
   const { title, description } = auction
   const documentSummary = auction.extraction?.documentSummary ?? null
   const extractionTexts = extractTranslatableExtractionTexts(auction.extraction)
+  const sourceLang = countryContentLanguage(auction.country)
   if (title == null && description == null && documentSummary == null && extractionTexts == null) {
     return { title: null, description: null, documentSummary: null, extractionTexts: null, translated: false }
   }
@@ -268,7 +297,7 @@ export default defineEventHandler(async (event) => {
         throw new Error('LLM ist nicht konfiguriert')
       }
 
-      const result = await tryTranslate(title, description, documentSummary, extractionTexts, targetLang, config)
+      const result = await tryTranslate(title, description, documentSummary, extractionTexts, targetLang, sourceLang, config)
       if (!result) {
         throw new Error('LLM hat keine gültige Übersetzung geliefert')
       }

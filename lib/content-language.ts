@@ -1,10 +1,8 @@
-// Maps each crawled country (server/crawlers/registry.ts's `platforms`) to
-// its primary content language (ISO 639-1) — the language `title`/
-// `description` are actually written in. Used by the content-translation
-// passthrough rule (server/api/auction/[platform]/[id]/translation.post.ts
-// and the objekt detail page): if the viewer's target language equals the
-// auction's primary language, skip the LLM call and show the original text.
-export const PRIMARY_LANGUAGE: Record<string, string> = {
+// Maps each crawled country (server/crawlers/registry.ts's `platforms`) to the
+// language its source portal normally publishes auction text in (ISO 639-1).
+// This is NOT the set of UI locales the site offers. UI/content target
+// languages stay intentionally limited to `ContentTargetLang` below.
+export const COUNTRY_CONTENT_LANGUAGE: Record<string, string> = {
   de: 'de',
   at: 'de',
   es: 'es',
@@ -27,13 +25,22 @@ export const PRIMARY_LANGUAGE: Record<string, string> = {
   gr: 'el',
   gb: 'en',
   us: 'en',
+  bg: 'bg',
 }
 
+// User-facing target languages supported by the site and translation endpoint.
+// Adding a source country language above must not imply adding a selectable UI
+// locale here.
 export type ContentTargetLang = 'de' | 'en'
 
-/** True when the auction's country's primary language already matches
- *  `targetLang` — translating would be a no-op, so the caller should skip
- *  the LLM call and use the original title/description as-is. */
+export function countryContentLanguage(country: string): string | null {
+  return COUNTRY_CONTENT_LANGUAGE[country.toLowerCase()] ?? null
+}
+
+/** True when the auction's country source language already matches
+ *  `targetLang` — translating would be a no-op, so the caller should skip the
+ *  LLM call and use the original title/description as-is. Unknown countries
+ *  deliberately do not pass through; the LLM can detect the source language. */
 export function isPassthroughLanguage(country: string, targetLang: ContentTargetLang): boolean {
-  return PRIMARY_LANGUAGE[country.toLowerCase()] === targetLang
+  return countryContentLanguage(country) === targetLang
 }

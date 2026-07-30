@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isPassthroughLanguage } from './content-language'
+import { countryContentLanguage, isPassthroughLanguage } from './content-language'
 
 describe('isPassthroughLanguage', () => {
   it('is a passthrough when the target matches the country primary language', () => {
@@ -15,6 +15,8 @@ describe('isPassthroughLanguage', () => {
     expect(isPassthroughLanguage('gb', 'de')).toBe(false)
     expect(isPassthroughLanguage('es', 'de')).toBe(false)
     expect(isPassthroughLanguage('es', 'en')).toBe(false)
+    expect(isPassthroughLanguage('bg', 'de')).toBe(false)
+    expect(isPassthroughLanguage('bg', 'en')).toBe(false)
   })
 
   it('is case-insensitive on the country code', () => {
@@ -24,5 +26,16 @@ describe('isPassthroughLanguage', () => {
   it('is not a passthrough for an unknown country', () => {
     expect(isPassthroughLanguage('zz', 'de')).toBe(false)
     expect(isPassthroughLanguage('zz', 'en')).toBe(false)
+  })
+})
+
+describe('countryContentLanguage', () => {
+  it('maps country source language independently from supported UI locales', () => {
+    expect(countryContentLanguage('bg')).toBe('bg')
+    expect(countryContentLanguage('BG')).toBe('bg')
+  })
+
+  it('returns null for an unknown country so the LLM can detect it', () => {
+    expect(countryContentLanguage('zz')).toBeNull()
   })
 })
