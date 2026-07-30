@@ -50,6 +50,14 @@ export async function buildAuctionSearchFilter(
   const countries = requested.length ? requested.filter((entry) => enabled.includes(entry)) : enabled
   where.push(`a.country = ANY(${add(countries)}::text[])`)
 
+  // `auctions` is upserted row-by-row (current-auctions.ts) and never pruned,
+  // so an auction whose date has passed keeps its row indefinitely once the
+  // crawl stops returning it — unlike list_cache, which replaced the whole
+  // region blob per crawl and so dropped concluded auctions for free. Filter
+  // it here instead, the same way the enabled-country scope above is applied
+  // at read time rather than by deleting rows.
+  where.push(`(a.auction_date_iso IS NULL OR a.auction_date_iso >= now())`)
+
   const regionNames = commaList(query.regionNames)
   if (regionNames.length) where.push(`(a.country || ':' || a.region) = ANY(${add(regionNames)}::text[])`)
 

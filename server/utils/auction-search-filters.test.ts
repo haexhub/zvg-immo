@@ -61,4 +61,11 @@ describe('buildAuctionSearchFilter', () => {
 
     expect(predicate).not.toContain('market_value_eur >=')
   })
+
+  it('always excludes auctions whose date has passed', async () => {
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+    const { predicate } = await buildAuctionSearchFilter(db, { llmOnly: '0' })
+
+    expect(predicate).toContain('a.auction_date_iso IS NULL OR a.auction_date_iso >= now()')
+  })
 })
