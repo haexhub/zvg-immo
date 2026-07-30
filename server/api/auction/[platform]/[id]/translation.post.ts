@@ -194,7 +194,10 @@ export default defineEventHandler(async (event) => {
     // Same config that failed before: still within the backoff window, keep
     // replaying the stored error. A /settings provider/model/key change since
     // the failure produces a different fingerprint — skip the wait, retry now.
-    if (stored.failedConfig === currentFingerprint) {
+    // A null failedConfig (a row written before this fingerprint existed) is
+    // "unknown, assume unchanged" — otherwise every pre-existing failed row
+    // would bypass the backoff the first time it's touched after this ships.
+    if (stored.failedConfig == null || stored.failedConfig === currentFingerprint) {
       throw createError({
         statusCode: 502,
         statusMessage: 'Übersetzung fehlgeschlagen',

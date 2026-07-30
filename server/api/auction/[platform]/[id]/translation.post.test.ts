@@ -274,6 +274,38 @@ describe('/api/auction/:platform/:id/translation', () => {
     expect(callTranslationLlm).not.toHaveBeenCalled()
   })
 
+  it('still honors the backoff for a legacy failed row with no recorded config (failedConfig: null)', async () => {
+    const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
+    const { readAuctionTranslation, claimAuctionTranslation } = await import('~/server/utils/content-translation')
+    const handler = await loadHandler()
+    vi.mocked(readAuctionTranslation).mockResolvedValue({
+      contentHash: 'failed-content-hash',
+      status: 'failed',
+      errorMessage: 'Provider nicht erreichbar',
+      // Row written before failed_config existed — must not be treated as
+      // "config changed" (that would bypass the backoff for every
+      // pre-existing failure on the first request after this ships).
+      failedConfig: null,
+      claimStale: false,
+      retryDue: false,
+      title: null,
+      description: null,
+      documentSummary: null,
+      extractionTexts: null,
+    })
+
+    await expect(handler({
+      context: { params: { platform: 'se-kronofogden', id: '101738' } },
+      node: { req: { socket: { remoteAddress: '127.0.0.1' } } },
+    })).rejects.toMatchObject({
+      statusCode: 502,
+      data: { detail: 'Provider nicht erreichbar' },
+    })
+
+    expect(claimAuctionTranslation).not.toHaveBeenCalled()
+    expect(callTranslationLlm).not.toHaveBeenCalled()
+  })
+
   it('retries immediately when the LLM config changed since the failure, even though the retry window is still closed', async () => {
     const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
     const { readAuctionTranslation, claimAuctionTranslation } = await import('~/server/utils/content-translation')
