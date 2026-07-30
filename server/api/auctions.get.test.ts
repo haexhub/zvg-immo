@@ -18,7 +18,7 @@ afterEach(() => {
 })
 
 describe('/api/auctions', () => {
-  it('returns a paginated card DTO without detail text, documents or galleries', async () => {
+  it('returns a paginated card DTO without detail text, documents or raw galleries', async () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     vi.stubGlobal('getQuery', () => ({ country: 'de', page: '2', pageSize: '30' }))
     vi.stubGlobal('setResponseHeader', vi.fn())
@@ -52,6 +52,10 @@ describe('/api/auctions', () => {
         lastRenovationYear: 2020,
         condition: 'gut',
         features: ['garage'],
+        photos: [
+          { file: 'second.jpg', category: 'innen', caption: null, isPropertyPhoto: true },
+          { file: 'first.jpg', category: 'aussen', caption: null, isPropertyPhoto: true },
+        ],
         source: 'llm',
         llmAnalyzedAt: '2026-07-01T00:00:00.000Z',
         documentSummary: 'Must not reach a search card',
@@ -88,12 +92,17 @@ describe('/api/auctions', () => {
     expect(result).toMatchObject({ total: 61, page: 2, pageSize: 30 })
     const card = (result as { auctions: Array<Record<string, unknown>> }).auctions[0]!
     expect(card.thumbnailUrl).toBe('/api/auction-image/zvg-portal/42/first.jpg')
+    expect(card.galleryUrls).toEqual([
+      '/api/auction-image/zvg-portal/42/first.jpg',
+      '/api/auction-image/zvg-portal/42/second.jpg',
+    ])
     expect(card).not.toHaveProperty('description')
     expect(card).not.toHaveProperty('attachments')
     expect(card).not.toHaveProperty('photoUrls')
     expect(card).not.toHaveProperty('detailUrl')
     expect(card.extraction).not.toHaveProperty('documentSummary')
     expect(card.extraction).not.toHaveProperty('insights')
+    expect(card.extraction).not.toHaveProperty('photos')
   })
 
   it('fails visibly when the serving database is not configured', async () => {
