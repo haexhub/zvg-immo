@@ -38,27 +38,10 @@ import type { Auction } from '~/types/auction'
 const SUPPORTED_TARGET_LANGS = new Set<ContentTargetLang>(['de', 'en'])
 
 const LANG_NAMES: Record<ContentTargetLang, string> = { de: 'German', en: 'English' }
-const SOURCE_LANG_NAMES: Record<string, string> = {
-  bg: 'Bulgarian',
-  bs: 'Bosnian',
-  cs: 'Czech',
-  da: 'Danish',
-  de: 'German',
-  el: 'Greek',
-  en: 'English',
-  es: 'Spanish',
-  et: 'Estonian',
-  fi: 'Finnish',
-  fr: 'French',
-  hu: 'Hungarian',
-  is: 'Icelandic',
-  it: 'Italian',
-  lt: 'Lithuanian',
-  lv: 'Latvian',
-  pl: 'Polish',
-  pt: 'Portuguese',
-  sl: 'Slovenian',
-  sv: 'Swedish',
+const LANGUAGE_DISPLAY_NAMES = new Intl.DisplayNames(['en'], { type: 'language' })
+
+function languageName(code: string): string {
+  return LANGUAGE_DISPLAY_NAMES.of(code) ?? code
 }
 
 const SYSTEM_PROMPT =
@@ -84,7 +67,7 @@ function buildPrompt(
   sourceLang: string | null,
 ): string {
   const sourceHint = sourceLang
-    ? `The source portal normally publishes this auction in ${SOURCE_LANG_NAMES[sourceLang] ?? sourceLang}. If an individual field is in another language, detect it and still translate it into ${LANG_NAMES[targetLang]}.`
+    ? `The source portal normally publishes this auction in ${languageName(sourceLang)}. If an individual field is in another language, detect it and still translate it into ${LANG_NAMES[targetLang]}.`
     : `Detect the source language of each field and translate it into ${LANG_NAMES[targetLang]}.`
   const lines = [
     `Translate the following real-estate foreclosure auction text fields into ${LANG_NAMES[targetLang]}.`,

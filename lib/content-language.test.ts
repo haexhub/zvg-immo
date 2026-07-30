@@ -30,12 +30,17 @@ describe('isPassthroughLanguage', () => {
 })
 
 describe('countryContentLanguage', () => {
-  it('maps country source language independently from supported UI locales', () => {
+  it('infers country source languages independently from supported UI locales', () => {
     expect(countryContentLanguage('bg')).toBe('bg')
     expect(countryContentLanguage('BG')).toBe('bg')
+    expect(countryContentLanguage('at')).toBe('de')
+    expect(countryContentLanguage('cz')).toBe('cs')
+    expect(countryContentLanguage('dk')).toBe('da')
+    expect(countryContentLanguage('gr')).toBe('el')
   })
 
   it('returns null for an unknown country so the LLM can detect it', () => {
     expect(countryContentLanguage('zz')).toBeNull()
+    expect(countryContentLanguage('deu')).toBeNull()
   })
 })

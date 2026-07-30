@@ -1,40 +1,28 @@
-// Maps each crawled country (server/crawlers/registry.ts's `platforms`) to the
-// language its source portal normally publishes auction text in (ISO 639-1).
-// This is NOT the set of UI locales the site offers. UI/content target
-// languages stay intentionally limited to `ContentTargetLang` below.
-export const COUNTRY_CONTENT_LANGUAGE: Record<string, string> = {
-  de: 'de',
-  at: 'de',
-  es: 'es',
-  it: 'it',
-  cz: 'cs',
-  pl: 'pl',
-  hu: 'hu',
-  lt: 'lt',
-  ba: 'bs',
-  se: 'sv',
-  fi: 'fi',
-  dk: 'da',
-  fr: 'fr',
-  is: 'is',
-  ca: 'en',
-  ee: 'et',
-  lv: 'lv',
-  pt: 'pt',
-  si: 'sl',
-  gr: 'el',
-  gb: 'en',
-  us: 'en',
-  bg: 'bg',
-}
-
 // User-facing target languages supported by the site and translation endpoint.
-// Adding a source country language above must not imply adding a selectable UI
-// locale here.
+// Source languages are inferred separately from auction country codes; adding
+// a country must not imply adding a selectable UI locale here.
 export type ContentTargetLang = 'de' | 'en'
 
+const REGION_DISPLAY_NAMES = new Intl.DisplayNames(['en'], { type: 'region' })
+
+function isKnownRegion(code: string): boolean {
+  if (!/^[a-z]{2}$/i.test(code)) return false
+  return REGION_DISPLAY_NAMES.of(code.toUpperCase()) !== 'Unknown Region'
+}
+
+/** Infers the language a country's official/source portals normally use from
+ *  the ISO-3166 country code via CLDR likely-subtags. This keeps translation
+ *  passthrough automatic as countries are enabled/disabled, while unknown or
+ *  invalid country codes deliberately return null so the LLM can detect the
+ *  source language itself. */
 export function countryContentLanguage(country: string): string | null {
-  return COUNTRY_CONTENT_LANGUAGE[country.toLowerCase()] ?? null
+  const code = country.trim().toUpperCase()
+  if (!isKnownRegion(code)) return null
+  try {
+    return new Intl.Locale(`und-${code}`).maximize().language || null
+  } catch {
+    return null
+  }
 }
 
 /** True when the auction's country source language already matches
