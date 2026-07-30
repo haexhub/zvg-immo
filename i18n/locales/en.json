@@ -10,6 +10,11 @@
     "calculator": "Calculator",
     "menu": "Menu"
   },
+  "map": {
+    "layers": "Layers",
+    "baseLayerStreets": "Street",
+    "baseLayerSatellite": "Satellite"
+  },
   "landing": {
     "hero": {
       "eyebrow": "Foreclosure auctions · across Europe",

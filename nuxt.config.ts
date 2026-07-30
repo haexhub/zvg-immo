@@ -206,6 +206,11 @@ export default defineNuxtConfig({
       supabaseUrl: '',
       //   NUXT_PUBLIC_SUPABASE_ANON_KEY=<from scripts/generate-supabase-keys.mjs>
       supabaseAnonKey: '',
+      // Optional browser-side map tiles with localized labels. When empty,
+      // maps fall back to OpenStreetMap/Esri tiles, whose raster labels are
+      // provider-defined and cannot be switched per UI locale.
+      //   NUXT_PUBLIC_MAPTILER_API_KEY=<from MapTiler Cloud>
+      mapTilerApiKey: '',
     },
   },
   nitro: {

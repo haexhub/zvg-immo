@@ -16,6 +16,7 @@ import Overlay from 'ol/Overlay'
 import { defaults as defaultInteractions } from 'ol/interaction/defaults'
 import type BaseLayer from 'ol/layer/Base'
 import type { TileCoord } from 'ol/tilecoord'
+import { MAPTILER_ATTRIBUTION, OSM_ATTRIBUTION, mapTilerSatelliteUrl, mapTilerStreetsUrl } from '~/lib/map-tiles'
 import { mapPinDataUri, MAP_PIN_ANCHOR } from '~/lib/mapPinIcon'
 import type { HazardAssessment, LocationContext, LocationMapFeature } from '~/types/auction'
 
@@ -27,7 +28,9 @@ const props = defineProps<{
   locationContext?: LocationContext | null
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
+const runtimeConfig = useRuntimeConfig()
+const mapTilerApiKey = computed(() => String(runtimeConfig.public.mapTilerApiKey || '').trim())
 
 function hazardColor(hazard: HazardAssessment): string {
   if (hazard.status === 'inside') return '#dc2626'
@@ -316,7 +319,11 @@ onMounted(async () => {
   await nextTick()
   if (!mapEl.value || !popupEl.value) return
 
-  const streets = new TileLayer({ source: new OSM({ attributions: '&copy; OpenStreetMap contributors' }) })
+  const mapTilerKey = mapTilerApiKey.value
+  const streetsSource = mapTilerKey
+    ? new XYZ({ url: mapTilerStreetsUrl(locale.value, mapTilerKey), attributions: MAPTILER_ATTRIBUTION })
+    : new OSM({ attributions: OSM_ATTRIBUTION })
+  const streets = new TileLayer({ source: streetsSource })
   const esriImagery = new TileLayer({
     source: new XYZ({
       url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
@@ -332,13 +339,24 @@ onMounted(async () => {
       attributions: 'Tiles &copy; Esri',
     }),
   })
+  const mapTilerHybridSource = mapTilerKey
+    ? new XYZ({ url: mapTilerSatelliteUrl(locale.value, mapTilerKey), attributions: MAPTILER_ATTRIBUTION })
+    : null
+  const mapTilerHybrid = new TileLayer({ source: mapTilerHybridSource ?? undefined })
   streets.setVisible(baseLayer.value === 'streets')
-  esriImagery.setVisible(baseLayer.value !== 'streets')
-  placeLabels.setVisible(baseLayer.value !== 'streets')
+  mapTilerHybrid.setVisible(!!mapTilerHybridSource && baseLayer.value !== 'streets')
+  esriImagery.setVisible(!mapTilerHybridSource && baseLayer.value !== 'streets')
+  placeLabels.setVisible(!mapTilerHybridSource && baseLayer.value !== 'streets')
   watch(baseLayer, (value) => {
     streets.setVisible(value === 'streets')
-    esriImagery.setVisible(value !== 'streets')
-    placeLabels.setVisible(value !== 'streets')
+    mapTilerHybrid.setVisible(!!mapTilerHybridSource && value !== 'streets')
+    esriImagery.setVisible(!mapTilerHybridSource && value !== 'streets')
+    placeLabels.setVisible(!mapTilerHybridSource && value !== 'streets')
+  })
+  watch(locale, (value) => {
+    if (!mapTilerKey) return
+    if (streetsSource instanceof XYZ) streetsSource.setUrl(mapTilerStreetsUrl(value, mapTilerKey))
+    mapTilerHybridSource?.setUrl(mapTilerSatelliteUrl(value, mapTilerKey))
   })
 
   const entries: OverlayEntry[] = []
@@ -363,7 +381,7 @@ onMounted(async () => {
   map = new OlMap({
     target: mapEl.value,
     interactions: defaultInteractions({ mouseWheelZoom: false }),
-    layers: [streets, esriImagery, placeLabels, ...entries.map((e) => e.layer), markerLayer],
+    layers: [streets, ...(mapTilerHybridSource ? [mapTilerHybrid] : []), esriImagery, placeLabels, ...entries.map((e) => e.layer), markerLayer],
     overlays: [popupOverlay],
     view: new OlView({ center: fromLonLat([props.lng, props.lat]), zoom: 14 }),
   })
@@ -394,12 +412,12 @@ onBeforeUnmount(() => {
     <div ref="popupEl" class="auction-detail-map-popup" />
     <div class="auction-detail-map-layers">
       <button type="button" class="auction-detail-map-layers__toggle" @click="panelOpen = !panelOpen">
-        Ebenen
+        {{ t('map.layers') }}
       </button>
       <div v-if="panelOpen" class="auction-detail-map-layers__panel">
         <div class="auction-detail-map-layers__group">
-          <label><input v-model="baseLayer" type="radio" value="streets"> Straße</label>
-          <label><input v-model="baseLayer" type="radio" value="satellite"> Satellit</label>
+          <label><input v-model="baseLayer" type="radio" value="streets"> {{ t('map.baseLayerStreets') }}</label>
+          <label><input v-model="baseLayer" type="radio" value="satellite"> {{ t('map.baseLayerSatellite') }}</label>
         </div>
         <div v-if="overlayEntries.length" class="auction-detail-map-layers__overlays">
           <label v-for="entry in overlayEntries" :key="entry.key">
@@ -442,8 +460,8 @@ onBeforeUnmount(() => {
   padding: 4px 10px;
   font-size: 12px;
   font-weight: 600;
-  color: #1f2937;
-  background: white;
+  color: #111827;
+  background: rgb(255 255 255 / 98%);
   border: 1px solid rgb(15 23 42 / 15%);
   border-radius: 6px;
   box-shadow: 0 2px 8px rgb(15 23 42 / 15%);
@@ -455,12 +473,14 @@ onBeforeUnmount(() => {
   max-height: 15rem;
   overflow-y: auto;
   padding: 6px 8px;
-  background: white;
+  color: #111827;
+  background: rgb(255 255 255 / 96%);
   border: 1px solid rgb(15 23 42 / 15%);
   border-radius: 6px;
   box-shadow: 0 2px 8px rgb(15 23 42 / 15%);
   font-size: 12px;
   line-height: 1.25;
+  backdrop-filter: blur(4px);
 }
 
 .auction-detail-map-layers__group {
@@ -482,6 +502,12 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 4px;
+  min-height: 20px;
   cursor: pointer;
+}
+
+.auction-detail-map-layers input {
+  flex: 0 0 auto;
+  accent-color: #2563eb;
 }
 </style>
