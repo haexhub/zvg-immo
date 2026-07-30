@@ -5,20 +5,19 @@ import type { CountryEntry } from '~/server/crawlers/registry'
 import { ALL_SCOPE, isAllScope } from '~/lib/auction-constants'
 import { auctionKey } from '~/lib/auction-key'
 import type { SavedSearch } from '~/server/api/saved-searches/index.get'
-import type { WatchlistItem } from '~/server/api/watchlist/index.get'
-import { useMediaQuery, refDebounced } from '@vueuse/core'
+import { useMediaQuery } from '@vueuse/core'
 import { apiErrorMessage } from '~/lib/api-error'
+import { useAuctionSearchState } from '~/composables/useAuctionSearchState'
+import { useAuctionWatchlist } from '~/composables/useAuctionWatchlist'
 
 definePageMeta({ layout: 'search' })
 
 const route = useRoute()
-const router = useRouter()
 const { user } = useAuth()
 const { t, locale } = useI18n()
 const intlLocale = useIntlLocale()
 const { currency, eurToDisplay, displayToEur } = useCurrencyDisplay()
 const propertyTypeLabel = usePropertyTypeLabel()
-const countryLabel = useCountryLabel()
 
 // Desktop shows list + map side by side; below this breakpoint they collapse
 // into the two SearchTabs panes (see template) — matches SiteHeader's own
@@ -28,39 +27,6 @@ const countryLabel = useCountryLabel()
 // markup, so the desktop swap happens as a normal post-hydration update
 // instead of a hydration mismatch (which otherwise corrupts the DOM).
 const mediaIsDesktop = useMediaQuery('(min-width: 768px)')
-const mounted = ref(false)
-const isDesktop = computed(() => mounted.value && mediaIsDesktop.value)
-
-function queryStr(key: string, fallback = ''): string {
-  const v = route.query[key]
-  return (Array.isArray(v) ? (v[0] ?? '') : (v ?? '')) || fallback
-}
-function queryNum(key: string): number | null {
-  const v = queryStr(key)
-  if (!v) return null
-  const n = Number(v)
-  return Number.isFinite(n) ? n : null
-}
-function queryList(key: string): string[] {
-  const v = route.query[key]
-  const raw = Array.isArray(v) ? v.join(',') : (v ?? '')
-  return raw ? raw.split(',').filter(Boolean) : []
-}
-const SORT_OPTIONS = ['default', 'dateAsc', 'priceAsc', 'priceDesc'] as const
-type SortBy = typeof SORT_OPTIONS[number]
-function querySortBy(): SortBy {
-  const v = queryStr('sort', 'default')
-  return SORT_OPTIONS.includes(v as SortBy) ? (v as SortBy) : 'default'
-}
-
-// Country/region multi-select filter. Empty array = aggregate over every
-// registered platform across every country. Region selections are stored as
-// `${countryCode}:${regionCode}` pairs (not bare region codes) since region
-// codes aren't unique across countries once several countries are selectable.
-const selectedCountries = ref<string[]>(queryList('country'))
-const selectedRegionKeys = ref<string[]>(queryList('region'))
-
-const filtersOpen = ref(false)
 
 const { data: countries } = await useFetch<CountryEntry[]>('/api/regions', {
   cache: 'no-store',
@@ -76,49 +42,49 @@ const { data: displaySettings } = await useFetch<{ hideRulesOnlyAuctions: boolea
 })
 const hideRulesOnlyServerDefault = computed(() => displaySettings.value?.hideRulesOnlyAuctions ?? true)
 
-// Regions of the currently selected countries (empty when none selected).
-// Each entry carries its country's display name so the checkbox list can
-// disambiguate identically-named regions once multiple countries are picked.
-const availableRegions = computed(() => {
-  if (selectedCountries.value.length === 0) return []
-  return (countries.value ?? [])
-    .filter((c) => selectedCountries.value.includes(c.code))
-    .flatMap((c) => c.regions.map((r) => ({ ...r, key: `${c.code}:${r.code}`, countryName: countryLabel(c.code, c.name) })))
+const {
+  mounted,
+  selectedCountries,
+  selectedRegionKeys,
+  filtersOpen,
+  availableRegions,
+  queryParams,
+  view,
+  search,
+  debouncedSearch,
+  includeCancelled,
+  authorityFilter,
+  priceMinDisplay,
+  priceMaxDisplay,
+  landAreaMin,
+  landAreaMax,
+  livingAreaMin,
+  livingAreaMax,
+  yearBuiltMin,
+  yearBuiltMax,
+  renovationYearMin,
+  renovationYearMax,
+  categoryFilter,
+  conditionFilter,
+  featuresFilter,
+  onlyWithPhotos,
+  hideRulesOnly,
+  boundToMap,
+  sortBy,
+  headerLabel,
+  activeFilterCount,
+  toggleCountry,
+  toggleRegion,
+  setPriceBucket,
+  clearAllFilters,
+  initializeMountedState,
+} = useAuctionSearchState({
+  countries,
+  hideRulesOnlyServerDefault,
+  eurToDisplay,
+  displayToEur,
 })
-
-function toggleCountry(code: string): void {
-  const set = new Set(selectedCountries.value)
-  if (set.has(code)) set.delete(code)
-  else set.add(code)
-  selectedCountries.value = [...set]
-}
-function toggleRegion(key: string): void {
-  const set = new Set(selectedRegionKeys.value)
-  if (set.has(key)) set.delete(key)
-  else set.add(key)
-  selectedRegionKeys.value = [...set]
-}
-
-// Drop region selections that no longer belong to a selected country — e.g.
-// deselecting a country should also drop its regions.
-watch(selectedCountries, () => {
-  const valid = new Set(availableRegions.value.map((r) => r.key))
-  selectedRegionKeys.value = selectedRegionKeys.value.filter((k) => valid.has(k))
-})
-
-const queryParams = computed(() => ({
-  ...route.query,
-  country: selectedCountries.value.length ? selectedCountries.value.join(',') : undefined,
-  regionNames: selectedRegionKeys.value
-    .map((key) => {
-      const region = availableRegions.value.find((entry) => entry.key === key)
-      return region ? `${region.country}:${region.name}` : null
-    })
-    .filter((value): value is string => value != null)
-    .join(',') || undefined,
-  page: 1,
-  pageSize: 30,
-}))
+const isDesktop = computed(() => mounted.value && mediaIsDesktop.value)
 
 // Search results are filtered and paginated in Postgres. Only compact card
 // summaries reach the browser; detail text, documents and galleries stay on
@@ -127,12 +93,6 @@ const { data, pending, error, refresh } = useLazyFetch<AuctionSearchResponse | n
   query: queryParams,
   default: () => null,
 })
-
-// SSR-safe default 'list' (see isDesktop above) — this is now purely the
-// active *mobile* tab; on desktop both panes render regardless of its value.
-const view = ref<'list' | 'map'>('list')
-const mapViewImpliedByCountryQuery = ref(false)
-let applyingImplicitMapView = false
 
 // The map pane is visible whenever it's actually on screen: always on
 // desktop, or only during the "map" mobile tab. Drives both the geo-fetch
@@ -237,125 +197,13 @@ watch([geocodingInProgress, mapVisible, shouldFetchMissingGeo], ([running, visib
   else stopGeoPoll()
 }, { immediate: true })
 
-onMounted(() => {
-  const isMapView = route.query.view === 'map'
-  const isCountryMapView = !isMapView && route.query.view === undefined && selectedCountries.value.length > 0
-  mapViewImpliedByCountryQuery.value = isCountryMapView
-  applyingImplicitMapView = isCountryMapView
-  view.value = isMapView || isCountryMapView ? 'map' : 'list'
-  if (applyingImplicitMapView) {
-    void nextTick(() => {
-      applyingImplicitMapView = false
-    })
-  }
-  mounted.value = true
-  // The multi-ref sync watcher below only fires on change — a stale
-  // non-map `view` param (e.g. old `?view=list` links) wouldn't trigger
-  // it since view.value already equals the default, so clean it up here.
-  if (!isMapView && route.query.view !== undefined) {
-    const query = { ...route.query }
-    delete query.view
-    router.replace({ query })
-  }
-})
+onMounted(initializeMountedState)
 
 onDeactivated(() => stopGeoPoll())
 onActivated(() => {
   if (geocodingInProgress.value && mapVisible.value) startGeoPoll()
 })
 onBeforeUnmount(() => stopGeoPoll())
-
-watch(view, () => {
-  if (!mounted.value || applyingImplicitMapView) return
-  mapViewImpliedByCountryQuery.value = false
-})
-
-const search = ref(queryStr('q'))
-// Every keystroke re-runs filteredGeo and rebuilds thousands of map markers —
-// debounce the search term so typing stays smooth. Selects/checkboxes keep
-// applying instantly.
-const debouncedSearch = refDebounced(search, 250)
-const includeCancelled = ref(route.query.cancelled === '1')
-const authorityFilter = ref<string>(queryStr('authority', ALL_SCOPE))
-// Canonical filter state stays in EUR (matches marketValueEur, and keeps
-// saved-search/URL query semantics stable regardless of the viewer's
-// currency preference) — priceMinDisplay/priceMaxDisplay below convert only
-// for the input fields the user actually types into.
-const priceMin = ref<number | null>(queryNum('priceMin'))
-const priceMax = ref<number | null>(queryNum('priceMax'))
-
-function toDisplayOrNull(eur: number | null): number | null {
-  if (eur == null) return null
-  const d = eurToDisplay(eur)
-  return d != null ? Math.round(d) : null
-}
-function toEurOrNull(v: unknown): number | null {
-  if (typeof v !== 'number' || Number.isNaN(v)) return null
-  const eur = displayToEur(v)
-  return eur != null ? Math.round(eur) : null
-}
-const priceMinDisplay = computed<number | null>({
-  get: () => toDisplayOrNull(priceMin.value),
-  set: (v) => { priceMin.value = toEurOrNull(v) },
-})
-const priceMaxDisplay = computed<number | null>({
-  get: () => toDisplayOrNull(priceMax.value),
-  set: (v) => { priceMax.value = toEurOrNull(v) },
-})
-const landAreaMin = ref<number | null>(queryNum('landMin'))
-const landAreaMax = ref<number | null>(queryNum('landMax'))
-const livingAreaMin = ref<number | null>(queryNum('livMin'))
-const livingAreaMax = ref<number | null>(queryNum('livMax'))
-const yearBuiltMin = ref<number | null>(queryNum('yearBuiltMin'))
-const yearBuiltMax = ref<number | null>(queryNum('yearBuiltMax'))
-const renovationYearMin = ref<number | null>(queryNum('renovationYearMin'))
-const renovationYearMax = ref<number | null>(queryNum('renovationYearMax'))
-const categoryFilter = ref<string>(queryStr('category', ALL_SCOPE))
-const conditionFilter = ref<string>(queryStr('condition', ALL_SCOPE))
-const featuresFilter = ref<string[]>(queryList('features'))
-const onlyWithPhotos = ref(route.query.photos === '1')
-// Three-way: explicit '1'/'0' in the URL wins, otherwise fall back to the
-// admin-configured default (hideRulesOnlyServerDefault) instead of `false` —
-// unlike onlyWithPhotos/includeCancelled, "absent from the URL" doesn't mean
-// "off" here.
-const hideRulesOnly = ref(
-  route.query.llmOnly === '1' ? true : route.query.llmOnly === '0' ? false : hideRulesOnlyServerDefault.value,
-)
-
-function setPriceBucket(min: number | null, max: number | null): void {
-  priceMin.value = min
-  priceMax.value = max
-}
-
-// When the user switches country/region, the previously-selected court may
-// no longer exist. Reset filters that depend on the dataset.
-watch([selectedCountries, selectedRegionKeys], () => {
-  authorityFilter.value = ALL_SCOPE
-  categoryFilter.value = ALL_SCOPE
-})
-
-const selectedCountryLabel = computed(() => {
-  if (selectedCountries.value.length === 0) return t('search.europe')
-  if (selectedCountries.value.length === 1) {
-    const code = selectedCountries.value[0]!
-    return countryLabel(code, countries.value?.find((c) => c.code === code)?.name)
-  }
-  return t('search.countriesCount', { count: selectedCountries.value.length })
-})
-
-const selectedRegionLabel = computed(() => {
-  if (selectedRegionKeys.value.length === 0) return null
-  if (selectedRegionKeys.value.length === 1) {
-    return availableRegions.value.find((r) => r.key === selectedRegionKeys.value[0])?.name ?? null
-  }
-  return t('search.regionsCount', { count: selectedRegionKeys.value.length })
-})
-
-const headerLabel = computed(() => {
-  return selectedRegionLabel.value
-    ? `${selectedRegionLabel.value}, ${selectedCountryLabel.value}`
-    : selectedCountryLabel.value
-})
 
 const courts = computed<string[]>(() => {
   return data.value?.facets.authorities ?? []
@@ -368,36 +216,6 @@ const kategorienMitCount = computed<{ id: string; label: string; count: number }
     .map(({ id, count }) => ({ id, label: propertyTypeLabel(id), count }))
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, locale.value))
 })
-
-function clearAllFilters(): void {
-  selectedCountries.value = []
-  selectedRegionKeys.value = []
-  search.value = ''
-  authorityFilter.value = ALL_SCOPE
-  priceMin.value = null
-  priceMax.value = null
-  landAreaMin.value = null
-  landAreaMax.value = null
-  livingAreaMin.value = null
-  livingAreaMax.value = null
-  yearBuiltMin.value = null
-  yearBuiltMax.value = null
-  renovationYearMin.value = null
-  renovationYearMax.value = null
-  categoryFilter.value = ALL_SCOPE
-  conditionFilter.value = ALL_SCOPE
-  featuresFilter.value = []
-  onlyWithPhotos.value = false
-  includeCancelled.value = false
-  boundToMap.value = false
-  hideRulesOnly.value = hideRulesOnlyServerDefault.value
-}
-
-// v-model.number yields '' (empty string) when the input is cleared; treat
-// anything that isn't a real number as "filter not set".
-function numOrNull(v: unknown): number | null {
-  return typeof v === 'number' && !Number.isNaN(v) ? v : null
-}
 
 const filtered = computed<AuctionSummary[]>(() => data.value?.auctions ?? [])
 
@@ -412,8 +230,6 @@ const filteredGeo = computed<GeoAuction[]>(() => {
 // of the list while this is active.
 type MapBounds = { north: number; south: number; east: number; west: number }
 const mapBounds = ref<MapBounds | null>(null)
-const boundToMap = ref(route.query.boundToMap === '1')
-const sortBy = ref<SortBy>(querySortBy())
 
 const listBase = computed<AuctionSummary[]>(() => {
   if (boundToMap.value && mapBounds.value) {
@@ -503,105 +319,6 @@ const totals = computed(() => {
   }
 })
 
-const activeFilterCount = computed(() => {
-  let n = 0
-  if (selectedCountries.value.length) n++
-  if (selectedRegionKeys.value.length) n++
-  if (search.value.trim()) n++
-  if (!isAllScope(authorityFilter.value)) n++
-  if (numOrNull(priceMin.value) != null) n++
-  if (numOrNull(priceMax.value) != null) n++
-  if (numOrNull(landAreaMin.value) != null) n++
-  if (numOrNull(landAreaMax.value) != null) n++
-  if (numOrNull(livingAreaMin.value) != null) n++
-  if (numOrNull(livingAreaMax.value) != null) n++
-  if (numOrNull(yearBuiltMin.value) != null) n++
-  if (numOrNull(yearBuiltMax.value) != null) n++
-  if (numOrNull(renovationYearMin.value) != null) n++
-  if (numOrNull(renovationYearMax.value) != null) n++
-  if (!isAllScope(categoryFilter.value)) n++
-  if (!isAllScope(conditionFilter.value)) n++
-  if (featuresFilter.value.length) n++
-  if (onlyWithPhotos.value) n++
-  if (includeCancelled.value) n++
-  if (boundToMap.value) n++
-  if (hideRulesOnly.value !== hideRulesOnlyServerDefault.value) n++
-  return n
-})
-
-watch(
-  [selectedCountries, selectedRegionKeys, debouncedSearch, authorityFilter, priceMin, priceMax, landAreaMin, landAreaMax, livingAreaMin, livingAreaMax, yearBuiltMin, yearBuiltMax, renovationYearMin, renovationYearMax, categoryFilter, conditionFilter, featuresFilter, onlyWithPhotos, includeCancelled, hideRulesOnly, boundToMap, sortBy, view],
-  () => {
-    const query: Record<string, string> = {}
-    if (selectedCountries.value.length) query.country = selectedCountries.value.join(',')
-    if (selectedRegionKeys.value.length) query.region = selectedRegionKeys.value.join(',')
-    if (debouncedSearch.value.trim()) query.q = debouncedSearch.value.trim()
-    if (!isAllScope(authorityFilter.value)) query.authority = authorityFilter.value
-    if (numOrNull(priceMin.value) != null) query.priceMin = String(numOrNull(priceMin.value))
-    if (numOrNull(priceMax.value) != null) query.priceMax = String(numOrNull(priceMax.value))
-    if (numOrNull(landAreaMin.value) != null) query.landMin = String(numOrNull(landAreaMin.value))
-    if (numOrNull(landAreaMax.value) != null) query.landMax = String(numOrNull(landAreaMax.value))
-    if (numOrNull(livingAreaMin.value) != null) query.livMin = String(numOrNull(livingAreaMin.value))
-    if (numOrNull(livingAreaMax.value) != null) query.livMax = String(numOrNull(livingAreaMax.value))
-    if (numOrNull(yearBuiltMin.value) != null) query.yearBuiltMin = String(numOrNull(yearBuiltMin.value))
-    if (numOrNull(yearBuiltMax.value) != null) query.yearBuiltMax = String(numOrNull(yearBuiltMax.value))
-    if (numOrNull(renovationYearMin.value) != null) query.renovationYearMin = String(numOrNull(renovationYearMin.value))
-    if (numOrNull(renovationYearMax.value) != null) query.renovationYearMax = String(numOrNull(renovationYearMax.value))
-    if (!isAllScope(categoryFilter.value)) query.category = categoryFilter.value
-    if (!isAllScope(conditionFilter.value)) query.condition = conditionFilter.value
-    if (featuresFilter.value.length) query.features = featuresFilter.value.join(',')
-    if (onlyWithPhotos.value) query.photos = '1'
-    if (includeCancelled.value) query.cancelled = '1'
-    if (boundToMap.value) query.boundToMap = '1'
-    if (hideRulesOnly.value !== hideRulesOnlyServerDefault.value) query.llmOnly = hideRulesOnly.value ? '1' : '0'
-    if (sortBy.value !== 'default') query.sort = sortBy.value
-    if (view.value === 'map' && !mapViewImpliedByCountryQuery.value) query.view = 'map'
-    router.replace({ query })
-  },
-)
-
-// Re-sync all filter refs when the user navigates with browser Back/Forward.
-// Without this watch, same-route history navigation updates route.query reactively
-// but refs are only initialized once at setup, so URL and UI would diverge.
-watch(() => route.query, (q) => {
-  const hadCountrySelection = selectedCountries.value.length > 0
-  selectedCountries.value = queryList('country')
-  selectedRegionKeys.value = queryList('region')
-  search.value = queryStr('q')
-  includeCancelled.value = q.cancelled === '1'
-  authorityFilter.value = queryStr('authority', ALL_SCOPE)
-  priceMin.value = queryNum('priceMin')
-  priceMax.value = queryNum('priceMax')
-  landAreaMin.value = queryNum('landMin')
-  landAreaMax.value = queryNum('landMax')
-  livingAreaMin.value = queryNum('livMin')
-  livingAreaMax.value = queryNum('livMax')
-  yearBuiltMin.value = queryNum('yearBuiltMin')
-  yearBuiltMax.value = queryNum('yearBuiltMax')
-  renovationYearMin.value = queryNum('renovationYearMin')
-  renovationYearMax.value = queryNum('renovationYearMax')
-  categoryFilter.value = queryStr('category', ALL_SCOPE)
-  conditionFilter.value = queryStr('condition', ALL_SCOPE)
-  featuresFilter.value = queryList('features')
-  onlyWithPhotos.value = q.photos === '1'
-  boundToMap.value = q.boundToMap === '1'
-  hideRulesOnly.value = q.llmOnly === '1' ? true : q.llmOnly === '0' ? false : hideRulesOnlyServerDefault.value
-  sortBy.value = querySortBy()
-  const isMapView = q.view === 'map'
-  const isCountryMapView = !isMapView
-    && q.view === undefined
-    && selectedCountries.value.length > 0
-    && (!hadCountrySelection || mapViewImpliedByCountryQuery.value)
-  mapViewImpliedByCountryQuery.value = isCountryMapView
-  applyingImplicitMapView = isCountryMapView
-  view.value = isMapView || isCountryMapView ? 'map' : 'list'
-  if (applyingImplicitMapView) {
-    void nextTick(() => {
-      applyingImplicitMapView = false
-    })
-  }
-}, { deep: true })
-
 // Validate URL-restored authorityFilter / categoryFilter once data has loaded.
 // Invalid values produce silent 0-result filtering otherwise.
 watch(data, () => {
@@ -637,46 +354,11 @@ async function saveCurrentSearch(): Promise<void> {
   }
 }
 
-// Watchlist star toggle. Keyed by `${platform}:${externalId}` → the watchlist
-// row's own id (needed for the DELETE call). Loaded once per login state.
-const watchlistIds = ref<Map<string, string>>(new Map())
-async function loadWatchlist(): Promise<void> {
-  if (!user.value) {
-    watchlistIds.value = new Map()
-    return
-  }
-  try {
-    const items = await authFetch<WatchlistItem[]>('/api/watchlist')
-    watchlistIds.value = new Map(items.map((i) => [auctionKey(i), i.id]))
-  } catch (err) {
-    listActionError.value = apiErrorMessage(err, 'Die Merkliste konnte nicht geladen werden.')
-  }
-}
-watch(user, () => loadWatchlist(), { immediate: true })
-
-async function toggleWatchlist(a: AuctionSummary): Promise<void> {
-  if (!user.value) return
-  const key = auctionKey(a)
-  const existingId = watchlistIds.value.get(key)
-  try {
-    if (existingId) {
-      await authFetch(`/api/watchlist/${existingId}`, { method: 'DELETE' })
-      const next = new Map(watchlistIds.value)
-      next.delete(key)
-      watchlistIds.value = next
-    } else {
-      const item = await authFetch<WatchlistItem>('/api/watchlist', {
-        method: 'POST',
-        body: { platform: a.platform, externalId: a.externalId, authority: a.authority, caseNumber: a.caseNumber },
-      })
-      const next = new Map(watchlistIds.value)
-      next.set(key, item.id)
-      watchlistIds.value = next
-    }
-  } catch (err) {
-    listActionError.value = apiErrorMessage(err, 'Die Merkliste konnte nicht geändert werden.')
-  }
-}
+const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
+  onError: (message) => {
+    listActionError.value = message
+  },
+})
 </script>
 
 <template>

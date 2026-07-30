@@ -5,6 +5,7 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
+    "typecheck": "vue-tsc --noEmit",
     "dev": "nuxt dev",
     "build": "nuxt build",
     "preview": "nuxt preview",
