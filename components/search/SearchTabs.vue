@@ -36,7 +36,7 @@ const activeTab = defineModel<'list' | 'map'>({ required: true })
       <TabsTrigger value="map" class="flex-1">{{ $t('search.tabMap') }}</TabsTrigger>
     </TabsList>
     <TabsContent value="list" class="flex-1 min-h-0">
-      <SearchAuctionListPane
+      <AuctionListPane
         :auctions="auctions"
         :total-count="totalCount"
         :pending="pending"
@@ -50,7 +50,7 @@ const activeTab = defineModel<'list' | 'map'>({ required: true })
       />
     </TabsContent>
     <TabsContent value="map" class="flex-1 min-h-0">
-      <SearchAuctionMapPane
+      <AuctionMapPane
         :auctions="geoAuctions"
         :selected-countries="selectedCountries"
         :active-auction-key="activeAuctionKey"

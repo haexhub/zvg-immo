@@ -406,7 +406,7 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
 
     <div class="flex-1 min-h-0">
       <div v-if="isDesktop" class="h-full flex gap-4">
-        <SearchAuctionMapPane
+        <AuctionMapPane
           class="w-2/5 min-w-88 shrink-0 min-h-0"
           :auctions="filteredGeo"
           :selected-countries="selectedCountries"
@@ -419,7 +419,7 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
           @auction-hover="handleMapAuctionHover"
           @auction-select="handleMapAuctionSelect"
         />
-        <SearchAuctionListPane
+        <AuctionListPane
           class="flex-1 min-h-0"
           :auctions="visibleAuctions"
           :total-count="boundToMap ? sortedList.length : (data?.total ?? 0)"
