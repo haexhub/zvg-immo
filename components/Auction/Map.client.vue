@@ -33,17 +33,27 @@ function pinStyle(active: boolean): Style {
 // ol/source/Cluster wraps every feature (even singletons) in a "cluster
 // feature" whose `features` property holds the real children — so this
 // single style function covers both individual pins and cluster badges.
+// OL calls this for every visible feature on every render pass (pan/zoom/
+// refresh), so cluster badge styles are cached like the singleton pin
+// styles above instead of rebuilt each time.
+const clusterStyleCache = new Map<string, Style>()
 function clusterStyle(feature: any): Style {
   const children = (feature.get('features') ?? [feature]) as Feature<Point>[]
   if (children.length === 1) {
     return pinStyle(children[0]!.get('active') === true)
   }
   const active = children.some((f) => f.get('active') === true)
-  const color = active ? PIN_COLOR_ACTIVE : PIN_COLOR
-  return new Style({
-    image: new CircleStyle({ radius: 18, fill: new Fill({ color }), stroke: new Stroke({ color: '#fff', width: 2 }) }),
-    text: new Text({ text: String(children.length), fill: new Fill({ color: '#fff' }), font: 'bold 12px sans-serif' }),
-  })
+  const cacheKey = `${children.length}:${active}`
+  let style = clusterStyleCache.get(cacheKey)
+  if (!style) {
+    const color = active ? PIN_COLOR_ACTIVE : PIN_COLOR
+    style = new Style({
+      image: new CircleStyle({ radius: 18, fill: new Fill({ color }), stroke: new Stroke({ color: '#fff', width: 2 }) }),
+      text: new Text({ text: String(children.length), fill: new Fill({ color: '#fff' }), font: 'bold 12px sans-serif' }),
+    })
+    clusterStyleCache.set(cacheKey, style)
+  }
+  return style
 }
 
 const props = defineProps<{
@@ -93,6 +103,7 @@ const initialZoom = 4
 const mapRef = ref<any>(null)
 const vectorSourceRef = ref<any>(null)
 const clusterSourceRef = ref<any>(null)
+const vectorLayerRef = ref<any>(null)
 
 const selectedKey = ref<string | null>(null)
 const popupPosition = ref<number[] | undefined>(undefined)
@@ -120,9 +131,11 @@ function updateMarkerHighlight(): void {
     feature.set('active', key === props.activeAuctionKey)
   }
   lastActiveKey = props.activeAuctionKey ?? null
-  // Mirrors markersLayer.refreshClusters(changedMarkers) from the Leaflet
-  // version — forces the cluster layer to re-run the style function.
-  if (changedKeys.size) clusterSourceRef.value?.source?.refresh()
+  // layer.changed() repaints with the current style function (which reads
+  // the 'active' flag just set above) without clusterSource.refresh()'s
+  // clear-and-reload of the wrapped vector source — that would force a full
+  // re-cluster for what's only ever a hover-driven style change.
+  if (changedKeys.size) vectorLayerRef.value?.vectorLayer?.changed()
 }
 
 function emitBounds(): void {
@@ -283,7 +296,7 @@ function onPointerMove(evt: any): void {
           </ol-tile-layer>
         </template>
       </template>
-      <ol-vector-layer :style="clusterStyle">
+      <ol-vector-layer ref="vectorLayerRef" :style="clusterStyle">
         <ol-source-cluster ref="clusterSourceRef" :distance="60">
           <ol-source-vector ref="vectorSourceRef" />
         </ol-source-cluster>

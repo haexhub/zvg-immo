@@ -20,31 +20,67 @@ const { t } = useI18n()
 
 const lightboxOpen = ref(false)
 const activeIndex = ref(0)
+const lightboxRef = ref<HTMLElement | null>(null)
+const closeButtonRef = ref<HTMLButtonElement | null>(null)
+let triggerElement: HTMLElement | null = null
+let previousBodyOverflow: string | null = null
 
-function openLightbox(index: number) {
+const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+function openLightbox(index: number, event: MouseEvent) {
+  // Not document.activeElement — a click doesn't reliably focus its target
+  // first, so that can point at whatever was focused before instead of the
+  // slide the user actually clicked.
+  triggerElement = event.currentTarget as HTMLElement
   activeIndex.value = index
   lightboxOpen.value = true
 }
 
-function handleKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape' && lightboxOpen.value) {
-    lightboxOpen.value = false
+function trapFocus(e: KeyboardEvent) {
+  const container = lightboxRef.value
+  if (!container) return
+  const focusable = [...container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)]
+  if (!focusable.length) return
+  const first = focusable[0]!
+  const last = focusable[focusable.length - 1]!
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault()
+    last.focus()
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault()
+    first.focus()
   }
 }
 
-watch(lightboxOpen, (open) => {
+function handleKeydown(e: KeyboardEvent) {
+  if (!lightboxOpen.value) return
+  if (e.key === 'Escape') {
+    lightboxOpen.value = false
+  } else if (e.key === 'Tab') {
+    trapFocus(e)
+  }
+}
+
+watch(lightboxOpen, async (open) => {
   if (typeof document === 'undefined') return
-  document.body.style.overflow = open ? 'hidden' : ''
   if (open) {
+    previousBodyOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
     document.addEventListener('keydown', handleKeydown)
+    await nextTick()
+    closeButtonRef.value?.focus()
   } else {
+    document.body.style.overflow = previousBodyOverflow ?? ''
+    previousBodyOverflow = null
     document.removeEventListener('keydown', handleKeydown)
+    triggerElement?.focus()
+    triggerElement = null
   }
 })
 
 onUnmounted(() => {
   if (typeof document !== 'undefined') {
-    document.body.style.overflow = ''
+    if (previousBodyOverflow !== null) document.body.style.overflow = previousBodyOverflow
     document.removeEventListener('keydown', handleKeydown)
   }
 })
@@ -67,7 +103,7 @@ const swiperModules = [Navigation, Pagination, Keyboard]
           type="button"
           class="block h-full w-full"
           :aria-label="t('objektDetail.showPhoto', { n: i + 1 })"
-          @click="openLightbox(i)"
+          @click="openLightbox(i, $event)"
         >
           <img
             :src="url"
@@ -83,10 +119,15 @@ const swiperModules = [Navigation, Pagination, Keyboard]
     <Teleport to="body">
       <div
         v-if="lightboxOpen"
+        ref="lightboxRef"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="altBase"
         class="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4"
         @click.self="lightboxOpen = false"
       >
         <button
+          ref="closeButtonRef"
           type="button"
           class="absolute top-4 right-4 rounded-full bg-white/10 p-2 text-white hover:bg-white/20"
           :aria-label="t('objektDetail.gallery.close')"

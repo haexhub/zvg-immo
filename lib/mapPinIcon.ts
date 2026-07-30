@@ -1,7 +1,7 @@
 // Replicates the classic CSS map-pin trick (rounded square, one square
 // corner, rotate(-45deg)) as a static SVG so it can be baked into an
-// ol/style/Icon — used by both AuctionMap.client.vue (clustered pins) and
-// AuctionDetailMap.client.vue (single property marker).
+// ol/style/Icon — used by both Auction/Map.client.vue (clustered pins) and
+// Auction/DetailMap.client.vue (single property marker).
 export function mapPinDataUri(color: string): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">`
     + `<path d="M16 6 A10 10 0 0 1 26 16 A10 10 0 0 1 16 26 L6 26 L6 16 A10 10 0 0 1 16 6 Z" `

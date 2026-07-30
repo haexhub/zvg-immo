@@ -1,6 +1,6 @@
-# Gates every PR (and push to main) on typecheck + tests + build, so broken
-# TS/config never reaches main silently — build-image.yml only builds after
-# merge and doesn't run on pull requests.
+# Gates every PR (and push to main) on lint + typecheck + tests + build, so
+# broken TS/config/templates never reach main silently — build-image.yml
+# only builds after merge and doesn't run on pull requests.
 
 name: CI
 
@@ -33,6 +33,9 @@ jobs:
 
       - name: Generate Nuxt types
         run: pnpm exec nuxi prepare
+
+      - name: Lint
+        run: pnpm run lint
 
       - name: Typecheck
         run: pnpm exec nuxi typecheck

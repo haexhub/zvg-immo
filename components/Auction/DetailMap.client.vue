@@ -421,10 +421,16 @@ onBeforeUnmount(() => {
     <div ref="mapEl" class="h-full w-full" />
     <div ref="popupEl" class="auction-detail-map-popup" />
     <div class="auction-detail-map-layers">
-      <button type="button" class="auction-detail-map-layers__toggle" @click="panelOpen = !panelOpen">
+      <button
+        type="button"
+        class="auction-detail-map-layers__toggle"
+        :aria-expanded="panelOpen"
+        aria-controls="auction-detail-map-layers-panel"
+        @click="panelOpen = !panelOpen"
+      >
         {{ t('map.layers') }}
       </button>
-      <div v-if="panelOpen" class="auction-detail-map-layers__panel">
+      <div v-if="panelOpen" id="auction-detail-map-layers-panel" class="auction-detail-map-layers__panel">
         <div class="auction-detail-map-layers__group">
           <label><input v-model="baseLayer" type="radio" value="streets"> {{ t('map.baseLayerStreets') }}</label>
           <label><input v-model="baseLayer" type="radio" value="satellite"> {{ t('map.baseLayerSatellite') }}</label>

@@ -6,6 +6,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "vue-tsc --noEmit",
+    "lint": "eslint .",
     "dev": "nuxt dev",
     "build": "nuxt build",
     "preview": "nuxt preview",
@@ -43,6 +44,7 @@
     "yauzl": "^3.4.0"
   },
   "devDependencies": {
+    "@nuxt/eslint": "^1.16.0",
     "@nuxt/icon": "^2.3.1",
     "@types/d3-geo": "^3.1.0",
     "@types/node": "^25.6.0",
@@ -53,6 +55,7 @@
     "@vitejs/plugin-vue": "^6.0.8",
     "@vueuse/core": "^14.3.0",
     "d3-geo": "^3.1.1",
+    "eslint": "^10.8.0",
     "h3": "1.15.11",
     "shadcn-nuxt": "^2.8.0",
     "topojson-client": "^3.1.0",

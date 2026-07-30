@@ -20,7 +20,7 @@ const emit = defineEmits<{
 
 <template>
   <div class="relative h-full flex flex-col">
-    <p v-if="geoError" class="py-12 text-center text-destructive">
+    <p v-if="geoError && !hasGeoData" class="py-12 text-center text-destructive">
       {{ $t('search.geoError', { msg: geoError.statusMessage || geoError.message }) }}
     </p>
     <template v-else>
