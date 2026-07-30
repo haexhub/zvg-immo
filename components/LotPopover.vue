@@ -7,8 +7,9 @@ import 'swiper/css/pagination'
 import type { Attachment } from '~/types/auction'
 import type { GeoAuction } from '~/server/api/auctions-geo.get'
 import type { AuctionDetail } from '~/server/api/auction/[platform]/[id].get'
-import { apiErrorMessage, apiErrorStatusCode } from '~/lib/api-error'
+import { apiErrorMessage } from '~/lib/api-error'
 import { isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
+import { fetchWithPendingRetry } from '~/lib/pending-retry'
 
 const props = defineProps<{
   auction: GeoAuction
@@ -42,6 +43,7 @@ const loading = ref(true)
 const loadError = ref<string | null>(null)
 const translatedTitle = ref<string | null>(null)
 const displayTitle = computed(() => translatedTitle.value ?? detail.value?.title ?? null)
+let isActive = true
 
 interface AuctionTranslationResponse {
   title: string | null
@@ -50,31 +52,33 @@ interface AuctionTranslationResponse {
 const TRANSLATION_PENDING_RETRY_MS = 2500
 const TRANSLATION_PENDING_MAX_POLLS = 24
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms))
-}
-
 // Loaded silently alongside the detail fetch, same as the objekt detail page
 // (pages/objekt/[platform]/[id].vue) — the address stays untranslated
 // everywhere in the app (it's a place name), only the title needs this.
 async function loadTranslation(): Promise<void> {
   if (!props.lang || isPassthroughLanguage(props.auction.country, props.lang)) return
-  for (let attempt = 0; attempt <= TRANSLATION_PENDING_MAX_POLLS; attempt++) {
-    try {
-      const value = await $fetch<AuctionTranslationResponse>(
+  try {
+    const value = await fetchWithPendingRetry(
+      () => $fetch<AuctionTranslationResponse>(
         `/api/auction/${encodeURIComponent(props.auction.platform)}/${encodeURIComponent(props.auction.externalId)}/translation`,
         { method: 'POST', query: { lang: props.lang } },
-      )
-      translatedTitle.value = value.title
-      return
-    } catch (err) {
-      // Silent fallback to the original title — the compact popover has no
-      // room for a dedicated translation-error state.
-      if (apiErrorStatusCode(err) !== 409 || attempt === TRANSLATION_PENDING_MAX_POLLS) return
-      await sleep(TRANSLATION_PENDING_RETRY_MS)
-    }
+      ),
+      {
+        maxPolls: TRANSLATION_PENDING_MAX_POLLS,
+        retryMs: TRANSLATION_PENDING_RETRY_MS,
+        shouldContinue: () => isActive,
+      },
+    )
+    if (value && isActive) translatedTitle.value = value.title
+  } catch {
+    // Silent fallback to the original title — the compact popover has no
+    // room for a dedicated translation-error state.
   }
 }
+
+onUnmounted(() => {
+  isActive = false
+})
 
 onMounted(async () => {
   loadTranslation()

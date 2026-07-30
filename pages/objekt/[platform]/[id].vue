@@ -25,11 +25,12 @@ import { isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-lan
 import {
   applyTranslatedExtractionTexts,
   extractTranslatableExtractionTexts,
-  TRANSLATABLE_EXTRACTION_TEXTS_VERSION,
+  translationContentSource,
   type TranslatableExtractionTexts,
 } from '~/lib/extraction-translation'
 import { safeHref } from '~/lib/utils'
-import { apiErrorMessage, apiErrorStatusCode } from '~/lib/api-error'
+import { apiErrorMessage } from '~/lib/api-error'
+import { fetchWithPendingRetry } from '~/lib/pending-retry'
 import { googleCalendarUrl, icsDataUrl, outlookCalendarUrl } from '~/lib/calendar-links'
 import {
   Accessibility,
@@ -119,15 +120,7 @@ function hasTranslatableContent(val: AuctionDetail): boolean {
 }
 
 function translationSourceKey(val: AuctionDetail): string {
-  return JSON.stringify({
-    title: val.title,
-    description: val.description,
-    documentSummary: val.extraction?.documentSummary ?? null,
-    extractionTexts: extractTranslatableExtractionTexts(val.extraction),
-    extractionTextsVersion: TRANSLATABLE_EXTRACTION_TEXTS_VERSION,
-    documentSetHash: val.extraction?.documentSetHash ?? null,
-    documentSetVersion: val.extraction?.documentSetVersion ?? null,
-  })
+  return JSON.stringify(translationContentSource(val))
 }
 
 function translationRequest(val: AuctionDetail | null, loc: string): { lang: ContentTargetLang, sourceKey: string } | null {
@@ -223,29 +216,6 @@ const translationSeq = ref(0)
 const TRANSLATION_PENDING_RETRY_MS = 2500
 const TRANSLATION_PENDING_MAX_POLLS = 48
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms))
-}
-
-async function generateTranslationWithPendingRetry(
-  lang: ContentTargetLang,
-  shouldContinue: () => boolean,
-): Promise<AuctionTranslationResponse | null> {
-  for (let attempt = 0; attempt <= TRANSLATION_PENDING_MAX_POLLS; attempt++) {
-    if (!shouldContinue()) return null
-    try {
-      return await $fetch<AuctionTranslationResponse>(
-        `/api/auction/${encodeURIComponent(platform)}/${encodeURIComponent(id)}/translation`,
-        { method: 'POST', query: { lang } },
-      )
-    } catch (err) {
-      if (apiErrorStatusCode(err) !== 409 || attempt === TRANSLATION_PENDING_MAX_POLLS) throw err
-      await sleep(TRANSLATION_PENDING_RETRY_MS)
-    }
-  }
-  return null
-}
-
 watch([currentTranslationRequest, activeTranslation, translationFetchPending], async ([request, existing, cacheLookupPending]) => {
   if (import.meta.server) return
   const seq = ++translationSeq.value
@@ -255,7 +225,17 @@ watch([currentTranslationRequest, activeTranslation, translationFetchPending], a
   translationGenerationPending.value = true
   translationError.value = null
   try {
-    const payload = await generateTranslationWithPendingRetry(request.lang, () => seq === translationSeq.value)
+    const payload = await fetchWithPendingRetry(
+      () => $fetch<AuctionTranslationResponse>(
+        `/api/auction/${encodeURIComponent(platform)}/${encodeURIComponent(id)}/translation`,
+        { method: 'POST', query: { lang: request.lang } },
+      ),
+      {
+        maxPolls: TRANSLATION_PENDING_MAX_POLLS,
+        retryMs: TRANSLATION_PENDING_RETRY_MS,
+        shouldContinue: () => seq === translationSeq.value,
+      },
+    )
     if (!payload) return
     if (seq !== translationSeq.value) return
     loadedTranslation.value = { ...request, payload }

@@ -26,7 +26,7 @@ import { getLlmMaxTokens, getLlmProviderOverride } from '~/server/utils/app-sett
 import { resolveLlmConfig, type LlmConfig } from '~/server/utils/extract/llm'
 import { callTranslationLlm, type TranslationResult } from '~/server/utils/extract/text-llm'
 import { countryContentLanguage, isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
-import { extractTranslatableExtractionTexts, TRANSLATABLE_EXTRACTION_TEXTS_VERSION } from '~/lib/extraction-translation'
+import { extractTranslatableExtractionTexts, translationContentSource } from '~/lib/extraction-translation'
 import {
   checkInMemoryRateLimit,
   createInMemoryRateLimitState,
@@ -134,15 +134,7 @@ export function fingerprintConfig(config: LlmConfig): string {
 }
 
 export function auctionTranslationContentHash(auction: Pick<Auction, 'title' | 'description' | 'extraction'>): string {
-  return sha256Hex(Buffer.from(JSON.stringify({
-    title: auction.title,
-    description: auction.description,
-    documentSummary: auction.extraction?.documentSummary ?? null,
-    extractionTexts: extractTranslatableExtractionTexts(auction.extraction),
-    extractionTextsVersion: TRANSLATABLE_EXTRACTION_TEXTS_VERSION,
-    documentSetHash: auction.extraction?.documentSetHash ?? null,
-    documentSetVersion: auction.extraction?.documentSetVersion ?? null,
-  })))
+  return sha256Hex(Buffer.from(JSON.stringify(translationContentSource(auction))))
 }
 
 export default defineEventHandler(async (event) => {
@@ -179,10 +171,10 @@ export default defineEventHandler(async (event) => {
   }
 
   const contentHash = auctionTranslationContentHash(auction)
-  // Dedupe only the same auction/language. A content-hash key could let a
-  // second auction hitchhike on another auction's in-flight promise without
-  // ever creating its own durable once-only row.
-  const inflightKey = `${platform}:${id}:${targetLang}`
+  // Dedupe only the same auction/language/content snapshot. A content-hash-only
+  // key could let a second auction hitchhike without creating its own durable
+  // once-only row, while omitting the hash could reuse stale in-memory work.
+  const inflightKey = `${platform}:${id}:${targetLang}:${contentHash}`
 
   const db: Pool | null = getPool()
   if (!db) {

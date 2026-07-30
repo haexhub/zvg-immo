@@ -246,8 +246,14 @@ describe('/api/auction/:platform/:id/translation', () => {
 
   it('regenerates a completed auction translation when the content hash changed', async () => {
     const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
-    const { readAuctionTranslation, claimAuctionTranslation } = await import('~/server/utils/content-translation')
+    const {
+      completeAuctionTranslation,
+      readAuctionTranslation,
+      claimAuctionTranslation,
+    } = await import('~/server/utils/content-translation')
     const handler = await loadHandler()
+    const { auctionTranslationContentHash } = await import('./translation.post')
+    const expectedContentHash = auctionTranslationContentHash(auction())
     const payload = {
       title: 'Fresh title for changed content',
       description: 'Fresh description for changed content',
@@ -274,7 +280,23 @@ describe('/api/auction/:platform/:id/translation', () => {
     })).resolves.toMatchObject({ ...payload, translated: true })
 
     expect(claimAuctionTranslation).toHaveBeenCalledOnce()
+    expect(claimAuctionTranslation).toHaveBeenCalledWith(
+      expect.anything(),
+      'se-kronofogden',
+      '101738',
+      'de',
+      expectedContentHash,
+    )
     expect(callTranslationLlm).toHaveBeenCalledOnce()
+    expect(completeAuctionTranslation).toHaveBeenCalledOnce()
+    expect(completeAuctionTranslation).toHaveBeenCalledWith(
+      expect.anything(),
+      'se-kronofogden',
+      '101738',
+      'de',
+      CLAIM,
+      payload,
+    )
   })
 
   it('serves the stored error instead of retrying while the retry window is closed', async () => {
