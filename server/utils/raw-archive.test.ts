@@ -15,6 +15,7 @@ const {
   archiveDocument,
   archiveDocumentSet,
   archiveDocumentText,
+  archivePhotoBlob,
   canonicalizeAuction,
   recordCapture,
   sha256Hex,
@@ -528,6 +529,55 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     expect(captureInserts[0]![1]).toContain('document')
     expect(captureInserts[0]![1]![4]).toBe('Sachsen') // region forwarded from DocumentIdentity
     expect(captureInserts[1]![1]![4]).toBeNull() // omitted region -> null, not undefined/crash
+  })
+
+  it('archivePhotoBlob: roundtrips bytes into a photo capture without a sourceUrl', async () => {
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+
+    const photoBytes = Buffer.from('fake jpeg bytes')
+    const hash = await archivePhotoBlob(
+      photoBytes,
+      'image/jpeg',
+      { platform: 'test', country: 'de', region: 'Sachsen', externalId: '1', caseNumber: '1 K 1/26', authority: 'AG Test' },
+      '2026-07-19T00:00:00.000Z',
+    )
+
+    expect(hash).toBe(sha256Hex(photoBytes))
+    expect(pool.blobs.size).toBe(1)
+    const row = [...pool.blobs.values()][0]!
+    expect(row.content_type).toBe('image/jpeg') // raw, not gzipped
+    const stored = await readFile(join(outboxDir, row.s3_key))
+    expect(stored).toEqual(photoBytes)
+
+    const captureInserts = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO raw_captures'))
+    expect(captureInserts).toHaveLength(1)
+    expect(captureInserts[0]![1]).toContain('photo')
+    expect(captureInserts[0]![1]![9]).toBeNull() // no sourceUrl for photos
+  })
+
+  it('archivePhotoBlob: the same photo bytes referenced by two auctions dedup the blob but capture both', async () => {
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+
+    const photoBytes = Buffer.from('shared jpeg bytes')
+    await archivePhotoBlob(photoBytes, 'image/jpeg', { platform: 'test', country: 'de', externalId: '1' }, '2026-07-19T00:00:00.000Z')
+    await archivePhotoBlob(photoBytes, 'image/jpeg', { platform: 'test', country: 'de', externalId: '2' }, '2026-07-19T00:05:00.000Z')
+
+    expect(pool.blobs.size).toBe(1)
+    expect(pool.captures.size).toBe(2)
+  })
+
+  it('archivePhotoBlob no-ops without a DB pool', async () => {
+    vi.mocked(getPool).mockReturnValue(null)
+    await expect(
+      archivePhotoBlob(
+        Buffer.from('fake jpeg bytes'),
+        'image/jpeg',
+        { platform: 'test', country: 'de', externalId: '1' },
+        '2026-07-19T00:00:00.000Z',
+      ),
+    ).resolves.toBeNull()
   })
 
   it('archiveDocumentText: gzips the text and records a document_text capture', async () => {

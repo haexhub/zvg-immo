@@ -36,10 +36,12 @@ function normalizeExtractionEntries(entries: ExtractionCache): ExtractionCache {
 }
 
 /**
- * Apply the extraction cache to a set of auctions (mutates in place). Synthesises
- * a `thumbnailUrl` and bumps `photoCount` from `extraction.photos` when the
- * listing didn't bring its own photo attachment. Shared by the /api/auctions
- * overlay and the enrich-task snapshot writer so they stay consistent.
+ * Apply the extraction cache to a set of auctions (mutates in place).
+ * Synthesises `thumbnailUrl`/`photoCount` from `extraction.photos` whenever
+ * curated photos exist — this is the self-hosted `/api/auction-image` URL,
+ * so it always wins over whatever raw (and possibly short-lived) URL the
+ * crawler set on `a.thumbnailUrl`. Shared by the /api/auctions overlay and
+ * the enrich-task snapshot writer so they stay consistent.
  */
 export function applyExtractionToAuctions(auctions: Auction[], cache: ExtractionCache): void {
   for (const a of auctions) {
@@ -69,10 +71,8 @@ export function applyExtractionToAuctions(auctions: Auction[], cache: Extraction
       a.marketValueText = normalizedHit.marketValueText ?? null
     }
     if (photos.length === 0) continue
-    if (!a.thumbnailUrl) {
-      a.thumbnailUrl = `/api/auction-image/${a.platform}/${a.externalId}/${photos[0]!.file}`
-    }
-    if (a.photoCount < photos.length) a.photoCount = photos.length
+    a.thumbnailUrl = `/api/auction-image/${a.platform}/${a.externalId}/${photos[0]!.file}`
+    a.photoCount = photos.length
   }
 }
 

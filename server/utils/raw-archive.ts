@@ -29,7 +29,7 @@ export type BlobContentType =
   | 'image/webp'
   | 'text/plain'
 
-export type CaptureKind = 'auction' | 'document' | 'detail_html' | 'document_text'
+export type CaptureKind = 'auction' | 'document' | 'detail_html' | 'document_text' | 'photo'
 
 // Text content is gzipped before storage (compresses well); PDF/DOCX are
 // already compressed, stored as-is. `content_type` in raw_blobs records the
@@ -292,6 +292,36 @@ export async function archiveDocumentBlob(
     authority: identity.authority ?? null,
     contentHash: hash,
     sourceUrl,
+  })
+  return hash
+}
+
+/**
+ * Archives a photo's raw bytes (`kind='photo'`). Unlike documents, no
+ * `sourceUrl` is required: photos are deduplicated by content hash alone, and
+ * several source URLs (native crawler photo, document-extracted photo) can
+ * legitimately point at the same bytes — the source URL isn't a meaningful
+ * identity here. Persistence failures propagate.
+ */
+export async function archivePhotoBlob(
+  bytes: Buffer,
+  contentType: 'image/jpeg' | 'image/png' | 'image/webp',
+  identity: DocumentIdentity,
+  capturedAt: string,
+): Promise<string | null> {
+  const hash = await archiveBlob(bytes, contentType, identity.country)
+  if (!hash) return null
+  await recordCapture({
+    capturedAt,
+    kind: 'photo',
+    platform: identity.platform,
+    country: identity.country,
+    region: identity.region ?? null,
+    externalId: identity.externalId,
+    caseNumber: identity.caseNumber ?? null,
+    authority: identity.authority ?? null,
+    contentHash: hash,
+    sourceUrl: null,
   })
   return hash
 }

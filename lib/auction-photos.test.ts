@@ -31,11 +31,10 @@ function auction(overrides: Partial<Auction> = {}): Auction {
 }
 
 describe('auctionPhotoUrls', () => {
-  it('combines the native gallery with locally extracted document photos', () => {
+  it('builds the gallery from curated extraction.photos', () => {
     expect(
       auctionPhotoUrls(
         auction({
-          photoUrls: ['https://zvg.test/1.jpg', 'https://zvg.test/2.jpg'],
           extraction: {
             propertyType: null,
             landAreaSqm: null,
@@ -44,32 +43,26 @@ describe('auctionPhotoUrls', () => {
             units: null,
             source: 'rules',
             confidence: 'low',
-            photos: [{ file: 'page 1.jpg', category: 'aussen', caption: null, isPropertyPhoto: true }],
+            photos: [
+              { file: 'page 1.jpg', category: 'aussen', caption: null, isPropertyPhoto: true },
+              { file: '2222222222222222.jpg', category: 'innen', caption: null, isPropertyPhoto: true },
+            ],
             at: '2026-07-25T00:00:00.000Z',
           },
         }),
       ),
     ).toEqual([
-      'https://zvg.test/1.jpg',
-      'https://zvg.test/2.jpg',
       '/api/auction-image/mv-zvgcom/210678/page%201.jpg',
+      '/api/auction-image/mv-zvgcom/210678/2222222222222222.jpg',
     ])
   })
 
-  it('uses the thumbnail only when no full-size image is available', () => {
-    expect(auctionPhotoUrls(auction({ thumbnailUrl: '/thumb.jpg' }))).toEqual(['/thumb.jpg'])
-    expect(
-      auctionPhotoUrls(
-        auction({ thumbnailUrl: '/thumb.jpg', photoUrls: ['/full.jpg'] }),
-      ),
-    ).toEqual(['/full.jpg'])
-  })
-
-  it('deduplicates identical URLs', () => {
+  it('ignores raw crawler photoUrls/proxyUrl attachments — display comes only from extraction.photos', () => {
     expect(
       auctionPhotoUrls(
         auction({
-          photoUrls: ['/same.jpg'],
+          thumbnailUrl: '/thumb.jpg',
+          photoUrls: ['https://zvg.test/1.jpg', 'https://zvg.test/2.jpg'],
           attachments: [{
             kind: 'photo',
             label: 'Foto',
@@ -80,14 +73,18 @@ describe('auctionPhotoUrls', () => {
           }],
         }),
       ),
-    ).toEqual(['/same.jpg'])
+    ).toEqual(['/thumb.jpg'])
   })
 
-  it('does not infer native-gallery coverage from hash-like local document filenames', () => {
+  it('uses the thumbnail only when there are no curated photos', () => {
+    expect(auctionPhotoUrls(auction({ thumbnailUrl: '/thumb.jpg' }))).toEqual(['/thumb.jpg'])
+    expect(auctionPhotoUrls(auction())).toEqual([])
+  })
+
+  it('deduplicates identical curated photo URLs', () => {
     expect(
       auctionPhotoUrls(
         auction({
-          photoUrls: ['https://zvg.test/1.jpg', 'https://zvg.test/2.jpg'],
           extraction: {
             propertyType: null,
             landAreaSqm: null,
@@ -97,19 +94,13 @@ describe('auctionPhotoUrls', () => {
             source: 'rules',
             confidence: 'low',
             photos: [
-              { file: '1111111111111111.jpg', category: 'aussen', caption: null, isPropertyPhoto: true },
-              { file: '2222222222222222.jpg', category: 'innen', caption: null, isPropertyPhoto: true },
+              { file: 'same.jpg', category: 'aussen', caption: null, isPropertyPhoto: true },
+              { file: 'same.jpg', category: 'aussen', caption: null, isPropertyPhoto: true },
             ],
-            photosCheckedAt: '2026-07-25T00:00:00.000Z',
             at: '2026-07-25T00:00:00.000Z',
           },
         }),
       ),
-    ).toEqual([
-      'https://zvg.test/1.jpg',
-      'https://zvg.test/2.jpg',
-      '/api/auction-image/mv-zvgcom/210678/1111111111111111.jpg',
-      '/api/auction-image/mv-zvgcom/210678/2222222222222222.jpg',
-    ])
+    ).toEqual(['/api/auction-image/mv-zvgcom/210678/same.jpg'])
   })
 })

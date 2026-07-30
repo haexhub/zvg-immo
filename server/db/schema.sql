@@ -295,7 +295,7 @@ CREATE TABLE IF NOT EXISTS raw_blobs (
 CREATE TABLE IF NOT EXISTS raw_captures (
   id            bigserial PRIMARY KEY,
   captured_at   timestamptz NOT NULL,
-  kind          text NOT NULL,             -- 'auction' | 'document' | 'detail_html' | 'document_text'
+  kind          text NOT NULL,             -- 'auction' | 'document' | 'detail_html' | 'document_text' | 'photo'
   platform      text NOT NULL,
   country       text NOT NULL,
   external_id   text NOT NULL,             -- Auktions-Identität (immer vorhanden)
