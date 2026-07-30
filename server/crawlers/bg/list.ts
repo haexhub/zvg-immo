@@ -69,6 +69,11 @@ export async function fetchAllListings(
   const data = (await res.json()) as BgAnnouncement[]
   const auctions = data
     .filter((a) => a.propertyType === REAL_ESTATE_PROPERTY_TYPE)
+    // Unlike every other portal's list endpoint, /announcements returns the
+    // full historical archive (auctions going back years), not just upcoming
+    // ones — `cancelled` here means "withdrawn by court", not "date passed".
+    // Drop concluded auctions ourselves so they don't show up as active.
+    .filter((a) => a.auctionStartDate == null || Date.parse(a.auctionStartDate) >= Date.now())
     .map((a) => mapAnnouncement(a, platformId))
 
   return { auctions, total: auctions.length }
