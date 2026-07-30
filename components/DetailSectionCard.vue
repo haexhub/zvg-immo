@@ -11,15 +11,15 @@ defineProps<{
 </script>
 
 <template>
-  <Card>
+  <Card class="detail-section-card gap-5">
     <CardHeader>
-      <CardTitle class="text-base"><slot name="title">{{ title }}</slot></CardTitle>
-      <CardDescription v-if="subtitle || $slots.subtitle">
+      <CardTitle class="text-xl font-semibold leading-tight md:text-2xl"><slot name="title">{{ title }}</slot></CardTitle>
+      <CardDescription v-if="subtitle || $slots.subtitle" class="text-sm leading-relaxed text-foreground/80 md:text-base">
         <slot name="subtitle">{{ subtitle }}</slot>
       </CardDescription>
       <CardAction v-if="$slots.action"><slot name="action" /></CardAction>
     </CardHeader>
-    <CardContent>
+    <CardContent class="text-base leading-relaxed text-card-foreground md:text-lg">
       <slot />
     </CardContent>
   </Card>

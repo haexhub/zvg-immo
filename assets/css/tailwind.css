@@ -90,7 +90,7 @@
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
+  --muted-foreground: oklch(0.82 0 0);
   --accent: oklch(0.269 0 0);
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
@@ -127,6 +127,34 @@
   @media (prefers-color-scheme: dark) {
     :root {
       color-scheme: dark;
+    }
+  }
+}
+
+@layer components {
+  .detail-section-card [data-slot="card-content"] p,
+  .detail-section-card [data-slot="card-content"] li,
+  .detail-section-card [data-slot="card-content"] dd {
+    font-size: 1rem;
+    line-height: 1.65;
+  }
+
+  .detail-section-card [data-slot="card-content"] dt,
+  .detail-section-card [data-slot="card-content"] h3 {
+    font-size: 0.875rem;
+    line-height: 1.45;
+  }
+
+  .detail-section-card [data-slot="card-content"] .text-muted-foreground,
+  .detail-section-card [data-slot="card-description"].text-muted-foreground {
+    color: color-mix(in oklab, var(--foreground) 78%, transparent);
+  }
+
+  @media (min-width: 768px) {
+    .detail-section-card [data-slot="card-content"] p,
+    .detail-section-card [data-slot="card-content"] li,
+    .detail-section-card [data-slot="card-content"] dd {
+      font-size: 1.0625rem;
     }
   }
 }

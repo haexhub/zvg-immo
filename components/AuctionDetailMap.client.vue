@@ -389,7 +389,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="relative h-72 w-full rounded-xl border shadow-sm overflow-hidden">
+  <div class="relative h-[24rem] w-full overflow-hidden rounded-xl border shadow-sm md:h-[32rem]">
     <div ref="mapEl" class="h-full w-full" />
     <div ref="popupEl" class="auction-detail-map-popup" />
     <div class="auction-detail-map-layers">

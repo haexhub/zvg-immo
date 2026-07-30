@@ -42,6 +42,8 @@ import {
   CalendarPlus,
   ChartNoAxesColumn,
   ChefHat,
+  ChevronDown,
+  FileText,
   Flame,
   Heater,
   Home,
@@ -542,10 +544,9 @@ const groupedAttachments = computed<Array<{ kind: string; label: string; items: 
     .map((k) => ({ kind: k, label: attachmentKindLabelFn(k, k), items: byKind.get(k)! }))
 })
 
-// Flattened for the sidebar "Dateien" card, which lists every attachment as a
-// single row of buttons rather than grouping by kind — falls back to the
-// kind label (e.g. "Gutachten") when an attachment has neither its own label
-// nor filename.
+// Flattened for the auction data files menu, which lists every attachment as a
+// single row rather than grouping by kind — falls back to the kind label
+// (e.g. "Gutachten") when an attachment has neither its own label nor filename.
 const flatAttachments = computed(() => groupedAttachments.value.flatMap(
   (g) => g.items.map((att) => ({ att, groupLabel: g.label })),
 ))
@@ -761,8 +762,8 @@ useHead(() => ({
 
       <AuctionPhotoGallery :photos="photoUrls" :alt-base="displayTitle || $t('objektDetail.fallbackTitle')" />
 
-      <div class="grid grid-cols-1 lg:grid-cols-5 gap-6 items-start">
-        <div class="lg:col-span-3 space-y-8">
+      <div class="space-y-8">
+        <div class="space-y-8">
           <DetailSectionCard :title="$t('objektDetail.auctionDataTitle')">
             <template v-if="auctionDataTranslating" #action>
               <TranslationPendingBadge />
@@ -779,7 +780,7 @@ useHead(() => ({
                 </dd>
               </div>
               <div>
-                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.auctionDate') }}</dt>
+                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.versteigerungstermin') }}</dt>
                 <dd class="text-sm font-medium">{{ formatDate(a.auctionDateIso, a.auctionDateText) }}</dd>
               </div>
               <div v-if="a.startingBid != null">
@@ -806,6 +807,65 @@ useHead(() => ({
             <p v-if="displayExtraction?.biddingNotes" class="mt-4 text-xs text-muted-foreground">
               {{ $t('objektDetail.biddingNotes', { note: displayExtraction.biddingNotes }) }}
             </p>
+            <div v-if="calendarEvent || flatAttachments.length > 0" class="mt-5 flex flex-wrap gap-2">
+              <details v-if="calendarEvent" class="group relative">
+                <summary
+                  class="inline-flex h-8 cursor-pointer list-none items-center justify-center gap-1.5 whitespace-nowrap rounded-md border bg-background px-3 text-sm font-medium shadow-xs outline-none transition-all hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-3 dark:bg-input/30 dark:border-input dark:hover:bg-input/50 [&::-webkit-details-marker]:hidden"
+                >
+                  <CalendarPlus class="h-4 w-4" />
+                  <span>{{ $t('objektDetail.saveToCalendar') }}</span>
+                  <ChevronDown class="h-4 w-4 opacity-50 transition-transform group-open:rotate-180" />
+                </summary>
+                <div class="absolute left-0 z-50 mt-2 w-max min-w-64 max-w-[calc(100vw-2rem)] rounded-md border bg-popover p-1 text-popover-foreground shadow-md">
+                  <a
+                    :href="googleCalendarUrl(calendarEvent)"
+                    target="_blank"
+                    rel="noopener"
+                    class="flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
+                  >
+                    <CalendarPlus class="h-4 w-4 text-muted-foreground" /> {{ $t('objektDetail.addToGoogleCalendar') }}
+                  </a>
+                  <a
+                    :href="outlookCalendarUrl(calendarEvent)"
+                    target="_blank"
+                    rel="noopener"
+                    class="flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
+                  >
+                    <CalendarPlus class="h-4 w-4 text-muted-foreground" /> {{ $t('objektDetail.addToOutlookCalendar') }}
+                  </a>
+                  <a
+                    :href="icsDataUrl(calendarEvent)"
+                    :download="icsFilename(a.caseNumber)"
+                    class="flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
+                  >
+                    <CalendarPlus class="h-4 w-4 text-muted-foreground" /> {{ $t('objektDetail.downloadIcs') }}
+                  </a>
+                </div>
+              </details>
+
+              <details v-if="flatAttachments.length > 0" class="group relative">
+                <summary
+                  class="inline-flex h-8 cursor-pointer list-none items-center justify-center gap-1.5 whitespace-nowrap rounded-md border bg-background px-3 text-sm font-medium shadow-xs outline-none transition-all hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-3 dark:bg-input/30 dark:border-input dark:hover:bg-input/50 [&::-webkit-details-marker]:hidden"
+                >
+                  <FileText class="h-4 w-4" />
+                  <span>{{ $t('objektDetail.openFilesMenu') }}</span>
+                  <ChevronDown class="h-4 w-4 opacity-50 transition-transform group-open:rotate-180" />
+                </summary>
+                <div class="absolute left-0 z-50 mt-2 w-max min-w-64 max-w-[calc(100vw-2rem)] rounded-md border bg-popover p-1 text-popover-foreground shadow-md">
+                  <a
+                    v-for="{ att, groupLabel } in flatAttachments"
+                    :key="att.fileId"
+                    :href="attachmentHref(att)"
+                    target="_blank"
+                    rel="noopener"
+                    class="flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
+                  >
+                    <FileText class="h-4 w-4 text-muted-foreground" />
+                    <span class="min-w-0 truncate">{{ att.label || att.filename || groupLabel }}</span>
+                  </a>
+                </div>
+              </details>
+            </div>
           </DetailSectionCard>
 
           <DetailSectionCard v-if="hasPropertyData" :title="$t('objektDetail.propertyDataTitle')">
@@ -1002,7 +1062,7 @@ useHead(() => ({
 
           <LawyerContact :platform="a.platform" :external-id="a.externalId" :country="a.country" />
 
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div class="space-y-6">
             <DetailSectionCard :title="$t('objektDetail.defectsTitle')">
               <template v-if="defectsTranslating" #action>
                 <TranslationPendingBadge />
@@ -1164,77 +1224,24 @@ useHead(() => ({
           </div>
         </div>
 
-        <aside class="lg:col-span-2 space-y-6">
-          <DetailSectionCard :title="$t('objektDetail.courtInfoTitle')">
-            <dl class="space-y-3 text-sm">
-              <div>
-                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.authority') }}</dt>
-                <dd class="font-medium">{{ a.authority }}</dd>
-              </div>
-              <div>
-                <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.versteigerungstermin') }}</dt>
-                <dd class="font-medium">{{ formatDate(a.auctionDateIso, a.auctionDateText) }}</dd>
-              </div>
-            </dl>
-            <div v-if="calendarEvent" class="flex flex-col gap-2 pt-4">
-              <Button as-child variant="outline" size="sm">
-                <a :href="googleCalendarUrl(calendarEvent)" target="_blank" rel="noopener">
-                  <CalendarPlus class="h-4 w-4" /> {{ $t('objektDetail.addToGoogleCalendar') }}
-                </a>
-              </Button>
-              <Button as-child variant="outline" size="sm">
-                <a :href="outlookCalendarUrl(calendarEvent)" target="_blank" rel="noopener">
-                  <CalendarPlus class="h-4 w-4" /> {{ $t('objektDetail.addToOutlookCalendar') }}
-                </a>
-              </Button>
-              <Button as-child variant="outline" size="sm">
-                <a :href="icsDataUrl(calendarEvent)" :download="icsFilename(a.caseNumber)">
-                  <CalendarPlus class="h-4 w-4" /> {{ $t('objektDetail.downloadIcs') }}
-                </a>
-              </Button>
-            </div>
-          </DetailSectionCard>
+        <CostCalculator v-if="a.country === 'de'" :market-value-eur="a.marketValueEur" :region="a.region" />
 
-          <CostCalculator v-if="a.country === 'de'" :market-value-eur="a.marketValueEur" :region="a.region" />
-
-          <DetailSectionCard v-if="groupedAttachments.length > 0" :title="$t('objektDetail.filesTitle')">
-            <div class="flex flex-wrap gap-2">
-              <Button v-for="{ att, groupLabel } in flatAttachments" :key="att.fileId" as-child variant="outline" size="sm">
-                <a :href="attachmentHref(att)" target="_blank" rel="noopener">
-                  {{ att.label || att.filename || groupLabel }}
-                </a>
-              </Button>
-            </div>
-          </DetailSectionCard>
-
-          <DetailSectionCard :title="$t('objektDetail.sourcesDisclaimerTitle')">
-            <div v-if="a.pdfUrlUpstream" class="mb-2 flex flex-wrap gap-2">
-              <Button v-if="a.pdfUrlUpstream" as-child variant="outline" size="sm">
-                <a :href="safeHref(a.pdfUrlUpstream)" target="_blank" rel="noopener">{{ $t('objektDetail.announcementOriginal') }}</a>
-              </Button>
-            </div>
-            <p class="text-xs text-muted-foreground">{{ $t('objektDetail.sourcesDisclaimerText') }}</p>
-          </DetailSectionCard>
-
-          <DetailSectionCard v-if="a.country === 'de'" :title="$t('objektDetail.safetyNoticeTitle')">
-            <p class="text-xs text-muted-foreground leading-relaxed">{{ $t('objektDetail.safetyNoticeText') }}</p>
-          </DetailSectionCard>
-        </aside>
+        <DetailSectionCard v-if="a.country === 'de'" :title="$t('objektDetail.safetyNoticeTitle')">
+          <p class="text-base leading-relaxed text-foreground/85">{{ $t('objektDetail.safetyNoticeText') }}</p>
+        </DetailSectionCard>
       </div>
 
-      <section v-if="a.lat != null && a.lng != null" class="mt-8 space-y-2">
-        <h2 class="text-base font-semibold">{{ $t('objektDetail.location') }}</h2>
-        <div class="grid grid-cols-1 lg:grid-cols-5 gap-4 items-start">
-          <div class="lg:col-span-3">
-            <AuctionDetailMap
-              :lat="a.lat"
-              :lng="a.lng"
-              :label="a.address ?? undefined"
-              :hazards="a.locationEnrichment?.hazards"
-              :location-context="locationContext"
-            />
-          </div>
-          <div v-if="locationContext" class="lg:col-span-2 space-y-4">
+      <section v-if="a.lat != null && a.lng != null" class="mt-8 space-y-5">
+        <h2 class="text-2xl font-semibold tracking-tight">{{ $t('objektDetail.location') }}</h2>
+        <AuctionDetailMap
+          :lat="a.lat"
+          :lng="a.lng"
+          :label="a.address ?? undefined"
+          :hazards="a.locationEnrichment?.hazards"
+          :location-context="locationContext"
+        />
+        <div>
+          <div v-if="locationContext" class="space-y-6">
             <DetailSectionCard v-if="locationQuality" :title="$t('objektDetail.locationQualityTitle')">
               <div class="space-y-3">
                 <div class="flex flex-wrap items-center justify-between gap-2">
@@ -1515,11 +1522,23 @@ useHead(() => ({
               </div>
             </DetailSectionCard>
           </div>
-          <DetailSectionCard v-else class="lg:col-span-2" :title="$t('objektDetail.nearbyPlaces')">
+          <DetailSectionCard v-else :title="$t('objektDetail.nearbyPlaces')">
             <p class="text-sm text-muted-foreground">{{ $t('objektDetail.noExternalLocationContext') }}</p>
           </DetailSectionCard>
         </div>
       </section>
+
+      <footer class="mt-10 border-t pt-6 text-sm leading-relaxed text-foreground/80">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 class="text-base font-semibold text-foreground">{{ $t('objektDetail.sourcesDisclaimerTitle') }}</h2>
+            <p class="mt-1 max-w-3xl">{{ $t('objektDetail.sourcesDisclaimerText') }}</p>
+          </div>
+          <Button v-if="a.pdfUrlUpstream" as-child variant="outline" size="sm" class="shrink-0">
+            <a :href="safeHref(a.pdfUrlUpstream)" target="_blank" rel="noopener">{{ $t('objektDetail.announcementOriginal') }}</a>
+          </Button>
+        </div>
+      </footer>
     </template>
     </div>
   </main>
