@@ -25,18 +25,24 @@ import {
 import { getLlmMaxTokens, getLlmProviderOverride } from '~/server/utils/app-settings'
 import { resolveLlmConfig, type LlmConfig } from '~/server/utils/extract/llm'
 import { callTranslationLlm, type TranslationResult } from '~/server/utils/extract/text-llm'
-import { isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
-import { extractTranslatableExtractionTexts, TRANSLATABLE_EXTRACTION_TEXTS_VERSION } from '~/lib/extraction-translation'
+import { countryContentLanguage, isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
+import { extractTranslatableExtractionTexts, translationContentSource } from '~/lib/extraction-translation'
 import {
   checkInMemoryRateLimit,
   createInMemoryRateLimitState,
   recordInMemoryRateLimitHit,
 } from '~/server/utils/in-memory-rate-limit'
 import { requestClientIp } from '~/server/utils/request-client-ip'
+import type { Auction } from '~/types/auction'
 
 const SUPPORTED_TARGET_LANGS = new Set<ContentTargetLang>(['de', 'en'])
 
 const LANG_NAMES: Record<ContentTargetLang, string> = { de: 'German', en: 'English' }
+const LANGUAGE_DISPLAY_NAMES = new Intl.DisplayNames(['en'], { type: 'language' })
+
+function languageName(code: string): string {
+  return LANGUAGE_DISPLAY_NAMES.of(code) ?? code
+}
 
 const SYSTEM_PROMPT =
   'Du bist ein präziser Übersetzer für Anzeigen von Immobilien-Zwangsversteigerungen. ' +
@@ -58,9 +64,14 @@ function buildPrompt(
   documentSummary: string | null,
   extractionTexts: ReturnType<typeof extractTranslatableExtractionTexts>,
   targetLang: ContentTargetLang,
+  sourceLang: string | null,
 ): string {
+  const sourceHint = sourceLang
+    ? `The source portal normally publishes this auction in ${languageName(sourceLang)}. If an individual field is in another language, detect it and still translate it into ${LANG_NAMES[targetLang]}.`
+    : `Detect the source language of each field and translate it into ${LANG_NAMES[targetLang]}.`
   const lines = [
     `Translate the following real-estate foreclosure auction text fields into ${LANG_NAMES[targetLang]}.`,
+    sourceHint,
     'Return the same JSON shape. Translate every string value. Keep nulls, array order, array lengths, identifiers, dates, numbers and currencies unchanged.',
     'Do not leave whole source-language sentences unchanged. Do not write source terms followed by target-language translations in parentheses; use the target-language term directly.',
     'EXTRACTION_TEXTS_JSON contains short structured labels shown in the property detail UI. Translate heating and insights.construction as user-facing amenity text, including material, roof, window, foundation and building-services terms. Keep an original specialist term only when there is no reliable target-language equivalent.',
@@ -79,11 +90,12 @@ async function tryTranslate(
   documentSummary: string | null,
   extractionTexts: ReturnType<typeof extractTranslatableExtractionTexts>,
   targetLang: ContentTargetLang,
+  sourceLang: string | null,
   config: Parameters<typeof callTranslationLlm>[6],
 ): Promise<TranslationResult | null> {
   return await callTranslationLlm(
     SYSTEM_PROMPT,
-    buildPrompt(title, description, documentSummary, extractionTexts, targetLang),
+    buildPrompt(title, description, documentSummary, extractionTexts, targetLang, sourceLang),
     title,
     description,
     documentSummary,
@@ -121,6 +133,10 @@ export function fingerprintConfig(config: LlmConfig): string {
   })))
 }
 
+export function auctionTranslationContentHash(auction: Pick<Auction, 'title' | 'description' | 'extraction'>): string {
+  return sha256Hex(Buffer.from(JSON.stringify(translationContentSource(auction))))
+}
+
 export default defineEventHandler(async (event) => {
   const platform = String(event.context.params?.platform ?? '')
   const id = String(event.context.params?.id ?? '')
@@ -145,6 +161,7 @@ export default defineEventHandler(async (event) => {
   const { title, description } = auction
   const documentSummary = auction.extraction?.documentSummary ?? null
   const extractionTexts = extractTranslatableExtractionTexts(auction.extraction)
+  const sourceLang = countryContentLanguage(auction.country)
   if (title == null && description == null && documentSummary == null && extractionTexts == null) {
     return { title: null, description: null, documentSummary: null, extractionTexts: null, translated: false }
   }
@@ -153,19 +170,11 @@ export default defineEventHandler(async (event) => {
     return { title, description, documentSummary, extractionTexts, translated: false }
   }
 
-  const contentHash = sha256Hex(Buffer.from(JSON.stringify({
-    title,
-    description,
-    documentSummary,
-    extractionTexts,
-    extractionTextsVersion: TRANSLATABLE_EXTRACTION_TEXTS_VERSION,
-    documentSetHash: auction.extraction?.documentSetHash ?? null,
-    documentSetVersion: auction.extraction?.documentSetVersion ?? null,
-  })))
-  // Dedupe only the same auction/language. A content-hash key could let a
-  // second auction hitchhike on another auction's in-flight promise without
-  // ever creating its own durable once-only row.
-  const inflightKey = `${platform}:${id}:${targetLang}`
+  const contentHash = auctionTranslationContentHash(auction)
+  // Dedupe only the same auction/language/content snapshot. A content-hash-only
+  // key could let a second auction hitchhike without creating its own durable
+  // once-only row, while omitting the hash could reuse stale in-memory work.
+  const inflightKey = `${platform}:${id}:${targetLang}:${contentHash}`
 
   const db: Pool | null = getPool()
   if (!db) {
@@ -173,7 +182,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const stored = await readAuctionTranslation(db, platform, id, targetLang)
-  if (stored?.status === 'completed') {
+  if (stored?.status === 'completed' && stored.contentHash === contentHash) {
     setResponseHeader(event, 'x-zvg-translation-cache', 'hit')
     return {
       title: stored.title,
@@ -187,6 +196,7 @@ export default defineEventHandler(async (event) => {
   // pending claim blocks until its lease expires. Both then fall through to
   // claimAuctionTranslation, which takes the stale row over — a transient
   // provider failure must not lock this auction out permanently.
+  const existing = inflight.get(inflightKey)
   let resolvedConfig: LlmConfig | null = null
   if (stored?.status === 'failed' && !stored.retryDue) {
     resolvedConfig = await resolveActiveLlmConfig(db)
@@ -211,10 +221,12 @@ export default defineEventHandler(async (event) => {
       setResponseStatus(event, 204)
       return null
     }
+    if (existing) {
+      return { ...(await existing), translated: true }
+    }
     throw createError({ statusCode: 409, statusMessage: 'Übersetzung läuft bereits' })
   }
 
-  const existing = inflight.get(inflightKey)
   if (cacheOnly) {
     setResponseHeader(event, 'x-zvg-translation-cache', existing ? 'inflight' : 'miss')
     setResponseStatus(event, 204)
@@ -260,7 +272,7 @@ export default defineEventHandler(async (event) => {
         throw new Error('LLM ist nicht konfiguriert')
       }
 
-      const result = await tryTranslate(title, description, documentSummary, extractionTexts, targetLang, config)
+      const result = await tryTranslate(title, description, documentSummary, extractionTexts, targetLang, sourceLang, config)
       if (!result) {
         throw new Error('LLM hat keine gültige Übersetzung geliefert')
       }

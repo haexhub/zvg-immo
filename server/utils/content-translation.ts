@@ -93,10 +93,17 @@ export async function claimAuctionTranslation(
        status = 'pending',
        started_at = now(),
        completed_at = null,
-       error_message = null
+       title = null,
+       description = null,
+       document_summary = null,
+       extraction_texts = null,
+       error_message = null,
+       failed_config = null
      WHERE auction_translations.status = 'failed'
         OR (auction_translations.status = 'pending'
             AND auction_translations.started_at < now() - $5::interval)
+        OR (auction_translations.status = 'completed'
+            AND auction_translations.content_hash <> excluded.content_hash)
      RETURNING started_at AS "startedAt"`,
     [platform, externalId, lang, contentHash, CLAIM_LEASE],
   )

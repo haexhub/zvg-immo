@@ -27,6 +27,10 @@ describe('stripBgHtml', () => {
     )
   })
 
+  it('decodes common real-estate entities used by zapori descriptions', () => {
+    expect(stripBgHtml('&frac12; идеална част &ndash; част ІІ')).toBe('1/2 идеална част – част ІІ')
+  })
+
   it('returns an empty string for null/undefined input', () => {
     expect(stripBgHtml(null)).toBe('')
     expect(stripBgHtml(undefined)).toBe('')
@@ -82,6 +86,15 @@ describe('parseBgAddress', () => {
     expect(parseBgAddress('Публична продан на земеделска земя - с. Костанденец', null)).toBe(
       'с. Костанденец, Bulgarien',
     )
+  })
+
+  it('extracts Bulgarian long-form village, municipality, province and locality text', () => {
+    expect(
+      parseBgAddress(
+        'ОБЯВЛЕНИЕ ЗА ЕЛЕКТРОНЕН ПУБЛИЧЕН ТЪРГ НА НЕДВИЖИМ ИМОТ',
+        'имот, находящ се в село Приселци, община Аврен, област Варна, местност "Пазарлията" – част ІІ',
+      ),
+    ).toBe('местност Пазарлията, село Приселци, община Аврен, област Варна, Bulgarien')
   })
 
   it('extracts a title-only street and number (no separate description)', () => {

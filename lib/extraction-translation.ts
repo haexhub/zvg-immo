@@ -1,4 +1,4 @@
-import type { AuctionExtraction, AuctionInsights, LandParcel, PlanningNotes } from '~/types/auction'
+import type { Auction, AuctionExtraction, AuctionInsights, LandParcel, PlanningNotes } from '~/types/auction'
 
 export const TRANSLATABLE_EXTRACTION_TEXTS_VERSION = 3
 
@@ -33,6 +33,16 @@ export interface TranslatableExtractionTexts {
   heating: string | null
   insights: TranslatableInsightsTexts | null
   planningNotes: TranslatablePlanningNotesTexts | null
+}
+
+export interface TranslationContentSource {
+  title: string | null
+  description: string | null
+  documentSummary: string | null
+  extractionTexts: TranslatableExtractionTexts | null
+  extractionTextsVersion: number
+  documentSetHash: string | null
+  documentSetVersion: number | null
 }
 
 function text(value: string | null | undefined): string | null {
@@ -116,6 +126,20 @@ export function extractTranslatableExtractionTexts(
     out.planningNotes != null
     ? out
     : null
+}
+
+export function translationContentSource(
+  auction: Pick<Auction, 'title' | 'description' | 'extraction'>,
+): TranslationContentSource {
+  return {
+    title: auction.title,
+    description: auction.description,
+    documentSummary: auction.extraction?.documentSummary ?? null,
+    extractionTexts: extractTranslatableExtractionTexts(auction.extraction),
+    extractionTextsVersion: TRANSLATABLE_EXTRACTION_TEXTS_VERSION,
+    documentSetHash: auction.extraction?.documentSetHash ?? null,
+    documentSetVersion: auction.extraction?.documentSetVersion ?? null,
+  }
 }
 
 export function applyTranslatedExtractionTexts(

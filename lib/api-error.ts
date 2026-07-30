@@ -18,3 +18,14 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
     || value.message
     || fallback
 }
+
+export function apiErrorStatusCode(error: unknown): number | null {
+  if (typeof error !== 'object' || error === null) return null
+  const value = error as {
+    status?: number
+    statusCode?: number
+    response?: { status?: number }
+    data?: { statusCode?: number }
+  }
+  return value.statusCode ?? value.status ?? value.response?.status ?? value.data?.statusCode ?? null
+}

@@ -213,8 +213,10 @@ describe('/api/auction/:platform/:id/translation', () => {
   it('always serves the persistent auction cache after the first completed translation', async () => {
     const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
     const { readAuctionTranslation, claimAuctionTranslation } = await import('~/server/utils/content-translation')
+    const handler = await loadHandler()
+    const { auctionTranslationContentHash } = await import('./translation.post')
     const cached = {
-      contentHash: 'original-content-hash',
+      contentHash: auctionTranslationContentHash(auction()),
       status: 'completed' as const,
       errorMessage: null,
       failedConfig: null,
@@ -225,7 +227,6 @@ describe('/api/auction/:platform/:id/translation', () => {
       documentSummary: null,
       extractionTexts: null,
     }
-    const handler = await loadHandler()
     vi.mocked(readAuctionTranslation).mockResolvedValue(cached)
 
     await expect(handler({
@@ -241,6 +242,61 @@ describe('/api/auction/:platform/:id/translation', () => {
 
     expect(claimAuctionTranslation).not.toHaveBeenCalled()
     expect(callTranslationLlm).not.toHaveBeenCalled()
+  })
+
+  it('regenerates a completed auction translation when the content hash changed', async () => {
+    const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
+    const {
+      completeAuctionTranslation,
+      readAuctionTranslation,
+      claimAuctionTranslation,
+    } = await import('~/server/utils/content-translation')
+    const handler = await loadHandler()
+    const { auctionTranslationContentHash } = await import('./translation.post')
+    const expectedContentHash = auctionTranslationContentHash(auction())
+    const payload = {
+      title: 'Fresh title for changed content',
+      description: 'Fresh description for changed content',
+      documentSummary: null,
+      extractionTexts: null,
+    }
+    vi.mocked(readAuctionTranslation).mockResolvedValue({
+      contentHash: 'old-content-hash',
+      status: 'completed',
+      errorMessage: null,
+      failedConfig: null,
+      claimStale: false,
+      retryDue: true,
+      title: 'Old cached title',
+      description: 'Old cached description',
+      documentSummary: null,
+      extractionTexts: null,
+    })
+    vi.mocked(callTranslationLlm).mockResolvedValue(payload)
+
+    await expect(handler({
+      context: { params: { platform: 'se-kronofogden', id: '101738' } },
+      node: { req: { socket: { remoteAddress: '127.0.0.1' } } },
+    })).resolves.toMatchObject({ ...payload, translated: true })
+
+    expect(claimAuctionTranslation).toHaveBeenCalledOnce()
+    expect(claimAuctionTranslation).toHaveBeenCalledWith(
+      expect.anything(),
+      'se-kronofogden',
+      '101738',
+      'de',
+      expectedContentHash,
+    )
+    expect(callTranslationLlm).toHaveBeenCalledOnce()
+    expect(completeAuctionTranslation).toHaveBeenCalledOnce()
+    expect(completeAuctionTranslation).toHaveBeenCalledWith(
+      expect.anything(),
+      'se-kronofogden',
+      '101738',
+      'de',
+      CLAIM,
+      payload,
+    )
   })
 
   it('serves the stored error instead of retrying while the retry window is closed', async () => {
@@ -431,6 +487,52 @@ describe('/api/auction/:platform/:id/translation', () => {
       node: { req: { socket: { remoteAddress: '127.0.0.1' } } },
     })).resolves.toMatchObject({ title: 'Recovered title', translated: true })
 
+    expect(claimAuctionTranslation).toHaveBeenCalledOnce()
+  })
+
+  it('waits for the in-memory generation when the durable row is pending in this process', async () => {
+    const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
+    const { readAuctionTranslation, claimAuctionTranslation } = await import('~/server/utils/content-translation')
+    const handler = await loadHandler()
+    const payload = {
+      title: 'Shared translated title',
+      description: 'Shared translated description',
+      documentSummary: null,
+      extractionTexts: null,
+    }
+    let resolveTranslation!: (value: typeof payload) => void
+    vi.mocked(callTranslationLlm).mockImplementation(() => new Promise((resolve) => {
+      resolveTranslation = resolve
+    }))
+    vi.mocked(readAuctionTranslation)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({
+        contentHash: 'pending-content-hash',
+        status: 'pending',
+        errorMessage: null,
+        failedConfig: null,
+        claimStale: false,
+        retryDue: false,
+        title: null,
+        description: null,
+        documentSummary: null,
+        extractionTexts: null,
+      })
+
+    const first = handler({
+      context: { params: { platform: 'se-kronofogden', id: '101738' } },
+      node: { req: { socket: { remoteAddress: '127.0.0.1' } } },
+    })
+    await vi.waitFor(() => expect(callTranslationLlm).toHaveBeenCalledOnce())
+
+    const second = handler({
+      context: { params: { platform: 'se-kronofogden', id: '101738' } },
+      node: { req: { socket: { remoteAddress: '127.0.0.1' } } },
+    })
+    resolveTranslation(payload)
+
+    await expect(first).resolves.toMatchObject({ ...payload, translated: true })
+    await expect(second).resolves.toMatchObject({ ...payload, translated: true })
     expect(claimAuctionTranslation).toHaveBeenCalledOnce()
   })
 

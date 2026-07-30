@@ -1,39 +1,34 @@
-// Maps each crawled country (server/crawlers/registry.ts's `platforms`) to
-// its primary content language (ISO 639-1) — the language `title`/
-// `description` are actually written in. Used by the content-translation
-// passthrough rule (server/api/auction/[platform]/[id]/translation.post.ts
-// and the objekt detail page): if the viewer's target language equals the
-// auction's primary language, skip the LLM call and show the original text.
-export const PRIMARY_LANGUAGE: Record<string, string> = {
-  de: 'de',
-  at: 'de',
-  es: 'es',
-  it: 'it',
-  cz: 'cs',
-  pl: 'pl',
-  hu: 'hu',
-  lt: 'lt',
-  ba: 'bs',
-  se: 'sv',
-  fi: 'fi',
-  dk: 'da',
-  fr: 'fr',
-  is: 'is',
-  ca: 'en',
-  ee: 'et',
-  lv: 'lv',
-  pt: 'pt',
-  si: 'sl',
-  gr: 'el',
-  gb: 'en',
-  us: 'en',
-}
-
+// User-facing target languages supported by the site and translation endpoint.
+// Source languages are inferred separately from auction country codes; adding
+// a country must not imply adding a selectable UI locale here.
 export type ContentTargetLang = 'de' | 'en'
 
-/** True when the auction's country's primary language already matches
- *  `targetLang` — translating would be a no-op, so the caller should skip
- *  the LLM call and use the original title/description as-is. */
+const REGION_DISPLAY_NAMES = new Intl.DisplayNames(['en'], { type: 'region' })
+
+function isKnownRegion(code: string): boolean {
+  if (!/^[a-z]{2}$/i.test(code)) return false
+  return REGION_DISPLAY_NAMES.of(code.toUpperCase()) !== 'Unknown Region'
+}
+
+/** Infers the language a country's official/source portals normally use from
+ *  the ISO-3166 country code via CLDR likely-subtags. This keeps translation
+ *  passthrough automatic as countries are enabled/disabled, while unknown or
+ *  invalid country codes deliberately return null so the LLM can detect the
+ *  source language itself. */
+export function countryContentLanguage(country: string): string | null {
+  const code = country.trim().toUpperCase()
+  if (!isKnownRegion(code)) return null
+  try {
+    return new Intl.Locale(`und-${code}`).maximize().language || null
+  } catch {
+    return null
+  }
+}
+
+/** True when the auction's country source language already matches
+ *  `targetLang` — translating would be a no-op, so the caller should skip the
+ *  LLM call and use the original title/description as-is. Unknown countries
+ *  deliberately do not pass through; the LLM can detect the source language. */
 export function isPassthroughLanguage(country: string, targetLang: ContentTargetLang): boolean {
-  return PRIMARY_LANGUAGE[country.toLowerCase()] === targetLang
+  return countryContentLanguage(country) === targetLang
 }

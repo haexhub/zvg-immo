@@ -221,6 +221,11 @@ describe('normalizeBgAddress', () => {
       .toEqual(['РУСАЛКА 70, СВЕТИ ВЛАС', 'СВЕТИ ВЛАС'])
   })
 
+  it('normalizes a zapori long-form village/locality address to specific-to-broad queries', () => {
+    expect(normalizeBgAddress('местност Пазарлията, село Приселци, община Аврен, област Варна, Bulgarien'))
+      .toEqual(['Пазарлията, Приселци', 'Пазарлията, Аврен', 'Приселци, Аврен', 'Приселци, Варна', 'Приселци', 'Аврен', 'Варна'])
+  })
+
   it('falls back to the raw address when it has no recognisable structure', () => {
     expect(normalizeBgAddress('Bulgarien')).toEqual(['Bulgarien'])
   })

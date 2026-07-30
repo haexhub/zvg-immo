@@ -8,6 +8,7 @@ import type { GeoAuction } from '~/server/api/auctions-geo.get'
 import type { AuctionDetail } from '~/server/api/auction/[platform]/[id].get'
 import { apiErrorMessage } from '~/lib/api-error'
 import { isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
+import { fetchWithPendingRetry } from '~/lib/pending-retry'
 import { auctionPhotoUrls } from '~/lib/auction-photos'
 
 const props = defineProps<{
@@ -27,10 +28,14 @@ const loading = ref(true)
 const loadError = ref<string | null>(null)
 const translatedTitle = ref<string | null>(null)
 const displayTitle = computed(() => translatedTitle.value ?? detail.value?.title ?? null)
+let isActive = true
 
 interface AuctionTranslationResponse {
   title: string | null
 }
+
+const TRANSLATION_PENDING_RETRY_MS = 2500
+const TRANSLATION_PENDING_MAX_POLLS = 24
 
 // Loaded silently alongside the detail fetch, same as the objekt detail page
 // (pages/objekt/[platform]/[id].vue) — the address stays untranslated
@@ -38,16 +43,27 @@ interface AuctionTranslationResponse {
 async function loadTranslation(): Promise<void> {
   if (!props.lang || isPassthroughLanguage(props.auction.country, props.lang)) return
   try {
-    const value = await $fetch<AuctionTranslationResponse>(
-      `/api/auction/${encodeURIComponent(props.auction.platform)}/${encodeURIComponent(props.auction.externalId)}/translation`,
-      { method: 'POST', query: { lang: props.lang } },
+    const value = await fetchWithPendingRetry(
+      () => $fetch<AuctionTranslationResponse>(
+        `/api/auction/${encodeURIComponent(props.auction.platform)}/${encodeURIComponent(props.auction.externalId)}/translation`,
+        { method: 'POST', query: { lang: props.lang } },
+      ),
+      {
+        maxPolls: TRANSLATION_PENDING_MAX_POLLS,
+        retryMs: TRANSLATION_PENDING_RETRY_MS,
+        shouldContinue: () => isActive,
+      },
     )
-    translatedTitle.value = value.title
+    if (value && isActive) translatedTitle.value = value.title
   } catch {
     // Silent fallback to the original title — the compact popover has no
     // room for a dedicated translation-error state.
   }
 }
+
+onUnmounted(() => {
+  isActive = false
+})
 
 onMounted(async () => {
   loadTranslation()
