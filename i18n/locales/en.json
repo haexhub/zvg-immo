@@ -134,6 +134,7 @@
     "heading": "Settings",
     "logoutAdmin": "Sign out",
     "logoutAdminError": "Sign out failed.",
+    "sessionExpired": "Session expired.",
     "login": {
       "title": "Sign in",
       "protected": "This page is password-protected.",
@@ -284,7 +285,8 @@
       "saveError": "Save failed.",
       "saved": "Saved.",
       "saving": "Saving …",
-      "save": "Save"
+      "save": "Save",
+      "retry": "Retry"
     },
     "sources": {
       "title": "Data sources",
@@ -1069,6 +1071,7 @@
     "usageIdeasPending": "Generating ideas …",
     "usageIdeasError": "Usage ideas could not be generated.",
     "usageIdeasRetry": "Retry",
+    "usageIdeasEmpty": "No usage ideas identified.",
     "renovationCostTitle": "Renovation cost",
     "renovationCostGenerate": "Estimate renovation cost",
     "renovationCostPending": "Generating estimate …",
