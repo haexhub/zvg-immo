@@ -11,7 +11,10 @@ import type { ContentTargetLang } from '~/lib/content-language'
 
 const ESRI_IMAGERY_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
 const ESRI_LABELS_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'
-const GERMANY_CENTER_LONLAT: [number, number] = [10.4515, 51.1657]
+// Only used before any auction data has loaded and no country is selected —
+// once either is available, refreshMarkers()/fitFallbackView() below take
+// over with a real fit (auction extent, or the selected country's bounds).
+const EUROPE_CENTER_LONLAT: [number, number] = [15, 50]
 
 // Replicates .auction-map-pin's CSS trick (rounded square, one square corner,
 // rotate(-45deg)) as a static SVG so it can be baked into an ol/style/Icon.
@@ -80,8 +83,8 @@ function resolveContentLang(loc: string): ContentTargetLang | null {
 const contentLang = computed(() => resolveContentLang(locale.value))
 
 const baseLayer = ref<'streets' | 'satellite'>('streets')
-const initialCenter = fromLonLat(GERMANY_CENTER_LONLAT)
-const initialZoom = 6
+const initialCenter = fromLonLat(EUROPE_CENTER_LONLAT)
+const initialZoom = 4
 
 const mapRef = ref<any>(null)
 const vectorSourceRef = ref<any>(null)
