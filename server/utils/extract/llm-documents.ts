@@ -11,7 +11,7 @@ import { downloadBlob, findLatestCapture, readDocumentSetItems } from '../storag
 import { detectImageExt, type ImageExt } from './image-bytes'
 import { docxBufferToText } from './docx-text'
 import { buildDocumentLlmParts } from './pdf-documents'
-import { extractPdfTextFromBuffer } from './pdf-text'
+import { extractPdfTextFromBuffer, pdfHasTrustworthyEncoding } from './pdf-text'
 import { renderPdfPagesJpeg } from './pdf-render'
 import type { LlmInput } from './llm'
 
@@ -315,9 +315,17 @@ async function prepareDocument(
       ? await archiveDocumentBlob(bytes, contentType, opts.identity, attachment.proxyUrl, opts.capturedAt)
       : null
   )
-  const text = format === 'pdf'
+  let text = format === 'pdf'
     ? opts.nativeDocuments ? null : await extractPdfTextFromBuffer(bytes)
     : textForPrepared(format, bytes)
+  // A PDF whose fonts use a CJK CID encoding (seen from scanner OCR software
+  // that mismapped Cyrillic onto a Japanese font) still yields plenty of
+  // characters from pdftotext, just not real text — treat it the same as no
+  // text at all so the caller falls back to rendering page images instead of
+  // feeding the LLM homoglyph noise.
+  if (format === 'pdf' && text && !(await pdfHasTrustworthyEncoding(bytes))) {
+    text = null
+  }
   if (text?.trim() && opts.identity && opts.capturedAt) {
     await archiveDocumentText(text, opts.identity, attachment.proxyUrl, opts.capturedAt)
   }

@@ -162,6 +162,44 @@ export async function extractPdfTextFromBuffer(buf: Buffer): Promise<string | nu
   }
 }
 
+// Adobe's predefined CJK CID encodings (Shift-JIS/GB/CNS/KS CMaps) — never
+// legitimate for a European real-estate document. Some scanner OCR software
+// (observed: a Canon copier's built-in OCR) mismaps Cyrillic/Latin text onto
+// a CJK font with one of these encodings; poppler still decodes *something*
+// from it (plenty of characters, so the plain length check below never
+// catches it) but the result is homoglyph noise, not real text.
+const CJK_CID_ENCODING_RE = /RKSJ|UniGB|UniCNS|UniJIS|UniKS|EUC-|KSC/i
+
+/**
+ * Whether this PDF's fonts look trustworthy, i.e. none uses a CJK CID
+ * encoding — a strong signal that its text layer is bogus (see
+ * CJK_CID_ENCODING_RE above). Fails open (true = "trust the text") so a
+ * missing/erroring `pdffonts` never makes extraction worse than before this
+ * check existed.
+ */
+export async function pdfHasTrustworthyEncoding(buf: Buffer): Promise<boolean> {
+  const dir = await mkdtemp(join(tmpdir(), 'zvg-pdffonts-'))
+  const inputPath = join(dir, 'in.pdf')
+  try {
+    await writeFile(inputPath, buf)
+    const { stdout } = await exec('pdffonts', [inputPath], {
+      timeout: 30_000,
+      maxBuffer: 5 * 1024 * 1024,
+    })
+    return !stdout
+      .split('\n')
+      .slice(2)
+      // Columns: name type encoding emb sub uni objectID gen — name/type can
+      // themselves contain spaces (e.g. "CID TrueType"), so count the fixed-
+      // width tail columns from the end rather than indexing from the start.
+      .some((line) => CJK_CID_ENCODING_RE.test(line.trim().split(/\s+/).at(-6) ?? ''))
+  } catch {
+    return true
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+}
+
 /**
  * Fetch the PDF at `proxyUrl` and return its text, or null on any failure.
  * When `archive` is given, the raw PDF bytes are captured into the G1 archive
