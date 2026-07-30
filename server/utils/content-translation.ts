@@ -23,12 +23,19 @@ const CLAIM_LEASE = '10 minutes'
 // retry is allowed. A provider rate limit or outage must not lock an auction
 // out of ever getting a translation — the same lockout that PR #200 had to undo
 // for extraction (see server/tasks/reprocess.ts's isRateLimitError handling).
+// translation.post.ts additionally bypasses this window immediately when the
+// resolved LLM config no longer matches `failedConfig` below — a /settings
+// provider/model switch shouldn't have to wait out a stale config's backoff.
 const RETRY_AFTER = '1 hour'
 
 export interface AuctionTranslationRow extends ContentTranslationRow {
   contentHash: string
   status: 'pending' | 'completed' | 'failed'
   errorMessage: string | null
+  /** Fingerprint of the LLM config that produced `errorMessage` on a
+   *  `failed` row — lets the caller bypass `retryDue`'s time-based backoff
+   *  immediately once the currently-resolved config no longer matches. */
+  failedConfig: string | null
   /** `pending` row whose lease expired — another request may claim it. */
   claimStale: boolean
   /** `failed` row old enough that a fresh attempt is allowed. */
@@ -54,6 +61,7 @@ export async function readAuctionTranslation(
        document_summary AS "documentSummary",
        extraction_texts AS "extractionTexts",
        error_message AS "errorMessage",
+       failed_config AS "failedConfig",
        started_at < now() - $4::interval AS "claimStale",
        coalesce(completed_at, started_at) < now() - $5::interval AS "retryDue"
      FROM auction_translations
@@ -111,6 +119,7 @@ export async function completeAuctionTranslation(
        document_summary = $7,
        extraction_texts = $8,
        error_message = null,
+       failed_config = null,
        completed_at = now()
      WHERE platform = $1 AND external_id = $2 AND lang = $3
        AND status = 'pending' AND started_at = $4`,
@@ -137,6 +146,7 @@ export async function failAuctionTranslation(
   lang: string,
   claim: AuctionTranslationClaim,
   errorMessage: string,
+  configFingerprint: string | null,
 ): Promise<void> {
   // Scoped to our own claim: a slow attempt whose lease already expired must
   // not mark the newer attempt's row as failed.
@@ -144,10 +154,11 @@ export async function failAuctionTranslation(
     `UPDATE auction_translations SET
        status = 'failed',
        error_message = $5,
+       failed_config = $6,
        completed_at = now()
      WHERE platform = $1 AND external_id = $2 AND lang = $3
        AND status = 'pending' AND started_at = $4`,
-    [platform, externalId, lang, claim.startedAt, errorMessage.slice(0, 4000)],
+    [platform, externalId, lang, claim.startedAt, errorMessage.slice(0, 4000), configFingerprint],
   )
 }
 
