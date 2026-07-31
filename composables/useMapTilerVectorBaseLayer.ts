@@ -31,7 +31,12 @@ export function useMapTilerVectorBaseLayer(options: {
       if (thisGeneration !== generation) return // superseded by a newer style/lang change
       const localizedStyle = localizeVectorStyleLanguage(rawStyle, options.lang.value)
       group.getLayers().clear()
-      await apply(group, localizedStyle)
+      // `styleUrl` is mandatory when the style is handed over as an object:
+      // ol-mapbox-style derives the API key from the style URL's query string
+      // (apply.js's completeOptions) and resolves the style's sprite/glyphs
+      // against it. Without it those requests go out keyless and MapTiler
+      // rejects them — no icons and no labels at all.
+      await apply(group, localizedStyle, { styleUrl: url })
     } catch (err) {
       console.warn(`[map-tiles] failed to load/apply MapTiler style ${url}: ${(err as Error).message}`)
     }
