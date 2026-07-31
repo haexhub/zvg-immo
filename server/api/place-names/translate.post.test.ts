@@ -93,6 +93,22 @@ describe('/api/place-names/translate', () => {
     expect(writePlaceNameTranslations).not.toHaveBeenCalled()
   })
 
+  it('moves on to the next configured provider when one throws', async () => {
+    const handler = await loadHandler({ names: ['с. Равна'], lang: 'en' })
+    const { resolveActiveLlmConfigChain } = await import('~/server/utils/translation-llm-chain')
+    const { callPlaceNameTranslationLlm } = await import('~/server/utils/extract/text-llm')
+    const fallbackConfig = { ...CONFIG, model: 'gpt-fallback' }
+    vi.mocked(resolveActiveLlmConfigChain).mockResolvedValue([CONFIG, fallbackConfig])
+    vi.mocked(callPlaceNameTranslationLlm)
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce(['Ravna'])
+
+    await expect(handler({ node: { req: { socket: { remoteAddress: '127.0.0.1' } } } }))
+      .resolves.toEqual({ translations: { 'с. Равна': 'Ravna' } })
+    expect(callPlaceNameTranslationLlm).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(callPlaceNameTranslationLlm).mock.calls[1]![2]).toEqual(fallbackConfig)
+  })
+
   it('deduplicates and caps the incoming names list', async () => {
     const { readPlaceNameTranslations } = await import('~/server/utils/place-name-translation')
     const handler = await loadHandler({ names: ['Бургас', 'Бургас', ...Array.from({ length: 50 }, (_, i) => `Place ${i}`)], lang: 'en' })
