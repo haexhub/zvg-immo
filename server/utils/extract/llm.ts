@@ -140,6 +140,40 @@ export function isRateLimitError(err: unknown): boolean {
   return (err as { response?: { status?: number } })?.response?.status === 429
 }
 
+/** Every `quotaId` Google attached to a QuotaFailure detail in the error body
+ *  (e.g. 'GenerateRequestsPerDayPerProjectPerModel-FreeTier'). Empty for
+ *  providers that don't report quota details. */
+function quotaIds(err: unknown): string[] {
+  const details = (err as { data?: { error?: { details?: unknown } } })?.data?.error?.details
+  if (!Array.isArray(details)) return []
+  const ids: string[] = []
+  for (const detail of details) {
+    const violations = (detail as { violations?: unknown })?.violations
+    if (!Array.isArray(violations)) continue
+    for (const violation of violations) {
+      const id = (violation as { quotaId?: unknown })?.quotaId
+      if (typeof id === 'string') ids.push(id)
+    }
+  }
+  return ids
+}
+
+/**
+ * Whether a 429 is a *per-day* quota rather than a per-minute rate limit.
+ * The distinction decides whether waiting can help at all: a per-minute limit
+ * clears in seconds, a daily one only at midnight Pacific. Retrying the
+ * latter burns MAX_RETRIES × MIN_REQUEST_GAP_MS (~50 s) per candidate for
+ * nothing — measured in prod on 2026-07-31, where it cut reprocess throughput
+ * from ~300 to ~58 auctions per hourly run.
+ *
+ * Deliberately conservative: only true when the provider actually says so via
+ * a `quotaId` containing 'PerDay'. Providers that report no quota details keep
+ * their previous retry behaviour rather than being guessed at.
+ */
+export function isDailyQuotaError(err: unknown): boolean {
+  return isRateLimitError(err) && quotaIds(err).some((id) => /perday/i.test(id))
+}
+
 /** Whether the current model/profile is the problem — rate-limited/over
  *  quota, or a provider-level failure such as a model id that no longer
  *  resolves (see gemini-native.ts) — as opposed to a caller-side bug. Callers

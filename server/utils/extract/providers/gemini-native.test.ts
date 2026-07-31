@@ -56,6 +56,21 @@ describe('GeminiNativeProvider.extract — 429 pacing/retry', () => {
     return Object.assign(new Error(`http ${status}`), { response: { status } })
   }
 
+  /** 429 carrying a QuotaFailure detail, as the live API returns it. */
+  function quotaError(quotaId: string) {
+    return Object.assign(error(429), {
+      data: {
+        error: {
+          status: 'RESOURCE_EXHAUSTED',
+          details: [{ '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [{ quotaId }] }],
+        },
+      },
+    })
+  }
+
+  const dailyQuotaError = () => quotaError('GenerateRequestsPerDayPerProjectPerModel-FreeTier')
+  const minuteQuotaError = () => quotaError('GenerateRequestsPerMinutePerProjectPerModel-FreeTier')
+
   beforeEach(() => {
     vi.useFakeTimers()
   })
@@ -129,6 +144,32 @@ describe('GeminiNativeProvider.extract — 429 pacing/retry', () => {
     await vi.runAllTimersAsync()
     await expect(promise).rejects.toThrow('http 429')
     expect(fetchMock).toHaveBeenCalledTimes(4) // 1 initial attempt + 3 retries
+  })
+
+  // The whole point of telling the two 429 flavours apart: a per-day quota
+  // cannot clear before midnight Pacific, so the 3 retries at 12.5 s pacing
+  // were ~50 s burned per candidate. Measured in prod 2026-07-31.
+  it('does not retry a per-day quota and rethrows immediately', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(dailyQuotaError())
+    vi.stubGlobal('$fetch', fetchMock)
+    const provider = await freshProvider()
+    const promise = provider.extract(req)
+    promise.catch(() => {})
+    await vi.runAllTimersAsync()
+    await expect(promise).rejects.toThrow('http 429')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('still retries a per-minute rate limit', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(minuteQuotaError())
+      .mockResolvedValueOnce(okResponse)
+    vi.stubGlobal('$fetch', fetchMock)
+    const provider = await freshProvider()
+    const promise = provider.extract(req)
+    await vi.runAllTimersAsync()
+    await expect(promise).resolves.toEqual({ propertyType: 'haus' })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
   it('does not retry and surfaces a non-429 failure', async () => {
