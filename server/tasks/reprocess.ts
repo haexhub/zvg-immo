@@ -29,6 +29,7 @@ import { extractByRules } from '~/server/utils/extract/rules'
 import {
   extractByLlm,
   isLlmProviderError,
+  isLlmProviderUnavailable,
   isRateLimitError,
   type LlmConfig,
   type LlmInput,
@@ -43,7 +44,7 @@ import {
   supportsNativeBatchDocuments,
 } from '~/server/utils/extract/llm-batch'
 import { readLlmExecutionMode } from '~/server/utils/app-settings'
-import { MAX_LLM_FAILURES, readExtractionLlmConfig } from '~/server/utils/extract/llm-task-config'
+import { MAX_LLM_FAILURES, readExtractionLlmConfigChain } from '~/server/utils/extract/llm-task-config'
 import { mergeLlmResult, withDerivedExtractionFields, type MergeInputFields } from '~/server/utils/extract/merge-llm-result'
 import {
   applyExtractionToAuctions,
@@ -445,19 +446,48 @@ export async function reprocessAuction(
   priorEntry: AuctionExtraction | undefined,
   llmConfig: LlmConfig | null,
   at: string,
-  opts: { onLlmAttempt?: () => void; onLlmError?: (err: unknown) => void } = {},
+  opts: {
+    onLlmAttempt?: () => void
+    onLlmError?: (err: unknown) => void
+    /** Tried in order after `llmConfig`, only when the current model is
+     *  rate-limited/over quota or otherwise unavailable (see
+     *  isLlmProviderUnavailable) — not on a caller-side error. */
+    fallbackConfigs?: LlmConfig[]
+  } = {},
 ): Promise<{ entry: AuctionExtraction; llmCalled: boolean } | null> {
-  const base = await buildReprocessInput(platform, externalId, priorEntry, llmConfig)
+  let base = await buildReprocessInput(platform, externalId, priorEntry, llmConfig)
   if (!base) return null
 
   if (!llmConfig) {
     return { entry: buildRulesOnlyEntry(base.fields, priorEntry, at), llmCalled: false }
   }
 
-  const llm = await extractByLlm(base.input!, llmConfig, {
-    onProviderAttempt: opts.onLlmAttempt,
-    onProviderError: opts.onLlmError,
-  })
+  const configs = [llmConfig, ...(opts.fallbackConfigs ?? [])]
+  let llm: Awaited<ReturnType<typeof extractByLlm>> = null
+  for (const [index, config] of configs.entries()) {
+    if (index > 0) {
+      // Rebuild rather than reuse base.input: nativeDocuments (gemini-native's
+      // raw-PDF path vs. every other provider's rasterized images) depends on
+      // which provider is actually being asked, and the fallback's provider
+      // can differ from the one buildReprocessInput was first built for.
+      const rebuilt = await buildReprocessInput(platform, externalId, priorEntry, config)
+      if (!rebuilt) break
+      base = rebuilt
+    }
+    try {
+      llm = await extractByLlm(base.input!, config, {
+        onProviderAttempt: opts.onLlmAttempt,
+        onProviderError: opts.onLlmError,
+      })
+      break
+    } catch (err) {
+      const isLast = index === configs.length - 1
+      if (isLast || !isLlmProviderUnavailable(err)) throw err
+      console.warn(
+        `[reprocess] ${config.provider ?? 'openai-compatible'}/${config.model} unavailable for ${platform}:${externalId}, trying next configured model: ${(err as Error).message}`,
+      )
+    }
+  }
   let curatedPhotos = priorEntry?.photos?.map(normalizePhoto)
   if (llm && curatedPhotos && base.input?.candidateImages?.length && llm.photoCuration.length) {
     // llm.photoCuration's photoIndex is relative to the candidateImages that
@@ -530,7 +560,12 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
     return { candidates: 0, processed: 0, skipped: 0, llmCalls: 0, llmErrors: 0, durationMs }
   }
   const cache = await readExtractionCache()
-  const llmConfig = await readExtractionLlmConfig()
+  // Batch submission (below) is committed to one model per job, so only the
+  // sync path (reprocessAuction, further down) gets the rest of the chain as
+  // automatic fallback — llmConfig itself stays the primary everywhere else
+  // (logging, batch capability checks) exactly as before.
+  const llmConfigs = await readExtractionLlmConfigChain()
+  const llmConfig = llmConfigs[0] ?? null
   const executionMode = await readLlmExecutionMode()
   const maxLlmPerRun = readMaxLlmPerRun()
   const at = new Date().toISOString()
@@ -551,8 +586,9 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
   }
   const useBatch = batchRequested && supportsLlmBatch(llmConfig) && !batchProviderBroken
   if (llmConfig) {
+    const chainLabel = llmConfigs.map((c) => `${c.provider ?? 'openai-compatible'}/${c.model}`).join(' → ')
     console.log(
-      `[reprocess] llm provider=${llmConfig.provider ?? 'openai-compatible'} model=${llmConfig.model} mode=${useBatch ? 'batch' : 'sync'} maxPerRun=${maxLlmPerRun}`,
+      `[reprocess] llm ${chainLabel} mode=${useBatch ? 'batch' : 'sync'} maxPerRun=${maxLlmPerRun}`,
     )
   } else {
     console.log('[reprocess] llm disabled — rules-only')
@@ -668,11 +704,14 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       }
 
       let syncLlmAttempted = false
+      let platformLlmCallsSoFar = platformLlmCalls
       const result = await reprocessAuction(platform, externalId, priorEntry, useLlm, at, {
+        fallbackConfigs: useLlm ? llmConfigs.slice(1) : undefined,
         onLlmAttempt: () => {
           syncLlmAttempted = true
           llmCalls++
-          llmCallsByPlatform.set(platform, platformLlmCalls + 1)
+          platformLlmCallsSoFar++
+          llmCallsByPlatform.set(platform, platformLlmCallsSoFar)
         },
         onLlmError: (err) => {
           llmErrors++
@@ -686,7 +725,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       }
       if (result.llmCalled && !syncLlmAttempted) {
         llmCalls++
-        llmCallsByPlatform.set(platform, platformLlmCalls + 1)
+        llmCallsByPlatform.set(platform, platformLlmCallsSoFar + 1)
       }
 
       cache[key] = result.entry

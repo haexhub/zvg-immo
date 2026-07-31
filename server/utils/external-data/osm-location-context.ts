@@ -4,6 +4,7 @@ import { type Point } from './geo'
 import { buildLocationContext } from './osm-location-context-builder'
 import {
   DEFAULT_GIVE_UP_AFTER_CONSECUTIVE_FAILURES,
+  DEFAULT_GIVE_UP_COOLDOWN_MS,
   DEFAULT_MAX_ATTEMPTS,
   DEFAULT_MIN_REQUEST_INTERVAL_MS,
   DEFAULT_TIMEOUT_MS,
@@ -28,6 +29,11 @@ export interface OsmLocationContextOptions {
   sleepImpl?: (ms: number) => Promise<void>
   /** Consecutive fully-failed auctions after which the run stops trying. */
   giveUpAfterConsecutiveFailures?: number
+  /** How long to pause once giveUpAfterConsecutiveFailures trips before
+   *  probing the endpoint again. */
+  giveUpCooldownMs?: number
+  /** Injectable so tests exercise the cooldown without a real wait. */
+  nowImpl?: () => number
 }
 
 export function createOsmLocationContextAdapter(options: OsmLocationContextOptions): LocationContextAdapter {
@@ -40,19 +46,24 @@ export function createOsmLocationContextAdapter(options: OsmLocationContextOptio
   // paces the whole run.
   const gate = createRequestGate(options.minRequestIntervalMs ?? DEFAULT_MIN_REQUEST_INTERVAL_MS, sleepImpl)
   const giveUpAfter = options.giveUpAfterConsecutiveFailures ?? DEFAULT_GIVE_UP_AFTER_CONSECUTIVE_FAILURES
+  const giveUpCooldownMs = options.giveUpCooldownMs ?? DEFAULT_GIVE_UP_COOLDOWN_MS
+  const now = options.nowImpl ?? Date.now
   // Retrying with backoff turns a hard endpoint block into a very long run
-  // (every auction burning its full attempt budget), which would overlap the
-  // next scheduled tick. Once this many auctions in a row have exhausted their
-  // retries the endpoint is refusing us wholesale, so stop paying for it and
-  // let the run finish — the next tick starts with a clean counter.
+  // (every auction burning its full attempt budget). Once this many auctions
+  // in a row have exhausted their retries the endpoint is refusing us
+  // wholesale, so stop paying for it — but only for giveUpCooldownMs, not the
+  // rest of the run. Without the cooldown, a blip that clears a minute later
+  // would still cost every auction that happens to come after it in this
+  // run's iteration order, not just the ones that actually failed.
   let consecutiveFailures = 0
+  let cooldownUntil = 0
   return {
     id: 'osm-location-context',
     sourceVersion: 'osm-overpass-v1',
     supports: (auction) => !!endpoint && isFinitePoint(auction),
     async context(auction) {
-      if (consecutiveFailures >= giveUpAfter) {
-        throw new Error(`Overpass unavailable, skipped after ${consecutiveFailures} consecutive failures`)
+      if (now() < cooldownUntil) {
+        throw new Error(`Overpass unavailable, in cooldown after ${consecutiveFailures} consecutive failures`)
       }
       const point = { lat: auction.lat!, lng: auction.lng! }
       try {
@@ -67,6 +78,9 @@ export function createOsmLocationContextAdapter(options: OsmLocationContextOptio
         return buildLocationContext(point, response.elements ?? [], options.checkedAt)
       } catch (err) {
         consecutiveFailures++
+        if (consecutiveFailures >= giveUpAfter) {
+          cooldownUntil = now() + giveUpCooldownMs
+        }
         throw err
       }
     },

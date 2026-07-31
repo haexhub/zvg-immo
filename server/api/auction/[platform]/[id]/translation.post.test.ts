@@ -27,11 +27,13 @@ vi.mock('~/server/utils/content-translation', () => ({
 vi.mock('~/server/utils/app-settings', () => ({
   getLlmMaxTokens: vi.fn(),
   getLlmProviderOverride: vi.fn(),
+  getLlmProviderOverrideChain: vi.fn(),
 }))
 
-vi.mock('~/server/utils/extract/llm', () => ({
-  resolveLlmConfig: vi.fn(),
-}))
+vi.mock('~/server/utils/extract/llm', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/server/utils/extract/llm')>()
+  return { ...actual, resolveLlmConfig: vi.fn() }
+})
 
 vi.mock('~/server/utils/extract/text-llm', () => ({
   callTranslationLlm: vi.fn(),
@@ -118,7 +120,7 @@ async function loadHandler(query: Record<string, string> = { lang: 'de' }) {
     readContentTranslation,
     writeContentTranslation,
   } = await import('~/server/utils/content-translation')
-  const { getLlmMaxTokens, getLlmProviderOverride } = await import('~/server/utils/app-settings')
+  const { getLlmMaxTokens, getLlmProviderOverride, getLlmProviderOverrideChain } = await import('~/server/utils/app-settings')
   const { resolveLlmConfig } = await import('~/server/utils/extract/llm')
 
   vi.mocked(readAuctionSnapshot).mockResolvedValue({ 'se-kronofogden:101738': auction() })
@@ -130,6 +132,7 @@ async function loadHandler(query: Record<string, string> = { lang: 'de' }) {
   vi.mocked(readContentTranslation).mockResolvedValue(null)
   vi.mocked(writeContentTranslation).mockResolvedValue(undefined)
   vi.mocked(getLlmProviderOverride).mockResolvedValue(null)
+  vi.mocked(getLlmProviderOverrideChain).mockResolvedValue([])
   vi.mocked(getLlmMaxTokens).mockResolvedValue(8192)
   vi.mocked(resolveLlmConfig).mockReturnValue({
     provider: 'openai-compatible',
@@ -548,5 +551,113 @@ describe('/api/auction/:platform/:id/translation', () => {
     })).rejects.toMatchObject({ statusCode: 409 })
 
     expect(callTranslationLlm).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the next configured model when the primary is unavailable', async () => {
+    const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
+    const { getLlmProviderOverrideChain } = await import('~/server/utils/app-settings')
+    const { resolveLlmConfig, LlmProviderError } = await import('~/server/utils/extract/llm')
+    const { completeAuctionTranslation, failAuctionTranslation } = await import('~/server/utils/content-translation')
+    const handler = await loadHandler()
+
+    vi.mocked(getLlmProviderOverrideChain).mockImplementation(async (_db, scope) => {
+      if (scope !== 'translation') return []
+      return [
+        { provider: 'gemini-native', baseUrl: 'https://generativelanguage.googleapis.com', model: 'gemini-2.5-flash-lite', executionMode: 'sync', apiKey: 'key' },
+        { provider: 'gemini-native', baseUrl: 'https://generativelanguage.googleapis.com', model: 'gemini-3.1-flash-lite', executionMode: 'sync', apiKey: 'key' },
+      ]
+    })
+    vi.mocked(resolveLlmConfig).mockImplementation((source) => (source
+      ? { provider: source.provider as 'gemini-native', baseUrl: source.baseUrl!, model: source.model!, maxTokens: 8192 }
+      : null))
+    const payload = {
+      title: 'Bebautes Einfamilienhaus',
+      description: 'Größe: 5 Zimmer, 124 m²',
+      documentSummary: null,
+      extractionTexts: null,
+    }
+    vi.mocked(callTranslationLlm).mockImplementation(async (...args) => {
+      const config = args[6] as { model: string }
+      if (config.model === 'gemini-2.5-flash-lite') {
+        throw new LlmProviderError('gemini-native', '[POST] "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent": 404 Not Found')
+      }
+      return payload
+    })
+
+    await expect(handler({
+      context: { params: { platform: 'se-kronofogden', id: '101738' } },
+      node: { req: { socket: { remoteAddress: '127.0.0.1' } } },
+    })).resolves.toMatchObject({ ...payload, translated: true })
+
+    expect(callTranslationLlm).toHaveBeenCalledTimes(2)
+    expect((vi.mocked(callTranslationLlm).mock.calls[0]![6] as { model: string }).model).toBe('gemini-2.5-flash-lite')
+    expect((vi.mocked(callTranslationLlm).mock.calls[1]![6] as { model: string }).model).toBe('gemini-3.1-flash-lite')
+    expect(failAuctionTranslation).not.toHaveBeenCalled()
+    expect(completeAuctionTranslation).toHaveBeenCalledWith(
+      expect.anything(), 'se-kronofogden', '101738', 'de', CLAIM, payload,
+    )
+  })
+
+  it('falls back to the extraction chain when every configured translation profile fails to resolve', async () => {
+    const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
+    const { getLlmProviderOverrideChain } = await import('~/server/utils/app-settings')
+    const { resolveLlmConfig } = await import('~/server/utils/extract/llm')
+    const handler = await loadHandler()
+
+    vi.mocked(getLlmProviderOverrideChain).mockImplementation(async (_db, scope) => {
+      if (scope === 'translation') {
+        // Missing baseUrl — resolveLlmConfig rejects this below, same as a
+        // profile with incomplete config would in production.
+        return [{ provider: 'gemini-native', baseUrl: '', model: 'broken', executionMode: 'sync', apiKey: 'key' }]
+      }
+      if (scope === 'extraction') {
+        return [{ provider: 'gemini-native', baseUrl: 'https://generativelanguage.googleapis.com', model: 'extraction-model', executionMode: 'sync', apiKey: 'key' }]
+      }
+      return []
+    })
+    vi.mocked(resolveLlmConfig).mockImplementation((source) => (source && source.baseUrl
+      ? { provider: source.provider as 'gemini-native', baseUrl: source.baseUrl, model: source.model!, maxTokens: 8192 }
+      : null))
+    const payload = {
+      title: 'Bebautes Einfamilienhaus',
+      description: 'Größe: 5 Zimmer, 124 m²',
+      documentSummary: null,
+      extractionTexts: null,
+    }
+    vi.mocked(callTranslationLlm).mockResolvedValue(payload)
+
+    await expect(handler({
+      context: { params: { platform: 'se-kronofogden', id: '101738' } },
+      node: { req: { socket: { remoteAddress: '127.0.0.1' } } },
+    })).resolves.toMatchObject({ ...payload, translated: true })
+
+    expect(callTranslationLlm).toHaveBeenCalledTimes(1)
+    expect((vi.mocked(callTranslationLlm).mock.calls[0]![6] as { model: string }).model).toBe('extraction-model')
+  })
+
+  it('does not fall back to the next model for a non-availability error', async () => {
+    const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
+    const { getLlmProviderOverrideChain } = await import('~/server/utils/app-settings')
+    const { resolveLlmConfig } = await import('~/server/utils/extract/llm')
+    const handler = await loadHandler()
+
+    vi.mocked(getLlmProviderOverrideChain).mockImplementation(async (_db, scope) => {
+      if (scope !== 'translation') return []
+      return [
+        { provider: 'gemini-native', baseUrl: 'https://generativelanguage.googleapis.com', model: 'primary', executionMode: 'sync', apiKey: 'key' },
+        { provider: 'gemini-native', baseUrl: 'https://generativelanguage.googleapis.com', model: 'fallback', executionMode: 'sync', apiKey: 'key' },
+      ]
+    })
+    vi.mocked(resolveLlmConfig).mockImplementation((source) => (source
+      ? { provider: source.provider as 'gemini-native', baseUrl: source.baseUrl!, model: source.model!, maxTokens: 8192 }
+      : null))
+    vi.mocked(callTranslationLlm).mockRejectedValue(new Error('boom'))
+
+    await expect(handler({
+      context: { params: { platform: 'se-kronofogden', id: '101738' } },
+      node: { req: { socket: { remoteAddress: '127.0.0.1' } } },
+    })).rejects.toMatchObject({ statusCode: 502 })
+
+    expect(callTranslationLlm).toHaveBeenCalledTimes(1)
   })
 })

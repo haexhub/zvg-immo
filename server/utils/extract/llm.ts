@@ -140,6 +140,16 @@ export function isRateLimitError(err: unknown): boolean {
   return (err as { response?: { status?: number } })?.response?.status === 429
 }
 
+/** Whether the current model/profile is the problem — rate-limited/over
+ *  quota, or a provider-level failure such as a model id that no longer
+ *  resolves (see gemini-native.ts) — as opposed to a caller-side bug. Callers
+ *  configured with a fallback chain (see app-settings.ts's
+ *  getLlmProviderOverrideChain) use this to decide whether to try the next
+ *  model instead of giving up. */
+export function isLlmProviderUnavailable(err: unknown): boolean {
+  return isRateLimitError(err) || isLlmProviderError(err)
+}
+
 const MAX_PDF_CHARS = 60_000
 const MAX_DOCUMENT_TEXT_CHARS = 80_000
 

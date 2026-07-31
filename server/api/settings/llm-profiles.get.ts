@@ -5,6 +5,7 @@ import { getPool } from '~/server/utils/db'
 import {
   getLlmProviderOverride,
   getLlmProviderProfileSettings,
+  MAX_PROVIDER_CHAIN_LENGTH,
   type LlmExecutionMode,
   type LlmProvider,
   type LlmProviderAssignments,
@@ -91,5 +92,6 @@ export default defineEventHandler(async () => {
     profiles: settings.profiles.map(publicProfile),
     assignments: settings.assignments,
     effective,
+    maxChainLength: MAX_PROVIDER_CHAIN_LENGTH,
   }
 })
