@@ -11,6 +11,7 @@ import { useAuctionDetailTranslation } from '~/composables/useAuctionDetailTrans
 import { ArrowLeft } from 'lucide-vue-next'
 
 const route = useRoute()
+const router = useRouter()
 const platform = String(route.params.platform)
 const id = String(route.params.id)
 const { t, locale } = useI18n()
@@ -104,6 +105,18 @@ const combinedDescription = computed(() => {
   return [...new Set(parts)].join('\n\n')
 })
 
+// The list page keeps its full filter/sort state in the URL, so a plain
+// browser-back restores it. Only fall back to a bare /search (via NuxtLink's
+// own navigate()) when there's no real in-app page to go back to, e.g. the
+// detail page was opened directly — see plugins/track-in-app-history.client.ts.
+const hasInAppHistory = useState('has-in-app-history', () => false)
+function onBackClick(event: MouseEvent, navigate: (event?: MouseEvent) => void): void {
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return
+  event.preventDefault()
+  if (hasInAppHistory.value) router.back()
+  else navigate()
+}
+
 useHead(() => ({
   title: displayTitle.value
     ? `${displayTitle.value} · ${a.value?.authority}`
@@ -115,8 +128,10 @@ useHead(() => ({
   <main class="px-4 py-6">
     <div class="max-w-7xl mx-auto">
     <div class="mb-4">
-      <NuxtLink to="/search" class="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-        <ArrowLeft class="h-4 w-4" /> {{ $t('objektDetail.back') }}
+      <NuxtLink v-slot="{ href, navigate }" to="/search" custom>
+        <a :href="href ?? undefined" class="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground" @click="onBackClick($event, navigate)">
+          <ArrowLeft class="h-4 w-4" /> {{ $t('objektDetail.back') }}
+        </a>
       </NuxtLink>
     </div>
 
