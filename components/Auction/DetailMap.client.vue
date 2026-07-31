@@ -319,7 +319,7 @@ interface LegendEntry {
   label: string
 }
 
-const legendOpen = ref(false)
+const legendOpen = ref(true)
 
 const featureLegendEntries = computed<LegendEntry[]>(() => {
   const byKind = new Map<string, LegendEntry>()
