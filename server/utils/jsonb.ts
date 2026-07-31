@@ -8,14 +8,16 @@
 // list_cache and auction_snapshot upserts that batched dozens of otherwise-
 // good rows together.
 //
-// Stripping it from the stringified text (rather than walking the object) is
-// safe: JSON.stringify only ever emits one specific six-character escape
-// sequence for an embedded NUL character; a literal backslash in the source
-// data is itself escaped, so that sequence can't mean anything else.
-// Built from character codes, not a string literal, so this source file
-// never contains the escape sequence (or a real NUL byte) directly.
-const JSON_ESCAPED_NUL = String.fromCharCode(92, 117, 48, 48, 48, 48)
+// Stripping the NUL via a replacer (before JSON.stringify escapes anything)
+// rather than pattern-matching the already-stringified text: the replacer
+// sees each string's real characters, so removing an actual NUL character is
+// unambiguous. Post-processing the stringified text is not — a literal
+// backslash immediately followed by literal "u0000" text becomes, once
+// escaped, indistinguishable from an escaped-NUL sequence that merely starts
+// one character later, and a naive substring removal there corrupts the JSON.
+const NUL = String.fromCharCode(0)
 
 export function jsonbStringify(value: unknown): string {
-  return JSON.stringify(value).split(JSON_ESCAPED_NUL).join('')
+  return JSON.stringify(value, (_key, val) =>
+    typeof val === 'string' && val.includes(NUL) ? val.split(NUL).join('') : val)
 }

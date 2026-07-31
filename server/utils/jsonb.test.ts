@@ -31,4 +31,27 @@ describe('jsonbStringify', () => {
     const value = { a: 'line1\nline2\ttabbed' }
     expect(jsonbStringify(value)).toBe(JSON.stringify(value))
   })
+
+  // Regression (CodeRabbit review on #279): the first implementation
+  // pattern-matched the already-escaped JSON text for the 6-character
+  // sequence a NUL produces. A literal backslash immediately followed by
+  // literal "u0000" text becomes, once JSON.stringify escapes the backslash,
+  // indistinguishable from that same 6-character sequence starting one
+  // character later — a naive substring removal there stripped part of a
+  // legitimate escaped backslash and produced invalid JSON. The replacer-based
+  // fix never sees escaped text, only real characters, so this case is
+  // unaffected by the sanitization at all.
+  it('leaves a literal backslash followed by literal "u0000" text intact', () => {
+    const value = { title: `Haus\\u0000Straße` }
+    const result = jsonbStringify(value)
+    expect(result).toBe(JSON.stringify(value))
+    expect(JSON.parse(result)).toEqual(value)
+  })
+
+  it('sanitizes NUL characters in deeply nested strings, not just top-level fields', () => {
+    const value = { auctions: [{ title: 'ok' }, { title: `Haus${NUL}Straße`, tags: [`a${NUL}b`] }] }
+    const result = JSON.parse(jsonbStringify(value))
+    expect(result.auctions[1].title).toBe('HausStraße')
+    expect(result.auctions[1].tags[0]).toBe('ab')
+  })
 })
