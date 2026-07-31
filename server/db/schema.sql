@@ -665,3 +665,23 @@ CREATE TABLE IF NOT EXISTS auction_insights (
   PRIMARY KEY (insight_id, content_hash)
 );
 ALTER TABLE auction_insights ENABLE ROW LEVEL SECURITY;
+
+-- task_run_errors: per-item error history for tracked tasks (enrich/
+-- reprocess/...), distinct from task_run_status's single lastWarning/
+-- lastError string (app_settings, overwritten every run and truncated to
+-- the first 20 entries — see enrich.ts). The underlying fetch/network
+-- failure reason used to be swallowed entirely (bare `catch { return null }`
+-- in llm-documents.ts/native-images.ts/document-images.ts); container
+-- restarts and short journalctl retention meant it was gone for good. Rows
+-- age out on write (see task-run-errors.ts) instead of a fixed row cap.
+CREATE TABLE IF NOT EXISTS task_run_errors (
+  id           bigserial PRIMARY KEY,
+  task         text NOT NULL,
+  platform     text,
+  external_id  text,
+  category     text NOT NULL,
+  message      text NOT NULL,
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_task_run_errors_task_created ON task_run_errors (task, created_at DESC);
+ALTER TABLE task_run_errors ENABLE ROW LEVEL SECURITY;

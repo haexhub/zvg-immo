@@ -345,6 +345,7 @@ export async function extractDocumentPhotos(
   const candidates = pickDocumentImageCandidates(attachments)
   const photos: string[] = []
   let failed = false
+  let lastError: string | null = null
   const maxPhotos = maxPhotosLimit(opts.maxPhotos)
 
   for (const candidate of candidates) {
@@ -360,13 +361,14 @@ export async function extractDocumentPhotos(
             ? await extractHtmlPhotos(candidate.proxyUrl, childPhotoOptions(opts.destDir, remainingPhotos))
             : []
       for (const name of found) if (!photos.includes(name)) photos.push(name)
-    } catch {
+    } catch (err) {
       failed = true
+      lastError = (err as Error).message
     }
   }
 
   if (photos.length === 0 && failed) {
-    throw new Error(`document photo extraction failed for all ${candidates.length} candidate document(s)`)
+    throw new Error(`document photo extraction failed for all ${candidates.length} candidate document(s)${lastError ? `: ${lastError}` : ''}`)
   }
   return photos
 }

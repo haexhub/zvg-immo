@@ -59,12 +59,17 @@ import { writeListCache } from '~/server/utils/list-cache'
 import { applyDescriptionMarketValue } from '~/server/utils/description-market-value'
 import { normalizeAuctionDescription, normalizeAuctionDescriptions } from '~/server/utils/description-normalization'
 import { recordTaskRunEnd, recordTaskRunProgress, recordTaskRunStart } from '~/server/utils/task-runs'
+import { recordTaskRunError } from '~/server/utils/task-run-errors'
 import { runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-task'
 
 const IMAGES_DIR = join(process.cwd(), '.cache_zvg', 'images')
 
 const ENRICH_CONCURRENCY = 8
 const FLUSH_EVERY = 200
+// How many of this run's errors go into the single-line lastWarning preview
+// (/settings). Every error is recorded in full in task_run_errors regardless
+// of this limit — this only bounds the inline summary's length.
+const WARNING_PREVIEW_LIMIT = 50
 // Give up retrying a listing whose photo pipeline (native download / document
 // extraction) keeps *throwing* after this many attempts. A listing that
 // completes an attempt but legitimately has no usable photos stops retrying
@@ -121,6 +126,14 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
     let regionsDone = 0
     let regionsTotal = 0
     const runErrors: string[] = []
+    // Mirrors every runErrors entry into task_run_errors (Postgres) so it
+    // survives past this run's lastWarning being overwritten by the next one,
+    // and past a container restart — unlike a bare console.warn. Best-effort;
+    // never blocks the run itself.
+    function pushRunError(category: string, message: string, identity?: { platform?: string; externalId?: string }) {
+      runErrors.push(message)
+      void recordTaskRunError('enrich', { category, message, platform: identity?.platform, externalId: identity?.externalId })
+    }
     const result = await crawlAll({
       immobilienOnly: true,
       enrichDetails: false,
@@ -271,7 +284,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
               (a.photoUrls?.length ?? 0) > 0 ||
               a.lat != null
           } catch (err) {
-            runErrors.push(`Detailabruf ${a.platform}:${a.externalId}: ${(err as Error).message}`)
+            pushRunError('detail_fetch', `Detailabruf ${a.platform}:${a.externalId}: ${(err as Error).message}`, a)
           }
         }
         // Runs regardless of whether this platform has its own enrichOne step
@@ -291,7 +304,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
             await archiveAuction(a, at)
           } catch (err) {
             a.detailFetchedAt = undefined
-            runErrors.push(`Roharchiv ${a.platform}:${a.externalId}: ${(err as Error).message}`)
+            pushRunError('raw_archive', `Roharchiv ${a.platform}:${a.externalId}: ${(err as Error).message}`, a)
           }
         }
         if (enriched) enrichedCount++
@@ -321,12 +334,13 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
           const preparedDocuments = await prepareLiveLlmDocuments(a.attachments, documentIdentity, at)
           if (!preparedDocuments.documentSetComplete) {
             if (a.attachments.length > 0) {
-              runErrors.push(`Dokumentarchiv ${a.platform}:${a.externalId} ist unvollständig`)
+              const detail = preparedDocuments.errors?.length ? `: ${preparedDocuments.errors.join('; ')}` : ''
+              pushRunError('document_archive_incomplete', `Dokumentarchiv ${a.platform}:${a.externalId} ist unvollständig${detail}`, a)
             }
           } else {
             currentDocumentSet = await archiveDocumentSet(documentIdentity, preparedDocuments.documentSetItems, at)
             if (!currentDocumentSet && a.attachments.length > 0) {
-              runErrors.push(`Dokumentmanifest ${a.platform}:${a.externalId} konnte nicht gespeichert werden`)
+              pushRunError('document_manifest_write_failed', `Dokumentmanifest ${a.platform}:${a.externalId} konnte nicht gespeichert werden`, a)
             }
           }
         }
@@ -397,7 +411,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
             photoPipelineVersion = targetPhotoPipelineVersion(a)
           } catch (err) {
             photoFailures++
-            runErrors.push(`Fotoextraktion ${a.platform}:${a.externalId}: ${(err as Error).message}`)
+            pushRunError('photo_extraction', `Fotoextraktion ${a.platform}:${a.externalId}: ${(err as Error).message}`, a)
             if (photos.length === 0 && priorPhotos.length > 0) {
               photos = priorPhotos.map((photo) => photo.file)
             }
@@ -464,7 +478,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
           await writeAuctionSnapshot([a])
           await upsertCurrentAuctions([a], at)
         } catch (err) {
-          runErrors.push(`Snapshot ${a.platform}:${a.externalId}: ${(err as Error).message}`)
+          pushRunError('snapshot', `Snapshot ${a.platform}:${a.externalId}: ${(err as Error).message}`, a)
         }
         void recordTaskRunProgress('enrich', {
           regionsDone,
@@ -518,7 +532,9 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
     // tooling) — additive, no-op without NUXT_DATABASE_URL. See
     // server/utils/current-auctions.ts.
     await upsertCurrentAuctions(result.auctions, at)
-    runErrors.push(...result.errors.map((failure) => `${failure.country}/${failure.region}: ${failure.message}`))
+    for (const failure of result.errors) {
+      pushRunError('crawl', `${failure.country}/${failure.region}: ${failure.message}`)
+    }
 
     const durationMs = Date.now() - startedAt
     console.log(
@@ -537,7 +553,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
         durationMs,
       },
       warning: runErrors.length > 0
-        ? `${runErrors.length} Fehler: ${runErrors.slice(0, 20).join('; ')}`
+        ? `${runErrors.length} Fehler: ${runErrors.slice(0, WARNING_PREVIEW_LIMIT).join('; ')}`
         : undefined,
     }
 }

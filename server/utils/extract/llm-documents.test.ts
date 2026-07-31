@@ -8,6 +8,14 @@ vi.mock('../storage-download', () => ({
   findLatestCapture: vi.fn(),
   readDocumentSetItems: vi.fn(),
 }))
+// archiveDocumentBlob/archiveDocumentText hit Postgres via getPool(), which
+// calls the Nuxt-only useRuntimeConfig() — unavailable in this plain vitest
+// environment. prepareLiveLlmDocuments's tests below only care about the
+// live-fetch outcome, not the archiving step past it.
+vi.mock('../raw-archive', () => ({
+  archiveDocumentBlob: vi.fn(async () => 'stub-hash'),
+  archiveDocumentText: vi.fn(async () => undefined),
+}))
 vi.mock('./pdf-text', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./pdf-text')>()
   return { ...actual, extractPdfTextFromBuffer: vi.fn(async () => 'PDF Wohnfläche 140 m²') }
@@ -17,7 +25,7 @@ vi.mock('./pdf-render', async (importOriginal) => {
   return { ...actual, renderPdfPagesJpeg: vi.fn(async () => []) }
 })
 
-const { htmlToText, pickAllLlmDocumentAttachments, prepareArchivedLlmDocuments } = await import('./llm-documents')
+const { htmlToText, pickAllLlmDocumentAttachments, prepareArchivedLlmDocuments, prepareLiveLlmDocuments } = await import('./llm-documents')
 
 function att(overrides: Partial<Attachment>): Attachment {
   return {
@@ -207,5 +215,40 @@ describe('prepareArchivedLlmDocuments', () => {
     const prepared = await prepareArchivedLlmDocuments(auction(), { nativeDocuments: false })
 
     expect(prepared.input.documentText?.length).toBeLessThanOrEqual(80_000)
+  })
+})
+
+describe('prepareLiveLlmDocuments', () => {
+  const identity = { platform: 'se-kronofogden', country: 'se', region: 'Schweden', externalId: '101746', caseNumber: null, authority: 'Kronofogden' }
+
+  it('reports the real fetch failure reason instead of swallowing it', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 403 })))
+
+    const attachments: Attachment[] = [
+      att({ kind: 'appraisal', label: 'Beskrivning och värdering', filename: 'F-2209-25.pdf', proxyUrl: 'https://auktionstorget.kronofogden.se/download/F-2209-25.pdf' }),
+    ]
+
+    const result = await prepareLiveLlmDocuments(attachments, identity, '2026-07-31T08:27:35.000Z')
+
+    expect(result.documentSetComplete).toBe(false)
+    expect(result.documentSetItems).toEqual([])
+    expect(result.errors).toEqual(['Beskrivning och värdering: HTTP 403'])
+
+    vi.unstubAllGlobals()
+  })
+
+  it('leaves errors undefined once every candidate fetch succeeds', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 200 })))
+
+    const attachments: Attachment[] = [
+      att({ kind: 'appraisal', label: 'Beskrivning och värdering', filename: 'F-2209-25.pdf', proxyUrl: 'https://auktionstorget.kronofogden.se/download/F-2209-25.pdf' }),
+    ]
+
+    const result = await prepareLiveLlmDocuments(attachments, identity, '2026-07-31T08:27:35.000Z')
+
+    expect(result.documentSetComplete).toBe(true)
+    expect(result.errors).toBeUndefined()
+
+    vi.unstubAllGlobals()
   })
 })
