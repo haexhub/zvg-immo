@@ -95,8 +95,11 @@ describe('buildLocationContext', () => {
     expect(context.quality.score).toBeGreaterThan(50)
     expect(context.quality.strengths).toContain('groceries_nearby')
     expect(context.environment.heavyIndustryKinds).toContain('factory')
+    expect(context.environment.heavyIndustrySites).toContainEqual({ kind: 'industrial_factory', name: 'Werk', distanceMeters: expect.any(Number) })
     expect(context.environment.noisyRoadLevel).toBe('medium')
     expect(context.environment.aviationNoiseLevel).toBe('high')
+    expect(context.environment.nearestAirportName).toBe('Flugplatz Musterstadt')
+    expect(context.environment.nearestAirportKind).toBe('minor')
     expect(context.environment.riskSignals).toContain('runway_very_near')
     expect(context.environment.riskSignals).toContain('airport_near')
     expect(context.environment.riskSignals).toContain('helipad_near')
@@ -129,6 +132,32 @@ describe('buildLocationContext', () => {
     expect(inside.environment.riskSignals).toContain('heavy_industry_mapped')
     expect(corner.environment.riskSignals).not.toContain('heavy_industry_mapped')
     expect(corner.environment.nearestHeavyIndustryDistanceMeters).toBeNull()
+  })
+
+  it('names the specific power plant type and airport class instead of a generic label', () => {
+    const context = buildLocationContext({ lat: 52, lng: 13 }, [
+      { type: 'way', id: 1, center: { lat: 52.01, lon: 13 }, tags: { power: 'plant', 'plant:source': 'nuclear', name: 'Kernkraftwerk Musterstadt' } },
+      { type: 'way', id: 2, center: { lat: 52.02, lon: 13.02 }, tags: { man_made: 'petroleum_well', name: 'Bohrturm 3' } },
+      { type: 'node', id: 3, lat: 52.05, lon: 13.05, tags: { aeroway: 'aerodrome', name: 'Flughafen Musterstadt', iata: 'MST', 'aerodrome:type': 'international' } },
+    ], '2026-07-26T00:00:00.000Z')
+
+    expect(context.environment.heavyIndustrySites).toContainEqual({ kind: 'power_plant_nuclear', name: 'Kernkraftwerk Musterstadt', distanceMeters: expect.any(Number) })
+    expect(context.environment.heavyIndustrySites).toContainEqual({ kind: 'man_made_petroleum_well', name: 'Bohrturm 3', distanceMeters: expect.any(Number) })
+    expect(context.environment.nearestHeavyIndustryDistanceMeters).not.toBeNull()
+    expect(context.environment.nearestAirportName).toBe('Flughafen Musterstadt')
+    expect(context.environment.nearestAirportKind).toBe('major')
+  })
+
+  it('classifies an unmarked small airfield as minor and a military one as military', () => {
+    const minor = buildLocationContext({ lat: 52, lng: 13 }, [
+      { type: 'node', id: 1, lat: 52.05, lon: 13.05, tags: { aeroway: 'aerodrome', name: 'Segelflugplatz' } },
+    ], '2026-07-26T00:00:00.000Z')
+    const military = buildLocationContext({ lat: 52, lng: 13 }, [
+      { type: 'node', id: 1, lat: 52.05, lon: 13.05, tags: { aeroway: 'aerodrome', name: 'Fliegerhorst', military: 'airfield' } },
+    ], '2026-07-26T00:00:00.000Z')
+
+    expect(minor.environment.nearestAirportKind).toBe('minor')
+    expect(military.environment.nearestAirportKind).toBe('military')
   })
 
   it('ignores a ferry route beyond its radius that only the bbox corner picked up', () => {

@@ -33,6 +33,7 @@ const locationMobility = computed(() => locationContext.value?.mobility ?? null)
 const locationAmenities = computed(() => locationContext.value?.amenities ?? [])
 const locationQuality = computed(() => locationContext.value?.quality ?? null)
 const locationEnvironment = computed(() => locationContext.value?.environment ?? null)
+const heavyIndustrySites = computed(() => locationEnvironment.value?.heavyIndustrySites ?? [])
 const reportedNoise = computed(() => locationEnvironment.value?.reportedNoise ?? [])
 const airQuality = computed(() => locationEnvironment.value?.airQuality ?? null)
 const locationDemographics = computed(() => locationContext.value?.demographics ?? null)
@@ -81,6 +82,18 @@ function noisyRoadLevelLabel(level: LocationEnvironmentContext['noisyRoadLevel']
 
 function aviationNoiseLevelLabel(level: LocationEnvironmentContext['aviationNoiseLevel']): string {
   return t(`objektDetail.aviationNoiseLevel.${level}`)
+}
+
+function airportKindLabel(kind: LocationEnvironmentContext['nearestAirportKind']): string {
+  return t(`objektDetail.aviationAirportKind.${kind}`)
+}
+
+function industrialSiteKindLabel(kind: string): string {
+  const key = `objektDetail.industrialSiteKind.${kind}`
+  const translated = t(key)
+  if (translated !== key) return translated
+  const raw = kind.replace(/^(power_plant_|power_generator_|power_|man_made_|industrial_|amenity_|landuse_)/, '')
+  return raw.replace(/_/g, ' ')
 }
 
 function noiseObservationLabel(observation: LocationNoiseObservation): string {
@@ -250,6 +263,9 @@ function neighborhoodNoteLabel(note: NeighborhoodContext['notes'][number] | stri
                 <div>
                   <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.nearestAirport') }}</dt>
                   <dd class="font-medium tabular-nums">{{ formatDistance(locationEnvironment.nearestAirportDistanceMeters) }}</dd>
+                  <dd v-if="locationEnvironment.nearestAirportName" class="text-xs text-muted-foreground">
+                    {{ locationEnvironment.nearestAirportName }} · {{ airportKindLabel(locationEnvironment.nearestAirportKind) }}
+                  </dd>
                 </div>
                 <div>
                   <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.nearestRunway') }}</dt>
@@ -276,6 +292,24 @@ function neighborhoodNoteLabel(note: NeighborhoodContext['notes'][number] | stri
                   <dd class="font-medium tabular-nums">{{ locationEnvironment.industrialCountWithin3000m.toLocaleString(intlLocale) }}</dd>
                 </div>
               </dl>
+              <div v-if="heavyIndustrySites.length" class="space-y-2">
+                <h3 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  {{ $t('objektDetail.nearbyIndustrialSitesTitle') }}
+                </h3>
+                <ul class="divide-y rounded-md border text-sm">
+                  <li
+                    v-for="(site, i) in heavyIndustrySites"
+                    :key="i"
+                    class="flex items-center justify-between gap-3 px-3 py-2"
+                  >
+                    <span class="min-w-0 truncate">
+                      {{ industrialSiteKindLabel(site.kind) }}
+                      <span v-if="site.name" class="text-muted-foreground"> · {{ site.name }}</span>
+                    </span>
+                    <span class="shrink-0 font-medium tabular-nums text-muted-foreground">{{ formatDistance(site.distanceMeters) }}</span>
+                  </li>
+                </ul>
+              </div>
               <div v-if="reportedNoise.length" class="space-y-2">
                 <h3 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   {{ $t('objektDetail.reportedNoiseTitle') }}
