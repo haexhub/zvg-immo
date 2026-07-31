@@ -17,6 +17,7 @@ import type { Auction } from '~/types/auction'
 import { getPool } from './db'
 import { cacheKey } from './verkehrswert-cache'
 import { normalizeAuctionDescription } from './description-normalization'
+import { jsonbStringify } from './jsonb'
 import { normalizePublicAuctionLinks } from './public-auction-links'
 
 export type AuctionSnapshot = Record<string, Auction>
@@ -267,7 +268,7 @@ async function upsertChunk(db: Pool, rows: Auction[]): Promise<void> {
   for (const a of rows) {
     const placeholders = [1, 2, 3].map((n) => `$${values.length + n}`)
     tuples.push(`(${placeholders.join(', ')})`)
-    values.push(a.platform, a.externalId, JSON.stringify(a))
+    values.push(a.platform, a.externalId, jsonbStringify(a))
   }
   await db.query(
     `
