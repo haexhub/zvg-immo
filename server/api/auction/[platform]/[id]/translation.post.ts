@@ -22,8 +22,8 @@ import {
   readContentTranslation,
   writeContentTranslation,
 } from '~/server/utils/content-translation'
-import { getLlmMaxTokens, getLlmProviderOverride } from '~/server/utils/app-settings'
-import { resolveLlmConfig, type LlmConfig } from '~/server/utils/extract/llm'
+import { getLlmMaxTokens, getLlmProviderOverride, getLlmProviderOverrideChain } from '~/server/utils/app-settings'
+import { isLlmProviderUnavailable, resolveLlmConfig, type LlmConfig } from '~/server/utils/extract/llm'
 import { callTranslationLlm, type TranslationResult } from '~/server/utils/extract/text-llm'
 import { countryContentLanguage, isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
 import { extractTranslatableExtractionTexts, translationContentSource } from '~/lib/extraction-translation'
@@ -106,7 +106,9 @@ async function tryTranslate(
 
 /** The provider/model translation.post.ts would use right now for the
  *  'translation' scope, falling back to 'extraction' then the ENV-configured
- *  default — same precedence as the actual translate call below. */
+ *  default — same precedence as the actual translate call below. Used only
+ *  for the retry-lockout fingerprint check; the actual attempt below goes
+ *  through the full fallback chain via resolveActiveLlmConfigChain. */
 async function resolveActiveLlmConfig(db: Pool): Promise<LlmConfig | null> {
   const llmCfg = useRuntimeConfig().extractLlm as
     | { provider?: string; baseUrl?: string; apiKey?: string; model?: string }
@@ -116,6 +118,29 @@ async function resolveActiveLlmConfig(db: Pool): Promise<LlmConfig | null> {
   return resolveLlmConfig(translationOverride ?? extractionOverride ?? llmCfg, {
     maxTokens: await getLlmMaxTokens(db, 'translation'),
   })
+}
+
+/** Same precedence as resolveActiveLlmConfig, but the full assigned fallback
+ *  chain for the 'translation' use case — every profile assigned to
+ *  'translation', or (only when none is) every profile assigned to
+ *  'extraction', in order. Tried in sequence below so a model that's rate-
+ *  limited/over quota or otherwise unavailable (see gemini-native.ts) doesn't
+ *  fail the whole request when another configured model could serve it. */
+async function resolveActiveLlmConfigChain(db: Pool): Promise<LlmConfig[]> {
+  const llmCfg = useRuntimeConfig().extractLlm as
+    | { provider?: string; baseUrl?: string; apiKey?: string; model?: string }
+    | undefined
+  const maxTokens = await getLlmMaxTokens(db, 'translation')
+  const translationChain = await getLlmProviderOverrideChain(db, 'translation')
+  const extractionChain = translationChain.length === 0 ? await getLlmProviderOverrideChain(db, 'extraction') : []
+  const sources = translationChain.length > 0
+    ? translationChain
+    : extractionChain.length > 0
+      ? extractionChain
+      : llmCfg ? [llmCfg] : []
+  return sources
+    .map((source) => resolveLlmConfig(source, { maxTokens }))
+    .filter((config): config is LlmConfig => config != null)
 }
 
 /** Identifies a resolved LLM config for the retry-lockout check below — a
@@ -261,18 +286,33 @@ export default defineEventHandler(async (event) => {
         return cached
       }
 
-      // Reuses the config already resolved by the retry-lockout check above
-      // when present (same request), otherwise resolves it fresh here — and
-      // records it on the outer variable so a failure below fingerprints the
-      // config that actually produced it, not whatever (if anything) the
-      // pre-claim check saw.
-      resolvedConfig = resolvedConfig ?? await resolveActiveLlmConfig(db)
-      const config = resolvedConfig
-      if (!config) {
+      // Always resolves the full chain fresh here (rather than reusing the
+      // pre-claim check's single-config resolution) — that check only ever
+      // looks at the primary anyway, and this only re-runs on the already-slow
+      // retry-a-failed-attempt path, so one extra resolve is a fine trade for
+      // not threading two different "resolved config" shapes through here.
+      const configs = await resolveActiveLlmConfigChain(db)
+      if (configs.length === 0) {
         throw new Error('LLM ist nicht konfiguriert')
       }
 
-      const result = await tryTranslate(title, description, documentSummary, extractionTexts, targetLang, sourceLang, config)
+      let result: TranslationResult | null = null
+      for (const [index, config] of configs.entries()) {
+        // Recorded on the outer variable on every attempt (not just the last)
+        // so a failure below fingerprints whichever config actually produced
+        // it, not whatever (if anything) the pre-claim check saw.
+        resolvedConfig = config
+        try {
+          result = await tryTranslate(title, description, documentSummary, extractionTexts, targetLang, sourceLang, config)
+          break
+        } catch (err) {
+          const isLast = index === configs.length - 1
+          if (isLast || !isLlmProviderUnavailable(err)) throw err
+          console.warn(
+            `[translation] ${config.provider ?? 'openai-compatible'}/${config.model} unavailable for ${platform}/${id}, trying next configured model: ${(err as Error).message}`,
+          )
+        }
+      }
       if (!result) {
         throw new Error('LLM hat keine gültige Übersetzung geliefert')
       }

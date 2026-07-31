@@ -255,6 +255,81 @@ describe('reprocessAuction', () => {
     expect(result!.entry.insights?.summary).toBe('Solide Bausubstanz.')
   })
 
+  it('tries the next configured model when the primary is rate-limited, instead of failing the auction', async () => {
+    const auction = makeAuction({
+      title: 'Einfamilienhaus',
+      description: 'Einfamilienhaus mit Wohnfläche ca. 140 m² und Grundstücksfläche 850 m².',
+    })
+    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
+      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
+    )
+    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
+    vi.mocked(extractByLlm).mockImplementation(async (_input, config) => {
+      if (config.model === 'primary-model') {
+        throw Object.assign(new Error('http 429'), { response: { status: 429 } })
+      }
+      return {
+        propertyType: null,
+        landAreaSqm: null,
+        livingAreaSqm: null,
+        rooms: null,
+        bedrooms: null,
+        bathrooms: null,
+        floor: null,
+        bathroomHasTub: null,
+        bathroomHasShower: null,
+        heating: null,
+        units: null,
+        securityDeposit: null,
+        biddingNotes: null,
+        condition: null,
+        features: [],
+        yearBuilt: null,
+        lastRenovationYear: null,
+        renovationNotes: null,
+        insights: null,
+        planningNotes: null,
+        photoCuration: [],
+        marketValueEur: null,
+        marketValueText: 'from fallback model',
+      }
+    })
+
+    const result = await reprocessAuction(
+      'zvg-portal',
+      '7265',
+      undefined,
+      { baseUrl: 'http://proxy', model: 'primary-model' },
+      '2026-07-22T00:00:00.000Z',
+      { fallbackConfigs: [{ baseUrl: 'http://proxy', model: 'fallback-model' }] },
+    )
+
+    expect(extractByLlm).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(extractByLlm).mock.calls[0]?.[1]?.model).toBe('primary-model')
+    expect(vi.mocked(extractByLlm).mock.calls[1]?.[1]?.model).toBe('fallback-model')
+    expect(result!.llmCalled).toBe(true)
+    expect(result!.entry.marketValueText).toBe('from fallback model')
+  })
+
+  it('does not try the next configured model for a non-availability error', async () => {
+    const auction = makeAuction()
+    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
+      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
+    )
+    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
+    vi.mocked(extractByLlm).mockRejectedValue(new Error('boom'))
+
+    await expect(reprocessAuction(
+      'zvg-portal',
+      '7265',
+      undefined,
+      { baseUrl: 'http://proxy', model: 'primary-model' },
+      '2026-07-22T00:00:00.000Z',
+      { fallbackConfigs: [{ baseUrl: 'http://proxy', model: 'fallback-model' }] },
+    )).rejects.toThrow('boom')
+    expect(extractByLlm).toHaveBeenCalledTimes(1)
+  })
+
   it('falls back to the vision path for a scanned appraisal PDF and merges the LLM result', async () => {
     const auction = makeAuction({
       attachments: [

@@ -155,7 +155,10 @@ export interface LlmProviderProfileInput {
   apiKey?: string
 }
 
-export type LlmProviderAssignments = Partial<Record<LlmProviderScope, string>>
+// Ordered profile-id chain per use case: the first entry is primary, the rest
+// are automatic fallbacks tried in order when the current one is rate-limited/
+// over quota or its model is otherwise unavailable (see getLlmProviderOverrideChain).
+export type LlmProviderAssignments = Partial<Record<LlmProviderScope, string[]>>
 
 const LLM_PROVIDER_OVERRIDE_KEY = 'llm_provider_override'
 const LLM_TRANSLATION_PROVIDER_OVERRIDE_KEY = 'llm_translation_provider_override'
@@ -217,12 +220,23 @@ function coerceProviderProfiles(value: unknown): LlmProviderProfile[] {
   return profiles
 }
 
+// Guards against an unbounded chain turning one slow/unavailable model into a
+// very long request (each link is a full attempt-with-retries elsewhere).
+const MAX_PROVIDER_CHAIN_LENGTH = 5
+
 function coerceAssignments(value: unknown, profileIds: ReadonlySet<string>): LlmProviderAssignments {
   if (!value || typeof value !== 'object') return {}
   const v = value as Record<string, unknown>
   const assignments: LlmProviderAssignments = {}
   for (const scope of ['extraction', 'translation'] as const) {
-    if (typeof v[scope] === 'string' && profileIds.has(v[scope])) assignments[scope] = v[scope]
+    const raw = v[scope]
+    // A bare string is the pre-fallback-chain stored shape — accepted so an
+    // existing single assignment keeps resolving without a migration step.
+    const ids = typeof raw === 'string' ? [raw] : Array.isArray(raw) ? raw : []
+    const chain = [
+      ...new Set(ids.filter((id): id is string => typeof id === 'string' && profileIds.has(id))),
+    ].slice(0, MAX_PROVIDER_CHAIN_LENGTH)
+    if (chain.length > 0) assignments[scope] = chain
   }
   return assignments
 }
@@ -355,35 +369,58 @@ export async function deleteLlmProviderProfile(
   const remaining = profiles.filter((profile) => profile.id !== id)
   const prunedAssignments: LlmProviderAssignments = { ...assignments }
   for (const scope of ['extraction', 'translation'] as const) {
-    if (prunedAssignments[scope] === id) delete prunedAssignments[scope]
+    const chain = prunedAssignments[scope]?.filter((assignedId) => assignedId !== id)
+    if (chain && chain.length > 0) prunedAssignments[scope] = chain
+    else delete prunedAssignments[scope]
   }
   return setLlmProviderProfileSettings(db, remaining, prunedAssignments)
+}
+
+async function resolveAssignedProfileChain(db: Pool, scope: LlmProviderScope): Promise<LlmProviderOverride[]> {
+  const { profiles, assignments } = await getLlmProviderProfileSettings(db).catch(() => ({
+    profiles: [] as LlmProviderProfile[],
+    assignments: {} as LlmProviderAssignments,
+  }))
+  const byId = new Map(profiles.map((profile) => [profile.id, profile]))
+  return (assignments[scope] ?? [])
+    .map((id) => byId.get(id))
+    .filter((profile): profile is LlmProviderProfile => !!profile)
+    .map((profile) => ({
+      provider: profile.provider,
+      baseUrl: profile.baseUrl,
+      model: profile.model,
+      executionMode: scope === 'translation' ? 'sync' : profile.executionMode,
+      apiKey: profile.apiKey,
+    }))
 }
 
 export async function getLlmProviderOverride(
   db: Pool,
   scope: LlmProviderScope = 'extraction',
 ): Promise<LlmProviderOverride | null> {
-  const { profiles, assignments } = await getLlmProviderProfileSettings(db).catch(() => ({
-    profiles: [] as LlmProviderProfile[],
-    assignments: {} as LlmProviderAssignments,
-  }))
-  const assigned = assignments[scope]
-  const profile = assigned ? profiles.find((candidate) => candidate.id === assigned) : null
-  if (profile) {
-    return {
-      provider: profile.provider,
-      baseUrl: profile.baseUrl,
-      model: profile.model,
-      executionMode: scope === 'translation' ? 'sync' : profile.executionMode,
-      apiKey: profile.apiKey,
-    }
-  }
+  const [primary] = await resolveAssignedProfileChain(db, scope)
+  if (primary) return primary
   const { rows } = await db.query<{ value: unknown }>(
     'SELECT value FROM app_settings WHERE key = $1',
     [providerOverrideKey(scope)],
   )
   return rows[0] ? coerceProviderOverride(rows[0].value) : null
+}
+
+// Same resolution as getLlmProviderOverride, but returns every profile
+// assigned to `scope` in order instead of just the primary. Callers that want
+// automatic fallback across models (rate limit/quota, or a model id that's
+// stopped resolving — see gemini-native.ts) iterate this chain instead of
+// giving up on the first failure. The pre-profiles single-override row has no
+// concept of ordering, so it surfaces as a one-element chain, same as before.
+export async function getLlmProviderOverrideChain(
+  db: Pool,
+  scope: LlmProviderScope = 'extraction',
+): Promise<LlmProviderOverride[]> {
+  const chain = await resolveAssignedProfileChain(db, scope)
+  if (chain.length > 0) return chain
+  const single = await getLlmProviderOverride(db, scope)
+  return single ? [single] : []
 }
 
 // apiKey undefined means "leave the stored key untouched" (the PUT route's

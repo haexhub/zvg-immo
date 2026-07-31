@@ -33,7 +33,7 @@ interface LlmProfilesResponse {
     apiKeySet: boolean
     apiKeyMissing: boolean
   }>
-  assignments: Partial<Record<LlmProviderScope, string>>
+  assignments: Partial<Record<LlmProviderScope, string[]>>
   effective: Record<LlmProviderScope, {
     provider: string
     baseUrl: string
