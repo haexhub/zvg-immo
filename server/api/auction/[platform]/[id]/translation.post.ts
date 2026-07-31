@@ -22,7 +22,7 @@ import {
   readContentTranslation,
   writeContentTranslation,
 } from '~/server/utils/content-translation'
-import { getLlmMaxTokens, getLlmProviderOverride, getLlmProviderOverrideChain, type LlmProviderOverride } from '~/server/utils/app-settings'
+import { getLlmMaxTokens, getLlmProviderOverrideChain, type LlmProviderOverride } from '~/server/utils/app-settings'
 import { isLlmProviderUnavailable, resolveLlmConfig, type LlmConfig } from '~/server/utils/extract/llm'
 import { callTranslationLlm, type TranslationResult } from '~/server/utils/extract/text-llm'
 import { countryContentLanguage, isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
@@ -104,28 +104,12 @@ async function tryTranslate(
   )
 }
 
-/** The provider/model translation.post.ts would use right now for the
- *  'translation' scope, falling back to 'extraction' then the ENV-configured
- *  default — same precedence as the actual translate call below. Used only
- *  for the retry-lockout fingerprint check; the actual attempt below goes
- *  through the full fallback chain via resolveActiveLlmConfigChain. */
-async function resolveActiveLlmConfig(db: Pool): Promise<LlmConfig | null> {
-  const llmCfg = useRuntimeConfig().extractLlm as
-    | { provider?: string; baseUrl?: string; apiKey?: string; model?: string }
-    | undefined
-  const translationOverride = await getLlmProviderOverride(db, 'translation')
-  const extractionOverride = translationOverride ? null : await getLlmProviderOverride(db, 'extraction')
-  return resolveLlmConfig(translationOverride ?? extractionOverride ?? llmCfg, {
-    maxTokens: await getLlmMaxTokens(db, 'translation'),
-  })
-}
-
-/** Same precedence as resolveActiveLlmConfig, but the full assigned fallback
- *  chain for the 'translation' use case — every profile assigned to
- *  'translation', or (only when none is) every profile assigned to
- *  'extraction', in order. Tried in sequence below so a model that's rate-
- *  limited/over quota or otherwise unavailable (see gemini-native.ts) doesn't
- *  fail the whole request when another configured model could serve it. */
+/** The full assigned fallback chain for the 'translation' use case — every
+ *  profile assigned to 'translation', or (only when none is) every profile
+ *  assigned to 'extraction', in order. Tried in sequence below so a model
+ *  that's rate-limited/over quota or otherwise unavailable (see
+ *  gemini-native.ts) doesn't fail the whole request when another configured
+ *  model could serve it. */
 async function resolveActiveLlmConfigChain(db: Pool): Promise<LlmConfig[]> {
   const llmCfg = useRuntimeConfig().extractLlm as
     | { provider?: string; baseUrl?: string; apiKey?: string; model?: string }
@@ -145,19 +129,20 @@ async function resolveActiveLlmConfigChain(db: Pool): Promise<LlmConfig[]> {
   return resolveChain(llmCfg ? [llmCfg] : [])
 }
 
-/** Identifies a resolved LLM config for the retry-lockout check below — a
- *  /settings provider/model/key change produces a different fingerprint,
- *  which lets a previously failed attempt retry immediately instead of
- *  waiting out content-translation.ts's RETRY_AFTER window. Hashed (rather
- *  than storing provider/baseUrl/model/apiKey directly) so the plaintext
- *  apiKey from app_settings never gets copied into a second column. */
-export function fingerprintConfig(config: LlmConfig): string {
-  return sha256Hex(Buffer.from(JSON.stringify({
+/** Identifies the resolved LLM fallback chain for the retry-lockout check
+ *  below — a /settings edit to any link (primary or a fallback: added,
+ *  removed, reordered or fixed) produces a different fingerprint, which lets
+ *  a previously failed attempt retry immediately instead of waiting out
+ *  content-translation.ts's RETRY_AFTER window. Hashed (rather than storing
+ *  provider/baseUrl/model/apiKey directly) so plaintext apiKeys from
+ *  app_settings never get copied into a second column. */
+export function fingerprintConfigChain(configs: readonly LlmConfig[]): string {
+  return sha256Hex(Buffer.from(JSON.stringify(configs.map((config) => ({
     provider: config.provider,
     baseUrl: config.baseUrl,
     model: config.model,
     apiKey: config.apiKey ?? '',
-  })))
+  })))))
 }
 
 export function auctionTranslationContentHash(auction: Pick<Auction, 'title' | 'description' | 'extraction'>): string {
@@ -224,16 +209,16 @@ export default defineEventHandler(async (event) => {
   // claimAuctionTranslation, which takes the stale row over — a transient
   // provider failure must not lock this auction out permanently.
   const existing = inflight.get(inflightKey)
-  let resolvedConfig: LlmConfig | null = null
   if (stored?.status === 'failed' && !stored.retryDue) {
-    resolvedConfig = await resolveActiveLlmConfig(db)
-    const currentFingerprint = resolvedConfig ? fingerprintConfig(resolvedConfig) : null
-    // Same config that failed before: still within the backoff window, keep
-    // replaying the stored error. A /settings provider/model/key change since
-    // the failure produces a different fingerprint — skip the wait, retry now.
-    // A null failedConfig (a row written before this fingerprint existed) is
-    // "unknown, assume unchanged" — otherwise every pre-existing failed row
-    // would bypass the backoff the first time it's touched after this ships.
+    const configs = await resolveActiveLlmConfigChain(db)
+    const currentFingerprint = configs.length > 0 ? fingerprintConfigChain(configs) : null
+    // Same chain that failed before: still within the backoff window, keep
+    // replaying the stored error. A /settings change to any link in the chain
+    // (primary or a fallback — added, removed, reordered or fixed) produces a
+    // different fingerprint — skip the wait, retry now. A null failedConfig (a
+    // row written before this fingerprint existed) is "unknown, assume
+    // unchanged" — otherwise every pre-existing failed row would bypass the
+    // backoff the first time it's touched after this ships.
     if (stored.failedConfig == null || stored.failedConfig === currentFingerprint) {
       throw createError({
         statusCode: 502,
@@ -279,6 +264,10 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 409, statusMessage: 'Übersetzung wurde bereits angestoßen' })
   }
 
+  // Populated inside gen() with whatever chain was actually resolved for this
+  // attempt, so a failure below fingerprints the whole attempted chain (not
+  // just one link) — see fingerprintConfigChain.
+  let attemptedConfigs: LlmConfig[] = []
   const gen = (async () => {
     try {
       const cached = await readContentTranslation(db, contentHash, targetLang)
@@ -289,21 +278,17 @@ export default defineEventHandler(async (event) => {
       }
 
       // Always resolves the full chain fresh here (rather than reusing the
-      // pre-claim check's single-config resolution) — that check only ever
-      // looks at the primary anyway, and this only re-runs on the already-slow
+      // pre-claim check's resolution) — this only re-runs on the already-slow
       // retry-a-failed-attempt path, so one extra resolve is a fine trade for
-      // not threading two different "resolved config" shapes through here.
+      // not threading the resolved chain through here.
       const configs = await resolveActiveLlmConfigChain(db)
+      attemptedConfigs = configs
       if (configs.length === 0) {
         throw new Error('LLM ist nicht konfiguriert')
       }
 
       let result: TranslationResult | null = null
       for (const [index, config] of configs.entries()) {
-        // Recorded on the outer variable on every attempt (not just the last)
-        // so a failure below fingerprints whichever config actually produced
-        // it, not whatever (if anything) the pre-claim check saw.
-        resolvedConfig = config
         try {
           result = await tryTranslate(title, description, documentSummary, extractionTexts, targetLang, sourceLang, config)
           break
@@ -332,7 +317,7 @@ export default defineEventHandler(async (event) => {
       return result
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      const failedFingerprint = resolvedConfig ? fingerprintConfig(resolvedConfig) : null
+      const failedFingerprint = attemptedConfigs.length > 0 ? fingerprintConfigChain(attemptedConfigs) : null
       await failAuctionTranslation(db, platform, id, targetLang, claim, message, failedFingerprint)
       throw createError({
         statusCode: 502,

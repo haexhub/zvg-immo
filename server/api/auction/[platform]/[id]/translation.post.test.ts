@@ -306,13 +306,13 @@ describe('/api/auction/:platform/:id/translation', () => {
     const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
     const { readAuctionTranslation, claimAuctionTranslation } = await import('~/server/utils/content-translation')
     const handler = await loadHandler()
-    const { fingerprintConfig } = await import('./translation.post')
+    const { fingerprintConfigChain } = await import('./translation.post')
     vi.mocked(readAuctionTranslation).mockResolvedValue({
       contentHash: 'failed-content-hash',
       status: 'failed',
       errorMessage: 'Provider nicht erreichbar',
       // Same config that produced the failure — still inside the backoff window.
-      failedConfig: fingerprintConfig({ provider: 'openai-compatible', baseUrl: 'https://api.example', model: 'gpt' }),
+      failedConfig: fingerprintConfigChain([{ provider: 'openai-compatible', baseUrl: 'https://api.example', model: 'gpt' }]),
       claimStale: false,
       retryDue: false,
       title: null,
@@ -370,14 +370,14 @@ describe('/api/auction/:platform/:id/translation', () => {
     const { readAuctionTranslation, claimAuctionTranslation } = await import('~/server/utils/content-translation')
     const { resolveLlmConfig } = await import('~/server/utils/extract/llm')
     const handler = await loadHandler()
-    const { fingerprintConfig } = await import('./translation.post')
+    const { fingerprintConfigChain } = await import('./translation.post')
     vi.mocked(readAuctionTranslation).mockResolvedValue({
       contentHash: 'failed-content-hash',
       status: 'failed',
       errorMessage: 'Rate limit exceeded',
       // Fingerprint of the OLD model — the assignment was switched in
       // /settings since this failure was recorded.
-      failedConfig: fingerprintConfig({ provider: 'openai-compatible', baseUrl: 'https://api.example', model: 'gpt' }),
+      failedConfig: fingerprintConfigChain([{ provider: 'openai-compatible', baseUrl: 'https://api.example', model: 'gpt' }]),
       claimStale: false,
       retryDue: false,
       title: null,
@@ -411,7 +411,7 @@ describe('/api/auction/:platform/:id/translation', () => {
     const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
     const { failAuctionTranslation } = await import('~/server/utils/content-translation')
     const handler = await loadHandler()
-    const { fingerprintConfig } = await import('./translation.post')
+    const { fingerprintConfigChain } = await import('./translation.post')
     vi.mocked(callTranslationLlm).mockResolvedValue(null)
 
     await expect(handler({
@@ -426,7 +426,7 @@ describe('/api/auction/:platform/:id/translation', () => {
       'de',
       CLAIM,
       expect.any(String),
-      fingerprintConfig({ provider: 'openai-compatible', baseUrl: 'https://api.example', model: 'gpt' }),
+      fingerprintConfigChain([{ provider: 'openai-compatible', baseUrl: 'https://api.example', model: 'gpt' }]),
     )
   })
 
