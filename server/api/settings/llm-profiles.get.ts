@@ -3,6 +3,8 @@
 
 import { getPool } from '~/server/utils/db'
 import {
+  DEFAULT_LLM_CHAIN_STRATEGY,
+  getLlmExtractionChainStrategy,
   getLlmProviderOverride,
   getLlmProviderProfileSettings,
   MAX_PROVIDER_CHAIN_LENGTH,
@@ -91,6 +93,7 @@ export default defineEventHandler(async () => {
   return {
     profiles: settings.profiles.map(publicProfile),
     assignments: settings.assignments,
+    strategy: db ? await getLlmExtractionChainStrategy(db).catch(() => DEFAULT_LLM_CHAIN_STRATEGY) : DEFAULT_LLM_CHAIN_STRATEGY,
     effective,
     maxChainLength: MAX_PROVIDER_CHAIN_LENGTH,
   }

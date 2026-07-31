@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ChevronDown, ChevronUp, X } from 'lucide-vue-next'
 import { useSettingsError } from '~/composables/settings/useSettingsError'
-import type { LlmExecutionMode, LlmProvider, LlmProviderScope } from '~/server/utils/app-settings'
+import type { LlmChainStrategy, LlmExecutionMode, LlmProvider, LlmProviderScope } from '~/server/utils/app-settings'
 
 interface LlmProviderProfileForm {
   id: string
@@ -15,6 +15,7 @@ interface LlmProviderProfileForm {
 interface LlmProfilesResponse {
   profiles: LlmProviderProfileForm[]
   assignments: Partial<Record<LlmProviderScope, string[]>>
+  strategy: LlmChainStrategy
   effective: Record<LlmProviderScope, {
     provider: string
     baseUrl: string
@@ -38,6 +39,11 @@ const addSelection = reactive<Record<LlmProviderScope, string>>({
   extraction: ADD_PLACEHOLDER,
   translation: ADD_PLACEHOLDER,
 })
+const LLM_CHAIN_STRATEGY_OPTIONS: LlmChainStrategy[] = ['fallback', 'round-robin']
+// Only the extraction chain has a strategy: it's the one a background task
+// walks hundreds of times per run, so spreading it over several API keys is
+// what buys throughput. On-demand translation issues one request at a time.
+const chainStrategy = ref<LlmChainStrategy>('fallback')
 const llmProfileEffective = ref<LlmProfilesResponse['effective'] | null>(null)
 // Matches the server's MAX_PROVIDER_CHAIN_LENGTH default until loadLlmAssignments
 // resolves; kept in sync so the UI never lets a user add entries the server
@@ -50,6 +56,37 @@ const llmAssignmentsPending = ref(false)
 function profileLabel(id: string): string {
   const profile = llmProfiles.value.find((candidate) => candidate.id === id)
   return profile ? (profile.name || profile.model) : id
+}
+
+function isRoundRobin(scope: LlmProviderScope): boolean {
+  return scope === 'extraction' && chainStrategy.value === 'round-robin'
+}
+
+// 'Primär'/'Fallback n' describes the fallback strategy specifically — under
+// round-robin there is no primary, every link serves its share, so labelling
+// one of them primary would misreport what the task does.
+function chainBadge(scope: LlmProviderScope, index: number): string {
+  if (isRoundRobin(scope)) return t('settings.llmAssignment.poolMember', { n: index + 1 })
+  return index === 0
+    ? t('settings.llmAssignment.primary')
+    : t('settings.llmAssignment.fallbackN', { n: index })
+}
+
+function strategyLabel(option: LlmChainStrategy): string {
+  return option === 'round-robin'
+    ? t('settings.llmAssignment.strategyRoundRobin')
+    : t('settings.llmAssignment.strategyFallback')
+}
+
+function strategyHint(): string {
+  return chainStrategy.value === 'round-robin'
+    ? t('settings.llmAssignment.strategyRoundRobinHint')
+    : t('settings.llmAssignment.strategyFallbackHint')
+}
+
+function setStrategy(option: LlmChainStrategy): void {
+  chainStrategy.value = option
+  llmAssignmentsSaved.value = false
 }
 
 function chainLimitReached(scope: LlmProviderScope): boolean {
@@ -95,6 +132,7 @@ async function loadLlmAssignments(): Promise<void> {
     }))
     llmProfileAssignments.extraction = [...(res.assignments.extraction ?? [])]
     llmProfileAssignments.translation = [...(res.assignments.translation ?? [])]
+    chainStrategy.value = res.strategy
     maxChainLength.value = res.maxChainLength
     llmProfileEffective.value = res.effective
     llmAssignmentsError.value = null
@@ -115,6 +153,7 @@ async function saveLlmAssignments(): Promise<void> {
           extraction: llmProfileAssignments.extraction.length ? llmProfileAssignments.extraction : undefined,
           translation: llmProfileAssignments.translation.length ? llmProfileAssignments.translation : undefined,
         },
+        strategy: chainStrategy.value,
       },
     })
     await loadLlmAssignments()
@@ -148,6 +187,20 @@ onMounted(loadLlmAssignments)
             {{ scope === 'translation' ? $t('settings.llmAssignment.translationTitle') : $t('settings.llmAssignment.extractionTitle') }}
           </Label>
 
+          <template v-if="scope === 'extraction'">
+            <Select :model-value="chainStrategy" @update:model-value="(option) => setStrategy(option as LlmChainStrategy)">
+              <SelectTrigger class="w-full">
+                <SelectValue>{{ strategyLabel(chainStrategy) }}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="option in LLM_CHAIN_STRATEGY_OPTIONS" :key="option" :value="option">
+                  {{ strategyLabel(option) }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <p class="text-xs text-muted-foreground">{{ strategyHint() }}</p>
+          </template>
+
           <ul v-if="llmProfileAssignments[scope].length" class="space-y-1.5">
             <li
               v-for="(profileId, index) in llmProfileAssignments[scope]"
@@ -155,7 +208,7 @@ onMounted(loadLlmAssignments)
               class="flex items-center gap-1.5 rounded-md border px-2 py-1.5"
             >
               <Badge variant="outline" class="shrink-0">
-                {{ index === 0 ? $t('settings.llmAssignment.primary') : $t('settings.llmAssignment.fallbackN', { n: index }) }}
+                {{ chainBadge(scope, index) }}
               </Badge>
               <span class="min-w-0 flex-1 truncate text-sm">{{ profileLabel(profileId) }}</span>
               <Button
@@ -204,7 +257,7 @@ onMounted(loadLlmAssignments)
           <p v-if="chainLimitReached(scope)" class="text-xs text-muted-foreground">
             {{ $t('settings.llmAssignment.chainLimitReached', { max: maxChainLength }) }}
           </p>
-          <p v-else-if="llmProfileAssignments[scope].length > 1" class="text-xs text-muted-foreground">
+          <p v-else-if="llmProfileAssignments[scope].length > 1 && scope !== 'extraction'" class="text-xs text-muted-foreground">
             {{ $t('settings.llmAssignment.fallbackHint') }}
           </p>
           <p v-if="llmProfileAssignments[scope].length === 0 && llmProfileEffective" class="text-xs text-muted-foreground">

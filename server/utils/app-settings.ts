@@ -160,10 +160,26 @@ export interface LlmProviderProfileInput {
 // over quota or its model is otherwise unavailable (see getLlmProviderOverrideChain).
 export type LlmProviderAssignments = Partial<Record<LlmProviderScope, string[]>>
 
+// How the extraction chain picks which assigned profile serves a given
+// auction. 'fallback' is the original behaviour: always start at the primary
+// and only walk on when the current link is unavailable — right when the chain
+// is a quality ranking (best model first, cheaper stand-in behind it).
+// 'round-robin' advances the starting point per auction instead, which is what
+// a chain of equivalent profiles backed by *different* API keys wants: each key
+// is its own Google project and the free-tier quota is per project per model
+// (`GenerateRequestsPerMinutePerProjectPerModel-FreeTier`), so N keys carry N×
+// the throughput — unreachable while every request starts at the same primary.
+// Only the starting point rotates: an unavailable model still falls through the
+// remaining links in order, so resilience is identical in both modes.
+export const LLM_CHAIN_STRATEGIES = ['fallback', 'round-robin'] as const
+export type LlmChainStrategy = (typeof LLM_CHAIN_STRATEGIES)[number]
+export const DEFAULT_LLM_CHAIN_STRATEGY: LlmChainStrategy = 'fallback'
+
 const LLM_PROVIDER_OVERRIDE_KEY = 'llm_provider_override'
 const LLM_TRANSLATION_PROVIDER_OVERRIDE_KEY = 'llm_translation_provider_override'
 const LLM_PROVIDER_PROFILES_KEY = 'llm_provider_profiles'
 const LLM_PROVIDER_ASSIGNMENTS_KEY = 'llm_provider_assignments'
+const LLM_EXTRACTION_CHAIN_STRATEGY_KEY = 'llm_extraction_chain_strategy'
 
 function providerOverrideKey(scope: LlmProviderScope): string {
   return scope === 'translation' ? LLM_TRANSLATION_PROVIDER_OVERRIDE_KEY : LLM_PROVIDER_OVERRIDE_KEY
@@ -345,20 +361,55 @@ export async function setLlmProviderProfiles(
   return saved.profiles
 }
 
-// Saves only the use-case assignments; profiles are left untouched. Invalid
-// or now-deleted profile ids are dropped via coerceAssignments.
+export async function getLlmExtractionChainStrategy(db: Pool): Promise<LlmChainStrategy> {
+  const { rows } = await db.query<{ value: unknown }>(
+    'SELECT value FROM app_settings WHERE key = $1',
+    [LLM_EXTRACTION_CHAIN_STRATEGY_KEY],
+  )
+  const value = rows[0]?.value
+  return LLM_CHAIN_STRATEGIES.includes(value as LlmChainStrategy)
+    ? (value as LlmChainStrategy)
+    : DEFAULT_LLM_CHAIN_STRATEGY
+}
+
+// Saves only the use-case assignments (and, when given, the extraction chain's
+// strategy — same card, same save button); profiles are left untouched.
+// Invalid or now-deleted profile ids are dropped via coerceAssignments. An
+// omitted/unrecognised strategy leaves the stored one as it is, same
+// preserve-on-omit contract the apiKey writes use.
 export async function setLlmProviderAssignments(
   db: Pool,
   inputAssignments: LlmProviderAssignments,
-): Promise<LlmProviderAssignments> {
+  strategy?: unknown,
+): Promise<{ assignments: LlmProviderAssignments; strategy: LlmChainStrategy }> {
   const profileIds = new Set((await getLlmProviderProfiles(db)).map((profile) => profile.id))
   const assignments = coerceAssignments(inputAssignments, profileIds)
-  await db.query(
-    `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, now())
-     ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()`,
-    [LLM_PROVIDER_ASSIGNMENTS_KEY, JSON.stringify(assignments)],
-  )
-  return assignments
+  const nextStrategy = LLM_CHAIN_STRATEGIES.includes(strategy as LlmChainStrategy)
+    ? (strategy as LlmChainStrategy)
+    : null
+  const client = await db.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, now())
+       ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()`,
+      [LLM_PROVIDER_ASSIGNMENTS_KEY, JSON.stringify(assignments)],
+    )
+    if (nextStrategy) {
+      await client.query(
+        `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, now())
+         ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()`,
+        [LLM_EXTRACTION_CHAIN_STRATEGY_KEY, JSON.stringify(nextStrategy)],
+      )
+    }
+    await client.query('COMMIT')
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => undefined)
+    throw err
+  } finally {
+    client.release()
+  }
+  return { assignments, strategy: nextStrategy ?? (await getLlmExtractionChainStrategy(db)) }
 }
 
 // Deletes a single profile immediately (not gated behind the profile list's

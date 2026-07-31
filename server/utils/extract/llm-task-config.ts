@@ -1,6 +1,13 @@
 import { MAX_LLM_FAILURES } from '~/lib/llm-limits'
 import { getPool } from '../db'
-import { DEFAULT_LLM_MAX_TOKENS, getLlmMaxTokens, getLlmProviderOverrideChain } from '../app-settings'
+import {
+  DEFAULT_LLM_CHAIN_STRATEGY,
+  DEFAULT_LLM_MAX_TOKENS,
+  getLlmExtractionChainStrategy,
+  getLlmMaxTokens,
+  getLlmProviderOverrideChain,
+  type LlmChainStrategy,
+} from '../app-settings'
 import { resolveLlmConfig, type LlmConfig } from './llm'
 
 export { MAX_LLM_FAILURES }
@@ -27,4 +34,14 @@ export async function readExtractionLlmConfigChain(): Promise<LlmConfig[]> {
   return sources
     .map((source) => resolveLlmConfig(source, { maxTokens }))
     .filter((config): config is LlmConfig => config != null)
+}
+
+/** Whether the extraction chain is a quality ranking ('fallback') or a pool of
+ *  equivalent profiles to spread load over ('round-robin') — see
+ *  LLM_CHAIN_STRATEGIES. Falls back to the default whenever no DB is
+ *  configured, so the task keeps its pre-setting behaviour. */
+export async function readExtractionChainStrategy(): Promise<LlmChainStrategy> {
+  const db = getPool()
+  if (!db) return DEFAULT_LLM_CHAIN_STRATEGY
+  return getLlmExtractionChainStrategy(db).catch(() => DEFAULT_LLM_CHAIN_STRATEGY)
 }
