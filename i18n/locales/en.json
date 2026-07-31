@@ -13,7 +13,9 @@
   "map": {
     "layers": "Layers",
     "baseLayerStreets": "Street",
-    "baseLayerSatellite": "Satellite"
+    "baseLayerSatellite": "Satellite",
+    "legend": "Legend",
+    "legendSubject": "Auction property"
   },
   "landing": {
     "hero": {
@@ -991,12 +993,6 @@
     "mapLayerHazardPrefix": "Hazard map",
     "mapLayerOdorSignals": "Odour/emissions",
     "mapLayerFloodRiskAreas": "Flood map (EU)",
-    "mapLayerNoiseRoadDay": "Noise map road Lden",
-    "mapLayerNoiseRoadNight": "Noise map road night",
-    "mapLayerNoiseRailDay": "Noise map rail Lden",
-    "mapLayerNoiseRailNight": "Noise map rail night",
-    "mapLayerNoiseAviationDay": "Noise map aviation Lden",
-    "mapLayerNoiseAviationNight": "Noise map aviation night",
     "mapFeatureKind": {
       "groceries": "shopping/groceries",
       "pharmacy": "pharmacy",

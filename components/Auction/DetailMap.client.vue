@@ -41,10 +41,10 @@ const mapTilerMapIds = computed<MapTilerTileMapIds>(() => ({
   satelliteEn: String(runtimeConfig.public.maptilerSatelliteMapIdEn || ''),
 }))
 
-function hazardColor(hazard: HazardAssessment): string {
-  if (hazard.status === 'inside') return '#dc2626'
-  if (hazard.status === 'nearby') return '#d97706'
-  if (hazard.status === 'outside') return '#16a34a'
+function hazardStatusColor(status: HazardAssessment['status']): string {
+  if (status === 'inside') return '#dc2626'
+  if (status === 'nearby') return '#d97706'
+  if (status === 'outside') return '#16a34a'
   return '#64748b'
 }
 
@@ -138,9 +138,13 @@ interface OverlayEntry {
   // that deep-proxying is what makes Vue's template type inference lose the
   // OL layer classes' nominal (private-field-based) typing.
   visible: Ref<boolean>
+  // Stable identifier for entries the template needs to find regardless of
+  // the current locale — entry.key is a translated label captured once at
+  // mount time, so it goes stale on a locale switch.
+  id?: string
 }
 
-function addOverlayEntry(entries: OverlayEntry[], label: string, layer: BaseLayer, visible: boolean): void {
+function addOverlayEntry(entries: OverlayEntry[], label: string, layer: BaseLayer, visible: boolean, id?: string): void {
   let key = label
   let index = 2
   while (entries.some((e) => e.key === key)) {
@@ -148,17 +152,13 @@ function addOverlayEntry(entries: OverlayEntry[], label: string, layer: BaseLaye
     index++
   }
   layer.setVisible(visible)
-  entries.push({ key, layer, visible: ref(visible) })
+  entries.push({ key, layer, visible: ref(visible), id })
 }
 
 // Esri's "export"/"exportImage" REST endpoints render a fresh image per
 // request instead of serving a pre-rendered tile pyramid, so the tile's bbox
 // has to be computed and passed as a query param on every request.
 const arcGisTileGrid = createXYZ()
-
-function arcGisImageLayer(serviceUrl: string, opacity: number, attribution: string): TileLayer<XYZ> {
-  return arcGisGridLayer(serviceUrl, 'exportImage', {}, opacity, attribution)
-}
 
 function arcGisMapLayer(serviceUrl: string, layers: string, opacity: number, attribution: string): TileLayer<XYZ> {
   return arcGisGridLayer(serviceUrl, 'export', { layers }, opacity, attribution)
@@ -205,20 +205,12 @@ function arcGisExportUrl(
   return url.toString()
 }
 
-function addEnvironmentalMapLayers(entries: OverlayEntry[]): void {
-  const noiseBase = 'https://noise.discomap.eea.europa.eu/arcgis/rest/services/noiseStoryMap'
-  const noiseAttribution = 'EEA Environmental Noise Directive'
-  addOverlayEntry(entries, t('objektDetail.mapLayerNoiseRoadDay'), arcGisImageLayer(`${noiseBase}/NoiseContours_road_lden/ImageServer`, 0.55, noiseAttribution), false)
-  addOverlayEntry(entries, t('objektDetail.mapLayerNoiseRoadNight'), arcGisImageLayer(`${noiseBase}/NoiseContours_road_lnight/ImageServer`, 0.55, noiseAttribution), false)
-  addOverlayEntry(entries, t('objektDetail.mapLayerNoiseRailDay'), arcGisImageLayer(`${noiseBase}/NoiseContours_rail_lden/ImageServer`, 0.55, noiseAttribution), false)
-  addOverlayEntry(entries, t('objektDetail.mapLayerNoiseRailNight'), arcGisImageLayer(`${noiseBase}/NoiseContours_rail_lnight/ImageServer`, 0.55, noiseAttribution), false)
-  addOverlayEntry(entries, t('objektDetail.mapLayerNoiseAviationDay'), arcGisImageLayer(`${noiseBase}/NoiseContours_air_lden/ImageServer`, 0.55, noiseAttribution), false)
-  addOverlayEntry(entries, t('objektDetail.mapLayerNoiseAviationNight'), arcGisImageLayer(`${noiseBase}/NoiseContours_air_lnight/ImageServer`, 0.55, noiseAttribution), false)
+function addFloodRiskLayer(entries: OverlayEntry[]): void {
   addOverlayEntry(
     entries,
     t('objektDetail.mapLayerFloodRiskAreas'),
     arcGisMapLayer(
-      'https://water.discomap.eea.europa.eu/arcgis/rest/services/FloodsDirective/FloodsRiskZone_WM/MapServer',
+      'https://water.discomap.eea.europa.eu/arcgis/rest/services/FloodsDirective/Floods2024_RiskZone_WM/MapServer',
       'show:2',
       0.5,
       'EEA Floods Directive',
@@ -247,12 +239,12 @@ function odorOverlayEntry(entries: OverlayEntry[]): void {
       fill: new Fill({ color: rgba('#ef4444', nearest <= 1000 ? 0.12 : 0.06) }),
     }),
   })
-  addOverlayEntry(entries, label, layer, false)
+  addOverlayEntry(entries, label, layer, false, 'odor')
 }
 
 function hazardOverlayEntries(entries: OverlayEntry[]): void {
   for (const hazard of props.hazards ?? []) {
-    const color = hazardColor(hazard)
+    const color = hazardStatusColor(hazard.status)
     const circleFeature = new Feature({ geometry: circularPolygon(props.lng, props.lat, hazardRadius(hazard)) })
     circleFeature.set('popupHtml', `${hazardOverlayLabel(hazard)}<br>${t('objektDetail.hazardSeverityLabel')} ${t(`objektDetail.hazardSeverity.${hazard.severity}`)}`)
     const dotFeature = new Feature({ geometry: new Point(fromLonLat([props.lng, props.lat])) })
@@ -321,6 +313,35 @@ function toggleOverlay(entry: OverlayEntry): void {
   entry.layer.setVisible(entry.visible.value)
 }
 
+interface LegendEntry {
+  key: string
+  color: string
+  label: string
+}
+
+const legendOpen = ref(false)
+
+const featureLegendEntries = computed<LegendEntry[]>(() => {
+  const byKind = new Map<string, LegendEntry>()
+  for (const feature of props.locationContext?.mapFeatures ?? []) {
+    if (!byKind.has(feature.kind)) {
+      byKind.set(feature.kind, { key: feature.kind, color: featureColor(feature), label: featureLabel(feature) })
+    }
+  }
+  return [...byKind.values()]
+})
+
+const hazardStatusLegendEntries = computed<LegendEntry[]>(() => {
+  if (!props.hazards?.length) return []
+  return (['inside', 'nearby', 'outside', 'unknown'] as const).map((status) => ({
+    key: status,
+    color: hazardStatusColor(status),
+    label: t(`objektDetail.hazardStatus.${status}`),
+  }))
+})
+
+const showOdorLegend = computed(() => overlayEntries.value.some((entry) => entry.id === 'odor'))
+
 onMounted(async () => {
   // The parent gates this component behind v-if="a.lat != null && a.lng != null".
   // The ref binding races with the v-if flip when the data arrives, so wait a
@@ -370,7 +391,7 @@ onMounted(async () => {
   })
 
   const entries: OverlayEntry[] = []
-  addEnvironmentalMapLayers(entries)
+  addFloodRiskLayer(entries)
   featureOverlayEntries(entries)
   odorOverlayEntry(entries)
   hazardOverlayEntries(entries)
@@ -442,6 +463,38 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </div>
+    <div class="auction-detail-map-legend">
+      <button
+        type="button"
+        class="auction-detail-map-legend__toggle"
+        :aria-expanded="legendOpen"
+        aria-controls="auction-detail-map-legend-panel"
+        @click="legendOpen = !legendOpen"
+      >
+        {{ t('map.legend') }}
+      </button>
+      <div v-if="legendOpen" id="auction-detail-map-legend-panel" class="auction-detail-map-legend__panel">
+        <div class="auction-detail-map-legend__item">
+          <span class="auction-detail-map-legend__pin" />
+          {{ t('map.legendSubject') }}
+        </div>
+        <div v-for="entry in featureLegendEntries" :key="entry.key" class="auction-detail-map-legend__item">
+          <span class="auction-detail-map-legend__swatch" :style="{ backgroundColor: entry.color }" />
+          {{ entry.label }}
+        </div>
+        <template v-if="hazardStatusLegendEntries.length">
+          <div class="auction-detail-map-legend__group-title">{{ t('objektDetail.hazardsTitle') }}</div>
+          <div v-for="entry in hazardStatusLegendEntries" :key="entry.key" class="auction-detail-map-legend__item">
+            <span class="auction-detail-map-legend__swatch" :style="{ backgroundColor: entry.color }" />
+            {{ entry.label }}
+          </div>
+        </template>
+        <div v-if="showOdorLegend" class="auction-detail-map-legend__item">
+          <span class="auction-detail-map-legend__swatch auction-detail-map-legend__swatch--dashed" />
+          {{ t('objektDetail.mapLayerOdorSignals') }}
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -461,18 +514,29 @@ onBeforeUnmount(() => {
   box-shadow: 0 4px 16px rgb(15 23 42 / 20%);
 }
 
-.auction-detail-map-layers {
+.auction-detail-map-layers,
+.auction-detail-map-legend {
   position: absolute;
-  top: 8px;
-  right: 8px;
   z-index: 10;
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
   gap: 4px;
 }
 
-.auction-detail-map-layers__toggle {
+.auction-detail-map-layers {
+  top: 8px;
+  right: 8px;
+  align-items: flex-end;
+}
+
+.auction-detail-map-legend {
+  bottom: 8px;
+  left: 8px;
+  align-items: flex-start;
+}
+
+.auction-detail-map-layers__toggle,
+.auction-detail-map-legend__toggle {
   padding: 4px 10px;
   font-size: 12px;
   font-weight: 600;
@@ -484,7 +548,8 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-.auction-detail-map-layers__panel {
+.auction-detail-map-layers__panel,
+.auction-detail-map-legend__panel {
   width: 15rem;
   max-height: 15rem;
   overflow-y: auto;
@@ -525,5 +590,40 @@ onBeforeUnmount(() => {
 .auction-detail-map-layers input {
   flex: 0 0 auto;
   accent-color: #2563eb;
+}
+
+.auction-detail-map-legend__group-title {
+  padding-top: 4px;
+  margin-top: 4px;
+  font-weight: 600;
+  border-top: 1px solid rgb(15 23 42 / 10%);
+}
+
+.auction-detail-map-legend__item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 18px;
+}
+
+.auction-detail-map-legend__swatch {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.auction-detail-map-legend__swatch--dashed {
+  background: rgb(239 68 68 / 15%);
+  border: 1.5px dashed #7f1d1d;
+}
+
+.auction-detail-map-legend__pin {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  background: #2563eb;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
 }
 </style>
