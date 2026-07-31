@@ -84,14 +84,20 @@ export async function claimAuctionTranslation(
   lang: string,
   contentHash: string,
 ): Promise<AuctionTranslationClaim | null> {
+  // started_at is truncated to millisecond precision: node-postgres reads
+  // timestamptz columns into a JS Date, which cannot hold more than
+  // millisecond precision, so a raw now() value (microsecond precision)
+  // round-tripped through `claim.startedAt` never matches its own row again
+  // in completeAuctionTranslation/failAuctionTranslation's `started_at = $4`
+  // — every claim leaked as permanently 'pending'.
   const { rows } = await db.query<AuctionTranslationClaim>(
     `INSERT INTO auction_translations
        (platform, external_id, lang, content_hash, status, started_at)
-     VALUES ($1, $2, $3, $4, 'pending', now())
+     VALUES ($1, $2, $3, $4, 'pending', date_trunc('milliseconds', now()))
      ON CONFLICT (platform, external_id, lang) DO UPDATE SET
        content_hash = excluded.content_hash,
        status = 'pending',
-       started_at = now(),
+       started_at = date_trunc('milliseconds', now()),
        completed_at = null,
        title = null,
        description = null,

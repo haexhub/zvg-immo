@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Pool } from 'pg'
-import { readContentTranslation, writeContentTranslation } from './content-translation'
+import {
+  claimAuctionTranslation,
+  completeAuctionTranslation,
+  failAuctionTranslation,
+  readContentTranslation,
+  writeContentTranslation,
+} from './content-translation'
 
 /** Minimal in-memory stand-in for the `pg` Pool, matching the exact queries
  *  content-translation.ts issues (checked via the SQL prefix), mirroring the
@@ -114,5 +120,93 @@ describe('readContentTranslation / writeContentTranslation', () => {
     await writeContentTranslation(db, 'hash-a', 'en', 'Old title', 'Old desc', 'Old document', null)
     const hitNewHash = await readContentTranslation(db, 'hash-b', 'en')
     expect(hitNewHash).toBeNull()
+  })
+})
+
+/** Simulates the one real-Postgres behaviour the bug hinges on: a
+ *  `timestamptz` column keeps microsecond precision, but node-postgres
+ *  parses it into a JS `Date` (millisecond precision) on RETURNING. A row
+ *  written via a plain `now()` therefore carries a nonzero microsecond
+ *  remainder that a later `WHERE started_at = $n` (fed that same `Date` back
+ *  as a parameter) can never match — unless the writer truncated to
+ *  milliseconds up front, exactly like `date_trunc('milliseconds', now())`. */
+function makeFakeAuctionTranslationPool() {
+  const rows = new Map<string, {
+    status: 'pending' | 'completed' | 'failed'
+    startedAtMs: number
+    startedAtHasMicroRemainder: boolean
+    title: string | null
+    errorMessage: string | null
+  }>()
+
+  const query = vi.fn(async (sql: string, params: unknown[] = []) => {
+    if (sql.includes('INSERT INTO auction_translations')) {
+      const [platform, externalId, lang] = params as [string, string, string, string, string]
+      const key = `${platform}:${externalId}:${lang}`
+      const truncated = sql.includes("date_trunc('milliseconds', now())")
+      const startedAtMs = Date.now()
+      rows.set(key, {
+        status: 'pending',
+        startedAtMs,
+        startedAtHasMicroRemainder: !truncated,
+        title: null,
+        errorMessage: null,
+      })
+      return { rows: [{ startedAt: new Date(startedAtMs) }] }
+    }
+    if (sql.includes("status = 'completed'")) {
+      const [platform, externalId, lang, startedAt, title] = params as [string, string, string, Date, string]
+      const key = `${platform}:${externalId}:${lang}`
+      const row = rows.get(key)
+      const matches =
+        row?.status === 'pending' && !row.startedAtHasMicroRemainder && row.startedAtMs === startedAt.getTime()
+      if (matches) {
+        row.status = 'completed'
+        row.title = title
+      }
+      return { rowCount: matches ? 1 : 0 }
+    }
+    if (sql.includes("status = 'failed'")) {
+      const [platform, externalId, lang, startedAt, errorMessage] = params as [string, string, string, Date, string]
+      const key = `${platform}:${externalId}:${lang}`
+      const row = rows.get(key)
+      const matches =
+        row?.status === 'pending' && !row.startedAtHasMicroRemainder && row.startedAtMs === startedAt.getTime()
+      if (matches) {
+        row.status = 'failed'
+        row.errorMessage = errorMessage
+      }
+      return { rowCount: matches ? 1 : 0 }
+    }
+    throw new Error(`unexpected query: ${sql}`)
+  })
+
+  return { rows, query: query as unknown as Pool['query'] }
+}
+
+describe('claimAuctionTranslation / completeAuctionTranslation / failAuctionTranslation', () => {
+  it('a claim can be completed — started_at survives the Postgres round trip', async () => {
+    const pool = makeFakeAuctionTranslationPool()
+    const db = { query: pool.query } as Pool
+    const claim = await claimAuctionTranslation(db, 'se-kronofogden', '101735', 'de', 'hash-a')
+    expect(claim).not.toBeNull()
+    await completeAuctionTranslation(db, 'se-kronofogden', '101735', 'de', claim!, {
+      title: 'Translated title',
+      description: null,
+      documentSummary: null,
+      extractionTexts: null,
+    })
+    expect(pool.rows.get('se-kronofogden:101735:de')?.status).toBe('completed')
+  })
+
+  it('a claim can be failed — started_at survives the Postgres round trip', async () => {
+    const pool = makeFakeAuctionTranslationPool()
+    const db = { query: pool.query } as Pool
+    const claim = await claimAuctionTranslation(db, 'bg-zapori', '3500', 'de', 'hash-b')
+    expect(claim).not.toBeNull()
+    await failAuctionTranslation(db, 'bg-zapori', '3500', 'de', claim!, 'LLM ist nicht konfiguriert', null)
+    const row = pool.rows.get('bg-zapori:3500:de')
+    expect(row?.status).toBe('failed')
+    expect(row?.errorMessage).toBe('LLM ist nicht konfiguriert')
   })
 })
