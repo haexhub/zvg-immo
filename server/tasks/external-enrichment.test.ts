@@ -123,6 +123,7 @@ const locationContext: LocationContext = {
     nearestCommercialDistanceMeters: 300,
     nearestHeavyIndustryDistanceMeters: null,
     heavyIndustryKinds: [],
+    heavyIndustrySites: [],
     noisyRoadLevel: 'medium',
     aviationNoiseLevel: 'medium',
     nearestMotorwayDistanceMeters: 2200,
@@ -130,6 +131,8 @@ const locationContext: LocationContext = {
     nearestAirportDistanceMeters: 6500,
     nearestRunwayDistanceMeters: 7200,
     nearestHelipadDistanceMeters: null,
+    nearestAirportName: null,
+    nearestAirportKind: 'unknown',
     riskSignals: ['motorway_near', 'runway_near'],
   },
   demographics: {

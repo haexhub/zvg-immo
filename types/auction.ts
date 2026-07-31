@@ -150,6 +150,7 @@ export interface LocationEnvironmentContext {
   nearestCommercialDistanceMeters: number | null
   nearestHeavyIndustryDistanceMeters: number | null
   heavyIndustryKinds: string[]
+  heavyIndustrySites: { kind: string; name: string | null; distanceMeters: number }[]
   noisyRoadLevel: 'low' | 'medium' | 'high' | 'unknown'
   aviationNoiseLevel: 'low' | 'medium' | 'high' | 'unknown'
   nearestMotorwayDistanceMeters: number | null
@@ -157,6 +158,8 @@ export interface LocationEnvironmentContext {
   nearestAirportDistanceMeters: number | null
   nearestRunwayDistanceMeters: number | null
   nearestHelipadDistanceMeters: number | null
+  nearestAirportName: string | null
+  nearestAirportKind: 'major' | 'regional' | 'minor' | 'military' | 'unknown'
   reportedNoise?: LocationNoiseObservation[]
   airQuality?: LocationAirQualityObservation | null
   riskSignals: string[]

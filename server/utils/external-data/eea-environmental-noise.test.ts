@@ -32,6 +32,7 @@ function locationContext(overrides: Partial<LocationContext> = {}): LocationCont
       nearestCommercialDistanceMeters: null,
       nearestHeavyIndustryDistanceMeters: null,
       heavyIndustryKinds: [],
+      heavyIndustrySites: [],
       noisyRoadLevel: 'low',
       aviationNoiseLevel: 'low',
       nearestMotorwayDistanceMeters: null,
@@ -39,6 +40,8 @@ function locationContext(overrides: Partial<LocationContext> = {}): LocationCont
       nearestAirportDistanceMeters: null,
       nearestRunwayDistanceMeters: null,
       nearestHelipadDistanceMeters: null,
+      nearestAirportName: null,
+      nearestAirportKind: 'unknown',
       riskSignals: [],
     },
     demographics: {
