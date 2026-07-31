@@ -81,6 +81,7 @@ export async function downloadNativeImages(
   const written: string[] = []
   const seenHashes = new Set<string>()
   let hadFetchError = false
+  let lastFetchError: string | null = null
   // The cap counts successful downloads, not attempts — dead URLs at the
   // front of the list must not block valid ones further back.
   for (const url of urls) {
@@ -88,8 +89,9 @@ export async function downloadNativeImages(
     let buf: Buffer | null
     try {
       buf = await fetchImageBytes(url, opts)
-    } catch {
+    } catch (err) {
       hadFetchError = true
+      lastFetchError = (err as Error).message
       continue
     }
     if (!buf || buf.length < MIN_BYTES) continue
@@ -112,7 +114,7 @@ export async function downloadNativeImages(
   // confirmed empty gallery. If some URLs did succeed, a few dead ones among
   // them are unremarkable and not worth failing the whole listing over.
   if (written.length === 0 && hadFetchError) {
-    throw new Error('all native image fetches failed (network error)')
+    throw new Error(`all native image fetches failed (network error)${lastFetchError ? `: ${lastFetchError}` : ''}`)
   }
   return written
 }

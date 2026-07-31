@@ -37,6 +37,9 @@ export interface PreparedLlmDocuments {
 export interface ArchivedLiveDocuments {
   documentSetItems: ArchivedDocumentSetItem[]
   documentSetComplete: boolean
+  /** One entry per candidate whose fetch didn't yield bytes — the reason
+   *  fetchAttachmentBytes used to swallow silently. Undefined when complete. */
+  errors?: string[]
 }
 
 const MAX_ATTACHMENT_BYTES = 30 * 1024 * 1024
@@ -113,17 +116,22 @@ function resolveAttachmentSource(proxyUrl: string, accept: string): { url: strin
   return { url: proxyUrl, headers: { 'User-Agent': UA, Accept: accept } }
 }
 
-async function fetchAttachmentBytes(att: Attachment): Promise<Buffer | null> {
+interface FetchedAttachment {
+  bytes: Buffer | null
+  error?: string
+}
+
+async function fetchAttachmentBytes(att: Attachment): Promise<FetchedAttachment> {
   const { url, headers } = resolveAttachmentSource(att.proxyUrl, acceptForHint(formatHint(att)))
   try {
     const res = await fetch(url, { headers, signal: AbortSignal.timeout(30_000) })
-    if (!res.ok) return null
+    if (!res.ok) return { bytes: null, error: `HTTP ${res.status}` }
     const contentLength = Number(res.headers.get('content-length') ?? '')
     if (Number.isFinite(contentLength) && contentLength > MAX_ATTACHMENT_BYTES) {
       await res.body?.cancel().catch(() => undefined)
-      return null
+      return { bytes: null, error: `attachment too large (${contentLength} bytes)` }
     }
-    if (!res.body) return null
+    if (!res.body) return { bytes: null, error: 'empty response body' }
     const reader = res.body.getReader()
     const chunks: Buffer[] = []
     let total = 0
@@ -134,13 +142,13 @@ async function fetchAttachmentBytes(att: Attachment): Promise<Buffer | null> {
       total += value.byteLength
       if (total > MAX_ATTACHMENT_BYTES) {
         await reader.cancel().catch(() => undefined)
-        return null
+        return { bytes: null, error: `attachment too large (>${MAX_ATTACHMENT_BYTES} bytes)` }
       }
       chunks.push(Buffer.from(value))
     }
-    return Buffer.concat(chunks, total)
-  } catch {
-    return null
+    return { bytes: Buffer.concat(chunks, total) }
+  } catch (err) {
+    return { bytes: null, error: (err as Error).message }
   }
 }
 
@@ -347,10 +355,14 @@ export async function prepareLiveLlmDocuments(
   capturedAt: string,
 ): Promise<ArchivedLiveDocuments> {
   const candidates = pickAllLlmDocumentAttachments(attachments)
+  const fetchErrors: string[] = []
   const prepared = (
     await Promise.all(candidates.map(async (attachment, ordinal) => {
-      const bytes = await fetchAttachmentBytes(attachment)
-      if (!bytes) return null
+      const { bytes, error } = await fetchAttachmentBytes(attachment)
+      if (!bytes) {
+        if (error) fetchErrors.push(`${attachmentLabel(attachment)}: ${error}`)
+        return null
+      }
       return prepareDocument(attachment, ordinal, bytes, {
         identity,
         capturedAt,
@@ -373,6 +385,7 @@ export async function prepareLiveLlmDocuments(
   return {
     documentSetItems,
     documentSetComplete: documentSetItems.length === candidates.length,
+    errors: fetchErrors.length > 0 ? fetchErrors : undefined,
   }
 }
 
