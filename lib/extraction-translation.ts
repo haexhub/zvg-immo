@@ -37,6 +37,7 @@ export interface TranslatableExtractionTexts {
 
 export interface TranslationContentSource {
   title: string | null
+  address: string | null
   description: string | null
   documentSummary: string | null
   extractionTexts: TranslatableExtractionTexts | null
@@ -129,10 +130,11 @@ export function extractTranslatableExtractionTexts(
 }
 
 export function translationContentSource(
-  auction: Pick<Auction, 'title' | 'description' | 'extraction'>,
+  auction: Pick<Auction, 'title' | 'address' | 'description' | 'extraction'>,
 ): TranslationContentSource {
   return {
     title: auction.title,
+    address: auction.address,
     description: auction.description,
     documentSummary: auction.extraction?.documentSummary ?? null,
     extractionTexts: extractTranslatableExtractionTexts(auction.extraction),

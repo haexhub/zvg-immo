@@ -12,9 +12,11 @@ import type {
 import type { AuctionDetail } from '~/server/api/auction/[platform]/[id].get'
 import { safeHref } from '~/lib/utils'
 import { useAuctionDetailFormatters } from '~/composables/useAuctionDetailFormatters'
+import { usePlaceNameTranslations } from '~/composables/usePlaceNameTranslations'
 
 const props = defineProps<{
   auction: AuctionDetail
+  displayAddress: string | null
 }>()
 
 const { t } = useI18n()
@@ -39,6 +41,16 @@ const airQuality = computed(() => locationEnvironment.value?.airQuality ?? null)
 const locationDemographics = computed(() => locationContext.value?.demographics ?? null)
 const neighborhoodContext = computed(() => locationContext.value?.neighborhood ?? null)
 const neighborhoodNotes = computed(() => neighborhoodContext.value?.notes ?? [])
+
+const translatablePlaceNames = computed(() => [...new Set([
+  ...nearbyPlaces.value.map((place) => place.name),
+  ...heavyIndustrySites.value.map((site) => site.name).filter((name): name is string => name != null),
+  ...(locationEnvironment.value?.nearestAirportName ? [locationEnvironment.value.nearestAirportName] : []),
+])])
+const { displayName: placeDisplayName } = usePlaceNameTranslations({
+  names: translatablePlaceNames,
+  country: computed(() => props.auction.country),
+})
 
 function locationQualityLabel(verdict: string): string {
   return t(`objektDetail.locationQualityVerdict.${verdict}`)
@@ -152,7 +164,7 @@ function neighborhoodNoteLabel(note: NeighborhoodContext['notes'][number] | stri
       <AuctionDetailMap
         :lat="auction.lat"
         :lng="auction.lng"
-        :label="auction.address ?? undefined"
+        :label="displayAddress ?? undefined"
         :hazards="auction.locationEnrichment?.hazards"
         :location-context="locationContext"
       />
@@ -194,7 +206,7 @@ function neighborhoodNoteLabel(note: NeighborhoodContext['notes'][number] | stri
                     class="flex items-start justify-between gap-3 px-3 py-2.5"
                   >
                     <span class="min-w-0">
-                      <span class="block truncate font-medium">{{ place.name }}</span>
+                      <span class="block truncate font-medium">{{ placeDisplayName(place.name) }}</span>
                       <span class="text-xs text-muted-foreground">
                         {{ placeKindLabel(place.kind) }}
                         <span v-if="formatPopulation(place)"> · {{ formatPopulation(place) }}</span>
@@ -264,7 +276,7 @@ function neighborhoodNoteLabel(note: NeighborhoodContext['notes'][number] | stri
                   <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.nearestAirport') }}</dt>
                   <dd class="font-medium tabular-nums">{{ formatDistance(locationEnvironment.nearestAirportDistanceMeters) }}</dd>
                   <dd v-if="locationEnvironment.nearestAirportName" class="text-xs text-muted-foreground">
-                    {{ locationEnvironment.nearestAirportName }} · {{ airportKindLabel(locationEnvironment.nearestAirportKind) }}
+                    {{ placeDisplayName(locationEnvironment.nearestAirportName) }} · {{ airportKindLabel(locationEnvironment.nearestAirportKind) }}
                   </dd>
                 </div>
                 <div>
@@ -304,7 +316,7 @@ function neighborhoodNoteLabel(note: NeighborhoodContext['notes'][number] | stri
                   >
                     <span class="min-w-0 truncate">
                       {{ industrialSiteKindLabel(site.kind) }}
-                      <span v-if="site.name" class="text-muted-foreground"> · {{ site.name }}</span>
+                      <span v-if="site.name" class="text-muted-foreground"> · {{ placeDisplayName(site.name) }}</span>
                     </span>
                     <span class="shrink-0 font-medium tabular-nums text-muted-foreground">{{ formatDistance(site.distanceMeters) }}</span>
                   </li>

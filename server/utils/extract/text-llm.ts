@@ -43,6 +43,14 @@ const TRANSLATION_SCHEMA = {
   additionalProperties: false,
   properties: {
     title: { type: ['string', 'null'], description: 'Übersetzter Titel, oder null wenn kein Titel vorhanden war.' },
+    address: {
+      type: ['string', 'null'],
+      description:
+        'Übersetzte/transliterierte Adresse, oder null wenn keine Adresse vorhanden war. Verwaltungsbegriffe und ' +
+        'Abkürzungen (Ortsteil-Präfixe, Straße, Platz, Bezirk, Hausnummer-Zeichen) in die im Zielsprachraum übliche ' +
+        'Form bringen und Eigennamen in nicht-lateinischer Schrift lateinisch transliterieren. Reihenfolge der ' +
+        'Adressbestandteile nicht ändern, keine Bestandteile erfinden oder weglassen.',
+    },
     description: {
       type: ['string', 'null'],
       description: 'Übersetzte Beschreibung, oder null wenn keine Beschreibung vorhanden war.',
@@ -116,11 +124,12 @@ const TRANSLATION_SCHEMA = {
       required: ['biddingNotes', 'renovationNotes', 'floor', 'heating', 'insights', 'planningNotes'],
     },
   },
-  required: ['title', 'description', 'documentSummary', 'extractionTexts'],
+  required: ['title', 'address', 'description', 'documentSummary', 'extractionTexts'],
 } as const
 
 export interface TranslationResult {
   title: string | null
+  address: string | null
   description: string | null
   documentSummary: string | null
   extractionTexts: TranslatableExtractionTexts | null
@@ -235,6 +244,7 @@ export async function callTranslationLlm(
   systemPrompt: string,
   userText: string,
   title: string | null,
+  address: string | null,
   description: string | null,
   documentSummary: string | null,
   extractionTexts: TranslatableExtractionTexts | null,
@@ -247,17 +257,61 @@ export async function callTranslationLlm(
   })
   if (!raw) return null
   const translatedTitle = typeof raw.title === 'string' ? raw.title.trim() : null
+  const translatedAddress = typeof raw.address === 'string' ? raw.address.trim() : null
   const translatedDescription = typeof raw.description === 'string' ? raw.description.trim() : null
   const translatedDocumentSummary = typeof raw.documentSummary === 'string' ? raw.documentSummary.trim() : null
   const translatedExtraction = translatedExtractionTexts(raw.extractionTexts, extractionTexts)
   if (title != null && !translatedTitle) return null
+  if (address != null && !translatedAddress) return null
   if (description != null && !translatedDescription) return null
   if (documentSummary != null && !translatedDocumentSummary) return null
   if (translatedExtraction === undefined) return null
   return {
     title: title == null ? null : translatedTitle,
+    address: address == null ? null : translatedAddress,
     description: description == null ? null : translatedDescription,
     documentSummary: documentSummary == null ? null : translatedDocumentSummary,
     extractionTexts: translatedExtraction,
   }
+}
+
+const PLACE_NAME_TRANSLATION_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    names: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['names'],
+} as const
+
+/** Translates/transliterates a batch of OSM place names (settlements,
+ *  industrial sites, airports — see osm-location-shared.ts's nameOf()) in one
+ *  call. Returns null on request failure or if the model doesn't return
+ *  exactly one output per input in the same order — a length mismatch can't
+ *  be safely zipped back to the source names. */
+export async function callPlaceNameTranslationLlm(
+  names: readonly string[],
+  targetLangName: string,
+  config: LlmConfig,
+): Promise<string[] | null> {
+  const systemPrompt =
+    'Du übersetzt/transliterierst geographische Eigennamen (Städte, Dörfer, Industriestandorte, Flughäfen). ' +
+    'Nutze den international gebräuchlichen Namen, wenn es einen gibt (z. B. "Bukarest" für "București"); ' +
+    'ansonsten transliteriere nicht-lateinische Schrift originalgetreu in lateinische Schrift. ' +
+    'Erfinde keine Namen und ändere die Bedeutung nicht.'
+  const userText = [
+    `Translate/transliterate each of the following place names into ${targetLangName}.`,
+    'Return exactly one output per input, in the same order — never merge, split, drop or add entries.',
+    '',
+    JSON.stringify(names),
+  ].join('\n')
+  const raw = await getProvider(config).extract({
+    systemPrompt,
+    schema: PLACE_NAME_TRANSLATION_SCHEMA,
+    parts: [{ type: 'text', text: userText }],
+  })
+  const translated = raw?.names
+  if (!Array.isArray(translated) || translated.length !== names.length) return null
+  const out = translated.map((value) => (typeof value === 'string' ? value.trim() : ''))
+  return out.every(Boolean) ? out : null
 }

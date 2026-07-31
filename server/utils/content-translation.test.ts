@@ -14,6 +14,7 @@ import {
 function makeFakePool() {
   const rows = new Map<string, {
     title: string | null
+    address: string | null
     description: string | null
     documentSummary: string | null
     extractionTexts: unknown
@@ -26,9 +27,10 @@ function makeFakePool() {
       return { rows: hit ? [hit] : [] }
     }
     if (sql.includes('INSERT INTO content_translations')) {
-      const [hash, lang, title, description, documentSummary, extractionTexts] = params as [
+      const [hash, lang, title, address, description, documentSummary, extractionTexts] = params as [
         string,
         string,
+        string | null,
         string | null,
         string | null,
         string | null,
@@ -38,6 +40,7 @@ function makeFakePool() {
       if (!rows.has(key)) {
         rows.set(key, {
           title,
+          address,
           description,
           documentSummary,
           extractionTexts: typeof extractionTexts === 'string' ? JSON.parse(extractionTexts) : extractionTexts,
@@ -61,7 +64,7 @@ describe('readContentTranslation / writeContentTranslation', () => {
   it('returns the written row on a cache hit', async () => {
     const pool = makeFakePool()
     const db = { query: pool.query } as Pool
-    await writeContentTranslation(db, 'hash-a', 'en', 'Title EN', 'Description EN', 'Document summary EN', {
+    await writeContentTranslation(db, 'hash-a', 'en', 'Title EN', 'Address EN', 'Description EN', 'Document summary EN', {
       biddingNotes: null,
       renovationNotes: 'Renovation notes EN',
       floor: null,
@@ -72,6 +75,7 @@ describe('readContentTranslation / writeContentTranslation', () => {
     const hit = await readContentTranslation(db, 'hash-a', 'en')
     expect(hit).toEqual({
       title: 'Title EN',
+      address: 'Address EN',
       description: 'Description EN',
       documentSummary: 'Document summary EN',
       extractionTexts: {
@@ -88,7 +92,7 @@ describe('readContentTranslation / writeContentTranslation', () => {
   it('is keyed on (content_hash, lang) — a different lang is a separate entry', async () => {
     const pool = makeFakePool()
     const db = { query: pool.query } as Pool
-    await writeContentTranslation(db, 'hash-a', 'en', 'Title EN', 'Description EN', null, null)
+    await writeContentTranslation(db, 'hash-a', 'en', 'Title EN', null, 'Description EN', null, null)
     const hitDe = await readContentTranslation(db, 'hash-a', 'de')
     expect(hitDe).toBeNull()
   })
@@ -96,8 +100,8 @@ describe('readContentTranslation / writeContentTranslation', () => {
   it('is immutable per (content_hash, lang) — a second write does not overwrite', async () => {
     const pool = makeFakePool()
     const db = { query: pool.query } as Pool
-    await writeContentTranslation(db, 'hash-a', 'en', 'First', 'First desc', 'First document', null)
-    await writeContentTranslation(db, 'hash-a', 'en', 'Second', 'Second desc', 'Second document', {
+    await writeContentTranslation(db, 'hash-a', 'en', 'First', null, 'First desc', 'First document', null)
+    await writeContentTranslation(db, 'hash-a', 'en', 'Second', null, 'Second desc', 'Second document', {
       biddingNotes: 'Second note',
       renovationNotes: null,
       floor: null,
@@ -108,6 +112,7 @@ describe('readContentTranslation / writeContentTranslation', () => {
     const hit = await readContentTranslation(db, 'hash-a', 'en')
     expect(hit).toEqual({
       title: 'First',
+      address: null,
       description: 'First desc',
       documentSummary: 'First document',
       extractionTexts: null,
@@ -117,7 +122,7 @@ describe('readContentTranslation / writeContentTranslation', () => {
   it('a changed content_hash is a distinct cache entry (content change -> new translation)', async () => {
     const pool = makeFakePool()
     const db = { query: pool.query } as Pool
-    await writeContentTranslation(db, 'hash-a', 'en', 'Old title', 'Old desc', 'Old document', null)
+    await writeContentTranslation(db, 'hash-a', 'en', 'Old title', null, 'Old desc', 'Old document', null)
     const hitNewHash = await readContentTranslation(db, 'hash-b', 'en')
     expect(hitNewHash).toBeNull()
   })
@@ -192,6 +197,7 @@ describe('claimAuctionTranslation / completeAuctionTranslation / failAuctionTran
     expect(claim).not.toBeNull()
     await completeAuctionTranslation(db, 'se-kronofogden', '101735', 'de', claim!, {
       title: 'Translated title',
+      address: null,
       description: null,
       documentSummary: null,
       extractionTexts: null,

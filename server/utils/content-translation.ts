@@ -10,6 +10,7 @@ import type { TranslatableExtractionTexts } from '~/lib/extraction-translation'
 
 export interface ContentTranslationRow {
   title: string | null
+  address: string | null
   description: string | null
   documentSummary: string | null
   extractionTexts: TranslatableExtractionTexts | null
@@ -57,6 +58,7 @@ export async function readAuctionTranslation(
        content_hash AS "contentHash",
        status,
        title,
+       address,
        description,
        document_summary AS "documentSummary",
        extraction_texts AS "extractionTexts",
@@ -100,6 +102,7 @@ export async function claimAuctionTranslation(
        started_at = date_trunc('milliseconds', now()),
        completed_at = null,
        title = null,
+       address = null,
        description = null,
        document_summary = null,
        extraction_texts = null,
@@ -128,9 +131,10 @@ export async function completeAuctionTranslation(
     `UPDATE auction_translations SET
        status = 'completed',
        title = $5,
-       description = $6,
-       document_summary = $7,
-       extraction_texts = $8,
+       address = $6,
+       description = $7,
+       document_summary = $8,
+       extraction_texts = $9,
        error_message = null,
        failed_config = null,
        completed_at = now()
@@ -142,6 +146,7 @@ export async function completeAuctionTranslation(
       lang,
       claim.startedAt,
       value.title,
+      value.address,
       value.description,
       value.documentSummary,
       value.extractionTexts == null ? null : JSON.stringify(value.extractionTexts),
@@ -181,7 +186,7 @@ export async function readContentTranslation(
   lang: string,
 ): Promise<ContentTranslationRow | null> {
   const { rows } = await db.query<ContentTranslationRow>(
-    `SELECT title, description, document_summary AS "documentSummary", extraction_texts AS "extractionTexts"
+    `SELECT title, address, description, document_summary AS "documentSummary", extraction_texts AS "extractionTexts"
      FROM content_translations
      WHERE content_hash = $1 AND lang = $2`,
     [contentHash, lang],
@@ -194,14 +199,15 @@ export async function writeContentTranslation(
   contentHash: string,
   lang: string,
   title: string | null,
+  address: string | null,
   description: string | null,
   documentSummary: string | null,
   extractionTexts: TranslatableExtractionTexts | null,
 ): Promise<void> {
   await db.query(
-    `INSERT INTO content_translations (content_hash, lang, title, description, document_summary, extraction_texts, at)
-     VALUES ($1, $2, $3, $4, $5, $6, now())
+    `INSERT INTO content_translations (content_hash, lang, title, address, description, document_summary, extraction_texts, at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, now())
      ON CONFLICT (content_hash, lang) DO NOTHING`,
-    [contentHash, lang, title, description, documentSummary, extractionTexts == null ? null : JSON.stringify(extractionTexts)],
+    [contentHash, lang, title, address, description, documentSummary, extractionTexts == null ? null : JSON.stringify(extractionTexts)],
   )
 }

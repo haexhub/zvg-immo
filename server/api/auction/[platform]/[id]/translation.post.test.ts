@@ -159,6 +159,7 @@ describe('/api/auction/:platform/:id/translation', () => {
     const { completeAuctionTranslation, writeContentTranslation } = await import('~/server/utils/content-translation')
     const payload = {
       title: 'Bebautes Einfamilienhaus',
+      address: 'Nor Kasernweg 5, 827 54 Järvsö',
       description: 'Größe: 5 Zimmer, 124 m²',
       documentSummary: null,
       extractionTexts: {
@@ -199,6 +200,7 @@ describe('/api/auction/:platform/:id/translation', () => {
       expect.any(String),
       'de',
       payload.title,
+      payload.address,
       payload.description,
       payload.documentSummary,
       payload.extractionTexts,
@@ -226,6 +228,7 @@ describe('/api/auction/:platform/:id/translation', () => {
       claimStale: false,
       retryDue: true,
       title: 'Dauerhaft gespeicherter Titel',
+      address: 'Dauerhaft gespeicherte Adresse',
       description: 'Dauerhaft gespeicherte Beschreibung',
       documentSummary: null,
       extractionTexts: null,
@@ -237,6 +240,7 @@ describe('/api/auction/:platform/:id/translation', () => {
       node: { req: { socket: { remoteAddress: '127.0.0.1' } } },
     })).resolves.toEqual({
       title: cached.title,
+      address: cached.address,
       description: cached.description,
       documentSummary: null,
       extractionTexts: null,
@@ -259,6 +263,7 @@ describe('/api/auction/:platform/:id/translation', () => {
     const expectedContentHash = auctionTranslationContentHash(auction())
     const payload = {
       title: 'Fresh title for changed content',
+      address: 'Fresh address for changed content',
       description: 'Fresh description for changed content',
       documentSummary: null,
       extractionTexts: null,
@@ -271,6 +276,7 @@ describe('/api/auction/:platform/:id/translation', () => {
       claimStale: false,
       retryDue: true,
       title: 'Old cached title',
+      address: 'Old cached address',
       description: 'Old cached description',
       documentSummary: null,
       extractionTexts: null,
@@ -306,7 +312,7 @@ describe('/api/auction/:platform/:id/translation', () => {
     const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
     const { readAuctionTranslation, claimAuctionTranslation } = await import('~/server/utils/content-translation')
     const handler = await loadHandler()
-    const { fingerprintConfigChain } = await import('./translation.post')
+    const { fingerprintConfigChain } = await import('~/server/utils/translation-llm-chain')
     vi.mocked(readAuctionTranslation).mockResolvedValue({
       contentHash: 'failed-content-hash',
       status: 'failed',
@@ -316,6 +322,7 @@ describe('/api/auction/:platform/:id/translation', () => {
       claimStale: false,
       retryDue: false,
       title: null,
+      address: null,
       description: null,
       documentSummary: null,
       extractionTexts: null,
@@ -348,6 +355,7 @@ describe('/api/auction/:platform/:id/translation', () => {
       claimStale: false,
       retryDue: false,
       title: null,
+      address: null,
       description: null,
       documentSummary: null,
       extractionTexts: null,
@@ -370,7 +378,7 @@ describe('/api/auction/:platform/:id/translation', () => {
     const { readAuctionTranslation, claimAuctionTranslation } = await import('~/server/utils/content-translation')
     const { resolveLlmConfig } = await import('~/server/utils/extract/llm')
     const handler = await loadHandler()
-    const { fingerprintConfigChain } = await import('./translation.post')
+    const { fingerprintConfigChain } = await import('~/server/utils/translation-llm-chain')
     vi.mocked(readAuctionTranslation).mockResolvedValue({
       contentHash: 'failed-content-hash',
       status: 'failed',
@@ -381,6 +389,7 @@ describe('/api/auction/:platform/:id/translation', () => {
       claimStale: false,
       retryDue: false,
       title: null,
+      address: null,
       description: null,
       documentSummary: null,
       extractionTexts: null,
@@ -393,6 +402,7 @@ describe('/api/auction/:platform/:id/translation', () => {
     })
     vi.mocked(callTranslationLlm).mockResolvedValue({
       title: 'Translated with the new model',
+      address: null,
       description: null,
       documentSummary: null,
       extractionTexts: null,
@@ -411,7 +421,7 @@ describe('/api/auction/:platform/:id/translation', () => {
     const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
     const { failAuctionTranslation } = await import('~/server/utils/content-translation')
     const handler = await loadHandler()
-    const { fingerprintConfigChain } = await import('./translation.post')
+    const { fingerprintConfigChain } = await import('~/server/utils/translation-llm-chain')
     vi.mocked(callTranslationLlm).mockResolvedValue(null)
 
     await expect(handler({
@@ -442,12 +452,14 @@ describe('/api/auction/:platform/:id/translation', () => {
       claimStale: true,
       retryDue: true,
       title: null,
+      address: null,
       description: null,
       documentSummary: null,
       extractionTexts: null,
     })
     vi.mocked(callTranslationLlm).mockResolvedValue({
       title: 'Retried title',
+      address: null,
       description: 'Retried description',
       documentSummary: null,
       extractionTexts: null,
@@ -474,12 +486,14 @@ describe('/api/auction/:platform/:id/translation', () => {
       claimStale: true,
       retryDue: false,
       title: null,
+      address: null,
       description: null,
       documentSummary: null,
       extractionTexts: null,
     })
     vi.mocked(callTranslationLlm).mockResolvedValue({
       title: 'Recovered title',
+      address: null,
       description: 'Recovered description',
       documentSummary: null,
       extractionTexts: null,
@@ -499,6 +513,7 @@ describe('/api/auction/:platform/:id/translation', () => {
     const handler = await loadHandler()
     const payload = {
       title: 'Shared translated title',
+      address: null,
       description: 'Shared translated description',
       documentSummary: null,
       extractionTexts: null,
@@ -517,6 +532,7 @@ describe('/api/auction/:platform/:id/translation', () => {
         claimStale: false,
         retryDue: false,
         title: null,
+        address: null,
         description: null,
         documentSummary: null,
         extractionTexts: null,
@@ -572,12 +588,13 @@ describe('/api/auction/:platform/:id/translation', () => {
       : null))
     const payload = {
       title: 'Bebautes Einfamilienhaus',
+      address: null,
       description: 'Größe: 5 Zimmer, 124 m²',
       documentSummary: null,
       extractionTexts: null,
     }
     vi.mocked(callTranslationLlm).mockImplementation(async (...args) => {
-      const config = args[6] as { model: string }
+      const config = args[7] as { model: string }
       if (config.model === 'gemini-2.5-flash-lite') {
         throw new LlmProviderError('gemini-native', '[POST] "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent": 404 Not Found')
       }
@@ -590,8 +607,8 @@ describe('/api/auction/:platform/:id/translation', () => {
     })).resolves.toMatchObject({ ...payload, translated: true })
 
     expect(callTranslationLlm).toHaveBeenCalledTimes(2)
-    expect((vi.mocked(callTranslationLlm).mock.calls[0]![6] as { model: string }).model).toBe('gemini-2.5-flash-lite')
-    expect((vi.mocked(callTranslationLlm).mock.calls[1]![6] as { model: string }).model).toBe('gemini-3.1-flash-lite')
+    expect((vi.mocked(callTranslationLlm).mock.calls[0]![7] as { model: string }).model).toBe('gemini-2.5-flash-lite')
+    expect((vi.mocked(callTranslationLlm).mock.calls[1]![7] as { model: string }).model).toBe('gemini-3.1-flash-lite')
     expect(failAuctionTranslation).not.toHaveBeenCalled()
     expect(completeAuctionTranslation).toHaveBeenCalledWith(
       expect.anything(), 'se-kronofogden', '101738', 'de', CLAIM, payload,
@@ -620,6 +637,7 @@ describe('/api/auction/:platform/:id/translation', () => {
       : null))
     const payload = {
       title: 'Bebautes Einfamilienhaus',
+      address: null,
       description: 'Größe: 5 Zimmer, 124 m²',
       documentSummary: null,
       extractionTexts: null,
@@ -632,7 +650,7 @@ describe('/api/auction/:platform/:id/translation', () => {
     })).resolves.toMatchObject({ ...payload, translated: true })
 
     expect(callTranslationLlm).toHaveBeenCalledTimes(1)
-    expect((vi.mocked(callTranslationLlm).mock.calls[0]![6] as { model: string }).model).toBe('extraction-model')
+    expect((vi.mocked(callTranslationLlm).mock.calls[0]![7] as { model: string }).model).toBe('extraction-model')
   })
 
   it('does not fall back to the next model for a non-availability error', async () => {

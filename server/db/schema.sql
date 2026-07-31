@@ -413,6 +413,7 @@ CREATE TABLE IF NOT EXISTS content_translations (
 );
 ALTER TABLE content_translations ADD COLUMN IF NOT EXISTS document_summary text;
 ALTER TABLE content_translations ADD COLUMN IF NOT EXISTS extraction_texts jsonb;
+ALTER TABLE content_translations ADD COLUMN IF NOT EXISTS address text;
 -- RLS ohne Policies (Default-Deny): sperrt PostgREST-anon/authenticated aus,
 -- der Backend-Zugriff läuft als Table-Owner und umgeht RLS ohnehin.
 ALTER TABLE content_translations ENABLE ROW LEVEL SECURITY;
@@ -446,6 +447,23 @@ ALTER TABLE auction_translations ENABLE ROW LEVEL SECURITY;
 -- switch bypass the retry-after-1h backoff immediately instead of replaying
 -- the old config's stale error for the rest of that window.
 ALTER TABLE auction_translations ADD COLUMN IF NOT EXISTS failed_config text;
+ALTER TABLE auction_translations ADD COLUMN IF NOT EXISTS address text;
+
+-- Place names (nearby settlements, industrial sites, airports — all sourced
+-- from OSM's `name`/`name:xx` tags via osm-location-shared.ts's nameOf()) are
+-- shared across every auction near that place, so they're translated/
+-- transliterated into a cache keyed by the name itself rather than bundled
+-- into auction_translations/content_translations above — one auction's
+-- unrelated title/description shouldn't fragment the cache key for a place
+-- name hundreds of other auctions also reference.
+CREATE TABLE IF NOT EXISTS place_name_translations (
+  name       text NOT NULL,
+  lang       text NOT NULL,
+  translated text NOT NULL,
+  at         timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (name, lang)
+);
+ALTER TABLE place_name_translations ENABLE ROW LEVEL SECURITY;
 
 -- Datenqualitäts-Offensive: strukturierte "aktueller Zustand pro Auktion"-
 -- Tabelle, additiv neben der bestehenden JSON-Snapshot-Pipeline

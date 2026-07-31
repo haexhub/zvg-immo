@@ -30,20 +30,21 @@ const photos = computed<string[]>(() => detail.value?.galleryUrls ?? [])
 const loading = ref(!props.summary)
 const loadError = ref<string | null>(null)
 const translatedTitle = ref<string | null>(null)
+const translatedAddress = ref<string | null>(null)
 const displayTitle = computed(() => translatedTitle.value ?? detail.value?.title ?? null)
+const displayAddress = computed(() => translatedAddress.value ?? detail.value?.address ?? null)
 let isActive = true
 
 interface AuctionTranslationResponse {
   title: string | null
+  address: string | null
 }
 
 const TRANSLATION_PENDING_RETRY_MS = 2500
 const TRANSLATION_PENDING_MAX_POLLS = 24
 
 // Loaded silently alongside the summary lookup below, same as the objekt
-// detail page (pages/objekt/[platform]/[id].vue) — the address stays
-// untranslated everywhere in the app (it's a place name), only the title
-// needs this.
+// detail page (pages/objekt/[platform]/[id].vue).
 async function loadTranslation(): Promise<void> {
   if (!props.lang || isPassthroughLanguage(props.auction.country, props.lang)) return
   try {
@@ -58,10 +59,13 @@ async function loadTranslation(): Promise<void> {
         shouldContinue: () => isActive,
       },
     )
-    if (value && isActive) translatedTitle.value = value.title
+    if (value && isActive) {
+      translatedTitle.value = value.title
+      translatedAddress.value = value.address
+    }
   } catch {
-    // Silent fallback to the original title — the compact popover has no
-    // room for a dedicated translation-error state.
+    // Silent fallback to the original title/address — the compact popover has
+    // no room for a dedicated translation-error state.
   }
 }
 
@@ -130,7 +134,7 @@ const swiperModules = [Navigation, Pagination, Keyboard]
     <p v-else-if="loadError" class="lot-popover__error">{{ loadError }}</p>
 
     <div class="lot-popover__title">{{ displayTitle ?? t('lotPopover.untitled') }}</div>
-    <div class="lot-popover__address">{{ detail?.address ?? '' }}</div>
+    <div class="lot-popover__address">{{ displayAddress ?? '' }}</div>
 
     <div class="lot-popover__grid">
       <div>

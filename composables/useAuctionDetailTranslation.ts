@@ -12,6 +12,7 @@ import { fetchWithPendingRetry } from '~/lib/pending-retry'
 
 interface AuctionTranslationResponse {
   title: string | null
+  address: string | null
   description: string | null
   documentSummary: string | null
   extractionTexts: TranslatableExtractionTexts | null
@@ -33,6 +34,7 @@ function targetContentLang(value: string): ContentTargetLang | null {
 function hasTranslatableContent(auction: AuctionDetail): boolean {
   return !(
     auction.title == null &&
+    auction.address == null &&
     auction.description == null &&
     auction.extraction?.documentSummary == null &&
     extractTranslatableExtractionTexts(auction.extraction) == null
@@ -89,6 +91,7 @@ export async function useAuctionDetailTranslation(options: {
   })
 
   const translatedTitle = computed(() => activeTranslation.value?.title ?? null)
+  const translatedAddress = computed(() => activeTranslation.value?.address ?? null)
   const translatedDescription = computed(() => activeTranslation.value?.description ?? null)
   const translatedDocumentSummary = computed(() => activeTranslation.value?.documentSummary ?? null)
   const translatedExtractionTexts = computed(() => activeTranslation.value?.extractionTexts ?? null)
@@ -98,6 +101,7 @@ export async function useAuctionDetailTranslation(options: {
   )
 
   const displayTitle = computed(() => translatedTitle.value ?? options.auction.value?.title ?? null)
+  const displayAddress = computed(() => translatedAddress.value ?? options.auction.value?.address ?? null)
   const displayDescription = computed(() => translatedDescription.value ?? options.auction.value?.description ?? null)
   const displayDocumentSummary = computed(
     () => translatedDocumentSummary.value ?? options.auction.value?.extraction?.documentSummary ?? null,
@@ -182,6 +186,7 @@ export async function useAuctionDetailTranslation(options: {
     translationError,
     translationPending,
     displayTitle,
+    displayAddress,
     displayDescription,
     displayDocumentSummary,
     displayExtraction,

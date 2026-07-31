@@ -36,6 +36,7 @@ const {
   translationError,
   translationPending,
   displayTitle,
+  displayAddress,
   displayDescription,
   displayDocumentSummary,
   displayExtraction,
@@ -139,7 +140,7 @@ useHead(() => ({
           <TranslationPendingBadge v-if="translationPending" />
           <span v-if="titleTranslated" class="text-xs text-muted-foreground">({{ $t('objektDetail.autoTranslatedHint') }})</span>
         </div>
-        <p v-if="a.address" class="text-muted-foreground">{{ a.address }}</p>
+        <p v-if="displayAddress" class="text-muted-foreground">{{ displayAddress }}</p>
         <p v-if="translationError" role="alert" class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {{ translationError }}
         </p>
@@ -152,6 +153,7 @@ useHead(() => ({
           <AuctionDetailOverviewSections
             :auction="a"
             :display-title="displayTitle"
+            :display-address="displayAddress"
             :display-extraction="displayExtraction"
             :combined-description="combinedDescription"
             :auction-data-translating="auctionDataTranslating"
@@ -187,7 +189,7 @@ useHead(() => ({
         </DetailSectionCard>
       </div>
 
-      <AuctionDetailLocationSection :auction="a" />
+      <AuctionDetailLocationSection :auction="a" :display-address="displayAddress" />
 
       <footer class="mt-10 border-t pt-6 text-sm leading-relaxed text-foreground/80">
         <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
