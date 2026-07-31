@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
+// Via the 'vue' export, not '@vue/compiler-sfc' directly: the latter is only a
+// transitive dependency, so it is not guaranteed to resolve (CI's install does
+// not hoist it and typecheck fails on it).
+import { compileScript, compileTemplate, parse } from 'vue/compiler-sfc'
 import { describe, expect, it } from 'vitest'
 
 const componentPath = fileURLToPath(new URL('./Map.client.vue', import.meta.url))
