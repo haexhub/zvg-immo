@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { LlmConfig } from './llm'
-import { callSummaryLlm, callTranslationLlm } from './text-llm'
+import { callPlaceNameTranslationLlm, callSummaryLlm, callTranslationLlm } from './text-llm'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -61,17 +61,19 @@ describe('callTranslationLlm', () => {
     vi.stubGlobal('$fetch', vi.fn().mockResolvedValue({ choices: [{ message: { content: JSON.stringify(payload) } }] }))
   }
 
-  it('returns the translated title and description', async () => {
+  it('returns the translated title, address and description', async () => {
     stubResponse({
       title: 'Haus',
+      address: 'Hauptstraße 5, Musterstadt',
       description: 'Schöne Beschreibung',
       documentSummary: 'Ausführliche Dokument-Zusammenfassung',
       extractionTexts: null,
     })
     await expect(
-      callTranslationLlm('sys', 'user text', 'House', 'Nice description', 'Detailed document summary', null, config),
+      callTranslationLlm('sys', 'user text', 'House', 'Main Street 5, Sampletown', 'Nice description', 'Detailed document summary', null, config),
     ).resolves.toEqual({
       title: 'Haus',
+      address: 'Hauptstraße 5, Musterstadt',
       description: 'Schöne Beschreibung',
       documentSummary: 'Ausführliche Dokument-Zusammenfassung',
       extractionTexts: null,
@@ -79,13 +81,19 @@ describe('callTranslationLlm', () => {
   })
 
   it('keeps a null field null when the source was null', async () => {
-    stubResponse({ title: 'Haus', description: null, documentSummary: null, extractionTexts: null })
-    await expect(callTranslationLlm('sys', 'user text', 'House', null, null, null, config)).resolves.toEqual({
+    stubResponse({ title: 'Haus', address: null, description: null, documentSummary: null, extractionTexts: null })
+    await expect(callTranslationLlm('sys', 'user text', 'House', null, null, null, null, config)).resolves.toEqual({
       title: 'Haus',
+      address: null,
       description: null,
       documentSummary: null,
       extractionTexts: null,
     })
+  })
+
+  it('signals failure when the source had an address but the model returned an empty one', async () => {
+    stubResponse({ title: null, address: '', description: null, documentSummary: null, extractionTexts: null })
+    await expect(callTranslationLlm('sys', 'user text', null, 'Main Street 5', null, null, null, config)).resolves.toBeNull()
   })
 
   it('returns translated structured extraction text', async () => {
@@ -141,7 +149,7 @@ describe('callTranslationLlm', () => {
       },
     })
 
-    await expect(callTranslationLlm('sys', 'user text', null, null, null, source, config)).resolves.toMatchObject({
+    await expect(callTranslationLlm('sys', 'user text', null, null, null, null, source, config)).resolves.toMatchObject({
       extractionTexts: {
         renovationNotes: 'Gewisser Instandhaltungsbedarf vorhanden',
         heating: 'Fernwärme',
@@ -158,13 +166,13 @@ describe('callTranslationLlm', () => {
   })
 
   it('signals failure when the source had a title but the model returned an empty one', async () => {
-    stubResponse({ title: '', description: 'x', documentSummary: null, extractionTexts: null })
-    await expect(callTranslationLlm('sys', 'user text', 'House', 'x', null, null, config)).resolves.toBeNull()
+    stubResponse({ title: '', address: null, description: 'x', documentSummary: null, extractionTexts: null })
+    await expect(callTranslationLlm('sys', 'user text', 'House', null, 'x', null, null, config)).resolves.toBeNull()
   })
 
   it('signals failure when a source document summary was not translated', async () => {
-    stubResponse({ title: null, description: null, documentSummary: '', extractionTexts: null })
-    await expect(callTranslationLlm('sys', 'user text', null, null, 'Document', null, config)).resolves.toBeNull()
+    stubResponse({ title: null, address: null, description: null, documentSummary: '', extractionTexts: null })
+    await expect(callTranslationLlm('sys', 'user text', null, null, null, 'Document', null, config)).resolves.toBeNull()
   })
 
   it('signals failure when structured array lengths change', async () => {
@@ -187,7 +195,7 @@ describe('callTranslationLlm', () => {
         planningNotes: null,
       },
     })
-    await expect(callTranslationLlm('sys', 'user text', null, null, null, {
+    await expect(callTranslationLlm('sys', 'user text', null, null, null, null, {
       biddingNotes: null,
       renovationNotes: null,
       floor: null,
@@ -232,7 +240,7 @@ describe('callTranslationLlm', () => {
         },
       },
     })
-    await expect(callTranslationLlm('sys', 'user text', null, null, null, {
+    await expect(callTranslationLlm('sys', 'user text', null, null, null, null, {
       biddingNotes: null,
       renovationNotes: null,
       floor: null,
@@ -287,7 +295,7 @@ describe('callTranslationLlm', () => {
         },
       },
     })
-    await expect(callTranslationLlm('sys', 'user text', null, null, null, {
+    await expect(callTranslationLlm('sys', 'user text', null, null, null, null, {
       biddingNotes: null,
       renovationNotes: null,
       floor: null,
@@ -314,6 +322,31 @@ describe('callTranslationLlm', () => {
 
   it('surfaces request failure', async () => {
     vi.stubGlobal('$fetch', vi.fn().mockRejectedValue(new Error('boom')))
-    await expect(callTranslationLlm('sys', 'user text', 'House', 'desc', null, null, config)).rejects.toMatchObject({ name: 'LlmProviderError' })
+    await expect(callTranslationLlm('sys', 'user text', 'House', null, 'desc', null, null, config)).rejects.toMatchObject({ name: 'LlmProviderError' })
+  })
+})
+
+describe('callPlaceNameTranslationLlm', () => {
+  const config: LlmConfig = { provider: 'openai-compatible', baseUrl: 'https://api.example', model: 'gpt' }
+
+  it('returns one translated name per input, in order', async () => {
+    vi.stubGlobal('$fetch', vi.fn().mockResolvedValue({
+      choices: [{ message: { content: JSON.stringify({ names: ['Burgas', 'Ravna'] }) } }],
+    }))
+    await expect(callPlaceNameTranslationLlm(['Бургас', 'Равна'], 'English', config)).resolves.toEqual(['Burgas', 'Ravna'])
+  })
+
+  it('returns null when the model drops or merges entries (length mismatch)', async () => {
+    vi.stubGlobal('$fetch', vi.fn().mockResolvedValue({
+      choices: [{ message: { content: JSON.stringify({ names: ['Burgas'] }) } }],
+    }))
+    await expect(callPlaceNameTranslationLlm(['Бургас', 'Равна'], 'English', config)).resolves.toBeNull()
+  })
+
+  it('returns null when a name comes back empty', async () => {
+    vi.stubGlobal('$fetch', vi.fn().mockResolvedValue({
+      choices: [{ message: { content: JSON.stringify({ names: ['Burgas', ''] }) } }],
+    }))
+    await expect(callPlaceNameTranslationLlm(['Бургас', 'Равна'], 'English', config)).resolves.toBeNull()
   })
 })

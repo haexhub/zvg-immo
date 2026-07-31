@@ -1,5 +1,5 @@
-// Lazy LLM translation of one auction's title, description and document
-// synthesis into a target language (?lang=de|en). Cache-first, with in-flight
+// Lazy LLM translation of one auction's title, address, description and
+// document synthesis into a target language (?lang=de|en). Cache-first, with in-flight
 // dedup, an in-memory rate limit, snapshot lookup and safe path segments.
 // Cached by (content_hash, lang) in Postgres (content_translations) — the
 // hash covers the translated fields plus the current document-set identity, so
@@ -22,9 +22,9 @@ import {
   readContentTranslation,
   writeContentTranslation,
 } from '~/server/utils/content-translation'
-import { getLlmMaxTokens, getLlmProviderOverrideChain, type LlmProviderOverride } from '~/server/utils/app-settings'
-import { isLlmProviderUnavailable, resolveLlmConfig, type LlmConfig } from '~/server/utils/extract/llm'
+import { isLlmProviderUnavailable, type LlmConfig } from '~/server/utils/extract/llm'
 import { callTranslationLlm, type TranslationResult } from '~/server/utils/extract/text-llm'
+import { fingerprintConfigChain, resolveActiveLlmConfigChain } from '~/server/utils/translation-llm-chain'
 import { countryContentLanguage, isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
 import { extractTranslatableExtractionTexts, translationContentSource } from '~/lib/extraction-translation'
 import {
@@ -60,6 +60,7 @@ const translationRateLimit = createInMemoryRateLimitState()
 /** Builds a labelled prompt so nullable fields retain their identity. */
 function buildPrompt(
   title: string | null,
+  address: string | null,
   description: string | null,
   documentSummary: string | null,
   extractionTexts: ReturnType<typeof extractTranslatableExtractionTexts>,
@@ -74,9 +75,11 @@ function buildPrompt(
     sourceHint,
     'Return the same JSON shape. Translate every string value. Keep nulls, array order, array lengths, identifiers, dates, numbers and currencies unchanged.',
     'Do not leave whole source-language sentences unchanged. Do not write source terms followed by target-language translations in parentheses; use the target-language term directly.',
+    'ADDRESS is a property address, not prose: localize administrative terms/abbreviations (street, square, district, house-number sign, place-name prefixes) into the target-language convention, and transliterate non-Latin-script proper nouns into Latin script. Keep the same component order; do not invent or drop components.',
     'EXTRACTION_TEXTS_JSON contains short structured labels shown in the property detail UI. Translate heating and insights.construction as user-facing amenity text, including material, roof, window, foundation and building-services terms. Keep an original specialist term only when there is no reliable target-language equivalent.',
     '',
     `TITLE: ${title ?? ''}`,
+    `ADDRESS: ${address ?? ''}`,
     `DESCRIPTION:\n${description ?? ''}`,
     `DOCUMENT_SUMMARY:\n${documentSummary ?? ''}`,
     `EXTRACTION_TEXTS_JSON:\n${JSON.stringify(extractionTexts ?? null, null, 2)}`,
@@ -86,17 +89,19 @@ function buildPrompt(
 
 async function tryTranslate(
   title: string | null,
+  address: string | null,
   description: string | null,
   documentSummary: string | null,
   extractionTexts: ReturnType<typeof extractTranslatableExtractionTexts>,
   targetLang: ContentTargetLang,
   sourceLang: string | null,
-  config: Parameters<typeof callTranslationLlm>[6],
+  config: Parameters<typeof callTranslationLlm>[7],
 ): Promise<TranslationResult | null> {
   return await callTranslationLlm(
     SYSTEM_PROMPT,
-    buildPrompt(title, description, documentSummary, extractionTexts, targetLang, sourceLang),
+    buildPrompt(title, address, description, documentSummary, extractionTexts, targetLang, sourceLang),
     title,
+    address,
     description,
     documentSummary,
     extractionTexts,
@@ -104,48 +109,7 @@ async function tryTranslate(
   )
 }
 
-/** The full assigned fallback chain for the 'translation' use case — every
- *  profile assigned to 'translation', or (only when none is) every profile
- *  assigned to 'extraction', in order. Tried in sequence below so a model
- *  that's rate-limited/over quota or otherwise unavailable (see
- *  gemini-native.ts) doesn't fail the whole request when another configured
- *  model could serve it. */
-async function resolveActiveLlmConfigChain(db: Pool): Promise<LlmConfig[]> {
-  const llmCfg = useRuntimeConfig().extractLlm as
-    | { provider?: string; baseUrl?: string; apiKey?: string; model?: string }
-    | undefined
-  const maxTokens = await getLlmMaxTokens(db, 'translation')
-  const resolveChain = (chain: (LlmProviderOverride | typeof llmCfg)[]) =>
-    chain
-      .map((source) => resolveLlmConfig(source, { maxTokens }))
-      .filter((config): config is LlmConfig => config != null)
-
-  const resolvedTranslation = resolveChain(await getLlmProviderOverrideChain(db, 'translation'))
-  if (resolvedTranslation.length > 0) return resolvedTranslation
-
-  const resolvedExtraction = resolveChain(await getLlmProviderOverrideChain(db, 'extraction'))
-  if (resolvedExtraction.length > 0) return resolvedExtraction
-
-  return resolveChain(llmCfg ? [llmCfg] : [])
-}
-
-/** Identifies the resolved LLM fallback chain for the retry-lockout check
- *  below — a /settings edit to any link (primary or a fallback: added,
- *  removed, reordered or fixed) produces a different fingerprint, which lets
- *  a previously failed attempt retry immediately instead of waiting out
- *  content-translation.ts's RETRY_AFTER window. Hashed (rather than storing
- *  provider/baseUrl/model/apiKey directly) so plaintext apiKeys from
- *  app_settings never get copied into a second column. */
-export function fingerprintConfigChain(configs: readonly LlmConfig[]): string {
-  return sha256Hex(Buffer.from(JSON.stringify(configs.map((config) => ({
-    provider: config.provider,
-    baseUrl: config.baseUrl,
-    model: config.model,
-    apiKey: config.apiKey ?? '',
-  })))))
-}
-
-export function auctionTranslationContentHash(auction: Pick<Auction, 'title' | 'description' | 'extraction'>): string {
+export function auctionTranslationContentHash(auction: Pick<Auction, 'title' | 'address' | 'description' | 'extraction'>): string {
   return sha256Hex(Buffer.from(JSON.stringify(translationContentSource(auction))))
 }
 
@@ -170,16 +134,16 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, statusMessage: 'auction not found' })
   }
 
-  const { title, description } = auction
+  const { title, address, description } = auction
   const documentSummary = auction.extraction?.documentSummary ?? null
   const extractionTexts = extractTranslatableExtractionTexts(auction.extraction)
   const sourceLang = countryContentLanguage(auction.country)
-  if (title == null && description == null && documentSummary == null && extractionTexts == null) {
-    return { title: null, description: null, documentSummary: null, extractionTexts: null, translated: false }
+  if (title == null && address == null && description == null && documentSummary == null && extractionTexts == null) {
+    return { title: null, address: null, description: null, documentSummary: null, extractionTexts: null, translated: false }
   }
 
   if (isPassthroughLanguage(auction.country, targetLang)) {
-    return { title, description, documentSummary, extractionTexts, translated: false }
+    return { title, address, description, documentSummary, extractionTexts, translated: false }
   }
 
   const contentHash = auctionTranslationContentHash(auction)
@@ -198,6 +162,7 @@ export default defineEventHandler(async (event) => {
     setResponseHeader(event, 'x-zvg-translation-cache', 'hit')
     return {
       title: stored.title,
+      address: stored.address,
       description: stored.description,
       documentSummary: stored.documentSummary,
       extractionTexts: stored.extractionTexts,
@@ -290,7 +255,7 @@ export default defineEventHandler(async (event) => {
       let result: TranslationResult | null = null
       for (const [index, config] of configs.entries()) {
         try {
-          result = await tryTranslate(title, description, documentSummary, extractionTexts, targetLang, sourceLang, config)
+          result = await tryTranslate(title, address, description, documentSummary, extractionTexts, targetLang, sourceLang, config)
           break
         } catch (err) {
           const isLast = index === configs.length - 1
@@ -308,6 +273,7 @@ export default defineEventHandler(async (event) => {
         contentHash,
         targetLang,
         result.title,
+        result.address,
         result.description,
         result.documentSummary,
         result.extractionTexts,

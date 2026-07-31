@@ -32,6 +32,7 @@ import {
 const props = defineProps<{
   auction: AuctionDetail
   displayTitle: string | null
+  displayAddress: string | null
   displayExtraction: AuctionDetail['extraction'] | null
   combinedDescription: string
   auctionDataTranslating: boolean
@@ -136,7 +137,7 @@ const calendarEvent = computed(() => {
   return {
     title: props.displayTitle ?? t('objektDetail.untitled'),
     description: `${props.auction.authority} · ${props.auction.caseNumber}`,
-    location: props.auction.address ?? undefined,
+    location: props.displayAddress ?? undefined,
     startIso: props.auction.auctionDateIso,
   }
 })
