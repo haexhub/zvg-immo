@@ -5,7 +5,7 @@
 // that Gemini reads scanned Gutachten correctly without a rasterize/OCR step.
 
 import type { ContentPart, ExtractionProvider, ExtractionRequest, LlmConfig } from '../llm'
-import { isRateLimitError, LlmProviderError } from '../llm'
+import { isDailyQuotaError, isRateLimitError, LlmProviderError } from '../llm'
 import { toGeminiSchema } from './gemini-schema'
 
 type GeminiPart = { text: string } | { inlineData: { mimeType: string; data: string } }
@@ -108,6 +108,14 @@ export class GeminiNativeProvider implements ExtractionProvider {
         break
       } catch (err) {
         if (isRateLimitError(err)) {
+          // A per-day quota won't clear before midnight Pacific, so retrying
+          // it only burns MIN_REQUEST_GAP_MS per attempt. Hand it straight to
+          // the caller, which can move on to the next configured model (see
+          // isDailyQuotaError()).
+          if (isDailyQuotaError(err)) {
+            console.warn('[extract/llm] gemini daily quota exhausted, not retrying')
+            throw err
+          }
           if (attempt < MAX_RETRIES) {
             console.warn(`[extract/llm] gemini 429, retry ${attempt + 1}/${MAX_RETRIES}`)
             continue

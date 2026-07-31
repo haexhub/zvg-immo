@@ -3,6 +3,7 @@ import {
   buildParts,
   clampExtraction,
   extractByLlm,
+  isDailyQuotaError,
   isRateLimitError,
   parseExtractionResponse,
   resolveLlmConfig,
@@ -22,6 +23,51 @@ describe('isRateLimitError', () => {
     expect(isRateLimitError(Object.assign(new Error('http 500'), { response: { status: 500 } }))).toBe(false)
     expect(isRateLimitError(new Error('network error'))).toBe(false)
     expect(isRateLimitError(null)).toBe(false)
+  })
+})
+
+describe('isDailyQuotaError', () => {
+  // Shape observed from the live API on 2026-07-31, when the free tier's
+  // 500-requests-per-day cap was reached.
+  function quotaError(quotaId: string, status = 429) {
+    return Object.assign(new Error(`http ${status}`), {
+      response: { status },
+      data: {
+        error: {
+          code: status,
+          status: 'RESOURCE_EXHAUSTED',
+          details: [
+            { '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [{ quotaId, quotaValue: '500' }] },
+            { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '28s' },
+          ],
+        },
+      },
+    })
+  }
+
+  it('recognizes a per-day quota', () => {
+    expect(isDailyQuotaError(quotaError('GenerateRequestsPerDayPerProjectPerModel-FreeTier'))).toBe(true)
+  })
+
+  // A per-minute limit clears within seconds, so retrying it is right and this
+  // must not report it as exhausted for the whole run.
+  it('does not treat a per-minute rate limit as a daily quota', () => {
+    expect(isDailyQuotaError(quotaError('GenerateRequestsPerMinutePerProjectPerModel-FreeTier'))).toBe(false)
+  })
+
+  it('requires a 429 — the same body on another status is not a quota verdict', () => {
+    expect(isDailyQuotaError(quotaError('GenerateRequestsPerDayPerProjectPerModel-FreeTier', 503))).toBe(false)
+  })
+
+  // Providers that report no quota details keep their previous retry
+  // behaviour rather than being guessed at.
+  it('stays false for a bare 429 and for malformed bodies', () => {
+    expect(isDailyQuotaError(Object.assign(new Error('http 429'), { response: { status: 429 } }))).toBe(false)
+    expect(isDailyQuotaError(Object.assign(new Error('http 429'), {
+      response: { status: 429 },
+      data: { error: { details: 'nope' } },
+    }))).toBe(false)
+    expect(isDailyQuotaError(null)).toBe(false)
   })
 })
 

@@ -28,6 +28,7 @@ import { getPool } from '~/server/utils/db'
 import { extractByRules } from '~/server/utils/extract/rules'
 import {
   extractByLlm,
+  isDailyQuotaError,
   isLlmProviderError,
   isLlmProviderUnavailable,
   isRateLimitError,
@@ -453,6 +454,11 @@ export async function reprocessAuction(
      *  rate-limited/over quota or otherwise unavailable (see
      *  isLlmProviderUnavailable) — not on a caller-side error. */
     fallbackConfigs?: LlmConfig[]
+    /** Fires when a config turned out to be over its *daily* quota, which no
+     *  amount of waiting fixes within this run. Lets the caller drop it from
+     *  the chain for every remaining candidate instead of paying the failed
+     *  attempt again and again (see runReprocess). */
+    onDailyQuotaExhausted?: (config: LlmConfig) => void
   } = {},
 ): Promise<{ entry: AuctionExtraction; llmCalled: boolean } | null> {
   let base = await buildReprocessInput(platform, externalId, priorEntry, llmConfig)
@@ -481,6 +487,7 @@ export async function reprocessAuction(
       })
       break
     } catch (err) {
+      if (isDailyQuotaError(err)) opts.onDailyQuotaExhausted?.(config)
       const isLast = index === configs.length - 1
       if (isLast || !isLlmProviderUnavailable(err)) throw err
       console.warn(
@@ -566,6 +573,11 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
   // (logging, batch capability checks) exactly as before.
   const llmConfigs = await readExtractionLlmConfigChain()
   const llmConfig = llmConfigs[0] ?? null
+  /** Configs that reported a per-day quota during this run — see the sync
+   *  path below. Keyed by object identity, so the same model configured twice
+   *  with different API keys (i.e. different projects, each with its own
+   *  quota) is tracked separately. */
+  const exhaustedConfigs = new Set<LlmConfig>()
   const executionMode = await readLlmExecutionMode()
   const maxLlmPerRun = readMaxLlmPerRun()
   const at = new Date().toISOString()
@@ -671,7 +683,6 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
         skipped++
         continue
       }
-      const useLlm = llmReady ? llmConfig : null
 
       if (useBatch && llmReady) {
         const base = await buildReprocessInput(platform, externalId, priorEntry, llmConfig, {
@@ -703,10 +714,29 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
         continue
       }
 
+      // Models already known to be over their daily quota are dropped from
+      // this run's chain entirely: retrying them costs a full failed attempt
+      // per candidate (~50 s with the provider's pacing) and cannot succeed
+      // before the quota resets at midnight Pacific.
+      const syncConfigs = llmReady ? llmConfigs.filter((config) => !exhaustedConfigs.has(config)) : []
+      if (llmReady && syncConfigs.length === 0) {
+        warning = 'Alle konfigurierten LLM-Modelle haben ihr Tageskontingent erreicht.'
+        console.warn('[reprocess] every configured model is over its daily quota — stopping this run early')
+        skipped++
+        break
+      }
+
       let syncLlmAttempted = false
       let platformLlmCallsSoFar = platformLlmCalls
-      const result = await reprocessAuction(platform, externalId, priorEntry, useLlm, at, {
-        fallbackConfigs: useLlm ? llmConfigs.slice(1) : undefined,
+      const result = await reprocessAuction(platform, externalId, priorEntry, syncConfigs[0] ?? null, at, {
+        fallbackConfigs: syncConfigs.slice(1),
+        onDailyQuotaExhausted: (config) => {
+          if (exhaustedConfigs.has(config)) return
+          exhaustedConfigs.add(config)
+          console.warn(
+            `[reprocess] ${config.provider ?? 'openai-compatible'}/${config.model} is over its daily quota — skipping it for the rest of this run`,
+          )
+        },
         onLlmAttempt: () => {
           syncLlmAttempted = true
           llmCalls++

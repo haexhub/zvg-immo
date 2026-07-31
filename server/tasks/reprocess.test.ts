@@ -1092,6 +1092,78 @@ describe('runReprocess', () => {
     expect(result.llmCalls).toBe(2)
   })
 
+  it('stops asking a model that reported a per-day quota, for the rest of the run', async () => {
+    // The regression this guards: without dropping the exhausted model from
+    // the chain, every remaining candidate paid another failed attempt against
+    // it (~50 s each with the provider's pacing), which measurably cut
+    // throughput in prod on 2026-07-31. Two candidates → the primary must be
+    // asked exactly once, the fallback twice.
+    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { baseUrl: 'http://proxy', maxPerRun: '10' } }))
+    const query = vi.fn().mockResolvedValue({
+      rows: [
+        { platform: 'zvg-portal', external_id: '1' },
+        { platform: 'zvg-portal', external_id: '2' },
+      ],
+    })
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValueOnce([
+      { provider: 'gemini-native', baseUrl: 'http://gemini', model: 'daily-exhausted-model' },
+      { provider: 'openai-compatible', baseUrl: 'http://proxy', model: 'fallback-model' },
+    ])
+    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
+      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
+    )
+    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(makeAuction())))
+    vi.mocked(extractByLlm).mockImplementation(async (_input, config, opts) => {
+      opts?.onProviderAttempt?.()
+      if (config.model === 'daily-exhausted-model') {
+        throw Object.assign(new Error('http 429'), {
+          response: { status: 429 },
+          data: {
+            error: {
+              status: 'RESOURCE_EXHAUSTED',
+              details: [{
+                '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+                violations: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' }],
+              }],
+            },
+          },
+        })
+      }
+      return {
+        propertyType: null,
+        landAreaSqm: null,
+        livingAreaSqm: null,
+        rooms: null,
+        bedrooms: null,
+        bathrooms: null,
+        floor: null,
+        bathroomHasTub: null,
+        bathroomHasShower: null,
+        heating: null,
+        units: null,
+        securityDeposit: null,
+        biddingNotes: null,
+        condition: null,
+        features: [],
+        yearBuilt: null,
+        lastRenovationYear: null,
+        renovationNotes: null,
+        insights: null,
+        planningNotes: null,
+        photoCuration: [],
+        marketValueEur: null,
+        marketValueText: 'from fallback model',
+      }
+    })
+
+    const result = await runReprocess({ country: 'SE' })
+
+    const asked = vi.mocked(extractByLlm).mock.calls.map(([, config]) => config.model)
+    expect(asked).toEqual(['daily-exhausted-model', 'fallback-model', 'fallback-model'])
+    expect(result.processed).toBe(2)
+  })
+
   it('returns all-zero without a configured DB pool', async () => {
     vi.mocked(getPool).mockReturnValue(null)
     const result = await runReprocess({})
