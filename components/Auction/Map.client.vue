@@ -110,9 +110,13 @@ const vectorStyleUrl = computed(() => {
 })
 
 const mapRef = ref<any>(null)
-const olMap = shallowRef<OlMap | null>(null)
-watch(() => mapRef.value?.map, (m) => { olMap.value = m ?? null }, { immediate: true })
-useMapTilerVectorBaseLayer({ map: olMap, styleUrl: vectorStyleUrl, lang: locale })
+// Must not be named `olMap`: the template compiler camelizes the `<ol-map>`
+// tag to `olMap` and prefers a same-named setup binding over
+// resolveComponent(), so that binding would render as the component itself —
+// see the guard in Map.client.test.ts.
+const mapInstance = shallowRef<OlMap | null>(null)
+watch(() => mapRef.value?.map, (m) => { mapInstance.value = m ?? null }, { immediate: true })
+useMapTilerVectorBaseLayer({ map: mapInstance, styleUrl: vectorStyleUrl, lang: locale })
 const vectorSourceRef = ref<any>(null)
 const clusterSourceRef = ref<any>(null)
 const vectorLayerRef = ref<any>(null)
