@@ -219,6 +219,11 @@ const kategorienMitCount = computed<{ id: string; label: string; count: number }
 
 const filtered = computed<AuctionSummary[]>(() => data.value?.auctions ?? [])
 
+// Lets the map popover show grid data (photos included) instantly for any
+// marker whose auction the grid has already loaded, instead of a fallback
+// fetch — see components/LotPopover.vue.
+const auctionSummaries = computed(() => new Map(filtered.value.map((a) => [auctionKey(a), a])))
+
 const filteredGeo = computed<GeoAuction[]>(() => {
   if (!geoData.value) return []
   return geoData.value.auctions
@@ -409,6 +414,7 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
         <AuctionMapPane
           class="w-2/5 min-w-88 shrink-0 min-h-0"
           :auctions="filteredGeo"
+          :auction-summaries="auctionSummaries"
           :selected-countries="selectedCountries"
           :fit-key="geoFitKey"
           :geo-pending="geoPending"

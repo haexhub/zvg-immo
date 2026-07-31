@@ -211,15 +211,13 @@ export default defineNuxtConfig({
       // provider-defined and cannot be switched per UI locale.
       //   NUXT_PUBLIC_MAPTILER_API_KEY=<from MapTiler Cloud>
       maptilerApiKey: '',
-      // Optional MapTiler Map IDs for published per-locale raster styles.
-      // Raster tile labels are baked into the map style, so set these to
-      // custom MapTiler styles when localized labels are required.
+      // MapTiler style IDs, rendered as vector tiles (lib/map-tiles.ts +
+      // ol-mapbox-style) with labels re-localized to the current UI locale at
+      // runtime — one style per mode covers every locale, unlike the old
+      // raster tiles this replaced (label language was baked into the style,
+      // needing a separate Map ID per language).
       maptilerStreetsMapId: '',
-      maptilerStreetsMapIdDe: '',
-      maptilerStreetsMapIdEn: '',
       maptilerSatelliteMapId: '',
-      maptilerSatelliteMapIdDe: '',
-      maptilerSatelliteMapIdEn: '',
     },
   },
   nitro: {
