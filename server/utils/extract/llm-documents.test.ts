@@ -2,6 +2,7 @@ import { deflateRawSync } from 'node:zlib'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Attachment, Auction } from '~/types/auction'
 import { downloadBlob, findLatestCapture, readDocumentSetItems } from '../storage-download'
+import { markdownForPdf } from './docling'
 
 vi.mock('../storage-download', () => ({
   downloadBlob: vi.fn(),
@@ -19,6 +20,13 @@ vi.mock('../raw-archive', () => ({
 vi.mock('./pdf-text', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./pdf-text')>()
   return { ...actual, extractPdfTextFromBuffer: vi.fn(async () => 'PDF Wohnfläche 140 m²') }
+})
+// Docling is off unless a test stubs useRuntimeConfig().doclingUrl; the client
+// itself is covered by docling.test.ts, here only its effect on the prepared
+// input matters.
+vi.mock('./docling', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./docling')>()
+  return { ...actual, markdownForPdf: vi.fn(async () => null) }
 })
 vi.mock('./pdf-render', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./pdf-render')>()
@@ -215,6 +223,58 @@ describe('prepareArchivedLlmDocuments', () => {
     const prepared = await prepareArchivedLlmDocuments(auction(), { nativeDocuments: false })
 
     expect(prepared.input.documentText?.length).toBeLessThanOrEqual(80_000)
+  })
+
+  describe('with Docling configured', () => {
+    beforeEach(() => {
+      vi.mocked(markdownForPdf).mockReset()
+      vi.stubGlobal('useRuntimeConfig', () => ({ doclingUrl: 'http://docling:5001' }))
+    })
+
+    it('sends converted Markdown as text instead of the raw PDF bytes', async () => {
+      vi.mocked(markdownForPdf).mockResolvedValue('## Flurstücke\n\n| Gemarkung | m² |\n|---|---|\n| Ebingen | 1.112 |')
+      vi.mocked(readDocumentSetItems).mockResolvedValue([
+        { ordinal: 0, kind: 'document', label: 'Gutachten', filename: 'g.pdf', fileId: '1', sourceUrl: 'https://example.test/g.pdf', contentHash: 'pdf', contentType: 'application/pdf' },
+      ])
+      vi.mocked(downloadBlob).mockResolvedValue(Buffer.from('%PDF-1.4\n%%EOF'))
+
+      // nativeDocuments: true is the live prod setting (gemini-native).
+      const prepared = await prepareArchivedLlmDocuments(auction(), { nativeDocuments: true })
+
+      expect(prepared.input.pdfText).toContain('| Gemarkung | m² |')
+      expect(prepared.input.pdfBytes).toBeNull()
+      expect(prepared.input.pdfDocuments).toBeUndefined()
+    })
+
+    // The regression this guards: a set where Docling handled some documents
+    // and not others must reach the model complete, not lose the converted
+    // half because native bytes are present.
+    it('keeps both converted text and native bytes in a mixed set', async () => {
+      vi.mocked(markdownForPdf).mockImplementation(async (_db, hash) =>
+        hash === 'converted' ? '## Konvertiert' : null)
+      vi.mocked(readDocumentSetItems).mockResolvedValue([
+        { ordinal: 0, kind: 'document', label: 'Gutachten', filename: 'a.pdf', fileId: '1', sourceUrl: 'https://example.test/a.pdf', contentHash: 'converted', contentType: 'application/pdf' },
+        { ordinal: 1, kind: 'document', label: 'Bekanntmachung', filename: 'b.pdf', fileId: '2', sourceUrl: 'https://example.test/b.pdf', contentHash: 'failed', contentType: 'application/pdf' },
+      ])
+      vi.mocked(downloadBlob).mockResolvedValue(Buffer.from('%PDF-1.4\n%%EOF'))
+
+      const prepared = await prepareArchivedLlmDocuments(auction(), { nativeDocuments: true })
+
+      expect(prepared.input.pdfText).toContain('## Konvertiert')
+      expect(prepared.input.pdfBytes).toBe(Buffer.from('%PDF-1.4\n%%EOF').toString('base64'))
+    })
+
+    it('falls back to pdftotext when a conversion fails and the provider is not native', async () => {
+      vi.mocked(markdownForPdf).mockResolvedValue(null)
+      vi.mocked(readDocumentSetItems).mockResolvedValue([
+        { ordinal: 0, kind: 'document', label: 'Gutachten', filename: 'g.pdf', fileId: '1', sourceUrl: 'https://example.test/g.pdf', contentHash: 'pdf', contentType: 'application/pdf' },
+      ])
+      vi.mocked(downloadBlob).mockResolvedValue(Buffer.from('%PDF-1.4\n%%EOF'))
+
+      const prepared = await prepareArchivedLlmDocuments(auction(), { nativeDocuments: false })
+
+      expect(prepared.input.pdfText).toContain('PDF Wohnfläche 140 m²')
+    })
   })
 })
 

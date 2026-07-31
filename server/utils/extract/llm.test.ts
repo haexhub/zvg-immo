@@ -457,16 +457,21 @@ describe('buildParts', () => {
     ])
   })
 
-  it('prefers a document part over pdfText/pdfPageImages when pdfBytes is set', () => {
+  it('drops pdfPageImages when pdfBytes is set, but keeps pdfText', () => {
+    // Rendered page images of a PDF the provider also receives natively are
+    // pure duplication. pdfText is not: since Docling entered the pipeline it
+    // holds the documents that were converted to Markdown, while pdfBytes
+    // holds the ones that weren't (see llm-documents.ts's buildPreparedInput).
+    // A mixed set has to reach the model complete.
     const parts = buildParts({
       title: 'Haus',
       description: null,
-      pdfText: 'sollte ignoriert werden',
-      pdfPageImages: ['ignored-too'],
+      pdfText: 'Konvertiertes Gutachten',
+      pdfPageImages: ['ignored'],
       pdfBytes: 'base64pdfbytes',
     })
     expect(parts).toEqual([
-      { type: 'text', text: 'Objektbezeichnung: Haus' },
+      { type: 'text', text: 'Objektbezeichnung: Haus\n\nAuszug aus Gutachten/Exposé (PDF):\nKonvertiertes Gutachten' },
       { type: 'document', mimeType: 'application/pdf', data: 'base64pdfbytes' },
     ])
   })

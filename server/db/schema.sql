@@ -386,6 +386,24 @@ BEGIN
     INSERT INTO schema_migrations (name) VALUES ('raw_blob_orphan_cleanup_20260727');
   END IF;
 END $$;
+-- Docling-Konversions-Cache: pro PDF-Bytes (pdf_content_hash) das einmal
+-- erzeugte Markdown (markdown_content_hash in raw_blobs). Bewusst auf den
+-- Bytes-Hash geschlüsselt und nicht auf die Auktion: Docling kostet auf CPU
+-- Sekunden pro Seite (gemessen ~6 s/Seite Textschicht, ~20 s/Seite OCR), und
+-- derselbe Anhang hängt an mehreren Auktionen bzw. wird vom stündlichen
+-- Reprocess erneut angefasst. `failed_at`/`error` merken einen Fehlversuch,
+-- damit ein kaputtes PDF nicht in jedem Lauf erneut Minuten verbrennt.
+CREATE TABLE IF NOT EXISTS document_markdown (
+  pdf_content_hash      text PRIMARY KEY REFERENCES raw_blobs(content_hash),
+  markdown_content_hash text REFERENCES raw_blobs(content_hash),
+  page_count            integer,
+  converted_at          timestamptz,
+  failed_at             timestamptz,
+  error                 text
+);
+CREATE INDEX IF NOT EXISTS idx_document_markdown_failed ON document_markdown (failed_at)
+  WHERE failed_at IS NOT NULL;
+
 -- Server-intern, nie clientseitig exponiert — trotzdem RLS aktivieren (ohne
 -- Policies, also Default-Deny), sonst liest/schreibt PostgREST-anon/authenticated
 -- munter mit; der Backend-Zugriff läuft als Table-Owner und umgeht RLS ohnehin.
@@ -393,6 +411,7 @@ ALTER TABLE raw_blobs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE raw_captures ENABLE ROW LEVEL SECURITY;
 ALTER TABLE raw_document_sets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE raw_document_set_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE document_markdown ENABLE ROW LEVEL SECURITY;
 
 -- WP-8: i18n Baustein B (Content-Übersetzung). content_hash = sha256 über
 -- {title, description, documentSummary, extractionTexts, documentSetHash,

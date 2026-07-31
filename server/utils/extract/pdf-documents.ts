@@ -23,6 +23,13 @@ const MAX_RENDERED_PAGES = 20
  * page limits, text labelling and native-document assembly stay identical in
  * live enrichment and archived reprocessing.
  */
+function labelledText<T>(documents: Array<DocumentLlmSource<T>>): string | null {
+  return documents
+    .filter((document): document is DocumentLlmSource<T> & { text: string } => !!document.text?.trim())
+    .map((document) => `=== ${document.label} ===\n${document.text}`)
+    .join('\n\n') || null
+}
+
 export async function buildDocumentLlmParts<T>(
   documents: Array<DocumentLlmSource<T>>,
   opts: {
@@ -35,17 +42,18 @@ export async function buildDocumentLlmParts<T>(
       .filter((document): document is DocumentLlmSource<T> & { data: string } => !!document.data)
       .map(({ label, data }) => ({ label, data }))
     return {
-      pdfText: null,
+      // Even in native mode a document may arrive already converted to text
+      // (Docling Markdown, see server/utils/extract/docling.ts). Those carry
+      // their text instead of their bytes, and a mixed set — some converted,
+      // some not — has to stay complete, so both fields can be populated.
+      pdfText: labelledText(documents),
       pdfPageImages: null,
       pdfBytes: nativeDocuments.length === 1 ? nativeDocuments[0]!.data : null,
       pdfDocuments: nativeDocuments.length > 1 ? nativeDocuments : undefined,
     }
   }
 
-  const pdfText = documents
-    .filter((document): document is DocumentLlmSource<T> & { text: string } => !!document.text?.trim())
-    .map((document) => `=== ${document.label} ===\n${document.text}`)
-    .join('\n\n') || null
+  const pdfText = labelledText(documents)
   const scannedDocuments = documents.filter(
     (document) => !document.text || document.text.trim().length < SCANNED_PDF_TEXT_THRESHOLD,
   )
