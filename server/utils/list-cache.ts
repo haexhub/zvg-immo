@@ -13,6 +13,7 @@ import { auctionKey } from '~/lib/auction-key'
 import { MULTI_PLATFORM } from '~/lib/auction-constants'
 import { ensureEnabledCountriesLoaded, isCountryEnabled } from '../crawlers/registry'
 import { getPool } from './db'
+import { jsonbStringify } from './jsonb'
 import { normalizePublicAuctionLinks } from './public-auction-links'
 
 function normalizeResultLinks(result: CrawlResult): CrawlResult {
@@ -85,7 +86,7 @@ export async function writeListCache(
     await db.query(
       `INSERT INTO list_cache (country, region, result, fetched_at) VALUES ($1, $2, $3, $4)
        ON CONFLICT (country, region) DO UPDATE SET result = EXCLUDED.result, fetched_at = EXCLUDED.fetched_at`,
-      [country, region, JSON.stringify(storedResult), result.fetchedAt],
+      [country, region, jsonbStringify(storedResult), result.fetchedAt],
     )
   } catch (err) {
     console.warn(`[list-cache] write ${country}/${region}: ${(err as Error).message}`)

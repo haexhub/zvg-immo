@@ -151,6 +151,25 @@ describe('writeListCache', () => {
 
     expect(pool.upserted[0]?.result.listCacheVersion).toBe(2)
   })
+
+  // Regression: a NUL character in one crawled auction (observed prod
+  // 2026-07-31, DE/bw) made Postgres reject the whole region's jsonb row with
+  // "unsupported Unicode escape sequence" — see jsonb.ts.
+  it('strips a NUL character from a crawled field instead of failing the whole region write', async () => {
+    const { getPool } = await import('./db')
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { writeListCache } = await import('./list-cache')
+
+    const tainted: CrawlResult = {
+      ...deBy,
+      auctions: [{ ...deBy.auctions[0], title: `Haus${String.fromCharCode(0)}Straße` } as CrawlResult['auctions'][number]],
+    }
+
+    await writeListCache('de', 'by', tainted)
+
+    expect(pool.upserted[0]?.result.auctions[0]).toMatchObject({ title: 'HausStraße' })
+  })
 })
 
 describe('readMergedListCache', () => {

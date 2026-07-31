@@ -416,6 +416,23 @@ describe('readAuctionSnapshot / writeAuctionSnapshot (Postgres-backed)', () => {
     expect(pool.upserted[0]?.auction.attachments).toEqual(prev.attachments)
   })
 
+  // Regression: a NUL character in one auction's field (observed prod
+  // 2026-07-31, DE/bw) made Postgres reject the whole multi-row jsonb insert
+  // with "unsupported Unicode escape sequence" — since this write is
+  // deliberately unguarded (see the test above), that took down the entire
+  // batch, not just the tainted auction. See jsonb.ts.
+  it('strips a NUL character from an auction field instead of failing the whole batch', async () => {
+    const { getPool } = await import('./db')
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { writeAuctionSnapshot } = await import('./auction-snapshot')
+
+    const tainted = auction({ address: `Hauptstraße${String.fromCharCode(0)} 1` })
+    await writeAuctionSnapshot([tainted])
+
+    expect(pool.upserted[0]?.auction.address).toBe('Hauptstraße 1')
+  })
+
   it('surfaces an upsert failure so a run cannot report success after data loss', async () => {
     const { getPool } = await import('./db')
     vi.mocked(getPool).mockReturnValue({ query: vi.fn().mockRejectedValue(new Error('connection reset')) } as never)
