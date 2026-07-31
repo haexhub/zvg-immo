@@ -55,7 +55,9 @@ export class ClaudeProxyProvider implements ExtractionProvider {
       // Bound the request: the proxy spawns a `claude` subprocess per call, so a
       // stuck spawn (or upstream stall) would keep this promise pending forever
       // and — because the enrich task awaits every worker via Promise.all — block
-      // the whole run.
+      // the whole run. 120s (not 60s): observed in prod, the subprocess itself
+      // can take 80s+ to exit even on success, so 60s aborted a call that would
+      // otherwise have succeeded moments later.
       resp = await $fetch(`${this.config.baseUrl.replace(/\/$/, '')}/v1/messages`, {
         method: 'POST',
         headers: {
@@ -64,7 +66,7 @@ export class ClaudeProxyProvider implements ExtractionProvider {
           ...(this.config.apiKey ? { 'x-api-key': this.config.apiKey } : {}),
         },
         body,
-        signal: AbortSignal.timeout(60_000),
+        signal: AbortSignal.timeout(120_000),
       })
     } catch (err) {
       // Rethrow a rate limit/quota error instead of swallowing it to null —
