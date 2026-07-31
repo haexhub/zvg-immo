@@ -21,6 +21,7 @@ interface LlmProfilesResponse {
     model: string
     executionMode: LlmExecutionMode
   }>
+  maxChainLength: number
 }
 
 const { t } = useI18n()
@@ -38,6 +39,10 @@ const addSelection = reactive<Record<LlmProviderScope, string>>({
   translation: ADD_PLACEHOLDER,
 })
 const llmProfileEffective = ref<LlmProfilesResponse['effective'] | null>(null)
+// Matches the server's MAX_PROVIDER_CHAIN_LENGTH default until loadLlmAssignments
+// resolves; kept in sync so the UI never lets a user add entries the server
+// would silently truncate on save.
+const maxChainLength = ref(5)
 const llmAssignmentsError = ref<string | null>(null)
 const llmAssignmentsSaved = ref(false)
 const llmAssignmentsPending = ref(false)
@@ -47,13 +52,18 @@ function profileLabel(id: string): string {
   return profile ? (profile.name || profile.model) : id
 }
 
+function chainLimitReached(scope: LlmProviderScope): boolean {
+  return llmProfileAssignments[scope].length >= maxChainLength.value
+}
+
 function availableProfiles(scope: LlmProviderScope): LlmProviderProfileForm[] {
+  if (chainLimitReached(scope)) return []
   const assigned = new Set(llmProfileAssignments[scope])
   return llmProfiles.value.filter((profile) => !assigned.has(profile.id))
 }
 
 function addAssignment(scope: LlmProviderScope, id: string): void {
-  if (id === ADD_PLACEHOLDER) return
+  if (id === ADD_PLACEHOLDER || chainLimitReached(scope)) return
   llmProfileAssignments[scope].push(id)
   addSelection[scope] = ADD_PLACEHOLDER
   llmAssignmentsSaved.value = false
@@ -85,6 +95,7 @@ async function loadLlmAssignments(): Promise<void> {
     }))
     llmProfileAssignments.extraction = [...(res.assignments.extraction ?? [])]
     llmProfileAssignments.translation = [...(res.assignments.translation ?? [])]
+    maxChainLength.value = res.maxChainLength
     llmProfileEffective.value = res.effective
     llmAssignmentsError.value = null
   } catch (err) {
@@ -190,7 +201,10 @@ onMounted(loadLlmAssignments)
             </SelectContent>
           </Select>
 
-          <p v-if="llmProfileAssignments[scope].length > 1" class="text-xs text-muted-foreground">
+          <p v-if="chainLimitReached(scope)" class="text-xs text-muted-foreground">
+            {{ $t('settings.llmAssignment.chainLimitReached', { max: maxChainLength }) }}
+          </p>
+          <p v-else-if="llmProfileAssignments[scope].length > 1" class="text-xs text-muted-foreground">
             {{ $t('settings.llmAssignment.fallbackHint') }}
           </p>
           <p v-if="llmProfileAssignments[scope].length === 0 && llmProfileEffective" class="text-xs text-muted-foreground">

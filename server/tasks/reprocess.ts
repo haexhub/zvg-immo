@@ -704,12 +704,14 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       }
 
       let syncLlmAttempted = false
+      let platformLlmCallsSoFar = platformLlmCalls
       const result = await reprocessAuction(platform, externalId, priorEntry, useLlm, at, {
         fallbackConfigs: useLlm ? llmConfigs.slice(1) : undefined,
         onLlmAttempt: () => {
           syncLlmAttempted = true
           llmCalls++
-          llmCallsByPlatform.set(platform, platformLlmCalls + 1)
+          platformLlmCallsSoFar++
+          llmCallsByPlatform.set(platform, platformLlmCallsSoFar)
         },
         onLlmError: (err) => {
           llmErrors++
@@ -723,7 +725,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       }
       if (result.llmCalled && !syncLlmAttempted) {
         llmCalls++
-        llmCallsByPlatform.set(platform, platformLlmCalls + 1)
+        llmCallsByPlatform.set(platform, platformLlmCallsSoFar + 1)
       }
 
       cache[key] = result.entry

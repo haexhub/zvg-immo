@@ -279,6 +279,7 @@
       "moveDown": "Move down",
       "remove": "Remove",
       "fallbackHint": "If a model is rate-limited, over quota, or otherwise unavailable, the next entry in the list takes over.",
+      "chainLimitReached": "Maximum of {max} profiles per use case.",
       "saveError": "Save failed.",
       "saved": "Saved.",
       "saving": "Saving …",

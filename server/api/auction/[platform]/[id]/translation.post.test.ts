@@ -598,6 +598,43 @@ describe('/api/auction/:platform/:id/translation', () => {
     )
   })
 
+  it('falls back to the extraction chain when every configured translation profile fails to resolve', async () => {
+    const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
+    const { getLlmProviderOverrideChain } = await import('~/server/utils/app-settings')
+    const { resolveLlmConfig } = await import('~/server/utils/extract/llm')
+    const handler = await loadHandler()
+
+    vi.mocked(getLlmProviderOverrideChain).mockImplementation(async (_db, scope) => {
+      if (scope === 'translation') {
+        // Missing baseUrl — resolveLlmConfig rejects this below, same as a
+        // profile with incomplete config would in production.
+        return [{ provider: 'gemini-native', baseUrl: '', model: 'broken', executionMode: 'sync', apiKey: 'key' }]
+      }
+      if (scope === 'extraction') {
+        return [{ provider: 'gemini-native', baseUrl: 'https://generativelanguage.googleapis.com', model: 'extraction-model', executionMode: 'sync', apiKey: 'key' }]
+      }
+      return []
+    })
+    vi.mocked(resolveLlmConfig).mockImplementation((source) => (source && source.baseUrl
+      ? { provider: source.provider as 'gemini-native', baseUrl: source.baseUrl, model: source.model!, maxTokens: 8192 }
+      : null))
+    const payload = {
+      title: 'Bebautes Einfamilienhaus',
+      description: 'Größe: 5 Zimmer, 124 m²',
+      documentSummary: null,
+      extractionTexts: null,
+    }
+    vi.mocked(callTranslationLlm).mockResolvedValue(payload)
+
+    await expect(handler({
+      context: { params: { platform: 'se-kronofogden', id: '101738' } },
+      node: { req: { socket: { remoteAddress: '127.0.0.1' } } },
+    })).resolves.toMatchObject({ ...payload, translated: true })
+
+    expect(callTranslationLlm).toHaveBeenCalledTimes(1)
+    expect((vi.mocked(callTranslationLlm).mock.calls[0]![6] as { model: string }).model).toBe('extraction-model')
+  })
+
   it('does not fall back to the next model for a non-availability error', async () => {
     const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
     const { getLlmProviderOverrideChain } = await import('~/server/utils/app-settings')

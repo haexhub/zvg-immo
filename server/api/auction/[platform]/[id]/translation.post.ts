@@ -22,7 +22,7 @@ import {
   readContentTranslation,
   writeContentTranslation,
 } from '~/server/utils/content-translation'
-import { getLlmMaxTokens, getLlmProviderOverride, getLlmProviderOverrideChain } from '~/server/utils/app-settings'
+import { getLlmMaxTokens, getLlmProviderOverride, getLlmProviderOverrideChain, type LlmProviderOverride } from '~/server/utils/app-settings'
 import { isLlmProviderUnavailable, resolveLlmConfig, type LlmConfig } from '~/server/utils/extract/llm'
 import { callTranslationLlm, type TranslationResult } from '~/server/utils/extract/text-llm'
 import { countryContentLanguage, isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
@@ -131,16 +131,18 @@ async function resolveActiveLlmConfigChain(db: Pool): Promise<LlmConfig[]> {
     | { provider?: string; baseUrl?: string; apiKey?: string; model?: string }
     | undefined
   const maxTokens = await getLlmMaxTokens(db, 'translation')
-  const translationChain = await getLlmProviderOverrideChain(db, 'translation')
-  const extractionChain = translationChain.length === 0 ? await getLlmProviderOverrideChain(db, 'extraction') : []
-  const sources = translationChain.length > 0
-    ? translationChain
-    : extractionChain.length > 0
-      ? extractionChain
-      : llmCfg ? [llmCfg] : []
-  return sources
-    .map((source) => resolveLlmConfig(source, { maxTokens }))
-    .filter((config): config is LlmConfig => config != null)
+  const resolveChain = (chain: (LlmProviderOverride | typeof llmCfg)[]) =>
+    chain
+      .map((source) => resolveLlmConfig(source, { maxTokens }))
+      .filter((config): config is LlmConfig => config != null)
+
+  const resolvedTranslation = resolveChain(await getLlmProviderOverrideChain(db, 'translation'))
+  if (resolvedTranslation.length > 0) return resolvedTranslation
+
+  const resolvedExtraction = resolveChain(await getLlmProviderOverrideChain(db, 'extraction'))
+  if (resolvedExtraction.length > 0) return resolvedExtraction
+
+  return resolveChain(llmCfg ? [llmCfg] : [])
 }
 
 /** Identifies a resolved LLM config for the retry-lockout check below — a

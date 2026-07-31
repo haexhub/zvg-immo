@@ -222,7 +222,9 @@ function coerceProviderProfiles(value: unknown): LlmProviderProfile[] {
 
 // Guards against an unbounded chain turning one slow/unavailable model into a
 // very long request (each link is a full attempt-with-retries elsewhere).
-const MAX_PROVIDER_CHAIN_LENGTH = 5
+// Exported so the settings UI can enforce the same limit instead of letting a
+// user add entries the server would silently truncate on save.
+export const MAX_PROVIDER_CHAIN_LENGTH = 5
 
 function coerceAssignments(value: unknown, profileIds: ReadonlySet<string>): LlmProviderAssignments {
   if (!value || typeof value !== 'object') return {}

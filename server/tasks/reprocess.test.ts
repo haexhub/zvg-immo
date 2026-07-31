@@ -9,6 +9,7 @@ import { renderPdfPagesJpeg } from '../utils/extract/pdf-render'
 import { readExtractionCache, writeExtractionCache } from '../utils/extraction-cache'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
 import { ensureEnabledCountriesLoaded, getEnabledCountryCodes, isCountryEnabled } from '../crawlers/registry'
+import { readExtractionLlmConfigChain } from '../utils/extract/llm-task-config'
 import { readFile } from 'node:fs/promises'
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -49,6 +50,10 @@ vi.mock('../utils/extract/pdf-render', async (importOriginal) => {
 vi.mock('../utils/extraction-cache', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/extraction-cache')>()
   return { ...actual, readExtractionCache: vi.fn(), writeExtractionCache: vi.fn() }
+})
+vi.mock('../utils/extract/llm-task-config', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/extract/llm-task-config')>()
+  return { ...actual, readExtractionLlmConfigChain: vi.fn(actual.readExtractionLlmConfigChain) }
 })
 vi.mock('../utils/auction-snapshot', () => ({ readAuctionSnapshot: vi.fn(), writeAuctionSnapshot: vi.fn() }))
 // defineTask is a Nitro auto-import, not present in the plain vitest
@@ -992,6 +997,99 @@ describe('runReprocess', () => {
     expect(writeExtractionCache).toHaveBeenCalledTimes(1)
     expect(vi.mocked(writeExtractionCache).mock.calls[0]?.[0]).toHaveProperty('zvg-portal:7265')
     expect(vi.mocked(writeExtractionCache).mock.calls[0]?.[0]).not.toHaveProperty('zvg-portal:2222')
+  })
+
+  it('counts every fallback attempt toward the per-platform LLM cap, not just the first', async () => {
+    // Two platforms among the candidates → llmCapPerPlatform = ceil(4/2) = 2.
+    // zvg-portal:1 alone needs 2 attempts (primary unavailable, then the
+    // fallback succeeds), which must exhaust zvg-portal's cap on its own and
+    // leave zvg-portal:2 as rules-only — not trigger a second real LLM call.
+    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { baseUrl: 'http://proxy', maxPerRun: '4' } }))
+    const ineligibleEntry: AuctionExtraction = {
+      propertyType: 'einfamilienhaus',
+      landAreaSqm: 850,
+      livingAreaSqm: 140,
+      rooms: 5,
+      bedrooms: null,
+      bathrooms: null,
+      floor: null,
+      bathroomHasTub: null,
+      bathroomHasShower: null,
+      heating: null,
+      units: 1,
+      condition: 'gepflegt',
+      features: [],
+      yearBuilt: null,
+      lastRenovationYear: null,
+      renovationNotes: null,
+      insights: null,
+      planningNotes: null,
+      documentSummary: null,
+      marketValueEur: null,
+      marketValueText: null,
+      source: 'llm',
+      confidence: 'high',
+      at: '2026-07-01T00:00:00.000Z',
+    }
+    const query = vi.fn().mockResolvedValue({
+      rows: [
+        { platform: 'zvg-portal', external_id: '1' },
+        { platform: 'zvg-portal', external_id: '2' },
+        { platform: 'other-portal', external_id: '9' },
+      ],
+    })
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+    // Only present to make llmPlatformCount = 2 (its own cap); already-complete
+    // so it consumes no LLM budget itself and can't interfere with the assertion.
+    vi.mocked(readExtractionCache).mockResolvedValue({ 'other-portal:9': ineligibleEntry })
+    // Once — readExtractionLlmConfigChain is called a single time per run
+    // (before the per-candidate loop), and mockResolvedValue would otherwise
+    // leak this fallback chain into later tests (afterEach only clears call
+    // history, not configured implementations).
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValueOnce([
+      { provider: 'openai-compatible', baseUrl: 'http://proxy', model: 'primary-model' },
+      { provider: 'openai-compatible', baseUrl: 'http://proxy', model: 'fallback-model' },
+    ])
+    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
+      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
+    )
+    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(makeAuction())))
+    vi.mocked(extractByLlm).mockImplementation(async (_input, config, opts) => {
+      opts?.onProviderAttempt?.()
+      if (config.model === 'primary-model') {
+        throw Object.assign(new Error('http 429'), { response: { status: 429 } })
+      }
+      return {
+        propertyType: null,
+        landAreaSqm: null,
+        livingAreaSqm: null,
+        rooms: null,
+        bedrooms: null,
+        bathrooms: null,
+        floor: null,
+        bathroomHasTub: null,
+        bathroomHasShower: null,
+        heating: null,
+        units: null,
+        securityDeposit: null,
+        biddingNotes: null,
+        condition: null,
+        features: [],
+        yearBuilt: null,
+        lastRenovationYear: null,
+        renovationNotes: null,
+        insights: null,
+        planningNotes: null,
+        photoCuration: [],
+        marketValueEur: null,
+        marketValueText: 'from fallback model',
+      }
+    })
+
+    const result = await runReprocess({ country: 'SE' })
+
+    expect(extractByLlm).toHaveBeenCalledTimes(2)
+    expect(result.llmCalls).toBe(2)
   })
 
   it('returns all-zero without a configured DB pool', async () => {

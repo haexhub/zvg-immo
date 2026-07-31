@@ -279,6 +279,7 @@
       "moveDown": "Nach unten",
       "remove": "Entfernen",
       "fallbackHint": "Wird ein Modell rate-limitiert, über sein Kontingent oder ist sonst nicht verfügbar, springt der nächste Eintrag in der Liste ein.",
+      "chainLimitReached": "Maximal {max} Profile pro Anwendungsfall.",
       "saveError": "Speichern fehlgeschlagen.",
       "saved": "Gespeichert.",
       "saving": "Speichere …",
