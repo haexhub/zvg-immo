@@ -138,9 +138,13 @@ interface OverlayEntry {
   // that deep-proxying is what makes Vue's template type inference lose the
   // OL layer classes' nominal (private-field-based) typing.
   visible: Ref<boolean>
+  // Stable identifier for entries the template needs to find regardless of
+  // the current locale — entry.key is a translated label captured once at
+  // mount time, so it goes stale on a locale switch.
+  id?: string
 }
 
-function addOverlayEntry(entries: OverlayEntry[], label: string, layer: BaseLayer, visible: boolean): void {
+function addOverlayEntry(entries: OverlayEntry[], label: string, layer: BaseLayer, visible: boolean, id?: string): void {
   let key = label
   let index = 2
   while (entries.some((e) => e.key === key)) {
@@ -148,7 +152,7 @@ function addOverlayEntry(entries: OverlayEntry[], label: string, layer: BaseLaye
     index++
   }
   layer.setVisible(visible)
-  entries.push({ key, layer, visible: ref(visible) })
+  entries.push({ key, layer, visible: ref(visible), id })
 }
 
 // Esri's "export"/"exportImage" REST endpoints render a fresh image per
@@ -235,7 +239,7 @@ function odorOverlayEntry(entries: OverlayEntry[]): void {
       fill: new Fill({ color: rgba('#ef4444', nearest <= 1000 ? 0.12 : 0.06) }),
     }),
   })
-  addOverlayEntry(entries, label, layer, false)
+  addOverlayEntry(entries, label, layer, false, 'odor')
 }
 
 function hazardOverlayEntries(entries: OverlayEntry[]): void {
@@ -329,14 +333,14 @@ const featureLegendEntries = computed<LegendEntry[]>(() => {
 
 const hazardStatusLegendEntries = computed<LegendEntry[]>(() => {
   if (!props.hazards?.length) return []
-  return (['inside', 'nearby', 'outside'] as const).map((status) => ({
+  return (['inside', 'nearby', 'outside', 'unknown'] as const).map((status) => ({
     key: status,
     color: hazardStatusColor(status),
     label: t(`objektDetail.hazardStatus.${status}`),
   }))
 })
 
-const showOdorLegend = computed(() => overlayEntries.value.some((entry) => entry.key === t('objektDetail.mapLayerOdorSignals')))
+const showOdorLegend = computed(() => overlayEntries.value.some((entry) => entry.id === 'odor'))
 
 onMounted(async () => {
   // The parent gates this component behind v-if="a.lat != null && a.lng != null".
