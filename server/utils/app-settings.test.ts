@@ -17,6 +17,7 @@ import {
   setEnabledCountries,
   setHideRulesOnlyAuctions,
   setLlmMaxTokens,
+  getLlmExtractionChainStrategy,
   setLlmProviderAssignments,
   setLlmProviderProfiles,
   setLlmProviderProfileSettings,
@@ -778,7 +779,7 @@ describe('setLlmProviderProfiles / setLlmProviderAssignments / deleteLlmProvider
 
     const saved = await setLlmProviderAssignments(db, { extraction: ['gemini'], translation: ['gemini'] })
 
-    expect(saved).toEqual({ extraction: ['gemini'], translation: ['gemini'] })
+    expect(saved.assignments).toEqual({ extraction: ['gemini'], translation: ['gemini'] })
     expect(await getLlmProviderProfileSettings(db)).toEqual({
       profiles: [{
         id: 'gemini',
@@ -795,7 +796,7 @@ describe('setLlmProviderProfiles / setLlmProviderAssignments / deleteLlmProvider
 
   it('setLlmProviderAssignments drops assignments referencing an unknown profile id', async () => {
     const db = makeFakePool() as unknown as Pool
-    expect(await setLlmProviderAssignments(db, { extraction: ['does-not-exist'] })).toEqual({})
+    expect((await setLlmProviderAssignments(db, { extraction: ['does-not-exist'] })).assignments).toEqual({})
   })
 
   it('setLlmProviderAssignments dedupes and caps an oversized fallback chain', async () => {
@@ -813,7 +814,21 @@ describe('setLlmProviderProfiles / setLlmProviderAssignments / deleteLlmProvider
 
     const saved = await setLlmProviderAssignments(db, { extraction: ['a', 'b', 'a', 'c', 'd', 'e', 'f'] })
 
-    expect(saved).toEqual({ extraction: ['a', 'b', 'c', 'd', 'e'] })
+    expect(saved.assignments).toEqual({ extraction: ['a', 'b', 'c', 'd', 'e'] })
+  })
+
+  it('setLlmProviderAssignments stores a valid chain strategy and preserves it when omitted', async () => {
+    const db = makeFakePool() as unknown as Pool
+    expect(await getLlmExtractionChainStrategy(db)).toBe('fallback')
+
+    expect((await setLlmProviderAssignments(db, {}, 'round-robin')).strategy).toBe('round-robin')
+    expect(await getLlmExtractionChainStrategy(db)).toBe('round-robin')
+
+    // Omitted (or garbage — the PUT body is untrusted) must not silently reset
+    // the strategy to the default, same preserve-on-omit contract as apiKey.
+    expect((await setLlmProviderAssignments(db, {})).strategy).toBe('round-robin')
+    expect((await setLlmProviderAssignments(db, {}, 'nonsense')).strategy).toBe('round-robin')
+    expect(await getLlmExtractionChainStrategy(db)).toBe('round-robin')
   })
 
   it('deleteLlmProviderProfile removes the profile and prunes its assignments', async () => {

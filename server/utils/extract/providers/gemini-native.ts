@@ -4,6 +4,7 @@
 // `inlineData` — the bake-off finding this provider exists to preserve is
 // that Gemini reads scanned Gutachten correctly without a rasterize/OCR step.
 
+import { createHash } from 'node:crypto'
 import type { ContentPart, ExtractionProvider, ExtractionRequest, LlmConfig } from '../llm'
 import { isDailyQuotaError, isRateLimitError, LlmProviderError } from '../llm'
 import { toGeminiSchema } from './gemini-schema'
@@ -43,30 +44,40 @@ export const DEFAULT_MODEL = 'gemini-flash-latest'
 // finding) — enrich/reprocess's concurrent workers (ENRICH_CONCURRENCY=8, up
 // to maxLlmPerRun calls) otherwise fire far more than that within seconds and
 // get 429'd wholesale (observed in prod: 202/202 calls failed in ~90s). Same
-// pacing pattern as server/utils/geocode.ts: serialize request starts across
-// all concurrent callers through a shared queue, spaced MIN_REQUEST_GAP_MS
-// apart, process-wide (not per-item) since the limit is per API key, not per
-// call site. Padded slightly above the exact 12000ms/5rpm to cover clock drift.
+// pacing pattern as server/utils/geocode.ts: serialize request starts through
+// a shared queue, spaced MIN_REQUEST_GAP_MS apart. Padded slightly above the
+// exact 12000ms/5rpm to cover clock drift.
 const MIN_REQUEST_GAP_MS = 12_500
 const MAX_RETRIES = 3
-let lastRequestAt = 0
-let queue: Promise<void> = Promise.resolve()
+
+/** One pacing gate per quota bucket rather than one process-wide gate. The
+ *  429s name their own scope: `GenerateRequestsPerMinutePerProjectPerModel-
+ *  FreeTier` (measured against the live API 2026-07-31), i.e. the limit is per
+ *  API key — which identifies the Google project — *and* per model. A single
+ *  shared gate therefore throttled unrelated keys against each other: with
+ *  four keys from four projects assigned to the extraction chain, throughput
+ *  stayed at one request per 12.5s instead of four. Keyed by apiKey+model so
+ *  the gate granularity matches the quota exactly. */
+const paceGates = new Map<string, { lastRequestAt: number; queue: Promise<void> }>()
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 /** Blocks until at least MIN_REQUEST_GAP_MS has passed since the last call
- *  across ALL concurrent callers (queue serialises the wait-then-stamp dance,
- *  same as geocode.ts). Retries reuse this too, so a 429 is paced the same as
- *  a fresh request instead of stacking an extra backoff on top. */
-async function paceNextRequest(): Promise<void> {
-  const run = queue.then(async () => {
-    const wait = lastRequestAt + MIN_REQUEST_GAP_MS - Date.now()
+ *  against the same quota bucket, across ALL concurrent callers (queue
+ *  serialises the wait-then-stamp dance, same as geocode.ts). Retries reuse
+ *  this too, so a 429 is paced the same as a fresh request instead of stacking
+ *  an extra backoff on top. */
+async function paceNextRequest(bucket: string): Promise<void> {
+  const gate = paceGates.get(bucket) ?? { lastRequestAt: 0, queue: Promise.resolve() }
+  paceGates.set(bucket, gate)
+  const run = gate.queue.then(async () => {
+    const wait = gate.lastRequestAt + MIN_REQUEST_GAP_MS - Date.now()
     if (wait > 0) await sleep(wait)
-    lastRequestAt = Date.now()
+    gate.lastRequestAt = Date.now()
   })
-  queue = run.catch(() => {})
+  gate.queue = run.catch(() => {})
   await run
 }
 
@@ -91,9 +102,12 @@ export class GeminiNativeProvider implements ExtractionProvider {
       },
     }
     const url = `${this.config.baseUrl.replace(/\/$/, '')}/v1beta/models/${model}:generateContent`
+    // The key is what the quota is scoped to, but it must not be held in a
+    // long-lived Map — hash it so paceGates never retains a plaintext secret.
+    const bucket = `${createHash('sha256').update(this.config.apiKey ?? '').digest('hex')}|${model}`
     let resp: unknown
     for (let attempt = 0; ; attempt++) {
-      await paceNextRequest()
+      await paceNextRequest(bucket)
       try {
         // Same rationale as the other providers: bound the request so a stuck
         // upstream call can't hang the enrich task's Promise.all forever.

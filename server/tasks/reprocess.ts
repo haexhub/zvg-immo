@@ -45,7 +45,7 @@ import {
   supportsNativeBatchDocuments,
 } from '~/server/utils/extract/llm-batch'
 import { readLlmExecutionMode } from '~/server/utils/app-settings'
-import { MAX_LLM_FAILURES, readExtractionLlmConfigChain } from '~/server/utils/extract/llm-task-config'
+import { MAX_LLM_FAILURES, readExtractionChainStrategy, readExtractionLlmConfigChain } from '~/server/utils/extract/llm-task-config'
 import { mergeLlmResult, withDerivedExtractionFields, type MergeInputFields } from '~/server/utils/extract/merge-llm-result'
 import {
   applyExtractionToAuctions,
@@ -578,6 +578,13 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
    *  with different API keys (i.e. different projects, each with its own
    *  quota) is tracked separately. */
   const exhaustedConfigs = new Set<LlmConfig>()
+  const chainStrategy = await readExtractionChainStrategy()
+  /** Rotates the chain's starting point under 'round-robin' (see
+   *  LLM_CHAIN_STRATEGIES). Counted per candidate that reaches the sync LLM
+   *  path, not per request, so consecutive auctions land on different API keys
+   *  — which is the whole point: each key is its own project with its own
+   *  per-minute quota, and gemini-native paces per key. */
+  let chainCursor = 0
   const executionMode = await readLlmExecutionMode()
   const maxLlmPerRun = readMaxLlmPerRun()
   const at = new Date().toISOString()
@@ -598,9 +605,13 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
   }
   const useBatch = batchRequested && supportsLlmBatch(llmConfig) && !batchProviderBroken
   if (llmConfig) {
-    const chainLabel = llmConfigs.map((c) => `${c.provider ?? 'openai-compatible'}/${c.model}`).join(' → ')
+    // '→' reads as the fallback order it is; round-robin has no primary, so it
+    // gets '+' instead of implying one.
+    const chainLabel = llmConfigs
+      .map((c) => `${c.provider ?? 'openai-compatible'}/${c.model}`)
+      .join(chainStrategy === 'round-robin' ? ' + ' : ' → ')
     console.log(
-      `[reprocess] llm ${chainLabel} mode=${useBatch ? 'batch' : 'sync'} maxPerRun=${maxLlmPerRun}`,
+      `[reprocess] llm ${chainLabel} strategy=${chainStrategy} mode=${useBatch ? 'batch' : 'sync'} maxPerRun=${maxLlmPerRun}`,
     )
   } else {
     console.log('[reprocess] llm disabled — rules-only')
@@ -718,7 +729,14 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       // this run's chain entirely: retrying them costs a full failed attempt
       // per candidate (~50 s with the provider's pacing) and cannot succeed
       // before the quota resets at midnight Pacific.
-      const syncConfigs = llmReady ? llmConfigs.filter((config) => !exhaustedConfigs.has(config)) : []
+      const available = llmReady ? llmConfigs.filter((config) => !exhaustedConfigs.has(config)) : []
+      // Rotation happens over the *surviving* configs, so a chain that lost a
+      // link to its daily quota keeps spreading evenly over the rest instead of
+      // handing every nth auction to a model that can no longer answer.
+      const offset = chainStrategy === 'round-robin' && available.length > 1
+        ? chainCursor++ % available.length
+        : 0
+      const syncConfigs = offset === 0 ? available : [...available.slice(offset), ...available.slice(0, offset)]
       if (llmReady && syncConfigs.length === 0) {
         warning = 'Alle konfigurierten LLM-Modelle haben ihr Tageskontingent erreicht.'
         console.warn('[reprocess] every configured model is over its daily quota — stopping this run early')

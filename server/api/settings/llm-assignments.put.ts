@@ -17,8 +17,7 @@ export default defineEventHandler(async (event) => {
     ? body.assignments
     : {}) as LlmProviderAssignments
   try {
-    const saved = await setLlmProviderAssignments(db, assignments)
-    return { assignments: saved }
+    return await setLlmProviderAssignments(db, assignments, body?.strategy)
   } catch (err) {
     console.warn(`[settings/llm-assignments] save failed: ${(err as Error).message}`)
     throw createError({

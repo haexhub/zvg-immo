@@ -9,7 +9,7 @@ import { renderPdfPagesJpeg } from '../utils/extract/pdf-render'
 import { readExtractionCache, writeExtractionCache } from '../utils/extraction-cache'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
 import { ensureEnabledCountriesLoaded, getEnabledCountryCodes, isCountryEnabled } from '../crawlers/registry'
-import { readExtractionLlmConfigChain } from '../utils/extract/llm-task-config'
+import { readExtractionChainStrategy, readExtractionLlmConfigChain } from '../utils/extract/llm-task-config'
 import { readFile } from 'node:fs/promises'
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -53,7 +53,11 @@ vi.mock('../utils/extraction-cache', async (importOriginal) => {
 })
 vi.mock('../utils/extract/llm-task-config', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/extract/llm-task-config')>()
-  return { ...actual, readExtractionLlmConfigChain: vi.fn(actual.readExtractionLlmConfigChain) }
+  return {
+    ...actual,
+    readExtractionLlmConfigChain: vi.fn(actual.readExtractionLlmConfigChain),
+    readExtractionChainStrategy: vi.fn(async () => 'fallback' as const),
+  }
 })
 vi.mock('../utils/auction-snapshot', () => ({ readAuctionSnapshot: vi.fn(), writeAuctionSnapshot: vi.fn() }))
 // defineTask is a Nitro auto-import, not present in the plain vitest
@@ -1162,6 +1166,61 @@ describe('runReprocess', () => {
     const asked = vi.mocked(extractByLlm).mock.calls.map(([, config]) => config.model)
     expect(asked).toEqual(['daily-exhausted-model', 'fallback-model', 'fallback-model'])
     expect(result.processed).toBe(2)
+  })
+
+  it('rotates the chain per candidate under the round-robin strategy', async () => {
+    // Why this buys anything: the free tier's per-minute quota is scoped
+    // `PerProjectPerModel`, so two profiles on two API keys are two independent
+    // quotas — but only if requests actually alternate between them. Under
+    // 'fallback' every candidate starts at the primary and the second key idles.
+    vi.mocked(readExtractionChainStrategy).mockResolvedValueOnce('round-robin')
+    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { baseUrl: 'http://proxy', maxPerRun: '10' } }))
+    const query = vi.fn().mockResolvedValue({
+      rows: [1, 2, 3, 4, 5].map((n) => ({ platform: 'zvg-portal', external_id: String(n) })),
+    })
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValueOnce([
+      { provider: 'gemini-native', baseUrl: 'http://gemini', model: 'key-a' },
+      { provider: 'gemini-native', baseUrl: 'http://gemini', model: 'key-b' },
+    ])
+    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
+      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
+    )
+    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(makeAuction())))
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+      opts?.onProviderAttempt?.()
+      return null
+    })
+
+    const result = await runReprocess({ country: 'SE' })
+
+    const asked = vi.mocked(extractByLlm).mock.calls.map(([, config]) => config.model)
+    expect(asked).toEqual(['key-a', 'key-b', 'key-a', 'key-b', 'key-a'])
+    expect(result.processed).toBe(5)
+  })
+
+  it('keeps starting at the primary under the fallback strategy', async () => {
+    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { baseUrl: 'http://proxy', maxPerRun: '10' } }))
+    const query = vi.fn().mockResolvedValue({
+      rows: [1, 2, 3].map((n) => ({ platform: 'zvg-portal', external_id: String(n) })),
+    })
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValueOnce([
+      { provider: 'gemini-native', baseUrl: 'http://gemini', model: 'key-a' },
+      { provider: 'gemini-native', baseUrl: 'http://gemini', model: 'key-b' },
+    ])
+    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
+      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
+    )
+    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(makeAuction())))
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+      opts?.onProviderAttempt?.()
+      return null
+    })
+
+    await runReprocess({ country: 'SE' })
+
+    expect(vi.mocked(extractByLlm).mock.calls.map(([, config]) => config.model)).toEqual(['key-a', 'key-a', 'key-a'])
   })
 
   it('returns all-zero without a configured DB pool', async () => {

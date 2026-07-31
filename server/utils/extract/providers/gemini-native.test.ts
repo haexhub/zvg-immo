@@ -216,4 +216,61 @@ describe('GeminiNativeProvider.extract — 429 pacing/retry', () => {
     expect(startTimes).toHaveLength(2)
     expect(startTimes[1]! - startTimes[0]!).toBeGreaterThanOrEqual(12_500)
   })
+
+  // The quota the pacing exists to respect is
+  // `GenerateRequestsPerMinutePerProjectPerModel-FreeTier` — per API key (each
+  // key is its own Google project) and per model. A single process-wide gate
+  // therefore throttled unrelated keys against each other, which is exactly
+  // what made a chain of four keys no faster than one.
+  it('does not pace two different API keys against each other', async () => {
+    const startTimes: number[] = []
+    vi.stubGlobal('$fetch', vi.fn().mockImplementation(async () => {
+      startTimes.push(Date.now())
+      return okResponse
+    }))
+    vi.resetModules()
+    const mod = await import('./gemini-native')
+    const first = new mod.GeminiNativeProvider({ ...config, apiKey: 'key-a' })
+    const second = new mod.GeminiNativeProvider({ ...config, apiKey: 'key-b' })
+    const p1 = first.extract(req)
+    const p2 = second.extract(req)
+    await vi.runAllTimersAsync()
+    await Promise.all([p1, p2])
+    expect(startTimes).toHaveLength(2)
+    expect(startTimes[1]! - startTimes[0]!).toBeLessThan(12_500)
+  })
+
+  it('still paces the same key across two provider instances', async () => {
+    const startTimes: number[] = []
+    vi.stubGlobal('$fetch', vi.fn().mockImplementation(async () => {
+      startTimes.push(Date.now())
+      return okResponse
+    }))
+    vi.resetModules()
+    const mod = await import('./gemini-native')
+    const first = new mod.GeminiNativeProvider({ ...config, apiKey: 'same-key' })
+    const second = new mod.GeminiNativeProvider({ ...config, apiKey: 'same-key' })
+    const p1 = first.extract(req)
+    const p2 = second.extract(req)
+    await vi.runAllTimersAsync()
+    await Promise.all([p1, p2])
+    expect(startTimes[1]! - startTimes[0]!).toBeGreaterThanOrEqual(12_500)
+  })
+
+  it('paces the same key separately per model, matching the per-model quota', async () => {
+    const startTimes: number[] = []
+    vi.stubGlobal('$fetch', vi.fn().mockImplementation(async () => {
+      startTimes.push(Date.now())
+      return okResponse
+    }))
+    vi.resetModules()
+    const mod = await import('./gemini-native')
+    const flash = new mod.GeminiNativeProvider({ ...config, apiKey: 'k', model: 'gemini-flash-latest' })
+    const lite = new mod.GeminiNativeProvider({ ...config, apiKey: 'k', model: 'gemini-flash-lite-latest' })
+    const p1 = flash.extract(req)
+    const p2 = lite.extract(req)
+    await vi.runAllTimersAsync()
+    await Promise.all([p1, p2])
+    expect(startTimes[1]! - startTimes[0]!).toBeLessThan(12_500)
+  })
 })
