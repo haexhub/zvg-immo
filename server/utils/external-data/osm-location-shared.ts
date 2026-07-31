@@ -54,6 +54,10 @@ export const HEAVY_INDUSTRY_TAGS = new Set([
   'quarry',
   'mine',
   'landfill',
+  'petroleum_well',
+  'mineshaft',
+  'generator',
+  'substation',
 ])
 export const BUILDING_RADIUS_METERS = 500
 export const BUILDING_RADIUS_SQ_KM = Math.PI * (BUILDING_RADIUS_METERS / 1000) ** 2
