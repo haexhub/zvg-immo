@@ -74,7 +74,7 @@ const DEFAULT_NEARBY_DISTANCE_METERS = 1_000
 const DEFAULT_PAGE_SIZE = 2_000
 export const EU_FLOOD_RISK_SOURCE_VERSION = 'eea-floods-ref-v03-r00-2025-08-05'
 export const EU_FLOOD_RISK_POLYGON_LAYER_URL =
-  'https://water.discomap.eea.europa.eu/arcgis/rest/services/FloodsDirective/FloodsRiskZone_WM/MapServer/2'
+  'https://water.discomap.eea.europa.eu/arcgis/rest/services/FloodsDirective/Floods2024_RiskZone_WM/MapServer/2'
 const FLOOD_SOURCE = EXTERNAL_DATA_SOURCES.find((source) => source.id === 'eu-flood-risk-areas')!
 
 export async function readFloodRiskGeoJson(path: string, sourceVersion?: string): Promise<FloodRiskZoneCollection> {
