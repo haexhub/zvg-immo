@@ -262,6 +262,52 @@ with 403 `unregistered callers`. PR #235 rejects a keyless profile at save time 
 (internal sidecars stay legitimately keyless) and exposes `apiKeyMissing` so an already-broken
 profile is visible rather than only guarded on the next write.
 
+### 2026-07-31: Overpass give-up was collateral damage, plus a second translation-provider incident
+
+User report: "Swedish auctions always get a `gemini-native ... 404` error, and are missing
+Lagequalität/Orte in der Nähe/Gewerbe/Demografie/Versorgung." Checked prod (DB + logs) rather
+than guessing from code:
+
+- The location-context claim didn't hold up: 60 of 69 SE auctions (87%) already had a full
+  `location_enrichment` row; BG was actually worse (120/347, 35%). The remaining SE gaps had
+  coordinates but no location context — not a country-specific bug, just the give-up counter
+  from the 2026-07-29 fix above. It stops the *whole rest of that run's auctions*, not just the
+  ones that actually failed, once 5 fail in a row — a transient Overpass blip mid-run cost every
+  auction that happened to come later in iteration order. Fixed: the give-up now expires after a
+  5-minute cooldown (`DEFAULT_GIVE_UP_COOLDOWN_MS`, osm-overpass.ts) instead of lasting the rest
+  of the run, so a recovered endpoint gets retried the same run instead of waiting for the next
+  scheduled tick.
+- The gemini-404 was real, and is the *same failure class* as the empty-API-key incident two
+  paragraphs up, just a different profile: the `llm_provider_profiles` row named "translate"
+  (assigned to the `translation` scope) had `model: "gemini-2.5-flash-lite"`, which 404s against
+  this API key — Gemini model availability is per-key and can regress after the fact, same
+  caveat as `gemini-native.ts`'s `DEFAULT_MODEL` comment already notes. It only ever surfaces for
+  non-German auctions, since `translation.post.ts` skips the LLM call entirely when the source
+  country's language already matches the target (German never calls it; Swedish always does).
+  User fixed the profile's model via `/settings`.
+- Since this is the second time one bad model/profile has silently broken 100% of translation
+  attempts, added a real fix rather than telling the user to just pick a better model:
+  `/settings` → Modellzuordnung now assigns an **ordered chain** of profiles per use case
+  (extraction/translation), not just one. `getLlmProviderOverrideChain()` (app-settings.ts)
+  resolves it; `reprocess.ts` and `translation.post.ts` try each config in order and only move to
+  the next on `isLlmProviderUnavailable()` (rate limit or a thrown `LlmProviderError`, e.g. a 404
+  model). Old single-profile assignments still resolve unchanged (read as a one-element chain).
+  Uncovered a second, independent bug while wiring this in: `reprocess.ts`'s per-candidate loop
+  was `break`-ing the **entire run** on the very first rate-limited/unavailable candidate, not
+  just skipping that one — explains why prod logs showed the same one or two candidates retried
+  every single hourly run for days. The fallback chain fixes this too, since it now only gives up
+  on a candidate (and therefore the run) once every configured model has failed for it.
+
+Still open, explicitly deferred (out of scope for the data-sources plan, belongs with the
+translation/content pipeline instead): a translation attempt can get orphaned mid-flight —
+`auction_translations` rows stuck at `status='pending'` forever, most likely because the
+container gets replaced (`AutoUpdate=registry`) while a Gemini call is in flight, so neither
+`completeAuctionTranslation` nor `failAuctionTranslation` ever runs. Frontend then polls the
+same auction every 2.5s (`fetchWithPendingRetry`, up to 48x) and gets fast 409s the whole time —
+harmless (rejected before any LLM call), but the auction's translation never actually completes
+until someone revisits after the 10-minute claim lease expires. See memory
+`translation-stuck-pending-claim-bug` for the next-session starting point.
+
 ### WP5 avalanche: deliberately not implemented
 
 EAWS publishes micro-region polygons whose features carry only a bare region id
