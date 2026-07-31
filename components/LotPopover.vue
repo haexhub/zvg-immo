@@ -5,14 +5,16 @@ import 'swiper/css'
 import 'swiper/css/navigation'
 import 'swiper/css/pagination'
 import type { GeoAuction } from '~/server/api/auctions-geo.get'
-import type { AuctionDetail } from '~/server/api/auction/[platform]/[id].get'
+import type { AuctionSummary } from '~/server/api/auctions.get'
 import { apiErrorMessage } from '~/lib/api-error'
 import { isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
 import { fetchWithPendingRetry } from '~/lib/pending-retry'
-import { auctionPhotoUrls } from '~/lib/auction-photos'
 
 const props = defineProps<{
   auction: GeoAuction
+  /** Already-loaded summary for this auction, when the search grid has it in
+   *  its currently-loaded page — skips the fallback fetch below entirely. */
+  summary: AuctionSummary | null
   /** Viewer's target content language, or null when it isn't one of the
    *  supported translation targets. */
   lang: ContentTargetLang | null
@@ -22,9 +24,10 @@ const { t } = useI18n()
 const intlLocale = useIntlLocale()
 const { currency, eurToDisplay } = useCurrencyDisplay()
 
-const detail = ref<AuctionDetail | null>(null)
-const photos = ref<string[]>([])
-const loading = ref(true)
+const fetchedSummary = ref<AuctionSummary | null>(null)
+const detail = computed<AuctionSummary | null>(() => props.summary ?? fetchedSummary.value)
+const photos = computed<string[]>(() => detail.value?.galleryUrls ?? [])
+const loading = ref(!props.summary)
 const loadError = ref<string | null>(null)
 const translatedTitle = ref<string | null>(null)
 const displayTitle = computed(() => translatedTitle.value ?? detail.value?.title ?? null)
@@ -37,9 +40,10 @@ interface AuctionTranslationResponse {
 const TRANSLATION_PENDING_RETRY_MS = 2500
 const TRANSLATION_PENDING_MAX_POLLS = 24
 
-// Loaded silently alongside the detail fetch, same as the objekt detail page
-// (pages/objekt/[platform]/[id].vue) — the address stays untranslated
-// everywhere in the app (it's a place name), only the title needs this.
+// Loaded silently alongside the summary lookup below, same as the objekt
+// detail page (pages/objekt/[platform]/[id].vue) — the address stays
+// untranslated everywhere in the app (it's a place name), only the title
+// needs this.
 async function loadTranslation(): Promise<void> {
   if (!props.lang || isPassthroughLanguage(props.auction.country, props.lang)) return
   try {
@@ -67,12 +71,12 @@ onUnmounted(() => {
 
 onMounted(async () => {
   loadTranslation()
+  if (props.summary) return
+  loading.value = true
   try {
-    const value = await $fetch<AuctionDetail>(
-      `/api/auction/${encodeURIComponent(props.auction.platform)}/${encodeURIComponent(props.auction.externalId)}`,
+    fetchedSummary.value = await $fetch<AuctionSummary>(
+      `/api/auction/${encodeURIComponent(props.auction.platform)}/${encodeURIComponent(props.auction.externalId)}/summary`,
     )
-    detail.value = value
-    photos.value = auctionPhotoUrls(value)
   } catch (err) {
     loadError.value = apiErrorMessage(err, 'Objektdetails konnten nicht geladen werden.')
   } finally {

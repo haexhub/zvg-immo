@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import type { AuctionSummary } from '~/server/api/auctions.get'
 import type { GeoAuction, GeoCrawlResult } from '~/server/api/auctions-geo.get'
+import { auctionKey } from '~/lib/auction-key'
 
-defineProps<{
+const props = defineProps<{
   auctions: AuctionSummary[]
   totalCount: number
   pending: boolean
@@ -27,6 +28,8 @@ const emit = defineEmits<{
 }>()
 
 const activeTab = defineModel<'list' | 'map'>({ required: true })
+
+const auctionSummaries = computed(() => new Map(props.auctions.map((a) => [auctionKey(a), a])))
 </script>
 
 <template>
@@ -52,6 +55,7 @@ const activeTab = defineModel<'list' | 'map'>({ required: true })
     <TabsContent value="map" class="flex-1 min-h-0">
       <AuctionMapPane
         :auctions="geoAuctions"
+        :auction-summaries="auctionSummaries"
         :selected-countries="selectedCountries"
         :active-auction-key="activeAuctionKey"
         :fit-key="geoFitKey"

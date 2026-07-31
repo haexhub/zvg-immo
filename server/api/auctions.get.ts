@@ -25,6 +25,7 @@ export interface AuctionSummary {
   thumbnailUrl: string | null
   /** Compact, display-ready gallery URLs for the card slider. */
   galleryUrls: string[]
+  pdfUrl: string | null
   extraction: Pick<
     AuctionExtraction,
     | 'propertyType'
@@ -38,6 +39,24 @@ export interface AuctionSummary {
     | 'llmAnalyzedAt'
   > | null
 }
+
+// Shared with server/api/auction/[platform]/[id]/summary.get.ts, which reuses
+// this exact column list and JOIN shape for a single-auction, unfiltered
+// lookup — the map popover's fallback for a marker outside the loaded page.
+export const SUMMARY_COLUMNS_SQL = `
+  a.platform, a.country, a.region, a.external_id, a.case_number, a.authority,
+  a.title, a.address, a.market_value, a.currency, a.market_value_eur,
+  s.auction->>'marketValueText' AS market_value_text,
+  a.starting_bid, a.current_bid, a.auction_date_iso,
+  s.auction->>'auctionDateText' AS auction_date_text,
+  s.auction->>'pdfUrl' AS pdf_url,
+  a.cancelled, a.photo_count, a.thumbnail_url, ec.extraction`
+
+export const SUMMARY_FROM_SQL = `FROM auctions a
+  LEFT JOIN extraction_cache ec
+    ON ec.platform = a.platform AND ec.external_id = a.external_id
+  LEFT JOIN auction_snapshot s
+    ON s.platform = a.platform AND s.external_id = a.external_id`
 
 export interface AuctionSearchResponse {
   auctions: AuctionSummary[]
@@ -53,7 +72,7 @@ export interface AuctionSearchResponse {
   }
 }
 
-interface SearchRow {
+export interface SearchRow {
   platform: string
   country: string
   region: string
@@ -73,10 +92,11 @@ interface SearchRow {
   cancelled: boolean
   photo_count: number
   thumbnail_url: string | null
+  pdf_url: string | null
   extraction: AuctionExtraction | null
 }
 
-function summary(row: SearchRow): AuctionSummary {
+export function summary(row: SearchRow): AuctionSummary {
   const extraction = row.extraction
   return {
     platform: row.platform,
@@ -99,6 +119,7 @@ function summary(row: SearchRow): AuctionSummary {
     photoCount: row.photo_count,
     thumbnailUrl: row.thumbnail_url,
     galleryUrls: curatedAuctionPhotoUrls(row.platform, row.external_id, extraction?.photos, row.thumbnail_url),
+    pdfUrl: row.pdf_url,
     extraction: extraction
       ? {
           propertyType: extraction.propertyType,
@@ -135,18 +156,8 @@ export default defineEventHandler(async (event): Promise<AuctionSearchResponse> 
         ? 'a.market_value_eur DESC NULLS LAST, a.platform, a.external_id'
         : 'a.photo_count DESC, a.updated_at DESC, a.platform, a.external_id'
 
-  const from = `FROM auctions a
-    LEFT JOIN extraction_cache ec
-      ON ec.platform = a.platform AND ec.external_id = a.external_id
-    LEFT JOIN auction_snapshot s
-      ON s.platform = a.platform AND s.external_id = a.external_id`
-  const rowsSql = `SELECT
-      a.platform, a.country, a.region, a.external_id, a.case_number, a.authority,
-      a.title, a.address, a.market_value, a.currency, a.market_value_eur,
-      s.auction->>'marketValueText' AS market_value_text,
-      a.starting_bid, a.current_bid, a.auction_date_iso,
-      s.auction->>'auctionDateText' AS auction_date_text,
-      a.cancelled, a.photo_count, a.thumbnail_url, ec.extraction
+  const from = SUMMARY_FROM_SQL
+  const rowsSql = `SELECT ${SUMMARY_COLUMNS_SQL}
     ${from} ${predicate}
     ORDER BY ${orderBy}
     LIMIT $${filterValues.length + 1} OFFSET $${filterValues.length + 2}`

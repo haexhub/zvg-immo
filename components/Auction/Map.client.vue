@@ -4,6 +4,7 @@ import Point from 'ol/geom/Point'
 import { fromLonLat, transformExtent } from 'ol/proj'
 import { Circle as CircleStyle, Fill, Icon, Stroke, Style, Text } from 'ol/style'
 import type { GeoAuction } from '~/server/api/auctions-geo.get'
+import type { AuctionSummary } from '~/server/api/auctions.get'
 import LotPopover from '~/components/LotPopover.vue'
 import { auctionKey } from '~/lib/auction-key'
 import { boundsForCountries } from '~/lib/country-bounds'
@@ -58,6 +59,10 @@ function clusterStyle(feature: any): Style {
 
 const props = defineProps<{
   auctions: GeoAuction[]
+  /** Summaries for the auctions the search grid currently has loaded, keyed by
+   *  `auctionKey()` — lets the popover skip its fallback fetch when the
+   *  clicked marker is among them. */
+  auctionSummaries?: Map<string, AuctionSummary>
   selectedCountries?: string[]
   activeAuctionKey?: string | null
   /** Bumping this string requests a re-fit on the next marker refresh — used
@@ -110,6 +115,10 @@ const popupPosition = ref<number[] | undefined>(undefined)
 const selectedAuction = computed<GeoAuction | undefined>(() => {
   if (!selectedKey.value) return undefined
   return featuresByKey.get(selectedKey.value)?.get('auction') as GeoAuction | undefined
+})
+const selectedSummary = computed<AuctionSummary | null>(() => {
+  if (!selectedKey.value) return null
+  return props.auctionSummaries?.get(selectedKey.value) ?? null
 })
 
 // True at mount and whenever the parent bumps `fitKey` (filter change). The
@@ -303,7 +312,17 @@ function onPointerMove(evt: any): void {
       </ol-vector-layer>
       <ol-overlay v-if="selectedKey && popupPosition" :position="popupPosition" :offset="[0, -12]" positioning="bottom-center">
         <div class="auction-map-popup">
-          <LotPopover v-if="selectedAuction" :auction="selectedAuction" :lang="contentLang" />
+          <!-- Keyed on the auction: clicking a second marker while a popup is
+               open swaps selectedKey without ever unmounting the overlay, so
+               without this the instance would keep the previous auction's
+               fetched summary, photos and translated title. -->
+          <LotPopover
+            v-if="selectedAuction"
+            :key="selectedKey!"
+            :auction="selectedAuction"
+            :summary="selectedSummary"
+            :lang="contentLang"
+          />
         </div>
       </ol-overlay>
     </ol-map>
