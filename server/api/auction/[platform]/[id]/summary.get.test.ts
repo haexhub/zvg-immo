@@ -81,6 +81,18 @@ describe('/api/auction/[platform]/[id]/summary', () => {
     ).rejects.toMatchObject({ statusCode: 404 })
   })
 
+  it('503s when the serving database is not configured', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    vi.stubGlobal('createError', (input: object) => Object.assign(new Error('api error'), input))
+    const { getPool } = await import('~/server/utils/db')
+    vi.mocked(getPool).mockReturnValue(null as never)
+    const handler = (await import('./summary.get')).default as unknown as (event: unknown) => Promise<unknown>
+
+    await expect(
+      handler({ context: { params: { platform: 'zvg-portal', id: '42' } } }),
+    ).rejects.toMatchObject({ statusCode: 503 })
+  })
+
   it('rejects an unsafe path segment', async () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     vi.stubGlobal('createError', (input: object) => Object.assign(new Error('api error'), input))

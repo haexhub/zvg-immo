@@ -312,7 +312,17 @@ function onPointerMove(evt: any): void {
       </ol-vector-layer>
       <ol-overlay v-if="selectedKey && popupPosition" :position="popupPosition" :offset="[0, -12]" positioning="bottom-center">
         <div class="auction-map-popup">
-          <LotPopover v-if="selectedAuction" :auction="selectedAuction" :summary="selectedSummary" :lang="contentLang" />
+          <!-- Keyed on the auction: clicking a second marker while a popup is
+               open swaps selectedKey without ever unmounting the overlay, so
+               without this the instance would keep the previous auction's
+               fetched summary, photos and translated title. -->
+          <LotPopover
+            v-if="selectedAuction"
+            :key="selectedKey!"
+            :auction="selectedAuction"
+            :summary="selectedSummary"
+            :lang="contentLang"
+          />
         </div>
       </ol-overlay>
     </ol-map>
