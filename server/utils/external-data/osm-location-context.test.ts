@@ -430,6 +430,35 @@ describe('createOsmLocationContextAdapter', () => {
       await expect(adapter.context(auction({ externalId: '5' }))).rejects.toThrow('Overpass unavailable')
     })
 
+    it('probes again once the give-up cooldown elapses, instead of skipping the rest of the run', async () => {
+      const fetchImpl = vi.fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response('rate limited', { status: 429 }))
+        .mockResolvedValueOnce(new Response('rate limited', { status: 429 }))
+        .mockResolvedValueOnce(okResponse())
+      let clock = 0
+      const adapter = createOsmLocationContextAdapter({
+        endpoint: 'https://overpass.example.test/api/interpreter',
+        checkedAt: '2026-07-26T00:00:00.000Z',
+        fetchImpl,
+        maxAttempts: 1,
+        giveUpAfterConsecutiveFailures: 2,
+        giveUpCooldownMs: 60_000,
+        sleepImpl: async () => undefined,
+        nowImpl: () => clock,
+      })
+
+      await expect(adapter.context(auction({ externalId: '1' }))).rejects.toThrow('Overpass returned 429')
+      await expect(adapter.context(auction({ externalId: '2' }))).rejects.toThrow('Overpass returned 429')
+      // Cooldown just tripped: the next auction is skipped without touching the network.
+      await expect(adapter.context(auction({ externalId: '3' }))).rejects.toThrow('Overpass unavailable')
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+
+      clock += 60_000
+      // Cooldown elapsed: this auction — further along in the same run — gets a real attempt.
+      await expect(adapter.context(auction({ externalId: '4' }))).resolves.not.toBeNull()
+      expect(fetchImpl).toHaveBeenCalledTimes(3)
+    })
+
     it('spaces consecutive auctions by the configured interval', async () => {
       const fetchImpl = vi.fn<typeof fetch>(async () => okResponse())
       const waits: number[] = []

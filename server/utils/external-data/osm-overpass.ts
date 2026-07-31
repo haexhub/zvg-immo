@@ -26,6 +26,11 @@ export const DEFAULT_TIMEOUT_MS = 120_000
 export const DEFAULT_MIN_REQUEST_INTERVAL_MS = 2_000
 export const DEFAULT_MAX_ATTEMPTS = 4
 export const DEFAULT_GIVE_UP_AFTER_CONSECUTIVE_FAILURES = 5
+// This task only runs once a day (see nuxt.config.ts's scheduledTasks), so a
+// cooldown that's short relative to the run's total duration lets a transient
+// Overpass outage clear and the run recover — without it, tripping the guard
+// early would permanently skip every auction still left in that day's run.
+export const DEFAULT_GIVE_UP_COOLDOWN_MS = 5 * 60_000
 const BACKOFF_BASE_MS = 5_000
 const MAX_BACKOFF_MS = 60_000
 
