@@ -16,9 +16,9 @@ import Overlay from 'ol/Overlay'
 import { defaults as defaultInteractions } from 'ol/interaction/defaults'
 import type BaseLayer from 'ol/layer/Base'
 import type { TileCoord } from 'ol/tilecoord'
-import { MAPTILER_ATTRIBUTION, OSM_ATTRIBUTION, mapTilerSatelliteUrl, mapTilerStreetsUrl } from '~/lib/map-tiles'
-import type { MapTilerTileMapIds } from '~/lib/map-tiles'
+import { OSM_ATTRIBUTION, mapTilerSatelliteStyleUrl, mapTilerStreetsStyleUrl } from '~/lib/map-tiles'
 import { mapPinDataUri, MAP_PIN_ANCHOR } from '~/lib/mapPinIcon'
+import { useMapTilerVectorBaseLayer } from '~/composables/useMapTilerVectorBaseLayer'
 import type { HazardAssessment, LocationContext, LocationMapFeature } from '~/types/auction'
 
 const props = defineProps<{
@@ -32,14 +32,21 @@ const props = defineProps<{
 const { t, locale } = useI18n()
 const runtimeConfig = useRuntimeConfig()
 const mapTilerApiKey = computed(() => String(runtimeConfig.public.maptilerApiKey || '').trim())
-const mapTilerMapIds = computed<MapTilerTileMapIds>(() => ({
-  streets: String(runtimeConfig.public.maptilerStreetsMapId || ''),
-  streetsDe: String(runtimeConfig.public.maptilerStreetsMapIdDe || ''),
-  streetsEn: String(runtimeConfig.public.maptilerStreetsMapIdEn || ''),
-  satellite: String(runtimeConfig.public.maptilerSatelliteMapId || ''),
-  satelliteDe: String(runtimeConfig.public.maptilerSatelliteMapIdDe || ''),
-  satelliteEn: String(runtimeConfig.public.maptilerSatelliteMapIdEn || ''),
-}))
+const baseLayer = ref<'streets' | 'satellite'>('streets')
+
+// The MapTiler base layer renders as vector tiles (see
+// useMapTilerVectorBaseLayer) with labels re-localized to the UI locale — one
+// style per mode covers every language. No key configured -> empty URL -> the
+// composable stays inert and the raster OSM/Esri fallback below renders
+// instead.
+const vectorStyleUrl = computed(() => {
+  if (!mapTilerApiKey.value) return ''
+  return baseLayer.value === 'streets'
+    ? mapTilerStreetsStyleUrl(mapTilerApiKey.value, String(runtimeConfig.public.maptilerStreetsMapId || '') || undefined)
+    : mapTilerSatelliteStyleUrl(mapTilerApiKey.value, String(runtimeConfig.public.maptilerSatelliteMapId || '') || undefined)
+})
+const olMapRef = shallowRef<OlMap | null>(null)
+useMapTilerVectorBaseLayer({ map: olMapRef, styleUrl: vectorStyleUrl, lang: locale })
 
 function hazardStatusColor(status: HazardAssessment['status']): string {
   if (status === 'inside') return '#dc2626'
@@ -304,7 +311,6 @@ const mapEl = ref<HTMLDivElement | null>(null)
 const popupEl = ref<HTMLDivElement | null>(null)
 let map: OlMap | null = null
 
-const baseLayer = ref<'streets' | 'satellite'>('streets')
 const panelOpen = ref(false)
 const overlayEntries = shallowRef<OverlayEntry[]>([])
 
@@ -349,46 +355,37 @@ onMounted(async () => {
   await nextTick()
   if (!mapEl.value || !popupEl.value) return
 
-  const mapTilerKey = mapTilerApiKey.value
-  const configuredMapIds = mapTilerMapIds.value
-  const streetsSource = mapTilerKey
-    ? new XYZ({ url: mapTilerStreetsUrl(locale.value, mapTilerKey, configuredMapIds), attributions: MAPTILER_ATTRIBUTION })
-    : new OSM({ attributions: OSM_ATTRIBUTION })
-  const streets = new TileLayer({ source: streetsSource })
-  const esriImagery = new TileLayer({
-    source: new XYZ({
-      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-      attributions: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics',
-    }),
-  })
-  // A dedicated labels/boundaries overlay with a transparent background,
-  // paired with satellite imagery (a full opaque basemap blended at low
-  // opacity over it would just look washed out).
-  const placeLabels = new TileLayer({
-    source: new XYZ({
-      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
-      attributions: 'Tiles &copy; Esri',
-    }),
-  })
-  const mapTilerHybridSource = mapTilerKey
-    ? new XYZ({ url: mapTilerSatelliteUrl(locale.value, mapTilerKey, configuredMapIds), attributions: MAPTILER_ATTRIBUTION })
-    : null
-  const mapTilerHybrid = new TileLayer({ source: mapTilerHybridSource ?? undefined })
-  streets.setVisible(baseLayer.value === 'streets')
-  mapTilerHybrid.setVisible(!!mapTilerHybridSource && baseLayer.value !== 'streets')
-  esriImagery.setVisible(!mapTilerHybridSource && baseLayer.value !== 'streets')
-  placeLabels.setVisible(!mapTilerHybridSource && baseLayer.value !== 'streets')
-  watch(baseLayer, (value) => {
-    streets.setVisible(value === 'streets')
-    mapTilerHybrid.setVisible(!!mapTilerHybridSource && value !== 'streets')
-    esriImagery.setVisible(!mapTilerHybridSource && value !== 'streets')
-    placeLabels.setVisible(!mapTilerHybridSource && value !== 'streets')
-  })
-  watch(locale, (value) => {
-    if (!mapTilerKey) return
-    if (streetsSource instanceof XYZ) streetsSource.setUrl(mapTilerStreetsUrl(value, mapTilerKey, configuredMapIds))
-    mapTilerHybridSource?.setUrl(mapTilerSatelliteUrl(value, mapTilerKey, configuredMapIds))
-  })
+  // The MapTiler vector base layer (useMapTilerVectorBaseLayer, wired up
+  // above) is inserted imperatively at the bottom of the layer stack once a
+  // key is configured; this raster fallback only renders without one.
+  const rasterFallbackLayers: BaseLayer[] = []
+  if (!mapTilerApiKey.value) {
+    const streets = new TileLayer({ source: new OSM({ attributions: OSM_ATTRIBUTION }) })
+    const esriImagery = new TileLayer({
+      source: new XYZ({
+        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        attributions: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics',
+      }),
+    })
+    // A dedicated labels/boundaries overlay with a transparent background,
+    // paired with satellite imagery (a full opaque basemap blended at low
+    // opacity over it would just look washed out).
+    const placeLabels = new TileLayer({
+      source: new XYZ({
+        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+        attributions: 'Tiles &copy; Esri',
+      }),
+    })
+    streets.setVisible(baseLayer.value === 'streets')
+    esriImagery.setVisible(baseLayer.value !== 'streets')
+    placeLabels.setVisible(baseLayer.value !== 'streets')
+    watch(baseLayer, (value) => {
+      streets.setVisible(value === 'streets')
+      esriImagery.setVisible(value !== 'streets')
+      placeLabels.setVisible(value !== 'streets')
+    })
+    rasterFallbackLayers.push(streets, esriImagery, placeLabels)
+  }
 
   const entries: OverlayEntry[] = []
   addFloodRiskLayer(entries)
@@ -412,10 +409,11 @@ onMounted(async () => {
   map = new OlMap({
     target: mapEl.value,
     interactions: defaultInteractions({ mouseWheelZoom: false }),
-    layers: [streets, ...(mapTilerHybridSource ? [mapTilerHybrid] : []), esriImagery, placeLabels, ...entries.map((e) => e.layer), markerLayer],
+    layers: [...rasterFallbackLayers, ...entries.map((e) => e.layer), markerLayer],
     overlays: [popupOverlay],
     view: new OlView({ center: fromLonLat([props.lng, props.lat]), zoom: 14 }),
   })
+  olMapRef.value = map
 
   map.on('click', (evt) => {
     const feature = map!.forEachFeatureAtPixel(evt.pixel, (f) => f)
@@ -434,6 +432,7 @@ onBeforeUnmount(() => {
     map.setTarget(undefined)
     map = null
   }
+  olMapRef.value = null
 })
 </script>
 

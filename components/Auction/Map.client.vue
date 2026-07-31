@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Feature } from 'ol'
 import Point from 'ol/geom/Point'
+import type OlMap from 'ol/Map'
 import { fromLonLat, transformExtent } from 'ol/proj'
 import { Circle as CircleStyle, Fill, Icon, Stroke, Style, Text } from 'ol/style'
 import type { GeoAuction } from '~/server/api/auctions-geo.get'
@@ -9,9 +10,9 @@ import LotPopover from '~/components/LotPopover.vue'
 import { auctionKey } from '~/lib/auction-key'
 import { boundsForCountries } from '~/lib/country-bounds'
 import type { ContentTargetLang } from '~/lib/content-language'
-import { MAPTILER_ATTRIBUTION, OSM_ATTRIBUTION, mapTilerSatelliteUrl, mapTilerStreetsUrl } from '~/lib/map-tiles'
-import type { MapTilerTileMapIds } from '~/lib/map-tiles'
+import { OSM_ATTRIBUTION, mapTilerSatelliteStyleUrl, mapTilerStreetsStyleUrl } from '~/lib/map-tiles'
 import { mapPinDataUri, MAP_PIN_ANCHOR } from '~/lib/mapPinIcon'
+import { useMapTilerVectorBaseLayer } from '~/composables/useMapTilerVectorBaseLayer'
 
 const ESRI_IMAGERY_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
 const ESRI_LABELS_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'
@@ -83,16 +84,6 @@ const emit = defineEmits<{
 const { locale, t } = useI18n()
 const runtimeConfig = useRuntimeConfig()
 const mapTilerApiKey = computed(() => String(runtimeConfig.public.maptilerApiKey || '').trim())
-const mapTilerMapIds = computed<MapTilerTileMapIds>(() => ({
-  streets: String(runtimeConfig.public.maptilerStreetsMapId || ''),
-  streetsDe: String(runtimeConfig.public.maptilerStreetsMapIdDe || ''),
-  streetsEn: String(runtimeConfig.public.maptilerStreetsMapIdEn || ''),
-  satellite: String(runtimeConfig.public.maptilerSatelliteMapId || ''),
-  satelliteDe: String(runtimeConfig.public.maptilerSatelliteMapIdDe || ''),
-  satelliteEn: String(runtimeConfig.public.maptilerSatelliteMapIdEn || ''),
-}))
-const streetsTileUrl = computed(() => mapTilerApiKey.value ? mapTilerStreetsUrl(locale.value, mapTilerApiKey.value, mapTilerMapIds.value) : '')
-const satelliteTileUrl = computed(() => mapTilerApiKey.value ? mapTilerSatelliteUrl(locale.value, mapTilerApiKey.value, mapTilerMapIds.value) : '')
 
 // Only 'de'/'en' have LLM translation support (see lib/content-language.ts);
 // any other UI locale falls back to showing the auction's original title.
@@ -105,7 +96,23 @@ const baseLayer = ref<'streets' | 'satellite'>('streets')
 const initialCenter = fromLonLat(EUROPE_CENTER_LONLAT)
 const initialZoom = 4
 
+// The MapTiler base layer renders as vector tiles (see
+// useMapTilerVectorBaseLayer) with labels re-localized to the UI locale — one
+// style per mode covers every language, unlike raster tiles which bake the
+// label language into the style. No key configured -> empty URL -> the
+// composable stays inert and the raster OSM/Esri fallback below renders
+// instead.
+const vectorStyleUrl = computed(() => {
+  if (!mapTilerApiKey.value) return ''
+  return baseLayer.value === 'streets'
+    ? mapTilerStreetsStyleUrl(mapTilerApiKey.value, String(runtimeConfig.public.maptilerStreetsMapId || '') || undefined)
+    : mapTilerSatelliteStyleUrl(mapTilerApiKey.value, String(runtimeConfig.public.maptilerSatelliteMapId || '') || undefined)
+})
+
 const mapRef = ref<any>(null)
+const olMap = shallowRef<OlMap | null>(null)
+watch(() => mapRef.value?.map, (m) => { olMap.value = m ?? null }, { immediate: true })
+useMapTilerVectorBaseLayer({ map: olMap, styleUrl: vectorStyleUrl, lang: locale })
 const vectorSourceRef = ref<any>(null)
 const clusterSourceRef = ref<any>(null)
 const vectorLayerRef = ref<any>(null)
@@ -288,13 +295,12 @@ function onPointerMove(evt: any): void {
   <div class="relative isolate h-full w-full rounded-xl border shadow-sm overflow-hidden">
     <ol-map ref="mapRef" class="h-full w-full" @click="onMapClick" @pointermove="onPointerMove" @moveend="emitBounds">
       <ol-view :center="initialCenter" :zoom="initialZoom" projection="EPSG:3857" />
-      <ol-tile-layer v-if="baseLayer === 'streets'">
-        <ol-source-xyz v-if="streetsTileUrl" :url="streetsTileUrl" :attributions="MAPTILER_ATTRIBUTION" />
-        <ol-source-osm v-else :attributions="OSM_ATTRIBUTION" />
-      </ol-tile-layer>
-      <template v-else>
-        <ol-tile-layer v-if="satelliteTileUrl">
-          <ol-source-xyz :url="satelliteTileUrl" :attributions="MAPTILER_ATTRIBUTION" />
+      <!-- MapTiler vector base layer (useMapTilerVectorBaseLayer) is inserted
+           imperatively at the bottom of the layer stack once a key is
+           configured; this raster fallback only renders without one. -->
+      <template v-if="!mapTilerApiKey">
+        <ol-tile-layer v-if="baseLayer === 'streets'">
+          <ol-source-osm :attributions="OSM_ATTRIBUTION" />
         </ol-tile-layer>
         <template v-else>
           <ol-tile-layer>

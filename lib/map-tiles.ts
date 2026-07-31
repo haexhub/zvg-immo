@@ -1,53 +1,65 @@
-const DEFAULT_MAPTILER_STREETS_MAP_ID = 'streets-v4'
-const DEFAULT_MAPTILER_SATELLITE_MAP_ID = 'hybrid-v4'
-
 export const OSM_ATTRIBUTION = '&copy; OpenStreetMap contributors'
-export const MAPTILER_ATTRIBUTION = '&copy; MapTiler &copy; OpenStreetMap contributors'
 
-export interface MapTilerTileMapIds {
-  streets?: string
-  streetsDe?: string
-  streetsEn?: string
-  satellite?: string
-  satelliteDe?: string
-  satelliteEn?: string
+const DEFAULT_MAPTILER_STREETS_STYLE_ID = 'streets-v2'
+const DEFAULT_MAPTILER_SATELLITE_STYLE_ID = 'hybrid'
+
+function configuredStyleId(value: string | undefined, defaultId: string): string {
+  return value?.trim() || defaultId
 }
 
-function normalizedMapLocale(locale: string): string {
-  return locale.split('-')[0]?.toLowerCase() || 'en'
+/** MapTiler style.json URL, rendered as vector tiles via ol-mapbox-style. One
+ *  style covers every UI locale — see localizeVectorStyleLanguage — unlike
+ *  the raster tiles this replaced, whose label language was baked into the
+ *  style at MapTiler-Cloud creation time and needed one style per language. */
+export function mapTilerStyleUrl(styleId: string, apiKey: string): string {
+  const params = new URLSearchParams({ key: apiKey })
+  return `https://api.maptiler.com/maps/${styleId}/style.json?${params}`
 }
 
-function configuredMapId(value: string | undefined): string | undefined {
-  const trimmed = value?.trim()
-  return trimmed || undefined
+export function mapTilerStreetsStyleUrl(apiKey: string, styleId?: string): string {
+  return mapTilerStyleUrl(configuredStyleId(styleId, DEFAULT_MAPTILER_STREETS_STYLE_ID), apiKey)
 }
 
-function mapIdForLocale(defaultMapId: string, locale: string, fallbackMapId: string | undefined, localizedMapIds: Partial<Record<'de' | 'en', string>>): string {
-  const language = normalizedMapLocale(locale)
-  return configuredMapId(localizedMapIds[language as 'de' | 'en'])
-    ?? configuredMapId(fallbackMapId)
-    ?? defaultMapId
+export function mapTilerSatelliteStyleUrl(apiKey: string, styleId?: string): string {
+  return mapTilerStyleUrl(configuredStyleId(styleId, DEFAULT_MAPTILER_SATELLITE_STYLE_ID), apiKey)
 }
 
-export function mapTilerTileUrl(mapId: string, apiKey: string): string {
-  const params = new URLSearchParams({
-    key: apiKey,
-  })
-  return `https://api.maptiler.com/maps/${mapId}/256/{z}/{x}/{y}.png?${params}`
+export interface MapboxLayer {
+  layout?: { 'text-field'?: unknown } & Record<string, unknown>
+  [key: string]: unknown
 }
 
-export function mapTilerStreetsUrl(locale: string, apiKey: string, mapIds: MapTilerTileMapIds = {}): string {
-  const mapId = mapIdForLocale(DEFAULT_MAPTILER_STREETS_MAP_ID, locale, mapIds.streets, {
-    de: mapIds.streetsDe,
-    en: mapIds.streetsEn,
-  })
-  return mapTilerTileUrl(mapId, apiKey)
+export interface MapboxStyle {
+  layers?: MapboxLayer[]
+  [key: string]: unknown
 }
 
-export function mapTilerSatelliteUrl(locale: string, apiKey: string, mapIds: MapTilerTileMapIds = {}): string {
-  const mapId = mapIdForLocale(DEFAULT_MAPTILER_SATELLITE_MAP_ID, locale, mapIds.satellite, {
-    de: mapIds.satelliteDe,
-    en: mapIds.satelliteEn,
-  })
-  return mapTilerTileUrl(mapId, apiKey)
+/** True when a Mapbox/MapLibre `text-field` expression reads a `name`-family
+ *  source property (`name`, `name:xx`, `name_int`, …) — i.e. this is a
+ *  place-name label layer, as opposed to house numbers, elevation labels,
+ *  route shields etc., which must be left alone. */
+function referencesNameField(expression: unknown): boolean {
+  if (!Array.isArray(expression)) return false
+  if (expression[0] === 'get' && typeof expression[1] === 'string' && /^name(:|_|$)/.test(expression[1])) {
+    return true
+  }
+  return expression.some(referencesNameField)
+}
+
+/** Rewrites every place-name label layer's `text-field` to prefer the given
+ *  language's OpenMapTiles `name:{lang}` field, falling back to the feature's
+ *  native `name` when untranslated — the same technique the
+ *  maplibre-gl-language plugin uses, applied here because OpenLayers has no
+ *  equivalent of MapLibre GL JS's live `map.setLayoutProperty`: the style
+ *  must be re-localized and the vector layer re-applied on locale change.
+ *  Returns a new object; the input is not mutated. */
+export function localizeVectorStyleLanguage(style: MapboxStyle, lang: string): MapboxStyle {
+  const cloned = JSON.parse(JSON.stringify(style)) as MapboxStyle
+  for (const layer of cloned.layers ?? []) {
+    const textField = layer.layout?.['text-field']
+    if (textField !== undefined && referencesNameField(textField)) {
+      layer.layout!['text-field'] = ['coalesce', ['get', `name:${lang}`], ['get', 'name']]
+    }
+  }
+  return cloned
 }
