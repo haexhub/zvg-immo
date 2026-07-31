@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import type { GeoAuction } from '~/server/api/auctions-geo.get'
+import type { AuctionSummary } from '~/server/api/auctions.get'
 
 defineProps<{
   auctions: GeoAuction[]
+  auctionSummaries?: Map<string, AuctionSummary>
   selectedCountries: string[]
   activeAuctionKey?: string | null
   fitKey: string
@@ -28,6 +30,7 @@ const emit = defineEmits<{
            as geoData arrives instead of gating the whole map behind it. -->
       <AuctionMap
         :auctions="auctions"
+        :auction-summaries="auctionSummaries"
         :selected-countries="selectedCountries"
         :active-auction-key="activeAuctionKey"
         :fit-key="fitKey"
