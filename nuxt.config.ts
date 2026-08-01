@@ -280,8 +280,8 @@ export default defineNuxtConfig({
       // query and, for the geo endpoint, on a geocode cache that grows while the
       // client polls — an SWR route rule would freeze geocodedCount after the
       // first hit.
-      // /api/regions and /api/stats depend on the admin-enabled country scope
-      // and must reflect changes immediately; those handlers send no-store.
+      // /api/regions depends on the admin-enabled country scope and must
+      // reflect changes immediately; that handler sends no-store.
       // WP-7: rate table refreshes at most every 24h anyway (exchange-rate.ts's
       // own TTL); swr avoids re-doing that disk-cache read on every request.
       '/api/exchange-rates': { swr: 86400 },
