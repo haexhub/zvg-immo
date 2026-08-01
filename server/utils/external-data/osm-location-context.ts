@@ -22,6 +22,11 @@ interface OsmCategory {
   tagKey: string
   /** Omitted means "key exists, any value" — Overpass QL's bare `["key"]` filter. */
   values?: string[]
+  /** Mirrors the old query's `node(...)` (vs `nwr(...)`) selector — the
+   *  nwr variant dragged in administrative boundary *relations* that also
+   *  carry a `place`/`highway` tag, e.g. a city's boundary polygon reporting
+   *  itself as a "nearby place" a few metres away. */
+  nodeOnly?: boolean
 }
 
 // Mirrors the old buildQuery()'s Overpass QL sub-clauses one-for-one — same
@@ -32,9 +37,9 @@ interface OsmCategory {
 // building/university/school) need to stay close to their real radius here,
 // since nothing downstream narrows them further.
 const CATEGORIES: OsmCategory[] = [
-  { radiusMeters: PLACE_RADIUS_METERS, tagKey: 'place', values: ['city', 'town', 'suburb', 'village', 'hamlet', 'island', 'municipality'] },
+  { radiusMeters: PLACE_RADIUS_METERS, tagKey: 'place', values: ['city', 'town', 'suburb', 'village', 'hamlet', 'island', 'municipality'], nodeOnly: true },
   { radiusMeters: 3000, tagKey: 'public_transport', values: ['platform', 'stop_position', 'station'] },
-  { radiusMeters: 3000, tagKey: 'highway', values: ['bus_stop'] },
+  { radiusMeters: 3000, tagKey: 'highway', values: ['bus_stop'], nodeOnly: true },
   { radiusMeters: 3000, tagKey: 'railway', values: ['station', 'halt', 'tram_stop'] },
   { radiusMeters: FERRY_RADIUS_METERS, tagKey: 'amenity', values: ['ferry_terminal'] },
   { radiusMeters: FERRY_RADIUS_METERS, tagKey: 'route', values: ['ferry'] },
@@ -79,6 +84,7 @@ async function queryCategory(db: Pool, country: string, point: Point, category: 
     WHERE country = $1
       AND ST_DWithin(geom::geography, ST_MakePoint($2, $3)::geography, $4)
       AND ${tagCondition}
+      ${category.nodeOnly ? "AND osm_type = 'node'" : ''}
     `,
     params,
   )

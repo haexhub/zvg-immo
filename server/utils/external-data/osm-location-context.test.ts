@@ -228,6 +228,21 @@ describe('createLocalOsmLocationContextAdapter', () => {
     expect(categoryCall.params.slice(0, 3)).toEqual(['de', 13, 52])
   })
 
+  it('restricts place and bus_stop lookups to nodes, so a boundary relation is not picked up as a place', async () => {
+    const { pool, calls } = fakeOsmPool()
+    const adapter = createLocalOsmLocationContextAdapter({ db: pool, checkedAt: '2026-07-26T00:00:00.000Z' })
+
+    await adapter.context(auction())
+
+    const placeCall = calls.find((call) => call.params[4] === 'place')
+    const busStopCall = calls.find((call) => call.params[4] === 'highway' && (call.params[5] as string[])?.includes('bus_stop'))
+    const buildingCall = calls.find((call) => call.params[4] === 'building' && call.params[5] === undefined)
+    if (!placeCall || !busStopCall || !buildingCall) throw new Error('expected category query missing')
+    expect(placeCall.sql).toContain("osm_type = 'node'")
+    expect(busStopCall.sql).toContain("osm_type = 'node'")
+    expect(buildingCall.sql).not.toContain("osm_type = 'node'")
+  })
+
   it('dedupes an OSM object matched by more than one tag category', async () => {
     const shared: LocalOsmRow = { osm_type: 'way', osm_id: '99', lat: 52.001, lon: 13.001, tags: { building: 'yes', office: 'insurance' } }
     const { pool } = fakeOsmPool({
