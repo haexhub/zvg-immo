@@ -43,6 +43,8 @@ function makePool() {
     if (sql.includes('DELETE FROM auctions')) return { rowCount: 2 }
     if (sql.includes('DELETE FROM auction_snapshot')) return { rowCount: 3 }
     if (sql.includes('DELETE FROM extraction_cache')) return { rowCount: 4 }
+    if (sql.includes('DELETE FROM location_enrichment')) return { rowCount: 5 }
+    if (sql.includes('DELETE FROM auction_translations')) return { rowCount: 6 }
     throw new Error(`unexpected query: ${sql}`)
   })
   return { query }
@@ -104,6 +106,8 @@ describe('rebuildCountry', () => {
       currentAuctions: 2,
       auctionSnapshot: 3,
       extractionCache: 4,
+      locationEnrichment: 5,
+      auctionTranslations: 6,
     })
     expect(result.crawled).toMatchObject({ ok: 1, failed: 0, auctions: 1 })
     expect(state.pool?.query).toHaveBeenCalledWith('DELETE FROM list_cache WHERE country = $1', ['se'])
@@ -114,6 +118,14 @@ describe('rebuildCountry', () => {
     )
     expect(state.pool?.query).toHaveBeenCalledWith(
       'DELETE FROM extraction_cache WHERE platform = ANY($1::text[])',
+      [['se-kronofogden']],
+    )
+    expect(state.pool?.query).toHaveBeenCalledWith(
+      'DELETE FROM location_enrichment WHERE platform = ANY($1::text[])',
+      [['se-kronofogden']],
+    )
+    expect(state.pool?.query).toHaveBeenCalledWith(
+      'DELETE FROM auction_translations WHERE platform = ANY($1::text[])',
       [['se-kronofogden']],
     )
     expect(state.crawlSingle).toHaveBeenCalledWith({

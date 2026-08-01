@@ -9,6 +9,7 @@ import { getPool } from './db'
 import { writeListCache } from './list-cache'
 import { invalidateAuctionSnapshot } from './auction-snapshot'
 import { invalidateExtractionCache } from './extraction-cache'
+import { invalidateLocationEnrichmentCache } from './external-data/location-enrichment'
 
 export interface CountryRebuildResult {
   country: string
@@ -17,6 +18,8 @@ export interface CountryRebuildResult {
     auctionSnapshot: number
     extractionCache: number
     currentAuctions: number
+    locationEnrichment: number
+    auctionTranslations: number
   }
   crawled: {
     ok: number
@@ -44,6 +47,8 @@ export async function deleteCountryCurrentData(db: Pool, country: string): Promi
     currentAuctions,
     auctionSnapshot,
     extractionCache,
+    locationEnrichment,
+    auctionTranslations,
   ] = await Promise.all([
     db.query('DELETE FROM list_cache WHERE country = $1', [country]),
     db.query('DELETE FROM auctions WHERE country = $1', [country]),
@@ -55,16 +60,29 @@ export async function deleteCountryCurrentData(db: Pool, country: string): Promi
     platformIds.length > 0
       ? db.query('DELETE FROM extraction_cache WHERE platform = ANY($1::text[])', [platformIds])
       : Promise.resolve({ rowCount: 0 }),
+    // Kept in sync with extraction_cache/auction_snapshot above — these two
+    // are keyed by the same (platform, external_id) identity but were
+    // previously left out of the rebuild cleanup, leaving stale location
+    // context / translations behind for a country that was otherwise wiped.
+    platformIds.length > 0
+      ? db.query('DELETE FROM location_enrichment WHERE platform = ANY($1::text[])', [platformIds])
+      : Promise.resolve({ rowCount: 0 }),
+    platformIds.length > 0
+      ? db.query('DELETE FROM auction_translations WHERE platform = ANY($1::text[])', [platformIds])
+      : Promise.resolve({ rowCount: 0 }),
   ])
 
   invalidateAuctionSnapshot()
   invalidateExtractionCache()
+  invalidateLocationEnrichmentCache()
 
   return {
     listCache: listCache.rowCount ?? 0,
     auctionSnapshot: auctionSnapshot.rowCount ?? 0,
     extractionCache: extractionCache.rowCount ?? 0,
     currentAuctions: currentAuctions.rowCount ?? 0,
+    locationEnrichment: locationEnrichment.rowCount ?? 0,
+    auctionTranslations: auctionTranslations.rowCount ?? 0,
   }
 }
 
