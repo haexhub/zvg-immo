@@ -71,12 +71,20 @@ CREATE TABLE auctions (
 --   status = 'active' AND auction_date_iso < now()
 
 -- artifact_blobs (= heutiges raw_blobs, umbenannt)
--- artifact_captures (= heutiges raw_captures, umbenannt) + neue FK:
+-- artifact_captures (= heutiges raw_captures, umbenannt) + neue FK. country/
+-- region/authority/case_number werden dabei gedroppt (waren nur denormalisiert,
+-- weil es vorher keinen verlässlichen auctions-Anker gab) — bei Bedarf per
+-- JOIN auf auctions holen. Ein Gerichtswechsel/Aktenzeichen-Neuvergabe würde
+-- ohnehin praktisch immer eine neue external_id bedeuten, also eigene
+-- Identität — kein Grund, den alten Stand pro Capture einzufrieren.
+ALTER TABLE artifact_captures DROP COLUMN country, DROP COLUMN case_number, DROP COLUMN authority;
 ALTER TABLE artifact_captures
   ADD CONSTRAINT fk_artifact_captures_auction
   FOREIGN KEY (platform, external_id) REFERENCES auctions (platform, external_id);
 
--- artifact_versions (= heutiges raw_document_sets, umbenannt) + neue FK:
+-- artifact_versions (= heutiges raw_document_sets, umbenannt) + neue FK, gleiche
+-- Spalten-Bereinigung (country/region/case_number/authority raus):
+ALTER TABLE artifact_versions DROP COLUMN country, DROP COLUMN region, DROP COLUMN case_number, DROP COLUMN authority;
 ALTER TABLE artifact_versions
   ADD CONSTRAINT fk_artifact_versions_auction
   FOREIGN KEY (platform, external_id) REFERENCES auctions (platform, external_id);
@@ -208,6 +216,13 @@ ALTER TABLE location_enrichment
    `auction_details`**, nicht als eigene Spalten dort — die 1:n-Liste "welche
    Dateien genau" bleibt in `artifact_version_items`, `auction_details`
    referenziert nur das Manifest.
+11. **`country`/`region`/`authority`/`case_number` werden von
+   `artifact_captures`/`artifact_versions` gedroppt** (waren nur denormalisiert,
+   weil vorher kein verlässlicher `auctions`-Anker existierte) — bei Bedarf per
+   JOIN auf `auctions` holen. Ein Gerichtswechsel würde ohnehin praktisch immer
+   eine neue `external_id` bedeuten (andere Quelle = eigene Identität), es gibt
+   also keinen Fall, in dem der alte, pro Capture eingefrorene Stand gebraucht
+   würde.
 
 ## Offene Punkte — vom planenden Modell entschieden, NICHT explizit vom Nutzer
 bestätigt. Bei Umsetzung kurz gegenchecken, nicht blind übernehmen:
@@ -278,14 +293,33 @@ bestätigt. Bei Umsetzung kurz gegenchecken, nicht blind übernehmen:
 - `server/utils/country-rebuild.ts`: dieselbe Reihenfolge im Crawl-Loop von
   `rebuildCountry()`. `DELETE FROM auctions WHERE country = $1` aus
   `deleteCountryCurrentData()` entfernen (siehe "Offene Punkte" oben) —
-  ansonsten würde WP-2's FK das sofort mit einem Fehler quittieren, sobald
+  ansonsten würde die FK unten das sofort mit einem Fehler quittieren, sobald
   `artifact_versions`/`auction_details`-Zeilen existieren.
 - schema.sql: FK `artifact_captures`/`artifact_versions` → `auctions` ergänzen
-  (siehe DDL).
+  (siehe DDL), dabei `country`/`region`/`authority`/`case_number` von beiden
+  Tabellen droppen (waren nur denormalisiert, weil es vorher keinen
+  verlässlichen Anker gab — siehe DDL-Kommentar) sowie die dadurch obsoleten
+  Indizes (`idx_capt_az_time`, `idx_capt_country_region_time` auf
+  `artifact_captures`; `idx_doc_sets_country_region_time` auf
+  `artifact_versions`).
+- **Historische Vorsicht, bewusst gegengecheckt:** Genau dieses "region per
+  JOIN gegen `auctions` statt eigener Spalte" war schon einmal kaputt (siehe
+  schema.sql-Kommentar zum "Roh-Archiv-Fix" von 2026-07-3x) — damals wurde
+  `auctions` bei jedem `enrich`-Lauf komplett neu geschrieben, ein
+  fehlgeschlagener Upsert-Chunk konnte ein ganzes Bundesland im Archiv-Browser
+  verschwinden lassen, deshalb wurde `region` doch wieder direkt auf
+  `raw_captures` gespeichert. Der Grund dafür entfällt erst durch WP-1 selbst:
+  `auctions` wird jetzt beim allerersten Crawl geschrieben (nicht mehr spät von
+  `enrich.ts`) und nie gelöscht — der JOIN ist danach robuster als beim ersten
+  Anlauf. Trotzdem: Admin-Archiv-Browser-Endpunkte (`regions.get.ts`/
+  `cases.get.ts` o.ä.), die heute direkt aus `raw_captures`/`raw_document_sets`
+  lesen, müssen auf einen JOIN gegen `auctions` umgestellt werden — nicht
+  vergessen, sonst brechen sie beim Spalten-Drop.
 - Verifikation: zweifacher `refresh`-Lauf für ein Land → `auctions`-Zeile
   entsteht bereits nach dem ersten Lauf, vor jedem `enrich`. Manuelles Löschen
   einer referenzierten `auctions`-Zeile schlägt mit FK-Fehler fehl (Beweis,
-  dass die Reihenfolge jetzt erzwungen ist).
+  dass die Reihenfolge jetzt erzwungen ist). Archiv-Browser liefert nach der
+  Umstellung identische Land/Region-Navigation wie vorher.
 
 **WP-2 — `auction_details` einführen (additiv, Dual-Write)**
 - schema.sql: `CREATE TABLE auction_details` (siehe DDL).
