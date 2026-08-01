@@ -1,6 +1,7 @@
 import { refDebounced } from '@vueuse/core'
 import type { ComputedRef, InjectionKey, Ref } from 'vue'
 import { ALL_SCOPE, isAllScope } from '~/lib/auction-constants'
+import { toggleInArray } from '~/lib/toggle-array'
 import type { CountryEntry } from '~/server/crawlers/registry'
 
 const SORT_OPTIONS = ['default', 'dateAsc', 'priceAsc', 'priceDesc'] as const
@@ -65,6 +66,15 @@ export function useAuctionSearchState(options: {
   const yearBuiltMax = ref<number | null>(queryNum('yearBuiltMax'))
   const renovationYearMin = ref<number | null>(queryNum('renovationYearMin'))
   const renovationYearMax = ref<number | null>(queryNum('renovationYearMax'))
+  const nearSea = ref<number | null>(queryNum('nearSea'))
+  const nearLake = ref<number | null>(queryNum('nearLake'))
+  const nearRiver = ref<number | null>(queryNum('nearRiver'))
+  const nearMountain = ref<number | null>(queryNum('nearMountain'))
+  const nearAirport = ref<number | null>(queryNum('nearAirport'))
+  const urbanRural = ref<string>(queryStr('urbanRural', ALL_SCOPE))
+  const nearLat = ref<number | null>(queryNum('nearLat'))
+  const nearLng = ref<number | null>(queryNum('nearLng'))
+  const nearRadius = ref<number | null>(queryNum('nearRadius'))
   const categoryFilter = ref<string>(queryStr('category', ALL_SCOPE))
   const conditionFilter = ref<string>(queryStr('condition', ALL_SCOPE))
   const featuresFilter = ref<string[]>(queryList('features'))
@@ -147,6 +157,13 @@ export function useAuctionSearchState(options: {
     if (numOrNull(yearBuiltMax.value) != null) n++
     if (numOrNull(renovationYearMin.value) != null) n++
     if (numOrNull(renovationYearMax.value) != null) n++
+    if (numOrNull(nearSea.value) != null) n++
+    if (numOrNull(nearLake.value) != null) n++
+    if (numOrNull(nearRiver.value) != null) n++
+    if (numOrNull(nearMountain.value) != null) n++
+    if (numOrNull(nearAirport.value) != null) n++
+    if (!isAllScope(urbanRural.value)) n++
+    if (nearLat.value != null && nearLng.value != null) n++
     if (!isAllScope(categoryFilter.value)) n++
     if (!isAllScope(conditionFilter.value)) n++
     if (featuresFilter.value.length) n++
@@ -170,17 +187,11 @@ export function useAuctionSearchState(options: {
   }
 
   function toggleCountry(code: string): void {
-    const set = new Set(selectedCountries.value)
-    if (set.has(code)) set.delete(code)
-    else set.add(code)
-    selectedCountries.value = [...set]
+    selectedCountries.value = toggleInArray(selectedCountries.value, code)
   }
 
   function toggleRegion(key: string): void {
-    const set = new Set(selectedRegionKeys.value)
-    if (set.has(key)) set.delete(key)
-    else set.add(key)
-    selectedRegionKeys.value = [...set]
+    selectedRegionKeys.value = toggleInArray(selectedRegionKeys.value, key)
   }
 
   function setPriceBucket(min: number | null, max: number | null): void {
@@ -203,6 +214,15 @@ export function useAuctionSearchState(options: {
     yearBuiltMax.value = null
     renovationYearMin.value = null
     renovationYearMax.value = null
+    nearSea.value = null
+    nearLake.value = null
+    nearRiver.value = null
+    nearMountain.value = null
+    nearAirport.value = null
+    urbanRural.value = ALL_SCOPE
+    nearLat.value = null
+    nearLng.value = null
+    nearRadius.value = null
     categoryFilter.value = ALL_SCOPE
     conditionFilter.value = ALL_SCOPE
     featuresFilter.value = []
@@ -253,7 +273,7 @@ export function useAuctionSearchState(options: {
   })
 
   watch(
-    [selectedCountries, selectedRegionKeys, debouncedSearch, authorityFilter, priceMin, priceMax, landAreaMin, landAreaMax, livingAreaMin, livingAreaMax, yearBuiltMin, yearBuiltMax, renovationYearMin, renovationYearMax, categoryFilter, conditionFilter, featuresFilter, onlyWithPhotos, includeCancelled, hideRulesOnly, boundToMap, sortBy, view],
+    [selectedCountries, selectedRegionKeys, debouncedSearch, authorityFilter, priceMin, priceMax, landAreaMin, landAreaMax, livingAreaMin, livingAreaMax, yearBuiltMin, yearBuiltMax, renovationYearMin, renovationYearMax, nearSea, nearLake, nearRiver, nearMountain, nearAirport, urbanRural, nearLat, nearLng, nearRadius, categoryFilter, conditionFilter, featuresFilter, onlyWithPhotos, includeCancelled, hideRulesOnly, boundToMap, sortBy, view],
     () => {
       const query: Record<string, string> = {}
       if (selectedCountries.value.length) query.country = selectedCountries.value.join(',')
@@ -270,6 +290,17 @@ export function useAuctionSearchState(options: {
       if (numOrNull(yearBuiltMax.value) != null) query.yearBuiltMax = String(numOrNull(yearBuiltMax.value))
       if (numOrNull(renovationYearMin.value) != null) query.renovationYearMin = String(numOrNull(renovationYearMin.value))
       if (numOrNull(renovationYearMax.value) != null) query.renovationYearMax = String(numOrNull(renovationYearMax.value))
+      if (numOrNull(nearSea.value) != null) query.nearSea = String(numOrNull(nearSea.value))
+      if (numOrNull(nearLake.value) != null) query.nearLake = String(numOrNull(nearLake.value))
+      if (numOrNull(nearRiver.value) != null) query.nearRiver = String(numOrNull(nearRiver.value))
+      if (numOrNull(nearMountain.value) != null) query.nearMountain = String(numOrNull(nearMountain.value))
+      if (numOrNull(nearAirport.value) != null) query.nearAirport = String(numOrNull(nearAirport.value))
+      if (!isAllScope(urbanRural.value)) query.urbanRural = urbanRural.value
+      if (nearLat.value != null && nearLng.value != null) {
+        query.nearLat = String(nearLat.value)
+        query.nearLng = String(nearLng.value)
+        query.nearRadius = String(numOrNull(nearRadius.value) ?? 25)
+      }
       if (!isAllScope(categoryFilter.value)) query.category = categoryFilter.value
       if (!isAllScope(conditionFilter.value)) query.condition = conditionFilter.value
       if (featuresFilter.value.length) query.features = featuresFilter.value.join(',')
@@ -300,6 +331,15 @@ export function useAuctionSearchState(options: {
     yearBuiltMax.value = queryNum('yearBuiltMax')
     renovationYearMin.value = queryNum('renovationYearMin')
     renovationYearMax.value = queryNum('renovationYearMax')
+    nearSea.value = queryNum('nearSea')
+    nearLake.value = queryNum('nearLake')
+    nearRiver.value = queryNum('nearRiver')
+    nearMountain.value = queryNum('nearMountain')
+    nearAirport.value = queryNum('nearAirport')
+    urbanRural.value = queryStr('urbanRural', ALL_SCOPE)
+    nearLat.value = queryNum('nearLat')
+    nearLng.value = queryNum('nearLng')
+    nearRadius.value = queryNum('nearRadius')
     categoryFilter.value = queryStr('category', ALL_SCOPE)
     conditionFilter.value = queryStr('condition', ALL_SCOPE)
     featuresFilter.value = queryList('features')
@@ -346,6 +386,15 @@ export function useAuctionSearchState(options: {
     yearBuiltMax,
     renovationYearMin,
     renovationYearMax,
+    nearSea,
+    nearLake,
+    nearRiver,
+    nearMountain,
+    nearAirport,
+    urbanRural,
+    nearLat,
+    nearLng,
+    nearRadius,
     categoryFilter,
     conditionFilter,
     featuresFilter,

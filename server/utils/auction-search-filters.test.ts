@@ -68,4 +68,52 @@ describe('buildAuctionSearchFilter', () => {
 
     expect(predicate).toContain('a.auction_date_iso IS NULL OR a.auction_date_iso >= now()')
   })
+
+  it('adds an osm_local_elements proximity clause for a set Umgebung filter', async () => {
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+    const { predicate, values } = await buildAuctionSearchFilter(db, { nearSea: '5', llmOnly: '0' })
+
+    expect(predicate).toContain('EXISTS')
+    expect(predicate).toContain('osm_local_elements')
+    expect(values).toContain('natural')
+    expect(values).toContain('coastline')
+    expect(values).toContain(5_000)
+  })
+
+  it('ignores a zero or unset Umgebung distance', async () => {
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+    const { predicate } = await buildAuctionSearchFilter(db, { nearSea: '0', llmOnly: '0' })
+
+    expect(predicate).not.toContain('osm_local_elements')
+  })
+
+  it('negates the place-proximity clause for a rural request', async () => {
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+    const { predicate, values } = await buildAuctionSearchFilter(db, { urbanRural: 'rural', llmOnly: '0' })
+
+    expect(predicate).toContain('NOT (')
+    expect(values).toContain('place')
+  })
+
+  it('filters by geolocated distance once lat/lng/radius are all present', async () => {
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+    const { predicate, values } = await buildAuctionSearchFilter(db, {
+      nearLat: '52.5',
+      nearLng: '13.4',
+      nearRadius: '25',
+      llmOnly: '0',
+    })
+
+    expect(predicate).toContain('ST_DWithin')
+    expect(values).toContain(52.5)
+    expect(values).toContain(13.4)
+    expect(values).toContain(25_000)
+  })
+
+  it('skips the geolocation filter when the radius is missing', async () => {
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+    const { predicate } = await buildAuctionSearchFilter(db, { nearLat: '52.5', nearLng: '13.4', llmOnly: '0' })
+
+    expect(predicate).not.toContain('ST_DWithin')
+  })
 })

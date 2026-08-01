@@ -568,7 +568,49 @@
       "boundToMap": "Kartenbereich",
       "sort": "Sortierung",
       "llmOnly": "vollständig verarbeitet",
-      "view": "Ansicht"
+      "view": "Ansicht",
+      "nearSea": "Nähe zum Meer",
+      "nearLake": "Nähe zum See",
+      "nearRiver": "Nähe zum Fluss",
+      "nearMountain": "Nähe zum Berg",
+      "nearAirport": "Nähe zum Flughafen",
+      "urbanRural": "Umgebungstyp",
+      "nearLat": "Standort (Breite)",
+      "nearLng": "Standort (Länge)",
+      "nearRadius": "Umkreis"
+    }
+  },
+  "searchBar": {
+    "activeCount": "{count} aktiv",
+    "apply": "Anwenden",
+    "location": {
+      "label": "Ort",
+      "placeholder": "Reiseziele suchen",
+      "recent": "Zuletzt gesucht",
+      "suggested": "Vorgeschlagene Reiseziele",
+      "nearby": "In der Nähe",
+      "nearbyPending": "Standort wird ermittelt …",
+      "geolocationUnsupported": "Geolocation wird von diesem Browser nicht unterstützt.",
+      "geolocationFailed": "Standort konnte nicht ermittelt werden."
+    },
+    "properties": {
+      "label": "Eigenschaften",
+      "placeholder": "Preis, Fläche, Objektart …"
+    },
+    "environment": {
+      "label": "Umgebung",
+      "placeholder": "Meer, Berge, Flughafen …",
+      "sea": "Nähe zum Meer",
+      "lake": "Nähe zum See",
+      "river": "Nähe zum Fluss",
+      "mountain": "Nähe zu Bergen",
+      "airport": "Nähe zum Flughafen",
+      "withinKm": "bis {km} km",
+      "any": "egal",
+      "urbanRural": "Umgebungstyp",
+      "either": "Egal",
+      "urban": "Urban",
+      "rural": "Ländlich"
     }
   },
   "authStatus": {

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import type { CountryEntry } from '~/server/crawlers/registry'
+import type { AuctionSearchResponse } from '~/server/api/auctions.get'
 import { AUCTION_SEARCH_STATE_KEY, useAuctionSearchState } from '~/composables/useAuctionSearchState'
+import { AUCTION_SEARCH_RESULT_KEY } from '~/composables/useAuctionSearchResult'
 
 // Owns the single useAuctionSearchState instance for /search — the header
 // slot below (rendered here) and the page (injecting AUCTION_SEARCH_STATE_KEY)
@@ -8,9 +10,9 @@ import { AUCTION_SEARCH_STATE_KEY, useAuctionSearchState } from '~/composables/u
 // common ancestor of "always-visible header" and "page content" that Nuxt's
 // automatic layout wiring (app.vue's <NuxtLayout><NuxtPage/></NuxtLayout>)
 // gives us — a page can't hand named slot content up to its own layout.
-const route = useRoute()
-const router = useRouter()
-const { eurToDisplay, displayToEur } = useCurrencyDisplay()
+const { eurToDisplay, displayToEur, currency } = useCurrencyDisplay()
+const propertyTypeLabel = usePropertyTypeLabel()
+const { locale } = useI18n()
 
 // Admin-configured default for the hideRulesOnly filter (/settings'
 // "Dashboard-Anzeige" — see server/utils/app-settings.ts's
@@ -36,25 +38,47 @@ const state = useAuctionSearchState({
 })
 provide(AUCTION_SEARCH_STATE_KEY, { ...state, countries })
 
-const { search, filtersOpen, selectedCountries, activeFilterCount, initializeMountedState } = state
+// Search results are filtered and paginated in Postgres. Only compact card
+// summaries reach the browser; detail text, documents and galleries stay on
+// the per-auction endpoint. Lives here (not pages/search.vue) so the header's
+// Properties popover can read the same facets (courts/categories) the list
+// derives them from — see AUCTION_SEARCH_RESULT_KEY.
+const { data, pending, error, refresh } = useLazyFetch<AuctionSearchResponse | null>('/api/auctions', {
+  query: state.queryParams,
+  default: () => null,
+})
+const courts = computed<string[]>(() => data.value?.facets.authorities ?? [])
+const categories = computed<Array<{ id: string; label: string; count: number }>>(() => {
+  return (data.value?.facets.categories ?? [])
+    .map(({ id, count }) => ({ id, label: propertyTypeLabel(id), count }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, locale.value))
+})
+provide(AUCTION_SEARCH_RESULT_KEY, { data, pending, error, refresh, courts, categories })
 
-// A country suggestion (see SearchLocationAutocomplete) is a real filter, not
-// text — pick it, and the header search box just scopes to that country.
-function selectHeaderCountry(code: string): void {
-  selectedCountries.value = [code]
+const {
+  search, selectedCountries, selectedRegionKeys, availableRegions, headerLabel,
+  priceMin, priceMax, landAreaMin, landAreaMax, livingAreaMin, livingAreaMax,
+  yearBuiltMin, yearBuiltMax, renovationYearMin, renovationYearMax,
+  authorityFilter, categoryFilter, conditionFilter, featuresFilter,
+  onlyWithPhotos, includeCancelled, hideRulesOnly,
+  nearSea, nearLake, nearRiver, nearMountain, nearAirport, urbanRural,
+  nearLat, nearLng, nearRadius,
+  toggleCountry, toggleRegion, initializeMountedState,
+} = state
+
+function setNearby(lat: number, lng: number): void {
+  nearLat.value = lat
+  nearLng.value = lng
+  nearRadius.value = 25
+}
+
+const router = useRouter()
+function pickRecent(query: Record<string, string>): void {
+  router.push({ path: '/search', query })
 }
 
 onMounted(() => {
   initializeMountedState()
-  // The landing page's own filter button has nowhere to open a filter panel
-  // (it has no filter state of its own) — it navigates here with this flag
-  // instead, see pages/index.vue.
-  if (route.query.openFilters === '1') {
-    filtersOpen.value = true
-    const query = { ...route.query }
-    delete query.openFilters
-    router.replace({ query })
-  }
 })
 </script>
 
@@ -62,13 +86,44 @@ onMounted(() => {
   <div class="h-screen overflow-hidden flex flex-col">
     <SiteHeader>
       <template #search>
-        <SearchFilterBar
+        <SearchBar
           v-model:search="search"
+          v-model:price-min="priceMin"
+          v-model:price-max="priceMax"
+          v-model:land-area-min="landAreaMin"
+          v-model:land-area-max="landAreaMax"
+          v-model:living-area-min="livingAreaMin"
+          v-model:living-area-max="livingAreaMax"
+          v-model:year-built-min="yearBuiltMin"
+          v-model:year-built-max="yearBuiltMax"
+          v-model:renovation-year-min="renovationYearMin"
+          v-model:renovation-year-max="renovationYearMax"
+          v-model:authority-filter="authorityFilter"
+          v-model:category-filter="categoryFilter"
+          v-model:condition-filter="conditionFilter"
+          v-model:features-filter="featuresFilter"
+          v-model:only-with-photos="onlyWithPhotos"
+          v-model:include-cancelled="includeCancelled"
+          v-model:hide-rules-only="hideRulesOnly"
+          v-model:near-sea="nearSea"
+          v-model:near-lake="nearLake"
+          v-model:near-river="nearRiver"
+          v-model:near-mountain="nearMountain"
+          v-model:near-airport="nearAirport"
+          v-model:urban-rural="urbanRural"
+          :location-summary="headerLabel"
           :countries="countries ?? []"
-          :active-filter-count="activeFilterCount"
-          :placeholder="$t('filters.searchPlaceholder')"
-          @open-filters="filtersOpen = true"
-          @select-country="selectHeaderCountry"
+          :selected-countries="selectedCountries"
+          :available-regions="availableRegions"
+          :selected-region-keys="selectedRegionKeys"
+          :courts="courts"
+          :categories="categories"
+          :currency="currency"
+          @toggle-country="toggleCountry"
+          @toggle-region="toggleRegion"
+          @select-country="toggleCountry"
+          @set-nearby="setNearby"
+          @pick-recent="pickRecent"
         />
       </template>
     </SiteHeader>
