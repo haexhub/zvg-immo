@@ -262,8 +262,8 @@ describe('GeminiNativeProvider.extract — 429 pacing/retry', () => {
   // independent: a key can sit well under its request limit while its
   // Gutachten PDFs blow the token one (measured in prod 2026-08-01: 6/15 RPM,
   // 298.92k/250k TPM).
-  function okResponseWithTokens(totalTokenCount: number) {
-    return { ...okResponse, usageMetadata: { totalTokenCount } }
+  function okResponseWithTokens(promptTokenCount: number) {
+    return { ...okResponse, usageMetadata: { promptTokenCount } }
   }
 
   it('does not delay a fresh bucket even for an oversized first request', async () => {

@@ -109,7 +109,10 @@ async function waitForTokenBudget(gate: PaceGate): Promise<void> {
 }
 
 function recordTokenUsage(bucket: string, resp: unknown): void {
-  const tokens = (resp as { usageMetadata?: { totalTokenCount?: unknown } })?.usageMetadata?.totalTokenCount
+  // The quota (GenerateContentInputTokensPerModelPerMinute-FreeTier) is scoped
+  // to input tokens — promptTokenCount, not totalTokenCount, which also folds
+  // in generated output tokens and would overcount against this specific cap.
+  const tokens = (resp as { usageMetadata?: { promptTokenCount?: unknown } })?.usageMetadata?.promptTokenCount
   if (typeof tokens !== 'number' || !Number.isFinite(tokens)) return
   getGate(bucket).tokenWindow.push({ at: Date.now(), tokens })
 }
