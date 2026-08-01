@@ -50,6 +50,25 @@ export const DEFAULT_MODEL = 'gemini-flash-latest'
 const MIN_REQUEST_GAP_MS = 12_500
 const MAX_RETRIES = 3
 
+// GenerateContentInputTokensPerModelPerMinute-FreeTier caps gemini flash-lite
+// at 250k tokens/minute per key — measured 2026-08-01 against a key sitting at
+// a comfortable 6/15 on requests/minute while already at 298.92k/250k on
+// tokens. The MIN_REQUEST_GAP_MS gate above never sees that: it counts
+// requests, not the size of the Gutachten PDFs inlined into them, so a
+// handful of large documents blow the token quota well before the request
+// quota notices anything wrong.
+const TPM_CAP = 250_000
+const TOKEN_WINDOW_MS = 60_000
+
+type PaceGate = {
+  lastRequestAt: number
+  queue: Promise<void>
+  /** Actual tokens (from each response's own usageMetadata) spent by this
+   *  bucket in roughly the trailing minute — not estimated, since there's no
+   *  cheap way to know an inlineData PDF's token cost before sending it. */
+  tokenWindow: { at: number; tokens: number }[]
+}
+
 /** One pacing gate per quota bucket rather than one process-wide gate. The
  *  429s name their own scope: `GenerateRequestsPerMinutePerProjectPerModel-
  *  FreeTier` (measured against the live API 2026-07-31), i.e. the limit is per
@@ -58,23 +77,58 @@ const MAX_RETRIES = 3
  *  four keys from four projects assigned to the extraction chain, throughput
  *  stayed at one request per 12.5s instead of four. Keyed by apiKey+model so
  *  the gate granularity matches the quota exactly. */
-const paceGates = new Map<string, { lastRequestAt: number; queue: Promise<void> }>()
+const paceGates = new Map<string, PaceGate>()
+
+function getGate(bucket: string): PaceGate {
+  const gate = paceGates.get(bucket) ?? { lastRequestAt: 0, queue: Promise.resolve(), tokenWindow: [] }
+  paceGates.set(bucket, gate)
+  return gate
+}
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+/** Drops entries older than TOKEN_WINDOW_MS and returns the remaining sum. */
+function prunedTokenSum(gate: PaceGate, now: number): number {
+  gate.tokenWindow = gate.tokenWindow.filter((entry) => entry.at > now - TOKEN_WINDOW_MS)
+  return gate.tokenWindow.reduce((sum, entry) => sum + entry.tokens, 0)
+}
+
+/** Blocks until the bucket's trailing-minute token usage is back under
+ *  TPM_CAP. Only engages once the window is actually over budget, so it never
+ *  delays a bucket that hasn't hit it yet — the first oversized request in a
+ *  window still goes through, and this is what makes the next one wait. */
+async function waitForTokenBudget(gate: PaceGate): Promise<void> {
+  for (;;) {
+    const now = Date.now()
+    if (prunedTokenSum(gate, now) < TPM_CAP) return
+    const oldest = gate.tokenWindow[0]!
+    await sleep(oldest.at + TOKEN_WINDOW_MS - now)
+  }
+}
+
+function recordTokenUsage(bucket: string, resp: unknown): void {
+  // The quota (GenerateContentInputTokensPerModelPerMinute-FreeTier) is scoped
+  // to input tokens — promptTokenCount, not totalTokenCount, which also folds
+  // in generated output tokens and would overcount against this specific cap.
+  const tokens = (resp as { usageMetadata?: { promptTokenCount?: unknown } })?.usageMetadata?.promptTokenCount
+  if (typeof tokens !== 'number' || !Number.isFinite(tokens)) return
+  getGate(bucket).tokenWindow.push({ at: Date.now(), tokens })
+}
+
 /** Blocks until at least MIN_REQUEST_GAP_MS has passed since the last call
  *  against the same quota bucket, across ALL concurrent callers (queue
- *  serialises the wait-then-stamp dance, same as geocode.ts). Retries reuse
+ *  serialises the wait-then-stamp dance, same as geocode.ts), and until the
+ *  bucket's trailing-minute token usage is back under TPM_CAP. Retries reuse
  *  this too, so a 429 is paced the same as a fresh request instead of stacking
  *  an extra backoff on top. */
 async function paceNextRequest(bucket: string): Promise<void> {
-  const gate = paceGates.get(bucket) ?? { lastRequestAt: 0, queue: Promise.resolve() }
-  paceGates.set(bucket, gate)
+  const gate = getGate(bucket)
   const run = gate.queue.then(async () => {
     const wait = gate.lastRequestAt + MIN_REQUEST_GAP_MS - Date.now()
     if (wait > 0) await sleep(wait)
+    await waitForTokenBudget(gate)
     gate.lastRequestAt = Date.now()
   })
   gate.queue = run.catch(() => {})
@@ -119,6 +173,7 @@ export class GeminiNativeProvider implements ExtractionProvider {
           body,
           signal: AbortSignal.timeout(60_000),
         })
+        recordTokenUsage(bucket, resp)
         break
       } catch (err) {
         if (isRateLimitError(err)) {
