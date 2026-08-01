@@ -203,6 +203,14 @@ function refreshMarkers(): void {
 
   const seen = new Set<string>()
   let hasPoints = false
+  // Collected instead of calling source.addFeature() per marker: the cluster
+  // source re-clusters its entire feature set on every 'change' event from
+  // the wrapped source, and addFeature() fires one such event per call —
+  // O(n) reclusters for n new markers. addFeatures() below fires the event
+  // once for the whole batch, which is the only way an unfiltered "all
+  // countries" load (up to 5000 markers, see MAX_MARKERS) doesn't lock up
+  // the tab on every navigation to /search.
+  const newFeatures: Feature<Point>[] = []
   for (const a of props.auctions) {
     if (a.lat == null || a.lng == null) continue
     const key = auctionKey(a)
@@ -215,13 +223,14 @@ function refreshMarkers(): void {
       feature.set('active', key === props.activeAuctionKey)
       if (key === props.activeAuctionKey) lastActiveKey = key
       featuresByKey.set(key, feature)
-      source.addFeature(feature)
+      newFeatures.push(feature)
     }
     // Refreshed on every pass (not just on creation) so a popup opened after
     // a later poll shows live data instead of the auction as it was when the
     // marker was first created.
     feature.set('auction', a)
   }
+  if (newFeatures.length) source.addFeatures(newFeatures)
   // Remove features whose auctions dropped out; close an open popup pointing
   // at a removed feature.
   for (const [key, feature] of featuresByKey) {

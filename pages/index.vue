@@ -193,7 +193,6 @@ function pickRecent(query: Record<string, string>): void {
             :selected-countries="selectedCountries"
             :available-regions="availableRegions"
             :selected-region-keys="selectedRegionKeys"
-            :courts="[]"
             :categories="[]"
             :currency="currency"
             @toggle-country="toggleCountry"

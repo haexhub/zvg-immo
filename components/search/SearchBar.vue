@@ -14,7 +14,6 @@ const props = defineProps<{
   selectedCountries: string[]
   availableRegions: Array<{ key: string; name: string; countryName: string }>
   selectedRegionKeys: string[]
-  courts: string[]
   categories: Array<{ id: string; label: string; count: number }>
   currency: string
 }>()
@@ -115,7 +114,7 @@ const environmentSummary = computed(() => {
           <span class="block truncate text-sm text-muted-foreground">{{ locationSummary }}</span>
         </button>
       </PopoverTrigger>
-      <PopoverContent class="w-80" align="start">
+      <PopoverContent class="w-md" align="start">
         <SearchLocationPopover
           v-model:search="search"
           :countries="countries"
@@ -147,7 +146,7 @@ const environmentSummary = computed(() => {
           </span>
         </button>
       </PopoverTrigger>
-      <PopoverContent class="w-80" align="start">
+      <PopoverContent class="w-md" align="start">
         <SearchPropertiesPopover
           v-model:price-min="priceMin"
           v-model:price-max="priceMax"
@@ -167,7 +166,6 @@ const environmentSummary = computed(() => {
           v-model:include-cancelled="includeCancelled"
           v-model:hide-rules-only="hideRulesOnly"
           v-model:open="propertiesOpen"
-          :courts="courts"
           :categories="categories"
           :currency="currency"
         />
@@ -189,7 +187,7 @@ const environmentSummary = computed(() => {
           </span>
         </button>
       </PopoverTrigger>
-      <PopoverContent class="w-80" align="end">
+      <PopoverContent class="w-md" align="end">
         <SearchEnvironmentPopover
           v-model:near-sea="nearSea"
           v-model:near-lake="nearLake"

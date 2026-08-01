@@ -12,7 +12,6 @@ import { useFilterDraft } from '~/composables/useFilterDraft'
 
 const props = defineProps<{
   open: boolean
-  courts: string[]
   categories: Array<{ id: string; label: string; count: number }>
   currency: string
 }>()
@@ -145,19 +144,6 @@ function apply(): void {
 <template>
   <div class="flex max-h-[70vh] flex-col">
     <div class="flex-1 overflow-y-auto space-y-5 pb-4">
-      <div class="space-y-2">
-        <Label>{{ $t('filters.authority') }}</Label>
-        <Select v-model="draft.authorityFilter">
-          <SelectTrigger class="w-full">
-            <SelectValue :placeholder="$t('filters.authorityPlaceholder')" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem :value="ALL_SCOPE">{{ $t('filters.allCourts') }}</SelectItem>
-            <SelectItem v-for="c in courts" :key="c" :value="c">{{ c }}</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-
       <div class="space-y-2">
         <Label>{{ $t('filters.marketValue') }} ({{ currency }})</Label>
         <div class="flex items-center gap-2">
