@@ -2,9 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('~/server/utils/db', () => ({ getPool: vi.fn() }))
 vi.mock('~/server/crawlers/registry', () => ({
-  ensureEnabledCountriesLoaded: vi.fn(async () => ['de']),
-  getEnabledCountryCodes: vi.fn(() => ['de']),
-  listCountries: vi.fn(() => [{ code: 'de', name: 'Deutschland', regions: [] }]),
+  ensureEnabledCountriesLoaded: vi.fn(async () => ['se', 'de', 'bg']),
+  getEnabledCountryCodes: vi.fn(() => ['se', 'de', 'bg']),
+  listCountries: vi.fn(() => [
+    { code: 'de', name: 'Deutschland', regions: [] },
+    { code: 'se', name: 'Schweden', regions: [] },
+    { code: 'bg', name: 'Bulgarien', regions: [] },
+  ]),
 }))
 vi.mock('~/server/utils/app-settings', () => ({
   getHideRulesOnlyAuctions: vi.fn(async () => false),
@@ -43,21 +47,35 @@ function row(overrides: Partial<Record<string, unknown>> = {}) {
 }
 
 describe('/api/landing/rails', () => {
-  it('returns country tiles with counts/thumbnails and a best-condition rail', async () => {
+  it('returns country rails (skipping empty ones), a best-condition rail and geo rails', async () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     vi.stubGlobal('setResponseHeader', vi.fn())
     vi.stubGlobal('createError', (input: object) => Object.assign(new Error('api error'), input))
 
     const query = vi.fn(async (sql: string, params: unknown[]) => {
-      if (sql.includes('DISTINCT ON (a.country)')) {
-        return { rows: [row()], rowCount: 1 }
-      }
-      if (sql.includes('GROUP BY a.country')) {
-        return { rows: [{ country: 'de', count: 61 }], rowCount: 1 }
-      }
       if (sql.includes('CASE a.condition')) {
         expect(params.at(-1)).toBe(12)
         return { rows: [row({ external_id: '43', extraction: { condition: 'gepflegt', features: [], source: 'llm' } })], rowCount: 1 }
+      }
+      if (sql.includes('osm_local_elements')) {
+        expect(params.at(-1)).toBe(12)
+        const tagValue = params[2]
+        const byTagValue: Record<string, ReturnType<typeof row>[]> = {
+          coastline: [row({ external_id: '10' })],
+          peak: [row({ external_id: '11' })],
+          water: [row({ external_id: '12' })],
+          river: [row({ external_id: '13' })],
+        }
+        const rows = byTagValue[tagValue as string]
+        if (!rows) throw new Error(`unexpected geo tag value: ${String(tagValue)}`)
+        return { rows, rowCount: rows.length }
+      }
+      if (sql.includes('a.country = ANY(')) {
+        const code = (params[0] as string[])[0]
+        if (code === 'se') return { rows: [row({ external_id: '1', country: 'se' })], rowCount: 1 }
+        if (code === 'de') return { rows: [row({ external_id: '2', country: 'de' })], rowCount: 1 }
+        if (code === 'bg') return { rows: [], rowCount: 0 }
+        throw new Error(`unexpected country: ${code}`)
       }
       throw new Error(`unexpected query: ${sql}`)
     })
@@ -66,15 +84,27 @@ describe('/api/landing/rails', () => {
     const handler = (await import('./rails.get')).default as unknown as (event: unknown) => Promise<unknown>
 
     const result = await handler({}) as {
-      countries: Array<{ code: string; name: string; count: number; thumbnailUrl: string | null }>
+      countryRails: Array<{ code: string; name: string; auctions: Array<{ externalId: string }> }>
       bestCondition: Array<{ externalId: string }>
+      sea: Array<{ externalId: string }>
+      mountains: Array<{ externalId: string }>
+      lakes: Array<{ externalId: string }>
+      rivers: Array<{ externalId: string }>
     }
 
-    expect(result.countries).toEqual([
-      { code: 'de', name: 'Deutschland', count: 61, thumbnailUrl: '/api/auction-image/zvg-portal/42/first.jpg' },
-    ])
+    expect(result.countryRails).toHaveLength(2)
+    expect(result.countryRails[0]).toMatchObject({ code: 'se', name: 'Schweden' })
+    expect(result.countryRails[0]!.auctions[0]!.externalId).toBe('1')
+    expect(result.countryRails[1]).toMatchObject({ code: 'de', name: 'Deutschland' })
+    expect(result.countryRails.some((r) => r.code === 'bg')).toBe(false)
+
     expect(result.bestCondition).toHaveLength(1)
     expect(result.bestCondition[0]!.externalId).toBe('43')
+
+    expect(result.sea[0]!.externalId).toBe('10')
+    expect(result.mountains[0]!.externalId).toBe('11')
+    expect(result.lakes[0]!.externalId).toBe('12')
+    expect(result.rivers[0]!.externalId).toBe('13')
   })
 
   it('fails visibly when the serving database is not configured', async () => {

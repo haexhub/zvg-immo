@@ -26,13 +26,28 @@
       "trust": ["100 % kostenlos", "Ohne Anmeldung", "Live von Amts- & Gerichtsportalen"]
     },
     "rails": {
-      "countries": {
-        "title": "Nach Land durchsuchen",
-        "count": "{count} Auktionen"
+      "country": {
+        "title": "Auktionen in {name}"
       },
       "bestCondition": {
         "title": "Am besten gepflegt",
         "subtitle": "Neuwertige und gepflegte Objekte"
+      },
+      "sea": {
+        "title": "Immobilien am Meer",
+        "subtitle": "Bis 5 km zur Küste"
+      },
+      "mountains": {
+        "title": "Immobilien in den Bergen",
+        "subtitle": "Bis 15 km zum nächsten Gipfel"
+      },
+      "lakes": {
+        "title": "Immobilien am See",
+        "subtitle": "Bis 5 km zum Wasser"
+      },
+      "rivers": {
+        "title": "Immobilien am Fluss",
+        "subtitle": "Bis 2 km zum Fluss"
       }
     },
     "footer": {

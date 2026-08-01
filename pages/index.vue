@@ -42,9 +42,9 @@ function submitSearch() {
 
     <!-- Category rails -->
     <div class="mx-auto w-full max-w-7xl px-6">
-      <LandingCategoryRail v-if="rails?.countries.length" :title="$t('landing.rails.countries.title')">
-        <div v-for="c in rails.countries" :key="c.code" class="w-44 shrink-0 snap-start sm:w-52">
-          <LandingCountryTile :country="c" />
+      <LandingCategoryRail v-for="rail in rails?.countryRails" :key="rail.code" :title="$t('landing.rails.country.title', { name: rail.name })">
+        <div v-for="a in rail.auctions" :key="`${a.platform}:${a.externalId}`" class="w-72 shrink-0 snap-start">
+          <AuctionCard :auction="a" class="h-full" />
         </div>
       </LandingCategoryRail>
 
@@ -54,6 +54,46 @@ function submitSearch() {
         :subtitle="$t('landing.rails.bestCondition.subtitle')"
       >
         <div v-for="a in rails.bestCondition" :key="`${a.platform}:${a.externalId}`" class="w-72 shrink-0 snap-start">
+          <AuctionCard :auction="a" class="h-full" />
+        </div>
+      </LandingCategoryRail>
+
+      <LandingCategoryRail
+        v-if="rails?.sea.length"
+        :title="$t('landing.rails.sea.title')"
+        :subtitle="$t('landing.rails.sea.subtitle')"
+      >
+        <div v-for="a in rails.sea" :key="`${a.platform}:${a.externalId}`" class="w-72 shrink-0 snap-start">
+          <AuctionCard :auction="a" class="h-full" />
+        </div>
+      </LandingCategoryRail>
+
+      <LandingCategoryRail
+        v-if="rails?.mountains.length"
+        :title="$t('landing.rails.mountains.title')"
+        :subtitle="$t('landing.rails.mountains.subtitle')"
+      >
+        <div v-for="a in rails.mountains" :key="`${a.platform}:${a.externalId}`" class="w-72 shrink-0 snap-start">
+          <AuctionCard :auction="a" class="h-full" />
+        </div>
+      </LandingCategoryRail>
+
+      <LandingCategoryRail
+        v-if="rails?.lakes.length"
+        :title="$t('landing.rails.lakes.title')"
+        :subtitle="$t('landing.rails.lakes.subtitle')"
+      >
+        <div v-for="a in rails.lakes" :key="`${a.platform}:${a.externalId}`" class="w-72 shrink-0 snap-start">
+          <AuctionCard :auction="a" class="h-full" />
+        </div>
+      </LandingCategoryRail>
+
+      <LandingCategoryRail
+        v-if="rails?.rivers.length"
+        :title="$t('landing.rails.rivers.title')"
+        :subtitle="$t('landing.rails.rivers.subtitle')"
+      >
+        <div v-for="a in rails.rivers" :key="`${a.platform}:${a.externalId}`" class="w-72 shrink-0 snap-start">
           <AuctionCard :auction="a" class="h-full" />
         </div>
       </LandingCategoryRail>

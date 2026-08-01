@@ -26,13 +26,28 @@
       "trust": ["100% free", "No sign-up needed", "Live from court portals"]
     },
     "rails": {
-      "countries": {
-        "title": "Browse by country",
-        "count": "{count} auctions"
+      "country": {
+        "title": "Auctions in {name}"
       },
       "bestCondition": {
         "title": "Best maintained",
         "subtitle": "Like-new and well-kept properties"
+      },
+      "sea": {
+        "title": "Properties by the sea",
+        "subtitle": "Within 5 km of the coast"
+      },
+      "mountains": {
+        "title": "Properties in the mountains",
+        "subtitle": "Within 15 km of the nearest peak"
+      },
+      "lakes": {
+        "title": "Properties by the lake",
+        "subtitle": "Within 5 km of water"
+      },
+      "rivers": {
+        "title": "Properties by the river",
+        "subtitle": "Within 2 km of a river"
       }
     },
     "footer": {
