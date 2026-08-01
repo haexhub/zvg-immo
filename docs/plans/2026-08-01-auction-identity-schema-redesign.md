@@ -70,6 +70,25 @@ CREATE TABLE auctions (
 -- "beendet" ist reine Lesezeit-Berechnung, keine eigene Spalte/Pflege:
 --   status = 'active' AND auction_date_iso < now()
 
+-- Backfill VOR den FKs unten: archiveDocumentSet/reprocess.ts können heute
+-- raw_captures/raw_document_sets-Zeilen schreiben, bevor je eine auctions-
+-- Zeile existiert (siehe Punkt 1 unter "Im Gespräch geklärte Entscheidungen" —
+-- WP-1 erzwingt das nur für künftige Schreibpfade). Ein direktes ADD
+-- CONSTRAINT würde auf diesen bestehenden verwaisten Zeilen fehlschlagen.
+-- Deshalb: erst Identität nachziehen (die denormalisierten Spalten sind zu
+-- diesem Zeitpunkt noch vorhanden), DANN droppen, DANN FK als NOT VALID
+-- hinzufügen und validieren (blockiert keine parallelen Writes länger als der
+-- Constraint-Check selbst):
+INSERT INTO auctions (platform, external_id, country, region, authority, case_number, auction_date_iso, status)
+SELECT DISTINCT ON (platform, external_id) platform, external_id, country, region, authority, case_number, NULL, 'active'
+FROM artifact_captures
+ON CONFLICT (platform, external_id) DO NOTHING;
+-- analog für jede (platform, external_id)-Kombination aus artifact_versions,
+-- die obiger INSERT noch nicht abgedeckt hat (gleiches Muster). Abweichende
+-- Identitätsfelder zwischen mehreren Captures derselben Auktion sind
+-- unkritisch — der nächste reguläre Crawl-Lauf aktualisiert sie ohnehin über
+-- den normalen Upsert (Punkt 2 unten).
+
 -- artifact_blobs (= heutiges raw_blobs, umbenannt)
 -- artifact_captures (= heutiges raw_captures, umbenannt) + neue FK. country/
 -- region/authority/case_number werden dabei gedroppt (waren nur denormalisiert,
@@ -80,14 +99,22 @@ CREATE TABLE auctions (
 ALTER TABLE artifact_captures DROP COLUMN country, DROP COLUMN case_number, DROP COLUMN authority;
 ALTER TABLE artifact_captures
   ADD CONSTRAINT fk_artifact_captures_auction
-  FOREIGN KEY (platform, external_id) REFERENCES auctions (platform, external_id);
+  FOREIGN KEY (platform, external_id) REFERENCES auctions (platform, external_id) NOT VALID;
+ALTER TABLE artifact_captures VALIDATE CONSTRAINT fk_artifact_captures_auction;
 
 -- artifact_versions (= heutiges raw_document_sets, umbenannt) + neue FK, gleiche
--- Spalten-Bereinigung (country/region/case_number/authority raus):
+-- Spalten-Bereinigung (country/region/case_number/authority raus). Zusätzlich
+-- eine UNIQUE-Spalte auf (id, platform, external_id) — Voraussetzung für die
+-- zusammengesetzte FK von auction_details unten (stellt sicher, dass eine
+-- auction_details-Zeile nur ein artifact_versions-Manifest der EIGENEN Auktion
+-- referenzieren kann):
 ALTER TABLE artifact_versions DROP COLUMN country, DROP COLUMN region, DROP COLUMN case_number, DROP COLUMN authority;
 ALTER TABLE artifact_versions
   ADD CONSTRAINT fk_artifact_versions_auction
-  FOREIGN KEY (platform, external_id) REFERENCES auctions (platform, external_id);
+  FOREIGN KEY (platform, external_id) REFERENCES auctions (platform, external_id) NOT VALID;
+ALTER TABLE artifact_versions VALIDATE CONSTRAINT fk_artifact_versions_auction;
+ALTER TABLE artifact_versions
+  ADD CONSTRAINT uq_artifact_versions_identity UNIQUE (id, platform, external_id);
 
 -- artifact_version_items (= heutiges raw_document_set_items, umbenannt, unverändert)
 
@@ -98,8 +125,9 @@ CREATE TABLE auction_details (
   platform              text NOT NULL,
   external_id           text NOT NULL,
   version               integer NOT NULL,        -- eigener Zähler, siehe oben
-  artifact_version_id   bigint REFERENCES artifact_versions (id),  -- NULL = nur aus Listing-Daten (noch keine Dokumente geparst)
-  created_at            timestamptz NOT NULL DEFAULT now(),
+  artifact_version_id   bigint,  -- NULL = nur aus Listing-Daten (noch keine Dokumente geparst)
+  created_at            timestamptz NOT NULL DEFAULT now(),  -- Zeitpunkt des INSERTs (Housekeeping)
+  extracted_at          timestamptz NOT NULL,  -- fachlicher Extraktions-Zeitpunkt, = AuctionExtraction.at; NICHT durch created_at ersetzbar (kann von created_at abweichen, z.B. bei Backfill/Replay)
   -- Objekt-/Preisdaten, analog den heutigen `auctions`-Spalten + extraction_cache-Feldern:
   address               text,
   description           text,
@@ -107,6 +135,12 @@ CREATE TABLE auction_details (
   land_area_sqm         numeric,
   living_area_sqm       numeric,
   rooms                 numeric,
+  bedrooms              numeric,
+  bathrooms             numeric,
+  floor                 text,
+  bathroom_has_tub      boolean,
+  bathroom_has_shower   boolean,
+  heating               text,
   units                 integer,
   year_built            integer,
   last_renovation_year  integer,
@@ -115,6 +149,9 @@ CREATE TABLE auction_details (
   market_value_eur      numeric,
   condition             jsonb,
   features              text[],
+  insights              jsonb,        -- AuctionInsights
+  planning_notes        jsonb,        -- PlanningNotes (Denkmalschutz/Altlasten/Bauleitplanung/...)
+  renovation_notes      text,
   starting_bid          numeric,
   current_bid           numeric,
   source_security_deposit numeric,
@@ -126,9 +163,16 @@ CREATE TABLE auction_details (
   lng                   numeric,
   extraction_source     text,
   extraction_confidence text,
+  llm_analyzed_at       timestamptz,  -- AuctionExtraction.llmAnalyzedAt
   document_summary      text,
   extraction_texts      jsonb,
   FOREIGN KEY (platform, external_id) REFERENCES auctions (platform, external_id),
+  -- Zusammengesetzte FK statt nur REFERENCES artifact_versions (id): verhindert,
+  -- dass eine auction_details-Zeile das Manifest einer FREMDEN Auktion
+  -- referenziert (artifact_version_id allein garantiert das nicht). NULL bleibt
+  -- erlaubt (Postgres prüft eine FK mit NULL-Spalte per MATCH SIMPLE nicht).
+  FOREIGN KEY (artifact_version_id, platform, external_id)
+    REFERENCES artifact_versions (id, platform, external_id),
   UNIQUE (platform, external_id, version)
 );
 CREATE INDEX idx_auction_details_identity_version ON auction_details (platform, external_id, version DESC);
@@ -141,8 +185,20 @@ CREATE INDEX idx_auction_details_year_built ON auction_details (year_built);
 -- auction_translations: + version-Spalte, FK jetzt auf auction_details statt
 -- nur auctions (Inhalt ist versionsabhängig — eine neue Version kann Titel/
 -- Beschreibung ändern, alte Übersetzungen bleiben als Historie stehen).
-ALTER TABLE auction_translations ADD COLUMN version integer NOT NULL;
--- PK wird (platform, external_id, version, lang) statt (platform, external_id, lang)
+-- NOT NULL kann nicht direkt per ADD COLUMN auf eine gefüllte Tabelle — Spalte
+-- nullable anlegen, backfillen (WP-4: bestehende Zeilen bekommen version = 1,
+-- vorausgesetzt der auction_details-Backfill aus WP-2 hat für dieselbe
+-- (platform, external_id) bereits eine version = 1-Zeile erzeugt), dann erst
+-- NOT NULL setzen:
+ALTER TABLE auction_translations ADD COLUMN version integer;
+UPDATE auction_translations SET version = 1;
+ALTER TABLE auction_translations ALTER COLUMN version SET NOT NULL;
+-- PK wird (platform, external_id, version, lang) statt (platform, external_id,
+-- lang) — alter PK lässt sonst keine zweite Version derselben Sprache zu:
+ALTER TABLE auction_translations DROP CONSTRAINT auction_translations_pkey;
+ALTER TABLE auction_translations ADD PRIMARY KEY (platform, external_id, version, lang);
+-- FK erst NACH dem auction_details-Backfill aus WP-2 hinzufügen, sonst schlägt
+-- sie für jede Zeile ohne passende auction_details-Version fehl:
 ALTER TABLE auction_translations
   ADD CONSTRAINT fk_auction_translations_details
   FOREIGN KEY (platform, external_id, version) REFERENCES auction_details (platform, external_id, version);
@@ -264,6 +320,23 @@ bestätigt. Bei Umsetzung kurz gegenchecken, nicht blind übernehmen:
   Werte gegen die aktuell neueste Version vergleichen (analog dem
   Change-only-Prinzip, das `artifact_versions`/`archiveAuction` heute schon für
   Dokumente anwenden).
+- **`auction_details.version`-Vergabe muss atomar sein:** `runEnrich`,
+  `runReprocess` und `runLlmBatchPoll` können für dieselbe `(platform,
+  external_id)` konkurrierend schreiben. Ein einfaches `SELECT MAX(version)`
+  gefolgt von einem separaten `INSERT` in `writeAuctionDetails(...)` kann bei
+  zwei gleichzeitigen Läufen dieselbe nächste Versionsnummer berechnen und
+  kollidieren (oder — schlimmer, ohne den `UNIQUE (platform, external_id,
+  version)`-Constraint — eine Version stillschweigend überschreiben/doppeln).
+  Der `UNIQUE`-Constraint aus der DDL fängt echte Kollisionen als Fehler ab,
+  ersetzt aber keine Serialisierung: `writeAuctionDetails(...)` muss
+  MAX(version)+1-Berechnung und INSERT in einer Transaktion mit
+  `pg_advisory_xact_lock(hashtext(platform || ':' || external_id))` (oder
+  äquivalent: `SELECT ... FROM auctions WHERE (platform, external_id) = ($1,
+  $2) FOR UPDATE` als Sperr-Anker) umschließen, damit konkurrierende Aufrufer
+  serialisiert werden statt auf einen `UNIQUE`-Fehler zu laufen. Tests: zwei
+  gleichzeitige `writeAuctionDetails(...)`-Aufrufe für dieselbe Auktion müssen
+  Version N und N+1 erzeugen (nie zweimal N, kein Fehler), plus ein Test für
+  das Changed-Detection-Verhalten bei identischen Werten.
 
 ## Server-seitige Änderungen, gruppiert nach Arbeitspaket
 
@@ -325,7 +398,8 @@ bestätigt. Bei Umsetzung kurz gegenchecken, nicht blind übernehmen:
 - schema.sql: `CREATE TABLE auction_details` (siehe DDL).
 - Neues Modul `server/utils/auction-details.ts` (Vorbild: `extraction-cache.ts`/
   `auction-snapshot.ts`): `writeAuctionDetails(...)` (immer INSERT einer neuen
-  Version, nie UPDATE, mit Changed-Detection — siehe "Offene Punkte"),
+  Version, nie UPDATE, mit Changed-Detection und atomarer Versionsvergabe per
+  Advisory-Lock — siehe "Offene Punkte"),
   `readLatestAuctionDetails(platform, externalId)`, `readAuctionDetailsAtVersion
   (platform, externalId, version)`, In-Memory-Cache + `invalidate...()` im
   bestehenden Muster.
@@ -339,7 +413,11 @@ bestätigt. Bei Umsetzung kurz gegenchecken, nicht blind übernehmen:
   `extraction_cache.extraction` + `auction_snapshot.auction` eine
   `auction_details`-Zeile mit `version = 1` erzeugen, `artifact_version_id` auf
   die jeweils neueste vorhandene `artifact_versions`-Zeile setzen (oder `NULL`,
-  falls keine existiert).
+  falls keine existiert). `extracted_at` aus `AuctionExtraction.at` übernehmen,
+  falls im gecachten Objekt vorhanden, sonst `extraction_cache.updated_at` als
+  bester verfügbarer Ersatz. Diese Zeile ist ausdrücklich ein Best-Effort-
+  Startpunkt, keine exakte Rekonstruktion historischer Provenienz (siehe
+  "Explizit nicht Teil dieses Plans").
 - Verifikation: Backfill lokal/gegen einen Datenbank-Dump laufen lassen,
   Stichproben gegen die alten `extraction_cache`/`auction_snapshot`-Werte
   gegenchecken. Dual-Write per Test: nach einem `enrich`-Lauf existiert sowohl
@@ -357,8 +435,8 @@ Betroffene Dateien (per Grep verifiziert, Stand 2026-08-01):
 `server/api/lawyer-inquiries/index.post.ts`,
 `server/api/settings/llm-batch-jobs.get.ts`,
 `server/utils/auction-search-filters.ts`.
-- Alle auf `auctions JOIN auction_details (neueste Version, `DISTINCT ON` +
-  Index, siehe "Offene Punkte")` umstellen statt `extraction_cache`/
+- Alle auf `auctions JOIN auction_details` (neueste Version, per `DISTINCT ON`
+  + Index, siehe "Offene Punkte") umstellen statt `extraction_cache`/
   `auction_snapshot`/den heutigen Objekt-Spalten auf `auctions` zu lesen.
 - `auction-search-filters.ts`: WHERE-Klausel-Builder auf `auction_details`-
   Spalten umstellen (Land/Region-Filter bleiben auf `auctions`, Fläche/
