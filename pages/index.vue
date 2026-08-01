@@ -3,15 +3,18 @@ import { Search } from 'lucide-vue-next'
 import type { LandingRailsResponse } from '~/server/api/landing/rails.get'
 import type { CountryEntry } from '~/server/crawlers/registry'
 
-const { data: rails } = await useFetch<LandingRailsResponse | null>('/api/landing/rails', {
-  cache: 'no-store',
-  default: () => null,
-})
-
-const { data: countries } = await useFetch<CountryEntry[]>('/api/regions', {
-  cache: 'no-store',
-  default: () => [],
-})
+// Independent endpoints — fetch concurrently rather than serially awaiting
+// one after the other.
+const [{ data: rails }, { data: countries }] = await Promise.all([
+  useFetch<LandingRailsResponse | null>('/api/landing/rails', {
+    cache: 'no-store',
+    default: () => null,
+  }),
+  useFetch<CountryEntry[]>('/api/regions', {
+    cache: 'no-store',
+    default: () => [],
+  }),
+])
 
 const geoRails = computed(() => {
   if (!rails.value) return []

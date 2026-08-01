@@ -27,6 +27,10 @@ const mediaIsDesktop = useMediaQuery('(min-width: 768px)')
 
 // layouts/search.vue owns the single useAuctionSearchState instance — its
 // header slot and this page both read/write the same reactive filters.
+const injectedSearchState = inject(AUCTION_SEARCH_STATE_KEY)
+if (!injectedSearchState) {
+  throw new Error('pages/search.vue requires the auction search state provided by layouts/search.vue')
+}
 const {
   mounted,
   countries,
@@ -63,7 +67,7 @@ const {
   toggleRegion,
   setPriceBucket,
   clearAllFilters,
-} = inject(AUCTION_SEARCH_STATE_KEY)!
+} = injectedSearchState
 const isDesktop = computed(() => mounted.value && mediaIsDesktop.value)
 
 // Search results are filtered and paginated in Postgres. Only compact card
@@ -334,7 +338,7 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
       </div>
     </header>
 
-    <div v-if="data?.total" class="shrink-0 mb-3 text-sm text-muted-foreground">
+    <div v-if="data" class="shrink-0 mb-3 text-sm text-muted-foreground">
       {{ $t('search.resultsCount', { count: data.total }) }}<span v-if="geoData">
         · {{ filteredGeo.length }} {{ $t('search.onMap') }} ({{ $t('search.geocoded', { done: geoData.geocodedCount, total: geoData.total }) }}<span v-if="geoData.unresolvableCount > 0">, {{ $t('search.unresolvable', { count: geoData.unresolvableCount }) }}</span><span v-if="geocodingInProgress">, {{ $t('search.geocodingRunning') }}</span>)
       </span>

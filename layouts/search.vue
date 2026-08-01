@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { CountryEntry } from '~/server/crawlers/registry'
 import type { SavedSearch } from '~/server/api/saved-searches/index.get'
+import { apiErrorMessage } from '~/lib/api-error'
 import { AUCTION_SEARCH_STATE_KEY, useAuctionSearchState } from '~/composables/useAuctionSearchState'
 
 // Owns the single useAuctionSearchState instance for /search — the header
@@ -14,17 +15,20 @@ const { user } = useAuth()
 const { t } = useI18n()
 const { eurToDisplay, displayToEur } = useCurrencyDisplay()
 
-const { data: countries } = await useFetch<CountryEntry[]>('/api/regions', {
-  cache: 'no-store',
-  default: () => [],
-})
-
 // Admin-configured default for the hideRulesOnly filter (/settings'
 // "Dashboard-Anzeige" — see server/utils/app-settings.ts's
 // getHideRulesOnlyAuctions). Public endpoint since every visitor needs it.
-const { data: displaySettings } = await useFetch<{ hideRulesOnlyAuctions: boolean }>('/api/display-settings', {
-  default: () => ({ hideRulesOnlyAuctions: true }),
-})
+// Independent of /api/regions, so fetch both concurrently rather than
+// serially awaiting one after the other.
+const [{ data: countries }, { data: displaySettings }] = await Promise.all([
+  useFetch<CountryEntry[]>('/api/regions', {
+    cache: 'no-store',
+    default: () => [],
+  }),
+  useFetch<{ hideRulesOnlyAuctions: boolean }>('/api/display-settings', {
+    default: () => ({ hideRulesOnlyAuctions: true }),
+  }),
+])
 const hideRulesOnlyServerDefault = computed(() => displaySettings.value?.hideRulesOnlyAuctions ?? true)
 
 const state = useAuctionSearchState({
@@ -59,10 +63,7 @@ async function saveCurrentSearch(): Promise<void> {
       body: { name, filters: route.query },
     })
   } catch (err: unknown) {
-    const msg = (err as { statusMessage?: string; message?: string })?.statusMessage
-      ?? (err as { message?: string })?.message
-      ?? t('search.saveSearchError')
-    window.alert(msg)
+    window.alert(apiErrorMessage(err, t('search.saveSearchError')))
   } finally {
     savingSearch.value = false
   }

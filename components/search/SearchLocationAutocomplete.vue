@@ -35,7 +35,7 @@ const open = ref(false)
 const activeIndex = ref(-1)
 
 function foldDrop(s: string): string {
-  return s.toLocaleLowerCase('de').normalize('NFD').replace(/[̀-ͯ]/g, '')
+  return s.toLocaleLowerCase('de').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
 }
 
 type Suggestion =
