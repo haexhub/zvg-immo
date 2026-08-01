@@ -26,6 +26,44 @@ export const COUNTRY_BOUNDS: Partial<Record<string, CountryBounds>> = {
   us: [[24.4, -125.0], [49.4, -66.9]],
 }
 
+// Representative point per crawled country — used to place an auction whose
+// address could not be geocoded at all (no coordinates, no address match).
+// Capitals rather than bounding-box midpoints: for countries with distant
+// exclaves (es includes the Canary Islands, ca spans the whole continent) the
+// box center falls in open ocean or empty wilderness, nowhere near "the
+// country" a user would recognise.
+const COUNTRY_CENTROIDS: Partial<Record<string, [number, number]>> = {
+  at: [48.2082, 16.3738],
+  ba: [43.8563, 18.4131],
+  be: [50.8503, 4.3517],
+  bg: [42.6977, 23.3219],
+  ca: [45.4215, -75.6972],
+  cz: [50.0755, 14.4378],
+  de: [52.52, 13.405],
+  dk: [55.6761, 12.5683],
+  ee: [59.437, 24.7536],
+  es: [40.4168, -3.7038],
+  fi: [60.1699, 24.9384],
+  fr: [48.8566, 2.3522],
+  gb: [51.5074, -0.1278],
+  gr: [37.9838, 23.7275],
+  hu: [47.4979, 19.0402],
+  is: [64.1466, -21.9426],
+  it: [41.9028, 12.4964],
+  lt: [54.6872, 25.2797],
+  lv: [56.9496, 24.1052],
+  pl: [52.2297, 21.0122],
+  pt: [38.7223, -9.1393],
+  se: [59.3293, 18.0686],
+  si: [46.0569, 14.5058],
+  us: [38.9072, -77.0369],
+}
+
+export function countryCentroid(countryCode: string): { lat: number; lng: number } | null {
+  const point = COUNTRY_CENTROIDS[countryCode.toLowerCase()]
+  return point ? { lat: point[0], lng: point[1] } : null
+}
+
 export function boundsForCountries(countryCodes: readonly string[]): CountryBounds | null {
   const bounds = countryCodes
     .map((code) => COUNTRY_BOUNDS[code.toLowerCase()])

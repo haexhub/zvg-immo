@@ -15,7 +15,8 @@
     "baseLayerStreets": "Straße",
     "baseLayerSatellite": "Satellit",
     "legend": "Legende",
-    "legendSubject": "Auktionsobjekt"
+    "legendSubject": "Auktionsobjekt",
+    "clusterPickerHint": "{count} Auktionen an diesem Ort"
   },
   "landing": {
     "hero": {
