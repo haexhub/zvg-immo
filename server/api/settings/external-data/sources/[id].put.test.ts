@@ -40,21 +40,21 @@ describe('PUT /api/settings/external-data/sources/:id', () => {
     vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
 
     const handler = (await import('./[id].put')).default as unknown as (event: unknown) => Promise<unknown>
-    await expect(handler({ context: { params: { id: 'openstreetmap-overpass' } } })).rejects.toMatchObject({ statusCode: 503 })
+    await expect(handler({ context: { params: { id: 'eea-environmental-noise-directive' } } })).rejects.toMatchObject({ statusCode: 503 })
   })
 
   it('saves a valid override and echoes back the coerced values', async () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
-    vi.stubGlobal('readBody', vi.fn(async () => ({ endpoint: 'https://mirror.example/api/interpreter', timeoutMs: '5000' })))
+    vi.stubGlobal('readBody', vi.fn(async () => ({ serviceBaseUrl: 'https://mirror.example/services/noiseStoryMap', timeoutMs: '5000' })))
 
     const { getPool } = await import('~/server/utils/db')
     vi.mocked(getPool).mockReturnValue(fakePool() as never)
 
     const handler = (await import('./[id].put')).default as unknown as (event: unknown) => Promise<unknown>
-    await expect(handler({ context: { params: { id: 'openstreetmap-overpass' } } })).resolves.toEqual({
-      id: 'openstreetmap-overpass',
-      values: { endpoint: 'https://mirror.example/api/interpreter', timeoutMs: 5000 },
+    await expect(handler({ context: { params: { id: 'eea-environmental-noise-directive' } } })).resolves.toEqual({
+      id: 'eea-environmental-noise-directive',
+      values: { serviceBaseUrl: 'https://mirror.example/services/noiseStoryMap', timeoutMs: 5000 },
     })
   })
 })

@@ -40,7 +40,6 @@ describe('configurableExternalDataSources', () => {
       'eea-environmental-noise-directive',
       'eu-flood-risk-areas',
       'fr-dvf-geolocated',
-      'openstreetmap-overpass',
     ])
   })
 
@@ -50,35 +49,35 @@ describe('configurableExternalDataSources', () => {
 })
 
 describe('resolveExternalDataSourceConfig', () => {
-  const source = getConfigurableExternalDataSource('openstreetmap-overpass')!
+  const source = getConfigurableExternalDataSource('eea-environmental-noise-directive')!
 
   it('falls back to the field default when neither DB nor env is set', () => {
     const resolved = resolveExternalDataSourceConfig(source, {}, {})
-    expect(resolved.values.endpoint).toBe('')
-    expect(resolved.values.timeoutMs).toBe(120_000)
+    expect(resolved.values.serviceBaseUrl).toBe('')
+    expect(resolved.values.timeoutMs).toBe(10_000)
     expect(resolved.isConfigured).toBe(false)
   })
 
   it('env runtimeConfig wins over the field default', () => {
-    const resolved = resolveExternalDataSourceConfig(source, {}, { osmContextEndpoint: 'https://overpass-api.de/api/interpreter' })
-    expect(resolved.values.endpoint).toBe('https://overpass-api.de/api/interpreter')
+    const resolved = resolveExternalDataSourceConfig(source, {}, { eeaNoiseServiceBaseUrl: 'https://noise.discomap.eea.europa.eu/arcgis/rest/services/noiseStoryMap' })
+    expect(resolved.values.serviceBaseUrl).toBe('https://noise.discomap.eea.europa.eu/arcgis/rest/services/noiseStoryMap')
     expect(resolved.isConfigured).toBe(true)
   })
 
   it('a DB override wins over env runtimeConfig', () => {
     const resolved = resolveExternalDataSourceConfig(
       source,
-      { endpoint: 'https://my-overpass-mirror.example/api/interpreter' },
-      { osmContextEndpoint: 'https://overpass-api.de/api/interpreter' },
+      { serviceBaseUrl: 'https://my-noise-mirror.example/services/noiseStoryMap' },
+      { eeaNoiseServiceBaseUrl: 'https://noise.discomap.eea.europa.eu/arcgis/rest/services/noiseStoryMap' },
     )
-    expect(resolved.values.endpoint).toBe('https://my-overpass-mirror.example/api/interpreter')
+    expect(resolved.values.serviceBaseUrl).toBe('https://my-noise-mirror.example/services/noiseStoryMap')
   })
 })
 
 describe('stored external-data source config (DB round-trip)', () => {
   it('returns {} for a source with nothing stored yet', async () => {
     const db = makeFakePool()
-    expect(await getStoredExternalDataSourceConfig(db, 'openstreetmap-overpass')).toEqual({})
+    expect(await getStoredExternalDataSourceConfig(db, 'eea-environmental-noise-directive')).toEqual({})
   })
 
   it('saves and re-reads a source config, dropping invalid/empty fields', async () => {
@@ -101,6 +100,6 @@ describe('stored external-data source config (DB round-trip)', () => {
     await setStoredExternalDataSourceConfig(db, 'fr-dvf-geolocated', { cachePath: '/app/.cache_zvg/external/fr-dvf.json' })
     const all = await getAllStoredExternalDataSourceConfigs(db)
     expect(all['fr-dvf-geolocated']).toEqual({ cachePath: '/app/.cache_zvg/external/fr-dvf.json' })
-    expect(all['openstreetmap-overpass']).toEqual({})
+    expect(all['cams-air-quality']).toEqual({})
   })
 })

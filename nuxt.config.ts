@@ -140,9 +140,6 @@ export default defineNuxtConfig({
     //   NUXT_EXTERNAL_DATA_FR_DVF_CACHE_PATH=/app/.cache_zvg/external/fr-dvf.json
     //   NUXT_EXTERNAL_DATA_EU_FLOOD_RISK_GEO_JSON_PATH=/app/.cache_zvg/external/eu-flood-risk.geojson
     //   NUXT_EXTERNAL_DATA_EU_FLOOD_RISK_MAX_CACHE_AGE_DAYS=400
-    //   NUXT_EXTERNAL_DATA_OSM_CONTEXT_ENDPOINT=https://overpass-api.de/api/interpreter
-    // Leave the OSM endpoint empty unless your deployment cadence is polite
-    // enough for the selected Overpass instance or you run your own mirror.
     //   NUXT_EXTERNAL_DATA_EEA_NOISE_SERVICE_BASE_URL=https://noise.discomap.eea.europa.eu/arcgis/rest/services/noiseStoryMap
     //   NUXT_EXTERNAL_DATA_COPERNICUS_EFFIS_CACHE_PATH=/app/.cache_zvg/external/copernicus-effis.json
     //   NUXT_EXTERNAL_DATA_COPERNICUS_EFFIS_MAX_CACHE_AGE_DAYS=400
@@ -150,8 +147,6 @@ export default defineNuxtConfig({
       frDvfCachePath: '',
       euFloodRiskGeoJsonPath: '',
       euFloodRiskMaxCacheAgeDays: 400,
-      osmContextEndpoint: '',
-      osmContextTimeoutMs: 120_000,
       eeaNoiseServiceBaseUrl: '',
       eeaNoiseTimeoutMs: 10_000,
       // Public, unauthenticated API, so unlike the entries above this one
@@ -250,9 +245,12 @@ export default defineNuxtConfig({
       // completed results — jobs often finish well under the 24h SLA, so a
       // shorter tick than enrich's own 6h cadence gets results merged sooner.
       '*/30 * * * *': ['llm-batch-poll'],
-      // Daily: refresh cached external market/risk overlays. With no configured
-      // externalData adapters this is a cheap no-op; detail pages never fetch
-      // providers live.
+      // Daily: refresh cached external market/risk/location overlays. Location
+      // context (server/utils/external-data/osm-location-context.ts) reads a
+      // local Postgres table loaded out-of-band by a standalone osm2pgsql job,
+      // not a live external endpoint, so this stays a fast local-DB pass; the
+      // remaining externalData adapters (market/hazard) are a cheap no-op
+      // until configured.
       '15 3 * * *': ['external-enrichment'],
       // Monthly: refresh the local EU Flood Risk Areas polygon cache (see
       // server/tasks/import-eu-flood-risk-cache.ts) from the EEA's published
@@ -260,8 +258,7 @@ export default defineNuxtConfig({
       // — and stay inert while it has none, so this never paginates the whole
       // EU layer into a file no adapter opens. The Floods Directive reporting
       // cycle itself is six-yearly, so monthly is just a courtesy re-pull to
-      // catch source corrections — nowhere near a rate-limit concern for this
-      // source, unlike the OSM Overpass endpoint above.
+      // catch source corrections.
       '30 4 1 * *': ['import-eu-flood-risk-cache'],
       // Monthly, offset from the flood importer: refresh the local Copernicus
       // EFFIS MODIS burnt-area polygon cache (see server/tasks/import-
