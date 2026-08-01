@@ -48,7 +48,7 @@ function submitSearch() {
     </section>
 
     <!-- Category rails -->
-    <div class="mx-auto w-full max-w-7xl px-6">
+    <div class="w-full px-3">
       <LandingCategoryRail v-for="rail in rails?.countryRails" :key="rail.code" :title="$t('landing.rails.country.title', { name: rail.name })">
         <div v-for="a in rail.auctions" :key="`${a.platform}:${a.externalId}`" class="w-72 shrink-0 snap-start">
           <AuctionCard :auction="a" class="h-full" />

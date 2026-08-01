@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { Star } from 'lucide-vue-next'
 import { Swiper, SwiperSlide } from 'swiper/vue'
-import { Keyboard, Navigation, Pagination } from 'swiper/modules'
+import { Keyboard, Navigation } from 'swiper/modules'
 import 'swiper/css'
 import 'swiper/css/navigation'
-import 'swiper/css/pagination'
 import type { AuctionSummary } from '~/server/api/auctions.get'
 
 const props = withDefaults(defineProps<{
@@ -70,7 +69,7 @@ function bidLine(a: AuctionSummary): string | null {
   return converted.toLocaleString(intlLocale.value, { style: 'currency', currency: currency.value, maximumFractionDigits: 0 })
 }
 
-const swiperModules = [Navigation, Pagination, Keyboard]
+const swiperModules = [Navigation, Keyboard]
 </script>
 
 <template>
@@ -86,7 +85,6 @@ const swiperModules = [Navigation, Pagination, Keyboard]
         v-if="props.auction.galleryUrls.length > 0"
         :modules="swiperModules"
         :navigation="props.auction.galleryUrls.length > 1"
-        :pagination="props.auction.galleryUrls.length > 1 ? { clickable: true } : false"
         :keyboard="{ enabled: true }"
         :loop="props.auction.galleryUrls.length > 1"
         :lazy-preload-prev-next="0"
@@ -156,15 +154,5 @@ const swiperModules = [Navigation, Pagination, Keyboard]
 .auction-card-swiper :deep(.swiper-button-next)::after {
   font-size: 1rem;
   font-weight: 700;
-}
-.auction-card-swiper :deep(.swiper-pagination) {
-  bottom: 0.35rem;
-}
-.auction-card-swiper :deep(.swiper-pagination-bullet) {
-  background: rgba(255, 255, 255, 0.85);
-  opacity: 1;
-}
-.auction-card-swiper :deep(.swiper-pagination-bullet-active) {
-  background: rgb(245 158 11);
 }
 </style>
