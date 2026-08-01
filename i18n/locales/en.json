@@ -568,7 +568,49 @@
       "boundToMap": "Map area",
       "sort": "Sort",
       "llmOnly": "fully processed",
-      "view": "View"
+      "view": "View",
+      "nearSea": "Near the sea",
+      "nearLake": "Near a lake",
+      "nearRiver": "Near a river",
+      "nearMountain": "Near mountains",
+      "nearAirport": "Near an airport",
+      "urbanRural": "Area type",
+      "nearLat": "Location (latitude)",
+      "nearLng": "Location (longitude)",
+      "nearRadius": "Radius"
+    }
+  },
+  "searchBar": {
+    "activeCount": "{count} active",
+    "apply": "Apply",
+    "location": {
+      "label": "Location",
+      "placeholder": "Search destinations",
+      "recent": "Recent searches",
+      "suggested": "Suggested destinations",
+      "nearby": "Nearby",
+      "nearbyPending": "Locating …",
+      "geolocationUnsupported": "Geolocation isn't supported by this browser.",
+      "geolocationFailed": "Couldn't determine your location."
+    },
+    "properties": {
+      "label": "Properties",
+      "placeholder": "Price, area, property type …"
+    },
+    "environment": {
+      "label": "Environment",
+      "placeholder": "Sea, mountains, airport …",
+      "sea": "Near the sea",
+      "lake": "Near a lake",
+      "river": "Near a river",
+      "mountain": "Near mountains",
+      "airport": "Near an airport",
+      "withinKm": "within {km} km",
+      "any": "any",
+      "urbanRural": "Area type",
+      "either": "Either",
+      "urban": "Urban",
+      "rural": "Rural"
     }
   },
   "authStatus": {

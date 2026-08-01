@@ -1,6 +1,7 @@
 import type { Pool } from 'pg'
 import { getPool } from '~/server/utils/db'
 import { buildAuctionSearchFilter } from '~/server/utils/auction-search-filters'
+import { proximityCondition } from '~/server/utils/osm-proximity'
 import { ensureEnabledCountriesLoaded, listCountries } from '~/server/crawlers/registry'
 import { SUMMARY_COLUMNS_SQL, SUMMARY_FROM_SQL, summary, type AuctionSummary, type SearchRow } from '~/server/api/auctions.get'
 
@@ -62,12 +63,7 @@ async function geoRail(db: Pool, category: GeoCategory): Promise<AuctionSummary[
     values.push(value)
     return `$${values.length}`
   }
-  const geoCondition = `a.lat IS NOT NULL AND a.lng IS NOT NULL AND EXISTS (
-    SELECT 1 FROM osm_local_elements o
-    WHERE o.country = a.country
-      AND o.tags ->> ${add(category.tagKey)} = ${add(category.tagValue)}
-      AND ST_DWithin(o.geom::geography, ST_MakePoint(a.lng, a.lat)::geography, ${add(category.radiusMeters)})
-  )`
+  const geoCondition = proximityCondition(category.tagKey, category.tagValue, category.radiusMeters, add)
   const predicate = basePredicate ? `${basePredicate} AND ${geoCondition}` : `WHERE ${geoCondition}`
   const sql = `SELECT ${SUMMARY_COLUMNS_SQL}
     ${SUMMARY_FROM_SQL} ${predicate}

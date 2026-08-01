@@ -7,6 +7,26 @@
 import type { Pool } from 'pg'
 import { ensureEnabledCountriesLoaded, getEnabledCountryCodes } from '~/server/crawlers/registry'
 import { getHideRulesOnlyAuctions } from '~/server/utils/app-settings'
+import { proximityCondition, proximityConditionAnyOf } from '~/server/utils/osm-proximity'
+
+// Umgebung ("environment") proximity filters — same osm_local_elements
+// dataset and EXISTS/ST_DWithin shape as the landing page's geo rails
+// (server/api/landing/rails.get.ts), but with a user-chosen radius instead
+// of a fixed one. Query param name -> OSM tag matched against.
+const PROXIMITY_FILTERS: Record<string, { tagKey: string; tagValue: string }> = {
+  nearSea: { tagKey: 'natural', tagValue: 'coastline' },
+  nearLake: { tagKey: 'natural', tagValue: 'water' },
+  nearRiver: { tagKey: 'waterway', tagValue: 'river' },
+  nearMountain: { tagKey: 'natural', tagValue: 'peak' },
+  nearAirport: { tagKey: 'aeroway', tagValue: 'aerodrome' },
+}
+
+// A settlement counts as "urban" if a city/town-sized OSM place node sits
+// within this radius; otherwise the auction is "rural". Arbitrary but easy
+// to retune later — there's no existing urban/rural concept in this codebase
+// to anchor to.
+const URBAN_PLACE_TAGS = ['city', 'town']
+const URBAN_RADIUS_METERS = 5_000
 
 export interface AuctionSearchFilter {
   /** `WHERE …`, or '' when nothing is constrained. */
@@ -114,6 +134,31 @@ export async function buildAuctionSearchFilter(
   for (const [raw, column, operator] of ranges) {
     const value = finiteNumber(raw)
     if (value != null) where.push(`${column} ${operator} ${add(value)}`)
+  }
+
+  for (const [param, tag] of Object.entries(PROXIMITY_FILTERS)) {
+    const km = finiteNumber(query[param])
+    if (km != null && km > 0) where.push(proximityCondition(tag.tagKey, tag.tagValue, km * 1000, add))
+  }
+
+  const urbanRural = String(query.urbanRural ?? '')
+  if (urbanRural === 'urban' || urbanRural === 'rural') {
+    const nearCity = proximityConditionAnyOf('place', URBAN_PLACE_TAGS, URBAN_RADIUS_METERS, add)
+    where.push(urbanRural === 'urban' ? nearCity : `NOT (${nearCity})`)
+  }
+
+  // "Immobilien in der Nähe" — the user's own browser-geolocated position,
+  // filtered directly against the auction's own geocoded coordinates. No OSM
+  // data involved, so it works everywhere an auction already has lat/lng.
+  const nearLat = finiteNumber(query.nearLat)
+  const nearLng = finiteNumber(query.nearLng)
+  const nearRadiusKm = finiteNumber(query.nearRadius)
+  if (nearLat != null && nearLng != null && nearRadiusKm != null && nearRadiusKm > 0) {
+    where.push(`a.lat IS NOT NULL AND a.lng IS NOT NULL AND ST_DWithin(
+      ST_MakePoint(a.lng, a.lat)::geography,
+      ST_MakePoint(${add(nearLng)}, ${add(nearLat)})::geography,
+      ${add(nearRadiusKm * 1000)}
+    )`)
   }
 
   return { predicate: where.length ? `WHERE ${where.join(' AND ')}` : '', values }

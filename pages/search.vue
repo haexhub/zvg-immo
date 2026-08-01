@@ -7,16 +7,15 @@ import { auctionKey } from '~/lib/auction-key'
 import { useMediaQuery } from '@vueuse/core'
 import { apiErrorMessage } from '~/lib/api-error'
 import { AUCTION_SEARCH_STATE_KEY } from '~/composables/useAuctionSearchState'
+import { AUCTION_SEARCH_RESULT_KEY } from '~/composables/useAuctionSearchResult'
 import { useAuctionWatchlist } from '~/composables/useAuctionWatchlist'
 
 definePageMeta({ layout: 'search' })
 
 const route = useRoute()
 const { user } = useAuth()
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const intlLocale = useIntlLocale()
-const { currency } = useCurrencyDisplay()
-const propertyTypeLabel = usePropertyTypeLabel()
 
 // Desktop shows list + map side by side; below this breakpoint they collapse
 // into the two SearchTabs panes (see template) — matches SiteHeader's own
@@ -35,50 +34,28 @@ if (!injectedSearchState) {
 }
 const {
   mounted,
-  countries,
   selectedCountries,
   selectedRegionKeys,
-  filtersOpen,
-  availableRegions,
   queryParams,
   view,
-  search,
   debouncedSearch,
-  includeCancelled,
   authorityFilter,
-  priceMinDisplay,
-  priceMaxDisplay,
-  landAreaMin,
-  landAreaMax,
-  livingAreaMin,
-  livingAreaMax,
-  yearBuiltMin,
-  yearBuiltMax,
-  renovationYearMin,
-  renovationYearMax,
   categoryFilter,
-  conditionFilter,
-  featuresFilter,
-  onlyWithPhotos,
-  hideRulesOnly,
   boundToMap,
   sortBy,
   headerLabel,
-  activeFilterCount,
-  toggleCountry,
-  toggleRegion,
-  setPriceBucket,
-  clearAllFilters,
 } = injectedSearchState
 const isDesktop = computed(() => mounted.value && mediaIsDesktop.value)
 
-// Search results are filtered and paginated in Postgres. Only compact card
-// summaries reach the browser; detail text, documents and galleries stay on
-// the per-auction endpoint.
-const { data, pending, error, refresh } = useLazyFetch<AuctionSearchResponse | null>('/api/auctions', {
-  query: queryParams,
-  default: () => null,
-})
+// The main /api/auctions fetch (+ its derived courts/categories facets) lives
+// in layouts/search.vue — the header's Properties popover needs the same
+// facets the results list does, and a layout is the only common ancestor of
+// header and page content (see useAuctionSearchResult.ts).
+const injectedSearchResult = inject(AUCTION_SEARCH_RESULT_KEY)
+if (!injectedSearchResult) {
+  throw new Error('pages/search.vue requires the auction search result provided by layouts/search.vue')
+}
+const { data, pending, error, courts, categories: kategorienMitCount } = injectedSearchResult
 
 // The map pane is visible whenever it's actually on screen: always on
 // desktop, or only during the "map" mobile tab. Drives both the geo-fetch
@@ -188,18 +165,6 @@ onActivated(() => {
   if (geocodingInProgress.value && mapVisible.value) startGeoPoll()
 })
 onBeforeUnmount(() => stopGeoPoll())
-
-const courts = computed<string[]>(() => {
-  return data.value?.facets.authorities ?? []
-})
-
-// Counts of normalized Objektart categories. Sorted by descending count so
-// the most common categories show up first in the dropdown.
-const kategorienMitCount = computed<{ id: string; label: string; count: number }[]>(() => {
-  return (data.value?.facets.categories ?? [])
-    .map(({ id, count }) => ({ id, label: propertyTypeLabel(id), count }))
-    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, locale.value))
-})
 
 const filtered = computed<AuctionSummary[]>(() => data.value?.auctions ?? [])
 
@@ -460,43 +425,5 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
         @auction-select="handleMapAuctionSelect"
       />
     </div>
-
-    <Sheet v-model:open="filtersOpen">
-      <SheetContent side="right" class="flex flex-col gap-0 p-0 w-full sm:max-w-md">
-        <SearchFilters
-          v-model:authority-filter="authorityFilter"
-          v-model:price-min-display="priceMinDisplay"
-          v-model:price-max-display="priceMaxDisplay"
-          v-model:land-area-min="landAreaMin"
-          v-model:land-area-max="landAreaMax"
-          v-model:living-area-min="livingAreaMin"
-          v-model:living-area-max="livingAreaMax"
-          v-model:year-built-min="yearBuiltMin"
-          v-model:year-built-max="yearBuiltMax"
-          v-model:renovation-year-min="renovationYearMin"
-          v-model:renovation-year-max="renovationYearMax"
-          v-model:category-filter="categoryFilter"
-          v-model:condition-filter="conditionFilter"
-          v-model:features-filter="featuresFilter"
-          v-model:only-with-photos="onlyWithPhotos"
-          v-model:include-cancelled="includeCancelled"
-          v-model:hide-rules-only="hideRulesOnly"
-          :countries="countries ?? []"
-          :selected-countries="selectedCountries"
-          :available-regions="availableRegions"
-          :selected-region-keys="selectedRegionKeys"
-          :courts="courts"
-          :categories="kategorienMitCount"
-          :currency="currency"
-          :pending="pending"
-          :active-filter-count="activeFilterCount"
-          @toggle-country="toggleCountry"
-          @toggle-region="toggleRegion"
-          @set-price-bucket="setPriceBucket"
-          @clear-filters="clearAllFilters"
-          @reload="refresh()"
-        />
-      </SheetContent>
-    </Sheet>
   </main>
 </template>
