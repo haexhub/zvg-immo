@@ -23,9 +23,7 @@
       "subheadline": "PropHammer continuously crawls court and official portals across many European countries — with photos, market value and hearing date.",
       "searchPlaceholder": "Search location, property type or case number …",
       "searchCta": "Search",
-      "trust": ["100% free", "No sign-up needed", "Live from court portals"],
-      "mapLabel": "Map by country",
-      "mapHint": "Click a country"
+      "trust": ["100% free", "No sign-up needed", "Live from court portals"]
     },
     "rails": {
       "countries": {
