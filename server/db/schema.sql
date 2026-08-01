@@ -725,4 +725,10 @@ CREATE TABLE IF NOT EXISTS osm_local_elements (
 );
 CREATE INDEX IF NOT EXISTS idx_osm_local_elements_geom ON osm_local_elements USING GIST (geom);
 CREATE INDEX IF NOT EXISTS idx_osm_local_elements_country ON osm_local_elements (country);
+-- Landing-page geo rails (server/api/landing/rails.get.ts) filter each
+-- candidate auction with `country = $1 AND tags ->> 'natural'/'waterway' = $2`
+-- inside an EXISTS subquery; these composite expression indexes let that
+-- lookup use an index scan instead of a per-row jsonb scan.
+CREATE INDEX IF NOT EXISTS idx_osm_local_elements_country_natural ON osm_local_elements (country, (tags ->> 'natural'));
+CREATE INDEX IF NOT EXISTS idx_osm_local_elements_country_waterway ON osm_local_elements (country, (tags ->> 'waterway'));
 ALTER TABLE osm_local_elements ENABLE ROW LEVEL SECURITY;

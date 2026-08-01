@@ -7,6 +7,13 @@ const { data: rails } = await useFetch<LandingRailsResponse | null>('/api/landin
   default: () => null,
 })
 
+const geoRails = computed(() => {
+  if (!rails.value) return []
+  return (['sea', 'mountains', 'lakes', 'rivers'] as const)
+    .map((key) => ({ key, items: rails.value![key] }))
+    .filter((geo) => geo.items.length > 0)
+})
+
 const router = useRouter()
 const searchQuery = ref('')
 function submitSearch() {
@@ -59,41 +66,12 @@ function submitSearch() {
       </LandingCategoryRail>
 
       <LandingCategoryRail
-        v-if="rails?.sea.length"
-        :title="$t('landing.rails.sea.title')"
-        :subtitle="$t('landing.rails.sea.subtitle')"
+        v-for="geo in geoRails"
+        :key="geo.key"
+        :title="$t(`landing.rails.${geo.key}.title`)"
+        :subtitle="$t(`landing.rails.${geo.key}.subtitle`)"
       >
-        <div v-for="a in rails.sea" :key="`${a.platform}:${a.externalId}`" class="w-72 shrink-0 snap-start">
-          <AuctionCard :auction="a" class="h-full" />
-        </div>
-      </LandingCategoryRail>
-
-      <LandingCategoryRail
-        v-if="rails?.mountains.length"
-        :title="$t('landing.rails.mountains.title')"
-        :subtitle="$t('landing.rails.mountains.subtitle')"
-      >
-        <div v-for="a in rails.mountains" :key="`${a.platform}:${a.externalId}`" class="w-72 shrink-0 snap-start">
-          <AuctionCard :auction="a" class="h-full" />
-        </div>
-      </LandingCategoryRail>
-
-      <LandingCategoryRail
-        v-if="rails?.lakes.length"
-        :title="$t('landing.rails.lakes.title')"
-        :subtitle="$t('landing.rails.lakes.subtitle')"
-      >
-        <div v-for="a in rails.lakes" :key="`${a.platform}:${a.externalId}`" class="w-72 shrink-0 snap-start">
-          <AuctionCard :auction="a" class="h-full" />
-        </div>
-      </LandingCategoryRail>
-
-      <LandingCategoryRail
-        v-if="rails?.rivers.length"
-        :title="$t('landing.rails.rivers.title')"
-        :subtitle="$t('landing.rails.rivers.subtitle')"
-      >
-        <div v-for="a in rails.rivers" :key="`${a.platform}:${a.externalId}`" class="w-72 shrink-0 snap-start">
+        <div v-for="a in geo.items" :key="`${a.platform}:${a.externalId}`" class="w-72 shrink-0 snap-start">
           <AuctionCard :auction="a" class="h-full" />
         </div>
       </LandingCategoryRail>
