@@ -1,11 +1,20 @@
 <script setup lang="ts">
 import { Search } from 'lucide-vue-next'
 import type { LandingRailsResponse } from '~/server/api/landing/rails.get'
+import type { CountryEntry } from '~/server/crawlers/registry'
 
-const { data: rails } = await useFetch<LandingRailsResponse | null>('/api/landing/rails', {
-  cache: 'no-store',
-  default: () => null,
-})
+// Independent endpoints — fetch concurrently rather than serially awaiting
+// one after the other.
+const [{ data: rails }, { data: countries }] = await Promise.all([
+  useFetch<LandingRailsResponse | null>('/api/landing/rails', {
+    cache: 'no-store',
+    default: () => null,
+  }),
+  useFetch<CountryEntry[]>('/api/regions', {
+    cache: 'no-store',
+    default: () => [],
+  }),
+])
 
 const geoRails = computed(() => {
   if (!rails.value) return []
@@ -19,6 +28,9 @@ const searchQuery = ref('')
 function submitSearch() {
   const q = searchQuery.value.trim()
   router.push({ path: '/search', query: q ? { q } : {} })
+}
+function selectCountry(code: string) {
+  router.push({ path: '/search', query: { country: code } })
 }
 </script>
 
@@ -35,6 +47,8 @@ function submitSearch() {
               v-model="searchQuery"
               :placeholder="$t('landing.hero.searchPlaceholder')"
               input-class="h-12 w-full rounded-full bg-background text-base shadow-sm"
+              :countries="countries ?? []"
+              @select-country="selectCountry"
             />
           </div>
           <Button type="submit" size="lg" class="h-12 rounded-full px-5">

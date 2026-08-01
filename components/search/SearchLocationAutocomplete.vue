@@ -1,25 +1,67 @@
 <script setup lang="ts">
-// Type-ahead place suggestions (Ort — Region [Land], like zvgscout.com) over
-// the curated lib/de-places.ts gazetteer. Wraps a plain Input so it's a
-// drop-in replacement wherever the free-text search box lives (landing hero,
-// search-page toolbar) — selecting a suggestion just writes its name into the
-// v-model, which both call sites already feed into the existing substring
-// search (lib/auction-filters.ts's filterAuctions), so no new filter
-// dimension is introduced.
+// Type-ahead suggestions (Ort — Region [Land], like zvgscout.com) over the
+// curated lib/de-places.ts gazetteer, plus the enabled countries themselves
+// (server/crawlers/registry.ts's CountryEntry list, e.g. "Deutschland"). Wraps
+// a plain Input so it's a drop-in replacement wherever the free-text search
+// box lives (landing hero, search-page toolbar).
+//
+// A place suggestion writes its name into the v-model, which both call sites
+// feed into the substring text search — that's the right behaviour for a
+// city/region name. A country is different: an auction's address/title text
+// almost never contains its own country's name, so treating "Deutschland" as
+// a text search would silently match ~nothing. Selecting a country instead
+// emits select-country so the caller can apply it as an actual country
+// filter (search.vue: selectedCountries; landing hero: navigate with
+// ?country=) and clears the text field, since the pick already fully
+// expresses the intent.
 import { filterPlaces, placeSearchTerm } from '~/lib/de-places'
+import type { CountryEntry } from '~/server/crawlers/registry'
 
-withDefaults(defineProps<{ placeholder?: string; inputClass?: string; type?: string }>(), {
+const props = withDefaults(defineProps<{
+  placeholder?: string
+  inputClass?: string
+  type?: string
+  countries?: CountryEntry[]
+}>(), {
   type: 'text',
+  countries: () => [],
 })
 const model = defineModel<string>({ required: true })
+const emit = defineEmits<{
+  (e: 'select-country', code: string): void
+}>()
 
 const open = ref(false)
 const activeIndex = ref(-1)
 
-const suggestions = computed(() => filterPlaces(model.value))
+function foldDrop(s: string): string {
+  return s.toLocaleLowerCase('de').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+}
 
-function pick(name: string) {
-  model.value = placeSearchTerm(name)
+type Suggestion =
+  | { kind: 'place'; name: string; region: string }
+  | { kind: 'country'; code: string; name: string }
+
+const countryMatches = computed<Suggestion[]>(() => {
+  const q = foldDrop(model.value.trim())
+  if (q.length < 2) return []
+  return props.countries
+    .filter((c) => foldDrop(c.name).includes(q))
+    .map((c) => ({ kind: 'country', code: c.code, name: c.name }))
+})
+
+const suggestions = computed<Suggestion[]>(() => {
+  const places = filterPlaces(model.value).map((p): Suggestion => ({ kind: 'place', name: p.name, region: p.region }))
+  return [...countryMatches.value, ...places].slice(0, 8)
+})
+
+function pick(suggestion: Suggestion) {
+  if (suggestion.kind === 'country') {
+    model.value = ''
+    emit('select-country', suggestion.code)
+  } else {
+    model.value = placeSearchTerm(suggestion.name)
+  }
   open.value = false
   activeIndex.value = -1
 }
@@ -34,7 +76,7 @@ function onKeydown(e: KeyboardEvent) {
     activeIndex.value = (activeIndex.value - 1 + suggestions.value.length) % suggestions.value.length
   } else if (e.key === 'Enter' && activeIndex.value >= 0) {
     e.preventDefault()
-    pick(suggestions.value[activeIndex.value]!.name)
+    pick(suggestions.value[activeIndex.value]!)
   } else if (e.key === 'Escape') {
     open.value = false
   }
@@ -69,17 +111,17 @@ function onBlur() {
   >
     <li
       v-for="(s, i) in suggestions"
-      :key="`${s.name}-${s.region}`"
+      :key="s.kind === 'country' ? `country-${s.code}` : `${s.name}-${s.region}`"
       class="flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-sm"
       :class="i === activeIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent hover:text-accent-foreground'"
-      @mousedown.prevent="pick(s.name)"
+      @mousedown.prevent="pick(s)"
     >
       <span>
         <span class="font-medium">{{ s.name }}</span>
-        <span class="text-muted-foreground"> — {{ s.region }}</span>
+        <span v-if="s.kind === 'place'" class="text-muted-foreground"> — {{ s.region }}</span>
       </span>
       <span class="shrink-0 rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-        {{ $t('country.de') }}
+        {{ s.kind === 'country' ? $t('search.countrySuggestionBadge') : $t('country.de') }}
       </span>
     </li>
   </ul>

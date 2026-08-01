@@ -1,5 +1,5 @@
 import { refDebounced } from '@vueuse/core'
-import type { ComputedRef, Ref } from 'vue'
+import type { ComputedRef, InjectionKey, Ref } from 'vue'
 import { ALL_SCOPE, isAllScope } from '~/lib/auction-constants'
 import type { CountryEntry } from '~/server/crawlers/registry'
 
@@ -363,3 +363,13 @@ export function useAuctionSearchState(options: {
     initializeMountedState,
   }
 }
+
+// layouts/search.vue owns the single instance (so its header slot and the
+// page share one reactive state) and bundles in the countries list it
+// already fetches for useAuctionSearchState itself — pages/search.vue injects
+// this rather than calling useAuctionSearchState() or fetching /api/regions
+// again.
+export type AuctionSearchState = ReturnType<typeof useAuctionSearchState> & {
+  countries: Ref<CountryEntry[] | null>
+}
+export const AUCTION_SEARCH_STATE_KEY: InjectionKey<AuctionSearchState> = Symbol('auctionSearchState')

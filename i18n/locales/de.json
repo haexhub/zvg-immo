@@ -5,9 +5,6 @@
   },
   "nav": {
     "brand": "PropHammer",
-    "search": "Suche",
-    "archive": "Archiv",
-    "calculator": "Rechner",
     "menu": "Menü"
   },
   "map": {
@@ -75,6 +72,7 @@
     "saveSearchPrompt": "Name für die gespeicherte Suche:",
     "saveSearchError": "Suche konnte nicht gespeichert werden.",
     "filterButton": "Filter",
+    "countrySuggestionBadge": "Land",
     "viewMap": "Karte",
     "viewList": "Liste",
     "loadingData": "Lade Daten …",
