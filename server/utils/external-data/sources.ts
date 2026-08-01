@@ -159,37 +159,14 @@ export const EXTERNAL_DATA_SOURCES: readonly ExternalDataSource[] = [
       },
     ],
   },
-  {
-    id: 'openstreetmap-overpass',
-    label: 'OpenStreetMap / Overpass',
-    countries: ['eu'],
-    capabilities: ['location_context', 'poi_places', 'transport_network'],
-    sourceUrl: 'https://www.openstreetmap.org/copyright',
-    licenseNote: 'Europe-wide open map tags for POIs, transport, roads, landuse and visible neighborhood signals; completeness varies by mapper coverage.',
-    refreshCadence: 'deployment-configured / source minutely updates',
-    resolution: 'object tags around auction coordinates',
-    adapter: 'osmLocationContextAdapter',
-    configFields: [
-      {
-        key: 'endpoint',
-        type: 'url',
-        runtimeConfigKey: 'osmContextEndpoint',
-        envVar: 'NUXT_EXTERNAL_DATA_OSM_CONTEXT_ENDPOINT',
-        defaultValue: '',
-        required: true,
-      },
-      {
-        key: 'timeoutMs',
-        type: 'number',
-        runtimeConfigKey: 'osmContextTimeoutMs',
-        envVar: 'NUXT_EXTERNAL_DATA_OSM_CONTEXT_TIMEOUT_MS',
-        // Doubles as the query's own `[timeout:]`, so it must exceed the
-        // server-side execution time — see DEFAULT_TIMEOUT_MS in
-        // osm-location-context.ts.
-        defaultValue: 120_000,
-      },
-    ],
-  },
+  // openstreetmap-overpass used to live here as a configurable source (live
+  // Overpass endpoint + timeout). Replaced by a local PostGIS table
+  // (osm_local_elements, server/utils/external-data/osm-location-context.ts)
+  // loaded out-of-band by a standalone osm2pgsql job — nothing left to
+  // configure, so no source entry (this array only ever surfaces
+  // configurable sources; see configurableExternalDataSources() in
+  // config.ts). Attribution for the returned LocationContext is still
+  // OpenStreetMap's, hardcoded as SOURCE in osm-location-shared.ts.
   {
     id: 'overture-maps',
     label: 'Overture Maps',

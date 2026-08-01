@@ -5,6 +5,7 @@
 -- depend on. Later phases append their own CREATE TABLE blocks below.
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS postgis;
 
 CREATE TABLE IF NOT EXISTS schema_migrations (
   name       text PRIMARY KEY,
@@ -703,3 +704,25 @@ CREATE TABLE IF NOT EXISTS task_run_errors (
 );
 CREATE INDEX IF NOT EXISTS idx_task_run_errors_task_created ON task_run_errors (task, created_at DESC);
 ALTER TABLE task_run_errors ENABLE ROW LEVEL SECURITY;
+
+-- Local OSM data (loaded out-of-band by a standalone osm2pgsql job, not by
+-- this app) replacing the live public Overpass API as the location-context
+-- source (server/utils/external-data/osm-local.ts) — overpass-api.de started
+-- timing out under the nightly full-dataset external-enrichment run. Real
+-- geometry (not just a center point) on purpose, even though
+-- buildLocationContext only ever consumes a single representative point per
+-- element today: this table is meant to carry future geodata features too
+-- (user-drawn search-area polygons, "within N km of the coast" filters)
+-- without a schema change.
+CREATE TABLE IF NOT EXISTS osm_local_elements (
+  osm_type    text NOT NULL,
+  osm_id      bigint NOT NULL,
+  geom        geometry(Geometry, 4326) NOT NULL,
+  tags        jsonb NOT NULL,
+  country     text NOT NULL,
+  imported_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (osm_type, osm_id)
+);
+CREATE INDEX IF NOT EXISTS idx_osm_local_elements_geom ON osm_local_elements USING GIST (geom);
+CREATE INDEX IF NOT EXISTS idx_osm_local_elements_country ON osm_local_elements (country);
+ALTER TABLE osm_local_elements ENABLE ROW LEVEL SECURITY;

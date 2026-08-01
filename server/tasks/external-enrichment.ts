@@ -13,7 +13,7 @@ import { createEuFloodRiskFileAdapter } from '~/server/utils/external-data/eu-fl
 import { createCopernicusEffisBurntAreaFileAdapter } from '~/server/utils/external-data/copernicus-effis'
 import { createEeaEnvironmentalNoiseEnhancer } from '~/server/utils/external-data/eea-environmental-noise'
 import { createCamsAirQualityEnhancer } from '~/server/utils/external-data/cams-air-quality'
-import { createOsmLocationContextAdapter } from '~/server/utils/external-data/osm-location-context'
+import { createLocalOsmLocationContextAdapter } from '~/server/utils/external-data/osm-location-context'
 import {
   getStoredExternalDataSourceConfig,
   getConfigurableExternalDataSource,
@@ -400,13 +400,10 @@ async function defaultHazardAdapters(
 }
 
 async function defaultLocationContextAdapters(db: Pool | null, checkedAt: string): Promise<LocationContextAdapter[]> {
-  const osmValues = await resolvedSourceValues(db, 'openstreetmap-overpass')
-  if (!osmValues) return []
-  const osmAdapter = createOsmLocationContextAdapter({
-    endpoint: String(osmValues.endpoint),
-    checkedAt,
-    timeoutMs: Number(osmValues.timeoutMs),
-  })
+  // No config to resolve any more (osm_local_elements is loaded out-of-band by
+  // a standalone osm2pgsql job, not fetched live) — just needs a DB to query.
+  if (!db) return []
+  const osmAdapter = createLocalOsmLocationContextAdapter({ db, checkedAt })
   const enhancers: LocationContextEnhancer[] = []
   const eeaValues = await resolvedSourceValues(db, 'eea-environmental-noise-directive')
   if (eeaValues) {
