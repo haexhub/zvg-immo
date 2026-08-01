@@ -183,16 +183,23 @@ ALTER TABLE location_enrichment
 8. **Ändert sich `lat`/`lng` zwischen zwei `auction_details`-Versionen
     spürbar** (Toleranzschwelle wegen Geocoding-Rauschen, keine exakte
     Gleichheit), wird `location_enrichment` einfach aktualisiert (überschrieben,
-    keine eigene Versionierung) — aber nicht erst beim nächsten planmäßigen
-    Re-Check: der Writer aus WP-2 setzt `location_enrichment.checked_at` für
-    diese Auktion zurück (z.B. `NULL`), sobald er eine neue Version mit
-    geändertem `lat`/`lng` schreibt. Kein synchrones Neuberechnen im
-    Extraktionspfad (externe Abfrage ist zu teuer, um den Enrich-Lauf zu
-    blockieren) — nur eine Als-veraltet-Markierung, die der nächste reguläre
-    `external-enrichment.ts`-Durchlauf sofort aufgreift statt die normale
-    Kadenz abzuwarten. Sonst würde die alte, jetzt falsche Standort-Anreicherung
-    bis zum nächsten planmäßigen Check aktiv falsch ausgeliefert, nicht nur
-    veraltet.
+    keine eigene Versionierung). **Verifiziert am echten Code
+    (`server/tasks/external-enrichment.ts`, `nuxt.config.ts`):** der Task läuft
+    heute per Cron `15 3 * * *` als **blinder, unbedingter Voll-Sweep über alle
+    Auktionen** — kein `checked_at`-Staleness-Gate, das ein Zurücksetzen
+    beeinflussen würde. Dieser Voll-Sweep bleibt bestehen, weil ein Teil der
+    Adapter (EU-Hochwasserrisiko, Copernicus-EFFIS, EEA-Lärm, CAMS-Luftqualität)
+    von **extern, unabhängig von der Auktion aktualisierten Datensätzen**
+    abhängt — eine neue Hochwasserzone kann eine unveränderte Auktion betreffen,
+    ohne dass irgendein auktionsseitiger Trigger das je auslösen würde. Für den
+    Fall "Adresse/Koordinaten dieser einen Auktion haben sich geändert" reicht
+    der nächtliche Sweep aber nicht (bis zu 24h falsche Anzeige) — zusätzlich
+    ein **sofortiger, gezielter, detachter Trigger**: der Writer aus WP-2 (bzw.
+    WP-1 für neu angelegte Auktionen) ruft `runExternalEnrichment({ platform,
+    externalId })` fire-and-forget auf (Funktion unterstützt Einzel-Auktions-
+    Scope bereits über `options.platform`/`options.externalId`; das
+    "detached"-Muster existiert schon für den manuellen `/settings`-Trigger).
+    Kein synchrones Warten im Extraktionspfad auf externe HTTP-Latenzen.
 9. **`auctions.status`**: nur `active`/`cancelled` werden aktiv gepflegt
    (`cancelled` vom Crawler gesetzt, sobald er eine Absage erkennt). `beendet`
    wird NICHT gespeichert, sondern bei jedem Read aus `auction_date_iso < now()`
@@ -341,11 +348,12 @@ Betroffene Dateien (per Grep verifiziert, Stand 2026-08-01):
 **WP-5 — `location_enrichment`-FK**
 - schema.sql: FK ergänzen (trivial, da `auctions` durch WP-1 garantiert
   vorher existiert).
-- `server/utils/auction-details.ts`s Writer (aus WP-2): beim Schreiben einer
-  neuen Version mit spürbar geändertem `lat`/`lng` gegenüber der bisher
-  neuesten Version `location_enrichment.checked_at` für diese Auktion
-  zurücksetzen (siehe Punkt 8 oben) — kein synchrones Neuberechnen, nur
-  Als-veraltet-Markierung für den nächsten `external-enrichment.ts`-Durchlauf.
+- `server/utils/auction-details.ts`s Writer (aus WP-2, sowie `ensureAuctionIdentity`
+  aus WP-1 für neue Auktionen): beim Schreiben einer neuen Version mit spürbar
+  geändertem `lat`/`lng` gegenüber der bisher neuesten Version einen
+  gezielten, detachten Aufruf `runExternalEnrichment({ platform, externalId })`
+  auslösen (siehe Punkt 8 oben) — nicht auf den nächtlichen Cron-Sweep warten,
+  der bleibt unverändert für die extern-datensatzseitige Aktualität bestehen.
 
 **WP-6 — Contract: alte Tabellen/Spalten entfernen**
 - Erst nach Burn-in-Zeit von WP-2/3 in Prod: `extraction_cache`,
