@@ -7,6 +7,13 @@ const { data: rails } = await useFetch<LandingRailsResponse | null>('/api/landin
   default: () => null,
 })
 
+const geoRails = computed(() => {
+  if (!rails.value) return []
+  return (['sea', 'mountains', 'lakes', 'rivers'] as const)
+    .map((key) => ({ key, items: rails.value![key] }))
+    .filter((geo) => geo.items.length > 0)
+})
+
 const router = useRouter()
 const searchQuery = ref('')
 function submitSearch() {
@@ -42,9 +49,9 @@ function submitSearch() {
 
     <!-- Category rails -->
     <div class="mx-auto w-full max-w-7xl px-6">
-      <LandingCategoryRail v-if="rails?.countries.length" :title="$t('landing.rails.countries.title')">
-        <div v-for="c in rails.countries" :key="c.code" class="w-44 shrink-0 snap-start sm:w-52">
-          <LandingCountryTile :country="c" />
+      <LandingCategoryRail v-for="rail in rails?.countryRails" :key="rail.code" :title="$t('landing.rails.country.title', { name: rail.name })">
+        <div v-for="a in rail.auctions" :key="`${a.platform}:${a.externalId}`" class="w-72 shrink-0 snap-start">
+          <AuctionCard :auction="a" class="h-full" />
         </div>
       </LandingCategoryRail>
 
@@ -54,6 +61,17 @@ function submitSearch() {
         :subtitle="$t('landing.rails.bestCondition.subtitle')"
       >
         <div v-for="a in rails.bestCondition" :key="`${a.platform}:${a.externalId}`" class="w-72 shrink-0 snap-start">
+          <AuctionCard :auction="a" class="h-full" />
+        </div>
+      </LandingCategoryRail>
+
+      <LandingCategoryRail
+        v-for="geo in geoRails"
+        :key="geo.key"
+        :title="$t(`landing.rails.${geo.key}.title`)"
+        :subtitle="$t(`landing.rails.${geo.key}.subtitle`)"
+      >
+        <div v-for="a in geo.items" :key="`${a.platform}:${a.externalId}`" class="w-72 shrink-0 snap-start">
           <AuctionCard :auction="a" class="h-full" />
         </div>
       </LandingCategoryRail>
