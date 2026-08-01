@@ -1,22 +1,19 @@
 <script setup lang="ts">
 import type { AuctionSearchResponse, AuctionSummary } from '~/server/api/auctions.get'
 import type { GeoAuction, GeoCrawlResult } from '~/server/api/auctions-geo.get'
-import type { CountryEntry } from '~/server/crawlers/registry'
 import { ALL_SCOPE, isAllScope } from '~/lib/auction-constants'
 import { auctionKey } from '~/lib/auction-key'
-import type { SavedSearch } from '~/server/api/saved-searches/index.get'
 import { useMediaQuery } from '@vueuse/core'
 import { apiErrorMessage } from '~/lib/api-error'
-import { useAuctionSearchState } from '~/composables/useAuctionSearchState'
+import { AUCTION_SEARCH_STATE_KEY } from '~/composables/useAuctionSearchState'
 import { useAuctionWatchlist } from '~/composables/useAuctionWatchlist'
 
 definePageMeta({ layout: 'search' })
 
-const route = useRoute()
 const { user } = useAuth()
 const { t, locale } = useI18n()
 const intlLocale = useIntlLocale()
-const { currency, eurToDisplay, displayToEur } = useCurrencyDisplay()
+const { currency } = useCurrencyDisplay()
 const propertyTypeLabel = usePropertyTypeLabel()
 
 // Desktop shows list + map side by side; below this breakpoint they collapse
@@ -28,22 +25,11 @@ const propertyTypeLabel = usePropertyTypeLabel()
 // instead of a hydration mismatch (which otherwise corrupts the DOM).
 const mediaIsDesktop = useMediaQuery('(min-width: 768px)')
 
-const { data: countries } = await useFetch<CountryEntry[]>('/api/regions', {
-  cache: 'no-store',
-  default: () => [],
-})
-
-// Admin-configured default for the hideRulesOnly filter below (/settings'
-// "Dashboard-Anzeige" — see server/utils/app-settings.ts's
-// getHideRulesOnlyAuctions). Public endpoint outside /api/settings/ since
-// every visitor, not just an admin, needs this default.
-const { data: displaySettings } = await useFetch<{ hideRulesOnlyAuctions: boolean }>('/api/display-settings', {
-  default: () => ({ hideRulesOnlyAuctions: true }),
-})
-const hideRulesOnlyServerDefault = computed(() => displaySettings.value?.hideRulesOnlyAuctions ?? true)
-
+// layouts/search.vue owns the single useAuctionSearchState instance — its
+// header slot and this page both read/write the same reactive filters.
 const {
   mounted,
+  countries,
   selectedCountries,
   selectedRegionKeys,
   filtersOpen,
@@ -77,13 +63,7 @@ const {
   toggleRegion,
   setPriceBucket,
   clearAllFilters,
-  initializeMountedState,
-} = useAuctionSearchState({
-  countries,
-  hideRulesOnlyServerDefault,
-  eurToDisplay,
-  displayToEur,
-})
+} = inject(AUCTION_SEARCH_STATE_KEY)!
 const isDesktop = computed(() => mounted.value && mediaIsDesktop.value)
 
 // Search results are filtered and paginated in Postgres. Only compact card
@@ -196,8 +176,6 @@ watch([geocodingInProgress, mapVisible, shouldFetchMissingGeo], ([running, visib
   if (running && visible && shouldFetch) startGeoPoll()
   else stopGeoPoll()
 }, { immediate: true })
-
-onMounted(initializeMountedState)
 
 onDeactivated(() => stopGeoPoll())
 onActivated(() => {
@@ -335,30 +313,6 @@ watch(data, () => {
   }
 })
 
-// "Suche speichern" — POSTs the current URL query params as-is (same shape
-// saved_searches.filters mirrors, see lib/auction-filters.ts) under a
-// user-chosen name.
-const savingSearch = ref(false)
-async function saveCurrentSearch(): Promise<void> {
-  if (!user.value) return
-  const name = window.prompt(t('search.saveSearchPrompt'))?.trim()
-  if (!name) return
-  savingSearch.value = true
-  try {
-    await authFetch<SavedSearch>('/api/saved-searches', {
-      method: 'POST',
-      body: { name, filters: route.query },
-    })
-  } catch (err: unknown) {
-    const msg = (err as { statusMessage?: string; message?: string })?.statusMessage
-      ?? (err as { message?: string })?.message
-      ?? t('search.saveSearchError')
-    window.alert(msg)
-  } finally {
-    savingSearch.value = false
-  }
-}
-
 const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
   onError: (message) => {
     listActionError.value = message
@@ -380,20 +334,11 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
       </div>
     </header>
 
-    <SearchToolbar
-      v-model:search="search"
-      v-model:sort-by="sortBy"
-      v-model:bound-to-map="boundToMap"
-      :filtered-count="data?.total ?? 0"
-      :geo-data="geoData"
-      :filtered-geo-count="filteredGeo.length"
-      :geocoding-in-progress="geocodingInProgress"
-      :logged-in="!!user"
-      :saving-search="savingSearch"
-      :active-filter-count="activeFilterCount"
-      @save-search="saveCurrentSearch"
-      @open-filters="filtersOpen = true"
-    />
+    <div v-if="data?.total" class="shrink-0 mb-3 text-sm text-muted-foreground">
+      {{ $t('search.resultsCount', { count: data.total }) }}<span v-if="geoData">
+        · {{ filteredGeo.length }} {{ $t('search.onMap') }} ({{ $t('search.geocoded', { done: geoData.geocodedCount, total: geoData.total }) }}<span v-if="geoData.unresolvableCount > 0">, {{ $t('search.unresolvable', { count: geoData.unresolvableCount }) }}</span><span v-if="geocodingInProgress">, {{ $t('search.geocodingRunning') }}</span>)
+      </span>
+    </div>
 
     <p v-if="pending && !data" class="py-12 text-center text-muted-foreground">{{ $t('search.loadingData') }}</p>
     <p v-else-if="error" class="py-12 text-center text-destructive">
