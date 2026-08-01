@@ -32,6 +32,11 @@ function submitSearch() {
 function selectCountry(code: string) {
   router.push({ path: '/search', query: { country: code } })
 }
+// The landing page has no filter state of its own — hand off to the search
+// page and ask it to open the filter sheet immediately (see layouts/search.vue).
+function goToFilters() {
+  router.push({ path: '/search', query: { openFilters: '1' } })
+}
 </script>
 
 <template>
@@ -42,15 +47,13 @@ function selectCountry(code: string) {
         <h1 class="text-3xl font-bold tracking-tight sm:text-4xl">{{ $t('landing.hero.headline') }}</h1>
         <p class="max-w-xl text-muted-foreground">{{ $t('landing.hero.subheadline') }}</p>
         <form class="flex w-full max-w-lg items-center gap-2" @submit.prevent="submitSearch">
-          <div class="relative flex-1">
-            <SearchLocationAutocomplete
-              v-model="searchQuery"
-              :placeholder="$t('landing.hero.searchPlaceholder')"
-              input-class="h-12 w-full rounded-full bg-background text-base shadow-sm"
-              :countries="countries ?? []"
-              @select-country="selectCountry"
-            />
-          </div>
+          <SearchFilterBar
+            v-model:search="searchQuery"
+            :placeholder="$t('landing.hero.searchPlaceholder')"
+            :countries="countries ?? []"
+            @select-country="selectCountry"
+            @open-filters="goToFilters"
+          />
           <Button type="submit" size="lg" class="h-12 rounded-full px-5">
             <Search class="h-4 w-4" />{{ $t('landing.hero.searchCta') }}
           </Button>

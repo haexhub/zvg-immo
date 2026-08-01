@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { AuctionSearchResponse, AuctionSummary } from '~/server/api/auctions.get'
 import type { GeoAuction, GeoCrawlResult } from '~/server/api/auctions-geo.get'
+import type { SavedSearch } from '~/server/api/saved-searches/index.get'
 import { ALL_SCOPE, isAllScope } from '~/lib/auction-constants'
 import { auctionKey } from '~/lib/auction-key'
 import { useMediaQuery } from '@vueuse/core'
@@ -10,6 +11,7 @@ import { useAuctionWatchlist } from '~/composables/useAuctionWatchlist'
 
 definePageMeta({ layout: 'search' })
 
+const route = useRoute()
 const { user } = useAuth()
 const { t, locale } = useI18n()
 const intlLocale = useIntlLocale()
@@ -317,6 +319,27 @@ watch(data, () => {
   }
 })
 
+// "Suche speichern" — POSTs the current URL query params as-is (same shape
+// saved_searches.filters mirrors, see lib/auction-filters.ts) under a
+// user-chosen name.
+const savingSearch = ref(false)
+async function saveCurrentSearch(): Promise<void> {
+  if (!user.value) return
+  const name = window.prompt(t('search.saveSearchPrompt'))?.trim()
+  if (!name) return
+  savingSearch.value = true
+  try {
+    await authFetch<SavedSearch>('/api/saved-searches', {
+      method: 'POST',
+      body: { name, filters: route.query },
+    })
+  } catch (err: unknown) {
+    window.alert(apiErrorMessage(err, t('search.saveSearchError')))
+  } finally {
+    savingSearch.value = false
+  }
+}
+
 const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
   onError: (message) => {
     listActionError.value = message
@@ -337,6 +360,32 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
         </div>
       </div>
     </header>
+
+    <div class="shrink-0 mb-3 flex flex-wrap items-center gap-2">
+      <Select v-model="sortBy">
+        <SelectTrigger class="w-44">
+          <SelectValue :placeholder="$t('search.sortLabel')" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="default">{{ $t('search.sortDefault') }}</SelectItem>
+          <SelectItem value="dateAsc">{{ $t('search.sortDateAsc') }}</SelectItem>
+          <SelectItem value="priceAsc">{{ $t('search.sortPriceAsc') }}</SelectItem>
+          <SelectItem value="priceDesc">{{ $t('search.sortPriceDesc') }}</SelectItem>
+        </SelectContent>
+      </Select>
+
+      <label
+        class="flex cursor-pointer select-none items-center gap-2 whitespace-nowrap text-sm"
+        :title="$t('search.boundToMapHint')"
+      >
+        <Checkbox v-model="boundToMap" />
+        {{ $t('search.boundToMap') }}
+      </label>
+
+      <Button v-if="user" type="button" variant="outline" class="ml-auto" :disabled="savingSearch" @click="saveCurrentSearch">
+        {{ savingSearch ? $t('search.savingSearch') : $t('search.saveSearch') }}
+      </Button>
+    </div>
 
     <div v-if="data" class="shrink-0 mb-3 text-sm text-muted-foreground">
       {{ $t('search.resultsCount', { count: data.total }) }}<span v-if="geoData">

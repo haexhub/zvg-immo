@@ -1,7 +1,5 @@
 <script setup lang="ts">
 import type { CountryEntry } from '~/server/crawlers/registry'
-import type { SavedSearch } from '~/server/api/saved-searches/index.get'
-import { apiErrorMessage } from '~/lib/api-error'
 import { AUCTION_SEARCH_STATE_KEY, useAuctionSearchState } from '~/composables/useAuctionSearchState'
 
 // Owns the single useAuctionSearchState instance for /search — the header
@@ -11,8 +9,7 @@ import { AUCTION_SEARCH_STATE_KEY, useAuctionSearchState } from '~/composables/u
 // automatic layout wiring (app.vue's <NuxtLayout><NuxtPage/></NuxtLayout>)
 // gives us — a page can't hand named slot content up to its own layout.
 const route = useRoute()
-const { user } = useAuth()
-const { t } = useI18n()
+const router = useRouter()
 const { eurToDisplay, displayToEur } = useCurrencyDisplay()
 
 // Admin-configured default for the hideRulesOnly filter (/settings'
@@ -39,8 +36,7 @@ const state = useAuctionSearchState({
 })
 provide(AUCTION_SEARCH_STATE_KEY, { ...state, countries })
 
-const { search, sortBy, boundToMap, filtersOpen, selectedCountries, activeFilterCount, initializeMountedState } = state
-onMounted(initializeMountedState)
+const { search, filtersOpen, selectedCountries, activeFilterCount, initializeMountedState } = state
 
 // A country suggestion (see SearchLocationAutocomplete) is a real filter, not
 // text — pick it, and the header search box just scopes to that country.
@@ -48,41 +44,29 @@ function selectHeaderCountry(code: string): void {
   selectedCountries.value = [code]
 }
 
-// "Suche speichern" — POSTs the current URL query params as-is (same shape
-// saved_searches.filters mirrors, see lib/auction-filters.ts) under a
-// user-chosen name.
-const savingSearch = ref(false)
-async function saveCurrentSearch(): Promise<void> {
-  if (!user.value) return
-  const name = window.prompt(t('search.saveSearchPrompt'))?.trim()
-  if (!name) return
-  savingSearch.value = true
-  try {
-    await authFetch<SavedSearch>('/api/saved-searches', {
-      method: 'POST',
-      body: { name, filters: route.query },
-    })
-  } catch (err: unknown) {
-    window.alert(apiErrorMessage(err, t('search.saveSearchError')))
-  } finally {
-    savingSearch.value = false
+onMounted(() => {
+  initializeMountedState()
+  // The landing page's own filter button has nowhere to open a filter panel
+  // (it has no filter state of its own) — it navigates here with this flag
+  // instead, see pages/index.vue.
+  if (route.query.openFilters === '1') {
+    filtersOpen.value = true
+    const query = { ...route.query }
+    delete query.openFilters
+    router.replace({ query })
   }
-}
+})
 </script>
 
 <template>
   <div class="h-screen overflow-hidden flex flex-col">
     <SiteHeader>
       <template #search>
-        <SearchToolbar
+        <SearchFilterBar
           v-model:search="search"
-          v-model:sort-by="sortBy"
-          v-model:bound-to-map="boundToMap"
           :countries="countries ?? []"
-          :logged-in="!!user"
-          :saving-search="savingSearch"
           :active-filter-count="activeFilterCount"
-          @save-search="saveCurrentSearch"
+          :placeholder="$t('filters.searchPlaceholder')"
           @open-filters="filtersOpen = true"
           @select-country="selectHeaderCountry"
         />
