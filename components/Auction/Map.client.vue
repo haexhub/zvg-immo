@@ -121,6 +121,8 @@ const vectorSourceRef = ref<any>(null)
 const clusterSourceRef = ref<any>(null)
 const vectorLayerRef = ref<any>(null)
 
+const MAX_ZOOM = 18
+
 const selectedKey = ref<string | null>(null)
 const popupPosition = ref<number[] | undefined>(undefined)
 const selectedAuction = computed<GeoAuction | undefined>(() => {
@@ -130,6 +132,17 @@ const selectedAuction = computed<GeoAuction | undefined>(() => {
 const selectedSummary = computed<AuctionSummary | null>(() => {
   if (!selectedKey.value) return null
   return props.auctionSummaries?.get(selectedKey.value) ?? null
+})
+
+// Set instead of opening a popup when a cluster can't be split further by
+// zooming (see onMapClick) — lets the user pick one of the co-located
+// auctions individually rather than being stuck with an unclickable badge.
+const clusterKeys = ref<string[] | null>(null)
+const clusterAuctions = computed<GeoAuction[]>(() => {
+  if (!clusterKeys.value) return []
+  return clusterKeys.value
+    .map((key) => featuresByKey.get(key)?.get('auction') as GeoAuction | undefined)
+    .filter((a): a is GeoAuction => a != null)
 })
 
 // True at mount and whenever the parent bumps `fitKey` (filter change). The
@@ -265,20 +278,45 @@ function onMapClick(evt: any): void {
   const clusterFeature = map.forEachFeatureAtPixel(evt.pixel, (f: any) => f)
   if (!clusterFeature) {
     selectedKey.value = null
+    clusterKeys.value = null
     popupPosition.value = undefined
     return
   }
   const children = clusterFeature.get('features') as Feature<Point>[]
   if (children.length > 1) {
-    // Cluster of more than one — zoom in instead of opening a popup, same as
-    // the implicit cluster-click-to-expand behaviour of the Leaflet version.
     const view = map.getView()
-    view.animate({ center: clusterFeature.getGeometry().getCoordinates(), zoom: Math.min((view.getZoom() ?? initialZoom) + 2, 18) })
+    const extent = clusterFeature.getGeometry().getExtent() as [number, number, number, number]
+    // Every child projects to the exact same pixel, so no amount of zooming
+    // will ever push them past the cluster distance (60px) — e.g. several
+    // auctions unresolvable to an exact address and parked at the same
+    // country-centroid fallback. Same once the view is already at max zoom:
+    // further "zoom in" would be a no-op animation, leaving the cluster
+    // permanently unclickable. Offer a picker instead of spinning forever.
+    const isSinglePoint = extent[0] === extent[2] && extent[1] === extent[3]
+    const atMaxZoom = (view.getZoom() ?? initialZoom) >= MAX_ZOOM
+    if (isSinglePoint || atMaxZoom) {
+      selectedKey.value = null
+      clusterKeys.value = children.map((f) => f.getId() as string)
+      popupPosition.value = clusterFeature.getGeometry().getCoordinates()
+      return
+    }
+    // Cluster of more than one, still spatially separable — zoom in instead
+    // of opening a popup, same as the implicit cluster-click-to-expand
+    // behaviour of the Leaflet version.
+    view.animate({ center: clusterFeature.getGeometry().getCoordinates(), zoom: Math.min((view.getZoom() ?? initialZoom) + 2, MAX_ZOOM) })
     return
   }
+  clusterKeys.value = null
   const key = children[0]!.getId() as string
   selectedKey.value = key
   popupPosition.value = clusterFeature.getGeometry().getCoordinates()
+  emit('auction-select', key)
+}
+
+function selectFromCluster(auction: GeoAuction): void {
+  const key = auctionKey(auction)
+  clusterKeys.value = null
+  selectedKey.value = key
   emit('auction-select', key)
 }
 
@@ -335,6 +373,20 @@ function onPointerMove(evt: any): void {
           />
         </div>
       </ol-overlay>
+      <ol-overlay v-if="clusterKeys && popupPosition" :position="popupPosition" :offset="[0, -12]" positioning="bottom-center">
+        <div class="auction-map-cluster-list">
+          <div class="auction-map-cluster-list__hint">{{ t('map.clusterPickerHint', { count: clusterAuctions.length }) }}</div>
+          <button
+            v-for="a in clusterAuctions"
+            :key="auctionKey(a)"
+            type="button"
+            class="auction-map-cluster-list__item"
+            @click="selectFromCluster(a)"
+          >
+            {{ a.country.toUpperCase() }} · {{ a.region }} · {{ a.externalId }}
+          </button>
+        </div>
+      </ol-overlay>
     </ol-map>
     <div class="auction-map-baselayer-toggle">
       <button type="button" :class="{ 'is-active': baseLayer === 'streets' }" @click="baseLayer = 'streets'">
@@ -355,6 +407,42 @@ function onPointerMove(evt: any): void {
   max-width: 320px;
   background: white;
   box-shadow: 0 4px 16px rgb(15 23 42 / 20%);
+}
+
+.auction-map-cluster-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-radius: 8px;
+  padding: 8px;
+  min-width: 220px;
+  max-width: 280px;
+  max-height: 240px;
+  overflow-y: auto;
+  background: white;
+  box-shadow: 0 4px 16px rgb(15 23 42 / 20%);
+}
+
+.auction-map-cluster-list__hint {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.auction-map-cluster-list__item {
+  text-align: left;
+  font-size: 13px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.auction-map-cluster-list__item:hover {
+  background: #f3f4f6;
 }
 
 .auction-map-baselayer-toggle {

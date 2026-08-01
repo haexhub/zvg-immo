@@ -64,4 +64,71 @@ describe('/api/auctions-geo', () => {
       'country', 'externalId', 'lat', 'lng', 'platform', 'region',
     ])
   })
+
+  it('places an address-less row at the country centroid instead of dropping it', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    vi.stubGlobal('getQuery', () => ({ country: 'de', fetch: '0' }))
+    vi.stubGlobal('setResponseHeader', vi.fn())
+    vi.stubGlobal('createError', (input: object) => Object.assign(new Error('api error'), input))
+    const query = vi.fn().mockResolvedValue({
+      rows: [{
+        platform: 'zvg-portal',
+        external_id: '43',
+        country: 'de',
+        region: 'Bayern',
+        address: null,
+        lat: null,
+        lng: null,
+      }],
+      rowCount: 1,
+    })
+    const { getPool } = await import('~/server/utils/db')
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+    const handler = (await import('./auctions-geo.get')).default as unknown as (
+      event: { node: { req: { on: (name: string, callback: () => void) => void } } }
+    ) => Promise<unknown>
+
+    const result = await handler({ node: { req: { on: vi.fn() } } })
+    expect(result).toMatchObject({
+      total: 1,
+      // Placed via country-centroid fallback, not a real geocode hit.
+      geocodedCount: 0,
+      unresolvableCount: 1,
+      auctions: [{ platform: 'zvg-portal', externalId: '43', country: 'de', lat: 52.52, lng: 13.405 }],
+    })
+  })
+
+  it('never trusts a stored (0,0) as a real position and re-geocodes from the address', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    vi.stubGlobal('getQuery', () => ({ country: 'de', fetch: '0' }))
+    vi.stubGlobal('setResponseHeader', vi.fn())
+    vi.stubGlobal('createError', (input: object) => Object.assign(new Error('api error'), input))
+    const query = vi.fn().mockResolvedValue({
+      rows: [{
+        platform: 'zvg-portal',
+        external_id: '44',
+        country: 'de',
+        region: 'Bayern',
+        address: 'Musterstraße 1',
+        lat: '0',
+        lng: '0',
+      }],
+      rowCount: 1,
+    })
+    const { getPool } = await import('~/server/utils/db')
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+    const { geocodeAddress } = await import('~/server/utils/geocode')
+    vi.mocked(geocodeAddress).mockResolvedValue({ lat: 48.137, lng: 11.575, displayName: 'x' })
+    const handler = (await import('./auctions-geo.get')).default as unknown as (
+      event: { node: { req: { on: (name: string, callback: () => void) => void } } }
+    ) => Promise<unknown>
+
+    const result = await handler({ node: { req: { on: vi.fn() } } })
+    expect(result).toMatchObject({
+      total: 1,
+      geocodedCount: 1,
+      unresolvableCount: 0,
+      auctions: [{ platform: 'zvg-portal', externalId: '44', lat: 48.137, lng: 11.575 }],
+    })
+  })
 })
