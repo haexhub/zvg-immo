@@ -180,11 +180,24 @@ ALTER TABLE location_enrichment
    sich nicht zwischen Extraktions-Versionen). **`auction_translations` hängt
    versioniert an `auction_details`** (Inhalt ändert sich mit der Version, alte
    Übersetzungen bleiben als Historie erhalten statt überschrieben zu werden).
-8. **`auctions.status`**: nur `active`/`cancelled` werden aktiv gepflegt
+8. **Ändert sich `lat`/`lng` zwischen zwei `auction_details`-Versionen
+    spürbar** (Toleranzschwelle wegen Geocoding-Rauschen, keine exakte
+    Gleichheit), wird `location_enrichment` einfach aktualisiert (überschrieben,
+    keine eigene Versionierung) — aber nicht erst beim nächsten planmäßigen
+    Re-Check: der Writer aus WP-2 setzt `location_enrichment.checked_at` für
+    diese Auktion zurück (z.B. `NULL`), sobald er eine neue Version mit
+    geändertem `lat`/`lng` schreibt. Kein synchrones Neuberechnen im
+    Extraktionspfad (externe Abfrage ist zu teuer, um den Enrich-Lauf zu
+    blockieren) — nur eine Als-veraltet-Markierung, die der nächste reguläre
+    `external-enrichment.ts`-Durchlauf sofort aufgreift statt die normale
+    Kadenz abzuwarten. Sonst würde die alte, jetzt falsche Standort-Anreicherung
+    bis zum nächsten planmäßigen Check aktiv falsch ausgeliefert, nicht nur
+    veraltet.
+9. **`auctions.status`**: nur `active`/`cancelled` werden aktiv gepflegt
    (`cancelled` vom Crawler gesetzt, sobald er eine Absage erkennt). `beendet`
    wird NICHT gespeichert, sondern bei jedem Read aus `auction_date_iso < now()`
    berechnet — kein Cron-Job, der veralten kann.
-9. **Artefakte (Bilder/Dokumente/HTML) hängen über `artifact_version_id` an
+10. **Artefakte (Bilder/Dokumente/HTML) hängen über `artifact_version_id` an
    `auction_details`**, nicht als eigene Spalten dort — die 1:n-Liste "welche
    Dateien genau" bleibt in `artifact_version_items`, `auction_details`
    referenziert nur das Manifest.
@@ -328,9 +341,11 @@ Betroffene Dateien (per Grep verifiziert, Stand 2026-08-01):
 **WP-5 — `location_enrichment`-FK**
 - schema.sql: FK ergänzen (trivial, da `auctions` durch WP-1 garantiert
   vorher existiert).
-- `server/tasks/external-enrichment.ts`: prüfen, ob eine Neuberechnung nötig
-  ist, wenn sich `lat`/`lng` zwischen `auction_details`-Versionen ändern
-  (reine Anwendungslogik, kein Schema-Thema).
+- `server/utils/auction-details.ts`s Writer (aus WP-2): beim Schreiben einer
+  neuen Version mit spürbar geändertem `lat`/`lng` gegenüber der bisher
+  neuesten Version `location_enrichment.checked_at` für diese Auktion
+  zurücksetzen (siehe Punkt 8 oben) — kein synchrones Neuberechnen, nur
+  Als-veraltet-Markierung für den nächsten `external-enrichment.ts`-Durchlauf.
 
 **WP-6 — Contract: alte Tabellen/Spalten entfernen**
 - Erst nach Burn-in-Zeit von WP-2/3 in Prod: `extraction_cache`,
