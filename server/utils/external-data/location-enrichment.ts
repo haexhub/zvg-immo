@@ -7,6 +7,10 @@ export type LocationEnrichmentCache = Record<string, LocationEnrichment>
 
 let cachePromise: Promise<LocationEnrichmentCache> | null = null
 
+export function invalidateLocationEnrichmentCache(): void {
+  cachePromise = null
+}
+
 export async function readLocationEnrichmentCache(): Promise<LocationEnrichmentCache> {
   if (!cachePromise) cachePromise = loadLocationEnrichmentCache()
   try {

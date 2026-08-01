@@ -537,6 +537,22 @@ ALTER TABLE auctions ADD COLUMN IF NOT EXISTS year_built integer;
 ALTER TABLE auctions ADD COLUMN IF NOT EXISTS last_renovation_year integer;
 CREATE INDEX IF NOT EXISTS idx_auctions_year_built ON auctions (year_built);
 
+-- (platform, external_id) identity note: extraction_cache, auction_snapshot,
+-- location_enrichment and auction_translations all key on this pair, but
+-- deliberately carry no FOREIGN KEY to `auctions` or to each other. Two
+-- reasons: (1) `auctions` is a derived SQL mirror written LAST in the
+-- pipeline (current-auctions.ts, called after writeAuctionSnapshot/
+-- writeExtractionCache in enrich.ts) or not at all (reprocess.ts,
+-- llm-batch-poll.ts write extraction_cache/auction_snapshot without ever
+-- touching `auctions`) — an FK pointing at `auctions` would reject those
+-- writes; (2) these caches are meant to outlive their `auctions`/list_cache
+-- row on purpose (permalink retention for ended auctions, see
+-- wp5-snapshot-no-prune-intentional), so ON DELETE CASCADE would silently
+-- destroy exactly the historical data this is for. Cross-table consistency
+-- is instead maintained by application code where it matters (e.g.
+-- country-rebuild.ts's deleteCountryCurrentData deletes matching rows from
+-- all of these tables when resetting a country).
+--
 -- WP-3: vollständiger Extraktions-Cache-Blob (server/utils/extraction-cache.ts)
 -- — Postgres ist die einzige Persistenz, kein lokales JSON-File mehr. Eigene
 -- Tabelle statt einer weiteren Spalte auf `auctions`: writeExtractionCache()
