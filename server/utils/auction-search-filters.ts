@@ -69,8 +69,12 @@ export async function buildAuctionSearchFilter(
   if (authority && authority !== 'all') where.push(`a.authority = ${add(authority)}`)
   const category = String(query.category ?? '')
   if (category && category !== 'all') where.push(`a.property_type = ${add(category)}`)
-  const condition = String(query.condition ?? '')
-  if (condition && condition !== 'all') where.push(`a.condition #>> '{}' = ${add(condition)}`)
+  // Comma-list (not a single exact match) so the landing page's "best
+  // maintained" rail can ask for multiple condition tiers at once
+  // (neuwertig,gepflegt) — pages/search.vue's single-select UI still works
+  // unchanged since commaList('x') === ['x'].
+  const conditions = commaList(query.condition).filter((entry) => entry !== 'all')
+  if (conditions.length) where.push(`a.condition #>> '{}' = ANY(${add(conditions)}::text[])`)
   const features = commaList(query.features)
   if (features.length) where.push(`a.features && ${add(features)}::text[]`)
   if (String(query.photos ?? '') === '1') where.push('a.photo_count > 0')

@@ -19,56 +19,23 @@
   },
   "landing": {
     "hero": {
-      "eyebrow": "Foreclosure auctions · across Europe",
-      "headline": "Every property auction",
-      "headlineHighlight": "on one map",
-      "headlineSuffix": "— across Europe.",
-      "subheadline": "PropHammer continuously crawls court and official portals across many European countries and shows every foreclosure auction on an interactive map — with photos, market value and hearing date.",
-      "statLive": "{total} listings · {countries} countries · {regions} regions",
-      "statPlaceholder": "Thousands of listings · many countries across Europe",
+      "headline": "Every property auction across Europe",
+      "subheadline": "PropHammer continuously crawls court and official portals across many European countries — with photos, market value and hearing date.",
       "searchPlaceholder": "Search location, property type or case number …",
       "searchCta": "Search",
       "trust": ["100% free", "No sign-up needed", "Live from court portals"],
-      "ctaPrimary": "Browse listings",
       "mapLabel": "Map by country",
-      "mapHint": "Click a country",
-      "legendAvailable": "Data available — click",
-      "legendSoon": "coming soon"
+      "mapHint": "Click a country"
     },
-    "coverage": {
-      "heading": "One portal for all of Europe",
-      "subheadline": "From German local court portals to France, Italy, Spain and Poland, to curated sources in North America — PropHammer crawls continuously in the background, no manual refresh needed.",
-      "stat": "{countries} countries · {regions} regions/states",
-      "statPlaceholder": "Many countries and regions",
-      "tileListings": "listings on record",
-      "tileCountries": "countries",
-      "tileRegions": "regions & states",
-      "note": "New auctions appear automatically, with no manual refresh.",
-      "cta": "See available countries"
-    },
-    "features": {
-      "heading": "More than just a search",
-      "subheadline": "AI-powered analysis and features you won't find anywhere else.",
-      "items": [
-        { "title": "AI appraisal analysis", "badge": "AI-powered", "desc": "Instead of wading through a hundred-page PDF: PropHammer summarizes appraisals and listings and detects property type, area and room count automatically." },
-        { "title": "Map view", "badge": "Live", "desc": "Every auction in a country on one interactive map — filterable by property type, price and date." },
-        { "title": "Photo gallery", "badge": "Listing + Appraisal", "desc": "Photos from the listing and the appraisal in one place — no more digging through PDFs." },
-        { "title": "Appraisals & listings", "badge": "Direct access", "desc": "Every available document for the property — appraisal, listing and more — ready to download." },
-        { "title": "Cost calculator", "badge": "Germany", "desc": "Property transfer tax, court costs and interest for German foreclosure auctions at a glance." },
-        { "title": "Email alerts", "badge": "Automatic", "desc": "Save a search once — we'll email you as soon as a matching property shows up." },
-        { "title": "Multilingual & multi-currency", "badge": "20+ countries", "desc": "Descriptions translated automatically, market values converted live into your currency — the original stays visible next to it." }
-      ]
-    },
-    "faq": {
-      "heading": "Frequently asked questions",
-      "items": [
-        { "q": "Is PropHammer free?", "a": "Yes — search, map view and filters are completely free, even without an account. An account is only needed for extras like the watchlist and saved searches." },
-        { "q": "Which countries does the data come from?", "a": "PropHammer crawls court and official portals across many European countries as well as curated sources in North America. You can see the exact country list in the search filters." },
-        { "q": "How up to date is the data?", "a": "A background crawler keeps the data continuously updated — you never have to trigger anything manually." },
-        { "q": "Does PropHammer replace legal advice?", "a": "No. PropHammer provides research data, not legal advice. The listing page lets you contact a referred lawyer directly if you need one." },
-        { "q": "What does the AI summary do?", "a": "It summarizes property data, location and condition from appraisals and listings, and translates them on demand — at the push of a button, right on the listing page." },
-        { "q": "Does the acquisition-cost calculator work for all countries?", "a": "No, currently only for German foreclosure auctions." }
-      ]
+    "rails": {
+      "countries": {
+        "title": "Browse by country",
+        "count": "{count} auctions"
+      },
+      "bestCondition": {
+        "title": "Best maintained",
+        "subtitle": "Like-new and well-kept properties"
+      }
     },
     "footer": {
       "tagline": "Foreclosure auctions across Europe — on one map.",

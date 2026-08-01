@@ -19,56 +19,23 @@
   },
   "landing": {
     "hero": {
-      "eyebrow": "Zwangsversteigerungen · europaweit",
-      "headline": "Alle Immobilien-Auktionen",
-      "headlineHighlight": "auf einer Karte",
-      "headlineSuffix": "— europaweit.",
-      "subheadline": "PropHammer durchsucht rund um die Uhr Gerichts- und Amtsportale in vielen europäischen Ländern und zeigt dir jede Zwangsversteigerung auf einer interaktiven Karte — mit Fotos, Verkehrswert und Termin.",
-      "statLive": "{total} Objekte im Bestand · {countries} Länder · {regions} Regionen",
-      "statPlaceholder": "Tausende Objekte · viele Länder europaweit",
+      "headline": "Alle Immobilien-Auktionen europaweit",
+      "subheadline": "PropHammer durchsucht rund um die Uhr Gerichts- und Amtsportale in vielen europäischen Ländern — mit Fotos, Verkehrswert und Termin.",
       "searchPlaceholder": "Ort, Objektart oder Aktenzeichen suchen …",
       "searchCta": "Suchen",
       "trust": ["100 % kostenlos", "Ohne Anmeldung", "Live von Amts- & Gerichtsportalen"],
-      "ctaPrimary": "Objekte durchsuchen",
       "mapLabel": "Karte nach Land",
-      "mapHint": "Land anklicken",
-      "legendAvailable": "Daten verfügbar — anklicken",
-      "legendSoon": "bald verfügbar"
+      "mapHint": "Land anklicken"
     },
-    "coverage": {
-      "heading": "Ein Portal für ganz Europa",
-      "subheadline": "Von den deutschen Amtsgerichtsportalen über Frankreich, Italien, Spanien und Polen bis zu kuratierten Quellen in Nordamerika — PropHammer crawlt kontinuierlich im Hintergrund, du musst nichts manuell aktualisieren.",
-      "stat": "{countries} Länder · {regions} Regionen/Bundesländer",
-      "statPlaceholder": "Viele Länder und Regionen",
-      "tileListings": "Objekte im Bestand",
-      "tileCountries": "Länder",
-      "tileRegions": "Regionen & Bundesländer",
-      "note": "Neue Auktionen erscheinen automatisch, ohne dass du manuell aktualisierst.",
-      "cta": "Verfügbare Länder ansehen"
-    },
-    "features": {
-      "heading": "Mehr als nur eine Suche",
-      "subheadline": "KI-gestützte Analyse und Funktionen, die es sonst nirgends gibt.",
-      "items": [
-        { "title": "KI-Gutachten-Analyse", "badge": "KI-gestützt", "desc": "Statt hundert Seiten PDF zu wälzen: PropHammer fasst Gutachten und Exposés zusammen und erkennt automatisch Objektart, Fläche und Zimmerzahl." },
-        { "title": "Kartenansicht", "badge": "Live", "desc": "Alle Auktionen eines Landes auf einer interaktiven Karte — mit Filtern nach Objektart, Preis und Termin." },
-        { "title": "Bildergalerie", "badge": "Original + Gutachten", "desc": "Fotos aus Anzeige und Gutachten an einem Ort — kein Wälzen durch PDFs mehr." },
-        { "title": "Gutachten & Exposés", "badge": "Direktzugriff", "desc": "Alle verfügbaren Dokumente zum Objekt — Gutachten, Exposé und mehr — griffbereit zum Download." },
-        { "title": "Kostenrechner", "badge": "Deutschland", "desc": "Grunderwerbsteuer, Gerichtskosten und Zinsen für deutsche Zwangsversteigerungen auf einen Blick." },
-        { "title": "Email-Benachrichtigungen", "badge": "Automatisch", "desc": "Suche einmal speichern — wir informieren dich per E-Mail, sobald ein passendes Objekt neu auftaucht." },
-        { "title": "Mehrsprachig & Multiwährung", "badge": "20+ Länder", "desc": "Beschreibungen automatisch übersetzt, Verkehrswerte live in deiner Wunschwährung — das Original bleibt daneben sichtbar." }
-      ]
-    },
-    "faq": {
-      "heading": "Häufig gestellte Fragen",
-      "items": [
-        { "q": "Ist PropHammer kostenlos?", "a": "Ja — Suche, Kartenansicht und Filter sind komplett kostenlos, auch ohne Anmeldung. Ein Konto brauchst du nur für Zusatzfunktionen wie Watchlist und gespeicherte Suchen." },
-        { "q": "Aus welchen Ländern kommen die Daten?", "a": "PropHammer crawlt Amts- und Gerichtsportale in vielen europäischen Ländern sowie kuratierte Quellen in Nordamerika. Die genaue Länderliste siehst du im Filter der Suche." },
-        { "q": "Wie aktuell sind die Daten?", "a": "Ein Hintergrund-Crawler aktualisiert die Daten laufend — du musst nichts manuell anstoßen." },
-        { "q": "Ersetzt PropHammer eine Rechtsberatung?", "a": "Nein. PropHammer liefert Recherche-Daten, keine Rechtsberatung. Über die Objektseite kannst du bei Bedarf direkt einen vermittelten Anwalt kontaktieren." },
-        { "q": "Was macht die KI-Zusammenfassung?", "a": "Sie fasst Objektdaten, Lage und Zustand aus Gutachten und Exposés zusammen und übersetzt sie bei Bedarf — auf Knopfdruck, direkt auf der Objektseite." },
-        { "q": "Funktioniert der Erwerbskosten-Rechner für alle Länder?", "a": "Nein, aktuell nur für deutsche Zwangsversteigerungen." }
-      ]
+    "rails": {
+      "countries": {
+        "title": "Nach Land durchsuchen",
+        "count": "{count} Auktionen"
+      },
+      "bestCondition": {
+        "title": "Am besten gepflegt",
+        "subtitle": "Neuwertige und gepflegte Objekte"
+      }
     },
     "footer": {
       "tagline": "Zwangsversteigerungen europaweit — auf einer Karte.",
