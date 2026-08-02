@@ -12,6 +12,7 @@ import { regionRefreshIntervalMs } from '../crawlers/crawl-cadence'
 import { matchAlerts } from '../utils/alert-matching'
 import { recordObservations } from '../utils/history'
 import { archiveAuction } from '../utils/raw-archive'
+import { ensureAuctionIdentity } from '../utils/current-auctions'
 import { regionListCacheAgeMs, writeListCache } from '../utils/list-cache'
 import { drainOutbox } from '../utils/storage-uploader'
 import { runExclusiveTask, throwIfTaskAborted } from '../utils/exclusive-task'
@@ -63,6 +64,10 @@ async function runRefresh(signal: AbortSignal) {
         })
         throwIfTaskAborted(signal)
         await writeListCache(r.country, r.code, result)
+        // Must precede archiveAuction below: artifact_captures/artifact_versions
+        // carry an FK on (platform, external_id) -> auctions, so the identity
+        // has to exist before the first archive write for this auction.
+        await ensureAuctionIdentity(result.auctions)
         // History and raw-archive writes are part of a successful crawl: their
         // failures propagate into this region's visible failure result.
         // Alert delivery remains independently fault-tolerant.

@@ -6,6 +6,7 @@ import { matchAlerts } from './alert-matching'
 import { archiveAuction } from './raw-archive'
 import { recordObservations } from './history'
 import { getPool } from './db'
+import { ensureAuctionIdentity } from './current-auctions'
 import { writeListCache } from './list-cache'
 import { invalidateAuctionSnapshot } from './auction-snapshot'
 import { invalidateExtractionCache } from './extraction-cache'
@@ -17,7 +18,6 @@ export interface CountryRebuildResult {
     listCache: number
     auctionSnapshot: number
     extractionCache: number
-    currentAuctions: number
     locationEnrichment: number
     auctionTranslations: number
   }
@@ -42,16 +42,17 @@ function platformIdsForCountry(country: string): string[] {
 
 export async function deleteCountryCurrentData(db: Pool, country: string): Promise<CountryRebuildResult['deleted']> {
   const platformIds = platformIdsForCountry(country)
+  // `auctions` is deliberately absent here: since WP-1 it is the permanent
+  // master identity every artifact/extraction row hangs off, so it is never
+  // deleted. A re-crawl corrects it in place through the normal upsert.
   const [
     listCache,
-    currentAuctions,
     auctionSnapshot,
     extractionCache,
     locationEnrichment,
     auctionTranslations,
   ] = await Promise.all([
     db.query('DELETE FROM list_cache WHERE country = $1', [country]),
-    db.query('DELETE FROM auctions WHERE country = $1', [country]),
     db.query(
       `DELETE FROM auction_snapshot
        WHERE auction->>'country' = $1 OR platform = ANY($2::text[])`,
@@ -80,7 +81,6 @@ export async function deleteCountryCurrentData(db: Pool, country: string): Promi
     listCache: listCache.rowCount ?? 0,
     auctionSnapshot: auctionSnapshot.rowCount ?? 0,
     extractionCache: extractionCache.rowCount ?? 0,
-    currentAuctions: currentAuctions.rowCount ?? 0,
     locationEnrichment: locationEnrichment.rowCount ?? 0,
     auctionTranslations: auctionTranslations.rowCount ?? 0,
   }
@@ -122,6 +122,7 @@ export async function rebuildCountry(countryInput: string): Promise<CountryRebui
           enrichDetails: false,
         })
         await writeListCache(country, region.code, result)
+        await ensureAuctionIdentity(result.auctions)
         await recordObservations(result, capturedAt)
         await matchAlerts(country, region.code, result)
         for (const auction of result.auctions) {

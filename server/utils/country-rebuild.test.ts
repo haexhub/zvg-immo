@@ -9,6 +9,7 @@ const state = vi.hoisted(() => ({
   recordObservations: vi.fn(),
   matchAlerts: vi.fn(),
   archiveAuction: vi.fn(),
+  ensureAuctionIdentity: vi.fn(),
 }))
 
 vi.mock('../crawlers/registry', () => ({
@@ -36,11 +37,11 @@ vi.mock('./list-cache', () => ({ writeListCache: state.writeListCache }))
 vi.mock('./history', () => ({ recordObservations: state.recordObservations }))
 vi.mock('./alert-matching', () => ({ matchAlerts: state.matchAlerts }))
 vi.mock('./raw-archive', () => ({ archiveAuction: state.archiveAuction }))
+vi.mock('./current-auctions', () => ({ ensureAuctionIdentity: state.ensureAuctionIdentity }))
 
 function makePool() {
   const query = vi.fn(async (sql: string) => {
     if (sql.includes('DELETE FROM list_cache')) return { rowCount: 1 }
-    if (sql.includes('DELETE FROM auctions')) return { rowCount: 2 }
     if (sql.includes('DELETE FROM auction_snapshot')) return { rowCount: 3 }
     if (sql.includes('DELETE FROM extraction_cache')) return { rowCount: 4 }
     if (sql.includes('DELETE FROM location_enrichment')) return { rowCount: 5 }
@@ -103,7 +104,6 @@ describe('rebuildCountry', () => {
 
     expect(result.deleted).toEqual({
       listCache: 1,
-      currentAuctions: 2,
       auctionSnapshot: 3,
       extractionCache: 4,
       locationEnrichment: 5,
@@ -111,7 +111,12 @@ describe('rebuildCountry', () => {
     })
     expect(result.crawled).toMatchObject({ ok: 1, failed: 0, auctions: 1 })
     expect(state.pool?.query).toHaveBeenCalledWith('DELETE FROM list_cache WHERE country = $1', ['se'])
-    expect(state.pool?.query).toHaveBeenCalledWith('DELETE FROM auctions WHERE country = $1', ['se'])
+    // `auctions` is the permanent master identity since WP-1 — a country
+    // rebuild must never delete it.
+    expect(state.pool?.query).not.toHaveBeenCalledWith(
+      expect.stringContaining('DELETE FROM auctions'),
+      expect.anything(),
+    )
     expect(state.pool?.query).toHaveBeenCalledWith(
       expect.stringContaining('DELETE FROM auction_snapshot'),
       ['se', ['se-kronofogden']],

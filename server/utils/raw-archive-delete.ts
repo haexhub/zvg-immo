@@ -111,13 +111,15 @@ export async function deleteRawArchiveCountry(countryInput: string): Promise<Del
        FROM artifact_blobs rb
        WHERE EXISTS (
          SELECT 1 FROM artifact_captures rc
-         WHERE rc.country = $1 AND rc.content_hash = rb.content_hash
+         JOIN auctions a ON a.platform = rc.platform AND a.external_id = rc.external_id
+         WHERE a.country = $1 AND rc.content_hash = rb.content_hash
        )
        OR EXISTS (
          SELECT 1
          FROM artifact_versions rds
+         JOIN auctions a ON a.platform = rds.platform AND a.external_id = rds.external_id
          JOIN artifact_version_items rdsi ON rdsi.set_id = rds.id
-         WHERE rds.country = $1 AND rdsi.content_hash = rb.content_hash
+         WHERE a.country = $1 AND rdsi.content_hash = rb.content_hash
        )`,
       [country],
     )
@@ -125,16 +127,27 @@ export async function deleteRawArchiveCountry(countryInput: string): Promise<Del
     const itemCount = await client.query<{ count: string }>(
       `SELECT count(*) AS count
        FROM artifact_versions rds
+       JOIN auctions a ON a.platform = rds.platform AND a.external_id = rds.external_id
        JOIN artifact_version_items rdsi ON rdsi.set_id = rds.id
-       WHERE rds.country = $1`,
+       WHERE a.country = $1`,
       [country],
     )
     documentSetItems = Number(itemCount.rows[0]?.count ?? 0)
 
-    const deletedSets = await client.query('DELETE FROM artifact_versions WHERE country = $1', [country])
+    const deletedSets = await client.query(
+      `DELETE FROM artifact_versions rds
+       USING auctions a
+       WHERE a.platform = rds.platform AND a.external_id = rds.external_id AND a.country = $1`,
+      [country],
+    )
     documentSets = deletedSets.rowCount ?? 0
 
-    const deletedCaptures = await client.query('DELETE FROM artifact_captures WHERE country = $1', [country])
+    const deletedCaptures = await client.query(
+      `DELETE FROM artifact_captures rc
+       USING auctions a
+       WHERE a.platform = rc.platform AND a.external_id = rc.external_id AND a.country = $1`,
+      [country],
+    )
     captures = deletedCaptures.rowCount ?? 0
 
     const hashes = candidates.rows.map((row) => row.content_hash)

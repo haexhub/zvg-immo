@@ -1,12 +1,10 @@
-// Level 2 of the Roh-Archiv browser: regions within a country. `region` is
-// stored directly on artifact_captures at capture time (see raw-archive.ts) — it
-// used to be joined live from `auctions`, but that table is a volatile
-// current-state mirror rebuilt from scratch on every enrich run, so a single
-// failed crawl/upsert for a Bundesland could make its entire capture history
-// vanish into the `'—'` bucket. Older rows captured before region was added
-// are backfilled from `auctions` once (schema.sql), then null forever after
-// that if nothing new is ever captured for that identity — those still fall
-// into `'—'`.
+// Level 2 of the Roh-Archiv browser: regions within a country, joined from the
+// `auctions` identity row. An earlier attempt at this join was reverted because
+// `auctions` was then a volatile mirror rewritten from scratch on every enrich
+// run, so one failed upsert chunk could drop a whole Bundesland into the `'—'`
+// bucket. Since WP-1 the row is created at first crawl and never deleted, which
+// is what makes the join dependable — rows whose region was never captured
+// (backfilled as '') still fall into `'—'`.
 
 import { getPool } from '../../../utils/db'
 
@@ -29,12 +27,13 @@ export default defineEventHandler(async (event): Promise<ArchiveRegionRow[]> => 
   }
 
   const { rows } = await db.query<{ region: string; count: string; last_captured_at: string }>(
-    `SELECT COALESCE(NULLIF(region, ''), $2) AS region,
-            count(DISTINCT (platform, external_id)) AS count,
-            max(captured_at) AS last_captured_at
-     FROM artifact_captures
-     WHERE country = $1 AND kind = 'auction'
-     GROUP BY COALESCE(NULLIF(region, ''), $2)
+    `SELECT COALESCE(NULLIF(a.region, ''), $2) AS region,
+            count(DISTINCT (rc.platform, rc.external_id)) AS count,
+            max(rc.captured_at) AS last_captured_at
+     FROM artifact_captures rc
+     JOIN auctions a ON a.platform = rc.platform AND a.external_id = rc.external_id
+     WHERE a.country = $1 AND rc.kind = 'auction'
+     GROUP BY COALESCE(NULLIF(a.region, ''), $2)
      ORDER BY region`,
     [country, UNKNOWN_REGION],
   )

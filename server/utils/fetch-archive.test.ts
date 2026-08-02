@@ -30,15 +30,11 @@ function makeFakePool() {
       return { rows: [] }
     }
     if (sql.includes('INSERT INTO artifact_captures')) {
-      const [, kind, , , , , , , , sourceUrl] = params as [
+      const [, kind, , , , sourceUrl] = params as [
         string,
         string,
         string,
         string,
-        string | null,
-        string,
-        string | null,
-        string | null,
         string,
         string | null,
       ]

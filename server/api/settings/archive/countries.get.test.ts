@@ -23,7 +23,8 @@ describe('/api/settings/archive/countries', () => {
     await expect(handler()).resolves.toEqual([
       { code: 'se', label: 'Schweden', count: 67, lastCapturedAt: '2026-07-27T07:30:12.000Z' },
     ])
-    expect(query.mock.calls[0]?.[0]).toContain("WHERE kind = 'auction'")
-    expect(query.mock.calls[0]?.[0]).toContain('count(DISTINCT (platform, external_id))')
+    expect(query.mock.calls[0]?.[0]).toContain("WHERE rc.kind = 'auction'")
+    expect(query.mock.calls[0]?.[0]).toContain('JOIN auctions a')
+    expect(query.mock.calls[0]?.[0]).toContain('count(DISTINCT (rc.platform, rc.external_id))')
   })
 })
