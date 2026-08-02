@@ -17,6 +17,14 @@ import { extractPdfTextFromBuffer, pdfHasTrustworthyEncoding } from './pdf-text'
 import { renderPdfPagesJpeg } from './pdf-render'
 import type { LlmInput } from './llm'
 
+// llm.ts's MAX_PDF_CHARS (120k) was raised for Docling's longer Markdown
+// output, but it's a single cap applied to the combined pdfText of however
+// many documents fed into it — including this pdftotext fallback, which
+// predates Docling and was sized for the smaller 60k budget. Capped here,
+// per document, so a Docling outage doesn't silently double this
+// already-live path's prompt size along with it.
+const LEGACY_PDFTOTEXT_MAX_CHARS = 60_000
+
 type LlmAttachmentFormat = 'pdf' | 'docx' | 'html' | 'text' | 'image' | 'unsupported'
 
 interface PreparedAttachmentDocument {
@@ -352,7 +360,9 @@ async function prepareDocument(
     // Docling unavailable/failed for this PDF: back to the previous behaviour —
     // pdftotext prose, or nothing at all so the native-document providers get
     // the raw bytes instead.
-    if (text == null && !opts.nativeDocuments) text = await extractPdfTextFromBuffer(bytes)
+    if (text == null && !opts.nativeDocuments) {
+      text = (await extractPdfTextFromBuffer(bytes))?.slice(0, LEGACY_PDFTOTEXT_MAX_CHARS) ?? null
+    }
   } else {
     text = textForPrepared(format, bytes)
   }
