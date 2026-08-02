@@ -4,8 +4,14 @@ import { getPool } from './db'
 
 vi.mock('./db', () => ({ getPool: vi.fn() }))
 
-const { auctionDetailsValues, invalidateAuctionDetailsCache, readAuctionDetailsAtVersion, readLatestAuctionDetails, writeAuctionDetails } =
-  await import('./auction-details')
+const {
+  auctionDetailsValues,
+  coordinatesMovedSignificantly,
+  invalidateAuctionDetailsCache,
+  readAuctionDetailsAtVersion,
+  readLatestAuctionDetails,
+  writeAuctionDetails,
+} = await import('./auction-details')
 
 function makeAuction(overrides: Partial<Auction> = {}): Auction {
   return {
@@ -86,6 +92,28 @@ describe('auctionDetailsValues', () => {
     expect(values.property_type).toBeNull()
     expect(values.photo_count).toBe(3)
     expect(values.address).toBe('Berliner Tor 2, 16278 Angermünde')
+  })
+})
+
+describe('coordinatesMovedSignificantly', () => {
+  it('treats the first coordinates an auction ever gets as a move', () => {
+    expect(coordinatesMovedSignificantly(null, { lat: 52.1, lng: 13.2 })).toBe(true)
+    expect(coordinatesMovedSignificantly({ lat: null, lng: null }, { lat: 52.1, lng: 13.2 })).toBe(true)
+  })
+
+  it('ignores geocoder noise below the threshold', () => {
+    // ~11 m apart.
+    expect(coordinatesMovedSignificantly({ lat: 52.1, lng: 13.2 }, { lat: 52.1001, lng: 13.2 })).toBe(false)
+    expect(coordinatesMovedSignificantly({ lat: 52.1, lng: 13.2 }, { lat: 52.1, lng: 13.2 })).toBe(false)
+  })
+
+  it('reports a real relocation', () => {
+    // ~1.1 km apart.
+    expect(coordinatesMovedSignificantly({ lat: 52.1, lng: 13.2 }, { lat: 52.11, lng: 13.2 })).toBe(true)
+  })
+
+  it('does not fire when the new version lost its coordinates', () => {
+    expect(coordinatesMovedSignificantly({ lat: 52.1, lng: 13.2 }, { lat: null, lng: null })).toBe(false)
   })
 })
 
@@ -198,6 +226,34 @@ describeDb('writeAuctionDetails (real Postgres)', () => {
     expect(details.rows[0].n).toBe(0)
     const translations = await pool.query('SELECT count(*)::int AS n FROM auction_translations')
     expect(translations.rows[0].n).toBe(0)
+  })
+
+  it('triggers targeted location enrichment only when the coordinates really moved', async () => {
+    const runTask = vi.fn(async () => ({}))
+    vi.stubGlobal('runTask', runTask)
+    try {
+      await writeAuctionDetails(makeAuction({ lat: 52.1, lng: 13.2 }), makeExtraction())
+      expect(runTask).toHaveBeenCalledWith('external-enrichment', {
+        payload: { platform: 'zvg-portal', externalId: '7265' },
+      })
+
+      // A new version whose coordinates only jittered must not re-enrich.
+      runTask.mockClear()
+      await writeAuctionDetails(
+        makeAuction({ lat: 52.1001, lng: 13.2 }),
+        makeExtraction({ livingAreaSqm: 140 }),
+      )
+      expect(runTask).not.toHaveBeenCalled()
+
+      // A real relocation does.
+      await writeAuctionDetails(
+        makeAuction({ lat: 52.11, lng: 13.2 }),
+        makeExtraction({ livingAreaSqm: 150 }),
+      )
+      expect(runTask).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('holds the advisory lock for the whole transaction', async () => {

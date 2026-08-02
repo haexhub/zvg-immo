@@ -844,6 +844,33 @@ CREATE TABLE IF NOT EXISTS location_enrichment (
 CREATE INDEX IF NOT EXISTS idx_location_enrichment_checked_at ON location_enrichment (checked_at DESC);
 ALTER TABLE location_enrichment ENABLE ROW LEVEL SECURITY;
 
+-- Auction-Identity-Redesign WP-5: echte FK auf die Auktions-Identität. Bewusst
+-- unversioniert — der Standort ändert sich nicht zwischen Extraktions-
+-- Versionen, er wird bei einer spürbaren Koordinatenänderung überschrieben
+-- (siehe server/utils/auction-details.ts).
+--
+-- Gleiches NOT VALID-Muster wie bei auction_translations (WP-4): neue Writes
+-- sind sofort abgesichert, validiert wird erst, wenn keine Altzeile mehr ohne
+-- auctions-Zeile existiert — ein Boot davor soll nicht daran scheitern.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_location_enrichment_auction') THEN
+    ALTER TABLE location_enrichment
+      ADD CONSTRAINT fk_location_enrichment_auction
+      FOREIGN KEY (platform, external_id) REFERENCES auctions (platform, external_id)
+      NOT VALID;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM location_enrichment le
+    WHERE NOT EXISTS (
+      SELECT 1 FROM auctions a WHERE a.platform = le.platform AND a.external_id = le.external_id
+    )
+  ) THEN
+    ALTER TABLE location_enrichment VALIDATE CONSTRAINT fk_location_enrichment_auction;
+  END IF;
+END $$;
+
 -- llm_batch_jobs: tracks in-flight LLM Batch API jobs submitted by
 -- enrich.ts/reprocess.ts. Gemini echoes the submitted `key` directly in its
 -- result JSONL; Anthropic restricts `custom_id` to a short safe alphabet, so
