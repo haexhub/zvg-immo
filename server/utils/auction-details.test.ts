@@ -228,6 +228,34 @@ describeDb('writeAuctionDetails (real Postgres)', () => {
     }
   })
 
+  it('cascades: deleting the referenced artifact_versions row deletes auction_details and its translations', async () => {
+    // deleteRawArchiveCountry() deletes artifact_versions rows for a country
+    // directly. ON DELETE CASCADE runs two layers deep (artifact_versions ->
+    // auction_details -> auction_translations) precisely so that admin action
+    // keeps working once a version is both extracted and translated, instead
+    // of failing with an FK violation on whichever layer isn't cascaded.
+    await pool.query(
+      `INSERT INTO artifact_versions (platform, external_id, version, set_hash, document_count, captured_at, last_seen_at)
+       VALUES ('zvg-portal', '7265', 1, 'deadbeef', 1, now(), now())`,
+    )
+    const write = await writeAuctionDetails(makeAuction(), makeExtraction({ documentSetVersion: 1 }))
+    expect(write).toEqual({ version: 1, changed: true })
+    const before = await pool.query('SELECT artifact_version_id FROM auction_details WHERE version = 1')
+    expect(before.rows[0].artifact_version_id).not.toBeNull()
+
+    await pool.query(
+      `INSERT INTO auction_translations (platform, external_id, version, lang, content_hash, status, title, started_at, completed_at)
+       VALUES ('zvg-portal', '7265', 1, 'en', 'hash', 'completed', 'Test title', now(), now())`,
+    )
+
+    await pool.query(`DELETE FROM artifact_versions WHERE platform = 'zvg-portal' AND external_id = '7265'`)
+
+    const details = await pool.query('SELECT count(*)::int AS n FROM auction_details')
+    expect(details.rows[0].n).toBe(0)
+    const translations = await pool.query('SELECT count(*)::int AS n FROM auction_translations')
+    expect(translations.rows[0].n).toBe(0)
+  })
+
   it('holds the advisory lock for the whole transaction', async () => {
     await writeAuctionDetails(makeAuction(), makeExtraction())
 

@@ -693,8 +693,14 @@ CREATE TABLE IF NOT EXISTS auction_details (
   -- Zusammengesetzt statt nur REFERENCES artifact_versions (id): verhindert,
   -- dass eine Zeile das Manifest einer FREMDEN Auktion referenziert.
   -- NULL bleibt erlaubt (MATCH SIMPLE prüft eine FK mit NULL-Spalte nicht).
+  -- ON DELETE CASCADE: deleteRawArchiveCountry() (admin "Archiv löschen")
+  -- löscht artifact_versions-Zeilen für ein Land direkt aus der DB. Ohne
+  -- CASCADE würde das ab hier mit einem FK-Fehler abbrechen, sobald eine
+  -- Extraktions-Version existiert. Wer das Roharchiv eines Landes löscht,
+  -- will die davon abgeleitete Extraktions-Historie mitgelöscht haben, nicht
+  -- eine Fehlermeldung.
   FOREIGN KEY (artifact_version_id, platform, external_id)
-    REFERENCES artifact_versions (id, platform, external_id),
+    REFERENCES artifact_versions (id, platform, external_id) ON DELETE CASCADE,
   UNIQUE (platform, external_id, version)
 );
 CREATE INDEX IF NOT EXISTS idx_auction_details_identity_version
@@ -729,10 +735,16 @@ BEGIN
     ALTER TABLE auction_translations ADD PRIMARY KEY (platform, external_id, version, lang);
   END IF;
 
+  -- ON DELETE CASCADE: auction_details rows themselves cascade away when
+  -- their artifact_versions manifest is deleted (WP-2, deleteRawArchiveCountry
+  -- admin action) — without the same here, that cascade would stop one layer
+  -- too early and fail on any translated version instead of taking the
+  -- translation history with it.
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_auction_translations_details') THEN
     ALTER TABLE auction_translations
       ADD CONSTRAINT fk_auction_translations_details
       FOREIGN KEY (platform, external_id, version) REFERENCES auction_details (platform, external_id, version)
+      ON DELETE CASCADE
       NOT VALID;
   END IF;
 
