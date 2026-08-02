@@ -712,6 +712,59 @@ CREATE INDEX IF NOT EXISTS idx_auction_details_land_area ON auction_details (lan
 CREATE INDEX IF NOT EXISTS idx_auction_details_year_built ON auction_details (year_built);
 ALTER TABLE auction_details ENABLE ROW LEVEL SECURITY;
 
+-- Auction-Identity-Redesign WP-4: Übersetzungen hängen jetzt an einer konkreten
+-- auction_details-Version statt nur an der Auktion. Der Inhalt ist
+-- versionsabhängig — eine neue Extraktions-Version kann Titel/Beschreibung
+-- ändern —, alte Übersetzungen bleiben als Historie erhalten statt
+-- überschrieben zu werden. NOT NULL geht nicht direkt per ADD COLUMN auf eine
+-- gefüllte Tabelle: nullable anlegen, backfillen, dann NOT NULL setzen.
+ALTER TABLE auction_translations ADD COLUMN IF NOT EXISTS version integer;
+UPDATE auction_translations SET version = 1 WHERE version IS NULL;
+ALTER TABLE auction_translations ALTER COLUMN version SET NOT NULL;
+-- Der alte PK (platform, external_id, lang) ließe keine zweite Version
+-- derselben Sprache zu.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_index i
+    JOIN pg_class c ON c.oid = i.indexrelid
+    JOIN pg_attribute att ON att.attrelid = i.indrelid AND att.attnum = ANY (i.indkey)
+    WHERE i.indrelid = 'auction_translations'::regclass AND i.indisprimary AND att.attname = 'version'
+  ) THEN
+    ALTER TABLE auction_translations DROP CONSTRAINT auction_translations_pkey;
+    ALTER TABLE auction_translations ADD PRIMARY KEY (platform, external_id, version, lang);
+  END IF;
+
+  -- ON DELETE CASCADE: auction_details rows themselves cascade away when
+  -- their artifact_versions manifest is deleted (WP-2, deleteRawArchiveCountry
+  -- admin action) — without the same here, that cascade would stop one layer
+  -- too early and fail on any translated version instead of taking the
+  -- translation history with it.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_auction_translations_details') THEN
+    ALTER TABLE auction_translations
+      ADD CONSTRAINT fk_auction_translations_details
+      FOREIGN KEY (platform, external_id, version) REFERENCES auction_details (platform, external_id, version)
+      ON DELETE CASCADE
+      NOT VALID;
+  END IF;
+
+  -- NOT VALID greift bereits für jeden neuen Schreibzugriff; validiert wird
+  -- erst, wenn der einmalige auction_details-Backfill (WP-2,
+  -- scripts/backfill-auction-details.ts) für jede übersetzte Auktion eine
+  -- version = 1 erzeugt hat. Ein Boot vor dem Backfill soll daran nicht
+  -- scheitern, also wird pro Boot erneut geprüft statt einmal hart validiert.
+  IF NOT EXISTS (
+    SELECT 1 FROM auction_translations t
+    WHERE NOT EXISTS (
+      SELECT 1 FROM auction_details ad
+      WHERE ad.platform = t.platform AND ad.external_id = t.external_id AND ad.version = t.version
+    )
+  ) THEN
+    ALTER TABLE auction_translations VALIDATE CONSTRAINT fk_auction_translations_details;
+  END IF;
+END $$;
+
+
 -- (platform, external_id) identity note: extraction_cache, auction_snapshot,
 -- location_enrichment and auction_translations all key on this pair, but
 -- deliberately carry no FOREIGN KEY to `auctions` or to each other. Two

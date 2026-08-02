@@ -10,6 +10,7 @@
 import { setResponseHeader, setResponseStatus } from 'h3'
 import type { Pool } from 'pg'
 import { readAuctionSnapshot } from '~/server/utils/auction-snapshot'
+import { readLatestAuctionDetails } from '~/server/utils/auction-details'
 import { isSafePathSegment } from '~/server/utils/path-segment'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 import { getPool } from '~/server/utils/db'
@@ -157,7 +158,15 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 503, statusMessage: 'translation cache not configured' })
   }
 
-  const stored = await readAuctionTranslation(db, platform, id, targetLang)
+  // Translations hang off a concrete extraction version (WP-4). An auction
+  // with no auction_details row yet has nothing versioned to translate.
+  const latestDetails = await readLatestAuctionDetails(platform, id)
+  if (!latestDetails) {
+    throw createError({ statusCode: 404, statusMessage: 'auction not found' })
+  }
+  const detailsVersion = latestDetails.version
+
+  const stored = await readAuctionTranslation(db, platform, id, detailsVersion, targetLang)
   if (stored?.status === 'completed' && stored.contentHash === contentHash) {
     setResponseHeader(event, 'x-zvg-translation-cache', 'hit')
     return {
@@ -224,7 +233,7 @@ export default defineEventHandler(async (event) => {
   }
   recordInMemoryRateLimitHit(translationRateLimit, requester, now, TRANSLATION_RATE_LIMIT)
 
-  const claim = await claimAuctionTranslation(db, platform, id, targetLang, contentHash)
+  const claim = await claimAuctionTranslation(db, platform, id, detailsVersion, targetLang, contentHash)
   if (!claim) {
     throw createError({ statusCode: 409, statusMessage: 'Übersetzung wurde bereits angestoßen' })
   }
@@ -237,7 +246,7 @@ export default defineEventHandler(async (event) => {
     try {
       const cached = await readContentTranslation(db, contentHash, targetLang)
       if (cached) {
-        await completeAuctionTranslation(db, platform, id, targetLang, claim, cached)
+        await completeAuctionTranslation(db, platform, id, detailsVersion, targetLang, claim, cached)
         setResponseHeader(event, 'x-zvg-translation-cache', 'hit')
         return cached
       }
@@ -278,13 +287,13 @@ export default defineEventHandler(async (event) => {
         result.documentSummary,
         result.extractionTexts,
       )
-      await completeAuctionTranslation(db, platform, id, targetLang, claim, result)
+      await completeAuctionTranslation(db, platform, id, detailsVersion, targetLang, claim, result)
       setResponseHeader(event, 'x-zvg-translation-cache', 'generated')
       return result
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       const failedFingerprint = attemptedConfigs.length > 0 ? fingerprintConfigChain(attemptedConfigs) : null
-      await failAuctionTranslation(db, platform, id, targetLang, claim, message, failedFingerprint)
+      await failAuctionTranslation(db, platform, id, detailsVersion, targetLang, claim, message, failedFingerprint)
       throw createError({
         statusCode: 502,
         statusMessage: 'Übersetzung fehlgeschlagen',
