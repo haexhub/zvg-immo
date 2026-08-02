@@ -44,43 +44,47 @@ describe('/api/auctions', () => {
       cancelled: false,
       photo_count: 4,
       thumbnail_url: '/api/auction-image/zvg-portal/42/first.jpg',
-      extraction: {
-        propertyType: 'einfamilienhaus',
-        landAreaSqm: 500,
-        livingAreaSqm: 120,
-        yearBuilt: 1990,
-        lastRenovationYear: 2020,
-        condition: 'gut',
-        features: ['garage'],
-        photos: [
-          { file: 'second.jpg', category: 'innen', caption: null, isPropertyPhoto: true },
-          { file: 'first.jpg', category: 'aussen', caption: null, isPropertyPhoto: true },
-        ],
-        source: 'llm',
-        llmAnalyzedAt: '2026-07-01T00:00:00.000Z',
-        documentSummary: 'Must not reach a search card',
-        insights: { defects: ['Must not reach a search card'] },
-      },
+      // Typed auction_details columns (WP-3), no longer the extraction_cache blob.
+      property_type: 'einfamilienhaus',
+      land_area_sqm: '500',
+      living_area_sqm: '120',
+      year_built: 1990,
+      last_renovation_year: 2020,
+      condition: 'gut',
+      features: ['garage'],
+      extraction_source: 'llm',
+      llm_analyzed_at: '2026-07-01T00:00:00.000Z',
+      // Curated photos still come from extraction_cache — auction_details
+      // models photo_count/thumbnail_url but not the array itself.
+      photos: [
+        { file: 'second.jpg', category: 'innen', caption: null, isPropertyPhoto: true },
+        { file: 'first.jpg', category: 'aussen', caption: null, isPropertyPhoto: true },
+      ],
+      document_summary: 'Must not reach a search card',
+      insights: { defects: ['Must not reach a search card'] },
       // Simulate detail-only fields accidentally present in a DB result.
       description: 'Must not reach a search card',
       attachments: [{ proxyUrl: 'https://example.test/document.pdf' }],
       photo_urls: ['/one.jpg', '/two.jpg'],
       detail_url: 'https://example.test/detail',
     }
+    // The facet/stats queries are matched before the row query: every one of
+    // them now contains an ORDER BY ... LIMIT from the auction_details lateral
+    // join, so that alone no longer identifies the paginated row query.
     const query = vi.fn(async (sql: string, params: unknown[]) => {
-      if (sql.includes('ORDER BY') && sql.includes('LIMIT')) {
-        expect(params.at(-2)).toBe(30)
-        expect(params.at(-1)).toBe(30)
-        return { rows: [row], rowCount: 1 }
-      }
       if (sql.includes('count(*)::int AS total')) {
         return { rows: [{ total: 61, active: 60, cancelled: 1 }], rowCount: 1 }
       }
       if (sql.includes('SELECT DISTINCT a.authority')) {
         return { rows: [{ authority: 'AG München' }], rowCount: 1 }
       }
-      if (sql.includes('SELECT a.property_type AS id')) {
+      if (sql.includes('SELECT d.property_type AS id')) {
         return { rows: [{ id: 'einfamilienhaus', count: 61 }], rowCount: 1 }
+      }
+      if (sql.includes('LIMIT $') && sql.includes('OFFSET $')) {
+        expect(params.at(-2)).toBe(30)
+        expect(params.at(-1)).toBe(30)
+        return { rows: [row], rowCount: 1 }
       }
       throw new Error(`unexpected query: ${sql}`)
     })

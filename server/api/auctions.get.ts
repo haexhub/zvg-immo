@@ -1,4 +1,7 @@
 import type { AuctionExtraction } from '~/types/auction'
+import type { PropertyType } from '~/lib/property-type'
+import type { Condition } from '~/lib/condition'
+import type { Feature } from '~/lib/features'
 import { getPool } from '~/server/utils/db'
 import { buildAuctionSearchFilter, finiteNumber } from '~/server/utils/auction-search-filters'
 import { curatedAuctionPhotoUrls } from '~/lib/auction-photos'
@@ -40,19 +43,43 @@ export interface AuctionSummary {
   > | null
 }
 
-// Shared with server/api/auction/[platform]/[id]/summary.get.ts, which reuses
-// this exact column list and JOIN shape for a single-auction, unfiltered
-// lookup — the map popover's fallback for a marker outside the loaded page.
+// Shared with server/api/auction/[platform]/[id]/summary.get.ts and
+// server/api/landing/rails.get.ts, which reuse this exact column list and JOIN
+// shape — the map popover's fallback for a marker outside the loaded page, and
+// the landing rails respectively.
+//
+// Object/price/extraction fields come from the newest `auction_details` version
+// (WP-3). extraction_cache is still joined for the curated photo array and
+// auction_snapshot for the three display-only strings, neither of which
+// auction_details models — see LATEST_DETAILS_JOIN_SQL.
 export const SUMMARY_COLUMNS_SQL = `
   a.platform, a.country, a.region, a.external_id, a.case_number, a.authority,
-  a.title, a.address, a.market_value, a.currency, a.market_value_eur,
+  a.title, a.auction_date_iso, a.cancelled,
+  d.address, d.market_value, d.currency, d.market_value_eur,
+  d.starting_bid, d.current_bid, d.photo_count, d.thumbnail_url,
+  d.property_type, d.land_area_sqm, d.living_area_sqm, d.year_built,
+  d.last_renovation_year, d.condition, d.features, d.extraction_source,
+  d.llm_analyzed_at,
   s.auction->>'marketValueText' AS market_value_text,
-  a.starting_bid, a.current_bid, a.auction_date_iso,
   s.auction->>'auctionDateText' AS auction_date_text,
   s.auction->>'pdfUrl' AS pdf_url,
-  a.cancelled, a.photo_count, a.thumbnail_url, ec.extraction`
+  ec.extraction -> 'photos' AS photos`
+
+/**
+ * Newest extraction version per auction. LATERAL rather than the plan's
+ * `DISTINCT ON (platform, external_id) … ORDER BY version DESC` because the
+ * query is driven from `auctions`: this walks
+ * idx_auction_details_identity_version once per matched auction instead of
+ * sorting the whole history table first. Same result set either way.
+ */
+export const LATEST_DETAILS_JOIN_SQL = `LEFT JOIN LATERAL (
+    SELECT ad.* FROM auction_details ad
+    WHERE ad.platform = a.platform AND ad.external_id = a.external_id
+    ORDER BY ad.version DESC LIMIT 1
+  ) d ON true`
 
 export const SUMMARY_FROM_SQL = `FROM auctions a
+  ${LATEST_DETAILS_JOIN_SQL}
   LEFT JOIN extraction_cache ec
     ON ec.platform = a.platform AND ec.external_id = a.external_id
   LEFT JOIN auction_snapshot s
@@ -90,14 +117,22 @@ export interface SearchRow {
   auction_date_iso: string | null
   auction_date_text: string | null
   cancelled: boolean
-  photo_count: number
+  photo_count: number | null
   thumbnail_url: string | null
   pdf_url: string | null
-  extraction: AuctionExtraction | null
+  property_type: PropertyType | null
+  land_area_sqm: string | number | null
+  living_area_sqm: string | number | null
+  year_built: number | null
+  last_renovation_year: number | null
+  condition: Condition | null
+  features: Feature[] | null
+  extraction_source: 'rules' | 'llm' | null
+  llm_analyzed_at: Date | string | null
+  photos: AuctionExtraction['photos'] | null
 }
 
 export function summary(row: SearchRow): AuctionSummary {
-  const extraction = row.extraction
   return {
     platform: row.platform,
     country: row.country,
@@ -116,24 +151,31 @@ export function summary(row: SearchRow): AuctionSummary {
     auctionDateIso: row.auction_date_iso,
     auctionDateText: row.auction_date_text,
     cancelled: row.cancelled,
-    photoCount: row.photo_count,
+    photoCount: row.photo_count ?? 0,
     thumbnailUrl: row.thumbnail_url,
-    galleryUrls: curatedAuctionPhotoUrls(row.platform, row.external_id, extraction?.photos, row.thumbnail_url),
+    galleryUrls: curatedAuctionPhotoUrls(row.platform, row.external_id, row.photos ?? undefined, row.thumbnail_url),
     pdfUrl: row.pdf_url,
-    extraction: extraction
+    // `source` is required on AuctionExtraction, so a row without it is an
+    // auction that has no extraction rather than one with empty fields.
+    extraction: row.extraction_source
       ? {
-          propertyType: extraction.propertyType,
-          landAreaSqm: extraction.landAreaSqm,
-          livingAreaSqm: extraction.livingAreaSqm,
-          yearBuilt: extraction.yearBuilt,
-          lastRenovationYear: extraction.lastRenovationYear,
-          condition: extraction.condition,
-          features: extraction.features,
-          source: extraction.source,
-          llmAnalyzedAt: extraction.llmAnalyzedAt,
+          propertyType: row.property_type,
+          landAreaSqm: finiteNumber(row.land_area_sqm),
+          livingAreaSqm: finiteNumber(row.living_area_sqm),
+          yearBuilt: row.year_built,
+          lastRenovationYear: row.last_renovation_year,
+          condition: row.condition,
+          features: row.features ?? undefined,
+          source: row.extraction_source,
+          llmAnalyzedAt: isoOrNull(row.llm_analyzed_at) ?? undefined,
         }
       : null,
   }
+}
+
+function isoOrNull(value: Date | string | null): string | null {
+  if (value == null) return null
+  return value instanceof Date ? value.toISOString() : value
 }
 
 export default defineEventHandler(async (event): Promise<AuctionSearchResponse> => {
@@ -151,10 +193,10 @@ export default defineEventHandler(async (event): Promise<AuctionSearchResponse> 
   const orderBy = sort === 'dateAsc'
     ? 'a.auction_date_iso ASC NULLS LAST, a.platform, a.external_id'
     : sort === 'priceAsc'
-      ? 'a.market_value_eur ASC NULLS LAST, a.platform, a.external_id'
+      ? 'd.market_value_eur ASC NULLS LAST, a.platform, a.external_id'
       : sort === 'priceDesc'
-        ? 'a.market_value_eur DESC NULLS LAST, a.platform, a.external_id'
-        : 'a.photo_count DESC, a.updated_at DESC, a.platform, a.external_id'
+        ? 'd.market_value_eur DESC NULLS LAST, a.platform, a.external_id'
+        : 'd.photo_count DESC NULLS LAST, a.updated_at DESC, a.platform, a.external_id'
 
   const from = SUMMARY_FROM_SQL
   const rowsSql = `SELECT ${SUMMARY_COLUMNS_SQL}
@@ -169,9 +211,9 @@ export default defineEventHandler(async (event): Promise<AuctionSearchResponse> 
   const authoritiesSql = `SELECT DISTINCT a.authority ${from} ${
     predicate ? `${predicate} AND a.authority <> ''` : `WHERE a.authority <> ''`
   } ORDER BY a.authority`
-  const categoriesSql = `SELECT a.property_type AS id, count(*)::int AS count
-    ${from} ${predicate ? `${predicate} AND a.property_type IS NOT NULL` : `WHERE a.property_type IS NOT NULL`}
-    GROUP BY a.property_type ORDER BY count DESC, a.property_type`
+  const categoriesSql = `SELECT d.property_type AS id, count(*)::int AS count
+    ${from} ${predicate ? `${predicate} AND d.property_type IS NOT NULL` : `WHERE d.property_type IS NOT NULL`}
+    GROUP BY d.property_type ORDER BY count DESC, d.property_type`
 
   // Facet queries reuse the filter parameters but not LIMIT/OFFSET.
   const [rowsResult, statsResult, authoritiesResult, categoriesResult] = await Promise.all([

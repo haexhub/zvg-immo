@@ -83,21 +83,21 @@ export async function buildAuctionSearchFilter(
 
   const search = String(query.q ?? '').trim()
   if (search) {
-    where.push(`concat_ws(' ', a.case_number, a.authority, a.title, a.address, a.description) ILIKE ${add(`%${search}%`)}`)
+    where.push(`concat_ws(' ', a.case_number, a.authority, a.title, d.address, d.description) ILIKE ${add(`%${search}%`)}`)
   }
   const authority = String(query.authority ?? '')
   if (authority && authority !== 'all') where.push(`a.authority = ${add(authority)}`)
   const category = String(query.category ?? '')
-  if (category && category !== 'all') where.push(`a.property_type = ${add(category)}`)
+  if (category && category !== 'all') where.push(`d.property_type = ${add(category)}`)
   // Comma-list (not a single exact match) so the landing page's "best
   // maintained" rail can ask for multiple condition tiers at once
   // (neuwertig,gepflegt) — pages/search.vue's single-select UI still works
   // unchanged since commaList('x') === ['x'].
   const conditions = commaList(query.condition).filter((entry) => entry !== 'all')
-  if (conditions.length) where.push(`a.condition #>> '{}' = ANY(${add(conditions)}::text[])`)
+  if (conditions.length) where.push(`d.condition #>> '{}' = ANY(${add(conditions)}::text[])`)
   const features = commaList(query.features)
-  if (features.length) where.push(`a.features && ${add(features)}::text[]`)
-  if (String(query.photos ?? '') === '1') where.push('a.photo_count > 0')
+  if (features.length) where.push(`d.features && ${add(features)}::text[]`)
+  if (String(query.photos ?? '') === '1') where.push('d.photo_count > 0')
   if (String(query.cancelled ?? '') !== '1') where.push('a.cancelled = false')
 
   // pages/search.vue only puts llmOnly in the URL when the user overrode the
@@ -110,26 +110,30 @@ export async function buildAuctionSearchFilter(
       ? false
       : await getHideRulesOnlyAuctions(db)
   if (hideRulesOnly) {
+    // The jsonb columns keep AuctionExtraction's "never checked" (SQL NULL)
+    // vs "checked, found nothing" (jsonb null) distinction, so IS NOT NULL
+    // here means the same as the `? 'condition'` key-existence test it
+    // replaces (see auction-details.ts's json()).
     where.push(`(
-      a.extraction_source = 'llm'
-      OR ec.extraction ? 'llmAnalyzedAt'
-      OR ec.extraction ? 'condition'
-      OR ec.extraction ? 'features'
-      OR ec.extraction ? 'insights'
+      d.extraction_source = 'llm'
+      OR d.llm_analyzed_at IS NOT NULL
+      OR d.condition IS NOT NULL
+      OR d.features IS NOT NULL
+      OR d.insights IS NOT NULL
     )`)
   }
 
   const ranges: Array<[unknown, string, '>=' | '<=']> = [
-    [query.priceMin, 'a.market_value_eur', '>='],
-    [query.priceMax, 'a.market_value_eur', '<='],
-    [query.landMin, 'a.land_area_sqm', '>='],
-    [query.landMax, 'a.land_area_sqm', '<='],
-    [query.livMin, 'a.living_area_sqm', '>='],
-    [query.livMax, 'a.living_area_sqm', '<='],
-    [query.yearBuiltMin, 'a.year_built', '>='],
-    [query.yearBuiltMax, 'a.year_built', '<='],
-    [query.renovationYearMin, 'a.last_renovation_year', '>='],
-    [query.renovationYearMax, 'a.last_renovation_year', '<='],
+    [query.priceMin, 'd.market_value_eur', '>='],
+    [query.priceMax, 'd.market_value_eur', '<='],
+    [query.landMin, 'd.land_area_sqm', '>='],
+    [query.landMax, 'd.land_area_sqm', '<='],
+    [query.livMin, 'd.living_area_sqm', '>='],
+    [query.livMax, 'd.living_area_sqm', '<='],
+    [query.yearBuiltMin, 'd.year_built', '>='],
+    [query.yearBuiltMax, 'd.year_built', '<='],
+    [query.renovationYearMin, 'd.last_renovation_year', '>='],
+    [query.renovationYearMax, 'd.last_renovation_year', '<='],
   ]
   for (const [raw, column, operator] of ranges) {
     const value = finiteNumber(raw)
@@ -154,8 +158,8 @@ export async function buildAuctionSearchFilter(
   const nearLng = finiteNumber(query.nearLng)
   const nearRadiusKm = finiteNumber(query.nearRadius)
   if (nearLat != null && nearLng != null && nearRadiusKm != null && nearRadiusKm > 0) {
-    where.push(`a.lat IS NOT NULL AND a.lng IS NOT NULL AND ST_DWithin(
-      ST_MakePoint(a.lng, a.lat)::geography,
+    where.push(`d.lat IS NOT NULL AND d.lng IS NOT NULL AND ST_DWithin(
+      ST_MakePoint(d.lng, d.lat)::geography,
       ST_MakePoint(${add(nearLng)}, ${add(nearLat)})::geography,
       ${add(nearRadiusKm * 1000)}
     )`)

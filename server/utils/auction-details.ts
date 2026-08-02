@@ -114,8 +114,14 @@ const VALUE_COLUMNS = [
 
 type ValueColumn = (typeof VALUE_COLUMNS)[number][0]
 
+/**
+ * `undefined` becomes SQL NULL, an explicit `null` becomes the jsonb `null`
+ * literal. AuctionExtraction distinguishes the two — "never checked yet" vs
+ * "checked, found nothing" — and the llmOnly search filter reads that
+ * distinction, so collapsing both to SQL NULL would change what it hides.
+ */
 function json(value: unknown): string | null {
-  return value == null ? null : JSON.stringify(value)
+  return value === undefined ? null : JSON.stringify(value)
 }
 
 /**
