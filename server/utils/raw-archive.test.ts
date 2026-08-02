@@ -59,9 +59,6 @@ interface FakeBlobRow {
 
 interface FakeCaptureRow {
   capturedAt: string
-  region: string | null
-  caseNumber: string | null
-  authority: string | null
   contentHash: string
   sourceUrl: string | null
 }
@@ -94,24 +91,19 @@ function makeFakePool() {
       return { rows: [], rowCount: 1 }
     }
     if (sql.includes('INSERT INTO artifact_captures')) {
-      const [capturedAt, kind, platform, , region, externalId, caseNumber, authority, contentHash, sourceUrl] =
-        params as [
-          string,
-          string,
-          string,
-          string,
-          string | null,
-          string,
-          string | null,
-          string | null,
-          string,
-          string | null,
-        ]
+      const [capturedAt, kind, platform, externalId, contentHash, sourceUrl] = params as [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string | null,
+      ]
       const key =
         kind === 'auction'
           ? `${kind}|${platform}|${externalId}|${contentHash}`
           : `${kind}|${platform}|${externalId}|${sourceUrl ?? ''}|${contentHash}`
-      captures.set(key, { capturedAt, region, caseNumber, authority, contentHash, sourceUrl })
+      captures.set(key, { capturedAt, contentHash, sourceUrl })
       return { rows: [], rowCount: 1 }
     }
     if (sql.includes('SELECT id, version') && sql.includes('FROM artifact_versions')) {
@@ -123,17 +115,7 @@ function makeFakePool() {
       return { rows: [], rowCount: 1 }
     }
     if (sql.includes('INSERT INTO artifact_versions')) {
-      const [, platform, , , externalId, , , setHash] = params as [
-        string,
-        string,
-        string,
-        string | null,
-        string,
-        string | null,
-        string | null,
-        string,
-        number,
-      ]
+      const [, platform, externalId, setHash] = params as [string, string, string, string, number]
       const identityPrefix = `${platform}|${externalId}|`
       const version = [...documentSets.keys()].filter((key) => key.startsWith(identityPrefix)).length + 1
       const id = String(documentSets.size + 1)
@@ -336,13 +318,12 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
       externalId: '1',
       contentHash: 'hash-a',
     }
-    // The PDF itself never changes — only the auction's region gets
-    // corrected upstream between the two captures.
-    await recordCapture({ ...base, capturedAt: '2026-07-01T00:00:00.000Z', region: null })
-    await recordCapture({ ...base, capturedAt: '2026-07-20T00:00:00.000Z', region: 'Hamburg' })
+    // The PDF itself never changes — it is simply re-seen on a later run.
+    await recordCapture({ ...base, capturedAt: '2026-07-01T00:00:00.000Z' })
+    await recordCapture({ ...base, capturedAt: '2026-07-20T00:00:00.000Z' })
 
     expect(pool.captures.size).toBe(1) // no duplicate row
-    expect(pool.captures.get('document|test|1||hash-a')).toMatchObject({ region: 'Hamburg', capturedAt: '2026-07-20T00:00:00.000Z' })
+    expect(pool.captures.get('document|test|1||hash-a')).toMatchObject({ capturedAt: '2026-07-20T00:00:00.000Z' })
   })
 
   it('recordCapture keeps separate document source URLs for the same auction', async () => {
@@ -406,34 +387,28 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
       country: 'de',
       externalId: '1',
     }
-    // Same PDF captured while the auction was still assigned to the wrong region…
     await recordCapture({
       ...base,
       capturedAt: '2026-07-01T00:00:00.000Z',
       contentHash: 'hash-a',
-      region: null,
     })
     // …content genuinely changes for a while…
     await recordCapture({
       ...base,
       capturedAt: '2026-07-10T00:00:00.000Z',
       contentHash: 'hash-b',
-      region: null,
     })
-    // …then reverts to the original bytes after the region got corrected. The
-    // logical document slot is updated in place instead of preserving all
-    // intermediate captures.
+    // …then reverts to the original bytes. The logical document slot is
+    // updated in place instead of preserving all intermediate captures.
     await recordCapture({
       ...base,
       capturedAt: '2026-07-20T00:00:00.000Z',
       contentHash: 'hash-a',
-      region: 'Hamburg',
     })
 
     expect(pool.captures.size).toBe(2)
     expect(pool.captures.get('document|test|1||hash-a')).toMatchObject({
       contentHash: 'hash-a',
-      region: 'Hamburg',
       capturedAt: '2026-07-20T00:00:00.000Z',
     })
     expect(pool.captures.get('document|test|1||hash-b')).toMatchObject({ contentHash: 'hash-b' })
@@ -479,7 +454,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     expect(captureInserts).toHaveLength(2)
   })
 
-  it('archiveAuction persists region directly on the capture row', async () => {
+  it('archiveAuction stores identity by (platform, external_id) only, not denormalized columns', async () => {
     const pool = makeFakePool()
     vi.mocked(getPool).mockReturnValue(pool as never)
 
@@ -488,8 +463,11 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     const [insertSql, insertParams] = pool.query.mock.calls.find(([sql]) =>
       sql.includes('INSERT INTO artifact_captures'),
     )!
-    expect(insertSql).toContain('region')
-    expect(insertParams![4]).toBe('Sachsen-Anhalt')
+    for (const column of ['country', 'region', 'case_number', 'authority']) {
+      expect(insertSql).not.toContain(column)
+    }
+    expect(insertParams![2]).toBe('test') // platform
+    expect(insertParams![3]).toBe('42') // external_id
   })
 
   it('archiveDocument: same PDF referenced by two auctions dedups the blob but captures both', async () => {
@@ -527,8 +505,8 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     const captureInserts = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO artifact_captures'))
     expect(captureInserts).toHaveLength(2)
     expect(captureInserts[0]![1]).toContain('document')
-    expect(captureInserts[0]![1]![4]).toBe('Sachsen') // region forwarded from DocumentIdentity
-    expect(captureInserts[1]![1]![4]).toBeNull() // omitted region -> null, not undefined/crash
+    expect(captureInserts[0]![1]![3]).toBe('1') // external_id
+    expect(captureInserts[1]![1]![3]).toBe('2')
   })
 
   it('archivePhotoBlob: roundtrips bytes into a photo capture without a sourceUrl', async () => {
@@ -553,7 +531,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     const captureInserts = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO artifact_captures'))
     expect(captureInserts).toHaveLength(1)
     expect(captureInserts[0]![1]).toContain('photo')
-    expect(captureInserts[0]![1]![9]).toBeNull() // no sourceUrl for photos
+    expect(captureInserts[0]![1]![5]).toBeNull() // no sourceUrl for photos
   })
 
   it('archivePhotoBlob: the same photo bytes referenced by two auctions dedup the blob but capture both', async () => {

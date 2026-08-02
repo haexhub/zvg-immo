@@ -184,19 +184,22 @@ async function findCandidates(opts: ReprocessOptions, countries: readonly string
   if (countries.length === 0) return []
   const db = getPool()
   if (!db) return []
-  const conditions = ["kind = 'auction'"]
+  const conditions = ["rc.kind = 'auction'"]
   const params: unknown[] = []
   if (countries.length === 1) {
-    conditions.push(`country = $${params.push(countries[0])}`)
+    conditions.push(`a.country = $${params.push(countries[0])}`)
   } else {
-    conditions.push(`country = ANY($${params.push(countries)})`)
+    conditions.push(`a.country = ANY($${params.push(countries)})`)
   }
-  if (opts.platform) conditions.push(`platform = $${params.push(opts.platform)}`)
-  if (opts.externalId) conditions.push(`external_id = $${params.push(opts.externalId)}`)
-  if (opts.caseNumber) conditions.push(`case_number = $${params.push(opts.caseNumber)}`)
+  if (opts.platform) conditions.push(`rc.platform = $${params.push(opts.platform)}`)
+  if (opts.externalId) conditions.push(`rc.external_id = $${params.push(opts.externalId)}`)
+  if (opts.caseNumber) conditions.push(`a.case_number = $${params.push(opts.caseNumber)}`)
   const limitClause = opts.limit ? ` LIMIT $${params.push(opts.limit)}` : ''
   const { rows } = await db.query<{ platform: string; external_id: string }>(
-    `SELECT DISTINCT platform, external_id FROM artifact_captures WHERE ${conditions.join(' AND ')}${limitClause}`,
+    `SELECT DISTINCT rc.platform, rc.external_id
+     FROM artifact_captures rc
+     JOIN auctions a ON a.platform = rc.platform AND a.external_id = rc.external_id
+     WHERE ${conditions.join(' AND ')}${limitClause}`,
     params,
   )
   return rows.map((r) => ({ platform: r.platform, externalId: r.external_id }))

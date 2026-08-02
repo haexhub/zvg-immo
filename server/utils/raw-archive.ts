@@ -177,6 +177,9 @@ export async function archiveBlob(
   return hash
 }
 
+// region/caseNumber/authority are no longer persisted — they live on the
+// `auctions` identity row since WP-1 and are read back by JOIN. `country` is
+// still required: it selects the storage folder in shardedKey().
 export interface CaptureInput {
   capturedAt: string
   kind: CaptureKind
@@ -193,7 +196,7 @@ export interface CaptureInput {
 /**
  * Capture index, append-only. Auctions are keyed by `(kind, platform,
  * externalId, contentHash)`: a repeated crawl with the same content_hash only
- * refreshes metadata (captured_at/region/...) in place, but a real change to
+ * refreshes metadata (captured_at/source_url) in place, but a real change to
  * the parsed auction produces a new content hash and therefore a new version
  * row — old versions are never overwritten (the unique index makes this
  * race-safe). Documents/detail/text captures are keyed by `(kind, platform,
@@ -209,19 +212,11 @@ export async function recordCapture(input: CaptureInput): Promise<void> {
       input.capturedAt,
       input.kind,
       input.platform,
-      input.country,
-      input.region || null,
       input.externalId,
-      input.caseNumber ?? null,
-      input.authority ?? null,
       input.contentHash,
       input.sourceUrl ?? null,
     ]
     const updateSet = `captured_at = EXCLUDED.captured_at,
-         country      = EXCLUDED.country,
-         region       = EXCLUDED.region,
-         case_number  = EXCLUDED.case_number,
-         authority    = EXCLUDED.authority,
          content_hash = EXCLUDED.content_hash,
          source_url   = EXCLUDED.source_url`
     const conflictTarget =
@@ -231,8 +226,8 @@ export async function recordCapture(input: CaptureInput): Promise<void> {
 
   await db.query(
     `INSERT INTO artifact_captures
-       (captured_at, kind, platform, country, region, external_id, case_number, authority, content_hash, source_url)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       (captured_at, kind, platform, external_id, content_hash, source_url)
+     VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT ${conflictTarget} DO UPDATE SET
        ${updateSet}`,
     params,
@@ -402,21 +397,8 @@ export async function archiveDocumentSet(
     const existingRow = existing.rows[0]
     if (existingRow) {
       await db.query(
-        `UPDATE artifact_versions SET
-           last_seen_at = $1,
-           country = $2,
-           region = $3,
-           case_number = $4,
-           authority = $5
-         WHERE id = $6`,
-        [
-          capturedAt,
-          identity.country,
-          identity.region ?? null,
-          identity.caseNumber ?? null,
-          identity.authority ?? null,
-          existingRow.id,
-        ],
+        `UPDATE artifact_versions SET last_seen_at = $1 WHERE id = $2`,
+        [capturedAt, existingRow.id],
       )
       return { setHash, version: existingRow.version, changed: false }
     }
@@ -427,21 +409,17 @@ export async function archiveDocumentSet(
         await client.query('BEGIN')
         const inserted = await client.query<{ id: string; version: number }>(
           `INSERT INTO artifact_versions
-             (captured_at, last_seen_at, platform, country, region, external_id, case_number, authority, set_hash, version, document_count)
+             (captured_at, last_seen_at, platform, external_id, set_hash, version, document_count)
            VALUES (
-             $1, $1, $2, $3, $4, $5, $6, $7, $8,
-             COALESCE((SELECT max(version) + 1 FROM artifact_versions WHERE platform = $2 AND external_id = $5), 1),
-             $9
+             $1, $1, $2, $3, $4,
+             COALESCE((SELECT max(version) + 1 FROM artifact_versions WHERE platform = $2 AND external_id = $3), 1),
+             $5
            )
            RETURNING id, version`,
           [
             capturedAt,
             identity.platform,
-            identity.country,
-            identity.region ?? null,
             identity.externalId,
-            identity.caseNumber ?? null,
-            identity.authority ?? null,
             setHash,
             documents.length,
           ],
