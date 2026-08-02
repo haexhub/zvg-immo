@@ -35,18 +35,16 @@ describe('/api/auction/[platform]/[id]/summary', () => {
       cancelled: false,
       photo_count: 1,
       thumbnail_url: null,
-      extraction: {
-        propertyType: 'einfamilienhaus',
-        landAreaSqm: 500,
-        livingAreaSqm: 120,
-        yearBuilt: 1990,
-        lastRenovationYear: 2020,
-        condition: 'gut',
-        features: ['garage'],
-        photos: [{ file: 'first.jpg', category: 'aussen', caption: null, isPropertyPhoto: true }],
-        source: 'llm',
-        llmAnalyzedAt: '2026-07-01T00:00:00.000Z',
-      },
+      property_type: 'einfamilienhaus',
+      land_area_sqm: '500',
+      living_area_sqm: '120',
+      year_built: 1990,
+      last_renovation_year: 2020,
+      condition: 'gut',
+      features: ['garage'],
+      extraction_source: 'llm',
+      llm_analyzed_at: '2026-07-01T00:00:00.000Z',
+      photos: [{ file: 'first.jpg', category: 'aussen', caption: null, isPropertyPhoto: true }],
     }
     const query = vi.fn(async (sql: string, params: unknown[]) => {
       expect(sql).toContain('WHERE a.platform = $1 AND a.external_id = $2')

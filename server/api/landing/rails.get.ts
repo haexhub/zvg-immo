@@ -9,7 +9,7 @@ import { SUMMARY_COLUMNS_SQL, SUMMARY_FROM_SQL, summary, type AuctionSummary, ty
 // scrolling row of actual auction cards, not a category picker. Country
 // rails query auctions.country directly. Geo rails (sea/mountains/lakes/
 // rivers) query the osm_local_elements PostGIS dataset (PR #282) via
-// ST_DWithin against auctions.lat/lng — no LLM call, no location-context
+// ST_DWithin against the newest auction_details lat/lng — no LLM call, no location-context
 // backfill lag. They depend on the ansible-side osm2pgsql import actually
 // having loaded natural=coastline/water/peak and waterway=river for a
 // country (ansible PR #80) — until that import has run, a geo rail simply
@@ -50,7 +50,7 @@ async function countryRail(db: Pool, code: string): Promise<AuctionSummary[]> {
   const { predicate, values } = await buildAuctionSearchFilter(db, { country: code, photos: '1' })
   const sql = `SELECT ${SUMMARY_COLUMNS_SQL}
     ${SUMMARY_FROM_SQL} ${predicate}
-    ORDER BY a.photo_count DESC, a.updated_at DESC
+    ORDER BY d.photo_count DESC NULLS LAST, a.updated_at DESC
     LIMIT $${values.length + 1}`
   const { rows } = await db.query<SearchRow>(sql, [...values, RAIL_LIMIT])
   return rows.map(summary)
@@ -67,7 +67,7 @@ async function geoRail(db: Pool, category: GeoCategory): Promise<AuctionSummary[
   const predicate = basePredicate ? `${basePredicate} AND ${geoCondition}` : `WHERE ${geoCondition}`
   const sql = `SELECT ${SUMMARY_COLUMNS_SQL}
     ${SUMMARY_FROM_SQL} ${predicate}
-    ORDER BY a.photo_count DESC, a.updated_at DESC
+    ORDER BY d.photo_count DESC NULLS LAST, a.updated_at DESC
     LIMIT ${add(RAIL_LIMIT)}`
   const { rows } = await db.query<SearchRow>(sql, values)
   return rows.map(summary)
@@ -88,7 +88,7 @@ export default defineEventHandler(async (event): Promise<LandingRailsResponse> =
   })
   const bestConditionSql = `SELECT ${SUMMARY_COLUMNS_SQL}
     ${SUMMARY_FROM_SQL} ${conditionPredicate}
-    ORDER BY (CASE a.condition #>> '{}' WHEN 'neuwertig' THEN 0 WHEN 'gepflegt' THEN 1 ELSE 2 END), a.photo_count DESC, a.updated_at DESC
+    ORDER BY (CASE d.condition #>> '{}' WHEN 'neuwertig' THEN 0 WHEN 'gepflegt' THEN 1 ELSE 2 END), d.photo_count DESC NULLS LAST, a.updated_at DESC
     LIMIT $${conditionValues.length + 1}`
 
   const [countryRailResults, bestConditionResult, sea, mountains, lakes, rivers] = await Promise.all([
