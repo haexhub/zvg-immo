@@ -32,7 +32,7 @@ import type { Auction, AuctionExtraction, CuratedPhoto } from '~/types/auction'
 import { normalizePhoto } from '~/lib/photo'
 import { crawlAll, platforms } from '~/server/crawlers/registry'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '~/server/utils/auction-snapshot'
-import { upsertCurrentAuctions } from '~/server/utils/current-auctions'
+import { ensureAuctionIdentity, upsertCurrentAuctions } from '~/server/utils/current-auctions'
 import { deriveMarketValueEur, getRates } from '~/server/utils/exchange-rate'
 import { matchAlerts } from '~/server/utils/alert-matching'
 import { downloadNativeImages } from '~/server/utils/extract/native-images'
@@ -143,6 +143,9 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
           ? async (country, region, regionResult) => {
             await writeListCache(country, region, regionResult)
             await matchAlerts(country, region, regionResult)
+            // Identity must exist before any archive write — archiveAuction's
+            // artifact_captures row has an FK on (platform, external_id).
+            await ensureAuctionIdentity(regionResult.auctions)
             for (const auction of regionResult.auctions) {
               throwIfTaskAborted(signal)
               await archiveAuction(auction, capturedAt)
@@ -155,6 +158,12 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
         void recordTaskRunProgress('enrich', { regionsDone, regionsTotal, archivedDone: 0, archivedTotal: 0 })
       },
     })
+    // Identity must exist before this task's own tail loop below archives
+    // detail data (archiveAuction's artifact_captures row has an FK on
+    // (platform, external_id)) — refresh.ts/country-rebuild.ts already do
+    // this for their own writes, but enrich's crawlAll() call is independent
+    // of those and can discover auctions before either has run.
+    await ensureAuctionIdentity(result.auctions)
     const cache = await readExtractionCache()
     const previousSnapshot = await readAuctionSnapshot()
     const byPlatform = new Map(platforms.map((p) => [p.id, p]))
