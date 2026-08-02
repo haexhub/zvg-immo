@@ -753,21 +753,27 @@ BEGIN
 END $$;
 
 
--- (platform, external_id) identity note: extraction_cache, auction_snapshot,
--- location_enrichment and auction_translations all key on this pair, but
--- deliberately carry no FOREIGN KEY to `auctions` or to each other. Two
--- reasons: (1) `auctions` is a derived SQL mirror written LAST in the
--- pipeline (current-auctions.ts, called after writeAuctionSnapshot/
--- writeExtractionCache in enrich.ts) or not at all (reprocess.ts,
--- llm-batch-poll.ts write extraction_cache/auction_snapshot without ever
--- touching `auctions`) — an FK pointing at `auctions` would reject those
--- writes; (2) these caches are meant to outlive their `auctions`/list_cache
--- row on purpose (permalink retention for ended auctions, see
--- wp5-snapshot-no-prune-intentional), so ON DELETE CASCADE would silently
--- destroy exactly the historical data this is for. Cross-table consistency
--- is instead maintained by application code where it matters (e.g.
--- country-rebuild.ts's deleteCountryCurrentData deletes matching rows from
--- all of these tables when resetting a country).
+-- (platform, external_id) identity note: extraction_cache, auction_snapshot
+-- and auction_translations all key on this pair, but deliberately carry no
+-- FOREIGN KEY to `auctions` or to each other. Two reasons: (1) `auctions` is
+-- a derived SQL mirror written LAST in the pipeline (current-auctions.ts,
+-- called after writeAuctionSnapshot/writeExtractionCache in enrich.ts) or
+-- not at all (reprocess.ts, llm-batch-poll.ts write extraction_cache/
+-- auction_snapshot without ever touching `auctions`) — an FK pointing at
+-- `auctions` would reject those writes; (2) these caches are meant to
+-- outlive their `auctions`/list_cache row on purpose (permalink retention
+-- for ended auctions, see wp5-snapshot-no-prune-intentional), so ON DELETE
+-- CASCADE would silently destroy exactly the historical data this is for.
+-- Cross-table consistency is instead maintained by application code where
+-- it matters (e.g. country-rebuild.ts's deleteCountryCurrentData deletes
+-- matching rows from all of these tables when resetting a country).
+--
+-- location_enrichment is the one exception: since Auction-Identity-Redesign
+-- WP-5 it does carry a `NOT VALID`/no-ON-DELETE FK to `auctions` (see below)
+-- — safe only because `auctions` became permanent-and-never-deleted in WP-1
+-- (ensureAuctionIdentity runs before any archive/extraction write, and
+-- country-rebuild.ts's deleteCountryCurrentData no longer deletes from
+-- `auctions`), so neither of the two reasons above still applies to it.
 --
 -- WP-3: vollständiger Extraktions-Cache-Blob (server/utils/extraction-cache.ts)
 -- — Postgres ist die einzige Persistenz, kein lokales JSON-File mehr. Eigene
