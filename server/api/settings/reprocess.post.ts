@@ -1,5 +1,5 @@
 // Manually triggers server/tasks/reprocess.ts (WP-6: re-run rules/LLM
-// extraction against archived raw_captures) from /settings — admin-only via
+// extraction against archived artifact_captures) from /settings — admin-only via
 // the settings-auth guard. Nitro's own task-run route isn't exposed in
 // production, and there was previously no way to kick off a bounded spot
 // check (e.g. verifying a new provider/model config against a handful of

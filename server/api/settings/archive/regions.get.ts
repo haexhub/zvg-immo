@@ -1,5 +1,5 @@
 // Level 2 of the Roh-Archiv browser: regions within a country. `region` is
-// stored directly on raw_captures at capture time (see raw-archive.ts) — it
+// stored directly on artifact_captures at capture time (see raw-archive.ts) — it
 // used to be joined live from `auctions`, but that table is a volatile
 // current-state mirror rebuilt from scratch on every enrich run, so a single
 // failed crawl/upsert for a Bundesland could make its entire capture history
@@ -32,7 +32,7 @@ export default defineEventHandler(async (event): Promise<ArchiveRegionRow[]> => 
     `SELECT COALESCE(NULLIF(region, ''), $2) AS region,
             count(DISTINCT (platform, external_id)) AS count,
             max(captured_at) AS last_captured_at
-     FROM raw_captures
+     FROM artifact_captures
      WHERE country = $1 AND kind = 'auction'
      GROUP BY COALESCE(NULLIF(region, ''), $2)
      ORDER BY region`,

@@ -80,12 +80,12 @@ function makeFakePool() {
     if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
       return { rows: [], rowCount: null }
     }
-    if (sql.includes('SELECT uploaded_at FROM raw_blobs')) {
+    if (sql.includes('SELECT uploaded_at FROM artifact_blobs')) {
       const hash = params[0] as string
       const row = blobs.get(hash)
       return { rows: row ? [{ uploaded_at: row.uploaded_at }] : [], rowCount: row ? 1 : 0 }
     }
-    if (sql.includes('INSERT INTO raw_blobs')) {
+    if (sql.includes('INSERT INTO artifact_blobs')) {
       const [hash, s3_key, content_type, byte_size] = params as [string, string, string, number]
       // Mirrors the production ON CONFLICT (content_hash) DO UPDATE SET
       // uploaded_at = null: a re-write always resets uploaded_at, whether
@@ -93,7 +93,7 @@ function makeFakePool() {
       blobs.set(hash, { s3_key, content_type, byte_size, uploaded_at: null })
       return { rows: [], rowCount: 1 }
     }
-    if (sql.includes('INSERT INTO raw_captures')) {
+    if (sql.includes('INSERT INTO artifact_captures')) {
       const [capturedAt, kind, platform, , region, externalId, caseNumber, authority, contentHash, sourceUrl] =
         params as [
           string,
@@ -114,15 +114,15 @@ function makeFakePool() {
       captures.set(key, { capturedAt, region, caseNumber, authority, contentHash, sourceUrl })
       return { rows: [], rowCount: 1 }
     }
-    if (sql.includes('SELECT id, version') && sql.includes('FROM raw_document_sets')) {
+    if (sql.includes('SELECT id, version') && sql.includes('FROM artifact_versions')) {
       const [platform, externalId, setHash] = params as [string, string, string]
       const row = documentSets.get(`${platform}|${externalId}|${setHash}`)
       return { rows: row ? [{ id: row.id, version: row.version }] : [], rowCount: row ? 1 : 0 }
     }
-    if (sql.includes('UPDATE raw_document_sets')) {
+    if (sql.includes('UPDATE artifact_versions')) {
       return { rows: [], rowCount: 1 }
     }
-    if (sql.includes('INSERT INTO raw_document_sets')) {
+    if (sql.includes('INSERT INTO artifact_versions')) {
       const [, platform, , , externalId, , , setHash] = params as [
         string,
         string,
@@ -140,7 +140,7 @@ function makeFakePool() {
       documentSets.set(`${platform}|${externalId}|${setHash}`, { id, version, setHash })
       return { rows: [{ id, version }], rowCount: 1 }
     }
-    if (sql.includes('INSERT INTO raw_document_set_items')) {
+    if (sql.includes('INSERT INTO artifact_version_items')) {
       documentSetItems.set(String(params[0]), params)
       return { rows: [], rowCount: 1 }
     }
@@ -265,7 +265,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     expect(second).toBe(first)
     expect(pool.blobs.size).toBe(1)
     // The confirmed-upload check short-circuits the second call — no redundant write.
-    const insertCalls = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO raw_blobs'))
+    const insertCalls = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO artifact_blobs'))
     expect(insertCalls).toHaveLength(1)
   })
 
@@ -285,7 +285,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
 
     expect(second).toBe(first)
     expect(pool.blobs.size).toBe(1)
-    const insertCalls = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO raw_blobs'))
+    const insertCalls = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO artifact_blobs'))
     expect(insertCalls).toHaveLength(2)
     // The outbox file is present and intact either way.
     const row = pool.blobs.get(first!)!
@@ -475,7 +475,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
       contentHash: secondHash,
       capturedAt: '2026-07-19T00:05:00.000Z',
     })
-    const captureInserts = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO raw_captures'))
+    const captureInserts = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO artifact_captures'))
     expect(captureInserts).toHaveLength(2)
   })
 
@@ -486,7 +486,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     await archiveAuction(auction({ region: 'Sachsen-Anhalt' }), '2026-07-19T00:00:00.000Z')
 
     const [insertSql, insertParams] = pool.query.mock.calls.find(([sql]) =>
-      sql.includes('INSERT INTO raw_captures'),
+      sql.includes('INSERT INTO artifact_captures'),
     )!
     expect(insertSql).toContain('region')
     expect(insertParams![4]).toBe('Sachsen-Anhalt')
@@ -524,7 +524,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     const row = [...pool.blobs.values()][0]!
     expect(row.content_type).toBe('application/pdf') // raw, not gzipped
 
-    const captureInserts = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO raw_captures'))
+    const captureInserts = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO artifact_captures'))
     expect(captureInserts).toHaveLength(2)
     expect(captureInserts[0]![1]).toContain('document')
     expect(captureInserts[0]![1]![4]).toBe('Sachsen') // region forwarded from DocumentIdentity
@@ -550,7 +550,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     const stored = await readFile(join(outboxDir, row.s3_key))
     expect(stored).toEqual(photoBytes)
 
-    const captureInserts = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO raw_captures'))
+    const captureInserts = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO artifact_captures'))
     expect(captureInserts).toHaveLength(1)
     expect(captureInserts[0]![1]).toContain('photo')
     expect(captureInserts[0]![1]![9]).toBeNull() // no sourceUrl for photos
@@ -597,7 +597,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     const stored = await readFile(join(outboxDir, row.s3_key))
     expect(gunzipSync(stored).toString('utf8')).toBe('Gutachten-Volltext ...')
 
-    const captureInserts = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO raw_captures'))
+    const captureInserts = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO artifact_captures'))
     expect(captureInserts).toHaveLength(1)
     expect(captureInserts[0]![1]).toContain('document_text')
   })

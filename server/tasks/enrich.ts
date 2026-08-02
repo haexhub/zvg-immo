@@ -319,7 +319,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
         }
 
         // Document archiving: download every candidate attachment and store
-        // its bytes (raw_document_sets/raw_document_set_items + raw_blobs).
+        // its bytes (artifact_versions/artifact_version_items + artifact_blobs).
         // Only the archived bytes matter here — reprocess.ts re-reads and
         // parses them independently, so this task never needs to keep the
         // parsed text/pages around.

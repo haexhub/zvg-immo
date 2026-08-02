@@ -26,7 +26,7 @@ export interface CaptureRef {
 }
 
 /**
- * Most recent `raw_captures` row for `(kind, platform, externalId)`,
+ * Most recent `artifact_captures` row for `(kind, platform, externalId)`,
  * optionally narrowed to a specific `sourceUrl` — used to pick the capture of
  * one particular attachment among several 'document' captures for the same
  * auction. Null when none exists or the archive isn't configured.
@@ -42,13 +42,13 @@ export async function findLatestCapture(
   try {
     const { rows } = sourceUrl
       ? await db.query<{ content_hash: string; source_url: string | null; captured_at: string }>(
-          `SELECT content_hash, source_url, captured_at FROM raw_captures
+          `SELECT content_hash, source_url, captured_at FROM artifact_captures
            WHERE kind = $1 AND platform = $2 AND external_id = $3 AND source_url = $4
            ORDER BY captured_at DESC LIMIT 1`,
           [kind, platform, externalId, sourceUrl],
         )
       : await db.query<{ content_hash: string; source_url: string | null; captured_at: string }>(
-          `SELECT content_hash, source_url, captured_at FROM raw_captures
+          `SELECT content_hash, source_url, captured_at FROM artifact_captures
            WHERE kind = $1 AND platform = $2 AND external_id = $3
            ORDER BY captured_at DESC LIMIT 1`,
           [kind, platform, externalId],
@@ -86,13 +86,13 @@ export async function readDocumentSetItems(
     }>(
       `WITH selected_set AS (
          SELECT id
-         FROM raw_document_sets
+         FROM artifact_versions
          WHERE ${conditions.join(' AND ')}
          ORDER BY version DESC
          LIMIT 1
        )
        SELECT ordinal, kind, label, filename, file_id, source_url, content_hash, content_type
-       FROM raw_document_set_items
+       FROM artifact_version_items
        WHERE set_id = (SELECT id FROM selected_set)
        ORDER BY ordinal ASC`,
       params,
@@ -124,7 +124,7 @@ export async function downloadBlob(contentHash: string): Promise<Buffer | null> 
   if (!db) return null
   try {
     const { rows } = await db.query<{ s3_key: string; content_type: string }>(
-      'SELECT s3_key, content_type FROM raw_blobs WHERE content_hash = $1',
+      'SELECT s3_key, content_type FROM artifact_blobs WHERE content_hash = $1',
       [contentHash],
     )
     const row = rows[0]

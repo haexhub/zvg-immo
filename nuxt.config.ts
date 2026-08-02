@@ -162,7 +162,7 @@ export default defineNuxtConfig({
     // uploads) — same graceful-degrade pattern as extractLlm.baseUrl above.
     // Uploads via the same service-role client as supabaseUrl/
     // supabaseServiceRoleKey below (server/utils/supabase.ts). Also requires
-    // databaseUrl (the raw_blobs/raw_captures index lives in Postgres, see
+    // databaseUrl (the artifact_blobs/artifact_captures index lives in Postgres, see
     // server/db/schema.sql).
     //   NUXT_STORAGE_BUCKET=zvg-immo-raw-archive
     storageBucket: '',

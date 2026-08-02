@@ -1,12 +1,12 @@
-// One-off migration: prefixes every existing raw_blobs.s3_key with a German
+// One-off migration: prefixes every existing artifact_blobs.s3_key with a German
 // country folder (see server/utils/raw-archive.ts shardedKey()), so the
 // bucket becomes browsable by country in Supabase Studio. Country per hash
-// is looked up from the earliest raw_captures row referencing it (a blob can
+// is looked up from the earliest artifact_captures row referencing it (a blob can
 // only have one folder; content-hash-dedup means the same bytes are assumed
 // to belong to a single country in practice).
 //
 // Moves the object in Supabase Storage if already uploaded, otherwise
-// renames the local outbox file, then updates raw_blobs.s3_key to match.
+// renames the local outbox file, then updates artifact_blobs.s3_key to match.
 //
 // Usage:
 //   NUXT_DATABASE_URL=... NUXT_STORAGE_BUCKET=... NUXT_SUPABASE_URL=... \
@@ -38,7 +38,7 @@ if (!databaseUrl || !bucket || !supabaseUrl || !serviceKey) {
 const pool = new Pool({ connectionString: databaseUrl })
 const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } })
 
-// raw_blobs.content_type is the POST-compression type ('application/json+gzip'
+// artifact_blobs.content_type is the POST-compression type ('application/json+gzip'
 // etc, see storedContentType() in raw-archive.ts) — map back to the
 // pre-compression BlobContentType shardedKey() expects.
 function toBlobContentType(stored: string): BlobContentType {
@@ -57,12 +57,12 @@ interface BlobRow {
 
 async function main() {
   const { rows: blobs } = await pool.query<BlobRow>(
-    'SELECT content_hash, s3_key, content_type, uploaded_at FROM raw_blobs',
+    'SELECT content_hash, s3_key, content_type, uploaded_at FROM artifact_blobs',
   )
 
   const { rows: earliestCaptures } = await pool.query<{ content_hash: string; country: string }>(
     `SELECT DISTINCT ON (content_hash) content_hash, country
-     FROM raw_captures
+     FROM artifact_captures
      ORDER BY content_hash, captured_at ASC`,
   )
   const countryByHash = new Map(earliestCaptures.map((r) => [r.content_hash, r.country]))
@@ -76,7 +76,7 @@ async function main() {
     const country = countryByHash.get(blob.content_hash)
     if (!country) {
       skippedNoCapture++
-      console.warn(`[migrate] no raw_captures row for ${blob.content_hash}, skipping`)
+      console.warn(`[migrate] no artifact_captures row for ${blob.content_hash}, skipping`)
       continue
     }
 
@@ -102,7 +102,7 @@ async function main() {
         await mkdir(dirname(newPath), { recursive: true })
         await rename(oldPath, newPath)
       }
-      await pool.query('UPDATE raw_blobs SET s3_key = $1 WHERE content_hash = $2', [newKey, blob.content_hash])
+      await pool.query('UPDATE artifact_blobs SET s3_key = $1 WHERE content_hash = $2', [newKey, blob.content_hash])
       moved++
     } catch (err) {
       failed++

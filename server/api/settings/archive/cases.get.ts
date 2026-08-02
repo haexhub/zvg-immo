@@ -43,7 +43,7 @@ export default defineEventHandler(async (event): Promise<ArchiveCaseRow[]> => {
             max(authority) AS authority,
             count(*) FILTER (WHERE kind = 'auction') AS count,
             max(captured_at) AS last_captured_at
-     FROM raw_captures
+     FROM artifact_captures
      WHERE country = $1 AND kind = 'auction' AND COALESCE(NULLIF(region, ''), $3) = $2
      GROUP BY platform, external_id
      ORDER BY case_label`,

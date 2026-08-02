@@ -32,13 +32,13 @@ function makeClient() {
     if (sql.includes('SELECT count(*) AS count')) {
       return { rows: [{ count: '3' }], rowCount: 1 }
     }
-    if (sql.includes('DELETE FROM raw_document_sets')) {
+    if (sql.includes('DELETE FROM artifact_versions')) {
       return { rows: [], rowCount: 2 }
     }
-    if (sql.includes('DELETE FROM raw_captures')) {
+    if (sql.includes('DELETE FROM artifact_captures')) {
       return { rows: [], rowCount: 5 }
     }
-    if (sql.includes('DELETE FROM raw_blobs')) {
+    if (sql.includes('DELETE FROM artifact_blobs')) {
       return { rows: [{ content_hash: 'orphan', s3_key: 'Deutschland/aa/orphan.pdf' }], rowCount: 1 }
     }
     throw new Error(`unexpected query: ${sql}`)

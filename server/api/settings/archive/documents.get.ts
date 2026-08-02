@@ -1,7 +1,7 @@
 // Level 4 of the Roh-Archiv browser: versioned document-set items plus
 // non-document captures for one auction identity `(platform, external_id)`.
 // Document rows include setVersion/setHash so the UI can show which files were
-// valid together. `id` remains raw_captures.id, so the existing download route
+// valid together. `id` remains artifact_captures.id, so the existing download route
 // can resolve content_hash + content_type in one query.
 
 import { getPool } from '../../../utils/db'
@@ -49,23 +49,23 @@ export default defineEventHandler(async (event): Promise<ArchiveDocumentRow[]> =
        SELECT rc.id, rds.captured_at, rdsi.kind, rdsi.source_url, rb.content_type, rb.byte_size,
               rds.version AS set_version, rds.set_hash, rdsi.ordinal AS item_ordinal,
               rdsi.label, rdsi.filename
-       FROM raw_document_sets rds
-       JOIN raw_document_set_items rdsi ON rdsi.set_id = rds.id
-       JOIN raw_captures rc
+       FROM artifact_versions rds
+       JOIN artifact_version_items rdsi ON rdsi.set_id = rds.id
+       JOIN artifact_captures rc
          ON rc.kind = rdsi.kind
         AND rc.platform = rds.platform
         AND rc.external_id = rds.external_id
         AND COALESCE(rc.source_url, '') = rdsi.source_url
         AND rc.content_hash = rdsi.content_hash
-       JOIN raw_blobs rb ON rb.content_hash = rdsi.content_hash
+       JOIN artifact_blobs rb ON rb.content_hash = rdsi.content_hash
        WHERE rds.platform = $1 AND rds.external_id = $2
      ),
      capture_rows AS (
        SELECT rc.id, rc.captured_at, rc.kind, rc.source_url, rb.content_type, rb.byte_size,
               null::integer AS set_version, null::text AS set_hash, null::integer AS item_ordinal,
               null::text AS label, null::text AS filename
-       FROM raw_captures rc
-       JOIN raw_blobs rb ON rb.content_hash = rc.content_hash
+       FROM artifact_captures rc
+       JOIN artifact_blobs rb ON rb.content_hash = rc.content_hash
        WHERE rc.platform = $1 AND rc.external_id = $2 AND rc.kind <> 'document'
      )
      SELECT * FROM set_rows

@@ -108,15 +108,15 @@ export async function deleteRawArchiveCountry(countryInput: string): Promise<Del
 
     const candidates = await client.query<BlobRef>(
       `SELECT DISTINCT rb.content_hash, rb.s3_key
-       FROM raw_blobs rb
+       FROM artifact_blobs rb
        WHERE EXISTS (
-         SELECT 1 FROM raw_captures rc
+         SELECT 1 FROM artifact_captures rc
          WHERE rc.country = $1 AND rc.content_hash = rb.content_hash
        )
        OR EXISTS (
          SELECT 1
-         FROM raw_document_sets rds
-         JOIN raw_document_set_items rdsi ON rdsi.set_id = rds.id
+         FROM artifact_versions rds
+         JOIN artifact_version_items rdsi ON rdsi.set_id = rds.id
          WHERE rds.country = $1 AND rdsi.content_hash = rb.content_hash
        )`,
       [country],
@@ -124,26 +124,26 @@ export async function deleteRawArchiveCountry(countryInput: string): Promise<Del
 
     const itemCount = await client.query<{ count: string }>(
       `SELECT count(*) AS count
-       FROM raw_document_sets rds
-       JOIN raw_document_set_items rdsi ON rdsi.set_id = rds.id
+       FROM artifact_versions rds
+       JOIN artifact_version_items rdsi ON rdsi.set_id = rds.id
        WHERE rds.country = $1`,
       [country],
     )
     documentSetItems = Number(itemCount.rows[0]?.count ?? 0)
 
-    const deletedSets = await client.query('DELETE FROM raw_document_sets WHERE country = $1', [country])
+    const deletedSets = await client.query('DELETE FROM artifact_versions WHERE country = $1', [country])
     documentSets = deletedSets.rowCount ?? 0
 
-    const deletedCaptures = await client.query('DELETE FROM raw_captures WHERE country = $1', [country])
+    const deletedCaptures = await client.query('DELETE FROM artifact_captures WHERE country = $1', [country])
     captures = deletedCaptures.rowCount ?? 0
 
     const hashes = candidates.rows.map((row) => row.content_hash)
     if (hashes.length > 0) {
       const deletedBlobs = await client.query<BlobRef>(
-        `DELETE FROM raw_blobs rb
+        `DELETE FROM artifact_blobs rb
          WHERE rb.content_hash = ANY($1::text[])
-           AND NOT EXISTS (SELECT 1 FROM raw_captures rc WHERE rc.content_hash = rb.content_hash)
-           AND NOT EXISTS (SELECT 1 FROM raw_document_set_items rdsi WHERE rdsi.content_hash = rb.content_hash)
+           AND NOT EXISTS (SELECT 1 FROM artifact_captures rc WHERE rc.content_hash = rb.content_hash)
+           AND NOT EXISTS (SELECT 1 FROM artifact_version_items rdsi WHERE rdsi.content_hash = rb.content_hash)
          RETURNING content_hash, s3_key`,
         [hashes],
       )
