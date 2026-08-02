@@ -113,6 +113,14 @@ export default defineNuxtConfig({
     // /setup/* endpoints. Same value must be set on both containers.
     //   NUXT_PROXY_SETUP_TOKEN=<openssl rand -hex 32>
     proxySetupToken: '',
+    // Sibling docling-serve container that turns PDF bytes into structured
+    // Markdown before the LLM ever sees them (server/utils/extract/docling.ts).
+    // Empty → the whole Docling step is skipped and document preparation keeps
+    // its previous behaviour (pdftotext, or raw PDF bytes for providers with
+    // native document understanding) — same graceful-degrade pattern as
+    // extractLlm.baseUrl.
+    //   NUXT_DOCLING_URL=http://docling-serve:5001
+    doclingUrl: '',
     // Password protecting the /settings page — solo-deployment scope, no user
     // db. HMAC secret signs the session cookie.
     //   NUXT_SETTINGS_PASSWORD=<user-chosen>

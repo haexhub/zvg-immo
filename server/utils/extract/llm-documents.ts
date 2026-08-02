@@ -8,12 +8,22 @@ import {
   type DocumentIdentity,
 } from '../raw-archive'
 import { downloadBlob, findLatestCapture, readDocumentSetItems } from '../storage-download'
+import { getPool } from '../db'
 import { detectImageExt, type ImageExt } from './image-bytes'
+import { doclingBaseUrl, markdownForPdf } from './docling'
 import { docxBufferToText } from './docx-text'
 import { buildDocumentLlmParts } from './pdf-documents'
 import { extractPdfTextFromBuffer, pdfHasTrustworthyEncoding } from './pdf-text'
 import { renderPdfPagesJpeg } from './pdf-render'
 import type { LlmInput } from './llm'
+
+// llm.ts's MAX_PDF_CHARS (120k) was raised for Docling's longer Markdown
+// output, but it's a single cap applied to the combined pdfText of however
+// many documents fed into it — including this pdftotext fallback, which
+// predates Docling and was sized for the smaller 60k budget. Capped here,
+// per document, so a Docling outage doesn't silently double this
+// already-live path's prompt size along with it.
+const LEGACY_PDFTOTEXT_MAX_CHARS = 60_000
 
 type LlmAttachmentFormat = 'pdf' | 'docx' | 'html' | 'text' | 'image' | 'unsupported'
 
@@ -290,8 +300,12 @@ async function buildPreparedInput(
     pdfs.map((doc) => ({
       source: doc,
       label: doc.label,
-      text: opts.nativeDocuments ? null : doc.text,
-      data: opts.nativeDocuments ? doc.bytes.toString('base64') : undefined,
+      // A PDF Docling turned into Markdown carries its text even in native
+      // mode — structured Markdown is the whole point of converting it, and
+      // sending both the text and the raw bytes would just duplicate the
+      // document in the prompt.
+      text: doc.text,
+      data: opts.nativeDocuments && !doc.text ? doc.bytes.toString('base64') : undefined,
     })),
     {
       native: opts.nativeDocuments,
@@ -303,7 +317,8 @@ async function buildPreparedInput(
   const documentImages = documents
     .filter((doc) => doc.format === 'image' && doc.attachment.kind !== 'photo')
     .map((doc) => ({ label: doc.label, mimeType: doc.contentType, data: doc.bytes.toString('base64') }))
-  const textDocuments = opts.nativeDocuments ? documents : documents.filter((doc) => doc.format !== 'pdf')
+  // PDF prose always travels in pdfText (above), never in documentText.
+  const textDocuments = documents.filter((doc) => doc.format !== 'pdf')
   return {
     ...pdfParts,
     documentText: combineDocumentText(textDocuments, opts.extraText),
@@ -315,7 +330,17 @@ async function prepareDocument(
   attachment: Attachment,
   ordinal: number,
   bytes: Buffer,
-  opts: { identity?: DocumentIdentity; capturedAt?: string; nativeDocuments: boolean; contentHash?: string | null },
+  opts: {
+    identity?: DocumentIdentity
+    capturedAt?: string
+    nativeDocuments: boolean
+    contentHash?: string | null
+    /** Try Docling first for PDFs. Only the archived/reprocessing path sets
+     *  this — a conversion costs seconds per page, which the live crawl (whose
+     *  text output only feeds archiveDocumentText) must not pay. */
+    docling?: boolean
+    country?: string | null
+  },
 ): Promise<PreparedAttachmentDocument> {
   const { format, contentType } = inferFormat(attachment, bytes)
   const contentHash = opts.contentHash ?? (
@@ -323,14 +348,30 @@ async function prepareDocument(
       ? await archiveDocumentBlob(bytes, contentType, opts.identity, attachment.proxyUrl, opts.capturedAt)
       : null
   )
-  let text = format === 'pdf'
-    ? opts.nativeDocuments ? null : await extractPdfTextFromBuffer(bytes)
-    : textForPrepared(format, bytes)
+  const label = attachmentLabel(attachment)
+  let text: string | null = null
+  if (format === 'pdf') {
+    if (opts.docling) {
+      text = await markdownForPdf(getPool(), contentHash, bytes, {
+        label,
+        country: opts.country ?? opts.identity?.country,
+      })
+    }
+    // Docling unavailable/failed for this PDF: back to the previous behaviour —
+    // pdftotext prose, or nothing at all so the native-document providers get
+    // the raw bytes instead.
+    if (text == null && !opts.nativeDocuments) {
+      text = (await extractPdfTextFromBuffer(bytes))?.slice(0, LEGACY_PDFTOTEXT_MAX_CHARS) ?? null
+    }
+  } else {
+    text = textForPrepared(format, bytes)
+  }
   // A PDF whose fonts use a CJK CID encoding (seen from scanner OCR software
   // that mismapped Cyrillic onto a Japanese font) still yields plenty of
   // characters from pdftotext, just not real text — treat it the same as no
   // text at all so the caller falls back to rendering page images instead of
-  // feeding the LLM homoglyph noise.
+  // feeding the LLM homoglyph noise. Docling reads the same broken text layer
+  // when one exists, so this check guards its Markdown too.
   if (format === 'pdf' && text && !(await pdfHasTrustworthyEncoding(bytes))) {
     text = null
   }
@@ -340,7 +381,7 @@ async function prepareDocument(
   return {
     attachment,
     ordinal,
-    label: attachmentLabel(attachment),
+    label,
     format,
     contentType,
     bytes,
@@ -410,8 +451,10 @@ async function prepareArchivedDocumentSetItems(
     nativeDocuments: boolean
     extraText?: string[]
     sourceAttachments?: readonly Attachment[]
+    country?: string | null
   } = { nativeDocuments: false },
 ): Promise<PreparedLlmDocuments> {
+  const docling = !!doclingBaseUrl()
   const prepared = (
     await Promise.all(items.map(async (item) => {
       const bytes = await downloadBlob(item.contentHash)
@@ -419,6 +462,8 @@ async function prepareArchivedDocumentSetItems(
       return prepareDocument(attachmentFromDocumentSetItem(item, opts.sourceAttachments), item.ordinal, bytes, {
         nativeDocuments: opts.nativeDocuments,
         contentHash: item.contentHash,
+        docling,
+        country: opts.country,
       })
     }))
   ).filter((doc): doc is PreparedAttachmentDocument => doc != null)
@@ -452,6 +497,7 @@ export async function prepareArchivedLlmDocuments(
     ...opts,
     extraText,
     sourceAttachments: auction.attachments,
+    country: auction.country,
   })
   return documentSetItems == null ? { ...prepared, documentSetComplete: false } : prepared
 }

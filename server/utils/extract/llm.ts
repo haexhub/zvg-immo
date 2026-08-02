@@ -184,7 +184,13 @@ export function isLlmProviderUnavailable(err: unknown): boolean {
   return isRateLimitError(err) || isLlmProviderError(err)
 }
 
-const MAX_PDF_CHARS = 60_000
+// Docling's Markdown is longer than the pdftotext prose this used to cap:
+// measured 114.570 vs 103.600 chars on a 37-page appraisal, because table
+// syntax costs pipes and separator rows. At 60k that document lost half its
+// content. Raised so structure isn't bought by truncating more of the
+// document — and no more expensive than the status quo, where the native-PDF
+// path uploaded the whole file anyway.
+const MAX_PDF_CHARS = 120_000
 const MAX_DOCUMENT_TEXT_CHARS = 80_000
 
 /** Pull the structured object out of the proxy's `final_result` tool_use block. */
@@ -202,10 +208,17 @@ export function parseExtractionResponse(resp: unknown): Record<string, unknown> 
 }
 
 /**
- * Assemble provider-neutral content parts from an LlmInput. When `pdfBytes`
- * is set (a provider with native document understanding is in play),
- * `pdfText`/`pdfPageImages` are left out — sending both would double the
- * token cost for the same information.
+ * Assemble provider-neutral content parts from an LlmInput. `pdfPageImages`
+ * is left out when `pdfBytes`/`pdfDocuments` are set (a provider with native
+ * document understanding is in play) — sending both would double the token
+ * cost for the same information.
+ *
+ * `pdfText` is always included: since Docling entered the pipeline the two
+ * fields describe *different* documents, never the same one twice. A document
+ * that was converted to Markdown travels as text and withholds its bytes,
+ * one that wasn't travels as bytes and has no text (see
+ * server/utils/extract/llm-documents.ts's buildPreparedInput). Dropping the
+ * text here would silently lose every converted document in a mixed set.
  */
 export function buildParts(input: LlmInput): ContentPart[] {
   const text: string[] = []
@@ -220,7 +233,7 @@ export function buildParts(input: LlmInput): ContentPart[] {
       ? [{ label: 'Gutachten/Exposé', data: input.pdfBytes }]
       : []
   const usingDocumentPart = nativeDocuments.length > 0
-  if (input.pdfText && !usingDocumentPart) {
+  if (input.pdfText) {
     text.push(`Auszug aus Gutachten/Exposé (PDF):\n${input.pdfText.slice(0, MAX_PDF_CHARS)}`)
   }
   if (input.pdfPageImages?.length && !usingDocumentPart) {
