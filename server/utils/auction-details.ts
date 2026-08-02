@@ -124,6 +124,13 @@ function json(value: unknown): string | null {
   return value === undefined ? null : JSON.stringify(value)
 }
 
+// node-postgres returns `numeric` as a string to avoid float precision loss.
+function numeric(value: number | string | null): number | null {
+  if (value == null) return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
 /**
  * Projects an auction plus its extraction onto the `auction_details` value
  * columns. Mirrors current-auctions.ts's auctionToCurrentRow, extended with the
@@ -258,6 +265,13 @@ export async function writeAuctionDetails(
     await client.query('BEGIN')
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`auction_details:${platform}:${externalId}`])
 
+    const previous = await client.query<{ lat: number | null; lng: number | null }>(
+      `SELECT lat, lng FROM auction_details
+       WHERE platform = $1 AND external_id = $2
+       ORDER BY version DESC LIMIT 1`,
+      [platform, externalId],
+    )
+
     const unchanged = await client.query<{ version: number }>(
       `SELECT version FROM auction_details
        WHERE platform = $1 AND external_id = $2
@@ -293,6 +307,13 @@ export async function writeAuctionDetails(
     const row = inserted.rows[0]
     if (!row) return null
     latestCache.set(cacheKey(platform, externalId), row)
+    const previousRow = previous.rows[0] ?? null
+    if (coordinatesMovedSignificantly(
+      previousRow ? { lat: numeric(previousRow.lat), lng: numeric(previousRow.lng) } : null,
+      { lat: numeric(row.lat), lng: numeric(row.lng) },
+    )) {
+      triggerLocationEnrichment(platform, externalId)
+    }
     return { version: row.version, changed: true }
   } catch (err) {
     try {
@@ -304,6 +325,52 @@ export async function writeAuctionDetails(
   } finally {
     client.release()
   }
+}
+
+// Geocoders return slightly different coordinates for the same address between
+// runs, so an exact comparison would re-enrich constantly. 100 m is well above
+// that noise and well below the distance at which the location context (nearby
+// amenities, hazard zones, noise bands) would meaningfully differ.
+const COORDINATE_CHANGE_THRESHOLD_METERS = 100
+
+function distanceMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6_371_000
+  const toRad = (deg: number): number => (deg * Math.PI) / 180
+  const dLat = toRad(lat2 - lat1)
+  const dLng = toRad(lng2 - lng1)
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2
+  return 2 * R * Math.asin(Math.sqrt(a))
+}
+
+/** Exported for tests. */
+export function coordinatesMovedSignificantly(
+  previous: { lat: number | null; lng: number | null } | null,
+  next: { lat: number | null; lng: number | null },
+): boolean {
+  if (next.lat == null || next.lng == null) return false
+  // First coordinates this auction ever had — including a brand new auction,
+  // whose identity row is created before any geocoding has run.
+  if (previous?.lat == null || previous?.lng == null) return true
+  return distanceMeters(previous.lat, previous.lng, next.lat, next.lng) > COORDINATE_CHANGE_THRESHOLD_METERS
+}
+
+/**
+ * Fire-and-forget re-enrichment of one auction's location context.
+ *
+ * The nightly full sweep stays the mechanism for externally-updated datasets
+ * (EU flood zones, EFFIS, EEA noise, CAMS air quality) — those change without
+ * anything happening on the auction side. It is not enough for "this auction's
+ * coordinates just moved", though: up to 24 h of wrong context. Never awaited,
+ * so the extraction path doesn't wait on external HTTP.
+ */
+function triggerLocationEnrichment(platform: string, externalId: string): void {
+  // Absent outside the Nitro runtime (unit tests), where there is no task to run.
+  if (typeof runTask !== 'function') return
+  void runTask('external-enrichment', { payload: { platform, externalId } }).catch((err: unknown) => {
+    console.error(`[auction-details] external enrichment trigger failed for ${platform}/${externalId}: ${(err as Error).message}`)
+  })
 }
 
 async function resolveArtifactVersionId(
