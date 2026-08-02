@@ -8,17 +8,21 @@
 // A country whose OSM import hasn't loaded the relevant tag yet (see PR #282's
 // follow-up on ansible) simply matches nothing here — callers should treat
 // that as "no results for this filter", not an error.
+//
+// Assumes the caller's FROM is `auctions a` joined to the newest
+// `auction_details` as `d` (LATEST_DETAILS_JOIN_SQL): coordinates are
+// versioned and live on `d`, the country is identity and lives on `a`.
 export function proximityCondition(
   tagKey: string,
   tagValue: string,
   radiusMeters: number,
   add: (value: unknown) => string,
 ): string {
-  return `a.lat IS NOT NULL AND a.lng IS NOT NULL AND EXISTS (
+  return `d.lat IS NOT NULL AND d.lng IS NOT NULL AND EXISTS (
     SELECT 1 FROM osm_local_elements o
     WHERE o.country = a.country
       AND o.tags ->> ${add(tagKey)} = ${add(tagValue)}
-      AND ST_DWithin(o.geom::geography, ST_MakePoint(a.lng, a.lat)::geography, ${add(radiusMeters)})
+      AND ST_DWithin(o.geom::geography, ST_MakePoint(d.lng, d.lat)::geography, ${add(radiusMeters)})
   )`
 }
 
@@ -29,10 +33,10 @@ export function proximityConditionAnyOf(
   radiusMeters: number,
   add: (value: unknown) => string,
 ): string {
-  return `a.lat IS NOT NULL AND a.lng IS NOT NULL AND EXISTS (
+  return `d.lat IS NOT NULL AND d.lng IS NOT NULL AND EXISTS (
     SELECT 1 FROM osm_local_elements o
     WHERE o.country = a.country
       AND o.tags ->> ${add(tagKey)} = ANY(${add(tagValues)}::text[])
-      AND ST_DWithin(o.geom::geography, ST_MakePoint(a.lng, a.lat)::geography, ${add(radiusMeters)})
+      AND ST_DWithin(o.geom::geography, ST_MakePoint(d.lng, d.lat)::geography, ${add(radiusMeters)})
   )`
 }

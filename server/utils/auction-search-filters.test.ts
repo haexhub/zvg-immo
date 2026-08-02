@@ -45,14 +45,14 @@ describe('buildAuctionSearchFilter', () => {
     const { predicate } = await buildAuctionSearchFilter(db, {})
 
     expect(getHideRulesOnlyAuctions).toHaveBeenCalledWith(db)
-    expect(predicate).toContain(`a.extraction_source = 'llm'`)
+    expect(predicate).toContain(`d.extraction_source = 'llm'`)
   })
 
   it('lets an explicit llmOnly=0 override the admin default', async () => {
     const { buildAuctionSearchFilter } = await import('./auction-search-filters')
     const { predicate } = await buildAuctionSearchFilter(db, { llmOnly: '0' })
 
-    expect(predicate).not.toContain(`a.extraction_source = 'llm'`)
+    expect(predicate).not.toContain(`d.extraction_source = 'llm'`)
   })
 
   it('treats an empty numeric parameter as unset instead of 0', async () => {

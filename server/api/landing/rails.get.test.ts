@@ -41,7 +41,9 @@ function row(overrides: Partial<Record<string, unknown>> = {}) {
     cancelled: false,
     photo_count: 4,
     thumbnail_url: '/api/auction-image/zvg-portal/42/first.jpg',
-    extraction: { condition: 'neuwertig', features: [], source: 'llm' },
+    condition: 'neuwertig',
+    features: [],
+    extraction_source: 'llm',
     ...overrides,
   }
 }
@@ -53,9 +55,9 @@ describe('/api/landing/rails', () => {
     vi.stubGlobal('createError', (input: object) => Object.assign(new Error('api error'), input))
 
     const query = vi.fn(async (sql: string, params: unknown[]) => {
-      if (sql.includes('CASE a.condition')) {
+      if (sql.includes('CASE d.condition')) {
         expect(params.at(-1)).toBe(12)
-        return { rows: [row({ external_id: '43', extraction: { condition: 'gepflegt', features: [], source: 'llm' } })], rowCount: 1 }
+        return { rows: [row({ external_id: '43', condition: 'gepflegt' })], rowCount: 1 }
       }
       if (sql.includes('osm_local_elements')) {
         expect(params.at(-1)).toBe(12)

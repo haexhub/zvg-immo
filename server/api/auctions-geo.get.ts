@@ -1,6 +1,7 @@
 import { geocodeAddress, geocodeStatus } from '~/server/utils/geocode'
 import { getPool } from '~/server/utils/db'
 import { buildAuctionSearchFilter, finiteNumber } from '~/server/utils/auction-search-filters'
+import { LATEST_DETAILS_JOIN_SQL } from '~/server/api/auctions.get'
 import { countryCentroid } from '~/lib/country-bounds'
 
 // A map beyond this many pins is not readable anyway, and every row here can
@@ -54,10 +55,9 @@ export default defineEventHandler(async (event): Promise<GeoCrawlResult> => {
   const { predicate, values } = await buildAuctionSearchFilter(db, query)
 
   const { rows } = await db.query<MarkerRow>(
-    `SELECT a.platform, a.external_id, a.country, a.region, a.address, a.lat, a.lng
+    `SELECT a.platform, a.external_id, a.country, a.region, d.address, d.lat, d.lng
      FROM auctions a
-     LEFT JOIN extraction_cache ec
-       ON ec.platform = a.platform AND ec.external_id = a.external_id
+     ${LATEST_DETAILS_JOIN_SQL}
      ${predicate}
      ORDER BY a.platform, a.external_id
      LIMIT $${values.length + 1}`,
