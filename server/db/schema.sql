@@ -631,6 +631,87 @@ END $$;
 ALTER TABLE artifact_captures VALIDATE CONSTRAINT fk_artifact_captures_auction;
 ALTER TABLE artifact_versions VALIDATE CONSTRAINT fk_artifact_versions_auction;
 
+-- Auction-Identity-Redesign WP-2: typisierte, versionierte Extraktion. Ersetzt
+-- perspektivisch extraction_cache + auction_snapshot (Contract erst in WP-6,
+-- bis dahin Dual-Write). Jede Zeile ist unveränderlich — es gibt kein UPDATE,
+-- die Versionsfolge IST die Historie. Typisierte Spalten statt einem JSON-Blob,
+-- damit sich zwischen zwei Versionen per SQL diffen lässt, wo sich z.B.
+-- living_area_sqm geändert hat.
+--
+-- `version` ist ein eigener Zähler, unabhängig von artifact_versions.version:
+-- eine neue Extraktions-Version entsteht sowohl durch neue Dokumente als auch
+-- durch einen erneuten LLM-Lauf auf denselben Dokumenten (reprocess.ts).
+-- artifact_version_id hält fest, welches Manifest ausgewertet wurde.
+CREATE TABLE IF NOT EXISTS auction_details (
+  id                    bigserial PRIMARY KEY,
+  platform              text NOT NULL,
+  external_id           text NOT NULL,
+  version               integer NOT NULL,
+  artifact_version_id   bigint,  -- NULL = nur aus Listing-Daten, keine Dokumente geparst
+  created_at            timestamptz NOT NULL DEFAULT now(),
+  -- Fachlicher Extraktions-Zeitpunkt (= AuctionExtraction.at). Nicht durch
+  -- created_at ersetzbar: bei Backfill/Replay weichen die beiden ab.
+  extracted_at          timestamptz NOT NULL,
+  address               text,
+  description           text,
+  property_type         text,
+  land_area_sqm         numeric,
+  living_area_sqm       numeric,
+  rooms                 numeric,
+  bedrooms              numeric,
+  bathrooms             numeric,
+  floor                 text,
+  bathroom_has_tub      boolean,
+  bathroom_has_shower   boolean,
+  heating               text,
+  units                 integer,
+  year_built            integer,
+  last_renovation_year  integer,
+  market_value          numeric,
+  currency              text,
+  market_value_eur      numeric,
+  condition             jsonb,
+  features              text[],
+  insights              jsonb,
+  planning_notes        jsonb,
+  renovation_notes      text,
+  starting_bid          numeric,
+  current_bid           numeric,
+  source_security_deposit numeric,
+  security_deposit      numeric,
+  bidding_notes         text,
+  photo_count           integer NOT NULL DEFAULT 0,
+  thumbnail_url         text,
+  lat                   numeric,
+  lng                   numeric,
+  extraction_source     text,
+  extraction_confidence text,
+  llm_analyzed_at       timestamptz,
+  document_summary      text,
+  extraction_texts      jsonb,
+  FOREIGN KEY (platform, external_id) REFERENCES auctions (platform, external_id),
+  -- Zusammengesetzt statt nur REFERENCES artifact_versions (id): verhindert,
+  -- dass eine Zeile das Manifest einer FREMDEN Auktion referenziert.
+  -- NULL bleibt erlaubt (MATCH SIMPLE prüft eine FK mit NULL-Spalte nicht).
+  -- ON DELETE CASCADE: deleteRawArchiveCountry() (admin "Archiv löschen")
+  -- löscht artifact_versions-Zeilen für ein Land direkt aus der DB. Ohne
+  -- CASCADE würde das ab hier mit einem FK-Fehler abbrechen, sobald eine
+  -- Extraktions-Version existiert. Wer das Roharchiv eines Landes löscht,
+  -- will die davon abgeleitete Extraktions-Historie mitgelöscht haben, nicht
+  -- eine Fehlermeldung.
+  FOREIGN KEY (artifact_version_id, platform, external_id)
+    REFERENCES artifact_versions (id, platform, external_id) ON DELETE CASCADE,
+  UNIQUE (platform, external_id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_auction_details_identity_version
+  ON auction_details (platform, external_id, version DESC);
+-- Für die "aktueller Stand"-Filterabfragen aus WP-3 (Suche/Karte).
+CREATE INDEX IF NOT EXISTS idx_auction_details_property_type ON auction_details (property_type);
+CREATE INDEX IF NOT EXISTS idx_auction_details_living_area ON auction_details (living_area_sqm);
+CREATE INDEX IF NOT EXISTS idx_auction_details_land_area ON auction_details (land_area_sqm);
+CREATE INDEX IF NOT EXISTS idx_auction_details_year_built ON auction_details (year_built);
+ALTER TABLE auction_details ENABLE ROW LEVEL SECURITY;
+
 -- (platform, external_id) identity note: extraction_cache, auction_snapshot,
 -- location_enrichment and auction_translations all key on this pair, but
 -- deliberately carry no FOREIGN KEY to `auctions` or to each other. Two
