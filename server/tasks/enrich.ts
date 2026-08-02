@@ -33,6 +33,7 @@ import { normalizePhoto } from '~/lib/photo'
 import { crawlAll, platforms } from '~/server/crawlers/registry'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '~/server/utils/auction-snapshot'
 import { ensureAuctionIdentity, upsertCurrentAuctions } from '~/server/utils/current-auctions'
+import { writeAuctionDetails } from '~/server/utils/auction-details'
 import { deriveMarketValueEur, getRates } from '~/server/utils/exchange-rate'
 import { matchAlerts } from '~/server/utils/alert-matching'
 import { downloadNativeImages } from '~/server/utils/extract/native-images'
@@ -486,6 +487,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
           applyExtractionToAuctions([a], cache)
           await writeAuctionSnapshot([a])
           await upsertCurrentAuctions([a], at)
+          await writeAuctionDetails(a, entry)
         } catch (err) {
           pushRunError('snapshot', `Snapshot ${a.platform}:${a.externalId}: ${(err as Error).message}`, a)
         }

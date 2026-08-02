@@ -16,6 +16,7 @@ import {
   writeExtractionCache,
 } from '../utils/extraction-cache'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
+import { writeAuctionDetails } from '../utils/auction-details'
 import {
   listPendingLlmBatchJobs,
   markLlmBatchJobChecked,
@@ -174,6 +175,7 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
           const updated: Auction = { ...snapshotEntry }
           applyExtractionToAuctions([updated], { [key]: mergedEntry })
           await writeAuctionSnapshot([updated])
+          await writeAuctionDetails(updated, mergedEntry)
         }
         merged++
       }
