@@ -7,7 +7,7 @@ import {
   type BlobContentType,
   type DocumentIdentity,
 } from '../raw-archive'
-import { downloadBlob, findLatestCapture, readDocumentSetItems } from '../storage-download'
+import { downloadBlob, findLatestCapture, readDocumentSet } from '../storage-download'
 import { detectImageExt, type ImageExt } from './image-bytes'
 import { docxBufferToText } from './docx-text'
 import { buildDocumentLlmParts } from './pdf-documents'
@@ -32,6 +32,7 @@ export interface PreparedLlmDocuments {
   input: Pick<LlmInput, 'documentText' | 'documentImages' | 'pdfText' | 'pdfPageImages' | 'pdfBytes' | 'pdfDocuments'>
   documentSetItems: ArchivedDocumentSetItem[]
   documentSetComplete: boolean
+  artifactVersionId: number | null
 }
 
 export interface ArchivedLiveDocuments {
@@ -406,6 +407,7 @@ function attachmentFromDocumentSetItem(
 
 async function prepareArchivedDocumentSetItems(
   items: readonly ArchivedDocumentSetItem[],
+  artifactVersionId: number | null,
   opts: {
     nativeDocuments: boolean
     extraText?: string[]
@@ -427,12 +429,13 @@ async function prepareArchivedDocumentSetItems(
     input: await buildPreparedInput(prepared, opts),
     documentSetItems: [...items],
     documentSetComplete: prepared.length === items.length,
+    artifactVersionId,
   }
 }
 
 export async function prepareArchivedLlmDocuments(
   auction: Auction,
-  opts: { nativeDocuments: boolean; documentSetHash?: string | null; documentSetVersion?: number | null },
+  opts: { nativeDocuments: boolean; artifactVersionId: number | null },
 ): Promise<PreparedLlmDocuments> {
   const extraText: string[] = []
   const detailCapture = await findLatestCapture('detail_html', auction.platform, auction.externalId)
@@ -444,16 +447,16 @@ export async function prepareArchivedLlmDocuments(
     }
   }
 
-  const documentSetItems = await readDocumentSetItems(auction.platform, auction.externalId, {
-    setHash: opts.documentSetHash,
-    version: opts.documentSetVersion,
-  })
-  const prepared = await prepareArchivedDocumentSetItems(documentSetItems ?? [], {
+  const documentSet = opts.artifactVersionId == null
+    ? null
+    : await readDocumentSet(auction.platform, auction.externalId, { id: opts.artifactVersionId })
+  const prepared = await prepareArchivedDocumentSetItems(documentSet?.items ?? [], documentSet?.artifactVersionId ?? null, {
     ...opts,
     extraText,
     sourceAttachments: auction.attachments,
   })
-  return documentSetItems == null ? { ...prepared, documentSetComplete: false } : prepared
+  if (opts.artifactVersionId == null) return prepared
+  return documentSet == null ? { ...prepared, documentSetComplete: false } : prepared
 }
 
 export async function readArchivedAuction(platform: string, externalId: string): Promise<Auction | null> {

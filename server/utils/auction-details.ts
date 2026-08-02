@@ -1,14 +1,10 @@
-// Typed, versioned extraction state per auction (`auction_details`). Every write
-// appends a new version; rows are never updated, so the version sequence is the
-// history. Replaces extraction_cache + auction_snapshot eventually — until then
-// the tasks dual-write and nothing reads this table (see WP-2/WP-3 of
-// docs/plans/2026-08-01-auction-identity-schema-redesign.md).
+// Typed, versioned detail/extraction state per auction. Every changed write
+// appends a version; artifact_version_id records the evaluated manifest.
 //
 // `version` is its own counter, independent of artifact_versions.version: a new
 // extraction version arises both from new documents and from re-running the LLM
 // over the same documents (reprocess.ts). `artifact_version_id` records which
-// manifest was evaluated. No-op without a configured pool, same graceful-degrade
-// as extraction-cache.ts/auction-snapshot.ts.
+// manifest was evaluated. No-op without a configured pool.
 
 import type { Auction, AuctionExtraction, CuratedPhoto, PhotoCategory } from '~/types/auction'
 import { extractTranslatableExtractionTexts } from '~/lib/extraction-translation'
@@ -149,9 +145,8 @@ function numeric(value: number | string | null): number | null {
 }
 
 /**
- * Projects an auction plus its extraction onto the `auction_details` value
- * columns. Mirrors current-auctions.ts's auctionToCurrentRow, extended with the
- * fields that only ever lived in the extraction_cache JSONB before.
+ * Projects an auction plus its extraction onto the versioned
+ * `auction_details` value columns.
  */
 export function auctionDetailsValues(auction: Auction, extraction: AuctionExtraction | null): Record<ValueColumn, unknown> {
   const e = extraction ? withDerivedExtractionFields(extraction) : null
@@ -233,9 +228,8 @@ export async function readAuctionPhotos(auctionDetailsId: number): Promise<Curat
   }))
 }
 
-// Latest version per identity only — this is a history table, so the
-// load-the-whole-table pattern of extraction-cache.ts would pull every past
-// version into memory. Populated on read, refreshed on write.
+// Latest version per identity only; loading the whole history would grow
+// without bound. Populated on read, refreshed on write.
 const latestCache = new Map<string, AuctionDetailsRow | null>()
 
 export function invalidateAuctionDetailsCache(): void {
@@ -258,12 +252,7 @@ export async function readLatestAuctionDetails(
     [platform, externalId],
   )
   const row = rows[0] ?? null
-  // Only cache a hit, never "not found yet" — the one-off backfill script
-  // (scripts/backfill-auction-details.ts) writes rows through its own
-  // short-lived process via raw SQL, bypassing writeAuctionDetails() and
-  // this cache entirely. Caching a miss would otherwise pin an auction at
-  // "not found" here until server restart, even after the backfill (or any
-  // other out-of-process write) gives it a row.
+  // Only cache a hit. A miss may become a row through another app instance.
   if (row) latestCache.set(key, row)
   return row
 }
@@ -306,8 +295,8 @@ export interface WriteAuctionDetailsOptions {
  * the same next version and collide on the UNIQUE constraint; the constraint
  * catches the collision but is not a substitute for serializing.
  *
- * `artifact_version_id` is resolved from the manifest the extraction actually
- * parsed (`documentSetVersion`), so it stays NULL for a listing-only extraction.
+ * Callers pass the manifest actually evaluated. It stays NULL for listing-only
+ * or rules-only extraction.
  */
 export async function writeAuctionDetails(
   auction: Auction,
@@ -319,9 +308,7 @@ export async function writeAuctionDetails(
   const { platform, externalId } = auction
   const values = auctionDetailsValues(auction, extraction)
   const photos = normalizedPhotos(extraction)
-  values.artifact_version_id = Object.prototype.hasOwnProperty.call(options, 'artifactVersionId')
-    ? options.artifactVersionId ?? null
-    : await resolveArtifactVersionId(platform, externalId, extraction)
+  values.artifact_version_id = options.artifactVersionId ?? null
   const extractedAt = extraction?.at ?? new Date().toISOString()
   const llmAnalyzedAt = extraction?.llmAnalyzedAt ?? null
 
@@ -458,20 +445,4 @@ function triggerLocationEnrichment(platform: string, externalId: string): void {
   void runTask('external-enrichment', { payload: { platform, externalId } }).catch((err: unknown) => {
     console.error(`[auction-details] external enrichment trigger failed for ${platform}/${externalId}: ${(err as Error).message}`)
   })
-}
-
-async function resolveArtifactVersionId(
-  platform: string,
-  externalId: string,
-  extraction: AuctionExtraction | null,
-): Promise<number | null> {
-  const version = extraction?.documentSetVersion
-  if (version == null) return null
-  const db = getPool()
-  if (!db) return null
-  const { rows } = await db.query<{ id: string }>(
-    'SELECT id FROM artifact_versions WHERE platform = $1 AND external_id = $2 AND version = $3',
-    [platform, externalId, version],
-  )
-  return rows[0] ? Number(rows[0].id) : null
 }

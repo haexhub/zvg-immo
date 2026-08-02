@@ -1,21 +1,16 @@
-// Polls in-flight LLM Batch API jobs (submitted by enrich.ts/reprocess.ts,
-// see server/utils/extract/llm-batch.ts) and merges completed results into
-// extraction_cache/auction_snapshot — the async counterpart to those tasks'
-// synchronous LLM merge (server/utils/extract/merge-llm-result.ts). Scheduled
+// Polls in-flight LLM Batch API jobs submitted by reprocess.ts and appends
+// completed results to auction_details. Scheduled
 // every 30 minutes (nuxt.config.ts) plus a boot-time nudge (llm-batch-poll-
 // bootstrap.ts) so a job that finished while the server was down/restarting
 // gets merged promptly instead of waiting for the next tick.
 
-import type { Auction, AuctionExtraction } from '~/types/auction'
 import { fetchLlmBatchResults, pollLlmBatch } from '../utils/extract/llm-batch'
 import { readExtractionLlmConfig } from '../utils/extract/llm-task-config'
-import { mergeLlmResult, type MergeInputFields } from '../utils/extract/merge-llm-result'
-import {
-  applyExtractionToAuctions,
-  readExtractionCache,
-  writeExtractionCache,
-} from '../utils/extraction-cache'
-import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
+import { mergeLlmResult } from '../utils/extract/merge-llm-result'
+import { buildReprocessFields } from '../utils/extract/reprocess-fields'
+import { applyAuctionExtraction } from '../utils/auction-extraction'
+import { readAuctionRecordMap } from '../utils/auction-record'
+import { upsertCurrentAuctions } from '../utils/current-auctions'
 import { writeAuctionDetails } from '../utils/auction-details'
 import { readAuctionFetchStates, writeAuctionLlmPipelineState } from '../utils/auction-fetch-state'
 import {
@@ -64,47 +59,10 @@ function splitKey(key: string): { platform: string; externalId: string } | null 
   return { platform: key.slice(0, i), externalId: key.slice(i + 1) }
 }
 
-// Reconstructs the `MergeInputFields` mergeLlmResult needs from the
-// already-cached rules-only entry (written at explicit batch-submit time by
-// enrich.ts/reprocess.ts). `confident` (whether the LLM may still touch propertyType/
-// sizes) is provably `confidence === 'high'`: extractByRules defines
-// `confident` as "a real property type and an area", the exact same
-// condition both callers' `confidence: 'high'` is derived from — so the
-// original `rules.confident || (hasType && hasArea)` gate always reduces to
-// `confidence === 'high'`, without needing the original (unpersisted)
-// `rules.confident` flag.
-function toMergeFields(entry: AuctionExtraction): MergeInputFields {
-  return {
-    propertyType: entry.propertyType,
-    landAreaSqm: entry.landAreaSqm,
-    livingAreaSqm: entry.livingAreaSqm,
-    rooms: entry.rooms,
-    bedrooms: entry.bedrooms,
-    bathrooms: entry.bathrooms,
-    floor: entry.floor,
-    bathroomHasTub: entry.bathroomHasTub,
-    bathroomHasShower: entry.bathroomHasShower,
-    heating: entry.heating,
-    units: entry.units,
-    securityDeposit: entry.securityDeposit ?? null,
-    condition: entry.condition,
-    features: entry.features,
-    yearBuilt: entry.yearBuilt,
-    lastRenovationYear: entry.lastRenovationYear,
-    renovationNotes: entry.renovationNotes,
-    insights: entry.insights,
-    planningNotes: entry.planningNotes,
-    documentSummary: entry.documentSummary,
-    marketValueEur: entry.marketValueEur,
-    marketValueText: entry.marketValueText,
-    confident: entry.confidence === 'high',
-  }
-}
-
 export default defineTask({
   meta: {
     name: 'llm-batch-poll',
-    description: 'Poll in-flight LLM Batch API jobs and merge completed results into extraction_cache/auction_snapshot.',
+    description: 'Poll in-flight LLM Batch API jobs and write completed results to structured auction details.',
   },
   async run() {
     return await runExclusiveTask('llm-batch-poll', async (signal) => ({
@@ -124,7 +82,7 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
     return { checked: 0, merged: 0 }
   }
 
-  const cache = await readExtractionCache()
+  const records = await readAuctionRecordMap()
   const fetchStates = await readAuctionFetchStates()
   throwIfTaskAborted(signal)
   const at = new Date().toISOString()
@@ -153,49 +111,44 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
 
       const results = await fetchLlmBatchResults(job.jobName, poll.resultFileName, llmConfig, job.customIdMap)
       throwIfTaskAborted(signal)
-      const snapshot = await readAuctionSnapshot()
-      let cacheWriteFailed = false
-
       for (const { key, extraction } of results) {
         throwIfTaskAborted(signal)
         const identity = splitKey(key)
         if (!identity) continue
-        const storedPriorEntry = cache[key]
+        const record = records.get(key)
+        if (!record) continue
+        const storedPriorEntry = record.auction.extraction ?? undefined
         const priorState = fetchStates.get(key)
-        const priorEntry = storedPriorEntry && priorState
-          ? {
-              ...storedPriorEntry,
-              llmBatchJob: priorState.llmBatchJob ?? storedPriorEntry.llmBatchJob,
-              llmFailures: Math.max(priorState.llmFailures ?? 0, storedPriorEntry.llmFailures ?? 0) || undefined,
-            }
-          : storedPriorEntry
-        if (!priorEntry) continue
-        // mergeLlmResult's return type has no `llmBatchJob` field, so the
-        // marker is dropped here simply by not carrying it forward.
-        const mergedEntry = mergeLlmResult(priorEntry, toMergeFields(priorEntry), extraction, at, priorEntry.photos)
-        cache[key] = mergedEntry
-        const cacheWritten = await writeExtractionCache({ [key]: mergedEntry })
-        if (!cacheWritten) {
-          cacheWriteFailed = true
-          console.warn(`[llm-batch-poll] cache write failed for ${key} in job ${job.jobName} — leaving job for next tick`)
-          break
-        }
+        if (!storedPriorEntry) continue
+        const artifactVersionId = priorState?.llmArtifactVersionId ?? record.artifactVersionId
+        const fields = buildReprocessFields(
+          record.auction,
+          storedPriorEntry,
+          artifactVersionId !== record.artifactVersionId,
+        )
+        const mergedEntry = mergeLlmResult(
+          storedPriorEntry,
+          fields,
+          extraction,
+          at,
+          storedPriorEntry.photos,
+        )
+        const updated = { ...record.auction, extraction: mergedEntry }
+        applyAuctionExtraction(updated, mergedEntry)
+        await writeAuctionDetails(updated, mergedEntry, {
+          artifactVersionId,
+        })
+        await upsertCurrentAuctions([updated], at)
         await writeAuctionLlmPipelineState(identity.platform, identity.externalId, {
           llmBatchJob: null,
-          llmFailures: mergedEntry.llmFailures ?? 0,
+          llmArtifactVersionId: null,
+          llmFailures: extraction === null ? (priorState?.llmFailures ?? 0) + 1 : 0,
         })
-
-        const snapshotEntry = snapshot[key]
-        if (snapshotEntry) {
-          const updated: Auction = { ...snapshotEntry }
-          applyExtractionToAuctions([updated], { [key]: mergedEntry })
-          await writeAuctionSnapshot([updated])
-          await writeAuctionDetails(updated, mergedEntry)
-        }
+        record.auction = updated
+        record.artifactVersionId = artifactVersionId
         merged++
       }
 
-      if (cacheWriteFailed) continue
       await markLlmBatchJobResolved(job.jobName, 'succeeded', at)
       console.log(`[llm-batch-poll] job ${job.jobName} succeeded — merged ${results.length} items`)
     } catch (err) {

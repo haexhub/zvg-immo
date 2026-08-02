@@ -1,12 +1,12 @@
 import { deflateRawSync } from 'node:zlib'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Attachment, Auction } from '~/types/auction'
-import { downloadBlob, findLatestCapture, readDocumentSetItems } from '../storage-download'
+import { downloadBlob, findLatestCapture, readDocumentSet } from '../storage-download'
 
 vi.mock('../storage-download', () => ({
   downloadBlob: vi.fn(),
   findLatestCapture: vi.fn(),
-  readDocumentSetItems: vi.fn(),
+  readDocumentSet: vi.fn(),
 }))
 // archiveDocumentBlob/archiveDocumentText hit Postgres via getPool(), which
 // calls the Nuxt-only useRuntimeConfig() — unavailable in this plain vitest
@@ -132,7 +132,7 @@ function zipWithDocumentXml(xml: string): Buffer {
 
 beforeEach(() => {
   vi.mocked(findLatestCapture).mockResolvedValue(null)
-  vi.mocked(readDocumentSetItems).mockResolvedValue([])
+  vi.mocked(readDocumentSet).mockResolvedValue(null)
   vi.mocked(downloadBlob).mockResolvedValue(null)
 })
 
@@ -173,14 +173,14 @@ describe('prepareArchivedLlmDocuments', () => {
       att({ kind: 'other', label: 'Scan', filename: 'scan.jpg', proxyUrl: 'https://example.test/scan.jpg' }),
       att({ kind: 'photo', label: 'Gallery', filename: 'gallery.jpg', proxyUrl: 'https://example.test/gallery.jpg' }),
     ]
-    vi.mocked(readDocumentSetItems).mockResolvedValue([
+    vi.mocked(readDocumentSet).mockResolvedValue({ artifactVersionId: 17, items: [
       { ordinal: 0, kind: 'document', label: 'Gutachten', filename: 'gutachten.pdf', fileId: '1', sourceUrl: attachments[0]!.proxyUrl, contentHash: 'pdf', contentType: 'application/pdf' },
       { ordinal: 1, kind: 'document', label: 'Expose', filename: 'expose.docx', fileId: '2', sourceUrl: attachments[1]!.proxyUrl, contentHash: 'docx', contentType: 'application/vnd.docx' },
       { ordinal: 2, kind: 'document', label: 'HTML', filename: 'notice.html', fileId: '3', sourceUrl: attachments[2]!.proxyUrl, contentHash: 'html', contentType: 'text/html' },
       { ordinal: 3, kind: 'document', label: 'Text', filename: 'notes.txt', fileId: '4', sourceUrl: attachments[3]!.proxyUrl, contentHash: 'text', contentType: 'text/plain' },
       { ordinal: 4, kind: 'document', label: 'Scan', filename: 'scan.jpg', fileId: '5', sourceUrl: attachments[4]!.proxyUrl, contentHash: 'scan', contentType: 'image/jpeg' },
       { ordinal: 5, kind: 'document', label: 'Gallery', filename: 'gallery.jpg', fileId: '6', sourceUrl: attachments[5]!.proxyUrl, contentHash: 'gallery', contentType: 'image/jpeg' },
-    ])
+    ] })
     vi.mocked(downloadBlob).mockImplementation(async (hash) => {
       if (hash === 'pdf') return Buffer.from('%PDF-1.4\n%%EOF')
       if (hash === 'docx') {
@@ -192,7 +192,10 @@ describe('prepareArchivedLlmDocuments', () => {
       return null
     })
 
-    const prepared = await prepareArchivedLlmDocuments(auction(attachments), { nativeDocuments: false })
+    const prepared = await prepareArchivedLlmDocuments(auction(attachments), {
+      nativeDocuments: false,
+      artifactVersionId: 17,
+    })
 
     expect(prepared.input.pdfText).toContain('PDF Wohnfläche 140 m²')
     expect(prepared.input.documentText).not.toContain('PDF Wohnfläche 140 m²')
@@ -202,17 +205,22 @@ describe('prepareArchivedLlmDocuments', () => {
     expect(prepared.input.documentImages).toEqual([
       { label: 'Scan', mimeType: 'image/jpeg', data: Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0x00, 0x43, 0x00, 0xff, 0xd9]).toString('base64') },
     ])
+    expect(prepared.artifactVersionId).toBe(17)
+    expect(readDocumentSet).toHaveBeenCalledWith('zvg-portal', '1', { id: 17 })
   })
 
   it('caps combined documentText across all archived text sections', async () => {
-    vi.mocked(readDocumentSetItems).mockResolvedValue([
+    vi.mocked(readDocumentSet).mockResolvedValue({ artifactVersionId: 18, items: [
       { ordinal: 0, kind: 'document', label: 'Long 1', filename: 'one.txt', fileId: '1', sourceUrl: 'https://example.test/one.txt', contentHash: 'one', contentType: 'text/plain' },
       { ordinal: 1, kind: 'document', label: 'Long 2', filename: 'two.txt', fileId: '2', sourceUrl: 'https://example.test/two.txt', contentHash: 'two', contentType: 'text/plain' },
       { ordinal: 2, kind: 'document', label: 'Long 3', filename: 'three.txt', fileId: '3', sourceUrl: 'https://example.test/three.txt', contentHash: 'three', contentType: 'text/plain' },
-    ])
+    ] })
     vi.mocked(downloadBlob).mockResolvedValue(Buffer.from('x'.repeat(40_000)))
 
-    const prepared = await prepareArchivedLlmDocuments(auction(), { nativeDocuments: false })
+    const prepared = await prepareArchivedLlmDocuments(auction(), {
+      nativeDocuments: false,
+      artifactVersionId: 18,
+    })
 
     expect(prepared.input.documentText?.length).toBeLessThanOrEqual(80_000)
   })

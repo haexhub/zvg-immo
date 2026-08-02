@@ -93,8 +93,6 @@ function auction(overrides: Partial<Auction> = {}): Auction {
         conservationArea: null,
         landParcels: [{ label: 'Ljusdal Nor 1:5', areaSqm: 1775, use: 'Småhusenhet, bebyggd' }],
       },
-      documentSetHash: 'doc-hash',
-      documentSetVersion: 1,
     },
     ...overrides,
   }
@@ -123,7 +121,12 @@ async function loadHandler(query: Record<string, string> = { lang: 'de' }) {
   const { getLlmMaxTokens, getLlmProviderOverride, getLlmProviderOverrideChain } = await import('~/server/utils/app-settings')
   const { resolveLlmConfig } = await import('~/server/utils/extract/llm')
 
-  vi.mocked(readAuctionRecord).mockResolvedValue({ auction: auction(), detailsId: 1, detailsVersion: 1 })
+  vi.mocked(readAuctionRecord).mockResolvedValue({
+    auction: auction(),
+    detailsId: 1,
+    detailsVersion: 1,
+    artifactVersionId: null,
+  })
   vi.mocked(getPool).mockReturnValue({} as Pool)
   vi.mocked(readAuctionTranslation).mockResolvedValue(null)
   vi.mocked(claimAuctionTranslation).mockResolvedValue(CLAIM)

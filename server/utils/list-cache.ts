@@ -3,8 +3,8 @@
 // Written by the refresh task at each region's existing portal cadence
 // (crawl-cadence.ts) and by the /api/auctions cold-start warming path, so
 // list freshness is unchanged from the JSON-file era. No-op without a
-// configured pool, same graceful-degrade as current-auctions.ts/
-// extraction-cache.ts: without Postgres, /api/auctions falls back to its
+// configured pool, same graceful-degrade as current-auctions.ts: without
+// Postgres, /api/auctions falls back to its
 // existing live-crawl path (the same thing that happened on a cold/missing
 // file before).
 

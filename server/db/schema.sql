@@ -280,28 +280,12 @@ UPDATE auction_observations
 SET market_value = market_value_eur, currency = 'EUR'
 WHERE market_value_eur IS NOT NULL AND currency IS NULL;
 
--- Auction-Identity-Redesign WP-0: raw_* -> artifact_*. Reiner Rename, keine
--- Verhaltensänderung — betrifft nur bereits existierende Prod-Tabellen; die
--- CREATE TABLE-Blöcke unten legen neue Installationen schon mit den neuen
--- Namen an, daher genügt ein einmaliges RENAME pro Tabelle (idempotent: nach
--- dem ersten Lauf existiert der alte Name nicht mehr, der IF EXISTS-Check
--- greift dann nicht mehr). FK-Constraints und Indizes überleben ein RENAME
--- unverändert — Postgres bindet sie an die OID, nicht an den Namen.
-DO $$
-BEGIN
-  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'raw_blobs') THEN
-    ALTER TABLE raw_blobs RENAME TO artifact_blobs;
-  END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'raw_captures') THEN
-    ALTER TABLE raw_captures RENAME TO artifact_captures;
-  END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'raw_document_sets') THEN
-    ALTER TABLE raw_document_sets RENAME TO artifact_versions;
-  END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'raw_document_set_items') THEN
-    ALTER TABLE raw_document_set_items RENAME TO artifact_version_items;
-  END IF;
-END $$;
+-- Direct artifact cutover. Existing crawl data is disposable and recreated
+-- from source, so old raw_* tables are dropped instead of renamed/backfilled.
+DROP TABLE IF EXISTS raw_document_set_items;
+DROP TABLE IF EXISTS raw_document_sets;
+DROP TABLE IF EXISTS raw_captures;
+DROP TABLE IF EXISTS raw_blobs;
 
 -- WP-3: G1 Roh-Archiv Schicht 1. artifact_blobs = deduplizierte Bytes (S3-Key =
 -- content_hash, sha256), artifact_captures = deduplizierter Capture-Index,
@@ -417,12 +401,11 @@ ALTER TABLE artifact_captures ENABLE ROW LEVEL SECURITY;
 ALTER TABLE artifact_versions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE artifact_version_items ENABLE ROW LEVEL SECURITY;
 
--- WP-8: i18n Baustein B (Content-Übersetzung). content_hash = sha256 über
--- {title, description, documentSummary, extractionTexts, documentSetHash,
---  documentSetVersion}
+-- WP-8: i18n Baustein B (Content-Übersetzung). content_hash = sha256 over
+-- the translatable aggregate fields.
 -- (raw-archive.ts's sha256Hex, siehe server/api/.../translation.post.ts):
--- unveränderter Inhalt/Dokumentstand -> Cache-Treffer, geänderter Inhalt oder
--- neue Dokumentversion -> neuer Hash -> neue Übersetzung. Immutabel pro
+-- unveränderter Inhalt -> Cache-Treffer, geänderter Inhalt -> neuer Hash und
+-- damit eine neue Übersetzung. Immutabel pro
 -- (content_hash, lang), keine destructive Invalidierung nötig.
 CREATE TABLE IF NOT EXISTS content_translations (
   content_hash  text NOT NULL,
@@ -488,15 +471,9 @@ CREATE TABLE IF NOT EXISTS place_name_translations (
 );
 ALTER TABLE place_name_translations ENABLE ROW LEVEL SECURITY;
 
--- Datenqualitäts-Offensive: strukturierte "aktueller Zustand pro Auktion"-
--- Tabelle, additiv neben der bestehenden JSON-Snapshot-Pipeline
--- (auction-snapshot.ts). auction_observations (oben) ist ein Append-only-
--- Historienlog — kein Table, gegen das man "WHERE living_area_sqm BETWEEN …"
--- schnell filtern könnte, ohne jeden Lauf mitzuzählen. Diese Tabelle wird pro
--- Auktion upgeserted (server/utils/current-auctions.ts, aufgerufen aus
--- server/tasks/enrich.ts direkt neben writeAuctionSnapshot) und dient
--- als SQL-Spiegel für schnelle Abfragen und die serverseitig gefilterten,
--- paginierten Such-/Marker-APIs.
+-- Stable master identity. Object, price and extraction fields live only in
+-- the immutable auction_details versions below; mutable crawl/pipeline state
+-- lives in auction_fetch_state.
 CREATE TABLE IF NOT EXISTS auctions (
   platform              text NOT NULL,
   external_id           text NOT NULL,
@@ -505,63 +482,22 @@ CREATE TABLE IF NOT EXISTS auctions (
   authority             text NOT NULL,
   case_number           text NOT NULL,
   title                 text,
-  address               text,
-  description           text,
-  property_type         text,
-  land_area_sqm         numeric,
-  living_area_sqm       numeric,
-  rooms                 numeric,
-  units                 integer,
-  market_value          numeric,
-  currency              text,
-  market_value_eur      numeric,
   auction_date_iso      timestamptz,
+  auction_date_text     text,
   cancelled             boolean NOT NULL,
-  -- photoCount/thumbnailUrl (not a raw photoUrls array) mirror the fields
-  -- lib/auction-filters.ts's onlyWithPhotos filter actually checks today.
-  photo_count           integer NOT NULL DEFAULT 0,
-  thumbnail_url         text,
-  lat                   numeric,
-  lng                   numeric,
-  detail_fetched_at     timestamptz,
-  extraction_source     text,
-  extraction_confidence text,
   first_seen_at         timestamptz NOT NULL DEFAULT now(),
   updated_at            timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (platform, external_id)
 );
 CREATE INDEX IF NOT EXISTS idx_auctions_country_region ON auctions (country, region);
-CREATE INDEX IF NOT EXISTS idx_auctions_property_type ON auctions (property_type);
-CREATE INDEX IF NOT EXISTS idx_auctions_living_area ON auctions (living_area_sqm);
-CREATE INDEX IF NOT EXISTS idx_auctions_land_area ON auctions (land_area_sqm);
 -- Server-intern befüllt; öffentliche APIs lesen nur über kontrollierte
 -- Server-DTOs. RLS trotzdem an, ohne Policies (Default-Deny), sonst
 -- läse/schriebe PostgREST-anon/authenticated direkt mit.
 ALTER TABLE auctions ENABLE ROW LEVEL SECURITY;
 
--- WP-3: Zustand/Ausstattung (WP-1) + Preis-/Gebotsfelder (WP-2) additiv in den
--- bestehenden Filter-Spiegel aufgenommen. ADD COLUMN IF NOT EXISTS statt die
--- CREATE TABLE-Spaltenliste zu erweitern, da runMigrations() dieses schema.sql
--- bei jedem Boot komplett ausführt und CREATE TABLE IF NOT EXISTS in einer
--- bereits existierenden Prod-Tabelle keine Spalten nachträgt.
-ALTER TABLE auctions ADD COLUMN IF NOT EXISTS condition jsonb;
-ALTER TABLE auctions ADD COLUMN IF NOT EXISTS features text[];
-ALTER TABLE auctions ADD COLUMN IF NOT EXISTS starting_bid numeric;
-ALTER TABLE auctions ADD COLUMN IF NOT EXISTS current_bid numeric;
-ALTER TABLE auctions ADD COLUMN IF NOT EXISTS source_security_deposit numeric;
-ALTER TABLE auctions ADD COLUMN IF NOT EXISTS security_deposit numeric;
-ALTER TABLE auctions ADD COLUMN IF NOT EXISTS bidding_notes text;
-
--- WP-C.4: Baujahr/Sanierungsjahr in den Filter-Spiegel aufgenommen (eigene
--- Spalten, da als SQL-Filterkriterium sinnvoll). renovationNotes/insights/
--- photos bleiben bewusst nur im extraction_cache-JSONB — kein Filterbedarf,
--- kein eigenes Spaltenschema. Additiv, wie die WP-3-Spalten oben.
-ALTER TABLE auctions ADD COLUMN IF NOT EXISTS year_built integer;
-ALTER TABLE auctions ADD COLUMN IF NOT EXISTS last_renovation_year integer;
-CREATE INDEX IF NOT EXISTS idx_auctions_year_built ON auctions (year_built);
-
--- Auction-Identity-Redesign WP-1: `auctions` ist ab jetzt die früh angelegte,
--- nie gelöschte Master-Identität (geschrieben von ensureAuctionIdentity aus
+-- `auctions` is the master identity and is written before artifacts/details.
+-- Normal crawls only upsert it; a country rebuild deliberately deletes the
+-- complete country graph and recreates it from a fresh crawl.
 -- server/utils/current-auctions.ts, aufgerufen im Crawl-Pfad VOR jedem
 -- Archiv-/Extraktionsschreiber). Damit können artifact_captures/
 -- artifact_versions endlich eine echte FK darauf tragen und ihre
@@ -569,48 +505,54 @@ CREATE INDEX IF NOT EXISTS idx_auctions_year_built ON auctions (year_built);
 ALTER TABLE auctions ADD COLUMN IF NOT EXISTS first_seen_at timestamptz NOT NULL DEFAULT now();
 ALTER TABLE auctions ADD COLUMN IF NOT EXISTS auction_date_text text;
 
--- Reihenfolge ist wesentlich: erst Identität aus den noch vorhandenen
--- denormalisierten Spalten nachziehen, DANN droppen, DANN die FK. Vor WP-1
--- konnten archiveDocumentSet/reprocess.ts Archivzeilen schreiben, bevor je
--- eine auctions-Zeile existierte — ein direktes ADD CONSTRAINT würde auf
--- diesen verwaisten Bestandszeilen fehlschlagen.
+-- Direct cutover from the former denormalized serving mirror. The data is
+-- intentionally rebuilt by crawling, so no values are copied forward.
+ALTER TABLE auctions
+  DROP COLUMN IF EXISTS address,
+  DROP COLUMN IF EXISTS description,
+  DROP COLUMN IF EXISTS property_type,
+  DROP COLUMN IF EXISTS land_area_sqm,
+  DROP COLUMN IF EXISTS living_area_sqm,
+  DROP COLUMN IF EXISTS rooms,
+  DROP COLUMN IF EXISTS units,
+  DROP COLUMN IF EXISTS market_value,
+  DROP COLUMN IF EXISTS currency,
+  DROP COLUMN IF EXISTS market_value_eur,
+  DROP COLUMN IF EXISTS photo_count,
+  DROP COLUMN IF EXISTS thumbnail_url,
+  DROP COLUMN IF EXISTS lat,
+  DROP COLUMN IF EXISTS lng,
+  DROP COLUMN IF EXISTS detail_fetched_at,
+  DROP COLUMN IF EXISTS extraction_source,
+  DROP COLUMN IF EXISTS extraction_confidence,
+  DROP COLUMN IF EXISTS condition,
+  DROP COLUMN IF EXISTS features,
+  DROP COLUMN IF EXISTS starting_bid,
+  DROP COLUMN IF EXISTS current_bid,
+  DROP COLUMN IF EXISTS source_security_deposit,
+  DROP COLUMN IF EXISTS security_deposit,
+  DROP COLUMN IF EXISTS bidding_notes,
+  DROP COLUMN IF EXISTS year_built,
+  DROP COLUMN IF EXISTS last_renovation_year;
+
+-- Remove the former denormalized archive identity fields without carrying
+-- their values forward. Identity is recreated by the crawl before artifacts.
+DROP INDEX IF EXISTS idx_capt_az_time;
+DROP INDEX IF EXISTS idx_capt_country_region_time;
+DROP INDEX IF EXISTS idx_doc_sets_country_region_time;
+ALTER TABLE artifact_captures
+  DROP COLUMN IF EXISTS country,
+  DROP COLUMN IF EXISTS region,
+  DROP COLUMN IF EXISTS authority,
+  DROP COLUMN IF EXISTS case_number;
+ALTER TABLE artifact_versions
+  DROP COLUMN IF EXISTS country,
+  DROP COLUMN IF EXISTS region,
+  DROP COLUMN IF EXISTS authority,
+  DROP COLUMN IF EXISTS case_number;
+
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'artifact_captures' AND column_name = 'country') THEN
-    INSERT INTO auctions (platform, external_id, country, region, authority, case_number, cancelled)
-    SELECT DISTINCT ON (platform, external_id)
-           platform, external_id, country, COALESCE(region, ''), COALESCE(authority, ''), COALESCE(case_number, ''), false
-    FROM artifact_captures
-    ORDER BY platform, external_id, captured_at DESC
-    ON CONFLICT (platform, external_id) DO NOTHING;
-
-    DROP INDEX IF EXISTS idx_capt_az_time;
-    DROP INDEX IF EXISTS idx_capt_country_region_time;
-    ALTER TABLE artifact_captures
-      DROP COLUMN country,
-      DROP COLUMN region,
-      DROP COLUMN authority,
-      DROP COLUMN case_number;
-  END IF;
-
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'artifact_versions' AND column_name = 'country') THEN
-    INSERT INTO auctions (platform, external_id, country, region, authority, case_number, cancelled)
-    SELECT DISTINCT ON (platform, external_id)
-           platform, external_id, country, COALESCE(region, ''), COALESCE(authority, ''), COALESCE(case_number, ''), false
-    FROM artifact_versions
-    ORDER BY platform, external_id, captured_at DESC
-    ON CONFLICT (platform, external_id) DO NOTHING;
-
-    DROP INDEX IF EXISTS idx_doc_sets_country_region_time;
-    ALTER TABLE artifact_versions
-      DROP COLUMN country,
-      DROP COLUMN region,
-      DROP COLUMN authority,
-      DROP COLUMN case_number;
-  END IF;
-
-  -- uq_artifact_versions_identity steht für Bestandsdatenbanken nicht in der
-  -- CREATE TABLE-Liste oben; WP-2s auction_details-FK braucht sie.
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_artifact_versions_identity') THEN
     ALTER TABLE artifact_versions ADD CONSTRAINT uq_artifact_versions_identity UNIQUE (id, platform, external_id);
   END IF;
@@ -618,12 +560,12 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_artifact_captures_auction') THEN
     ALTER TABLE artifact_captures
       ADD CONSTRAINT fk_artifact_captures_auction
-      FOREIGN KEY (platform, external_id) REFERENCES auctions (platform, external_id) NOT VALID;
+      FOREIGN KEY (platform, external_id) REFERENCES auctions (platform, external_id) ON DELETE CASCADE NOT VALID;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_artifact_versions_auction') THEN
     ALTER TABLE artifact_versions
       ADD CONSTRAINT fk_artifact_versions_auction
-      FOREIGN KEY (platform, external_id) REFERENCES auctions (platform, external_id) NOT VALID;
+      FOREIGN KEY (platform, external_id) REFERENCES auctions (platform, external_id) ON DELETE CASCADE NOT VALID;
   END IF;
 END $$;
 -- Getrennt vom Block oben: VALIDATE auf einer bereits validierten Constraint
@@ -632,9 +574,8 @@ END $$;
 ALTER TABLE artifact_captures VALIDATE CONSTRAINT fk_artifact_captures_auction;
 ALTER TABLE artifact_versions VALIDATE CONSTRAINT fk_artifact_versions_auction;
 
--- Auction-Identity-Redesign WP-2: typisierte, versionierte Extraktion. Ersetzt
--- perspektivisch extraction_cache + auction_snapshot (Contract erst in WP-6,
--- bis dahin Dual-Write). Jede Zeile ist unveränderlich — es gibt kein UPDATE,
+-- Typisierte, versionierte Detail- und Extraktionsdaten. Jede Zeile ist
+-- unveränderlich — es gibt kein UPDATE,
 -- die Versionsfolge IST die Historie. Typisierte Spalten statt einem JSON-Blob,
 -- damit sich zwischen zwei Versionen per SQL diffen lässt, wo sich z.B.
 -- living_area_sqm geändert hat.
@@ -651,7 +592,7 @@ CREATE TABLE IF NOT EXISTS auction_details (
   artifact_version_id   bigint,  -- NULL = nur aus Listing-Daten, keine Dokumente geparst
   created_at            timestamptz NOT NULL DEFAULT now(),
   -- Fachlicher Extraktions-Zeitpunkt (= AuctionExtraction.at). Nicht durch
-  -- created_at ersetzbar: bei Backfill/Replay weichen die beiden ab.
+  -- created_at ersetzbar: bei Replay können die beiden abweichen.
   extracted_at          timestamptz NOT NULL,
   address               text,
   description           text,
@@ -690,7 +631,7 @@ CREATE TABLE IF NOT EXISTS auction_details (
   llm_analyzed_at       timestamptz,
   document_summary      text,
   extraction_texts      jsonb,
-  FOREIGN KEY (platform, external_id) REFERENCES auctions (platform, external_id),
+  FOREIGN KEY (platform, external_id) REFERENCES auctions (platform, external_id) ON DELETE CASCADE,
   -- Zusammengesetzt statt nur REFERENCES artifact_versions (id): verhindert,
   -- dass eine Zeile das Manifest einer FREMDEN Auktion referenziert.
   -- NULL bleibt erlaubt (MATCH SIMPLE prüft eine FK mit NULL-Spalte nicht).
@@ -743,7 +684,7 @@ ALTER TABLE auction_photos ENABLE ROW LEVEL SECURITY;
 -- versionsabhängig — eine neue Extraktions-Version kann Titel/Beschreibung
 -- ändern —, alte Übersetzungen bleiben als Historie erhalten statt
 -- überschrieben zu werden. NOT NULL geht nicht direkt per ADD COLUMN auf eine
--- gefüllte Tabelle: nullable anlegen, backfillen, dann NOT NULL setzen.
+-- gefüllte Tabelle: nullable anlegen, vorhandene Zeilen zuordnen, dann NOT NULL setzen.
 ALTER TABLE auction_translations ADD COLUMN IF NOT EXISTS version integer;
 UPDATE auction_translations SET version = 1 WHERE version IS NULL;
 ALTER TABLE auction_translations ALTER COLUMN version SET NOT NULL;
@@ -774,11 +715,8 @@ BEGIN
       NOT VALID;
   END IF;
 
-  -- NOT VALID greift bereits für jeden neuen Schreibzugriff; validiert wird
-  -- erst, wenn der einmalige auction_details-Backfill (WP-2,
-  -- scripts/backfill-auction-details.ts) für jede übersetzte Auktion eine
-  -- version = 1 erzeugt hat. Ein Boot vor dem Backfill soll daran nicht
-  -- scheitern, also wird pro Boot erneut geprüft statt einmal hart validiert.
+  -- NOT VALID greift bereits für jeden neuen Schreibzugriff. Validiert wird,
+  -- sobald jede vorhandene Übersetzung einer Details-Version zugeordnet ist.
   IF NOT EXISTS (
     SELECT 1 FROM auction_translations t
     WHERE NOT EXISTS (
@@ -791,45 +729,10 @@ BEGIN
 END $$;
 
 
--- (platform, external_id) identity note: extraction_cache, auction_snapshot
--- and auction_translations all key on this pair, but deliberately carry no
--- FOREIGN KEY to `auctions` or to each other. Two reasons: (1) `auctions` is
--- a derived SQL mirror written LAST in the pipeline (current-auctions.ts,
--- called after writeAuctionSnapshot/writeExtractionCache in enrich.ts) or
--- not at all (reprocess.ts, llm-batch-poll.ts write extraction_cache/
--- auction_snapshot without ever touching `auctions`) — an FK pointing at
--- `auctions` would reject those writes; (2) these caches are meant to
--- outlive their `auctions`/list_cache row on purpose (permalink retention
--- for ended auctions, see wp5-snapshot-no-prune-intentional), so ON DELETE
--- CASCADE would silently destroy exactly the historical data this is for.
--- Cross-table consistency is instead maintained by application code where
--- it matters (e.g. country-rebuild.ts's deleteCountryCurrentData deletes
--- matching rows from all of these tables when resetting a country).
---
--- location_enrichment is the one exception: since Auction-Identity-Redesign
--- WP-5 it does carry a `NOT VALID`/no-ON-DELETE FK to `auctions` (see below)
--- — safe only because `auctions` became permanent-and-never-deleted in WP-1
--- (ensureAuctionIdentity runs before any archive/extraction write, and
--- country-rebuild.ts's deleteCountryCurrentData no longer deletes from
--- `auctions`), so neither of the two reasons above still applies to it.
---
--- WP-3: vollständiger Extraktions-Cache-Blob (server/utils/extraction-cache.ts)
--- — Postgres ist die einzige Persistenz, kein lokales JSON-File mehr. Eigene
--- Tabelle statt einer weiteren Spalte auf `auctions`: writeExtractionCache()
--- kennt nur platform+externalId+die AuctionExtraction, nicht das volle
--- Auction-Objekt mit den NOT-NULL-Feldern (country/region/authority/
--- case_number), die ein Insert in `auctions` bräuchte. Erstschreiber gewinnt
--- — kein TTL, keine Historie nötig.
-CREATE TABLE IF NOT EXISTS extraction_cache (
-  platform      text NOT NULL,
-  external_id   text NOT NULL,
-  extraction    jsonb NOT NULL,
-  updated_at    timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (platform, external_id)
-);
--- RLS ohne Policies (Default-Deny): sperrt PostgREST-anon/authenticated aus,
--- der Backend-Zugriff läuft als Table-Owner und umgeht RLS ohnehin.
-ALTER TABLE extraction_cache ENABLE ROW LEVEL SECURITY;
+-- Direct structured cutover: crawl data is cheap to recreate, so obsolete
+-- JSON serving/cache tables are removed instead of backfilled or dual-written.
+DROP TABLE IF EXISTS extraction_cache;
+DROP TABLE IF EXISTS auction_snapshot;
 
 -- WP-5: Read-Path auf Postgres. Ersetzt die beiden lokalen JSON-Caches
 -- (.cache_zvg/list/<country>-<region>.json, .cache_zvg/auctions.json) als
@@ -848,20 +751,6 @@ CREATE TABLE IF NOT EXISTS list_cache (
 );
 ALTER TABLE list_cache ENABLE ROW LEVEL SECURITY;
 
--- auction_snapshot: ein vollständiger Auction-Blob pro (platform, external_id),
--- analog extraction_cache — trägt mergePreservedDetail's Merge-Semantik über
--- mehrere enrich-Läufe hinweg 1:1 weiter (die Funktion selbst ist unverändert,
--- nur die Persistenz darunter wechselt). Geschrieben von enrich.ts genau dort,
--- wo bisher writeAuctionSnapshot(result.auctions) lief.
-CREATE TABLE IF NOT EXISTS auction_snapshot (
-  platform      text NOT NULL,
-  external_id   text NOT NULL,
-  auction       jsonb NOT NULL,
-  updated_at    timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (platform, external_id)
-);
-ALTER TABLE auction_snapshot ENABLE ROW LEVEL SECURITY;
-
 -- Auction-Details-Completion WP-8: mutable crawl and pipeline state. Two
 -- independent writers own disjoint column groups; application writes update
 -- only their own columns so concurrent crawl/photo/LLM work cannot reset the
@@ -878,20 +767,53 @@ CREATE TABLE IF NOT EXISTS auction_fetch_state (
   source_updated_iso     timestamptz,
   detail_fetched_at      timestamptz,
   llm_batch_job          text,
+  llm_artifact_version_id bigint,
   llm_failures           integer NOT NULL DEFAULT 0,
   photos_checked_at      timestamptz,
   photo_failures         integer NOT NULL DEFAULT 0,
   photo_pipeline_version integer,
   updated_at             timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (platform, external_id),
-  FOREIGN KEY (platform, external_id) REFERENCES auctions (platform, external_id)
+  FOREIGN KEY (platform, external_id) REFERENCES auctions (platform, external_id) ON DELETE CASCADE,
+  CONSTRAINT fk_auction_fetch_state_llm_artifact
+    FOREIGN KEY (llm_artifact_version_id, platform, external_id)
+    REFERENCES artifact_versions (id, platform, external_id)
+    ON DELETE SET NULL (llm_artifact_version_id)
 );
+ALTER TABLE auction_fetch_state
+  ADD COLUMN IF NOT EXISTS llm_artifact_version_id bigint;
+UPDATE auction_fetch_state fs
+SET llm_artifact_version_id = NULL
+WHERE fs.llm_artifact_version_id IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1
+    FROM artifact_versions av
+    WHERE av.id = fs.llm_artifact_version_id
+      AND av.platform = fs.platform
+      AND av.external_id = fs.external_id
+  );
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'fk_auction_fetch_state_llm_artifact'
+  ) THEN
+    ALTER TABLE auction_fetch_state
+      ADD CONSTRAINT fk_auction_fetch_state_llm_artifact
+      FOREIGN KEY (llm_artifact_version_id, platform, external_id)
+      REFERENCES artifact_versions (id, platform, external_id)
+      ON DELETE SET NULL (llm_artifact_version_id)
+      NOT VALID;
+  END IF;
+END $$;
+ALTER TABLE auction_fetch_state
+  VALIDATE CONSTRAINT fk_auction_fetch_state_llm_artifact;
 CREATE INDEX IF NOT EXISTS idx_auction_fetch_state_llm_batch_job
   ON auction_fetch_state (llm_batch_job) WHERE llm_batch_job IS NOT NULL;
 ALTER TABLE auction_fetch_state ENABLE ROW LEVEL SECURITY;
 
 -- External market/hazard enrichment is intentionally stored outside the LLM
--- extraction cache: provider licenses, TTLs and source versions have their
+-- extraction result: provider licenses, TTLs and source versions have their
 -- own cadence, and detail pages only ever read the cached result.
 CREATE TABLE IF NOT EXISTS location_enrichment (
   platform      text NOT NULL,
@@ -917,7 +839,7 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_location_enrichment_auction') THEN
     ALTER TABLE location_enrichment
       ADD CONSTRAINT fk_location_enrichment_auction
-      FOREIGN KEY (platform, external_id) REFERENCES auctions (platform, external_id)
+      FOREIGN KEY (platform, external_id) REFERENCES auctions (platform, external_id) ON DELETE CASCADE
       NOT VALID;
   END IF;
 

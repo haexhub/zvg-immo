@@ -6,7 +6,6 @@
 import type { Pool } from 'pg'
 import type { Auction, CrawlResult } from '~/types/auction'
 import { getPool } from './db'
-import { applyExtractionToAuctions, readExtractionCache } from './extraction-cache'
 
 const COLUMNS = [
   'captured_at',
@@ -85,8 +84,6 @@ export async function recordObservations(result: CrawlResult, capturedAt: string
   if (!db) return
   if (result.auctions.length === 0) return
 
-  const cache = await readExtractionCache()
-  applyExtractionToAuctions(result.auctions, cache)
   const rows = result.auctions.map((a) => auctionToObservationRow(a, capturedAt))
 
   for (let i = 0; i < rows.length; i += CHUNK_SIZE) {

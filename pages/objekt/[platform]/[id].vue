@@ -80,9 +80,9 @@ function hasCompletedLlmAnalysis(): boolean {
 const analysisStatus = computed<AnalysisStatus>(() => {
   const e = a.value?.extraction
   if (!e) return 'pending'
-  if (e.llmBatchJob) return 'batch'
+  if (a.value?.processing?.llmBatchJob) return 'batch'
   if (hasCompletedLlmAnalysis()) return 'llm'
-  if ((e.llmFailures ?? 0) >= MAX_LLM_FAILURES) return 'failed'
+  if ((a.value?.processing?.llmFailures ?? 0) >= MAX_LLM_FAILURES) return 'failed'
   return 'rules'
 })
 

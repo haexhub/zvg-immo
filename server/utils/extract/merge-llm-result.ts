@@ -155,12 +155,6 @@ export function mergeLlmResult(
 
   const hasType = propertyType != null && propertyType !== 'sonstiges'
   const hasArea = landAreaSqm != null || livingAreaSqm != null
-  const prevFailures = priorEntry?.llmFailures ?? 0
-  // Reset on any successful call (regardless of whether it flipped `source`
-  // to 'llm') — the call worked, so a persistent-failure counter no longer
-  // applies. Bump only on an actual request failure.
-  const llmFailures = llm === null ? prevFailures + 1 : 0
-
   return withDerivedExtractionFields({
     propertyType,
     landAreaSqm,
@@ -185,16 +179,14 @@ export function mergeLlmResult(
     documentSummary,
     marketValueEur,
     marketValueText,
-    documentSetHash: priorEntry?.documentSetHash,
-    documentSetVersion: priorEntry?.documentSetVersion,
     source,
     confidence: hasType && hasArea ? 'high' : 'low',
     photos,
-    photosCheckedAt: priorEntry?.photosCheckedAt,
-    photoPipelineVersion: priorEntry?.photoPipelineVersion,
     at,
-    ...(llm ? { llmAnalyzedAt: at } : {}),
-    ...(llmFailures > 0 ? { llmFailures } : {}),
-    ...(priorEntry?.photoFailures ? { photoFailures: priorEntry.photoFailures } : {}),
+    ...(llm
+      ? { llmAnalyzedAt: at }
+      : priorEntry?.llmAnalyzedAt
+        ? { llmAnalyzedAt: priorEntry.llmAnalyzedAt }
+        : {}),
   })
 }

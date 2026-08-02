@@ -1,8 +1,5 @@
-// Bridges the two photo representations that coexist in extraction_cache: the
-// new structured CuratedPhoto and the bare filename strings older rows still
-// hold. Instead of a data migration, every read site normalizes on the way
-// out (applyExtractionToAuctions, the enrich write path, the objekt detail
-// page). Shared by server and client, so it lives in lib/.
+// Normalizes freshly extracted filenames and structured photo metadata through
+// one shared server/client representation.
 
 import type { CuratedPhoto, PhotoCategory } from '~/types/auction'
 

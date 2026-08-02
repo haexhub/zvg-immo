@@ -1,4 +1,4 @@
-import type { Attachment, Auction, AuctionExtraction } from '~/types/auction'
+import type { Attachment, Auction } from '~/types/auction'
 import { getPool } from './db'
 import { jsonbStringify } from './jsonb'
 import { cacheKey } from './verkehrswert-cache'
@@ -15,6 +15,7 @@ export interface AuctionFetchState {
   sourceUpdatedIso: string | null
   detailFetchedAt: string | null
   llmBatchJob: string | null
+  llmArtifactVersionId: number | null
   llmFailures: number
   photosCheckedAt: string | null
   photoFailures: number
@@ -34,6 +35,7 @@ interface AuctionFetchStateRow {
   source_updated_iso: Date | string | null
   detail_fetched_at: Date | string | null
   llm_batch_job: string | null
+  llm_artifact_version_id: string | number | null
   llm_failures: number
   photos_checked_at: Date | string | null
   photo_failures: number
@@ -59,6 +61,7 @@ function fromRow(row: AuctionFetchStateRow): AuctionFetchState {
     sourceUpdatedIso: iso(row.source_updated_iso),
     detailFetchedAt: iso(row.detail_fetched_at),
     llmBatchJob: row.llm_batch_job,
+    llmArtifactVersionId: row.llm_artifact_version_id == null ? null : Number(row.llm_artifact_version_id),
     llmFailures: row.llm_failures,
     photosCheckedAt: iso(row.photos_checked_at),
     photoFailures: row.photo_failures,
@@ -184,8 +187,9 @@ export async function writeAuctionPhotoPipelineState(
 }
 
 export interface LlmPipelineState {
-  llmBatchJob?: string | null
-  llmFailures?: number
+  llmBatchJob: string | null
+  llmArtifactVersionId: number | null
+  llmFailures: number
 }
 
 /** Updates only LLM-pipeline columns, preserving concurrent crawler/photo writes. */
@@ -197,13 +201,21 @@ export async function writeAuctionLlmPipelineState(
   const db = getPool()
   if (!db) return
   await db.query(
-    `INSERT INTO auction_fetch_state (platform, external_id, llm_batch_job, llm_failures)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO auction_fetch_state
+       (platform, external_id, llm_batch_job, llm_artifact_version_id, llm_failures)
+     VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (platform, external_id) DO UPDATE SET
        llm_batch_job = EXCLUDED.llm_batch_job,
+       llm_artifact_version_id = EXCLUDED.llm_artifact_version_id,
        llm_failures = EXCLUDED.llm_failures,
        updated_at = now()`,
-    [platform, externalId, state.llmBatchJob ?? null, state.llmFailures ?? 0],
+    [
+      platform,
+      externalId,
+      state.llmBatchJob,
+      state.llmArtifactVersionId,
+      state.llmFailures,
+    ],
   )
 }
 
@@ -218,19 +230,12 @@ export function applyAuctionFetchState(auction: Auction, state: AuctionFetchStat
   auction.photoUrls = state.photoUrls ?? undefined
   auction.sourceUpdatedIso = state.sourceUpdatedIso
   auction.detailFetchedAt = state.detailFetchedAt
-  if (auction.extraction) {
-    auction.extraction.llmBatchJob = state.llmBatchJob ?? undefined
-    auction.extraction.llmFailures = state.llmFailures || undefined
-    auction.extraction.photosCheckedAt = state.photosCheckedAt ?? undefined
-    auction.extraction.photoFailures = state.photoFailures || undefined
-    auction.extraction.photoPipelineVersion = state.photoPipelineVersion ?? undefined
+  auction.processing = {
+    llmBatchJob: state.llmBatchJob,
+    llmFailures: state.llmFailures,
+    photosCheckedAt: state.photosCheckedAt,
+    photoFailures: state.photoFailures,
+    photoPipelineVersion: state.photoPipelineVersion,
   }
   return auction
-}
-
-export function llmStateFromExtraction(extraction: AuctionExtraction | null | undefined): LlmPipelineState {
-  return {
-    llmBatchJob: extraction?.llmBatchJob ?? null,
-    llmFailures: extraction?.llmFailures ?? 0,
-  }
 }

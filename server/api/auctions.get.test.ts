@@ -44,7 +44,7 @@ describe('/api/auctions', () => {
       cancelled: false,
       photo_count: 4,
       thumbnail_url: '/api/auction-image/zvg-portal/42/first.jpg',
-      // Typed auction_details columns (WP-3), no longer the extraction_cache blob.
+      // Typed auction_details columns.
       property_type: 'einfamilienhaus',
       land_area_sqm: '500',
       living_area_sqm: '120',
@@ -54,7 +54,7 @@ describe('/api/auctions', () => {
       features: ['garage'],
       extraction_source: 'llm',
       llm_analyzed_at: '2026-07-01T00:00:00.000Z',
-      // Curated photos still come from extraction_cache — auction_details
+      // Curated photos come from auction_photos joined to auction_details.
       // models photo_count/thumbnail_url but not the array itself.
       photos: [
         { file: 'second.jpg', category: 'innen', caption: null, isPropertyPhoto: true },

@@ -25,6 +25,11 @@ export interface CaptureRef {
   capturedAt: string
 }
 
+export interface ArchivedDocumentSet {
+  artifactVersionId: number
+  items: ArchivedDocumentSetItem[]
+}
+
 /**
  * Most recent `artifact_captures` row for `(kind, platform, externalId)`,
  * optionally narrowed to a specific `sourceUrl` — used to pick the capture of
@@ -62,27 +67,29 @@ export async function findLatestCapture(
   }
 }
 
-export async function readDocumentSetItems(
+export async function readDocumentSet(
   platform: string,
   externalId: string,
-  opts: { setHash?: string | null; version?: number | null } = {},
-): Promise<ArchivedDocumentSetItem[] | null> {
+  opts: { id?: number | null; setHash?: string | null; version?: number | null } = {},
+): Promise<ArchivedDocumentSet | null> {
   const db = getPool()
   if (!db) return null
   try {
     const conditions = ['platform = $1', 'external_id = $2']
     const params: unknown[] = [platform, externalId]
+    if (opts.id != null) conditions.push(`id = $${params.push(opts.id)}`)
     if (opts.setHash) conditions.push(`set_hash = $${params.push(opts.setHash)}`)
     if (opts.version != null) conditions.push(`version = $${params.push(opts.version)}`)
     const { rows } = await db.query<{
-      ordinal: number
-      kind: string
+      set_id: string | number
+      ordinal: number | null
+      kind: string | null
       label: string | null
       filename: string | null
       file_id: string | null
       source_url: string
-      content_hash: string
-      content_type: string
+      content_hash: string | null
+      content_type: string | null
     }>(
       `WITH selected_set AS (
          SELECT id
@@ -91,26 +98,39 @@ export async function readDocumentSetItems(
          ORDER BY version DESC
          LIMIT 1
        )
-       SELECT ordinal, kind, label, filename, file_id, source_url, content_hash, content_type
-       FROM artifact_version_items
-       WHERE set_id = (SELECT id FROM selected_set)
-       ORDER BY ordinal ASC`,
+       SELECT selected_set.id AS set_id, item.ordinal, item.kind, item.label,
+              item.filename, item.file_id, item.source_url, item.content_hash,
+              item.content_type
+       FROM selected_set
+       LEFT JOIN artifact_version_items item ON item.set_id = selected_set.id
+       ORDER BY item.ordinal ASC`,
       params,
     )
-    return rows.map((row) => ({
+    const first = rows[0]
+    if (!first) return null
+    const items = rows.flatMap((row): ArchivedDocumentSetItem[] => row.ordinal == null ? [] : [{
       ordinal: row.ordinal,
       kind: row.kind as ArchivedDocumentSetItem['kind'],
       label: row.label,
       filename: row.filename,
       fileId: row.file_id,
       sourceUrl: row.source_url,
-      contentHash: row.content_hash,
+      contentHash: row.content_hash!,
       contentType: row.content_type as ArchivedDocumentSetItem['contentType'],
-    }))
+    }])
+    return { artifactVersionId: Number(first.set_id), items }
   } catch (err) {
-    console.warn(`[storage-download] readDocumentSetItems failed: ${(err as Error).message}`)
+    console.warn(`[storage-download] readDocumentSet failed: ${(err as Error).message}`)
     return null
   }
+}
+
+export async function readDocumentSetItems(
+  platform: string,
+  externalId: string,
+  opts: { id?: number | null; setHash?: string | null; version?: number | null } = {},
+): Promise<ArchivedDocumentSetItem[] | null> {
+  return (await readDocumentSet(platform, externalId, opts))?.items ?? null
 }
 
 /**

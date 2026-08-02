@@ -342,7 +342,7 @@ async function submitGeminiBatchLocked(
   }
   // Google may return file results in input order without echoing the JSONL
   // `key` on every line. Persist an ordinal fallback so the poller can still
-  // merge each response into the right extraction-cache entry.
+  // merge each response into the right structured auction entry.
   const customIdMap = Object.fromEntries(selection.selected.map((entry, index) => [String(index), entry.item.key]))
   const model = config.model || DEFAULT_MODEL
   try {

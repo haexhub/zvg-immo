@@ -103,7 +103,7 @@ export default defineEventHandler(async (event): Promise<AuctionDetail> => {
   // Cache-only lookup: the geocode task fills coordinates ahead of time, so
   // serving a detail page never blocks on Nominatim.
   const point = await geocodeAddress(auction.address, auction.country, { fetchMissing: false })
-  // Source-provided coordinates (crawler-set, preserved in the snapshot) beat
+  // Source-provided coordinates (crawler-set, preserved in auction_details) beat
   // the geocoder guess — but only as a complete pair, never mixed with the
   // geocoder's.
   const sourcePoint =
