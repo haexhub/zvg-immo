@@ -80,6 +80,18 @@ Verschiebung: weniger Felder in `AuctionExtraction`, weniger Stellen in
 -- auction_fetch_state: mutabler Ist-Zustand pro Auktion, keine Historie.
 -- Wird bei jedem Crawl/Enrich-Lauf überschrieben, nie versioniert — das
 -- unterscheidet sie von auction_details.
+--
+-- Zwei unabhängige, nebenläufige Schreibpfade auf derselben Zeile — Crawler
+-- (pdf_url*/detail_url*/attachments/photo_urls/source_updated_iso/
+-- detail_fetched_at) und enrich.ts' Foto-/LLM-Pipeline (llm_batch_job/
+-- llm_failures/photos_checked_at/photo_failures/photo_pipeline_version).
+-- Jeder Schreibpfad besitzt disjunkte Spalten und darf NUR seine eigenen per
+-- spaltenscharfem `UPDATE ... SET col = $1 WHERE ...` setzen — nie ein
+-- Full-Row-`UPSERT`/REPLACE mit Default-/NULL-Werten für die Spalten des
+-- jeweils anderen Pfads, sonst überschreibt ein Lauf die Ergebnisse des
+-- anderen. `writeAuctionFetchState` bekommt deshalb zwei getrennte
+-- Funktionen (oder ein `Partial<...>`-Argument), keine einzige Funktion mit
+-- allen Spalten.
 CREATE TABLE IF NOT EXISTS auction_fetch_state (
   platform              text NOT NULL,
   external_id           text NOT NULL,
@@ -96,6 +108,11 @@ CREATE TABLE IF NOT EXISTS auction_fetch_state (
   photos_checked_at     timestamptz,
   photo_failures        integer NOT NULL DEFAULT 0,
   photo_pipeline_version integer,
+  -- DEFAULT now() greift nur beim ersten INSERT der Zeile (angelegt von
+  -- welchem der beiden Schreibpfade auch zuerst läuft). Jedes spätere
+  -- `UPDATE`, von beiden Pfaden, MUSS updated_at = now() explizit in der
+  -- eigenen SET-Klausel mitsetzen — sonst bleibt der Zeitstempel nach dem
+  -- ersten Schreiben stehen.
   updated_at            timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (platform, external_id),
   FOREIGN KEY (platform, external_id) REFERENCES auctions (platform, external_id)
@@ -173,7 +190,10 @@ bestätigt. Bei Umsetzung kurz gegenchecken, nicht blind übernehmen:
   sauberer getrennt (unterschiedliche Schreibpfade: Crawler schreibt URLs,
   `enrich.ts`s Foto-/LLM-Pipeline schreibt die Zähler). Für die Größenordnung
   dieses Projekts hier als eine Tabelle vorgeschlagen — bei Bedarf leicht zu
-  splitten.
+  splitten. **Nicht optional, falls die eine Tabelle bleibt:** die beiden
+  Schreibpfade dürfen sich nicht per Full-Row-Write überschreiben — siehe der
+  Kommentar direkt an der DDL oben (spaltenscharfe `UPDATE`s, disjunkter
+  Spaltenbesitz) und der Concurrency-Test in WP-8s Verifikation.
 - **`attachments` bleibt `jsonb`, `photo_urls` bleibt `text[]`** — beide
   ändern sich nicht in einer Weise, die SQL-Diffing zwischen Ständen bräuchte
   (kein Versionsverlauf für diese Tabelle), analog zur `jsonb`-Begründung im
@@ -202,21 +222,51 @@ bestätigt. Bei Umsetzung kurz gegenchecken, nicht blind übernehmen:
   `auction_details.artifact_version_id` umstellen (siehe eigener Abschnitt
   oben), `documentSetHash`/`documentSetVersion`/`archivedDocumentSetHash`/
   `archivedDocumentSetVersion` aus `AuctionExtraction` entfernen.
+- Einmaliges Backfill-Skript (wie WP-2s `backfill-auction-details.ts`, nicht
+  Teil der schema.sql-Boot-Migration): für jede bestehende `(platform,
+  external_id)` aus dem aktuellen `extraction_cache`/`auction_snapshot`-Stand
+  eine `auction_fetch_state`-Zeile erzeugen. Notwendig, nicht optional — siehe
+  "Join-Kardinalität" in WP-11: ohne Backfill fehlt jeder heute schon
+  archivierten Auktion diese Zeile bis zum nächsten Enrich-Lauf.
 - Verifikation: nach einem Enrich-Lauf existiert eine `auction_fetch_state`-
   Zeile mit identischen Werten zu den `Auction`-Feldern. Ein zweiter Lauf mit
   neuen `artifact_versions` löst Reprocessing aus, einer ohne nicht — geprüft
-  ohne die vier gestrichenen Felder.
+  ohne die vier gestrichenen Felder. Zusätzlich ein Concurrency-Test: ein
+  simulierter Crawler-Write (nur URL-Spalten) und ein simulierter
+  Pipeline-Write (nur Retry-Spalten) auf dieselbe Zeile, in beliebiger
+  Reihenfolge/überlappend — am Ende müssen beide Spaltengruppen ihren
+  jeweils zuletzt geschriebenen Wert tragen, keine Gruppe darf die andere auf
+  `NULL`/Default zurückgesetzt haben. Backfill-Verifikation analog WP-2:
+  gegen einen befüllten Datenbank-Dump laufen lassen, Stichproben gegen die
+  alten `Auction`-Feldwerte gegenchecken.
 
 **WP-9 — `auction_photos` einführen**
 - `schema.sql`: `CREATE TABLE auction_photos` (siehe DDL).
 - `server/utils/auction-details.ts` (oder neues `auction-photos.ts`):
   `writeAuctionPhotos(auctionDetailsId, photos: CuratedPhoto[])`, aufgerufen
-  direkt nach `writeAuctionDetails` mit der zurückgegebenen `id` — nur bei
-  `changed: true` (sonst keine neue `auction_details`-Zeile, an die sich
-  Fotos hängen ließen).
+  direkt nach `writeAuctionDetails` mit der zurückgegebenen `id`.
+- **Wichtig, sonst geht ein Fotowechsel verloren:** `writeAuctionDetails`s
+  Changed-Detection aus WP-2 vergleicht nur die eigenen Spalten — wenn sich
+  ausschließlich die kuratierten Fotos ändern (gleiche Extraktionswerte,
+  andere Kategorie/Reihenfolge nach einem Reprocess mit neuem Prompt), bliebe
+  `changed: false`, es entstünde keine neue `auction_details`-Version, und
+  `writeAuctionPhotos` würde nie aufgerufen (nur bei `changed: true`
+  vorgesehen) — der Fotowechsel wäre unwiederbringlich weg. Die
+  Changed-Detection muss deshalb einen stabilen Vergleich der neuen
+  `CuratedPhoto[]` gegen die `auction_photos`-Zeilen der aktuell neuesten
+  Version einbeziehen (Ordinal+Datei+Kategorie+Caption+isPropertyPhoto) und
+  bei einer Abweichung ebenfalls `changed: true` auslösen, auch wenn alle
+  anderen `auction_details`-Spalten identisch sind.
+- Einmaliges Backfill-Skript, analog WP-8: für jede bestehende
+  `auction_details`-Zeile (aus WP-2s Backfill oder inzwischen regulär
+  geschrieben) mit vorhandenen `AuctionExtraction.photos` die passenden
+  `auction_photos`-Zeilen erzeugen.
 - Verifikation: Reprocess mit geänderter Fotokuratierung erzeugt neue
   `auction_photos`-Zeilen unter der neuen `auction_details_id`, alte Version
-  bleibt unverändert abrufbar (Historie).
+  bleibt unverändert abrufbar (Historie). Eigener Testfall: identische
+  Extraktionswerte, nur die Fotokuratierung ändert sich — muss trotzdem eine
+  neue Version samt neuer `auction_photos`-Zeilen erzeugen. Backfill-
+  Verifikation analog WP-8/WP-2.
 
 **WP-10 — `auction_details`/`auctions` um die verbleibenden Spalten ergänzen**
 - `schema.sql`: vier `ALTER TABLE auction_details ADD COLUMN`, eine
@@ -229,8 +279,26 @@ bestätigt. Bei Umsetzung kurz gegenchecken, nicht blind übernehmen:
 
 **WP-11 — WP-3 abschließen: die sieben verbliebenen Endpunkte umstellen**
 - Die sieben Dateien aus WP-3s "Not migrated"-Liste auf
-  `auctions JOIN auction_details JOIN auction_fetch_state [JOIN auction_photos]`
-  umstellen statt `readAuctionSnapshot()`/`readExtractionCache()`.
+  `auctions JOIN auction_details JOIN auction_fetch_state` umstellen statt
+  `readAuctionSnapshot()`/`readExtractionCache()`.
+- **Join-Kardinalität, nicht trivial:** `auction_details` enthält jede
+  Version als eigene Zeile — ein direkter Join ohne Versionsauswahl liefert
+  eine Auktion mehrfach (einmal pro Version) oder kombiniert (bei einem
+  naiven `ORDER BY ... LIMIT 1` pro Gesamtergebnis statt pro Auktion) sogar
+  eine veraltete `auction_details`-Zeile mit dem aktuellen
+  `auction_fetch_state`. Dieselbe "genau die neueste Version pro Auktion"-
+  Auswahl wie in WP-3 verwenden (`LATEST_DETAILS_JOIN_SQL`s
+  `LEFT JOIN LATERAL ... ORDER BY version DESC LIMIT 1`-Muster aus #296),
+  nicht neu erfinden. `auction_photos` ist zusätzlich 1:n pro Version — nicht
+  in denselben Zeilen-Join packen, sondern separat laden (eigene Query mit
+  `WHERE auction_details_id = $1 ORDER BY ordinal`) und im Response-Objekt
+  zusammenführen, wie es `photos` als Array heute schon ist.
+- **`auction_fetch_state` per `LEFT JOIN`, nicht `INNER JOIN`** — trotz
+  Backfill in WP-8 (siehe dort): eine fehlende Zeile darf eine Auktion nicht
+  aus dem Endpunkt verschwinden lassen, sondern soll die betroffenen Felder
+  als `null` liefern. Robuster als sich auf vollständige Backfill-Abdeckung
+  zu verlassen, insbesondere für den Übergangszeitraum zwischen WP-8s Deploy
+  und dem Lauf des Backfill-Skripts.
 - `buildContentHashInput(auction)`/`auctionTranslationContentHash(auction)`/
   `toPublicAuction(auction)` (und was sie sonst noch konsumieren) auf die
   neue Feldherkunft umstellen.
@@ -246,11 +314,5 @@ bestätigt. Bei Umsetzung kurz gegenchecken, nicht blind übernehmen:
 
 - WP-6/WP-7 aus dem Ursprungsplan — dieser Nachtrag macht WP-6 planbar,
   implementiert es aber nicht.
-- Rückwirkendes Backfill von `auction_fetch_state`/`auction_photos` für
-  historische, bereits archivierte Auktionen — beide Tabellen sind reiner
-  Ist-Zustand; ein Backfill aus `extraction_cache`/`auction_snapshot` ist
-  möglich (analog zu WP-2s `backfill-auction-details.ts`), aber nicht in
-  diesem Dokument spezifiziert. Bei Bedarf als eigenes Backfill-Skript in
-  WP-8/WP-9.
 - Eine mögliche Aufteilung von `auction_fetch_state` in zwei Tabellen (siehe
   "Offene Punkte") — falls gewünscht, vor WP-8 klären, nicht währenddessen.
