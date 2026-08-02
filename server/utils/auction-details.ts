@@ -198,7 +198,13 @@ export async function readLatestAuctionDetails(
     [platform, externalId],
   )
   const row = rows[0] ?? null
-  latestCache.set(key, row)
+  // Only cache a hit, never "not found yet" — the one-off backfill script
+  // (scripts/backfill-auction-details.ts) writes rows through its own
+  // short-lived process via raw SQL, bypassing writeAuctionDetails() and
+  // this cache entirely. Caching a miss would otherwise pin an auction at
+  // "not found" here until server restart, even after the backfill (or any
+  // other out-of-process write) gives it a row.
+  if (row) latestCache.set(key, row)
   return row
 }
 
