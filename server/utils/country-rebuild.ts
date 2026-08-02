@@ -4,23 +4,28 @@ import type { CrawlResult } from '~/types/auction'
 import { crawlSingle, ensureEnabledCountriesLoaded, isCountryEnabled, listRegisteredCountries } from '../crawlers/registry'
 import { matchAlerts } from './alert-matching'
 import { archiveAuction } from './raw-archive'
+import { deleteRawArchiveCountry } from './raw-archive-delete'
 import { recordObservations } from './history'
 import { getPool } from './db'
 import { ensureAuctionIdentity } from './current-auctions'
 import { writeAuctionCrawlFetchState } from './auction-fetch-state'
 import { writeListCache } from './list-cache'
-import { invalidateAuctionSnapshot } from './auction-snapshot'
-import { invalidateExtractionCache } from './extraction-cache'
 import { invalidateLocationEnrichmentCache } from './external-data/location-enrichment'
 
 export interface CountryRebuildResult {
   country: string
   deleted: {
     listCache: number
-    auctionSnapshot: number
-    extractionCache: number
+    observations: number
+    auctions: number
+    auctionDetails: number
+    fetchState: number
     locationEnrichment: number
     auctionTranslations: number
+    artifactCaptures: number
+    artifactVersions: number
+    artifactVersionItems: number
+    artifactBlobs: number
   }
   crawled: {
     ok: number
@@ -33,57 +38,54 @@ export interface CountryRebuildResult {
 
 let runningCountry: string | null = null
 
-function platformIdsForCountry(country: string): string[] {
-  const entry = listRegisteredCountries().find((candidate) => candidate.code === country)
-  if (!entry) return []
-  return [
-    ...new Set(entry.regions.flatMap((region) => region.platforms.map((platform) => platform.id))),
-  ]
-}
-
 export async function deleteCountryCurrentData(db: Pool, country: string): Promise<CountryRebuildResult['deleted']> {
-  const platformIds = platformIdsForCountry(country)
-  // `auctions` is deliberately absent here: since WP-1 it is the permanent
-  // master identity every artifact/extraction row hangs off, so it is never
-  // deleted. A re-crawl corrects it in place through the normal upsert.
-  const [
-    listCache,
-    auctionSnapshot,
-    extractionCache,
-    locationEnrichment,
-    auctionTranslations,
-  ] = await Promise.all([
-    db.query('DELETE FROM list_cache WHERE country = $1', [country]),
-    db.query(
-      `DELETE FROM auction_snapshot
-       WHERE auction->>'country' = $1 OR platform = ANY($2::text[])`,
-      [country, platformIds],
-    ),
-    platformIds.length > 0
-      ? db.query('DELETE FROM extraction_cache WHERE platform = ANY($1::text[])', [platformIds])
-      : Promise.resolve({ rowCount: 0 }),
-    // Kept in sync with extraction_cache/auction_snapshot above — these two
-    // are keyed by the same (platform, external_id) identity but were
-    // previously left out of the rebuild cleanup, leaving stale location
-    // context / translations behind for a country that was otherwise wiped.
-    platformIds.length > 0
-      ? db.query('DELETE FROM location_enrichment WHERE platform = ANY($1::text[])', [platformIds])
-      : Promise.resolve({ rowCount: 0 }),
-    platformIds.length > 0
-      ? db.query('DELETE FROM auction_translations WHERE platform = ANY($1::text[])', [platformIds])
-      : Promise.resolve({ rowCount: 0 }),
-  ])
-
-  invalidateAuctionSnapshot()
-  invalidateExtractionCache()
-  invalidateLocationEnrichmentCache()
-
-  return {
-    listCache: listCache.rowCount ?? 0,
-    auctionSnapshot: auctionSnapshot.rowCount ?? 0,
-    extractionCache: extractionCache.rowCount ?? 0,
-    locationEnrichment: locationEnrichment.rowCount ?? 0,
-    auctionTranslations: auctionTranslations.rowCount ?? 0,
+  const archive = await deleteRawArchiveCountry(country)
+  const client = await db.connect()
+  try {
+    await client.query('BEGIN')
+    const auctionTranslations = await client.query(
+      `DELETE FROM auction_translations t USING auctions a
+       WHERE a.platform = t.platform AND a.external_id = t.external_id AND a.country = $1`,
+      [country],
+    )
+    const auctionDetails = await client.query(
+      `DELETE FROM auction_details d USING auctions a
+       WHERE a.platform = d.platform AND a.external_id = d.external_id AND a.country = $1`,
+      [country],
+    )
+    const fetchState = await client.query(
+      `DELETE FROM auction_fetch_state fs USING auctions a
+       WHERE a.platform = fs.platform AND a.external_id = fs.external_id AND a.country = $1`,
+      [country],
+    )
+    const locationEnrichment = await client.query(
+      `DELETE FROM location_enrichment le USING auctions a
+       WHERE a.platform = le.platform AND a.external_id = le.external_id AND a.country = $1`,
+      [country],
+    )
+    const observations = await client.query('DELETE FROM auction_observations WHERE country = $1', [country])
+    const listCache = await client.query('DELETE FROM list_cache WHERE country = $1', [country])
+    const auctions = await client.query('DELETE FROM auctions WHERE country = $1', [country])
+    await client.query('COMMIT')
+    invalidateLocationEnrichmentCache()
+    return {
+      listCache: listCache.rowCount ?? 0,
+      observations: observations.rowCount ?? 0,
+      auctions: auctions.rowCount ?? 0,
+      auctionDetails: auctionDetails.rowCount ?? 0,
+      fetchState: fetchState.rowCount ?? 0,
+      locationEnrichment: locationEnrichment.rowCount ?? 0,
+      auctionTranslations: auctionTranslations.rowCount ?? 0,
+      artifactCaptures: archive.deleted.captures,
+      artifactVersions: archive.deleted.documentSets,
+      artifactVersionItems: archive.deleted.documentSetItems,
+      artifactBlobs: archive.deleted.blobs,
+    }
+  } catch (err) {
+    await client.query('ROLLBACK')
+    throw err
+  } finally {
+    client.release()
   }
 }
 

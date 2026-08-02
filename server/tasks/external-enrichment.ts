@@ -1,6 +1,6 @@
 import type { Pool } from 'pg'
 import type { Auction, HazardAssessment, LandValueBaseline, LocationContext, MarketComparison } from '~/types/auction'
-import { readAuctionSnapshot } from '~/server/utils/auction-snapshot'
+import { readAuctionRecords } from '~/server/utils/auction-record'
 import { geocodeAddress } from '~/server/utils/geocode'
 import { getPool } from '~/server/utils/db'
 import {
@@ -122,7 +122,7 @@ export async function runExternalEnrichment(
   const startedAt = Date.now()
   const now = options.now ?? new Date()
   const checkedAt = now.toISOString()
-  const snapshot = await readAuctionSnapshot()
+  const records = await readAuctionRecords(options.country, { includePhotos: false })
   const existing = await readLocationEnrichmentCache()
   const entries: LocationEnrichmentCache = {}
   const summary: ExternalEnrichmentSummary = {
@@ -146,7 +146,7 @@ export async function runExternalEnrichment(
   const locationContextAdapters = options.locationContextAdapters ?? await defaultLocationContextAdapters(db, checkedAt)
   throwIfTaskAborted(signal)
 
-  for (const rawAuction of Object.values(snapshot).filter((auction) => inScope(auction, options))) {
+  for (const rawAuction of records.map((record) => record.auction).filter((auction) => inScope(auction, options))) {
     throwIfTaskAborted(signal)
     if (options.limit != null && summary.processed >= options.limit) break
     const point = await resolvePoint(rawAuction)

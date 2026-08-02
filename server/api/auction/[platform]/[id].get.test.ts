@@ -141,6 +141,7 @@ describe('/api/auction/:platform/:id location enrichment overlay', () => {
       auction: auction({ lat: 48.1, lng: 11.5 }),
       detailsId: 1,
       detailsVersion: 1,
+      artifactVersionId: null,
     })
     vi.mocked(geocodeAddress).mockResolvedValue({ lat: 1, lng: 2, displayName: 'Ignored' } as never)
     vi.mocked(readLocationEnrichment).mockResolvedValue(enrichment)

@@ -19,8 +19,8 @@ import type { ClampedExtraction, LlmConfig, LlmInput } from './llm'
 import { isOpenAiBatchBaseUrl } from '../llm-provider-capabilities'
 import { getLlmBatchCapability } from '../llm-batch-jobs'
 
-// A submitted-but-not-yet-polled item is marked with `llmBatchJob` (see
-// AuctionExtraction.llmBatchJob) so enrich.ts/reprocess.ts don't re-submit it
+// A submitted-but-not-yet-polled item is marked with `llmBatchJob` in
+// auction_fetch_state so enrich.ts/reprocess.ts don't re-submit it
 // to a second job while the first is still in flight — job submission isn't
 // idempotent. Batch jobs expire after 48h if never completed, so a marker
 // older than that is orphaned and the item becomes eligible again rather than

@@ -66,8 +66,6 @@ function auction(overrides: Partial<Auction> = {}): Auction {
       units: null,
       source: 'rules',
       confidence: 'high',
-      documentSetHash: 'doc-hash',
-      documentSetVersion: 1,
     },
     ...overrides,
   } as Auction
@@ -107,7 +105,12 @@ async function loadHandler() {
   const { getLlmMaxTokens, getLlmProviderOverride } = await import('~/server/utils/app-settings')
   const { resolveLlmConfig, getProvider } = await import('~/server/utils/extract/llm')
 
-  vi.mocked(readAuctionRecord).mockResolvedValue({ auction: auction(), detailsId: 1, detailsVersion: 1 })
+  vi.mocked(readAuctionRecord).mockResolvedValue({
+    auction: auction(),
+    detailsId: 1,
+    detailsVersion: 1,
+    artifactVersionId: null,
+  })
   vi.mocked(getPool).mockReturnValue({} as Pool)
   vi.mocked(readInsight).mockResolvedValue(null)
   vi.mocked(writeInsight).mockResolvedValue(undefined)

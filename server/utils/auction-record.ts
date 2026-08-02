@@ -11,11 +11,13 @@ import type { Condition } from '~/lib/condition'
 import type { Feature } from '~/lib/features'
 import type { PropertyType } from '~/lib/property-type'
 import { getPool } from './db'
+import { cacheKey } from './verkehrswert-cache'
 
 export interface AuctionRecord {
   auction: Auction
   detailsId: number | null
   detailsVersion: number | null
+  artifactVersionId: number | null
 }
 
 interface AuctionRecordRow {
@@ -37,6 +39,7 @@ interface AuctionRecordRow {
   current_lng: string | number | null
   details_id: string | number | null
   details_version: number | null
+  artifact_version_id: string | number | null
   extracted_at: Date | string | null
   property_type: PropertyType | null
   land_area_sqm: string | number | null
@@ -72,10 +75,6 @@ interface AuctionRecordRow {
   source_living_area_sqm: string | number | null
   source_land_area_sqm: string | number | null
   source_rooms: string | number | null
-  parsed_set_hash: string | null
-  parsed_set_version: number | null
-  latest_set_hash: string | null
-  latest_set_version: number | null
   pdf_url: string | null
   pdf_url_upstream: string | null
   detail_url: string | null
@@ -103,13 +102,13 @@ interface AuctionPhotoRow {
 const SELECT_SQL = `SELECT
   a.platform, a.external_id, a.country, a.region, a.authority, a.case_number,
   a.title, a.auction_date_iso, a.auction_date_text, a.cancelled,
-  COALESCE(d.address, a.address) AS current_address,
-  COALESCE(d.description, a.description) AS current_description,
-  COALESCE(d.photo_count, a.photo_count) AS current_photo_count,
-  COALESCE(d.thumbnail_url, a.thumbnail_url) AS current_thumbnail_url,
-  COALESCE(d.lat, a.lat) AS current_lat,
-  COALESCE(d.lng, a.lng) AS current_lng,
-  d.id AS details_id, d.version AS details_version, d.extracted_at,
+  d.address AS current_address,
+  d.description AS current_description,
+  d.photo_count AS current_photo_count,
+  d.thumbnail_url AS current_thumbnail_url,
+  d.lat AS current_lat,
+  d.lng AS current_lng,
+  d.id AS details_id, d.version AS details_version, d.artifact_version_id, d.extracted_at,
   d.property_type, d.land_area_sqm, d.living_area_sqm, d.rooms,
   d.bedrooms, d.bathrooms, d.floor, d.bathroom_has_tub,
   d.bathroom_has_shower, d.heating, d.units, d.year_built,
@@ -120,8 +119,6 @@ const SELECT_SQL = `SELECT
   d.extraction_source, d.extraction_confidence, d.llm_analyzed_at,
   d.document_summary, d.source_living_area_sqm, d.source_land_area_sqm,
   d.source_rooms,
-  parsed_av.set_hash AS parsed_set_hash, parsed_av.version AS parsed_set_version,
-  latest_av.set_hash AS latest_set_hash, latest_av.version AS latest_set_version,
   fs.pdf_url, fs.pdf_url_upstream, fs.detail_url, fs.detail_url_upstream,
   fs.attachments, fs.photo_urls, fs.source_updated_iso, fs.detail_fetched_at,
   fs.llm_batch_job, fs.llm_failures, fs.photos_checked_at,
@@ -132,12 +129,6 @@ LEFT JOIN LATERAL (
   WHERE ad.platform = a.platform AND ad.external_id = a.external_id
   ORDER BY ad.version DESC LIMIT 1
 ) d ON true
-LEFT JOIN artifact_versions parsed_av ON parsed_av.id = d.artifact_version_id
-LEFT JOIN LATERAL (
-  SELECT av.set_hash, av.version FROM artifact_versions av
-  WHERE av.platform = a.platform AND av.external_id = a.external_id
-  ORDER BY av.version DESC LIMIT 1
-) latest_av ON true
 LEFT JOIN auction_fetch_state fs
   ON fs.platform = a.platform AND fs.external_id = a.external_id`
 
@@ -165,19 +156,10 @@ function extractionFromRow(row: AuctionRecordRow, photos: CuratedPhoto[]): Aucti
     source: row.extraction_source,
     confidence: row.extraction_confidence,
     at: isoOrNull(row.extracted_at)!,
-    documentSetHash: row.parsed_set_hash,
-    documentSetVersion: row.parsed_set_version,
-    archivedDocumentSetHash: row.latest_set_hash,
-    archivedDocumentSetVersion: row.latest_set_version,
     photos: photos.length > 0 ? photos : undefined,
-    llmFailures: (row.llm_failures ?? 0) || undefined,
-    photosCheckedAt: isoOrNull(row.photos_checked_at) ?? undefined,
-    photoFailures: (row.photo_failures ?? 0) || undefined,
-    photoPipelineVersion: row.photo_pipeline_version ?? undefined,
-    llmBatchJob: row.llm_batch_job ?? undefined,
     llmAnalyzedAt: isoOrNull(row.llm_analyzed_at) ?? undefined,
   }
-  if (row.extraction_source === 'llm') {
+  if (row.extraction_source === 'llm' || row.llm_analyzed_at != null) {
     extraction.bedrooms = numberOrNull(row.bedrooms)
     extraction.bathrooms = numberOrNull(row.bathrooms)
     extraction.floor = row.floor
@@ -202,6 +184,7 @@ function fromRow(row: AuctionRecordRow, photos: CuratedPhoto[]): AuctionRecord {
   return {
     detailsId: row.details_id == null ? null : Number(row.details_id),
     detailsVersion: row.details_version,
+    artifactVersionId: row.artifact_version_id == null ? null : Number(row.artifact_version_id),
     auction: {
       platform: row.platform,
       externalId: row.external_id,
@@ -238,6 +221,13 @@ function fromRow(row: AuctionRecordRow, photos: CuratedPhoto[]): AuctionRecord {
       lng: numberOrNull(row.current_lng),
       detailFetchedAt: isoOrNull(row.detail_fetched_at),
       extraction,
+      processing: {
+        llmBatchJob: row.llm_batch_job,
+        llmFailures: row.llm_failures ?? 0,
+        photosCheckedAt: isoOrNull(row.photos_checked_at),
+        photoFailures: row.photo_failures ?? 0,
+        photoPipelineVersion: row.photo_pipeline_version,
+      },
     },
   }
 }
@@ -285,4 +275,12 @@ export async function readAuctionRecords(country?: string, options: { includePho
   return options.includePhotos === false
     ? result.rows.map((row) => fromRow(row, []))
     : await attachPhotos(result.rows)
+}
+
+export async function readAuctionRecordMap(
+  country?: string,
+  options: { includePhotos?: boolean } = {},
+): Promise<Map<string, AuctionRecord>> {
+  const records = await readAuctionRecords(country, options)
+  return new Map(records.map((record) => [cacheKey(record.auction.platform, record.auction.externalId), record]))
 }

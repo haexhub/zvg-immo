@@ -228,7 +228,7 @@ describeDb('writeAuctionDetails (real Postgres)', () => {
 
     await writeAuctionDetails(
       makeAuction(),
-      makeExtraction({ documentSetVersion: 2 }),
+      makeExtraction(),
       { artifactVersionId: firstId },
     )
 
@@ -273,7 +273,12 @@ describeDb('writeAuctionDetails (real Postgres)', () => {
       `INSERT INTO artifact_versions (platform, external_id, version, set_hash, document_count, captured_at, last_seen_at)
        VALUES ('zvg-portal', '7265', 1, 'deadbeef', 1, now(), now())`,
     )
-    const write = await writeAuctionDetails(makeAuction(), makeExtraction({ documentSetVersion: 1 }))
+    const { rows } = await pool.query<{ id: string }>(
+      `SELECT id FROM artifact_versions WHERE platform = 'zvg-portal' AND external_id = '7265'`,
+    )
+    const write = await writeAuctionDetails(makeAuction(), makeExtraction(), {
+      artifactVersionId: Number(rows[0]!.id),
+    })
     expect(write).toEqual({ version: 1, changed: true })
     const before = await pool.query('SELECT artifact_version_id FROM auction_details WHERE version = 1')
     expect(before.rows[0].artifact_version_id).not.toBeNull()

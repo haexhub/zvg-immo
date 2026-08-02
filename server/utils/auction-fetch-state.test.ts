@@ -94,6 +94,7 @@ describe('auction fetch state writers', () => {
       sourceUpdatedIso: null,
       detailFetchedAt: '2026-08-02T10:00:00.000Z',
       llmBatchJob: 'batch-1',
+      llmArtifactVersionId: 12,
       llmFailures: 2,
       photosCheckedAt: '2026-08-02T11:00:00.000Z',
       photoFailures: 1,
@@ -102,13 +103,15 @@ describe('auction fetch state writers', () => {
     })
 
     expect(value.pdfUrl).toBe('/new.pdf')
-    expect(value.extraction).toMatchObject({
+    expect(value.extraction).toEqual({
       propertyType: 'eigentumswohnung',
+      landAreaSqm: null,
       livingAreaSqm: 70,
-      llmBatchJob: 'batch-1',
-      llmFailures: 2,
-      photoFailures: 1,
-      photoPipelineVersion: 3,
+      rooms: 3,
+      units: 1,
+      source: 'llm',
+      confidence: 'high',
+      at: '2026-08-02T10:00:00.000Z',
     })
   })
 })

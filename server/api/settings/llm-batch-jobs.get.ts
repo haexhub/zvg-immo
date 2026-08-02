@@ -1,6 +1,6 @@
-// Admin overview for explicit LLM Batch API jobs and extraction-cache backlog.
-// Joins the durable job table with extraction_cache's per-item `llmBatchJob`
-// markers so /settings can show both "how many" and "which" requests are
+// Admin overview for explicit LLM Batch API jobs and structured extraction backlog.
+// Joins the durable job table with auction_fetch_state's per-item markers so
+// /settings can show both "how many" and "which" requests are
 // currently waiting for a provider response, plus enough history/backlog
 // context to debug why listings are still rules-only.
 
@@ -14,6 +14,7 @@ import {
   type LlmBatchJobStatus,
 } from '~/server/utils/llm-batch-jobs'
 import { readAuctionRecords } from '~/server/utils/auction-record'
+import { readAuctionFetchStates } from '~/server/utils/auction-fetch-state'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 import { isGeminiBatchTierPaid } from '~/server/utils/extract/gemini-batch'
 import { getTaskRunStatus, type TaskRunStatus } from '~/server/utils/task-runs'
@@ -128,6 +129,7 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
     }
   }
   const records = await readAuctionRecords(undefined, { includePhotos: false })
+  const fetchStates = await readAuctionFetchStates()
   const keysByJob = new Map<string, string[]>()
   const pendingJobNames = new Set(jobs.map((job) => job.jobName))
   const knownRecentJobNames = new Set(recentJobs.map((job) => job.jobName))
@@ -141,24 +143,25 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
 
   for (const { auction } of records) {
     const entry = auction.extraction
-    if (!entry) continue
     const key = cacheKey(auction.platform, auction.externalId)
-    if (entry.llmBatchJob) {
-      const arr = keysByJob.get(entry.llmBatchJob) ?? []
+    const state = fetchStates.get(key)
+    if (state?.llmBatchJob) {
+      const arr = keysByJob.get(state.llmBatchJob) ?? []
       arr.push(key)
-      keysByJob.set(entry.llmBatchJob, arr)
-      if (!pendingJobNames.has(entry.llmBatchJob) && !knownRecentJobNames.has(entry.llmBatchJob)) {
+      keysByJob.set(state.llmBatchJob, arr)
+      if (!pendingJobNames.has(state.llmBatchJob) && !knownRecentJobNames.has(state.llmBatchJob)) {
         orphanedBatchMarkers++
         if (orphanedRequestKeys.length < MAX_KEYS_PER_GROUP) orphanedRequestKeys.push(key)
       }
       continue
     }
+    if (!entry) continue
 
     const lowRules = entry.source === 'rules' && entry.confidence === 'low'
     const missingFields = hasMissingLlmFields(entry)
     if (lowRules) lowConfidenceRules++
     if (missingFields) missingLlmFields++
-    if ((entry.llmFailures ?? 0) >= MAX_LLM_FAILURES) {
+    if ((state?.llmFailures ?? 0) >= MAX_LLM_FAILURES) {
       failedLimit++
       continue
     }

@@ -60,8 +60,6 @@ export default defineEventHandler(async (event) => {
 
   const contentHash = sha256Hex(Buffer.from(JSON.stringify({
     ...definition.buildContentHashInput(auction),
-    documentSetHash: auction.extraction?.documentSetHash ?? null,
-    documentSetVersion: auction.extraction?.documentSetVersion ?? null,
     promptVersion: definition.promptVersion,
   })))
 

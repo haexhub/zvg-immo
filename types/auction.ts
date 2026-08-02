@@ -369,25 +369,30 @@ export interface Auction {
   lat?: number | null
   lng?: number | null
   /** ISO timestamp of the last successful (non-throwing) `enrichOne` call.
-   *  Absent on the fresh listing crawl; set on the auction-snapshot side and
-   *  preserved across snapshot merges. Used by the enrich task to distinguish
+   *  Absent on the fresh listing crawl and persisted in auction_fetch_state.
+   *  Used by the enrich task to distinguish
    *  "detail never fetched" from "fetched, and the listing legitimately has no
    *  attachments/description" — the latter would otherwise be retried on every
    *  run. */
   detailFetchedAt?: string | null
-  /** Structured fields extracted from the listing text/documents. Always absent
-   *  at crawl time — populated read-only from the extraction cache by the
-   *  /api/auctions overlay (mirrors how marketValueEur is filled). */
+  /** Structured fields extracted from listing text and archived documents.
+   *  Absent at crawl time and reconstructed from auction_details on reads. */
   extraction?: AuctionExtraction | null
+  /** Mutable processing state, kept separate from versioned extraction facts. */
+  processing?: {
+    llmBatchJob: string | null
+    llmFailures: number
+    photosCheckedAt: string | null
+    photoFailures: number
+    photoPipelineVersion: number | null
+  } | null
 }
 
 /** Coarse bucket a curated photo falls into. Drives frontend
  *  sorting/grouping only — it never filters a photo out. */
 export type PhotoCategory = 'aussen' | 'innen' | 'grundriss' | 'lageplan' | 'sonstiges'
 
-/** A single curated photo. Supersedes the old bare-filename `string` entries;
- *  existing extraction_cache rows still hold plain strings, bridged at read
- *  time by normalizePhoto (lib/photo.ts) — no migration. */
+/** A single curated photo stored with its auction_details version. */
 export interface CuratedPhoto {
   /** Filename relative to `.cache_zvg/images/<platform>/<externalId>/`,
    *  served via /api/auction-image. */
@@ -497,12 +502,6 @@ export interface AuctionExtraction {
   features?: Feature[]
   source: 'rules' | 'llm'
   confidence: 'high' | 'low'
-  /** How many times an LLM extraction was attempted for this listing and the
-   *  request itself failed (not "ran and returned empty" — that yields
-   *  source:'llm' and is never retried). Bounds retries so a listing whose
-   *  LLM call persistently errors can't re-spend an LLM slot every run
-   *  forever. Absent/0 on entries that never had a failed attempt. */
-  llmFailures?: number
   /** LLM-only. `undefined` = never checked yet; `null` = checked, nothing
    *  found. Same backfill semantics as `condition`. */
   yearBuilt?: number | null
@@ -524,74 +523,26 @@ export interface AuctionExtraction {
    * has not been backfilled yet; `null` means the documents contained no
    * useful additional description. */
   documentSummary?: string | null
-  /** Hash/version of the current listing document set used for this
-   *  extraction. `undefined` = legacy cache entry never checked; `null` =
-   *  checked, but no set could be recorded because the archive was unavailable.
-   *  A changed non-null set means document-derived fields must be rebuilt from
-   *  the new valid documents, not merged with stale facts from a withdrawn or
-   *  updated document. */
-  documentSetHash?: string | null
-  /** See `documentSetHash` for the `undefined` vs `null` cache semantics. */
-  documentSetVersion?: number | null
-  /** Hash/version of the document set as last archived by the crawl task
-   *  (enrich.ts) — distinct from `documentSetHash`/`documentSetVersion`,
-   *  which record what the extraction task (reprocess.ts) last actually
-   *  parsed. The two tasks run independently on their own schedules and
-   *  only communicate through this cache row, so a single shared field
-   *  can't tell "changed since archived" from "changed since parsed" —
-   *  reprocessing is due whenever this differs from `documentSetHash`. */
-  archivedDocumentSetHash?: string | null
-  /** See `archivedDocumentSetHash`. */
-  archivedDocumentSetVersion?: number | null
   /** LLM-only Verkehrswert extracted from the Gutachten text, in the
    *  auction's `currency`. `undefined` = never checked yet; `null` = checked,
    *  nothing found. Same backfill semantics as `condition`. Only ever applied
    *  to `Auction.marketValueEur` when that field isn't already set from a
    *  structural source (AT-Edikte/Biddit's Verkehrswert-Cache — see
-   *  enrich.ts/extraction-cache.ts) — a platform with a known-reliable value
+   *  enrich.ts/auction-extraction.ts) — a platform with a known-reliable value
    *  is never overwritten by an LLM guess. */
   marketValueEur?: number | null
   /** LLM-only free-text O-Ton for `marketValueEur` (e.g. "185.000 EUR laut
    *  Gutachten"), or null. */
   marketValueText?: string | null
-  /** Curated photos, in display order. Older cache rows hold bare filename
-   *  strings (normalized on read by lib/photo.ts's normalizePhoto). Empty/
-   *  absent when the listing/PDF held no usable photos. Served via
-   *  /api/auction-image. */
+  /** Curated photos in display order. Empty/absent when the listing or
+   *  archived documents held no usable photos. Served via /api/auction-image. */
   photos?: CuratedPhoto[]
-  /** ISO timestamp of the last photo pipeline attempt (native download + PDF
-   *  fallback) that completed without throwing — set regardless of whether
-   *  photos were actually found. `undefined` = never attempted (older cache
-   *  entries predate this field, or the first attempt threw before
-   *  completing). Lets enrich.ts retry a listing whose photos are missing
-   *  instead of treating "never tried" the same as "tried, found none"
-   *  forever. */
-  photosCheckedAt?: string
-  /** How many times the photo pipeline was attempted and threw (network/
-   *  subprocess failure) before completing. Bounds retries the same way
-   *  `llmFailures` does. Reset (absent) on any attempt that completes
-   *  without throwing, whether or not it found photos. */
-  photoFailures?: number
-  /** Internal schema/version marker for the deterministic photo pipeline.
-   *  Lets enrich.ts re-run older false-negative attempts once when the
-   *  crawler/mining rules improve, without retrying confirmed-empty PDFs
-   *  forever. */
-  photoPipelineVersion?: number
   /** ISO timestamp of when this extraction was produced. */
   at: string
   /** ISO timestamp of the last successful LLM analysis. Rules-only interim
    *  entries leave this unset, even when they already contain useful source or
    *  regex-derived fields. */
   llmAnalyzedAt?: string
-  /** Set when this entry was written as the immediate rules-only fallback
-   *  for an item submitted to the Gemini Batch API, to the job's resource
-   *  name (`batches/...`) — prevents re-submitting the same item to a new
-   *  batch job while this one is still in flight (Gemini job submission
-   *  isn't idempotent). Cleared once llm-batch-poll.ts merges that job's
-   *  result (success or definitive failure). A marker older than 48h (the
-   *  Gemini job's own expiry) is treated as orphaned and the item becomes
-   *  eligible again. */
-  llmBatchJob?: string
 }
 
 export interface CrawlResult {

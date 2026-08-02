@@ -432,7 +432,7 @@ async function prepareArchivedDocumentSetItems(
 
 export async function prepareArchivedLlmDocuments(
   auction: Auction,
-  opts: { nativeDocuments: boolean; documentSetHash?: string | null; documentSetVersion?: number | null },
+  opts: { nativeDocuments: boolean },
 ): Promise<PreparedLlmDocuments> {
   const extraText: string[] = []
   const detailCapture = await findLatestCapture('detail_html', auction.platform, auction.externalId)
@@ -444,10 +444,7 @@ export async function prepareArchivedLlmDocuments(
     }
   }
 
-  const documentSetItems = await readDocumentSetItems(auction.platform, auction.externalId, {
-    setHash: opts.documentSetHash,
-    version: opts.documentSetVersion,
-  })
+  const documentSetItems = await readDocumentSetItems(auction.platform, auction.externalId)
   const prepared = await prepareArchivedDocumentSetItems(documentSetItems ?? [], {
     ...opts,
     extraText,

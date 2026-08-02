@@ -1,10 +1,10 @@
 // Tracks in-flight LLM Batch API jobs (server/utils/extract/*-batch.ts)
 // so llm-batch-poll.ts knows what to check and enrich.ts/reprocess.ts can
-// avoid double-submitting while a job is still open (see AuctionExtraction's
-// `llmBatchJob` marker). No in-process memoization like extraction-cache.ts —
+// avoid double-submitting while a job is still open (see
+// auction_fetch_state.llm_batch_job). No in-process memoization —
 // this table has too few rows for caching to be worth the invalidation
 // complexity; a live read per poll tick is simpler. Same graceful-no-op
-// pattern as extraction-cache.ts: getPool() → null without NUXT_DATABASE_URL.
+// getPool() returns null without NUXT_DATABASE_URL.
 
 import type { PoolClient } from 'pg'
 import { getPool } from './db'

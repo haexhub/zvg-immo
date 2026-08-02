@@ -6,6 +6,7 @@ vi.mock('~/server/utils/llm-batch-jobs', () => ({
   getAllLlmBatchCapabilities: vi.fn(),
 }))
 vi.mock('~/server/utils/auction-record', () => ({ readAuctionRecords: vi.fn() }))
+vi.mock('~/server/utils/auction-fetch-state', () => ({ readAuctionFetchStates: vi.fn(async () => new Map()) }))
 vi.mock('~/server/utils/extract/gemini-batch', () => ({ isGeminiBatchTierPaid: vi.fn() }))
 vi.mock('~/server/utils/task-runs', () => ({ getTaskRunStatus: vi.fn() }))
 
@@ -45,6 +46,7 @@ describe('/api/settings/llm-batch-jobs', () => {
     const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
       await import('~/server/utils/llm-batch-jobs')
     const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { readAuctionFetchStates } = await import('~/server/utils/auction-fetch-state')
     const { isGeminiBatchTierPaid } = await import('~/server/utils/extract/gemini-batch')
     const { getTaskRunStatus } = await import('~/server/utils/task-runs')
     vi.mocked(isGeminiBatchTierPaid).mockReturnValue(true)
@@ -87,6 +89,11 @@ describe('/api/settings/llm-batch-jobs', () => {
       record('zvg-portal:4', { source: 'rules', confidence: 'low', at: '2026-07-26T18:00:00.000Z' }),
       record('zvg-portal:5', { llmBatchJob: 'deleted_job', at: '2026-07-26T18:00:00.000Z' }),
     ])
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([
+      ['zvg-portal:1', { llmBatchJob: 'msgbatch_abc', llmFailures: 0 } as never],
+      ['zvg-portal:2', { llmBatchJob: 'msgbatch_abc', llmFailures: 0 } as never],
+      ['zvg-portal:5', { llmBatchJob: 'deleted_job', llmFailures: 0 } as never],
+    ]))
 
     const handler = (await import('./llm-batch-jobs.get')).default as () => Promise<unknown>
 

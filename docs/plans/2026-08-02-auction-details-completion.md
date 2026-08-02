@@ -1,32 +1,38 @@
 # Auction-Details-Vervollständigung — Nachtrag zum Identity-Redesign
 
-**Status (2026-08-02): WP-8 bis WP-11 im Integrations-Worktree
-`codex/auction-schema-completion` umgesetzt und verifiziert.** Nachtrag zu
-`docs/plans/2026-08-01-auction-identity-schema-redesign.md` (WP-0…WP-7).
-WP-0…WP-5 wurden dafür aus den vorhandenen Workpackage-Branches integriert.
-WP-6 bleibt bewusst bis nach dem Produktions-Burn-in offen; WP-7 bleibt bis
-zur Entscheidung über die Recovery-Semantik offen.
+**Status (2026-08-02): vollständig umgesetzt.** WP-8 bis WP-11 sowie der
+direkte strukturierte Cutover aus WP-6/WP-7 sind abgeschlossen. Auf Wunsch
+wurde auf Migration, Backfill, Dual-Write und Legacy-Fallbacks verzichtet:
+der nächste Vollcrawl baut den kleinen Datenbestand aus den Quellen neu auf.
 
 ## Umsetzungsstand
 
 - **WP-8 fertig:** `auction_fetch_state`, spaltenscharfe Crawl-/Foto-/LLM-
-  Writer, struktureller Manifestvergleich und idempotenter Backfill sind
-  implementiert. Die vier Legacy-Hash-Felder bleiben während des Dual-Write-
-  Burn-ins als Kompatibilitätsdaten erhalten und werden zusammen mit den alten
-  Cache-Contracts in WP-6 entfernt.
+  Writer und der strukturelle Manifestvergleich sind implementiert. Die vier
+  Legacy-Hash-Felder wurden entfernt; Batch-Provenienz wird als konkrete
+  `llm_artifact_version_id` geführt.
 - **WP-9 fertig:** `auction_photos` ist versioniert an `auction_details`
-  gebunden. Foto-only-Änderungen erzeugen eine neue Details-Version; Backfill
-  und Kaskaden sind verifiziert.
+  gebunden. Foto-only-Änderungen erzeugen eine neue Details-Version; Changed-
+  Detection und Kaskaden sind verifiziert.
 - **WP-10 fertig:** Quellflächen/-räume, `market_value_text` und
-  `auction_date_text` sind typisiert persistiert und im Backfill enthalten.
+  `auction_date_text` sind in den strukturierten Writern und Readern typisiert
+  persistiert.
 - **WP-11 fertig:** Die sieben verbliebenen Endpunkte sowie Suche, Karten-
   Summary und Landing-Rails lesen den strukturierten Aggregatpfad. Ein
   gemeinsamer Reader wählt pro Auktion exakt die neueste Details-Version und
   lädt Fotos separat.
-- **Verifikation:** vollständiger Typecheck, ESLint ohne Fehler, 1.492 Unit-/
-  API-Tests sowie 15 echte PostgreSQL-Tests. `schema.sql` wurde auf einer
-  leeren PostGIS/PostgreSQL-16-Instanz zweimal erfolgreich ausgeführt; der
-  Completion-Backfill wurde angewendet und idempotent wiederholt.
+- **WP-6/WP-7 fertig:** `extraction_cache` und `auction_snapshot` samt Modulen,
+  Backfill-Skripten und Fallbacks sind entfernt. Der Länder-Rebuild löscht den
+  strukturierten Länderbestand einschließlich Artefakten und crawlt ihn neu;
+  `auctions` ist auf Identitäts-/Terminfelder reduziert.
+- **Verifikation:** Typecheck, Produktions-Build, zweimaliger idempotenter
+  Schema-Lauf auf Supabase-Postgres und 1.372 bestandene Tests (8 übersprungen)
+  sind grün. Lint läuft ohne Fehler; eine bestehende Attributreihenfolge-Warnung
+  in `components/ui/slider/Slider.vue` bleibt unverändert.
+
+Die weiter unten beschriebenen Backfill-/Dual-Write-Schritte dokumentieren
+den früheren Übergangsplan. Sie sind durch die direkte Recrawl-Entscheidung
+ersetzt und werden nicht ausgeführt.
 
 ## Wie es dazu kam
 
@@ -329,13 +335,9 @@ bestätigt. Bei Umsetzung kurz gegenchecken, nicht blind übernehmen:
   `auction_fetch_state` statt aus dem Cache-Blob.
 - Verifikation: bestehende API-Tests dieser sieben Endpunkte weiterhin grün
   nach Umstellung der Fixtures. Das schließt WP-3 endgültig ab und macht
-  WP-6 (Contract: `extraction_cache`/`auction_snapshot` droppen) erstmals
-  planbar — WP-6 selbst bleibt weiterhin auf Prod-Burn-in gegated, siehe
-  Ursprungsplan.
+  den strukturierten Contract vollständig ab.
 
 ## Explizit nicht Teil dieses Plans
 
-- WP-6/WP-7 aus dem Ursprungsplan — dieser Nachtrag macht WP-6 planbar,
-  implementiert es aber nicht.
 - Eine mögliche Aufteilung von `auction_fetch_state` in zwei Tabellen (siehe
   "Offene Punkte") — falls gewünscht, vor WP-8 klären, nicht währenddessen.

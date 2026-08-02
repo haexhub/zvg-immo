@@ -1,62 +1,51 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Auction, AuctionExtraction } from '~/types/auction'
 import { fetchLlmBatchResults, pollLlmBatch } from '../utils/extract/llm-batch'
-import { listPendingLlmBatchJobs, markLlmBatchJobChecked, markLlmBatchJobResolved, type LlmBatchJob } from '../utils/llm-batch-jobs'
-import { readExtractionCache, writeExtractionCache } from '../utils/extraction-cache'
-import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
+import { readExtractionLlmConfig } from '../utils/extract/llm-task-config'
+import { readAuctionRecordMap } from '../utils/auction-record'
+import { readAuctionFetchStates, writeAuctionLlmPipelineState } from '../utils/auction-fetch-state'
+import { upsertCurrentAuctions } from '../utils/current-auctions'
+import { writeAuctionDetails } from '../utils/auction-details'
+import {
+  listPendingLlmBatchJobs,
+  markLlmBatchJobChecked,
+  markLlmBatchJobResolved,
+  type LlmBatchJob,
+} from '../utils/llm-batch-jobs'
 
 vi.mock('../utils/extract/llm-batch', () => ({ pollLlmBatch: vi.fn(), fetchLlmBatchResults: vi.fn() }))
+vi.mock('../utils/extract/llm-task-config', () => ({ readExtractionLlmConfig: vi.fn() }))
+vi.mock('../utils/auction-record', () => ({ readAuctionRecordMap: vi.fn() }))
+vi.mock('../utils/auction-fetch-state', () => ({
+  readAuctionFetchStates: vi.fn(),
+  writeAuctionLlmPipelineState: vi.fn(),
+}))
+vi.mock('../utils/current-auctions', () => ({ upsertCurrentAuctions: vi.fn() }))
+vi.mock('../utils/auction-details', () => ({ writeAuctionDetails: vi.fn() }))
 vi.mock('../utils/llm-batch-jobs', () => ({
   listPendingLlmBatchJobs: vi.fn(),
   markLlmBatchJobChecked: vi.fn(),
   markLlmBatchJobResolved: vi.fn(),
 }))
-vi.mock('../utils/extraction-cache', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../utils/extraction-cache')>()
-  return { ...actual, readExtractionCache: vi.fn(), writeExtractionCache: vi.fn() }
-})
-vi.mock('../utils/auction-snapshot', () => ({ readAuctionSnapshot: vi.fn(), writeAuctionSnapshot: vi.fn() }))
-vi.stubGlobal('defineTask', (def: unknown) => def)
+vi.stubGlobal('defineTask', (definition: unknown) => definition)
 
 const { runLlmBatchPoll } = await import('./llm-batch-poll')
 
-function makeEntry(overrides: Partial<AuctionExtraction> = {}): AuctionExtraction {
+function entry(overrides: Partial<AuctionExtraction> = {}): AuctionExtraction {
   return {
-    propertyType: null,
-    landAreaSqm: null,
-    livingAreaSqm: null,
-    rooms: null,
-    bedrooms: null,
-    bathrooms: null,
-    floor: null,
-    bathroomHasTub: null,
-    bathroomHasShower: null,
-    heating: null,
-    units: null,
+    propertyType: 'einfamilienhaus',
+    landAreaSqm: 500,
+    livingAreaSqm: 120,
+    rooms: 4,
+    units: 1,
     source: 'rules',
-    confidence: 'low',
-    at: '2026-07-23T00:00:00.000Z',
-    llmBatchJob: 'batches/abc',
+    confidence: 'high',
+    at: '2026-08-02T10:00:00.000Z',
     ...overrides,
   }
 }
 
-function makeJob(overrides: Partial<LlmBatchJob> = {}): LlmBatchJob {
-  return {
-    jobName: 'batches/abc',
-    source: 'enrich',
-    status: 'pending',
-    itemCount: 1,
-    customIdMap: {},
-    submittedAt: '2026-07-26T18:00:00.000Z',
-    checkedAt: null,
-    updatedAt: '2026-07-26T18:00:00.000Z',
-    errorMessage: null,
-    ...overrides,
-  }
-}
-
-function makeAuction(overrides: Partial<Auction> = {}): Auction {
+function auction(extraction: AuctionExtraction = entry()): Auction {
   return {
     platform: 'zvg-portal',
     country: 'de',
@@ -64,39 +53,104 @@ function makeAuction(overrides: Partial<Auction> = {}): Auction {
     externalId: '7265',
     caseNumber: '12 K 34/26',
     authority: 'AG Musterstadt',
-    title: null,
+    title: 'Einfamilienhaus',
     address: 'Musterstraße 1, 01234 Musterstadt',
-    marketValueEur: 100_000,
+    marketValueEur: 100000,
     marketValueText: '100.000 EUR',
-    auctionDateIso: '2026-08-01T09:00:00.000Z',
-    auctionDateText: '01.08.2026',
+    auctionDateIso: '2026-09-01T09:00:00.000Z',
+    auctionDateText: '01.09.2026',
     cancelled: false,
     sourceUpdatedIso: null,
     pdfUrl: null,
-    detailUrl: null,
     pdfUrlUpstream: null,
+    detailUrl: null,
     detailUrlUpstream: null,
     attachments: [],
     description: null,
     photoCount: 0,
     thumbnailUrl: null,
+    extraction,
+  }
+}
+
+function job(overrides: Partial<LlmBatchJob> = {}): LlmBatchJob {
+  return {
+    jobName: 'batches/abc',
+    source: 'reprocess',
+    status: 'pending',
+    itemCount: 1,
+    customIdMap: {},
+    submittedAt: '2026-08-02T10:00:00.000Z',
+    checkedAt: null,
+    updatedAt: '2026-08-02T10:00:00.000Z',
+    errorMessage: null,
     ...overrides,
   }
 }
 
+const llmResult = {
+  propertyType: null,
+  landAreaSqm: null,
+  livingAreaSqm: null,
+  rooms: null,
+  bedrooms: 3,
+  bathrooms: 1,
+  floor: null,
+  bathroomHasTub: true,
+  bathroomHasShower: false,
+  heating: 'Gas',
+  units: null,
+  securityDeposit: null,
+  biddingNotes: null,
+  condition: 'gepflegt' as const,
+  features: [],
+  yearBuilt: 1998,
+  lastRenovationYear: null,
+  renovationNotes: null,
+  insights: null,
+  planningNotes: null,
+  photoCuration: [],
+  marketValueEur: null,
+  marketValueText: null,
+}
+
 beforeEach(() => {
   vi.stubGlobal('useRuntimeConfig', () => ({
-    extractLlm: {
-      baseUrl: 'http://gemini',
-      provider: 'gemini-native',
-      geminiBatchTier: 'free',
-      geminiFreeBatchPollIntervalHours: 6,
-    },
+    extractLlm: { geminiBatchTier: 'paid' },
   }))
-  vi.mocked(readExtractionCache).mockResolvedValue({})
-  vi.mocked(readAuctionSnapshot).mockResolvedValue({})
-  vi.mocked(writeExtractionCache).mockResolvedValue(true)
-  vi.mocked(writeAuctionSnapshot).mockResolvedValue(undefined)
+  vi.mocked(readExtractionLlmConfig).mockResolvedValue({
+    baseUrl: 'https://example.test',
+    apiKey: 'test',
+    model: 'gemini-test',
+    provider: 'gemini-native',
+  })
+  const stored = auction()
+  vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map([['zvg-portal:7265', {
+    auction: stored,
+    detailsId: 7,
+    detailsVersion: 2,
+    artifactVersionId: 11,
+  }]]))
+  vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([['zvg-portal:7265', {
+    platform: 'zvg-portal',
+    externalId: '7265',
+    pdfUrl: null,
+    pdfUrlUpstream: null,
+    detailUrl: null,
+    detailUrlUpstream: null,
+    attachments: [],
+    photoUrls: null,
+    sourceUpdatedIso: null,
+    detailFetchedAt: null,
+    llmBatchJob: 'batches/abc',
+    llmArtifactVersionId: 22,
+    llmFailures: 2,
+    photosCheckedAt: null,
+    photoFailures: 0,
+    photoPipelineVersion: null,
+    updatedAt: '2026-08-02T10:00:00.000Z',
+  }]]))
+  vi.mocked(writeAuctionDetails).mockResolvedValue({ version: 3, changed: true })
 })
 
 afterEach(() => {
@@ -105,191 +159,83 @@ afterEach(() => {
 })
 
 describe('runLlmBatchPoll', () => {
-  it('does nothing when there are no pending jobs', async () => {
+  it('does nothing without pending jobs', async () => {
     vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([])
-
-    const result = await runLlmBatchPoll()
-
-    expect(result).toEqual({ checked: 0, merged: 0 })
+    await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 0, merged: 0 })
     expect(pollLlmBatch).not.toHaveBeenCalled()
   })
 
-  it('skips without an LLM provider configured, even with pending jobs', async () => {
-    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: {} }))
-    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([makeJob()])
-
-    const result = await runLlmBatchPoll()
-
-    expect(result).toEqual({ checked: 0, merged: 0 })
+  it('skips pending jobs without an LLM configuration', async () => {
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job()])
+    vi.mocked(readExtractionLlmConfig).mockResolvedValue(null)
+    await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 0, merged: 0 })
     expect(pollLlmBatch).not.toHaveBeenCalled()
   })
 
-  it('leaves a still-pending job untouched', async () => {
-    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([makeJob()])
+  it('checks a still-pending job without resolving it', async () => {
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job()])
     vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'pending' })
-
-    const result = await runLlmBatchPoll()
-
-    expect(result).toEqual({ checked: 1, merged: 0 })
+    await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 1, merged: 0 })
     expect(markLlmBatchJobChecked).toHaveBeenCalledWith('batches/abc', expect.any(String))
     expect(markLlmBatchJobResolved).not.toHaveBeenCalled()
-    expect(fetchLlmBatchResults).not.toHaveBeenCalled()
   })
 
-  it('skips a recently checked Gemini job while in the free-tier poll interval', async () => {
-    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([
-      makeJob({ checkedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString() }),
-    ])
-
-    const result = await runLlmBatchPoll()
-
-    expect(result).toEqual({ checked: 0, merged: 0 })
-    expect(pollLlmBatch).not.toHaveBeenCalled()
-    expect(markLlmBatchJobChecked).not.toHaveBeenCalled()
-  })
-
-  it('marks a failed/expired job resolved with its error message, without touching the cache', async () => {
-    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([makeJob()])
-    vi.mocked(pollLlmBatch).mockResolvedValue({
-      state: 'failed',
-      errorMessage: 'FAILED_PRECONDITION: Precondition check failed.',
-    })
-
-    const result = await runLlmBatchPoll()
-
-    expect(result).toEqual({ checked: 1, merged: 0 })
+  it('resolves a failed job without changing auction data', async () => {
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job()])
+    vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'failed', errorMessage: 'provider failed' })
+    await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 1, merged: 0 })
     expect(markLlmBatchJobResolved).toHaveBeenCalledWith(
-      'batches/abc',
-      'failed',
-      expect.any(String),
-      'FAILED_PRECONDITION: Precondition check failed.',
+      'batches/abc', 'failed', expect.any(String), 'provider failed',
     )
-    expect(writeExtractionCache).not.toHaveBeenCalled()
+    expect(writeAuctionDetails).not.toHaveBeenCalled()
   })
 
-  it('merges a succeeded job into extraction_cache and auction_snapshot, then marks the job resolved', async () => {
-    const priorEntry = makeEntry({ propertyType: 'einfamilienhaus', landAreaSqm: 500, confidence: 'high' })
-    vi.mocked(readExtractionCache).mockResolvedValue({ 'zvg-portal:7265': priorEntry })
-    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([makeJob()])
-    vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/results' })
+  it('writes a successful result to details and clears its fetch-state marker', async () => {
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job()])
+    vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/result' })
     vi.mocked(fetchLlmBatchResults).mockResolvedValue([
-      {
-        key: 'zvg-portal:7265',
-        extraction: {
-          propertyType: null,
-          landAreaSqm: null,
-          livingAreaSqm: null,
-          rooms: null,
-          bedrooms: null,
-          bathrooms: null,
-          floor: null,
-          bathroomHasTub: null,
-          bathroomHasShower: null,
-          heating: null,
-          units: null,
-          securityDeposit: null,
-          biddingNotes: null,
-          condition: 'gepflegt',
-          features: [],
-          yearBuilt: 1998,
-          lastRenovationYear: null,
-          renovationNotes: null,
-          insights: null,
-          planningNotes: null,
-          photoCuration: [],
-          marketValueEur: null,
-          marketValueText: null,
-        },
-      },
+      { key: 'zvg-portal:7265', extraction: llmResult },
     ])
-    const auction = makeAuction()
-    vi.mocked(readAuctionSnapshot).mockResolvedValue({ 'zvg-portal:7265': auction })
 
-    const result = await runLlmBatchPoll()
-
-    expect(result).toEqual({ checked: 1, merged: 1 })
-    expect(fetchLlmBatchResults).toHaveBeenCalledWith('batches/abc', 'files/results', expect.any(Object), {})
-    expect(writeExtractionCache).toHaveBeenCalledWith({
-      'zvg-portal:7265': expect.objectContaining({ condition: 'gepflegt', yearBuilt: 1998, propertyType: 'einfamilienhaus' }),
+    await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 1, merged: 1 })
+    expect(writeAuctionDetails).toHaveBeenCalledWith(
+      expect.objectContaining({ extraction: expect.objectContaining({ condition: 'gepflegt', yearBuilt: 1998 }) }),
+      expect.objectContaining({ condition: 'gepflegt', yearBuilt: 1998 }),
+      { artifactVersionId: 22 },
+    )
+    expect(upsertCurrentAuctions).toHaveBeenCalledTimes(1)
+    expect(writeAuctionLlmPipelineState).toHaveBeenCalledWith('zvg-portal', '7265', {
+      llmBatchJob: null,
+      llmArtifactVersionId: null,
+      llmFailures: 0,
     })
-    // Confident propertyType/area came from rules — untouched by the LLM.
-    const [written] = vi.mocked(writeExtractionCache).mock.calls[0]!
-    expect(written['zvg-portal:7265']!.llmBatchJob).toBeUndefined()
-    expect(writeAuctionSnapshot).toHaveBeenCalledTimes(1)
     expect(markLlmBatchJobResolved).toHaveBeenCalledWith('batches/abc', 'succeeded', expect.any(String))
   })
 
-  it('leaves the job row in place when writing the cache fails, so the next tick retries', async () => {
-    const priorEntry = makeEntry({ propertyType: 'einfamilienhaus', landAreaSqm: 500, confidence: 'high' })
-    vi.mocked(readExtractionCache).mockResolvedValue({ 'zvg-portal:7265': priorEntry })
-    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([makeJob()])
-    vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/results' })
+  it('keeps a succeeded job pending when writing structured details fails', async () => {
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job()])
+    vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/result' })
     vi.mocked(fetchLlmBatchResults).mockResolvedValue([
-      {
-        key: 'zvg-portal:7265',
-        extraction: {
-          propertyType: null,
-          landAreaSqm: null,
-          livingAreaSqm: null,
-          rooms: null,
-          bedrooms: null,
-          bathrooms: null,
-          floor: null,
-          bathroomHasTub: null,
-          bathroomHasShower: null,
-          heating: null,
-          units: null,
-          securityDeposit: null,
-          biddingNotes: null,
-          condition: 'gepflegt',
-          features: [],
-          yearBuilt: 1998,
-          lastRenovationYear: null,
-          renovationNotes: null,
-          insights: null,
-          planningNotes: null,
-          photoCuration: [],
-          marketValueEur: null,
-          marketValueText: null,
-        },
-      },
+      { key: 'zvg-portal:7265', extraction: llmResult },
     ])
-    vi.mocked(writeExtractionCache).mockResolvedValue(false)
+    vi.mocked(writeAuctionDetails).mockRejectedValue(new Error('database unavailable'))
 
-    const result = await runLlmBatchPoll()
-
-    expect(result).toEqual({ checked: 1, merged: 0 })
-    expect(writeAuctionSnapshot).not.toHaveBeenCalled()
+    await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 1, merged: 0 })
     expect(markLlmBatchJobResolved).not.toHaveBeenCalled()
+    expect(writeAuctionLlmPipelineState).not.toHaveBeenCalled()
   })
 
-  it('skips a result whose key has no cached prior entry', async () => {
-    vi.mocked(readExtractionCache).mockResolvedValue({})
-    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([makeJob()])
-    vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/results' })
-    vi.mocked(fetchLlmBatchResults).mockResolvedValue([{ key: 'zvg-portal:unknown', extraction: null }])
-
-    const result = await runLlmBatchPoll()
-
-    expect(result).toEqual({ checked: 1, merged: 0 })
-    expect(writeExtractionCache).not.toHaveBeenCalled()
-    expect(markLlmBatchJobResolved).toHaveBeenCalledWith('batches/abc', 'succeeded', expect.any(String))
-  })
-
-  it('continues with other jobs when one job throws', async () => {
+  it('continues after one job throws', async () => {
     vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([
-      makeJob({ jobName: 'batches/bad' }),
-      makeJob({ jobName: 'batches/good' }),
+      job({ jobName: 'batches/bad' }),
+      job({ jobName: 'batches/good' }),
     ])
-    vi.mocked(pollLlmBatch).mockImplementation(async (jobName) => {
-      if (jobName === 'batches/bad') throw new Error('boom')
-      return { state: 'failed' }
+    vi.mocked(pollLlmBatch).mockImplementation(async (name) => {
+      if (name === 'batches/bad') throw new Error('boom')
+      return { state: 'expired' }
     })
 
-    const result = await runLlmBatchPoll()
-
-    expect(result).toEqual({ checked: 2, merged: 0 })
-    expect(markLlmBatchJobResolved).toHaveBeenCalledWith('batches/good', 'failed', expect.any(String), null)
-    expect(markLlmBatchJobResolved).not.toHaveBeenCalledWith('batches/bad', expect.any(String), expect.any(String))
+    await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 2, merged: 0 })
+    expect(markLlmBatchJobResolved).toHaveBeenCalledWith('batches/good', 'expired', expect.any(String), null)
   })
 })

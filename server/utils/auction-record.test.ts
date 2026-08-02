@@ -44,6 +44,7 @@ describe('readAuctionRecord', () => {
           current_lng: '13.2',
           details_id: '42',
           details_version: 3,
+          artifact_version_id: '17',
           extracted_at: new Date('2026-08-01T10:00:00.000Z'),
           property_type: 'einfamilienhaus',
           land_area_sqm: '500',
@@ -106,6 +107,7 @@ describe('readAuctionRecord', () => {
     expect(record).toMatchObject({
       detailsId: 42,
       detailsVersion: 3,
+      artifactVersionId: 17,
       auction: {
         auctionDateText: '15.10.2026, 16:00 Uhr',
         marketValueEur: 250000,
@@ -113,8 +115,6 @@ describe('readAuctionRecord', () => {
         pdfUrl: '/api/pdf',
         extraction: {
           propertyType: 'einfamilienhaus',
-          documentSetHash: 'parsed',
-          archivedDocumentSetHash: 'latest',
           photos: [{ file: 'front.jpg', category: 'aussen', caption: 'Straßenansicht', isPropertyPhoto: true }],
         },
       },

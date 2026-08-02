@@ -68,7 +68,7 @@ function apply(): void {
           :model-value="sliderValue(s.key)"
           :max="s.max"
           :step="1"
-          @update:model-value="(v) => setSliderValue(s.key, v ?? [0])"
+          @update:model-value="setSliderValue(s.key, $event ?? [0])"
         />
       </div>
 

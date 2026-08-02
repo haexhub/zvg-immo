@@ -1,26 +1,31 @@
 # Auction-Identität + versionierte Extraktion — Redesign
 
-**Status (2026-08-02): WP-0 bis WP-5 implementiert und im Integrations-Worktree
-`codex/auction-schema-completion` zusammengeführt.** WP-8 bis WP-11 aus dem
-Nachtrag `2026-08-02-auction-details-completion.md` sind dort ebenfalls
-umgesetzt. WP-6 (alte Cache-Contracts entfernen) bleibt auf den vereinbarten
-Produktions-Burn-in gegated; WP-7 (Länder-Rebuild/Recovery) wartet weiterhin
-auf die fachliche Entscheidung zur Löschsemantik.
+**Status (2026-08-02): vollständig umgesetzt.** WP-0 bis WP-7 und der Nachtrag
+WP-8 bis WP-11 sind abgeschlossen. Die abschließende fachliche Entscheidung
+lautet: kein Legacy-Burn-in und keine Datenmigration; der kleine Bestand wird
+gelöscht und per Vollcrawl neu aufgebaut.
+
+Damit sind `extraction_cache`/`auction_snapshot`, ihre Module, Backfill-Skripte,
+Dual-Writes und Hash-Kompatibilitätsfelder entfernt. `auctions` enthält nur noch
+Identitäts-/Terminfelder; `auction_details`, `auction_photos`,
+`auction_fetch_state`, `artifact_versions` und der gemeinsame Aggregat-Reader
+bilden den alleinigen Contract. Frühere Backfill-/Burn-in-Abschnitte weiter
+unten bleiben nur als verworfener Entscheidungsverlauf erhalten.
 
 ## Wie es dazu kam
 
 Ausgangsfrage: "die FK-Beziehungen zwischen `extraction_cache`, `auction_snapshot`,
 `location_enrichment`, `auction_translations` (alle mit `platform`+`external_id`,
 aber ohne FK) wirken schlecht modelliert." Erste Analyse ergab: das ist kein
-Versehen, sondern Konsequenz davon, dass `auctions` **kein Master ist, sondern ein
+Versehen, sondern Konsequenz davon, dass `auctions` **kein Master war, sondern ein
 abgeleiteter SQL-Spiegel**, der spät (oder in manchen Schreibpfaden nie)
-geschrieben wird, plus einer bewussten Permalink-Retention-Entscheidung (alte
-Auktionen werden nie geprunt). Ein konkreter Bug wurde dabei gefunden und bereits
+geschrieben wurde, plus der damaligen Permalink-Retention-Entscheidung. Ein
+konkreter Bug wurde dabei gefunden und bereits
 gefixt: `country-rebuild.ts` räumte `location_enrichment`/`auction_translations`
 beim Länder-Reset nicht mit auf (**PR #289, gemergt**).
 
 Der Nutzer wollte daraufhin die Architektur nicht nur reparieren, sondern **von
-Grund auf neu denken**: `auctions` soll die echte, nie gelöschte Master-Identität
+Grund auf neu denken**: `auctions` soll die echte Master-Identität
 werden, an der alle Artefakte (Dokumente/Bilder) und alle abgeleiteten Daten
 hängen — mit voller Versionshistorie statt Überschreiben, damit sich jederzeit
 nachvollziehen lässt, was sich zwischen Versionen geändert hat, ohne alte Daten
@@ -30,7 +35,7 @@ zu verlieren.
 
 | Tabelle heute | Tabelle neu | Rolle |
 |---|---|---|
-| `auctions` | `auctions` (schlanker) | Master-Identität: Land, Region, Gericht, Aktenzeichen, Titel, Termin, Status. **Keine** Objekt-/Preisdaten. Nie gelöscht. |
+| `auctions` | `auctions` (schlanker) | Master-Identität: Land, Region, Gericht, Aktenzeichen, Titel, Termin, Status. Beim expliziten Länder-Rebuild gelöscht und frisch erzeugt. |
 | `raw_blobs` | `artifact_blobs` | Content-adressierter Zeiger auf S3 (kein Byte-Inhalt in der DB) |
 | `raw_captures` | `artifact_captures` | Append-only-Log jedes Fetches |
 | `raw_document_sets` | `artifact_versions` | Vollständiges Artefakt-Manifest pro Version ("Artefakt-Version") |
@@ -53,8 +58,8 @@ Manifest sie ausgewertet hat, damit beide Auslöser unterscheidbar bleiben.
 ```sql
 -- auctions: Master-Identität. Wird beim allerersten Crawl-Sichten angelegt
 -- (Land/Region/Gericht/Aktenzeichen/Termin sind ohne Dokumenten-Parsing bekannt),
--- danach nur noch in-place geupdated (Termin verschiebt sich, Status ändert
--- sich) — NIE gelöscht.
+-- danach nur noch in-place geupdated. Ein expliziter Länder-Rebuild löscht
+-- den vollständigen Ländergraphen und erzeugt ihn per Crawl neu.
 CREATE TABLE auctions (
   platform      text NOT NULL,
   external_id   text NOT NULL,
@@ -212,7 +217,11 @@ ALTER TABLE location_enrichment
   FOREIGN KEY (platform, external_id) REFERENCES auctions (platform, external_id);
 ```
 
-## Im Gespräch geklärte Entscheidungen (nicht erneut aufrollen)
+## Historischer Entscheidungsverlauf
+
+Die Punkte in diesem Abschnitt dokumentieren die ursprüngliche Planung. Die
+spätere, verbindliche Recrawl-Entscheidung am Dokumentanfang ersetzt insbesondere
+die Aussagen zu Retention, Backfill und Dual-Write.
 
 1. **Warum keine FK bisher:** `auctions` wurde bisher zuletzt (`enrich.ts`, nach
    `writeExtractionCache`/`writeAuctionSnapshot`) oder gar nicht
@@ -225,7 +234,7 @@ ALTER TABLE location_enrichment
    garantiert, bevor irgendein Artefakt/Extraktions-Datensatz dazu geschrieben
    wird — auch für `reprocess.ts`/`llm-batch-poll.ts`, die immer eine bereits
    gecrawlte Auktion bearbeiten.
-3. **`auctions` wird nie gelöscht** — auch nicht beim Länder-Rebuild. Ersetzt die
+3. **Ursprünglich geplant war: `auctions` wird nie gelöscht** — auch nicht beim Länder-Rebuild. Ersetzt die
    heutige Permalink-Retention-Sonderregel für `auction_snapshot`/
    `extraction_cache` (siehe Memory `wp5-snapshot-no-prune-intentional`) durch
    ein einheitliches Prinzip für die ganze Kette.
@@ -282,8 +291,10 @@ ALTER TABLE location_enrichment
    also keinen Fall, in dem der alte, pro Capture eingefrorene Stand gebraucht
    würde.
 
-## Offene Punkte — vom planenden Modell entschieden, NICHT explizit vom Nutzer
-bestätigt. Bei Umsetzung kurz gegenchecken, nicht blind übernehmen:
+## Historische offene Punkte
+
+Diese Punkte sind inzwischen durch die Umsetzung und die Recrawl-Entscheidung
+aufgelöst; sie bleiben nur zur Nachvollziehbarkeit erhalten:
 
 - **`address` liegt in `auction_details`, nicht in `auctions`.** Der Nutzer
   nannte für `auctions` explizit nur "Land, Ort, ID/Aktenzeichen, Termin" — "Ort"
@@ -470,18 +481,16 @@ Betroffene Dateien (per Grep verifiziert, Stand 2026-08-01):
   der bleibt unverändert für die extern-datensatzseitige Aktualität bestehen.
 
 **WP-6 — Contract: alte Tabellen/Spalten entfernen**
-- Erst nach Burn-in-Zeit von WP-2/3 in Prod: `extraction_cache`,
-  `auction_snapshot` droppen; `server/utils/extraction-cache.ts`,
-  `server/utils/auction-snapshot.ts` löschen.
-- `auctions`: Objekt-/Preisspalten droppen (alles außer den in der Ziel-DDL
-  genannten Feldern).
-- `current-auctions.ts`s `upsertCurrentAuctions` auf die schlanke Spaltenliste
-  zurückbauen (nur noch `auction_date_iso`/`status`/`updated_at` als Update-Ziel;
-  Identität wird über `ensureAuctionIdentity` aus WP-1 abgedeckt).
+- **Erledigt per direktem Cutover:** `extraction_cache`, `auction_snapshot`,
+  ihre Module, Backfill-Skripte und Legacy-Fallbacks sind entfernt. Die
+  Objekt-/Preisspalten wurden aus `auctions` entfernt und
+  `current-auctions.ts` schreibt nur noch Identitäts-/Terminfelder.
 
 **WP-7 — `country-rebuild.ts` neu zuschneiden**
-- Siehe "Offene Punkte" oben — mit dem Nutzer die Recovery-Story für kaputte
-  Crawler-Daten gegenchecken, bevor das umgesetzt wird.
+- **Erledigt:** Ein expliziter Länder-Rebuild löscht List-Cache,
+  Beobachtungen, Übersetzungen, Details/Fotos, Fetch-/Location-State,
+  Artefakte und Auktionsidentitäten des Landes. Danach werden Identitäten und
+  Rohdaten aus dem Crawl neu aufgebaut; Enrich/Reprocess füllen den Rest.
 
 ## Explizit nicht Teil dieses Plans
 

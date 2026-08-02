@@ -3,12 +3,13 @@ import type { CrawlResult } from '~/types/auction'
 
 const state = vi.hoisted(() => ({
   enabled: true,
-  pool: null as { query: ReturnType<typeof vi.fn> } | null,
+  pool: null as { query: ReturnType<typeof vi.fn>; connect: ReturnType<typeof vi.fn> } | null,
   crawlSingle: vi.fn(),
   writeListCache: vi.fn(),
   recordObservations: vi.fn(),
   matchAlerts: vi.fn(),
   archiveAuction: vi.fn(),
+  deleteRawArchiveCountry: vi.fn(),
   ensureAuctionIdentity: vi.fn(),
   writeAuctionCrawlFetchState: vi.fn(),
 }))
@@ -38,19 +39,23 @@ vi.mock('./list-cache', () => ({ writeListCache: state.writeListCache }))
 vi.mock('./history', () => ({ recordObservations: state.recordObservations }))
 vi.mock('./alert-matching', () => ({ matchAlerts: state.matchAlerts }))
 vi.mock('./raw-archive', () => ({ archiveAuction: state.archiveAuction }))
+vi.mock('./raw-archive-delete', () => ({ deleteRawArchiveCountry: state.deleteRawArchiveCountry }))
 vi.mock('./current-auctions', () => ({ ensureAuctionIdentity: state.ensureAuctionIdentity }))
 vi.mock('./auction-fetch-state', () => ({ writeAuctionCrawlFetchState: state.writeAuctionCrawlFetchState }))
 
 function makePool() {
   const query = vi.fn(async (sql: string) => {
+    if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rowCount: 0 }
     if (sql.includes('DELETE FROM list_cache')) return { rowCount: 1 }
-    if (sql.includes('DELETE FROM auction_snapshot')) return { rowCount: 3 }
-    if (sql.includes('DELETE FROM extraction_cache')) return { rowCount: 4 }
+    if (sql.includes('DELETE FROM auction_observations')) return { rowCount: 2 }
+    if (sql.includes('DELETE FROM auctions')) return { rowCount: 3 }
+    if (sql.includes('DELETE FROM auction_details')) return { rowCount: 4 }
+    if (sql.includes('DELETE FROM auction_fetch_state')) return { rowCount: 4 }
     if (sql.includes('DELETE FROM location_enrichment')) return { rowCount: 5 }
     if (sql.includes('DELETE FROM auction_translations')) return { rowCount: 6 }
     throw new Error(`unexpected query: ${sql}`)
   })
-  return { query }
+  return { query, connect: vi.fn(async () => ({ query, release: vi.fn() })) }
 }
 
 const seResult: CrawlResult = {
@@ -96,6 +101,11 @@ beforeEach(() => {
   state.recordObservations.mockReset().mockResolvedValue(undefined)
   state.matchAlerts.mockReset().mockResolvedValue(undefined)
   state.archiveAuction.mockReset().mockResolvedValue(null)
+  state.deleteRawArchiveCountry.mockReset().mockResolvedValue({
+    country: 'se',
+    deleted: { captures: 7, documentSets: 8, documentSetItems: 9, blobs: 10, localFiles: 0, storageFiles: 0 },
+    failed: { localFiles: 0, storageFiles: 0 },
+  })
 })
 
 describe('rebuildCountry', () => {
@@ -106,34 +116,27 @@ describe('rebuildCountry', () => {
 
     expect(result.deleted).toEqual({
       listCache: 1,
-      auctionSnapshot: 3,
-      extractionCache: 4,
+      observations: 2,
+      auctions: 3,
+      auctionDetails: 4,
+      fetchState: 4,
       locationEnrichment: 5,
       auctionTranslations: 6,
+      artifactCaptures: 7,
+      artifactVersions: 8,
+      artifactVersionItems: 9,
+      artifactBlobs: 10,
     })
     expect(result.crawled).toMatchObject({ ok: 1, failed: 0, auctions: 1 })
     expect(state.pool?.query).toHaveBeenCalledWith('DELETE FROM list_cache WHERE country = $1', ['se'])
-    // `auctions` is the permanent master identity since WP-1 — a country
-    // rebuild must never delete it.
-    expect(state.pool?.query).not.toHaveBeenCalledWith(
-      expect.stringContaining('DELETE FROM auctions'),
-      expect.anything(),
+    expect(state.pool?.query).toHaveBeenCalledWith('DELETE FROM auctions WHERE country = $1', ['se'])
+    expect(state.pool?.query).toHaveBeenCalledWith(
+      expect.stringContaining('DELETE FROM location_enrichment'),
+      ['se'],
     )
     expect(state.pool?.query).toHaveBeenCalledWith(
-      expect.stringContaining('DELETE FROM auction_snapshot'),
-      ['se', ['se-kronofogden']],
-    )
-    expect(state.pool?.query).toHaveBeenCalledWith(
-      'DELETE FROM extraction_cache WHERE platform = ANY($1::text[])',
-      [['se-kronofogden']],
-    )
-    expect(state.pool?.query).toHaveBeenCalledWith(
-      'DELETE FROM location_enrichment WHERE platform = ANY($1::text[])',
-      [['se-kronofogden']],
-    )
-    expect(state.pool?.query).toHaveBeenCalledWith(
-      'DELETE FROM auction_translations WHERE platform = ANY($1::text[])',
-      [['se-kronofogden']],
+      expect.stringContaining('DELETE FROM auction_translations'),
+      ['se'],
     )
     expect(state.crawlSingle).toHaveBeenCalledWith({
       country: 'se',

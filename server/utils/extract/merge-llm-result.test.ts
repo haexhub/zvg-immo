@@ -183,29 +183,6 @@ describe('mergeLlmResult', () => {
     expect(entry.rooms).toBe(3)
   })
 
-  it('bumps llmFailures on a failed call and leaves fields untouched', () => {
-    const priorEntry = { llmFailures: 1 } as AuctionExtraction
-    const fields = baseFields({ confident: false, condition: 'neuwertig' })
-    const entry = mergeLlmResult(priorEntry, fields, null, AT, undefined)
-
-    expect(entry.source).toBe('rules')
-    expect(entry.condition).toBe('neuwertig')
-    expect(entry.llmFailures).toBe(2)
-  })
-
-  it('starts llmFailures at 1 on a failed call with no prior failures', () => {
-    const entry = mergeLlmResult(undefined, baseFields(), null, AT, undefined)
-    expect(entry.llmFailures).toBe(1)
-  })
-
-  it('resets llmFailures to 0 (omitted) on any successful call, even when source stays rules', () => {
-    const priorEntry = { llmFailures: 2 } as AuctionExtraction
-    const fields = baseFields({ confident: true, propertyType: 'eigentumswohnung', landAreaSqm: 80 })
-    const entry = mergeLlmResult(priorEntry, fields, llmResult(), AT, undefined)
-
-    expect(entry.llmFailures).toBeUndefined()
-  })
-
   it('stamps llmAnalyzedAt on successful LLM calls, even when source stays rules', () => {
     const fields = baseFields({ confident: true, propertyType: 'eigentumswohnung', landAreaSqm: 80 })
     const entry = mergeLlmResult(undefined, fields, llmResult(), AT, undefined)
@@ -236,18 +213,4 @@ describe('mergeLlmResult', () => {
     expect(entry.at).toBe(AT)
   })
 
-  it('carries photosCheckedAt/photoFailures forward from priorEntry unchanged', () => {
-    const priorEntry = { photosCheckedAt: '2026-07-01T00:00:00.000Z', photoFailures: 2 } as AuctionExtraction
-    const entry = mergeLlmResult(priorEntry, baseFields(), llmResult(), AT, undefined)
-
-    expect(entry.photosCheckedAt).toBe('2026-07-01T00:00:00.000Z')
-    expect(entry.photoFailures).toBe(2)
-  })
-
-  it('omits photosCheckedAt/photoFailures when priorEntry never had them', () => {
-    const entry = mergeLlmResult(undefined, baseFields(), llmResult(), AT, undefined)
-
-    expect(entry.photosCheckedAt).toBeUndefined()
-    expect(entry.photoFailures).toBeUndefined()
-  })
 })
