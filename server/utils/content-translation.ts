@@ -3,6 +3,11 @@
 // (content_translations table, WP-8). Immutable per (content_hash, lang) —
 // once written, an entry is never updated, so a concurrent duplicate insert
 // (two requests racing on the same cache miss) is a harmless no-op.
+//
+// The auction-level gate below is keyed per auction_details version, not per
+// auction: a new extraction version can change title/description, and the
+// translation of an older version stays retrievable as history rather than
+// being overwritten.
 
 import type { Pool } from 'pg'
 
@@ -50,6 +55,7 @@ export async function readAuctionTranslation(
   db: Pool,
   platform: string,
   externalId: string,
+  version: number,
   lang: string,
 ): Promise<AuctionTranslationRow | null> {
   // The age comparisons run in Postgres so all app instances share one clock.
@@ -64,11 +70,11 @@ export async function readAuctionTranslation(
        extraction_texts AS "extractionTexts",
        error_message AS "errorMessage",
        failed_config AS "failedConfig",
-       started_at < now() - $4::interval AS "claimStale",
-       coalesce(completed_at, started_at) < now() - $5::interval AS "retryDue"
+       started_at < now() - $5::interval AS "claimStale",
+       coalesce(completed_at, started_at) < now() - $6::interval AS "retryDue"
      FROM auction_translations
-     WHERE platform = $1 AND external_id = $2 AND lang = $3`,
-    [platform, externalId, lang, CLAIM_LEASE, RETRY_AFTER],
+     WHERE platform = $1 AND external_id = $2 AND version = $3 AND lang = $4`,
+    [platform, externalId, version, lang, CLAIM_LEASE, RETRY_AFTER],
   )
   return rows[0] ?? null
 }
@@ -83,6 +89,7 @@ export async function claimAuctionTranslation(
   db: Pool,
   platform: string,
   externalId: string,
+  version: number,
   lang: string,
   contentHash: string,
 ): Promise<AuctionTranslationClaim | null> {
@@ -94,9 +101,9 @@ export async function claimAuctionTranslation(
   // — every claim leaked as permanently 'pending'.
   const { rows } = await db.query<AuctionTranslationClaim>(
     `INSERT INTO auction_translations
-       (platform, external_id, lang, content_hash, status, started_at)
-     VALUES ($1, $2, $3, $4, 'pending', date_trunc('milliseconds', now()))
-     ON CONFLICT (platform, external_id, lang) DO UPDATE SET
+       (platform, external_id, version, lang, content_hash, status, started_at)
+     VALUES ($1, $2, $3, $4, $5, 'pending', date_trunc('milliseconds', now()))
+     ON CONFLICT (platform, external_id, version, lang) DO UPDATE SET
        content_hash = excluded.content_hash,
        status = 'pending',
        started_at = date_trunc('milliseconds', now()),
@@ -110,11 +117,11 @@ export async function claimAuctionTranslation(
        failed_config = null
      WHERE auction_translations.status = 'failed'
         OR (auction_translations.status = 'pending'
-            AND auction_translations.started_at < now() - $5::interval)
+            AND auction_translations.started_at < now() - $6::interval)
         OR (auction_translations.status = 'completed'
             AND auction_translations.content_hash <> excluded.content_hash)
      RETURNING started_at AS "startedAt"`,
-    [platform, externalId, lang, contentHash, CLAIM_LEASE],
+    [platform, externalId, version, lang, contentHash, CLAIM_LEASE],
   )
   return rows[0] ?? null
 }
@@ -123,6 +130,7 @@ export async function completeAuctionTranslation(
   db: Pool,
   platform: string,
   externalId: string,
+  version: number,
   lang: string,
   claim: AuctionTranslationClaim,
   value: ContentTranslationRow,
@@ -130,19 +138,20 @@ export async function completeAuctionTranslation(
   const { rowCount } = await db.query(
     `UPDATE auction_translations SET
        status = 'completed',
-       title = $5,
-       address = $6,
-       description = $7,
-       document_summary = $8,
-       extraction_texts = $9,
+       title = $6,
+       address = $7,
+       description = $8,
+       document_summary = $9,
+       extraction_texts = $10,
        error_message = null,
        failed_config = null,
        completed_at = now()
-     WHERE platform = $1 AND external_id = $2 AND lang = $3
-       AND status = 'pending' AND started_at = $4`,
+     WHERE platform = $1 AND external_id = $2 AND version = $3 AND lang = $4
+       AND status = 'pending' AND started_at = $5`,
     [
       platform,
       externalId,
+      version,
       lang,
       claim.startedAt,
       value.title,
@@ -153,7 +162,7 @@ export async function completeAuctionTranslation(
     ],
   )
   if (rowCount !== 1) {
-    throw new Error(`translation claim lost for ${platform}/${externalId}/${lang}`)
+    throw new Error(`translation claim lost for ${platform}/${externalId}@${version}/${lang}`)
   }
 }
 
@@ -161,6 +170,7 @@ export async function failAuctionTranslation(
   db: Pool,
   platform: string,
   externalId: string,
+  version: number,
   lang: string,
   claim: AuctionTranslationClaim,
   errorMessage: string,
@@ -171,12 +181,12 @@ export async function failAuctionTranslation(
   await db.query(
     `UPDATE auction_translations SET
        status = 'failed',
-       error_message = $5,
-       failed_config = $6,
+       error_message = $6,
+       failed_config = $7,
        completed_at = now()
-     WHERE platform = $1 AND external_id = $2 AND lang = $3
-       AND status = 'pending' AND started_at = $4`,
-    [platform, externalId, lang, claim.startedAt, errorMessage.slice(0, 4000), configFingerprint],
+     WHERE platform = $1 AND external_id = $2 AND version = $3 AND lang = $4
+       AND status = 'pending' AND started_at = $5`,
+    [platform, externalId, version, lang, claim.startedAt, errorMessage.slice(0, 4000), configFingerprint],
   )
 }
 

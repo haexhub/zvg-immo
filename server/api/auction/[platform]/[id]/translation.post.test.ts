@@ -11,6 +11,12 @@ vi.mock('~/server/utils/auction-snapshot', () => ({
   readAuctionSnapshot: vi.fn(),
 }))
 
+// WP-4: the endpoint resolves the auction's newest extraction version and keys
+// the translation on it.
+vi.mock('~/server/utils/auction-details', () => ({
+  readLatestAuctionDetails: vi.fn(async () => ({ version: 1 })),
+}))
+
 vi.mock('~/server/utils/db', () => ({
   getPool: vi.fn(),
 }))
@@ -209,6 +215,7 @@ describe('/api/auction/:platform/:id/translation', () => {
       expect.anything(),
       'se-kronofogden',
       '101738',
+      1,
       'de',
       CLAIM,
       payload,
@@ -293,6 +300,7 @@ describe('/api/auction/:platform/:id/translation', () => {
       expect.anything(),
       'se-kronofogden',
       '101738',
+      1,
       'de',
       expectedContentHash,
     )
@@ -302,6 +310,7 @@ describe('/api/auction/:platform/:id/translation', () => {
       expect.anything(),
       'se-kronofogden',
       '101738',
+      1,
       'de',
       CLAIM,
       payload,
@@ -433,6 +442,7 @@ describe('/api/auction/:platform/:id/translation', () => {
       expect.anything(),
       'se-kronofogden',
       '101738',
+      1,
       'de',
       CLAIM,
       expect.any(String),
@@ -611,7 +621,7 @@ describe('/api/auction/:platform/:id/translation', () => {
     expect((vi.mocked(callTranslationLlm).mock.calls[1]![7] as { model: string }).model).toBe('gemini-3.1-flash-lite')
     expect(failAuctionTranslation).not.toHaveBeenCalled()
     expect(completeAuctionTranslation).toHaveBeenCalledWith(
-      expect.anything(), 'se-kronofogden', '101738', 'de', CLAIM, payload,
+      expect.anything(), 'se-kronofogden', '101738', 1, 'de', CLAIM, payload,
     )
   })
 
