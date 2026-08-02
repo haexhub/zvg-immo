@@ -280,11 +280,34 @@ UPDATE auction_observations
 SET market_value = market_value_eur, currency = 'EUR'
 WHERE market_value_eur IS NOT NULL AND currency IS NULL;
 
--- WP-3: G1 Roh-Archiv Schicht 1. raw_blobs = deduplizierte Bytes (S3-Key =
--- content_hash, sha256), raw_captures = deduplizierter Capture-Index,
--- raw_document_sets = versionierte "diese Dokumente galten zusammen"-
+-- Auction-Identity-Redesign WP-0: raw_* -> artifact_*. Reiner Rename, keine
+-- Verhaltensänderung — betrifft nur bereits existierende Prod-Tabellen; die
+-- CREATE TABLE-Blöcke unten legen neue Installationen schon mit den neuen
+-- Namen an, daher genügt ein einmaliges RENAME pro Tabelle (idempotent: nach
+-- dem ersten Lauf existiert der alte Name nicht mehr, der IF EXISTS-Check
+-- greift dann nicht mehr). FK-Constraints und Indizes überleben ein RENAME
+-- unverändert — Postgres bindet sie an die OID, nicht an den Namen.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'raw_blobs') THEN
+    ALTER TABLE raw_blobs RENAME TO artifact_blobs;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'raw_captures') THEN
+    ALTER TABLE raw_captures RENAME TO artifact_captures;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'raw_document_sets') THEN
+    ALTER TABLE raw_document_sets RENAME TO artifact_versions;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'raw_document_set_items') THEN
+    ALTER TABLE raw_document_set_items RENAME TO artifact_version_items;
+  END IF;
+END $$;
+
+-- WP-3: G1 Roh-Archiv Schicht 1. artifact_blobs = deduplizierte Bytes (S3-Key =
+-- content_hash, sha256), artifact_captures = deduplizierter Capture-Index,
+-- artifact_versions = versionierte "diese Dokumente galten zusammen"-
 -- Manifeste pro Auktion (server/utils/raw-archive.ts).
-CREATE TABLE IF NOT EXISTS raw_blobs (
+CREATE TABLE IF NOT EXISTS artifact_blobs (
   content_hash  text PRIMARY KEY,          -- sha256 der kanonisierten Bytes
   s3_key        text NOT NULL,             -- sharded Key im Primary-Bucket, z.B. 'ab/abcd….json.gz'
   content_type  text NOT NULL,             -- 'application/json+gzip' | 'text/html+gzip' | 'application/pdf' | 'application/vnd.docx'
@@ -293,7 +316,7 @@ CREATE TABLE IF NOT EXISTS raw_blobs (
   uploaded_at   timestamptz                -- gesetzt, sobald Primary-Upload bestätigt (null = noch in Outbox)
 );
 
-CREATE TABLE IF NOT EXISTS raw_captures (
+CREATE TABLE IF NOT EXISTS artifact_captures (
   id            bigserial PRIMARY KEY,
   captured_at   timestamptz NOT NULL,
   kind          text NOT NULL,             -- 'auction' | 'document' | 'detail_html' | 'document_text' | 'photo'
@@ -302,12 +325,12 @@ CREATE TABLE IF NOT EXISTS raw_captures (
   external_id   text NOT NULL,             -- Auktions-Identität (immer vorhanden)
   case_number   text,                      -- stabilere Cross-Run-Identität
   authority     text,
-  content_hash  text NOT NULL REFERENCES raw_blobs(content_hash),
+  content_hash  text NOT NULL REFERENCES artifact_blobs(content_hash),
   source_url    text                       -- Upstream-URL (Provenienz)
 );
-CREATE INDEX IF NOT EXISTS idx_capt_identity_time ON raw_captures (platform, external_id, captured_at DESC);
-CREATE INDEX IF NOT EXISTS idx_capt_az_time       ON raw_captures (authority, case_number, captured_at DESC);
-CREATE INDEX IF NOT EXISTS idx_capt_hash          ON raw_captures (content_hash);
+CREATE INDEX IF NOT EXISTS idx_capt_identity_time ON artifact_captures (platform, external_id, captured_at DESC);
+CREATE INDEX IF NOT EXISTS idx_capt_az_time       ON artifact_captures (authority, case_number, captured_at DESC);
+CREATE INDEX IF NOT EXISTS idx_capt_hash          ON artifact_captures (content_hash);
 -- One-time historical cleanup before adding the uniqueness guarantees below.
 -- Keep only the newest parsed auction row per identity; for documents/detail/
 -- text keep one row per identity+source_url+content_hash so updated documents
@@ -324,9 +347,9 @@ BEGIN
                             CASE WHEN kind = 'auction' THEN '' ELSE content_hash END
                ORDER BY captured_at DESC, id DESC
              ) AS rn
-      FROM raw_captures
+      FROM artifact_captures
     )
-    DELETE FROM raw_captures rc USING ranked r
+    DELETE FROM artifact_captures rc USING ranked r
     WHERE rc.id = r.id AND r.rn > 1;
 
     INSERT INTO schema_migrations (name) VALUES ('raw_capture_dedupe_cleanup_20260727');
@@ -337,13 +360,13 @@ END $$;
 -- new version per real change) and document rows by source URL+bytes.
 DROP INDEX IF EXISTS idx_capt_unique;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_capt_unique_auction_hash
-  ON raw_captures (kind, platform, external_id, content_hash)
+  ON artifact_captures (kind, platform, external_id, content_hash)
   WHERE kind = 'auction';
 CREATE UNIQUE INDEX IF NOT EXISTS idx_capt_unique_source_hash
-  ON raw_captures (kind, platform, external_id, (COALESCE(source_url, '')), content_hash)
+  ON artifact_captures (kind, platform, external_id, (COALESCE(source_url, '')), content_hash)
   WHERE kind <> 'auction';
 
-CREATE TABLE IF NOT EXISTS raw_document_sets (
+CREATE TABLE IF NOT EXISTS artifact_versions (
   id              bigserial PRIMARY KEY,
   captured_at     timestamptz NOT NULL,
   last_seen_at    timestamptz NOT NULL,
@@ -360,29 +383,29 @@ CREATE TABLE IF NOT EXISTS raw_document_sets (
   UNIQUE (platform, external_id, version)
 );
 CREATE INDEX IF NOT EXISTS idx_doc_sets_identity_version
-  ON raw_document_sets (platform, external_id, version DESC);
+  ON artifact_versions (platform, external_id, version DESC);
 CREATE INDEX IF NOT EXISTS idx_doc_sets_country_region_time
-  ON raw_document_sets (country, region, captured_at DESC);
+  ON artifact_versions (country, region, captured_at DESC);
 
-CREATE TABLE IF NOT EXISTS raw_document_set_items (
-  set_id        bigint NOT NULL REFERENCES raw_document_sets(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS artifact_version_items (
+  set_id        bigint NOT NULL REFERENCES artifact_versions(id) ON DELETE CASCADE,
   ordinal       integer NOT NULL,
   kind          text NOT NULL,
   label         text,
   filename      text,
   file_id       text,
   source_url    text NOT NULL,
-  content_hash  text NOT NULL REFERENCES raw_blobs(content_hash),
+  content_hash  text NOT NULL REFERENCES artifact_blobs(content_hash),
   content_type  text NOT NULL,
   PRIMARY KEY (set_id, ordinal)
 );
-CREATE INDEX IF NOT EXISTS idx_doc_set_items_hash ON raw_document_set_items (content_hash);
+CREATE INDEX IF NOT EXISTS idx_doc_set_items_hash ON artifact_version_items (content_hash);
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE name = 'raw_blob_orphan_cleanup_20260727') THEN
-    DELETE FROM raw_blobs rb
-    WHERE NOT EXISTS (SELECT 1 FROM raw_captures rc WHERE rc.content_hash = rb.content_hash)
-      AND NOT EXISTS (SELECT 1 FROM raw_document_set_items rdsi WHERE rdsi.content_hash = rb.content_hash);
+    DELETE FROM artifact_blobs rb
+    WHERE NOT EXISTS (SELECT 1 FROM artifact_captures rc WHERE rc.content_hash = rb.content_hash)
+      AND NOT EXISTS (SELECT 1 FROM artifact_version_items rdsi WHERE rdsi.content_hash = rb.content_hash);
 
     INSERT INTO schema_migrations (name) VALUES ('raw_blob_orphan_cleanup_20260727');
   END IF;
@@ -390,10 +413,10 @@ END $$;
 -- Server-intern, nie clientseitig exponiert — trotzdem RLS aktivieren (ohne
 -- Policies, also Default-Deny), sonst liest/schreibt PostgREST-anon/authenticated
 -- munter mit; der Backend-Zugriff läuft als Table-Owner und umgeht RLS ohnehin.
-ALTER TABLE raw_blobs ENABLE ROW LEVEL SECURITY;
-ALTER TABLE raw_captures ENABLE ROW LEVEL SECURITY;
-ALTER TABLE raw_document_sets ENABLE ROW LEVEL SECURITY;
-ALTER TABLE raw_document_set_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE artifact_blobs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE artifact_captures ENABLE ROW LEVEL SECURITY;
+ALTER TABLE artifact_versions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE artifact_version_items ENABLE ROW LEVEL SECURITY;
 
 -- WP-8: i18n Baustein B (Content-Übersetzung). content_hash = sha256 über
 -- {title, description, documentSummary, extractionTexts, documentSetHash,
@@ -655,21 +678,21 @@ CREATE TABLE IF NOT EXISTS app_settings (
 );
 ALTER TABLE app_settings ENABLE ROW LEVEL SECURITY;
 
--- Roh-Archiv-Fix: region wurde bisher nicht auf raw_captures gespeichert,
+-- Roh-Archiv-Fix: region wurde bisher nicht auf artifact_captures gespeichert,
 -- sondern beim Lesen (regions.get.ts/cases.get.ts) live gegen die auctions-
 -- Tabelle gejoint. Da auctions bei jedem enrich-Lauf komplett neu geschrieben
 -- wird (current-auctions.ts) und ein einzelner fehlgeschlagener Upsert-Chunk
 -- den Rest des Laufs stillschweigend abbricht, konnte ein ganzes Bundesland
--- im Archiv-Browser unter "—" verschwinden, obwohl raw_captures dafür Daten
+-- im Archiv-Browser unter "—" verschwinden, obwohl artifact_captures dafür Daten
 -- hat. Ab jetzt wird region direkt beim Capture geschrieben (raw-archive.ts),
 -- unabhängig vom aktuellen Zustand von auctions.
-ALTER TABLE raw_captures ADD COLUMN IF NOT EXISTS region text;
-CREATE INDEX IF NOT EXISTS idx_capt_country_region_time ON raw_captures (country, region, captured_at DESC);
+ALTER TABLE artifact_captures ADD COLUMN IF NOT EXISTS region text;
+CREATE INDEX IF NOT EXISTS idx_capt_country_region_time ON artifact_captures (country, region, captured_at DESC);
 -- Backfill für Bestandszeilen (region ist erst mit obigem ADD COLUMN
 -- entstanden, ältere Zeilen haben region=NULL). Nur IS NULL, läuft bei jedem
 -- Boot erneut (idempotent) und holt automatisch nach, sobald auctions für ein
 -- bislang fehlendes Bundesland wieder befüllt ist.
-UPDATE raw_captures rc SET region = a.region
+UPDATE artifact_captures rc SET region = a.region
 FROM auctions a
 WHERE rc.region IS NULL AND rc.platform = a.platform AND rc.external_id = a.external_id;
 

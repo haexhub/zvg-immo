@@ -1,5 +1,5 @@
 // Extraction task — runs regex rules and (when configured) an LLM against
-// already-archived captures (raw_captures/raw_document_sets), never against a
+// already-archived captures (artifact_captures/artifact_versions), never against a
 // live portal fetch. Fully decoupled from server/tasks/enrich.ts (the crawl/
 // archive task): the two never call each other and don't share a schedule —
 // this task finds its own work by comparing, for every archived auction,
@@ -196,7 +196,7 @@ async function findCandidates(opts: ReprocessOptions, countries: readonly string
   if (opts.caseNumber) conditions.push(`case_number = $${params.push(opts.caseNumber)}`)
   const limitClause = opts.limit ? ` LIMIT $${params.push(opts.limit)}` : ''
   const { rows } = await db.query<{ platform: string; external_id: string }>(
-    `SELECT DISTINCT platform, external_id FROM raw_captures WHERE ${conditions.join(' AND ')}${limitClause}`,
+    `SELECT DISTINCT platform, external_id FROM artifact_captures WHERE ${conditions.join(' AND ')}${limitClause}`,
     params,
   )
   return rows.map((r) => ({ platform: r.platform, externalId: r.external_id }))
@@ -532,7 +532,7 @@ export default defineTask({
   meta: {
     name: 'reprocess',
     description:
-      'Run rules/LLM extraction (incl. vision) against archived raw_captures — no live portal fetch. Scheduled across all countries; also invokable manually/scoped.',
+      'Run rules/LLM extraction (incl. vision) against archived artifact_captures — no live portal fetch. Scheduled across all countries; also invokable manually/scoped.',
   },
   async run(event) {
     return await runExclusiveTask('reprocess', async (signal) => {

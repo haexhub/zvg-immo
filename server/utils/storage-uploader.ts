@@ -1,5 +1,5 @@
 // Drains the local raw-archive outbox into Supabase Storage: every
-// `raw_blobs` row without `uploaded_at` gets uploaded, then marked uploaded
+// `artifact_blobs` row without `uploaded_at` gets uploaded, then marked uploaded
 // and deleted locally. Only after a *confirmed* upload — so a transient
 // Storage outage just leaves blobs in the outbox for the next run to retry,
 // never losing bytes. Best-effort like raw-archive.ts: never throws, no-op
@@ -44,7 +44,7 @@ export async function drainOutbox(): Promise<DrainResult> {
   let failed = 0
   try {
     const { rows } = await db.query<PendingBlob>(
-      'SELECT content_hash, s3_key, content_type FROM raw_blobs WHERE uploaded_at IS NULL',
+      'SELECT content_hash, s3_key, content_type FROM artifact_blobs WHERE uploaded_at IS NULL',
     )
     if (rows.length === 0) return { uploaded: 0, failed: 0 }
 
@@ -56,7 +56,7 @@ export async function drainOutbox(): Promise<DrainResult> {
           .from(bucket)
           .upload(row.s3_key, body, { contentType: row.content_type, upsert: true })
         if (error) throw new Error(error.message)
-        await db.query('UPDATE raw_blobs SET uploaded_at = now() WHERE content_hash = $1', [
+        await db.query('UPDATE artifact_blobs SET uploaded_at = now() WHERE content_hash = $1', [
           row.content_hash,
         ])
         await rm(join(dir, row.s3_key), { force: true })

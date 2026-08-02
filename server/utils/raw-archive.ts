@@ -1,5 +1,5 @@
 // G1 Roh-Archiv Schicht 1: unveränderliches Archiv des vollständigen geparsten
-// Auktions-Stands (raw_blobs = content-addressed Bytes, raw_captures =
+// Auktions-Stands (artifact_blobs = content-addressed Bytes, artifact_captures =
 // append-only "welche Auktions-Identität zeigt auf welchen Blob"-Index).
 // Ohne NUXT_DATABASE_URL (siehe server/utils/db.ts) bleibt die Schicht
 // deaktiviert. Sobald eine Datenbank konfiguriert ist, werden Schreibfehler
@@ -32,7 +32,7 @@ export type BlobContentType =
 export type CaptureKind = 'auction' | 'document' | 'detail_html' | 'document_text' | 'photo'
 
 // Text content is gzipped before storage (compresses well); PDF/DOCX are
-// already compressed, stored as-is. `content_type` in raw_blobs records the
+// already compressed, stored as-is. `content_type` in artifact_blobs records the
 // stored (post-compression) type.
 const TEXT_TYPES = new Set<BlobContentType>(['application/json', 'text/html', 'text/plain'])
 // Exported for server/api/settings/archive/download/[id].get.ts, which needs
@@ -124,7 +124,7 @@ export function canonicalizeAuction(auction: Auction): unknown {
  * `opts.canonicalBytesForHash` (falls back to `bytes`) so a caller can hash a
  * normalized form while storing the bytes as originally captured. Gzips text
  * content, writes it to the local outbox (atomic tmp+rename), and inserts the
- * `raw_blobs` index row. Existing hashes are recognized and skipped — the
+ * `artifact_blobs` index row. Existing hashes are recognized and skipped — the
  * whole point of content-hash-dedup.
  *
  * Returns null only when archiving is unavailable because no database is
@@ -153,7 +153,7 @@ export async function archiveBlob(
     // archived and rewrite — the write below is idempotent, and
     // drainOutbox only ever trusts `uploaded_at`, never row presence.
     const existing = await db.query<{ uploaded_at: string | null }>(
-      'SELECT uploaded_at FROM raw_blobs WHERE content_hash = $1',
+      'SELECT uploaded_at FROM artifact_blobs WHERE content_hash = $1',
       [hash],
     )
     if (existing.rows[0]?.uploaded_at != null) return hash
@@ -169,7 +169,7 @@ export async function archiveBlob(
     await rename(tmp, path)
 
     await db.query(
-      `INSERT INTO raw_blobs (content_hash, s3_key, content_type, byte_size, first_seen_at, uploaded_at)
+      `INSERT INTO artifact_blobs (content_hash, s3_key, content_type, byte_size, first_seen_at, uploaded_at)
        VALUES ($1, $2, $3, $4, now(), null)
        ON CONFLICT (content_hash) DO UPDATE SET uploaded_at = null`,
       [hash, key, storedContentType(contentType), stored.length],
@@ -230,7 +230,7 @@ export async function recordCapture(input: CaptureInput): Promise<void> {
         : `(kind, platform, external_id, (COALESCE(source_url, '')), content_hash) WHERE kind <> 'auction'`
 
   await db.query(
-    `INSERT INTO raw_captures
+    `INSERT INTO artifact_captures
        (captured_at, kind, platform, country, region, external_id, case_number, authority, content_hash, source_url)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      ON CONFLICT ${conflictTarget} DO UPDATE SET
@@ -368,7 +368,7 @@ export async function archiveDocumentText(
 
 /**
  * Archives the current set of listing documents as one versioned manifest.
- * Individual document bytes remain content-addressed in raw_blobs; this table
+ * Individual document bytes remain content-addressed in artifact_blobs; this table
  * records which hashes were valid together for the auction. Re-seeing the same
  * set only updates last_seen_at; a changed/added/withdrawn document produces
  * the next version. Persistence failures propagate.
@@ -395,14 +395,14 @@ export async function archiveDocumentSet(
 
     const existing = await db.query<{ id: string; version: number }>(
       `SELECT id, version
-       FROM raw_document_sets
+       FROM artifact_versions
        WHERE platform = $1 AND external_id = $2 AND set_hash = $3`,
       [identity.platform, identity.externalId, setHash],
     )
     const existingRow = existing.rows[0]
     if (existingRow) {
       await db.query(
-        `UPDATE raw_document_sets SET
+        `UPDATE artifact_versions SET
            last_seen_at = $1,
            country = $2,
            region = $3,
@@ -426,11 +426,11 @@ export async function archiveDocumentSet(
       try {
         await client.query('BEGIN')
         const inserted = await client.query<{ id: string; version: number }>(
-          `INSERT INTO raw_document_sets
+          `INSERT INTO artifact_versions
              (captured_at, last_seen_at, platform, country, region, external_id, case_number, authority, set_hash, version, document_count)
            VALUES (
              $1, $1, $2, $3, $4, $5, $6, $7, $8,
-             COALESCE((SELECT max(version) + 1 FROM raw_document_sets WHERE platform = $2 AND external_id = $5), 1),
+             COALESCE((SELECT max(version) + 1 FROM artifact_versions WHERE platform = $2 AND external_id = $5), 1),
              $9
            )
            RETURNING id, version`,
@@ -471,7 +471,7 @@ export async function archiveDocumentSet(
             )
           }
           await client.query(
-            `INSERT INTO raw_document_set_items
+            `INSERT INTO artifact_version_items
                (set_id, ordinal, kind, label, filename, file_id, source_url, content_hash, content_type)
              VALUES ${tuples.join(', ')}`,
             params,
@@ -485,7 +485,7 @@ export async function archiveDocumentSet(
         if ((err as { code?: string }).code === '23505') {
           const winner = await db.query<{ id: string; version: number }>(
             `SELECT id, version
-             FROM raw_document_sets
+             FROM artifact_versions
              WHERE platform = $1 AND external_id = $2 AND set_hash = $3`,
             [identity.platform, identity.externalId, setHash],
           )

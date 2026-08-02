@@ -1,4 +1,4 @@
-// Downloads one archived blob by its raw_captures.id (not the bare hash, so
+// Downloads one archived blob by its artifact_captures.id (not the bare hash, so
 // content_type/kind come along in the same query — see
 // docs/plans/2026-07-18-raw-archive-g1-design.md's Roh-Archiv Browse-Feature
 // section). Runs under settings-auth like every /api/settings/* route — no
@@ -21,8 +21,8 @@ export default defineEventHandler(async (event) => {
 
   const { rows } = await db.query<{ content_hash: string; content_type: string }>(
     `SELECT rc.content_hash, rb.content_type
-     FROM raw_captures rc
-     JOIN raw_blobs rb ON rb.content_hash = rc.content_hash
+     FROM artifact_captures rc
+     JOIN artifact_blobs rb ON rb.content_hash = rc.content_hash
      WHERE rc.id = $1`,
     [id],
   )

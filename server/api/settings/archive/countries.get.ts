@@ -1,6 +1,6 @@
 // Level 1 of the Roh-Archiv browser (Land → Region → Aktenzeichen →
 // Dokumente, see docs/plans/2026-07-18-raw-archive-g1-design.md): one row per
-// country that has at least one raw_captures entry. Lives under
+// country that has at least one artifact_captures entry. Lives under
 // /api/settings/ and therefore automatically inherits
 // server/middleware/settings-auth.ts's guard.
 
@@ -24,7 +24,7 @@ export default defineEventHandler(async (): Promise<ArchiveCountryRow[]> => {
     `SELECT country,
             count(DISTINCT (platform, external_id)) AS count,
             max(captured_at) AS last_captured_at
-     FROM raw_captures
+     FROM artifact_captures
      WHERE kind = 'auction'
      GROUP BY country
      ORDER BY country`,

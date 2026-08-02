@@ -18,10 +18,10 @@ const { drainOutbox } = await import('./storage-uploader')
 function makeFakePool(rows: Array<{ content_hash: string; s3_key: string; content_type: string }>) {
   const updated: string[] = []
   const query = vi.fn(async (sql: string, params: unknown[] = []) => {
-    if (sql.includes('SELECT content_hash, s3_key, content_type FROM raw_blobs')) {
+    if (sql.includes('SELECT content_hash, s3_key, content_type FROM artifact_blobs')) {
       return { rows, rowCount: rows.length }
     }
-    if (sql.includes('UPDATE raw_blobs SET uploaded_at')) {
+    if (sql.includes('UPDATE artifact_blobs SET uploaded_at')) {
       updated.push(params[0] as string)
       return { rows: [], rowCount: 1 }
     }

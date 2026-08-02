@@ -161,19 +161,19 @@ function makeFakePool() {
   const captures: Array<{ kind: string; platform: string; externalId: string; sourceUrl: string | null }> = []
 
   const query = vi.fn(async (sql: string, params: unknown[] = []) => {
-    if (sql.includes('SELECT uploaded_at FROM raw_blobs')) {
+    if (sql.includes('SELECT uploaded_at FROM artifact_blobs')) {
       const hash = params[0] as string
       return { rows: blobs.has(hash) ? [{ uploaded_at: null }] : [] }
     }
-    if (sql.includes('INSERT INTO raw_blobs')) {
+    if (sql.includes('INSERT INTO artifact_blobs')) {
       const [hash, s3_key, content_type] = params as [string, string, string]
       if (!blobs.has(hash)) blobs.set(hash, { s3_key, content_type })
       return { rows: [], rowCount: 1 }
     }
-    if (sql.includes('SELECT content_hash FROM raw_captures')) {
+    if (sql.includes('SELECT content_hash FROM artifact_captures')) {
       return { rows: [] }
     }
-    if (sql.includes('INSERT INTO raw_captures')) {
+    if (sql.includes('INSERT INTO artifact_captures')) {
       const [, kind, platform, , , externalId, , , , sourceUrl] = params as [
         string, string, string, string, string | null, string, string | null, string | null, string, string | null,
       ]
