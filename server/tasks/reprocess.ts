@@ -24,7 +24,6 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Auction, AuctionExtraction, CuratedPhoto } from '~/types/auction'
 import { getPool } from '~/server/utils/db'
-import { extractByRules } from '~/server/utils/extract/rules'
 import {
   extractByLlm,
   isDailyQuotaError,
@@ -46,6 +45,7 @@ import {
 import { readLlmExecutionMode } from '~/server/utils/app-settings'
 import { MAX_LLM_FAILURES, readExtractionChainStrategy, readExtractionLlmConfigChain } from '~/server/utils/extract/llm-task-config'
 import { mergeLlmResult, withDerivedExtractionFields, type MergeInputFields } from '~/server/utils/extract/merge-llm-result'
+import { buildReprocessFields } from '~/server/utils/extract/reprocess-fields'
 import { applyAuctionExtraction } from '~/server/utils/auction-extraction'
 import { readAuctionRecordMap, type AuctionRecord } from '~/server/utils/auction-record'
 import { upsertCurrentAuctions } from '~/server/utils/current-auctions'
@@ -302,6 +302,8 @@ async function buildReprocessInput(
      *  which case the parse must not be stamped as caught up (see
      *  reprocessAuction). Always true when no LLM was configured. */
     documentSetComplete: boolean
+    /** Manifest whose exact item bytes were used to build the LLM input. */
+    artifactVersionId: number | null
     photoSourceIndices: number[] | undefined
   } | null
 > {
@@ -319,41 +321,11 @@ async function buildReprocessInput(
 
   const artifactState = opts.artifactState ?? await readArtifactProcessingState(platform, externalId)
   const documentSetChanged = hasNewArchivedDocuments(artifactState)
-  const effectivePriorEntry = documentSetChanged ? undefined : priorEntry
-
-  const rules = extractByRules({ title: auction.title, description: auction.description })
-  const propertyType = rules.propertyType
-  const landAreaSqm = auction.sourceLandAreaSqm ?? rules.landAreaSqm
-  const livingAreaSqm = auction.sourceLivingAreaSqm ?? rules.livingAreaSqm
-  const fields: MergeInputFields = {
-    propertyType,
-    landAreaSqm,
-    livingAreaSqm,
-    rooms: auction.sourceRooms ?? rules.rooms,
-    units: rules.units,
-    securityDeposit: auction.sourceSecurityDeposit ?? rules.securityDeposit,
-    condition: effectivePriorEntry?.condition,
-    features: effectivePriorEntry?.features,
-    bedrooms: effectivePriorEntry?.bedrooms,
-    bathrooms: effectivePriorEntry?.bathrooms,
-    floor: effectivePriorEntry?.floor,
-    bathroomHasTub: effectivePriorEntry?.bathroomHasTub,
-    bathroomHasShower: effectivePriorEntry?.bathroomHasShower,
-    heating: effectivePriorEntry?.heating,
-    yearBuilt: effectivePriorEntry?.yearBuilt,
-    lastRenovationYear: effectivePriorEntry?.lastRenovationYear,
-    renovationNotes: effectivePriorEntry?.renovationNotes,
-    insights: effectivePriorEntry?.insights,
-    planningNotes: effectivePriorEntry?.planningNotes,
-    documentSummary: effectivePriorEntry?.documentSummary,
-    marketValueEur: effectivePriorEntry?.marketValueEur,
-    marketValueText: effectivePriorEntry?.marketValueText,
-    confident:
-      rules.confident || (propertyType != null && propertyType !== 'sonstiges' && (landAreaSqm != null || livingAreaSqm != null)),
-  }
+  const fields = buildReprocessFields(auction, priorEntry, documentSetChanged)
 
   let input: LlmInput | null = null
   let documentSetComplete = true
+  let artifactVersionId = artifactState.parsedArtifactVersionId
   let photoSourceIndices: number[] | undefined
   if (llmConfig) {
     // Native document understanding for batch providers reads PDF bytes
@@ -365,8 +337,10 @@ async function buildReprocessInput(
     photoSourceIndices = candidates?.sourceIndices
     const documentParts = await prepareArchivedLlmDocuments(auction, {
       nativeDocuments: usingNativeDoc,
+      artifactVersionId: artifactState.latest?.id ?? null,
     })
     documentSetComplete = documentParts.documentSetComplete
+    artifactVersionId = documentParts.artifactVersionId
     input = {
       title: auction.title,
       description: auction.description,
@@ -375,7 +349,7 @@ async function buildReprocessInput(
     }
   }
 
-  return { fields, input, documentSetChanged, documentSetComplete, photoSourceIndices }
+  return { fields, input, documentSetChanged, documentSetComplete, artifactVersionId, photoSourceIndices }
 }
 
 /** Rules-only entry for a candidate no LLM attempt was made for (LLM
@@ -520,7 +494,7 @@ export async function reprocessAuction(
     llmCalled: true,
     llmFailures: llm === null ? (opts.priorLlmFailures ?? 0) + 1 : 0,
     artifactVersionId: parsedCurrentSet
-      ? (artifactState.latest?.id ?? artifactState.parsedArtifactVersionId)
+      ? base.artifactVersionId
       : artifactState.parsedArtifactVersionId,
   }
 }
@@ -640,8 +614,8 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
   ): Promise<void> {
     const updated: Auction = { ...record.auction, extraction: entry }
     applyAuctionExtraction(updated, entry)
-    await upsertCurrentAuctions([updated], at)
     await writeAuctionDetails(updated, entry, { artifactVersionId })
+    await upsertCurrentAuctions([updated], at)
     await writeAuctionLlmPipelineState(record.auction.platform, record.auction.externalId, {
       llmBatchJob: null,
       llmArtifactVersionId: null,
@@ -716,8 +690,12 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
         llmCalls++
         llmCallsByPlatform.set(platform, platformLlmCalls + 1)
         batchItems.push({ key, input: base.input })
-        batchArtifactVersions.set(key, artifactState.latest?.id ?? null)
-        const entry = buildRulesOnlyEntry(base.fields, priorEntry, at)
+        batchArtifactVersions.set(key, base.artifactVersionId)
+        // Keep the currently visible extraction intact while the replacement
+        // is pending. The poller rebuilds a fresh merge base for changed sets.
+        const entry = base.documentSetChanged && priorEntry
+          ? priorEntry
+          : buildRulesOnlyEntry(base.fields, priorEntry, at)
         processed++
         await persistEntry(record, entry, artifactState.parsedArtifactVersionId, priorLlmFailures)
         continue
@@ -778,7 +756,6 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
 
       processed++
 
-      // Persist each successful sync result immediately. Otherwise a long
       // Persist each result immediately so a long run survives a deployment.
       await persistEntry(record, result.entry, result.artifactVersionId, result.llmFailures)
     } catch (err) {

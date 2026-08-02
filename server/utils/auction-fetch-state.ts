@@ -187,9 +187,9 @@ export async function writeAuctionPhotoPipelineState(
 }
 
 export interface LlmPipelineState {
-  llmBatchJob?: string | null
-  llmArtifactVersionId?: number | null
-  llmFailures?: number
+  llmBatchJob: string | null
+  llmArtifactVersionId: number | null
+  llmFailures: number
 }
 
 /** Updates only LLM-pipeline columns, preserving concurrent crawler/photo writes. */
@@ -212,9 +212,9 @@ export async function writeAuctionLlmPipelineState(
     [
       platform,
       externalId,
-      state.llmBatchJob ?? null,
-      state.llmArtifactVersionId ?? null,
-      state.llmFailures ?? 0,
+      state.llmBatchJob,
+      state.llmArtifactVersionId,
+      state.llmFailures,
     ],
   )
 }

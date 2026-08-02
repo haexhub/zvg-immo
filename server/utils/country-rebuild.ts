@@ -4,7 +4,7 @@ import type { CrawlResult } from '~/types/auction'
 import { crawlSingle, ensureEnabledCountriesLoaded, isCountryEnabled, listRegisteredCountries } from '../crawlers/registry'
 import { matchAlerts } from './alert-matching'
 import { archiveAuction } from './raw-archive'
-import { deleteRawArchiveCountry } from './raw-archive-delete'
+import { deleteRawArchiveCountry, rollbackQuietly } from './raw-archive-delete'
 import { recordObservations } from './history'
 import { getPool } from './db'
 import { ensureAuctionIdentity } from './current-auctions'
@@ -39,6 +39,9 @@ export interface CountryRebuildResult {
 let runningCountry: string | null = null
 
 export async function deleteCountryCurrentData(db: Pool, country: string): Promise<CountryRebuildResult['deleted']> {
+  // Archive queries need the auction rows for country scoping, so archive/blob
+  // deletion must happen first. File removal cannot join the SQL transaction;
+  // if the relational delete fails, rerun rebuildCountry to recover.
   const archive = await deleteRawArchiveCountry(country)
   const client = await db.connect()
   try {
@@ -82,7 +85,7 @@ export async function deleteCountryCurrentData(db: Pool, country: string): Promi
       artifactBlobs: archive.deleted.blobs,
     }
   } catch (err) {
-    await client.query('ROLLBACK')
+    await rollbackQuietly(client)
     throw err
   } finally {
     client.release()

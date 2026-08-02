@@ -7,17 +7,19 @@ import { normalizeAuctionDescription } from './description-normalization'
  */
 export function mergeStoredAuction(next: Auction, previous: Auction): Auction {
   normalizeAuctionDescription(next)
-  normalizeAuctionDescription(previous)
+  const normalizedPrevious = { ...previous }
+  normalizeAuctionDescription(normalizedPrevious)
+  const previousDescription = normalizedPrevious.description
   if (next.attachments.length === 0 && previous.attachments.length > 0) next.attachments = previous.attachments
-  if (next.description == null && previous.description != null) {
-    next.description = previous.description
+  if (next.description == null && previousDescription != null) {
+    next.description = previousDescription
   } else if (
     next.description != null &&
-    previous.description != null &&
+    previousDescription != null &&
     previous.detailFetchedAt != null &&
-    previous.description.startsWith(next.description)
+    previousDescription.startsWith(next.description)
   ) {
-    next.description = previous.description
+    next.description = previousDescription
   }
   if (!next.caseNumber && previous.caseNumber) next.caseNumber = previous.caseNumber
   if (next.pdfUrl == null && previous.pdfUrl != null) {

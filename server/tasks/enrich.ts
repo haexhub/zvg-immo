@@ -233,7 +233,6 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
         )
       }
       return (
-        hit != null &&
         pipelineDue &&
         (photos === 0 || nativePhotoUrls(a).length > 0 || a.attachments.length > 0) &&
         (state?.photoFailures ?? 0) < MAX_PHOTO_FAILURES
@@ -255,6 +254,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
     let photoExtractions = 0
     let photosTotal = 0
     const at = new Date().toISOString()
+    const persistedDetails = new Map<string, { marketValueEur: number | null; marketValueText: string | null }>()
     let cursor = 0
     async function worker() {
       while (cursor < todo.length) {
@@ -462,8 +462,12 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
           }
           if (a.detailFetchedAt == null && priorRecord) mergeStoredAuction(a, priorRecord.auction)
           applyAuctionExtraction(a, entry)
-          await upsertCurrentAuctions([a], at)
           await writeAuctionDetails(a, entry, { artifactVersionId: priorRecord?.artifactVersionId ?? null })
+          persistedDetails.set(key, {
+            marketValueEur: a.marketValueEur,
+            marketValueText: a.marketValueText,
+          })
+          await upsertCurrentAuctions([a], at)
         } catch (err) {
           pushRunError('auction_details', `Details ${a.platform}:${a.externalId}: ${(err as Error).message}`, a)
         }
@@ -501,6 +505,12 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
     // auction_details version.
     for (const a of result.auctions) {
       throwIfTaskAborted(signal)
+      const persisted = persistedDetails.get(cacheKey(a.platform, a.externalId))
+      if (
+        persisted &&
+        persisted.marketValueEur === a.marketValueEur &&
+        persisted.marketValueText === a.marketValueText
+      ) continue
       try {
         const record = records.get(cacheKey(a.platform, a.externalId))
         await writeAuctionDetails(a, a.extraction ?? null, {

@@ -34,7 +34,7 @@ function bucketName(): string | null {
   return (useRuntimeConfig().storageBucket as string | undefined) || null
 }
 
-async function rollbackQuietly(client: PoolClient): Promise<void> {
+export async function rollbackQuietly(client: PoolClient): Promise<void> {
   try {
     await client.query('ROLLBACK')
   } catch {

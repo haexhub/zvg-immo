@@ -24,6 +24,10 @@ export function applyAuctionExtraction(
   if (photos.length > 0) {
     auction.thumbnailUrl = `/api/auction-image/${encodeURIComponent(auction.platform)}/${encodeURIComponent(auction.externalId)}/${encodeURIComponent(photos[0]!.file)}`
     auction.photoCount = photos.length
+  } else if (normalized.photos != null) {
+    // An explicit empty curated set supersedes photos from the prior detail version.
+    auction.thumbnailUrl = null
+    auction.photoCount = 0
   }
   return auction
 }

@@ -51,7 +51,11 @@ describe('auction fetch state writers', () => {
       photoFailures: 2,
       photoPipelineVersion: 3,
     })
-    await writeAuctionLlmPipelineState('test', '1', { llmBatchJob: 'batch-1', llmFailures: 1 })
+    await writeAuctionLlmPipelineState('test', '1', {
+      llmBatchJob: 'batch-1',
+      llmArtifactVersionId: 12,
+      llmFailures: 1,
+    })
     const calls = query.mock.calls as unknown as Array<[string, unknown[]?]>
 
     const crawlSql = String(calls[0]?.[0])
@@ -113,5 +117,13 @@ describe('auction fetch state writers', () => {
       confidence: 'high',
       at: '2026-08-02T10:00:00.000Z',
     })
+    expect(value.processing).toEqual({
+      llmBatchJob: 'batch-1',
+      llmFailures: 2,
+      photosCheckedAt: '2026-08-02T11:00:00.000Z',
+      photoFailures: 1,
+      photoPipelineVersion: 3,
+    })
+    expect(value.processing).not.toHaveProperty('llmArtifactVersionId')
   })
 })

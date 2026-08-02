@@ -5,7 +5,12 @@ import { ensureAuctionIdentity, upsertCurrentAuctions } from '../utils/current-a
 import { writeAuctionDetails } from '../utils/auction-details'
 import { readAuctionRecordMap } from '../utils/auction-record'
 import { readLatestArtifactVersions } from '../utils/artifact-version-state'
-import { readAuctionFetchStates, writeAuctionCrawlFetchState } from '../utils/auction-fetch-state'
+import {
+  readAuctionFetchStates,
+  writeAuctionCrawlFetchState,
+  writeAuctionPhotoPipelineState,
+} from '../utils/auction-fetch-state'
+import { downloadNativeImages } from '../utils/extract/native-images'
 import { archiveAuction } from '../utils/raw-archive'
 import { recordObservations } from '../utils/history'
 import { writeListCache } from '../utils/list-cache'
@@ -103,6 +108,7 @@ beforeEach(() => {
   vi.mocked(readLatestArtifactVersions).mockResolvedValue(new Map())
   vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map())
   vi.mocked(writeAuctionDetails).mockResolvedValue({ version: 1, changed: true })
+  vi.mocked(downloadNativeImages).mockResolvedValue([])
 })
 
 afterEach(() => vi.clearAllMocks())
@@ -142,5 +148,23 @@ describe('runEnrich structured persistence', () => {
       expect.objectContaining({ source: 'rules', confidence: 'low' }),
       { artifactVersionId: null },
     )
+  })
+
+  it('checks native photos on the first pass and writes details only once', async () => {
+    const listing = { ...auction(), photoUrls: ['https://example.test/front.jpg'] }
+    vi.mocked(crawlAll).mockResolvedValue(crawlResult([listing]))
+
+    await runEnrich({ country: 'de' })
+
+    expect(downloadNativeImages).toHaveBeenCalledWith(
+      ['https://example.test/front.jpg'],
+      expect.objectContaining({ destDir: expect.stringContaining('/test-platform/42') }),
+    )
+    expect(writeAuctionPhotoPipelineState).toHaveBeenCalledWith('test-platform', '42', {
+      photosCheckedAt: expect.any(String),
+      photoFailures: 0,
+      photoPipelineVersion: expect.any(Number),
+    })
+    expect(writeAuctionDetails).toHaveBeenCalledTimes(1)
   })
 })

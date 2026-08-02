@@ -29,4 +29,24 @@ describe('mergeStoredAuction', () => {
   it('does not restore mutable current bids', () => {
     expect(mergeStoredAuction(auction(), auction({ currentBid: 90_000 })).currentBid).toBeUndefined()
   })
+
+  it('keeps a longer fetched description when the list text is its prefix', () => {
+    const previous = auction({
+      description: 'Kurzer Text mit zusätzlichen Details',
+      detailFetchedAt: '2026-08-01T10:00:00.000Z',
+    })
+
+    expect(mergeStoredAuction(auction({ description: 'Kurzer Text' }), previous).description)
+      .toBe('Kurzer Text mit zusätzlichen Details')
+    expect(previous.description).toBe('Kurzer Text mit zusätzlichen Details')
+  })
+
+  it('keeps the new list description before details were fetched', () => {
+    const merged = mergeStoredAuction(
+      auction({ description: 'Kurzer Text' }),
+      auction({ description: 'Kurzer Text mit zusätzlichen Details', detailFetchedAt: null }),
+    )
+
+    expect(merged.description).toBe('Kurzer Text')
+  })
 })

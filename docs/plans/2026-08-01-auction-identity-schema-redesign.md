@@ -12,7 +12,15 @@ Identitäts-/Terminfelder; `auction_details`, `auction_photos`,
 bilden den alleinigen Contract. Frühere Backfill-/Burn-in-Abschnitte weiter
 unten bleiben nur als verworfener Entscheidungsverlauf erhalten.
 
-## Wie es dazu kam
+## Historischer Anhang (nicht ausführbar)
+
+Alles ab hier dokumentiert ausschließlich den verworfenen Planungs- und
+Entscheidungsverlauf. Insbesondere sind sämtliche DDL-/Migrations-Snippets,
+Backfills, Burn-in-Schritte, Dual-Writes, offenen Punkte und WP-2-Anweisungen
+**nicht auszuführen**. Der verbindliche Contract steht ausschließlich im
+Statusblock oben: direkter Cutover, vollständiger Recrawl, keine Legacy-Pfade.
+
+### Wie es dazu kam
 
 Ausgangsfrage: "die FK-Beziehungen zwischen `extraction_cache`, `auction_snapshot`,
 `location_enrichment`, `auction_translations` (alle mit `platform`+`external_id`,
@@ -31,7 +39,7 @@ hängen — mit voller Versionshistorie statt Überschreiben, damit sich jederze
 nachvollziehen lässt, was sich zwischen Versionen geändert hat, ohne alte Daten
 zu verlieren.
 
-## Zielarchitektur — Übersicht
+### Zielarchitektur — Übersicht
 
 | Tabelle heute | Tabelle neu | Rolle |
 |---|---|---|
@@ -53,7 +61,7 @@ Prompt/neues Modell — das ist heute schon ein realer, genutzter Fall in
 `reprocess.ts`). Jede `auction_details`-Zeile trägt eine FK, welches Artefakt-
 Manifest sie ausgewertet hat, damit beide Auslöser unterscheidbar bleiben.
 
-## Datenmodell (Ziel-DDL)
+### Datenmodell (historischer DDL-Entwurf, nicht ausführen)
 
 ```sql
 -- auctions: Master-Identität. Wird beim allerersten Crawl-Sichten angelegt
@@ -217,7 +225,7 @@ ALTER TABLE location_enrichment
   FOREIGN KEY (platform, external_id) REFERENCES auctions (platform, external_id);
 ```
 
-## Historischer Entscheidungsverlauf
+### Historischer Entscheidungsverlauf
 
 Die Punkte in diesem Abschnitt dokumentieren die ursprüngliche Planung. Die
 spätere, verbindliche Recrawl-Entscheidung am Dokumentanfang ersetzt insbesondere
@@ -291,7 +299,7 @@ die Aussagen zu Retention, Backfill und Dual-Write.
    also keinen Fall, in dem der alte, pro Capture eingefrorene Stand gebraucht
    würde.
 
-## Historische offene Punkte
+### Historische offene Punkte (verworfen, nicht ausführen)
 
 Diese Punkte sind inzwischen durch die Umsetzung und die Recrawl-Entscheidung
 aufgelöst; sie bleiben nur zur Nachvollziehbarkeit erhalten:
@@ -351,7 +359,7 @@ aufgelöst; sie bleiben nur zur Nachvollziehbarkeit erhalten:
   Version N und N+1 erzeugen (nie zweimal N, kein Fehler), plus ein Test für
   das Changed-Detection-Verhalten bei identischen Werten.
 
-## Server-seitige Änderungen, gruppiert nach Arbeitspaket
+### Historische Arbeitspakete (nicht ausführen)
 
 **WP-0 — Umbenennung (mechanisch, kein Verhaltenswechsel)**
 - `schema.sql`: idempotente `RENAME TABLE`-Statements für `raw_blobs` →
@@ -407,7 +415,7 @@ aufgelöst; sie bleiben nur zur Nachvollziehbarkeit erhalten:
   dass die Reihenfolge jetzt erzwungen ist). Archiv-Browser liefert nach der
   Umstellung identische Land/Region-Navigation wie vorher.
 
-**WP-2 — `auction_details` einführen (additiv, Dual-Write)**
+**WP-2 — verworfener additiver Dual-Write-Plan (nicht ausführen)**
 - schema.sql: `CREATE TABLE auction_details` (siehe DDL).
 - Neues Modul `server/utils/auction-details.ts` (Vorbild: `extraction-cache.ts`/
   `auction-snapshot.ts`): `writeAuctionDetails(...)` (immer INSERT einer neuen
@@ -492,7 +500,7 @@ Betroffene Dateien (per Grep verifiziert, Stand 2026-08-01):
   Artefakte und Auktionsidentitäten des Landes. Danach werden Identitäten und
   Rohdaten aus dem Crawl neu aufgebaut; Enrich/Reprocess füllen den Rest.
 
-## Explizit nicht Teil dieses Plans
+### Historisch nicht eingeplante Arbeiten
 
 - Rückwirkende Migration/Backfill von Daten, die vor diesem Umbau schon
   unwiederbringlich überschrieben wurden (z.B. frühere `auctions`-Stände) —

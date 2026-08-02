@@ -45,4 +45,13 @@ describe('applyAuctionExtraction', () => {
     applyAuctionExtraction(structural, extraction({ marketValueEur: 180_000 }))
     expect(structural.marketValueEur).toBe(200_000)
   })
+
+  it('clears stale display photos for an explicitly empty curated set', () => {
+    const value = auction({ photoCount: 2, thumbnailUrl: '/old.jpg' })
+
+    applyAuctionExtraction(value, extraction({ photos: [] }))
+
+    expect(value.photoCount).toBe(0)
+    expect(value.thumbnailUrl).toBeNull()
+  })
 })

@@ -204,6 +204,8 @@ describe('runLlmBatchPoll', () => {
       { artifactVersionId: 22 },
     )
     expect(upsertCurrentAuctions).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(writeAuctionDetails).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(upsertCurrentAuctions).mock.invocationCallOrder[0]!)
     expect(writeAuctionLlmPipelineState).toHaveBeenCalledWith('zvg-portal', '7265', {
       llmBatchJob: null,
       llmArtifactVersionId: null,
@@ -223,6 +225,22 @@ describe('runLlmBatchPoll', () => {
     await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 1, merged: 0 })
     expect(markLlmBatchJobResolved).not.toHaveBeenCalled()
     expect(writeAuctionLlmPipelineState).not.toHaveBeenCalled()
+    expect(upsertCurrentAuctions).not.toHaveBeenCalled()
+  })
+
+  it('increments failures and clears state for a null batch extraction', async () => {
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job()])
+    vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/result' })
+    vi.mocked(fetchLlmBatchResults).mockResolvedValue([
+      { key: 'zvg-portal:7265', extraction: null },
+    ])
+
+    await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 1, merged: 1 })
+    expect(writeAuctionLlmPipelineState).toHaveBeenCalledWith('zvg-portal', '7265', {
+      llmBatchJob: null,
+      llmArtifactVersionId: null,
+      llmFailures: 3,
+    })
   })
 
   it('continues after one job throws', async () => {

@@ -774,10 +774,40 @@ CREATE TABLE IF NOT EXISTS auction_fetch_state (
   photo_pipeline_version integer,
   updated_at             timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (platform, external_id),
-  FOREIGN KEY (platform, external_id) REFERENCES auctions (platform, external_id) ON DELETE CASCADE
+  FOREIGN KEY (platform, external_id) REFERENCES auctions (platform, external_id) ON DELETE CASCADE,
+  CONSTRAINT fk_auction_fetch_state_llm_artifact
+    FOREIGN KEY (llm_artifact_version_id, platform, external_id)
+    REFERENCES artifact_versions (id, platform, external_id)
+    ON DELETE SET NULL (llm_artifact_version_id)
 );
 ALTER TABLE auction_fetch_state
   ADD COLUMN IF NOT EXISTS llm_artifact_version_id bigint;
+UPDATE auction_fetch_state fs
+SET llm_artifact_version_id = NULL
+WHERE fs.llm_artifact_version_id IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1
+    FROM artifact_versions av
+    WHERE av.id = fs.llm_artifact_version_id
+      AND av.platform = fs.platform
+      AND av.external_id = fs.external_id
+  );
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'fk_auction_fetch_state_llm_artifact'
+  ) THEN
+    ALTER TABLE auction_fetch_state
+      ADD CONSTRAINT fk_auction_fetch_state_llm_artifact
+      FOREIGN KEY (llm_artifact_version_id, platform, external_id)
+      REFERENCES artifact_versions (id, platform, external_id)
+      ON DELETE SET NULL (llm_artifact_version_id)
+      NOT VALID;
+  END IF;
+END $$;
+ALTER TABLE auction_fetch_state
+  VALIDATE CONSTRAINT fk_auction_fetch_state_llm_artifact;
 CREATE INDEX IF NOT EXISTS idx_auction_fetch_state_llm_batch_job
   ON auction_fetch_state (llm_batch_job) WHERE llm_batch_job IS NOT NULL;
 ALTER TABLE auction_fetch_state ENABLE ROW LEVEL SECURITY;

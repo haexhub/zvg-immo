@@ -1,16 +1,68 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { Auction } from '~/types/auction'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Auction, AuctionExtraction } from '~/types/auction'
 import { downloadBlob, findLatestCapture } from '../utils/storage-download'
+import { getPool } from '../utils/db'
+import { readAuctionRecordMap } from '../utils/auction-record'
+import { readAuctionFetchStates, writeAuctionLlmPipelineState } from '../utils/auction-fetch-state'
+import { readArtifactProcessingState } from '../utils/artifact-version-state'
+import { readExtractionChainStrategy, readExtractionLlmConfigChain } from '../utils/extract/llm-task-config'
+import { readLlmExecutionMode } from '../utils/app-settings'
+import { submitLlmBatch } from '../utils/extract/llm-batch'
+import { writeAuctionDetails } from '../utils/auction-details'
+import { upsertCurrentAuctions } from '../utils/current-auctions'
 
 vi.mock('../utils/storage-download', () => ({
   findLatestCapture: vi.fn(),
   downloadBlob: vi.fn(),
-  readDocumentSetItems: vi.fn(async () => []),
+  readDocumentSet: vi.fn(async () => null),
+}))
+vi.mock('../utils/db', () => ({ getPool: vi.fn() }))
+vi.mock('../utils/auction-record', () => ({ readAuctionRecordMap: vi.fn() }))
+vi.mock('../utils/auction-fetch-state', () => ({
+  readAuctionFetchStates: vi.fn(),
+  writeAuctionLlmPipelineState: vi.fn(),
+}))
+vi.mock('../utils/artifact-version-state', () => ({
+  hasUnparsedArtifactVersion: vi.fn((state) => state.latest != null && state.latest.id !== state.parsedArtifactVersionId),
+  readArtifactProcessingState: vi.fn(),
+}))
+vi.mock('../utils/extract/llm-task-config', () => ({
+  MAX_LLM_FAILURES: 3,
+  readExtractionChainStrategy: vi.fn(),
+  readExtractionLlmConfigChain: vi.fn(),
+}))
+vi.mock('../utils/app-settings', () => ({ readLlmExecutionMode: vi.fn() }))
+vi.mock('../utils/extract/llm-batch', () => ({
+  isLlmBatchPending: vi.fn(() => false),
+  isLlmBatchProviderBroken: vi.fn(async () => false),
+  submitLlmBatch: vi.fn(),
+  supportsLlmBatch: vi.fn((config) => config != null),
+  supportsNativeBatchDocuments: vi.fn(() => false),
+}))
+vi.mock('../utils/extract/llm-documents', () => ({
+  prepareArchivedLlmDocuments: vi.fn(async (_auction, opts) => ({
+    input: {},
+    documentSetItems: [],
+    documentSetComplete: true,
+    artifactVersionId: opts.artifactVersionId,
+  })),
+}))
+vi.mock('../utils/auction-details', () => ({ writeAuctionDetails: vi.fn() }))
+vi.mock('../utils/current-auctions', () => ({ upsertCurrentAuctions: vi.fn() }))
+vi.mock('../crawlers/registry', () => ({
+  ensureEnabledCountriesLoaded: vi.fn(),
+  getEnabledCountryCodes: vi.fn(() => ['de']),
+  isCountryEnabled: vi.fn(() => true),
+}))
+vi.mock('../utils/task-runs', () => ({
+  recordTaskRunStart: vi.fn(),
+  recordTaskRunEnd: vi.fn(),
+  recordTaskRunProgress: vi.fn(),
 }))
 
 vi.stubGlobal('defineTask', (definition: unknown) => definition)
 
-const { reprocessAuction } = await import('./reprocess')
+const { reprocessAuction, runReprocess } = await import('./reprocess')
 
 const emptyArtifactState = {
   latest: null,
@@ -44,7 +96,49 @@ function auction(): Auction {
   }
 }
 
-afterEach(() => vi.clearAllMocks())
+function extraction(overrides: Partial<AuctionExtraction> = {}): AuctionExtraction {
+  return {
+    propertyType: 'einfamilienhaus',
+    landAreaSqm: 500,
+    livingAreaSqm: 120,
+    rooms: 4,
+    units: 1,
+    source: 'llm',
+    confidence: 'high',
+    at: '2026-08-01T10:00:00.000Z',
+    ...overrides,
+  }
+}
+
+beforeEach(() => {
+  vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { maxPerRun: '10' } }))
+  vi.mocked(getPool).mockReturnValue({
+    query: vi.fn(async () => ({ rows: [{ platform: 'zvg-portal', external_id: '7265' }] })),
+  } as never)
+  vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map([['zvg-portal:7265', {
+    auction: auction(),
+    detailsId: 7,
+    detailsVersion: 2,
+    artifactVersionId: null,
+  }]]))
+  vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map())
+  vi.mocked(readArtifactProcessingState).mockResolvedValue(emptyArtifactState)
+  vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([])
+  vi.mocked(readExtractionChainStrategy).mockResolvedValue('fallback')
+  vi.mocked(readLlmExecutionMode).mockResolvedValue('sync')
+  vi.mocked(findLatestCapture).mockResolvedValue({
+    contentHash: 'auction-hash',
+    sourceUrl: null,
+    capturedAt: '2026-08-02T10:00:00.000Z',
+  })
+  vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction())))
+  vi.mocked(writeAuctionDetails).mockResolvedValue({ version: 3, changed: true })
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.clearAllMocks()
+})
 
 describe('reprocessAuction structured provenance', () => {
   it('returns null when no archived auction capture exists', async () => {
@@ -114,6 +208,70 @@ describe('reprocessAuction structured provenance', () => {
       llmFailures: 2,
       artifactVersionId: 11,
       entry: { source: 'rules', confidence: 'high' },
+    })
+  })
+})
+
+describe('runReprocess structured persistence', () => {
+  it('persists a synchronous rules result before updating the current projection', async () => {
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 1, skipped: 0 })
+
+    expect(writeAuctionDetails).toHaveBeenCalledWith(
+      expect.objectContaining({ extraction: expect.objectContaining({ source: 'rules' }) }),
+      expect.objectContaining({ source: 'rules' }),
+      { artifactVersionId: null },
+    )
+    expect(writeAuctionLlmPipelineState).toHaveBeenCalledWith('zvg-portal', '7265', {
+      llmBatchJob: null,
+      llmArtifactVersionId: null,
+      llmFailures: 0,
+    })
+    expect(vi.mocked(writeAuctionDetails).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(upsertCurrentAuctions).mock.invocationCallOrder[0]!)
+  })
+
+  it('preserves visible details and records exact artifact provenance for a submitted batch', async () => {
+    const prior = extraction({ condition: 'gepflegt', documentSummary: 'Bisherige Zusammenfassung' })
+    vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map([['zvg-portal:7265', {
+      auction: { ...auction(), extraction: prior },
+      detailsId: 7,
+      detailsVersion: 2,
+      artifactVersionId: 11,
+    }]]))
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([['zvg-portal:7265', {
+      platform: 'zvg-portal', externalId: '7265', pdfUrl: null, pdfUrlUpstream: null,
+      detailUrl: null, detailUrlUpstream: null, attachments: [], photoUrls: null,
+      sourceUpdatedIso: null, detailFetchedAt: null, llmBatchJob: null,
+      llmArtifactVersionId: null, llmFailures: 2, photosCheckedAt: null,
+      photoFailures: 0, photoPipelineVersion: null,
+      updatedAt: '2026-08-02T10:00:00.000Z',
+    }]]))
+    vi.mocked(readArtifactProcessingState).mockResolvedValue({
+      latest: {
+        id: 22, platform: 'zvg-portal', externalId: '7265', version: 3, setHash: 'set-22',
+      },
+      parsedArtifactVersionId: 11,
+    })
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+      baseUrl: 'https://api.example.test', apiKey: 'secret', model: 'batch-model', provider: 'openai-compatible',
+    }])
+    vi.mocked(submitLlmBatch).mockResolvedValue({
+      jobName: 'batch-22',
+      submitted: [{ key: 'zvg-portal:7265', jobName: 'batch-22' }],
+      retryItems: [],
+    })
+
+    await expect(runReprocess({ country: 'de', batch: true })).resolves.toMatchObject({ processed: 1 })
+
+    expect(writeAuctionDetails).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ condition: 'gepflegt', documentSummary: 'Bisherige Zusammenfassung' }),
+      { artifactVersionId: 11 },
+    )
+    expect(writeAuctionLlmPipelineState).toHaveBeenLastCalledWith('zvg-portal', '7265', {
+      llmBatchJob: 'batch-22',
+      llmArtifactVersionId: 22,
+      llmFailures: 2,
     })
   })
 })
