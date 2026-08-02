@@ -38,14 +38,15 @@ export default defineEventHandler(async (event): Promise<ArchiveCaseRow[]> => {
     count: string
     last_captured_at: string
   }>(
-    `SELECT platform, external_id,
-            COALESCE(max(case_number), external_id) AS case_label,
-            max(authority) AS authority,
-            count(*) FILTER (WHERE kind = 'auction') AS count,
-            max(captured_at) AS last_captured_at
-     FROM artifact_captures
-     WHERE country = $1 AND kind = 'auction' AND COALESCE(NULLIF(region, ''), $3) = $2
-     GROUP BY platform, external_id
+    `SELECT rc.platform, rc.external_id,
+            COALESCE(NULLIF(max(a.case_number), ''), rc.external_id) AS case_label,
+            NULLIF(max(a.authority), '') AS authority,
+            count(*) FILTER (WHERE rc.kind = 'auction') AS count,
+            max(rc.captured_at) AS last_captured_at
+     FROM artifact_captures rc
+     JOIN auctions a ON a.platform = rc.platform AND a.external_id = rc.external_id
+     WHERE a.country = $1 AND rc.kind = 'auction' AND COALESCE(NULLIF(a.region, ''), $3) = $2
+     GROUP BY rc.platform, rc.external_id
      ORDER BY case_label`,
     [country, region, UNKNOWN_REGION],
   )

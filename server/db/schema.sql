@@ -316,20 +316,20 @@ CREATE TABLE IF NOT EXISTS artifact_blobs (
   uploaded_at   timestamptz                -- gesetzt, sobald Primary-Upload bestätigt (null = noch in Outbox)
 );
 
+-- country/region/authority/case_number lagen hier früher denormalisiert, weil
+-- es keinen verlässlichen auctions-Anker gab. Seit dem Auction-Identity-
+-- Redesign (WP-1) existiert die auctions-Zeile garantiert vor jedem Capture,
+-- also kommen diese Felder per JOIN auf auctions.
 CREATE TABLE IF NOT EXISTS artifact_captures (
   id            bigserial PRIMARY KEY,
   captured_at   timestamptz NOT NULL,
   kind          text NOT NULL,             -- 'auction' | 'document' | 'detail_html' | 'document_text' | 'photo'
   platform      text NOT NULL,
-  country       text NOT NULL,
   external_id   text NOT NULL,             -- Auktions-Identität (immer vorhanden)
-  case_number   text,                      -- stabilere Cross-Run-Identität
-  authority     text,
   content_hash  text NOT NULL REFERENCES artifact_blobs(content_hash),
   source_url    text                       -- Upstream-URL (Provenienz)
 );
 CREATE INDEX IF NOT EXISTS idx_capt_identity_time ON artifact_captures (platform, external_id, captured_at DESC);
-CREATE INDEX IF NOT EXISTS idx_capt_az_time       ON artifact_captures (authority, case_number, captured_at DESC);
 CREATE INDEX IF NOT EXISTS idx_capt_hash          ON artifact_captures (content_hash);
 -- One-time historical cleanup before adding the uniqueness guarantees below.
 -- Keep only the newest parsed auction row per identity; for documents/detail/
@@ -366,26 +366,25 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_capt_unique_source_hash
   ON artifact_captures (kind, platform, external_id, (COALESCE(source_url, '')), content_hash)
   WHERE kind <> 'auction';
 
+-- Gleiche Entdenormalisierung wie bei artifact_captures oben. uq_artifact_
+-- versions_identity ist Voraussetzung für die zusammengesetzte FK von
+-- auction_details (WP-2): sie stellt sicher, dass eine Extraktions-Version nur
+-- ein Manifest der eigenen Auktion referenzieren kann.
 CREATE TABLE IF NOT EXISTS artifact_versions (
   id              bigserial PRIMARY KEY,
   captured_at     timestamptz NOT NULL,
   last_seen_at    timestamptz NOT NULL,
   platform        text NOT NULL,
-  country         text NOT NULL,
-  region          text,
   external_id     text NOT NULL,
-  case_number     text,
-  authority       text,
   set_hash        text NOT NULL,
   version         integer NOT NULL,
   document_count  integer NOT NULL,
   UNIQUE (platform, external_id, set_hash),
-  UNIQUE (platform, external_id, version)
+  UNIQUE (platform, external_id, version),
+  CONSTRAINT uq_artifact_versions_identity UNIQUE (id, platform, external_id)
 );
 CREATE INDEX IF NOT EXISTS idx_doc_sets_identity_version
   ON artifact_versions (platform, external_id, version DESC);
-CREATE INDEX IF NOT EXISTS idx_doc_sets_country_region_time
-  ON artifact_versions (country, region, captured_at DESC);
 
 CREATE TABLE IF NOT EXISTS artifact_version_items (
   set_id        bigint NOT NULL REFERENCES artifact_versions(id) ON DELETE CASCADE,
@@ -527,6 +526,7 @@ CREATE TABLE IF NOT EXISTS auctions (
   detail_fetched_at     timestamptz,
   extraction_source     text,
   extraction_confidence text,
+  first_seen_at         timestamptz NOT NULL DEFAULT now(),
   updated_at            timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (platform, external_id)
 );
@@ -559,6 +559,77 @@ ALTER TABLE auctions ADD COLUMN IF NOT EXISTS bidding_notes text;
 ALTER TABLE auctions ADD COLUMN IF NOT EXISTS year_built integer;
 ALTER TABLE auctions ADD COLUMN IF NOT EXISTS last_renovation_year integer;
 CREATE INDEX IF NOT EXISTS idx_auctions_year_built ON auctions (year_built);
+
+-- Auction-Identity-Redesign WP-1: `auctions` ist ab jetzt die früh angelegte,
+-- nie gelöschte Master-Identität (geschrieben von ensureAuctionIdentity aus
+-- server/utils/current-auctions.ts, aufgerufen im Crawl-Pfad VOR jedem
+-- Archiv-/Extraktionsschreiber). Damit können artifact_captures/
+-- artifact_versions endlich eine echte FK darauf tragen und ihre
+-- denormalisierten Identitätsspalten abgeben.
+ALTER TABLE auctions ADD COLUMN IF NOT EXISTS first_seen_at timestamptz NOT NULL DEFAULT now();
+
+-- Reihenfolge ist wesentlich: erst Identität aus den noch vorhandenen
+-- denormalisierten Spalten nachziehen, DANN droppen, DANN die FK. Vor WP-1
+-- konnten archiveDocumentSet/reprocess.ts Archivzeilen schreiben, bevor je
+-- eine auctions-Zeile existierte — ein direktes ADD CONSTRAINT würde auf
+-- diesen verwaisten Bestandszeilen fehlschlagen.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'artifact_captures' AND column_name = 'country') THEN
+    INSERT INTO auctions (platform, external_id, country, region, authority, case_number, cancelled)
+    SELECT DISTINCT ON (platform, external_id)
+           platform, external_id, country, COALESCE(region, ''), COALESCE(authority, ''), COALESCE(case_number, ''), false
+    FROM artifact_captures
+    ORDER BY platform, external_id, captured_at DESC
+    ON CONFLICT (platform, external_id) DO NOTHING;
+
+    DROP INDEX IF EXISTS idx_capt_az_time;
+    DROP INDEX IF EXISTS idx_capt_country_region_time;
+    ALTER TABLE artifact_captures
+      DROP COLUMN country,
+      DROP COLUMN region,
+      DROP COLUMN authority,
+      DROP COLUMN case_number;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'artifact_versions' AND column_name = 'country') THEN
+    INSERT INTO auctions (platform, external_id, country, region, authority, case_number, cancelled)
+    SELECT DISTINCT ON (platform, external_id)
+           platform, external_id, country, COALESCE(region, ''), COALESCE(authority, ''), COALESCE(case_number, ''), false
+    FROM artifact_versions
+    ORDER BY platform, external_id, captured_at DESC
+    ON CONFLICT (platform, external_id) DO NOTHING;
+
+    DROP INDEX IF EXISTS idx_doc_sets_country_region_time;
+    ALTER TABLE artifact_versions
+      DROP COLUMN country,
+      DROP COLUMN region,
+      DROP COLUMN authority,
+      DROP COLUMN case_number;
+  END IF;
+
+  -- uq_artifact_versions_identity steht für Bestandsdatenbanken nicht in der
+  -- CREATE TABLE-Liste oben; WP-2s auction_details-FK braucht sie.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_artifact_versions_identity') THEN
+    ALTER TABLE artifact_versions ADD CONSTRAINT uq_artifact_versions_identity UNIQUE (id, platform, external_id);
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_artifact_captures_auction') THEN
+    ALTER TABLE artifact_captures
+      ADD CONSTRAINT fk_artifact_captures_auction
+      FOREIGN KEY (platform, external_id) REFERENCES auctions (platform, external_id) NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_artifact_versions_auction') THEN
+    ALTER TABLE artifact_versions
+      ADD CONSTRAINT fk_artifact_versions_auction
+      FOREIGN KEY (platform, external_id) REFERENCES auctions (platform, external_id) NOT VALID;
+  END IF;
+END $$;
+-- Getrennt vom Block oben: VALIDATE auf einer bereits validierten Constraint
+-- ist ein No-op, ein fehlgeschlagener Validierungslauf kann so beim nächsten
+-- Boot nachgeholt werden statt am IF NOT EXISTS oben hängenzubleiben.
+ALTER TABLE artifact_captures VALIDATE CONSTRAINT fk_artifact_captures_auction;
+ALTER TABLE artifact_versions VALIDATE CONSTRAINT fk_artifact_versions_auction;
 
 -- (platform, external_id) identity note: extraction_cache, auction_snapshot,
 -- location_enrichment and auction_translations all key on this pair, but
@@ -677,24 +748,6 @@ CREATE TABLE IF NOT EXISTS app_settings (
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE app_settings ENABLE ROW LEVEL SECURITY;
-
--- Roh-Archiv-Fix: region wurde bisher nicht auf artifact_captures gespeichert,
--- sondern beim Lesen (regions.get.ts/cases.get.ts) live gegen die auctions-
--- Tabelle gejoint. Da auctions bei jedem enrich-Lauf komplett neu geschrieben
--- wird (current-auctions.ts) und ein einzelner fehlgeschlagener Upsert-Chunk
--- den Rest des Laufs stillschweigend abbricht, konnte ein ganzes Bundesland
--- im Archiv-Browser unter "—" verschwinden, obwohl artifact_captures dafür Daten
--- hat. Ab jetzt wird region direkt beim Capture geschrieben (raw-archive.ts),
--- unabhängig vom aktuellen Zustand von auctions.
-ALTER TABLE artifact_captures ADD COLUMN IF NOT EXISTS region text;
-CREATE INDEX IF NOT EXISTS idx_capt_country_region_time ON artifact_captures (country, region, captured_at DESC);
--- Backfill für Bestandszeilen (region ist erst mit obigem ADD COLUMN
--- entstanden, ältere Zeilen haben region=NULL). Nur IS NULL, läuft bei jedem
--- Boot erneut (idempotent) und holt automatisch nach, sobald auctions für ein
--- bislang fehlendes Bundesland wieder befüllt ist.
-UPDATE artifact_captures rc SET region = a.region
-FROM auctions a
-WHERE rc.region IS NULL AND rc.platform = a.platform AND rc.external_id = a.external_id;
 
 -- Rollback von PR #186 (27.7.2026): der "aktueller Stand"-Index für
 -- kind='auction' hat das vorherige append-only-Verhalten (eine neue Zeile

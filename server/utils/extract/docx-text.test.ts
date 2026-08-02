@@ -168,8 +168,8 @@ function makeFakePool() {
       return { rows: [] }
     }
     if (sql.includes('INSERT INTO artifact_captures')) {
-      const [, kind, platform, , , externalId, , , , sourceUrl] = params as [
-        string, string, string, string, string | null, string, string | null, string | null, string, string | null,
+      const [, kind, platform, externalId, , sourceUrl] = params as [
+        string, string, string, string, string, string | null,
       ]
       captures.push({ kind, platform, externalId, sourceUrl })
       return { rows: [], rowCount: 1 }

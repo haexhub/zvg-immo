@@ -12,6 +12,7 @@ vi.mock('../crawlers/crawl-cadence', () => ({ regionRefreshIntervalMs: vi.fn(() 
 vi.mock('../utils/alert-matching', () => ({ matchAlerts: vi.fn() }))
 vi.mock('../utils/history', () => ({ recordObservations: vi.fn() }))
 vi.mock('../utils/raw-archive', () => ({ archiveAuction: vi.fn() }))
+vi.mock('../utils/current-auctions', () => ({ ensureAuctionIdentity: vi.fn() }))
 vi.mock('../utils/list-cache', () => ({
   regionListCacheAgeMs: vi.fn(async () => null),
   writeListCache: vi.fn(),
