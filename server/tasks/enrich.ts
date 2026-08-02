@@ -535,6 +535,21 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
     applyExtractionToAuctions(result.auctions, cache)
     normalizeAuctionDescriptions(result.auctions)
     await writeAuctionSnapshot(result.auctions)
+    // Pair every snapshot write with auction_details, including auctions
+    // outside `todo` above (per-item loop already covers those) — otherwise
+    // a value only this catch-all pass refreshes (backfilled marketValueEur,
+    // normalized description, a currentBid picked up by a plain re-crawl)
+    // would land in auction_snapshot but never in auction_details.
+    // writeAuctionDetails no-ops (a single SELECT, no INSERT) when nothing
+    // actually changed, so this is cheap for the common case.
+    for (const a of result.auctions) {
+      throwIfTaskAborted(signal)
+      try {
+        await writeAuctionDetails(a, cache[cacheKey(a.platform, a.externalId)] ?? null)
+      } catch (err) {
+        pushRunError('auction_details', `auction_details ${a.platform}:${a.externalId}: ${(err as Error).message}`, a)
+      }
+    }
     // Record the final enriched payload, not the earlier list-only regional
     // shape. This keeps each analytical observation complete with detail,
     // document, photo and extraction fields available at this run.
