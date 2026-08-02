@@ -54,6 +54,7 @@ import {
   type ExtractionCache,
 } from '~/server/utils/extraction-cache'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '~/server/utils/auction-snapshot'
+import { writeAuctionDetails } from '~/server/utils/auction-details'
 import { downloadBlob, findLatestCapture } from '~/server/utils/storage-download'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 import { interleaveByPlatform } from '~/server/utils/interleave-by-platform'
@@ -654,6 +655,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
     const updated: Auction = { ...snapshotEntry }
     applyExtractionToAuctions([updated], { [key]: entry })
     await writeAuctionSnapshot([updated])
+    await writeAuctionDetails(updated, entry)
   }
 
   for (const { platform, externalId } of candidates) {
@@ -724,6 +726,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
           const updated: Auction = { ...snapshotEntry }
           applyExtractionToAuctions([updated], { [key]: entry })
           await writeAuctionSnapshot([updated])
+          await writeAuctionDetails(updated, entry)
         }
         continue
       }
