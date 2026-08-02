@@ -172,6 +172,26 @@ describeDb('writeAuctionDetails (real Postgres)', () => {
     expect(rows.map((r) => r.version)).toEqual(Array.from({ length: WRITERS + 1 }, (_, i) => i + 1))
   })
 
+  it('cascades: deleting the referenced artifact_versions row deletes the auction_details row', async () => {
+    // deleteRawArchiveCountry() deletes artifact_versions rows for a country
+    // directly. The FK carries ON DELETE CASCADE precisely so that admin
+    // action keeps working once auction_details references a manifest,
+    // instead of failing with an FK violation.
+    await pool.query(
+      `INSERT INTO artifact_versions (platform, external_id, version, set_hash, document_count, captured_at, last_seen_at)
+       VALUES ('zvg-portal', '7265', 1, 'deadbeef', 1, now(), now())`,
+    )
+    const write = await writeAuctionDetails(makeAuction(), makeExtraction({ documentSetVersion: 1 }))
+    expect(write).toEqual({ version: 1, changed: true })
+    const before = await pool.query('SELECT artifact_version_id FROM auction_details WHERE version = 1')
+    expect(before.rows[0].artifact_version_id).not.toBeNull()
+
+    await pool.query(`DELETE FROM artifact_versions WHERE platform = 'zvg-portal' AND external_id = '7265'`)
+
+    const { rows } = await pool.query('SELECT count(*)::int AS n FROM auction_details')
+    expect(rows[0].n).toBe(0)
+  })
+
   it('holds the advisory lock for the whole transaction', async () => {
     await writeAuctionDetails(makeAuction(), makeExtraction())
 
