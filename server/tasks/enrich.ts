@@ -34,6 +34,12 @@ import { crawlAll, platforms } from '~/server/crawlers/registry'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '~/server/utils/auction-snapshot'
 import { ensureAuctionIdentity, upsertCurrentAuctions } from '~/server/utils/current-auctions'
 import { writeAuctionDetails } from '~/server/utils/auction-details'
+import { readLatestArtifactVersions } from '~/server/utils/artifact-version-state'
+import {
+  readAuctionFetchStates,
+  writeAuctionCrawlFetchState,
+  writeAuctionPhotoPipelineState,
+} from '~/server/utils/auction-fetch-state'
 import { deriveMarketValueEur, getRates } from '~/server/utils/exchange-rate'
 import { matchAlerts } from '~/server/utils/alert-matching'
 import { downloadNativeImages } from '~/server/utils/extract/native-images'
@@ -147,6 +153,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
             // Identity must exist before any archive write — archiveAuction's
             // artifact_captures row has an FK on (platform, external_id).
             await ensureAuctionIdentity(regionResult.auctions)
+            await writeAuctionCrawlFetchState(regionResult.auctions)
             for (const auction of regionResult.auctions) {
               throwIfTaskAborted(signal)
               await archiveAuction(auction, capturedAt)
@@ -165,6 +172,9 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
     // this for their own writes, but enrich's crawlAll() call is independent
     // of those and can discover auctions before either has run.
     await ensureAuctionIdentity(result.auctions)
+    await writeAuctionCrawlFetchState(result.auctions)
+    const fetchStates = await readAuctionFetchStates()
+    const artifactVersions = await readLatestArtifactVersions()
     const cache = await readExtractionCache()
     const previousSnapshot = await readAuctionSnapshot()
     const byPlatform = new Map(platforms.map((p) => [p.id, p]))
@@ -184,19 +194,21 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
     const needsEnrich = (a: Auction): boolean => {
       const crawler = byPlatform.get(a.platform)
       if (!crawler?.enrichOne) return false
-      const prev = previousSnapshot[cacheKey(a.platform, a.externalId)]
+      const key = cacheKey(a.platform, a.externalId)
+      const prev = fetchStates.get(key) ?? previousSnapshot[key]
       return opts.force || !prev?.detailFetchedAt || (a.sourceUpdatedIso != null && prev.sourceUpdatedIso !== a.sourceUpdatedIso)
     }
     // `archivedDocumentSetHash` (not `documentSetHash`) is this task's own
     // bookkeeping — whether *this task* has ever archived a document set for
     // this auction, independent of whether reprocess.ts has parsed it yet.
     const needsDocumentSetCheck = (a: Auction): boolean => {
-      const hit = cache[cacheKey(a.platform, a.externalId)]
-      const prev = previousSnapshot[cacheKey(a.platform, a.externalId)]
+      const key = cacheKey(a.platform, a.externalId)
+      const latestArtifact = artifactVersions.get(key)
+      const hit = cache[key]
+      const prev = fetchStates.get(key) ?? previousSnapshot[key]
       return (
         opts.force ||
-        !hit ||
-        (a.attachments.length > 0 && hit.archivedDocumentSetHash == null) ||
+        (!latestArtifact && (!hit || (a.attachments.length > 0 && hit.archivedDocumentSetHash == null))) ||
         (a.sourceUpdatedIso != null && prev?.sourceUpdatedIso !== a.sourceUpdatedIso)
       )
     }
@@ -221,22 +233,25 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
     // MAX_PHOTO_FAILURES so a listing whose PDF/URLs genuinely cannot be
     // mined doesn't retry forever.
     const needsPhotoBackfill = (a: Auction): boolean => {
-      const hit = cache[cacheKey(a.platform, a.externalId)]
+      const key = cacheKey(a.platform, a.externalId)
+      const hit = cache[key]
+      const state = fetchStates.get(key)
       const photos = hit?.photos?.length ?? 0
       const targetVersion = targetPhotoPipelineVersion(a)
       const pipelineDue =
-        hit?.photosCheckedAt == null || (hit.photoPipelineVersion ?? 1) < targetVersion
+        (state?.photosCheckedAt ?? hit?.photosCheckedAt) == null ||
+        (state?.photoPipelineVersion ?? hit?.photoPipelineVersion ?? 1) < targetVersion
       if (opts.force) {
         return (
           (photos === 0 || nativePhotoUrls(a).length > 0 || a.attachments.length > 0) &&
-          (hit?.photoFailures ?? 0) < MAX_PHOTO_FAILURES
+          (state?.photoFailures ?? hit?.photoFailures ?? 0) < MAX_PHOTO_FAILURES
         )
       }
       return (
         hit != null &&
         pipelineDue &&
         (photos === 0 || nativePhotoUrls(a).length > 0 || a.attachments.length > 0) &&
-        (hit.photoFailures ?? 0) < MAX_PHOTO_FAILURES
+        (state?.photoFailures ?? hit?.photoFailures ?? 0) < MAX_PHOTO_FAILURES
       )
     }
     const eligible = result.auctions.filter(
@@ -333,12 +348,19 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
         // Only the archived bytes matter here — reprocess.ts re-reads and
         // parses them independently, so this task never needs to keep the
         // parsed text/pages around.
-        let currentDocumentSet: ArchivedDocumentSetResult | null = priorEntry?.archivedDocumentSetHash
+        const latestArtifact = artifactVersions.get(key)
+        let currentDocumentSet: ArchivedDocumentSetResult | null = latestArtifact
           ? {
-              setHash: priorEntry.archivedDocumentSetHash,
-              version: priorEntry.archivedDocumentSetVersion ?? 0,
+              setHash: latestArtifact.setHash,
+              version: latestArtifact.version,
               changed: false,
             }
+          : priorEntry?.archivedDocumentSetHash
+            ? {
+                setHash: priorEntry.archivedDocumentSetHash,
+                version: priorEntry.archivedDocumentSetVersion ?? 0,
+                changed: false,
+              }
           : null
         if (needsDocumentSetCheck(a)) {
           const preparedDocuments = await prepareLiveLlmDocuments(a.attachments, documentIdentity, at)
@@ -361,14 +383,15 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
         // after dropping exact byte duplicates whose content hash matches a
         // mirrored native image.
         let curatedPhotos: CuratedPhoto[] | undefined
-        let photosCheckedAt = priorEntry?.photosCheckedAt
-        let photoFailures = priorEntry?.photoFailures ?? 0
-        let photoPipelineVersion = priorEntry?.photoPipelineVersion
+        const priorFetchState = fetchStates.get(key)
+        let photosCheckedAt = priorFetchState?.photosCheckedAt ?? priorEntry?.photosCheckedAt
+        let photoFailures = priorFetchState?.photoFailures ?? priorEntry?.photoFailures ?? 0
+        let photoPipelineVersion = priorFetchState?.photoPipelineVersion ?? priorEntry?.photoPipelineVersion
         if (needsPhotoBackfill(a) && isSafePathSegment(a.platform) && isSafePathSegment(a.externalId)) {
           const destDir = join(IMAGES_DIR, a.platform, a.externalId)
           const priorPhotos = priorEntry?.photos?.map(normalizePhoto) ?? []
           const targetVersion = targetPhotoPipelineVersion(a)
-          const rebuildingPhotoSet = (priorEntry?.photoPipelineVersion ?? 1) < targetVersion
+          const rebuildingPhotoSet = (priorFetchState?.photoPipelineVersion ?? priorEntry?.photoPipelineVersion ?? 1) < targetVersion
           let photos = rebuildingPhotoSet ? [] : priorPhotos.map((photo) => photo.file)
           let newlyDownloadedPhotos: string[] = []
           const nativeFotoUrls = nativePhotoUrls(a)
@@ -469,6 +492,12 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
             }
         cache[key] = entry
         dirty[key] = entry
+        await writeAuctionCrawlFetchState([a])
+        await writeAuctionPhotoPipelineState(a.platform, a.externalId, {
+          photosCheckedAt,
+          photoFailures,
+          photoPipelineVersion,
+        })
         archived++
         // Make this auction visible right away instead of waiting for the
         // whole run to finish — otherwise a freshly activated country shows
@@ -535,6 +564,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
     applyExtractionToAuctions(result.auctions, cache)
     normalizeAuctionDescriptions(result.auctions)
     await writeAuctionSnapshot(result.auctions)
+    await writeAuctionCrawlFetchState(result.auctions)
     // Pair every snapshot write with auction_details, including auctions
     // outside `todo` above (per-item loop already covers those) — otherwise
     // a value only this catch-all pass refreshes (backfilled marketValueEur,

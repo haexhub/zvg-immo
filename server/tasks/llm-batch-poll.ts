@@ -17,6 +17,7 @@ import {
 } from '../utils/extraction-cache'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
 import { writeAuctionDetails } from '../utils/auction-details'
+import { readAuctionFetchStates, writeAuctionLlmPipelineState } from '../utils/auction-fetch-state'
 import {
   listPendingLlmBatchJobs,
   markLlmBatchJobChecked,
@@ -124,6 +125,7 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
   }
 
   const cache = await readExtractionCache()
+  const fetchStates = await readAuctionFetchStates()
   throwIfTaskAborted(signal)
   const at = new Date().toISOString()
   const now = Date.parse(at)
@@ -156,8 +158,17 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
 
       for (const { key, extraction } of results) {
         throwIfTaskAborted(signal)
-        if (!splitKey(key)) continue
-        const priorEntry = cache[key]
+        const identity = splitKey(key)
+        if (!identity) continue
+        const storedPriorEntry = cache[key]
+        const priorState = fetchStates.get(key)
+        const priorEntry = storedPriorEntry && priorState
+          ? {
+              ...storedPriorEntry,
+              llmBatchJob: priorState.llmBatchJob ?? storedPriorEntry.llmBatchJob,
+              llmFailures: Math.max(priorState.llmFailures ?? 0, storedPriorEntry.llmFailures ?? 0) || undefined,
+            }
+          : storedPriorEntry
         if (!priorEntry) continue
         // mergeLlmResult's return type has no `llmBatchJob` field, so the
         // marker is dropped here simply by not carrying it forward.
@@ -169,6 +180,10 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
           console.warn(`[llm-batch-poll] cache write failed for ${key} in job ${job.jobName} — leaving job for next tick`)
           break
         }
+        await writeAuctionLlmPipelineState(identity.platform, identity.externalId, {
+          llmBatchJob: null,
+          llmFailures: mergedEntry.llmFailures ?? 0,
+        })
 
         const snapshotEntry = snapshot[key]
         if (snapshotEntry) {

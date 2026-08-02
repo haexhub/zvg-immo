@@ -39,8 +39,8 @@ function makeFakePool() {
   const rows: Array<{ platform: string; external_id: string; living_area_sqm: number | null }> = []
   const query = vi.fn(async (sql: string, params: unknown[] = []) => {
     if (sql.includes('INSERT INTO auctions')) {
-      // 36 columns per row, in COLUMNS order: platform, external_id are first two.
-      for (let i = 0; i < params.length; i += 36) {
+      // 37 columns per row, in COLUMNS order: platform, external_id are first two.
+      for (let i = 0; i < params.length; i += 37) {
         rows.push({
           platform: params[i] as string,
           external_id: params[i + 1] as string,

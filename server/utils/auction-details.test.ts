@@ -58,8 +58,15 @@ function makeExtraction(overrides: Partial<AuctionExtraction> = {}): AuctionExtr
 describe('auctionDetailsValues', () => {
   it('projects auction and extraction fields onto the value columns', () => {
     const values = auctionDetailsValues(
-      makeAuction({ startingBid: 1000, lat: 52.1, lng: 13.2 }),
-      makeExtraction({ heating: 'Gaszentralheizung', yearBuilt: 1968 }),
+      makeAuction({
+        startingBid: 1000,
+        lat: 52.1,
+        lng: 13.2,
+        sourceLivingAreaSqm: 121,
+        sourceLandAreaSqm: 501,
+        sourceRooms: 4.5,
+      }),
+      makeExtraction({ heating: 'Gaszentralheizung', yearBuilt: 1968, marketValueText: '250.000 EUR laut Gutachten' }),
     )
 
     expect(values).toMatchObject({
@@ -77,6 +84,10 @@ describe('auctionDetailsValues', () => {
       lng: 13.2,
       extraction_source: 'llm',
       extraction_confidence: 'high',
+      source_living_area_sqm: 121,
+      source_land_area_sqm: 501,
+      source_rooms: 4.5,
+      market_value_text: '250.000 EUR laut Gutachten',
     })
   })
 
@@ -139,6 +150,9 @@ describeDb('writeAuctionDetails (real Postgres)', () => {
     vi.mocked(getPool).mockReturnValue(pool as never)
     invalidateAuctionDetailsCache()
     await pool.query('DELETE FROM auction_details')
+    await pool.query('DELETE FROM artifact_versions')
+    await pool.query('DELETE FROM auction_fetch_state')
+    await pool.query('DELETE FROM location_enrichment')
     await pool.query('DELETE FROM auctions')
     await pool.query(
       `INSERT INTO auctions (platform, external_id, country, region, authority, case_number, cancelled)
@@ -174,6 +188,55 @@ describeDb('writeAuctionDetails (real Postgres)', () => {
 
     const { rows } = await pool.query('SELECT count(*)::int AS n FROM auction_details')
     expect(rows[0].n).toBe(1)
+  })
+
+  it('appends a version when only the curated photos changed', async () => {
+    await writeAuctionDetails(
+      makeAuction({ photoCount: 1 }),
+      makeExtraction({ photos: [{ file: 'front.jpg', category: 'aussen', caption: null, isPropertyPhoto: true }] }),
+    )
+    const changed = await writeAuctionDetails(
+      makeAuction({ photoCount: 1 }),
+      makeExtraction({ photos: [{ file: 'front.jpg', category: 'innen', caption: 'Wohnzimmer', isPropertyPhoto: true }] }),
+    )
+
+    expect(changed).toEqual({ version: 2, changed: true })
+    const { rows } = await pool.query(
+      `SELECT d.version, p.category, p.caption
+       FROM auction_details d JOIN auction_photos p ON p.auction_details_id = d.id
+       ORDER BY d.version`,
+    )
+    expect(rows).toEqual([
+      { version: 1, category: 'aussen', caption: null },
+      { version: 2, category: 'innen', caption: 'Wohnzimmer' },
+    ])
+  })
+
+  it('honors explicit parsed-manifest provenance for a rules-only placeholder', async () => {
+    await pool.query(
+      `INSERT INTO artifact_versions
+         (platform, external_id, version, set_hash, document_count, captured_at, last_seen_at)
+       VALUES
+         ('zvg-portal', '7265', 1, 'first', 1, now(), now()),
+         ('zvg-portal', '7265', 2, 'second', 1, now(), now())`,
+    )
+    const { rows } = await pool.query<{ id: string }>(
+      `SELECT id FROM artifact_versions
+       WHERE platform = 'zvg-portal' AND external_id = '7265' AND version = 1`,
+    )
+    const firstId = Number(rows[0]!.id)
+
+    await writeAuctionDetails(
+      makeAuction(),
+      makeExtraction({ documentSetVersion: 2 }),
+      { artifactVersionId: firstId },
+    )
+
+    const details = await pool.query<{ artifact_version_id: string }>(
+      `SELECT artifact_version_id FROM auction_details
+       WHERE platform = 'zvg-portal' AND external_id = '7265'`,
+    )
+    expect(Number(details.rows[0]!.artifact_version_id)).toBe(firstId)
   })
 
   it('serializes concurrent writers for the same auction into consecutive versions', async () => {

@@ -48,10 +48,9 @@ export interface AuctionSummary {
 // shape — the map popover's fallback for a marker outside the loaded page, and
 // the landing rails respectively.
 //
-// Object/price/extraction fields come from the newest `auction_details` version
-// (WP-3). extraction_cache is still joined for the curated photo array and
-// auction_snapshot for the three display-only strings, neither of which
-// auction_details models — see LATEST_DETAILS_JOIN_SQL.
+// Object/price/extraction fields come from the newest `auction_details`
+// version. Display-only crawl state lives in auction_fetch_state; curated
+// photos are aggregated from the current details version.
 export const SUMMARY_COLUMNS_SQL = `
   a.platform, a.country, a.region, a.external_id, a.case_number, a.authority,
   a.title, a.auction_date_iso, a.cancelled,
@@ -60,10 +59,10 @@ export const SUMMARY_COLUMNS_SQL = `
   d.property_type, d.land_area_sqm, d.living_area_sqm, d.year_built,
   d.last_renovation_year, d.condition, d.features, d.extraction_source,
   d.llm_analyzed_at,
-  s.auction->>'marketValueText' AS market_value_text,
-  s.auction->>'auctionDateText' AS auction_date_text,
-  s.auction->>'pdfUrl' AS pdf_url,
-  ec.extraction -> 'photos' AS photos`
+  d.market_value_text,
+  a.auction_date_text,
+  fs.pdf_url,
+  photos.items AS photos`
 
 /**
  * Newest extraction version per auction. LATERAL rather than the plan's
@@ -80,10 +79,18 @@ export const LATEST_DETAILS_JOIN_SQL = `LEFT JOIN LATERAL (
 
 export const SUMMARY_FROM_SQL = `FROM auctions a
   ${LATEST_DETAILS_JOIN_SQL}
-  LEFT JOIN extraction_cache ec
-    ON ec.platform = a.platform AND ec.external_id = a.external_id
-  LEFT JOIN auction_snapshot s
-    ON s.platform = a.platform AND s.external_id = a.external_id`
+  LEFT JOIN auction_fetch_state fs
+    ON fs.platform = a.platform AND fs.external_id = a.external_id
+  LEFT JOIN LATERAL (
+    SELECT jsonb_agg(jsonb_build_object(
+      'file', ap.file,
+      'category', ap.category,
+      'caption', ap.caption,
+      'isPropertyPhoto', ap.is_property_photo
+    ) ORDER BY ap.ordinal) AS items
+    FROM auction_photos ap
+    WHERE ap.auction_details_id = d.id
+  ) photos ON true`
 
 export interface AuctionSearchResponse {
   auctions: AuctionSummary[]

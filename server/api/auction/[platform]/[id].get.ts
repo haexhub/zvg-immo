@@ -1,21 +1,16 @@
-// Returns one fully-decorated auction from the enrich-task snapshot. Avoids the
-// live crawler so detail-page loads stay fast and the URL stays shareable.
-// Staleness is bounded by the enrich task interval (cron `30 */6 * * *`); for
-// listings whose snapshot hasn't been built yet (cold cache, recently added)
-// the endpoint returns 404 — the user can still reach the source portal via
-// the link on the list view.
+// Returns the structured current aggregate. A short live/list fallback remains
+// for a just-discovered auction whose first database write has not landed yet.
 
 import type { Auction, LocationEnrichment } from '~/types/auction'
-import { applyAuctionPhotos, applySnapshotPhotosToAuctions, readAuctionSnapshot, type AuctionSnapshot } from '../../../utils/auction-snapshot'
-import { applyExtractionToAuctions, readExtractionCache } from '../../../utils/extraction-cache'
 import { geocodeAddress } from '../../../utils/geocode'
 import { isSafePathSegment } from '../../../utils/path-segment'
-import { cacheKey, readVerkehrswertCache } from '../../../utils/verkehrswert-cache'
+import { cacheKey } from '../../../utils/verkehrswert-cache'
 import { applyDescriptionMarketValue } from '../../../utils/description-market-value'
 import { deriveMarketValueEur, getRates } from '../../../utils/exchange-rate'
 import { ensureEnabledCountriesLoaded, isCountryEnabled, platforms } from '../../../crawlers/registry'
 import { readMergedListCache } from '../../../utils/list-cache'
 import { readLocationEnrichment } from '../../../utils/external-data/location-enrichment'
+import { readAuctionRecord } from '../../../utils/auction-record'
 
 const LIVE_MISS_TTL_MS = 60_000
 const liveMissCache = new Map<string, number>()
@@ -90,47 +85,21 @@ async function findLiveAuction(platform: string, id: string): Promise<Auction | 
   return null
 }
 
-async function decorateDetailAuction(auction: Auction, snapshot: AuctionSnapshot): Promise<Auction> {
-  const [cachedListAuction, extractionCache, verkehrswertCache] = await Promise.all([
-    findCachedListAuction(auction.platform, auction.externalId, auction.country),
-    readExtractionCache(),
-    readVerkehrswertCache(),
-  ])
-  // A detail snapshot can predate a crawler gaining native gallery support.
-  // The search/list cache may already have the richer gallery, so recover it
-  // for the detail page without replacing the snapshot's enriched fields.
-  if (cachedListAuction) applyAuctionPhotos(auction, cachedListAuction)
-  const key = cacheKey(auction.platform, auction.externalId)
-  if (auction.marketValueEur == null) {
-    const vw = verkehrswertCache[key]
-    if (vw?.marketValueEur != null) {
-      auction.marketValueEur = vw.marketValueEur
-      auction.marketValueText = vw.marketValueText
-    }
-  }
-  applyDescriptionMarketValue(auction)
-  applySnapshotPhotosToAuctions([auction], snapshot)
-  applyExtractionToAuctions([auction], extractionCache)
-  return auction
-}
-
 export default defineEventHandler(async (event): Promise<AuctionDetail> => {
   const platform = String(event.context.params?.platform ?? '')
   const id = String(event.context.params?.id ?? '')
   if (!isSafePathSegment(platform) || !isSafePathSegment(id)) {
     throw createError({ statusCode: 400, statusMessage: 'invalid platform/id' })
   }
-  const key = cacheKey(platform, id)
-  const snapshot = await readAuctionSnapshot()
-  const snapshotHit = snapshot[key]
+  const stored = await readAuctionRecord(platform, id)
   const hit =
-    (snapshotHit ? cloneAuction(snapshotHit) : null) ??
+    stored?.auction ??
     (await findCachedListAuction(platform, id)) ??
     (await findLiveAuction(platform, id))
   if (!hit) {
     throw createError({ statusCode: 404, statusMessage: 'auction not found' })
   }
-  const auction = await decorateDetailAuction(hit, snapshot)
+  const auction = cloneAuction(hit)
   // Cache-only lookup: the geocode task fills coordinates ahead of time, so
   // serving a detail page never blocks on Nominatim.
   const point = await geocodeAddress(auction.address, auction.country, { fetchMissing: false })

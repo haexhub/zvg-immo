@@ -7,8 +7,8 @@ vi.mock('h3', () => ({
   setResponseHeader: vi.fn(),
 }))
 
-vi.mock('~/server/utils/auction-snapshot', () => ({
-  readAuctionSnapshot: vi.fn(),
+vi.mock('~/server/utils/auction-record', () => ({
+  readAuctionRecord: vi.fn(),
 }))
 
 vi.mock('~/server/utils/db', () => ({
@@ -101,13 +101,13 @@ async function loadHandler() {
   }))
   vi.stubGlobal('createError', (input: { statusCode: number, statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
 
-  const { readAuctionSnapshot } = await import('~/server/utils/auction-snapshot')
+  const { readAuctionRecord } = await import('~/server/utils/auction-record')
   const { getPool } = await import('~/server/utils/db')
   const { readInsight, writeInsight } = await import('~/server/utils/insight-cache')
   const { getLlmMaxTokens, getLlmProviderOverride } = await import('~/server/utils/app-settings')
   const { resolveLlmConfig, getProvider } = await import('~/server/utils/extract/llm')
 
-  vi.mocked(readAuctionSnapshot).mockResolvedValue({ 'se-kronofogden:101738': auction() })
+  vi.mocked(readAuctionRecord).mockResolvedValue({ auction: auction(), detailsId: 1, detailsVersion: 1 })
   vi.mocked(getPool).mockReturnValue({} as Pool)
   vi.mocked(readInsight).mockResolvedValue(null)
   vi.mocked(writeInsight).mockResolvedValue(undefined)

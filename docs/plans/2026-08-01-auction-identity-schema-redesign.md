@@ -1,9 +1,11 @@
 # Auction-Identität + versionierte Extraktion — Redesign
 
-**Status (2026-08-01): Design fertig diskutiert, KEIN Code geschrieben.** Dieses
-Dokument ist die vollständige Grundlage für die Umsetzung in einer neuen Session/
-neuem Worktree. Umsetzung **pro Arbeitspaket in einem eigenen Worktree**
-(Projektkonvention, `EnterWorktree`), nicht als ein großer Umbau.
+**Status (2026-08-02): WP-0 bis WP-5 implementiert und im Integrations-Worktree
+`codex/auction-schema-completion` zusammengeführt.** WP-8 bis WP-11 aus dem
+Nachtrag `2026-08-02-auction-details-completion.md` sind dort ebenfalls
+umgesetzt. WP-6 (alte Cache-Contracts entfernen) bleibt auf den vereinbarten
+Produktions-Burn-in gegated; WP-7 (Länder-Rebuild/Recovery) wartet weiterhin
+auf die fachliche Entscheidung zur Löschsemantik.
 
 ## Wie es dazu kam
 

@@ -48,6 +48,8 @@ const VALUE_COLUMNS = [
   'source_security_deposit', 'security_deposit', 'bidding_notes', 'photo_count',
   'thumbnail_url', 'lat', 'lng', 'extraction_source', 'extraction_confidence',
   'document_summary', 'extraction_texts',
+  'source_living_area_sqm', 'source_land_area_sqm', 'source_rooms',
+  'market_value_text',
 ] as const
 
 const COLUMN_TYPES: Record<string, string> = {
@@ -60,6 +62,8 @@ const COLUMN_TYPES: Record<string, string> = {
   current_bid: 'numeric', source_security_deposit: 'numeric',
   security_deposit: 'numeric', photo_count: 'integer', lat: 'numeric',
   lng: 'numeric', extraction_texts: 'jsonb',
+  source_living_area_sqm: 'numeric', source_land_area_sqm: 'numeric',
+  source_rooms: 'numeric',
 }
 
 async function main() {

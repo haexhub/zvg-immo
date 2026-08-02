@@ -7,6 +7,7 @@ import { archiveAuction } from './raw-archive'
 import { recordObservations } from './history'
 import { getPool } from './db'
 import { ensureAuctionIdentity } from './current-auctions'
+import { writeAuctionCrawlFetchState } from './auction-fetch-state'
 import { writeListCache } from './list-cache'
 import { invalidateAuctionSnapshot } from './auction-snapshot'
 import { invalidateExtractionCache } from './extraction-cache'
@@ -123,6 +124,7 @@ export async function rebuildCountry(countryInput: string): Promise<CountryRebui
         })
         await writeListCache(country, region.code, result)
         await ensureAuctionIdentity(result.auctions)
+        await writeAuctionCrawlFetchState(result.auctions)
         await recordObservations(result, capturedAt)
         await matchAlerts(country, region.code, result)
         for (const auction of result.auctions) {

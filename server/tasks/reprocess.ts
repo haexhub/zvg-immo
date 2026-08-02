@@ -55,6 +55,15 @@ import {
 } from '~/server/utils/extraction-cache'
 import { readAuctionSnapshot, writeAuctionSnapshot } from '~/server/utils/auction-snapshot'
 import { writeAuctionDetails } from '~/server/utils/auction-details'
+import {
+  hasUnparsedArtifactVersion,
+  readArtifactProcessingState,
+  type ArtifactProcessingState,
+} from '~/server/utils/artifact-version-state'
+import {
+  readAuctionFetchStates,
+  writeAuctionLlmPipelineState,
+} from '~/server/utils/auction-fetch-state'
 import { downloadBlob, findLatestCapture } from '~/server/utils/storage-download'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 import { interleaveByPlatform } from '~/server/utils/interleave-by-platform'
@@ -210,11 +219,13 @@ async function findCandidates(opts: ReprocessOptions, countries: readonly string
  *  task hasn't parsed yet — the two hashes are written by different tasks on
  *  different schedules (see this file's header) and only diverge when
  *  documents were added/changed/removed since the last successful parse. */
-function hasNewArchivedDocuments(priorEntry: AuctionExtraction | undefined): boolean {
-  return (
-    !!priorEntry?.archivedDocumentSetHash &&
+function hasNewArchivedDocuments(
+  state: ArtifactProcessingState,
+  priorEntry?: AuctionExtraction,
+): boolean {
+  if (state.latest) return hasUnparsedArtifactVersion(state)
+  return !!priorEntry?.archivedDocumentSetHash &&
     priorEntry.archivedDocumentSetHash !== priorEntry.documentSetHash
-  )
 }
 
 /** Overlays the LLM's index-based curation onto enrich.ts's default-
@@ -290,7 +301,7 @@ async function buildReprocessInput(
   externalId: string,
   priorEntry: AuctionExtraction | undefined,
   llmConfig: LlmConfig | null,
-  opts: { nativeDocuments?: boolean } = {},
+  opts: { nativeDocuments?: boolean; artifactState?: ArtifactProcessingState } = {},
 ): Promise<
   {
     fields: MergeInputFields
@@ -316,7 +327,8 @@ async function buildReprocessInput(
     return null
   }
 
-  const documentSetChanged = hasNewArchivedDocuments(priorEntry)
+  const artifactState = opts.artifactState ?? await readArtifactProcessingState(platform, externalId)
+  const documentSetChanged = hasNewArchivedDocuments(artifactState, priorEntry)
   const effectivePriorEntry = documentSetChanged ? undefined : priorEntry
 
   const rules = extractByRules({ title: auction.title, description: auction.description })
@@ -366,8 +378,8 @@ async function buildReprocessInput(
     // already parsed instead of picking up a just-archived change.
     const documentParts = await prepareArchivedLlmDocuments(auction, {
       nativeDocuments: usingNativeDoc,
-      documentSetHash: priorEntry?.archivedDocumentSetHash,
-      documentSetVersion: priorEntry?.archivedDocumentSetVersion,
+      documentSetHash: artifactState.latest?.setHash ?? priorEntry?.archivedDocumentSetHash,
+      documentSetVersion: artifactState.latest?.version ?? priorEntry?.archivedDocumentSetVersion,
     })
     documentSetComplete = documentParts.documentSetComplete
     input = {
@@ -463,9 +475,11 @@ export async function reprocessAuction(
      *  the chain for every remaining candidate instead of paying the failed
      *  attempt again and again (see runReprocess). */
     onDailyQuotaExhausted?: (config: LlmConfig) => void
+    artifactState?: ArtifactProcessingState
   } = {},
 ): Promise<{ entry: AuctionExtraction; llmCalled: boolean } | null> {
-  let base = await buildReprocessInput(platform, externalId, priorEntry, llmConfig)
+  const artifactState = opts.artifactState ?? await readArtifactProcessingState(platform, externalId)
+  let base = await buildReprocessInput(platform, externalId, priorEntry, llmConfig, { artifactState })
   if (!base) return null
 
   if (!llmConfig) {
@@ -480,7 +494,7 @@ export async function reprocessAuction(
       // raw-PDF path vs. every other provider's rasterized images) depends on
       // which provider is actually being asked, and the fallback's provider
       // can differ from the one buildReprocessInput was first built for.
-      const rebuilt = await buildReprocessInput(platform, externalId, priorEntry, config)
+      const rebuilt = await buildReprocessInput(platform, externalId, priorEntry, config, { artifactState })
       if (!rebuilt) break
       base = rebuilt
     }
@@ -521,9 +535,11 @@ export async function reprocessAuction(
   const parsedCurrentSet = llm != null && base.documentSetComplete
   const entry: AuctionExtraction = {
     ...mergeLlmResult(effectivePriorEntry, base.fields, llm, at, curatedPhotos),
-    documentSetHash: parsedCurrentSet ? (priorEntry?.archivedDocumentSetHash ?? null) : (priorEntry?.documentSetHash ?? null),
+    documentSetHash: parsedCurrentSet
+      ? (artifactState.latest?.setHash ?? priorEntry?.archivedDocumentSetHash ?? null)
+      : (priorEntry?.documentSetHash ?? null),
     documentSetVersion: parsedCurrentSet
-      ? (priorEntry?.archivedDocumentSetVersion ?? null)
+      ? (artifactState.latest?.version ?? priorEntry?.archivedDocumentSetVersion ?? null)
       : (priorEntry?.documentSetVersion ?? null),
     // Crawl-owned fields — pass through untouched, this task never sets them.
     archivedDocumentSetHash: priorEntry?.archivedDocumentSetHash ?? null,
@@ -571,6 +587,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
     return { candidates: 0, processed: 0, skipped: 0, llmCalls: 0, llmErrors: 0, durationMs }
   }
   const cache = await readExtractionCache()
+  const fetchStates = await readAuctionFetchStates()
   // Batch submission (below) is committed to one model per job, so only the
   // sync path (reprocessAuction, further down) gets the rest of the chain as
   // automatic fallback — llmConfig itself stays the primary everywhere else
@@ -638,8 +655,12 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
   const dirty: ExtractionCache = {}
   const batchItems: { key: string; input: LlmInput }[] = []
 
-  async function persistEntry(key: string, entry: AuctionExtraction): Promise<boolean> {
+  async function persistEntry(platform: string, externalId: string, key: string, entry: AuctionExtraction): Promise<boolean> {
     const ok = await writeExtractionCache({ [key]: entry })
+    await writeAuctionLlmPipelineState(platform, externalId, {
+      llmBatchJob: entry.llmBatchJob ?? null,
+      llmFailures: entry.llmFailures ?? 0,
+    })
     if (ok) {
       delete dirty[key]
     } else {
@@ -648,21 +669,34 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
     return ok
   }
 
-  async function syncSnapshotEntry(key: string, entry: AuctionExtraction): Promise<void> {
+  async function syncSnapshotEntry(
+    key: string,
+    entry: AuctionExtraction,
+    artifactVersionId: number | null,
+  ): Promise<void> {
     const snapshot = await readAuctionSnapshot()
     const snapshotEntry = snapshot[key]
     if (!snapshotEntry) return
     const updated: Auction = { ...snapshotEntry }
     applyExtractionToAuctions([updated], { [key]: entry })
     await writeAuctionSnapshot([updated])
-    await writeAuctionDetails(updated, entry)
+    await writeAuctionDetails(updated, entry, { artifactVersionId })
   }
 
   for (const { platform, externalId } of candidates) {
     throwIfTaskAborted(signal)
     try {
       const key = cacheKey(platform, externalId)
-      const priorEntry = cache[key]
+      const storedPriorEntry = cache[key]
+      const priorState = fetchStates.get(key)
+      const priorEntry = storedPriorEntry && priorState
+        ? {
+            ...storedPriorEntry,
+            llmBatchJob: priorState.llmBatchJob ?? storedPriorEntry.llmBatchJob,
+            llmFailures: Math.max(priorState.llmFailures ?? 0, storedPriorEntry.llmFailures ?? 0) || undefined,
+          }
+        : storedPriorEntry
+      const artifactState = await readArtifactProcessingState(platform, externalId)
       const hasMissingLlmOnlyField = priorEntry
         ? priorEntry.condition === undefined ||
           priorEntry.features === undefined ||
@@ -685,9 +719,11 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
         ((!priorEntry ||
           (priorEntry.source === 'rules' && priorEntry.confidence === 'low') ||
           (llmConfig != null && hasMissingLlmOnlyField) ||
-          hasNewArchivedDocuments(priorEntry)) &&
+          hasNewArchivedDocuments(artifactState, priorEntry)) &&
           (priorEntry?.llmFailures ?? 0) < MAX_LLM_FAILURES &&
-          !isLlmBatchPending(priorEntry))
+          !isLlmBatchPending(priorState?.llmBatchJob
+            ? { llmBatchJob: priorState.llmBatchJob, at: priorState.updatedAt }
+            : priorEntry))
       if (!eligible) {
         skipped++
         continue
@@ -703,6 +739,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       if (useBatch && llmReady) {
         const base = await buildReprocessInput(platform, externalId, priorEntry, llmConfig, {
           nativeDocuments: supportsNativeBatchDocuments(llmConfig),
+          artifactState,
         })
         if (!base || !base.input) {
           skipped++
@@ -713,8 +750,8 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
         batchItems.push({ key, input: base.input })
         const entry = {
           ...buildRulesOnlyEntry(base.fields, priorEntry, at),
-          documentSetHash: priorEntry?.archivedDocumentSetHash ?? null,
-          documentSetVersion: priorEntry?.archivedDocumentSetVersion ?? null,
+          documentSetHash: artifactState.latest?.setHash ?? priorEntry?.archivedDocumentSetHash ?? null,
+          documentSetVersion: artifactState.latest?.version ?? priorEntry?.archivedDocumentSetVersion ?? null,
         }
         cache[key] = entry
         dirty[key] = entry
@@ -726,7 +763,11 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
           const updated: Auction = { ...snapshotEntry }
           applyExtractionToAuctions([updated], { [key]: entry })
           await writeAuctionSnapshot([updated])
-          await writeAuctionDetails(updated, entry)
+          // Submitting a batch has not parsed the new documents yet. Keep the
+          // previous provenance until llm-batch-poll merges a real result.
+          await writeAuctionDetails(updated, entry, {
+            artifactVersionId: artifactState.parsedArtifactVersionId,
+          })
         }
         continue
       }
@@ -753,6 +794,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       let syncLlmAttempted = false
       let platformLlmCallsSoFar = platformLlmCalls
       const result = await reprocessAuction(platform, externalId, priorEntry, syncConfigs[0] ?? null, at, {
+        artifactState,
         fallbackConfigs: syncConfigs.slice(1),
         onDailyQuotaExhausted: (config) => {
           if (exhaustedConfigs.has(config)) return
@@ -789,8 +831,14 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       // Persist each successful sync result immediately. Otherwise a long
       // manual run can show LLM data from the in-process cache, then lose all
       // unflushed progress when podman auto-update replaces the container.
-      if (await persistEntry(key, result.entry)) {
-        await syncSnapshotEntry(key, result.entry)
+      if (await persistEntry(platform, externalId, key, result.entry)) {
+        const parsedLatest = artifactState.latest != null &&
+          result.entry.documentSetVersion === artifactState.latest.version
+        await syncSnapshotEntry(
+          key,
+          result.entry,
+          parsedLatest ? artifactState.latest!.id : artifactState.parsedArtifactVersionId,
+        )
       }
     } catch (err) {
       // Also where a rate limit/quota error (see llm.ts's isRateLimitError())
@@ -833,6 +881,14 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
         const marked = { ...priorItemEntry, llmBatchJob: item.jobName }
         cache[item.key] = marked
         dirty[item.key] = marked
+        const separator = item.key.indexOf(':')
+        if (separator > 0) {
+          await writeAuctionLlmPipelineState(
+            item.key.slice(0, separator),
+            item.key.slice(separator + 1),
+            { llmBatchJob: item.jobName, llmFailures: marked.llmFailures ?? 0 },
+          )
+        }
       }
       console.log(`[reprocess] submitted LLM batch ${submission.jobName} with ${submission.submitted.length} items`)
       if (submission.retryItems.length > 0) {

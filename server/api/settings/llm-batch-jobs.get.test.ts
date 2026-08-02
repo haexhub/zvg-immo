@@ -5,7 +5,7 @@ vi.mock('~/server/utils/llm-batch-jobs', () => ({
   listRecentLlmBatchJobs: vi.fn(),
   getAllLlmBatchCapabilities: vi.fn(),
 }))
-vi.mock('~/server/utils/extraction-cache', () => ({ readExtractionCache: vi.fn() }))
+vi.mock('~/server/utils/auction-record', () => ({ readAuctionRecords: vi.fn() }))
 vi.mock('~/server/utils/extract/gemini-batch', () => ({ isGeminiBatchTierPaid: vi.fn() }))
 vi.mock('~/server/utils/task-runs', () => ({ getTaskRunStatus: vi.fn() }))
 
@@ -20,6 +20,19 @@ const IDLE_REPROCESS_STATUS = {
   progress: null,
 }
 
+function record(key: string, extraction: Record<string, unknown>) {
+  const separator = key.indexOf(':')
+  return {
+    detailsId: 1,
+    detailsVersion: 1,
+    auction: {
+      platform: key.slice(0, separator),
+      externalId: key.slice(separator + 1),
+      extraction,
+    },
+  } as never
+}
+
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.resetModules()
@@ -31,7 +44,7 @@ describe('/api/settings/llm-batch-jobs', () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
       await import('~/server/utils/llm-batch-jobs')
-    const { readExtractionCache } = await import('~/server/utils/extraction-cache')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
     const { isGeminiBatchTierPaid } = await import('~/server/utils/extract/gemini-batch')
     const { getTaskRunStatus } = await import('~/server/utils/task-runs')
     vi.mocked(isGeminiBatchTierPaid).mockReturnValue(true)
@@ -67,13 +80,13 @@ describe('/api/settings/llm-batch-jobs', () => {
     vi.mocked(getAllLlmBatchCapabilities).mockResolvedValue({
       'gemini-native': { ok: false, message: 'FAILED_PRECONDITION: Precondition check failed.', checkedAt: '2026-07-26T18:00:00.000Z', source: 'enrich' },
     })
-    vi.mocked(readExtractionCache).mockResolvedValue({
-      'zvg-portal:1': { llmBatchJob: 'msgbatch_abc', at: '2026-07-26T18:00:00.000Z' } as never,
-      'zvg-portal:2': { llmBatchJob: 'msgbatch_abc', at: '2026-07-26T18:00:00.000Z' } as never,
-      'zvg-portal:3': { at: '2026-07-26T18:00:00.000Z' } as never,
-      'zvg-portal:4': { source: 'rules', confidence: 'low', at: '2026-07-26T18:00:00.000Z' } as never,
-      'zvg-portal:5': { llmBatchJob: 'deleted_job', at: '2026-07-26T18:00:00.000Z' } as never,
-    })
+    vi.mocked(readAuctionRecords).mockResolvedValue([
+      record('zvg-portal:1', { llmBatchJob: 'msgbatch_abc', at: '2026-07-26T18:00:00.000Z' }),
+      record('zvg-portal:2', { llmBatchJob: 'msgbatch_abc', at: '2026-07-26T18:00:00.000Z' }),
+      record('zvg-portal:3', { at: '2026-07-26T18:00:00.000Z' }),
+      record('zvg-portal:4', { source: 'rules', confidence: 'low', at: '2026-07-26T18:00:00.000Z' }),
+      record('zvg-portal:5', { llmBatchJob: 'deleted_job', at: '2026-07-26T18:00:00.000Z' }),
+    ])
 
     const handler = (await import('./llm-batch-jobs.get')).default as () => Promise<unknown>
 
@@ -150,13 +163,13 @@ describe('/api/settings/llm-batch-jobs', () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
       await import('~/server/utils/llm-batch-jobs')
-    const { readExtractionCache } = await import('~/server/utils/extraction-cache')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
     const { isGeminiBatchTierPaid } = await import('~/server/utils/extract/gemini-batch')
     const { getTaskRunStatus } = await import('~/server/utils/task-runs')
     vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([])
     vi.mocked(listRecentLlmBatchJobs).mockResolvedValue([])
     vi.mocked(getAllLlmBatchCapabilities).mockResolvedValue({})
-    vi.mocked(readExtractionCache).mockResolvedValue({})
+    vi.mocked(readAuctionRecords).mockResolvedValue([])
     vi.mocked(isGeminiBatchTierPaid).mockReturnValue(false)
     vi.mocked(getTaskRunStatus).mockResolvedValue(IDLE_REPROCESS_STATUS)
 
@@ -170,13 +183,13 @@ describe('/api/settings/llm-batch-jobs', () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
       await import('~/server/utils/llm-batch-jobs')
-    const { readExtractionCache } = await import('~/server/utils/extraction-cache')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
     const { isGeminiBatchTierPaid } = await import('~/server/utils/extract/gemini-batch')
     const { getTaskRunStatus } = await import('~/server/utils/task-runs')
     vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([])
     vi.mocked(listRecentLlmBatchJobs).mockResolvedValue([])
     vi.mocked(getAllLlmBatchCapabilities).mockResolvedValue({})
-    vi.mocked(readExtractionCache).mockResolvedValue({})
+    vi.mocked(readAuctionRecords).mockResolvedValue([])
     vi.mocked(isGeminiBatchTierPaid).mockReturnValue(true)
     vi.mocked(getTaskRunStatus).mockResolvedValue(IDLE_REPROCESS_STATUS)
 
@@ -190,13 +203,13 @@ describe('/api/settings/llm-batch-jobs', () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
       await import('~/server/utils/llm-batch-jobs')
-    const { readExtractionCache } = await import('~/server/utils/extraction-cache')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
     const { isGeminiBatchTierPaid } = await import('~/server/utils/extract/gemini-batch')
     const { getTaskRunStatus } = await import('~/server/utils/task-runs')
     vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([])
     vi.mocked(listRecentLlmBatchJobs).mockResolvedValue([])
     vi.mocked(getAllLlmBatchCapabilities).mockResolvedValue({})
-    vi.mocked(readExtractionCache).mockResolvedValue({})
+    vi.mocked(readAuctionRecords).mockResolvedValue([])
     vi.mocked(isGeminiBatchTierPaid).mockReturnValue(true)
     const runningStatus = {
       status: 'running' as const,

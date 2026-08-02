@@ -9,10 +9,8 @@
 
 import { setResponseHeader, setResponseStatus } from 'h3'
 import type { Pool } from 'pg'
-import { readAuctionSnapshot } from '~/server/utils/auction-snapshot'
-import { readLatestAuctionDetails } from '~/server/utils/auction-details'
+import { readAuctionRecord } from '~/server/utils/auction-record'
 import { isSafePathSegment } from '~/server/utils/path-segment'
-import { cacheKey } from '~/server/utils/verkehrswert-cache'
 import { getPool } from '~/server/utils/db'
 import { sha256Hex } from '~/server/utils/raw-archive'
 import {
@@ -128,12 +126,11 @@ export default defineEventHandler(async (event) => {
   const targetLang = lang as ContentTargetLang
   const cacheOnly = String(getQuery(event).cacheOnly ?? '') === '1'
 
-  const key = cacheKey(platform, id)
-  const snapshot = await readAuctionSnapshot()
-  const auction = snapshot[key]
-  if (!auction) {
+  const record = await readAuctionRecord(platform, id)
+  if (!record) {
     throw createError({ statusCode: 404, statusMessage: 'auction not found' })
   }
+  const auction = record.auction
 
   const { title, address, description } = auction
   const documentSummary = auction.extraction?.documentSummary ?? null
@@ -160,11 +157,10 @@ export default defineEventHandler(async (event) => {
 
   // Translations hang off a concrete extraction version (WP-4). An auction
   // with no auction_details row yet has nothing versioned to translate.
-  const latestDetails = await readLatestAuctionDetails(platform, id)
-  if (!latestDetails) {
+  if (record.detailsVersion == null) {
     throw createError({ statusCode: 404, statusMessage: 'auction not found' })
   }
-  const detailsVersion = latestDetails.version
+  const detailsVersion = record.detailsVersion
 
   const stored = await readAuctionTranslation(db, platform, id, detailsVersion, targetLang)
   if (stored?.status === 'completed' && stored.contentHash === contentHash) {

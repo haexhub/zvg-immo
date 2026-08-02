@@ -12,8 +12,7 @@
 
 import { getServiceClient } from '../../utils/supabase'
 import { sendMail } from '../../utils/mailer'
-import { readAuctionSnapshot } from '../../utils/auction-snapshot'
-import { cacheKey } from '../../utils/verkehrswert-cache'
+import { readAuctionRecord } from '../../utils/auction-record'
 
 export interface LawyerInquiry {
   id: string
@@ -41,11 +40,11 @@ export default defineEventHandler(async (event): Promise<LawyerInquiry> => {
     throw createError({ statusCode: 400, statusMessage: 'lawyerId, platform, externalId und message sind erforderlich.' })
   }
 
-  const snapshot = await readAuctionSnapshot()
-  const auction = snapshot[cacheKey(platform, externalId)]
-  if (!auction) {
+  const record = await readAuctionRecord(platform, externalId)
+  if (!record) {
     throw createError({ statusCode: 404, statusMessage: 'Auktion nicht gefunden.' })
   }
+  const auction = record.auction
 
   const supabase = getServiceClient()
   if (!supabase) {

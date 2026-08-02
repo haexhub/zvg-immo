@@ -13,7 +13,8 @@ import {
   type LlmBatchCapability,
   type LlmBatchJobStatus,
 } from '~/server/utils/llm-batch-jobs'
-import { readExtractionCache } from '~/server/utils/extraction-cache'
+import { readAuctionRecords } from '~/server/utils/auction-record'
+import { cacheKey } from '~/server/utils/verkehrswert-cache'
 import { isGeminiBatchTierPaid } from '~/server/utils/extract/gemini-batch'
 import { getTaskRunStatus, type TaskRunStatus } from '~/server/utils/task-runs'
 
@@ -126,7 +127,7 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
       source: 'config',
     }
   }
-  const cache = await readExtractionCache()
+  const records = await readAuctionRecords(undefined, { includePhotos: false })
   const keysByJob = new Map<string, string[]>()
   const pendingJobNames = new Set(jobs.map((job) => job.jobName))
   const knownRecentJobNames = new Set(recentJobs.map((job) => job.jobName))
@@ -138,7 +139,10 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
   const sampleRequestKeys: string[] = []
   const orphanedRequestKeys: string[] = []
 
-  for (const [key, entry] of Object.entries(cache)) {
+  for (const { auction } of records) {
+    const entry = auction.extraction
+    if (!entry) continue
+    const key = cacheKey(auction.platform, auction.externalId)
     if (entry.llmBatchJob) {
       const arr = keysByJob.get(entry.llmBatchJob) ?? []
       arr.push(key)

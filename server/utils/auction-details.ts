@@ -10,8 +10,9 @@
 // manifest was evaluated. No-op without a configured pool, same graceful-degrade
 // as extraction-cache.ts/auction-snapshot.ts.
 
-import type { Auction, AuctionExtraction } from '~/types/auction'
+import type { Auction, AuctionExtraction, CuratedPhoto, PhotoCategory } from '~/types/auction'
 import { extractTranslatableExtractionTexts } from '~/lib/extraction-translation'
+import { normalizePhoto } from '~/lib/photo'
 import { getPool } from './db'
 import { cacheKey } from './verkehrswert-cache'
 import { normalizeDescriptionText } from './description-normalization'
@@ -62,6 +63,18 @@ export interface AuctionDetailsRow {
   llm_analyzed_at: string | null
   document_summary: string | null
   extraction_texts: unknown
+  source_living_area_sqm: number | null
+  source_land_area_sqm: number | null
+  source_rooms: number | null
+  market_value_text: string | null
+}
+
+interface AuctionPhotoRow {
+  ordinal: number
+  file: string
+  category: PhotoCategory
+  caption: string | null
+  is_property_photo: boolean
 }
 
 /**
@@ -110,6 +123,10 @@ const VALUE_COLUMNS = [
   ['extraction_confidence', 'text'],
   ['document_summary', 'text'],
   ['extraction_texts', 'jsonb'],
+  ['source_living_area_sqm', 'numeric'],
+  ['source_land_area_sqm', 'numeric'],
+  ['source_rooms', 'numeric'],
+  ['market_value_text', 'text'],
 ] as const satisfies ReadonlyArray<readonly [string, string]>
 
 type ValueColumn = (typeof VALUE_COLUMNS)[number][0]
@@ -177,7 +194,43 @@ export function auctionDetailsValues(auction: Auction, extraction: AuctionExtrac
     extraction_confidence: e?.confidence ?? null,
     document_summary: e?.documentSummary ?? null,
     extraction_texts: json(texts),
+    source_living_area_sqm: auction.sourceLivingAreaSqm ?? null,
+    source_land_area_sqm: auction.sourceLandAreaSqm ?? null,
+    source_rooms: auction.sourceRooms ?? null,
+    market_value_text: e?.marketValueText ?? auction.marketValueText,
   }
+}
+
+function normalizedPhotos(extraction: AuctionExtraction | null): CuratedPhoto[] {
+  return (extraction?.photos ?? []).map(normalizePhoto)
+}
+
+function photoRowsEqual(rows: AuctionPhotoRow[], photos: CuratedPhoto[]): boolean {
+  return rows.length === photos.length && rows.every((row, index) => {
+    const photo = photos[index]
+    return !!photo &&
+      row.ordinal === index &&
+      row.file === photo.file &&
+      row.category === photo.category &&
+      row.caption === photo.caption &&
+      row.is_property_photo === photo.isPropertyPhoto
+  })
+}
+
+export async function readAuctionPhotos(auctionDetailsId: number): Promise<CuratedPhoto[]> {
+  const db = getPool()
+  if (!db) return []
+  const { rows } = await db.query<AuctionPhotoRow>(
+    `SELECT ordinal, file, category, caption, is_property_photo
+     FROM auction_photos WHERE auction_details_id = $1 ORDER BY ordinal`,
+    [auctionDetailsId],
+  )
+  return rows.map((row) => ({
+    file: row.file,
+    category: row.category,
+    caption: row.caption,
+    isPropertyPhoto: row.is_property_photo,
+  }))
 }
 
 // Latest version per identity only — this is a history table, so the
@@ -234,6 +287,14 @@ export interface WriteAuctionDetailsResult {
   changed: boolean
 }
 
+export interface WriteAuctionDetailsOptions {
+  /**
+   * Manifest actually evaluated for this version. An explicit null preserves
+   * "listing/rules only" even when a newer archived manifest already exists.
+   */
+  artifactVersionId?: number | null
+}
+
 /**
  * Appends a new extraction version for `auction`, unless the extracted values
  * are identical to the current latest version — a re-run that produced the same
@@ -251,12 +312,16 @@ export interface WriteAuctionDetailsResult {
 export async function writeAuctionDetails(
   auction: Auction,
   extraction: AuctionExtraction | null,
+  options: WriteAuctionDetailsOptions = {},
 ): Promise<WriteAuctionDetailsResult | null> {
   const db = getPool()
   if (!db) return null
   const { platform, externalId } = auction
   const values = auctionDetailsValues(auction, extraction)
-  values.artifact_version_id = await resolveArtifactVersionId(platform, externalId, extraction)
+  const photos = normalizedPhotos(extraction)
+  values.artifact_version_id = Object.prototype.hasOwnProperty.call(options, 'artifactVersionId')
+    ? options.artifactVersionId ?? null
+    : await resolveArtifactVersionId(platform, externalId, extraction)
   const extractedAt = extraction?.at ?? new Date().toISOString()
   const llmAnalyzedAt = extraction?.llmAnalyzedAt ?? null
 
@@ -265,14 +330,23 @@ export async function writeAuctionDetails(
     await client.query('BEGIN')
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`auction_details:${platform}:${externalId}`])
 
-    const previous = await client.query<{ lat: number | null; lng: number | null }>(
-      `SELECT lat, lng FROM auction_details
+    const previous = await client.query<{ id: number; lat: number | null; lng: number | null }>(
+      `SELECT id, lat, lng FROM auction_details
        WHERE platform = $1 AND external_id = $2
        ORDER BY version DESC LIMIT 1`,
       [platform, externalId],
     )
+    const previousRow = previous.rows[0] ?? null
+    const previousPhotos = previousRow
+      ? await client.query<AuctionPhotoRow>(
+          `SELECT ordinal, file, category, caption, is_property_photo
+           FROM auction_photos WHERE auction_details_id = $1 ORDER BY ordinal`,
+          [previousRow.id],
+        )
+      : { rows: [] as AuctionPhotoRow[] }
+    const photosUnchanged = previousRow != null && photoRowsEqual(previousPhotos.rows, photos)
 
-    const unchanged = await client.query<{ version: number }>(
+    const unchanged = photosUnchanged ? await client.query<{ version: number }>(
       `SELECT version FROM auction_details
        WHERE platform = $1 AND external_id = $2
          AND version = (SELECT max(version) FROM auction_details WHERE platform = $1 AND external_id = $2)
@@ -280,7 +354,7 @@ export async function writeAuctionDetails(
              IS NOT DISTINCT FROM
              (${VALUE_COLUMNS.map(([, type], i) => `$${i + 3}::${type}`).join(', ')})`,
       [platform, externalId, ...VALUE_COLUMNS.map(([name]) => values[name])],
-    )
+    ) : { rows: [] as Array<{ version: number }> }
     const unchangedVersion = unchanged.rows[0]?.version
     if (unchangedVersion !== undefined) {
       await client.query('COMMIT')
@@ -303,11 +377,24 @@ export async function writeAuctionDetails(
        RETURNING *`,
       params,
     )
-    await client.query('COMMIT')
     const row = inserted.rows[0]
-    if (!row) return null
+    if (!row) throw new Error(`auction_details insert returned no row for ${platform}/${externalId}`)
+    if (photos.length > 0) {
+      const photoValues: unknown[] = []
+      const photoTuples = photos.map((photo, ordinal) => {
+        const offset = photoValues.length
+        photoValues.push(row.id, ordinal, photo.file, photo.category, photo.caption, photo.isPropertyPhoto)
+        return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6})`
+      })
+      await client.query(
+        `INSERT INTO auction_photos
+           (auction_details_id, ordinal, file, category, caption, is_property_photo)
+         VALUES ${photoTuples.join(', ')}`,
+        photoValues,
+      )
+    }
+    await client.query('COMMIT')
     latestCache.set(cacheKey(platform, externalId), row)
-    const previousRow = previous.rows[0] ?? null
     if (coordinatesMovedSignificantly(
       previousRow ? { lat: numeric(previousRow.lat), lng: numeric(previousRow.lng) } : null,
       { lat: numeric(row.lat), lng: numeric(row.lng) },

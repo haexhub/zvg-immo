@@ -9,9 +9,8 @@
 
 import { setResponseHeader } from 'h3'
 import type { Pool } from 'pg'
-import { readAuctionSnapshot } from '~/server/utils/auction-snapshot'
+import { readAuctionRecord } from '~/server/utils/auction-record'
 import { isSafePathSegment } from '~/server/utils/path-segment'
-import { cacheKey } from '~/server/utils/verkehrswert-cache'
 import { getPool } from '~/server/utils/db'
 import { sha256Hex } from '~/server/utils/raw-archive'
 import { readInsight, writeInsight } from '~/server/utils/insight-cache'
@@ -53,12 +52,11 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 503, statusMessage: 'insight cache not configured' })
   }
 
-  const key = cacheKey(platform, id)
-  const snapshot = await readAuctionSnapshot()
-  const auction = snapshot[key]
-  if (!auction) {
+  const record = await readAuctionRecord(platform, id)
+  if (!record) {
     throw createError({ statusCode: 404, statusMessage: 'auction not found' })
   }
+  const auction = record.auction
 
   const contentHash = sha256Hex(Buffer.from(JSON.stringify({
     ...definition.buildContentHashInput(auction),

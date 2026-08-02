@@ -2,8 +2,7 @@
 // Daten-API (guarded by server/middleware/data-api-auth.ts). Same
 // PublicAuction contract as ../auctions.get.ts.
 
-import { applyExtractionToAuctions, readExtractionCache } from '../../../../../utils/extraction-cache'
-import { readMergedListCache } from '../../../../../utils/list-cache'
+import { readAuctionRecord } from '../../../../../utils/auction-record'
 import { toPublicAuction, type PublicAuction } from '../../../../../utils/data-api-shape'
 
 export default defineEventHandler(async (event): Promise<PublicAuction> => {
@@ -13,12 +12,9 @@ export default defineEventHandler(async (event): Promise<PublicAuction> => {
     throw createError({ statusCode: 400, statusMessage: 'platform/id fehlt.' })
   }
 
-  const result = await readMergedListCache()
-  const auction = result?.auctions.find((a) => a.platform === platform && a.externalId === id)
-  if (!auction) {
+  const record = await readAuctionRecord(platform, id)
+  if (!record) {
     throw createError({ statusCode: 404, statusMessage: 'Auktion nicht gefunden.' })
   }
-  const cache = await readExtractionCache()
-  applyExtractionToAuctions([auction], cache)
-  return toPublicAuction(auction)
+  return toPublicAuction(record.auction)
 })

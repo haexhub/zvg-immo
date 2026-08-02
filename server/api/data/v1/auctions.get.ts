@@ -1,12 +1,9 @@
-// GET /api/data/v1/auctions — current auction snapshot for the Daten-API
-// (guarded by server/middleware/data-api-auth.ts). Reads the same on-disk
-// cache the internal /api/auctions overlay already sits on top of
-// (readMergedListCache()) — no extra crawling. Response uses the stable,
+// GET /api/data/v1/auctions — structured current auctions for the Daten-API
+// (guarded by server/middleware/data-api-auth.ts). Response uses the stable,
 // documented PublicAuction contract (server/utils/data-api-shape.ts), not the
 // internal Auction type, and is paginated.
 
-import { applyExtractionToAuctions, readExtractionCache } from '../../../utils/extraction-cache'
-import { readMergedListCache } from '../../../utils/list-cache'
+import { readAuctionRecords } from '../../../utils/auction-record'
 import { toPublicAuction, type PublicAuction } from '../../../utils/data-api-shape'
 import { parsePagination } from '../../../utils/data-api-pagination'
 
@@ -30,10 +27,7 @@ export default defineEventHandler(async (event): Promise<PaginatedResponse<Publi
   const includeWithdrawn = query.includeWithdrawn === '1'
   const { page, pageSize } = parsePagination(query, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
 
-  const result = await readMergedListCache(country)
-  const auctions = result?.auctions ?? []
-  const cache = await readExtractionCache()
-  applyExtractionToAuctions(auctions, cache)
+  const auctions = (await readAuctionRecords(country, { includePhotos: false })).map((record) => record.auction)
 
   const filtered = auctions.filter((a) => {
     if (region && a.region !== region) return false

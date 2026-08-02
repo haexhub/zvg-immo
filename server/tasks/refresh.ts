@@ -13,6 +13,7 @@ import { matchAlerts } from '../utils/alert-matching'
 import { recordObservations } from '../utils/history'
 import { archiveAuction } from '../utils/raw-archive'
 import { ensureAuctionIdentity } from '../utils/current-auctions'
+import { writeAuctionCrawlFetchState } from '../utils/auction-fetch-state'
 import { regionListCacheAgeMs, writeListCache } from '../utils/list-cache'
 import { drainOutbox } from '../utils/storage-uploader'
 import { runExclusiveTask, throwIfTaskAborted } from '../utils/exclusive-task'
@@ -68,6 +69,7 @@ async function runRefresh(signal: AbortSignal) {
         // carry an FK on (platform, external_id) -> auctions, so the identity
         // has to exist before the first archive write for this auction.
         await ensureAuctionIdentity(result.auctions)
+        await writeAuctionCrawlFetchState(result.auctions)
         // History and raw-archive writes are part of a successful crawl: their
         // failures propagate into this region's visible failure result.
         // Alert delivery remains independently fault-tolerant.

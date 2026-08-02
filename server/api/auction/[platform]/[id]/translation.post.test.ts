@@ -7,14 +7,8 @@ vi.mock('h3', () => ({
   setResponseStatus: vi.fn(),
 }))
 
-vi.mock('~/server/utils/auction-snapshot', () => ({
-  readAuctionSnapshot: vi.fn(),
-}))
-
-// WP-4: the endpoint resolves the auction's newest extraction version and keys
-// the translation on it.
-vi.mock('~/server/utils/auction-details', () => ({
-  readLatestAuctionDetails: vi.fn(async () => ({ version: 1 })),
+vi.mock('~/server/utils/auction-record', () => ({
+  readAuctionRecord: vi.fn(),
 }))
 
 vi.mock('~/server/utils/db', () => ({
@@ -116,7 +110,7 @@ async function loadHandler(query: Record<string, string> = { lang: 'de' }) {
   }))
   vi.stubGlobal('createError', (input: { statusCode: number, statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
 
-  const { readAuctionSnapshot } = await import('~/server/utils/auction-snapshot')
+  const { readAuctionRecord } = await import('~/server/utils/auction-record')
   const { getPool } = await import('~/server/utils/db')
   const {
     readAuctionTranslation,
@@ -129,7 +123,7 @@ async function loadHandler(query: Record<string, string> = { lang: 'de' }) {
   const { getLlmMaxTokens, getLlmProviderOverride, getLlmProviderOverrideChain } = await import('~/server/utils/app-settings')
   const { resolveLlmConfig } = await import('~/server/utils/extract/llm')
 
-  vi.mocked(readAuctionSnapshot).mockResolvedValue({ 'se-kronofogden:101738': auction() })
+  vi.mocked(readAuctionRecord).mockResolvedValue({ auction: auction(), detailsId: 1, detailsVersion: 1 })
   vi.mocked(getPool).mockReturnValue({} as Pool)
   vi.mocked(readAuctionTranslation).mockResolvedValue(null)
   vi.mocked(claimAuctionTranslation).mockResolvedValue(CLAIM)

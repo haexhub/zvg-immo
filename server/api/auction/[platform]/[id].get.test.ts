@@ -8,34 +8,12 @@ const registryMock = vi.hoisted(() => ({
   isCountryEnabled: vi.fn(() => true),
 }))
 
-vi.mock('../../../utils/auction-snapshot', () => ({
-  readAuctionSnapshot: vi.fn(),
-  applyAuctionPhotos: vi.fn((target: Auction, source: Auction) => {
-    if (!target.thumbnailUrl && source.thumbnailUrl) target.thumbnailUrl = source.thumbnailUrl
-    if (target.photoCount < source.photoCount) target.photoCount = source.photoCount
-    if (source.photoUrls?.length) {
-      target.photoUrls = [...new Set([...(target.photoUrls ?? []), ...source.photoUrls])]
-    }
-  }),
-  applySnapshotPhotosToAuctions: vi.fn((auctions: Auction[], snapshot: Record<string, Auction>) => {
-    for (const a of auctions) {
-      const hit = snapshot[`${a.platform}:${a.externalId}`]
-      if (!hit) continue
-      if (!a.thumbnailUrl && hit.thumbnailUrl) a.thumbnailUrl = hit.thumbnailUrl
-      if (a.photoCount < hit.photoCount) a.photoCount = hit.photoCount
-      if (hit.photoUrls?.length) {
-        a.photoUrls = [...new Set([...(a.photoUrls ?? []), ...hit.photoUrls])]
-      }
-    }
-  }),
-}))
 vi.mock('../../../utils/geocode', () => ({ geocodeAddress: vi.fn() }))
+vi.mock('../../../utils/auction-record', () => ({ readAuctionRecord: vi.fn() }))
 vi.mock('../../../utils/external-data/location-enrichment', () => ({ readLocationEnrichment: vi.fn() }))
 vi.mock('../../../utils/list-cache', () => ({ readMergedListCache: vi.fn() }))
-vi.mock('../../../utils/extraction-cache', () => ({ readExtractionCache: vi.fn(), applyExtractionToAuctions: vi.fn() }))
 vi.mock('../../../utils/verkehrswert-cache', () => ({
   cacheKey: (platform: string, id: string) => `${platform}:${id}`,
-  readVerkehrswertCache: vi.fn(),
 }))
 vi.mock('../../../utils/exchange-rate', () => ({ deriveMarketValueEur: vi.fn(), getRates: vi.fn() }))
 vi.mock('../../../crawlers/registry', () => registryMock)
@@ -83,20 +61,16 @@ async function loadHandler() {
   vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
   vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
 
-  const { readAuctionSnapshot } = await import('../../../utils/auction-snapshot')
   const { geocodeAddress } = await import('../../../utils/geocode')
+  const { readAuctionRecord } = await import('../../../utils/auction-record')
   const { readLocationEnrichment } = await import('../../../utils/external-data/location-enrichment')
   const { readMergedListCache } = await import('../../../utils/list-cache')
-  const { readExtractionCache } = await import('../../../utils/extraction-cache')
-  const { readVerkehrswertCache } = await import('../../../utils/verkehrswert-cache')
   const { getRates } = await import('../../../utils/exchange-rate')
 
-  vi.mocked(readAuctionSnapshot).mockResolvedValue({})
+  vi.mocked(readAuctionRecord).mockResolvedValue(null)
   vi.mocked(geocodeAddress).mockResolvedValue(null)
   vi.mocked(readLocationEnrichment).mockResolvedValue(null)
   vi.mocked(readMergedListCache).mockResolvedValue(null)
-  vi.mocked(readExtractionCache).mockResolvedValue({})
-  vi.mocked(readVerkehrswertCache).mockResolvedValue({})
   vi.mocked(getRates).mockResolvedValue({ EUR: 1 })
 
   return (await import('./[id].get')).default as unknown as (event: {
@@ -113,20 +87,10 @@ afterEach(() => {
 })
 
 describe('/api/auction/:platform/:id location enrichment overlay', () => {
-  it('recovers a gallery from the list cache when the detail snapshot is stale', async () => {
-    const { readAuctionSnapshot } = await import('../../../utils/auction-snapshot')
+  it('uses the list cache during the brief gap before a structured record exists', async () => {
     const { readMergedListCache } = await import('../../../utils/list-cache')
     const handler = await loadHandler()
 
-    vi.mocked(readAuctionSnapshot).mockResolvedValue({
-      'se-kronofogden:101762': auction({
-        platform: 'se-kronofogden',
-        country: 'se',
-        externalId: '101762',
-        photoCount: 0,
-        thumbnailUrl: null,
-      }),
-    })
     vi.mocked(readMergedListCache).mockResolvedValue({
       platform: 'multi',
       source: '',
@@ -168,13 +132,15 @@ describe('/api/auction/:platform/:id location enrichment overlay', () => {
   })
 
   it('returns cached locationEnrichment without live external fetches', async () => {
-    const { readAuctionSnapshot } = await import('../../../utils/auction-snapshot')
+    const { readAuctionRecord } = await import('../../../utils/auction-record')
     const { geocodeAddress } = await import('../../../utils/geocode')
     const { readLocationEnrichment } = await import('../../../utils/external-data/location-enrichment')
     const handler = await loadHandler()
 
-    vi.mocked(readAuctionSnapshot).mockResolvedValue({
-      'zvg-portal:7265': auction({ lat: 48.1, lng: 11.5 }),
+    vi.mocked(readAuctionRecord).mockResolvedValue({
+      auction: auction({ lat: 48.1, lng: 11.5 }),
+      detailsId: 1,
+      detailsVersion: 1,
     })
     vi.mocked(geocodeAddress).mockResolvedValue({ lat: 1, lng: 2, displayName: 'Ignored' } as never)
     vi.mocked(readLocationEnrichment).mockResolvedValue(enrichment)

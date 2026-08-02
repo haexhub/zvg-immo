@@ -567,6 +567,7 @@ CREATE INDEX IF NOT EXISTS idx_auctions_year_built ON auctions (year_built);
 -- artifact_versions endlich eine echte FK darauf tragen und ihre
 -- denormalisierten Identitätsspalten abgeben.
 ALTER TABLE auctions ADD COLUMN IF NOT EXISTS first_seen_at timestamptz NOT NULL DEFAULT now();
+ALTER TABLE auctions ADD COLUMN IF NOT EXISTS auction_date_text text;
 
 -- Reihenfolge ist wesentlich: erst Identität aus den noch vorhandenen
 -- denormalisierten Spalten nachziehen, DANN droppen, DANN die FK. Vor WP-1
@@ -712,6 +713,31 @@ CREATE INDEX IF NOT EXISTS idx_auction_details_land_area ON auction_details (lan
 CREATE INDEX IF NOT EXISTS idx_auction_details_year_built ON auction_details (year_built);
 ALTER TABLE auction_details ENABLE ROW LEVEL SECURITY;
 
+-- Auction-Details-Completion WP-10: source-provided structured values and the
+-- original market-value wording belong to the immutable extraction version.
+ALTER TABLE auction_details ADD COLUMN IF NOT EXISTS source_living_area_sqm numeric;
+ALTER TABLE auction_details ADD COLUMN IF NOT EXISTS source_land_area_sqm numeric;
+ALTER TABLE auction_details ADD COLUMN IF NOT EXISTS source_rooms numeric;
+ALTER TABLE auction_details ADD COLUMN IF NOT EXISTS market_value_text text;
+
+-- Auction-Details-Completion WP-9: curated photos are extraction output and
+-- therefore versioned through auction_details. The actual image files remain
+-- in the image bucket; artifact_blobs is the document archive and deliberately
+-- has no FK relationship to this table.
+CREATE TABLE IF NOT EXISTS auction_photos (
+  id                  bigserial PRIMARY KEY,
+  auction_details_id  bigint NOT NULL REFERENCES auction_details (id) ON DELETE CASCADE,
+  ordinal             integer NOT NULL,
+  file                text NOT NULL,
+  category            text NOT NULL,
+  caption             text,
+  is_property_photo   boolean NOT NULL,
+  UNIQUE (auction_details_id, ordinal)
+);
+CREATE INDEX IF NOT EXISTS idx_auction_photos_details
+  ON auction_photos (auction_details_id, ordinal);
+ALTER TABLE auction_photos ENABLE ROW LEVEL SECURITY;
+
 -- Auction-Identity-Redesign WP-4: Übersetzungen hängen jetzt an einer konkreten
 -- auction_details-Version statt nur an der Auktion. Der Inhalt ist
 -- versionsabhängig — eine neue Extraktions-Version kann Titel/Beschreibung
@@ -835,6 +861,34 @@ CREATE TABLE IF NOT EXISTS auction_snapshot (
   PRIMARY KEY (platform, external_id)
 );
 ALTER TABLE auction_snapshot ENABLE ROW LEVEL SECURITY;
+
+-- Auction-Details-Completion WP-8: mutable crawl and pipeline state. Two
+-- independent writers own disjoint column groups; application writes update
+-- only their own columns so concurrent crawl/photo/LLM work cannot reset the
+-- other group's values to NULL or defaults.
+CREATE TABLE IF NOT EXISTS auction_fetch_state (
+  platform               text NOT NULL,
+  external_id            text NOT NULL,
+  pdf_url                text,
+  pdf_url_upstream       text,
+  detail_url             text,
+  detail_url_upstream    text,
+  attachments            jsonb NOT NULL DEFAULT '[]'::jsonb,
+  photo_urls             text[],
+  source_updated_iso     timestamptz,
+  detail_fetched_at      timestamptz,
+  llm_batch_job          text,
+  llm_failures           integer NOT NULL DEFAULT 0,
+  photos_checked_at      timestamptz,
+  photo_failures         integer NOT NULL DEFAULT 0,
+  photo_pipeline_version integer,
+  updated_at             timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (platform, external_id),
+  FOREIGN KEY (platform, external_id) REFERENCES auctions (platform, external_id)
+);
+CREATE INDEX IF NOT EXISTS idx_auction_fetch_state_llm_batch_job
+  ON auction_fetch_state (llm_batch_job) WHERE llm_batch_job IS NOT NULL;
+ALTER TABLE auction_fetch_state ENABLE ROW LEVEL SECURITY;
 
 -- External market/hazard enrichment is intentionally stored outside the LLM
 -- extraction cache: provider licenses, TTLs and source versions have their

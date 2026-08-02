@@ -1,9 +1,32 @@
 # Auction-Details-Vervollständigung — Nachtrag zum Identity-Redesign
 
-**Status (2026-08-02): Design fertig diskutiert, KEIN Code geschrieben.** Nachtrag
-zu `docs/plans/2026-08-01-auction-identity-schema-redesign.md` (WP-0…WP-7).
-Setzt WP-0…WP-5 als gemergt voraus. Umsetzung wieder **pro Arbeitspaket in
-einem eigenen Worktree**, nicht als ein großer Umbau.
+**Status (2026-08-02): WP-8 bis WP-11 im Integrations-Worktree
+`codex/auction-schema-completion` umgesetzt und verifiziert.** Nachtrag zu
+`docs/plans/2026-08-01-auction-identity-schema-redesign.md` (WP-0…WP-7).
+WP-0…WP-5 wurden dafür aus den vorhandenen Workpackage-Branches integriert.
+WP-6 bleibt bewusst bis nach dem Produktions-Burn-in offen; WP-7 bleibt bis
+zur Entscheidung über die Recovery-Semantik offen.
+
+## Umsetzungsstand
+
+- **WP-8 fertig:** `auction_fetch_state`, spaltenscharfe Crawl-/Foto-/LLM-
+  Writer, struktureller Manifestvergleich und idempotenter Backfill sind
+  implementiert. Die vier Legacy-Hash-Felder bleiben während des Dual-Write-
+  Burn-ins als Kompatibilitätsdaten erhalten und werden zusammen mit den alten
+  Cache-Contracts in WP-6 entfernt.
+- **WP-9 fertig:** `auction_photos` ist versioniert an `auction_details`
+  gebunden. Foto-only-Änderungen erzeugen eine neue Details-Version; Backfill
+  und Kaskaden sind verifiziert.
+- **WP-10 fertig:** Quellflächen/-räume, `market_value_text` und
+  `auction_date_text` sind typisiert persistiert und im Backfill enthalten.
+- **WP-11 fertig:** Die sieben verbliebenen Endpunkte sowie Suche, Karten-
+  Summary und Landing-Rails lesen den strukturierten Aggregatpfad. Ein
+  gemeinsamer Reader wählt pro Auktion exakt die neueste Details-Version und
+  lädt Fotos separat.
+- **Verifikation:** vollständiger Typecheck, ESLint ohne Fehler, 1.492 Unit-/
+  API-Tests sowie 15 echte PostgreSQL-Tests. `schema.sql` wurde auf einer
+  leeren PostGIS/PostgreSQL-16-Instanz zweimal erfolgreich ausgeführt; der
+  Completion-Backfill wurde angewendet und idempotent wiederholt.
 
 ## Wie es dazu kam
 

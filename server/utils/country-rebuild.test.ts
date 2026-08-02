@@ -10,6 +10,7 @@ const state = vi.hoisted(() => ({
   matchAlerts: vi.fn(),
   archiveAuction: vi.fn(),
   ensureAuctionIdentity: vi.fn(),
+  writeAuctionCrawlFetchState: vi.fn(),
 }))
 
 vi.mock('../crawlers/registry', () => ({
@@ -38,6 +39,7 @@ vi.mock('./history', () => ({ recordObservations: state.recordObservations }))
 vi.mock('./alert-matching', () => ({ matchAlerts: state.matchAlerts }))
 vi.mock('./raw-archive', () => ({ archiveAuction: state.archiveAuction }))
 vi.mock('./current-auctions', () => ({ ensureAuctionIdentity: state.ensureAuctionIdentity }))
+vi.mock('./auction-fetch-state', () => ({ writeAuctionCrawlFetchState: state.writeAuctionCrawlFetchState }))
 
 function makePool() {
   const query = vi.fn(async (sql: string) => {
