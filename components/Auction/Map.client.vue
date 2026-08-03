@@ -368,7 +368,7 @@ function onPointerMove(evt: any): void {
         </ol-source-cluster>
       </ol-vector-layer>
       <ol-overlay v-if="selectedKey && popupPosition" :position="popupPosition" :offset="[0, -12]" positioning="bottom-center">
-        <div class="auction-map-popup">
+        <div class="min-w-[280px] max-w-[320px] rounded-lg bg-white p-1 shadow-lg">
           <!-- Keyed on the auction: clicking a second marker while a popup is
                open swaps selectedKey without ever unmounting the overlay, so
                without this the instance would keep the previous auction's
@@ -383,13 +383,13 @@ function onPointerMove(evt: any): void {
         </div>
       </ol-overlay>
       <ol-overlay v-if="clusterKeys && popupPosition" :position="popupPosition" :offset="[0, -12]" positioning="bottom-center">
-        <div class="auction-map-cluster-list">
-          <div class="auction-map-cluster-list__hint">{{ t('map.clusterPickerHint', { count: clusterAuctions.length }) }}</div>
+        <div class="flex max-h-60 min-w-[220px] max-w-[280px] flex-col gap-0.5 overflow-y-auto rounded-lg bg-white p-2 text-gray-900 shadow-lg">
+          <div class="mb-1 text-[11px] font-semibold uppercase text-gray-500">{{ t('map.clusterPickerHint', { count: clusterAuctions.length }) }}</div>
           <button
             v-for="a in clusterAuctions"
             :key="auctionKey(a)"
             type="button"
-            class="auction-map-cluster-list__item"
+            class="cursor-pointer rounded-md bg-transparent px-2 py-1.5 text-left text-[13px] leading-[1.35] text-gray-900 hover:bg-gray-100 focus-visible:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-blue-600"
             @click="selectFromCluster(a)"
           >
             {{ a.country.toUpperCase() }} · {{ a.region }} · {{ a.externalId }}
@@ -397,88 +397,23 @@ function onPointerMove(evt: any): void {
         </div>
       </ol-overlay>
     </ol-map>
-    <div class="auction-map-baselayer-toggle">
-      <button type="button" :class="{ 'is-active': baseLayer === 'streets' }" @click="baseLayer = 'streets'">
+    <div class="absolute top-2 right-2 z-10 flex overflow-hidden rounded-md border border-slate-900/15 bg-white shadow-sm">
+      <button
+        type="button"
+        class="cursor-pointer px-2.5 py-1 text-xs font-semibold"
+        :class="baseLayer === 'streets' ? 'bg-blue-600 text-white' : 'bg-transparent text-gray-800'"
+        @click="baseLayer = 'streets'"
+      >
         {{ t('map.baseLayerStreets') }}
       </button>
-      <button type="button" :class="{ 'is-active': baseLayer === 'satellite' }" @click="baseLayer = 'satellite'">
+      <button
+        type="button"
+        class="cursor-pointer px-2.5 py-1 text-xs font-semibold"
+        :class="baseLayer === 'satellite' ? 'bg-blue-600 text-white' : 'bg-transparent text-gray-800'"
+        @click="baseLayer = 'satellite'"
+      >
         {{ t('map.baseLayerSatellite') }}
       </button>
     </div>
   </div>
 </template>
-
-<style>
-.auction-map-popup {
-  border-radius: 8px;
-  padding: 4px;
-  min-width: 280px;
-  max-width: 320px;
-  background: white;
-  box-shadow: 0 4px 16px rgb(15 23 42 / 20%);
-}
-
-.auction-map-cluster-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  border-radius: 8px;
-  padding: 8px;
-  min-width: 220px;
-  max-width: 280px;
-  max-height: 240px;
-  overflow-y: auto;
-  background: white;
-  box-shadow: 0 4px 16px rgb(15 23 42 / 20%);
-}
-
-.auction-map-cluster-list__hint {
-  font-size: 11px;
-  font-weight: 600;
-  color: #6b7280;
-  text-transform: uppercase;
-  margin-bottom: 4px;
-}
-
-.auction-map-cluster-list__item {
-  text-align: left;
-  font-size: 13px;
-  padding: 6px 8px;
-  border-radius: 6px;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-}
-
-.auction-map-cluster-list__item:hover {
-  background: #f3f4f6;
-}
-
-.auction-map-baselayer-toggle {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 10;
-  display: flex;
-  overflow: hidden;
-  border-radius: 6px;
-  border: 1px solid rgb(15 23 42 / 15%);
-  background: white;
-  box-shadow: 0 2px 8px rgb(15 23 42 / 15%);
-}
-
-.auction-map-baselayer-toggle button {
-  padding: 4px 10px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #1f2937;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-}
-
-.auction-map-baselayer-toggle button.is-active {
-  background: #2563eb;
-  color: white;
-}
-</style>

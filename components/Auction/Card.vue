@@ -88,7 +88,7 @@ const swiperModules = [Navigation, Keyboard]
         :keyboard="{ enabled: true }"
         :loop="props.auction.galleryUrls.length > 1"
         :lazy-preload-prev-next="0"
-        class="auction-card-swiper aspect-16/10 w-full bg-muted"
+        class="auction-card-swiper aspect-16/10 w-full overflow-hidden bg-muted"
       >
         <SwiperSlide v-for="(url, i) in props.auction.galleryUrls" :key="url">
           <img
@@ -142,9 +142,6 @@ const swiperModules = [Navigation, Keyboard]
 </template>
 
 <style scoped>
-.auction-card-swiper {
-  overflow: hidden;
-}
 .auction-card-swiper :deep(.swiper-button-prev),
 .auction-card-swiper :deep(.swiper-button-next) {
   color: #ffffff;
