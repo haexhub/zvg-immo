@@ -40,6 +40,9 @@ export function proximityConditionAnyTag(
   add: (value: unknown) => string,
   options: ProximityConditionOptions = {},
 ): string {
+  if (matchers.length === 0) {
+    throw new Error('proximityConditionAnyTag requires at least one tag matcher')
+  }
   const countryPredicate = options.constrainCountry === false ? '' : '      o.country = a.country\n      AND '
   const tagPredicate = matchers.length === 1
     ? `o.tags ->> ${add(matchers[0]!.tagKey)} = ${add(matchers[0]!.tagValue)}`

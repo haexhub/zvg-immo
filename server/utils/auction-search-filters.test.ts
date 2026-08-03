@@ -90,17 +90,26 @@ describe('buildAuctionSearchFilter', () => {
     expect(values[0]).toEqual(['se'])
     expect(seaPredicate).toContain(' OR ')
     expect(seaPredicate).not.toContain('o.country = a.country')
-    expect(values).toEqual(expect.arrayContaining([
+    expect(values).toEqual([
+      ['se'],
       'natural',
       'coastline',
+      'natural',
       'beach',
+      'natural',
       'bay',
+      'natural',
+      'strait',
       'water',
+      'sea',
+      'water',
+      'lagoon',
+      'place',
       'sea',
       'place',
       'ocean',
       100_000,
-    ]))
+    ])
   })
 
   it('keeps non-sea Umgebung filters scoped to the auction country', async () => {
