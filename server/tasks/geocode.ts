@@ -89,6 +89,7 @@ async function runGeocode(signal: AbortSignal) {
 
     const persistedCoordinates = await persistGeocodedAuctions(
       result.auctions.filter((a) => a.lat != null && a.lng != null),
+      signal,
     )
 
     const durationMs = Date.now() - startedAt
@@ -109,7 +110,7 @@ async function runGeocode(signal: AbortSignal) {
     }
 }
 
-async function persistGeocodedAuctions(auctions: Auction[]): Promise<number> {
+async function persistGeocodedAuctions(auctions: Auction[], signal: AbortSignal): Promise<number> {
   if (auctions.length === 0) return 0
   await ensureAuctionIdentity(auctions)
   const records = await readAuctionRecordMap()
@@ -117,6 +118,7 @@ async function persistGeocodedAuctions(auctions: Auction[]): Promise<number> {
   let persisted = 0
 
   for (const auction of auctions) {
+    throwIfTaskAborted(signal)
     try {
       const record = records.get(cacheKey(auction.platform, auction.externalId))
       if (auction.detailFetchedAt == null && record) mergeStoredAuction(auction, record.auction)
@@ -124,7 +126,7 @@ async function persistGeocodedAuctions(auctions: Auction[]): Promise<number> {
       const written = await writeAuctionDetails(auction, auction.extraction ?? null, {
         artifactVersionId: record?.artifactVersionId ?? null,
       })
-      if (written) persisted++
+      if (written?.changed) persisted++
     } catch (err) {
       console.warn(`[geocode] persist ${auction.platform}:${auction.externalId}: ${(err as Error).message}`)
     }
