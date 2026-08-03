@@ -47,8 +47,8 @@ onUnmounted(() => observer?.disconnect())
     <p
       id="auction-description"
       ref="copy"
-      class="description-copy whitespace-pre-line text-sm text-foreground/90"
-      :class="{ 'description-copy--collapsed': !expanded && (!measured || collapsible) }"
+      class="whitespace-pre-line break-words text-sm leading-[1.625] text-foreground/90 [overflow-wrap:anywhere]"
+      :class="{ 'max-h-[16.25em] overflow-hidden': !expanded && (!measured || collapsible) }"
     >
       {{ text }}
     </p>
@@ -66,16 +66,3 @@ onUnmounted(() => observer?.disconnect())
     </Button>
   </div>
 </template>
-
-<style scoped>
-.description-copy {
-  line-height: 1.625;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
-.description-copy--collapsed {
-  max-height: 16.25em;
-  overflow: hidden;
-}
-</style>

@@ -107,15 +107,15 @@ const swiperModules = [Navigation, Pagination, Keyboard]
 </script>
 
 <template>
-  <div class="lot-popover">
-    <div v-if="photos.length > 0" class="lot-popover__media">
+  <div class="min-w-[260px] font-sans text-[13px] leading-[1.45]">
+    <div v-if="photos.length > 0" class="mb-2">
       <Swiper
         :modules="swiperModules"
         :navigation="photos.length > 1"
         :pagination="photos.length > 1 ? { clickable: true } : false"
         :keyboard="{ enabled: true }"
         :loop="photos.length > 1"
-        class="lot-popover__swiper"
+        class="lot-popover__swiper h-40 w-full overflow-hidden rounded-md bg-gray-100"
       >
         <SwiperSlide v-for="(url, i) in photos" :key="url">
           <a :href="url" target="_blank" rel="noopener">
@@ -130,53 +130,40 @@ const swiperModules = [Navigation, Pagination, Keyboard]
         </SwiperSlide>
       </Swiper>
     </div>
-    <div v-else-if="loading" class="lot-popover__placeholder">{{ t('lotPopover.loadingPhotos') }}</div>
-    <p v-else-if="loadError" class="lot-popover__error">{{ loadError }}</p>
+    <div v-else-if="loading" class="mb-2 flex h-40 items-center justify-center rounded-md bg-gray-100 text-gray-500">{{ t('lotPopover.loadingPhotos') }}</div>
+    <p v-else-if="loadError" class="mb-2 text-red-700">{{ loadError }}</p>
 
-    <div class="lot-popover__title">{{ displayTitle ?? t('lotPopover.untitled') }}</div>
-    <div class="lot-popover__address">{{ displayAddress ?? '' }}</div>
+    <div class="mb-0.5 text-sm font-semibold">{{ displayTitle ?? t('lotPopover.untitled') }}</div>
+    <div class="mb-[0.4rem] text-gray-500">{{ displayAddress ?? '' }}</div>
 
-    <div class="lot-popover__grid">
+    <div class="mb-[0.4rem] grid grid-cols-2 gap-[0.4rem] text-xs">
       <div>
-        <div class="lot-popover__grid-label">{{ t('lotPopover.auctionDate') }}</div>
+        <div class="text-[10px] uppercase text-gray-500">{{ t('lotPopover.auctionDate') }}</div>
         {{ formatDate(detail?.auctionDateIso ?? null, detail?.auctionDateText ?? null) }}
       </div>
       <div>
-        <div class="lot-popover__grid-label">{{ t('lotPopover.marketValue') }}</div>
+        <div class="text-[10px] uppercase text-gray-500">{{ t('lotPopover.marketValue') }}</div>
         {{ detail ? (eurToDisplay(detail.marketValueEur) != null ? formatPrice(eurToDisplay(detail.marketValueEur)) : (detail.marketValueText ?? '–')) : '–' }}
       </div>
     </div>
 
-    <div class="lot-popover__cta">
-      <a :href="`/objekt/${encodeURIComponent(auction.platform)}/${encodeURIComponent(auction.externalId)}`">
+    <div class="mb-2">
+      <a
+        :href="`/objekt/${encodeURIComponent(auction.platform)}/${encodeURIComponent(auction.externalId)}`"
+        class="block rounded-md bg-amber-500 px-[0.6rem] py-[0.4rem] text-center font-semibold text-white no-underline hover:bg-amber-600"
+      >
         {{ t('lotPopover.viewDetails') }}
       </a>
     </div>
 
-    <div class="lot-popover__footer">
-      <span v-if="detail" class="lot-popover__source">{{ detail.authority }} · {{ detail.caseNumber }}</span><br>
+    <div class="border-t border-gray-200 pt-[0.4rem] text-xs">
+      <span v-if="detail" class="text-gray-500">{{ detail.authority }} · {{ detail.caseNumber }}</span><br>
       <a v-if="detail?.pdfUrl" :href="detail.pdfUrl" target="_blank" rel="noopener">{{ t('lotPopover.announcement') }}</a>
     </div>
   </div>
 </template>
 
 <style scoped>
-.lot-popover {
-  min-width: 260px;
-  font-family: system-ui, sans-serif;
-  font-size: 13px;
-  line-height: 1.45;
-}
-.lot-popover__media {
-  margin-bottom: 0.5rem;
-}
-.lot-popover__swiper {
-  width: 100%;
-  height: 160px;
-  border-radius: 6px;
-  overflow: hidden;
-  background: #f3f4f6;
-}
 .lot-popover__swiper :deep(.swiper-slide) img {
   width: 100%;
   height: 100%;
@@ -203,74 +190,5 @@ const swiperModules = [Navigation, Pagination, Keyboard]
 }
 .lot-popover__swiper :deep(.swiper-pagination-bullet-active) {
   background: rgb(245 158 11);
-}
-.lot-popover__placeholder {
-  height: 160px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #6b7280;
-  background: #f3f4f6;
-  border-radius: 6px;
-  margin-bottom: 0.5rem;
-}
-.lot-popover__error {
-  color: #b91c1c;
-  margin-bottom: 0.5rem;
-}
-.lot-popover__title {
-  font-weight: 600;
-  font-size: 14px;
-  margin-bottom: 2px;
-}
-.lot-popover__address {
-  color: #6b7280;
-  margin-bottom: 0.4rem;
-}
-.lot-popover__grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.4rem;
-  font-size: 12px;
-  margin-bottom: 0.4rem;
-}
-.lot-popover__grid-label {
-  text-transform: uppercase;
-  color: #6b7280;
-  font-size: 10px;
-}
-.lot-popover__cta {
-  margin-bottom: 0.5rem;
-}
-.lot-popover__cta a {
-  display: block;
-  text-align: center;
-  background: rgb(245 158 11);
-  color: #fff;
-  font-weight: 600;
-  border-radius: 6px;
-  padding: 0.4rem 0.6rem;
-  text-decoration: none;
-}
-.lot-popover__cta a:hover {
-  background: rgb(217 119 6);
-}
-.lot-popover__cta-disabled {
-  display: block;
-  text-align: center;
-  background: #9ca3af;
-  color: #f3f4f6;
-  font-weight: 600;
-  border-radius: 6px;
-  padding: 0.4rem 0.6rem;
-  cursor: not-allowed;
-}
-.lot-popover__footer {
-  font-size: 12px;
-  border-top: 1px solid #e5e7eb;
-  padding-top: 0.4rem;
-}
-.lot-popover__source {
-  color: #6b7280;
 }
 </style>

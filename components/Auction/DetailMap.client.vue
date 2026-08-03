@@ -33,6 +33,10 @@ const { t, locale } = useI18n()
 const runtimeConfig = useRuntimeConfig()
 const mapTilerApiKey = computed(() => String(runtimeConfig.public.maptilerApiKey || '').trim())
 const baseLayer = ref<'streets' | 'satellite'>('streets')
+const controlToggleClass = 'cursor-pointer rounded-md border border-slate-900/15 bg-white/95 px-2.5 py-1 text-xs font-semibold text-gray-900 shadow-sm'
+const controlPanelClass = 'max-h-60 w-60 overflow-y-auto rounded-md border border-slate-900/15 bg-white/95 px-2 py-1.5 text-xs leading-tight text-gray-900 shadow-sm backdrop-blur-sm'
+const layerLabelClass = 'flex min-h-5 cursor-pointer items-center gap-1'
+const layerInputClass = 'shrink-0 accent-blue-600'
 
 // The MapTiler base layer renders as vector tiles (see
 // useMapTilerVectorBaseLayer) with labels re-localized to the UI locale — one
@@ -439,190 +443,64 @@ onBeforeUnmount(() => {
 <template>
   <div class="relative h-[24rem] w-full overflow-hidden rounded-xl border shadow-sm md:h-[32rem]">
     <div ref="mapEl" class="h-full w-full" />
-    <div ref="popupEl" class="auction-detail-map-popup" />
-    <div class="auction-detail-map-layers">
+    <div ref="popupEl" class="empty:hidden min-w-[140px] max-w-[260px] rounded-lg bg-white px-2 py-1 text-xs leading-[1.35] text-gray-900 shadow-lg" />
+    <div class="absolute top-2 right-2 z-10 flex flex-col items-end gap-1">
       <button
         type="button"
-        class="auction-detail-map-layers__toggle"
+        :class="controlToggleClass"
         :aria-expanded="panelOpen"
         aria-controls="auction-detail-map-layers-panel"
         @click="panelOpen = !panelOpen"
       >
         {{ t('map.layers') }}
       </button>
-      <div v-if="panelOpen" id="auction-detail-map-layers-panel" class="auction-detail-map-layers__panel">
-        <div class="auction-detail-map-layers__group">
-          <label><input v-model="baseLayer" type="radio" value="streets"> {{ t('map.baseLayerStreets') }}</label>
-          <label><input v-model="baseLayer" type="radio" value="satellite"> {{ t('map.baseLayerSatellite') }}</label>
+      <div v-if="panelOpen" id="auction-detail-map-layers-panel" :class="controlPanelClass">
+        <div class="mb-1.5 flex flex-col gap-0.5 border-b border-slate-900/10 pb-1.5">
+          <label :class="layerLabelClass">
+            <input v-model="baseLayer" type="radio" value="streets" :class="layerInputClass"> {{ t('map.baseLayerStreets') }}
+          </label>
+          <label :class="layerLabelClass">
+            <input v-model="baseLayer" type="radio" value="satellite" :class="layerInputClass"> {{ t('map.baseLayerSatellite') }}
+          </label>
         </div>
-        <div v-if="overlayEntries.length" class="auction-detail-map-layers__overlays">
-          <label v-for="entry in overlayEntries" :key="entry.key">
-            <input type="checkbox" :checked="entry.visible.value" @change="toggleOverlay(entry)"> {{ entry.key }}
+        <div v-if="overlayEntries.length" class="flex flex-col gap-0.5">
+          <label v-for="entry in overlayEntries" :key="entry.key" :class="layerLabelClass">
+            <input type="checkbox" :checked="entry.visible.value" :class="layerInputClass" @change="toggleOverlay(entry)"> {{ entry.key }}
           </label>
         </div>
       </div>
     </div>
-    <div class="auction-detail-map-legend">
+    <div class="absolute bottom-2 left-2 z-10 flex flex-col items-start gap-1">
       <button
         type="button"
-        class="auction-detail-map-legend__toggle"
+        :class="controlToggleClass"
         :aria-expanded="legendOpen"
         aria-controls="auction-detail-map-legend-panel"
         @click="legendOpen = !legendOpen"
       >
         {{ t('map.legend') }}
       </button>
-      <div v-if="legendOpen" id="auction-detail-map-legend-panel" class="auction-detail-map-legend__panel">
-        <div class="auction-detail-map-legend__item">
-          <span class="auction-detail-map-legend__pin" />
+      <div v-if="legendOpen" id="auction-detail-map-legend-panel" :class="controlPanelClass">
+        <div class="flex min-h-[18px] items-center gap-1.5">
+          <span class="h-2.5 w-2.5 shrink-0 rotate-[-45deg] rounded-[50%_50%_50%_0] bg-blue-600" />
           {{ t('map.legendSubject') }}
         </div>
-        <div v-for="entry in featureLegendEntries" :key="entry.key" class="auction-detail-map-legend__item">
-          <span class="auction-detail-map-legend__swatch" :style="{ backgroundColor: entry.color }" />
+        <div v-for="entry in featureLegendEntries" :key="entry.key" class="flex min-h-[18px] items-center gap-1.5">
+          <span class="h-2.5 w-2.5 shrink-0 rounded-full" :style="{ backgroundColor: entry.color }" />
           {{ entry.label }}
         </div>
         <template v-if="hazardStatusLegendEntries.length">
-          <div class="auction-detail-map-legend__group-title">{{ t('objektDetail.hazardsTitle') }}</div>
-          <div v-for="entry in hazardStatusLegendEntries" :key="entry.key" class="auction-detail-map-legend__item">
-            <span class="auction-detail-map-legend__swatch" :style="{ backgroundColor: entry.color }" />
+          <div class="mt-1 border-t border-slate-900/10 pt-1 font-semibold">{{ t('objektDetail.hazardsTitle') }}</div>
+          <div v-for="entry in hazardStatusLegendEntries" :key="entry.key" class="flex min-h-[18px] items-center gap-1.5">
+            <span class="h-2.5 w-2.5 shrink-0 rounded-full" :style="{ backgroundColor: entry.color }" />
             {{ entry.label }}
           </div>
         </template>
-        <div v-if="showOdorLegend" class="auction-detail-map-legend__item">
-          <span class="auction-detail-map-legend__swatch auction-detail-map-legend__swatch--dashed" />
+        <div v-if="showOdorLegend" class="flex min-h-[18px] items-center gap-1.5">
+          <span class="h-2.5 w-2.5 shrink-0 rounded-full border-[1.5px] border-dashed border-red-950 bg-red-500/15" />
           {{ t('objektDetail.mapLayerOdorSignals') }}
         </div>
       </div>
     </div>
   </div>
 </template>
-
-<style scoped>
-.auction-detail-map-popup:empty {
-  display: none;
-}
-
-.auction-detail-map-popup {
-  border-radius: 8px;
-  padding: 4px 8px;
-  min-width: 140px;
-  max-width: 260px;
-  background: white;
-  font-size: 12px;
-  line-height: 1.35;
-  box-shadow: 0 4px 16px rgb(15 23 42 / 20%);
-}
-
-.auction-detail-map-layers,
-.auction-detail-map-legend {
-  position: absolute;
-  z-index: 10;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.auction-detail-map-layers {
-  top: 8px;
-  right: 8px;
-  align-items: flex-end;
-}
-
-.auction-detail-map-legend {
-  bottom: 8px;
-  left: 8px;
-  align-items: flex-start;
-}
-
-.auction-detail-map-layers__toggle,
-.auction-detail-map-legend__toggle {
-  padding: 4px 10px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #111827;
-  background: rgb(255 255 255 / 98%);
-  border: 1px solid rgb(15 23 42 / 15%);
-  border-radius: 6px;
-  box-shadow: 0 2px 8px rgb(15 23 42 / 15%);
-  cursor: pointer;
-}
-
-.auction-detail-map-layers__panel,
-.auction-detail-map-legend__panel {
-  width: 15rem;
-  max-height: 15rem;
-  overflow-y: auto;
-  padding: 6px 8px;
-  color: #111827;
-  background: rgb(255 255 255 / 96%);
-  border: 1px solid rgb(15 23 42 / 15%);
-  border-radius: 6px;
-  box-shadow: 0 2px 8px rgb(15 23 42 / 15%);
-  font-size: 12px;
-  line-height: 1.25;
-  backdrop-filter: blur(4px);
-}
-
-.auction-detail-map-layers__group {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding-bottom: 6px;
-  margin-bottom: 6px;
-  border-bottom: 1px solid rgb(15 23 42 / 10%);
-}
-
-.auction-detail-map-layers__overlays {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.auction-detail-map-layers label {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-height: 20px;
-  cursor: pointer;
-}
-
-.auction-detail-map-layers input {
-  flex: 0 0 auto;
-  accent-color: #2563eb;
-}
-
-.auction-detail-map-legend__group-title {
-  padding-top: 4px;
-  margin-top: 4px;
-  font-weight: 600;
-  border-top: 1px solid rgb(15 23 42 / 10%);
-}
-
-.auction-detail-map-legend__item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 18px;
-}
-
-.auction-detail-map-legend__swatch {
-  flex: 0 0 auto;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-}
-
-.auction-detail-map-legend__swatch--dashed {
-  background: rgb(239 68 68 / 15%);
-  border: 1.5px dashed #7f1d1d;
-}
-
-.auction-detail-map-legend__pin {
-  flex: 0 0 auto;
-  width: 10px;
-  height: 10px;
-  background: #2563eb;
-  border-radius: 50% 50% 50% 0;
-  transform: rotate(-45deg);
-}
-</style>

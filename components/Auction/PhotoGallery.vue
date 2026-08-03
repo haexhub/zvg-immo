@@ -96,7 +96,7 @@ const swiperModules = [Navigation, Pagination, Keyboard]
       :pagination="photos.length > 1 ? { type: 'fraction' } : false"
       :keyboard="{ enabled: true }"
       :loop="photos.length > 1"
-      class="auction-gallery-swiper rounded-xl bg-muted"
+      class="auction-gallery-swiper h-64 w-full rounded-xl bg-muted sm:h-96"
     >
       <SwiperSlide v-for="(url, i) in photos" :key="url">
         <button
@@ -142,7 +142,7 @@ const swiperModules = [Navigation, Pagination, Keyboard]
           :keyboard="{ enabled: true }"
           :loop="photos.length > 1"
           :initial-slide="activeIndex"
-          class="auction-gallery-lightbox"
+          class="auction-gallery-lightbox w-full max-w-[1100px]"
         >
           <SwiperSlide v-for="(url, i) in photos" :key="url" class="flex items-center justify-center">
             <img
@@ -160,15 +160,6 @@ const swiperModules = [Navigation, Pagination, Keyboard]
 </template>
 
 <style scoped>
-.auction-gallery-swiper {
-  width: 100%;
-  height: 16rem;
-}
-@media (min-width: 640px) {
-  .auction-gallery-swiper {
-    height: 24rem;
-  }
-}
 .auction-gallery-swiper :deep(.swiper-button-prev),
 .auction-gallery-swiper :deep(.swiper-button-next) {
   color: #fff;
@@ -187,10 +178,6 @@ const swiperModules = [Navigation, Pagination, Keyboard]
   font-weight: 500;
 }
 
-.auction-gallery-lightbox {
-  width: 100%;
-  max-width: 1100px;
-}
 .auction-gallery-lightbox :deep(.swiper-button-prev),
 .auction-gallery-lightbox :deep(.swiper-button-next) {
   color: #fff;
