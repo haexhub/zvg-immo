@@ -55,8 +55,8 @@ function apply(): void {
 </script>
 
 <template>
-  <div class="flex max-h-[70vh] flex-col">
-    <div class="flex-1 overflow-y-auto space-y-5 pb-4">
+  <div class="flex h-full flex-col md:h-auto md:max-h-[70vh]">
+    <div class="flex-1 overflow-y-auto space-y-6 pb-4">
       <div v-for="s in SLIDERS" :key="s.key" class="space-y-2">
         <div class="flex items-center justify-between">
           <Label>{{ $t(s.label) }}</Label>
@@ -72,14 +72,14 @@ function apply(): void {
         />
       </div>
 
-      <div class="space-y-2 border-t pt-3">
+      <div class="space-y-2 border-t pt-4">
         <Label>{{ $t('searchBar.environment.urbanRural') }}</Label>
         <div class="flex gap-2">
           <button
             v-for="opt in [ALL_SCOPE, 'urban', 'rural']"
             :key="opt"
             type="button"
-            class="flex-1 rounded-md border px-3 py-1.5 text-sm transition-colors"
+            class="flex-1 rounded-md border px-3 py-2 text-sm transition-colors"
             :class="draft.urbanRural === opt ? 'border-primary bg-primary/10 text-primary' : 'text-muted-foreground hover:border-primary/50'"
             @click="draft.urbanRural = opt"
           >
@@ -89,7 +89,7 @@ function apply(): void {
       </div>
     </div>
 
-    <div class="flex gap-2 border-t pt-3">
+    <div class="flex gap-3 border-t pt-4">
       <Button
         type="button"
         variant="outline"

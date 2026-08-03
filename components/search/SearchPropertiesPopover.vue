@@ -142,8 +142,8 @@ function apply(): void {
 </script>
 
 <template>
-  <div class="flex max-h-[70vh] flex-col">
-    <div class="flex-1 overflow-y-auto space-y-5 pb-4">
+  <div class="flex h-full flex-col md:h-auto md:max-h-[70vh]">
+    <div class="flex-1 overflow-y-auto space-y-6 pb-4">
       <div class="space-y-2">
         <Label>{{ $t('filters.marketValue') }} ({{ currency }})</Label>
         <div class="flex items-center gap-2">
@@ -156,7 +156,7 @@ function apply(): void {
             v-for="(p, i) in priceBuckets"
             :key="i"
             type="button"
-            class="rounded-full border px-3 py-0.5 text-xs text-muted-foreground hover:border-primary hover:text-primary transition-colors"
+            class="rounded-full border px-3 py-1 text-xs text-muted-foreground hover:border-primary hover:text-primary transition-colors"
             @click="setPriceBucket(p.min, p.max)"
           >{{ p.label }}</button>
         </div>
@@ -241,7 +241,7 @@ function apply(): void {
         </div>
       </div>
 
-      <div class="space-y-2 pt-2 border-t">
+      <div class="space-y-2 pt-3 border-t">
         <Label class="cursor-pointer">
           <Checkbox v-model="draft.onlyWithPhotos" /> {{ $t('filters.onlyWithPhotos') }}
         </Label>
@@ -254,7 +254,7 @@ function apply(): void {
       </div>
     </div>
 
-    <div class="flex gap-2 border-t pt-3">
+    <div class="flex gap-3 border-t pt-4">
       <Button
         type="button"
         variant="outline"

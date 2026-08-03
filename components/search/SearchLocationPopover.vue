@@ -76,7 +76,7 @@ function pickRecent(entry: { label: string; query: Record<string, string> }): vo
 </script>
 
 <template>
-  <div class="space-y-4">
+  <div class="space-y-5">
     <div class="relative">
       <SearchLocationAutocomplete
         v-model="search"
@@ -94,7 +94,7 @@ function pickRecent(entry: { label: string; query: Record<string, string> }): vo
         v-for="(entry, i) in recentSearches"
         :key="i"
         type="button"
-        class="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-muted"
+        class="flex w-full items-center gap-3 rounded-md px-2 py-2.5 text-left text-sm hover:bg-muted"
         @click="pickRecent(entry)"
       >
         <Clock class="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -106,7 +106,7 @@ function pickRecent(entry: { label: string; query: Record<string, string> }): vo
       <p class="px-1 text-xs font-medium text-muted-foreground">{{ $t('searchBar.location.suggested') }}</p>
       <button
         type="button"
-        class="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-muted disabled:cursor-wait disabled:opacity-60"
+        class="flex w-full items-center gap-3 rounded-md px-2 py-2.5 text-left text-sm hover:bg-muted disabled:cursor-wait disabled:opacity-60"
         :disabled="geoPending"
         @click="useNearby"
       >
@@ -118,7 +118,7 @@ function pickRecent(entry: { label: string; query: Record<string, string> }): vo
         v-for="c in suggestedCountries"
         :key="c.code"
         type="button"
-        class="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-muted"
+        class="flex w-full items-center gap-3 rounded-md px-2 py-2.5 text-left text-sm hover:bg-muted"
         @click="pickCountry(c.code)"
       >
         <MapPin class="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -126,13 +126,13 @@ function pickRecent(entry: { label: string; query: Record<string, string> }): vo
       </button>
     </div>
 
-    <div class="space-y-2 border-t pt-3">
+    <div class="space-y-2 border-t pt-4">
       <p class="px-1 text-xs font-medium text-muted-foreground">{{ $t('filters.country') }}</p>
       <div class="max-h-40 overflow-y-auto rounded-md border divide-y">
         <label
           v-for="c in countries"
           :key="c.code"
-          class="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-muted/50"
+          class="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-muted/50"
         >
           <Checkbox
             :model-value="selectedCountries.includes(c.code)"
@@ -149,7 +149,7 @@ function pickRecent(entry: { label: string; query: Record<string, string> }): vo
         <label
           v-for="r in availableRegions"
           :key="r.key"
-          class="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-muted/50"
+          class="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-muted/50"
         >
           <Checkbox
             :model-value="selectedRegionKeys.includes(r.key)"
