@@ -59,6 +59,7 @@ import { normalizeAuctionDescription, normalizeAuctionDescriptions } from '~/ser
 import { recordTaskRunEnd, recordTaskRunProgress, recordTaskRunStart } from '~/server/utils/task-runs'
 import { recordTaskRunError } from '~/server/utils/task-run-errors'
 import { runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-task'
+import { fillAuctionGeocodes } from '~/server/utils/auction-geocoding'
 
 const IMAGES_DIR = join(process.cwd(), '.cache_zvg', 'images')
 
@@ -166,6 +167,12 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
     const fetchStates = await readAuctionFetchStates()
     const artifactVersions = await readLatestArtifactVersions()
     const records = await readAuctionRecordMap(opts.country)
+    const cachedGeocodes = await fillAuctionGeocodes(result.auctions, { fetchMissing: false })
+    if (cachedGeocodes.geocoded > 0 || cachedGeocodes.failed > 0) {
+      console.log(
+        `[enrich] cached geocodes: processed=${cachedGeocodes.processed} hit=${cachedGeocodes.geocoded} failed=${cachedGeocodes.failed}`,
+      )
+    }
     const byPlatform = new Map(platforms.map((p) => [p.id, p]))
     const rates = await getRates()
     // Re-read below, right before the tail loop: geocode runs 30 min before
