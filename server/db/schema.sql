@@ -966,4 +966,18 @@ CREATE INDEX IF NOT EXISTS idx_osm_local_elements_country ON osm_local_elements 
 -- lookup use an index scan instead of a per-row jsonb scan.
 CREATE INDEX IF NOT EXISTS idx_osm_local_elements_country_natural ON osm_local_elements (country, (tags ->> 'natural'));
 CREATE INDEX IF NOT EXISTS idx_osm_local_elements_country_waterway ON osm_local_elements (country, (tags ->> 'waterway'));
+-- The landing rails' geo categories and the search filter's broadened
+-- nearSea matcher (server/utils/auction-search-filters.ts) correlate
+-- `o.country = a.country` against a per-row value, not a literal — the
+-- planner can't use the country-prefixed indexes above as an equality
+-- seek for that, so it falls back to scanning the whole tag value's
+-- entries across every country. Fine at Bulgaria-only scale (~1M rows),
+-- not once Germany's ~43M rows are loaded (measured: a plain natural=
+-- 'coastline' lookup went from a few ms to ~7-10s, reading tens of
+-- thousands of uncached buffers). These tag-only indexes make that
+-- lookup an index seek regardless of country.
+CREATE INDEX IF NOT EXISTS idx_osm_local_elements_tag_natural ON osm_local_elements ((tags ->> 'natural'));
+CREATE INDEX IF NOT EXISTS idx_osm_local_elements_tag_waterway ON osm_local_elements ((tags ->> 'waterway'));
+CREATE INDEX IF NOT EXISTS idx_osm_local_elements_tag_water ON osm_local_elements ((tags ->> 'water'));
+CREATE INDEX IF NOT EXISTS idx_osm_local_elements_tag_place ON osm_local_elements ((tags ->> 'place'));
 ALTER TABLE osm_local_elements ENABLE ROW LEVEL SECURITY;
