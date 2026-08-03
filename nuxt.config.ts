@@ -31,6 +31,15 @@ export default defineNuxtConfig({
       // preference sync in composables/useLocalePreference.ts.
       alwaysRedirect: false,
     },
+    experimental: {
+      // v10's Nitro-side detection has a known cold-start race: the first
+      // SSR request to any given route can hit useI18nContext() before the
+      // "request" hook that populates it has run, throwing "Nuxt I18n
+      // server context has not been set up yet" (nuxt-modules/i18n#3901).
+      // We use strategy: 'no_prefix' with no path-based locale routing, so
+      // this feature buys us nothing — disabling it avoids the crash.
+      nitroContextDetection: false,
+    },
   },
   app: {
     head: {
