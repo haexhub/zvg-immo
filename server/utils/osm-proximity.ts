@@ -12,16 +12,41 @@
 // Assumes the caller's FROM is `auctions a` joined to the newest
 // `auction_details` as `d` (LATEST_DETAILS_JOIN_SQL): coordinates are
 // versioned and live on `d`, the country is identity and lives on `a`.
+export interface ProximityTagMatcher {
+  tagKey: string
+  tagValue: string
+}
+
+export interface ProximityConditionOptions {
+  constrainCountry?: boolean
+}
+
 export function proximityCondition(
   tagKey: string,
   tagValue: string,
   radiusMeters: number,
   add: (value: unknown) => string,
 ): string {
+  return proximityConditionAnyTag([{ tagKey, tagValue }], radiusMeters, add)
+}
+
+/** Same as proximityCondition, but matches any of several key/value tag pairs.
+ *  Sea/coast queries intentionally use this broader form: coastline imports
+ *  can be incomplete around islands, while beaches/bays/sea polygons still
+ *  give a valid "near the sea" signal. */
+export function proximityConditionAnyTag(
+  matchers: ProximityTagMatcher[],
+  radiusMeters: number,
+  add: (value: unknown) => string,
+  options: ProximityConditionOptions = {},
+): string {
+  const countryPredicate = options.constrainCountry === false ? '' : '      o.country = a.country\n      AND '
+  const tagPredicate = matchers.length === 1
+    ? `o.tags ->> ${add(matchers[0]!.tagKey)} = ${add(matchers[0]!.tagValue)}`
+    : `(${matchers.map((matcher) => `o.tags ->> ${add(matcher.tagKey)} = ${add(matcher.tagValue)}`).join(' OR ')})`
   return `d.lat IS NOT NULL AND d.lng IS NOT NULL AND EXISTS (
     SELECT 1 FROM osm_local_elements o
-    WHERE o.country = a.country
-      AND o.tags ->> ${add(tagKey)} = ${add(tagValue)}
+    WHERE ${countryPredicate}${tagPredicate}
       AND ST_DWithin(o.geom::geography, ST_MakePoint(d.lng, d.lat)::geography, ${add(radiusMeters)})
   )`
 }
