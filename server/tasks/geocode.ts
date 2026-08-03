@@ -11,6 +11,11 @@ import { crawlAll } from '../crawlers/registry'
 import { enrichInBatches as enrichAtDetails } from '../crawlers/at/detail'
 import { enrichInBatches as enrichBidditDetails, formatVerkehrswertText } from '../crawlers/biddit/detail'
 import { geocodeAddress } from '../utils/geocode'
+import { writeAuctionDetails } from '../utils/auction-details'
+import { applyAuctionExtraction } from '../utils/auction-extraction'
+import { mergeStoredAuction } from '../utils/auction-merge'
+import { ensureAuctionIdentity, upsertCurrentAuctions } from '../utils/current-auctions'
+import { readAuctionRecordMap } from '../utils/auction-record'
 import {
   cacheKey,
   readVerkehrswertCache,
@@ -52,7 +57,11 @@ async function runGeocode(signal: AbortSignal) {
       processed++
       try {
         const point = await geocodeAddress(a.address, a.country, { fetchMissing: true })
-        if (point) geocoded++
+        if (point) {
+          a.lat = point.lat
+          a.lng = point.lng
+          geocoded++
+        }
       } catch {
         failed++
       }
@@ -78,21 +87,51 @@ async function runGeocode(signal: AbortSignal) {
     const vwErrors = vwAt.errors + vwBe.errors
     if (vwAdded > 0) await writeVerkehrswertCache(vwCache)
 
+    const persistedCoordinates = await persistGeocodedAuctions(
+      result.auctions.filter((a) => a.lat != null && a.lng != null),
+    )
+
     const durationMs = Date.now() - startedAt
     console.log(
-      `[geocode] done in ${(durationMs / 1000).toFixed(0)}s · geocoded=${geocoded} failed=${failed} · verkehrswert(at)=${vwAt.added}/${vwAt.errors} · verkehrswert(be)=${vwBe.added}/${vwBe.errors}`,
+      `[geocode] done in ${(durationMs / 1000).toFixed(0)}s · geocoded=${geocoded} persisted=${persistedCoordinates} failed=${failed} · verkehrswert(at)=${vwAt.added}/${vwAt.errors} · verkehrswert(be)=${vwBe.added}/${vwBe.errors}`,
     )
 
     return {
       result: {
         processed,
         geocoded,
+        persistedCoordinates,
         failed,
         verkehrswertAdded: vwAdded,
         verkehrswertErrors: vwErrors,
         durationMs,
       },
     }
+}
+
+async function persistGeocodedAuctions(auctions: Auction[]): Promise<number> {
+  if (auctions.length === 0) return 0
+  await ensureAuctionIdentity(auctions)
+  const records = await readAuctionRecordMap()
+  const at = new Date().toISOString()
+  let persisted = 0
+
+  for (const auction of auctions) {
+    try {
+      const record = records.get(cacheKey(auction.platform, auction.externalId))
+      if (auction.detailFetchedAt == null && record) mergeStoredAuction(auction, record.auction)
+      applyAuctionExtraction(auction, auction.extraction ?? record?.auction.extraction)
+      const written = await writeAuctionDetails(auction, auction.extraction ?? null, {
+        artifactVersionId: record?.artifactVersionId ?? null,
+      })
+      if (written) persisted++
+    } catch (err) {
+      console.warn(`[geocode] persist ${auction.platform}:${auction.externalId}: ${(err as Error).message}`)
+    }
+  }
+
+  await upsertCurrentAuctions(auctions, at)
+  return persisted
 }
 
 async function enrichAtVerkehrswert(
