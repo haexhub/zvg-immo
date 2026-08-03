@@ -18,7 +18,7 @@ vi.mock('../utils/list-cache', () => ({
   regionListCacheAgeMs: vi.fn(async () => null),
   writeListCache: vi.fn(),
 }))
-vi.mock('../utils/storage-uploader', () => ({ drainOutbox: vi.fn(async () => ({ uploaded: 0, failed: 0 })) }))
+vi.mock('../utils/storage-uploader', () => ({ drainOutbox: vi.fn(async () => ({ uploaded: 0, failed: 0, missing: 0 })) }))
 
 // defineTask is a Nitro auto-import — same stubbing pattern as enrich.test.ts.
 vi.stubGlobal('defineTask', (def: unknown) => def)
@@ -64,6 +64,17 @@ describe('refresh failure reporting', () => {
     vi.mocked(listRegions).mockReturnValue([region('de', 'by')] as never)
     vi.mocked(crawlSingle).mockResolvedValue({ auctions: [] } as never)
     vi.mocked(drainOutbox).mockResolvedValue({ uploaded: 0, failed: 3 } as never)
+    const task = await loadTask()
+
+    const outcome = await task.run()
+
+    expect(outcome.result).toMatchObject({ ok: 1, failed: 0 })
+  })
+
+  it('does not fail the run for missing local archive outbox files', async () => {
+    vi.mocked(listRegions).mockReturnValue([region('de', 'by')] as never)
+    vi.mocked(crawlSingle).mockResolvedValue({ auctions: [] } as never)
+    vi.mocked(drainOutbox).mockResolvedValue({ uploaded: 0, failed: 0, missing: 440 } as never)
     const task = await loadTask()
 
     const outcome = await task.run()

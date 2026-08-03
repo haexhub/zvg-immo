@@ -95,8 +95,10 @@ async function runRefresh(signal: AbortSignal) {
   // (best-effort, never throws) — this is the single scheduled trigger
   // point for the uploader (see server/utils/storage-uploader.ts).
   const upload = await drainOutbox()
-  if (upload.uploaded > 0 || upload.failed > 0) {
-    console.log(`[refresh] archive upload: ${upload.uploaded} ok, ${upload.failed} failed`)
+  if (upload.uploaded > 0 || upload.failed > 0 || upload.missing > 0) {
+    console.log(
+      `[refresh] archive upload: ${upload.uploaded} ok, ${upload.failed} failed, ${upload.missing} missing local`,
+    )
   }
   if (upload.failed > 0) {
     failureMessages.push(`${upload.failed} Roharchiv-Upload(s) fehlgeschlagen`)
