@@ -80,6 +80,48 @@ describe('buildAuctionSearchFilter', () => {
     expect(values).toContain(5_000)
   })
 
+  it('builds the sea filter broadly enough for Swedish coast and island searches', async () => {
+    const { getEnabledCountryCodes } = await import('~/server/crawlers/registry')
+    vi.mocked(getEnabledCountryCodes).mockReturnValueOnce(['de', 'at', 'se'])
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+    const { predicate, values } = await buildAuctionSearchFilter(db, { country: 'se', nearSea: '100', llmOnly: '0' })
+
+    const seaPredicate = predicate.slice(predicate.indexOf('EXISTS'))
+    expect(values[0]).toEqual(['se'])
+    expect(seaPredicate).toContain(' OR ')
+    expect(seaPredicate).not.toContain('o.country = a.country')
+    expect(values).toEqual([
+      ['se'],
+      'natural',
+      'coastline',
+      'natural',
+      'beach',
+      'natural',
+      'bay',
+      'natural',
+      'strait',
+      'water',
+      'sea',
+      'water',
+      'lagoon',
+      'place',
+      'sea',
+      'place',
+      'ocean',
+      100_000,
+    ])
+  })
+
+  it('keeps non-sea Umgebung filters scoped to the auction country', async () => {
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+    const { predicate, values } = await buildAuctionSearchFilter(db, { nearLake: '20', llmOnly: '0' })
+
+    expect(predicate).toContain('o.country = a.country')
+    expect(values).toContain('natural')
+    expect(values).toContain('water')
+    expect(values).toContain(20_000)
+  })
+
   it('ignores a zero or unset Umgebung distance', async () => {
     const { buildAuctionSearchFilter } = await import('./auction-search-filters')
     const { predicate } = await buildAuctionSearchFilter(db, { nearSea: '0', llmOnly: '0' })

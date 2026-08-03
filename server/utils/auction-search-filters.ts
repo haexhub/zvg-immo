@@ -7,18 +7,40 @@
 import type { Pool } from 'pg'
 import { ensureEnabledCountriesLoaded, getEnabledCountryCodes } from '~/server/crawlers/registry'
 import { getHideRulesOnlyAuctions } from '~/server/utils/app-settings'
-import { proximityCondition, proximityConditionAnyOf } from '~/server/utils/osm-proximity'
+import { proximityConditionAnyOf, proximityConditionAnyTag, type ProximityTagMatcher } from '~/server/utils/osm-proximity'
 
 // Umgebung ("environment") proximity filters — same osm_local_elements
 // dataset and EXISTS/ST_DWithin shape as the landing page's geo rails
 // (server/api/landing/rails.get.ts), but with a user-chosen radius instead
-// of a fixed one. Query param name -> OSM tag matched against.
-const PROXIMITY_FILTERS: Record<string, { tagKey: string; tagValue: string }> = {
-  nearSea: { tagKey: 'natural', tagValue: 'coastline' },
-  nearLake: { tagKey: 'natural', tagValue: 'water' },
-  nearRiver: { tagKey: 'waterway', tagValue: 'river' },
-  nearMountain: { tagKey: 'natural', tagValue: 'peak' },
-  nearAirport: { tagKey: 'aeroway', tagValue: 'aerodrome' },
+// of a fixed one. Query param name -> OSM tag matchers.
+interface ProximityFilterConfig {
+  matchers: ProximityTagMatcher[]
+  constrainCountry?: boolean
+}
+
+const PROXIMITY_FILTERS: Record<string, ProximityFilterConfig> = {
+  // Coastal OSM imports are not always represented only by
+  // natural=coastline, especially around islands. Do not constrain the OSM
+  // element's country here either: coastline/bay/sea geometries often sit on
+  // borders or water and the user's selected auction country already scopes
+  // the candidates.
+  nearSea: {
+    constrainCountry: false,
+    matchers: [
+      { tagKey: 'natural', tagValue: 'coastline' },
+      { tagKey: 'natural', tagValue: 'beach' },
+      { tagKey: 'natural', tagValue: 'bay' },
+      { tagKey: 'natural', tagValue: 'strait' },
+      { tagKey: 'water', tagValue: 'sea' },
+      { tagKey: 'water', tagValue: 'lagoon' },
+      { tagKey: 'place', tagValue: 'sea' },
+      { tagKey: 'place', tagValue: 'ocean' },
+    ],
+  },
+  nearLake: { matchers: [{ tagKey: 'natural', tagValue: 'water' }] },
+  nearRiver: { matchers: [{ tagKey: 'waterway', tagValue: 'river' }] },
+  nearMountain: { matchers: [{ tagKey: 'natural', tagValue: 'peak' }] },
+  nearAirport: { matchers: [{ tagKey: 'aeroway', tagValue: 'aerodrome' }] },
 }
 
 // A settlement counts as "urban" if a city/town-sized OSM place node sits
@@ -140,9 +162,13 @@ export async function buildAuctionSearchFilter(
     if (value != null) where.push(`${column} ${operator} ${add(value)}`)
   }
 
-  for (const [param, tag] of Object.entries(PROXIMITY_FILTERS)) {
+  for (const [param, config] of Object.entries(PROXIMITY_FILTERS)) {
     const km = finiteNumber(query[param])
-    if (km != null && km > 0) where.push(proximityCondition(tag.tagKey, tag.tagValue, km * 1000, add))
+    if (km != null && km > 0) {
+      where.push(proximityConditionAnyTag(config.matchers, km * 1000, add, {
+        constrainCountry: config.constrainCountry,
+      }))
+    }
   }
 
   const urbanRural = String(query.urbanRural ?? '')

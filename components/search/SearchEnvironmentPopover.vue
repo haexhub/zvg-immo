@@ -21,8 +21,8 @@ const isOpen = toRef(props, 'open')
 const { draft, commit } = useFilterDraft({ nearSea, nearLake, nearRiver, nearMountain, nearAirport, urbanRural }, isOpen)
 
 const SLIDERS = [
-  { key: 'nearSea', label: 'searchBar.environment.sea', max: 50 },
-  { key: 'nearLake', label: 'searchBar.environment.lake', max: 50 },
+  { key: 'nearSea', label: 'searchBar.environment.sea', max: 100 },
+  { key: 'nearLake', label: 'searchBar.environment.lake', max: 100 },
   { key: 'nearRiver', label: 'searchBar.environment.river', max: 30 },
   { key: 'nearMountain', label: 'searchBar.environment.mountain', max: 100 },
   { key: 'nearAirport', label: 'searchBar.environment.airport', max: 50 },
