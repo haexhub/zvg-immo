@@ -429,6 +429,7 @@ function onPointerMove(evt: any): void {
   max-height: 240px;
   overflow-y: auto;
   background: white;
+  color: #111827;
   box-shadow: 0 4px 16px rgb(15 23 42 / 20%);
 }
 
@@ -443,15 +444,23 @@ function onPointerMove(evt: any): void {
 .auction-map-cluster-list__item {
   text-align: left;
   font-size: 13px;
+  line-height: 1.35;
   padding: 6px 8px;
   border-radius: 6px;
   border: none;
   background: transparent;
+  color: #111827;
   cursor: pointer;
 }
 
-.auction-map-cluster-list__item:hover {
+.auction-map-cluster-list__item:hover,
+.auction-map-cluster-list__item:focus-visible {
   background: #f3f4f6;
+}
+
+.auction-map-cluster-list__item:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 1px;
 }
 
 .auction-map-baselayer-toggle {
