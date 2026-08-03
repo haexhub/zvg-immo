@@ -103,101 +103,76 @@ const environmentSummary = computed(() => {
 
 <template>
   <div class="flex min-w-0 flex-1 items-stretch rounded-full border bg-muted/40 shadow-sm">
-    <Popover v-model:open="locationOpen">
-      <PopoverTrigger as-child>
-        <button
-          type="button"
-          class="min-w-0 flex-1 rounded-full px-4 py-2 text-left transition-colors"
-          :class="locationOpen ? 'bg-background shadow' : 'hover:bg-background/60'"
-        >
-          <span class="block text-xs font-semibold">{{ $t('searchBar.location.label') }}</span>
-          <span class="block truncate text-sm text-muted-foreground">{{ locationSummary }}</span>
-        </button>
-      </PopoverTrigger>
-      <PopoverContent class="w-md" align="start">
-        <SearchLocationPopover
-          v-model:search="search"
-          :countries="countries"
-          :selected-countries="selectedCountries"
-          :available-regions="availableRegions"
-          :selected-region-keys="selectedRegionKeys"
-          :placeholder="$t('filters.searchPlaceholder')"
-          @toggle-country="emit('toggle-country', $event)"
-          @toggle-region="emit('toggle-region', $event)"
-          @select-country="emit('select-country', $event)"
-          @set-nearby="handleSetNearby"
-          @pick-recent="emit('pick-recent', $event)"
-        />
-      </PopoverContent>
-    </Popover>
+    <SearchBarSegment
+      v-model:open="locationOpen"
+      :label="$t('searchBar.location.label')"
+      :summary="locationSummary"
+      align="start"
+    >
+      <SearchLocationPopover
+        v-model:search="search"
+        :countries="countries"
+        :selected-countries="selectedCountries"
+        :available-regions="availableRegions"
+        :selected-region-keys="selectedRegionKeys"
+        :placeholder="$t('filters.searchPlaceholder')"
+        @toggle-country="emit('toggle-country', $event)"
+        @toggle-region="emit('toggle-region', $event)"
+        @select-country="emit('select-country', $event)"
+        @set-nearby="handleSetNearby"
+        @pick-recent="emit('pick-recent', $event)"
+      />
+    </SearchBarSegment>
 
     <Separator orientation="vertical" class="my-2 h-auto" />
 
-    <Popover v-model:open="propertiesOpen">
-      <PopoverTrigger as-child>
-        <button
-          type="button"
-          class="min-w-0 flex-1 rounded-full px-4 py-2 text-left transition-colors"
-          :class="propertiesOpen ? 'bg-background shadow' : 'hover:bg-background/60'"
-        >
-          <span class="block text-xs font-semibold">{{ $t('searchBar.properties.label') }}</span>
-          <span class="block truncate text-sm text-muted-foreground">
-            {{ propertiesSummary > 0 ? $t('searchBar.activeCount', { count: propertiesSummary }) : $t('searchBar.properties.placeholder') }}
-          </span>
-        </button>
-      </PopoverTrigger>
-      <PopoverContent class="w-md" align="start">
-        <SearchPropertiesPopover
-          v-model:price-min="priceMin"
-          v-model:price-max="priceMax"
-          v-model:land-area-min="landAreaMin"
-          v-model:land-area-max="landAreaMax"
-          v-model:living-area-min="livingAreaMin"
-          v-model:living-area-max="livingAreaMax"
-          v-model:year-built-min="yearBuiltMin"
-          v-model:year-built-max="yearBuiltMax"
-          v-model:renovation-year-min="renovationYearMin"
-          v-model:renovation-year-max="renovationYearMax"
-          v-model:authority-filter="authorityFilter"
-          v-model:category-filter="categoryFilter"
-          v-model:condition-filter="conditionFilter"
-          v-model:features-filter="featuresFilter"
-          v-model:only-with-photos="onlyWithPhotos"
-          v-model:include-cancelled="includeCancelled"
-          v-model:hide-rules-only="hideRulesOnly"
-          v-model:open="propertiesOpen"
-          :categories="categories"
-          :currency="currency"
-        />
-      </PopoverContent>
-    </Popover>
+    <SearchBarSegment
+      v-model:open="propertiesOpen"
+      :label="$t('searchBar.properties.label')"
+      :summary="propertiesSummary > 0 ? $t('searchBar.activeCount', { count: propertiesSummary }) : $t('searchBar.properties.placeholder')"
+      align="start"
+    >
+      <SearchPropertiesPopover
+        v-model:price-min="priceMin"
+        v-model:price-max="priceMax"
+        v-model:land-area-min="landAreaMin"
+        v-model:land-area-max="landAreaMax"
+        v-model:living-area-min="livingAreaMin"
+        v-model:living-area-max="livingAreaMax"
+        v-model:year-built-min="yearBuiltMin"
+        v-model:year-built-max="yearBuiltMax"
+        v-model:renovation-year-min="renovationYearMin"
+        v-model:renovation-year-max="renovationYearMax"
+        v-model:authority-filter="authorityFilter"
+        v-model:category-filter="categoryFilter"
+        v-model:condition-filter="conditionFilter"
+        v-model:features-filter="featuresFilter"
+        v-model:only-with-photos="onlyWithPhotos"
+        v-model:include-cancelled="includeCancelled"
+        v-model:hide-rules-only="hideRulesOnly"
+        v-model:open="propertiesOpen"
+        :categories="categories"
+        :currency="currency"
+      />
+    </SearchBarSegment>
 
     <Separator orientation="vertical" class="my-2 h-auto" />
 
-    <Popover v-model:open="environmentOpen">
-      <PopoverTrigger as-child>
-        <button
-          type="button"
-          class="min-w-0 flex-1 rounded-full px-4 py-2 text-left transition-colors"
-          :class="environmentOpen ? 'bg-background shadow' : 'hover:bg-background/60'"
-        >
-          <span class="block text-xs font-semibold">{{ $t('searchBar.environment.label') }}</span>
-          <span class="block truncate text-sm text-muted-foreground">
-            {{ environmentSummary > 0 ? $t('searchBar.activeCount', { count: environmentSummary }) : $t('searchBar.environment.placeholder') }}
-          </span>
-        </button>
-      </PopoverTrigger>
-      <PopoverContent class="w-md" align="end">
-        <SearchEnvironmentPopover
-          v-model:near-sea="nearSea"
-          v-model:near-lake="nearLake"
-          v-model:near-river="nearRiver"
-          v-model:near-mountain="nearMountain"
-          v-model:near-airport="nearAirport"
-          v-model:urban-rural="urbanRural"
-          v-model:open="environmentOpen"
-        />
-      </PopoverContent>
-    </Popover>
+    <SearchBarSegment
+      v-model:open="environmentOpen"
+      :label="$t('searchBar.environment.label')"
+      :summary="environmentSummary > 0 ? $t('searchBar.activeCount', { count: environmentSummary }) : $t('searchBar.environment.placeholder')"
+      align="end"
+    >
+      <SearchEnvironmentPopover
+        v-model:near-sea="nearSea"
+        v-model:near-lake="nearLake"
+        v-model:near-river="nearRiver"
+        v-model:near-mountain="nearMountain"
+        v-model:near-airport="nearAirport"
+        v-model:urban-rural="urbanRural"
+        v-model:open="environmentOpen"
+      />
+    </SearchBarSegment>
   </div>
 </template>
