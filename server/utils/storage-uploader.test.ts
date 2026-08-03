@@ -50,7 +50,7 @@ describe('drainOutbox', () => {
     vi.mocked(getPool).mockReturnValue(null)
     vi.stubGlobal('useRuntimeConfig', () => ({ rawOutboxDir: outboxDir, storageBucket: 'raw-archive' }))
     const result = await drainOutbox()
-    expect(result).toEqual({ uploaded: 0, failed: 0 })
+    expect(result).toEqual({ uploaded: 0, failed: 0, missing: 0 })
     expect(uploadMock).not.toHaveBeenCalled()
   })
 
@@ -58,7 +58,7 @@ describe('drainOutbox', () => {
     vi.mocked(getPool).mockReturnValue({ query: vi.fn() } as never)
     vi.stubGlobal('useRuntimeConfig', () => ({ rawOutboxDir: outboxDir, storageBucket: '' }))
     const result = await drainOutbox()
-    expect(result).toEqual({ uploaded: 0, failed: 0 })
+    expect(result).toEqual({ uploaded: 0, failed: 0, missing: 0 })
     expect(uploadMock).not.toHaveBeenCalled()
   })
 
@@ -67,7 +67,7 @@ describe('drainOutbox', () => {
     vi.mocked(getServiceClient).mockReturnValue(null)
     vi.stubGlobal('useRuntimeConfig', () => ({ rawOutboxDir: outboxDir, storageBucket: 'raw-archive' }))
     const result = await drainOutbox()
-    expect(result).toEqual({ uploaded: 0, failed: 0 })
+    expect(result).toEqual({ uploaded: 0, failed: 0, missing: 0 })
     expect(uploadMock).not.toHaveBeenCalled()
   })
 
@@ -83,7 +83,7 @@ describe('drainOutbox', () => {
 
     const result = await drainOutbox()
 
-    expect(result).toEqual({ uploaded: 1, failed: 0 })
+    expect(result).toEqual({ uploaded: 1, failed: 0, missing: 0 })
     expect(fakeSupabase.storage.from).toHaveBeenCalledWith('raw-archive')
     expect(uploadMock).toHaveBeenCalledTimes(1)
     expect(uploadMock).toHaveBeenCalledWith(key, expect.any(Buffer), {
@@ -94,7 +94,7 @@ describe('drainOutbox', () => {
     await expect(stat(filePath)).rejects.toThrow()
   })
 
-  it('counts a failed upload without throwing and leaves the local file in place', async () => {
+  it('counts a missing local outbox file without treating it as an upload failure', async () => {
     const key = 'cd/missing.json.gz'
     // Intentionally do not create the outbox file: readFile fails.
     const pool = makeFakePool([{ content_hash: 'missing', s3_key: key, content_type: 'application/json+gzip' }])
@@ -103,7 +103,7 @@ describe('drainOutbox', () => {
 
     const result = await drainOutbox()
 
-    expect(result).toEqual({ uploaded: 0, failed: 1 })
+    expect(result).toEqual({ uploaded: 0, failed: 0, missing: 1 })
     expect(uploadMock).not.toHaveBeenCalled()
     expect(pool.updated).toEqual([])
   })
@@ -121,7 +121,7 @@ describe('drainOutbox', () => {
 
     const result = await drainOutbox()
 
-    expect(result).toEqual({ uploaded: 0, failed: 1 })
+    expect(result).toEqual({ uploaded: 0, failed: 1, missing: 0 })
     expect(pool.updated).toEqual([])
     await expect(stat(filePath)).resolves.toBeTruthy()
   })

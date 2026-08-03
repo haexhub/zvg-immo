@@ -27,6 +27,11 @@ interface PendingBlob {
 export interface DrainResult {
   uploaded: number
   failed: number
+  missing: number
+}
+
+function isMissingFileError(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT'
 }
 
 /** Uploads every not-yet-uploaded outbox blob to Supabase Storage. No-op
@@ -34,24 +39,34 @@ export interface DrainResult {
  *  throws. */
 export async function drainOutbox(): Promise<DrainResult> {
   const db = getPool()
-  if (!db) return { uploaded: 0, failed: 0 }
+  if (!db) return { uploaded: 0, failed: 0, missing: 0 }
   const bucket = bucketName()
-  if (!bucket) return { uploaded: 0, failed: 0 }
+  if (!bucket) return { uploaded: 0, failed: 0, missing: 0 }
   const supabase = getServiceClient()
-  if (!supabase) return { uploaded: 0, failed: 0 }
+  if (!supabase) return { uploaded: 0, failed: 0, missing: 0 }
 
   let uploaded = 0
   let failed = 0
+  let missing = 0
   try {
     const { rows } = await db.query<PendingBlob>(
       'SELECT content_hash, s3_key, content_type FROM artifact_blobs WHERE uploaded_at IS NULL',
     )
-    if (rows.length === 0) return { uploaded: 0, failed: 0 }
+    if (rows.length === 0) return { uploaded: 0, failed: 0, missing: 0 }
 
     const dir = outboxDir()
     for (const row of rows) {
       try {
-        const body = await readFile(join(dir, row.s3_key))
+        let body: Buffer
+        try {
+          body = await readFile(join(dir, row.s3_key))
+        } catch (err) {
+          if (isMissingFileError(err)) {
+            missing++
+            continue
+          }
+          throw err
+        }
         const { error } = await supabase.storage
           .from(bucket)
           .upload(row.s3_key, body, { contentType: row.content_type, upsert: true })
@@ -66,8 +81,13 @@ export async function drainOutbox(): Promise<DrainResult> {
         failed++
       }
     }
+    if (missing > 0) {
+      console.warn(
+        `[storage-uploader] ${missing} pending blob(s) have no local outbox file; leaving rows pending for a future recrawl`,
+      )
+    }
   } catch (err) {
     console.warn(`[storage-uploader] drain failed: ${(err as Error).message}`)
   }
-  return { uploaded, failed }
+  return { uploaded, failed, missing }
 }
