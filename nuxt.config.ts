@@ -218,6 +218,10 @@ export default defineNuxtConfig({
   nitro: {
     experimental: {
       tasks: true,
+      // Without this, vue-i18n's SSR composer context (unctx-based) can leak
+      // or drop across concurrent requests under load, throwing "Nuxt I18n
+      // server context has not been set up yet" for unrelated requests.
+      asyncContext: true,
     },
     scheduledTasks: {
       // Every 6 hours: re-crawl and fill in missing geocodes. After the first
