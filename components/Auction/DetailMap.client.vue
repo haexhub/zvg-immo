@@ -408,10 +408,16 @@ onMounted(async () => {
     element: popupEl.value,
     offset: [0, -12],
     positioning: 'bottom-center',
+    autoPan: { margin: 20 },
   })
 
   map = new OlMap({
     target: mapEl.value,
+    // OL's own click/drag threshold defaults to 1px, so a mouse/trackpad
+    // click that drifts by 2px+ between press and release gets reclassified
+    // as a pan and never fires 'click' at all — the popup click handler
+    // below then never runs and an open popup can't be dismissed.
+    moveTolerance: 8,
     interactions: defaultInteractions({ mouseWheelZoom: false }),
     layers: [...rasterFallbackLayers, ...entries.map((e) => e.layer), markerLayer],
     overlays: [popupOverlay],

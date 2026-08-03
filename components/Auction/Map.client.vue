@@ -281,10 +281,21 @@ watch(() => props.fitKey, () => {
 watch(() => props.auctions, refreshMarkers, { deep: false })
 watch(() => props.activeAuctionKey, updateMarkerHighlight)
 
+// Without this, forEachFeatureAtPixel below also hits the MapTiler vector
+// base layer's own features (road/landcover/water polygons cover almost
+// every pixel) once useMapTilerVectorBaseLayer is active — clicking empty
+// map area then finds one of those instead of nothing, and
+// `clusterFeature.get('features')` on a foreign feature is undefined,
+// throwing inside onMapClick/onPointerMove before the popup-closing reset
+// runs. Only the raster OSM/Esri fallback (no vector features) hid this.
+function isMarkerLayer(layer: any): boolean {
+  return layer === vectorLayerRef.value?.vectorLayer
+}
+
 function onMapClick(evt: any): void {
   const map = mapRef.value?.map
   if (!map) return
-  const clusterFeature = map.forEachFeatureAtPixel(evt.pixel, (f: any) => f)
+  const clusterFeature = map.forEachFeatureAtPixel(evt.pixel, (f: any) => f, { layerFilter: isMarkerLayer })
   if (!clusterFeature) {
     selectedKey.value = null
     clusterKeys.value = null
@@ -333,7 +344,7 @@ let lastHoverKey: string | null = null
 function onPointerMove(evt: any): void {
   const map = mapRef.value?.map
   if (!map) return
-  const clusterFeature = map.forEachFeatureAtPixel(evt.pixel, (f: any) => f)
+  const clusterFeature = map.forEachFeatureAtPixel(evt.pixel, (f: any) => f, { layerFilter: isMarkerLayer })
   const children = clusterFeature?.get('features') as Feature<Point>[] | undefined
   const key = children && children.length === 1 ? (children[0]!.getId() as string) : null
   if (key === lastHoverKey) return
@@ -344,7 +355,13 @@ function onPointerMove(evt: any): void {
 
 <template>
   <div class="relative isolate h-full w-full rounded-xl border shadow-sm overflow-hidden">
-    <ol-map ref="mapRef" class="h-full w-full" @click="onMapClick" @pointermove="onPointerMove" @moveend="emitBounds">
+    <!-- OL's own click/drag threshold defaults to 1px (moveTolerance), so any
+         real-world mouse/trackpad click that drifts by 2px+ between press and
+         release gets reclassified as a pan and never fires 'click' at all —
+         onMapClick then never runs, and an open popup can't be dismissed by
+         clicking elsewhere. 8px keeps that dismiss-click reliable without
+         interfering with genuine drags. -->
+    <ol-map ref="mapRef" class="h-full w-full" :move-tolerance="8" @click="onMapClick" @pointermove="onPointerMove" @moveend="emitBounds">
       <ol-view :center="initialCenter" :zoom="initialZoom" projection="EPSG:3857" />
       <!-- MapTiler vector base layer (useMapTilerVectorBaseLayer) is inserted
            imperatively at the bottom of the layer stack once a key is
@@ -367,7 +384,13 @@ function onPointerMove(evt: any): void {
           <ol-source-vector ref="vectorSourceRef" />
         </ol-source-cluster>
       </ol-vector-layer>
-      <ol-overlay v-if="selectedKey && popupPosition" :position="popupPosition" :offset="[0, -12]" positioning="bottom-center">
+      <ol-overlay
+        v-if="selectedKey && popupPosition"
+        :position="popupPosition"
+        :offset="[0, -12]"
+        positioning="bottom-center"
+        :auto-pan="{ margin: 20 }"
+      >
         <div class="min-w-[280px] max-w-[320px] rounded-lg bg-white p-1 shadow-lg">
           <!-- Keyed on the auction: clicking a second marker while a popup is
                open swaps selectedKey without ever unmounting the overlay, so
@@ -382,7 +405,13 @@ function onPointerMove(evt: any): void {
           />
         </div>
       </ol-overlay>
-      <ol-overlay v-if="clusterKeys && popupPosition" :position="popupPosition" :offset="[0, -12]" positioning="bottom-center">
+      <ol-overlay
+        v-if="clusterKeys && popupPosition"
+        :position="popupPosition"
+        :offset="[0, -12]"
+        positioning="bottom-center"
+        :auto-pan="{ margin: 20 }"
+      >
         <div class="flex max-h-60 min-w-[220px] max-w-[280px] flex-col gap-0.5 overflow-y-auto rounded-lg bg-white p-2 text-gray-900 shadow-lg">
           <div class="mb-1 text-[11px] font-semibold uppercase text-gray-500">{{ t('map.clusterPickerHint', { count: clusterAuctions.length }) }}</div>
           <button
