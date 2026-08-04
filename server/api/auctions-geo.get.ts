@@ -1,5 +1,5 @@
 import { geocodeAddress, geocodeStatus } from '~/server/utils/geocode'
-import { getPool } from '~/server/utils/db'
+import { getPool, isStatementTimeoutError, SEARCH_STATEMENT_TIMEOUT_MS, withStatementTimeout } from '~/server/utils/db'
 import { buildAuctionSearchFilter, finiteNumber } from '~/server/utils/auction-search-filters'
 import { LATEST_DETAILS_JOIN_SQL } from '~/server/api/auctions.get'
 import { countryCentroid } from '~/lib/country-bounds'
@@ -54,15 +54,25 @@ export default defineEventHandler(async (event): Promise<GeoCrawlResult> => {
   const query = getQuery(event)
   const { predicate, values } = await buildAuctionSearchFilter(db, query)
 
-  const { rows } = await db.query<MarkerRow>(
-    `SELECT a.platform, a.external_id, a.country, a.region, d.address, d.lat, d.lng
-     FROM auctions a
-     ${LATEST_DETAILS_JOIN_SQL}
-     ${predicate}
-     ORDER BY a.platform, a.external_id
-     LIMIT $${values.length + 1}`,
-    [...values, MAX_MARKERS],
-  )
+  let rows: MarkerRow[]
+  try {
+    ;({ rows } = await withStatementTimeout(db, SEARCH_STATEMENT_TIMEOUT_MS, (client) =>
+      client.query<MarkerRow>(
+        `SELECT a.platform, a.external_id, a.country, a.region, d.address, d.lat, d.lng
+       FROM auctions a
+       ${LATEST_DETAILS_JOIN_SQL}
+       ${predicate}
+       ORDER BY a.platform, a.external_id
+       LIMIT $${values.length + 1}`,
+        [...values, MAX_MARKERS],
+      ),
+    ))
+  } catch (err) {
+    if (isStatementTimeoutError(err)) {
+      throw createError({ statusCode: 503, statusMessage: 'Suche zu aufwendig, bitte Filter einschränken.' })
+    }
+    throw err
+  }
 
   const fetchMissing = query.fetch === '1'
   const markers: Array<GeoAuction | undefined> = new Array(rows.length)
