@@ -222,23 +222,28 @@ export default defineEventHandler(async (event): Promise<AuctionSearchResponse> 
     ${from} ${predicate ? `${predicate} AND d.property_type IS NOT NULL` : `WHERE d.property_type IS NOT NULL`}
     GROUP BY d.property_type ORDER BY count DESC, d.property_type`
 
-  // Facet queries reuse the filter parameters but not LIMIT/OFFSET. All four
-  // run on one connection (see withStatementTimeout) so the same
-  // statement_timeout guards every one of them, including the environment
-  // filter's EXISTS/ST_DWithin subquery embedded in `predicate`.
+  // Facet queries reuse the filter parameters but not LIMIT/OFFSET. Each gets
+  // its own withStatementTimeout call — and therefore its own connection —
+  // run together via Promise.all: a single Postgres connection only ever
+  // processes one statement at a time, so bundling all four onto one
+  // connection would silently serialize them (no real parallelism despite
+  // the Promise.all) and, worse, would let their SET LOCAL statement_timeout
+  // windows add up to ~4x SEARCH_STATEMENT_TIMEOUT_MS worst case instead of
+  // capping the whole request at SEARCH_STATEMENT_TIMEOUT_MS. Four
+  // connections per search request is unchanged from before this file
+  // started using withStatementTimeout.
   let rowsResult, statsResult, authoritiesResult, categoriesResult
   try {
-    ;[rowsResult, statsResult, authoritiesResult, categoriesResult] = await withStatementTimeout(
-      db,
-      SEARCH_STATEMENT_TIMEOUT_MS,
-      (client) =>
-        Promise.all([
-          client.query<SearchRow>(rowsSql, [...filterValues, pageSize, offset]),
-          client.query<{ total: number; active: number; cancelled: number }>(statsSql, filterValues),
-          client.query<{ authority: string }>(authoritiesSql, filterValues),
-          client.query<{ id: string; count: number }>(categoriesSql, filterValues),
-        ]),
-    )
+    ;[rowsResult, statsResult, authoritiesResult, categoriesResult] = await Promise.all([
+      withStatementTimeout(db, SEARCH_STATEMENT_TIMEOUT_MS, (client) =>
+        client.query<SearchRow>(rowsSql, [...filterValues, pageSize, offset])),
+      withStatementTimeout(db, SEARCH_STATEMENT_TIMEOUT_MS, (client) =>
+        client.query<{ total: number; active: number; cancelled: number }>(statsSql, filterValues)),
+      withStatementTimeout(db, SEARCH_STATEMENT_TIMEOUT_MS, (client) =>
+        client.query<{ authority: string }>(authoritiesSql, filterValues)),
+      withStatementTimeout(db, SEARCH_STATEMENT_TIMEOUT_MS, (client) =>
+        client.query<{ id: string; count: number }>(categoriesSql, filterValues)),
+    ])
   } catch (err) {
     if (isStatementTimeoutError(err)) {
       throw createError({ statusCode: 503, statusMessage: 'Suche zu aufwendig, bitte Filter einschränken.' })

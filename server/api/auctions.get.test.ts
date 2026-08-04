@@ -8,19 +8,28 @@ vi.mock('~/server/utils/db', async () => {
   return { ...actual, getPool: vi.fn() }
 })
 
-/** A pool-like object whose one connection's control statements (BEGIN/SET
- *  LOCAL/COMMIT/ROLLBACK) are no-ops, delegating everything else to `query`. */
+/** A pool-like object that hands out a fresh mock client per `connect()`
+ *  call — one per withStatementTimeout invocation, mirroring a real pool —
+ *  whose control statements (BEGIN/SET LOCAL/COMMIT/ROLLBACK) are no-ops,
+ *  delegating everything else to `query`. `clients` collects every client
+ *  handed out, so a test can assert how many separate connections a handler
+ *  actually checked out. */
 function mockPool(query: (sql: string, params: unknown[]) => Promise<unknown>) {
-  const client = {
-    query: vi.fn(async (sql: string, params: unknown[] = []) => {
-      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK' || sql.startsWith('SET LOCAL')) {
-        return { rows: [] }
-      }
-      return query(sql, params)
-    }),
-    release: vi.fn(),
-  }
-  return { connect: vi.fn().mockResolvedValue(client) }
+  const clients: Array<{ query: ReturnType<typeof vi.fn>; release: ReturnType<typeof vi.fn> }> = []
+  const connect = vi.fn(async () => {
+    const client = {
+      query: vi.fn(async (sql: string, params: unknown[] = []) => {
+        if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK' || sql.startsWith('SET LOCAL')) {
+          return { rows: [] }
+        }
+        return query(sql, params)
+      }),
+      release: vi.fn(),
+    }
+    clients.push(client)
+    return client
+  })
+  return { connect, clients }
 }
 // Collaborators of the shared filter builder: the enabled-country scope and the
 // admin-configured hideRulesOnly default.
@@ -128,6 +137,37 @@ describe('/api/auctions', () => {
     expect(card.extraction).not.toHaveProperty('documentSummary')
     expect(card.extraction).not.toHaveProperty('insights')
     expect(card.extraction).not.toHaveProperty('photos')
+  })
+
+  it('runs the four facet queries as four independent connections instead of serializing them on one', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    vi.stubGlobal('getQuery', () => ({ country: 'de' }))
+    vi.stubGlobal('setResponseHeader', vi.fn())
+    vi.stubGlobal('createError', (input: object) => Object.assign(new Error('api error'), input))
+
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes('count(*)::int AS total')) return { rows: [{ total: 0, active: 0, cancelled: 0 }] }
+      if (sql.includes('SELECT DISTINCT a.authority')) return { rows: [] }
+      if (sql.includes('SELECT d.property_type AS id')) return { rows: [] }
+      if (sql.includes('LIMIT $') && sql.includes('OFFSET $')) return { rows: [] }
+      throw new Error(`unexpected query: ${sql}`)
+    })
+    const { getPool } = await import('~/server/utils/db')
+    const pool = mockPool(query)
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const handler = (await import('./auctions.get')).default as unknown as (event: unknown) => Promise<unknown>
+
+    await handler({})
+
+    // One connect() per facet query — bundling all four onto one connection
+    // would serialize them (a connection only processes one statement at a
+    // time) and let their SET LOCAL statement_timeout windows add up instead
+    // of capping the whole request at SEARCH_STATEMENT_TIMEOUT_MS.
+    expect(pool.connect).toHaveBeenCalledTimes(4)
+    expect(pool.clients).toHaveLength(4)
+    for (const client of pool.clients) {
+      expect(client.release).toHaveBeenCalledOnce()
+    }
   })
 
   it('fails visibly when the serving database is not configured', async () => {
