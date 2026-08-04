@@ -1,6 +1,6 @@
 // Deletes a lawyer from the catalog. Admin-only via /api/settings/'s
 // settings-auth guard. `lawyer_inquiries.lawyer_id` is `ON DELETE RESTRICT`
-// (those rows are billing records, see server/db/schema.sql) — Postgres
+// (those rows are billing records, see server/db/schema/lawyers.ts) — Postgres
 // rejects the delete with a foreign_key_violation when any inquiry
 // references this lawyer. Surface that as a clear 409 telling the caller to
 // deactivate instead, rather than letting a raw Postgres error bubble up as

@@ -135,7 +135,7 @@ export default defineNuxtConfig({
     //   NUXT_TRUST_FORWARDED_FOR=1
     trustForwardedFor: '',
     // Direct `pg` connection to the self-hosted Supabase `db` service, used
-    // by server/utils/db.ts to run server/db/schema.sql on boot. Empty →
+    // by server/utils/db.ts to run server/db/migrations/ on boot. Empty →
     // migrations are skipped (see db.ts) rather than failing hard.
     //   NUXT_DATABASE_URL=postgres://postgres:<pw>@db:5432/postgres
     databaseUrl: '',
@@ -172,7 +172,7 @@ export default defineNuxtConfig({
     // Uploads via the same service-role client as supabaseUrl/
     // supabaseServiceRoleKey below (server/utils/supabase.ts). Also requires
     // databaseUrl (the artifact_blobs/artifact_captures index lives in Postgres, see
-    // server/db/schema.sql).
+    // server/db/schema/core.ts).
     //   NUXT_STORAGE_BUCKET=zvg-immo-raw-archive
     storageBucket: '',
     // WP-4: Supabase Storage bucket for extracted auction photos (public-read;

@@ -5,8 +5,9 @@
 // server/tasks/enrich.ts: no config means the feature is off, not a hard
 // failure.
 
-import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { Pool, type PoolClient } from 'pg'
 
 let pool: Pool | null | undefined
@@ -20,25 +21,30 @@ function readDatabaseUrl(): string | null {
   return url || null
 }
 
-export function getPool(): Pool | null {
-  if (pool !== undefined) return pool
-  const url = readDatabaseUrl()
-  // query_timeout guards every query issued through this pool (e.g. the
-  // aggregate reads) against an indefinitely stalled
-  // Postgres — without it a stuck first read would hang every request that
-  // awaits the shared cache promise.
-  pool = url ? new Pool({ connectionString: url, query_timeout: 10_000 }) : null
-  return pool
-}
-
 // docs/plans/2026-08-04-gis-wp1-index-notfall.md: a single environment/geo
 // search hit a Seq Scan over 20 GB and took 16.6s on prod because of an
-// invalid index — the pool's client-side `query_timeout` above does not help
+// invalid index — the pool's client-side `query_timeout` below does not help
 // here, since node-pg's read-timeout only stops *waiting* for the reply, it
 // never cancels the query on the server. A search query must not be able to
 // occupy the server indefinitely regardless of how it got slow, so every
 // search query additionally gets a server-enforced statement_timeout.
 export const SEARCH_STATEMENT_TIMEOUT_MS = 10_000
+
+export function getPool(): Pool | null {
+  if (pool !== undefined) return pool
+  const url = readDatabaseUrl()
+  // query_timeout guards every query issued through this pool (e.g. the
+  // aggregate reads) against an indefinitely stalled Postgres — without it a
+  // stuck first read would hang every request that awaits the shared cache
+  // promise. Kept strictly above SEARCH_STATEMENT_TIMEOUT_MS, with margin for
+  // transport and cleanup, so the server-side statement_timeout always wins
+  // the race and cancels with SQLSTATE 57014 first; if this client-side timer
+  // fired first instead, pg would reject the query without that SQLSTATE and
+  // callers would surface a generic 500 instead of the intended 503.
+  const queryTimeoutMs = SEARCH_STATEMENT_TIMEOUT_MS + 5_000
+  pool = url ? new Pool({ connectionString: url, query_timeout: queryTimeoutMs }) : null
+  return pool
+}
 
 /** Postgres SQLSTATE for a statement cancelled by `statement_timeout`. */
 const STATEMENT_TIMEOUT_SQLSTATE = '57014'
@@ -86,16 +92,17 @@ export async function withStatementTimeout<T>(
 export async function runMigrations(): Promise<void> {
   const db = getPool()
   if (!db) return
-  const schema = await readFile(join(process.cwd(), 'server/db/schema.sql'), 'utf8')
   const client = await db.connect()
   let locked = false
   try {
     // All replicas share this session-scoped lock. It prevents two app
-    // instances started by the same deployment from applying the large,
-    // idempotent schema file concurrently and racing on conditional DDL.
-    // The try-variant is polled rather than blocking on pg_advisory_lock,
-    // because the pool's query_timeout would abort a blocking wait and make the
-    // second instance of an overlapping deploy fail its migration outright.
+    // instances started by the same deployment from applying migrations
+    // concurrently and racing on the same DDL. The try-variant is polled
+    // rather than blocking on pg_advisory_lock, because the pool's
+    // query_timeout would abort a blocking wait and make the second instance
+    // of an overlapping deploy fail its migration outright. drizzle-orm's
+    // migrate() has no locking of its own (see server/db/migrations/), so
+    // this wrapper still carries the whole guarantee.
     for (let attempt = 0; attempt < MIGRATION_LOCK_ATTEMPTS && !locked; attempt++) {
       if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, MIGRATION_LOCK_RETRY_MS))
       const { rows } = await client.query<{ locked: boolean }>(
@@ -104,7 +111,11 @@ export async function runMigrations(): Promise<void> {
       locked = rows[0]?.locked === true
     }
     if (!locked) throw new Error('schema migration lock is still held by another instance')
-    await client.query(schema)
+    // Same Dockerfile fallstrick as the old schema.sql read: Nitro's bundler
+    // can't see this fs access (readMigrationFiles() reads it dynamically at
+    // runtime), so server/db/migrations/ must be copied into the runner image
+    // explicitly (see Dockerfile).
+    await migrate(drizzle(client), { migrationsFolder: join(process.cwd(), 'server/db/migrations') })
   } finally {
     try {
       if (locked) {

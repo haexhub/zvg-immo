@@ -10,7 +10,9 @@
     "dev": "nuxt dev",
     "build": "nuxt build",
     "preview": "nuxt preview",
-    "crawl": "node scripts/crawl.mjs"
+    "crawl": "node scripts/crawl.mjs",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate"
   },
   "keywords": [],
   "author": "",
@@ -26,6 +28,7 @@
     "cheerio": "^1.2.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "drizzle-orm": "^0.45.2",
     "ipaddr.js": "^2.4.0",
     "lucide-vue-next": "^1.0.0",
     "nodemailer": "^9.0.3",
@@ -56,6 +59,7 @@
     "@vitejs/plugin-vue": "^6.0.8",
     "@vueuse/core": "^14.3.0",
     "d3-geo": "^3.1.1",
+    "drizzle-kit": "^0.31.10",
     "eslint": "^10.8.0",
     "h3": "1.15.11",
     "shadcn-nuxt": "^2.8.0",
