@@ -2,7 +2,7 @@ import type { AuctionExtraction } from '~/types/auction'
 import type { PropertyType } from '~/lib/property-type'
 import type { Condition } from '~/lib/condition'
 import type { Feature } from '~/lib/features'
-import { getPool } from '~/server/utils/db'
+import { getPool, isStatementTimeoutError, SEARCH_STATEMENT_TIMEOUT_MS, withStatementTimeout } from '~/server/utils/db'
 import { buildAuctionSearchFilter, finiteNumber } from '~/server/utils/auction-search-filters'
 import { curatedAuctionPhotoUrls } from '~/lib/auction-photos'
 
@@ -222,13 +222,34 @@ export default defineEventHandler(async (event): Promise<AuctionSearchResponse> 
     ${from} ${predicate ? `${predicate} AND d.property_type IS NOT NULL` : `WHERE d.property_type IS NOT NULL`}
     GROUP BY d.property_type ORDER BY count DESC, d.property_type`
 
-  // Facet queries reuse the filter parameters but not LIMIT/OFFSET.
-  const [rowsResult, statsResult, authoritiesResult, categoriesResult] = await Promise.all([
-    db.query<SearchRow>(rowsSql, [...filterValues, pageSize, offset]),
-    db.query<{ total: number; active: number; cancelled: number }>(statsSql, filterValues),
-    db.query<{ authority: string }>(authoritiesSql, filterValues),
-    db.query<{ id: string; count: number }>(categoriesSql, filterValues),
-  ])
+  // Facet queries reuse the filter parameters but not LIMIT/OFFSET. Each gets
+  // its own withStatementTimeout call — and therefore its own connection —
+  // run together via Promise.all: a single Postgres connection only ever
+  // processes one statement at a time, so bundling all four onto one
+  // connection would silently serialize them (no real parallelism despite
+  // the Promise.all) and, worse, would let their SET LOCAL statement_timeout
+  // windows add up to ~4x SEARCH_STATEMENT_TIMEOUT_MS worst case instead of
+  // capping the whole request at SEARCH_STATEMENT_TIMEOUT_MS. Four
+  // connections per search request is unchanged from before this file
+  // started using withStatementTimeout.
+  let rowsResult, statsResult, authoritiesResult, categoriesResult
+  try {
+    ;[rowsResult, statsResult, authoritiesResult, categoriesResult] = await Promise.all([
+      withStatementTimeout(db, SEARCH_STATEMENT_TIMEOUT_MS, (client) =>
+        client.query<SearchRow>(rowsSql, [...filterValues, pageSize, offset])),
+      withStatementTimeout(db, SEARCH_STATEMENT_TIMEOUT_MS, (client) =>
+        client.query<{ total: number; active: number; cancelled: number }>(statsSql, filterValues)),
+      withStatementTimeout(db, SEARCH_STATEMENT_TIMEOUT_MS, (client) =>
+        client.query<{ authority: string }>(authoritiesSql, filterValues)),
+      withStatementTimeout(db, SEARCH_STATEMENT_TIMEOUT_MS, (client) =>
+        client.query<{ id: string; count: number }>(categoriesSql, filterValues)),
+    ])
+  } catch (err) {
+    if (isStatementTimeoutError(err)) {
+      throw createError({ statusCode: 503, statusMessage: 'Suche zu aufwendig, bitte Filter einschränken.' })
+    }
+    throw err
+  }
   const stats = statsResult.rows[0] ?? { total: 0, active: 0, cancelled: 0 }
   setResponseHeader(event, 'cache-control', 'no-store')
   return {

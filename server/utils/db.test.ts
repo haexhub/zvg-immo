@@ -90,3 +90,63 @@ describe('runMigrations', () => {
     expect(client.release).toHaveBeenCalledOnce()
   })
 })
+
+describe('isStatementTimeoutError', () => {
+  it('recognizes the pg SQLSTATE for a statement_timeout cancellation', async () => {
+    const { isStatementTimeoutError } = await import('./db')
+    expect(isStatementTimeoutError({ code: '57014' })).toBe(true)
+  })
+
+  it('rejects unrelated errors, including ones with an unrelated code', async () => {
+    const { isStatementTimeoutError } = await import('./db')
+    expect(isStatementTimeoutError(new Error('boom'))).toBe(false)
+    expect(isStatementTimeoutError({ code: '23505' })).toBe(false)
+    expect(isStatementTimeoutError(null)).toBe(false)
+    expect(isStatementTimeoutError('57014')).toBe(false)
+  })
+})
+
+describe('withStatementTimeout', () => {
+  it('scopes statement_timeout to the transaction with SET LOCAL, not SET', async () => {
+    const client = { query: vi.fn().mockResolvedValue({ rows: [] }), release: vi.fn() }
+    const db = { connect: vi.fn().mockResolvedValue(client) }
+    const { withStatementTimeout } = await import('./db')
+
+    const result = await withStatementTimeout(db as never, 10_000, async (c) => {
+      await c.query('SELECT 1')
+      return 'ok'
+    })
+
+    expect(result).toBe('ok')
+    expect(client.query.mock.calls.map(([sql]) => sql)).toEqual([
+      'BEGIN',
+      'SET LOCAL statement_timeout = 10000',
+      'SELECT 1',
+      'COMMIT',
+    ])
+    expect(client.release).toHaveBeenCalledOnce()
+  })
+
+  it('rolls back and releases the client, but still rethrows, when fn fails', async () => {
+    const client = {
+      query: vi.fn().mockResolvedValue({ rows: [] }),
+      release: vi.fn(),
+    }
+    const db = { connect: vi.fn().mockResolvedValue(client) }
+    const { withStatementTimeout } = await import('./db')
+    const timeoutError = Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' })
+
+    await expect(
+      withStatementTimeout(db as never, 10_000, async () => {
+        throw timeoutError
+      }),
+    ).rejects.toBe(timeoutError)
+
+    expect(client.query.mock.calls.map(([sql]) => sql)).toEqual([
+      'BEGIN',
+      'SET LOCAL statement_timeout = 10000',
+      'ROLLBACK',
+    ])
+    expect(client.release).toHaveBeenCalledOnce()
+  })
+})

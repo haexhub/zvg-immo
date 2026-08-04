@@ -1,6 +1,28 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('~/server/utils/db', () => ({ getPool: vi.fn() }))
+// Keep the real withStatementTimeout/isStatementTimeoutError/timeout constant
+// — only getPool is faked — so the handler's `db.connect()` transaction
+// wrapping runs for real against the mock client built in each test.
+vi.mock('~/server/utils/db', async () => {
+  const actual = await vi.importActual<typeof import('~/server/utils/db')>('~/server/utils/db')
+  return { ...actual, getPool: vi.fn() }
+})
+
+/** A pool-like object whose one connection's control statements (BEGIN/SET
+ *  LOCAL/COMMIT/ROLLBACK) are no-ops, delegating everything else to `query`. */
+function mockPool(query: (sql: string, params: unknown[]) => Promise<unknown>) {
+  const client = {
+    query: vi.fn(async (sql: string, params: unknown[] = []) => {
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK' || sql.startsWith('SET LOCAL')) {
+        return { rows: [] }
+      }
+      return query(sql, params)
+    }),
+    release: vi.fn(),
+  }
+  return { connect: vi.fn().mockResolvedValue(client) }
+}
+
 vi.mock('~/server/utils/geocode', () => ({
   geocodeAddress: vi.fn(),
   geocodeStatus: vi.fn(),
@@ -41,7 +63,7 @@ describe('/api/auctions-geo', () => {
       rowCount: 1,
     })
     const { getPool } = await import('~/server/utils/db')
-    vi.mocked(getPool).mockReturnValue({ query } as never)
+    vi.mocked(getPool).mockReturnValue(mockPool(query) as never)
     const handler = (await import('./auctions-geo.get')).default as unknown as (
       event: { node: { req: { on: (name: string, callback: () => void) => void } } }
     ) => Promise<unknown>
@@ -83,7 +105,7 @@ describe('/api/auctions-geo', () => {
       rowCount: 1,
     })
     const { getPool } = await import('~/server/utils/db')
-    vi.mocked(getPool).mockReturnValue({ query } as never)
+    vi.mocked(getPool).mockReturnValue(mockPool(query) as never)
     const handler = (await import('./auctions-geo.get')).default as unknown as (
       event: { node: { req: { on: (name: string, callback: () => void) => void } } }
     ) => Promise<unknown>
@@ -116,7 +138,7 @@ describe('/api/auctions-geo', () => {
       rowCount: 1,
     })
     const { getPool } = await import('~/server/utils/db')
-    vi.mocked(getPool).mockReturnValue({ query } as never)
+    vi.mocked(getPool).mockReturnValue(mockPool(query) as never)
     const { geocodeAddress } = await import('~/server/utils/geocode')
     vi.mocked(geocodeAddress).mockResolvedValue({ lat: 48.137, lng: 11.575, displayName: 'x' })
     const handler = (await import('./auctions-geo.get')).default as unknown as (
@@ -130,5 +152,22 @@ describe('/api/auctions-geo', () => {
       unresolvableCount: 0,
       auctions: [{ platform: 'zvg-portal', externalId: '44', lat: 48.137, lng: 11.575 }],
     })
+  })
+
+  it('translates a statement_timeout cancellation into a 503 instead of a raw 500', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    vi.stubGlobal('getQuery', () => ({ country: 'de', fetch: '0' }))
+    vi.stubGlobal('setResponseHeader', vi.fn())
+    vi.stubGlobal('createError', (input: object) => Object.assign(new Error('api error'), input))
+    const query = vi.fn(async () => {
+      throw Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' })
+    })
+    const { getPool } = await import('~/server/utils/db')
+    vi.mocked(getPool).mockReturnValue(mockPool(query) as never)
+    const handler = (await import('./auctions-geo.get')).default as unknown as (
+      event: { node: { req: { on: (name: string, callback: () => void) => void } } }
+    ) => Promise<unknown>
+
+    await expect(handler({ node: { req: { on: vi.fn() } } })).rejects.toMatchObject({ statusCode: 503 })
   })
 })
