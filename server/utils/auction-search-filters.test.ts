@@ -147,6 +147,13 @@ describe('buildAuctionSearchFilter', () => {
     })
 
     expect(predicate).toContain('ST_DWithin')
+    // lat/lng live on auctions ("a"), not the versioned auction_details ("d")
+    // — WP-0 moved them; a.lat/a.lng is a compile-time-invisible SQL string,
+    // so nothing but a test catches a regression back to d.lat/d.lng.
+    expect(predicate).toContain('a.lat')
+    expect(predicate).toContain('a.lng')
+    expect(predicate).not.toContain('d.lat')
+    expect(predicate).not.toContain('d.lng')
     expect(values).toContain(52.5)
     expect(values).toContain(13.4)
     expect(values).toContain(25_000)

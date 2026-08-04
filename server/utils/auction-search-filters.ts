@@ -184,8 +184,8 @@ export async function buildAuctionSearchFilter(
   const nearLng = finiteNumber(query.nearLng)
   const nearRadiusKm = finiteNumber(query.nearRadius)
   if (nearLat != null && nearLng != null && nearRadiusKm != null && nearRadiusKm > 0) {
-    where.push(`d.lat IS NOT NULL AND d.lng IS NOT NULL AND ST_DWithin(
-      ST_MakePoint(d.lng, d.lat)::geography,
+    where.push(`a.lat IS NOT NULL AND a.lng IS NOT NULL AND ST_DWithin(
+      ST_MakePoint(a.lng, a.lat)::geography,
       ST_MakePoint(${add(nearLng)}, ${add(nearLat)})::geography,
       ${add(nearRadiusKm * 1000)}
     )`)
