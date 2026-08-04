@@ -42,9 +42,12 @@ CREATE INDEX ON climate_cells USING GIST (geom_3035);
 `auction_geo_metrics.climate_cell_id` (aus WP-5) bekommt jetzt den Fremdschlüssel. Die Suche wird damit:
 
 ```sql
-JOIN climate_cells c ON c.id = m.climate_cell_id
+LEFT JOIN climate_cells c ON c.id = m.climate_cell_id
+-- nur wenn der Nutzer einen Temperaturfilter gesetzt hat:
 WHERE c.summer_tmax_avg_c <= 30
 ```
+
+**`LEFT JOIN`, nicht `JOIN`** — dieselbe Falle wie bei den Distanzmetriken in WP-5. Eine Auktion ohne zugeordnete Zelle (nicht geocodiert, oder Zelle noch nicht befüllt) würde bei einem inneren Join aus *jeder* Suche verschwinden, auch aus einer ohne Klimafilter. Bei der heutigen Abdeckung von 1 % wären das 99 % der Treffer. Das `WHERE`-Prädikat darf nur hinzukommen, wenn der Filter tatsächlich aktiv ist; dann ist der Ausschluss von Auktionen ohne Klimadaten korrekt und gewollt.
 
 `climate_cells` hat für Europa maximal ~150 000 Zeilen und liegt vollständig im Cache — der Join ist trivial.
 
@@ -62,7 +65,7 @@ Für vollständige Abdeckung (z. B. ein Kartenlayer) gibt es zwei Bulk-Wege als 
 
 ## Schritte
 
-1. **Migration** für `climate_cells` + FK auf `auction_geo_metrics` (Drizzle, [WP-2](2026-08-04-gis-wp2-drizzle-fundament.md)).
+1. **Migration** für `climate_cells` + FK auf `auction_geo_metrics` (Drizzle, [WP-0](2026-08-04-gis-wp0-schema-neuaufbau.md)).
 2. **Zellzuordnung:** Für jede geocodierte Auktion die 0,1°-Zelle bestimmen (Abrunden der Koordinaten auf 0,1° ist ausreichend und deterministisch), Zeile anlegen falls nicht vorhanden, `climate_cell_id` setzen. Gehört in denselben Job wie WP-5 — er kennt die Position schon.
 3. **Adapter** im `sources.ts`-Rahmen, mit Rate-Limit-Behandlung. Aus der Projekthistorie: Rate-Limit-Fehler dürfen **nicht** wie echte Fehler gezählt werden, sonst sperren sie Datensätze dauerhaft; und Tageslimit-429 nicht endlos retrien.
 4. **Befüll-Job** für Zellen mit `fetched_at IS NULL`.

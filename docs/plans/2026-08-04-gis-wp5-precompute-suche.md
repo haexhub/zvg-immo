@@ -48,7 +48,7 @@ CREATE TABLE auction_geo_metrics (
 );
 ```
 
-Als Drizzle-Schema, Migration via [WP-2](2026-08-04-gis-wp2-drizzle-fundament.md). RLS wie bei allen Tabellen aktivieren (Drizzle generiert das nicht selbst).
+Als Drizzle-Schema, Migration via [WP-0](2026-08-04-gis-wp0-schema-neuaufbau.md). RLS wie bei allen Tabellen aktivieren (Drizzle generiert das nicht selbst).
 
 **Eine breite Zeile, nicht `(auktion, kind, distanz)`.** Die Suche verknüpft mit AND: `dist_sea_m <= 5000 AND dist_ski_m <= 50000` ist ein Zeilenfilter statt zweier Semi-Joins mit Aggregation. Sortierung („nächste am Meer zuerst") wird trivial, neue Kategorien sind ein additives `ADD COLUMN`.
 
@@ -71,7 +71,9 @@ LIMIT 1;
 
 `$point` ist die Auktionsposition, transformiert nach 3035. Cutoff je Kategorie (Vorschlag: Meer/Ski 200 km, See/Fluss/Berg 50 km, Freizeit/Sehenswürdigkeiten 30 km) — „nächstes Skigebiet 1 400 km" hat keinen Informationswert und zieht den KNN-Suchraum unnötig auf.
 
-Umfang heute: 37 geocodierte Auktionen × ~14 Kategorien = ~500 Lookups, also Sekunden. Nach [WP-3](2026-08-04-gis-wp3-geocoding-abdeckung.md): 2 785 × 14 ≈ 39 000 Lookups, wenige Minuten.
+**Die Cutoffs sind gleichzeitig die Obergrenze der suchbaren Radien** und müssen deshalb an einer Stelle liegen, die dieser Job *und* die Filter-Validierung liest. Ein `NULL` heißt „weiter als der Cutoff", nicht „unbekannt" — fragt der Nutzer nach 300 km bei einem Cutoff von 200 km, sind die Treffer zwischen 200 und 300 km alle `NULL` und von „gar nichts in der Nähe" nicht unterscheidbar. Ein `dist_ski_m <= 300000` würde sie stillschweigend ausschließen, der Filter wäre falsch. Also: Slider-Maximum je Kategorie = Cutoff dieser Kategorie, und ein größerer Wert wird abgewiesen statt gekappt. Wird ein Cutoff später erhöht, müssen alle Metriken über `features_epoch` neu berechnet werden.
+
+Umfang: 37 geocodierte Auktionen × ~14 Kategorien ≈ 500 Lookups; nach [WP-3](2026-08-04-gis-wp3-geocoding-abdeckung.md) 2 785 × 14 ≈ 39 000. **Die Laufzeit dafür ist erst nach der Messung in WP-4 bekannt** — die 147 ms aus der Prod-Messung sind die falsche Bezugsgröße (Rohtabelle, `::geography`-Cast, unzerlegte Geometrien) und ergäben hochgerechnet 95 Minuten. Mit dem fertigen Layer ist ein Bruchteil zu erwarten; die Zahl aus WP-4 Schritt 4 einsetzen, statt hier zu schätzen. Parallelität begrenzt das Connection-Limit des Jobs, nicht die CPU.
 
 **Inkrementell**, nicht immer alles: neu berechnen, wenn keine Zeile existiert, `features_epoch` von WP-4 abweicht, oder `point_hash` sich geändert hat (Auktion wurde neu geocodiert). Im Normalbetrieb sind das eine Handvoll Auktionen pro Lauf.
 

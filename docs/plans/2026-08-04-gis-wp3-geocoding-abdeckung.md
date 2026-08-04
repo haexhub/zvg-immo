@@ -27,6 +27,8 @@ Der Datei-Cache auf Prod (`/app/.cache_zvg/geocode`, siehe [geocode.ts:17](serve
 
 **(b) Cache passt nicht zu den aktuellen Adressen.** Der Cache-Key ist `sha1(country + ':' + query)` über die *normalisierte* Adresse. Ändert sich die Normalisierung (z. B. durch die BG-Adressmarker-Fixes), zeigen alle alten Einträge ins Leere. Die 30 909 Einträge wären dann Altlast vergangener Auktionen.
 
+**Unabhängig davon fehlt dem Key die Identität des Erzeugers.** Er enthält weder den Geocoder-Provider noch eine Version der Normalisierung. Das wird beim Umstieg auf LocationIQ (unten) unmittelbar relevant: die 12 496 `notFound`-Einträge stammen vom öffentlichen Nominatim, teils von einer gebannten IP — nach dem Providerwechsel würden sie weiterhin Retries unterdrücken und Adressen dauerhaft als unauflösbar markieren, die LocationIQ auflösen könnte. Provider und Normalisierer-Version gehören in den Key (oder in den Eintrag, mit Invalidierung bei Abweichung). Ohne das ist der Providerwechsel wirkungslos für alles, was schon einmal fehlgeschlagen ist.
+
 Erster Schritt dieses WP ist eine Entscheidung zwischen (a) und (b) — nicht Umsetzung. Vorgehen: eine Handvoll aktueller Adressen aus `auction_details` nehmen, den Cache-Key nachbilden und prüfen, ob die Datei existiert und einen Treffer enthält.
 
 ## Die eigentliche Blockade: der Geocoder
@@ -61,7 +63,7 @@ Der Code ist für die Lösung **schon vorbereitet** — es fehlt nur die Konfigu
 
 12 496 `notFound`-Einträge sind ein Signal: viele Adressen sind grundsätzlich nicht auflösbar (Flurstücksbezeichnungen ohne Straße, „Gemarkung X Flur Y"). Der Cache unterdrückt Retries schon korrekt. Für die Suche wichtiger ist, „nie versucht" von „versucht, nicht auflösbar" **in der Datenbank** unterscheidbar zu machen — sonst kann kein Backfill-Job wissen, was noch offen ist. Heute steht diese Information nur im Dateisystem.
 
-Vorschlag: ein `geocode_attempted_at` und `geocode_result`-Feld an der Auktion (via Drizzle-Migration, [WP-2](2026-08-04-gis-wp2-drizzle-fundament.md)). Damit wird der Fortschritt messbar und der Backfill idempotent.
+Vorschlag: ein `geocode_attempted_at` und `geocode_result`-Feld an der Auktion (via Drizzle-Migration, [WP-0](2026-08-04-gis-wp0-schema-neuaufbau.md)). Damit wird der Fortschritt messbar und der Backfill idempotent. Der Provider gehört mit hinein — sonst ist nach dem Wechsel auf LocationIQ nicht unterscheidbar, welche Fehlversuche vom gebannten Nominatim stammen und welche echte Nicht-Adressen sind.
 
 ### Backfill-Lauf
 

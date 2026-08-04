@@ -4,9 +4,13 @@ Datum: 2026-08-04
 Teil von [GIS-Architektur](2026-08-04-gis-scaling-architecture.md). Abhängig von: [WP-4](2026-08-04-gis-wp4-geo-features.md) (Mapping muss existieren).
 Aufwand: 1–2 Tage. **Repo: `~/Projekte/ansible`** (eigenes Repo, eigener PR) + Reimport.
 
-## Status: Code-Änderungen liegen bereits vor
+## Status: Code-Änderungen liegen als PR vor
 
-Im ansible-Repo auf Branch **`osm-import-geo-features`** (uncommitted, noch nicht gepusht). Beide Dateien sind syntaktisch geprüft (`luac -p` bzw. Jinja2-Rendering + `sh -n`), aber **nicht** gegen einen echten osm2pgsql-Lauf getestet. Was noch fehlt: Review, Commit, PR, Deploy, Reimport, Verifikation.
+**[ansible#87](https://github.com/haexhub/ansible/pull/87)**, Branch `osm-import-geo-features`, Commit `14ce2f0`. Geändert sind `roles/zvg-immo/files/osm-import/osm-local-elements.lua` und `roles/zvg-immo/templates/osm-import/import.sh.j2`.
+
+Beide Dateien sind syntaktisch geprüft (`luac -p` bzw. Jinja2-Rendering + `sh -n`), aber **nicht** gegen einen echten osm2pgsql-Lauf getestet. Was noch fehlt: Review, Smoke-Test, Merge, Deploy, Reimport, Verifikation.
+
+**Reihenfolge gegenüber [WP-0](2026-08-04-gis-wp0-schema-neuaufbau.md):** Ein OSM-Reimport fällt in beiden WPs an — in WP-0 wegen des Schema-Neuaufbaus, hier wegen der neuen Tags. Er darf **nur einmal** laufen (DE mehrere Stunden). Also: dieses WP zuerst deployen, dann den Reimport auslösen, dann ist er für beide Zwecke erledigt. Läuft WP-0 zuerst mit einem Reimport, muss er nach dem Deploy dieses WPs wiederholt werden.
 
 ## Drei Befunde, die das WP begründen
 

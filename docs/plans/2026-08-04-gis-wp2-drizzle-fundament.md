@@ -12,13 +12,15 @@ Aufwand: 2–3 Tage. Repo: `zvg-immo`.
 
 Heute gibt es kein Migrationssystem. [db-bootstrap.ts](server/plugins/db-bootstrap.ts) wendet [schema.sql](server/db/schema.sql) (952 Zeilen, alles `IF NOT EXISTS`) bei **jedem Start** idempotent an; DB-Zugriff ist rohes SQL über einen `pg`-Pool.
 
-Das hat einen konkreten, gemessenen Preis: Auf Prod existieren fünf Indizes auf `osm_local_elements`, die in `schema.sql` **nicht vorkommen** — manuell angelegt, zwei davon durch fehlgeschlagenes `CREATE INDEX CONCURRENTLY` im Zustand `indisvalid = false`. Das blieb wochenlang unentdeckt und ist die Ursache des Serverausfalls (siehe [WP-1](2026-08-04-gis-wp1-index-notfall.md)). Ein Bootstrap, der nur „fehlt es?" prüft, kann so einen Drift strukturell nicht erkennen — versionierte Migrationen können es.
+Das hat einen konkreten, gemessenen Preis: Auf Prod existieren fünf Indizes auf `osm_local_elements`, die in `schema.sql` **nicht vorkommen** — manuell angelegt, zwei davon durch fehlgeschlagenes `CREATE INDEX CONCURRENTLY` im Zustand `indisvalid = false`. Das blieb wochenlang unentdeckt und ist die Ursache des Serverausfalls (siehe [WP-1](2026-08-04-gis-wp1-index-notfall.md)). Ein Bootstrap, der je Objekt nur „fehlt es?" prüft, lässt so einen Zustand unbemerkt passieren.
+
+Präzisierung, damit die Erwartung stimmt: **Migrationen verhindern, dass Drift entsteht — erkennen tun sie ihn nicht.** Auch Drizzle vergleicht nur seine Migrationstabelle, nicht den Ist-Zustand; ein manuell angelegter oder halb fehlgeschlagener Index bleibt unsichtbar. Dafür braucht es den `indisvalid`-Wächter aus WP-1 und einen Schema-Diff gegen die laufende Datenbank.
 
 Die neuen Tabellen dieses Plans (`geo_features`, `auction_geo_metrics`, `climate_cells`) sind der ideale erste Anwendungsfall: flache Zahlentabellen, genau wo ein ORM trägt.
 
 ## Ziel
 
-1. `drizzle-kit` erzeugt und wendet versionierte Migrationen an; ein Drift wird sichtbar.
+1. `drizzle-kit` erzeugt und wendet versionierte Migrationen an; das Repo wird zur einzigen Quelle des Schemas. Erkennung von manuellem Drift bleibt Aufgabe des Wächters aus WP-1.
 2. Neue Tabellen werden in TypeScript definiert, nicht in `schema.sql`.
 3. PostGIS-Spalten (`geometry(Geometry, 3035)`) sind typisiert nutzbar.
 4. Bestehender Code läuft unverändert weiter.

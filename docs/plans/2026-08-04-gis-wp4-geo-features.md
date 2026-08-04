@@ -1,7 +1,7 @@
 # WP-4 — `geo_features`: query-fertiger POI-Layer
 
 Datum: 2026-08-04
-Teil von [GIS-Architektur](2026-08-04-gis-scaling-architecture.md). Abhängig von: [WP-2](2026-08-04-gis-wp2-drizzle-fundament.md) (Drizzle für die Migration).
+Teil von [GIS-Architektur](2026-08-04-gis-scaling-architecture.md). Abhängig von: [WP-0](2026-08-04-gis-wp0-schema-neuaufbau.md) (Drizzle-Schema für die Migration).
 Aufwand: 2–3 Tage. Repo: `zvg-immo`.
 
 ## Warum
@@ -29,7 +29,7 @@ CREATE INDEX ON geo_features USING GIST (geom_3035);
 CREATE INDEX ON geo_features (kind);
 ```
 
-Als Drizzle-Schema (`server/db/schema/geo-features.ts`) mit dem `customType` aus WP-2 für die Geometriespalte; der GIST-Index geht deklarativ über `index().using('gist', table.geom3035)`.
+Als Drizzle-Schema (`server/db/schema/geo-features.ts`); der GIST-Index geht deklarativ über `index().using('gist', table.geom3035)`. Für die Geometriespalte wird der `customType` gebraucht, der in [WP-2](2026-08-04-gis-wp2-drizzle-fundament.md) beschrieben ist — Drizzles eingebautes `geometry()` deckt nur `Point` ab, nicht `geometry(Geometry, …)` mit gemischten Typen. Dieser Abschnitt von WP-2 bleibt trotz WP-0 gültig.
 
 ### Drei Entscheidungen und ihr Grund
 

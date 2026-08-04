@@ -106,6 +106,8 @@ SELECT indexrelid::regclass::text FROM pg_index WHERE NOT indisvalid;
 
 Nicht-leeres Ergebnis → Health-Warnung mit Indexnamen. Billig (nur Katalog) und hätte dieses Problem sofort sichtbar gemacht.
 
+Dieser Check fängt allerdings nur den Fall „Index existiert, ist aber kaputt". Ein **fehlender** Index — wie `aeroway` heute — bleibt unsichtbar, obwohl er dieselbe Wirkung hat (5 971 ms Seq Scan). Der Wächter sollte deshalb gegen eine erwartete Liste prüfen, nicht nur gegen `indisvalid`: die für die Umgebungsfilter nötigen Indizes namentlich aufführen und melden, was fehlt *oder* invalide ist. Nach [WP-5](2026-08-04-gis-wp5-precompute-suche.md) schrumpft diese Liste auf die `geo_features`-Indizes, weil die Suche `osm_local_elements` nicht mehr anfasst.
+
 Der `import.sh`-Job im ansible-Repo protokolliert denselben Check bereits nach jedem Lauf (siehe [WP-6](2026-08-04-gis-wp6-osm-datenausbau.md)).
 
 ## Verifikation

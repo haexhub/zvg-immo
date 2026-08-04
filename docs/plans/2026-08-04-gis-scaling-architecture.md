@@ -69,7 +69,9 @@ Ein invalider Index wird vom Planner ignoriert, belegt aber Platz und wird bei D
 
 Zusätzlich ist `idx_osm_local_elements_geom` (GIST auf `geom`, 1 988 MB) mit **0 Scans** komplett unbenutzt: die Queries prädizieren auf `geom::geography`, und ein Index auf `geom` passt darauf nicht. Der dafür gedachte `_geog`-Index ist genau der invalide.
 
-**Und: keiner der `tag_*`- und `_geog`-Indizes steht in [schema.sql](server/db/schema.sql).** Sie wurden manuell auf Prod angelegt — vermutlich als Reaktion auf genau dieses Problem, wobei zwei `CREATE INDEX CONCURRENTLY` fehlgeschlagen sind, ohne dass es jemand bemerkte. Prod und Repo-Schema sind auseinandergelaufen. Das ist das stärkste Argument für WP-2 (Drizzle): ein Bootstrap, der `schema.sql` bei jedem Start idempotent anwendet, kann so einen Drift nicht erkennen — versionierte Migrationen können es.
+**Und: keiner der `tag_*`- und `_geog`-Indizes steht in [schema.sql](server/db/schema.sql).** Sie wurden manuell auf Prod angelegt — vermutlich als Reaktion auf genau dieses Problem, wobei zwei `CREATE INDEX CONCURRENTLY` fehlgeschlagen sind, ohne dass es jemand bemerkte. Prod und Repo-Schema sind auseinandergelaufen.
+
+Das ist das Argument für den Umstieg auf Migrationen ([WP-0](2026-08-04-gis-wp0-schema-neuaufbau.md)) — allerdings mit einer Präzisierung, die wichtig ist: **Migrationen verhindern, dass so ein Zustand entsteht, sie erkennen ihn nicht.** Auch Drizzle prüft nur seine eigene Migrationstabelle, nicht den Ist-Zustand der Datenbank; ein manuell angelegter oder fehlgeschlagener Index bleibt genauso unsichtbar wie heute. Erkennung braucht einen aktiven Vergleich: den `indisvalid`-Wächter aus [WP-1](2026-08-04-gis-wp1-index-notfall.md) und einen Schema-Diff gegen die laufende Datenbank. Beides ist nötig, nicht eines davon.
 
 Verstärkend, aber nicht ursächlich: `LATEST_DETAILS_JOIN_SQL` ist ein `LEFT JOIN LATERAL … LIMIT 1` ([auctions.get.ts:74-78](server/api/auctions.get.ts#L74-L78)), also ein Nested Loop pro Auktionszeile, und `/api/auctions` wertet dasselbe Prädikat dreimal aus (Seite, Count, Facetten).
 
@@ -136,6 +138,10 @@ Eine breite Zeile pro Auktion mit Distanzen in Metern je Kategorie plus Namen f�
 
 **Cutoff und NULL-Semantik.** Je Kategorie wird nur bis zu einem Cutoff (z. B. 200 km) gerechnet. „nichts in Reichweite" muss von „noch nicht berechnet" unterscheidbar bleiben: fehlende Zeile heißt nicht berechnet, vorhandene Zeile mit `dist_ski_m IS NULL` heißt nichts innerhalb Cutoff. Diese Unterscheidung ist bei `locationContext: null` schon einmal verloren gegangen ([osm-location-context.ts:141-145](server/utils/external-data/osm-location-context.ts#L141-L145)).
 
+**Der Cutoff begrenzt den suchbaren Radius — das muss im UI erzwungen werden.** Ein `NULL` bedeutet „weiter als der Cutoff", nicht „unbekannt". Fragt der Nutzer nach 300 km, während der Cutoff bei 200 km liegt, kann kein Prädikat auf der Spalte die Treffer zwischen 200 und 300 km finden: sie sind alle `NULL`, ununterscheidbar von „gar nichts in der Nähe". Ein `dist_ski_m <= 300000` würde sie stillschweigend ausschließen und der Filter wäre schlicht falsch.
+
+Konsequenz, verbindlich für [WP-5](2026-08-04-gis-wp5-precompute-suche.md): **das Slider-Maximum je Kategorie ist der Cutoff dieser Kategorie**, nicht ein frei gewählter UI-Wert. Die Cutoffs gehören damit an eine Stelle, die Precompute-Job *und* Filter-Validierung lesen. Ein Radius über dem Cutoff wird abgewiesen, nicht stillschweigend gekappt. Wird ein Cutoff später erhöht, müssen alle Metriken neu berechnet werden — dafür ist `features_epoch` da.
+
 Kernabfrage des Nachtjobs, pro Auktion und Kategorie:
 
 ```sql
@@ -147,7 +153,9 @@ ORDER BY f.geom_3035 <-> $point
 LIMIT 1;
 ```
 
-Bei 3 720 Auktionen × ~15 Kategorien sind das ~56 000 Lookups — nach den 147 ms der Messung oben grob zwei Minuten, mit zerlegten Geometrien und ohne `::geography`-Cast deutlich darunter. Im laufenden Betrieb nur noch für neu geocodierte Auktionen.
+Bei 3 720 Auktionen × ~15 Kategorien sind das ~56 000 Lookups. **Die Laufzeit ist damit noch nicht abschätzbar** — die 147 ms der Messung oben sind die falsche Bezugsgröße, denn sie stammen von der Rohtabelle mit `::geography`-Cast und unzerlegten Küstenlinien. Sequenziell hochgerechnet wären es 137 Minuten; mit EPSG:3035, zerlegten Geometrien und einem `kind`-Subset statt 44,5 Mio. Zeilen ist ein Bruchteil davon zu erwarten, aber das ist eine Vermutung, keine Zahl.
+
+Deshalb: In [WP-4](2026-08-04-gis-wp4-geo-features.md) wird die KNN-Abfrage gegen den fertigen Layer gemessen, und erst diese Zahl × 56 000 ergibt die Laufzeit. Parallelität ist durch das Connection-Limit des Jobs begrenzt (siehe WP-5), nicht durch die CPU. Im laufenden Betrieb betrifft der Job ohnehin nur neu geocodierte Auktionen.
 
 ### Schicht 3 — `climate_cells`
 
@@ -185,7 +193,7 @@ Skigebiete sind der einzige Fall, wo OSM Vorsicht verlangt: sie sind [uneinheitl
 
 ## Drizzle als Schema- und Zugriffsschicht
 
-Heute: `pg`-Pool mit rohem SQL, und ein Bootstrap-Plugin wendet `schema.sql` bei **jedem Start** idempotent an ([db-bootstrap.ts](server/plugins/db-bootstrap.ts)). Das ist kein Migrationssystem — es kann einen Prod-Drift wie die zwei invaliden Indizes strukturell nicht erkennen. Genau das ist der Anlass, jetzt umzustellen.
+Heute: `pg`-Pool mit rohem SQL, und ein Bootstrap-Plugin wendet `schema.sql` bei **jedem Start** idempotent an ([db-bootstrap.ts](server/plugins/db-bootstrap.ts)). Das ist kein Migrationssystem: es prüft je Objekt nur „fehlt es?", nie „ist es so, wie es sein soll?" — ein von Hand hinzugefügter oder halb angelegter Index passiert es unbemerkt. Genau das ist der Anlass, jetzt umzustellen. Was Migrationen dabei leisten und was nicht, steht im Abschnitt oben: sie machen das Repo zur einzigen Quelle, ersetzen aber keinen Wächter.
 
 Zwei Dinge, die den Zuschnitt bestimmen:
 
@@ -230,7 +238,7 @@ Ein Reimport der OSM-Daten fällt sowohl in WP-0 (Neuaufbau) als auch in WP-6 (n
 | **Geocode-Cache liegt im Dateisystem**, nicht in der DB — ~18 400 Auflösungen ≈ 5,6 h Nominatim-Arbeit, wegen IP-Ban nicht schnell nachholbar | `/app/.cache_zvg/geocode` separat sichern, nicht mit aufräumen (WP-0) |
 | Geocoding-Fix ohne Query-Fix → 75× mehr Last | WP-3 strikt nach WP-1 |
 | Precompute-Job erschöpft Connections wie der OSM-Reimport am 2026-08-03 | eigener Pool mit hartem Limit, Batch-Commits, off-peak |
-| Weiterer stiller Index-Drift auf Prod | `indisvalid`-Check in die Health-Route (WP-1), Migrationen ab WP-2 |
+| Weiterer stiller Index-Drift auf Prod | `indisvalid`-Wächter in die Health-Route (WP-1) — Migrationen ab WP-0 verhindern Drift, erkennen ihn aber nicht |
 | Veraltete Metriken nach OSM-Reimport oder Neu-Geocoding | `features_epoch` + `point_hash` als Invalidierungsschlüssel, im Schema von Anfang an |
 | „nichts in Reichweite" nicht von „nicht berechnet" unterscheidbar | getrennt modelliert: fehlende Zeile vs. Spalte `IS NULL` |
 | `ST_Subdivide` vergrößert die Tabelle | in WP-4 messen; nur Linien und große Flächen zerlegen, keine Punkte |

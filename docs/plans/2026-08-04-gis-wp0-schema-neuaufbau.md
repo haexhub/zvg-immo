@@ -6,7 +6,11 @@ Aufwand: 2–3 Tage. Repo: `zvg-immo`.
 
 ## Entscheidung
 
-Datenbank und Schema werden vollständig verworfen und aus Drizzle neu aufgebaut. Der Nutzer hat das ausdrücklich freigegeben mit der Begründung, dass die Daten wiederbeschaffbar sind.
+Das **Anwendungsschema** wird verworfen und aus Drizzle neu aufgebaut. Der Nutzer hat das ausdrücklich freigegeben mit der Begründung, dass die Daten wiederbeschaffbar sind.
+
+> **⚠️ Der Reset betrifft ausschließlich `public`.** Diese Datenbank ist eine Supabase-Instanz: `auth`, `storage`, `realtime`, `extensions` und `supabase_*` gehören der Plattform, nicht der Anwendung. Sie zu droppen zerstört die Installation — und `auth.users` enthält **Anmeldedaten, die durch keinen Crawl wiederherstellbar sind**. Die Freigabe des Nutzers bezog sich auf Auktionsdaten, nicht auf Konten.
+>
+> Konkret heißt das: kein `DROP DATABASE`, kein pauschales Drop über alle Schemas. Nur die Objekte in `public`, die zum Anwendungsschema gehören. Die PostGIS-Extension liegt je nach Setup in `public` oder `extensions` — vor dem Drop prüfen (`\dx`), sonst nimmt der Reset `postgis` mit und die Geometriespalten lassen sich nicht neu anlegen.
 
 ## Was das vereinfacht
 
@@ -35,6 +39,13 @@ Der Nutzer hat entschieden; das hier ist die Grundlage dafür, es informiert zu 
 
 **Maßnahme:** `pg_dump` der vollständigen Datenbank vor dem Drop, off-instance abgelegt. Kostet Minuten und macht die Frage „sind die Daten wirklich unkritisch?" irrelevant. Ohne diesen Dump nicht anfangen.
 
+**Kommt die Historie zurück? Das ist eine Entscheidung, keine Nebenwirkung.** Der Dump allein stellt nichts wieder her — Schritt 6 dropt und startet neue Crawls, und damit bleiben `auction_observations`, `artifact_captures` und `auction_snapshot` leer. Zwei Wege, und einer davon muss vor dem Drop gewählt sein:
+
+- **(a) Historie wird aufgegeben** — der Dump ist reines Notfallnetz. Das entspricht der Freigabe des Nutzers und ist der einfachere Weg. Folge: Zeitreihen beginnen bei null, und Auswertungen über den Verlauf sind erst in Zukunft wieder möglich.
+- **(b) Historie wird selektiv zurückgeholt** — Dump in eine Staging-Datenbank laden, dann die drei Tabellen nach dem Neuaufbau importieren. Das ist mehr Arbeit als es klingt: die Fremdschlüssel zeigen auf `auctions`/`auction_details`, deren IDs nach einem Neuaufbau andere sind. Ein Import ohne Neuzuordnung über die fachlichen Schlüssel (`platform` + `external_id`) erzeugt verwaiste oder falsch verknüpfte Zeilen. Vor dem Drop klären, ob die Identität stabil bleibt.
+
+Ohne bewusste Wahl passiert (a) stillschweigend. Die Entscheidung gehört ins WP-Protokoll, damit später klar ist, dass die Lücke gewollt war und kein Fehler.
+
 **Der Geocode-Cache liegt im Dateisystem, nicht in der DB:** `/app/.cache_zvg/geocode` mit 30.909 Einträgen, davon ~18.400 erfolgreiche Auflösungen. Bei 1,1 s Mindestabstand ([geocode.ts:31](server/utils/geocode.ts#L31)) entspricht das etwa 5,6 Stunden Nominatim-Arbeit — und die Server-IP ist dort gebannt, also wäre es nicht einfach nachzuholen. Er überlebt einen DB-Reset **nur, wenn ihn niemand mit aufräumt.** Vor dem Neuaufbau prüfen, ob das Verzeichnis auf einem Volume liegt, und es separat sichern.
 
 ## Schritte
@@ -56,11 +67,13 @@ Der Nutzer hat entschieden; das hier ist die Grundlage dafür, es informiert zu 
 1. Der `pg_dump` ist vorhanden, lesbar und wiederherstellbar — testweise in eine leere Datenbank laden. Ein ungeprüfter Dump ist kein Backup.
 2. Frische lokale DB + Initial-Migration → Anwendung startet, `pnpm test` läuft (`nuxt prepare` vorher).
 3. `pnpm db:generate` auf dem unveränderten Schema erzeugt **keine** weitere Migration.
-4. **RLS ist auf allen Tabellen aktiv** — gegen die Liste aus `schema.sql` abgleichen, nicht stichprobenartig:
+4. **RLS ist auf allen Tabellen aktiv** — gegen die Liste aus `schema.sql` abgleichen, nicht stichprobenartig. Der Join muss über das Schema qualifiziert sein, sonst matcht `relname` gleichnamige Tabellen in `auth`/`storage` und das Ergebnis ist falsch negativ:
 ```sql
-SELECT tablename FROM pg_tables t WHERE schemaname='public'
-  AND NOT EXISTS (SELECT 1 FROM pg_class c WHERE c.relname=t.tablename AND c.relrowsecurity);
+SELECT c.relname FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public' AND c.relkind = 'r' AND NOT c.relrowsecurity;
 ```
+Zusätzlich prüfen, dass Policies existieren und greifen: RLS ohne Policy sperrt für Nicht-Superuser alles, was als „funktioniert" durchgehen kann, solange nur mit der `postgres`-Rolle getestet wird. Einmal unter der Rolle testen, die die Anwendung tatsächlich verwendet.
 5. Keine invaliden Indizes: `SELECT … FROM pg_index WHERE NOT indisvalid` = 0 Zeilen.
 6. Ein Crawl-Lauf schreibt erfolgreich in das neue Schema — Constraints und Trigger greifen wie zuvor.
 7. Geocode-Cache ist noch da und wird genutzt (Trefferquote > 0 bei einem Testlauf).
