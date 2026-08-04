@@ -154,6 +154,33 @@ describe('/api/auctions-geo', () => {
     })
   })
 
+  it('selects lat/lng from auctions ("a"), not the versioned auction_details ("d")', async () => {
+    // WP-0 moved lat/lng off auction_details onto auctions; d.lat/d.lng no
+    // longer exists and would 500 every request (undefined_column), not just
+    // ones with an active geo filter — this is the map endpoint's own SELECT.
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    vi.stubGlobal('getQuery', () => ({ country: 'de', fetch: '0' }))
+    vi.stubGlobal('setResponseHeader', vi.fn())
+    vi.stubGlobal('createError', (input: object) => Object.assign(new Error('api error'), input))
+    let capturedSql = ''
+    const query = vi.fn(async (sql: string) => {
+      capturedSql = sql
+      return { rows: [], rowCount: 0 }
+    })
+    const { getPool } = await import('~/server/utils/db')
+    vi.mocked(getPool).mockReturnValue(mockPool(query) as never)
+    const handler = (await import('./auctions-geo.get')).default as unknown as (
+      event: { node: { req: { on: (name: string, callback: () => void) => void } } }
+    ) => Promise<unknown>
+
+    await handler({ node: { req: { on: vi.fn() } } })
+
+    expect(capturedSql).toContain('a.lat')
+    expect(capturedSql).toContain('a.lng')
+    expect(capturedSql).not.toContain('d.lat')
+    expect(capturedSql).not.toContain('d.lng')
+  })
+
   it('translates a statement_timeout cancellation into a 503 instead of a raw 500', async () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     vi.stubGlobal('getQuery', () => ({ country: 'de', fetch: '0' }))

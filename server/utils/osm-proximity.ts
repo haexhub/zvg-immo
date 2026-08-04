@@ -10,8 +10,9 @@
 // that as "no results for this filter", not an error.
 //
 // Assumes the caller's FROM is `auctions a` joined to the newest
-// `auction_details` as `d` (LATEST_DETAILS_JOIN_SQL): coordinates are
-// versioned and live on `d`, the country is identity and lives on `a`.
+// `auction_details` as `d` (LATEST_DETAILS_JOIN_SQL): coordinates and country
+// are both identity, so both live on `a` (WP-0 moved lat/lng off the
+// versioned `auction_details` — see docs/plans/2026-08-04-gis-wp0-schema-neuaufbau.md).
 export interface ProximityTagMatcher {
   tagKey: string
   tagValue: string
@@ -47,10 +48,10 @@ export function proximityConditionAnyTag(
   const tagPredicate = matchers.length === 1
     ? `o.tags ->> ${add(matchers[0]!.tagKey)} = ${add(matchers[0]!.tagValue)}`
     : `(${matchers.map((matcher) => `o.tags ->> ${add(matcher.tagKey)} = ${add(matcher.tagValue)}`).join(' OR ')})`
-  return `d.lat IS NOT NULL AND d.lng IS NOT NULL AND EXISTS (
+  return `a.lat IS NOT NULL AND a.lng IS NOT NULL AND EXISTS (
     SELECT 1 FROM osm_local_elements o
     WHERE ${countryPredicate}${tagPredicate}
-      AND ST_DWithin(o.geom::geography, ST_MakePoint(d.lng, d.lat)::geography, ${add(radiusMeters)})
+      AND ST_DWithin(o.geom::geography, ST_MakePoint(a.lng, a.lat)::geography, ${add(radiusMeters)})
   )`
 }
 
@@ -61,10 +62,10 @@ export function proximityConditionAnyOf(
   radiusMeters: number,
   add: (value: unknown) => string,
 ): string {
-  return `d.lat IS NOT NULL AND d.lng IS NOT NULL AND EXISTS (
+  return `a.lat IS NOT NULL AND a.lng IS NOT NULL AND EXISTS (
     SELECT 1 FROM osm_local_elements o
     WHERE o.country = a.country
       AND o.tags ->> ${add(tagKey)} = ANY(${add(tagValues)}::text[])
-      AND ST_DWithin(o.geom::geography, ST_MakePoint(d.lng, d.lat)::geography, ${add(radiusMeters)})
+      AND ST_DWithin(o.geom::geography, ST_MakePoint(a.lng, a.lat)::geography, ${add(radiusMeters)})
   )`
 }

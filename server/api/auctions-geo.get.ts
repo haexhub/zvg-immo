@@ -58,7 +58,7 @@ export default defineEventHandler(async (event): Promise<GeoCrawlResult> => {
   try {
     ;({ rows } = await withStatementTimeout(db, SEARCH_STATEMENT_TIMEOUT_MS, (client) =>
       client.query<MarkerRow>(
-        `SELECT a.platform, a.external_id, a.country, a.region, d.address, d.lat, d.lng
+        `SELECT a.platform, a.external_id, a.country, a.region, d.address, a.lat, a.lng
        FROM auctions a
        ${LATEST_DETAILS_JOIN_SQL}
        ${predicate}
