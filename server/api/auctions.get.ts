@@ -2,7 +2,7 @@ import type { AuctionExtraction } from '~/types/auction'
 import type { PropertyType } from '~/lib/property-type'
 import type { Condition } from '~/lib/condition'
 import type { Feature } from '~/lib/features'
-import { getPool } from '~/server/utils/db'
+import { getPool, isStatementTimeoutError, SEARCH_STATEMENT_TIMEOUT_MS, withStatementTimeout } from '~/server/utils/db'
 import { buildAuctionSearchFilter, finiteNumber } from '~/server/utils/auction-search-filters'
 import { curatedAuctionPhotoUrls } from '~/lib/auction-photos'
 
@@ -222,13 +222,29 @@ export default defineEventHandler(async (event): Promise<AuctionSearchResponse> 
     ${from} ${predicate ? `${predicate} AND d.property_type IS NOT NULL` : `WHERE d.property_type IS NOT NULL`}
     GROUP BY d.property_type ORDER BY count DESC, d.property_type`
 
-  // Facet queries reuse the filter parameters but not LIMIT/OFFSET.
-  const [rowsResult, statsResult, authoritiesResult, categoriesResult] = await Promise.all([
-    db.query<SearchRow>(rowsSql, [...filterValues, pageSize, offset]),
-    db.query<{ total: number; active: number; cancelled: number }>(statsSql, filterValues),
-    db.query<{ authority: string }>(authoritiesSql, filterValues),
-    db.query<{ id: string; count: number }>(categoriesSql, filterValues),
-  ])
+  // Facet queries reuse the filter parameters but not LIMIT/OFFSET. All four
+  // run on one connection (see withStatementTimeout) so the same
+  // statement_timeout guards every one of them, including the environment
+  // filter's EXISTS/ST_DWithin subquery embedded in `predicate`.
+  let rowsResult, statsResult, authoritiesResult, categoriesResult
+  try {
+    ;[rowsResult, statsResult, authoritiesResult, categoriesResult] = await withStatementTimeout(
+      db,
+      SEARCH_STATEMENT_TIMEOUT_MS,
+      (client) =>
+        Promise.all([
+          client.query<SearchRow>(rowsSql, [...filterValues, pageSize, offset]),
+          client.query<{ total: number; active: number; cancelled: number }>(statsSql, filterValues),
+          client.query<{ authority: string }>(authoritiesSql, filterValues),
+          client.query<{ id: string; count: number }>(categoriesSql, filterValues),
+        ]),
+    )
+  } catch (err) {
+    if (isStatementTimeoutError(err)) {
+      throw createError({ statusCode: 503, statusMessage: 'Suche zu aufwendig, bitte Filter einschränken.' })
+    }
+    throw err
+  }
   const stats = statsResult.rows[0] ?? { total: 0, active: 0, cancelled: 0 }
   setResponseHeader(event, 'cache-control', 'no-store')
   return {

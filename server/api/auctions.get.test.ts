@@ -1,6 +1,27 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('~/server/utils/db', () => ({ getPool: vi.fn() }))
+// Keep the real withStatementTimeout/isStatementTimeoutError/timeout constant
+// — only getPool is faked — so the handler's `db.connect()` transaction
+// wrapping runs for real against the mock client built in each test.
+vi.mock('~/server/utils/db', async () => {
+  const actual = await vi.importActual<typeof import('~/server/utils/db')>('~/server/utils/db')
+  return { ...actual, getPool: vi.fn() }
+})
+
+/** A pool-like object whose one connection's control statements (BEGIN/SET
+ *  LOCAL/COMMIT/ROLLBACK) are no-ops, delegating everything else to `query`. */
+function mockPool(query: (sql: string, params: unknown[]) => Promise<unknown>) {
+  const client = {
+    query: vi.fn(async (sql: string, params: unknown[] = []) => {
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK' || sql.startsWith('SET LOCAL')) {
+        return { rows: [] }
+      }
+      return query(sql, params)
+    }),
+    release: vi.fn(),
+  }
+  return { connect: vi.fn().mockResolvedValue(client) }
+}
 // Collaborators of the shared filter builder: the enabled-country scope and the
 // admin-configured hideRulesOnly default.
 vi.mock('~/server/crawlers/registry', () => ({
@@ -89,7 +110,7 @@ describe('/api/auctions', () => {
       throw new Error(`unexpected query: ${sql}`)
     })
     const { getPool } = await import('~/server/utils/db')
-    vi.mocked(getPool).mockReturnValue({ query } as never)
+    vi.mocked(getPool).mockReturnValue(mockPool(query) as never)
     const handler = (await import('./auctions.get')).default as unknown as (event: unknown) => Promise<unknown>
 
     const result = await handler({})
@@ -114,6 +135,22 @@ describe('/api/auctions', () => {
     vi.stubGlobal('createError', (input: object) => Object.assign(new Error('api error'), input))
     const { getPool } = await import('~/server/utils/db')
     vi.mocked(getPool).mockReturnValue(null)
+    const handler = (await import('./auctions.get')).default as unknown as (event: unknown) => Promise<unknown>
+
+    await expect(handler({})).rejects.toMatchObject({ statusCode: 503 })
+  })
+
+  it('translates a statement_timeout cancellation into a 503 instead of a raw 500', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    vi.stubGlobal('getQuery', () => ({ country: 'de' }))
+    vi.stubGlobal('setResponseHeader', vi.fn())
+    vi.stubGlobal('createError', (input: object) => Object.assign(new Error('api error'), input))
+
+    const query = vi.fn(async () => {
+      throw Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' })
+    })
+    const { getPool } = await import('~/server/utils/db')
+    vi.mocked(getPool).mockReturnValue(mockPool(query) as never)
     const handler = (await import('./auctions.get')).default as unknown as (event: unknown) => Promise<unknown>
 
     await expect(handler({})).rejects.toMatchObject({ statusCode: 503 })
