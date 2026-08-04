@@ -3,7 +3,7 @@
 // only sending an inquiry (server/api/lawyer-inquiries/index.post.ts) requires
 // a login. Returns only public-safe fields: `email` (the relay target for
 // commission-bearing inquiries) is never sent to the client — see
-// server/db/schema.sql's comment on the `lawyers` table.
+// server/db/schema/lawyers.ts's comment on the `lawyers` table.
 
 import { getServiceClient } from '../utils/supabase'
 

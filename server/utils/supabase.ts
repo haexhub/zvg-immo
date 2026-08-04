@@ -3,7 +3,7 @@
 // as the rest of the app: the Nuxt server is the only thing that talks to
 // the data layer, the browser never gets a direct, unscoped client for this.
 // RLS stays enabled on the tables themselves as defense-in-depth (see
-// server/db/schema.sql), just not exercised via this key.
+// server/db/schema/), just not exercised via this key.
 
 import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js'
 import type { H3Event } from 'h3'
