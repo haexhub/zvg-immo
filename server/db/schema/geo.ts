@@ -58,6 +58,22 @@ export const osmLocalElements = pgTable('osm_local_elements', {
   // subquery; these composite expression indexes let that use an index scan.
   index('idx_osm_local_elements_country_natural').on(table.country, sql`(${table.tags} ->> 'natural')`),
   index('idx_osm_local_elements_country_waterway').on(table.country, sql`(${table.tags} ->> 'waterway')`),
+  // Tag-only counterparts (docs/plans/2026-08-04-gis-wp1-index-notfall.md):
+  // the environment/proximity filters (auction-search-filters.ts) correlate
+  // `o.country = a.country` against a per-row value, not a literal, so the
+  // country-prefixed indexes above can't be used as an equality seek for
+  // that — these make the OR-chain's BitmapOr plan work regardless of
+  // country (PR #310, measured on Germany-scale data: ~7-10s without them).
+  index('idx_osm_local_elements_tag_natural').on(sql`(${table.tags} ->> 'natural')`),
+  index('idx_osm_local_elements_tag_waterway').on(sql`(${table.tags} ->> 'waterway')`),
+  index('idx_osm_local_elements_tag_water').on(sql`(${table.tags} ->> 'water')`),
+  index('idx_osm_local_elements_tag_place').on(sql`(${table.tags} ->> 'place')`),
+  index('idx_osm_local_elements_tag_aeroway').on(sql`(${table.tags} ->> 'aeroway')`),
+  // Every proximity EXISTS/ST_DWithin subquery (osm-proximity.ts) casts geom
+  // to ::geography — a plain GIST on geom (above) doesn't serve that
+  // predicate, so this table still needs the geography-cast index until
+  // WP-4/5 remove the cast entirely.
+  index('idx_osm_local_elements_geog').using('gist', sql`((${table.geom})::geography)`),
 ]).enableRLS()
 
 // Schicht 3 (climate_cells): 0.1° ERA5-Land raster grid. Auctions reference
