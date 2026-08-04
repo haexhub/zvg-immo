@@ -52,8 +52,6 @@ export interface AuctionDetailsRow {
   bidding_notes: string | null
   photo_count: number
   thumbnail_url: string | null
-  lat: number | null
-  lng: number | null
   extraction_source: string | null
   extraction_confidence: string | null
   llm_analyzed_at: string | null
@@ -113,8 +111,6 @@ const VALUE_COLUMNS = [
   ['bidding_notes', 'text'],
   ['photo_count', 'integer'],
   ['thumbnail_url', 'text'],
-  ['lat', 'numeric'],
-  ['lng', 'numeric'],
   ['extraction_source', 'text'],
   ['extraction_confidence', 'text'],
   ['document_summary', 'text'],
@@ -135,13 +131,6 @@ type ValueColumn = (typeof VALUE_COLUMNS)[number][0]
  */
 function json(value: unknown): string | null {
   return value === undefined ? null : JSON.stringify(value)
-}
-
-// node-postgres returns `numeric` as a string to avoid float precision loss.
-function numeric(value: number | string | null): number | null {
-  if (value == null) return null
-  const parsed = Number(value)
-  return Number.isFinite(parsed) ? parsed : null
 }
 
 /**
@@ -183,8 +172,6 @@ export function auctionDetailsValues(auction: Auction, extraction: AuctionExtrac
     bidding_notes: e?.biddingNotes ?? null,
     photo_count: auction.photoCount,
     thumbnail_url: auction.thumbnailUrl,
-    lat: auction.lat ?? null,
-    lng: auction.lng ?? null,
     extraction_source: e?.source ?? null,
     extraction_confidence: e?.confidence ?? null,
     document_summary: e?.documentSummary ?? null,
@@ -317,8 +304,8 @@ export async function writeAuctionDetails(
     await client.query('BEGIN')
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`auction_details:${platform}:${externalId}`])
 
-    const previous = await client.query<{ id: number; lat: number | null; lng: number | null }>(
-      `SELECT id, lat, lng FROM auction_details
+    const previous = await client.query<{ id: number }>(
+      `SELECT id FROM auction_details
        WHERE platform = $1 AND external_id = $2
        ORDER BY version DESC LIMIT 1`,
       [platform, externalId],
@@ -346,6 +333,13 @@ export async function writeAuctionDetails(
     if (unchangedVersion !== undefined) {
       await client.query('COMMIT')
       return { version: unchangedVersion, changed: false }
+    }
+
+    // is_latest has a partial UNIQUE index (one true row per identity) —
+    // the new row below defaults to is_latest = true, so the previous
+    // latest must be demoted first or the insert violates that constraint.
+    if (previousRow) {
+      await client.query('UPDATE auction_details SET is_latest = false WHERE id = $1', [previousRow.id])
     }
 
     const columns = ['platform', 'external_id', 'extracted_at', 'llm_analyzed_at', ...VALUE_COLUMNS.map(([name]) => name)]
@@ -382,12 +376,6 @@ export async function writeAuctionDetails(
     }
     await client.query('COMMIT')
     latestCache.set(cacheKey(platform, externalId), row)
-    if (coordinatesMovedSignificantly(
-      previousRow ? { lat: numeric(previousRow.lat), lng: numeric(previousRow.lng) } : null,
-      { lat: numeric(row.lat), lng: numeric(row.lng) },
-    )) {
-      triggerLocationEnrichment(platform, externalId)
-    }
     return { version: row.version, changed: true }
   } catch (err) {
     try {
@@ -399,50 +387,4 @@ export async function writeAuctionDetails(
   } finally {
     client.release()
   }
-}
-
-// Geocoders return slightly different coordinates for the same address between
-// runs, so an exact comparison would re-enrich constantly. 100 m is well above
-// that noise and well below the distance at which the location context (nearby
-// amenities, hazard zones, noise bands) would meaningfully differ.
-const COORDINATE_CHANGE_THRESHOLD_METERS = 100
-
-function distanceMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const R = 6_371_000
-  const toRad = (deg: number): number => (deg * Math.PI) / 180
-  const dLat = toRad(lat2 - lat1)
-  const dLng = toRad(lng2 - lng1)
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2
-  return 2 * R * Math.asin(Math.sqrt(a))
-}
-
-/** Exported for tests. */
-export function coordinatesMovedSignificantly(
-  previous: { lat: number | null; lng: number | null } | null,
-  next: { lat: number | null; lng: number | null },
-): boolean {
-  if (next.lat == null || next.lng == null) return false
-  // First coordinates this auction ever had — including a brand new auction,
-  // whose identity row is created before any geocoding has run.
-  if (previous?.lat == null || previous?.lng == null) return true
-  return distanceMeters(previous.lat, previous.lng, next.lat, next.lng) > COORDINATE_CHANGE_THRESHOLD_METERS
-}
-
-/**
- * Fire-and-forget re-enrichment of one auction's location context.
- *
- * The nightly full sweep stays the mechanism for externally-updated datasets
- * (EU flood zones, EFFIS, EEA noise, CAMS air quality) — those change without
- * anything happening on the auction side. It is not enough for "this auction's
- * coordinates just moved", though: up to 24 h of wrong context. Never awaited,
- * so the extraction path doesn't wait on external HTTP.
- */
-function triggerLocationEnrichment(platform: string, externalId: string): void {
-  // Absent outside the Nitro runtime (unit tests), where there is no task to run.
-  if (typeof runTask !== 'function') return
-  void runTask('external-enrichment', { payload: { platform, externalId } }).catch((err: unknown) => {
-    console.error(`[auction-details] external enrichment trigger failed for ${platform}/${externalId}: ${(err as Error).message}`)
-  })
 }

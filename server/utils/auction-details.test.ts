@@ -6,7 +6,6 @@ vi.mock('./db', () => ({ getPool: vi.fn() }))
 
 const {
   auctionDetailsValues,
-  coordinatesMovedSignificantly,
   invalidateAuctionDetailsCache,
   readAuctionDetailsAtVersion,
   readLatestAuctionDetails,
@@ -60,8 +59,6 @@ describe('auctionDetailsValues', () => {
     const values = auctionDetailsValues(
       makeAuction({
         startingBid: 1000,
-        lat: 52.1,
-        lng: 13.2,
         sourceLivingAreaSqm: 121,
         sourceLandAreaSqm: 501,
         sourceRooms: 4.5,
@@ -80,8 +77,6 @@ describe('auctionDetailsValues', () => {
       year_built: 1968,
       market_value_eur: 250000,
       starting_bid: 1000,
-      lat: 52.1,
-      lng: 13.2,
       extraction_source: 'llm',
       extraction_confidence: 'high',
       source_living_area_sqm: 121,
@@ -89,6 +84,9 @@ describe('auctionDetailsValues', () => {
       source_rooms: 4.5,
       market_value_text: '250.000 EUR laut Gutachten',
     })
+    // lat/lng live on auctions (WP-0), not the versioned auction_details.
+    expect(values).not.toHaveProperty('lat')
+    expect(values).not.toHaveProperty('lng')
   })
 
   it('JSON-encodes the jsonb columns and leaves absent extraction fields null', () => {
@@ -106,27 +104,9 @@ describe('auctionDetailsValues', () => {
   })
 })
 
-describe('coordinatesMovedSignificantly', () => {
-  it('treats the first coordinates an auction ever gets as a move', () => {
-    expect(coordinatesMovedSignificantly(null, { lat: 52.1, lng: 13.2 })).toBe(true)
-    expect(coordinatesMovedSignificantly({ lat: null, lng: null }, { lat: 52.1, lng: 13.2 })).toBe(true)
-  })
-
-  it('ignores geocoder noise below the threshold', () => {
-    // ~11 m apart.
-    expect(coordinatesMovedSignificantly({ lat: 52.1, lng: 13.2 }, { lat: 52.1001, lng: 13.2 })).toBe(false)
-    expect(coordinatesMovedSignificantly({ lat: 52.1, lng: 13.2 }, { lat: 52.1, lng: 13.2 })).toBe(false)
-  })
-
-  it('reports a real relocation', () => {
-    // ~1.1 km apart.
-    expect(coordinatesMovedSignificantly({ lat: 52.1, lng: 13.2 }, { lat: 52.11, lng: 13.2 })).toBe(true)
-  })
-
-  it('does not fire when the new version lost its coordinates', () => {
-    expect(coordinatesMovedSignificantly({ lat: 52.1, lng: 13.2 }, { lat: null, lng: null })).toBe(false)
-  })
-})
+// coordinatesMovedSignificantly and the location-enrichment trigger moved to
+// current-auctions.ts with WP-0 (coordinates now live on auctions, not the
+// versioned auction_details) — see current-auctions.test.ts.
 
 // Versioning is enforced by Postgres (advisory lock + UNIQUE constraint), so
 // these need a real database rather than a fake pool. Skipped unless one is
@@ -177,6 +157,25 @@ describeDb('writeAuctionDetails (real Postgres)', () => {
     // The old version is untouched — that is the whole point of the table.
     const v1 = await readAuctionDetailsAtVersion('zvg-portal', '7265', 1)
     expect(Number(v1?.living_area_sqm)).toBe(120)
+  })
+
+  it('keeps is_latest true on exactly the newest version, demoting the previous one', async () => {
+    // idx_auction_details_latest is a partial UNIQUE index (one true row per
+    // identity) — appending a version without demoting the old one violates
+    // it outright, so this is a correctness requirement, not a nicety.
+    await writeAuctionDetails(makeAuction(), makeExtraction())
+    await writeAuctionDetails(makeAuction(), makeExtraction({ livingAreaSqm: 140 }))
+    await writeAuctionDetails(makeAuction(), makeExtraction({ livingAreaSqm: 160 }))
+
+    const { rows } = await pool.query<{ version: number; is_latest: boolean }>(
+      `SELECT version, is_latest FROM auction_details
+       WHERE platform = 'zvg-portal' AND external_id = '7265' ORDER BY version`,
+    )
+    expect(rows).toEqual([
+      { version: 1, is_latest: false },
+      { version: 2, is_latest: false },
+      { version: 3, is_latest: true },
+    ])
   })
 
   it('skips the insert when nothing actually changed', async () => {
@@ -294,34 +293,6 @@ describeDb('writeAuctionDetails (real Postgres)', () => {
     expect(details.rows[0].n).toBe(0)
     const translations = await pool.query('SELECT count(*)::int AS n FROM auction_translations')
     expect(translations.rows[0].n).toBe(0)
-  })
-
-  it('triggers targeted location enrichment only when the coordinates really moved', async () => {
-    const runTask = vi.fn(async () => ({}))
-    vi.stubGlobal('runTask', runTask)
-    try {
-      await writeAuctionDetails(makeAuction({ lat: 52.1, lng: 13.2 }), makeExtraction())
-      expect(runTask).toHaveBeenCalledWith('external-enrichment', {
-        payload: { platform: 'zvg-portal', externalId: '7265' },
-      })
-
-      // A new version whose coordinates only jittered must not re-enrich.
-      runTask.mockClear()
-      await writeAuctionDetails(
-        makeAuction({ lat: 52.1001, lng: 13.2 }),
-        makeExtraction({ livingAreaSqm: 140 }),
-      )
-      expect(runTask).not.toHaveBeenCalled()
-
-      // A real relocation does.
-      await writeAuctionDetails(
-        makeAuction({ lat: 52.11, lng: 13.2 }),
-        makeExtraction({ livingAreaSqm: 150 }),
-      )
-      expect(runTask).toHaveBeenCalledTimes(1)
-    } finally {
-      vi.unstubAllGlobals()
-    }
   })
 
   it('holds the advisory lock for the whole transaction', async () => {
