@@ -4,7 +4,13 @@ Datum: 2026-08-04
 Teil von [GIS-Architektur](2026-08-04-gis-scaling-architecture.md). Abhängig von: [WP-4](2026-08-04-gis-wp4-geo-features.md).
 Aufwand: 3–4 Tage. Repo: `zvg-immo`. **Das ist der eigentliche Fix.**
 
-> **Status 2026-08-05: WP-4 (PR #318) ist erledigt, dieses WP ist bereit, sobald der OSM-Reimport gelaufen ist (siehe [WP-6](2026-08-04-gis-wp6-osm-datenausbau.md), aktueller Blocker).** Ein offener Punkt aus dem WP-4-Review, den dieses WP übernimmt: der Epoch-Lesevertrag, hier konkret festgelegt statt nur als Optionen skizziert.
+> **Status 2026-08-06: implementiert** (`server/tasks/build-auction-geo-metrics.ts`, Umstellung in `server/utils/auction-search-filters.ts` + `server/api/landing/rails.get.ts`). Migriert: nearSea/nearLake/nearRiver/nearMountain/nearAirport, plus neu nearSki (die Spalte gab es schon als "erste Erweiterung" im Skeleton-Schema). Alle vier Landing-Rails (sea/mountains/lakes/rivers) laufen jetzt über `auction_geo_metrics` statt live gegen `osm_local_elements`.
+>
+> **Bewusst zurückgestellt:** `urbanRural` bleibt auf dem alten Live-Pfad (`osm-proximity.ts`, `proximityConditionAnyOf`) — ein `dist_city_m` bräuchte eine neue `city`/`place`-`kind` in WP-4s Kind-Tabelle, die dessen Statusvermerk als vollständig markiert; das ist eine eigene, größere Änderung, kein Nebenprodukt dieses WPs. `tourism_density_count` wird vom Precompute-Job berechnet (bleibt heute 0, da `tourism_supply` erst mit WP-6 befüllt wird), ist aber noch nicht als Suchfilter verdrahtet — stand nicht im "Umstellung der Suche"-Abschnitt unten.
+>
+> **Noch nicht gegen echte Prod-Daten gelaufen:** hängt an WP-4s erstem echten Lauf gegen den vollständigen OSM-Reimport (SE steht noch aus, siehe [WP-6](2026-08-04-gis-wp6-osm-datenausbau.md)) — mit `EXPLAIN` lokal (Docker-Sandbox mit `supabase/postgres`-Image) verifiziert, dass der migrierte Plan kein `osm_local_elements` und keine Geometriefunktion mehr enthält.
+>
+> Ein offener Punkt aus dem WP-4-Review, den dieses WP übernimmt: der Epoch-Lesevertrag, hier konkret festgelegt statt nur als Optionen skizziert.
 >
 > - **Vollständig heißt:** eine neue Tabelle `geo_features_epochs` (`epoch bigint PRIMARY KEY, completed_at timestamptz NOT NULL`) bekommt genau eine Zeile pro Epoch — geschrieben von `build-geo-features.ts` erst *nach* dem finalen `DELETE FROM geo_features WHERE features_epoch < epoch`. Vor diesem Zeitpunkt existiert die Epoch für Leser nicht.
 > - **Leser und Precompute lesen ausschließlich die neueste vollständige Epoch:** `SELECT MAX(epoch) FROM geo_features_epochs`, nie `MAX(features_epoch) FROM geo_features` direkt — Letzteres würde während eines laufenden Aufbaus die gerade entstehende, partielle Epoch treffen.

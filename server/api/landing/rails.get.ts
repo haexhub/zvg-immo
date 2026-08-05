@@ -1,34 +1,36 @@
 import type { Pool } from 'pg'
 import { getPool } from '~/server/utils/db'
 import { buildAuctionSearchFilter } from '~/server/utils/auction-search-filters'
-import { proximityCondition } from '~/server/utils/osm-proximity'
 import { ensureEnabledCountriesLoaded, listCountries } from '~/server/crawlers/registry'
 import { SUMMARY_COLUMNS_SQL, SUMMARY_FROM_SQL, summary, type AuctionSummary, type SearchRow } from '~/server/api/auctions.get'
 
 // Landing-page category rails, Airbnb-style: each rail is a horizontally
 // scrolling row of actual auction cards, not a category picker. Country
 // rails query auctions.country directly. Geo rails (sea/mountains/lakes/
-// rivers) query the osm_local_elements PostGIS dataset (PR #282) via
-// ST_DWithin against the newest auction_details lat/lng — no LLM call, no location-context
-// backfill lag. They depend on the ansible-side osm2pgsql import actually
-// having loaded natural=coastline/water/peak and waterway=river for a
-// country (ansible PR #80) — until that import has run, a geo rail simply
-// comes back empty for that country rather than erroring.
+// rivers) compare against auction_geo_metrics (GIS WP-5) — no LLM call, no
+// location-context backfill lag, and (since WP-5) no live geometry query
+// either. They depend on that table having a row for the auction, which in
+// turn depends on the nightly precompute job (build-auction-geo-metrics.ts)
+// having run against a completed geo_features epoch (WP-4), which in turn
+// depends on the ansible-side osm2pgsql import having loaded the relevant
+// tags for that country (WP-6) — until all of that has run, a geo rail
+// simply comes back empty for that country rather than erroring, same
+// contract as before WP-5.
 const RAIL_LIMIT = 12
 const COUNTRY_RAIL_CODES = ['se', 'de', 'bg']
 
 interface GeoCategory {
   key: 'sea' | 'mountains' | 'lakes' | 'rivers'
-  tagKey: string
-  tagValue: string
+  /** auction_geo_metrics column. */
+  column: string
   radiusMeters: number
 }
 
 const GEO_CATEGORIES: GeoCategory[] = [
-  { key: 'sea', tagKey: 'natural', tagValue: 'coastline', radiusMeters: 5_000 },
-  { key: 'mountains', tagKey: 'natural', tagValue: 'peak', radiusMeters: 15_000 },
-  { key: 'lakes', tagKey: 'natural', tagValue: 'water', radiusMeters: 5_000 },
-  { key: 'rivers', tagKey: 'waterway', tagValue: 'river', radiusMeters: 2_000 },
+  { key: 'sea', column: 'dist_sea_m', radiusMeters: 5_000 },
+  { key: 'mountains', column: 'dist_mountain_m', radiusMeters: 15_000 },
+  { key: 'lakes', column: 'dist_lake_m', radiusMeters: 5_000 },
+  { key: 'rivers', column: 'dist_river_m', radiusMeters: 2_000 },
 ]
 
 export interface CountryRail {
@@ -63,7 +65,7 @@ async function geoRail(db: Pool, category: GeoCategory): Promise<AuctionSummary[
     values.push(value)
     return `$${values.length}`
   }
-  const geoCondition = proximityCondition(category.tagKey, category.tagValue, category.radiusMeters, add)
+  const geoCondition = `m.${category.column} <= ${add(category.radiusMeters)}`
   const predicate = basePredicate ? `${basePredicate} AND ${geoCondition}` : `WHERE ${geoCondition}`
   const sql = `SELECT ${SUMMARY_COLUMNS_SQL}
     ${SUMMARY_FROM_SQL} ${predicate}

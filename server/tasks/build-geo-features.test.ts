@@ -28,8 +28,14 @@ const describeDb = TEST_DB ? describe : describe.skip
 // database, though: buildGeoFeatures rebuilds from *all* of
 // osm_local_elements and its stale-epoch cleanup is a table-wide
 // `DELETE FROM geo_features WHERE features_epoch < $1` with no country
-// filter. Point TEST_DATABASE_URL at a disposable database — the guard in
-// beforeAll below refuses to run against one that holds foreign rows.
+// filter, and geo_features_epochs has no country column to scope by at all.
+// Point TEST_DATABASE_URL at a disposable database — the guard in beforeAll
+// below refuses to run against one that holds foreign rows — and do not run
+// this file concurrently with build-auction-geo-metrics.test.ts against the
+// same database: both touch the unscoped geo_features_epochs table, and this
+// file's systemic-failure test installs a trigger on all of geo_features
+// that would catch the other suite's inserts too. `vitest run <one file>`
+// per invocation, not the whole suite in parallel, when TEST_DATABASE_URL is set.
 const TEST_COUNTRY = 'zz-geo-features-test'
 
 // A second country, used only by the border-feature test below: Geofabrik's
@@ -181,12 +187,17 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
   afterAll(async () => {
     await pool.query('DELETE FROM geo_features WHERE country IN ($1, $2)', [TEST_COUNTRY, BORDER_COUNTRY])
     await pool.query('DELETE FROM osm_local_elements WHERE country IN ($1, $2)', [TEST_COUNTRY, BORDER_COUNTRY])
+    await pool.query('DELETE FROM geo_features_epochs')
     await pool.end()
   })
 
   beforeEach(async () => {
     await pool.query('DELETE FROM geo_features WHERE country IN ($1, $2)', [TEST_COUNTRY, BORDER_COUNTRY])
     await pool.query('DELETE FROM osm_local_elements WHERE country IN ($1, $2)', [TEST_COUNTRY, BORDER_COUNTRY])
+    // Epochs are a global sequence (not scoped to a country), so a leftover
+    // row from a previous test's epoch could make nextFeaturesEpoch() start
+    // from an unexpected number — clear the whole table between tests.
+    await pool.query('DELETE FROM geo_features_epochs')
     const client = await pool.connect()
     try {
       await seedFixture(client)
@@ -233,11 +244,19 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
 
       expect(afterFirst.every((r) => r.features_epoch === first.epoch)).toBe(true)
 
+      // Epoch is only "complete" for readers once the marker row exists —
+      // this is what auction_geo_metrics's precompute job resolves instead
+      // of MAX(features_epoch) on geo_features directly.
+      const firstMarker = await pool.query('SELECT 1 FROM geo_features_epochs WHERE epoch = $1', [first.epoch])
+      expect(firstMarker.rows).toHaveLength(1)
+
       // --- second run: must not duplicate anything ---
       const second = await buildGeoFeatures(client, signal)
       const afterSecond = await readFeatures(pool)
 
       expect(second.epoch).toBe(first.epoch + 1)
+      const secondMarker = await pool.query('SELECT 1 FROM geo_features_epochs WHERE epoch = $1', [second.epoch])
+      expect(secondMarker.rows).toHaveLength(1)
       // Same fixture, same geometries -> identical row set (by kind/osm_id
       // count), not doubled.
       expect(afterSecond.length).toBe(afterFirst.length)
@@ -291,11 +310,24 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
         CREATE TRIGGER zz_geo_features_boom BEFORE INSERT ON geo_features
           FOR EACH ROW EXECUTE FUNCTION zz_geo_features_boom();
       `)
+      let failedEpoch: number | undefined
       try {
+        // Same computation buildGeoFeatures itself uses internally
+        // (MAX(features_epoch)+1) — the epoch this next, failing run will
+        // attempt to write under.
+        const { rows } = await pool.query<{ next_epoch: number }>(
+          'SELECT COALESCE(MAX(features_epoch), 0) + 1 AS next_epoch FROM geo_features',
+        )
+        failedEpoch = rows[0]?.next_epoch
         await expect(buildGeoFeatures(client, signal)).rejects.toThrow(/simulated systemic failure/)
       } finally {
         await client.query('DROP TRIGGER zz_geo_features_boom ON geo_features; DROP FUNCTION zz_geo_features_boom();')
       }
+
+      // The failed epoch never becomes visible to readers — no marker row,
+      // ever, for an epoch that didn't complete.
+      const failedMarker = await pool.query('SELECT 1 FROM geo_features_epochs WHERE epoch = $1', [failedEpoch])
+      expect(failedMarker.rows).toHaveLength(0)
 
       const survivors = await readFeatures(pool)
       expect(survivors.length).toBeGreaterThan(0)

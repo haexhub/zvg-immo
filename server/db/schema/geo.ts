@@ -113,6 +113,20 @@ export const climateCells = pgTable('climate_cells', {
 // expected to be pre-split with ST_Subdivide by the WP-4 build job so a
 // GIST index actually excludes candidates; this table doesn't enforce that
 // itself.
+// Epoch completion marker (WP-5): build-geo-features.ts inserts a row here
+// only after a full rebuild's final `DELETE FROM geo_features WHERE
+// features_epoch < epoch` has committed — i.e. only once every kind for that
+// epoch is known-complete and the previous epoch's rows are gone. Readers
+// (the auction_geo_metrics precompute job, and any future live reader) must
+// resolve the current epoch via `SELECT MAX(epoch) FROM geo_features_epochs`,
+// never `MAX(features_epoch) FROM geo_features` directly — the latter would,
+// during a rebuild in progress, return the new epoch while it's still
+// partially written.
+export const geoFeaturesEpochs = pgTable('geo_features_epochs', {
+  epoch: integer('epoch').primaryKey(),
+  completedAt: timestamp('completed_at', { withTimezone: true }).notNull().defaultNow(),
+}).enableRLS()
+
 export const geoFeatures = pgTable('geo_features', {
   id: bigserial('id', { mode: 'number' }).primaryKey(),
   kind: text('kind').notNull(),

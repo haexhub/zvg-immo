@@ -217,6 +217,12 @@ export async function buildGeoFeatures(client: PoolClient, signal: AbortSignal):
     throwIfTaskAborted(signal)
     const { rowCount: deletedStale } = await client.query('DELETE FROM geo_features WHERE features_epoch < $1', [epoch])
     await client.query('ANALYZE geo_features')
+    // Only now is this epoch complete — readers (WP-5's auction_geo_metrics
+    // precompute job) resolve the current epoch via this table, never via
+    // MAX(features_epoch) on geo_features directly, so a rebuild in progress
+    // is never mistaken for done (see schema/geo.ts's geoFeaturesEpochs
+    // comment).
+    await client.query('INSERT INTO geo_features_epochs (epoch) VALUES ($1) ON CONFLICT (epoch) DO NOTHING', [epoch])
 
     const durationMs = Date.now() - startedAt
     console.log(`[build-geo-features] done in ${(durationMs / 1000).toFixed(0)}s, deleted ${deletedStale ?? 0} stale rows`)
@@ -313,7 +319,7 @@ async function buildKind(
 // (incl. 57014 statement_timeout), 58 external system error.
 const SYSTEMIC_SQLSTATE_CLASSES = ['08', '28', '2B', '2D', '40', '42', '53', '54', '57', '58']
 
-function isSystemicDatabaseError(err: unknown): boolean {
+export function isSystemicDatabaseError(err: unknown): boolean {
   const code = (err as { code?: unknown } | null | undefined)?.code
   return typeof code === 'string' && SYSTEMIC_SQLSTATE_CLASSES.includes(code.slice(0, 2))
 }

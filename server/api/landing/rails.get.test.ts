@@ -59,17 +59,18 @@ describe('/api/landing/rails', () => {
         expect(params.at(-1)).toBe(12)
         return { rows: [row({ external_id: '43', condition: 'gepflegt' })], rowCount: 1 }
       }
-      if (sql.includes('osm_local_elements')) {
+      if (sql.includes('m.dist_')) {
+        expect(params.at(-2)).toEqual(expect.any(Number)) // the rail's fixed radius
         expect(params.at(-1)).toBe(12)
-        const tagValue = params[2]
-        const byTagValue: Record<string, ReturnType<typeof row>[]> = {
-          coastline: [row({ external_id: '10' })],
-          peak: [row({ external_id: '11' })],
-          water: [row({ external_id: '12' })],
-          river: [row({ external_id: '13' })],
+        const byColumn: Record<string, ReturnType<typeof row>[]> = {
+          dist_sea_m: [row({ external_id: '10' })],
+          dist_mountain_m: [row({ external_id: '11' })],
+          dist_lake_m: [row({ external_id: '12' })],
+          dist_river_m: [row({ external_id: '13' })],
         }
-        const rows = byTagValue[tagValue as string]
-        if (!rows) throw new Error(`unexpected geo tag value: ${String(tagValue)}`)
+        const column = Object.keys(byColumn).find((c) => sql.includes(`m.${c} <=`))
+        const rows = column ? byColumn[column] : undefined
+        if (!rows) throw new Error(`unexpected geo metrics column in: ${sql}`)
         return { rows, rowCount: rows.length }
       }
       if (sql.includes('a.country = ANY(')) {
