@@ -194,32 +194,66 @@ export interface BuildGeoFeaturesResult {
  */
 export async function buildGeoFeatures(client: PoolClient, signal: AbortSignal): Promise<BuildGeoFeaturesResult> {
   const startedAt = Date.now()
-  const epoch = await nextFeaturesEpoch(client)
-  console.log(`[build-geo-features] start, epoch=${epoch}`)
+  await acquireRebuildLock(client)
+  try {
+    const epoch = await nextFeaturesEpoch(client)
+    console.log(`[build-geo-features] start, epoch=${epoch}`)
 
-  const perKind: Record<string, { inserted: number; skipped: number }> = {}
-  for (const mapping of KIND_MAPPINGS) {
+    const perKind: Record<string, { inserted: number; skipped: number }> = {}
+    for (const mapping of KIND_MAPPINGS) {
+      throwIfTaskAborted(signal)
+      const kindStartedAt = Date.now()
+      const outcome = await buildKind(client, mapping, epoch, signal)
+      perKind[mapping.kind] = outcome
+      console.log(
+        `[build-geo-features] kind=${mapping.kind} inserted=${outcome.inserted} skipped=${outcome.skipped} `
+        + `in ${((Date.now() - kindStartedAt) / 1000).toFixed(1)}s`,
+      )
+    }
+
+    // Only reached once every kind above has committed without throwing — an
+    // aborted or failed run leaves the previous epoch's rows untouched and in
+    // service, and simply gets redone (under yet another new epoch) next time.
     throwIfTaskAborted(signal)
-    const kindStartedAt = Date.now()
-    const outcome = await buildKind(client, mapping, epoch, signal)
-    perKind[mapping.kind] = outcome
-    console.log(
-      `[build-geo-features] kind=${mapping.kind} inserted=${outcome.inserted} skipped=${outcome.skipped} `
-      + `in ${((Date.now() - kindStartedAt) / 1000).toFixed(1)}s`,
-    )
+    const { rowCount: deletedStale } = await client.query('DELETE FROM geo_features WHERE features_epoch < $1', [epoch])
+    await client.query('ANALYZE geo_features')
+
+    const durationMs = Date.now() - startedAt
+    console.log(`[build-geo-features] done in ${(durationMs / 1000).toFixed(0)}s, deleted ${deletedStale ?? 0} stale rows`)
+
+    return { epoch, perKind, deletedStale: deletedStale ?? 0, durationMs }
+  } finally {
+    await releaseRebuildLock(client)
   }
+}
 
-  // Only reached once every kind above has committed without throwing — an
-  // aborted or failed run leaves the previous epoch's rows untouched and in
-  // service, and simply gets redone (under yet another new epoch) next time.
-  throwIfTaskAborted(signal)
-  const { rowCount: deletedStale } = await client.query('DELETE FROM geo_features WHERE features_epoch < $1', [epoch])
-  await client.query('ANALYZE geo_features')
+// runExclusiveTask only serialises runs inside one Node process. Two app
+// containers (or a container plus a manually triggered ad-hoc run) would
+// otherwise both read the same MAX(features_epoch) + 1, write under the same
+// epoch, and then each delete everything below it — including the rows the
+// other one just wrote. A session-level advisory lock makes the whole rebuild
+// exclusive database-wide.
+//
+// Deliberately *not* one big transaction around the rebuild: per-kind implicit
+// transactions are the point (see buildKind), and holding a single transaction
+// open across a 44.5M-row scan would pin WAL and block autovacuum for hours.
+const REBUILD_LOCK_KEY = 4_820_251_104
 
-  const durationMs = Date.now() - startedAt
-  console.log(`[build-geo-features] done in ${(durationMs / 1000).toFixed(0)}s, deleted ${deletedStale ?? 0} stale rows`)
+async function acquireRebuildLock(client: PoolClient): Promise<void> {
+  const { rows } = await client.query<{ locked: boolean }>('SELECT pg_try_advisory_lock($1) AS locked', [REBUILD_LOCK_KEY])
+  if (!rows[0]?.locked) {
+    throw new Error('[build-geo-features] another rebuild is already running (advisory lock held), skipping this run')
+  }
+}
 
-  return { epoch, perKind, deletedStale: deletedStale ?? 0, durationMs }
+async function releaseRebuildLock(client: PoolClient): Promise<void> {
+  try {
+    await client.query('SELECT pg_advisory_unlock($1)', [REBUILD_LOCK_KEY])
+  } catch (err) {
+    // The lock dies with the session anyway, so a failed unlock (e.g. the
+    // connection already broke) must not mask the original error.
+    console.warn(`[build-geo-features] releasing advisory lock failed: ${(err as Error).message}`)
+  }
 }
 
 async function nextFeaturesEpoch(client: PoolClient): Promise<number> {
@@ -258,11 +292,30 @@ async function buildKind(
     // Geometrien" pitfall: silently dropping a broken kind wholesale is
     // worse than a kind missing a handful of rows, but it must be logged,
     // not swallowed.
+    //
+    // Only for row-local failures, though: a systemic one (missing column,
+    // no permission, statement timeout, disk full) fails every row too, and
+    // the per-row pass would then report the whole kind as "skipped" —
+    // a successful-looking rebuild that goes on to delete the previous
+    // epoch's still-good rows.
+    if (isSystemicDatabaseError(err)) throw err
     console.warn(
       `[build-geo-features] kind=${mapping.kind} bulk insert failed (${(err as Error).message}), retrying row by row`,
     )
-    return await buildKindPerRow(client, mapping, epoch, signal)
+    return await buildKindPerRow(client, mapping, epoch, signal, err)
   }
+}
+
+// SQLSTATE classes that can never be caused by one bad geometry:
+// 08 connection, 28 invalid authorization, 2B/2D/40 transaction state,
+// 42 syntax/access rule (missing table/column, no permission),
+// 53 insufficient resources, 54 program limit, 57 operator intervention
+// (incl. 57014 statement_timeout), 58 external system error.
+const SYSTEMIC_SQLSTATE_CLASSES = ['08', '28', '2B', '2D', '40', '42', '53', '54', '57', '58']
+
+function isSystemicDatabaseError(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null | undefined)?.code
+  return typeof code === 'string' && SYSTEMIC_SQLSTATE_CLASSES.includes(code.slice(0, 2))
 }
 
 async function buildKindPerRow(
@@ -270,6 +323,7 @@ async function buildKindPerRow(
   mapping: KindMapping,
   epoch: number,
   signal: AbortSignal,
+  bulkError: unknown,
 ): Promise<{ inserted: number; skipped: number }> {
   const { rows: candidates } = await client.query<{ osm_type: string; osm_id: number }>(
     `SELECT o.osm_type, o.osm_id FROM osm_local_elements o WHERE ${mapping.where}`,
@@ -291,9 +345,15 @@ async function buildKindPerRow(
       const res = await client.query(rowSql, [mapping.kind, epoch, osm_type, osm_id])
       inserted += res.rowCount ?? 0
     } catch (err) {
+      if (isSystemicDatabaseError(err)) throw err
       skipped++
       console.warn(`[build-geo-features] kind=${mapping.kind} skipped ${osm_type}/${osm_id}: ${(err as Error).message}`)
     }
   }
+  // Every single candidate failing is not "a handful of broken geometries" —
+  // it's the bulk error having been systemic after all, under a SQLSTATE the
+  // classification above doesn't cover. Surface it instead of reporting an
+  // empty kind as a successful rebuild.
+  if (inserted === 0 && skipped === candidates.length && candidates.length > 0) throw bulkError
   return { inserted, skipped }
 }

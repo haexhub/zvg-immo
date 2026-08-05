@@ -22,9 +22,14 @@ const TEST_DB = process.env.TEST_DATABASE_URL
 const describeDb = TEST_DB ? describe : describe.skip
 
 // Reserved for this file only, never used by real crawl data or other
-// real-Postgres suites — every fixture row and assertion is scoped to it so
-// this test can run against a shared/persistent dev database without
-// touching real osm_local_elements/geo_features rows.
+// real-Postgres suites — every fixture row and assertion is scoped to it.
+//
+// The fixture scoping is NOT enough to make this suite safe on a shared
+// database, though: buildGeoFeatures rebuilds from *all* of
+// osm_local_elements and its stale-epoch cleanup is a table-wide
+// `DELETE FROM geo_features WHERE features_epoch < $1` with no country
+// filter. Point TEST_DATABASE_URL at a disposable database — the guard in
+// beforeAll below refuses to run against one that holds foreign rows.
 const TEST_COUNTRY = 'zz-geo-features-test'
 
 // osm_type/osm_id pairs used by the fixture below.
@@ -142,6 +147,15 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
   beforeAll(async () => {
     const { Pool } = await import('pg')
     pool = new Pool({ connectionString: TEST_DB })
+    for (const table of ['geo_features', 'osm_local_elements']) {
+      const { rows } = await pool.query(`SELECT 1 FROM ${table} WHERE country <> $1 LIMIT 1`, [TEST_COUNTRY])
+      if (rows.length > 0) {
+        throw new Error(
+          `${table} holds rows outside ${TEST_COUNTRY}. This suite rebuilds geo_features table-wide and would `
+          + 'destroy them — point TEST_DATABASE_URL at a disposable database.',
+        )
+      }
+    }
   })
 
   afterAll(async () => {
@@ -217,6 +231,55 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
         second.epoch,
       ])
       expect(Number(stale.rows[0]?.count)).toBe(0)
+    } finally {
+      client.release()
+    }
+  })
+
+  it('refuses to rebuild while another process holds the advisory lock', async () => {
+    const holder = await pool.connect()
+    const client = await pool.connect()
+    try {
+      // Same key as build-geo-features.ts's REBUILD_LOCK_KEY — stands in for a
+      // second app container mid-rebuild, which runExclusiveTask (in-process
+      // only) would not notice.
+      await holder.query('SELECT pg_advisory_lock($1)', [4_820_251_104])
+      await expect(buildGeoFeatures(client, new AbortController().signal)).rejects.toThrow(/another rebuild/)
+      // Nothing was written, and above all nothing was deleted.
+      expect(await readFeatures(pool)).toEqual([])
+    } finally {
+      await holder.query('SELECT pg_advisory_unlock($1)', [4_820_251_104])
+      holder.release()
+      client.release()
+    }
+  })
+
+  it('propagates a systemic insert failure instead of deleting the previous epoch', async () => {
+    const client = await pool.connect()
+    try {
+      const signal = new AbortController().signal
+      const first = await buildGeoFeatures(client, signal)
+      expect((await readFeatures(pool)).length).toBeGreaterThan(0)
+
+      // 53200 (out_of_memory) stands in for any systemic failure — schema,
+      // permission, timeout, resources. It hits every row, so the per-row
+      // fallback would otherwise report the whole rebuild as "skipped but
+      // successful" and go on to delete the previous epoch's still-good rows.
+      await client.query(`
+        CREATE FUNCTION zz_geo_features_boom() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN RAISE EXCEPTION 'simulated systemic failure' USING ERRCODE = '53200'; END $$;
+        CREATE TRIGGER zz_geo_features_boom BEFORE INSERT ON geo_features
+          FOR EACH ROW EXECUTE FUNCTION zz_geo_features_boom();
+      `)
+      try {
+        await expect(buildGeoFeatures(client, signal)).rejects.toThrow(/simulated systemic failure/)
+      } finally {
+        await client.query('DROP TRIGGER zz_geo_features_boom ON geo_features; DROP FUNCTION zz_geo_features_boom();')
+      }
+
+      const survivors = await readFeatures(pool)
+      expect(survivors.length).toBeGreaterThan(0)
+      expect(survivors.every((r) => r.features_epoch === first.epoch)).toBe(true)
     } finally {
       client.release()
     }
