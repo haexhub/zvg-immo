@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseSqm } from './text'
+import { extractInertiaPage, parseSqm } from './text'
 
 describe('parseSqm', () => {
   it('parses plain integers', () => {
@@ -25,5 +25,23 @@ describe('parseSqm', () => {
     expect(parseSqm(null)).toBeNull()
     expect(parseSqm(undefined)).toBeNull()
     expect(parseSqm('siehe Gutachten')).toBeNull()
+  })
+})
+
+describe('extractInertiaPage', () => {
+  it('parses a normal data-page payload', () => {
+    const html =
+      '<div id="app" data-page="{&quot;props&quot;:{&quot;auction&quot;:{&quot;title&quot;:&quot;Foo&quot;}}}"></div>'
+    expect(extractInertiaPage(html)).toEqual({ props: { auction: { title: 'Foo' } } })
+  })
+
+  it('strips a literal \\u0000 JSON escape that zvbawü emits mid-word (confirmed live on real titles)', () => {
+    const html =
+      '<div id="app" data-page="{&quot;props&quot;:{&quot;auction&quot;:{&quot;title&quot;:&quot;Gr\\u0000ünflä\\u0000che&quot;}}}"></div>'
+    expect(extractInertiaPage(html)).toEqual({ props: { auction: { title: 'Grünfläche' } } })
+  })
+
+  it('returns null for HTML without a data-page attribute', () => {
+    expect(extractInertiaPage('<div></div>')).toBeNull()
   })
 })
