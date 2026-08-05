@@ -4,15 +4,15 @@ Datum: 2026-08-04
 Teil von [GIS-Architektur](2026-08-04-gis-scaling-architecture.md). Abhängig von: [WP-4](2026-08-04-gis-wp4-geo-features.md) (Mapping muss existieren).
 Aufwand: 1–2 Tage. **Repo: `~/Projekte/ansible`** (eigenes Repo, eigener PR) + Reimport.
 
-## Status: Code-Änderungen liegen als PR vor
+## Status: Code gemergt + deployed, Smoke-Test bestanden — Reimport ist der letzte Schritt
 
-**[ansible#87](https://github.com/haexhub/ansible/pull/87)**, Branch `osm-import-geo-features`, Commit `14ce2f0`. Geändert sind `roles/zvg-immo/files/osm-import/osm-local-elements.lua` und `roles/zvg-immo/templates/osm-import/import.sh.j2`.
+**[ansible#87](https://github.com/haexhub/ansible/pull/87)**, Commit `14ce2f0`, **gemergt 2026-08-04 12:49 UTC** (`master` HEAD `85a5e20`) — bereits **auf Prod deployed** (`osm-local-elements.lua` md5sum-identisch mit dem gemergten Commit, verifiziert 2026-08-05).
 
-Beide Dateien sind syntaktisch geprüft (`luac -p` bzw. Jinja2-Rendering + `sh -n`), aber **nicht** gegen einen echten osm2pgsql-Lauf getestet. Was noch fehlt: Review, Smoke-Test, Merge, Deploy, Reimport, Verifikation.
+**Smoke-Test 2026-08-05: bestanden.** Der PR-Kommentar "kein Smoke-Test" bezog sich auf den zum Merge-Zeitpunkt ungetesteten Stand; der Datei-Header-Kommentar ("smoke-tested … with the bulgaria extract") bezieht sich nachweislich auf die *vorherige* Änderung (Sea-Tag-Broadening, Commit `2147f8b`), nicht auf `type=route`/Tourismus-Tags aus diesem PR. Test lief **isoliert** (kein Prod-Zugriff): `postgis/postgis:17-3.4`-Container + `debian:stable-slim` mit `osm2pgsql 2.1.1` (identisch zur Prod-Konfiguration) gegen den echten Bulgarien-Extrakt (~173 MB, download.geofabrik.de), exakt den Befehlen aus `import.sh.j2` folgend (inkl. Swap-Transaktion in eine lokale Kopie der echten `osm_local_elements`-DDL).
 
-**Reihenfolge gegenüber [WP-0](2026-08-04-gis-wp0-schema-neuaufbau.md):** Ein OSM-Reimport fällt in beiden WPs an — in WP-0 wegen des Schema-Neuaufbaus, hier wegen der neuen Tags. Er darf **nur einmal** laufen (DE mehrere Stunden). Also: dieses WP zuerst deployen, dann den Reimport auslösen, dann ist er für beide Zwecke erledigt. Läuft WP-0 zuerst mit einem Reimport, muss er nach dem Deploy dieses WPs wiederholt werden.
+Ergebnis: **keine Laufzeitfehler** — kein Flex-API-Crash, keine `NOT NULL`-Verletzung durch leere Routen-Geometrien. 1 066 969 Zeilen für BG (vorher 1 039 402 — +2,6 %, wie erwartet unkritisch). Alle Verifikationspunkte unten grün, inkl. `piste:type` (267), `landuse=winter_sports` (12), Routen-Relationen mit `route=hiking` (543), 0 leere Geometrien. Ski-Stichprobe: Bansko/Pamporovo per Namenssuche direkt gefunden; Borovets zunächst 0 Treffer, weil die Lifte/Pisten dort unbenannt sind (normales OSM-Tagging) — räumliche Suche um den benannten Ortsknoten "Боровец" bestätigt Lifte/Pisten in 245–380 m Entfernung, also kein Mapping-Fehler.
 
-> **Status 2026-08-05: dieser Fall ist eingetreten — der Reimport steht noch komplett aus.** WP-0 (PR #313, gemergt 2026-08-04) hat `osm_local_elements` per Hard-Reset geleert und den Reimport nicht selbst nachgeholt (verifiziert: 0 Zeilen, 96 kB auf Prod). WP-4 (PR #318, Aufbau-Job für `geo_features`) ist fertig und lokal verifiziert, läuft auf Prod aber gegen diese leere Quelle. Damit ist dieses WP der **aktuelle kritische Pfad**: `ansible#87` gegen einen kleinen Extrakt testen (Bulgarien empfohlen, nicht DE — schneller Turnaround), reviewen, mergen, deployen, dann den DE/SE/BG-Reimport auslösen. Erst danach liefern WP-4 und WP-5 reale Ergebnisse.
+**Offen bleibt nur noch:** der eigentliche DE/SE/BG-Reimport auf Prod (siehe „Offene Schritte" Punkt 5) — dieser WP-Teil ist damit **fertig für den Reimport**, nicht mehr Blocker davor.
 
 ## Drei Befunde, die das WP begründen
 
@@ -44,14 +44,24 @@ Zusätzlich protokolliert `import.sh` jetzt nach jedem Lauf invalide Indizes —
 
 ## Offene Schritte
 
-1. **Review der vorliegenden Änderungen** in `roles/zvg-immo/files/osm-import/osm-local-elements.lua` und `roles/zvg-immo/templates/osm-import/import.sh.j2`.
-2. **Größenabschätzung vor dem Reimport.** Die neuen ANY-Value-Keys (`piste:type`, `sac_scale`, `mtb:scale`) und `tourism=hotel|guest_house|apartment` vergrößern die Tabelle. Erwartung: einige Hunderttausend Zeilen, also unkritisch neben 40 Mio. `building` — aber vor dem Lauf gegen ein kleines Extrakt (Bulgarien, ~200 MB) prüfen, nicht gegen Deutschland.
-3. **Smoke-Test gegen echtes osm2pgsql.** Der bestehende Header-Kommentar dokumentiert genau dieses Vorgehen für die letzte Änderung („smoke-tested … with the bulgaria extract"). Syntaxprüfung allein reicht nicht: Fehler in der Flex-API (falscher Geometrietyp, fehlende Methode) zeigen sich erst zur Laufzeit.
-4. **Commit, PR, Deploy** im ansible-Repo.
-5. **Reimport auslösen** — alle drei Länder. Dauer: DE mehrere Stunden. Off-peak, und mit Blick auf den Connection-Verbrauch: derselbe Job hat am 2026-08-03 einen Prod-Totalausfall verursacht.
+1. ~~Review der vorliegenden Änderungen~~ — erledigt (Merge 2026-08-04).
+2. ~~Größenabschätzung vor dem Reimport~~ — erledigt: BG-Smoke-Test zeigt +2,6 % gegenüber dem alten BG-Bestand (1 066 969 vs. 1 039 402 Zeilen), unkritisch.
+3. ~~Smoke-Test gegen echtes osm2pgsql~~ — erledigt 2026-08-05, siehe Status-Abschnitt oben.
+4. ~~Commit, PR, Deploy~~ — erledigt (PR #87 gemergt + deployed, Lua-Datei md5sum-verifiziert).
+5. **Reimport auslösen — alle drei Länder. Wartet auf explizite Freigabe** (mehrstündige, hohe Prod-Last erzeugende Operation, siehe [[prod-outage-osm-import-connection-exhaustion]]-Vorfall vom 2026-08-03). Der Job läuft als `haex-service`-User-systemd-Unit (nicht `haex`), `haex` hat dafür passwortlosen `sudo -u haex-service`:
+   ```sh
+   ssh haex.cloud 'sudo -u haex-service XDG_RUNTIME_DIR=/run/user/1001 systemctl --user start zvg-immo-osm-import.service'
+   ```
+   Fortschritt/Fehler live verfolgen:
+   ```sh
+   ssh haex.cloud 'sudo -u haex-service XDG_RUNTIME_DIR=/run/user/1001 journalctl --user -u zvg-immo-osm-import.service -f'
+   ```
+   `TimeoutStartSec=21600` (6 h) im Service-Unit deckt alle drei Länder ab (DE allein ~1h42m gemessen). Off-peak fahren, wegen Connection-Verbrauch während des Laufs.
 6. **[WP-4](2026-08-04-gis-wp4-geo-features.md)-Aufbau erneut laufen lassen** und `features_epoch` erhöhen, damit [WP-5](2026-08-04-gis-wp5-precompute-suche.md) die Metriken neu berechnet.
 
 ## Verifikation
+
+Punkte 4–6 bereits im isolierten BG-Smoke-Test (2026-08-05) bestätigt — dort schon grün, nach dem echten Reimport nur gegen alle drei Länder wiederholen. Punkte 1–3 und 7 brauchen den echten Prod-Reimport.
 
 1. `SELECT country, count(*) FROM osm_local_elements GROUP BY 1` zeigt **alle drei** Länder, SE > 0.
 2. `systemctl --user status zvg-immo-osm-import.service` ist nicht mehr `failed`.
@@ -62,9 +72,9 @@ SELECT count(*) FROM osm_local_elements WHERE tags ? 'piste:type';
 SELECT count(*) FROM osm_local_elements WHERE tags->>'landuse' = 'winter_sports';
 SELECT count(*) FROM osm_local_elements WHERE osm_type='relation' AND tags->>'route' = 'hiking';
 ```
-Alle > 0. Der dritte Wert ist der wichtigste — er beweist, dass Routen-Relationen ankommen.
-5. **Ski-Abdeckung je Land plausibilisieren.** Skigebiete sind in OSM [uneinheitlich erfasst](https://wiki.openstreetmap.org/wiki/Tag:landuse=winter_sports); für 2–3 bekannte Gebiete je Land prüfen, ob sie über mindestens einen der drei Tags auffindbar sind. Ein Land mit 0 Skigebieten kann korrekt sein (BG hat welche, SE hat welche — bei 0 liegt ein Mapping-Fehler vor).
-6. Keine leeren Geometrien: `SELECT count(*) FROM osm_local_elements WHERE ST_IsEmpty(geom)` = 0.
+Alle > 0. Der dritte Wert ist der wichtigste — er beweist, dass Routen-Relationen ankommen. **BG-Smoke-Test:** 267 / 12 / 543.
+5. **Ski-Abdeckung je Land plausibilisieren.** Skigebiete sind in OSM [uneinheitlich erfasst](https://wiki.openstreetmap.org/wiki/Tag:landuse=winter_sports); für 2–3 bekannte Gebiete je Land prüfen, ob sie über mindestens einen der drei Tags auffindbar sind. Ein Land mit 0 Skigebieten kann korrekt sein (BG hat welche, SE hat welche — bei 0 liegt ein Mapping-Fehler vor). **BG-Smoke-Test:** Bansko/Pamporovo/Borovets alle bestätigt (Borovets nur räumlich, nicht per Namenssuche — Lifte dort unbenannt).
+6. Keine leeren Geometrien: `SELECT count(*) FROM osm_local_elements WHERE ST_IsEmpty(geom)` = 0. **BG-Smoke-Test:** bestätigt, 0.
 7. Der Invalid-Index-Check im Joblog gibt keine Zeilen aus.
 
 ## Fallstricke
