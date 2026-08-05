@@ -43,6 +43,13 @@
       "when": 1785931403841,
       "tag": "0005_osm_local_elements_pk_country",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785967106648,
+      "tag": "0006_wp5_geo_features_epochs",
+      "breakpoints": true
     }
   ]
 }

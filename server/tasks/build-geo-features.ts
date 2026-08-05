@@ -7,7 +7,7 @@
 // (osm-proximity.ts) with a value computed once here.
 //
 // Idempotent via features_epoch: a full rebuild writes under a new epoch
-// (max(features_epoch)+1) and only deletes the previous epoch's rows after
+// (see nextFeaturesEpoch) and only deletes the previous epoch's rows after
 // every kind has finished. A crash mid-build leaves the old epoch fully
 // intact for a live search to keep reading — nothing is ever deleted before
 // the new build is known-complete, and a second run of this task is always
@@ -215,13 +215,13 @@ export async function buildGeoFeatures(client: PoolClient, signal: AbortSignal):
     // aborted or failed run leaves the previous epoch's rows untouched and in
     // service, and simply gets redone (under yet another new epoch) next time.
     throwIfTaskAborted(signal)
-    const { rowCount: deletedStale } = await client.query('DELETE FROM geo_features WHERE features_epoch < $1', [epoch])
+    const deletedStale = await swapInEpoch(client, epoch)
     await client.query('ANALYZE geo_features')
 
     const durationMs = Date.now() - startedAt
-    console.log(`[build-geo-features] done in ${(durationMs / 1000).toFixed(0)}s, deleted ${deletedStale ?? 0} stale rows`)
+    console.log(`[build-geo-features] done in ${(durationMs / 1000).toFixed(0)}s, deleted ${deletedStale} stale rows`)
 
-    return { epoch, perKind, deletedStale: deletedStale ?? 0, durationMs }
+    return { epoch, perKind, deletedStale, durationMs }
   } finally {
     await releaseRebuildLock(client)
   }
@@ -256,11 +256,48 @@ async function releaseRebuildLock(client: PoolClient): Promise<void> {
   }
 }
 
-async function nextFeaturesEpoch(client: PoolClient): Promise<number> {
+// Both tables, not just geo_features: a successful rebuild that produced no
+// rows at all (osm_local_elements empty, as it was after the WP-0 reset)
+// leaves geo_features empty but geo_features_epochs holding that epoch's
+// marker. Counting from geo_features alone would then hand out an already-used
+// epoch number, the marker insert would hit ON CONFLICT DO NOTHING, MAX(epoch)
+// would stay behind — and readers would ignore every row the rebuild just
+// wrote. The epoch counter has to be monotonic across both.
+export async function nextFeaturesEpoch(client: PoolClient): Promise<number> {
   const { rows } = await client.query<{ next_epoch: number }>(
-    'SELECT COALESCE(MAX(features_epoch), 0) + 1 AS next_epoch FROM geo_features',
+    `SELECT GREATEST(
+       (SELECT COALESCE(MAX(features_epoch), 0) FROM geo_features),
+       (SELECT COALESCE(MAX(epoch), 0) FROM geo_features_epochs)
+     ) + 1 AS next_epoch`,
   )
   return rows[0]?.next_epoch ?? 1
+}
+
+/**
+ * Publishes `epoch`: drops every older row and records the completion marker
+ * in one transaction. Atomicity is the point — WP-5's metrics job pins itself
+ * to MAX(geo_features_epochs.epoch) and then measures against that epoch's
+ * rows, so a window where the old rows are already gone but the new marker is
+ * not yet visible would have it silently measure against nothing. Returns the
+ * number of stale rows removed.
+ */
+async function swapInEpoch(client: PoolClient, epoch: number): Promise<number> {
+  await client.query('BEGIN')
+  try {
+    const { rowCount } = await client.query('DELETE FROM geo_features WHERE features_epoch < $1', [epoch])
+    // Only now is this epoch complete — readers (WP-5's auction_geo_metrics
+    // precompute job) resolve the current epoch via this table, never via
+    // MAX(features_epoch) on geo_features directly, so a rebuild in progress
+    // is never mistaken for done (see schema/geo.ts's geoFeaturesEpochs
+    // comment).
+    await client.query('INSERT INTO geo_features_epochs (epoch) VALUES ($1) ON CONFLICT (epoch) DO NOTHING', [epoch])
+    await client.query('COMMIT')
+    return rowCount ?? 0
+  } catch (err) {
+    // A failing ROLLBACK (broken connection) must not mask why the swap failed.
+    await client.query('ROLLBACK').catch(() => {})
+    throw err
+  }
 }
 
 // One INSERT ... SELECT per kind (committed as its own implicit transaction,
@@ -313,7 +350,7 @@ async function buildKind(
 // (incl. 57014 statement_timeout), 58 external system error.
 const SYSTEMIC_SQLSTATE_CLASSES = ['08', '28', '2B', '2D', '40', '42', '53', '54', '57', '58']
 
-function isSystemicDatabaseError(err: unknown): boolean {
+export function isSystemicDatabaseError(err: unknown): boolean {
   const code = (err as { code?: unknown } | null | undefined)?.code
   return typeof code === 'string' && SYSTEMIC_SQLSTATE_CLASSES.includes(code.slice(0, 2))
 }

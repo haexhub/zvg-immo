@@ -69,64 +69,60 @@ describe('buildAuctionSearchFilter', () => {
     expect(predicate).toContain('a.auction_date_iso IS NULL OR a.auction_date_iso >= now()')
   })
 
-  it('adds an osm_local_elements proximity clause for a set Umgebung filter', async () => {
+  it('adds an auction_geo_metrics proximity clause for a set Umgebung filter', async () => {
     const { buildAuctionSearchFilter } = await import('./auction-search-filters')
     const { predicate, values } = await buildAuctionSearchFilter(db, { nearSea: '5', llmOnly: '0' })
 
-    expect(predicate).toContain('EXISTS')
-    expect(predicate).toContain('osm_local_elements')
-    expect(values).toContain('natural')
-    expect(values).toContain('coastline')
+    expect(predicate).toContain('m.dist_sea_m <=')
     expect(values).toContain(5_000)
   })
 
-  it('builds the sea filter broadly enough for Swedish coast and island searches', async () => {
-    const { getEnabledCountryCodes } = await import('~/server/crawlers/registry')
-    vi.mocked(getEnabledCountryCodes).mockReturnValueOnce(['de', 'at', 'se'])
+  it('adds a metrics-column clause per Umgebung filter, unscoped by country', async () => {
+    // GIS WP-5: distances are precomputed against the auction's exact
+    // position, not tag-matched per country — unlike the live query this
+    // replaced, there is no more per-category country constraint to test.
     const { buildAuctionSearchFilter } = await import('./auction-search-filters')
-    const { predicate, values } = await buildAuctionSearchFilter(db, { country: 'se', nearSea: '100', llmOnly: '0' })
+    const { predicate, values } = await buildAuctionSearchFilter(db, { nearLake: '20', nearSki: '50', llmOnly: '0' })
 
-    const seaPredicate = predicate.slice(predicate.indexOf('EXISTS'))
-    expect(values[0]).toEqual(['se'])
-    expect(seaPredicate).toContain(' OR ')
-    expect(seaPredicate).not.toContain('o.country = a.country')
-    expect(values).toEqual([
-      ['se'],
-      'natural',
-      'coastline',
-      'natural',
-      'beach',
-      'natural',
-      'bay',
-      'natural',
-      'strait',
-      'water',
-      'sea',
-      'water',
-      'lagoon',
-      'place',
-      'sea',
-      'place',
-      'ocean',
-      100_000,
-    ])
+    expect(predicate).toContain('m.dist_lake_m <=')
+    expect(predicate).toContain('m.dist_ski_m <=')
+    expect(values).toContain(20_000)
+    expect(values).toContain(50_000)
   })
 
-  it('keeps non-sea Umgebung filters scoped to the auction country', async () => {
+  it('accepts a radius exactly at the category cutoff unchanged', async () => {
+    const { GEO_METRIC_CATEGORIES } = await import('./geo-metric-categories')
     const { buildAuctionSearchFilter } = await import('./auction-search-filters')
-    const { predicate, values } = await buildAuctionSearchFilter(db, { nearLake: '20', llmOnly: '0' })
 
-    expect(predicate).toContain('o.country = a.country')
-    expect(values).toContain('natural')
-    expect(values).toContain('water')
-    expect(values).toContain(20_000)
+    for (const { param, cutoffMeters } of GEO_METRIC_CATEGORIES) {
+      const { values } = await buildAuctionSearchFilter(db, { [param]: String(cutoffMeters / 1000), llmOnly: '0' })
+      expect(values).toContain(cutoffMeters)
+    }
+  })
+
+  it('clamps a radius beyond the cutoff instead of asking for distances the precompute stores as NULL', async () => {
+    const { GEO_METRIC_CATEGORIES } = await import('./geo-metric-categories')
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+
+    for (const { param, column, cutoffMeters } of GEO_METRIC_CATEGORIES) {
+      const overLimitKm = cutoffMeters / 1000 + 100
+      const { predicate, values } = await buildAuctionSearchFilter(db, { [param]: String(overLimitKm), llmOnly: '0' })
+
+      // Still filtered (dropping the filter would return auctions nowhere
+      // near the feature), but never against a radius the metrics table has
+      // no data for — beyond the cutoff every row is NULL, so the wider
+      // request would match strictly fewer rows than the narrower one.
+      expect(predicate).toContain(`m.${column} <=`)
+      expect(values).toContain(cutoffMeters)
+      expect(values).not.toContain(overLimitKm * 1000)
+    }
   })
 
   it('ignores a zero or unset Umgebung distance', async () => {
     const { buildAuctionSearchFilter } = await import('./auction-search-filters')
     const { predicate } = await buildAuctionSearchFilter(db, { nearSea: '0', llmOnly: '0' })
 
-    expect(predicate).not.toContain('osm_local_elements')
+    expect(predicate).not.toContain('dist_sea_m')
   })
 
   it('negates the place-proximity clause for a rural request', async () => {

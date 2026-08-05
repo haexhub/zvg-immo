@@ -7,41 +7,8 @@
 import type { Pool } from 'pg'
 import { ensureEnabledCountriesLoaded, getEnabledCountryCodes } from '~/server/crawlers/registry'
 import { getHideRulesOnlyAuctions } from '~/server/utils/app-settings'
-import { proximityConditionAnyOf, proximityConditionAnyTag, type ProximityTagMatcher } from '~/server/utils/osm-proximity'
-
-// Umgebung ("environment") proximity filters — same osm_local_elements
-// dataset and EXISTS/ST_DWithin shape as the landing page's geo rails
-// (server/api/landing/rails.get.ts), but with a user-chosen radius instead
-// of a fixed one. Query param name -> OSM tag matchers.
-interface ProximityFilterConfig {
-  matchers: ProximityTagMatcher[]
-  constrainCountry?: boolean
-}
-
-const PROXIMITY_FILTERS: Record<string, ProximityFilterConfig> = {
-  // Coastal OSM imports are not always represented only by
-  // natural=coastline, especially around islands. Do not constrain the OSM
-  // element's country here either: coastline/bay/sea geometries often sit on
-  // borders or water and the user's selected auction country already scopes
-  // the candidates.
-  nearSea: {
-    constrainCountry: false,
-    matchers: [
-      { tagKey: 'natural', tagValue: 'coastline' },
-      { tagKey: 'natural', tagValue: 'beach' },
-      { tagKey: 'natural', tagValue: 'bay' },
-      { tagKey: 'natural', tagValue: 'strait' },
-      { tagKey: 'water', tagValue: 'sea' },
-      { tagKey: 'water', tagValue: 'lagoon' },
-      { tagKey: 'place', tagValue: 'sea' },
-      { tagKey: 'place', tagValue: 'ocean' },
-    ],
-  },
-  nearLake: { matchers: [{ tagKey: 'natural', tagValue: 'water' }] },
-  nearRiver: { matchers: [{ tagKey: 'waterway', tagValue: 'river' }] },
-  nearMountain: { matchers: [{ tagKey: 'natural', tagValue: 'peak' }] },
-  nearAirport: { matchers: [{ tagKey: 'aeroway', tagValue: 'aerodrome' }] },
-}
+import { GEO_METRIC_CATEGORIES } from '~/server/utils/geo-metric-categories'
+import { proximityConditionAnyOf } from '~/server/utils/osm-proximity'
 
 // A settlement counts as "urban" if a city/town-sized OSM place node sits
 // within this radius; otherwise the auction is "rural". Arbitrary but easy
@@ -162,13 +129,26 @@ export async function buildAuctionSearchFilter(
     if (value != null) where.push(`${column} ${operator} ${add(value)}`)
   }
 
-  for (const [param, config] of Object.entries(PROXIMITY_FILTERS)) {
+  // Umgebung ("environment") proximity filters — GIS WP-5: a plain column
+  // comparison against auction_geo_metrics (precomputed nightly from
+  // geo_features, see server/tasks/build-auction-geo-metrics.ts) instead of a
+  // live EXISTS/ST_DWithin join against osm_local_elements. Requires the
+  // caller's FROM to LEFT JOIN auction_geo_metrics AS m — see
+  // GEO_METRICS_JOIN_SQL (auctions.get.ts).
+  for (const { param, column, cutoffMeters } of GEO_METRIC_CATEGORIES) {
     const km = finiteNumber(query[param])
-    if (km != null && km > 0) {
-      where.push(proximityConditionAnyTag(config.matchers, km * 1000, add, {
-        constrainCountry: config.constrainCountry,
-      }))
-    }
+    if (km == null || km <= 0) continue
+    // Clamping, not rejecting: past the cutoff the precompute stores NULL, so
+    // a larger radius would match strictly *fewer* rows than a smaller one
+    // (see geo-metric-categories.ts). Everything within the cutoff is still a
+    // correct answer to the wider request; dropping the filter entirely would
+    // instead return auctions nowhere near the feature.
+    const meters = Math.min(km * 1000, cutoffMeters)
+    // A LEFT JOINed m with no row (ungeocoded auction) makes m.<column>
+    // NULL, and NULL <= x is NULL — false in a WHERE clause, so an
+    // ungeocoded auction correctly drops out only once a geofilter like this
+    // one is actually active, same as the live query it replaces.
+    where.push(`m.${column} <= ${add(meters)}`)
   }
 
   const urbanRural = String(query.urbanRural ?? '')

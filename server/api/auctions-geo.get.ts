@@ -1,7 +1,7 @@
 import { geocodeAddress, geocodeStatus } from '~/server/utils/geocode'
 import { getPool, isStatementTimeoutError, SEARCH_STATEMENT_TIMEOUT_MS, withStatementTimeout } from '~/server/utils/db'
 import { buildAuctionSearchFilter, finiteNumber } from '~/server/utils/auction-search-filters'
-import { LATEST_DETAILS_JOIN_SQL } from '~/server/api/auctions.get'
+import { GEO_METRICS_JOIN_SQL, LATEST_DETAILS_JOIN_SQL } from '~/server/api/auctions.get'
 import { countryCentroid } from '~/lib/country-bounds'
 
 // A map beyond this many pins is not readable anyway, and every row here can
@@ -61,6 +61,7 @@ export default defineEventHandler(async (event): Promise<GeoCrawlResult> => {
         `SELECT a.platform, a.external_id, a.country, a.region, d.address, a.lat, a.lng
        FROM auctions a
        ${LATEST_DETAILS_JOIN_SQL}
+       ${GEO_METRICS_JOIN_SQL}
        ${predicate}
        ORDER BY a.platform, a.external_id
        LIMIT $${values.length + 1}`,
