@@ -10,11 +10,16 @@ import type { Auction } from '~/types/auction'
 import { crawlAll } from '../crawlers/registry'
 import { enrichInBatches as enrichAtDetails } from '../crawlers/at/detail'
 import { enrichInBatches as enrichBidditDetails, formatVerkehrswertText } from '../crawlers/biddit/detail'
-import { geocodeAddress } from '../utils/geocode'
+import { activeGeocoderProvider, geocodeAddress, geocodeStatus } from '../utils/geocode'
 import { writeAuctionDetails } from '../utils/auction-details'
 import { applyAuctionExtraction } from '../utils/auction-extraction'
 import { mergeStoredAuction } from '../utils/auction-merge'
-import { ensureAuctionIdentity, upsertCurrentAuctions } from '../utils/current-auctions'
+import {
+  ensureAuctionIdentity,
+  recordGeocodeAttempts,
+  upsertCurrentAuctions,
+  type GeocodeAttempt,
+} from '../utils/current-auctions'
 import { readAuctionRecordMap } from '../utils/auction-record'
 import {
   cacheKey,
@@ -23,6 +28,10 @@ import {
   type VerkehrswertCache,
 } from '../utils/verkehrswert-cache'
 import { runExclusiveTask, throwIfTaskAborted } from '../utils/exclusive-task'
+
+// Matches recordGeocodeAttempts' own chunk size, so a flush is exactly one
+// UPDATE statement.
+const GEOCODE_ATTEMPT_FLUSH_SIZE = 500
 
 // Guards against overlapping runs: a cold-start bootstrap run can take ~40 min
 // and would otherwise race a cron-triggered run of the same task (duplicate
@@ -51,26 +60,47 @@ async function runGeocode(signal: AbortSignal) {
     let processed = 0
     let geocoded = 0
     let failed = 0
+    const provider = activeGeocoderProvider()
+    // Flushed in chunks rather than once at the end: a cold run takes ~40 min
+    // and gets aborted whenever a newer run supersedes it (runExclusiveTask)
+    // or the container redeploys — buffering everything would throw away the
+    // observability for exactly the long runs it exists for.
+    const attempts: GeocodeAttempt[] = []
+    const flushAttempts = async (): Promise<void> => {
+      if (attempts.length === 0) return
+      const pending = attempts.splice(0, attempts.length)
+      await recordGeocodeAttempts(pending, new Date().toISOString())
+    }
     const startGeo = Date.now()
-    for (const a of withAddress) {
-      throwIfTaskAborted(signal)
-      processed++
-      try {
-        const point = await geocodeAddress(a.address, a.country, { fetchMissing: true })
+    try {
+      for (const a of withAddress) {
+        throwIfTaskAborted(signal)
+        processed++
+        const point = await geocodeAddress(a.address, a.country, { fetchMissing: true }).catch(() => {
+          failed++
+          return null
+        })
         if (point) {
           a.lat = point.lat
           a.lng = point.lng
           geocoded++
         }
-      } catch {
-        failed++
+        // Recorded regardless of outcome: "never attempted" vs "attempted, still
+        // unresolved" is only distinguishable in the DB once this run stamps it
+        // (see WP-3) — 'pending' means the cache still has un-queried variants
+        // (e.g. the failure cooldown skipped them this run).
+        const status = point ? 'geocoded' : await geocodeStatus(a.address, a.country)
+        attempts.push({ platform: a.platform, externalId: a.externalId, result: status, provider })
+        if (attempts.length >= GEOCODE_ATTEMPT_FLUSH_SIZE) await flushAttempts()
+        if (processed % 100 === 0 || processed === withAddress.length) {
+          const rate = processed / Math.max(1, (Date.now() - startGeo) / 1000)
+          console.log(
+            `[geocode] ${processed}/${withAddress.length} · ${geocoded} hit · ${failed} err · ${rate.toFixed(1)}/s`,
+          )
+        }
       }
-      if (processed % 100 === 0 || processed === withAddress.length) {
-        const rate = processed / Math.max(1, (Date.now() - startGeo) / 1000)
-        console.log(
-          `[geocode] ${processed}/${withAddress.length} · ${geocoded} hit · ${failed} err · ${rate.toFixed(1)}/s`,
-        )
-      }
+    } finally {
+      await flushAttempts()
     }
 
     // AT-Edikte and Biddit both hide their Schätzwert / estimatedPrice on the

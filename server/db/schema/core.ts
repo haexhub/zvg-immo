@@ -48,6 +48,17 @@ export const auctions = pgTable('auctions', {
   cancelled: boolean('cancelled').notNull(),
   lat: numeric('lat'),
   lng: numeric('lng'),
+  // Geocoding observability (WP-3): distinguishes "never attempted" (all
+  // three NULL) from "attempted, still unresolved" — a backfill can't tell
+  // those apart from lat/lng alone, and would otherwise either skip
+  // addresses it never actually tried or hammer ones already known
+  // unresolvable. geocodeProvider records which backend ran the attempt
+  // (nominatim vs locationiq) so a provider switch doesn't get masked by
+  // stale failures from the previous one — see
+  // docs/plans/2026-08-04-gis-wp3-geocoding-abdeckung.md.
+  geocodeAttemptedAt: timestamp('geocode_attempted_at', { withTimezone: true }),
+  geocodeResult: text('geocode_result'), // 'geocoded' | 'unresolvable' | 'pending'
+  geocodeProvider: text('geocode_provider'), // 'nominatim' | 'locationiq'
   firstSeenAt: timestamp('first_seen_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [

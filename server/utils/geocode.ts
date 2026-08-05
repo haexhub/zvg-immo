@@ -49,6 +49,14 @@ export interface GeoPoint {
   displayName: string
 }
 
+/** Which backend geocodeOnce would currently call. Recorded alongside every
+ *  attempt (auctions.geocode_provider) so a later switch between Nominatim
+ *  and LocationIQ doesn't get masked by stale failures from the other one —
+ *  see docs/plans/2026-08-04-gis-wp3-geocoding-abdeckung.md. */
+export function activeGeocoderProvider(): 'nominatim' | 'locationiq' {
+  return LOCATIONIQ_KEY ? 'locationiq' : 'nominatim'
+}
+
 async function ensureCacheDir(): Promise<void> {
   await mkdir(CACHE_DIR, { recursive: true })
 }

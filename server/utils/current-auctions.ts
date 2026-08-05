@@ -6,6 +6,7 @@
 import type { Pool } from 'pg'
 import type { Auction } from '~/types/auction'
 import { getPool } from './db'
+import type { GeocodeStatus } from './geocode'
 
 const COLUMNS = [
   'platform',
@@ -193,4 +194,43 @@ async function insertChunk(db: Pool, rows: CurrentAuctionRow[], update: boolean)
      ON CONFLICT (platform, external_id) ${conflict}`,
     values,
   )
+}
+
+export interface GeocodeAttempt {
+  platform: string
+  externalId: string
+  /** 'geocoded' | 'unresolvable' | 'pending' — see geocodeStatus() in
+   *  geocode.ts. 'pending' means this run only got partway through the
+   *  address's query variants (e.g. the failure cooldown was active). */
+  result: GeocodeStatus
+  provider: 'nominatim' | 'locationiq'
+}
+
+/**
+ * Records that a backfill run considered an auction's address, independent of
+ * whether it resolved to coordinates — the only way to tell "never attempted"
+ * apart from "attempted, still unresolved" (see WP-3). Auctions that already
+ * have lat/lng need no attempt and are never passed here.
+ */
+export async function recordGeocodeAttempts(attempts: GeocodeAttempt[], attemptedAt: string): Promise<void> {
+  const db = getPool()
+  if (!db || attempts.length === 0) return
+  for (let i = 0; i < attempts.length; i += CHUNK_SIZE) {
+    const chunk = attempts.slice(i, i + CHUNK_SIZE)
+    const values: unknown[] = []
+    const tuples = chunk.map((a) => {
+      values.push(a.platform, a.externalId, attemptedAt, a.result, a.provider)
+      const o = values.length
+      return `($${o - 4}, $${o - 3}, $${o - 2}::timestamptz, $${o - 1}, $${o})`
+    })
+    await db.query(
+      `UPDATE auctions SET
+         geocode_attempted_at = v.attempted_at,
+         geocode_result = v.result,
+         geocode_provider = v.provider
+       FROM (VALUES ${tuples.join(', ')}) AS v(platform, external_id, attempted_at, result, provider)
+       WHERE auctions.platform = v.platform AND auctions.external_id = v.external_id`,
+      values,
+    )
+  }
 }

@@ -305,6 +305,10 @@ async function buildReprocessInput(
     /** Manifest whose exact item bytes were used to build the LLM input. */
     artifactVersionId: number | null
     photoSourceIndices: number[] | undefined
+    /** The archived crawl snapshot itself — the only place persistEntry can
+     *  recover crawl-owned facts (address, price, photos, ...) from when
+     *  there is no auction_details row yet to carry them forward from. */
+    auction: Auction
   } | null
 > {
   const auctionCapture = await findLatestCapture('auction', platform, externalId)
@@ -349,7 +353,7 @@ async function buildReprocessInput(
     }
   }
 
-  return { fields, input, documentSetChanged, documentSetComplete, artifactVersionId, photoSourceIndices }
+  return { fields, input, documentSetChanged, documentSetComplete, artifactVersionId, photoSourceIndices, auction }
 }
 
 /** Rules-only entry for a candidate no LLM attempt was made for (LLM
@@ -431,6 +435,7 @@ export async function reprocessAuction(
   llmCalled: boolean
   llmFailures: number
   artifactVersionId: number | null
+  auction: Auction
 } | null> {
   const artifactState = opts.artifactState ?? await readArtifactProcessingState(platform, externalId)
   let base = await buildReprocessInput(platform, externalId, priorEntry, llmConfig, { artifactState })
@@ -442,6 +447,7 @@ export async function reprocessAuction(
       llmCalled: false,
       llmFailures: opts.priorLlmFailures ?? 0,
       artifactVersionId: artifactState.parsedArtifactVersionId,
+      auction: base.auction,
     }
   }
 
@@ -496,6 +502,7 @@ export async function reprocessAuction(
     artifactVersionId: parsedCurrentSet
       ? base.artifactVersionId
       : artifactState.parsedArtifactVersionId,
+    auction: base.auction,
   }
 }
 
@@ -611,8 +618,23 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
     entry: AuctionExtraction,
     artifactVersionId: number | null,
     llmFailures: number,
+    archivedAuction: Auction,
   ): Promise<void> {
-    const updated: Auction = { ...record.auction, extraction: entry }
+    // record.auction is reconstructed from auctions LEFT JOIN LATERAL
+    // auction_details (see auction-record.ts) — when no auction_details row
+    // exists yet (a brand-new identity, or one whose details were wiped, e.g.
+    // by rebuildCountry), every crawl-owned field on it is null/0. This task
+    // never crawls live, so without this fallback that blank snapshot would
+    // become the permanent first version — address stays empty forever and
+    // geocoding never gets a query to run (see WP-3 SE root cause). The
+    // archived 'auction' capture this run already read is the actual crawl
+    // output and the correct source for that first write; lat/lng stay from
+    // record.auction since geocoding writes there independently and may be
+    // newer than the archive.
+    const base = record.detailsId == null
+      ? { ...archivedAuction, lat: record.auction.lat, lng: record.auction.lng }
+      : record.auction
+    const updated: Auction = { ...base, extraction: entry }
     applyAuctionExtraction(updated, entry)
     await writeAuctionDetails(updated, entry, { artifactVersionId })
     await upsertCurrentAuctions([updated], at)
@@ -697,7 +719,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
           ? priorEntry
           : buildRulesOnlyEntry(base.fields, priorEntry, at)
         processed++
-        await persistEntry(record, entry, artifactState.parsedArtifactVersionId, priorLlmFailures)
+        await persistEntry(record, entry, artifactState.parsedArtifactVersionId, priorLlmFailures, base.auction)
         continue
       }
 
@@ -757,7 +779,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       processed++
 
       // Persist each result immediately so a long run survives a deployment.
-      await persistEntry(record, result.entry, result.artifactVersionId, result.llmFailures)
+      await persistEntry(record, result.entry, result.artifactVersionId, result.llmFailures, result.auction)
     } catch (err) {
       // Also where a rate limit/quota error (see llm.ts's isRateLimitError())
       // lands: reprocessAuction/extractByLlm deliberately let it propagate

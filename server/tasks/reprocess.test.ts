@@ -275,3 +275,77 @@ describe('runReprocess structured persistence', () => {
     })
   })
 })
+
+// WP-3 SE root cause: record.auction is reconstructed from a LEFT JOIN
+// LATERAL onto auction_details (auction-record.ts) — for an identity with no
+// auction_details row yet (detailsId null; e.g. a fresh identity, or one
+// whose details were wiped by rebuildCountry), every crawl-owned field on it
+// is null/0 even though the crawler found real data, because this task never
+// crawls live. Confirmed on prod: 96/96 se-kronofogden auctions got a v1
+// auction_details row with address/description/market_value/photo_count all
+// empty, while the artifact_captures snapshot archived minutes earlier for
+// the same identities had the full crawled address, price and photos.
+describe('runReprocess crawl-owned field recovery (WP-3 SE root cause)', () => {
+  it('seeds address/description/price/photos from the archived capture on the very first auction_details row', async () => {
+    vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map([['zvg-portal:7265', {
+      auction: {
+        ...auction(),
+        address: null,
+        description: null,
+        marketValue: null,
+        marketValueText: null,
+        photoCount: 0,
+        thumbnailUrl: null,
+      },
+      detailsId: null,
+      detailsVersion: null,
+      artifactVersionId: null,
+    }]]))
+    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify({
+      ...auction(),
+      address: 'Ringvägen 65, 932 61 Lövånger',
+      description: 'Fastighet bebyggd med ett bostadshus.',
+      marketValue: 400000,
+      marketValueText: '400000:- SEK',
+      photoCount: 5,
+      thumbnailUrl: 'https://auktionstorget.kronofogden.se/images/1.jpg',
+    })))
+
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 1 })
+
+    expect(writeAuctionDetails).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address: 'Ringvägen 65, 932 61 Lövånger',
+        description: 'Fastighet bebyggd med ett bostadshus.',
+        marketValue: 400000,
+        marketValueText: '400000:- SEK',
+        photoCount: 5,
+        thumbnailUrl: 'https://auktionstorget.kronofogden.se/images/1.jpg',
+      }),
+      expect.anything(),
+      { artifactVersionId: null },
+    )
+  })
+
+  it('does not let a stale archived capture overwrite an auction_details row that already exists', async () => {
+    vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map([['zvg-portal:7265', {
+      auction: { ...auction(), address: 'Real DB address 1', photoCount: 3 },
+      detailsId: 7,
+      detailsVersion: 2,
+      artifactVersionId: null,
+    }]]))
+    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify({
+      ...auction(),
+      address: 'Outdated archived address',
+      photoCount: 0,
+    })))
+
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 1 })
+
+    expect(writeAuctionDetails).toHaveBeenCalledWith(
+      expect.objectContaining({ address: 'Real DB address 1', photoCount: 3 }),
+      expect.anything(),
+      expect.anything(),
+    )
+  })
+})
