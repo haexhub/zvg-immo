@@ -49,7 +49,17 @@ export const osmLocalElements = pgTable('osm_local_elements', {
   country: text('country').notNull(),
   importedAt: timestamp('imported_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
-  primaryKey({ columns: [table.osmType, table.osmId] }),
+  // country is part of the identity, not just an attribute: Geofabrik's
+  // per-country extracts overlap at borders/coastlines, so the same
+  // real-world element (a cross-border ferry terminal, a hiking/canoe
+  // route relation with members in two countries) can legitimately appear
+  // in more than one country's import with the same osm_type/osm_id. A PK
+  // without country meant the second country's swap collided on that one
+  // row and rolled back its entire import (observed live during the
+  // 2026-08-05 WP-6 reimport: one shared ferry terminal node zeroed out
+  // Sweden's whole load). Each country now keeps its own row for a shared
+  // element instead of the two competing to "own" it.
+  primaryKey({ columns: [table.osmType, table.osmId, table.country] }),
   index('idx_osm_local_elements_geom').using('gist', table.geom),
   index('idx_osm_local_elements_country').on(table.country),
   // Landing-page geo rails (server/api/landing/rails.get.ts) and the search

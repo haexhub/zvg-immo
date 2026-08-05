@@ -325,8 +325,13 @@ async function buildKindPerRow(
   signal: AbortSignal,
   bulkError: unknown,
 ): Promise<{ inserted: number; skipped: number }> {
-  const { rows: candidates } = await client.query<{ osm_type: string; osm_id: number }>(
-    `SELECT o.osm_type, o.osm_id FROM osm_local_elements o WHERE ${mapping.where}`,
+  // country is part of osm_local_elements' identity (see schema/geo.ts): a
+  // border feature can have one row per country, so a candidate must carry
+  // its own country through to rowSql — filtering by osm_type/osm_id alone
+  // would match every country's row for a shared element and insert it once
+  // per candidate per matching row instead of once per row.
+  const { rows: candidates } = await client.query<{ osm_type: string; osm_id: number; country: string }>(
+    `SELECT o.osm_type, o.osm_id, o.country FROM osm_local_elements o WHERE ${mapping.where}`,
   )
 
   const rowSql = `
@@ -334,20 +339,20 @@ async function buildKindPerRow(
     SELECT $1, o.tags ->> 'name', o.country, o.osm_type, o.osm_id, geom_3035, $2
     FROM osm_local_elements o
     ${GEOMETRY_PIECE_JOIN}
-    WHERE o.osm_type = $3 AND o.osm_id = $4
+    WHERE o.osm_type = $3 AND o.osm_id = $4 AND o.country = $5
   `
 
   let inserted = 0
   let skipped = 0
-  for (const { osm_type, osm_id } of candidates) {
+  for (const { osm_type, osm_id, country } of candidates) {
     throwIfTaskAborted(signal)
     try {
-      const res = await client.query(rowSql, [mapping.kind, epoch, osm_type, osm_id])
+      const res = await client.query(rowSql, [mapping.kind, epoch, osm_type, osm_id, country])
       inserted += res.rowCount ?? 0
     } catch (err) {
       if (isSystemicDatabaseError(err)) throw err
       skipped++
-      console.warn(`[build-geo-features] kind=${mapping.kind} skipped ${osm_type}/${osm_id}: ${(err as Error).message}`)
+      console.warn(`[build-geo-features] kind=${mapping.kind} skipped ${osm_type}/${osm_id}/${country}: ${(err as Error).message}`)
     }
   }
   // Every single candidate failing is not "a handful of broken geometries" —

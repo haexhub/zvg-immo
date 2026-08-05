@@ -32,6 +32,12 @@ const describeDb = TEST_DB ? describe : describe.skip
 // beforeAll below refuses to run against one that holds foreign rows.
 const TEST_COUNTRY = 'zz-geo-features-test'
 
+// A second country, used only by the border-feature test below: Geofabrik's
+// per-country extracts overlap at borders/coastlines, so the same real-world
+// element can land in two countries' osm_local_elements with the same
+// osm_type/osm_id (see schema/geo.ts's PK comment) — this stands in for that.
+const BORDER_COUNTRY = 'zz-geo-features-test-2'
+
 // osm_type/osm_id pairs used by the fixture below.
 const IDS = {
   sea: { osm_type: 'way', osm_id: 900_001 },
@@ -42,6 +48,7 @@ const IDS = {
   airport: { osm_type: 'way', osm_id: 900_006 },
   invalidLake: { osm_type: 'way', osm_id: 900_007 }, // hole-outside-shell: ST_Transform throws on it
   building: { osm_type: 'way', osm_id: 900_008 }, // must never appear in geo_features
+  borderLake: { osm_type: 'way', osm_id: 900_009 }, // same osm_id, once per country — see BORDER_COUNTRY above
 } as const
 
 async function seedFixture(client: PoolClient): Promise<void> {
@@ -120,6 +127,19 @@ async function seedFixture(client: PoolClient): Promise<void> {
        '{"building": "yes"}'::jsonb, $3)`,
     [IDS.building.osm_type, IDS.building.osm_id, TEST_COUNTRY],
   )
+
+  // Same osm_type/osm_id, once per country — the PK is (osm_type, osm_id,
+  // country), so both rows coexist. Tagged natural=water so it shares the
+  // 'lake' kind with invalidLake above, which forces buildKindPerRow's
+  // fallback path for every 'lake' candidate, including this one.
+  for (const country of [TEST_COUNTRY, BORDER_COUNTRY]) {
+    await client.query(
+      `INSERT INTO osm_local_elements (osm_type, osm_id, geom, tags, country)
+       VALUES ($1, $2, ST_GeomFromText('POLYGON((18 52,18.01 52,18.01 52.01,18 52.01,18 52))', 4326),
+         '{"natural": "water", "name": "Grenzsee"}'::jsonb, $3)`,
+      [IDS.borderLake.osm_type, IDS.borderLake.osm_id, country],
+    )
+  }
 }
 
 interface FeatureRow {
@@ -148,25 +168,25 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
     const { Pool } = await import('pg')
     pool = new Pool({ connectionString: TEST_DB })
     for (const table of ['geo_features', 'osm_local_elements']) {
-      const { rows } = await pool.query(`SELECT 1 FROM ${table} WHERE country <> $1 LIMIT 1`, [TEST_COUNTRY])
+      const { rows } = await pool.query(`SELECT 1 FROM ${table} WHERE country NOT IN ($1, $2) LIMIT 1`, [TEST_COUNTRY, BORDER_COUNTRY])
       if (rows.length > 0) {
         throw new Error(
-          `${table} holds rows outside ${TEST_COUNTRY}. This suite rebuilds geo_features table-wide and would `
-          + 'destroy them — point TEST_DATABASE_URL at a disposable database.',
+          `${table} holds rows outside ${TEST_COUNTRY}/${BORDER_COUNTRY}. This suite rebuilds geo_features `
+          + 'table-wide and would destroy them — point TEST_DATABASE_URL at a disposable database.',
         )
       }
     }
   })
 
   afterAll(async () => {
-    await pool.query('DELETE FROM geo_features WHERE country = $1', [TEST_COUNTRY])
-    await pool.query('DELETE FROM osm_local_elements WHERE country = $1', [TEST_COUNTRY])
+    await pool.query('DELETE FROM geo_features WHERE country IN ($1, $2)', [TEST_COUNTRY, BORDER_COUNTRY])
+    await pool.query('DELETE FROM osm_local_elements WHERE country IN ($1, $2)', [TEST_COUNTRY, BORDER_COUNTRY])
     await pool.end()
   })
 
   beforeEach(async () => {
-    await pool.query('DELETE FROM geo_features WHERE country = $1', [TEST_COUNTRY])
-    await pool.query('DELETE FROM osm_local_elements WHERE country = $1', [TEST_COUNTRY])
+    await pool.query('DELETE FROM geo_features WHERE country IN ($1, $2)', [TEST_COUNTRY, BORDER_COUNTRY])
+    await pool.query('DELETE FROM osm_local_elements WHERE country IN ($1, $2)', [TEST_COUNTRY, BORDER_COUNTRY])
     const client = await pool.connect()
     try {
       await seedFixture(client)
@@ -280,6 +300,33 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
       const survivors = await readFeatures(pool)
       expect(survivors.length).toBeGreaterThan(0)
       expect(survivors.every((r) => r.features_epoch === first.epoch)).toBe(true)
+    } finally {
+      client.release()
+    }
+  })
+
+  it('inserts a border feature once per country via the per-row fallback, not once per candidate', async () => {
+    const client = await pool.connect()
+    try {
+      // invalidLake forces buildKindPerRow for the whole 'lake' kind, which
+      // includes borderLake — present under both TEST_COUNTRY and
+      // BORDER_COUNTRY with the same osm_type/osm_id. Before country joined
+      // the PK, the fallback's candidate SELECT and rowSql both ignored
+      // country: two candidates (one per country) each matched both rows,
+      // inserting the border feature 4 times instead of 2.
+      await buildGeoFeatures(client, new AbortController().signal)
+
+      const { rows } = await client.query<{ country: string; n: string }>(
+        `SELECT country, count(*) AS n FROM geo_features
+         WHERE kind = 'lake' AND osm_type = $1 AND osm_id = $2
+         GROUP BY country ORDER BY country`,
+        [IDS.borderLake.osm_type, IDS.borderLake.osm_id],
+      )
+
+      expect(rows).toEqual([
+        { country: TEST_COUNTRY, n: '1' },
+        { country: BORDER_COUNTRY, n: '1' },
+      ])
     } finally {
       client.release()
     }
