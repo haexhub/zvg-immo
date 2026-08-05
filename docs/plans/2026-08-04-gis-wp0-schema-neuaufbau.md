@@ -4,6 +4,14 @@ Datum: 2026-08-04
 Teil von [GIS-Architektur](2026-08-04-gis-scaling-architecture.md). Abhängig von: nichts. **Ersetzt den Baseline-Ansatz in WP-2 und verkleinert WP-1.**
 Aufwand: 2–3 Tage. Repo: `zvg-immo`.
 
+> **Status: ✅ ERLEDIGT — PR #313 (`gis-wp0-schema-neuaufbau`, gemergt als `a39fb52`), Prod-Reset durchgeführt.** `pg_dump` vorab erstellt und in einem Docker-Postgres verifiziert wiederherstellbar. RLS nachträglich verifiziert: 0 Anwendungstabellen ohne RLS. `pnpm db:generate` auf dem unveränderten Schema erzeugt keine weitere Migration.
+>
+> **Zwei Lücken, die die Verifikation dieses WP nicht abgedeckt hat und die als eigene Hotfixes nachgezogen wurden** — beide nur durch echtes Postgres-Testen gefunden, nicht durch Mocks:
+> - **PR #314:** Vier Stellen im Code lasen Koordinaten noch über den alten `auction_details`-Alias (`d.lat`/`d.lng`) statt `a.lat`/`a.lng` — Schritt 6 dieses WP sagt "ein Crawl-Lauf schreibt erfolgreich", prüft aber nicht, ob **jeder Leser** der neuen Spaltenlage folgt. 500er auf `/api/auctions-geo` und geofilterten Suchen.
+> - **PR #315:** `auction-details.ts` versuchte weiterhin, `lat`/`lng` in `auction_details` zu INSERTen — die Spalte existiert dort seit diesem WP nicht mehr, jeder Insert scheiterte, die Tabelle blieb bei 0 Zeilen. Zusätzlich fehlte das Schreiben von `lat`/`lng` nach `auctions` in `current-auctions.ts` komplett, und `auction_details.is_latest` (der partielle Unique-Index aus Schritt 3) wurde beim Schreiben einer neuen Version nie demotet. **Lektion für den nächsten Schema-Umbau dieser Art: "ein Crawl-Lauf schreibt erfolgreich" (Verifikationspunkt 6) muss die tatsächliche Ziel-Tabelle nach dem Lauf prüfen (`SELECT count(*)`), nicht nur den Exit-Code des Laufs — ein Insert kann fehlschlagen, ohne dass der aufrufende Task-Code das je bemerkt.**
+>
+> **Zusätzlicher, unabhängiger Nebeneffekt des Hard-Resets (kein Bug in diesem WP, aber eine Lücke in Schritt 6/Verifikation):** `app_settings` wurde beim `DROP SCHEMA` mitgeleert. Der Default `hide_rules_only_auctions = true` blendete danach jede Auktion ohne LLM-Analyse aus der Suche aus — bei 0 LLM-analysierten Auktionen direkt nach dem Reset praktisch alle. Für den nächsten Reset dieser Art: Liste der `app_settings`-Keys mit Nicht-Default-Werten vorher sichern und danach explizit re-applizieren.
+
 ## Entscheidung
 
 Das **Anwendungsschema** wird verworfen und aus Drizzle neu aufgebaut. Der Nutzer hat das ausdrücklich freigegeben mit der Begründung, dass die Daten wiederbeschaffbar sind.

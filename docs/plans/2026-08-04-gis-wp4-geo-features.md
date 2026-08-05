@@ -4,6 +4,12 @@ Datum: 2026-08-04
 Teil von [GIS-Architektur](2026-08-04-gis-scaling-architecture.md). Abhängig von: [WP-0](2026-08-04-gis-wp0-schema-neuaufbau.md) (Drizzle-Schema für die Migration).
 Aufwand: 2–3 Tage. Repo: `zvg-immo`.
 
+> **Status 2026-08-05: WP-0 ist erledigt (PR #313), dieses WP ist bereit zu starten.** Der `geometry(Geometry, srid)`-`customType` aus dem WP-2-Verweis unten existiert bereits — WP-2 ist obsolet, der `customType` lebt jetzt in [server/db/schema/geo.ts](server/db/schema/geo.ts). **`geo_features` und `auction_geo_metrics` sind als leere Skeleton-Tabellen bereits angelegt** (Migration aus WP-0) — dieses WP befüllt sie über den Aufbau-Job, legt sie nicht neu an. Die tatsächlichen Spalten weichen leicht vom Sketch unten ab:
+> - `geo_features`: `id, kind, name, country, osm_type, osm_id, geom_3035, features_epoch, created_at` — **kein** `source_ref`/`attrs`; Rückverfolgung läuft über `osm_type`+`osm_id` (zwei Spalten statt einer zusammengesetzten), `country` ist bereits eine eigene Spalte (nicht in `attrs`), `features_epoch` ist bereits modelliert (Default `1`) statt erst hier zu entstehen.
+> - `auction_geo_metrics`: PK ist `(platform, external_id)`, FK auf `auctions`; `dist_sea_m/dist_lake_m/dist_river_m/dist_mountain_m/dist_airport_m/dist_ski_m` und `tourism_density_count` sind bereits als Spalten angelegt (weitere WP-6-Kategorien sind additive Migrationen später), plus `climate_cell_id` (FK auf `climate_cells`), `point_hash`, `features_epoch`, `computed_at`.
+>
+> Indizes existieren ebenfalls bereits: `idx_geo_features_geom_3035` (GIST), `idx_geo_features_kind`, `idx_geo_features_kind_country`. Der Aufbau-Job unten kann direkt gegen dieses Schema schreiben — Schritt "Datenmodell anlegen" entfällt, es bleibt der Aufbau-Job (Normalisierung aus `osm_local_elements`) als eigentlicher Inhalt dieses WP.
+
 ## Warum
 
 `osm_local_elements` ist ein Rohdatendump: 44,5 Mio. Zeilen / 20 GB, davon **90 % `building`**, Geometrien in EPSG:4326, Kategorien nur als `jsonb`-Tags. Jede Suche muss daraus zur Laufzeit erst die Semantik ableiten („Meer ist coastline *oder* beach *oder* bay …") — und genau diese OR-Ketten sind die Ursache des Serverausfalls, weil sie an einem einzigen fehlenden Index zerbrechen ([WP-1](2026-08-04-gis-wp1-index-notfall.md)).
