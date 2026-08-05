@@ -4,6 +4,10 @@ Datum: 2026-08-04
 Teil von [GIS-Architektur](2026-08-04-gis-scaling-architecture.md). Abhängig von: [WP-4](2026-08-04-gis-wp4-geo-features.md).
 Aufwand: 3–4 Tage. Repo: `zvg-immo`. **Das ist der eigentliche Fix.**
 
+> **Status 2026-08-05: WP-4 (PR #318) ist erledigt, dieses WP ist bereit, sobald der OSM-Reimport gelaufen ist (siehe [WP-6](2026-08-04-gis-wp6-osm-datenausbau.md), aktueller Blocker).** Ein offener Punkt aus dem WP-4-Review, den dieses WP explizit klären muss: `geo_features` hat keinen Vollständigkeits-Marker. Ein abgebrochener Aufbau-Lauf hinterlässt eine partielle Epoch mit dem *höchsten* `features_epoch` — ein Leser, der naiv `MAX(features_epoch)` nimmt, liest die unvollständige Version statt der letzten vollständigen. Der Lesevertrag (z. B. ein `completed_at`-Zeitstempel auf Epoch-Ebene, oder eine separate „aktuelle Epoch"-Markierung, die der Aufbau-Job erst nach dem finalen `DELETE` alter Epochen setzt) muss hier definiert werden, nicht erst beim ersten falschen Suchergebnis auffallen.
+>
+> Zwei weitere WP-4-Randbedingungen, die dieser Job wiederverwenden sollte statt neu zu erfinden: ein eigener Postgres-Pool mit hartem Connection-Limit für Off-Peak-Batch-Läufe (Lektion aus dem Prod-Totalausfall vom 2026-08-03), und ein Session-Advisory-Lock über den gesamten Lauf — `runExclusiveTask` serialisiert nur innerhalb eines Node-Prozesses, zwei Container liefen sonst gegeneinander.
+
 ## Warum
 
 Heute liegt Geometrie im Anfragepfad. Der `EXPLAIN` der `nearSea`-Suche über alle Länder:

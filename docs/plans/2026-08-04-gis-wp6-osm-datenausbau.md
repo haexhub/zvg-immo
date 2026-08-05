@@ -12,6 +12,8 @@ Beide Dateien sind syntaktisch geprüft (`luac -p` bzw. Jinja2-Rendering + `sh -
 
 **Reihenfolge gegenüber [WP-0](2026-08-04-gis-wp0-schema-neuaufbau.md):** Ein OSM-Reimport fällt in beiden WPs an — in WP-0 wegen des Schema-Neuaufbaus, hier wegen der neuen Tags. Er darf **nur einmal** laufen (DE mehrere Stunden). Also: dieses WP zuerst deployen, dann den Reimport auslösen, dann ist er für beide Zwecke erledigt. Läuft WP-0 zuerst mit einem Reimport, muss er nach dem Deploy dieses WPs wiederholt werden.
 
+> **Status 2026-08-05: dieser Fall ist eingetreten — der Reimport steht noch komplett aus.** WP-0 (PR #313, gemergt 2026-08-04) hat `osm_local_elements` per Hard-Reset geleert und den Reimport nicht selbst nachgeholt (verifiziert: 0 Zeilen, 96 kB auf Prod). WP-4 (PR #318, Aufbau-Job für `geo_features`) ist fertig und lokal verifiziert, läuft auf Prod aber gegen diese leere Quelle. Damit ist dieses WP der **aktuelle kritische Pfad**: `ansible#87` gegen einen kleinen Extrakt testen (Bulgarien empfohlen, nicht DE — schneller Turnaround), reviewen, mergen, deployen, dann den DE/SE/BG-Reimport auslösen. Erst danach liefern WP-4 und WP-5 reale Ergebnisse.
+
 ## Drei Befunde, die das WP begründen
 
 ### 1. Schweden ist nie importiert worden
