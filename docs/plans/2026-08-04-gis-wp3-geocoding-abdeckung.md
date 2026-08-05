@@ -8,7 +8,7 @@ Aufwand: 2–3 Tage. Repo: `zvg-immo` (+ evtl. `ansible`).
 
 ## Warum
 
-Auf Prod gemessen (2026-08-04):
+**Baseline vor dem Hard-Reset** (auf Prod gemessen, 2026-08-04 — überholt durch [WP-0](2026-08-04-gis-wp0-schema-neuaufbau.md)/PR #313, siehe aktuelle Zahlen im Status oben):
 
 | | Auktionen | mit Adresse | mit Koordinaten |
 |---|---|---|---|

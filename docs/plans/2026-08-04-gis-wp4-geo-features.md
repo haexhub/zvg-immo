@@ -22,6 +22,8 @@ Eine Tabelle, gegen die eine Nächster-Nachbar-Abfrage pro Kategorie in Millisek
 
 ## Datenmodell
 
+**Historischer Sketch, durch WP-0 überholt — die Tabelle existiert bereits mit abweichenden Spalten.** Siehe Status oben und [server/db/schema/geo.ts](../../server/db/schema/geo.ts) für die tatsächlichen Spalten (`country`, `osm_type`, `osm_id` statt `source_ref`/`attrs`). Ursprünglicher Entwurf, nur noch als Beleg für die Entscheidungen (EPSG:3035, Zerlegung, `kind`) unten:
+
 ```sql
 CREATE TABLE geo_features (
   id         bigserial PRIMARY KEY,
@@ -76,16 +78,18 @@ Aus `osm_local_elements` per SQL. Die Zuordnung ist der inhaltliche Kern dieses 
 
 ## Aufbau-Job
 
-Idempotent und wiederholbar — er muss nach jedem OSM-Reimport erneut laufen. Ablauf pro `kind`:
+Wiederholbar nach jedem OSM-Reimport — aber nicht durch reines Anhängen, sonst verdoppelt ein zweiter Lauf jeden `kind`, weil `ST_Subdivide` denselben Way wieder in mehrere Zeilen zerlegt und `(osm_type, osm_id)` dadurch **nicht** eindeutig ist (keine Unique-Constraint in `geo_features`, mehrere Segmente teilen sich die Quelle). Idempotenzstrategie: jeder vollständige Aufbau schreibt unter einer **neuen** `features_epoch` (`SELECT max(features_epoch) + 1 FROM geo_features`), und erst nach erfolgreichem Durchlauf aller `kind`s werden Zeilen mit altem Epoch gelöscht (`DELETE FROM geo_features WHERE features_epoch < $neuer_epoch`) — das hält den alten Stand für laufende Suchanfragen erreichbar, bis der neue vollständig steht, und macht einen erneuten Lauf sicher wiederholbar. Ablauf pro `kind`:
 
 ```sql
-INSERT INTO geo_features (kind, name, geom_3035, source_ref, attrs)
+INSERT INTO geo_features (kind, name, country, osm_type, osm_id, geom_3035, features_epoch)
 SELECT
   'sea',
   o.tags ->> 'name',
+  o.country,
+  o.osm_type,
+  o.osm_id,
   ST_Subdivide(ST_Transform(o.geom, 3035), 128),
-  o.osm_type || '/' || o.osm_id,
-  jsonb_build_object('tags', o.tags)
+  $neuer_epoch
 FROM osm_local_elements o
 WHERE o.tags ->> 'natural' IN ('coastline','beach','bay','strait')
    OR o.tags ->> 'water' IN ('sea','lagoon')

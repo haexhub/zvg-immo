@@ -75,11 +75,12 @@ Ohne bewusste Wahl passiert (a) stillschweigend. Die Entscheidung gehört ins WP
 1. Der `pg_dump` ist vorhanden, lesbar und wiederherstellbar — testweise in eine leere Datenbank laden. Ein ungeprüfter Dump ist kein Backup.
 2. Frische lokale DB + Initial-Migration → Anwendung startet, `pnpm test` läuft (`nuxt prepare` vorher).
 3. `pnpm db:generate` auf dem unveränderten Schema erzeugt **keine** weitere Migration.
-4. **RLS ist auf allen Tabellen aktiv** — gegen die Liste aus `schema.sql` abgleichen, nicht stichprobenartig. Der Join muss über das Schema qualifiziert sein, sonst matcht `relname` gleichnamige Tabellen in `auth`/`storage` und das Ergebnis ist falsch negativ:
+4. **RLS ist auf allen Tabellen aktiv** — gegen die Liste aus `schema.sql` abgleichen, nicht stichprobenartig. Der Join muss über das Schema qualifiziert sein, sonst matcht `relname` gleichnamige Tabellen in `auth`/`storage` und das Ergebnis ist falsch negativ. `spatial_ref_sys` (PostGIS-Systemtabelle, kein Anwendungsschema) ist von der Prüfung ausgeschlossen — sie erwartungsgemäß ohne RLS zu sehen ist kein Fund:
 ```sql
 SELECT c.relname FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE n.nspname = 'public' AND c.relkind = 'r' AND NOT c.relrowsecurity;
+WHERE n.nspname = 'public' AND c.relkind = 'r' AND NOT c.relrowsecurity
+  AND c.relname NOT IN ('spatial_ref_sys');
 ```
 Zusätzlich prüfen, dass Policies existieren und greifen: RLS ohne Policy sperrt für Nicht-Superuser alles, was als „funktioniert" durchgehen kann, solange nur mit der `postgres`-Rolle getestet wird. Einmal unter der Rolle testen, die die Anwendung tatsächlich verwendet.
 5. Keine invaliden Indizes: `SELECT … FROM pg_index WHERE NOT indisvalid` = 0 Zeilen.
