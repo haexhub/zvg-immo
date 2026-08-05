@@ -237,6 +237,45 @@ describeDb('buildAuctionGeoMetrics (real Postgres)', () => {
     }
   })
 
+  it('stops instead of persisting NULLs when a rebuild supersedes the epoch mid-run', async () => {
+    const client = await pool.connect()
+    try {
+      // A second candidate, so the run still has work left after the first
+      // upsert — that's where the epoch guard has to bite.
+      await pool.query(
+        `INSERT INTO auctions (platform, external_id, country, region, authority, case_number, cancelled, lat, lng)
+         VALUES ($1, 'zz-2', $2, 'Test', 'Testbehörde', '1 K 2/26', false, $3, $4)`,
+        [PLATFORM, TEST_COUNTRY, AUCTION_LAT, AUCTION_LNG],
+      )
+      // Stands in for build-geo-features.ts publishing a newer complete epoch
+      // (and deleting epoch 1's rows with it) between two upserts of the same
+      // run — the window in which every further measurement against epoch 1
+      // would come back NULL.
+      await pool.query(`
+        CREATE FUNCTION zz_supersede_epoch() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          INSERT INTO geo_features_epochs (epoch) VALUES (2) ON CONFLICT (epoch) DO NOTHING;
+          RETURN NEW;
+        END $$;
+        CREATE TRIGGER zz_supersede_epoch BEFORE INSERT ON auction_geo_metrics
+          FOR EACH ROW EXECUTE FUNCTION zz_supersede_epoch();
+      `)
+      try {
+        const result = await buildAuctionGeoMetrics(client, new AbortController().signal)
+        expect(result).toMatchObject({ epoch: 1, candidates: 2, computed: 1, skipped: 0, epochSuperseded: true })
+      } finally {
+        await pool.query('DROP TRIGGER zz_supersede_epoch ON auction_geo_metrics; DROP FUNCTION zz_supersede_epoch();')
+      }
+
+      // The second auction has no row at all rather than a row full of NULL
+      // distances — the next run picks it up again against epoch 2.
+      const { rows } = await pool.query('SELECT external_id FROM auction_geo_metrics WHERE platform = $1', [PLATFORM])
+      expect(rows).toHaveLength(1)
+    } finally {
+      client.release()
+    }
+  })
+
   it('skips the whole run when no geo_features epoch has completed yet', async () => {
     await pool.query('DELETE FROM geo_features_epochs')
     const client = await pool.connect()

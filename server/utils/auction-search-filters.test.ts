@@ -90,6 +90,34 @@ describe('buildAuctionSearchFilter', () => {
     expect(values).toContain(50_000)
   })
 
+  it('accepts a radius exactly at the category cutoff unchanged', async () => {
+    const { GEO_METRIC_CATEGORIES } = await import('./geo-metric-categories')
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+
+    for (const { param, cutoffMeters } of GEO_METRIC_CATEGORIES) {
+      const { values } = await buildAuctionSearchFilter(db, { [param]: String(cutoffMeters / 1000), llmOnly: '0' })
+      expect(values).toContain(cutoffMeters)
+    }
+  })
+
+  it('clamps a radius beyond the cutoff instead of asking for distances the precompute stores as NULL', async () => {
+    const { GEO_METRIC_CATEGORIES } = await import('./geo-metric-categories')
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+
+    for (const { param, column, cutoffMeters } of GEO_METRIC_CATEGORIES) {
+      const overLimitKm = cutoffMeters / 1000 + 100
+      const { predicate, values } = await buildAuctionSearchFilter(db, { [param]: String(overLimitKm), llmOnly: '0' })
+
+      // Still filtered (dropping the filter would return auctions nowhere
+      // near the feature), but never against a radius the metrics table has
+      // no data for — beyond the cutoff every row is NULL, so the wider
+      // request would match strictly fewer rows than the narrower one.
+      expect(predicate).toContain(`m.${column} <=`)
+      expect(values).toContain(cutoffMeters)
+      expect(values).not.toContain(overLimitKm * 1000)
+    }
+  })
+
   it('ignores a zero or unset Umgebung distance', async () => {
     const { buildAuctionSearchFilter } = await import('./auction-search-filters')
     const { predicate } = await buildAuctionSearchFilter(db, { nearSea: '0', llmOnly: '0' })

@@ -14,46 +14,11 @@
 import { Pool, type PoolClient } from 'pg'
 import { readDatabaseUrl } from '../utils/db'
 import { runExclusiveTask, throwIfTaskAborted } from '../utils/exclusive-task'
+import { GEO_METRIC_CATEGORIES, type GeoMetricCategory } from '../utils/geo-metric-categories'
 import { isSystemicDatabaseError } from './build-geo-features'
 
 const BUILD_POOL_MAX_CONNECTIONS = 2
 const BUILD_STATEMENT_TIMEOUT_MS = 60 * 1000
-
-interface DistanceCategory {
-  /** auction_geo_metrics column. */
-  column: string
-  /** geo_features.kind to search. */
-  kind: string
-  /**
-   * Also the search UI's slider maximum for this category (WP-5 doc's
-   * cutoff/NULL-semantics note): NULL means "nothing of this kind within the
-   * cutoff", not "unknown" — a larger requested radius would silently
-   * misread as "nothing nearby" instead of being rejected.
-   */
-  cutoffMeters: number
-}
-
-// Unlike the live osm-proximity.ts queries this replaces, none of these
-// constrain the geo_features row to the auction's own country. That
-// constraint existed there mainly to let a country-prefixed index narrow an
-// otherwise-unbounded live scan (schema/geo.ts's idx_osm_local_elements_
-// country_* comment) — a performance artifact, not a business rule. A lake
-// or peak just across a border is still physically near the auction, and
-// 'sea' was already exempted from it live for the same reason. Distances
-// here are exact measurements against real geometry, so there is no reason
-// to keep an approximation's compromise.
-const DISTANCE_CATEGORIES: DistanceCategory[] = [
-  { column: 'dist_sea_m', kind: 'sea', cutoffMeters: 200_000 },
-  { column: 'dist_lake_m', kind: 'lake', cutoffMeters: 50_000 },
-  { column: 'dist_river_m', kind: 'river', cutoffMeters: 50_000 },
-  { column: 'dist_mountain_m', kind: 'peak', cutoffMeters: 50_000 },
-  // Not one of the WP-5 doc's proposed tiers (Meer/Ski 200km, See/Fluss/Berg
-  // 50km) — airports don't fit either group's reasoning. 100km stands in for
-  // "within a regional airport's usual catchment", documented rather than
-  // guessed silently.
-  { column: 'dist_airport_m', kind: 'airport', cutoffMeters: 100_000 },
-  { column: 'dist_ski_m', kind: 'ski_area', cutoffMeters: 200_000 },
-]
 
 // Density, not distance — measures whether an area has tourist
 // infrastructure at all (schema/geo.ts's tourismDensityCount comment).
@@ -62,13 +27,23 @@ const DISTANCE_CATEGORIES: DistanceCategory[] = [
 const TOURISM_DENSITY_KIND = 'tourism_supply'
 const TOURISM_DENSITY_RADIUS_METERS = 10_000
 
+// Unlike the live osm-proximity.ts queries this replaces, this does not
+// constrain the geo_features row to the auction's own country. That
+// constraint existed there mainly to let a country-prefixed index narrow an
+// otherwise-unbounded live scan (schema/geo.ts's idx_osm_local_elements_
+// country_* comment) — a performance artifact, not a business rule. A lake
+// or peak just across a border is still physically near the auction, and
+// 'sea' was already exempted from it live for the same reason. Distances
+// here are exact measurements against real geometry, so there is no reason
+// to keep an approximation's compromise.
+//
 // features_epoch is pinned to the snapshot resolved at the start of this run
 // (not just "whatever the epoch number is called"): build-geo-features.ts
 // commits a rebuild per-kind and only deletes the previous epoch's rows at
 // the very end, so geo_features can transiently hold both epochs' rows
 // mid-rebuild. Without this filter, a KNN match here could silently pick up
 // a same-kind row from the *other* epoch if it happened to be nearer.
-function categorySelectSql(category: DistanceCategory, epoch: number): string {
+function categorySelectSql(category: GeoMetricCategory, epoch: number): string {
   return `(SELECT ST_Distance(f.geom_3035, point.geom)::int
     FROM geo_features f
     WHERE f.kind = '${category.kind}' AND f.features_epoch = ${epoch}
@@ -116,6 +91,8 @@ export interface BuildAuctionGeoMetricsResult {
   candidates: number
   computed: number
   skipped: number
+  /** A newer complete epoch landed mid-run; the rest was left for next time. */
+  epochSuperseded: boolean
   durationMs: number
 }
 
@@ -153,10 +130,19 @@ export async function buildAuctionGeoMetrics(
 
     let computed = 0
     let skipped = 0
+    let epochSuperseded = false
     for (const candidate of candidates) {
       throwIfTaskAborted(signal)
       try {
-        await upsertMetrics(client, candidate, epoch)
+        if (!await upsertMetrics(client, candidate, epoch)) {
+          // A rebuild completed while this run was working: geo_features no
+          // longer holds `epoch`'s rows, so every further measurement against
+          // it would come back NULL. Stop instead of persisting those — the
+          // rows already written stay correct, and the next run picks up
+          // everything still tagged with the old epoch as a candidate again.
+          epochSuperseded = true
+          break
+        }
         computed++
       } catch (err) {
         if (isSystemicDatabaseError(err)) throw err
@@ -168,8 +154,14 @@ export async function buildAuctionGeoMetrics(
     }
 
     const durationMs = Date.now() - startedAt
+    if (epochSuperseded) {
+      console.warn(
+        `[build-auction-geo-metrics] stopping early: geo_features epoch ${epoch} was superseded mid-run, `
+        + `${candidates.length - computed - skipped} candidates deferred to the next run`,
+      )
+    }
     console.log(`[build-auction-geo-metrics] done in ${(durationMs / 1000).toFixed(1)}s, computed=${computed} skipped=${skipped}`)
-    return { epoch, candidates: candidates.length, computed, skipped, durationMs }
+    return { epoch, candidates: candidates.length, computed, skipped, epochSuperseded, durationMs }
   } finally {
     await releaseLock(client)
   }
@@ -218,8 +210,22 @@ async function findCandidates(client: PoolClient, epoch: number): Promise<Candid
   return rows
 }
 
-async function upsertMetrics(client: PoolClient, candidate: Candidate, epoch: number): Promise<void> {
-  const distanceColumns = DISTANCE_CATEGORIES.map((c) => c.column)
+/**
+ * Writes one auction's metrics, or nothing at all if `epoch` is no longer the
+ * newest complete one. Returns whether the row was written.
+ *
+ * The guard is what keeps a concurrent rebuild from corrupting this run:
+ * build-geo-features.ts swaps epochs by deleting the old rows and inserting
+ * the new epoch's marker in a single transaction, and Postgres evaluates this
+ * whole statement against one snapshot (READ COMMITTED). So either the
+ * snapshot predates the swap — `epoch` is still current and its geo_features
+ * rows are all there — or it postdates it, the guard fails and nothing is
+ * written. There is no in-between where the rows are gone but the epoch still
+ * looks current, which would otherwise persist NULL distances for every
+ * remaining candidate.
+ */
+async function upsertMetrics(client: PoolClient, candidate: Candidate, epoch: number): Promise<boolean> {
+  const distanceColumns = GEO_METRIC_CATEGORIES.map((c) => c.column)
   const sql = `
     WITH point AS (
       SELECT ST_Transform(ST_SetSRID(ST_MakePoint($1, $2), 4326), 3035) AS geom
@@ -228,12 +234,13 @@ async function upsertMetrics(client: PoolClient, candidate: Candidate, epoch: nu
       platform, external_id, ${distanceColumns.join(', ')}, tourism_density_count, point_hash, features_epoch, computed_at
     )
     SELECT $3, $4,
-      ${DISTANCE_CATEGORIES.map((c) => categorySelectSql(c, epoch)).join(',\n      ')},
+      ${GEO_METRIC_CATEGORIES.map((c) => categorySelectSql(c, epoch)).join(',\n      ')},
       (SELECT count(*)::int FROM geo_features f, point
         WHERE f.kind = '${TOURISM_DENSITY_KIND}' AND f.features_epoch = ${epoch}
           AND ST_DWithin(f.geom_3035, point.geom, ${TOURISM_DENSITY_RADIUS_METERS})),
       $5, $6, now()
     FROM point
+    WHERE (SELECT MAX(epoch) FROM geo_features_epochs) = $6
     ON CONFLICT (platform, external_id) DO UPDATE SET
       ${distanceColumns.map((c) => `${c} = EXCLUDED.${c}`).join(',\n      ')},
       tourism_density_count = EXCLUDED.tourism_density_count,
@@ -241,5 +248,6 @@ async function upsertMetrics(client: PoolClient, candidate: Candidate, epoch: nu
       features_epoch = EXCLUDED.features_epoch,
       computed_at = EXCLUDED.computed_at
   `
-  await client.query(sql, [candidate.lng, candidate.lat, candidate.platform, candidate.external_id, candidate.point_hash, epoch])
+  const { rowCount } = await client.query(sql, [candidate.lng, candidate.lat, candidate.platform, candidate.external_id, candidate.point_hash, epoch])
+  return (rowCount ?? 0) > 0
 }

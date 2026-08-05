@@ -8,7 +8,7 @@ import type { Pool, PoolClient } from 'pg'
 // server/tasks/*.test.ts uses.
 vi.stubGlobal('defineTask', (definition: unknown) => definition)
 
-const { buildGeoFeatures } = await import('./build-geo-features')
+const { buildGeoFeatures, nextFeaturesEpoch } = await import('./build-geo-features')
 
 // Real Postgres, not a mock: this job's correctness lives entirely in SQL
 // (ST_MakeValid/ST_Transform/ST_Subdivide, the lake/river tag exclusion, the
@@ -293,6 +293,40 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
     }
   })
 
+  it('keeps handing out fresh epochs after a rebuild that produced no rows at all', async () => {
+    const client = await pool.connect()
+    try {
+      const signal = new AbortController().signal
+      // An empty source table is what the WP-0 reset actually left behind —
+      // the rebuild succeeds and records its marker, but geo_features stays
+      // empty, so a counter derived from geo_features alone would hand out
+      // that same epoch again on the next run.
+      await pool.query('DELETE FROM osm_local_elements WHERE country IN ($1, $2)', [TEST_COUNTRY, BORDER_COUNTRY])
+      const empty = await buildGeoFeatures(client, signal)
+      expect(await readFeatures(pool)).toEqual([])
+
+      const client2 = await pool.connect()
+      try {
+        await seedFixture(client2)
+      } finally {
+        client2.release()
+      }
+      const populated = await buildGeoFeatures(client, signal)
+      expect(populated.epoch).toBeGreaterThan(empty.epoch)
+
+      // The decisive part: what readers resolve as the newest complete epoch
+      // is the one the rows were actually written under. Equal epochs here
+      // would leave every row invisible to the metrics job.
+      const { rows } = await pool.query<{ epoch: number }>('SELECT MAX(epoch) AS epoch FROM geo_features_epochs')
+      expect(rows[0]!.epoch).toBe(populated.epoch)
+      const written = await readFeatures(pool)
+      expect(written.length).toBeGreaterThan(0)
+      expect(written.every((r) => r.features_epoch === populated.epoch)).toBe(true)
+    } finally {
+      client.release()
+    }
+  })
+
   it('propagates a systemic insert failure instead of deleting the previous epoch', async () => {
     const client = await pool.connect()
     try {
@@ -312,13 +346,10 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
       `)
       let failedEpoch: number | undefined
       try {
-        // Same computation buildGeoFeatures itself uses internally
-        // (MAX(features_epoch)+1) — the epoch this next, failing run will
-        // attempt to write under.
-        const { rows } = await pool.query<{ next_epoch: number }>(
-          'SELECT COALESCE(MAX(features_epoch), 0) + 1 AS next_epoch FROM geo_features',
-        )
-        failedEpoch = rows[0]?.next_epoch
+        // The epoch this next, failing run will attempt to write under —
+        // asked of the same function buildGeoFeatures uses, not a copy of its
+        // query, so the two can't drift apart.
+        failedEpoch = await nextFeaturesEpoch(client)
         await expect(buildGeoFeatures(client, signal)).rejects.toThrow(/simulated systemic failure/)
       } finally {
         await client.query('DROP TRIGGER zz_geo_features_boom ON geo_features; DROP FUNCTION zz_geo_features_boom();')

@@ -181,6 +181,33 @@ describe('/api/auctions-geo', () => {
     expect(capturedSql).not.toContain('d.lng')
   })
 
+  it('joins auction_geo_metrics so an active Umgebung filter has its "m" alias', async () => {
+    // GIS WP-5: the shared predicate (auction-search-filters.ts) emits
+    // `m.dist_sea_m <= $n` for a proximity filter. This endpoint builds its
+    // own narrow marker query rather than reusing SUMMARY_FROM_SQL, so
+    // without the join every geofiltered map request fails outright
+    // (missing_from_clause), not just returns wrong markers.
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    vi.stubGlobal('getQuery', () => ({ country: 'de', nearSea: '5', fetch: '0' }))
+    vi.stubGlobal('setResponseHeader', vi.fn())
+    vi.stubGlobal('createError', (input: object) => Object.assign(new Error('api error'), input))
+    let capturedSql = ''
+    const query = vi.fn(async (sql: string) => {
+      capturedSql = sql
+      return { rows: [], rowCount: 0 }
+    })
+    const { getPool } = await import('~/server/utils/db')
+    vi.mocked(getPool).mockReturnValue(mockPool(query) as never)
+    const handler = (await import('./auctions-geo.get')).default as unknown as (
+      event: { node: { req: { on: (name: string, callback: () => void) => void } } }
+    ) => Promise<unknown>
+
+    await handler({ node: { req: { on: vi.fn() } } })
+
+    expect(capturedSql).toContain('m.dist_sea_m <=')
+    expect(capturedSql).toContain('LEFT JOIN auction_geo_metrics m')
+  })
+
   it('translates a statement_timeout cancellation into a 503 instead of a raw 500', async () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     vi.stubGlobal('getQuery', () => ({ country: 'de', fetch: '0' }))

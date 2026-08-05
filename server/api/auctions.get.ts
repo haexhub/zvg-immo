@@ -81,12 +81,18 @@ export const LATEST_DETAILS_JOIN_SQL = `LEFT JOIN LATERAL (
 // compare against this join's columns (m.dist_sea_m <= …) instead of doing a
 // live osm_local_elements lookup — must be a LEFT JOIN, not JOIN: an
 // ungeocoded auction has no metrics row and must still show up whenever no
-// geofilter is active (see auction-search-filters.ts's PROXIMITY_FILTERS
-// comment).
+// geofilter is active (see auction-search-filters.ts's proximity-filter loop).
+//
+// Exported separately from SUMMARY_FROM_SQL because /api/auctions-geo builds
+// its own, much narrower marker query but shares the same predicate — every
+// query that applies buildAuctionSearchFilter must carry this join, or an
+// active geofilter references a missing `m`.
+export const GEO_METRICS_JOIN_SQL = `LEFT JOIN auction_geo_metrics m
+    ON m.platform = a.platform AND m.external_id = a.external_id`
+
 export const SUMMARY_FROM_SQL = `FROM auctions a
   ${LATEST_DETAILS_JOIN_SQL}
-  LEFT JOIN auction_geo_metrics m
-    ON m.platform = a.platform AND m.external_id = a.external_id
+  ${GEO_METRICS_JOIN_SQL}
   LEFT JOIN auction_fetch_state fs
     ON fs.platform = a.platform AND fs.external_id = a.external_id
   LEFT JOIN LATERAL (

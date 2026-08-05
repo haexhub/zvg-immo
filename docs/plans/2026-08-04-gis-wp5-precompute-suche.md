@@ -65,6 +65,8 @@ CREATE TABLE auction_geo_metrics (
 
 Als Drizzle-Schema, Migration via [WP-0](2026-08-04-gis-wp0-schema-neuaufbau.md). RLS wie bei allen Tabellen aktivieren (Drizzle generiert das nicht selbst).
 
+> **Umgesetzt heißt die Spalte anders:** WP-0 hat `dist_mountain_m` (nicht `dist_peak_m`) und `tourism_density_count` (nicht `tourism_supply_count_10km`) angelegt, und nur die sechs Distanzspalten Meer/See/Fluss/Berg/Flughafen/Ski. Der Block oben ist der ursprüngliche Vorschlag; maßgeblich ist [schema/geo.ts](server/db/schema/geo.ts).
+
 **Eine breite Zeile, nicht `(auktion, kind, distanz)`.** Die Suche verknüpft mit AND: `dist_sea_m <= 5000 AND dist_ski_m <= 50000` ist ein Zeilenfilter statt zweier Semi-Joins mit Aggregation. Sortierung („nächste am Meer zuerst") wird trivial, neue Kategorien sind ein additives `ADD COLUMN`.
 
 **Warum das schnell ist, hat nichts mit Indizes zu tun.** ~20 `int`-Spalten sind ~100 Byte pro Auktion — heute 370 KB, bei einer Million Auktionen 100 MB, vollständig im Page-Cache. Ein Seq Scan darüber mit beliebig vielen numerischen Prädikaten kostet Millisekunden. Der Gewinn kommt daher, dass **zur Query-Zeit keine Geometrie mehr angefasst wird.** Zusätzliche B-Tree-Indizes erst anlegen, wenn eine Messung sie fordert — bei mehreren unabhängigen Range-Prädikaten nutzt Postgres ohnehin nur einen.
@@ -86,7 +88,9 @@ LIMIT 1;
 
 `$point` ist die Auktionsposition, transformiert nach 3035. Cutoff je Kategorie (Vorschlag: Meer/Ski 200 km, See/Fluss/Berg 50 km, Freizeit/Sehenswürdigkeiten 30 km) — „nächstes Skigebiet 1 400 km" hat keinen Informationswert und zieht den KNN-Suchraum unnötig auf.
 
-**Die Cutoffs sind gleichzeitig die Obergrenze der suchbaren Radien** und müssen deshalb an einer Stelle liegen, die dieser Job *und* die Filter-Validierung liest. Ein `NULL` heißt „weiter als der Cutoff", nicht „unbekannt" — fragt der Nutzer nach 300 km bei einem Cutoff von 200 km, sind die Treffer zwischen 200 und 300 km alle `NULL` und von „gar nichts in der Nähe" nicht unterscheidbar. Ein `dist_ski_m <= 300000` würde sie stillschweigend ausschließen, der Filter wäre falsch. Also: Slider-Maximum je Kategorie = Cutoff dieser Kategorie, und ein größerer Wert wird abgewiesen statt gekappt. Wird ein Cutoff später erhöht, müssen alle Metriken über `features_epoch` neu berechnet werden.
+**Die Cutoffs sind gleichzeitig die Obergrenze der suchbaren Radien** und müssen deshalb an einer Stelle liegen, die dieser Job *und* die Filter-Validierung liest. Ein `NULL` heißt „weiter als der Cutoff", nicht „unbekannt" — fragt der Nutzer nach 300 km bei einem Cutoff von 200 km, sind die Treffer zwischen 200 und 300 km alle `NULL` und von „gar nichts in der Nähe" nicht unterscheidbar. Ein `dist_ski_m <= 300000` würde sie stillschweigend ausschließen, der Filter wäre falsch. Also: Slider-Maximum je Kategorie = Cutoff dieser Kategorie. Wird ein Cutoff später erhöht, müssen alle Metriken über `features_epoch` neu berechnet werden.
+
+> **Umgesetzt:** die Cutoffs liegen in [geo-metric-categories.ts](server/utils/geo-metric-categories.ts), gelesen von Job *und* Filter. Ein größerer Wert wird dort **gekappt statt abgewiesen** — abweichend vom Absatz oben: über den Cutoff hinaus liefert die Vorberechnung `NULL`, ein größerer Radius fände also *weniger* Treffer als ein kleinerer. Alles innerhalb des Cutoffs ist auf die weitere Anfrage weiterhin eine richtige (nur unvollständige) Antwort; den Filter ganz zu verwerfen würde stattdessen Auktionen fernab des Merkmals liefern, ein 400 würde eine sonst gültige Suche abbrechen.
 
 Umfang: 37 geocodierte Auktionen × ~14 Kategorien ≈ 500 Lookups; nach [WP-3](2026-08-04-gis-wp3-geocoding-abdeckung.md) 2 785 × 14 ≈ 39 000. **Die Laufzeit dafür ist erst nach der Messung in WP-4 bekannt** — die 147 ms aus der Prod-Messung sind die falsche Bezugsgröße (Rohtabelle, `::geography`-Cast, unzerlegte Geometrien) und ergäben hochgerechnet 95 Minuten. Mit dem fertigen Layer ist ein Bruchteil zu erwarten; die Zahl aus WP-4 Schritt 4 einsetzen, statt hier zu schätzen. Parallelität begrenzt das Connection-Limit des Jobs, nicht die CPU.
 
@@ -98,21 +102,21 @@ Randbedingungen wie in WP-4: eigener Connection-Pool mit hartem Limit, off-peak,
 
 [auction-search-filters.ts](server/utils/auction-search-filters.ts) ist die einzige Stelle, die angefasst werden muss — sie wird von **beiden** Endpoints geteilt ([auctions.get.ts](server/api/auctions.get.ts), [auctions-geo.get.ts](server/api/auctions-geo.get.ts)), und das ist Absicht: „ein Marker, den die Liste nicht zeigt, oder eine Karte ohne Marker liest sich als kaputter Filter".
 
-`PROXIMITY_FILTERS` ([Zeile 21-44](server/utils/auction-search-filters.ts#L21-L44)) wandelt sich von Tag-Matchern zu Spaltennamen — die Struktur bleibt:
+Die Tag-Matcher werden zu Spaltennamen — umgesetzt als [geo-metric-categories.ts](server/utils/geo-metric-categories.ts), gemeinsam mit dem Job, weil beide Seiten sich über den Cutoff einig sein müssen:
 
 ```ts
-const PROXIMITY_FILTERS: Record<string, string> = {
-  nearSea: 'dist_sea_m', nearLake: 'dist_lake_m', nearRiver: 'dist_river_m',
-  nearMountain: 'dist_peak_m', nearAirport: 'dist_airport_m', nearSki: 'dist_ski_m',
+export const GEO_METRIC_CATEGORIES = [
+  { param: 'nearSea', column: 'dist_sea_m', kind: 'sea', cutoffMeters: 200_000 },
+  { param: 'nearMountain', column: 'dist_mountain_m', kind: 'peak', cutoffMeters: 50_000 },
   …
-}
+]
 ```
 
-Und das Prädikat wird aus dem `EXISTS`/`ST_DWithin`-Block ([osm-proximity.ts:50-54](server/utils/osm-proximity.ts#L50-L54)) ein Vergleich: `m.dist_sea_m <= $n`.
+Und das Prädikat wird aus dem `EXISTS`/`ST_DWithin`-Block ([osm-proximity.ts:50-54](server/utils/osm-proximity.ts#L50-L54)) ein Vergleich: `m.dist_sea_m <= $n`. Jede Query, die dieses Prädikat verwendet, braucht dafür den `LEFT JOIN auction_geo_metrics m` ([GEO_METRICS_JOIN_SQL](server/api/auctions.get.ts)) — auch die schmale Marker-Query von `auctions-geo.get.ts`, die sonst auf ein nicht existierendes `m` verweist.
 
-`osm-proximity.ts` wird danach nur noch von den Landing-Rails ([rails.get.ts](server/api/landing/rails.get.ts)) genutzt. **Die müssen mit umgestellt werden** — sie haben dieselbe Query-Form mit festem Radius und dasselbe Kostenproblem. Danach kann `osm-proximity.ts` entfallen.
+Die Landing-Rails ([rails.get.ts](server/api/landing/rails.get.ts)) haben dieselbe Query-Form mit festem Radius und dasselbe Kostenproblem und sind mit umgestellt.
 
-Der `urbanRural`-Filter nutzt `proximityConditionAnyOf` mit `place`-Tags und braucht ein eigenes Feld (z. B. `dist_city_m`) statt einer Sonderbehandlung.
+`osm-proximity.ts` **bleibt trotzdem** — der `urbanRural`-Filter nutzt `proximityConditionAnyOf` weiter live und braucht ein eigenes Feld (z. B. `dist_city_m`) statt einer Sonderbehandlung; erst danach kann die Datei entfallen. Siehe „Bewusst zurückgestellt" oben.
 
 Der Standort-Filter (`nearLat`/`nearLng`, [Zeile 183-192](server/utils/auction-search-filters.ts#L183-L192)) bleibt **unverändert live** — er vergleicht die Nutzerposition mit der Auktionsposition, nicht mit OSM-Daten, und ist damit billig. (Er profitiert allerdings von einem Geo-Index auf der Auktionsposition, den es heute nicht gibt; separat bewerten.)
 
