@@ -62,7 +62,7 @@ const {
   authorityFilter, categoryFilter, conditionFilter, featuresFilter,
   onlyWithPhotos, includeCancelled, hideRulesOnly,
   nearSea, nearLake, nearRiver, nearMountain, nearAirport, urbanRural,
-  nearLat, nearLng, nearRadius,
+  nearLat, nearLng, nearRadius, sortBy,
   toggleCountry, toggleRegion, initializeMountedState,
 } = state
 
@@ -86,7 +86,7 @@ onMounted(() => {
   <div class="h-screen overflow-hidden flex flex-col">
     <SiteHeader>
       <template #search>
-        <div class="mx-auto w-full max-w-2xl">
+        <div class="mx-auto flex w-full max-w-3xl items-center gap-2">
           <SearchBar
             v-model:search="search"
             v-model:price-min="priceMin"
@@ -112,6 +112,7 @@ onMounted(() => {
             v-model:near-mountain="nearMountain"
             v-model:near-airport="nearAirport"
             v-model:urban-rural="urbanRural"
+            class="flex-1"
             :location-summary="headerLabel"
             :countries="countries ?? []"
             :selected-countries="selectedCountries"
@@ -125,6 +126,17 @@ onMounted(() => {
             @set-nearby="setNearby"
             @pick-recent="pickRecent"
           />
+          <Select v-model="sortBy">
+            <SelectTrigger class="w-40 shrink-0 rounded-full">
+              <SelectValue :placeholder="$t('search.sortLabel')" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="default">{{ $t('search.sortDefault') }}</SelectItem>
+              <SelectItem value="dateAsc">{{ $t('search.sortDateAsc') }}</SelectItem>
+              <SelectItem value="priceAsc">{{ $t('search.sortPriceAsc') }}</SelectItem>
+              <SelectItem value="priceDesc">{{ $t('search.sortPriceDesc') }}</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </template>
     </SiteHeader>

@@ -36,7 +36,22 @@ watch(() => props.scrollTargetKey, async (key) => {
       {{ $t('search.noResults') }}
     </p>
 
-    <ul v-if="props.auctions.length" class="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(16rem,1fr))]">
+    <ul
+      v-if="props.pending && props.auctions.length === 0"
+      class="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(16rem,1fr))]"
+      aria-hidden="true"
+    >
+      <li v-for="i in 8" :key="i" class="h-full animate-pulse overflow-hidden rounded-xl border bg-card">
+        <div class="aspect-16/10 bg-muted" />
+        <div class="flex flex-col gap-2 p-3">
+          <div class="h-3 w-1/3 rounded bg-muted" />
+          <div class="h-4 w-4/5 rounded bg-muted" />
+          <div class="h-4 w-1/2 rounded bg-muted" />
+        </div>
+      </li>
+    </ul>
+
+    <ul v-else-if="props.auctions.length" class="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(16rem,1fr))]">
       <li
         v-for="a in props.auctions"
         :key="auctionKey(a)"

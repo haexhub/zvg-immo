@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import type { AuctionSearchResponse, AuctionSummary } from '~/server/api/auctions.get'
 import type { GeoAuction, GeoCrawlResult } from '~/server/api/auctions-geo.get'
-import type { SavedSearch } from '~/server/api/saved-searches/index.get'
 import { ALL_SCOPE, isAllScope } from '~/lib/auction-constants'
 import { auctionKey } from '~/lib/auction-key'
 import { useMediaQuery } from '@vueuse/core'
@@ -12,7 +11,6 @@ import { useAuctionWatchlist } from '~/composables/useAuctionWatchlist'
 
 definePageMeta({ layout: 'search' })
 
-const route = useRoute()
 const { user } = useAuth()
 const { t } = useI18n()
 const intlLocale = useIntlLocale()
@@ -42,7 +40,6 @@ const {
   authorityFilter,
   categoryFilter,
   boundToMap,
-  sortBy,
   headerLabel,
 } = injectedSearchState
 const isDesktop = computed(() => mounted.value && mediaIsDesktop.value)
@@ -55,7 +52,7 @@ const injectedSearchResult = inject(AUCTION_SEARCH_RESULT_KEY)
 if (!injectedSearchResult) {
   throw new Error('pages/search.vue requires the auction search result provided by layouts/search.vue')
 }
-const { data, pending, error, courts, categories: kategorienMitCount } = injectedSearchResult
+const { data, pending, courts, categories: kategorienMitCount } = injectedSearchResult
 
 // The map pane is visible whenever it's actually on screen: always on
 // desktop, or only during the "map" mobile tab. Drives both the geo-fetch
@@ -284,27 +281,6 @@ watch(data, () => {
   }
 })
 
-// "Suche speichern" — POSTs the current URL query params as-is (same shape
-// saved_searches.filters mirrors, see lib/auction-filters.ts) under a
-// user-chosen name.
-const savingSearch = ref(false)
-async function saveCurrentSearch(): Promise<void> {
-  if (!user.value) return
-  const name = window.prompt(t('search.saveSearchPrompt'))?.trim()
-  if (!name) return
-  savingSearch.value = true
-  try {
-    await authFetch<SavedSearch>('/api/saved-searches', {
-      method: 'POST',
-      body: { name, filters: route.query },
-    })
-  } catch (err: unknown) {
-    window.alert(apiErrorMessage(err, t('search.saveSearchError')))
-  } finally {
-    savingSearch.value = false
-  }
-}
-
 const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
   onError: (message) => {
     listActionError.value = message
@@ -325,52 +301,6 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
         </div>
       </div>
     </header>
-
-    <div class="shrink-0 mb-3 flex flex-wrap items-center gap-2">
-      <Select v-model="sortBy">
-        <SelectTrigger class="w-44">
-          <SelectValue :placeholder="$t('search.sortLabel')" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="default">{{ $t('search.sortDefault') }}</SelectItem>
-          <SelectItem value="dateAsc">{{ $t('search.sortDateAsc') }}</SelectItem>
-          <SelectItem value="priceAsc">{{ $t('search.sortPriceAsc') }}</SelectItem>
-          <SelectItem value="priceDesc">{{ $t('search.sortPriceDesc') }}</SelectItem>
-        </SelectContent>
-      </Select>
-
-      <label
-        class="flex cursor-pointer select-none items-center gap-2 whitespace-nowrap text-sm"
-        :title="$t('search.boundToMapHint')"
-      >
-        <Checkbox v-model="boundToMap" />
-        {{ $t('search.boundToMap') }}
-      </label>
-
-      <Button v-if="user" type="button" variant="outline" class="ml-auto" :disabled="savingSearch" @click="saveCurrentSearch">
-        {{ savingSearch ? $t('search.savingSearch') : $t('search.saveSearch') }}
-      </Button>
-    </div>
-
-    <div v-if="data" class="shrink-0 mb-3 text-sm text-muted-foreground">
-      {{ $t('search.resultsCount', { count: data.total }) }}<span v-if="geoData">
-        · {{ filteredGeo.length }} {{ $t('search.onMap') }} ({{ $t('search.geocoded', { done: geoData.geocodedCount, total: geoData.total }) }}<span v-if="geoData.unresolvableCount > 0">, {{ $t('search.unresolvable', { count: geoData.unresolvableCount }) }}</span><span v-if="geocodingInProgress">, {{ $t('search.geocodingRunning') }}</span>)
-      </span>
-    </div>
-
-    <p v-if="pending && !data" class="py-12 text-center text-muted-foreground">{{ $t('search.loadingData') }}</p>
-    <p v-else-if="error" class="py-12 text-center text-destructive">
-      {{ $t('search.loadError', { msg: error.statusMessage || error.message }) }}
-    </p>
-    <p v-if="listActionError" role="alert" class="mb-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-      {{ listActionError }}
-    </p>
-    <p
-      v-if="selectedCountries.length === 0 && pending"
-      class="mb-4 text-xs text-muted-foreground text-center"
-    >
-      {{ $t('search.initialLoadHint') }}
-    </p>
 
     <div class="flex-1 min-h-0">
       <div v-if="isDesktop" class="h-full flex gap-4">
