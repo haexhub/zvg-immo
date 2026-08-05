@@ -1,0 +1,2 @@
+ALTER TABLE "osm_local_elements" DROP CONSTRAINT "osm_local_elements_osm_type_osm_id_pk";--> statement-breakpoint
+ALTER TABLE "osm_local_elements" ADD CONSTRAINT "osm_local_elements_osm_type_osm_id_country_pk" PRIMARY KEY("osm_type","osm_id","country");
