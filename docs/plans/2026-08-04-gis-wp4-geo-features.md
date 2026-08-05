@@ -4,6 +4,12 @@ Datum: 2026-08-04
 Teil von [GIS-Architektur](2026-08-04-gis-scaling-architecture.md). Abhängig von: [WP-0](2026-08-04-gis-wp0-schema-neuaufbau.md) (Drizzle-Schema für die Migration).
 Aufwand: 2–3 Tage. Repo: `zvg-immo`.
 
+> **Status 2026-08-05: WP-0 ist erledigt (PR #313), dieses WP ist bereit zu starten.** Der `geometry(Geometry, srid)`-`customType` aus dem WP-2-Verweis unten existiert bereits — WP-2 ist obsolet, der `customType` lebt jetzt in [server/db/schema/geo.ts](server/db/schema/geo.ts). **`geo_features` und `auction_geo_metrics` sind als leere Skeleton-Tabellen bereits angelegt** (Migration aus WP-0) — dieses WP befüllt sie über den Aufbau-Job, legt sie nicht neu an. Die tatsächlichen Spalten weichen leicht vom Sketch unten ab:
+> - `geo_features`: `id, kind, name, country, osm_type, osm_id, geom_3035, features_epoch, created_at` — **kein** `source_ref`/`attrs`; Rückverfolgung läuft über `osm_type`+`osm_id` (zwei Spalten statt einer zusammengesetzten), `country` ist bereits eine eigene Spalte (nicht in `attrs`), `features_epoch` ist bereits modelliert (Default `1`) statt erst hier zu entstehen.
+> - `auction_geo_metrics`: PK ist `(platform, external_id)`, FK auf `auctions`; `dist_sea_m/dist_lake_m/dist_river_m/dist_mountain_m/dist_airport_m/dist_ski_m` und `tourism_density_count` sind bereits als Spalten angelegt (weitere WP-6-Kategorien sind additive Migrationen später), plus `climate_cell_id` (FK auf `climate_cells`), `point_hash`, `features_epoch`, `computed_at`.
+>
+> Indizes existieren ebenfalls bereits: `idx_geo_features_geom_3035` (GIST), `idx_geo_features_kind`, `idx_geo_features_kind_country`. Der Aufbau-Job unten kann direkt gegen dieses Schema schreiben — Schritt "Datenmodell anlegen" entfällt, es bleibt der Aufbau-Job (Normalisierung aus `osm_local_elements`) als eigentlicher Inhalt dieses WP.
+
 ## Warum
 
 `osm_local_elements` ist ein Rohdatendump: 44,5 Mio. Zeilen / 20 GB, davon **90 % `building`**, Geometrien in EPSG:4326, Kategorien nur als `jsonb`-Tags. Jede Suche muss daraus zur Laufzeit erst die Semantik ableiten („Meer ist coastline *oder* beach *oder* bay …") — und genau diese OR-Ketten sind die Ursache des Serverausfalls, weil sie an einem einzigen fehlenden Index zerbrechen ([WP-1](2026-08-04-gis-wp1-index-notfall.md)).
@@ -15,6 +21,8 @@ Aufwand: 2–3 Tage. Repo: `zvg-immo`.
 Eine Tabelle, gegen die eine Nächster-Nachbar-Abfrage pro Kategorie in Millisekunden läuft, ohne `jsonb`-Ausdruck, ohne Cast und ohne OR-Kette.
 
 ## Datenmodell
+
+**Historischer Sketch, durch WP-0 überholt — die Tabelle existiert bereits mit abweichenden Spalten.** Siehe Status oben und [server/db/schema/geo.ts](../../server/db/schema/geo.ts) für die tatsächlichen Spalten (`country`, `osm_type`, `osm_id` statt `source_ref`/`attrs`). Ursprünglicher Entwurf, nur noch als Beleg für die Entscheidungen (EPSG:3035, Zerlegung, `kind`) unten:
 
 ```sql
 CREATE TABLE geo_features (
@@ -70,16 +78,18 @@ Aus `osm_local_elements` per SQL. Die Zuordnung ist der inhaltliche Kern dieses 
 
 ## Aufbau-Job
 
-Idempotent und wiederholbar — er muss nach jedem OSM-Reimport erneut laufen. Ablauf pro `kind`:
+Wiederholbar nach jedem OSM-Reimport — aber nicht durch reines Anhängen, sonst verdoppelt ein zweiter Lauf jeden `kind`, weil `ST_Subdivide` denselben Way wieder in mehrere Zeilen zerlegt und `(osm_type, osm_id)` dadurch **nicht** eindeutig ist (keine Unique-Constraint in `geo_features`, mehrere Segmente teilen sich die Quelle). Idempotenzstrategie: jeder vollständige Aufbau schreibt unter einer **neuen** `features_epoch` (`SELECT max(features_epoch) + 1 FROM geo_features`), und erst nach erfolgreichem Durchlauf aller `kind`s werden Zeilen mit altem Epoch gelöscht (`DELETE FROM geo_features WHERE features_epoch < $neuer_epoch`) — das hält den alten Stand für laufende Suchanfragen erreichbar, bis der neue vollständig steht, und macht einen erneuten Lauf sicher wiederholbar. Ablauf pro `kind`:
 
 ```sql
-INSERT INTO geo_features (kind, name, geom_3035, source_ref, attrs)
+INSERT INTO geo_features (kind, name, country, osm_type, osm_id, geom_3035, features_epoch)
 SELECT
   'sea',
   o.tags ->> 'name',
+  o.country,
+  o.osm_type,
+  o.osm_id,
   ST_Subdivide(ST_Transform(o.geom, 3035), 128),
-  o.osm_type || '/' || o.osm_id,
-  jsonb_build_object('tags', o.tags)
+  $neuer_epoch
 FROM osm_local_elements o
 WHERE o.tags ->> 'natural' IN ('coastline','beach','bay','strait')
    OR o.tags ->> 'water' IN ('sea','lagoon')

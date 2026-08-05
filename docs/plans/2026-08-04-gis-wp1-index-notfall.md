@@ -8,6 +8,8 @@ Aufwand: ½–1 Tag. Repo: `zvg-immo`.
 >
 > Der Rest dieses Dokuments bleibt als Beleg für die Ursache und als Fallback, falls WP-0 nicht umgesetzt wird.
 
+> **Status: ✅ ERLEDIGT — PR #312 (`gis-wp1-notfall-absicherung`), gemergt.** `withStatementTimeout`/`isStatementTimeoutError` in [db.ts](../../server/utils/db.ts), Invalid-Index-Wächter unter [/api/_health/db](../../server/api/_health/db.get.ts). Im Review korrigiert: die vier Facet-Queries in `auctions.get.ts` teilten sich anfangs einen `withStatementTimeout`-Aufruf und damit eine Connection — Postgres verarbeitet ein Statement pro Connection sequenziell, wodurch sich die Timeouts stillschweigend zu ~4× `SEARCH_STATEMENT_TIMEOUT_MS` hätten aufsummieren können statt bei einem Timeout zu deckeln. Fix: je Query eine eigene `withStatementTimeout`/Connection, per Test abgesichert (`pool.connect` 4×).
+
 ## Warum
 
 Die Umgebungssuche legt den Server lahm. Auf Prod gemessen (2026-08-04):

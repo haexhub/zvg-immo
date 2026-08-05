@@ -7,6 +7,15 @@ Implementierungspläne (je eine Session): [WP-0](2026-08-04-gis-wp0-schema-neuau
 
 > **Nachtrag 2026-08-04:** Der Nutzer hat den vollständigen Neuaufbau von Schema und Daten freigegeben. Damit gilt **[WP-0](2026-08-04-gis-wp0-schema-neuaufbau.md) statt [WP-2](2026-08-04-gis-wp2-drizzle-fundament.md)**, und [WP-1](2026-08-04-gis-wp1-index-notfall.md) schrumpft auf `statement_timeout` und den Invalid-Index-Wächter. Der Gewinn liegt fast vollständig bei Drizzle: der Baseline-Kompromiss (zwei Wahrheiten über dasselbe Schema) entfällt, und das Serving-Modell kann direkt richtig entstehen — Koordinaten auf `auctions` statt versioniert, `is_latest` statt `LATERAL`-Join, EPSG:3035 direkt beim Import. Alles Übrige unten bleibt unverändert gültig.
 
+> **Status 2026-08-05: WP-0 und WP-1 sind erledigt.** WP-0 (PR #313) hat Prod hart zurückgesetzt und neu migriert; WP-1 (PR #312) läuft (`statement_timeout` + Invalid-Index-Wächter unter [/api/_health/db](../../server/api/_health/db.get.ts)). `geo_features`, `auction_geo_metrics` und `climate_cells` existieren bereits als Skeleton-Tabellen samt PostGIS-`customType` in [server/db/schema/geo.ts](../../server/db/schema/geo.ts) — [WP-4](2026-08-04-gis-wp4-geo-features.md) befüllt sie, legt sie nicht neu an. RLS wurde nachträglich gegen Prod verifiziert: 0 Anwendungstabellen ohne RLS (die einzige Tabelle ohne RLS ist `spatial_ref_sys`, eine PostGIS-Systemtabelle, kein Anwendungsschema).
+>
+> Der Reset hat drei Folgefehler produziert, die **nicht** Teil von WP-0 selbst waren, sondern seiner Grundannahme "Koordinaten auf `auctions`" nicht konsequent genug nachgeführt wurden bzw. Nebenwirkungen des Hard-Resets waren — Details in Memory `wp0-rebuild-aftermath-cascade`:
+> 1. Vier Stellen lasen noch `d.lat`/`d.lng` statt `a.lat`/`a.lng` → 500er auf Geo-Endpunkten (Fix: PR #314).
+> 2. `auction_details`-INSERT versuchte weiterhin `lat`/`lng` zu schreiben (Spalte existiert dort nicht mehr) → **jeder** Schreibvorgang scheiterte, Tabelle blieb leer; zusätzlich fehlte das Schreiben von `lat`/`lng` nach `auctions` in `current-auctions.ts`, und `auction_details.is_latest` wurde nie demotet (Fix: PR #315, nur durch echtes Postgres-Testen gefunden, nicht durch Mocks).
+> 3. `app_settings` wurde durch den Reset geleert → Default `hide_rules_only_auctions = true` blendete alle Auktionen aus, solange keine LLM-Analyse vorliegt (Fix: Admin-Setting manuell auf `false` gestellt).
+>
+> **Aktuelle Messung (2026-08-05):** Geocoding-Abdeckung DE **2 357/2 685 (88 %)**, deutlich über dem 1 %-Ausgangswert aus der Messung unten — SE weiterhin **0/96**, ungeklärt (siehe [WP-3](2026-08-04-gis-wp3-geocoding-abdeckung.md)). **LLM-Extraktion ist aktuell nicht funktionsfähig** (Provider/Config muss neu aufgebaut werden) — bis dahin liefert `reprocess` nur regelbasierte Extraktionen; `hide_rules_only_auctions` muss auf `false` bleiben, sonst verschwindet die Suche wieder vollständig. Offen und **vor Welle 2 einzuplanen**: ein NUL-Byte-Encoding-Fehler im de/bw-Crawler (`server/crawlers/zvbawu/`), der Crawls dieser Region scheitern lässt — vermutlich vorbestehend, noch nicht gefixt.
+
 ## Ziel
 
 Zwei Klassen von Fragen sollen europaweit in Millisekunden beantwortbar sein:
@@ -209,11 +218,11 @@ Jedes ist ein eigenständiges Dokument, in einer Session umsetzbar.
 
 | WP | Inhalt | Aufwand | Abhängig von |
 |---|---|---|---|
-| [WP-0](2026-08-04-gis-wp0-schema-neuaufbau.md) | **Schema-Neuaufbau auf Drizzle** (Greenfield, `pg_dump` vorher) | 2–3 Tage | — |
-| [WP-1](2026-08-04-gis-wp1-index-notfall.md) | `statement_timeout` + Invalid-Index-Wächter (Rest entfällt mit WP-0) | ~2 h | — |
+| [WP-0](2026-08-04-gis-wp0-schema-neuaufbau.md) | **Schema-Neuaufbau auf Drizzle** (Greenfield, `pg_dump` vorher) | 2–3 Tage | ✅ **erledigt** (PR #313 + Folgefixes #314/#315) |
+| [WP-1](2026-08-04-gis-wp1-index-notfall.md) | `statement_timeout` + Invalid-Index-Wächter (Rest entfällt mit WP-0) | ~2 h | ✅ **erledigt** (PR #312) |
 | ~~[WP-2](2026-08-04-gis-wp2-drizzle-fundament.md)~~ | ~~Drizzle mit Baseline~~ — **ersetzt durch WP-0**; PostGIS-`customType` und Docker-Fallstrick dort weiterverwenden | — | — |
-| [WP-3](2026-08-04-gis-wp3-geocoding-abdeckung.md) | Geocoding-Abdeckung von 1 % anheben | 2–3 Tage | **WP-1** |
-| [WP-4](2026-08-04-gis-wp4-geo-features.md) | `geo_features`-Layer (EPSG:3035, zerlegt, `kind`-Mapping) | 2–3 Tage | WP-0 |
+| [WP-3](2026-08-04-gis-wp3-geocoding-abdeckung.md) | Geocoding-Abdeckung von 1 % anheben | 2–3 Tage | WP-1 ✅ erfüllt — **bereit** |
+| [WP-4](2026-08-04-gis-wp4-geo-features.md) | `geo_features`-Layer (EPSG:3035, zerlegt, `kind`-Mapping) | 2–3 Tage | WP-0 ✅ erfüllt — **bereit** (Tabellen existieren bereits als Skeleton) |
 | [WP-5](2026-08-04-gis-wp5-precompute-suche.md) | `auction_geo_metrics` + Suche umstellen ← **der eigentliche Fix** | 3–4 Tage | WP-4 |
 | [WP-6](2026-08-04-gis-wp6-osm-datenausbau.md) | Lua-Filter: SE nachziehen, Routen-Relationen, Ski/Tourismus-Tags | 1–2 Tage | WP-4 |
 | [WP-7](2026-08-04-gis-wp7-klima-grid.md) | `climate_cells` + Open-Meteo-Adapter + Temperaturfilter | 2–3 Tage | WP-5 |

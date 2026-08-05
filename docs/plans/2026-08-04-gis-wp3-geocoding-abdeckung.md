@@ -4,9 +4,11 @@ Datum: 2026-08-04
 Teil von [GIS-Architektur](2026-08-04-gis-scaling-architecture.md). Abhängig von: **[WP-1](2026-08-04-gis-wp1-index-notfall.md) muss fertig sein.**
 Aufwand: 2–3 Tage. Repo: `zvg-immo` (+ evtl. `ansible`).
 
+> **Status 2026-08-05: WP-1 ist erledigt (PR #312), dieses WP ist bereit zu starten.** Zwischen Planerstellung und heute lag ein vollständiger Schema-/Daten-Hard-Reset ([WP-0](2026-08-04-gis-wp0-schema-neuaufbau.md), PR #313) — die Zahlen und ein Fakt unten sind dadurch überholt, siehe Korrekturen inline. **Aktuelle Messung:** DE **2 357/2 685 mit Koordinaten (88 %)**, SE **0/96**. Der Sprung von 1 % auf 88 % bei DE deckt sich mit Hypothese (a) unten (Persistenz griff nicht) — der zugrunde liegende Bug war real, aber ein anderer als vermutet: nicht am Karten-Endpunkt, sondern ein kompletter Schreibfehlschlag von `auction_details` nach dem Reset (Fix: PR #315). Ob zusätzlich LocationIQ vs. Nominatim aktuell konfiguriert ist, wurde im Rahmen dieses Status-Updates **nicht** erneut geprüft — das war die eigentliche Kernfrage dieses WP und bleibt offen. SE bei weiterhin 0/96 ist ungeklärt und damit der erste konkrete Arbeitsschritt.
+
 ## Warum
 
-Auf Prod gemessen (2026-08-04):
+**Baseline vor dem Hard-Reset** (auf Prod gemessen, 2026-08-04 — überholt durch [WP-0](2026-08-04-gis-wp0-schema-neuaufbau.md)/PR #313, siehe aktuelle Zahlen im Status oben):
 
 | | Auktionen | mit Adresse | mit Koordinaten |
 |---|---|---|---|
@@ -92,5 +94,5 @@ SE hat 0/97. Ursache separat prüfen — es kann dasselbe Ban-Problem sein oder 
 
 - **Ohne WP-1 ausführen** → Faktor 75 mehr Last auf einer Query, die den Server schon umlegt.
 - **Cache-Verzeichnis ist containerlokal** (`/app/.cache_zvg`). Ohne Volume ist die Arbeit nach einem Redeploy verloren. Prüfen, ob ein Volume gemountet ist — 30 909 Einträge legen nahe, dass es eines gibt, aber das ist keine Bestätigung.
-- **Koordinaten liegen auf `auction_details`, nicht `auctions`** (verifiziert: `auctions` hat keine lat/lng-Spalten) und sind damit **versioniert**. Eine neue Details-Version ohne mitgeführte Koordinaten setzt die Abdeckung still zurück. Das ist der wahrscheinlichste Mechanismus hinter Hypothese (a) und muss geprüft werden.
+- ~~Koordinaten liegen auf `auction_details`, nicht `auctions`~~ — **überholt seit WP-0/PR #313:** Koordinaten liegen jetzt auf `auctions` (Identität, nicht Extraktionshistorie), gerade deshalb aus der Versionierung genommen. Der ursprüngliche Verdacht "neue Details-Version ohne mitgeführte Koordinaten setzt die Abdeckung zurück" war der richtige Instinkt, nur die Instanz war eine andere: nach dem Reset scheiterte der komplette `auction_details`-Insert (falsche Spaltenliste), wodurch gar keine Koordinate mehr durchkam — siehe PR #315. Für neue Prüfungen: aktueller Schreibpfad ist `current-auctions.ts::upsertCurrentAuctions`, nicht mehr `auction-details.ts`.
 - **Nominatim-Policy:** identifizierender User-Agent ist Pflicht und bereits gesetzt ([UA](server/utils/geocode.ts#L28)). Bei LocationIQ nicht relevant, aber nicht entfernen.
