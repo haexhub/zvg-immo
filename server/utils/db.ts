@@ -16,7 +16,10 @@ let pool: Pool | null | undefined
 const MIGRATION_LOCK_ATTEMPTS = 60
 const MIGRATION_LOCK_RETRY_MS = 1_000
 
-function readDatabaseUrl(): string | null {
+// Exported for server/tasks/build-geo-features.ts, which needs the same
+// config but connects through its own dedicated Pool (see that file) instead
+// of the shared one below.
+export function readDatabaseUrl(): string | null {
   const url = useRuntimeConfig().databaseUrl as string | undefined
   return url || null
 }
