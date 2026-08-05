@@ -221,10 +221,10 @@ Jedes ist ein eigenständiges Dokument, in einer Session umsetzbar.
 | [WP-0](2026-08-04-gis-wp0-schema-neuaufbau.md) | **Schema-Neuaufbau auf Drizzle** (Greenfield, `pg_dump` vorher) | 2–3 Tage | ✅ **erledigt** (PR #313 + Folgefixes #314/#315) |
 | [WP-1](2026-08-04-gis-wp1-index-notfall.md) | `statement_timeout` + Invalid-Index-Wächter (Rest entfällt mit WP-0) | ~2 h | ✅ **erledigt** (PR #312) |
 | ~~[WP-2](2026-08-04-gis-wp2-drizzle-fundament.md)~~ | ~~Drizzle mit Baseline~~ — **ersetzt durch WP-0**; PostGIS-`customType` und Docker-Fallstrick dort weiterverwenden | — | — |
-| [WP-3](2026-08-04-gis-wp3-geocoding-abdeckung.md) | Geocoding-Abdeckung von 1 % anheben | 2–3 Tage | WP-1 ✅ erfüllt — **bereit** |
+| [WP-3](2026-08-04-gis-wp3-geocoding-abdeckung.md) | Geocoding-Abdeckung von 1 % anheben | 2–3 Tage | ✅ **erledigt** (PR #319) — SE-Root-Cause war ein Persistenzbug in `reprocess.ts`, nicht der Geocoder; LocationIQ-ENV auf Prod weiterhin offen (ansible-Folgeschritt) |
 | [WP-4](2026-08-04-gis-wp4-geo-features.md) | `geo_features`-Layer (EPSG:3035, zerlegt, `kind`-Mapping) | 2–3 Tage | ✅ **erledigt** (PR #318) — Aufbau-Job noch nicht gegen Prod gelaufen, `osm_local_elements` ist dort seit dem WP-0-Neuaufbau leer (Reimport steht aus) |
-| [WP-5](2026-08-04-gis-wp5-precompute-suche.md) | `auction_geo_metrics` + Suche umstellen ← **der eigentliche Fix** | 3–4 Tage | WP-4 |
-| [WP-6](2026-08-04-gis-wp6-osm-datenausbau.md) | Lua-Filter: SE nachziehen, Routen-Relationen, Ski/Tourismus-Tags | 1–2 Tage | WP-4 |
+| [WP-5](2026-08-04-gis-wp5-precompute-suche.md) | `auction_geo_metrics` + Suche umstellen ← **der eigentliche Fix** | 3–4 Tage | WP-4 ✅ erfüllt (Code) — Verifikation gegen echte Daten braucht den ausstehenden OSM-Reimport |
+| [WP-6](2026-08-04-gis-wp6-osm-datenausbau.md) | Lua-Filter: SE nachziehen, Routen-Relationen, Ski/Tourismus-Tags | 1–2 Tage | WP-4 ✅ erfüllt — Code liegt bereits als [ansible#87](https://github.com/haexhub/ansible/pull/87) vor (ungetestet gegen echten osm2pgsql-Lauf), **aktueller kritischer Pfad** |
 | [WP-7](2026-08-04-gis-wp7-klima-grid.md) | `climate_cells` + Open-Meteo-Adapter + Temperaturfilter | 2–3 Tage | WP-5 |
 | [WP-8](2026-08-04-gis-wp8-lagebeschreibung.md) | Lagebeschreibung und Scores für Wohnen / wirtschaftliche Nutzung | 2–3 Tage | WP-5, WP-7 |
 
@@ -238,6 +238,8 @@ WP-0 (Neuaufbau) ──> WP-4 (geo_features) ──> WP-5 (Precompute) ──┬
 WP-0 und WP-1 sind unabhängig und können parallel laufen. WP-1 zuerst — es dauert zwei Stunden, und der `statement_timeout` schützt den Server auch während des Umbaus.
 
 Ein Reimport der OSM-Daten fällt sowohl in WP-0 (Neuaufbau) als auch in WP-6 (neue Tags) an. **Nur einmal ausführen** — WP-6 vor dem Reimport deployen, dann beide Ziele mit einem Lauf erreichen. DE dauert mehrere Stunden.
+
+> **Status 2026-08-05: das ist jetzt der aktuelle Blocker.** Der WP-0-Hard-Reset hat `osm_local_elements` mitgeleert (0 Zeilen, 96 kB statt der ursprünglichen 44,5 Mio. Zeilen/20 GB, verifiziert per `pg_stat_user_tables`) — der Reimport wurde seither nicht nachgeholt. WP-4s Aufbau-Job (PR #318) ist gemergt und lokal verifiziert, **auf Prod aber noch nicht gelaufen** — ein Lauf gegen die leere Quelle würde `geo_features` heute mit nichts befüllen. WP-5 hat noch nicht begonnen, es hängt an denselben Daten. WP-6s Code liegt bereits vor ([ansible#87](https://github.com/haexhub/ansible/pull/87), Branch `osm-import-geo-features`), aber nur syntaktisch geprüft, nicht gegen einen echten osm2pgsql-Lauf. Reihenfolge ab hier: ansible#87 gegen einen kleinen Extrakt (Bulgarien, nicht DE) testen, reviewen, mergen, deployen → DE/SE/BG-Reimport auslösen (mehrere Stunden, hohe Prod-Last, erfordert explizite Freigabe) → WP-4-Aufbau-Job auf Prod ausführen → WP-5-Precompute starten.
 
 ## Risiken
 

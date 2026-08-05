@@ -4,6 +4,15 @@ Datum: 2026-08-04
 Teil von [GIS-Architektur](2026-08-04-gis-scaling-architecture.md). Abhängig von: [WP-4](2026-08-04-gis-wp4-geo-features.md).
 Aufwand: 3–4 Tage. Repo: `zvg-immo`. **Das ist der eigentliche Fix.**
 
+> **Status 2026-08-05: WP-4 (PR #318) ist erledigt, dieses WP ist bereit, sobald der OSM-Reimport gelaufen ist (siehe [WP-6](2026-08-04-gis-wp6-osm-datenausbau.md), aktueller Blocker).** Ein offener Punkt aus dem WP-4-Review, den dieses WP übernimmt: der Epoch-Lesevertrag, hier konkret festgelegt statt nur als Optionen skizziert.
+>
+> - **Vollständig heißt:** eine neue Tabelle `geo_features_epochs` (`epoch bigint PRIMARY KEY, completed_at timestamptz NOT NULL`) bekommt genau eine Zeile pro Epoch — geschrieben von `build-geo-features.ts` erst *nach* dem finalen `DELETE FROM geo_features WHERE features_epoch < epoch`. Vor diesem Zeitpunkt existiert die Epoch für Leser nicht.
+> - **Leser und Precompute lesen ausschließlich die neueste vollständige Epoch:** `SELECT MAX(epoch) FROM geo_features_epochs`, nie `MAX(features_epoch) FROM geo_features` direkt — Letzteres würde während eines laufenden Aufbaus die gerade entstehende, partielle Epoch treffen.
+> - **Abbruch und Wiederholung:** eine abgebrochene Epoch bekommt nie eine `geo_features_epochs`-Zeile und bleibt damit für Leser dauerhaft unsichtbar. Ihre Zeilen bleiben als Datenmüll in `geo_features` liegen, bis der nächste *erfolgreiche* Lauf sie über `WHERE features_epoch < epoch` mitlöscht (Epochs sind streng monoton steigend, das schließt übersprungene Epochs ein). Ein Retry ist damit einfach der nächste reguläre Lauf, kein Sonderfall.
+> - **Ohne vollständige Epoch wird nichts gelesen:** eine leere `geo_features_epochs`-Tabelle liefert `MAX(epoch) = NULL`; Precompute schreibt dann keine Zeile für die betroffene Auktion/Kategorie. Gleiche Semantik wie im Datenmodell unten definiert („fehlende Zeile = nie berechnet") — kein Fallback auf eine unvollständige Epoch.
+>
+> Zwei weitere WP-4-Randbedingungen, die dieser Job wiederverwenden sollte statt neu zu erfinden: ein eigener Postgres-Pool mit hartem Connection-Limit für Off-Peak-Batch-Läufe (Lektion aus dem Prod-Totalausfall vom 2026-08-03), und ein Session-Advisory-Lock über den gesamten Lauf — `runExclusiveTask` serialisiert nur innerhalb eines Node-Prozesses, zwei Container liefen sonst gegeneinander.
+
 ## Warum
 
 Heute liegt Geometrie im Anfragepfad. Der `EXPLAIN` der `nearSea`-Suche über alle Länder:
