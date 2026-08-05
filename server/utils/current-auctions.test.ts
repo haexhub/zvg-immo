@@ -8,6 +8,7 @@ const {
   auctionToCurrentRow,
   coordinatesMovedSignificantly,
   ensureAuctionIdentity,
+  recordGeocodeAttempts,
   upsertCurrentAuctions,
 } = await import('./current-auctions')
 
@@ -138,6 +139,42 @@ describe('auction identity persistence', () => {
   })
 })
 
+describe('recordGeocodeAttempts', () => {
+  it('updates geocode_attempted_at/result/provider by identity', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [] })
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+
+    await recordGeocodeAttempts([
+      { platform: 'se-kronofogden', externalId: '101782', result: 'geocoded', provider: 'nominatim' },
+      { platform: 'se-kronofogden', externalId: '101877', result: 'unresolvable', provider: 'nominatim' },
+    ], '2026-08-05T10:00:00.000Z')
+
+    expect(query).toHaveBeenCalledTimes(1)
+    const [sql, values] = query.mock.calls[0]!
+    expect(sql).toContain('UPDATE auctions SET')
+    expect(sql).toContain('geocode_attempted_at = v.attempted_at')
+    expect(sql).toContain('geocode_result = v.result')
+    expect(sql).toContain('geocode_provider = v.provider')
+    expect(values).toEqual([
+      'se-kronofogden', '101782', '2026-08-05T10:00:00.000Z', 'geocoded', 'nominatim',
+      'se-kronofogden', '101877', '2026-08-05T10:00:00.000Z', 'unresolvable', 'nominatim',
+    ])
+  })
+
+  it('is a no-op without a configured pool or with no attempts', async () => {
+    vi.mocked(getPool).mockReturnValue(null)
+    await expect(recordGeocodeAttempts(
+      [{ platform: 'a', externalId: 'b', result: 'pending', provider: 'locationiq' }],
+      '2026-08-05T10:00:00.000Z',
+    )).resolves.toBeUndefined()
+
+    const query = vi.fn()
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+    await recordGeocodeAttempts([], '2026-08-05T10:00:00.000Z')
+    expect(query).not.toHaveBeenCalled()
+  })
+})
+
 describe('coordinatesMovedSignificantly', () => {
   it('treats the first coordinates an auction ever gets as a move', () => {
     expect(coordinatesMovedSignificantly(null, { lat: 52.1, lng: 13.2 })).toBe(true)
@@ -255,5 +292,21 @@ describeDb('upsertCurrentAuctions (real Postgres)', () => {
     } finally {
       vi.unstubAllGlobals()
     }
+  })
+
+  it('persists geocode_attempted_at/result/provider (WP-3 observability)', async () => {
+    await upsertCurrentAuctions([makeAuction({ ...TEST_IDENTITY })], '2026-08-02T11:00:00.000Z')
+
+    await recordGeocodeAttempts([
+      { platform: TEST_IDENTITY.platform, externalId: TEST_IDENTITY.externalId, result: 'unresolvable', provider: 'nominatim' },
+    ], '2026-08-05T09:00:00.000Z')
+
+    const { rows } = await pool.query<{ geocode_attempted_at: Date; geocode_result: string; geocode_provider: string }>(
+      'SELECT geocode_attempted_at, geocode_result, geocode_provider FROM auctions WHERE platform = $1 AND external_id = $2',
+      [TEST_IDENTITY.platform, TEST_IDENTITY.externalId],
+    )
+    expect(rows[0]?.geocode_result).toBe('unresolvable')
+    expect(rows[0]?.geocode_provider).toBe('nominatim')
+    expect(rows[0]?.geocode_attempted_at?.toISOString()).toBe('2026-08-05T09:00:00.000Z')
   })
 })

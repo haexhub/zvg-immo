@@ -10,11 +10,16 @@ import type { Auction } from '~/types/auction'
 import { crawlAll } from '../crawlers/registry'
 import { enrichInBatches as enrichAtDetails } from '../crawlers/at/detail'
 import { enrichInBatches as enrichBidditDetails, formatVerkehrswertText } from '../crawlers/biddit/detail'
-import { geocodeAddress } from '../utils/geocode'
+import { activeGeocoderProvider, geocodeAddress, geocodeStatus } from '../utils/geocode'
 import { writeAuctionDetails } from '../utils/auction-details'
 import { applyAuctionExtraction } from '../utils/auction-extraction'
 import { mergeStoredAuction } from '../utils/auction-merge'
-import { ensureAuctionIdentity, upsertCurrentAuctions } from '../utils/current-auctions'
+import {
+  ensureAuctionIdentity,
+  recordGeocodeAttempts,
+  upsertCurrentAuctions,
+  type GeocodeAttempt,
+} from '../utils/current-auctions'
 import { readAuctionRecordMap } from '../utils/auction-record'
 import {
   cacheKey,
@@ -51,6 +56,8 @@ async function runGeocode(signal: AbortSignal) {
     let processed = 0
     let geocoded = 0
     let failed = 0
+    const provider = activeGeocoderProvider()
+    const attempts: GeocodeAttempt[] = []
     const startGeo = Date.now()
     for (const a of withAddress) {
       throwIfTaskAborted(signal)
@@ -65,6 +72,12 @@ async function runGeocode(signal: AbortSignal) {
       } catch {
         failed++
       }
+      // Recorded regardless of outcome: "never attempted" vs "attempted, still
+      // unresolved" is only distinguishable in the DB once this run stamps it
+      // (see WP-3) — 'pending' below means the cache still has un-queried
+      // variants (e.g. the failure cooldown skipped them this run).
+      const result = await geocodeStatus(a.address, a.country)
+      attempts.push({ platform: a.platform, externalId: a.externalId, result, provider })
       if (processed % 100 === 0 || processed === withAddress.length) {
         const rate = processed / Math.max(1, (Date.now() - startGeo) / 1000)
         console.log(
@@ -72,6 +85,7 @@ async function runGeocode(signal: AbortSignal) {
         )
       }
     }
+    await recordGeocodeAttempts(attempts, new Date().toISOString())
 
     // AT-Edikte and Biddit both hide their Schätzwert / estimatedPrice on the
     // listing path the API uses. Enrich missing entries here and persist them
