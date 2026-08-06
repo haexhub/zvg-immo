@@ -74,13 +74,13 @@ const swiperModules = [Navigation, Keyboard]
 
 <template>
   <article
-    class="group h-full flex flex-col rounded-xl border bg-card text-card-foreground shadow-sm overflow-hidden transition-all hover:shadow-md"
-    :class="{
-      'opacity-60': props.auction.cancelled,
-      'ring-2 ring-amber-500 border-amber-500 shadow-md': props.active,
-    }"
+    class="group h-full flex flex-col"
+    :class="{ 'opacity-60': props.auction.cancelled }"
   >
-    <div class="relative border-b">
+    <div
+      class="relative rounded-2xl overflow-hidden"
+      :class="{ 'ring-2 ring-amber-500': props.active }"
+    >
       <Swiper
         v-if="props.auction.galleryUrls.length > 0"
         :modules="swiperModules"
@@ -109,7 +109,7 @@ const swiperModules = [Navigation, Keyboard]
       <button
         v-if="props.loggedIn"
         type="button"
-        class="absolute z-10 right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-background/90 shadow-sm transition-colors hover:bg-background"
+        class="absolute z-10 right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-background/90 backdrop-blur-sm transition-colors hover:bg-background"
         :class="{ 'text-amber-500': props.inWatchlist }"
         :title="props.inWatchlist ? $t('search.removeFromWatchlist') : $t('search.addToWatchlist')"
         @click="emit('toggle-watchlist')"
@@ -118,14 +118,14 @@ const swiperModules = [Navigation, Keyboard]
       </button>
     </div>
 
-    <NuxtLink :to="detailPath(props.auction)" class="p-3 flex-1 flex flex-col gap-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+    <NuxtLink :to="detailPath(props.auction)" class="mt-3 flex-1 flex flex-col gap-1 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+      <p class="text-sm font-semibold leading-tight">{{ props.auction.address || props.auction.title || $t('search.unknownPropertyType') }}</p>
       <span class="font-mono text-xs text-muted-foreground">{{ props.auction.caseNumber }}</span>
-      <p class="text-sm font-medium leading-tight">{{ props.auction.address || props.auction.title || $t('search.unknownPropertyType') }}</p>
       <div v-if="props.auction.extraction?.features?.length" class="flex flex-wrap gap-1">
         <span
           v-for="f in props.auction.extraction.features.slice(0, 3)"
           :key="f"
-          class="rounded-md bg-muted/60 text-muted-foreground px-1.5 py-0.5 text-xs"
+          class="rounded-full bg-muted/60 text-muted-foreground px-2 py-0.5 text-xs"
         >{{ featureLabel(f) }}</span>
       </div>
       <p class="mt-auto pt-1 font-semibold tabular-nums">

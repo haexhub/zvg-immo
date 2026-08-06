@@ -41,11 +41,11 @@ watch(() => props.scrollTargetKey, async (key) => {
       class="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(16rem,1fr))]"
       aria-hidden="true"
     >
-      <li v-for="i in 8" :key="i" class="h-full animate-pulse overflow-hidden rounded-xl border bg-card">
-        <div class="aspect-16/10 bg-muted" />
-        <div class="flex flex-col gap-2 p-3">
-          <div class="h-3 w-1/3 rounded bg-muted" />
+      <li v-for="i in 8" :key="i" class="h-full animate-pulse">
+        <div class="aspect-16/10 rounded-2xl bg-muted" />
+        <div class="flex flex-col gap-2 pt-3">
           <div class="h-4 w-4/5 rounded bg-muted" />
+          <div class="h-3 w-1/3 rounded bg-muted" />
           <div class="h-4 w-1/2 rounded bg-muted" />
         </div>
       </li>
