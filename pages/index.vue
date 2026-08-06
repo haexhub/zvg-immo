@@ -177,8 +177,6 @@ function pickRecent(query: Record<string, string>): void {
     <!-- Search -->
     <section class="border-b px-6 py-10 sm:py-14">
       <div class="mx-auto flex w-full max-w-2xl flex-col items-center gap-4 text-center">
-        <h1 class="text-3xl font-bold tracking-tight sm:text-4xl">{{ $t('landing.hero.headline') }}</h1>
-        <p class="max-w-xl text-muted-foreground">{{ $t('landing.hero.subheadline') }}</p>
         <form ref="heroSearchRef" class="flex w-full max-w-2xl items-center gap-2" @submit.prevent="submitSearch">
           <SearchBar
             v-model:search="search"
