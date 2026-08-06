@@ -45,6 +45,10 @@ export function parseOpenAiExtractionResponse(resp: unknown): Record<string, unk
 export class OpenAiCompatibleProvider implements ExtractionProvider {
   constructor(private config: LlmConfig) {}
 
+  private get providerLabel(): string {
+    return this.config.provider ?? 'openai-compatible'
+  }
+
   async extract(
     req: ExtractionRequest,
     opts?: { onRequestError?: (err: unknown) => void },
@@ -84,13 +88,13 @@ export class OpenAiCompatibleProvider implements ExtractionProvider {
       // A caller that passes onRequestError (extractByLlm) wants to keep
       // batching past a single failed candidate; one that doesn't (e.g.
       // callSummaryLlm/callTranslationLlm) wants the failure to reject.
-      if (!opts?.onRequestError) throw new LlmProviderError('openai-compatible', (err as Error).message, { cause: err })
+      if (!opts?.onRequestError) throw new LlmProviderError(this.providerLabel, (err as Error).message, { cause: err })
       console.warn(`[extract/llm] request failed: ${(err as Error).message}`)
       opts.onRequestError(err)
       return null
     }
     const parsed = parseOpenAiExtractionResponse(resp)
-    if (!parsed) throw new LlmProviderError('openai-compatible', 'ungültige oder leere Provider-Antwort')
+    if (!parsed) throw new LlmProviderError(this.providerLabel, 'ungültige oder leere Provider-Antwort')
     return parsed
   }
 }
