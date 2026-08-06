@@ -116,6 +116,7 @@ onMounted(probeSession)
         <SettingsReprocessCard />
         <SettingsCountrySourcesCard />
         <SettingsOsmImportCard />
+        <SettingsGeoMetricsCard />
         <SettingsExternalDataCard />
         <SettingsDisplayCard />
 

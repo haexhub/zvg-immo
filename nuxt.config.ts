@@ -265,6 +265,20 @@ export default defineNuxtConfig({
       // remaining externalData adapters (market/hazard) are a cheap no-op
       // until configured.
       '15 3 * * *': ['external-enrichment'],
+      // Daily: rebuild geo_features from osm_local_elements (GIS WP-4) — picks
+      // up whatever OSM data changed since yesterday, whether from an admin-
+      // requested reimport (see osm-import.get.ts) or a newly enabled
+      // country's first auto-load. Also manually triggerable from /settings
+      // (geo-metrics.post.ts) to unblock the same day instead of waiting for
+      // this tick.
+      '0 2 * * *': ['build-geo-features'],
+      // Daily, offset 3h from build-geo-features so a full rebuild (tens of
+      // millions of osm_local_elements rows across all countries) has time to
+      // publish a new epoch first; otherwise this just reports itself skipped
+      // (see build-auction-geo-metrics.ts's latestCompleteEpoch check) and
+      // picks it up on the next tick. Precomputes the auction_geo_metrics
+      // columns the search's Umgebungsfilter (GIS WP-5) reads.
+      '0 5 * * *': ['build-auction-geo-metrics'],
       // Monthly: refresh the local EU Flood Risk Areas polygon cache (see
       // server/tasks/import-eu-flood-risk-cache.ts) from the EEA's published
       // service, into whatever path the eu-flood-risk-areas source resolves to
