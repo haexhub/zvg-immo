@@ -5,6 +5,7 @@ import type { AuctionSummary } from '~/server/api/auctions.get'
 const props = defineProps<{
   auctions: AuctionSummary[]
   totalCount: number
+  canLoadMore: boolean
   pending: boolean
   loggedIn: boolean
   watchlistIds: Map<string, string>
@@ -72,7 +73,7 @@ watch(() => props.scrollTargetKey, async (key) => {
       </li>
     </ul>
 
-    <div v-if="props.auctions.length < props.totalCount" class="flex flex-col items-center gap-2 pt-2 pb-4">
+    <div v-if="props.canLoadMore" class="flex flex-col items-center gap-2 pt-2 pb-4">
       <p class="text-xs text-muted-foreground">{{ $t('search.loadMoreShown', { shown: props.auctions.length, total: props.totalCount }) }}</p>
       <Button type="button" variant="outline" @click="emit('load-more')">
         {{ $t('search.loadMore') }}
