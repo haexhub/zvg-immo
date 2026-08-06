@@ -100,12 +100,16 @@ async function runReprocessTest(): Promise<void> {
         <dt class="text-muted-foreground">{{ $t('settings.reprocess.llmErrors') }}</dt>
         <dd>{{ reprocessResult.llmErrors }}</dd>
       </dl>
-      <p v-if="reprocessResult?.warning" class="text-sm text-amber-600 dark:text-amber-400">
-        {{ $t('settings.reprocess.warning', { message: reprocessResult.warning }) }}
-      </p>
-      <p v-if="reprocessResult?.lastLlmError" class="text-sm text-destructive">
-        {{ $t('settings.reprocess.lastLlmError', { message: reprocessResult.lastLlmError }) }}
-      </p>
+      <SettingsMessageDetails
+        v-if="reprocessResult?.warning"
+        :text="$t('settings.reprocess.warning', { message: reprocessResult.warning })"
+        variant="warning"
+      />
+      <SettingsMessageDetails
+        v-if="reprocessResult?.lastLlmError"
+        :text="$t('settings.reprocess.lastLlmError', { message: reprocessResult.lastLlmError })"
+        variant="error"
+      />
     </CardContent>
   </Card>
 </template>

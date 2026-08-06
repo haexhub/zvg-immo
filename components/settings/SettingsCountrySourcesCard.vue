@@ -225,9 +225,12 @@ onBeforeUnmount(stopProgressPolling)
           duration: Math.round(countryEnrichResult.durationMs / 1000),
         }) }}
       </p>
-      <p v-if="countryEnrichResult?.warning" role="alert" class="text-sm text-amber-600 dark:text-amber-400">
-        {{ countryEnrichResult.warning }}
-      </p>
+      <SettingsMessageDetails
+        v-if="countryEnrichResult?.warning"
+        :text="countryEnrichResult.warning"
+        variant="warning"
+        role="alert"
+      />
       <p v-if="countryEnrichResult?.followUpTasksStarted" class="text-sm text-muted-foreground">
         {{ $t('settings.sources.followUpTasksStarted') }}
       </p>
@@ -260,12 +263,16 @@ onBeforeUnmount(stopProgressPolling)
             </p>
           </li>
         </ul>
-        <p v-if="llmBatchJobs.enrichStatus.lastError" class="text-destructive">
-          {{ $t('settings.sources.enrichStatusLastError', { message: llmBatchJobs.enrichStatus.lastError }) }}
-        </p>
-        <p v-if="llmBatchJobs.enrichStatus.lastWarning" class="text-amber-600 dark:text-amber-400">
-          {{ llmBatchJobs.enrichStatus.lastWarning }}
-        </p>
+        <SettingsMessageDetails
+          v-if="llmBatchJobs.enrichStatus.lastError"
+          :text="$t('settings.sources.enrichStatusLastError', { message: llmBatchJobs.enrichStatus.lastError })"
+          variant="error"
+        />
+        <SettingsMessageDetails
+          v-if="llmBatchJobs.enrichStatus.lastWarning"
+          :text="llmBatchJobs.enrichStatus.lastWarning"
+          variant="warning"
+        />
       </div>
 
       <div v-if="llmBatchJobs?.reprocessStatus" class="text-sm space-y-1">
@@ -295,18 +302,24 @@ onBeforeUnmount(stopProgressPolling)
             </p>
           </li>
         </ul>
-        <p v-if="llmBatchJobs.reprocessStatus.lastWarning" class="text-amber-600 dark:text-amber-400">
-          {{ $t('settings.sources.llmStatusLastWarning', { message: llmBatchJobs.reprocessStatus.lastWarning }) }}
-        </p>
-        <p v-if="llmBatchJobs.reprocessStatus.lastError" class="text-destructive">
-          {{ $t('settings.sources.llmStatusLastError', { message: llmBatchJobs.reprocessStatus.lastError }) }}
-        </p>
+        <SettingsMessageDetails
+          v-if="llmBatchJobs.reprocessStatus.lastWarning"
+          :text="$t('settings.sources.llmStatusLastWarning', { message: llmBatchJobs.reprocessStatus.lastWarning })"
+          variant="warning"
+        />
+        <SettingsMessageDetails
+          v-if="llmBatchJobs.reprocessStatus.lastError"
+          :text="$t('settings.sources.llmStatusLastError', { message: llmBatchJobs.reprocessStatus.lastError })"
+          variant="error"
+        />
         <p v-if="llmBatchJobs.reprocessStatus.lastResult?.llmErrors" class="text-destructive">
           {{ $t('settings.sources.llmStatusLlmErrors', { count: llmBatchJobs.reprocessStatus.lastResult.llmErrors }) }}
         </p>
-        <p v-if="llmBatchJobs.reprocessStatus.lastLlmError" class="text-destructive">
-          {{ $t('settings.sources.llmStatusLastLlmError', { message: llmBatchJobs.reprocessStatus.lastLlmError }) }}
-        </p>
+        <SettingsMessageDetails
+          v-if="llmBatchJobs.reprocessStatus.lastLlmError"
+          :text="$t('settings.sources.llmStatusLastLlmError', { message: llmBatchJobs.reprocessStatus.lastLlmError })"
+          variant="error"
+        />
       </div>
 
       <div v-if="llmBatchJobs?.offloadImagesStatus?.finishedAt" class="text-sm space-y-1">
@@ -317,12 +330,18 @@ onBeforeUnmount(stopProgressPolling)
             freedMb: Math.round((llmBatchJobs.offloadImagesStatus.lastResult?.freedBytes ?? 0) / 1024 / 1024),
           }) }}
         </p>
-        <p v-if="llmBatchJobs.offloadImagesStatus.lastWarning" role="alert" class="text-amber-600 dark:text-amber-400">
-          {{ llmBatchJobs.offloadImagesStatus.lastWarning }}
-        </p>
-        <p v-if="llmBatchJobs.offloadImagesStatus.lastError" role="alert" class="text-destructive">
-          {{ $t('settings.sources.offloadStatusLastError', { message: llmBatchJobs.offloadImagesStatus.lastError }) }}
-        </p>
+        <SettingsMessageDetails
+          v-if="llmBatchJobs.offloadImagesStatus.lastWarning"
+          :text="llmBatchJobs.offloadImagesStatus.lastWarning"
+          variant="warning"
+          role="alert"
+        />
+        <SettingsMessageDetails
+          v-if="llmBatchJobs.offloadImagesStatus.lastError"
+          :text="$t('settings.sources.offloadStatusLastError', { message: llmBatchJobs.offloadImagesStatus.lastError })"
+          variant="error"
+          role="alert"
+        />
       </div>
 
       <div v-if="llmBatchJobs?.externalEnrichmentStatus" class="text-sm space-y-1">
@@ -337,12 +356,18 @@ onBeforeUnmount(stopProgressPolling)
             duration: Math.round((llmBatchJobs.externalEnrichmentStatus.lastResult?.durationMs ?? 0) / 1000),
           }) }}
         </p>
-        <p v-if="llmBatchJobs.externalEnrichmentStatus.lastWarning" role="alert" class="text-amber-600 dark:text-amber-400">
-          {{ llmBatchJobs.externalEnrichmentStatus.lastWarning }}
-        </p>
-        <p v-if="llmBatchJobs.externalEnrichmentStatus.lastError" role="alert" class="text-destructive">
-          {{ $t('settings.sources.externalStatusLastError', { message: llmBatchJobs.externalEnrichmentStatus.lastError }) }}
-        </p>
+        <SettingsMessageDetails
+          v-if="llmBatchJobs.externalEnrichmentStatus.lastWarning"
+          :text="llmBatchJobs.externalEnrichmentStatus.lastWarning"
+          variant="warning"
+          role="alert"
+        />
+        <SettingsMessageDetails
+          v-if="llmBatchJobs.externalEnrichmentStatus.lastError"
+          :text="$t('settings.sources.externalStatusLastError', { message: llmBatchJobs.externalEnrichmentStatus.lastError })"
+          variant="error"
+          role="alert"
+        />
       </div>
 
       <form class="space-y-3" @submit.prevent="saveCountrySources">

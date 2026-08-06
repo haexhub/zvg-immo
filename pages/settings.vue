@@ -71,7 +71,7 @@ onMounted(probeSession)
 
 <template>
   <main class="px-4 py-6">
-    <div class="max-w-2xl mx-auto space-y-6">
+    <div class="mx-auto max-w-6xl space-y-6">
       <div class="flex items-center justify-between gap-3">
         <NuxtLink to="/search" class="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
           <ArrowLeft class="h-4 w-4" /> {{ $t('settings.back') }}
@@ -83,7 +83,7 @@ onMounted(probeSession)
       </div>
       <h1 class="text-2xl font-bold tracking-tight">{{ $t('settings.heading') }}</h1>
 
-      <Card v-if="!authed">
+      <Card v-if="!authed" class="mx-auto max-w-2xl">
         <CardHeader>
           <CardTitle>{{ $t('settings.login.title') }}</CardTitle>
         </CardHeader>
