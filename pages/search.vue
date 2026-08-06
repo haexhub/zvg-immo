@@ -13,7 +13,6 @@ definePageMeta({ layout: 'search' })
 
 const { user } = useAuth()
 const { t } = useI18n()
-const intlLocale = useIntlLocale()
 
 // Desktop shows list + map side by side; below this breakpoint they collapse
 // into the two SearchTabs panes (see template) — matches SiteHeader's own
@@ -40,7 +39,6 @@ const {
   authorityFilter,
   categoryFilter,
   boundToMap,
-  headerLabel,
 } = injectedSearchState
 const isDesktop = computed(() => mounted.value && mediaIsDesktop.value)
 
@@ -261,15 +259,6 @@ watch(sortedList, () => {
 // and region selections still recentre too.
 const geoFitKey = computed(() => `${selectedCountries.value.join(',')}:${selectedRegionKeys.value.join(',')}:${debouncedSearch.value}`)
 
-const totals = computed(() => {
-  if (!data.value) return { gesamt: 0, aktiv: 0, cancelled: 0 }
-  return {
-    gesamt: data.value.total,
-    aktiv: data.value.active,
-    cancelled: data.value.cancelled,
-  }
-})
-
 // Validate URL-restored authorityFilter / categoryFilter once data has loaded.
 // Invalid values produce silent 0-result filtering otherwise.
 watch(data, () => {
@@ -290,18 +279,6 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
 
 <template>
   <main class="h-full flex flex-col px-4 py-3">
-    <header class="shrink-0 mb-3">
-      <div class="flex items-baseline gap-x-5 gap-y-1 flex-wrap">
-        <h1 class="text-2xl font-bold tracking-tight">{{ $t('search.titleWithLabel', { label: headerLabel }) }}</h1>
-        <div v-if="data" class="flex flex-wrap items-center gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
-          <span><span class="font-semibold text-foreground">{{ totals.gesamt }}</span> {{ $t('search.total') }}</span>
-          <span><span class="font-semibold text-emerald-600 dark:text-emerald-500">{{ totals.aktiv }}</span> {{ $t('search.active') }}</span>
-          <span><span class="font-semibold">{{ totals.cancelled }}</span> {{ $t('search.cancelled') }}</span>
-          <span v-if="data">{{ $t('search.asOf', { date: new Date(data.fetchedAt).toLocaleString(intlLocale) }) }}</span>
-        </div>
-      </div>
-    </header>
-
     <div class="flex-1 min-h-0">
       <div v-if="isDesktop" class="h-full flex gap-4">
         <AuctionMapPane
