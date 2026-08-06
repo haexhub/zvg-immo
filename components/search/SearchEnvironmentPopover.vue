@@ -56,7 +56,7 @@ function apply(): void {
 
 <template>
   <div class="flex h-full flex-col md:h-auto md:max-h-[70vh]">
-    <div class="flex-1 overflow-y-auto space-y-6 pb-4">
+    <div class="flex-1 overflow-y-auto space-y-6 p-1 pr-4 pb-4">
       <div v-for="s in SLIDERS" :key="s.key" class="space-y-2">
         <div class="flex items-center justify-between">
           <Label>{{ $t(s.label) }}</Label>
