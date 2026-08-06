@@ -227,6 +227,31 @@ async function loadMore(): Promise<void> {
   }
 }
 
+// mapVisibleKeys (above) only narrows what's already loaded — it can't
+// surface matches sitting on a page loadMore() hasn't fetched yet, since
+// /api/auctions paginates in relevance/date/price order, not by geography.
+// So zooming into an area can leave the list empty even though the map
+// shows markers there. Auto-load a few more pages whenever the viewport has
+// matches the loaded pages don't cover, capped so an unfiltered, zoomed-out
+// view (thousands of matches scattered across hundreds of pages) can't turn
+// into a runaway background fetch — past the cap, "Mehr laden" still works.
+const AUTO_LOAD_MAX_PAGES = 5
+let autoLoadBoundsKey: string | null = null
+let autoLoadCount = 0
+watchEffect(() => {
+  if (!mapVisibleKeys.value || !data.value || loadMorePending.value) return
+  const boundsKey = JSON.stringify(mapBounds.value)
+  if (boundsKey !== autoLoadBoundsKey) {
+    autoLoadBoundsKey = boundsKey
+    autoLoadCount = 0
+  }
+  if (autoLoadCount >= AUTO_LOAD_MAX_PAGES) return
+  if (listBase.value.length >= mapVisibleKeys.value.size) return
+  if (data.value.auctions.length >= data.value.total) return
+  autoLoadCount++
+  void loadMore()
+})
+
 const hoveredAuctionKey = ref<string | null>(null)
 const selectedAuctionKey = ref<string | null>(null)
 const scrollTargetKey = ref<string | null>(null)
