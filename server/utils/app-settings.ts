@@ -119,10 +119,10 @@ export async function setLlmMaxTokens(db: Pool, kind: LlmMaxTokensKind, value: n
 // row = keep using the ENV-configured provider (nuxt.config.ts's
 // extractLlm.*), same graceful-degrade contract as the max-tokens settings
 // above.
-export type LlmProvider = 'claude-proxy' | 'openai-compatible' | 'gemini-native'
+export type LlmProvider = 'claude-proxy' | 'openai-compatible' | 'gemini-native' | 'openrouter'
 export type LlmExecutionMode = 'sync' | 'batch'
 
-export const LLM_PROVIDERS: LlmProvider[] = ['claude-proxy', 'openai-compatible', 'gemini-native']
+export const LLM_PROVIDERS: LlmProvider[] = ['claude-proxy', 'openai-compatible', 'gemini-native', 'openrouter']
 export const LLM_EXECUTION_MODES: LlmExecutionMode[] = ['sync', 'batch']
 export const DEFAULT_LLM_EXECUTION_MODE: LlmExecutionMode = 'sync'
 

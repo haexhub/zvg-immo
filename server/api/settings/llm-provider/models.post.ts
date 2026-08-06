@@ -8,6 +8,7 @@
 //   Model availability genuinely varies by key (see providers/gemini-native.ts
 //   DEFAULT_MODEL comment — 'gemini-2.5-flash' 404s for newly created keys),
 //   so this is queried live rather than hard-coded.
+// - openrouter: OpenRouter's own /models catalog (public, no auth needed).
 // - openai-compatible: arbitrary self-hosted/third-party endpoints with no
 //   common discovery contract — the UI keeps a free-text input for it and
 //   never calls this route.
@@ -26,6 +27,14 @@ async function fetchClaudeProxyModels(baseUrl: string): Promise<LlmModelOption[]
     { signal: AbortSignal.timeout(10_000) },
   )
   return (res.data ?? []).map((m) => ({ id: m.id, label: m.display_name || m.id }))
+}
+
+async function fetchOpenRouterModels(baseUrl: string): Promise<LlmModelOption[]> {
+  const res = await $fetch<{ data: { id: string; name?: string }[] }>(
+    `${baseUrl.replace(/\/$/, '')}/models`,
+    { signal: AbortSignal.timeout(10_000) },
+  )
+  return (res.data ?? []).map((m) => ({ id: m.id, label: m.name || m.id }))
 }
 
 async function fetchGeminiModels(apiKey: string): Promise<LlmModelOption[]> {
@@ -70,6 +79,15 @@ export default defineEventHandler(async (event) => {
       return { models: await fetchClaudeProxyModels(baseUrl) }
     } catch {
       throw createError({ statusCode: 502, statusMessage: 'Proxy nicht erreichbar, Modelle konnten nicht geladen werden.' })
+    }
+  }
+
+  if (provider === 'openrouter') {
+    if (!baseUrl) throw createError({ statusCode: 400, statusMessage: 'baseUrl fehlt.' })
+    try {
+      return { models: await fetchOpenRouterModels(baseUrl) }
+    } catch {
+      throw createError({ statusCode: 502, statusMessage: 'OpenRouter nicht erreichbar, Modelle konnten nicht geladen werden.' })
     }
   }
 

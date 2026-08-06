@@ -211,6 +211,7 @@
       "providerLabel": "Provider",
       "providerClaudeProxy": "Claude proxy (OAuth)",
       "providerOpenaiCompatible": "OpenAI-compatible",
+      "providerOpenrouter": "OpenRouter",
       "providerGeminiNative": "Gemini (native)",
       "executionModeLabel": "API call",
       "executionModeSync": "Sync",

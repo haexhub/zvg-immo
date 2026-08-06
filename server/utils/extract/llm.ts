@@ -73,7 +73,7 @@ export interface LlmConfig {
    *  'gemini-native' opts into Gemini's own API instead of its OpenAI-compat
    *  layer, for its one genuine extra capability: native PDF understanding
    *  (see `document` ContentPart below). */
-  provider?: 'claude-proxy' | 'openai-compatible' | 'gemini-native'
+  provider?: 'claude-proxy' | 'openai-compatible' | 'gemini-native' | 'openrouter'
   baseUrl: string
   apiKey?: string
   model: string
@@ -275,6 +275,7 @@ export function getProvider(config: LlmConfig): ExtractionProvider {
     case 'claude-proxy':
       return new ClaudeProxyProvider(config)
     case 'openai-compatible':
+    case 'openrouter':
       return new OpenAiCompatibleProvider(config)
     case 'gemini-native':
       return new GeminiNativeProvider(config)

@@ -59,6 +59,7 @@ const LLM_PROVIDER_PRESETS: Record<LlmProvider, { baseUrl: string; model: string
   'claude-proxy': { baseUrl: 'http://haex-claude-proxy:8080', model: 'claude-sonnet-5' },
   'gemini-native': { baseUrl: 'https://generativelanguage.googleapis.com', model: 'gemini-flash-latest' },
   'openai-compatible': { baseUrl: 'https://api.openai.com/v1', model: '' },
+  openrouter: { baseUrl: 'https://openrouter.ai/api/v1', model: '' },
 }
 
 const llmProfiles = ref<LlmProviderProfileForm[]>([])
@@ -283,6 +284,7 @@ onMounted(async () => {
                   <SelectItem value="claude-proxy">{{ $t('settings.llmProvider.providerClaudeProxy') }}</SelectItem>
                   <SelectItem value="gemini-native">{{ $t('settings.llmProvider.providerGeminiNative') }}</SelectItem>
                   <SelectItem value="openai-compatible">{{ $t('settings.llmProvider.providerOpenaiCompatible') }}</SelectItem>
+                  <SelectItem value="openrouter">{{ $t('settings.llmProvider.providerOpenrouter') }}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
