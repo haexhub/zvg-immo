@@ -133,19 +133,58 @@ describe('aggregate', () => {
 })
 
 describe('createOpenMeteoClimateNormalsEnhancer / readClimateNormals', () => {
+  // Models the same-cell serialization a real pg_advisory_xact_lock gives: a
+  // second lock request for a key already held waits for the holder's
+  // COMMIT/ROLLBACK before it proceeds. A successful write updates `row` so
+  // the loser's re-read (inside the lock) sees the winner's cached result.
   function fakePool(existingRow: Record<string, unknown> | null = null) {
     const inserted: unknown[][] = []
-    const query = vi.fn(async (sql: string, params: unknown[] = []) => {
-      if (sql.includes('SELECT') && sql.includes('FROM climate_cells')) {
-        return { rows: existingRow ? [existingRow] : [], rowCount: existingRow ? 1 : 0 }
-      }
-      if (sql.includes('INSERT INTO climate_cells')) {
-        inserted.push(params)
-        return { rows: [], rowCount: 1 }
-      }
-      throw new Error(`unexpected query: ${sql}`)
-    })
-    return { query, inserted } as unknown as Pool & { inserted: unknown[][] }
+    let row = existingRow
+    const locks = new Map<string, Promise<void>>()
+
+    async function acquireLock(key: string): Promise<() => void> {
+      while (locks.has(key)) await locks.get(key)
+      let release!: () => void
+      locks.set(key, new Promise((resolve) => { release = resolve }))
+      return () => { locks.delete(key); release() }
+    }
+
+    function makeQuery() {
+      let releaseLock: (() => void) | null = null
+      return vi.fn(async (sql: string, params: unknown[] = []) => {
+        if (sql === 'BEGIN') return { rows: [], rowCount: 0 }
+        if (sql === 'COMMIT' || sql === 'ROLLBACK') {
+          releaseLock?.()
+          releaseLock = null
+          return { rows: [], rowCount: 0 }
+        }
+        if (sql.includes('pg_advisory_xact_lock')) {
+          releaseLock = await acquireLock(String(params[0]))
+          return { rows: [], rowCount: 0 }
+        }
+        if (sql.includes('SELECT') && sql.includes('FROM climate_cells')) {
+          return { rows: row ? [row] : [], rowCount: row ? 1 : 0 }
+        }
+        if (sql.includes('INSERT INTO climate_cells')) {
+          inserted.push(params)
+          row = {
+            summer_avg_temp_c: String(params[2]),
+            winter_avg_temp_c: String(params[3]),
+            annual_precip_mm: params[4],
+            frost_days: params[5],
+            monthly: JSON.parse(params[6] as string),
+            source_version: params[7],
+            fetched_at: '2026-08-06T00:00:00.000Z',
+          }
+          return { rows: [], rowCount: 1 }
+        }
+        throw new Error(`unexpected query: ${sql}`)
+      })
+    }
+
+    const query = makeQuery()
+    const connect = vi.fn(async () => ({ query: makeQuery(), release: vi.fn() }))
+    return { query, connect, inserted } as unknown as Pool & { inserted: unknown[][] }
   }
 
   it('fetches, aggregates and caches on a miss', async () => {
@@ -165,6 +204,23 @@ describe('createOpenMeteoClimateNormalsEnhancer / readClimateNormals', () => {
 
     expect(normals?.periodStartYear).toBe(1991)
     expect(normals?.months).toHaveLength(12)
+    expect((db as unknown as { inserted: unknown[][] }).inserted).toHaveLength(1)
+  })
+
+  it('serializes concurrent misses on the same cold cell so only one fetch happens', async () => {
+    const db = fakePool(null)
+    const fetchImpl = vi.fn<typeof fetch>(async () => buildSampleArchiveResponse())
+
+    // Two nearby auctions that round to the same 0.1° cell, enriched at the
+    // same time (e.g. two different external-enrichment runs overlapping).
+    const [first, second] = await Promise.all([
+      readClimateNormals({ lat: 48.137, lng: 11.575 }, { db, checkedAt: '2026-08-06T00:00:00.000Z', fetchImpl }),
+      readClimateNormals({ lat: 48.161, lng: 11.599 }, { db, checkedAt: '2026-08-06T00:00:00.000Z', fetchImpl }),
+    ])
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(first?.months).toHaveLength(12)
+    expect(second?.months).toHaveLength(12)
     expect((db as unknown as { inserted: unknown[][] }).inserted).toHaveLength(1)
   })
 
@@ -205,6 +261,27 @@ describe('createOpenMeteoClimateNormalsEnhancer / readClimateNormals', () => {
     })
 
     expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects and does not cache a response with a short metric vector', async () => {
+    const db = fakePool(null)
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
+      daily: {
+        time: ['2020-01-01', '2020-01-02'],
+        temperature_2m_max: [5, 6],
+        temperature_2m_min: [1, 2],
+        // one entry short of `time` -> the whole response is incomplete
+        temperature_2m_mean: [3],
+        precipitation_sum: [0, 0],
+      },
+    }), { status: 200 }))
+
+    const normals = await readClimateNormals({ lat: 48.137, lng: 11.575 }, {
+      db, checkedAt: '2026-08-06T00:00:00.000Z', fetchImpl,
+    })
+
+    expect(normals).toBeNull()
+    expect((db as unknown as { inserted: unknown[][] }).inserted).toHaveLength(0)
   })
 
   it('applies the normals to the environment context and extends source attribution', async () => {

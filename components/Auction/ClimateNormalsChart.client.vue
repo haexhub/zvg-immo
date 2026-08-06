@@ -46,7 +46,7 @@ const colors = {
 }
 
 const monthLabels = computed(() => props.normals.months.map((m) =>
-  new Date(Date.UTC(2000, m.month - 1, 1)).toLocaleDateString(intlLocale.value, { month: 'short' })))
+  new Date(Date.UTC(2000, m.month - 1, 1)).toLocaleDateString(intlLocale.value, { month: 'short', timeZone: 'UTC' })))
 
 const chartData = computed<ChartData<'bar' | 'line'>>(() => ({
   labels: monthLabels.value,
@@ -109,6 +109,7 @@ const chartData = computed<ChartData<'bar' | 'line'>>(() => ({
 const chartOptions = computed<ChartOptions<'bar' | 'line'>>(() => ({
   responsive: true,
   maintainAspectRatio: false,
+  locale: intlLocale.value,
   interaction: { mode: 'index', intersect: false },
   plugins: {
     legend: {

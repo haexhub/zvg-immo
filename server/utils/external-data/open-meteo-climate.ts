@@ -13,7 +13,7 @@
 // Climate normals don't go stale (WP-7 doc: "einmal geholt, nie wieder"), so
 // a cell is fetched at most once, ever, keyed by its rounded coordinates.
 
-import type { Pool } from 'pg'
+import type { Pool, PoolClient } from 'pg'
 import type {
   Auction,
   LocationClimateMonthNormal,
@@ -82,11 +82,45 @@ export async function readClimateNormals(
   const cached = await readCachedCell(options.db, cell)
   if (cached) return toLocationClimateNormals(cached, options.checkedAt)
 
-  const daily = await fetchDailySeries(cell, options)
-  if (!daily) return null
-  const data = aggregate(daily)
-  await writeCachedCell(options.db, cell, data)
-  return toLocationClimateNormals(data, options.checkedAt)
+  // Cold cell: two concurrent requests can both observe the miss above
+  // before either has written the row. A per-cell advisory lock (held for
+  // the transaction, scoped to the checked-out client) serializes them, and
+  // the re-read after acquiring it lets the loser of the race serve the
+  // winner's freshly-cached row instead of hitting Open-Meteo again.
+  return withCellLock(options.db, cell, async (client) => {
+    const recached = await readCachedCell(client, cell)
+    if (recached) return toLocationClimateNormals(recached, options.checkedAt)
+
+    const daily = await fetchDailySeries(cell, options)
+    if (!daily) return null
+    const data = aggregate(daily)
+    await writeCachedCell(client, cell, data)
+    return toLocationClimateNormals(data, options.checkedAt)
+  })
+}
+
+async function withCellLock<T>(
+  db: Pool,
+  cell: { lat: number; lon: number },
+  fn: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+  const client = await db.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', [cellLockKey(cell)])
+    const result = await fn(client)
+    await client.query('COMMIT')
+    return result
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => undefined)
+    throw err
+  } finally {
+    client.release()
+  }
+}
+
+function cellLockKey(cell: { lat: number; lon: number }): string {
+  return `climate-cell:${cell.lat.toFixed(1)}:${cell.lon.toFixed(1)}`
 }
 
 /** Floors to the nearest 0.1° — matches WP-7's cell-assignment rule exactly
@@ -102,7 +136,7 @@ export function gridCell(lat: number, lng: number): { lat: number; lon: number }
   }
 }
 
-async function readCachedCell(db: Pool, cell: { lat: number; lon: number }): Promise<ClimateCellData | null> {
+async function readCachedCell(db: Pool | PoolClient, cell: { lat: number; lon: number }): Promise<ClimateCellData | null> {
   const { rows } = await db.query<{
     summer_avg_temp_c: string | null
     winter_avg_temp_c: string | null
@@ -134,7 +168,7 @@ async function readCachedCell(db: Pool, cell: { lat: number; lon: number }): Pro
 }
 
 async function writeCachedCell(
-  db: Pool,
+  db: Pool | PoolClient,
   cell: { lat: number; lon: number },
   data: ClimateCellData,
 ): Promise<void> {
@@ -198,14 +232,44 @@ async function fetchDailySeries(
 
   const daily = payload.daily
   if (!daily?.time?.length) return null
+  // A response with a missing or short metric vector would otherwise turn
+  // into all-null values for that metric (see validateDailyMetrics below),
+  // which silently aggregates to NaN/null and then gets cached as if it were
+  // a valid normal for this cell's source version — reject the whole
+  // response instead so the cell stays uncached and gets retried later.
+  const metrics = validateDailyMetrics(daily, daily.time.length)
+  if (!metrics) return null
   return daily.time.map((date, i) => ({
     year: Number(date.slice(0, 4)),
     month: Number(date.slice(5, 7)),
-    tempMax: numeric(daily.temperature_2m_max?.[i]),
-    tempMin: numeric(daily.temperature_2m_min?.[i]),
-    tempMean: numeric(daily.temperature_2m_mean?.[i]),
-    precip: numeric(daily.precipitation_sum?.[i]),
+    tempMax: metrics.tempMax[i]!,
+    tempMin: metrics.tempMin[i]!,
+    tempMean: metrics.tempMean[i]!,
+    precip: metrics.precip[i]!,
   }))
+}
+
+function validateDailyMetrics(
+  daily: NonNullable<ArchiveDailyResponse['daily']>,
+  length: number,
+): { tempMax: number[]; tempMin: number[]; tempMean: number[]; precip: number[] } | null {
+  const tempMax = daily.temperature_2m_max
+  const tempMin = daily.temperature_2m_min
+  const tempMean = daily.temperature_2m_mean
+  const precip = daily.precipitation_sum
+  if (
+    !isCompleteSeries(tempMax, length)
+    || !isCompleteSeries(tempMin, length)
+    || !isCompleteSeries(tempMean, length)
+    || !isCompleteSeries(precip, length)
+  ) {
+    return null
+  }
+  return { tempMax, tempMin, tempMean, precip }
+}
+
+function isCompleteSeries(field: (number | null)[] | undefined, length: number): field is number[] {
+  return Array.isArray(field) && field.length === length && field.every((v) => typeof v === 'number' && Number.isFinite(v))
 }
 
 const SUMMER_MONTHS = [6, 7, 8]
@@ -258,10 +322,6 @@ function mean(values: number[]): number {
 function round(value: number, decimals: number): number {
   const factor = 10 ** decimals
   return Math.round(value * factor) / factor
-}
-
-function numeric(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
 function parseNullableNumeric(value: string | null): number | null {
