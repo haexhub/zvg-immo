@@ -54,14 +54,9 @@
     }
   },
   "search": {
-    "titleWithLabel": "Foreclosure auctions {label}",
     "europe": "Europe",
     "countriesCount": "{count} countries",
     "regionsCount": "{count} regions",
-    "total": "total",
-    "active": "active",
-    "cancelled": "cancelled",
-    "asOf": "As of: {date}",
     "resultsCount": "{count} results",
     "onMap": "on map",
     "geocoded": "{done}/{total} geocoded",

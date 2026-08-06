@@ -54,14 +54,9 @@
     }
   },
   "search": {
-    "titleWithLabel": "Zwangsversteigerungen {label}",
     "europe": "Europa",
     "countriesCount": "{count} Länder",
     "regionsCount": "{count} Regionen",
-    "total": "gesamt",
-    "active": "aktiv",
-    "cancelled": "aufgehoben",
-    "asOf": "Stand: {date}",
     "resultsCount": "{count} Treffer",
     "onMap": "auf Karte",
     "geocoded": "{done}/{total} geokodiert",
