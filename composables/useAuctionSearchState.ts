@@ -82,7 +82,6 @@ export function useAuctionSearchState(options: {
   const hideRulesOnly = ref(
     route.query.llmOnly === '1' ? true : route.query.llmOnly === '0' ? false : options.hideRulesOnlyServerDefault.value,
   )
-  const boundToMap = ref(route.query.boundToMap === '1')
   const sortBy = ref<AuctionSearchSortBy>(querySortBy())
   const view = ref<'list' | 'map'>('list')
   const mapViewImpliedByCountryQuery = ref(false)
@@ -169,7 +168,6 @@ export function useAuctionSearchState(options: {
     if (featuresFilter.value.length) n++
     if (onlyWithPhotos.value) n++
     if (includeCancelled.value) n++
-    if (boundToMap.value) n++
     if (hideRulesOnly.value !== options.hideRulesOnlyServerDefault.value) n++
     return n
   })
@@ -228,7 +226,6 @@ export function useAuctionSearchState(options: {
     featuresFilter.value = []
     onlyWithPhotos.value = false
     includeCancelled.value = false
-    boundToMap.value = false
     hideRulesOnly.value = options.hideRulesOnlyServerDefault.value
   }
 
@@ -273,7 +270,7 @@ export function useAuctionSearchState(options: {
   })
 
   watch(
-    [selectedCountries, selectedRegionKeys, debouncedSearch, authorityFilter, priceMin, priceMax, landAreaMin, landAreaMax, livingAreaMin, livingAreaMax, yearBuiltMin, yearBuiltMax, renovationYearMin, renovationYearMax, nearSea, nearLake, nearRiver, nearMountain, nearAirport, urbanRural, nearLat, nearLng, nearRadius, categoryFilter, conditionFilter, featuresFilter, onlyWithPhotos, includeCancelled, hideRulesOnly, boundToMap, sortBy, view],
+    [selectedCountries, selectedRegionKeys, debouncedSearch, authorityFilter, priceMin, priceMax, landAreaMin, landAreaMax, livingAreaMin, livingAreaMax, yearBuiltMin, yearBuiltMax, renovationYearMin, renovationYearMax, nearSea, nearLake, nearRiver, nearMountain, nearAirport, urbanRural, nearLat, nearLng, nearRadius, categoryFilter, conditionFilter, featuresFilter, onlyWithPhotos, includeCancelled, hideRulesOnly, sortBy, view],
     () => {
       const query: Record<string, string> = {}
       if (selectedCountries.value.length) query.country = selectedCountries.value.join(',')
@@ -306,7 +303,6 @@ export function useAuctionSearchState(options: {
       if (featuresFilter.value.length) query.features = featuresFilter.value.join(',')
       if (onlyWithPhotos.value) query.photos = '1'
       if (includeCancelled.value) query.cancelled = '1'
-      if (boundToMap.value) query.boundToMap = '1'
       if (hideRulesOnly.value !== options.hideRulesOnlyServerDefault.value) query.llmOnly = hideRulesOnly.value ? '1' : '0'
       if (sortBy.value !== 'default') query.sort = sortBy.value
       if (view.value === 'map' && !mapViewImpliedByCountryQuery.value) query.view = 'map'
@@ -344,7 +340,6 @@ export function useAuctionSearchState(options: {
     conditionFilter.value = queryStr('condition', ALL_SCOPE)
     featuresFilter.value = queryList('features')
     onlyWithPhotos.value = q.photos === '1'
-    boundToMap.value = q.boundToMap === '1'
     hideRulesOnly.value = q.llmOnly === '1' ? true : q.llmOnly === '0' ? false : options.hideRulesOnlyServerDefault.value
     sortBy.value = querySortBy()
     const isMapView = q.view === 'map'
@@ -400,7 +395,6 @@ export function useAuctionSearchState(options: {
     featuresFilter,
     onlyWithPhotos,
     hideRulesOnly,
-    boundToMap,
     sortBy,
     headerLabel,
     activeFilterCount,

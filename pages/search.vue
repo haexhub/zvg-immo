@@ -38,7 +38,6 @@ const {
   debouncedSearch,
   authorityFilter,
   categoryFilter,
-  boundToMap,
 } = injectedSearchState
 const isDesktop = computed(() => mounted.value && mediaIsDesktop.value)
 
@@ -173,24 +172,31 @@ const filteredGeo = computed<GeoAuction[]>(() => {
   return geoData.value.auctions
 })
 
-// "Kartenbereich": when on, the list is restricted to auctions whose
-// coordinates fall inside the map's visible viewport (emitted by AuctionMap on
-// moveend). Only geocoded auctions can be placed, so ungeocoded ones drop out
-// of the list while this is active.
+// The list is always restricted to auctions whose coordinates fall inside the
+// map's visible viewport (emitted by AuctionMap on moveend), once the map has
+// reported one. Only geocoded auctions can be placed, so ungeocoded ones drop
+// out of the list once a viewport is known.
 type MapBounds = { north: number; south: number; east: number; west: number }
 const mapBounds = ref<MapBounds | null>(null)
 
+// filteredGeo already holds the whole matching set (up to MAX_MARKERS), not
+// just the page `filtered` has loaded so far — sizing this off `filtered`
+// instead would undercount and hide "load more" once bounds-filtering thins
+// the loaded page down.
+const mapVisibleKeys = computed<Set<string> | null>(() => {
+  if (!mapBounds.value) return null
+  const b = mapBounds.value
+  return new Set(filteredGeo.value
+    .filter((a) => a.lat >= b.south && a.lat <= b.north && a.lng >= b.west && a.lng <= b.east)
+    .map(auctionKey))
+})
+
 const listBase = computed<AuctionSummary[]>(() => {
-  if (boundToMap.value && mapBounds.value) {
-    const b = mapBounds.value
-    const visibleKeys = new Set(filteredGeo.value
-      .filter((a) => a.lat >= b.south && a.lat <= b.north && a.lng >= b.west && a.lng <= b.east)
-      .map(auctionKey))
-    return filtered.value.filter((auction) => visibleKeys.has(auctionKey(auction)))
-  }
-  return filtered.value
+  if (!mapVisibleKeys.value) return filtered.value
+  return filtered.value.filter((auction) => mapVisibleKeys.value!.has(auctionKey(auction)))
 })
 const sortedList = computed<AuctionSummary[]>(() => listBase.value)
+const listTotalCount = computed<number>(() => mapVisibleKeys.value ? mapVisibleKeys.value.size : (data.value?.total ?? 0))
 
 // The list view used to render every filtered auction as a full card in one
 // go — with the "all countries" default that's ~14.7k cards (~45MB of SSR
@@ -298,7 +304,7 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
         <AuctionListPane
           class="flex-1 min-h-0"
           :auctions="visibleAuctions"
-          :total-count="boundToMap ? sortedList.length : (data?.total ?? 0)"
+          :total-count="listTotalCount"
           :pending="pending"
           :logged-in="!!user"
           :watchlist-ids="watchlistIds"
@@ -313,7 +319,7 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
         v-else
         v-model="view"
         :auctions="visibleAuctions"
-        :total-count="boundToMap ? sortedList.length : (data?.total ?? 0)"
+        :total-count="listTotalCount"
         :pending="pending"
         :logged-in="!!user"
         :watchlist-ids="watchlistIds"
