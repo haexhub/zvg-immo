@@ -19,7 +19,6 @@
     "hero": {
       "searchPlaceholder": "Search location, property type or case number …",
       "searchCta": "Search",
-      "expandSearch": "Open search bar",
       "trust": ["100% free", "No sign-up needed", "Live from court portals"]
     },
     "rails": {

@@ -12,6 +12,11 @@ const mobileOpen = ref(false)
         {{ $t('nav.brand') }}
       </NuxtLink>
 
+      <!-- Teleport target: the landing hero's search bar slides in here once
+           it scrolls out from under this header (see pages/index.vue).
+           Empty otherwise, so it has no footprint on other pages. -->
+      <div id="header-search-target" class="min-w-0 flex-1" />
+
       <AuthStatus class="ml-auto hidden md:flex" />
 
       <Sheet v-model:open="mobileOpen">
