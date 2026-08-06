@@ -26,7 +26,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Auction, AuctionExtraction, CuratedPhoto } from '~/types/auction'
 import { normalizePhoto } from '~/lib/photo'
-import { crawlAll, listRegions, platforms } from '~/server/crawlers/registry'
+import { crawlAll, ensureEnabledCountriesLoaded, listRegions, platforms } from '~/server/crawlers/registry'
 import { ensureAuctionIdentity, upsertCurrentAuctions } from '~/server/utils/current-auctions'
 import { writeAuctionDetails } from '~/server/utils/auction-details'
 import { readAuctionRecordMap } from '~/server/utils/auction-record'
@@ -129,6 +129,11 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
     // shows up (at 0/N) as soon as the run starts rather than only once its
     // first region finishes.
     const regionsByCountry = new Map<string, { done: number; total: number }>()
+    // crawlAll() hydrates the enabled-country set from Postgres itself before
+    // it reads listRegions(); this seed runs first, so without the same await
+    // a cold process would seed from the compiled-in defaults and list
+    // countries the admin has paused (stuck at 0/N forever).
+    await ensureEnabledCountriesLoaded()
     for (const r of listRegions()) {
       if (opts.country && r.country !== opts.country.toLowerCase()) continue
       const entry = regionsByCountry.get(r.country) ?? { done: 0, total: 0 }
@@ -524,6 +529,14 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
       }
     }
     await Promise.all(Array.from({ length: ENRICH_CONCURRENCY }, worker))
+    // The per-country snapshot outlives the run in /settings, so its final
+    // state has to get past the progress throttle — the last few in-loop
+    // reports above are routinely swallowed by it.
+    await recordTaskRunProgress(
+      'enrich',
+      { regionsDone, regionsTotal, archivedDone: archived, archivedTotal: todo.length },
+      { progressByCountry: snapshotProgressByCountry(), flush: true },
+    )
 
     // Re-read shortly before the final projection so values produced while
     // this crawl was running are included.

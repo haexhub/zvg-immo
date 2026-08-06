@@ -611,7 +611,15 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
   // one candidate's iteration regardless of which branch it took.
   const candidatesTotalByCountry = new Map<string, number>()
   for (const c of candidates) candidatesTotalByCountry.set(c.country, (candidatesTotalByCountry.get(c.country) ?? 0) + 1)
-  const progressByCountry = new Map<string, TaskRunSummary>()
+  // Seeded at 0/N so every country in scope shows up right away instead of
+  // appearing one by one as the loop reaches it — and so a run that stops
+  // early (rate limit) still reports the countries it never got to.
+  const progressByCountry = new Map<string, TaskRunSummary>(
+    [...candidatesTotalByCountry].map(([country, candidatesTotal]) => [
+      country,
+      { candidatesTotal, processed: 0, skipped: 0, llmCalls: 0, llmErrors: 0 },
+    ]),
+  )
 
   let processed = 0
   let skipped = 0
@@ -825,6 +833,14 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       )
     }
   }
+  // The per-country snapshot outlives the run in /settings, so its final
+  // state has to get past the progress throttle — with a fast loop the last
+  // in-loop reports above are routinely swallowed by it.
+  await recordTaskRunProgress(
+    'reprocess',
+    { candidatesTotal: candidates.length, processed, skipped, llmCalls, llmErrors },
+    { lastLlmError, progressByCountry: Object.fromEntries(progressByCountry), flush: true },
+  )
 
   if (batchItems.length > 0 && llmConfig) {
     const submission = await submitLlmBatch(batchItems, llmConfig, 'reprocess')

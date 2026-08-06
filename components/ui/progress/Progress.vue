@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import type { HTMLAttributes } from "vue"
+import { reactiveOmit } from "@vueuse/core"
 import { ProgressIndicator, ProgressRoot, type ProgressRootProps } from "reka-ui"
 import { cn } from "@/lib/utils"
 
 const props = defineProps<ProgressRootProps & { class?: HTMLAttributes["class"] }>()
+
+const delegatedProps = reactiveOmit(props, "class")
 </script>
 
 <template>
   <ProgressRoot
     data-slot="progress"
-    v-bind="props"
+    v-bind="delegatedProps"
     :class="cn('bg-primary/20 relative h-2 w-full overflow-hidden rounded-full', props.class)"
   >
     <ProgressIndicator

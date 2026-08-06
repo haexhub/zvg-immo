@@ -35,11 +35,14 @@ export interface TaskRunStatus {
   progress: TaskRunSummary | null
   /** Same numeric snapshot, broken down per country (ISO-2, lowercase) —
    *  lets /settings show which countries are done vs. still in flight
-   *  instead of just the aggregate. Unlike `progress`, this is NOT cleared
-   *  by recordTaskRunEnd: it's meant to keep showing each country's state
-   *  from its last run until the next run overwrites it. Null when the task
-   *  has never reported per-country progress (e.g. old data from before this
-   *  field existed). */
+   *  instead of just the aggregate. Unlike `progress`, this is neither
+   *  cleared by recordTaskRunStart/End nor replaced wholesale: entries are
+   *  merged per country, so each country keeps its last reported state until
+   *  a run that actually covers it reports a new one. That matters for the
+   *  country-scoped manual triggers in /settings — crawling one country must
+   *  not blank out every other country's last known state. Null when the
+   *  task has never reported per-country progress (e.g. old data from before
+   *  this field existed). */
   progressByCountry: Record<string, TaskRunSummary> | null
 }
 
@@ -180,7 +183,6 @@ export async function recordTaskRunStart(task: TrackedTask): Promise<void> {
       lastWarning: null,
       lastLlmError: null,
       progress: null,
-      progressByCountry: null,
     })
   })
 }
@@ -205,28 +207,41 @@ export async function recordTaskRunEnd(
   })
 }
 
-/** Updates only `progress`, leaving `status`/`startedAt`/`lastResult`
- *  untouched — for a long-running loop (crawlAll's regions, enrich's
- *  per-auction worker, reprocess's per-candidate loop) to report how far
- *  along it is while it's still running. Throttled per task so a fast loop
- *  doesn't turn every item into its own Postgres write; queued behind
- *  start/end (see `enqueue`) so a throttled-through call can never land after
- *  the run's own end write. */
+/** Updates only `progress`/`progressByCountry`, leaving
+ *  `status`/`startedAt`/`lastResult` untouched — for a long-running loop
+ *  (crawlAll's regions, enrich's per-auction worker, reprocess's
+ *  per-candidate loop) to report how far along it is while it's still
+ *  running. Throttled per task so a fast loop doesn't turn every item into
+ *  its own Postgres write; queued behind start/end (see `enqueue`) so a
+ *  throttled-through call can never land after the run's own end write.
+ *
+ *  `flush` bypasses the throttle. A run's *last* progress report is the one
+ *  that stays visible in /settings after it finishes (recordTaskRunEnd
+ *  clears `progress` but keeps `progressByCountry`), so it must not be the
+ *  one the throttle happens to swallow — otherwise a completed run is left
+ *  showing e.g. 260/300 forever. Callers use it exactly once, after their
+ *  loop. */
 export async function recordTaskRunProgress(
   task: TrackedTask,
   progress: TaskRunSummary,
-  extra: { lastLlmError?: string | null; progressByCountry?: Record<string, TaskRunSummary> } = {},
+  extra: {
+    lastLlmError?: string | null
+    progressByCountry?: Record<string, TaskRunSummary>
+    flush?: boolean
+  } = {},
 ): Promise<void> {
   const now = Date.now()
   const last = lastProgressWriteAt.get(task) ?? 0
-  if (now - last < PROGRESS_THROTTLE_MS) return
+  if (!extra.flush && now - last < PROGRESS_THROTTLE_MS) return
   lastProgressWriteAt.set(task, now)
   await enqueue(task, async () => {
     const current = await getTaskRunStatus(task)
     await writeTaskRunStatus(task, {
       ...current,
       progress,
-      ...(extra.progressByCountry !== undefined ? { progressByCountry: extra.progressByCountry } : {}),
+      ...(extra.progressByCountry !== undefined
+        ? { progressByCountry: { ...current.progressByCountry, ...extra.progressByCountry } }
+        : {}),
       ...(extra.lastLlmError !== undefined ? { lastLlmError: extra.lastLlmError } : {}),
     })
   })

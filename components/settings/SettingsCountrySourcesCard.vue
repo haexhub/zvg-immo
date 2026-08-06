@@ -65,16 +65,24 @@ const crawlProgressByCountry = computed<CrawlCountryRow[]>(() => {
   if (!byCountry) return []
   return Object.entries(byCountry)
     .map(([code, p]) => {
+      const regionsDone = progressNumber(p.regionsDone)
+      const regionsTotal = progressNumber(p.regionsTotal)
       const archivedDone = progressNumber(p.archivedDone)
       const archivedTotal = progressNumber(p.archivedTotal)
       return {
         code,
         label: countryLabel(code),
-        regionsDone: progressNumber(p.regionsDone),
-        regionsTotal: progressNumber(p.regionsTotal),
+        regionsDone,
+        regionsTotal,
         archivedDone,
         archivedTotal,
-        percent: percentOf(archivedDone, archivedTotal),
+        // A run crawls all sources first and only then knows how many
+        // listings there are to archive, so archivedTotal is 0 for the whole
+        // first phase — track the phase that is actually running, otherwise
+        // every bar sits at 100% while the crawl has barely started.
+        percent: archivedTotal > 0
+          ? percentOf(archivedDone, archivedTotal)
+          : percentOf(regionsDone, regionsTotal),
       }
     })
     .sort((a, b) => a.label.localeCompare(b.label, 'de'))

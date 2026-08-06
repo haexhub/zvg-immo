@@ -15,7 +15,12 @@ import { archiveAuction } from '../utils/raw-archive'
 import { recordObservations } from '../utils/history'
 import { writeListCache } from '../utils/list-cache'
 
-vi.mock('../crawlers/registry', () => ({ crawlAll: vi.fn(), listRegions: vi.fn(() => []), platforms: [] }))
+vi.mock('../crawlers/registry', () => ({
+  crawlAll: vi.fn(),
+  ensureEnabledCountriesLoaded: vi.fn(async () => []),
+  listRegions: vi.fn(() => []),
+  platforms: [],
+}))
 vi.mock('../utils/current-auctions', () => ({ ensureAuctionIdentity: vi.fn(), upsertCurrentAuctions: vi.fn() }))
 vi.mock('../utils/auction-details', () => ({ writeAuctionDetails: vi.fn() }))
 vi.mock('../utils/auction-record', () => ({ readAuctionRecordMap: vi.fn() }))
