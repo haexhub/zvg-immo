@@ -115,6 +115,7 @@ onMounted(probeSession)
         <SettingsLlmBatchCard />
         <SettingsReprocessCard />
         <SettingsCountrySourcesCard />
+        <SettingsOsmImportCard />
         <SettingsExternalDataCard />
         <SettingsDisplayCard />
 
