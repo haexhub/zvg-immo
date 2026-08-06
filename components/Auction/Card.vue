@@ -74,8 +74,15 @@ const swiperModules = [Navigation, Keyboard]
 
 // Below `sm`, cards are shown two-up in a horizontal-scroll rail — a
 // swipeable gallery there fights the rail's own swipe gesture, so mobile
-// gets a single static photo instead of the Swiper carousel.
-const isGallery = useMediaQuery('(min-width: 640px)', { ssrWidth: 1280 })
+// gets a single static photo instead of the Swiper carousel. SSR and the
+// pre-mount client render always use the static image (no ssrWidth guess),
+// so hydration is consistent regardless of viewport; Swiper only mounts
+// once isMounted flips true and the real viewport comes back desktop.
+const isMounted = ref(false)
+onMounted(() => {
+  isMounted.value = true
+})
+const isGallery = useMediaQuery('(min-width: 640px)')
 </script>
 
 <template>
@@ -88,7 +95,7 @@ const isGallery = useMediaQuery('(min-width: 640px)', { ssrWidth: 1280 })
       :class="{ 'ring-2 ring-amber-500': props.active }"
     >
       <Swiper
-        v-if="isGallery && props.auction.galleryUrls.length > 0"
+        v-if="isMounted && isGallery && props.auction.galleryUrls.length > 0"
         :modules="swiperModules"
         :navigation="props.auction.galleryUrls.length > 1"
         :keyboard="{ enabled: true }"
