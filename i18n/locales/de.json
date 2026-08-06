@@ -311,6 +311,18 @@
       "offloadStatusLastRun": "Fotos ausgelagert: {at} — {removed} Datei(en), {freedMb} MB lokal freigegeben.",
       "offloadStatusLastError": "Foto-Auslagerung zuletzt fehlgeschlagen: {message}"
     },
+    "osmImport": {
+      "title": "OSM-Standortdaten",
+      "description": "Lädt Meer/See/Fluss/Berg/Flughafen/Ski-Daten pro Land aus OpenStreetMap-Extracts. Ein Land ohne Daten wird beim täglichen Lauf automatisch geladen; ein Land mit Daten wird danach nie mehr automatisch neu geladen — nur ein manueller Reimport hier löst das aus.",
+      "loadError": "Status konnte nicht geladen werden.",
+      "requestError": "Reimport konnte nicht angefordert werden.",
+      "refresh": "Status aktualisieren",
+      "rowCount": "{count} Objekte geladen",
+      "noData": "Noch keine Daten",
+      "request": "Reimport anfordern",
+      "requesting": "Anfordern …",
+      "pending": "Angefordert am {at} — wird beim nächsten täglichen Lauf verarbeitet."
+    },
     "externalData": {
       "title": "Externe Datenquellen",
       "description": "POI/ÖPNV, Lärm, Hochwasser und Marktvergleich auf der Detailseite kommen aus diesen Diensten. Ein leeres Feld übernimmt den per Deployment (Env-Var) gesetzten Wert, sofern vorhanden — sonst bleibt die Quelle inaktiv.",

@@ -311,6 +311,18 @@
       "offloadStatusLastRun": "Photos offloaded: {at} — {removed} file(s), {freedMb} MB freed locally.",
       "offloadStatusLastError": "Photo offload last failed: {message}"
     },
+    "osmImport": {
+      "title": "OSM location data",
+      "description": "Loads sea/lake/river/mountain/airport/ski data per country from OpenStreetMap extracts. A country with no data yet gets loaded automatically on the daily run; a country that already has data is never reloaded automatically again — only a manual reimport here triggers that.",
+      "loadError": "Could not load status.",
+      "requestError": "Could not request reimport.",
+      "refresh": "Refresh status",
+      "rowCount": "{count} features loaded",
+      "noData": "No data yet",
+      "request": "Request reimport",
+      "requesting": "Requesting …",
+      "pending": "Requested at {at} — will be processed on the next daily run."
+    },
     "externalData": {
       "title": "External data sources",
       "description": "POI/transit, noise, flood risk and market comparison on the detail page come from these services. An empty field falls back to the deployment-configured (env var) value, if set — otherwise the source stays inactive.",
