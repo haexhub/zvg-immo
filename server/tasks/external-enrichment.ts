@@ -13,6 +13,7 @@ import { createEuFloodRiskFileAdapter } from '~/server/utils/external-data/eu-fl
 import { createCopernicusEffisBurntAreaFileAdapter } from '~/server/utils/external-data/copernicus-effis'
 import { createEeaEnvironmentalNoiseEnhancer } from '~/server/utils/external-data/eea-environmental-noise'
 import { createCamsAirQualityEnhancer } from '~/server/utils/external-data/cams-air-quality'
+import { createOpenMeteoClimateNormalsEnhancer } from '~/server/utils/external-data/open-meteo-climate'
 import { createLocalOsmLocationContextAdapter } from '~/server/utils/external-data/osm-location-context'
 import {
   getStoredExternalDataSourceConfig,
@@ -419,6 +420,15 @@ async function defaultLocationContextAdapters(db: Pool | null, checkedAt: string
       checkedAt,
       serviceUrl: String(airQualityValues.serviceUrl),
       timeoutMs: Number(airQualityValues.timeoutMs),
+    }))
+  }
+  const climateValues = await resolvedSourceValues(db, 'open-meteo-climate-normals')
+  if (climateValues) {
+    enhancers.push(createOpenMeteoClimateNormalsEnhancer({
+      db,
+      checkedAt,
+      serviceUrl: String(climateValues.serviceUrl),
+      timeoutMs: Number(climateValues.timeoutMs),
     }))
   }
   return [withLocationContextEnhancers(osmAdapter, enhancers)]

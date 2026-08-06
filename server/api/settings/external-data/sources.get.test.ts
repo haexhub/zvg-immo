@@ -26,6 +26,7 @@ describe('GET /api/settings/external-data/sources', () => {
       'eea-environmental-noise-directive',
       'eu-flood-risk-areas',
       'fr-dvf-geolocated',
+      'open-meteo-climate-normals',
     ])
     // Public API with a working default, so it is usable with no config at all.
     expect(sources.find((source) => source.id === 'cams-air-quality')!.isConfigured).toBe(true)

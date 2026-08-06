@@ -40,6 +40,7 @@ describe('configurableExternalDataSources', () => {
       'eea-environmental-noise-directive',
       'eu-flood-risk-areas',
       'fr-dvf-geolocated',
+      'open-meteo-climate-normals',
     ])
   })
 

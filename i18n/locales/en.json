@@ -924,6 +924,13 @@
       "extremely_poor": "extremely poor",
       "unknown": "unknown"
     },
+    "climateTitle": "Climate",
+    "climateMonth": "Month",
+    "climateTempMax": "Average high",
+    "climateTempMean": "Average mean",
+    "climateTempMin": "Average low (night)",
+    "climatePrecipitation": "Precipitation",
+    "climateNormalsHint": "Climate normals ({start}–{end}), averaged per calendar month from the Open-Meteo historical archive (ERA5-Land reanalysis, ~9-11 km grid) — a normal, not a forecast, and it describes the surrounding area rather than the parcel.",
     "demographicSignalLevel": {
       "low": "weak",
       "medium": "medium",

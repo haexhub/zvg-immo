@@ -12,6 +12,7 @@ export type ExternalDataCapability =
   | 'settlement_structure'
   | 'noise_airport'
   | 'air_quality'
+  | 'climate_normals'
   | 'flight_routes'
   | 'source_discovery'
 
@@ -278,6 +279,39 @@ export const EXTERNAL_DATA_SOURCES: readonly ExternalDataSource[] = [
         runtimeConfigKey: 'camsAirQualityTimeoutMs',
         envVar: 'NUXT_EXTERNAL_DATA_CAMS_AIR_QUALITY_TIMEOUT_MS',
         defaultValue: 10_000,
+      },
+    ],
+  },
+  {
+    id: 'open-meteo-climate-normals',
+    label: 'Open-Meteo Historical Weather API (ERA5-Land climate normals)',
+    countries: ['eu'],
+    capabilities: ['climate_normals'],
+    sourceUrl: 'https://open-meteo.com/en/docs/historical-weather-api',
+    licenseNote: 'ERA5-Land reanalysis (Copernicus Climate Change Service, CC-BY-4.0) via Open-Meteo, aggregated here over the 1991–2020 reference period. Climate normals, not a forecast; modelled on a ~9-11 km grid, so it describes the surrounding area rather than the parcel.',
+    refreshCadence: 'fetched once per 0.1° grid cell, never (normals do not go stale)',
+    resolution: '0.1° ERA5-Land grid cell around the auction coordinates',
+    adapter: 'openMeteoClimateNormalsAdapter',
+    // Both fields carry a working default, so this source needs no admin setup
+    // to function — same public/unauthenticated shape as cams-air-quality.
+    configFields: [
+      {
+        key: 'serviceUrl',
+        type: 'url',
+        runtimeConfigKey: 'openMeteoClimateServiceUrl',
+        envVar: 'NUXT_EXTERNAL_DATA_OPEN_METEO_CLIMATE_SERVICE_URL',
+        defaultValue: 'https://archive-api.open-meteo.com/v1/archive',
+        required: true,
+      },
+      {
+        key: 'timeoutMs',
+        type: 'number',
+        runtimeConfigKey: 'openMeteoClimateTimeoutMs',
+        envVar: 'NUXT_EXTERNAL_DATA_OPEN_METEO_CLIMATE_TIMEOUT_MS',
+        // 30 years of daily data is a much bigger response than the other
+        // Open-Meteo call in this file (current-weather air quality), so this
+        // default is well above cams-air-quality's 10s.
+        defaultValue: 30_000,
       },
     ],
   },

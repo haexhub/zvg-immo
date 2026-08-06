@@ -924,6 +924,13 @@
       "extremely_poor": "extrem schlecht",
       "unknown": "unbekannt"
     },
+    "climateTitle": "Klima",
+    "climateMonth": "Monat",
+    "climateTempMax": "Mittlere Höchsttemperatur",
+    "climateTempMean": "Mitteltemperatur",
+    "climateTempMin": "Mittlere Nachttemperatur",
+    "climatePrecipitation": "Niederschlag",
+    "climateNormalsHint": "Klimanormalwerte ({start}–{end}), je Kalendermonat gemittelt aus dem Open-Meteo-Archiv (ERA5-Land-Reanalyse, ca. 9-11 km Raster) — ein Normalwert, keine Vorhersage, und beschreibt die Umgebung, nicht das Grundstück selbst.",
     "demographicSignalLevel": {
       "low": "schwach",
       "medium": "mittel",

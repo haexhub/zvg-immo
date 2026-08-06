@@ -38,6 +38,7 @@ const locationEnvironment = computed(() => locationContext.value?.environment ??
 const heavyIndustrySites = computed(() => locationEnvironment.value?.heavyIndustrySites ?? [])
 const reportedNoise = computed(() => locationEnvironment.value?.reportedNoise ?? [])
 const airQuality = computed(() => locationEnvironment.value?.airQuality ?? null)
+const climateNormals = computed(() => locationEnvironment.value?.climateNormals ?? null)
 const locationDemographics = computed(() => locationContext.value?.demographics ?? null)
 const neighborhoodContext = computed(() => locationContext.value?.neighborhood ?? null)
 const neighborhoodNotes = computed(() => neighborhoodContext.value?.notes ?? [])
@@ -375,6 +376,10 @@ function neighborhoodNoteLabel(note: NeighborhoodContext['notes'][number] | stri
                 <li v-for="(item, i) in locationEnvironment.riskSignals" :key="i">{{ environmentSignalLabel(item) }}</li>
               </ul>
             </div>
+          </DetailSectionCard>
+
+          <DetailSectionCard v-if="climateNormals" :title="$t('objektDetail.climateTitle')">
+            <AuctionClimateNormalsChart :normals="climateNormals" />
           </DetailSectionCard>
 
           <DetailSectionCard v-if="locationDemographics" :title="$t('objektDetail.demographicsTitle')">
