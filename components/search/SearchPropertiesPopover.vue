@@ -143,7 +143,7 @@ function apply(): void {
 
 <template>
   <div class="flex h-full flex-col md:h-auto md:max-h-[70vh]">
-    <div class="flex-1 overflow-y-auto space-y-6 pb-4">
+    <div class="flex-1 overflow-y-auto space-y-6 p-1 pr-4 pb-4">
       <div class="space-y-2">
         <Label>{{ $t('filters.marketValue') }} ({{ currency }})</Label>
         <div class="flex items-center gap-2">
