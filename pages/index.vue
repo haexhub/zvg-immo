@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useIntersectionObserver } from '@vueuse/core'
 import { Search } from 'lucide-vue-next'
 import type { LandingRailsResponse } from '~/server/api/landing/rails.get'
 import type { CountryEntry } from '~/server/crawlers/registry'
@@ -95,6 +96,22 @@ const locationSummary = computed(() => {
   return search.value.trim() || t('searchBar.location.placeholder')
 })
 
+// Airbnb-style collapsing header: once the hero search bar scrolls out from
+// under the sticky SiteHeader, a narrow summary pill takes its place so the
+// search stays reachable while browsing the rails below.
+const heroSearchRef = ref<HTMLElement>()
+const heroSearchVisible = ref(true)
+useIntersectionObserver(
+  heroSearchRef,
+  ([entry]) => { heroSearchVisible.value = entry?.isIntersecting ?? true },
+  { rootMargin: '-64px 0px 0px 0px' },
+)
+const showCompactSearch = computed(() => !heroSearchVisible.value)
+
+function scrollToHeroSearch(): void {
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
 function toggleCountry(code: string): void {
   selectedCountries.value = toggleInArray(selectedCountries.value, code)
 }
@@ -162,7 +179,7 @@ function pickRecent(query: Record<string, string>): void {
       <div class="mx-auto flex w-full max-w-2xl flex-col items-center gap-4 text-center">
         <h1 class="text-3xl font-bold tracking-tight sm:text-4xl">{{ $t('landing.hero.headline') }}</h1>
         <p class="max-w-xl text-muted-foreground">{{ $t('landing.hero.subheadline') }}</p>
-        <form class="flex w-full max-w-2xl items-center gap-2" @submit.prevent="submitSearch">
+        <form ref="heroSearchRef" class="flex w-full max-w-2xl items-center gap-2" @submit.prevent="submitSearch">
           <SearchBar
             v-model:search="search"
             v-model:price-min="priceMin"
@@ -211,6 +228,28 @@ function pickRecent(query: Record<string, string>): void {
         </ul>
       </div>
     </section>
+
+    <!-- Collapsed search, shown once the hero bar scrolls under the header -->
+    <Transition
+      enter-active-class="transition duration-200 ease-out"
+      enter-from-class="opacity-0 -translate-y-1"
+      enter-to-class="opacity-100 translate-y-0"
+      leave-active-class="transition duration-150 ease-in"
+      leave-from-class="opacity-100 translate-y-0"
+      leave-to-class="opacity-0 -translate-y-1"
+    >
+      <div v-if="showCompactSearch" class="sticky top-16 z-30 border-b bg-background/95 px-4 py-2 backdrop-blur supports-backdrop-filter:bg-background/60">
+        <button
+          type="button"
+          class="mx-auto flex w-full max-w-sm items-center justify-between gap-3 rounded-full border bg-background px-4 py-2 shadow-sm transition-shadow hover:shadow-md"
+          :aria-label="$t('landing.hero.expandSearch')"
+          @click="scrollToHeroSearch"
+        >
+          <span class="truncate text-sm font-medium">{{ locationSummary }}</span>
+          <Search class="h-4 w-4 shrink-0 text-muted-foreground" />
+        </button>
+      </div>
+    </Transition>
 
     <!-- Category rails -->
     <div class="w-full px-3">

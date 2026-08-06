@@ -21,6 +21,7 @@
       "subheadline": "PropHammer durchsucht rund um die Uhr Gerichts- und Amtsportale in vielen europäischen Ländern — mit Fotos, Verkehrswert und Termin.",
       "searchPlaceholder": "Ort, Objektart oder Aktenzeichen suchen …",
       "searchCta": "Suchen",
+      "expandSearch": "Suchleiste öffnen",
       "trust": ["100 % kostenlos", "Ohne Anmeldung", "Live von Amts- & Gerichtsportalen"]
     },
     "rails": {
