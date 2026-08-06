@@ -252,7 +252,7 @@ function pickRecent(query: Record<string, string>): void {
     <!-- Category rails -->
     <div class="w-full px-3">
       <LandingCategoryRail v-for="rail in rails?.countryRails" :key="rail.code" :title="$t('landing.rails.country.title', { name: rail.name })">
-        <div v-for="a in rail.auctions" :key="`${a.platform}:${a.externalId}`" class="w-72 shrink-0 snap-start">
+        <div v-for="a in rail.auctions" :key="`${a.platform}:${a.externalId}`" class="w-[calc(50%-0.5rem)] shrink-0 snap-start sm:w-72">
           <AuctionCard :auction="a" class="h-full" />
         </div>
       </LandingCategoryRail>
@@ -262,7 +262,7 @@ function pickRecent(query: Record<string, string>): void {
         :title="$t('landing.rails.bestCondition.title')"
         :subtitle="$t('landing.rails.bestCondition.subtitle')"
       >
-        <div v-for="a in rails.bestCondition" :key="`${a.platform}:${a.externalId}`" class="w-72 shrink-0 snap-start">
+        <div v-for="a in rails.bestCondition" :key="`${a.platform}:${a.externalId}`" class="w-[calc(50%-0.5rem)] shrink-0 snap-start sm:w-72">
           <AuctionCard :auction="a" class="h-full" />
         </div>
       </LandingCategoryRail>
@@ -273,7 +273,7 @@ function pickRecent(query: Record<string, string>): void {
         :title="$t(`landing.rails.${geo.key}.title`)"
         :subtitle="$t(`landing.rails.${geo.key}.subtitle`)"
       >
-        <div v-for="a in geo.items" :key="`${a.platform}:${a.externalId}`" class="w-72 shrink-0 snap-start">
+        <div v-for="a in geo.items" :key="`${a.platform}:${a.externalId}`" class="w-[calc(50%-0.5rem)] shrink-0 snap-start sm:w-72">
           <AuctionCard :auction="a" class="h-full" />
         </div>
       </LandingCategoryRail>

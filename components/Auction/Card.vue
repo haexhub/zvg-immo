@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useMediaQuery } from '@vueuse/core'
 import { Star } from 'lucide-vue-next'
 import { Swiper, SwiperSlide } from 'swiper/vue'
 import { Keyboard, Navigation } from 'swiper/modules'
@@ -70,6 +71,18 @@ function bidLine(a: AuctionSummary): string | null {
 }
 
 const swiperModules = [Navigation, Keyboard]
+
+// Below `sm`, cards are shown two-up in a horizontal-scroll rail — a
+// swipeable gallery there fights the rail's own swipe gesture, so mobile
+// gets a single static photo instead of the Swiper carousel. SSR and the
+// pre-mount client render always use the static image (no ssrWidth guess),
+// so hydration is consistent regardless of viewport; Swiper only mounts
+// once isMounted flips true and the real viewport comes back desktop.
+const isMounted = ref(false)
+onMounted(() => {
+  isMounted.value = true
+})
+const isGallery = useMediaQuery('(min-width: 640px)')
 </script>
 
 <template>
@@ -82,7 +95,7 @@ const swiperModules = [Navigation, Keyboard]
       :class="{ 'ring-2 ring-amber-500': props.active }"
     >
       <Swiper
-        v-if="props.auction.galleryUrls.length > 0"
+        v-if="isMounted && isGallery && props.auction.galleryUrls.length > 0"
         :modules="swiperModules"
         :navigation="props.auction.galleryUrls.length > 1"
         :keyboard="{ enabled: true }"
@@ -101,6 +114,15 @@ const swiperModules = [Navigation, Keyboard]
           >
         </SwiperSlide>
       </Swiper>
+      <img
+        v-else-if="props.auction.galleryUrls.length > 0"
+        :src="props.auction.galleryUrls[0]"
+        :alt="t('lotPopover.photoAlt', { n: 1, title: cardAltBase(props.auction) })"
+        class="aspect-16/10 w-full object-cover bg-muted"
+        referrerpolicy="no-referrer"
+        loading="eager"
+        fetchpriority="high"
+      >
       <div v-else class="flex aspect-16/10 items-center justify-center bg-muted text-muted-foreground text-sm">
         {{ $t('search.noPhoto') }}
       </div>
