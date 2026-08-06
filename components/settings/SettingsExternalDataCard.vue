@@ -101,8 +101,8 @@ onMounted(loadExternalDataSources)
         </div>
 
         <div class="grid gap-3 sm:grid-cols-2">
-          <div v-for="field in source.fields" :key="field.key" class="space-y-1">
-            <label class="block text-xs font-medium text-muted-foreground">{{ field.envVar }}</label>
+          <div v-for="field in source.fields" :key="field.key" class="min-w-0 space-y-1">
+            <label class="block break-words text-xs font-medium text-muted-foreground">{{ field.envVar }}</label>
             <Input
               v-model="externalDataFieldDrafts[`${source.id}:${field.key}`]"
               :type="field.type === 'number' ? 'number' : 'text'"

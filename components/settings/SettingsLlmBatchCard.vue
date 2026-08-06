@@ -43,18 +43,24 @@ onMounted(loadLlmBatchJobs)
             duration: Math.round((llmBatchJobs.reprocessStatus.lastResult?.durationMs ?? 0) / 1000),
           }) }}
         </p>
-        <p v-if="llmBatchJobs.reprocessStatus.lastError" class="text-destructive">
-          {{ $t('settings.llmBatch.reprocessLastError', { message: llmBatchJobs.reprocessStatus.lastError }) }}
-        </p>
-        <p v-if="llmBatchJobs.reprocessStatus.lastWarning" class="text-amber-600 dark:text-amber-400">
-          {{ $t('settings.llmBatch.reprocessLastWarning', { message: llmBatchJobs.reprocessStatus.lastWarning }) }}
-        </p>
+        <SettingsMessageDetails
+          v-if="llmBatchJobs.reprocessStatus.lastError"
+          :text="$t('settings.llmBatch.reprocessLastError', { message: llmBatchJobs.reprocessStatus.lastError })"
+          variant="error"
+        />
+        <SettingsMessageDetails
+          v-if="llmBatchJobs.reprocessStatus.lastWarning"
+          :text="$t('settings.llmBatch.reprocessLastWarning', { message: llmBatchJobs.reprocessStatus.lastWarning })"
+          variant="warning"
+        />
         <p v-if="llmBatchJobs.reprocessStatus.lastResult?.llmErrors" class="text-destructive">
           {{ $t('settings.llmBatch.reprocessLlmErrors', { count: llmBatchJobs.reprocessStatus.lastResult.llmErrors }) }}
         </p>
-        <p v-if="llmBatchJobs.reprocessStatus.lastLlmError" class="text-destructive">
-          {{ $t('settings.llmBatch.reprocessLastLlmError', { message: llmBatchJobs.reprocessStatus.lastLlmError }) }}
-        </p>
+        <SettingsMessageDetails
+          v-if="llmBatchJobs.reprocessStatus.lastLlmError"
+          :text="$t('settings.llmBatch.reprocessLastLlmError', { message: llmBatchJobs.reprocessStatus.lastLlmError })"
+          variant="error"
+        />
       </div>
 
       <div class="grid grid-cols-2 gap-3 text-sm">
@@ -164,7 +170,7 @@ onMounted(loadLlmBatchJobs)
               </div>
             </div>
           </div>
-          <p v-if="job.errorMessage" class="text-sm text-destructive">{{ job.errorMessage }}</p>
+          <SettingsMessageDetails v-if="job.errorMessage" :text="job.errorMessage" variant="error" />
           <div v-if="job.requestKeys.length" class="max-h-28 overflow-auto rounded border bg-muted/30 p-2">
             <div v-for="key in job.requestKeys" :key="`recent:${job.jobName}:${key}`" class="font-mono text-xs leading-6">
               {{ key }}

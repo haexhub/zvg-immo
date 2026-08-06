@@ -108,6 +108,10 @@
     "logoutAdmin": "Sign out",
     "logoutAdminError": "Sign out failed.",
     "sessionExpired": "Session expired.",
+    "messageDetails": {
+      "show": "Show {count} entries",
+      "hide": "Hide entries"
+    },
     "login": {
       "title": "Sign in",
       "protected": "This page is password-protected.",

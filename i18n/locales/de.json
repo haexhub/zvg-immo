@@ -108,6 +108,10 @@
     "logoutAdmin": "Abmelden",
     "logoutAdminError": "Abmelden fehlgeschlagen.",
     "sessionExpired": "Sitzung abgelaufen.",
+    "messageDetails": {
+      "show": "{count} Einträge anzeigen",
+      "hide": "Einträge ausblenden"
+    },
     "login": {
       "title": "Anmeldung",
       "protected": "Diese Seite ist passwortgeschützt.",
