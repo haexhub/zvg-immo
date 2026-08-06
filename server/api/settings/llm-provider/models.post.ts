@@ -29,10 +29,13 @@ async function fetchClaudeProxyModels(baseUrl: string): Promise<LlmModelOption[]
   return (res.data ?? []).map((m) => ({ id: m.id, label: m.display_name || m.id }))
 }
 
-async function fetchOpenRouterModels(baseUrl: string): Promise<LlmModelOption[]> {
+// Extraction sends `response_format: { type: 'json_schema', strict: true }`
+// (see providers/openai-compatible.ts), so only models whose endpoint
+// actually supports structured_outputs are offered here.
+export async function fetchOpenRouterModels(baseUrl: string): Promise<LlmModelOption[]> {
   const res = await $fetch<{ data: { id: string; name?: string }[] }>(
     `${baseUrl.replace(/\/$/, '')}/models`,
-    { signal: AbortSignal.timeout(10_000) },
+    { query: { supported_parameters: 'structured_outputs' }, signal: AbortSignal.timeout(10_000) },
   )
   return (res.data ?? []).map((m) => ({ id: m.id, label: m.name || m.id }))
 }
