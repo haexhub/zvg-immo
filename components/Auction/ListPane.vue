@@ -31,7 +31,7 @@ watch(() => props.scrollTargetKey, async (key) => {
 </script>
 
 <template>
-  <div class="h-full overflow-y-auto pb-4">
+  <div class="h-full overflow-y-auto p-1 pb-4">
     <p v-if="props.auctions.length === 0 && props.totalCount === 0 && !props.pending" class="py-12 text-center text-muted-foreground">
       {{ $t('search.noResults') }}
     </p>
