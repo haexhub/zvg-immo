@@ -179,15 +179,24 @@ const filteredGeo = computed<GeoAuction[]>(() => {
 type MapBounds = { north: number; south: number; east: number; west: number }
 const mapBounds = ref<MapBounds | null>(null)
 
-const listBase = computed<AuctionSummary[]>(() => {
-  if (!mapBounds.value) return filtered.value
+// filteredGeo already holds the whole matching set (up to MAX_MARKERS), not
+// just the page `filtered` has loaded so far — sizing this off `filtered`
+// instead would undercount and hide "load more" once bounds-filtering thins
+// the loaded page down.
+const mapVisibleKeys = computed<Set<string> | null>(() => {
+  if (!mapBounds.value) return null
   const b = mapBounds.value
-  const visibleKeys = new Set(filteredGeo.value
+  return new Set(filteredGeo.value
     .filter((a) => a.lat >= b.south && a.lat <= b.north && a.lng >= b.west && a.lng <= b.east)
     .map(auctionKey))
-  return filtered.value.filter((auction) => visibleKeys.has(auctionKey(auction)))
+})
+
+const listBase = computed<AuctionSummary[]>(() => {
+  if (!mapVisibleKeys.value) return filtered.value
+  return filtered.value.filter((auction) => mapVisibleKeys.value!.has(auctionKey(auction)))
 })
 const sortedList = computed<AuctionSummary[]>(() => listBase.value)
+const listTotalCount = computed<number>(() => mapVisibleKeys.value ? mapVisibleKeys.value.size : (data.value?.total ?? 0))
 
 // The list view used to render every filtered auction as a full card in one
 // go — with the "all countries" default that's ~14.7k cards (~45MB of SSR
@@ -295,7 +304,7 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
         <AuctionListPane
           class="flex-1 min-h-0"
           :auctions="visibleAuctions"
-          :total-count="mapBounds ? sortedList.length : (data?.total ?? 0)"
+          :total-count="listTotalCount"
           :pending="pending"
           :logged-in="!!user"
           :watchlist-ids="watchlistIds"
@@ -310,7 +319,7 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
         v-else
         v-model="view"
         :auctions="visibleAuctions"
-        :total-count="mapBounds ? sortedList.length : (data?.total ?? 0)"
+        :total-count="listTotalCount"
         :pending="pending"
         :logged-in="!!user"
         :watchlist-ids="watchlistIds"
