@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { CountryEntry } from '~/server/crawlers/registry'
 import type { AuctionSearchResponse } from '~/server/api/auctions.get'
+import { ArrowUpDown } from 'lucide-vue-next'
 import { AUCTION_SEARCH_STATE_KEY, useAuctionSearchState } from '~/composables/useAuctionSearchState'
 import { AUCTION_SEARCH_RESULT_KEY } from '~/composables/useAuctionSearchResult'
 
@@ -127,8 +128,14 @@ onMounted(() => {
             @pick-recent="pickRecent"
           />
           <Select v-model="sortBy">
-            <SelectTrigger class="w-40 shrink-0 rounded-full">
-              <SelectValue :placeholder="$t('search.sortLabel')" />
+            <SelectTrigger
+              class="size-9 shrink-0 justify-center rounded-full p-0 [&>svg]:hidden"
+              :title="$t('search.sortLabel')"
+              :aria-label="$t('search.sortLabel')"
+            >
+              <span class="flex items-center justify-center">
+                <ArrowUpDown class="size-4" />
+              </span>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="default">{{ $t('search.sortDefault') }}</SelectItem>
