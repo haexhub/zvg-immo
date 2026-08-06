@@ -1,15 +1,10 @@
 <script setup lang="ts">
-// Airbnb-style search bar: Location / Properties / Environment. On desktop
-// each is its own popover, side by side. Below the `md` breakpoint a
-// three-way split has no room for its per-segment summary text, so this
-// collapses into a single bar that opens one fullscreen Sheet with a tab per
-// segment — replaces the old SearchFilterBar (free-text + a button that just
+// Airbnb-style search bar: Location / Properties / Environment, each its own
+// popover — replaces the old SearchFilterBar (free-text + a button that just
 // forwarded to the Sheet sidebar). Used on both the landing hero
 // (pages/index.vue) and the search page header (layouts/search.vue), each
 // wiring it to its own filter state (a real useAuctionSearchState instance
 // on the search page, a lighter local one on the landing page).
-import { useMediaQuery } from '@vueuse/core'
-import { Search } from 'lucide-vue-next'
 import { ALL_SCOPE } from '~/lib/auction-constants'
 import type { CountryEntry } from '~/server/crawlers/registry'
 
@@ -104,31 +99,10 @@ const environmentSummary = computed(() => {
   if (urbanRural.value !== ALL_SCOPE) n++
   return n
 })
-
-const { t } = useI18n()
-const propertiesSummaryText = computed(() =>
-  propertiesSummary.value > 0
-    ? t('searchBar.activeCount', { count: propertiesSummary.value })
-    : t('searchBar.properties.placeholder'),
-)
-const environmentSummaryText = computed(() =>
-  environmentSummary.value > 0
-    ? t('searchBar.activeCount', { count: environmentSummary.value })
-    : t('searchBar.environment.placeholder'),
-)
-
-// Below `md`, the three segments collapse into one bar that opens a single
-// Sheet with a tab per segment instead of three independently-triggered ones.
-const isDesktop = useMediaQuery('(min-width: 768px)', { ssrWidth: 1280 })
-const mobileSheetOpen = ref(false)
-const activeMobileTab = ref<'location' | 'properties' | 'environment'>('location')
-const mobileSummary = computed(() =>
-  [props.locationSummary, propertiesSummaryText.value, environmentSummaryText.value].join(' · '),
-)
 </script>
 
 <template>
-  <div v-if="isDesktop" class="flex min-w-0 flex-1 items-stretch rounded-full border bg-muted/40 shadow-sm">
+  <div class="flex min-w-0 flex-1 items-stretch rounded-full border bg-muted/40 shadow-sm">
     <SearchBarSegment
       v-model:open="locationOpen"
       :label="$t('searchBar.location.label')"
@@ -155,7 +129,7 @@ const mobileSummary = computed(() =>
     <SearchBarSegment
       v-model:open="propertiesOpen"
       :label="$t('searchBar.properties.label')"
-      :summary="propertiesSummaryText"
+      :summary="propertiesSummary > 0 ? $t('searchBar.activeCount', { count: propertiesSummary }) : $t('searchBar.properties.placeholder')"
       align="start"
     >
       <SearchPropertiesPopover
@@ -187,7 +161,7 @@ const mobileSummary = computed(() =>
     <SearchBarSegment
       v-model:open="environmentOpen"
       :label="$t('searchBar.environment.label')"
-      :summary="environmentSummaryText"
+      :summary="environmentSummary > 0 ? $t('searchBar.activeCount', { count: environmentSummary }) : $t('searchBar.environment.placeholder')"
       align="end"
     >
       <SearchEnvironmentPopover
@@ -200,84 +174,5 @@ const mobileSummary = computed(() =>
         v-model:open="environmentOpen"
       />
     </SearchBarSegment>
-  </div>
-
-  <div v-else class="flex min-w-0 flex-1 items-stretch">
-    <button
-      type="button"
-      class="flex min-w-0 flex-1 items-center gap-2 rounded-full border bg-muted/40 px-4 py-2 text-left shadow-sm"
-      @click="mobileSheetOpen = true"
-    >
-      <Search class="size-4 shrink-0 text-muted-foreground" />
-      <span class="block truncate text-sm font-medium">{{ mobileSummary }}</span>
-    </button>
-
-    <Sheet v-model:open="mobileSheetOpen">
-      <SheetContent side="bottom" class="flex h-dvh max-h-dvh w-full flex-col gap-0 rounded-none border-t-0 p-0">
-        <SheetHeader class="border-b">
-          <SheetTitle>{{ $t('filters.title') }}</SheetTitle>
-        </SheetHeader>
-        <Tabs v-model="activeMobileTab" class="flex min-h-0 flex-1 flex-col gap-0">
-          <TabsList class="mx-4 mt-3 shrink-0 self-stretch">
-            <TabsTrigger value="location" class="flex-1">{{ $t('searchBar.location.label') }}</TabsTrigger>
-            <TabsTrigger value="properties" class="flex-1">{{ $t('searchBar.properties.label') }}</TabsTrigger>
-            <TabsTrigger value="environment" class="flex-1">{{ $t('searchBar.environment.label') }}</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="location" class="min-h-0 flex-1 overflow-y-auto p-5">
-            <SearchLocationPopover
-              v-model:search="search"
-              :countries="countries"
-              :selected-countries="selectedCountries"
-              :available-regions="availableRegions"
-              :selected-region-keys="selectedRegionKeys"
-              :placeholder="$t('filters.searchPlaceholder')"
-              @toggle-country="emit('toggle-country', $event)"
-              @toggle-region="emit('toggle-region', $event)"
-              @select-country="emit('select-country', $event)"
-              @set-nearby="handleSetNearby"
-              @pick-recent="emit('pick-recent', $event)"
-            />
-          </TabsContent>
-
-          <TabsContent value="properties" class="min-h-0 flex-1 overflow-y-auto p-5">
-            <SearchPropertiesPopover
-              v-model:price-min="priceMin"
-              v-model:price-max="priceMax"
-              v-model:land-area-min="landAreaMin"
-              v-model:land-area-max="landAreaMax"
-              v-model:living-area-min="livingAreaMin"
-              v-model:living-area-max="livingAreaMax"
-              v-model:year-built-min="yearBuiltMin"
-              v-model:year-built-max="yearBuiltMax"
-              v-model:renovation-year-min="renovationYearMin"
-              v-model:renovation-year-max="renovationYearMax"
-              v-model:authority-filter="authorityFilter"
-              v-model:category-filter="categoryFilter"
-              v-model:condition-filter="conditionFilter"
-              v-model:features-filter="featuresFilter"
-              v-model:only-with-photos="onlyWithPhotos"
-              v-model:include-cancelled="includeCancelled"
-              v-model:hide-rules-only="hideRulesOnly"
-              v-model:open="mobileSheetOpen"
-              :categories="categories"
-              :currency="currency"
-            />
-          </TabsContent>
-
-          <TabsContent value="environment" class="min-h-0 flex-1 overflow-y-auto p-5">
-            <SearchEnvironmentPopover
-              v-model:near-sea="nearSea"
-              v-model:near-lake="nearLake"
-              v-model:near-river="nearRiver"
-              v-model:near-mountain="nearMountain"
-              v-model:near-airport="nearAirport"
-              v-model:urban-rural="urbanRural"
-              v-model:open="mobileSheetOpen"
-            />
-          </TabsContent>
-        </Tabs>
-      </SheetContent>
-    </Sheet>
   </div>
 </template>
