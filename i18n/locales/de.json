@@ -100,9 +100,7 @@
     "sortDefault": "Standard",
     "sortDateAsc": "Termin (nächste zuerst)",
     "sortPriceAsc": "Preis aufsteigend",
-    "sortPriceDesc": "Preis absteigend",
-    "boundToMap": "Kartenbereich",
-    "boundToMapHint": "Nur Objekte im sichtbaren Kartenausschnitt anzeigen"
+    "sortPriceDesc": "Preis absteigend"
   },
   "settings": {
     "title": "Einstellungen — Zwangsversteigerungen",
@@ -559,7 +557,6 @@
       "features": "Ausstattung",
       "photos": "Nur mit Fotos",
       "cancelled": "inkl. aufgehobene",
-      "boundToMap": "Kartenbereich",
       "sort": "Sortierung",
       "llmOnly": "vollständig verarbeitet",
       "view": "Ansicht",

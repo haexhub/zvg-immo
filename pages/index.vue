@@ -34,7 +34,7 @@ const { currency } = useCurrencyDisplay()
 // off to the search page (?openFilters=1) the moment its filter button was
 // clicked — that's the bug report this bar replaces. It now owns the same
 // shape of local state as useAuctionSearchState (minus the URL sync and the
-// list-view-only concerns like sort/boundToMap/view), and only navigates to
+// list-view-only concerns like sort/view), and only navigates to
 // /search once the user actually submits.
 const search = ref('')
 const selectedCountries = ref<string[]>([])

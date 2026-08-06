@@ -100,9 +100,7 @@
     "sortDefault": "Default",
     "sortDateAsc": "Date (soonest first)",
     "sortPriceAsc": "Price low to high",
-    "sortPriceDesc": "Price high to low",
-    "boundToMap": "Map area",
-    "boundToMapHint": "Only show listings within the visible map area"
+    "sortPriceDesc": "Price high to low"
   },
   "settings": {
     "title": "Settings — Foreclosure Auctions",
@@ -559,7 +557,6 @@
       "features": "Features",
       "photos": "Only with photos",
       "cancelled": "incl. cancelled",
-      "boundToMap": "Map area",
       "sort": "Sort",
       "llmOnly": "fully processed",
       "view": "View",
