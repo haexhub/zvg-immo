@@ -35,6 +35,49 @@ describe('localizeVectorStyleLanguage', () => {
     expect(result.layers![0]!.layout!['text-field']).toEqual(['coalesce', ['get', 'name:en'], ['get', 'name']])
   })
 
+  it('rewrites a legacy string-template text-field (MapTiler streets-v2 Country/City/Continent labels)', () => {
+    const result = localizeVectorStyleLanguage(style([
+      { id: 'country-labels', type: 'symbol', layout: { 'text-field': '{name:en}' } },
+    ]), 'de')
+    expect(result.layers![0]!.layout!['text-field']).toEqual(['coalesce', ['get', 'name:de'], ['get', 'name']])
+  })
+
+  it('rewrites a bare "{name}" string-template text-field', () => {
+    const result = localizeVectorStyleLanguage(style([
+      { id: 'place-labels', type: 'symbol', layout: { 'text-field': '{name}' } },
+    ]), 'de')
+    expect(result.layers![0]!.layout!['text-field']).toEqual(['coalesce', ['get', 'name:de'], ['get', 'name']])
+  })
+
+  it('leaves an unrelated string-template text-field untouched', () => {
+    const original = style([
+      { id: 'housenumber', type: 'symbol', layout: { 'text-field': '{housenumber}' } },
+    ])
+    const result = localizeVectorStyleLanguage(original, 'de')
+    expect(result.layers![0]!.layout!['text-field']).toBe('{housenumber}')
+  })
+
+  it('rewrites only the name-referencing stop in a legacy zoom-function text-field, leaving other stops intact', () => {
+    const result = localizeVectorStyleLanguage(style([
+      { id: 'airport', type: 'symbol', layout: { 'text-field': { stops: [[8, ' '], [9, '{iata}'], [12, '{name:en}']] } } },
+    ]), 'de')
+    expect(result.layers![0]!.layout!['text-field']).toEqual({
+      stops: [
+        [8, ' '],
+        [9, '{iata}'],
+        [12, ['coalesce', ['get', 'name:de'], ['get', 'name']]],
+      ],
+    })
+  })
+
+  it('leaves a zoom-function text-field with no name-referencing stop untouched', () => {
+    const original = style([
+      { id: 'highway-shield', type: 'symbol', layout: { 'text-field': { stops: [[8, '{ref}']] } } },
+    ])
+    const result = localizeVectorStyleLanguage(original, 'de')
+    expect(result.layers![0]!.layout!['text-field']).toEqual({ stops: [[8, '{ref}']] })
+  })
+
   it('leaves a layer whose text-field references an unrelated field untouched', () => {
     const original = style([
       { id: 'housenumber', type: 'symbol', layout: { 'text-field': ['get', 'housenumber'] } },
