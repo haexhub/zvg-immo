@@ -333,7 +333,8 @@
       "auctionGeoMetricsRows": "Auctions with environment data",
       "latestEpoch": "Last complete rebuild",
       "rebuild": "Rebuild now",
-      "rebuilding": "Rebuilding …"
+      "rebuilding": "Rebuilding …",
+      "rebuildStarted": "Rebuild started — runs in the background and can take several minutes. Check progress via \"Refresh status\"."
     },
     "externalData": {
       "title": "External data sources",

@@ -2,25 +2,29 @@
 // own task-run route isn't exposed in production (see reprocess.post.ts),
 // and neither build-geo-features nor build-auction-geo-metrics is on a
 // scheduledTasks cron short enough to unblock an admin-requested OSM reimport
-// (see osm-import.get.ts) the same day. Runs build-geo-features first since
-// build-auction-geo-metrics only reads the latest *complete* geo_features
-// epoch and otherwise just reports itself skipped.
-
-import type { BuildGeoFeaturesResult } from '~/server/tasks/build-geo-features'
-import type { BuildAuctionGeoMetricsResult } from '~/server/tasks/build-auction-geo-metrics'
+// (see osm-import.get.ts) the same day.
+//
+// Detached, not awaited: build-geo-features scans the full osm_local_elements
+// table (tens of millions of rows across all countries) and can run far
+// longer than the reverse proxy keeps a request open — same rationale as
+// countries/[country]/enrich.post.ts detaching reprocess/external-enrichment.
+// Awaiting it here would also be actively dangerous: runExclusiveTask aborts
+// a task's in-flight run as soon as a new invocation starts, so a client
+// retrying after a perceived timeout would abort an almost-finished rebuild
+// and restart it, potentially forever. Chained via .then so
+// build-auction-geo-metrics only starts once build-geo-features has
+// published a complete epoch; poll GET /api/settings/geo-metrics for
+// progress instead of waiting on this response.
 
 export interface GeoMetricsRebuildResult {
-  geoFeatures: BuildGeoFeaturesResult | { skipped: true }
-  auctionGeoMetrics: BuildAuctionGeoMetricsResult | { skipped: true } | { skipped: true; reason: string }
+  started: true
 }
 
 export default defineEventHandler(async (event): Promise<GeoMetricsRebuildResult> => {
-  const geoFeaturesOutcome = (await runTask('build-geo-features')) as { result: GeoMetricsRebuildResult['geoFeatures'] }
-  const auctionGeoMetricsOutcome = (await runTask('build-auction-geo-metrics')) as {
-    result: GeoMetricsRebuildResult['auctionGeoMetrics']
-  }
-  return {
-    geoFeatures: geoFeaturesOutcome.result,
-    auctionGeoMetrics: auctionGeoMetricsOutcome.result,
-  }
+  void runTask('build-geo-features')
+    .then(() => runTask('build-auction-geo-metrics'))
+    .catch((err: unknown) => {
+      console.error('[settings/geo-metrics] rebuild chain failed:', (err as Error).message)
+    })
+  return { started: true }
 })

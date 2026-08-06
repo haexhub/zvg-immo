@@ -14,6 +14,7 @@ const pending = ref(false)
 const loadError = ref<string | null>(null)
 const rebuildPending = ref(false)
 const rebuildError = ref<string | null>(null)
+const rebuildStarted = ref(false)
 
 async function load(): Promise<void> {
   pending.value = true
@@ -31,8 +32,10 @@ async function rebuild(): Promise<void> {
   if (rebuildPending.value) return
   rebuildPending.value = true
   rebuildError.value = null
+  rebuildStarted.value = false
   try {
     await $fetch<GeoMetricsRebuildResult>('/api/settings/geo-metrics', { method: 'POST' })
+    rebuildStarted.value = true
     await load()
   } catch (err) {
     rebuildError.value = normalizeSettingsError(err, t('settings.geoMetrics.rebuildError'))
@@ -69,6 +72,7 @@ onMounted(load)
 
       <p v-if="loadError" class="text-sm text-destructive">{{ loadError }}</p>
       <p v-if="rebuildError" class="text-sm text-destructive">{{ rebuildError }}</p>
+      <p v-if="rebuildStarted" class="text-sm text-muted-foreground">{{ $t('settings.geoMetrics.rebuildStarted') }}</p>
 
       <dl v-if="status" class="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
         <dt class="text-muted-foreground">{{ $t('settings.geoMetrics.geoFeaturesRows') }}</dt>
