@@ -9,6 +9,11 @@ export default defineNuxtConfig({
   vite: {
     plugins: [tailwindcss()],
   },
+  // .claude/worktrees holds full checkouts (each with its own node_modules)
+  // that Claude Code creates alongside this repo — without this, Nuxt's
+  // watcher recurses into every one of them and can exhaust the system's
+  // inotify watch limit before the dev server even starts.
+  ignore: ['.claude/'],
   shadcn: {
     prefix: '',
     componentDir: '~/components/ui',
