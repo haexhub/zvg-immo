@@ -6,6 +6,7 @@ import { auctionKey } from '~/lib/auction-key'
 const props = defineProps<{
   auctions: AuctionSummary[]
   totalCount: number
+  canLoadMore: boolean
   pending: boolean
   loggedIn: boolean
   watchlistIds: Map<string, string>
@@ -42,6 +43,7 @@ const auctionSummaries = computed(() => new Map(props.auctions.map((a) => [aucti
       <AuctionListPane
         :auctions="auctions"
         :total-count="totalCount"
+        :can-load-more="canLoadMore"
         :pending="pending"
         :logged-in="loggedIn"
         :watchlist-ids="watchlistIds"

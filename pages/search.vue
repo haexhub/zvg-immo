@@ -198,6 +198,14 @@ const listBase = computed<AuctionSummary[]>(() => {
 const sortedList = computed<AuctionSummary[]>(() => listBase.value)
 const listTotalCount = computed<number>(() => mapVisibleKeys.value ? mapVisibleKeys.value.size : (data.value?.total ?? 0))
 
+// listTotalCount comes from the geo dataset (viewport-filtered, its own
+// fetch) and can end up larger than data.value.total (the /api/auctions
+// match count loadMore() actually pages through) — e.g. once every matching
+// auction is already loaded but the map still reports more geo-matched
+// points in view. Gating the button on listTotalCount alone then leaves it
+// visible forever with every click a silent no-op; gate it on this instead.
+const canLoadMore = computed<boolean>(() => !!data.value && data.value.auctions.length < data.value.total)
+
 // The list view used to render every filtered auction as a full card in one
 // go — with the "all countries" default that's ~14.7k cards (~45MB of SSR
 // HTML) before the client even hydrates and switches to the map. Page it
@@ -330,6 +338,7 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
           class="flex-1 min-h-0"
           :auctions="visibleAuctions"
           :total-count="listTotalCount"
+          :can-load-more="canLoadMore"
           :pending="pending"
           :logged-in="!!user"
           :watchlist-ids="watchlistIds"
@@ -345,6 +354,7 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
         v-model="view"
         :auctions="visibleAuctions"
         :total-count="listTotalCount"
+        :can-load-more="canLoadMore"
         :pending="pending"
         :logged-in="!!user"
         :watchlist-ids="watchlistIds"
