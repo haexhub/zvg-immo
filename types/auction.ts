@@ -162,6 +162,7 @@ export interface LocationEnvironmentContext {
   nearestAirportKind: 'major' | 'regional' | 'minor' | 'military' | 'unknown'
   reportedNoise?: LocationNoiseObservation[]
   airQuality?: LocationAirQualityObservation | null
+  climateNormals?: LocationClimateNormals | null
   riskSignals: string[]
 }
 
@@ -185,6 +186,29 @@ export interface LocationAirQualityObservation {
   ozone: number | null
   /** Timestamp of the modelled hour the values describe. */
   observedAt: string | null
+  sourceLabel: string
+  sourceUrl: string
+  checkedAt: string
+}
+
+export interface LocationClimateMonthNormal {
+  /** 1 = January … 12 = December. */
+  month: number
+  /** Average daily maximum temperature (°C) over the reference period. */
+  tempMaxAvgC: number
+  /** Average daily mean temperature (°C) over the reference period. */
+  tempMeanAvgC: number
+  /** Average daily minimum ("night") temperature (°C) over the reference period. */
+  tempMinAvgC: number
+  /** Average monthly precipitation total (mm) over the reference period. */
+  precipitationAvgMm: number
+}
+
+export interface LocationClimateNormals {
+  periodStartYear: number
+  periodEndYear: number
+  /** Twelve entries, ordered January (1) through December (12). */
+  months: LocationClimateMonthNormal[]
   sourceLabel: string
   sourceUrl: string
   checkedAt: string

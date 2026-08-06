@@ -89,15 +89,31 @@ export const osmLocalElements = pgTable('osm_local_elements', {
 // Schicht 3 (climate_cells): 0.1° ERA5-Land raster grid. Auctions reference
 // a cell via auction_geo_metrics.climateCellId instead of duplicating
 // climate normals per auction — Europe has ~150k cells at 0.1°, and that
-// count doesn't scale with the number of auctions. Only summerAvgTempC is
-// modeled so far (the one filter named concretely in the architecture doc);
-// WP-7 defines the full set of normals fetched from Open-Meteo's historical
-// archive.
+// count doesn't scale with the number of auctions.
+// Populated lazily today by server/utils/external-data/open-meteo-climate.ts
+// for the detail-page climate chart (one row per cell an auction actually
+// falls in, not a full grid pre-fill). summerAvgTempC is the mean of daily
+// *maxima* June–August, not daily means — see the WP-7 design doc's
+// reasoning (a 30°C daily mean is basically unreached in Europe, so the
+// "summer doesn't exceed 30°C" filter has to read the highs, not the mean).
+// auction_geo_metrics.climateCellId and the search-filter/Lagebeschreibung
+// half of WP-7 (docs/plans/2026-08-04-gis-wp7-klima-grid.md) are still open.
 export const climateCells = pgTable('climate_cells', {
   id: bigserial('id', { mode: 'number' }).primaryKey(),
   lat: numeric('lat').notNull(),
   lon: numeric('lon').notNull(),
   summerAvgTempC: numeric('summer_avg_temp_c'),
+  winterAvgTempC: numeric('winter_avg_temp_c'),
+  annualPrecipMm: integer('annual_precip_mm'),
+  frostDays: integer('frost_days'),
+  // Per-month min/median/max (LocationClimateNormals['months']) for the
+  // detail-page chart — richer than the single aggregates above, computed
+  // from the same fetched daily series at no extra request cost.
+  monthly: jsonb('monthly'),
+  // Reference period + adapter identity (e.g. 'open-meteo-era5-land-1991-
+  // 2020-v1'), so a later change of period or source can tell an old row
+  // apart from a current one instead of trusting fetchedAt alone.
+  sourceVersion: text('source_version'),
   fetchedAt: timestamp('fetched_at', { withTimezone: true }),
 }, (table) => [
   unique('climate_cells_lat_lon_key').on(table.lat, table.lon),

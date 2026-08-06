@@ -152,6 +152,8 @@ export default defineNuxtConfig({
     //   NUXT_EXTERNAL_DATA_EEA_NOISE_SERVICE_BASE_URL=https://noise.discomap.eea.europa.eu/arcgis/rest/services/noiseStoryMap
     //   NUXT_EXTERNAL_DATA_COPERNICUS_EFFIS_CACHE_PATH=/app/.cache_zvg/external/copernicus-effis.json
     //   NUXT_EXTERNAL_DATA_COPERNICUS_EFFIS_MAX_CACHE_AGE_DAYS=400
+    //   NUXT_EXTERNAL_DATA_OPEN_METEO_CLIMATE_SERVICE_URL=https://archive-api.open-meteo.com/v1/archive
+    //   NUXT_EXTERNAL_DATA_OPEN_METEO_CLIMATE_TIMEOUT_MS=30000
     externalData: {
       frDvfCachePath: '',
       euFloodRiskGeoJsonPath: '',
@@ -164,6 +166,9 @@ export default defineNuxtConfig({
       camsAirQualityTimeoutMs: 10_000,
       copernicusEffisCachePath: '',
       copernicusEffisMaxCacheAgeDays: 400,
+      // Same public/unauthenticated shape as camsAirQualityServiceUrl above.
+      openMeteoClimateServiceUrl: 'https://archive-api.open-meteo.com/v1/archive',
+      openMeteoClimateTimeoutMs: 30_000,
     },
     // G1 Roh-Archiv (WP-3): Supabase Storage bucket for archived crawl
     // snapshots (server/utils/raw-archive.ts, storage-uploader.ts). Empty →
