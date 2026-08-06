@@ -33,6 +33,17 @@ export interface TaskRunStatus {
   /** Numeric progress snapshot of the run currently in flight — null when
    *  idle or before the first progress report of a fresh run. */
   progress: TaskRunSummary | null
+  /** Same numeric snapshot, broken down per country (ISO-2, lowercase) —
+   *  lets /settings show which countries are done vs. still in flight
+   *  instead of just the aggregate. Unlike `progress`, this is neither
+   *  cleared by recordTaskRunStart/End nor replaced wholesale: entries are
+   *  merged per country, so each country keeps its last reported state until
+   *  a run that actually covers it reports a new one. That matters for the
+   *  country-scoped manual triggers in /settings — crawling one country must
+   *  not blank out every other country's last known state. Null when the
+   *  task has never reported per-country progress (e.g. old data from before
+   *  this field existed). */
+  progressByCountry: Record<string, TaskRunSummary> | null
 }
 
 const TASK_RUN_STATUS_KEY = 'task_run_status'
@@ -46,6 +57,7 @@ const IDLE_STATUS: TaskRunStatus = {
   lastWarning: null,
   lastLlmError: null,
   progress: null,
+  progressByCountry: null,
 }
 
 // Per-task last progress-write timestamp (ms), so a fast-moving loop (e.g. a
@@ -84,6 +96,16 @@ function coerceSummary(value: unknown): TaskRunSummary | null {
   return out
 }
 
+function coerceProgressByCountry(value: unknown): Record<string, TaskRunSummary> | null {
+  if (!value || typeof value !== 'object') return null
+  const out: Record<string, TaskRunSummary> = {}
+  for (const [country, entry] of Object.entries(value as Record<string, unknown>)) {
+    const summary = coerceSummary(entry)
+    if (summary) out[country] = summary
+  }
+  return out
+}
+
 function coerceTaskRunStatus(value: unknown): TaskRunStatus {
   if (!value || typeof value !== 'object') return IDLE_STATUS
   const v = value as Record<string, unknown>
@@ -96,6 +118,7 @@ function coerceTaskRunStatus(value: unknown): TaskRunStatus {
     lastWarning: typeof v.lastWarning === 'string' && v.lastWarning ? v.lastWarning : null,
     lastLlmError: typeof v.lastLlmError === 'string' && v.lastLlmError ? v.lastLlmError : null,
     progress: coerceSummary(v.progress),
+    progressByCountry: coerceProgressByCountry(v.progressByCountry),
   }
 }
 
@@ -184,27 +207,41 @@ export async function recordTaskRunEnd(
   })
 }
 
-/** Updates only `progress`, leaving `status`/`startedAt`/`lastResult`
- *  untouched — for a long-running loop (crawlAll's regions, enrich's
- *  per-auction worker, reprocess's per-candidate loop) to report how far
- *  along it is while it's still running. Throttled per task so a fast loop
- *  doesn't turn every item into its own Postgres write; queued behind
- *  start/end (see `enqueue`) so a throttled-through call can never land after
- *  the run's own end write. */
+/** Updates only `progress`/`progressByCountry`, leaving
+ *  `status`/`startedAt`/`lastResult` untouched — for a long-running loop
+ *  (crawlAll's regions, enrich's per-auction worker, reprocess's
+ *  per-candidate loop) to report how far along it is while it's still
+ *  running. Throttled per task so a fast loop doesn't turn every item into
+ *  its own Postgres write; queued behind start/end (see `enqueue`) so a
+ *  throttled-through call can never land after the run's own end write.
+ *
+ *  `flush` bypasses the throttle. A run's *last* progress report is the one
+ *  that stays visible in /settings after it finishes (recordTaskRunEnd
+ *  clears `progress` but keeps `progressByCountry`), so it must not be the
+ *  one the throttle happens to swallow — otherwise a completed run is left
+ *  showing e.g. 260/300 forever. Callers use it exactly once, after their
+ *  loop. */
 export async function recordTaskRunProgress(
   task: TrackedTask,
   progress: TaskRunSummary,
-  extra: { lastLlmError?: string | null } = {},
+  extra: {
+    lastLlmError?: string | null
+    progressByCountry?: Record<string, TaskRunSummary>
+    flush?: boolean
+  } = {},
 ): Promise<void> {
   const now = Date.now()
   const last = lastProgressWriteAt.get(task) ?? 0
-  if (now - last < PROGRESS_THROTTLE_MS) return
+  if (!extra.flush && now - last < PROGRESS_THROTTLE_MS) return
   lastProgressWriteAt.set(task, now)
   await enqueue(task, async () => {
     const current = await getTaskRunStatus(task)
     await writeTaskRunStatus(task, {
       ...current,
       progress,
+      ...(extra.progressByCountry !== undefined
+        ? { progressByCountry: { ...current.progressByCountry, ...extra.progressByCountry } }
+        : {}),
       ...(extra.lastLlmError !== undefined ? { lastLlmError: extra.lastLlmError } : {}),
     })
   })

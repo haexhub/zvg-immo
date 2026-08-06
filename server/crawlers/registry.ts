@@ -390,8 +390,10 @@ export interface CrawlAllOptions {
   /** Max parallel region fetches across all platforms. */
   regionConcurrency?: number
   /** Called after each region attempt (success or failure) completes, for
-   *  callers that want to report live crawl progress (see enrich.ts). */
-  onRegionDone?: (done: number, total: number) => void
+   *  callers that want to report live crawl progress (see enrich.ts). `last`
+   *  identifies the region that was just attempted, so callers can break the
+   *  done/total tally down per country. */
+  onRegionDone?: (done: number, total: number, last: { country: string; region: string }) => void
   /** Called for each successful regional crawl before it is merged. */
   onRegionResult?: (country: string, region: string, result: CrawlResult) => void | Promise<void>
   /** Cooperative cancellation used by exclusive scheduled/manual jobs. */
@@ -444,7 +446,7 @@ export async function crawlAll(
           message: (err as Error).message,
         })
       }
-      opts.onRegionDone?.(++regionsDone, all.length)
+      opts.onRegionDone?.(++regionsDone, all.length, { country: r.country, region: r.code })
     }
   }
   await Promise.all(Array.from({ length: concurrency }, worker))

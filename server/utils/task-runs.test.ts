@@ -32,6 +32,7 @@ const IDLE_STATUS = {
   lastWarning: null,
   lastLlmError: null,
   progress: null,
+  progressByCountry: null,
 }
 
 const SUMMARY = {
@@ -110,6 +111,66 @@ describe('task-runs', () => {
 
     await recordTaskRunEnd('reprocess', { result: { processed: 3 } })
     expect((await getTaskRunStatus('reprocess')).progress).toBeNull()
+
+    nowSpy.mockRestore()
+  })
+
+  it('keeps per-country progress across runs, merging only the countries a run reports', async () => {
+    const { getPool } = await import('./db')
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { getTaskRunStatus, recordTaskRunStart, recordTaskRunEnd, recordTaskRunProgress } = await import('./task-runs')
+
+    await recordTaskRunStart('enrich')
+    await recordTaskRunProgress(
+      'enrich',
+      { archivedDone: 3, archivedTotal: 3 },
+      { progressByCountry: { de: { archivedDone: 2, archivedTotal: 2 }, bg: { archivedDone: 1, archivedTotal: 1 } }, flush: true },
+    )
+    await recordTaskRunEnd('enrich', { result: { archived: 3 } })
+    // The aggregate snapshot is transient, the per-country one is not.
+    const afterFullRun = await getTaskRunStatus('enrich')
+    expect(afterFullRun.progress).toBeNull()
+    expect(afterFullRun.progressByCountry).toEqual({
+      de: { archivedDone: 2, archivedTotal: 2 },
+      bg: { archivedDone: 1, archivedTotal: 1 },
+    })
+
+    // A country-scoped manual run must not blank out the countries it never
+    // touched — /settings would otherwise lose their last known state.
+    await recordTaskRunStart('enrich')
+    await recordTaskRunProgress(
+      'enrich',
+      { archivedDone: 5, archivedTotal: 5 },
+      { progressByCountry: { de: { archivedDone: 5, archivedTotal: 5 } }, flush: true },
+    )
+    await recordTaskRunEnd('enrich', { result: { archived: 5 } })
+    expect((await getTaskRunStatus('enrich')).progressByCountry).toEqual({
+      de: { archivedDone: 5, archivedTotal: 5 },
+      bg: { archivedDone: 1, archivedTotal: 1 },
+    })
+  })
+
+  it('lets a flushed final progress report through the throttle', async () => {
+    const { getPool } = await import('./db')
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { getTaskRunStatus, recordTaskRunStart, recordTaskRunProgress } = await import('./task-runs')
+    const nowSpy = vi.spyOn(Date, 'now')
+
+    const T0 = 10_000_000
+    nowSpy.mockReturnValue(T0)
+    await recordTaskRunStart('reprocess')
+    await recordTaskRunProgress('reprocess', { processed: 1 }, { progressByCountry: { de: { processed: 1 } } })
+
+    // Same throttle window as the write above — without `flush` this would be
+    // dropped and the run would stay visible at its second-to-last state.
+    nowSpy.mockReturnValue(T0 + 100)
+    await recordTaskRunProgress('reprocess', { processed: 2 }, { progressByCountry: { de: { processed: 2 } }, flush: true })
+
+    const status = await getTaskRunStatus('reprocess')
+    expect(status.progress).toEqual({ processed: 2 })
+    expect(status.progressByCountry).toEqual({ de: { processed: 2 } })
 
     nowSpy.mockRestore()
   })
