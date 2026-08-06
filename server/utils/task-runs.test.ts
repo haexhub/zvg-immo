@@ -32,6 +32,7 @@ const IDLE_STATUS = {
   lastWarning: null,
   lastLlmError: null,
   progress: null,
+  progressByCountry: null,
 }
 
 const SUMMARY = {

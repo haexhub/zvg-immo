@@ -65,7 +65,7 @@ import { interleaveByPlatform } from '~/server/utils/interleave-by-platform'
 import { isSafePathSegment } from '~/server/utils/path-segment'
 import { downloadImage, mimeTypeFor } from '~/server/utils/image-storage'
 import { normalizePhoto } from '~/lib/photo'
-import { recordTaskRunEnd, recordTaskRunProgress, recordTaskRunStart } from '~/server/utils/task-runs'
+import { recordTaskRunEnd, recordTaskRunProgress, recordTaskRunStart, type TaskRunSummary } from '~/server/utils/task-runs'
 import {
   ensureEnabledCountriesLoaded,
   getEnabledCountryCodes,
@@ -131,6 +131,7 @@ function readMaxLlmPerRun(): number {
 interface Candidate {
   platform: string
   externalId: string
+  country: string
 }
 
 interface QuotaViolation {
@@ -200,14 +201,14 @@ async function findCandidates(opts: ReprocessOptions, countries: readonly string
   if (opts.externalId) conditions.push(`rc.external_id = $${params.push(opts.externalId)}`)
   if (opts.caseNumber) conditions.push(`a.case_number = $${params.push(opts.caseNumber)}`)
   const limitClause = opts.limit ? ` LIMIT $${params.push(opts.limit)}` : ''
-  const { rows } = await db.query<{ platform: string; external_id: string }>(
-    `SELECT DISTINCT rc.platform, rc.external_id
+  const { rows } = await db.query<{ platform: string; external_id: string; country: string }>(
+    `SELECT DISTINCT rc.platform, rc.external_id, a.country
      FROM artifact_captures rc
      JOIN auctions a ON a.platform = rc.platform AND a.external_id = rc.external_id
      WHERE ${conditions.join(' AND ')}${limitClause}`,
     params,
   )
-  return rows.map((r) => ({ platform: r.platform, externalId: r.external_id }))
+  return rows.map((r) => ({ platform: r.platform, externalId: r.external_id, country: r.country }))
 }
 
 /** Whether enrich.ts has archived a document set for this auction that this
@@ -604,6 +605,14 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
   const llmCapPerPlatform = Math.max(1, Math.ceil(maxLlmPerRun / llmPlatformCount))
   const llmCallsByPlatform = new Map<string, number>()
 
+  // Per-country breakdown for /settings — diffed from the aggregate counters
+  // below in the loop's `finally` block rather than incremented at each of
+  // their many call sites, since every increment happens somewhere within
+  // one candidate's iteration regardless of which branch it took.
+  const candidatesTotalByCountry = new Map<string, number>()
+  for (const c of candidates) candidatesTotalByCountry.set(c.country, (candidatesTotalByCountry.get(c.country) ?? 0) + 1)
+  const progressByCountry = new Map<string, TaskRunSummary>()
+
   let processed = 0
   let skipped = 0
   let llmCalls = 0
@@ -647,8 +656,9 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
     record.artifactVersionId = artifactVersionId
   }
 
-  for (const { platform, externalId } of candidates) {
+  for (const { platform, externalId, country } of candidates) {
     throwIfTaskAborted(signal)
+    const before = { processed, skipped, llmCalls, llmErrors }
     try {
       const key = cacheKey(platform, externalId)
       const record = records.get(key)
@@ -800,10 +810,18 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
         break
       }
     } finally {
+      const prevCountry = progressByCountry.get(country)
+      progressByCountry.set(country, {
+        candidatesTotal: candidatesTotalByCountry.get(country) ?? 0,
+        processed: (prevCountry?.processed ?? 0) + (processed - before.processed),
+        skipped: (prevCountry?.skipped ?? 0) + (skipped - before.skipped),
+        llmCalls: (prevCountry?.llmCalls ?? 0) + (llmCalls - before.llmCalls),
+        llmErrors: (prevCountry?.llmErrors ?? 0) + (llmErrors - before.llmErrors),
+      })
       void recordTaskRunProgress(
         'reprocess',
         { candidatesTotal: candidates.length, processed, skipped, llmCalls, llmErrors },
-        { lastLlmError },
+        { lastLlmError, progressByCountry: Object.fromEntries(progressByCountry) },
       )
     }
   }

@@ -30,6 +30,7 @@ interface TaskRunStatus {
   lastWarning?: string | null
   lastLlmError?: string | null
   progress?: Record<string, number | string | null>
+  progressByCountry?: Record<string, Record<string, number | string | null>> | null
 }
 
 export interface LlmBatchJobsOverview {

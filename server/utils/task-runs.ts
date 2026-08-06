@@ -33,6 +33,14 @@ export interface TaskRunStatus {
   /** Numeric progress snapshot of the run currently in flight — null when
    *  idle or before the first progress report of a fresh run. */
   progress: TaskRunSummary | null
+  /** Same numeric snapshot, broken down per country (ISO-2, lowercase) —
+   *  lets /settings show which countries are done vs. still in flight
+   *  instead of just the aggregate. Unlike `progress`, this is NOT cleared
+   *  by recordTaskRunEnd: it's meant to keep showing each country's state
+   *  from its last run until the next run overwrites it. Null when the task
+   *  has never reported per-country progress (e.g. old data from before this
+   *  field existed). */
+  progressByCountry: Record<string, TaskRunSummary> | null
 }
 
 const TASK_RUN_STATUS_KEY = 'task_run_status'
@@ -46,6 +54,7 @@ const IDLE_STATUS: TaskRunStatus = {
   lastWarning: null,
   lastLlmError: null,
   progress: null,
+  progressByCountry: null,
 }
 
 // Per-task last progress-write timestamp (ms), so a fast-moving loop (e.g. a
@@ -84,6 +93,16 @@ function coerceSummary(value: unknown): TaskRunSummary | null {
   return out
 }
 
+function coerceProgressByCountry(value: unknown): Record<string, TaskRunSummary> | null {
+  if (!value || typeof value !== 'object') return null
+  const out: Record<string, TaskRunSummary> = {}
+  for (const [country, entry] of Object.entries(value as Record<string, unknown>)) {
+    const summary = coerceSummary(entry)
+    if (summary) out[country] = summary
+  }
+  return out
+}
+
 function coerceTaskRunStatus(value: unknown): TaskRunStatus {
   if (!value || typeof value !== 'object') return IDLE_STATUS
   const v = value as Record<string, unknown>
@@ -96,6 +115,7 @@ function coerceTaskRunStatus(value: unknown): TaskRunStatus {
     lastWarning: typeof v.lastWarning === 'string' && v.lastWarning ? v.lastWarning : null,
     lastLlmError: typeof v.lastLlmError === 'string' && v.lastLlmError ? v.lastLlmError : null,
     progress: coerceSummary(v.progress),
+    progressByCountry: coerceProgressByCountry(v.progressByCountry),
   }
 }
 
@@ -160,6 +180,7 @@ export async function recordTaskRunStart(task: TrackedTask): Promise<void> {
       lastWarning: null,
       lastLlmError: null,
       progress: null,
+      progressByCountry: null,
     })
   })
 }
@@ -194,7 +215,7 @@ export async function recordTaskRunEnd(
 export async function recordTaskRunProgress(
   task: TrackedTask,
   progress: TaskRunSummary,
-  extra: { lastLlmError?: string | null } = {},
+  extra: { lastLlmError?: string | null; progressByCountry?: Record<string, TaskRunSummary> } = {},
 ): Promise<void> {
   const now = Date.now()
   const last = lastProgressWriteAt.get(task) ?? 0
@@ -205,6 +226,7 @@ export async function recordTaskRunProgress(
     await writeTaskRunStatus(task, {
       ...current,
       progress,
+      ...(extra.progressByCountry !== undefined ? { progressByCountry: extra.progressByCountry } : {}),
       ...(extra.lastLlmError !== undefined ? { lastLlmError: extra.lastLlmError } : {}),
     })
   })

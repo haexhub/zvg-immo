@@ -26,7 +26,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Auction, AuctionExtraction, CuratedPhoto } from '~/types/auction'
 import { normalizePhoto } from '~/lib/photo'
-import { crawlAll, platforms } from '~/server/crawlers/registry'
+import { crawlAll, listRegions, platforms } from '~/server/crawlers/registry'
 import { ensureAuctionIdentity, upsertCurrentAuctions } from '~/server/utils/current-auctions'
 import { writeAuctionDetails } from '~/server/utils/auction-details'
 import { readAuctionRecordMap } from '~/server/utils/auction-record'
@@ -56,7 +56,7 @@ import { recordObservations } from '~/server/utils/history'
 import { writeListCache } from '~/server/utils/list-cache'
 import { applyDescriptionMarketValue } from '~/server/utils/description-market-value'
 import { normalizeAuctionDescription, normalizeAuctionDescriptions } from '~/server/utils/description-normalization'
-import { recordTaskRunEnd, recordTaskRunProgress, recordTaskRunStart } from '~/server/utils/task-runs'
+import { recordTaskRunEnd, recordTaskRunProgress, recordTaskRunStart, type TaskRunSummary } from '~/server/utils/task-runs'
 import { recordTaskRunError } from '~/server/utils/task-run-errors'
 import { runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-task'
 import { fillAuctionGeocodes } from '~/server/utils/auction-geocoding'
@@ -123,6 +123,34 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
 
     let regionsDone = 0
     let regionsTotal = 0
+    // Per-country breakdown of the same two phases (region crawl, then
+    // per-auction archive) for /settings — regionsByCountry's totals are
+    // seeded upfront from the same scope crawlAll() will use, so a country
+    // shows up (at 0/N) as soon as the run starts rather than only once its
+    // first region finishes.
+    const regionsByCountry = new Map<string, { done: number; total: number }>()
+    for (const r of listRegions()) {
+      if (opts.country && r.country !== opts.country.toLowerCase()) continue
+      const entry = regionsByCountry.get(r.country) ?? { done: 0, total: 0 }
+      entry.total++
+      regionsByCountry.set(r.country, entry)
+    }
+    const archivedByCountry = new Map<string, number>()
+    let todoTotalByCountry = new Map<string, number>()
+    function snapshotProgressByCountry(): Record<string, TaskRunSummary> {
+      const countries = new Set([...regionsByCountry.keys(), ...todoTotalByCountry.keys()])
+      const out: Record<string, TaskRunSummary> = {}
+      for (const country of countries) {
+        const regions = regionsByCountry.get(country)
+        out[country] = {
+          regionsDone: regions?.done ?? 0,
+          regionsTotal: regions?.total ?? 0,
+          archivedDone: archivedByCountry.get(country) ?? 0,
+          archivedTotal: todoTotalByCountry.get(country) ?? 0,
+        }
+      }
+      return out
+    }
     const runErrors: string[] = []
     // Mirrors every runErrors entry into task_run_errors (Postgres) so it
     // survives past this run's lastWarning being overwritten by the next one,
@@ -151,10 +179,17 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
             }
           }
         : undefined,
-      onRegionDone: (done, total) => {
+      onRegionDone: (done, total, last) => {
         regionsDone = done
         regionsTotal = total
-        void recordTaskRunProgress('enrich', { regionsDone, regionsTotal, archivedDone: 0, archivedTotal: 0 })
+        const entry = regionsByCountry.get(last.country) ?? { done: 0, total: 0 }
+        entry.done++
+        regionsByCountry.set(last.country, entry)
+        void recordTaskRunProgress(
+          'enrich',
+          { regionsDone, regionsTotal, archivedDone: 0, archivedTotal: 0 },
+          { progressByCountry: snapshotProgressByCountry() },
+        )
       },
     })
     // Identity must exist before this task's own tail loop below archives
@@ -255,6 +290,8 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
     )
     const todo = interleaveByPlatform(eligible)
     console.log(`[enrich] crawled ${result.auctions.length}, ${todo.length} to (re)archive`)
+    todoTotalByCountry = new Map()
+    for (const a of todo) todoTotalByCountry.set(a.country, (todoTotalByCountry.get(a.country) ?? 0) + 1)
 
     let archived = 0
     let enrichedCount = 0
@@ -456,6 +493,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
           photoPipelineVersion,
         })
         archived++
+        archivedByCountry.set(a.country, (archivedByCountry.get(a.country) ?? 0) + 1)
         // Make this auction visible right away instead of waiting for the
         // whole run to finish — otherwise a freshly activated country shows
         // nothing in /search until every listing has been processed.
@@ -478,12 +516,11 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
         } catch (err) {
           pushRunError('auction_details', `Details ${a.platform}:${a.externalId}: ${(err as Error).message}`, a)
         }
-        void recordTaskRunProgress('enrich', {
-          regionsDone,
-          regionsTotal,
-          archivedDone: archived,
-          archivedTotal: todo.length,
-        })
+        void recordTaskRunProgress(
+          'enrich',
+          { regionsDone, regionsTotal, archivedDone: archived, archivedTotal: todo.length },
+          { progressByCountry: snapshotProgressByCountry() },
+        )
       }
     }
     await Promise.all(Array.from({ length: ENRICH_CONCURRENCY }, worker))

@@ -19,6 +19,7 @@ const IDLE_REPROCESS_STATUS = {
   lastWarning: null,
   lastLlmError: null,
   progress: null,
+  progressByCountry: null,
 }
 
 function record(key: string, extraction: Record<string, unknown>) {
@@ -227,6 +228,7 @@ describe('/api/settings/llm-batch-jobs', () => {
       lastWarning: null,
       lastLlmError: null,
       progress: null,
+      progressByCountry: null,
     }
     vi.mocked(getTaskRunStatus).mockResolvedValue(runningStatus)
 
