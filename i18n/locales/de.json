@@ -323,6 +323,18 @@
       "requesting": "Anfordern …",
       "pending": "Angefordert am {at} — wird beim nächsten täglichen Lauf verarbeitet."
     },
+    "geoMetrics": {
+      "title": "Umgebungsfilter-Precompute",
+      "description": "Berechnet Entfernungen zu Meer/See/Fluss/Berg/Flughafen/Ski (aus den OSM-Standortdaten oben) pro Auktion vor — die Umgebungsfilter in der Suche lesen nur aus diesen vorberechneten Werten. Läuft täglich automatisch, kann hier aber auch sofort angestoßen werden, z. B. nach einem manuellen OSM-Reimport.",
+      "loadError": "Status konnte nicht geladen werden.",
+      "rebuildError": "Neuberechnung fehlgeschlagen.",
+      "refresh": "Status aktualisieren",
+      "geoFeaturesRows": "Vorberechnete Umgebungspunkte",
+      "auctionGeoMetricsRows": "Auktionen mit Umgebungsdaten",
+      "latestEpoch": "Letzter vollständiger Aufbau",
+      "rebuild": "Jetzt neu berechnen",
+      "rebuilding": "Berechne …"
+    },
     "externalData": {
       "title": "Externe Datenquellen",
       "description": "POI/ÖPNV, Lärm, Hochwasser und Marktvergleich auf der Detailseite kommen aus diesen Diensten. Ein leeres Feld übernimmt den per Deployment (Env-Var) gesetzten Wert, sofern vorhanden — sonst bleibt die Quelle inaktiv.",

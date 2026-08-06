@@ -323,6 +323,18 @@
       "requesting": "Requesting …",
       "pending": "Requested at {at} — will be processed on the next daily run."
     },
+    "geoMetrics": {
+      "title": "Environment filter precompute",
+      "description": "Precomputes each auction's distance to sea/lake/river/mountain/airport/ski (from the OSM location data above) — the search's environment filters only read these precomputed values. Runs daily automatically, but can also be triggered here right away, e.g. after a manual OSM reimport.",
+      "loadError": "Could not load status.",
+      "rebuildError": "Rebuild failed.",
+      "refresh": "Refresh status",
+      "geoFeaturesRows": "Precomputed environment points",
+      "auctionGeoMetricsRows": "Auctions with environment data",
+      "latestEpoch": "Last complete rebuild",
+      "rebuild": "Rebuild now",
+      "rebuilding": "Rebuilding …"
+    },
     "externalData": {
       "title": "External data sources",
       "description": "POI/transit, noise, flood risk and market comparison on the detail page come from these services. An empty field falls back to the deployment-configured (env var) value, if set — otherwise the source stays inactive.",
