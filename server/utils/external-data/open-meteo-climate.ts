@@ -22,6 +22,7 @@ import type {
 } from '~/types/auction'
 import type { LocationContextEnhancer } from '~/server/tasks/external-enrichment'
 import { EXTERNAL_DATA_SOURCES } from './sources'
+import { fetchOpenMeteo } from './open-meteo-rate-limit'
 
 export interface OpenMeteoClimateOptions {
   db: Pool
@@ -223,7 +224,7 @@ async function fetchDailySeries(
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   let payload: ArchiveDailyResponse
   try {
-    const res = await fetchImpl(url.toString(), { signal: controller.signal })
+    const res = await fetchOpenMeteo(url.toString(), controller.signal, fetchImpl)
     if (!res.ok) throw new Error(`open-meteo archive service returned ${res.status}`)
     payload = await res.json() as ArchiveDailyResponse
   } finally {

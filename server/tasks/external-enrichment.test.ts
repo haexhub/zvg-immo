@@ -608,3 +608,52 @@ describe('runExternalEnrichment', () => {
     expect(summary.written).toBe(1)
   })
 })
+
+describe('withLocationContextEnhancers', () => {
+  it('keeps context from earlier enhancers when a later one throws, and records the failure', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { withLocationContextEnhancers } = await import('./external-enrichment')
+    const summary = {
+      processed: 0,
+      written: 0,
+      skippedMissingCoordinates: 0,
+      marketComparisons: 0,
+      landValueBaselines: 0,
+      hazards: 0,
+      locationContexts: 0,
+      staleResults: 0,
+      providerFailures: 0,
+      errors: [] as string[],
+      durationMs: 0,
+    }
+    const baseAdapter = {
+      id: 'base',
+      sourceVersion: 'v1',
+      supports: () => true,
+      context: vi.fn(async () => locationContext),
+    }
+    const firstEnhancer = {
+      id: 'first',
+      sourceVersion: 'v1',
+      supports: () => true,
+      enhance: vi.fn(async (_auction: Auction, context: LocationContext) => ({ ...context, checkedAt: 'first-applied' })),
+    }
+    const secondEnhancer = {
+      id: 'second',
+      sourceVersion: 'v1',
+      supports: () => true,
+      enhance: vi.fn(async () => {
+        throw new Error('rate limited')
+      }),
+    }
+
+    const adapter = withLocationContextEnhancers(baseAdapter, [firstEnhancer, secondEnhancer], summary)
+    const result = await adapter.context(auction())
+
+    expect(result?.checkedAt).toBe('first-applied')
+    expect(secondEnhancer.enhance).toHaveBeenCalledTimes(1)
+    expect(summary.providerFailures).toBe(1)
+    expect(summary.errors).toHaveLength(1)
+    expect(summary.errors[0]).toContain('second')
+  })
+})

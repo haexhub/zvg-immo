@@ -144,7 +144,7 @@ export async function runExternalEnrichment(
   const marketAdapters = options.marketAdapters ?? await defaultMarketAdapters(db)
   const landValueAdapters = options.landValueAdapters ?? []
   const hazardAdapters = options.hazardAdapters ?? await defaultHazardAdapters(db, checkedAt, summary)
-  const locationContextAdapters = options.locationContextAdapters ?? await defaultLocationContextAdapters(db, checkedAt)
+  const locationContextAdapters = options.locationContextAdapters ?? await defaultLocationContextAdapters(db, checkedAt, summary)
   throwIfTaskAborted(signal)
 
   for (const rawAuction of records.map((record) => record.auction).filter((auction) => inScope(auction, options))) {
@@ -400,7 +400,11 @@ async function defaultHazardAdapters(
   return adapters
 }
 
-async function defaultLocationContextAdapters(db: Pool | null, checkedAt: string): Promise<LocationContextAdapter[]> {
+async function defaultLocationContextAdapters(
+  db: Pool | null,
+  checkedAt: string,
+  summary: ExternalEnrichmentSummary,
+): Promise<LocationContextAdapter[]> {
   // No config to resolve any more (osm_local_elements is loaded out-of-band by
   // a standalone osm2pgsql job, not fetched live) — just needs a DB to query.
   if (!db) return []
@@ -431,12 +435,13 @@ async function defaultLocationContextAdapters(db: Pool | null, checkedAt: string
       timeoutMs: Number(climateValues.timeoutMs),
     }))
   }
-  return [withLocationContextEnhancers(osmAdapter, enhancers)]
+  return [withLocationContextEnhancers(osmAdapter, enhancers, summary)]
 }
 
-function withLocationContextEnhancers(
+export function withLocationContextEnhancers(
   adapter: LocationContextAdapter,
   enhancers: LocationContextEnhancer[],
+  summary: ExternalEnrichmentSummary,
 ): LocationContextAdapter {
   if (enhancers.length === 0) return adapter
   return {
@@ -448,7 +453,15 @@ function withLocationContextEnhancers(
       if (!context) return null
       for (const enhancer of enhancers) {
         if (!enhancer.supports(auction, context)) continue
-        context = await enhancer.enhance(auction, context)
+        try {
+          context = await enhancer.enhance(auction, context)
+        } catch (err) {
+          // One enhancer failing (e.g. a rate-limited upstream) must not
+          // discard what the earlier enhancers in this same chain already
+          // added — otherwise a single 429 from the last enhancer reverts
+          // the whole location context to last run's cached version.
+          recordProviderFailure(summary, enhancer.id, 'location context enhancer', auction, err)
+        }
       }
       return context
     },
