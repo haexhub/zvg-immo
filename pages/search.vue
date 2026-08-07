@@ -162,59 +162,30 @@ onBeforeUnmount(() => stopGeoPoll())
 
 const filtered = computed<AuctionSummary[]>(() => data.value?.auctions ?? [])
 
-// Lets the map popover show grid data (photos included) instantly for any
-// marker whose auction the grid has already loaded, instead of a fallback
-// fetch — see components/LotPopover.vue.
-const auctionSummaries = computed(() => new Map(filtered.value.map((a) => [auctionKey(a), a])))
-
 const filteredGeo = computed<GeoAuction[]>(() => {
   if (!geoData.value) return []
   return geoData.value.auctions
 })
 
-// The list is always restricted to auctions whose coordinates fall inside the
-// map's visible viewport (emitted by AuctionMap on moveend), once the map has
-// reported one. Only geocoded auctions can be placed, so ungeocoded ones drop
-// out of the list once a viewport is known.
+// The grid is always restricted to what's inside the map's visible viewport
+// (emitted by AuctionMap on moveend), once the map has reported one. Before
+// that (initial render, or mobile's list tab before the map tab was ever
+// opened) it falls back to the unscoped fetch above.
 type MapBounds = { north: number; south: number; east: number; west: number }
 const mapBounds = ref<MapBounds | null>(null)
-
-// filteredGeo already holds the whole matching set (up to MAX_MARKERS), not
-// just the page `filtered` has loaded so far — sizing this off `filtered`
-// instead would undercount and hide "load more" once bounds-filtering thins
-// the loaded page down.
-const mapVisibleKeys = computed<Set<string> | null>(() => {
-  if (!mapBounds.value) return null
-  const b = mapBounds.value
-  return new Set(filteredGeo.value
-    .filter((a) => a.lat >= b.south && a.lat <= b.north && a.lng >= b.west && a.lng <= b.east)
-    .map(auctionKey))
-})
-
-const listBase = computed<AuctionSummary[]>(() => {
-  if (!mapVisibleKeys.value) return filtered.value
-  return filtered.value.filter((auction) => mapVisibleKeys.value!.has(auctionKey(auction)))
-})
-const sortedList = computed<AuctionSummary[]>(() => listBase.value)
-const listTotalCount = computed<number>(() => mapVisibleKeys.value ? mapVisibleKeys.value.size : (data.value?.total ?? 0))
-
-// listTotalCount comes from the geo dataset (viewport-filtered, its own
-// fetch) and can end up larger than data.value.total (the /api/auctions
-// match count loadMore() actually pages through) — e.g. once every matching
-// auction is already loaded but the map still reports more geo-matched
-// points in view. Gating the button on listTotalCount alone then leaves it
-// visible forever with every click a silent no-op; gate it on this instead.
-const canLoadMore = computed<boolean>(() => !!data.value && data.value.auctions.length < data.value.total)
+const usingBoundedList = computed(() => mapBounds.value !== null)
 
 // The list view used to render every filtered auction as a full card in one
 // go — with the "all countries" default that's ~14.7k cards (~45MB of SSR
 // HTML) before the client even hydrates and switches to the map. Page it
 // instead: render a bounded slice and grow it on demand.
 const LIST_PAGE_SIZE = 30
-const loadMorePending = ref(false)
 const listActionError = ref<string | null>(null)
-const visibleAuctions = computed<AuctionSummary[]>(() => sortedList.value)
-async function loadMore(): Promise<void> {
+
+// Fallback pagination over the unscoped fetch — same page/offset paging this
+// page has always done. Only exercised while mapBounds is still null.
+const loadMorePending = ref(false)
+async function loadMoreUnbounded(): Promise<void> {
   if (!data.value || loadMorePending.value || data.value.auctions.length >= data.value.total) return
   loadMorePending.value = true
   listActionError.value = null
@@ -235,29 +206,102 @@ async function loadMore(): Promise<void> {
   }
 }
 
-// mapVisibleKeys (above) only narrows what's already loaded — it can't
-// surface matches sitting on a page loadMore() hasn't fetched yet, since
-// /api/auctions paginates in relevance/date/price order, not by geography.
-// So zooming into an area can leave the list empty even though the map
-// shows markers there. Auto-load a few more pages whenever the viewport has
-// matches the loaded pages don't cover, capped so an unfiltered, zoomed-out
-// view (thousands of matches scattered across hundreds of pages) can't turn
-// into a runaway background fetch — past the cap, "Mehr laden" still works.
-const AUTO_LOAD_MAX_PAGES = 5
-let autoLoadBoundsKey: string | null = null
-let autoLoadCount = 0
-watchEffect(() => {
-  if (!mapVisibleKeys.value || !data.value || loadMorePending.value) return
-  const boundsKey = JSON.stringify(mapBounds.value)
-  if (boundsKey !== autoLoadBoundsKey) {
-    autoLoadBoundsKey = boundsKey
-    autoLoadCount = 0
+// Bounds-scoped pagination — /api/auctions filters server-side on a.lat/lng
+// once north/south/east/west are present, so page 1 always matches what's on
+// screen instead of hoping a relevance/date/price-ordered page happens to.
+// skipFacets suppresses the courts/categories facet queries: the header's
+// Properties popover already gets those from the unscoped fetch above, and
+// re-deriving them on every pan/zoom would double a request that already
+// opens four DB connections.
+//
+// Plain $fetch behind a manual watch, not useFetch: bounds only ever exist
+// client-side after the map's first moveend, so there's nothing here for SSR
+// to prefetch, and useFetch's own built-in reactivity to its `query` option
+// would fire a second, redundant request alongside a manual one triggered
+// off the same change. boundedRequestKey guards against a slow page-1
+// request completing after a newer bounds/filter change already started —
+// same shape as pollGeoOnce's requestQuery snapshot above.
+const boundedQuery = computed(() => {
+  const b = mapBounds.value
+  return {
+    ...queryParams.value,
+    pageSize: LIST_PAGE_SIZE,
+    skipFacets: '1',
+    ...(b ? { north: b.north, south: b.south, east: b.east, west: b.west } : {}),
   }
-  if (autoLoadCount >= AUTO_LOAD_MAX_PAGES) return
-  if (listBase.value.length >= mapVisibleKeys.value.size) return
-  if (data.value.auctions.length >= data.value.total) return
-  autoLoadCount++
-  void loadMore()
+})
+const boundedData = ref<AuctionSearchResponse | null>(null)
+const boundedPending = ref(false)
+let boundedRequestKey: string | null = null
+
+watch(boundedQuery, async (query) => {
+  if (!mapBounds.value) return
+  const key = JSON.stringify(query)
+  boundedRequestKey = key
+  boundedPending.value = true
+  listActionError.value = null
+  try {
+    const result = await $fetch<AuctionSearchResponse>('/api/auctions', {
+      query: { ...query, page: 1 },
+      cache: 'no-store',
+    })
+    if (boundedRequestKey === key) boundedData.value = result
+  } catch (err) {
+    if (boundedRequestKey === key) listActionError.value = apiErrorMessage(err, 'Weitere Auktionen konnten nicht geladen werden.')
+  } finally {
+    if (boundedRequestKey === key) boundedPending.value = false
+  }
+}, { immediate: true })
+
+const boundedLoadMorePending = ref(false)
+async function loadMoreBounded(): Promise<void> {
+  if (!boundedData.value || boundedLoadMorePending.value || boundedData.value.auctions.length >= boundedData.value.total) return
+  const key = boundedRequestKey
+  const requestQuery = { ...boundedQuery.value }
+  boundedLoadMorePending.value = true
+  listActionError.value = null
+  try {
+    const nextPage = Math.floor(boundedData.value.auctions.length / LIST_PAGE_SIZE) + 1
+    const next = await $fetch<AuctionSearchResponse>('/api/auctions', {
+      query: { ...requestQuery, page: nextPage },
+      cache: 'no-store',
+    })
+    if (boundedRequestKey === key && boundedData.value) {
+      boundedData.value = {
+        ...next,
+        auctions: [...boundedData.value.auctions, ...next.auctions],
+      }
+    }
+  } catch (err) {
+    listActionError.value = apiErrorMessage(err, 'Weitere Auktionen konnten nicht geladen werden.')
+  } finally {
+    boundedLoadMorePending.value = false
+  }
+}
+
+const visibleAuctions = computed<AuctionSummary[]>(() =>
+  usingBoundedList.value ? (boundedData.value?.auctions ?? []) : filtered.value)
+const listTotalCount = computed<number>(() =>
+  usingBoundedList.value ? (boundedData.value?.total ?? 0) : (data.value?.total ?? 0))
+const canLoadMore = computed<boolean>(() =>
+  usingBoundedList.value
+    ? !!boundedData.value && boundedData.value.auctions.length < boundedData.value.total
+    : !!data.value && data.value.auctions.length < data.value.total)
+const listPending = computed<boolean>(() => usingBoundedList.value ? boundedPending.value : pending.value)
+
+async function loadMore(): Promise<void> {
+  if (usingBoundedList.value) await loadMoreBounded()
+  else await loadMoreUnbounded()
+}
+
+// Lets the map popover show grid data (photos included) instantly for any
+// marker whose auction the grid has already loaded, instead of a fallback
+// fetch — see components/LotPopover.vue. Merges both fetches since either
+// can hold the auction the popover is asking about.
+const auctionSummaries = computed(() => {
+  const map = new Map(filtered.value.map((a) => [auctionKey(a), a]))
+  for (const a of boundedData.value?.auctions ?? []) map.set(auctionKey(a), a)
+  return map
 })
 
 const hoveredAuctionKey = ref<string | null>(null)
@@ -285,8 +329,8 @@ function handleMapAuctionSelect(key: string): void {
   revealAuctionInList(key)
 }
 
-watch(sortedList, () => {
-  if (activeAuctionKey.value && !sortedList.value.some((a) => auctionKey(a) === activeAuctionKey.value)) {
+watch(visibleAuctions, () => {
+  if (activeAuctionKey.value && !visibleAuctions.value.some((a) => auctionKey(a) === activeAuctionKey.value)) {
     hoveredAuctionKey.value = null
     selectedAuctionKey.value = null
     scrollTargetKey.value = null
@@ -339,7 +383,7 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
           :auctions="visibleAuctions"
           :total-count="listTotalCount"
           :can-load-more="canLoadMore"
-          :pending="pending"
+          :pending="listPending"
           :logged-in="!!user"
           :watchlist-ids="watchlistIds"
           :active-auction-key="activeAuctionKey"
@@ -355,7 +399,7 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
         :auctions="visibleAuctions"
         :total-count="listTotalCount"
         :can-load-more="canLoadMore"
-        :pending="pending"
+        :pending="listPending"
         :logged-in="!!user"
         :watchlist-ids="watchlistIds"
         :active-auction-key="activeAuctionKey"

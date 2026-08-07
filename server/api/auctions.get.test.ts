@@ -170,6 +170,30 @@ describe('/api/auctions', () => {
     }
   })
 
+  it('skips the two facet queries and their connections when skipFacets is set', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    vi.stubGlobal('getQuery', () => ({ country: 'de', skipFacets: '1' }))
+    vi.stubGlobal('setResponseHeader', vi.fn())
+    vi.stubGlobal('createError', (input: object) => Object.assign(new Error('api error'), input))
+
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes('count(*)::int AS total')) return { rows: [{ total: 0, active: 0, cancelled: 0 }] }
+      if (sql.includes('LIMIT $') && sql.includes('OFFSET $')) return { rows: [] }
+      throw new Error(`unexpected query: ${sql}`)
+    })
+    const { getPool } = await import('~/server/utils/db')
+    const pool = mockPool(query)
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const handler = (await import('./auctions.get')).default as unknown as (event: unknown) => Promise<unknown>
+
+    const result = await handler({})
+
+    expect(result).toMatchObject({ facets: { authorities: [], categories: [] } })
+    // Only the row and stats queries open a connection — the facet queries
+    // never run, so pool.connect() is called twice instead of four times.
+    expect(pool.connect).toHaveBeenCalledTimes(2)
+  })
+
   it('fails visibly when the serving database is not configured', async () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     vi.stubGlobal('createError', (input: object) => Object.assign(new Error('api error'), input))
