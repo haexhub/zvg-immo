@@ -1,20 +1,24 @@
-import type {
-  ExternalEnrichmentOptions,
-  ExternalEnrichmentSummary,
-} from '~/server/tasks/external-enrichment'
+import type { ExternalEnrichmentOptions } from '~/server/tasks/external-enrichment'
 
 const MAX_LIMIT = 1000
 
-export default defineEventHandler(async (event): Promise<ExternalEnrichmentSummary> => {
+// Detached on purpose: an unscoped run sweeps every auction across every
+// country, calling several external providers per auction — far longer than
+// a request can stay open. Progress/result surface through task-runs
+// (externalEnrichmentStatus in /api/settings/llm-batch-jobs), same as the
+// country enrich flow's detached reprocess/external-enrichment calls.
+export default defineEventHandler(async (event): Promise<{ started: true }> => {
   const body = await readBody<Record<string, unknown>>(event).catch(() => ({}) as Record<string, unknown>)
   const limit = optionalLimit(body.limit)
   const country = optionalToken(body.country, 'country')
   const platform = optionalToken(body.platform, 'platform')
   const externalId = optionalToken(body.externalId, 'externalId')
-  const outcome = await runTask('external-enrichment', {
+  void runTask('external-enrichment', {
     payload: { limit, country, platform, externalId } satisfies ExternalEnrichmentOptions,
-  }) as { result: ExternalEnrichmentSummary }
-  return outcome.result
+  }).catch((err: unknown) => {
+    console.error('[settings/external-data/enrichment] trigger failed:', (err as Error).message)
+  })
+  return { started: true }
 })
 
 function optionalLimit(value: unknown): number | undefined {
