@@ -46,16 +46,31 @@ interface KindMapping {
 // lands, instead of this file needing a second pass later.
 const KIND_MAPPINGS: KindMapping[] = [
   {
-    // `natural=beach` was in this list originally (matching the WP-4 doc's
-    // mapping table) but is not sea-specific in OSM: it marks beach material
-    // (sand/shingle) along lakes and rivers just as often as along the coast
-    // — Bavaria alone has hundreds of them (Isar, Donau, Alpine lakes). That
-    // made the `sea` kind match almost everywhere in Germany, so a nearSea
-    // filter barely excluded anything. `swimming` below already covers
-    // natural=beach on its own terms.
+    // "Am Meer" must not mean "am See": the Bodensee or Gardasee is a lake,
+    // and only `lake` below may match it. Two earlier tags in this mapping
+    // broke that, both because the OSM tag is not sea-specific:
+    //   - `natural=beach` marks beach material (sand/shingle) along lakes and
+    //     rivers as often as along the coast — Bavaria alone has hundreds
+    //     (Isar, Donau, Alpine lakes), which made `sea` match almost
+    //     everywhere in Germany. `swimming` below covers beaches on their own
+    //     terms.
+    //   - `natural=bay`/`strait` likewise describe a shape, not a water body:
+    //     of Germany's 232 named bays nearly all are inland-lake bays
+    //     (Chiemsee's "Feldwieser Bucht", Walchensee, Tegernsee's "Egerner
+    //     Bucht", and the Bodensee arms "Überlinger See"/"Gnadensee"), with
+    //     "Leybucht" about the only marine one. Dropping them loses no real
+    //     coast, because `natural=coastline` encloses every marine bay and
+    //     strait anyway — a house on the Leybucht or the Fehmarnsund is just
+    //     as close to the coastline itself.
+    //   - `water=lagoon` is the same story: it covers Baltic Bodden ("Oderhaff")
+    //     but also inland ponds ("Allmeier Biotop", "Molenbecken"). The Bodden
+    //     are coastline-enclosed too — an auction near Anklam still measures
+    //     6.1km to the Peenestrom coastline without it.
+    // What remains is sea-only by definition, and coastline is well mapped in
+    // every imported country (SE 79.5k, DE 1.4k, BG 195 elements).
     kind: 'sea',
-    where: `(o.tags ->> 'natural' IN ('coastline', 'bay', 'strait')
-      OR o.tags ->> 'water' IN ('sea', 'lagoon')
+    where: `(o.tags ->> 'natural' = 'coastline'
+      OR o.tags ->> 'water' = 'sea'
       OR o.tags ->> 'place' IN ('sea', 'ocean'))`,
   },
   {
@@ -87,14 +102,25 @@ const KIND_MAPPINGS: KindMapping[] = [
   },
   {
     // `aeroway=aerodrome` alone matches every mapped airfield, including
-    // small general-aviation/gliding strips (e.g. "Flugplatz Hildesheim",
-    // "Flugplatz Hameln-Pyrmont") — Germany has thousands of these, dense
-    // enough that nearAirport barely excluded anything. Requiring an `iata`
-    // code narrows this to airports with real commercial/scheduled
-    // significance, which is what "nearby airport" colloquially means; small
-    // airfields typically have only an `icao` code or none at all.
+    // gliding and general-aviation strips — Germany has 742 of them, dense
+    // enough that nearAirport barely excluded anything (an auction in Zwickau
+    // counted as 2.9km from "Flugplatz Zwickau", an `aerodrome=airsport`
+    // club strip). Requiring an `iata` code was the first narrowing, but 84
+    // German aerodromes carry one, including island air taxi strips like
+    // "Flugplatz Baltrum"/"Juist"/"Langeoog" and the military "Fliegerhorst
+    // Jagel" — not what someone searching for an airport means.
+    // `aerodrome`/`aerodrome:type` = international is OSM's own marker for
+    // scheduled international traffic and yields exactly the 22 real German
+    // airports (FRA, MUC, BER, DUS, HAM, STR, CGN, …). It is a stricter tag
+    // and less universally applied than `iata` (SE 8, BG 3), so a few
+    // genuinely international airports may be missed until mappers add it —
+    // deliberately preferred over the false positives, since an unmatched
+    // airport only narrows results while a club strip widens them to
+    // everything.
     kind: 'airport',
-    where: `(o.tags ->> 'aeroway' = 'aerodrome' AND COALESCE(o.tags ->> 'iata', '') <> '')`,
+    where: `(o.tags ->> 'aeroway' = 'aerodrome'
+      AND (o.tags ->> 'aerodrome' = 'international'
+        OR o.tags ->> 'aerodrome:type' = 'international'))`,
   },
   {
     // Not importable yet (WP-6): landuse=winter_sports / piste:type /
