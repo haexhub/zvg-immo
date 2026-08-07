@@ -39,7 +39,7 @@ const COVERAGE_QUERY = `
     count(*) FILTER (WHERE a.lat IS NOT NULL AND a.lng IS NOT NULL) AS geocoded_total,
     count(*) FILTER (
       WHERE a.lat IS NOT NULL AND a.lng IS NOT NULL
-        AND le.enrichment->'locationContext'->'environment'->'airQuality' IS NOT NULL
+        AND nullif(le.enrichment->'locationContext'->'environment'->'airQuality', 'null'::jsonb) IS NOT NULL
     ) AS cams_air_quality,
     count(*) FILTER (
       WHERE a.lat IS NOT NULL AND a.lng IS NOT NULL
@@ -52,14 +52,14 @@ const COVERAGE_QUERY = `
     count(*) FILTER (
       WHERE a.lat IS NOT NULL AND a.lng IS NOT NULL
         AND EXISTS (
-          SELECT 1 FROM jsonb_array_elements(coalesce(le.enrichment->'hazards', '[]'::jsonb)) h
+          SELECT 1 FROM jsonb_array_elements(coalesce(nullif(le.enrichment->'hazards', 'null'::jsonb), '[]'::jsonb)) h
           WHERE h->>'hazard' = 'flood'
         )
     ) AS eu_flood_risk_areas,
     count(*) FILTER (
       WHERE a.lat IS NOT NULL AND a.lng IS NOT NULL
         AND EXISTS (
-          SELECT 1 FROM jsonb_array_elements(coalesce(le.enrichment->'hazards', '[]'::jsonb)) h
+          SELECT 1 FROM jsonb_array_elements(coalesce(nullif(le.enrichment->'hazards', 'null'::jsonb), '[]'::jsonb)) h
           WHERE h->>'hazard' = 'wildfire'
         )
     ) AS copernicus_effis,
