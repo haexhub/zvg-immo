@@ -4,10 +4,11 @@
 // auction_fetch_state.llm_batch_job). No in-process memoization —
 // this table has too few rows for caching to be worth the invalidation
 // complexity; a live read per poll tick is simpler. Same graceful-no-op
-// getPool() returns null without NUXT_DATABASE_URL.
+// getDb() returns null without NUXT_DATABASE_URL.
 
-import type { PoolClient } from 'pg'
-import { getPool } from './db'
+import { asc, desc, eq, sql } from 'drizzle-orm'
+import { appSettings, llmBatchJobs } from '../db/schema'
+import { getDb } from './db'
 
 export type LlmBatchJobStatus = 'pending' | 'succeeded' | 'failed' | 'expired'
 
@@ -75,17 +76,14 @@ function coerceGeminiQuotaUsage(value: unknown, day: string): GeminiBatchQuotaUs
 }
 
 export async function readGeminiBatchQuotaUsage(day: string): Promise<GeminiBatchQuotaUsage> {
-  const db = getPool()
+  const db = getDb()
   if (!db) {
     memoryGeminiQuotaUsage = coerceGeminiQuotaUsage(memoryGeminiQuotaUsage, day)
     return memoryGeminiQuotaUsage
   }
   try {
-    const { rows } = await db.query<{ value: unknown }>(
-      'SELECT value FROM app_settings WHERE key = $1',
-      [GEMINI_BATCH_QUOTA_KEY],
-    )
-    return coerceGeminiQuotaUsage(rows[0]?.value, day)
+    const [row] = await db.select({ value: appSettings.value }).from(appSettings).where(eq(appSettings.key, GEMINI_BATCH_QUOTA_KEY))
+    return coerceGeminiQuotaUsage(row?.value, day)
   } catch (err) {
     console.warn(`[llm-batch-jobs] Gemini quota read failed: ${(err as Error).message}`)
     memoryGeminiQuotaUsage = coerceGeminiQuotaUsage(memoryGeminiQuotaUsage, day)
@@ -102,7 +100,7 @@ export async function recordGeminiBatchQuotaUsage(
     items: Math.max(0, Math.round(delta.items)),
     estimatedTokens: Math.max(0, Math.round(delta.estimatedTokens)),
   }
-  const db = getPool()
+  const db = getDb()
   if (!db) {
     const current = await readGeminiBatchQuotaUsage(day)
     const next: GeminiBatchQuotaUsage = {
@@ -116,39 +114,38 @@ export async function recordGeminiBatchQuotaUsage(
     return
   }
   try {
-    await db.query(
-      `INSERT INTO app_settings (key, value, updated_at)
-       VALUES (
-         $1,
-         jsonb_build_object(
-           'day', $2::text,
-           'jobs', $3::integer,
-           'items', $4::integer,
-           'estimatedTokens', $5::integer,
-           'backoffUntil', NULL::text
-         ),
-         now()
-       )
-       ON CONFLICT (key) DO UPDATE SET
-         value = CASE
-           WHEN app_settings.value->>'day' = $2::text THEN jsonb_build_object(
-             'day', $2::text,
-             'jobs', (CASE WHEN app_settings.value->>'jobs' ~ '^[0-9]+$' THEN (app_settings.value->>'jobs')::integer ELSE 0 END) + $3::integer,
-             'items', (CASE WHEN app_settings.value->>'items' ~ '^[0-9]+$' THEN (app_settings.value->>'items')::integer ELSE 0 END) + $4::integer,
-             'estimatedTokens', (CASE WHEN app_settings.value->>'estimatedTokens' ~ '^[0-9]+$' THEN (app_settings.value->>'estimatedTokens')::integer ELSE 0 END) + $5::integer,
-             'backoffUntil', NULLIF(app_settings.value->>'backoffUntil', '')
-           )
-           ELSE jsonb_build_object(
-             'day', $2::text,
-             'jobs', $3::integer,
-             'items', $4::integer,
-             'estimatedTokens', $5::integer,
-             'backoffUntil', NULL::text
-           )
-         END,
-         updated_at = now()`,
-      [GEMINI_BATCH_QUOTA_KEY, day, safeDelta.jobs, safeDelta.items, safeDelta.estimatedTokens],
-    )
+    await db.execute(sql`
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES (
+        ${GEMINI_BATCH_QUOTA_KEY},
+        jsonb_build_object(
+          'day', ${day}::text,
+          'jobs', ${safeDelta.jobs}::integer,
+          'items', ${safeDelta.items}::integer,
+          'estimatedTokens', ${safeDelta.estimatedTokens}::integer,
+          'backoffUntil', NULL::text
+        ),
+        now()
+      )
+      ON CONFLICT (key) DO UPDATE SET
+        value = CASE
+          WHEN app_settings.value->>'day' = ${day}::text THEN jsonb_build_object(
+            'day', ${day}::text,
+            'jobs', (CASE WHEN app_settings.value->>'jobs' ~ '^[0-9]+$' THEN (app_settings.value->>'jobs')::integer ELSE 0 END) + ${safeDelta.jobs}::integer,
+            'items', (CASE WHEN app_settings.value->>'items' ~ '^[0-9]+$' THEN (app_settings.value->>'items')::integer ELSE 0 END) + ${safeDelta.items}::integer,
+            'estimatedTokens', (CASE WHEN app_settings.value->>'estimatedTokens' ~ '^[0-9]+$' THEN (app_settings.value->>'estimatedTokens')::integer ELSE 0 END) + ${safeDelta.estimatedTokens}::integer,
+            'backoffUntil', NULLIF(app_settings.value->>'backoffUntil', '')
+          )
+          ELSE jsonb_build_object(
+            'day', ${day}::text,
+            'jobs', ${safeDelta.jobs}::integer,
+            'items', ${safeDelta.items}::integer,
+            'estimatedTokens', ${safeDelta.estimatedTokens}::integer,
+            'backoffUntil', NULL::text
+          )
+        END,
+        updated_at = now()
+    `)
   } catch (err) {
     console.warn(`[llm-batch-jobs] Gemini quota write failed: ${(err as Error).message}`)
     const current = await readGeminiBatchQuotaUsage(day)
@@ -163,7 +160,7 @@ export async function recordGeminiBatchQuotaUsage(
 }
 
 export async function setGeminiBatchQuotaBackoff(day: string, backoffUntil: string): Promise<void> {
-  const db = getPool()
+  const db = getDb()
   if (!db) {
     const current = await readGeminiBatchQuotaUsage(day)
     const next: GeminiBatchQuotaUsage = { ...current, backoffUntil }
@@ -171,27 +168,26 @@ export async function setGeminiBatchQuotaBackoff(day: string, backoffUntil: stri
     return
   }
   try {
-    await db.query(
-      `INSERT INTO app_settings (key, value, updated_at)
-       VALUES (
-         $1,
-         jsonb_build_object('day', $2::text, 'jobs', 0, 'items', 0, 'estimatedTokens', 0, 'backoffUntil', $3::text),
-         now()
-       )
-       ON CONFLICT (key) DO UPDATE SET
-         value = CASE
-           WHEN app_settings.value->>'day' = $2::text THEN jsonb_build_object(
-             'day', $2::text,
-             'jobs', CASE WHEN app_settings.value->>'jobs' ~ '^[0-9]+$' THEN (app_settings.value->>'jobs')::integer ELSE 0 END,
-             'items', CASE WHEN app_settings.value->>'items' ~ '^[0-9]+$' THEN (app_settings.value->>'items')::integer ELSE 0 END,
-             'estimatedTokens', CASE WHEN app_settings.value->>'estimatedTokens' ~ '^[0-9]+$' THEN (app_settings.value->>'estimatedTokens')::integer ELSE 0 END,
-             'backoffUntil', $3::text
-           )
-           ELSE jsonb_build_object('day', $2::text, 'jobs', 0, 'items', 0, 'estimatedTokens', 0, 'backoffUntil', $3::text)
-         END,
-         updated_at = now()`,
-      [GEMINI_BATCH_QUOTA_KEY, day, backoffUntil],
-    )
+    await db.execute(sql`
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES (
+        ${GEMINI_BATCH_QUOTA_KEY},
+        jsonb_build_object('day', ${day}::text, 'jobs', 0, 'items', 0, 'estimatedTokens', 0, 'backoffUntil', ${backoffUntil}::text),
+        now()
+      )
+      ON CONFLICT (key) DO UPDATE SET
+        value = CASE
+          WHEN app_settings.value->>'day' = ${day}::text THEN jsonb_build_object(
+            'day', ${day}::text,
+            'jobs', CASE WHEN app_settings.value->>'jobs' ~ '^[0-9]+$' THEN (app_settings.value->>'jobs')::integer ELSE 0 END,
+            'items', CASE WHEN app_settings.value->>'items' ~ '^[0-9]+$' THEN (app_settings.value->>'items')::integer ELSE 0 END,
+            'estimatedTokens', CASE WHEN app_settings.value->>'estimatedTokens' ~ '^[0-9]+$' THEN (app_settings.value->>'estimatedTokens')::integer ELSE 0 END,
+            'backoffUntil', ${backoffUntil}::text
+          )
+          ELSE jsonb_build_object('day', ${day}::text, 'jobs', 0, 'items', 0, 'estimatedTokens', 0, 'backoffUntil', ${backoffUntil}::text)
+        END,
+        updated_at = now()
+    `)
   } catch (err) {
     console.warn(`[llm-batch-jobs] Gemini quota backoff write failed: ${(err as Error).message}`)
     const current = await readGeminiBatchQuotaUsage(day)
@@ -229,14 +225,11 @@ function coerceLlmBatchCapabilityMap(value: unknown): Record<string, LlmBatchCap
 }
 
 export async function getAllLlmBatchCapabilities(): Promise<Record<string, LlmBatchCapability>> {
-  const db = getPool()
+  const db = getDb()
   if (!db) return memoryLlmBatchCapability
   try {
-    const { rows } = await db.query<{ value: unknown }>(
-      'SELECT value FROM app_settings WHERE key = $1',
-      [LLM_BATCH_CAPABILITY_KEY],
-    )
-    return coerceLlmBatchCapabilityMap(rows[0]?.value)
+    const [row] = await db.select({ value: appSettings.value }).from(appSettings).where(eq(appSettings.key, LLM_BATCH_CAPABILITY_KEY))
+    return coerceLlmBatchCapabilityMap(row?.value)
   } catch (err) {
     console.warn(`[llm-batch-jobs] capability read failed: ${(err as Error).message}`)
     return memoryLlmBatchCapability
@@ -254,7 +247,7 @@ export async function recordLlmBatchCapability(
 ): Promise<void> {
   const checkedAt = new Date().toISOString()
   const next: LlmBatchCapability = { ok: entry.ok, message: entry.message, checkedAt, source: entry.source }
-  const db = getPool()
+  const db = getDb()
   if (!db) {
     memoryLlmBatchCapability = { ...memoryLlmBatchCapability, [provider]: next }
     return
@@ -264,14 +257,13 @@ export async function recordLlmBatchCapability(
     // reprocess.ts run as independent background tasks that can submit
     // concurrently, and a read-then-overwrite here could let one call's
     // stale snapshot clobber another provider's just-written capability.
-    await db.query(
-      `INSERT INTO app_settings (key, value, updated_at)
-       VALUES ($1, jsonb_build_object($2::text, $3::jsonb), now())
-       ON CONFLICT (key) DO UPDATE SET
-         value = app_settings.value || jsonb_build_object($2::text, $3::jsonb),
-         updated_at = now()`,
-      [LLM_BATCH_CAPABILITY_KEY, provider, JSON.stringify(next)],
-    )
+    await db.execute(sql`
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES (${LLM_BATCH_CAPABILITY_KEY}, jsonb_build_object(${provider}::text, ${JSON.stringify(next)}::jsonb), now())
+      ON CONFLICT (key) DO UPDATE SET
+        value = app_settings.value || jsonb_build_object(${provider}::text, ${JSON.stringify(next)}::jsonb),
+        updated_at = now()
+    `)
   } catch (err) {
     console.warn(`[llm-batch-jobs] capability write failed for ${provider}: ${(err as Error).message}`)
     memoryLlmBatchCapability = { ...memoryLlmBatchCapability, [provider]: next }
@@ -279,21 +271,12 @@ export async function recordLlmBatchCapability(
 }
 
 export async function withGeminiBatchQuotaLock<T>(fn: () => Promise<T>): Promise<T> {
-  const db = getPool()
+  const db = getDb()
   if (!db) return withMemoryGeminiBatchQuotaLock(fn)
-  const client = await db.connect()
-  try {
-    await client.query('BEGIN')
-    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [GEMINI_BATCH_QUOTA_KEY])
-    const result = await fn()
-    await client.query('COMMIT')
-    return result
-  } catch (err) {
-    await rollbackQuietly(client)
-    throw err
-  } finally {
-    client.release()
-  }
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${GEMINI_BATCH_QUOTA_KEY}))`)
+    return fn()
+  })
 }
 
 async function withMemoryGeminiBatchQuotaLock<T>(fn: () => Promise<T>): Promise<T> {
@@ -310,14 +293,6 @@ async function withMemoryGeminiBatchQuotaLock<T>(fn: () => Promise<T>): Promise<
   }
 }
 
-async function rollbackQuietly(client: PoolClient): Promise<void> {
-  try {
-    await client.query('ROLLBACK')
-  } catch {
-    // Best-effort cleanup before releasing the client.
-  }
-}
-
 /** Returns whether the row was recorded, so the caller can
  *  treat a failed insert as a failed submission instead of returning a job
  *  name the poller will never see. */
@@ -327,13 +302,15 @@ export async function insertLlmBatchJob(job: {
   itemCount: number
   customIdMap?: Record<string, string>
 }): Promise<boolean> {
-  const db = getPool()
+  const db = getDb()
   if (!db) return true
   try {
-    await db.query(
-      'INSERT INTO llm_batch_jobs (job_name, source, item_count, custom_id_map) VALUES ($1, $2, $3, $4::jsonb)',
-      [job.jobName, job.source, job.itemCount, JSON.stringify(job.customIdMap ?? {})],
-    )
+    await db.insert(llmBatchJobs).values({
+      jobName: job.jobName,
+      source: job.source,
+      itemCount: job.itemCount,
+      customIdMap: job.customIdMap ?? {},
+    })
     return true
   } catch (err) {
     console.warn(`[llm-batch-jobs] insert failed for ${job.jobName}: ${(err as Error).message}`)
@@ -354,43 +331,37 @@ async function listLlmBatchJobs(opts: {
   limit?: number
   order: 'asc' | 'desc'
 }): Promise<LlmBatchJob[]> {
-  const db = getPool()
+  const db = getDb()
   if (!db) return []
   try {
-    const params: unknown[] = []
-    const where = opts.status ? `WHERE status = $${params.push(opts.status)}` : ''
-    const limit = opts.limit && Number.isFinite(opts.limit) && opts.limit > 0
-      ? `LIMIT $${params.push(Math.round(opts.limit))}`
-      : ''
-    const order = opts.order === 'asc' ? 'ASC' : 'DESC'
-    const { rows } = await db.query<{
-      job_name: string
-      source: string
-      status: string
-      item_count: number
-      custom_id_map: unknown
-      submitted_at: Date | string
-      checked_at: Date | string | null
-      updated_at: Date | string
-      error_message: string | null
-    }>(
-      `SELECT job_name, source, status, item_count, custom_id_map, submitted_at, checked_at, updated_at, error_message
-       FROM llm_batch_jobs
-       ${where}
-       ORDER BY submitted_at ${order}
-       ${limit}`,
-      params,
-    )
+    const orderFn = opts.order === 'asc' ? asc : desc
+    const baseQuery = db.select({
+      jobName: llmBatchJobs.jobName,
+      source: llmBatchJobs.source,
+      status: llmBatchJobs.status,
+      itemCount: llmBatchJobs.itemCount,
+      customIdMap: llmBatchJobs.customIdMap,
+      submittedAt: llmBatchJobs.submittedAt,
+      checkedAt: llmBatchJobs.checkedAt,
+      updatedAt: llmBatchJobs.updatedAt,
+      errorMessage: llmBatchJobs.errorMessage,
+    })
+      .from(llmBatchJobs)
+      .where(opts.status ? eq(llmBatchJobs.status, opts.status) : undefined)
+      .orderBy(orderFn(llmBatchJobs.submittedAt))
+    const rows = opts.limit && Number.isFinite(opts.limit) && opts.limit > 0
+      ? await baseQuery.limit(Math.round(opts.limit))
+      : await baseQuery
     return rows.map((r) => ({
-      jobName: r.job_name,
+      jobName: r.jobName,
       source: r.source as 'enrich' | 'reprocess',
       status: r.status as LlmBatchJobStatus,
-      itemCount: r.item_count,
-      customIdMap: isStringMap(r.custom_id_map) ? r.custom_id_map : {},
-      submittedAt: toIso(r.submitted_at),
-      checkedAt: r.checked_at == null ? null : toIso(r.checked_at),
-      updatedAt: toIso(r.updated_at),
-      errorMessage: r.error_message,
+      itemCount: r.itemCount,
+      customIdMap: isStringMap(r.customIdMap) ? r.customIdMap : {},
+      submittedAt: toIso(r.submittedAt),
+      checkedAt: r.checkedAt == null ? null : toIso(r.checkedAt),
+      updatedAt: toIso(r.updatedAt),
+      errorMessage: r.errorMessage,
     }))
   } catch (err) {
     console.warn(`[llm-batch-jobs] list failed: ${(err as Error).message}`)
@@ -399,13 +370,12 @@ async function listLlmBatchJobs(opts: {
 }
 
 export async function markLlmBatchJobChecked(jobName: string, checkedAt: string): Promise<void> {
-  const db = getPool()
+  const db = getDb()
   if (!db) return
   try {
-    await db.query(
-      'UPDATE llm_batch_jobs SET checked_at = $2, updated_at = now() WHERE job_name = $1',
-      [jobName, checkedAt],
-    )
+    await db.update(llmBatchJobs)
+      .set({ checkedAt: new Date(checkedAt), updatedAt: sql`now()` })
+      .where(eq(llmBatchJobs.jobName, jobName))
   } catch (err) {
     console.warn(`[llm-batch-jobs] checked_at update failed for ${jobName}: ${(err as Error).message}`)
   }
@@ -417,15 +387,12 @@ export async function markLlmBatchJobResolved(
   checkedAt: string,
   errorMessage: string | null = null,
 ): Promise<void> {
-  const db = getPool()
+  const db = getDb()
   if (!db) return
   try {
-    await db.query(
-      `UPDATE llm_batch_jobs
-       SET status = $2, checked_at = $3, updated_at = now(), error_message = $4
-       WHERE job_name = $1`,
-      [jobName, status, checkedAt, errorMessage],
-    )
+    await db.update(llmBatchJobs)
+      .set({ status, checkedAt: new Date(checkedAt), updatedAt: sql`now()`, errorMessage })
+      .where(eq(llmBatchJobs.jobName, jobName))
   } catch (err) {
     console.warn(`[llm-batch-jobs] status update failed for ${jobName}: ${(err as Error).message}`)
   }
@@ -447,10 +414,10 @@ function isStringMap(value: unknown): value is Record<string, string> {
 /** Hard-delete helper kept for manual cleanup/tests. Normal poll completion
  *  uses markLlmBatchJobResolved() so /settings can show history. */
 export async function deleteLlmBatchJob(jobName: string): Promise<void> {
-  const db = getPool()
+  const db = getDb()
   if (!db) return
   try {
-    await db.query('DELETE FROM llm_batch_jobs WHERE job_name = $1', [jobName])
+    await db.delete(llmBatchJobs).where(eq(llmBatchJobs.jobName, jobName))
   } catch (err) {
     console.warn(`[llm-batch-jobs] delete failed for ${jobName}: ${(err as Error).message}`)
   }

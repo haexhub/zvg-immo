@@ -2,10 +2,12 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { getPool } from './db'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import { getDb } from './db'
 import { getServiceClient } from './supabase'
+import { queryText } from '~/test-support/drizzle-query'
 
-vi.mock('./db', () => ({ getPool: vi.fn() }))
+vi.mock('./db', () => ({ getDb: vi.fn() }))
 vi.mock('./supabase', () => ({ getServiceClient: vi.fn() }))
 
 const removeMock = vi.fn(async (_keys: string[]) => ({ error: null }))
@@ -13,37 +15,51 @@ const fakeSupabase = { storage: { from: vi.fn(() => ({ remove: removeMock })) } 
 
 const { deleteRawArchiveCountry } = await import('./raw-archive-delete')
 
+/** Builds a `getDb()`-shaped fake: a real Drizzle instance wrapping a mock
+ *  `pg.Pool`, so `db.transaction()` behaves like production (checks out one
+ *  connection, BEGIN/COMMIT/ROLLBACK, releases it) while the actual queries
+ *  hit this in-memory matcher. Matched on the compiled SQL Drizzle sends to
+ *  `client.query()`, not the hand-written strings the old raw-SQL version used. */
 function makeClient() {
   const queries: Array<{ sql: string; params: unknown[] }> = []
-  const query = vi.fn(async (sql: string, params: unknown[] = []) => {
-    queries.push({ sql, params })
-    if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+  const query = vi.fn(async (queryArg: unknown, params: unknown[] = []) => {
+    const text = queryText(queryArg)
+    queries.push({ sql: text, params })
+    const n = text.replace(/\s+/g, ' ').trim().toLowerCase()
+    if (n === 'begin' || n === 'commit' || n === 'rollback') {
       return { rows: [], rowCount: null }
     }
-    if (sql.includes('SELECT DISTINCT rb.content_hash')) {
+    if (n.startsWith('select distinct "content_hash", "s3_key" from "artifact_blobs"')) {
+      // array-mode rows: [contentHash, s3Key] per the select's field order.
       return {
         rows: [
-          { content_hash: 'orphan', s3_key: 'Deutschland/aa/orphan.pdf' },
-          { content_hash: 'shared', s3_key: 'Deutschland/bb/shared.pdf' },
+          ['orphan', 'Deutschland/aa/orphan.pdf'],
+          ['shared', 'Deutschland/bb/shared.pdf'],
         ],
         rowCount: 2,
       }
     }
-    if (sql.includes('SELECT count(*) AS count')) {
-      return { rows: [{ count: '3' }], rowCount: 1 }
+    if (n.startsWith('select count(*) from "artifact_versions"')) {
+      return { rows: [['3']], rowCount: 1 }
     }
-    if (sql.includes('DELETE FROM artifact_versions')) {
+    if (n.startsWith('delete from "artifact_versions"')) {
       return { rows: [], rowCount: 2 }
     }
-    if (sql.includes('DELETE FROM artifact_captures')) {
+    if (n.startsWith('delete from "artifact_captures"')) {
       return { rows: [], rowCount: 5 }
     }
-    if (sql.includes('DELETE FROM artifact_blobs')) {
-      return { rows: [{ content_hash: 'orphan', s3_key: 'Deutschland/aa/orphan.pdf' }], rowCount: 1 }
+    if (n.startsWith('delete from "artifact_blobs"')) {
+      return { rows: [['orphan', 'Deutschland/aa/orphan.pdf']], rowCount: 1 }
     }
-    throw new Error(`unexpected query: ${sql}`)
+    throw new Error(`unexpected query: ${text}`)
   })
-  return { query, release: vi.fn(), queries }
+  function MockPool() {}
+  const pool = Object.assign(new (MockPool as unknown as new () => object)(), {
+    query: vi.fn(async () => { throw new Error('unexpected direct pool query') }),
+    connect: vi.fn(async () => client),
+  })
+  const client = { query, release: vi.fn() }
+  return { query, release: client.release, queries, db: drizzle(pool as never) }
 }
 
 describe('deleteRawArchiveCountry', () => {
@@ -72,7 +88,7 @@ describe('deleteRawArchiveCountry', () => {
     await writeFile(localPath, Buffer.from('%PDF-1.4 orphan'))
 
     const client = makeClient()
-    vi.mocked(getPool).mockReturnValue({ connect: vi.fn(async () => client) } as never)
+    vi.mocked(getDb).mockReturnValue(client.db as never)
 
     const result = await deleteRawArchiveCountry('DE')
 
@@ -91,8 +107,8 @@ describe('deleteRawArchiveCountry', () => {
         storageFiles: 0,
       },
     })
-    expect(client.queries.map((q) => q.sql)).toContain('BEGIN')
-    expect(client.queries.map((q) => q.sql)).toContain('COMMIT')
+    expect(client.queries.map((q) => q.sql)).toContain('begin')
+    expect(client.queries.map((q) => q.sql)).toContain('commit')
     expect(client.release).toHaveBeenCalledOnce()
     await expect(readFile(localPath)).rejects.toThrow()
     expect(fakeSupabase.storage.from).toHaveBeenCalledWith('raw-archive')
@@ -101,28 +117,30 @@ describe('deleteRawArchiveCountry', () => {
 
   it('rejects invalid country codes before touching the DB', async () => {
     await expect(deleteRawArchiveCountry('de;drop')).rejects.toMatchObject({ statusCode: 400 })
-    expect(getPool).not.toHaveBeenCalled()
+    expect(getDb).not.toHaveBeenCalled()
   })
 
   it('returns 503 when the archive DB is not configured', async () => {
-    vi.mocked(getPool).mockReturnValue(null)
+    vi.mocked(getDb).mockReturnValue(null)
 
     await expect(deleteRawArchiveCountry('de')).rejects.toMatchObject({ statusCode: 503 })
   })
 
   it('rolls back and releases the client when a transaction query fails', async () => {
     const client = makeClient()
-    client.query.mockImplementation(async (sql: string, params: unknown[] = []) => {
-      client.queries.push({ sql, params })
-      if (sql === 'BEGIN' || sql === 'ROLLBACK') return { rows: [], rowCount: null }
-      if (sql.includes('SELECT DISTINCT rb.content_hash')) return { rows: [], rowCount: 0 }
-      if (sql.includes('SELECT count(*) AS count')) throw new Error('count failed')
-      throw new Error(`unexpected query: ${sql}`)
+    client.query.mockImplementation(async (queryArg: unknown, params: unknown[] = []) => {
+      const text = queryText(queryArg)
+      client.queries.push({ sql: text, params })
+      const n = text.replace(/\s+/g, ' ').trim().toLowerCase()
+      if (n === 'begin' || n === 'rollback') return { rows: [], rowCount: null }
+      if (n.startsWith('select distinct "content_hash", "s3_key" from "artifact_blobs"')) return { rows: [], rowCount: 0 }
+      if (n.startsWith('select count(*) from "artifact_versions"')) throw new Error('count failed')
+      throw new Error(`unexpected query: ${text}`)
     })
-    vi.mocked(getPool).mockReturnValue({ connect: vi.fn(async () => client) } as never)
+    vi.mocked(getDb).mockReturnValue(client.db as never)
 
     await expect(deleteRawArchiveCountry('de')).rejects.toMatchObject({ statusCode: 500 })
-    expect(client.queries.map((q) => q.sql)).toContain('ROLLBACK')
+    expect(client.queries.map((q) => q.sql.toLowerCase())).toContain('rollback')
     expect(client.release).toHaveBeenCalledOnce()
     expect(removeMock).not.toHaveBeenCalled()
   })

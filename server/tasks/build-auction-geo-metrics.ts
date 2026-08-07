@@ -11,8 +11,10 @@
 //
 // Own connection pool, hard-capped and separate from the app's shared
 // request-serving pool, same rationale as build-geo-features.ts.
-import { Pool, type PoolClient } from 'pg'
-import { readDatabaseUrl } from '../utils/db'
+import { Pool } from 'pg'
+import { sql } from 'drizzle-orm'
+import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { pgErrorMessage, readDatabaseUrl } from '../utils/db'
 import { runExclusiveTask, throwIfTaskAborted } from '../utils/exclusive-task'
 import { GEO_METRIC_CATEGORIES, type GeoMetricCategory } from '../utils/geo-metric-categories'
 import { isSystemicDatabaseError } from './build-geo-features'
@@ -77,7 +79,7 @@ async function runBuildAuctionGeoMetrics(signal: AbortSignal): Promise<{ result:
   try {
     const client = await pool.connect()
     try {
-      return { result: await buildAuctionGeoMetrics(client, signal) }
+      return { result: await buildAuctionGeoMetrics(drizzle(client), signal) }
     } finally {
       client.release()
     }
@@ -97,6 +99,7 @@ export interface BuildAuctionGeoMetricsResult {
 }
 
 interface Candidate {
+  [key: string]: unknown
   platform: string
   external_id: string
   lat: number
@@ -111,13 +114,13 @@ interface Candidate {
  * connection, same rationale as build-geo-features.ts's buildGeoFeatures.
  */
 export async function buildAuctionGeoMetrics(
-  client: PoolClient,
+  db: NodePgDatabase,
   signal: AbortSignal,
 ): Promise<BuildAuctionGeoMetricsResult | { skipped: true; reason: string }> {
   const startedAt = Date.now()
-  await acquireLock(client)
+  await acquireLock(db)
   try {
-    const epoch = await latestCompleteEpoch(client)
+    const epoch = await latestCompleteEpoch(db)
     if (epoch == null) {
       const reason = 'no complete geo_features epoch yet (geo_features_epochs is empty)'
       console.log(`[build-auction-geo-metrics] skipping: ${reason}`)
@@ -125,7 +128,7 @@ export async function buildAuctionGeoMetrics(
     }
 
     throwIfTaskAborted(signal)
-    const candidates = await findCandidates(client, epoch)
+    const candidates = await findCandidates(db, epoch)
     console.log(`[build-auction-geo-metrics] start, epoch=${epoch}, candidates=${candidates.length}`)
 
     let computed = 0
@@ -134,7 +137,7 @@ export async function buildAuctionGeoMetrics(
     for (const candidate of candidates) {
       throwIfTaskAborted(signal)
       try {
-        if (!await upsertMetrics(client, candidate, epoch)) {
+        if (!await upsertMetrics(db, candidate, epoch)) {
           // A rebuild completed while this run was working: geo_features no
           // longer holds `epoch`'s rows, so every further measurement against
           // it would come back NULL. Stop instead of persisting those — the
@@ -148,7 +151,7 @@ export async function buildAuctionGeoMetrics(
         if (isSystemicDatabaseError(err)) throw err
         skipped++
         console.warn(
-          `[build-auction-geo-metrics] skipped ${candidate.platform}/${candidate.external_id}: ${(err as Error).message}`,
+          `[build-auction-geo-metrics] skipped ${candidate.platform}/${candidate.external_id}: ${pgErrorMessage(err)}`,
         )
       }
     }
@@ -163,7 +166,7 @@ export async function buildAuctionGeoMetrics(
     console.log(`[build-auction-geo-metrics] done in ${(durationMs / 1000).toFixed(1)}s, computed=${computed} skipped=${skipped}`)
     return { epoch, candidates: candidates.length, computed, skipped, epochSuperseded, durationMs }
   } finally {
-    await releaseLock(client)
+    await releaseLock(db)
   }
 }
 
@@ -174,39 +177,38 @@ export async function buildAuctionGeoMetrics(
 // in-process-only serialization isn't enough across containers).
 const METRICS_LOCK_KEY = 4_820_251_205
 
-async function acquireLock(client: PoolClient): Promise<void> {
-  const { rows } = await client.query<{ locked: boolean }>('SELECT pg_try_advisory_lock($1) AS locked', [METRICS_LOCK_KEY])
+async function acquireLock(db: NodePgDatabase): Promise<void> {
+  const { rows } = await db.execute<{ locked: boolean }>(sql`SELECT pg_try_advisory_lock(${METRICS_LOCK_KEY}) AS locked`)
   if (!rows[0]?.locked) {
     throw new Error('[build-auction-geo-metrics] another run is already in progress (advisory lock held), skipping this run')
   }
 }
 
-async function releaseLock(client: PoolClient): Promise<void> {
+async function releaseLock(db: NodePgDatabase): Promise<void> {
   try {
-    await client.query('SELECT pg_advisory_unlock($1)', [METRICS_LOCK_KEY])
+    await db.execute(sql`SELECT pg_advisory_unlock(${METRICS_LOCK_KEY})`)
   } catch (err) {
     console.warn(`[build-auction-geo-metrics] releasing advisory lock failed: ${(err as Error).message}`)
   }
 }
 
-async function latestCompleteEpoch(client: PoolClient): Promise<number | null> {
-  const { rows } = await client.query<{ epoch: number | null }>('SELECT MAX(epoch) AS epoch FROM geo_features_epochs')
+async function latestCompleteEpoch(db: NodePgDatabase): Promise<number | null> {
+  const { rows } = await db.execute<{ epoch: number | null }>(sql`SELECT MAX(epoch) AS epoch FROM geo_features_epochs`)
   return rows[0]?.epoch ?? null
 }
 
-async function findCandidates(client: PoolClient, epoch: number): Promise<Candidate[]> {
-  const { rows } = await client.query<Candidate>(
-    `SELECT a.platform, a.external_id, a.lat, a.lng, md5(a.lat::text || ',' || a.lng::text) AS point_hash
-     FROM auctions a
-     LEFT JOIN auction_geo_metrics m ON m.platform = a.platform AND m.external_id = a.external_id
-     WHERE a.lat IS NOT NULL AND a.lng IS NOT NULL
-       AND (
-         m.platform IS NULL
-         OR m.features_epoch IS DISTINCT FROM $1
-         OR m.point_hash IS DISTINCT FROM md5(a.lat::text || ',' || a.lng::text)
-       )`,
-    [epoch],
-  )
+async function findCandidates(db: NodePgDatabase, epoch: number): Promise<Candidate[]> {
+  const { rows } = await db.execute<Candidate>(sql`
+    SELECT a.platform, a.external_id, a.lat, a.lng, md5(a.lat::text || ',' || a.lng::text) AS point_hash
+    FROM auctions a
+    LEFT JOIN auction_geo_metrics m ON m.platform = a.platform AND m.external_id = a.external_id
+    WHERE a.lat IS NOT NULL AND a.lng IS NOT NULL
+      AND (
+        m.platform IS NULL
+        OR m.features_epoch IS DISTINCT FROM ${epoch}
+        OR m.point_hash IS DISTINCT FROM md5(a.lat::text || ',' || a.lng::text)
+      )
+  `)
   return rows
 }
 
@@ -224,30 +226,30 @@ async function findCandidates(client: PoolClient, epoch: number): Promise<Candid
  * looks current, which would otherwise persist NULL distances for every
  * remaining candidate.
  */
-async function upsertMetrics(client: PoolClient, candidate: Candidate, epoch: number): Promise<boolean> {
+async function upsertMetrics(db: NodePgDatabase, candidate: Candidate, epoch: number): Promise<boolean> {
   const distanceColumns = GEO_METRIC_CATEGORIES.map((c) => c.column)
-  const sql = `
+  const query = sql`
     WITH point AS (
-      SELECT ST_Transform(ST_SetSRID(ST_MakePoint($1, $2), 4326), 3035) AS geom
+      SELECT ST_Transform(ST_SetSRID(ST_MakePoint(${candidate.lng}, ${candidate.lat}), 4326), 3035) AS geom
     )
     INSERT INTO auction_geo_metrics (
-      platform, external_id, ${distanceColumns.join(', ')}, tourism_density_count, point_hash, features_epoch, computed_at
+      platform, external_id, ${sql.raw(distanceColumns.join(', '))}, tourism_density_count, point_hash, features_epoch, computed_at
     )
-    SELECT $3, $4,
-      ${GEO_METRIC_CATEGORIES.map((c) => categorySelectSql(c, epoch)).join(',\n      ')},
+    SELECT ${candidate.platform}, ${candidate.external_id},
+      ${sql.raw(GEO_METRIC_CATEGORIES.map((c) => categorySelectSql(c, epoch)).join(',\n      '))},
       (SELECT count(*)::int FROM geo_features f, point
-        WHERE f.kind = '${TOURISM_DENSITY_KIND}' AND f.features_epoch = ${epoch}
+        WHERE f.kind = ${TOURISM_DENSITY_KIND} AND f.features_epoch = ${epoch}
           AND ST_DWithin(f.geom_3035, point.geom, ${TOURISM_DENSITY_RADIUS_METERS})),
-      $5, $6, now()
+      ${candidate.point_hash}, ${epoch}, now()
     FROM point
-    WHERE (SELECT MAX(epoch) FROM geo_features_epochs) = $6
+    WHERE (SELECT MAX(epoch) FROM geo_features_epochs) = ${epoch}
     ON CONFLICT (platform, external_id) DO UPDATE SET
-      ${distanceColumns.map((c) => `${c} = EXCLUDED.${c}`).join(',\n      ')},
+      ${sql.raw(distanceColumns.map((c) => `${c} = EXCLUDED.${c}`).join(',\n      '))},
       tourism_density_count = EXCLUDED.tourism_density_count,
       point_hash = EXCLUDED.point_hash,
       features_epoch = EXCLUDED.features_epoch,
       computed_at = EXCLUDED.computed_at
   `
-  const { rowCount } = await client.query(sql, [candidate.lng, candidate.lat, candidate.platform, candidate.external_id, candidate.point_hash, epoch])
+  const { rowCount } = await db.execute(query)
   return (rowCount ?? 0) > 0
 }

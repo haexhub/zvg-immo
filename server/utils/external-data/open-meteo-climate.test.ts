@@ -151,21 +151,23 @@ describe('createOpenMeteoClimateNormalsEnhancer / readClimateNormals', () => {
 
     function makeQuery() {
       let releaseLock: (() => void) | null = null
-      return vi.fn(async (sql: string, params: unknown[] = []) => {
-        if (sql === 'BEGIN') return { rows: [], rowCount: 0 }
-        if (sql === 'COMMIT' || sql === 'ROLLBACK') {
+      return vi.fn(async (queryArg: unknown, params: unknown[] = []) => {
+        const text = typeof queryArg === 'string' ? queryArg : (queryArg as { text: string }).text
+        const n = text.replace(/\s+/g, ' ').trim().toLowerCase()
+        if (n === 'begin') return { rows: [], rowCount: 0 }
+        if (n === 'commit' || n === 'rollback') {
           releaseLock?.()
           releaseLock = null
           return { rows: [], rowCount: 0 }
         }
-        if (sql.includes('pg_advisory_xact_lock')) {
+        if (n.includes('pg_advisory_xact_lock')) {
           releaseLock = await acquireLock(String(params[0]))
           return { rows: [], rowCount: 0 }
         }
-        if (sql.includes('SELECT') && sql.includes('FROM climate_cells')) {
+        if (n.includes('select') && n.includes('from climate_cells')) {
           return { rows: row ? [row] : [], rowCount: row ? 1 : 0 }
         }
-        if (sql.includes('INSERT INTO climate_cells')) {
+        if (n.includes('insert into climate_cells')) {
           inserted.push(params)
           row = {
             summer_avg_temp_c: String(params[2]),
@@ -178,13 +180,21 @@ describe('createOpenMeteoClimateNormalsEnhancer / readClimateNormals', () => {
           }
           return { rows: [], rowCount: 1 }
         }
-        throw new Error(`unexpected query: ${sql}`)
+        throw new Error(`unexpected query: ${text}`)
       })
     }
 
+    // drizzle's transaction() (withCellLock) only checks out its own
+    // connection when the object it wraps looks like a `pg.Pool` — it tests
+    // `instanceof Pool` or a constructor name containing "Pool" — so this
+    // needs a named constructor to take that branch and give each concurrent
+    // lock attempt its own `makeQuery()` closure, matching a real per-session
+    // connection.
+    function MockPool() {}
     const query = makeQuery()
     const connect = vi.fn(async () => ({ query: makeQuery(), release: vi.fn() }))
-    return { query, connect, inserted } as unknown as Pool & { inserted: unknown[][] }
+    const pool = Object.assign(new (MockPool as unknown as new () => object)(), { query, connect, inserted })
+    return pool as unknown as Pool & { inserted: unknown[][] }
   }
 
   it('fetches, aggregates and caches on a miss', async () => {

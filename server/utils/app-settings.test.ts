@@ -23,42 +23,59 @@ import {
   setLlmProviderProfileSettings,
   setLlmProviderOverride,
 } from './app-settings'
+import { queryText } from '~/test-support/drizzle-query'
 
 /** Minimal in-memory stand-in for the `pg` Pool, matching the exact queries
- *  app-settings.ts issues (checked via the SQL prefix), mirroring the fake
- *  pool in content-translation.test.ts. */
+ *  app-settings.ts issues (checked via the compiled SQL Drizzle sends to
+ *  `client.query()`), mirroring the fake pool in content-translation.test.ts.
+ *  app-settings.ts wraps this same Pool-shaped object in `drizzle()` itself
+ *  per call, so the constructor name below must look like a real `pg.Pool`
+ *  for `db.transaction()`'s pool-vs-client detection to take the
+ *  connect()-and-release branch. */
 function makeFakePool() {
   const rows = new Map<string, unknown>()
 
-  const query = async (sql: string, params: unknown[] = []) => {
-    if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+  const query = async (queryArg: unknown, params: unknown[] = []) => {
+    const text = queryText(queryArg)
+    const n = text.replace(/\s+/g, ' ').trim().toLowerCase()
+    if (n === 'begin' || n === 'commit' || n === 'rollback') {
       return { rows: [], rowCount: null }
     }
-    if (sql.includes('SELECT value FROM app_settings WHERE key =')) {
+    if (n.startsWith('select "value" from "app_settings"')) {
       const [key] = params as [string]
-      return rows.has(key) ? { rows: [{ value: rows.get(key) }] } : { rows: [] }
+      return rows.has(key) ? { rows: [[rows.get(key)]] } : { rows: [] }
     }
-    if (sql.includes('SELECT key, value FROM app_settings WHERE key = ANY')) {
-      const [keys] = params as [string[]]
-      return { rows: keys.filter((k) => rows.has(k)).map((k) => ({ key: k, value: rows.get(k) })) }
+    if (n.startsWith('select "key", "value" from "app_settings"')) {
+      const keys = params as string[]
+      return { rows: keys.filter((k) => rows.has(k)).map((k) => [k, rows.get(k)]) }
     }
-    if (sql.includes('INSERT INTO app_settings')) {
-      if (params.length === 2) {
-        const [key, value] = params as [string, string]
-        rows.set(key, JSON.parse(value))
-        return { rows: [], rowCount: 1 }
-      }
-      // setLlmProviderOverride's atomic upsert:
-      // [key, provider, baseUrl, model, executionMode|null, apiKey|null, defaultExecutionMode].
-      // Emulates the SQL's COALESCEs without a real jsonb engine.
-      const [key, provider, baseUrl, model, executionMode, apiKey, defaultExecutionMode] = params as [
+    if (n.startsWith('insert into "app_settings"')) {
+      // writeSetting()/the transactional upserts: [key, value, updatedAt, value, updatedAt] —
+      // value arrives JSON-stringified (Drizzle's jsonb mapToDriverValue).
+      const [key, value] = params as [string, string]
+      rows.set(key, JSON.parse(value))
+      return { rows: [], rowCount: 1 }
+    }
+    if (n.startsWith('insert into app_settings (key, value, updated_at) values ($1, $2, now())')) {
+      // The legacy-row seed below, written with hand-rolled SQL bypassing
+      // app-settings.ts entirely (simulating a pre-chain stored row).
+      const [key, value] = params as [string, string]
+      rows.set(key, JSON.parse(value))
+      return { rows: [], rowCount: 1 }
+    }
+    if (n.startsWith('insert into app_settings (key, value, updated_at)')) {
+      // setLlmProviderOverride's atomic upsert (raw sql fragment, not the
+      // query builder): [key, provider, baseUrl, model, executionMode|null,
+      // defaultExecutionMode, apiKey|null, ...same 6 again for the SET
+      // clause]. Emulates the SQL's COALESCEs without a real jsonb engine.
+      const [key, provider, baseUrl, model, executionMode, defaultExecutionMode, apiKey] = params as [
         string,
         string,
         string,
         string,
         string | null,
-        string | null,
         string,
+        string | null,
       ]
       const existing = rows.get(key) as { apiKey?: string; executionMode?: string } | undefined
       const value = {
@@ -71,21 +88,22 @@ function makeFakePool() {
       rows.set(key, value)
       return { rows: [{ value }], rowCount: 1 }
     }
-    if (sql.includes('DELETE FROM app_settings')) {
+    if (n.startsWith('delete from "app_settings"')) {
       const [key] = params as [string]
       const existed = rows.delete(key)
       return { rows: [], rowCount: existed ? 1 : 0 }
     }
-    throw new Error(`unexpected query: ${sql}`)
+    throw new Error(`unexpected query: ${text}`)
   }
 
-  return {
+  function MockPool() {}
+  return Object.assign(new (MockPool as unknown as new () => object)(), {
     query: query as unknown as Pool['query'],
     connect: async () => ({
       query: query as unknown as Pool['query'],
       release: () => undefined,
     }),
-  }
+  }) as unknown as Pool
 }
 
 describe('enabled countries', () => {
@@ -108,11 +126,11 @@ describe('enabled countries', () => {
 
   it('falls back to defaults for a malformed stored value', async () => {
     const db = makeFakePool()
-    ;(db as unknown as { query: (sql: string) => Promise<unknown> }).query = async (sql: string) => {
-      if (sql.includes('SELECT value')) return { rows: [{ value: 'de,se' }] }
+    ;(db as unknown as { query: (queryArg: unknown) => Promise<unknown> }).query = async (queryArg: unknown) => {
+      if (queryText(queryArg).toLowerCase().startsWith('select "value"')) return { rows: [['de,se']] }
       throw new Error('unexpected')
     }
-    expect(await getEnabledCountries(db as unknown as Pool)).toEqual(DEFAULT_ENABLED_COUNTRIES)
+    expect(await getEnabledCountries(db)).toEqual(DEFAULT_ENABLED_COUNTRIES)
   })
 })
 
@@ -132,35 +150,29 @@ describe('getLlmMaxTokens', () => {
 
   it('falls back to the default on a malformed value', async () => {
     const db = makeFakePool()
-    ;(db as unknown as { query: (sql: string, params?: unknown[]) => Promise<unknown> }).query = async (
-      sql: string,
-    ) => {
-      if (sql.includes('SELECT value')) return { rows: [{ value: 'not-a-number' }] }
+    ;(db as unknown as { query: (queryArg: unknown) => Promise<unknown> }).query = async (queryArg: unknown) => {
+      if (queryText(queryArg).toLowerCase().startsWith('select "value"')) return { rows: [['not-a-number']] }
       throw new Error('unexpected')
     }
-    expect(await getLlmMaxTokens(db as unknown as Pool, 'extraction')).toBe(DEFAULT_LLM_MAX_TOKENS.extraction)
+    expect(await getLlmMaxTokens(db, 'extraction')).toBe(DEFAULT_LLM_MAX_TOKENS.extraction)
   })
 
   it('clamps a stored out-of-range value that bypassed setLlmMaxTokens', async () => {
     const db = makeFakePool()
-    ;(db as unknown as { query: (sql: string, params?: unknown[]) => Promise<unknown> }).query = async (
-      sql: string,
-    ) => {
-      if (sql.includes('SELECT value')) return { rows: [{ value: 1_000_000 }] }
+    ;(db as unknown as { query: (queryArg: unknown) => Promise<unknown> }).query = async (queryArg: unknown) => {
+      if (queryText(queryArg).toLowerCase().startsWith('select "value"')) return { rows: [[1_000_000]] }
       throw new Error('unexpected')
     }
-    expect(await getLlmMaxTokens(db as unknown as Pool, 'extraction')).toBe(32_768)
+    expect(await getLlmMaxTokens(db, 'extraction')).toBe(32_768)
   })
 
   it('rounds a stored fractional value that bypassed setLlmMaxTokens', async () => {
     const db = makeFakePool()
-    ;(db as unknown as { query: (sql: string, params?: unknown[]) => Promise<unknown> }).query = async (
-      sql: string,
-    ) => {
-      if (sql.includes('SELECT value')) return { rows: [{ value: 1024.6 }] }
+    ;(db as unknown as { query: (queryArg: unknown) => Promise<unknown> }).query = async (queryArg: unknown) => {
+      if (queryText(queryArg).toLowerCase().startsWith('select "value"')) return { rows: [[1024.6]] }
       throw new Error('unexpected')
     }
-    expect(await getLlmMaxTokens(db as unknown as Pool, 'usage-ideas')).toBe(1025)
+    expect(await getLlmMaxTokens(db, 'usage-ideas')).toBe(1025)
   })
 })
 
@@ -376,35 +388,31 @@ describe('getLlmProviderOverride', () => {
 
   it('returns null for a malformed stored value', async () => {
     const db = makeFakePool()
-    ;(db as unknown as { query: (sql: string, params?: unknown[]) => Promise<unknown> }).query = async (
-      sql: string,
-    ) => {
-      if (sql.includes('SELECT value')) return { rows: [{ value: { provider: 'not-a-real-provider' } }] }
+    ;(db as unknown as { query: (queryArg: unknown) => Promise<unknown> }).query = async (queryArg: unknown) => {
+      if (queryText(queryArg).toLowerCase().startsWith('select "value"')) {
+        return { rows: [[{ provider: 'not-a-real-provider' }]] }
+      }
       throw new Error('unexpected')
     }
-    expect(await getLlmProviderOverride(db as unknown as Pool)).toBeNull()
+    expect(await getLlmProviderOverride(db)).toBeNull()
   })
 
   it('returns null when a stored provider override is missing executionMode', async () => {
     const db = makeFakePool()
-    ;(db as unknown as { query: (sql: string, params?: unknown[]) => Promise<unknown> }).query = async (
-      sql: string,
-    ) => {
-      if (sql.includes('SELECT value')) {
+    ;(db as unknown as { query: (queryArg: unknown) => Promise<unknown> }).query = async (queryArg: unknown) => {
+      if (queryText(queryArg).toLowerCase().startsWith('select "value"')) {
         return {
-          rows: [{
-            value: {
-              provider: 'claude-proxy',
-              baseUrl: 'http://haex-claude-proxy:8080',
-              model: 'claude-haiku-4-5',
-              apiKey: '',
-            },
-          }],
+          rows: [[{
+            provider: 'claude-proxy',
+            baseUrl: 'http://haex-claude-proxy:8080',
+            model: 'claude-haiku-4-5',
+            apiKey: '',
+          }]],
         }
       }
       throw new Error('unexpected')
     }
-    expect(await getLlmProviderOverride(db as unknown as Pool)).toBeNull()
+    expect(await getLlmProviderOverride(db)).toBeNull()
   })
 
   it('is null again after clearLlmProviderOverride', async () => {

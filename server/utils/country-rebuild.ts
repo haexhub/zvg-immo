@@ -1,12 +1,23 @@
-import type { Pool } from 'pg'
+import { and, eq, exists, sql } from 'drizzle-orm'
+import type { AnyPgColumn } from 'drizzle-orm/pg-core'
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { createError } from 'h3'
 import type { CrawlResult } from '~/types/auction'
 import { crawlSingle, ensureEnabledCountriesLoaded, isCountryEnabled, listRegisteredCountries } from '../crawlers/registry'
+import {
+  auctionDetails,
+  auctionFetchState,
+  auctionObservations,
+  auctions,
+  auctionTranslations,
+  listCache,
+  locationEnrichment,
+} from '../db/schema'
 import { matchAlerts } from './alert-matching'
 import { archiveAuction } from './raw-archive'
-import { deleteRawArchiveCountry, rollbackQuietly } from './raw-archive-delete'
+import { deleteRawArchiveCountry } from './raw-archive-delete'
 import { recordObservations } from './history'
-import { getPool } from './db'
+import { getDb } from './db'
 import { ensureAuctionIdentity } from './current-auctions'
 import { writeAuctionCrawlFetchState } from './auction-fetch-state'
 import { writeListCache } from './list-cache'
@@ -38,58 +49,59 @@ export interface CountryRebuildResult {
 
 let runningCountry: string | null = null
 
-export async function deleteCountryCurrentData(db: Pool, country: string): Promise<CountryRebuildResult['deleted']> {
+export async function deleteCountryCurrentData<TSchema extends Record<string, unknown>>(
+  db: NodePgDatabase<TSchema>,
+  country: string,
+): Promise<CountryRebuildResult['deleted']> {
   // Archive queries need the auction rows for country scoping, so archive/blob
   // deletion must happen first. File removal cannot join the SQL transaction;
   // if the relational delete fails, rerun rebuildCountry to recover.
   const archive = await deleteRawArchiveCountry(country)
-  const client = await db.connect()
-  try {
-    await client.query('BEGIN')
-    const auctionTranslations = await client.query(
-      `DELETE FROM auction_translations t USING auctions a
-       WHERE a.platform = t.platform AND a.external_id = t.external_id AND a.country = $1`,
-      [country],
-    )
-    const auctionDetails = await client.query(
-      `DELETE FROM auction_details d USING auctions a
-       WHERE a.platform = d.platform AND a.external_id = d.external_id AND a.country = $1`,
-      [country],
-    )
-    const fetchState = await client.query(
-      `DELETE FROM auction_fetch_state fs USING auctions a
-       WHERE a.platform = fs.platform AND a.external_id = fs.external_id AND a.country = $1`,
-      [country],
-    )
-    const locationEnrichment = await client.query(
-      `DELETE FROM location_enrichment le USING auctions a
-       WHERE a.platform = le.platform AND a.external_id = le.external_id AND a.country = $1`,
-      [country],
-    )
-    const observations = await client.query('DELETE FROM auction_observations WHERE country = $1', [country])
-    const listCache = await client.query('DELETE FROM list_cache WHERE country = $1', [country])
-    const auctions = await client.query('DELETE FROM auctions WHERE country = $1', [country])
-    await client.query('COMMIT')
-    invalidateLocationEnrichmentCache()
+  const deleted = await db.transaction(async (tx) => {
+    // These four tables don't carry their own `country` column — they key off
+    // (platform, external_id) — so scoping to a country goes through the
+    // `auctions` row for that identity, mirroring the old `USING auctions a`
+    // join.
+    const belongsToCountry = (platform: AnyPgColumn, externalId: AnyPgColumn) =>
+      exists(
+        tx.select({ one: sql`1` }).from(auctions).where(and(
+          eq(auctions.platform, platform),
+          eq(auctions.externalId, externalId),
+          eq(auctions.country, country),
+        )),
+      )
+
+    const auctionTranslationsResult = await tx.delete(auctionTranslations)
+      .where(belongsToCountry(auctionTranslations.platform, auctionTranslations.externalId))
+    const auctionDetailsResult = await tx.delete(auctionDetails)
+      .where(belongsToCountry(auctionDetails.platform, auctionDetails.externalId))
+    const fetchStateResult = await tx.delete(auctionFetchState)
+      .where(belongsToCountry(auctionFetchState.platform, auctionFetchState.externalId))
+    const locationEnrichmentResult = await tx.delete(locationEnrichment)
+      .where(belongsToCountry(locationEnrichment.platform, locationEnrichment.externalId))
+    const observationsResult = await tx.delete(auctionObservations).where(eq(auctionObservations.country, country))
+    const listCacheResult = await tx.delete(listCache).where(eq(listCache.country, country))
+    const auctionsResult = await tx.delete(auctions).where(eq(auctions.country, country))
+
     return {
-      listCache: listCache.rowCount ?? 0,
-      observations: observations.rowCount ?? 0,
-      auctions: auctions.rowCount ?? 0,
-      auctionDetails: auctionDetails.rowCount ?? 0,
-      fetchState: fetchState.rowCount ?? 0,
-      locationEnrichment: locationEnrichment.rowCount ?? 0,
-      auctionTranslations: auctionTranslations.rowCount ?? 0,
+      listCache: listCacheResult.rowCount ?? 0,
+      observations: observationsResult.rowCount ?? 0,
+      auctions: auctionsResult.rowCount ?? 0,
+      auctionDetails: auctionDetailsResult.rowCount ?? 0,
+      fetchState: fetchStateResult.rowCount ?? 0,
+      locationEnrichment: locationEnrichmentResult.rowCount ?? 0,
+      auctionTranslations: auctionTranslationsResult.rowCount ?? 0,
       artifactCaptures: archive.deleted.captures,
       artifactVersions: archive.deleted.documentSets,
       artifactVersionItems: archive.deleted.documentSetItems,
       artifactBlobs: archive.deleted.blobs,
     }
-  } catch (err) {
-    await rollbackQuietly(client)
-    throw err
-  } finally {
-    client.release()
-  }
+  })
+  // After the commit, not inside the callback: a concurrent request that
+  // repopulated the cache from rows this transaction had not removed yet would
+  // otherwise leave enrichment entries for deleted auctions behind.
+  invalidateLocationEnrichmentCache()
+  return deleted
 }
 
 export async function rebuildCountry(countryInput: string): Promise<CountryRebuildResult> {
@@ -106,7 +118,7 @@ export async function rebuildCountry(countryInput: string): Promise<CountryRebui
     throw createError({ statusCode: 409, statusMessage: `${registered.name} wird bereits neu gecrawlt.` })
   }
 
-  const db = getPool()
+  const db = getDb()
   if (!db) {
     throw createError({ statusCode: 503, statusMessage: 'Postgres ist nicht konfiguriert.' })
   }

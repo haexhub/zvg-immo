@@ -18,7 +18,12 @@ function mockPool(query: (sql: string, params: unknown[]) => Promise<unknown>) {
   const clients: Array<{ query: ReturnType<typeof vi.fn>; release: ReturnType<typeof vi.fn> }> = []
   const connect = vi.fn(async () => {
     const client = {
-      query: vi.fn(async (sql: string, params: unknown[] = []) => {
+      // withStatementTimeout issues BEGIN/SET LOCAL/COMMIT/ROLLBACK through a
+      // Drizzle session now, so those specific calls arrive as a {text, ...}
+      // config object instead of a plain string — everything else (this
+      // handler's own hand-built SQL) still comes through as a plain string.
+      query: vi.fn(async (queryArg: string | { text: string }, params: unknown[] = []) => {
+        const sql = typeof queryArg === 'string' ? queryArg : queryArg.text
         if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK' || sql.startsWith('SET LOCAL')) {
           return { rows: [] }
         }

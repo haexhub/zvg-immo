@@ -13,7 +13,9 @@
 // Climate normals don't go stale (WP-7 doc: "einmal geholt, nie wieder"), so
 // a cell is fetched at most once, ever, keyed by its rounded coordinates.
 
-import type { Pool, PoolClient } from 'pg'
+import type { Pool } from 'pg'
+import { sql } from 'drizzle-orm'
+import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type {
   Auction,
   LocationClimateMonthNormal,
@@ -23,6 +25,11 @@ import type {
 import type { LocationContextEnhancer } from '~/server/tasks/external-enrichment'
 import { EXTERNAL_DATA_SOURCES } from './sources'
 import { fetchOpenMeteo } from './open-meteo-rate-limit'
+
+/** `readCachedCell`/`writeCachedCell` run both outside any lock (against the
+ *  pool directly) and inside `withCellLock`'s transaction (against `tx`) — this
+ *  is the common surface both a `NodePgDatabase` and its transaction share. */
+type Queryable = Pick<NodePgDatabase, 'execute'>
 
 export interface OpenMeteoClimateOptions {
   db: Pool
@@ -79,8 +86,9 @@ export async function readClimateNormals(
   point: { lat: number; lng: number },
   options: OpenMeteoClimateOptions,
 ): Promise<LocationClimateNormals | null> {
+  const db = drizzle(options.db)
   const cell = gridCell(point.lat, point.lng)
-  const cached = await readCachedCell(options.db, cell)
+  const cached = await readCachedCell(db, cell)
   if (cached) return toLocationClimateNormals(cached, options.checkedAt)
 
   // Cold cell: two concurrent requests can both observe the miss above
@@ -88,36 +96,27 @@ export async function readClimateNormals(
   // the transaction, scoped to the checked-out client) serializes them, and
   // the re-read after acquiring it lets the loser of the race serve the
   // winner's freshly-cached row instead of hitting Open-Meteo again.
-  return withCellLock(options.db, cell, async (client) => {
-    const recached = await readCachedCell(client, cell)
+  return withCellLock(db, cell, async (tx) => {
+    const recached = await readCachedCell(tx, cell)
     if (recached) return toLocationClimateNormals(recached, options.checkedAt)
 
     const daily = await fetchDailySeries(cell, options)
     if (!daily) return null
     const data = aggregate(daily)
-    await writeCachedCell(client, cell, data)
+    await writeCachedCell(tx, cell, data)
     return toLocationClimateNormals(data, options.checkedAt)
   })
 }
 
 async function withCellLock<T>(
-  db: Pool,
+  db: NodePgDatabase,
   cell: { lat: number; lon: number },
-  fn: (client: PoolClient) => Promise<T>,
+  fn: (tx: Queryable) => Promise<T>,
 ): Promise<T> {
-  const client = await db.connect()
-  try {
-    await client.query('BEGIN')
-    await client.query('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', [cellLockKey(cell)])
-    const result = await fn(client)
-    await client.query('COMMIT')
-    return result
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => undefined)
-    throw err
-  } finally {
-    client.release()
-  }
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${cellLockKey(cell)})::bigint)`)
+    return fn(tx)
+  })
 }
 
 function cellLockKey(cell: { lat: number; lon: number }): string {
@@ -137,8 +136,8 @@ export function gridCell(lat: number, lng: number): { lat: number; lon: number }
   }
 }
 
-async function readCachedCell(db: Pool | PoolClient, cell: { lat: number; lon: number }): Promise<ClimateCellData | null> {
-  const { rows } = await db.query<{
+async function readCachedCell(db: Queryable, cell: { lat: number; lon: number }): Promise<ClimateCellData | null> {
+  const { rows } = await db.execute<{
     summer_avg_temp_c: string | null
     winter_avg_temp_c: string | null
     annual_precip_mm: number | null
@@ -146,11 +145,10 @@ async function readCachedCell(db: Pool | PoolClient, cell: { lat: number; lon: n
     monthly: LocationClimateMonthNormal[] | null
     source_version: string | null
     fetched_at: string | Date | null
-  }>(
-    `SELECT summer_avg_temp_c, winter_avg_temp_c, annual_precip_mm, frost_days, monthly, source_version, fetched_at
-     FROM climate_cells WHERE lat = $1 AND lon = $2`,
-    [cell.lat, cell.lon],
-  )
+  }>(sql`
+    SELECT summer_avg_temp_c, winter_avg_temp_c, annual_precip_mm, frost_days, monthly, source_version, fetched_at
+    FROM climate_cells WHERE lat = ${cell.lat} AND lon = ${cell.lon}
+  `)
   const row = rows[0]
   // fetched_at/monthly null means the row doesn't exist yet, or exists but
   // was never fully populated; a source_version mismatch means it was
@@ -169,32 +167,22 @@ async function readCachedCell(db: Pool | PoolClient, cell: { lat: number; lon: n
 }
 
 async function writeCachedCell(
-  db: Pool | PoolClient,
+  db: Queryable,
   cell: { lat: number; lon: number },
   data: ClimateCellData,
 ): Promise<void> {
-  await db.query(
-    `INSERT INTO climate_cells (lat, lon, summer_avg_temp_c, winter_avg_temp_c, annual_precip_mm, frost_days, monthly, source_version, fetched_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
-     ON CONFLICT (lat, lon) DO UPDATE
-       SET summer_avg_temp_c = EXCLUDED.summer_avg_temp_c,
-           winter_avg_temp_c = EXCLUDED.winter_avg_temp_c,
-           annual_precip_mm = EXCLUDED.annual_precip_mm,
-           frost_days = EXCLUDED.frost_days,
-           monthly = EXCLUDED.monthly,
-           source_version = EXCLUDED.source_version,
-           fetched_at = now()`,
-    [
-      cell.lat,
-      cell.lon,
-      data.summerAvgTempC,
-      data.winterAvgTempC,
-      data.annualPrecipMm,
-      data.frostDays,
-      JSON.stringify(data.monthly),
-      OPEN_METEO_CLIMATE_SOURCE_VERSION,
-    ],
-  )
+  await db.execute(sql`
+    INSERT INTO climate_cells (lat, lon, summer_avg_temp_c, winter_avg_temp_c, annual_precip_mm, frost_days, monthly, source_version, fetched_at)
+    VALUES (${cell.lat}, ${cell.lon}, ${data.summerAvgTempC}, ${data.winterAvgTempC}, ${data.annualPrecipMm}, ${data.frostDays}, ${JSON.stringify(data.monthly)}, ${OPEN_METEO_CLIMATE_SOURCE_VERSION}, now())
+    ON CONFLICT (lat, lon) DO UPDATE
+      SET summer_avg_temp_c = EXCLUDED.summer_avg_temp_c,
+          winter_avg_temp_c = EXCLUDED.winter_avg_temp_c,
+          annual_precip_mm = EXCLUDED.annual_precip_mm,
+          frost_days = EXCLUDED.frost_days,
+          monthly = EXCLUDED.monthly,
+          source_version = EXCLUDED.source_version,
+          fetched_at = now()
+  `)
 }
 
 interface DailyPoint {

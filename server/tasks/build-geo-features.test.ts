@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { drizzle } from 'drizzle-orm/node-postgres'
 import type { Pool, PoolClient } from 'pg'
 
 // buildGeoFeatures itself never touches Nitro's defineTask/useRuntimeConfig
@@ -8,7 +9,28 @@ import type { Pool, PoolClient } from 'pg'
 // server/tasks/*.test.ts uses.
 vi.stubGlobal('defineTask', (definition: unknown) => definition)
 
-const { buildGeoFeatures, nextFeaturesEpoch } = await import('./build-geo-features')
+const { buildGeoFeatures, isSystemicDatabaseError, nextFeaturesEpoch } = await import('./build-geo-features')
+
+// Runs without a database, unlike the suite below: this classification decides
+// whether a failed rebuild deletes the previous epoch's rows, and the inserts
+// now go through Drizzle, which hides the SQLSTATE inside its own wrapper.
+describe('isSystemicDatabaseError', () => {
+  const wrapped = (cause: unknown) =>
+    Object.assign(new Error('Failed query: insert into geo_features\nparams: lake,7'), { cause })
+
+  it('classifies a Drizzle-wrapped systemic SQLSTATE as systemic', () => {
+    for (const code of ['53200', '57014', '42P01', '08006']) {
+      expect(isSystemicDatabaseError(wrapped(Object.assign(new Error('boom'), { code })))).toBe(true)
+    }
+  })
+
+  it('still treats a single broken geometry as non-systemic', () => {
+    const geometryError = Object.assign(new Error('Geometry contains an interior ring outside'), { code: 'XX000' })
+    expect(isSystemicDatabaseError(wrapped(geometryError))).toBe(false)
+    expect(isSystemicDatabaseError(geometryError)).toBe(false)
+    expect(isSystemicDatabaseError(new Error('boom'))).toBe(false)
+  })
+})
 
 // Real Postgres, not a mock: this job's correctness lives entirely in SQL
 // (ST_MakeValid/ST_Transform/ST_Subdivide, the lake/river tag exclusion, the
@@ -256,7 +278,7 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
       const signal = new AbortController().signal
 
       // --- first run ---
-      const first = await buildGeoFeatures(client, signal)
+      const first = await buildGeoFeatures(drizzle(client), signal)
       const afterFirst = await readFeatures(pool)
 
       // Kind mapping + lake/river exclusion.
@@ -304,7 +326,7 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
       expect(firstMarker.rows).toHaveLength(1)
 
       // --- second run: must not duplicate anything ---
-      const second = await buildGeoFeatures(client, signal)
+      const second = await buildGeoFeatures(drizzle(client), signal)
       const afterSecond = await readFeatures(pool)
 
       expect(second.epoch).toBe(first.epoch + 1)
@@ -336,7 +358,7 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
       // second app container mid-rebuild, which runExclusiveTask (in-process
       // only) would not notice.
       await holder.query('SELECT pg_advisory_lock($1)', [4_820_251_104])
-      await expect(buildGeoFeatures(client, new AbortController().signal)).rejects.toThrow(/another rebuild/)
+      await expect(buildGeoFeatures(drizzle(client), new AbortController().signal)).rejects.toThrow(/another rebuild/)
       // Nothing was written, and above all nothing was deleted.
       expect(await readFeatures(pool)).toEqual([])
     } finally {
@@ -355,7 +377,7 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
       // empty, so a counter derived from geo_features alone would hand out
       // that same epoch again on the next run.
       await pool.query('DELETE FROM osm_local_elements WHERE country IN ($1, $2)', [TEST_COUNTRY, BORDER_COUNTRY])
-      const empty = await buildGeoFeatures(client, signal)
+      const empty = await buildGeoFeatures(drizzle(client), signal)
       expect(await readFeatures(pool)).toEqual([])
 
       const client2 = await pool.connect()
@@ -364,7 +386,7 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
       } finally {
         client2.release()
       }
-      const populated = await buildGeoFeatures(client, signal)
+      const populated = await buildGeoFeatures(drizzle(client), signal)
       expect(populated.epoch).toBeGreaterThan(empty.epoch)
 
       // The decisive part: what readers resolve as the newest complete epoch
@@ -384,7 +406,7 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
     const client = await pool.connect()
     try {
       const signal = new AbortController().signal
-      const first = await buildGeoFeatures(client, signal)
+      const first = await buildGeoFeatures(drizzle(client), signal)
       expect((await readFeatures(pool)).length).toBeGreaterThan(0)
 
       // 53200 (out_of_memory) stands in for any systemic failure — schema,
@@ -402,8 +424,12 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
         // The epoch this next, failing run will attempt to write under —
         // asked of the same function buildGeoFeatures uses, not a copy of its
         // query, so the two can't drift apart.
-        failedEpoch = await nextFeaturesEpoch(client)
-        await expect(buildGeoFeatures(client, signal)).rejects.toThrow(/simulated systemic failure/)
+        failedEpoch = await nextFeaturesEpoch(drizzle(client))
+        // Asserted on the cause, not the message: Drizzle rethrows a
+        // DrizzleQueryError whose own message is only `Failed query: <sql>`.
+        await expect(buildGeoFeatures(drizzle(client), signal)).rejects.toMatchObject({
+          cause: expect.objectContaining({ code: '53200' }),
+        })
       } finally {
         await client.query('DROP TRIGGER zz_geo_features_boom ON geo_features; DROP FUNCTION zz_geo_features_boom();')
       }
@@ -430,7 +456,7 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
       // the PK, the fallback's candidate SELECT and rowSql both ignored
       // country: two candidates (one per country) each matched both rows,
       // inserting the border feature 4 times instead of 2.
-      await buildGeoFeatures(client, new AbortController().signal)
+      await buildGeoFeatures(drizzle(client), new AbortController().signal)
 
       const { rows } = await client.query<{ country: string; n: string }>(
         `SELECT country, count(*) AS n FROM geo_features

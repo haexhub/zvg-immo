@@ -6,8 +6,33 @@
 // is absent, since a fresh install has no rows yet.
 
 import type { Pool } from 'pg'
+import { eq, inArray, sql } from 'drizzle-orm'
+import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { appSettings } from '../db/schema'
 import { llmProviderRequiresApiKey, supportsLlmProviderExecutionMode } from './llm-provider-capabilities'
 import { INSIGHT_REGISTRY } from './insights/registry'
+
+/** Every export below keeps accepting a raw `pg` `Pool` — callers still get
+ *  it from `getPool()` — and wraps it in Drizzle internally per call; the
+ *  wrap is cheap (no I/O), so this avoids rippling a `getDb()` signature
+ *  change through every one of this module's ~20 call sites. */
+async function readSetting(db: Pool, key: string): Promise<{ value: unknown } | undefined> {
+  const [row] = await drizzle(db).select({ value: appSettings.value }).from(appSettings).where(eq(appSettings.key, key))
+  return row
+}
+
+/** The single upsert shape every write below shares — usable with a Drizzle
+ *  instance or a transaction handle, so the conflict target and `updated_at`
+ *  handling stay in one place. */
+function upsertSetting(executor: Pick<NodePgDatabase, 'insert'>, key: string, value: unknown) {
+  const updatedAt = new Date()
+  return executor.insert(appSettings).values({ key, value, updatedAt })
+    .onConflictDoUpdate({ target: appSettings.key, set: { value, updatedAt } })
+}
+
+async function writeSetting(db: Pool, key: string, value: unknown): Promise<void> {
+  await upsertSetting(drizzle(db), key, value)
+}
 
 // Widened to `string` rather than a closed union of insight ids: insight
 // definitions carry a plain `id: string`, so a type-level union built from
@@ -39,19 +64,12 @@ function coerceEnabledCountries(value: unknown): string[] {
 }
 
 export async function getEnabledCountries(db: Pool): Promise<string[]> {
-  const { rows } = await db.query<{ value: unknown }>(
-    'SELECT value FROM app_settings WHERE key = $1',
-    [ENABLED_COUNTRIES_KEY],
-  )
-  return rows[0] ? coerceEnabledCountries(rows[0].value) : [...DEFAULT_ENABLED_COUNTRIES]
+  const row = await readSetting(db, ENABLED_COUNTRIES_KEY)
+  return row ? coerceEnabledCountries(row.value) : [...DEFAULT_ENABLED_COUNTRIES]
 }
 
 export async function setEnabledCountries(db: Pool, countries: readonly string[]): Promise<void> {
-  await db.query(
-    `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, now())
-     ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()`,
-    [ENABLED_COUNTRIES_KEY, JSON.stringify(coerceEnabledCountries([...countries]))],
-  )
+  await writeSetting(db, ENABLED_COUNTRIES_KEY, coerceEnabledCountries([...countries]))
 }
 
 // Single source of truth for valid kinds: the two fixed use-cases plus one
@@ -93,18 +111,14 @@ function coerce(value: unknown, kind: LlmMaxTokensKind): number {
 }
 
 export async function getLlmMaxTokens(db: Pool, kind: LlmMaxTokensKind): Promise<number> {
-  const { rows } = await db.query<{ value: unknown }>(
-    'SELECT value FROM app_settings WHERE key = $1',
-    [keyFor(kind)],
-  )
-  return coerce(rows[0]?.value, kind)
+  const row = await readSetting(db, keyFor(kind))
+  return coerce(row?.value, kind)
 }
 
 export async function getAllLlmMaxTokens(db: Pool): Promise<Record<LlmMaxTokensKind, number>> {
-  const { rows } = await db.query<{ key: string; value: unknown }>(
-    'SELECT key, value FROM app_settings WHERE key = ANY($1)',
-    [KINDS.map(keyFor)],
-  )
+  const rows = await drizzle(db).select({ key: appSettings.key, value: appSettings.value })
+    .from(appSettings)
+    .where(inArray(appSettings.key, KINDS.map(keyFor)))
   const byKey = new Map(rows.map((r) => [r.key, r.value]))
   const result = {} as Record<LlmMaxTokensKind, number>
   for (const kind of KINDS) result[kind] = coerce(byKey.get(keyFor(kind)), kind)
@@ -112,11 +126,7 @@ export async function getAllLlmMaxTokens(db: Pool): Promise<Record<LlmMaxTokensK
 }
 
 export async function setLlmMaxTokens(db: Pool, kind: LlmMaxTokensKind, value: number): Promise<void> {
-  await db.query(
-    `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, now())
-     ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()`,
-    [keyFor(kind), JSON.stringify(clamp(value))],
-  )
+  await writeSetting(db, keyFor(kind), clamp(value))
 }
 
 // DB-backed override for server/utils/extract/llm.ts's provider switch — lets
@@ -271,11 +281,8 @@ function coerceAssignments(value: unknown, profileIds: ReadonlySet<string>): Llm
 }
 
 export async function getLlmProviderProfiles(db: Pool): Promise<LlmProviderProfile[]> {
-  const { rows } = await db.query<{ value: unknown }>(
-    'SELECT value FROM app_settings WHERE key = $1',
-    [LLM_PROVIDER_PROFILES_KEY],
-  )
-  return coerceProviderProfiles(rows[0]?.value)
+  const row = await readSetting(db, LLM_PROVIDER_PROFILES_KEY)
+  return coerceProviderProfiles(row?.value)
 }
 
 export async function getLlmProviderAssignments(db: Pool): Promise<LlmProviderAssignments> {
@@ -288,13 +295,10 @@ export async function getLlmProviderProfileSettings(db: Pool): Promise<{
 }> {
   const profiles = await getLlmProviderProfiles(db)
   const profileIds = new Set(profiles.map((profile) => profile.id))
-  const { rows } = await db.query<{ value: unknown }>(
-    'SELECT value FROM app_settings WHERE key = $1',
-    [LLM_PROVIDER_ASSIGNMENTS_KEY],
-  )
+  const row = await readSetting(db, LLM_PROVIDER_ASSIGNMENTS_KEY)
   return {
     profiles,
-    assignments: coerceAssignments(rows[0]?.value, profileIds),
+    assignments: coerceAssignments(row?.value, profileIds),
   }
 }
 
@@ -336,26 +340,10 @@ export async function setLlmProviderProfileSettings(
   }
   const profileIds = new Set(profiles.map((profile) => profile.id))
   const assignments = coerceAssignments(inputAssignments, profileIds)
-  const client = await db.connect()
-  try {
-    await client.query('BEGIN')
-    await client.query(
-      `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, now())
-       ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()`,
-      [LLM_PROVIDER_PROFILES_KEY, JSON.stringify(profiles)],
-    )
-    await client.query(
-      `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, now())
-       ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()`,
-      [LLM_PROVIDER_ASSIGNMENTS_KEY, JSON.stringify(assignments)],
-    )
-    await client.query('COMMIT')
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => undefined)
-    throw err
-  } finally {
-    client.release()
-  }
+  await drizzle(db).transaction(async (tx) => {
+    await upsertSetting(tx, LLM_PROVIDER_PROFILES_KEY, profiles)
+    await upsertSetting(tx, LLM_PROVIDER_ASSIGNMENTS_KEY, assignments)
+  })
   return { profiles, assignments }
 }
 
@@ -373,11 +361,8 @@ export async function setLlmProviderProfiles(
 }
 
 export async function getLlmExtractionChainStrategy(db: Pool): Promise<LlmChainStrategy> {
-  const { rows } = await db.query<{ value: unknown }>(
-    'SELECT value FROM app_settings WHERE key = $1',
-    [LLM_EXTRACTION_CHAIN_STRATEGY_KEY],
-  )
-  const value = rows[0]?.value
+  const row = await readSetting(db, LLM_EXTRACTION_CHAIN_STRATEGY_KEY)
+  const value = row?.value
   return LLM_CHAIN_STRATEGIES.includes(value as LlmChainStrategy)
     ? (value as LlmChainStrategy)
     : DEFAULT_LLM_CHAIN_STRATEGY
@@ -398,28 +383,12 @@ export async function setLlmProviderAssignments(
   const nextStrategy = LLM_CHAIN_STRATEGIES.includes(strategy as LlmChainStrategy)
     ? (strategy as LlmChainStrategy)
     : null
-  const client = await db.connect()
-  try {
-    await client.query('BEGIN')
-    await client.query(
-      `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, now())
-       ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()`,
-      [LLM_PROVIDER_ASSIGNMENTS_KEY, JSON.stringify(assignments)],
-    )
+  await drizzle(db).transaction(async (tx) => {
+    await upsertSetting(tx, LLM_PROVIDER_ASSIGNMENTS_KEY, assignments)
     if (nextStrategy) {
-      await client.query(
-        `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, now())
-         ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()`,
-        [LLM_EXTRACTION_CHAIN_STRATEGY_KEY, JSON.stringify(nextStrategy)],
-      )
+      await upsertSetting(tx, LLM_EXTRACTION_CHAIN_STRATEGY_KEY, nextStrategy)
     }
-    await client.query('COMMIT')
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => undefined)
-    throw err
-  } finally {
-    client.release()
-  }
+  })
   return { assignments, strategy: nextStrategy ?? (await getLlmExtractionChainStrategy(db)) }
 }
 
@@ -464,11 +433,8 @@ export async function getLlmProviderOverride(
 ): Promise<LlmProviderOverride | null> {
   const [primary] = await resolveAssignedProfileChain(db, scope)
   if (primary) return primary
-  const { rows } = await db.query<{ value: unknown }>(
-    'SELECT value FROM app_settings WHERE key = $1',
-    [providerOverrideKey(scope)],
-  )
-  return rows[0] ? coerceProviderOverride(rows[0].value) : null
+  const row = await readSetting(db, providerOverrideKey(scope))
+  return row ? coerceProviderOverride(row.value) : null
 }
 
 // Same resolution as getLlmProviderOverride, but returns every profile
@@ -505,30 +471,24 @@ export async function setLlmProviderOverride(
   if (!supportsLlmProviderExecutionMode(value.provider, effectiveExecutionMode, effectiveApiKey, value.baseUrl)) {
     throw new Error('unsupported provider/executionMode combination')
   }
-  const { rows } = await db.query<{ value: unknown }>(
-    `INSERT INTO app_settings (key, value, updated_at)
-     VALUES ($1, jsonb_build_object('provider', $2::text, 'baseUrl', $3::text, 'model', $4::text, 'executionMode', COALESCE($5::text, $7::text), 'apiKey', COALESCE($6::text, '')), now())
-     ON CONFLICT (key) DO UPDATE SET
-       value = jsonb_build_object(
-         'provider', $2::text,
-         'baseUrl', $3::text,
-         'model', $4::text,
-         'executionMode', COALESCE($5::text, app_settings.value->>'executionMode', $7::text),
-         'apiKey', COALESCE($6::text, app_settings.value->>'apiKey', '')
-       ),
-       updated_at = now()
-     RETURNING value`,
-    [
-      providerOverrideKey(scope),
-      value.provider,
-      value.baseUrl,
-      value.model,
-      value.executionMode ?? null,
-      value.apiKey ?? null,
-      DEFAULT_LLM_EXECUTION_MODE,
-    ],
-  )
-  const saved = coerceProviderOverride(rows[0]?.value)
+  const key = providerOverrideKey(scope)
+  const executionMode = value.executionMode ?? null
+  const apiKey = value.apiKey ?? null
+  const result = await drizzle(db).execute<{ value: unknown }>(sql`
+    INSERT INTO app_settings (key, value, updated_at)
+    VALUES (${key}, jsonb_build_object('provider', ${value.provider}::text, 'baseUrl', ${value.baseUrl}::text, 'model', ${value.model}::text, 'executionMode', COALESCE(${executionMode}::text, ${DEFAULT_LLM_EXECUTION_MODE}::text), 'apiKey', COALESCE(${apiKey}::text, '')), now())
+    ON CONFLICT (key) DO UPDATE SET
+      value = jsonb_build_object(
+        'provider', ${value.provider}::text,
+        'baseUrl', ${value.baseUrl}::text,
+        'model', ${value.model}::text,
+        'executionMode', COALESCE(${executionMode}::text, app_settings.value->>'executionMode', ${DEFAULT_LLM_EXECUTION_MODE}::text),
+        'apiKey', COALESCE(${apiKey}::text, app_settings.value->>'apiKey', '')
+      ),
+      updated_at = now()
+    RETURNING value
+  `)
+  const saved = coerceProviderOverride(result.rows[0]?.value)
   if (!saved) throw new Error('unsupported provider/executionMode combination')
   return saved
 }
@@ -544,7 +504,7 @@ export async function clearLlmProviderOverride(
   db: Pool,
   scope: LlmProviderScope = 'extraction',
 ): Promise<void> {
-  await db.query('DELETE FROM app_settings WHERE key = $1', [providerOverrideKey(scope)])
+  await drizzle(db).delete(appSettings).where(eq(appSettings.key, providerOverrideKey(scope)))
 }
 
 // DB-backed default for whether the search dashboard hides rules-only
@@ -555,17 +515,10 @@ const HIDE_RULES_ONLY_KEY = 'hide_rules_only_auctions'
 export const DEFAULT_HIDE_RULES_ONLY_AUCTIONS = true
 
 export async function getHideRulesOnlyAuctions(db: Pool): Promise<boolean> {
-  const { rows } = await db.query<{ value: unknown }>(
-    'SELECT value FROM app_settings WHERE key = $1',
-    [HIDE_RULES_ONLY_KEY],
-  )
-  return typeof rows[0]?.value === 'boolean' ? rows[0].value : DEFAULT_HIDE_RULES_ONLY_AUCTIONS
+  const row = await readSetting(db, HIDE_RULES_ONLY_KEY)
+  return typeof row?.value === 'boolean' ? row.value : DEFAULT_HIDE_RULES_ONLY_AUCTIONS
 }
 
 export async function setHideRulesOnlyAuctions(db: Pool, value: boolean): Promise<void> {
-  await db.query(
-    `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, now())
-     ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()`,
-    [HIDE_RULES_ONLY_KEY, JSON.stringify(value)],
-  )
+  await writeSetting(db, HIDE_RULES_ONLY_KEY, value)
 }

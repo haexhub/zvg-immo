@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { drizzle } from 'drizzle-orm/node-postgres'
 import type { Pool, PoolClient } from 'pg'
 
 // Same global stub every server/tasks/*.test.ts needs — buildAuctionGeoMetrics
@@ -144,7 +145,7 @@ describeDb('buildAuctionGeoMetrics (real Postgres)', () => {
   it('computes nearest-distance per category, NULLs a feature beyond its cutoff, and counts tourism density', async () => {
     const client = await pool.connect()
     try {
-      const result = await buildAuctionGeoMetrics(client, new AbortController().signal)
+      const result = await buildAuctionGeoMetrics(drizzle(client), new AbortController().signal)
       expect(result).toMatchObject({ epoch: 1, candidates: 1, computed: 1, skipped: 0 })
 
       const row = await readMetrics(pool)
@@ -185,11 +186,11 @@ describeDb('buildAuctionGeoMetrics (real Postgres)', () => {
   it('skips an auction whose metrics are already current for this epoch', async () => {
     const client = await pool.connect()
     try {
-      const first = await buildAuctionGeoMetrics(client, new AbortController().signal)
+      const first = await buildAuctionGeoMetrics(drizzle(client), new AbortController().signal)
       expect(first).toMatchObject({ candidates: 1, computed: 1 })
       const firstComputedAt = (await readMetrics(pool))!.computed_at
 
-      const second = await buildAuctionGeoMetrics(client, new AbortController().signal)
+      const second = await buildAuctionGeoMetrics(drizzle(client), new AbortController().signal)
       expect(second).toMatchObject({ candidates: 0, computed: 0 })
       const secondComputedAt = (await readMetrics(pool))!.computed_at
       expect(secondComputedAt).toEqual(firstComputedAt)
@@ -201,7 +202,7 @@ describeDb('buildAuctionGeoMetrics (real Postgres)', () => {
   it('recomputes once the auction is re-geocoded (point_hash changes)', async () => {
     const client = await pool.connect()
     try {
-      await buildAuctionGeoMetrics(client, new AbortController().signal)
+      await buildAuctionGeoMetrics(drizzle(client), new AbortController().signal)
       const before = await readMetrics(pool)
 
       await client.query('UPDATE auctions SET lat = $1, lng = $2 WHERE platform = $3', [
@@ -209,7 +210,7 @@ describeDb('buildAuctionGeoMetrics (real Postgres)', () => {
         AUCTION_LNG + 1,
         PLATFORM,
       ])
-      const second = await buildAuctionGeoMetrics(client, new AbortController().signal)
+      const second = await buildAuctionGeoMetrics(drizzle(client), new AbortController().signal)
       expect(second).toMatchObject({ candidates: 1, computed: 1 })
 
       const after = await readMetrics(pool)
@@ -224,10 +225,10 @@ describeDb('buildAuctionGeoMetrics (real Postgres)', () => {
   it('recomputes once geo_features_epochs advances, even with an unchanged position', async () => {
     const client = await pool.connect()
     try {
-      await buildAuctionGeoMetrics(client, new AbortController().signal)
+      await buildAuctionGeoMetrics(drizzle(client), new AbortController().signal)
       await pool.query('INSERT INTO geo_features_epochs (epoch) VALUES (2)')
 
-      const second = await buildAuctionGeoMetrics(client, new AbortController().signal)
+      const second = await buildAuctionGeoMetrics(drizzle(client), new AbortController().signal)
       expect(second).toMatchObject({ epoch: 2, candidates: 1, computed: 1 })
 
       const row = await readMetrics(pool)
@@ -261,7 +262,7 @@ describeDb('buildAuctionGeoMetrics (real Postgres)', () => {
           FOR EACH ROW EXECUTE FUNCTION zz_supersede_epoch();
       `)
       try {
-        const result = await buildAuctionGeoMetrics(client, new AbortController().signal)
+        const result = await buildAuctionGeoMetrics(drizzle(client), new AbortController().signal)
         expect(result).toMatchObject({ epoch: 1, candidates: 2, computed: 1, skipped: 0, epochSuperseded: true })
       } finally {
         await pool.query('DROP TRIGGER zz_supersede_epoch ON auction_geo_metrics; DROP FUNCTION zz_supersede_epoch();')
@@ -280,7 +281,7 @@ describeDb('buildAuctionGeoMetrics (real Postgres)', () => {
     await pool.query('DELETE FROM geo_features_epochs')
     const client = await pool.connect()
     try {
-      const result = await buildAuctionGeoMetrics(client, new AbortController().signal)
+      const result = await buildAuctionGeoMetrics(drizzle(client), new AbortController().signal)
       expect(result).toMatchObject({ skipped: true })
       expect(await readMetrics(pool)).toBeUndefined()
     } finally {
@@ -294,7 +295,7 @@ describeDb('buildAuctionGeoMetrics (real Postgres)', () => {
     try {
       // Same key as build-auction-geo-metrics.ts's METRICS_LOCK_KEY.
       await holder.query('SELECT pg_advisory_lock($1)', [4_820_251_205])
-      await expect(buildAuctionGeoMetrics(client, new AbortController().signal)).rejects.toThrow(/another run/)
+      await expect(buildAuctionGeoMetrics(drizzle(client), new AbortController().signal)).rejects.toThrow(/another run/)
       expect(await readMetrics(pool)).toBeUndefined()
     } finally {
       await holder.query('SELECT pg_advisory_unlock($1)', [4_820_251_205])

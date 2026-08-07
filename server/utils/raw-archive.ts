@@ -14,9 +14,11 @@ import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { gzipSync } from 'node:zlib'
+import { and, eq, sql } from 'drizzle-orm'
 import type { Auction } from '~/types/auction'
+import { artifactBlobs, artifactVersionItems, artifactVersions } from '../db/schema'
 import { countryDisplayName } from './countries'
-import { getPool } from './db'
+import { getDb, pgErrorCode } from './db'
 
 export type BlobContentType =
   | 'application/json'
@@ -89,14 +91,6 @@ export function canonicalize(value: unknown): unknown {
   return value
 }
 
-async function rollbackQuietly(client: { query: (sql: string) => Promise<unknown> }): Promise<void> {
-  try {
-    await client.query('ROLLBACK')
-  } catch {
-    // Preserve the original DB error; rollback failures are only secondary noise.
-  }
-}
-
 /**
  * Canonical auction content for hashing: stable key order, and stripped of
  * fields that are per-run bookkeeping or derived rather than source content —
@@ -137,43 +131,44 @@ export async function archiveBlob(
   country: string,
   opts?: { canonicalBytesForHash?: Buffer },
 ): Promise<string | null> {
-  const db = getPool()
+  const db = getDb()
   if (!db) return null
   const hash = sha256Hex(opts?.canonicalBytesForHash ?? bytes)
 
-    // Only a *confirmed* upload counts as "already archived". A Supabase
-    // Storage outage before 2026-07-23 (Kong not yet routing /storage/v1/*,
-    // see ansible#62/zvg-immo#122) let drainOutbox mark ~8000 blobs
-    // `uploaded_at` even though the bytes never reached the bucket — and
-    // then delete their outbox copy, as a confirmed upload normally warrants.
-    // Skipping on row-existence alone (as before) would permanently orphan
-    // any future capture whose content happens to hash-match one of those
-    // dead rows: dedup would keep skipping the (re)write forever. A row
-    // that's still `uploaded_at IS NULL` is safe to treat as not yet
-    // archived and rewrite — the write below is idempotent, and
-    // drainOutbox only ever trusts `uploaded_at`, never row presence.
-    const existing = await db.query<{ uploaded_at: string | null }>(
-      'SELECT uploaded_at FROM artifact_blobs WHERE content_hash = $1',
-      [hash],
-    )
-    if (existing.rows[0]?.uploaded_at != null) return hash
+  // Only a *confirmed* upload counts as "already archived". A Supabase
+  // Storage outage before 2026-07-23 (Kong not yet routing /storage/v1/*,
+  // see ansible#62/zvg-immo#122) let drainOutbox mark ~8000 blobs
+  // `uploaded_at` even though the bytes never reached the bucket — and
+  // then delete their outbox copy, as a confirmed upload normally warrants.
+  // Skipping on row-existence alone (as before) would permanently orphan
+  // any future capture whose content happens to hash-match one of those
+  // dead rows: dedup would keep skipping the (re)write forever. A row
+  // that's still `uploaded_at IS NULL` is safe to treat as not yet
+  // archived and rewrite — the write below is idempotent, and
+  // drainOutbox only ever trusts `uploaded_at`, never row presence.
+  const existing = await db.select({ uploadedAt: artifactBlobs.uploadedAt })
+    .from(artifactBlobs)
+    .where(eq(artifactBlobs.contentHash, hash))
+  if (existing[0]?.uploadedAt != null) return hash
 
-    const gzip = TEXT_TYPES.has(contentType)
-    const stored = gzip ? gzipSync(bytes) : bytes
-    const key = shardedKey(hash, contentType, country)
+  const gzip = TEXT_TYPES.has(contentType)
+  const stored = gzip ? gzipSync(bytes) : bytes
+  const key = shardedKey(hash, contentType, country)
 
-    const path = join(outboxDir(), key)
-    await mkdir(dirname(path), { recursive: true })
-    const tmp = `${path}.${randomUUID()}.tmp`
-    await writeFile(tmp, stored)
-    await rename(tmp, path)
+  const path = join(outboxDir(), key)
+  await mkdir(dirname(path), { recursive: true })
+  const tmp = `${path}.${randomUUID()}.tmp`
+  await writeFile(tmp, stored)
+  await rename(tmp, path)
 
-    await db.query(
-      `INSERT INTO artifact_blobs (content_hash, s3_key, content_type, byte_size, first_seen_at, uploaded_at)
-       VALUES ($1, $2, $3, $4, now(), null)
-       ON CONFLICT (content_hash) DO UPDATE SET uploaded_at = null`,
-      [hash, key, storedContentType(contentType), stored.length],
-    )
+  await db.insert(artifactBlobs).values({
+    contentHash: hash,
+    s3Key: key,
+    contentType: storedContentType(contentType),
+    byteSize: stored.length,
+    firstSeenAt: sql`now()`,
+    uploadedAt: null,
+  }).onConflictDoUpdate({ target: artifactBlobs.contentHash, set: { uploadedAt: null } })
   return hash
 }
 
@@ -206,32 +201,26 @@ export interface CaptureInput {
  * older valid combinations. Persistence failures propagate.
  */
 export async function recordCapture(input: CaptureInput): Promise<void> {
-  const db = getPool()
+  const db = getDb()
   if (!db) return
-  const params = [
-      input.capturedAt,
-      input.kind,
-      input.platform,
-      input.externalId,
-      input.contentHash,
-      input.sourceUrl ?? null,
-    ]
-    const updateSet = `captured_at = EXCLUDED.captured_at,
-         content_hash = EXCLUDED.content_hash,
-         source_url   = EXCLUDED.source_url`
-    const conflictTarget =
-      input.kind === 'auction'
-        ? `(kind, platform, external_id, content_hash) WHERE kind = 'auction'`
-        : `(kind, platform, external_id, (COALESCE(source_url, '')), content_hash) WHERE kind <> 'auction'`
+  // The partial-unique-index conflict target below (predicate + a
+  // COALESCE expression for the non-auction case) can't be expressed
+  // through the typed insert builder's onConflictDoUpdate(), which only
+  // accepts plain columns as a target — hence the raw fragment here, same
+  // as the matching partial indexes in server/db/schema/core.ts.
+  const conflictTarget = input.kind === 'auction'
+    ? sql.raw(`(kind, platform, external_id, content_hash) WHERE kind = 'auction'`)
+    : sql.raw(`(kind, platform, external_id, (COALESCE(source_url, '')), content_hash) WHERE kind <> 'auction'`)
 
-  await db.query(
-    `INSERT INTO artifact_captures
-       (captured_at, kind, platform, external_id, content_hash, source_url)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     ON CONFLICT ${conflictTarget} DO UPDATE SET
-       ${updateSet}`,
-    params,
-  )
+  await db.execute(sql`
+    INSERT INTO artifact_captures
+      (captured_at, kind, platform, external_id, content_hash, source_url)
+    VALUES (${input.capturedAt}, ${input.kind}, ${input.platform}, ${input.externalId}, ${input.contentHash}, ${input.sourceUrl ?? null})
+    ON CONFLICT ${conflictTarget} DO UPDATE SET
+      captured_at = EXCLUDED.captured_at,
+      content_hash = EXCLUDED.content_hash,
+      source_url = EXCLUDED.source_url
+  `)
 }
 
 export interface DocumentIdentity {
@@ -373,7 +362,7 @@ export async function archiveDocumentSet(
   documents: ArchivedDocumentSetItem[],
   capturedAt: string,
 ): Promise<ArchivedDocumentSetResult | null> {
-  const db = getPool()
+  const db = getDb()
   if (!db) return null
   const canonicalDocuments = documents
       .map((doc) => canonicalize({
@@ -388,92 +377,61 @@ export async function archiveDocumentSet(
       .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
     const setHash = sha256Hex(Buffer.from(JSON.stringify(canonicalize({ documents: canonicalDocuments }))))
 
-    const existing = await db.query<{ id: string; version: number }>(
-      `SELECT id, version
-       FROM artifact_versions
-       WHERE platform = $1 AND external_id = $2 AND set_hash = $3`,
-      [identity.platform, identity.externalId, setHash],
+    const identityMatch = () => and(
+      eq(artifactVersions.platform, identity.platform),
+      eq(artifactVersions.externalId, identity.externalId),
+      eq(artifactVersions.setHash, setHash),
     )
-    const existingRow = existing.rows[0]
+
+    const existing = await db.select({ id: artifactVersions.id, version: artifactVersions.version })
+      .from(artifactVersions)
+      .where(identityMatch())
+    const existingRow = existing[0]
     if (existingRow) {
-      await db.query(
-        `UPDATE artifact_versions SET last_seen_at = $1 WHERE id = $2`,
-        [capturedAt, existingRow.id],
-      )
+      await db.update(artifactVersions).set({ lastSeenAt: new Date(capturedAt) }).where(eq(artifactVersions.id, existingRow.id))
       return { setHash, version: existingRow.version, changed: false }
     }
 
     for (let attempt = 0; attempt < 3; attempt++) {
-      const client = await db.connect()
       try {
-        await client.query('BEGIN')
-        const inserted = await client.query<{ id: string; version: number }>(
-          `INSERT INTO artifact_versions
-             (captured_at, last_seen_at, platform, external_id, set_hash, version, document_count)
-           VALUES (
-             $1, $1, $2, $3, $4,
-             COALESCE((SELECT max(version) + 1 FROM artifact_versions WHERE platform = $2 AND external_id = $3), 1),
-             $5
-           )
-           RETURNING id, version`,
-          [
-            capturedAt,
-            identity.platform,
-            identity.externalId,
+        return await db.transaction(async (tx) => {
+          const [row] = await tx.insert(artifactVersions).values({
+            capturedAt: new Date(capturedAt),
+            lastSeenAt: new Date(capturedAt),
+            platform: identity.platform,
+            externalId: identity.externalId,
             setHash,
-            documents.length,
-          ],
-        )
-        const row = inserted.rows[0]
-        if (!row) {
-          await client.query('COMMIT')
-          return null
-        }
+            version: sql`coalesce((select max(version) + 1 from ${artifactVersions} where platform = ${identity.platform} and external_id = ${identity.externalId}), 1)`,
+            documentCount: documents.length,
+          }).returning({ id: artifactVersions.id, version: artifactVersions.version })
+          if (!row) return null
 
-        if (documents.length > 0) {
-          const params: unknown[] = []
-          const tuples: string[] = []
-          for (const doc of documents) {
-            const offset = params.length
-            tuples.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9})`)
-            params.push(
-              row.id,
-              doc.ordinal,
-              doc.kind,
-              doc.label ?? null,
-              doc.filename ?? null,
-              doc.fileId ?? null,
-              doc.sourceUrl,
-              doc.contentHash,
-              doc.contentType,
-            )
+          if (documents.length > 0) {
+            await tx.insert(artifactVersionItems).values(documents.map((doc) => ({
+              setId: row.id,
+              ordinal: doc.ordinal,
+              kind: doc.kind,
+              label: doc.label ?? null,
+              filename: doc.filename ?? null,
+              fileId: doc.fileId ?? null,
+              sourceUrl: doc.sourceUrl,
+              contentHash: doc.contentHash,
+              contentType: doc.contentType,
+            })))
           }
-          await client.query(
-            `INSERT INTO artifact_version_items
-               (set_id, ordinal, kind, label, filename, file_id, source_url, content_hash, content_type)
-             VALUES ${tuples.join(', ')}`,
-            params,
-          )
-        }
 
-        await client.query('COMMIT')
-        return { setHash, version: row.version, changed: true }
+          return { setHash, version: row.version, changed: true }
+        })
       } catch (err) {
-        await rollbackQuietly(client)
-        if ((err as { code?: string }).code === '23505') {
-          const winner = await db.query<{ id: string; version: number }>(
-            `SELECT id, version
-             FROM artifact_versions
-             WHERE platform = $1 AND external_id = $2 AND set_hash = $3`,
-            [identity.platform, identity.externalId, setHash],
-          )
-          const winnerRow = winner.rows[0]
+        if (pgErrorCode(err) === '23505') {
+          const winner = await db.select({ id: artifactVersions.id, version: artifactVersions.version })
+            .from(artifactVersions)
+            .where(identityMatch())
+          const winnerRow = winner[0]
           if (winnerRow) return { setHash, version: winnerRow.version, changed: false }
           continue
         }
         throw err
-      } finally {
-        client.release()
       }
     }
 

@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { getPool } from './db'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import { getDb } from './db'
+import { queryText } from '~/test-support/drizzle-query'
 
-vi.mock('./db', () => ({ getPool: vi.fn() }))
+vi.mock('./db', () => ({ getDb: vi.fn() }))
 
-// Imported after the mock so the module under test picks up the mocked getPool.
+// Imported after the mock so the module under test picks up the mocked getDb.
 const { archiveDetailCapture, fetchTextAndArchive } = await import('./fetch-archive')
 
 const IDENTITY = { platform: 'test', country: 'de', externalId: '1' }
@@ -16,20 +18,19 @@ function makeFakePool() {
   const blobs = new Map<string, FakeBlobRow>()
   const captures: { kind: string; sourceUrl: string | null }[] = []
 
-  const query = vi.fn(async (sql: string, params: unknown[] = []) => {
-    if (sql.includes('SELECT uploaded_at FROM artifact_blobs')) {
+  const query = vi.fn(async (queryArg: unknown, params: unknown[] = []) => {
+    const text = queryText(queryArg)
+    const n = text.replace(/\s+/g, ' ').trim().toLowerCase()
+    if (n.startsWith('select "uploaded_at" from "artifact_blobs"')) {
       const hash = params[0] as string
-      return { rows: blobs.has(hash) ? [{ uploaded_at: null }] : [] }
+      return { rows: blobs.has(hash) ? [[null]] : [] }
     }
-    if (sql.includes('INSERT INTO artifact_blobs')) {
+    if (n.startsWith('insert into "artifact_blobs"')) {
       const [hash, , content_type] = params as [string, string, string]
       if (!blobs.has(hash)) blobs.set(hash, { content_type })
       return { rows: [], rowCount: 1 }
     }
-    if (sql.includes('SELECT content_hash FROM artifact_captures')) {
-      return { rows: [] }
-    }
-    if (sql.includes('INSERT INTO artifact_captures')) {
+    if (n.includes('insert into artifact_captures')) {
       const [, kind, , , , sourceUrl] = params as [
         string,
         string,
@@ -41,10 +42,10 @@ function makeFakePool() {
       captures.push({ kind, sourceUrl })
       return { rows: [], rowCount: 1 }
     }
-    throw new Error(`unexpected query: ${sql}`)
+    throw new Error(`unexpected query: ${text}`)
   })
 
-  return { blobs, captures, query }
+  return { blobs, captures, query, db: drizzle({ query } as never) }
 }
 
 describe('archiveDetailCapture', () => {
@@ -66,7 +67,7 @@ describe('archiveDetailCapture', () => {
 
   it('archives html bytes as kind=detail_html with the given source URL', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.db as never)
 
     await archiveDetailCapture(
       Buffer.from('<html>lot detail</html>'),
@@ -83,7 +84,7 @@ describe('archiveDetailCapture', () => {
 
   it('accepts a non-html contentType for a future non-HTML detail source', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.db as never)
 
     await archiveDetailCapture(
       Buffer.from('%PDF-1.4 detail export'),
@@ -97,7 +98,7 @@ describe('archiveDetailCapture', () => {
   })
 
   it('no-ops without a DB pool', async () => {
-    vi.mocked(getPool).mockReturnValue(null)
+    vi.mocked(getDb).mockReturnValue(null)
     await expect(
       archiveDetailCapture(Buffer.from('<html/>'), IDENTITY, 'https://example.test/lot/1', '2026-07-19T00:00:00.000Z'),
     ).resolves.toBeUndefined()
@@ -125,7 +126,7 @@ describe('fetchTextAndArchive', () => {
 
   it('returns the fetched text and archives it', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.db as never)
     global.fetch = vi.fn(async () => new Response('<html>lot</html>', { status: 200 })) as never
 
     const text = await fetchTextAndArchive(
@@ -140,7 +141,7 @@ describe('fetchTextAndArchive', () => {
 
   it('returns null and archives nothing on a non-2xx response', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.db as never)
     global.fetch = vi.fn(async () => new Response('nope', { status: 404 })) as never
 
     const text = await fetchTextAndArchive(
