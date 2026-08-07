@@ -15,7 +15,7 @@ Rules:
 | Card | Routen | Modus |
 |---|---|---|
 | SettingsCountrySourcesCard | GET/PUT `/api/settings/countries`, POST `/api/settings/countries/[code]/enrich` | Enrich detached |
-| SettingsOsmImportCard | GET `/api/settings/osm-import`, POST `/api/settings/osm-import/[code]` | detached, pro Land |
+| SettingsOsmImportCard | GET `/api/settings/osm-import`, POST `/api/settings/osm-import/[country]` | pro Land; der POST merkt die Anforderung nur vor, importiert wird vom täglichen Host-Job (nicht in dieser App) |
 | SettingsGeoMetricsCard | GET/POST `/api/settings/geo-metrics` | detached, **nur ganz Europa** (kein Pro-Land-Scoping) |
 | SettingsExternalDataCard | GET `/api/settings/external-data/sources`, PUT `.../sources/[id]`, POST `.../enrichment` | Enrichment detached; die drei Cache-Import-Buttons (`eu-flood-risk-cache`, `copernicus-effis-cache`, `fr-dvf-cache`) sind sync/awaited |
 | SettingsReprocessCard | POST `/api/settings/reprocess` | detached |

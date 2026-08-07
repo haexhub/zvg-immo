@@ -102,7 +102,16 @@ function setStrategy(option: LlmChainStrategy): void {
 // access needs a default since TS can no longer guarantee the key exists.
 // loadLlmAssignments seeds an entry per scope it knows about, so in practice
 // this only ever defaults for a scope that hasn't loaded yet.
-function assignmentsFor(scope: LlmProviderScope): string[] {
+const NO_ASSIGNMENTS: readonly string[] = []
+
+// Read-only on purpose: the template calls this on every render, and seeding a
+// missing key here would write to reactive state mid-render.
+function assignmentsFor(scope: LlmProviderScope): readonly string[] {
+  return llmProfileAssignments[scope] ?? NO_ASSIGNMENTS
+}
+
+// Mutating counterpart, only ever reached from a click handler.
+function ensureAssignments(scope: LlmProviderScope): string[] {
   return llmProfileAssignments[scope] ??= []
 }
 
@@ -118,18 +127,18 @@ function availableProfiles(scope: LlmProviderScope): LlmProviderProfileOption[] 
 
 function addAssignment(scope: LlmProviderScope, id: string): void {
   if (id === ADD_PLACEHOLDER || chainLimitReached(scope)) return
-  assignmentsFor(scope).push(id)
+  ensureAssignments(scope).push(id)
   addSelection[scope] = ADD_PLACEHOLDER
   llmAssignmentsSaved.value = false
 }
 
 function removeAssignment(scope: LlmProviderScope, index: number): void {
-  assignmentsFor(scope).splice(index, 1)
+  ensureAssignments(scope).splice(index, 1)
   llmAssignmentsSaved.value = false
 }
 
 function moveAssignment(scope: LlmProviderScope, index: number, delta: -1 | 1): void {
-  const chain = assignmentsFor(scope)
+  const chain = ensureAssignments(scope)
   const target = index + delta
   if (target < 0 || target >= chain.length) return
   ;[chain[index], chain[target]] = [chain[target]!, chain[index]!]

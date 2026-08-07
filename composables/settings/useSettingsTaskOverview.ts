@@ -108,12 +108,10 @@ export function useSettingsTaskOverview() {
       } finally {
         llmBatchJobsPending.value = false
       }
-    })()
-    try {
-      await loadLlmBatchJobsInFlight
-    } finally {
+    })().finally(() => {
       loadLlmBatchJobsInFlight = null
-    }
+    })
+    return loadLlmBatchJobsInFlight
   }
 
   function startProgressPolling(): void {

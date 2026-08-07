@@ -47,11 +47,12 @@ async function rebuild(): Promise<void> {
   rebuildPending.value = true
   rebuildError.value = null
   rebuildStarted.value = false
-  rebuildTriggered.value = true
+  // Captured before the POST, since load() below overwrites status.
   rebuildBaselineCompletedAt.value = status.value?.latestEpochCompletedAt ?? null
   try {
     await $fetch<GeoMetricsRebuildResult>('/api/settings/geo-metrics', { method: 'POST' })
     rebuildStarted.value = true
+    rebuildTriggered.value = true
     await load()
     startRebuildPolling()
   } catch (err) {

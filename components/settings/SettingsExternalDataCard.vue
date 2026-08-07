@@ -38,7 +38,7 @@ interface ExternalDataSourceSetting {
   fields: ExternalDataSourceField[]
 }
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const { normalizeSettingsError } = useSettingsError()
 const { llmBatchJobs, formatBatchDate, loadLlmBatchJobs, startProgressPolling } = useSettingsTaskOverview()
 
@@ -91,10 +91,21 @@ async function triggerCacheImport(sourceId: string): Promise<void> {
   cacheImportResult[sourceId] = null
   try {
     const body = config.requiresCsvPath ? { csvPath } : {}
-    const summary = await $fetch<{ normalized: number; generatedAt: string }>(config.endpoint, { method: 'POST', body })
+    const summary = await $fetch<{ normalized?: number; generatedAt?: string; skipped?: string }>(
+      config.endpoint,
+      { method: 'POST', body },
+    )
+    // import-eu-flood-risk-cache's task guard returns `{ skipped }` instead of
+    // importing when the source has no cache path configured anywhere. Without
+    // this branch that no-op renders as a successful import of `undefined`
+    // records.
+    if (typeof summary.normalized !== 'number') {
+      cacheImportError[sourceId] = t('settings.externalData.cacheImport.skipped')
+      return
+    }
     cacheImportResult[sourceId] = t('settings.externalData.cacheImport.done', {
       normalized: summary.normalized,
-      at: formatBatchDate(summary.generatedAt),
+      at: formatBatchDate(summary.generatedAt ?? null),
     })
   } catch (err) {
     cacheImportError[sourceId] = normalizeSettingsError(err, t('settings.externalData.cacheImport.error'))
@@ -105,8 +116,7 @@ async function triggerCacheImport(sourceId: string): Promise<void> {
 
 function sourceUsageHint(sourceId: string): string | null {
   const key = `settings.externalData.usageHints.${sourceId}`
-  const translated = t(key)
-  return translated === key ? null : translated
+  return te(key) ? t(key) : null
 }
 
 async function loadExternalDataSources(): Promise<void> {

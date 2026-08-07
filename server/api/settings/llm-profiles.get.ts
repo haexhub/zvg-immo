@@ -59,10 +59,6 @@ export default defineEventHandler(async () => {
     | undefined
   const db = getPool()
   const settings = db ? await getLlmProviderProfileSettings(db) : { profiles: [], assignments: {} as LlmProviderAssignments }
-  // Insight kinds have no override yet by default — they mirror extraction's
-  // effective config until explicitly assigned their own chain (matches
-  // today's hardcoded behavior in the insight endpoint, which always rode
-  // the extraction override; see insight/[insightId].post.ts).
   const effective: Record<LlmProviderScope, {
     provider: string
     baseUrl: string
@@ -77,10 +73,12 @@ export default defineEventHandler(async () => {
       executionMode: 'sync',
     }
   }
+  const scopesWithOwnOverride = new Set<LlmProviderScope>()
   if (db) {
     for (const scope of KINDS) {
       const override = await getLlmProviderOverride(db, scope).catch(() => null)
       if (override) {
+        scopesWithOwnOverride.add(scope)
         effective[scope] = {
           provider: override.provider,
           baseUrl: override.baseUrl,
@@ -88,6 +86,19 @@ export default defineEventHandler(async () => {
           executionMode: override.executionMode,
         }
       }
+    }
+  }
+  // An insight without its own chain actually runs on extraction's *resolved*
+  // config, not on the env default — insight/[insightId].post.ts falls back to
+  // getLlmProviderOverride(db, 'extraction'). Reporting the env default here
+  // would make the card claim "uses document extraction's provider" while
+  // printing whatever the env happens to hold, which is only what extraction
+  // itself falls back to when it has no override either.
+  const extractionEffective = effective.extraction
+  if (extractionEffective) {
+    for (const kind of KINDS) {
+      if (kind === 'extraction' || kind === 'translation' || scopesWithOwnOverride.has(kind)) continue
+      effective[kind] = { ...extractionEffective }
     }
   }
   return {

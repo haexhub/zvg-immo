@@ -29,10 +29,17 @@ async function load(): Promise<void> {
   }
 }
 
+// The reimport itself does not run in this app: [country].post.ts only records
+// the request, and the host-level daily job clears it once it starts honoring
+// it (server/utils/osm-import-requests.ts). `requestedAt` therefore stays set
+// for hours, so this must not poll open-endedly — osm-import.get counts
+// osm_local_elements rows, which is millions of rows per country. Bounded to a
+// short window right after a manual request, the only moment the row count can
+// plausibly move while an admin is watching.
 const { start: startImportPolling } = usePollWhileActive(
   () => countries.value.some((country) => !!country.requestedAt),
   load,
-  { intervalMs: 5000 },
+  { intervalMs: 30_000, maxAttempts: 20 },
 )
 
 async function requestReimport(code: string): Promise<void> {
@@ -50,10 +57,7 @@ async function requestReimport(code: string): Promise<void> {
   }
 }
 
-onMounted(async () => {
-  await load()
-  startImportPolling()
-})
+onMounted(load)
 </script>
 
 <template>

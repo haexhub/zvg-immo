@@ -372,6 +372,7 @@
         "csvPathPlaceholder": "Pfad zur DVF-CSV-Datei",
         "csvPathRequired": "csvPath ist erforderlich.",
         "done": "Import abgeschlossen: {normalized} Datensätze übernommen ({at}).",
+        "skipped": "Import übersprungen — für diese Quelle ist kein Cache-Pfad konfiguriert.",
         "error": "Import fehlgeschlagen."
       }
     },

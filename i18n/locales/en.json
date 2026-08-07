@@ -372,11 +372,12 @@
         "csvPathPlaceholder": "Path to the DVF CSV file",
         "csvPathRequired": "csvPath is required.",
         "done": "Import complete: {normalized} records ingested ({at}).",
+        "skipped": "Import skipped — this source has no cache path configured.",
         "error": "Import failed."
       }
     },
     "reprocess": {
-      "title": "Reprocess test run",
+      "title": "Extraction test run",
       "description": "Re-run extraction for a limited number of archived auctions — e.g. to verify a new provider/model configuration before reprocessing the full dataset.",
       "limitLabel": "Number of auctions",
       "countryLabel": "Country",
