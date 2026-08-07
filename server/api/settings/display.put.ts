@@ -9,7 +9,7 @@ export default defineEventHandler(async (event) => {
   if (!db) {
     throw createError({ statusCode: 503, statusMessage: 'Postgres ist nicht konfiguriert.' })
   }
-  const body = await readBody<Record<string, unknown>>(event).catch(() => ({}) as Record<string, unknown>)
+  const body = await readBody<Record<string, unknown>>(event).catch(() => undefined) ?? ({} as Record<string, unknown>)
   if (typeof body.hideRulesOnlyAuctions !== 'boolean') {
     throw createError({ statusCode: 400, statusMessage: 'hideRulesOnlyAuctions: ungültiger Wert.' })
   }

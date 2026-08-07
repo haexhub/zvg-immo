@@ -14,7 +14,7 @@ export interface CreatedApiKey extends ApiKeySummary {
 }
 
 export default defineEventHandler(async (event): Promise<CreatedApiKey> => {
-  const body = await readBody<{ label?: unknown }>(event).catch(() => ({}) as { label?: unknown })
+  const body = await readBody<{ label?: unknown }>(event).catch(() => undefined) ?? ({} as { label?: unknown })
   const label = typeof body.label === 'string' ? body.label.trim() : ''
   if (!label) {
     throw createError({ statusCode: 400, statusMessage: 'Label fehlt.' })

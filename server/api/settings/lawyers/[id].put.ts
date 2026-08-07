@@ -10,7 +10,7 @@ export default defineEventHandler(async (event): Promise<AdminLawyer> => {
   if (!id) {
     throw createError({ statusCode: 400, statusMessage: 'id fehlt.' })
   }
-  const body = await readBody<Record<string, unknown>>(event).catch(() => ({}))
+  const body = await readBody<Record<string, unknown>>(event).catch(() => undefined) ?? ({} as Record<string, unknown>)
   const input = parseLawyerInput(body)
 
   const supabase = getServiceClient()

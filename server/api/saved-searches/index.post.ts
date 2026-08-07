@@ -7,8 +7,8 @@ import type { SavedSearch } from './index.get'
 
 export default defineEventHandler(async (event): Promise<SavedSearch> => {
   const body = await readBody<{ name?: unknown; filters?: unknown }>(event).catch(
-    () => ({} as { name?: unknown; filters?: unknown }),
-  )
+    () => undefined,
+  ) ?? ({} as { name?: unknown; filters?: unknown })
   const name = typeof body.name === 'string' ? body.name.trim() : ''
   if (!name) {
     throw createError({ statusCode: 400, statusMessage: 'Name fehlt.' })

@@ -14,7 +14,7 @@ export default defineEventHandler(async (event): Promise<WatchlistItem> => {
     externalId?: unknown
     authority?: unknown
     caseNumber?: unknown
-  }>(event).catch(() => ({}) as Record<string, unknown>)
+  }>(event).catch(() => undefined) ?? ({} as Record<string, unknown>)
   const platform = typeof body.platform === 'string' ? body.platform.trim() : ''
   const externalId = typeof body.externalId === 'string' ? body.externalId.trim() : ''
   if (!platform || !externalId) {

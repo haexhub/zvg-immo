@@ -19,7 +19,7 @@ interface EnrichCountryBody {
 
 export default defineEventHandler(async (event) => {
   const country = (getRouterParam(event, 'country') ?? '').trim().toLowerCase()
-  const body = await readBody<EnrichCountryBody>(event).catch((): EnrichCountryBody => ({}))
+  const body = await readBody<EnrichCountryBody>(event).catch(() => undefined) ?? ({} as EnrichCountryBody)
   const forceExtraction = body.forceExtraction === true
   await ensureEnabledCountriesLoaded()
   const registered = listRegisteredCountries().find((candidate) => candidate.code === country)

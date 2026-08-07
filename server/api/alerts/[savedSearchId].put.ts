@@ -9,7 +9,7 @@ export default defineEventHandler(async (event): Promise<{ enabled: boolean }> =
   if (!savedSearchId) {
     throw createError({ statusCode: 400, statusMessage: 'savedSearchId fehlt.' })
   }
-  const body = await readBody<{ enabled?: unknown }>(event).catch(() => ({}) as { enabled?: unknown })
+  const body = await readBody<{ enabled?: unknown }>(event).catch(() => undefined) ?? ({} as { enabled?: unknown })
   const enabled = body.enabled !== false
 
   const supabase = getServiceClient()

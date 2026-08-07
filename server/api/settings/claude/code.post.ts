@@ -2,8 +2,8 @@ import { callProxySetup } from '../../../utils/claude-proxy'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody<{ code?: unknown }>(event).catch(
-    () => ({} as { code?: unknown }),
-  )
+    () => undefined,
+  ) ?? ({} as { code?: unknown })
   const code = typeof body.code === 'string' ? body.code.trim() : ''
   if (!code) {
     throw createError({ statusCode: 400, statusMessage: 'Code fehlt.' })

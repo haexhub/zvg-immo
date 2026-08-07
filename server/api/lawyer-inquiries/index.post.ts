@@ -31,7 +31,7 @@ export default defineEventHandler(async (event): Promise<LawyerInquiry> => {
     platform?: unknown
     externalId?: unknown
     message?: unknown
-  }>(event).catch(() => ({}) as Record<string, unknown>)
+  }>(event).catch(() => undefined) ?? ({} as Record<string, unknown>)
   const lawyerId = typeof body.lawyerId === 'string' ? body.lawyerId.trim() : ''
   const platform = typeof body.platform === 'string' ? body.platform.trim() : ''
   const externalId = typeof body.externalId === 'string' ? body.externalId.trim() : ''

@@ -15,7 +15,7 @@ export default defineEventHandler(async (event): Promise<CountrySourceSettings> 
     throw createError({ statusCode: 503, statusMessage: 'Postgres ist nicht konfiguriert.' })
   }
 
-  const body = await readBody<Record<string, unknown>>(event).catch(() => ({}) as Record<string, unknown>)
+  const body = await readBody<Record<string, unknown>>(event).catch(() => undefined) ?? ({} as Record<string, unknown>)
   if (
     !Array.isArray(body.enabledCountries)
     || !body.enabledCountries.every((country) => typeof country === 'string')

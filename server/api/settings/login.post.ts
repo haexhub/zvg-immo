@@ -48,8 +48,8 @@ export default defineEventHandler(async (event) => {
   }
 
   const body = await readBody<{ password?: unknown }>(event).catch(
-    () => ({} as { password?: unknown }),
-  )
+    () => undefined,
+  ) ?? ({} as { password?: unknown })
   const submitted = typeof body.password === 'string' ? body.password : ''
   if (!timingSafePasswordEqual(submitted, password)) {
     recordFailedAttempt(ip, now)

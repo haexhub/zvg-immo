@@ -4,7 +4,7 @@ import type {
 } from '~/server/tasks/import-fr-dvf-cache'
 
 export default defineEventHandler(async (event): Promise<ImportFrDvfCacheSummary> => {
-  const body = await readBody<Record<string, unknown>>(event).catch(() => ({}) as Record<string, unknown>)
+  const body = await readBody<Record<string, unknown>>(event).catch(() => undefined) ?? ({} as Record<string, unknown>)
 
   if (typeof body.csvPath !== 'string' || !body.csvPath.trim()) {
     throw createError({ statusCode: 400, statusMessage: 'csvPath ist erforderlich.' })
