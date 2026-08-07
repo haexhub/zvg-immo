@@ -236,6 +236,13 @@ export default defineEventHandler(async (event): Promise<AuctionSearchResponse> 
     ${from} ${predicate ? `${predicate} AND d.property_type IS NOT NULL` : `WHERE d.property_type IS NOT NULL`}
     GROUP BY d.property_type ORDER BY count DESC, d.property_type`
 
+  // Search-Grid: once the map has a viewport, pages/search.vue repeats this
+  // request on every pan/zoom purely to page through the visible rows — the
+  // header's Properties popover already gets its courts/categories facets
+  // from the initial, unscoped call. Skip re-deriving them here so a pan
+  // doesn't double a request that already opens four DB connections.
+  const skipFacets = String(query.skipFacets ?? '') === '1'
+
   // Facet queries reuse the filter parameters but not LIMIT/OFFSET. Each gets
   // its own withStatementTimeout call — and therefore its own connection —
   // run together via Promise.all: a single Postgres connection only ever
@@ -246,17 +253,23 @@ export default defineEventHandler(async (event): Promise<AuctionSearchResponse> 
   // capping the whole request at SEARCH_STATEMENT_TIMEOUT_MS. Four
   // connections per search request is unchanged from before this file
   // started using withStatementTimeout.
-  let rowsResult, statsResult, authoritiesResult, categoriesResult
+  let rowsResult, statsResult
+  let authoritiesResult: { rows: Array<{ authority: string }> } = { rows: [] }
+  let categoriesResult: { rows: Array<{ id: string; count: number }> } = { rows: [] }
   try {
     ;[rowsResult, statsResult, authoritiesResult, categoriesResult] = await Promise.all([
       withStatementTimeout(db, SEARCH_STATEMENT_TIMEOUT_MS, (client) =>
         client.query<SearchRow>(rowsSql, [...filterValues, pageSize, offset])),
       withStatementTimeout(db, SEARCH_STATEMENT_TIMEOUT_MS, (client) =>
         client.query<{ total: number; active: number; cancelled: number }>(statsSql, filterValues)),
-      withStatementTimeout(db, SEARCH_STATEMENT_TIMEOUT_MS, (client) =>
-        client.query<{ authority: string }>(authoritiesSql, filterValues)),
-      withStatementTimeout(db, SEARCH_STATEMENT_TIMEOUT_MS, (client) =>
-        client.query<{ id: string; count: number }>(categoriesSql, filterValues)),
+      skipFacets
+        ? Promise.resolve(authoritiesResult)
+        : withStatementTimeout(db, SEARCH_STATEMENT_TIMEOUT_MS, (client) =>
+          client.query<{ authority: string }>(authoritiesSql, filterValues)),
+      skipFacets
+        ? Promise.resolve(categoriesResult)
+        : withStatementTimeout(db, SEARCH_STATEMENT_TIMEOUT_MS, (client) =>
+          client.query<{ id: string; count: number }>(categoriesSql, filterValues)),
     ])
   } catch (err) {
     if (isStatementTimeoutError(err)) {

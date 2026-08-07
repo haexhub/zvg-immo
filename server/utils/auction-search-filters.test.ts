@@ -161,4 +161,29 @@ describe('buildAuctionSearchFilter', () => {
 
     expect(predicate).not.toContain('ST_DWithin')
   })
+
+  it('adds a bounding-box clause on a.lat/a.lng once the map viewport is complete', async () => {
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+    const { predicate, values } = await buildAuctionSearchFilter(db, {
+      north: '54.1',
+      south: '53.9',
+      east: '14.5',
+      west: '14.0',
+      llmOnly: '0',
+    })
+
+    expect(predicate).toContain('a.lat BETWEEN')
+    expect(predicate).toContain('a.lng BETWEEN')
+    expect(values).toContain(54.1)
+    expect(values).toContain(53.9)
+    expect(values).toContain(14.5)
+    expect(values).toContain(14.0)
+  })
+
+  it('skips the bounding-box clause when only part of the viewport is given', async () => {
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+    const { predicate } = await buildAuctionSearchFilter(db, { north: '54.1', south: '53.9', llmOnly: '0' })
+
+    expect(predicate).not.toContain('a.lat BETWEEN')
+  })
 })

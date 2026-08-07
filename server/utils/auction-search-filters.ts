@@ -157,6 +157,21 @@ export async function buildAuctionSearchFilter(
     where.push(urbanRural === 'urban' ? nearCity : `NOT (${nearCity})`)
   }
 
+  // Search-Grid: server-side viewport scoping — pages/search.vue sends the
+  // map's current bounds once it has one, so the list can be paginated by
+  // what's actually on screen instead of a relevance/date/price order that
+  // has nothing to do with geography. A row with no lat/lng (not yet
+  // geocoded) can never be known to be inside the viewport, and BETWEEN
+  // against a NULL column is NULL — false in a WHERE clause — so it drops
+  // out here the same way it would if it were simply missing from the map.
+  const north = finiteNumber(query.north)
+  const south = finiteNumber(query.south)
+  const east = finiteNumber(query.east)
+  const west = finiteNumber(query.west)
+  if (north != null && south != null && east != null && west != null) {
+    where.push(`a.lat BETWEEN ${add(south)} AND ${add(north)} AND a.lng BETWEEN ${add(west)} AND ${add(east)}`)
+  }
+
   // "Immobilien in der Nähe" — the user's own browser-geolocated position,
   // filtered directly against the auction's own geocoded coordinates. No OSM
   // data involved, so it works everywhere an auction already has lat/lng.
