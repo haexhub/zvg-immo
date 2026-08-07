@@ -36,6 +36,7 @@ import {
 } from '~/server/utils/extract/llm'
 import { prepareArchivedLlmDocuments } from '~/server/utils/extract/llm-documents'
 import {
+  batchSupportsMultimodal,
   isLlmBatchPending,
   isLlmBatchProviderBroken,
   submitLlmBatch,
@@ -121,6 +122,20 @@ export interface ReprocessResult {
    *  identical to a healthy rules-only run (observed in prod: 69 processed /
    *  69 llmCalls with zero visible errors while all 69 were failing 403s). */
   lastLlmError?: string
+}
+
+/** Whether buildParts(input) would produce any non-text content part. Used
+ *  to keep a photo-bearing/scanned-PDF candidate off a batch provider that
+ *  can't take multimodal requests (see batchSupportsMultimodal) — cheaper
+ *  than calling buildParts here just to inspect it. */
+function inputNeedsMultimodal(input: LlmInput): boolean {
+  return !!(
+    input.pdfPageImages?.length ||
+    input.documentImages?.length ||
+    input.candidateImages?.length ||
+    input.pdfBytes ||
+    input.pdfDocuments?.length
+  )
 }
 
 function readMaxLlmPerRun(): number {
@@ -727,18 +742,27 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
           skipped++
           continue
         }
-        llmCalls++
-        llmCallsByPlatform.set(platform, platformLlmCalls + 1)
-        batchItems.push({ key, input: base.input })
-        batchArtifactVersions.set(key, base.artifactVersionId)
-        // Keep the currently visible extraction intact while the replacement
-        // is pending. The poller rebuilds a fresh merge base for changed sets.
-        const entry = base.documentSetChanged && priorEntry
-          ? priorEntry
-          : buildRulesOnlyEntry(base.fields, priorEntry, at)
-        processed++
-        await persistEntry(record, entry, artifactState.parsedArtifactVersionId, priorLlmFailures, base.auction)
-        continue
+        // A candidate the configured batch provider can't take (OpenRouter's
+        // Batch API rejects any image/document content outright — see
+        // batchSupportsMultimodal) falls through to the synchronous path
+        // below instead of being queued: submitting it would just skip it
+        // into retryItems, and since that never sets an llmBatchJob marker,
+        // it would stay eligible and get queued into the same doomed batch
+        // again every run, forever.
+        if (batchSupportsMultimodal(llmConfig) || !inputNeedsMultimodal(base.input)) {
+          llmCalls++
+          llmCallsByPlatform.set(platform, platformLlmCalls + 1)
+          batchItems.push({ key, input: base.input })
+          batchArtifactVersions.set(key, base.artifactVersionId)
+          // Keep the currently visible extraction intact while the replacement
+          // is pending. The poller rebuilds a fresh merge base for changed sets.
+          const entry = base.documentSetChanged && priorEntry
+            ? priorEntry
+            : buildRulesOnlyEntry(base.fields, priorEntry, at)
+          processed++
+          await persistEntry(record, entry, artifactState.parsedArtifactVersionId, priorLlmFailures, base.auction)
+          continue
+        }
       }
 
       // Models already known to be over their daily quota are dropped from

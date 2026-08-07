@@ -228,6 +228,7 @@
       "batchUnsupported": "This provider does not offer batch mode here.",
       "batchBroken": "Batch API last failed: {message}",
       "batchConfigGated": "Batch API currently disabled (free-tier configuration)",
+      "batchTextOnly": "OpenRouter's Batch API only accepts text — auctions with photos/scanned PDFs run synchronously instead.",
       "batchKeyRequired": "Batch via Claude proxy requires a saved proxy/API key.",
       "batchOpenAiRequired": "OpenAI Batch requires https://api.openai.com/v1 as the base URL and a saved API key.",
       "baseUrlLabel": "Base URL",

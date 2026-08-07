@@ -44,6 +44,7 @@ import {
 } from './llm'
 import { DEFAULT_MODEL, parseGeminiExtractionResponse, toGeminiParts } from './providers/gemini-native'
 import { toGeminiSchema } from './providers/gemini-schema'
+import { apiBase, extractOfetchErrorMessage, isTransientBatchError } from './batch-shared'
 import {
   insertLlmBatchJob,
   readGeminiBatchQuotaUsage,
@@ -148,19 +149,6 @@ function backoffActive(usage: GeminiBatchQuotaUsage): boolean {
   return Number.isFinite(until) && until > Date.now()
 }
 
-/** ofetch's FetchError.message is generic ("[POST] "url": 400 Bad Request")
- *  — the actionable text (e.g. "FAILED_PRECONDITION: Precondition check
- *  failed.") lives in the parsed JSON body ofetch exposes as `.data`. Falls
- *  back to the generic message when the body isn't Google's error shape. */
-function extractOfetchErrorMessage(err: unknown): string {
-  const data = (err as { data?: unknown })?.data as { error?: { message?: unknown; status?: unknown } } | undefined
-  if (data?.error && typeof data.error.message === 'string') {
-    const status = typeof data.error.status === 'string' ? `${data.error.status}: ` : ''
-    return `${status}${data.error.message}`
-  }
-  return err instanceof Error ? err.message : String(err)
-}
-
 function isGeminiQuotaError(err: unknown): boolean {
   const status = (err as { status?: unknown; statusCode?: unknown; response?: { status?: unknown } })?.status
   const statusCode =
@@ -173,24 +161,10 @@ function isGeminiQuotaError(err: unknown): boolean {
   return /quota|rate.?limit|resource_exhausted|too many requests/i.test(message)
 }
 
-/** Timeouts, connection failures and 5xx responses say nothing about
- *  whether this account/model can batch at all (unlike isGeminiQuotaError's
- *  429, they're not even evidence the request was understood) — only a
- *  durable rejection like 400 FAILED_PRECONDITION should ever flip the
- *  recorded capability to broken, or a transient blip could disable batching
- *  for every subsequent run until someone notices and manually re-checks it. */
-function isTransientBatchError(err: unknown): boolean {
-  const status = (err as { status?: unknown; statusCode?: unknown; response?: { status?: unknown } })?.status
-  const statusCode =
-    typeof status === 'number' ? status : (err as { statusCode?: unknown })?.statusCode
-  const responseStatus = (err as { response?: { status?: unknown } })?.response?.status
-  const httpStatus = typeof statusCode === 'number' ? statusCode : typeof responseStatus === 'number' ? responseStatus : undefined
-  if (httpStatus != null && httpStatus >= 500) return true
-  const name = (err as { name?: unknown })?.name
-  if (name === 'AbortError' || name === 'TimeoutError') return true
-  const code = (err as { code?: unknown })?.code ?? (err as { cause?: { code?: unknown } })?.cause?.code
-  return typeof code === 'string' && /^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EPIPE)$/.test(code)
-}
+// isTransientBatchError (imported from ./batch-shared) also treats a 429 as
+// transient, unlike the version this file used to keep locally — harmless
+// here since isGeminiQuotaError above always intercepts a real 429 first and
+// returns before isTransientBatchError is ever consulted.
 
 function selectLineItemsForQuota(
   lineItems: Array<{ item: { key: string; input: LlmInput }; line: string }>,
@@ -226,10 +200,6 @@ function selectLineItemsForQuota(
     totalEstimatedTokens += itemEstimatedTokens
   }
   return { selected, retryItems, estimatedTokens: totalEstimatedTokens }
-}
-
-function apiBase(config: LlmConfig): string {
-  return config.baseUrl.replace(/\/$/, '')
 }
 
 function buildJsonlLine(key: string, input: LlmInput): string | null {

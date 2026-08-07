@@ -167,6 +167,37 @@ describe('/api/settings/llm-batch-jobs', () => {
     expect(getTaskRunStatus).toHaveBeenCalledWith('offload-images')
   })
 
+  it('maps an "openrouter_"-wrapped jobName to the openrouter provider, not openai', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
+      await import('~/server/utils/llm-batch-jobs')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { isGeminiBatchTierPaid } = await import('~/server/utils/extract/gemini-batch')
+    const { getTaskRunStatus } = await import('~/server/utils/task-runs')
+    const job = {
+      jobName: 'openrouter_batch_x',
+      source: 'reprocess',
+      status: 'pending',
+      itemCount: 1,
+      customIdMap: {},
+      submittedAt: '2026-08-08T18:00:00.000Z',
+      checkedAt: null,
+      updatedAt: '2026-08-08T18:00:00.000Z',
+      errorMessage: null,
+    } as const
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job])
+    vi.mocked(listRecentLlmBatchJobs).mockResolvedValue([job])
+    vi.mocked(getAllLlmBatchCapabilities).mockResolvedValue({})
+    vi.mocked(readAuctionRecords).mockResolvedValue([])
+    vi.mocked(isGeminiBatchTierPaid).mockReturnValue(true)
+    vi.mocked(getTaskRunStatus).mockResolvedValue(IDLE_REPROCESS_STATUS)
+
+    const handler = (await import('./llm-batch-jobs.get')).default as () => Promise<unknown>
+    const result = (await handler()) as { jobs: Array<{ provider: string }> }
+
+    expect(result.jobs[0]?.provider).toBe('openrouter')
+  })
+
   it('synthesizes a config-gated gemini-native capability when the free tier has never been attempted', async () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =

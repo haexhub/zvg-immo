@@ -59,5 +59,6 @@ export function supportsLlmProviderExecutionMode(
   if (executionMode === 'sync') return true
   if (provider === 'gemini-native') return true
   if (provider === 'claude-proxy') return !!apiKey
+  if (provider === 'openrouter') return !!apiKey
   return provider === 'openai-compatible' && !!apiKey && isOpenAiBatchBaseUrl(baseUrl)
 }
