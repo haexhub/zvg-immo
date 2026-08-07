@@ -71,12 +71,30 @@ const KIND_MAPPINGS: KindMapping[] = [
     where: `(o.tags ->> 'waterway' IN ('river', 'canal'))`,
   },
   {
+    // `natural=peak` alone matches any locally highest point OSM mappers
+    // bothered to tag — including sub-100m mounds on the North German Plain
+    // (e.g. a 20m rise near Hamburg), which made nearMountain match almost
+    // everywhere in flat regions too. Real German/Alpine mountains are
+    // reliably tagged with `ele`; a 300m floor keeps the Mittelgebirge and
+    // Alps while dropping flatland "peaks" — `ele` is absolute elevation,
+    // not topographic prominence (which OSM rarely tags), so this is an
+    // approximation, not exact. A peak missing `ele` entirely is treated as
+    // unqualified rather than assumed real.
     kind: 'peak',
-    where: `(o.tags ->> 'natural' = 'peak')`,
+    where: `(o.tags ->> 'natural' = 'peak'
+      AND o.tags ->> 'ele' ~ '^-?[0-9]+(\\.[0-9]+)?$'
+      AND (o.tags ->> 'ele')::numeric >= 300)`,
   },
   {
+    // `aeroway=aerodrome` alone matches every mapped airfield, including
+    // small general-aviation/gliding strips (e.g. "Flugplatz Hildesheim",
+    // "Flugplatz Hameln-Pyrmont") — Germany has thousands of these, dense
+    // enough that nearAirport barely excluded anything. Requiring an `iata`
+    // code narrows this to airports with real commercial/scheduled
+    // significance, which is what "nearby airport" colloquially means; small
+    // airfields typically have only an `icao` code or none at all.
     kind: 'airport',
-    where: `(o.tags ->> 'aeroway' = 'aerodrome')`,
+    where: `(o.tags ->> 'aeroway' = 'aerodrome' AND COALESCE(o.tags ->> 'iata', '') <> '')`,
   },
   {
     // Not importable yet (WP-6): landuse=winter_sports / piste:type /

@@ -55,6 +55,8 @@ const IDS = {
   invalidLake: { osm_type: 'way', osm_id: 900_007 }, // hole-outside-shell: ST_Transform throws on it
   building: { osm_type: 'way', osm_id: 900_008 }, // must never appear in geo_features
   borderLake: { osm_type: 'way', osm_id: 900_009 }, // same osm_id, once per country — see BORDER_COUNTRY above
+  lowPeak: { osm_type: 'node', osm_id: 900_010 }, // natural=peak but ele below the mountain floor — must not surface as 'peak'
+  smallAirfield: { osm_type: 'way', osm_id: 900_011 }, // aerodrome without iata — must not surface as 'airport'
 } as const
 
 async function seedFixture(client: PoolClient): Promise<void> {
@@ -102,15 +104,35 @@ async function seedFixture(client: PoolClient): Promise<void> {
   await client.query(
     `INSERT INTO osm_local_elements (osm_type, osm_id, geom, tags, country)
      VALUES ($1, $2, ST_SetSRID(ST_MakePoint(11, 47), 4326),
-       '{"natural": "peak", "name": "Testberg"}'::jsonb, $3)`,
+       '{"natural": "peak", "name": "Testberg", "ele": "1493"}'::jsonb, $3)`,
     [IDS.peak.osm_type, IDS.peak.osm_id, TEST_COUNTRY],
+  )
+
+  // Same tagging as a real peak, but below the mountain floor — stands in
+  // for the flatland "peaks" (dunes, spoil mounds) that made nearMountain
+  // match almost every German auction before this floor existed.
+  await client.query(
+    `INSERT INTO osm_local_elements (osm_type, osm_id, geom, tags, country)
+     VALUES ($1, $2, ST_SetSRID(ST_MakePoint(11.5, 47), 4326),
+       '{"natural": "peak", "name": "Testhuegel", "ele": "20"}'::jsonb, $3)`,
+    [IDS.lowPeak.osm_type, IDS.lowPeak.osm_id, TEST_COUNTRY],
   )
 
   await client.query(
     `INSERT INTO osm_local_elements (osm_type, osm_id, geom, tags, country)
      VALUES ($1, $2, ST_GeomFromText('POLYGON((16 52,16.02 52,16.02 52.02,16 52.02,16 52))', 4326),
-       '{"aeroway": "aerodrome", "name": "Testflughafen"}'::jsonb, $3)`,
+       '{"aeroway": "aerodrome", "name": "Testflughafen", "iata": "TST"}'::jsonb, $3)`,
     [IDS.airport.osm_type, IDS.airport.osm_id, TEST_COUNTRY],
+  )
+
+  // Same aeroway tag as a real airport, but no iata code — stands in for the
+  // small general-aviation airfields that made nearAirport barely exclude
+  // anything in Germany before this filter existed.
+  await client.query(
+    `INSERT INTO osm_local_elements (osm_type, osm_id, geom, tags, country)
+     VALUES ($1, $2, ST_GeomFromText('POLYGON((16.5 52,16.52 52,16.52 52.02,16.5 52.02,16.5 52))', 4326),
+       '{"aeroway": "aerodrome", "name": "Testflugplatz", "icao": "EDZZ"}'::jsonb, $3)`,
+    [IDS.smallAirfield.osm_type, IDS.smallAirfield.osm_id, TEST_COUNTRY],
   )
 
   // A hole entirely outside the shell — GEOS reports it invalid, and
@@ -220,6 +242,10 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
       expect(countFor(afterFirst, 'river', IDS.river.osm_id)).toBeGreaterThanOrEqual(1)
       expect(countFor(afterFirst, 'peak', IDS.peak.osm_id)).toBe(1)
       expect(countFor(afterFirst, 'airport', IDS.airport.osm_id)).toBeGreaterThanOrEqual(1)
+      // natural=peak below the mountain floor must not surface as 'peak'.
+      expect(afterFirst.some((r) => Number(r.osm_id) === IDS.lowPeak.osm_id)).toBe(false)
+      // aerodrome without an iata code must not surface as 'airport'.
+      expect(afterFirst.some((r) => Number(r.osm_id) === IDS.smallAirfield.osm_id)).toBe(false)
       // natural=water + water=river must not surface as lake nor as river.
       expect(afterFirst.some((r) => Number(r.osm_id) === IDS.riverWaterPolygon.osm_id)).toBe(false)
       // building is never mapped to any kind.
