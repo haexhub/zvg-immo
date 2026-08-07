@@ -11,10 +11,15 @@ vi.mock('pg', () => ({
     return { query: mocks.poolQuery, connect: mocks.connect }
   }),
 }))
-// drizzle(client) just needs to return something identifiable; the actual
-// migration work happens in the mocked migrate() below.
-vi.mock('drizzle-orm/node-postgres', () => ({ drizzle: (client: unknown) => ({ __client: client }) }))
 vi.mock('drizzle-orm/node-postgres/migrator', () => ({ migrate: mocks.migrate }))
+
+// db.ts issues its BEGIN/COMMIT/ROLLBACK/advisory-lock statements through a
+// real Drizzle session now, which calls client.query() with a {text, ...}
+// config object instead of a plain string — pull just the text back out.
+const queryText = (call: unknown[]): unknown => {
+  const arg = call[0]
+  return typeof arg === 'string' ? arg : (arg as { text: string }).text
+}
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -35,7 +40,7 @@ describe('runMigrations', () => {
 
     await runMigrations()
 
-    expect(client.query.mock.calls.map(([sql]) => sql)).toEqual([
+    expect(client.query.mock.calls.map(queryText)).toEqual([
       `SELECT pg_try_advisory_lock(hashtext('zvg-immo:schema-migrations')) AS locked`,
       `SELECT pg_advisory_unlock(hashtext('zvg-immo:schema-migrations'))`,
     ])
@@ -63,7 +68,7 @@ describe('runMigrations', () => {
     await runMigrations()
 
     const tryLock = `SELECT pg_try_advisory_lock(hashtext('zvg-immo:schema-migrations')) AS locked`
-    expect(client.query.mock.calls.map(([sql]) => sql)).toEqual([
+    expect(client.query.mock.calls.map(queryText)).toEqual([
       tryLock,
       tryLock,
       `SELECT pg_advisory_unlock(hashtext('zvg-immo:schema-migrations'))`,
@@ -84,7 +89,7 @@ describe('runMigrations', () => {
     const { runMigrations } = await import('./db')
 
     await expect(runMigrations()).rejects.toThrow('migration failed')
-    expect(client.query).toHaveBeenLastCalledWith(
+    expect(queryText(client.query.mock.calls.at(-1)!)).toBe(
       `SELECT pg_advisory_unlock(hashtext('zvg-immo:schema-migrations'))`,
     )
     expect(client.release).toHaveBeenCalledOnce()
@@ -118,7 +123,7 @@ describe('withStatementTimeout', () => {
     })
 
     expect(result).toBe('ok')
-    expect(client.query.mock.calls.map(([sql]) => sql)).toEqual([
+    expect(client.query.mock.calls.map(queryText)).toEqual([
       'BEGIN',
       'SET LOCAL statement_timeout = 10000',
       'SELECT 1',
@@ -142,7 +147,7 @@ describe('withStatementTimeout', () => {
       }),
     ).rejects.toBe(timeoutError)
 
-    expect(client.query.mock.calls.map(([sql]) => sql)).toEqual([
+    expect(client.query.mock.calls.map(queryText)).toEqual([
       'BEGIN',
       'SET LOCAL statement_timeout = 10000',
       'ROLLBACK',

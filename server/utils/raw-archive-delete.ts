@@ -1,13 +1,22 @@
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { PoolClient } from 'pg'
+import { and, eq, exists, inArray, notExists, or, sql } from 'drizzle-orm'
+import type { AnyPgColumn } from 'drizzle-orm/pg-core'
 import { createError } from 'h3'
-import { getPool } from './db'
+import {
+  artifactBlobs,
+  artifactCaptures,
+  artifactVersionItems,
+  artifactVersions,
+  auctions,
+} from '../db/schema'
+import { getDb } from './db'
 import { getServiceClient } from './supabase'
 
 interface BlobRef {
-  content_hash: string
-  s3_key: string
+  contentHash: string
+  s3Key: string
 }
 
 export interface DeleteRawArchiveCountryResult {
@@ -93,88 +102,84 @@ export async function deleteRawArchiveCountry(countryInput: string): Promise<Del
     throw createError({ statusCode: 400, statusMessage: 'Ungültiges Land.' })
   }
 
-  const db = getPool()
+  const db = getDb()
   if (!db) {
     throw createError({ statusCode: 503, statusMessage: 'Archiv ist nicht konfiguriert.' })
   }
 
-  const client = await db.connect()
   let orphanedBlobs: BlobRef[] = []
   let captures = 0
   let documentSets = 0
   let documentSetItems = 0
   try {
-    await client.query('BEGIN')
+    ;({ orphanedBlobs, captures, documentSets, documentSetItems } = await db.transaction(async (tx) => {
+      // A capture/document-set row scoped to this country's auctions —
+      // mirrors the `USING auctions a` joins below, since none of these
+      // child tables carry their own `country` column.
+      const belongsToCountry = (platform: AnyPgColumn, externalId: AnyPgColumn) =>
+        exists(
+          tx.select({ one: sql`1` }).from(auctions).where(and(
+            eq(auctions.platform, platform),
+            eq(auctions.externalId, externalId),
+            eq(auctions.country, country),
+          )),
+        )
 
-    const candidates = await client.query<BlobRef>(
-      `SELECT DISTINCT rb.content_hash, rb.s3_key
-       FROM artifact_blobs rb
-       WHERE EXISTS (
-         SELECT 1 FROM artifact_captures rc
-         JOIN auctions a ON a.platform = rc.platform AND a.external_id = rc.external_id
-         WHERE a.country = $1 AND rc.content_hash = rb.content_hash
-       )
-       OR EXISTS (
-         SELECT 1
-         FROM artifact_versions rds
-         JOIN auctions a ON a.platform = rds.platform AND a.external_id = rds.external_id
-         JOIN artifact_version_items rdsi ON rdsi.set_id = rds.id
-         WHERE a.country = $1 AND rdsi.content_hash = rb.content_hash
-       )`,
-      [country],
-    )
+      const candidates = await tx.selectDistinct({ contentHash: artifactBlobs.contentHash, s3Key: artifactBlobs.s3Key })
+        .from(artifactBlobs)
+        .where(or(
+          exists(
+            tx.select({ one: sql`1` }).from(artifactCaptures)
+              .innerJoin(auctions, and(eq(auctions.platform, artifactCaptures.platform), eq(auctions.externalId, artifactCaptures.externalId)))
+              .where(and(eq(auctions.country, country), eq(artifactCaptures.contentHash, artifactBlobs.contentHash))),
+          ),
+          exists(
+            tx.select({ one: sql`1` }).from(artifactVersions)
+              .innerJoin(auctions, and(eq(auctions.platform, artifactVersions.platform), eq(auctions.externalId, artifactVersions.externalId)))
+              .innerJoin(artifactVersionItems, eq(artifactVersionItems.setId, artifactVersions.id))
+              .where(and(eq(auctions.country, country), eq(artifactVersionItems.contentHash, artifactBlobs.contentHash))),
+          ),
+        ))
 
-    const itemCount = await client.query<{ count: string }>(
-      `SELECT count(*) AS count
-       FROM artifact_versions rds
-       JOIN auctions a ON a.platform = rds.platform AND a.external_id = rds.external_id
-       JOIN artifact_version_items rdsi ON rdsi.set_id = rds.id
-       WHERE a.country = $1`,
-      [country],
-    )
-    documentSetItems = Number(itemCount.rows[0]?.count ?? 0)
+      const [itemCount] = await tx.select({ count: sql<string>`count(*)` })
+        .from(artifactVersions)
+        .innerJoin(auctions, and(eq(auctions.platform, artifactVersions.platform), eq(auctions.externalId, artifactVersions.externalId)))
+        .innerJoin(artifactVersionItems, eq(artifactVersionItems.setId, artifactVersions.id))
+        .where(eq(auctions.country, country))
 
-    const deletedSets = await client.query(
-      `DELETE FROM artifact_versions rds
-       USING auctions a
-       WHERE a.platform = rds.platform AND a.external_id = rds.external_id AND a.country = $1`,
-      [country],
-    )
-    documentSets = deletedSets.rowCount ?? 0
+      const deletedSets = await tx.delete(artifactVersions)
+        .where(belongsToCountry(artifactVersions.platform, artifactVersions.externalId))
 
-    const deletedCaptures = await client.query(
-      `DELETE FROM artifact_captures rc
-       USING auctions a
-       WHERE a.platform = rc.platform AND a.external_id = rc.external_id AND a.country = $1`,
-      [country],
-    )
-    captures = deletedCaptures.rowCount ?? 0
+      const deletedCaptures = await tx.delete(artifactCaptures)
+        .where(belongsToCountry(artifactCaptures.platform, artifactCaptures.externalId))
 
-    const hashes = candidates.rows.map((row) => row.content_hash)
-    if (hashes.length > 0) {
-      const deletedBlobs = await client.query<BlobRef>(
-        `DELETE FROM artifact_blobs rb
-         WHERE rb.content_hash = ANY($1::text[])
-           AND NOT EXISTS (SELECT 1 FROM artifact_captures rc WHERE rc.content_hash = rb.content_hash)
-           AND NOT EXISTS (SELECT 1 FROM artifact_version_items rdsi WHERE rdsi.content_hash = rb.content_hash)
-         RETURNING content_hash, s3_key`,
-        [hashes],
-      )
-      orphanedBlobs = deletedBlobs.rows
-    }
+      const hashes = candidates.map((row) => row.contentHash)
+      let orphaned: BlobRef[] = []
+      if (hashes.length > 0) {
+        orphaned = await tx.delete(artifactBlobs)
+          .where(and(
+            inArray(artifactBlobs.contentHash, hashes),
+            notExists(tx.select({ one: sql`1` }).from(artifactCaptures).where(eq(artifactCaptures.contentHash, artifactBlobs.contentHash))),
+            notExists(tx.select({ one: sql`1` }).from(artifactVersionItems).where(eq(artifactVersionItems.contentHash, artifactBlobs.contentHash))),
+          ))
+          .returning({ contentHash: artifactBlobs.contentHash, s3Key: artifactBlobs.s3Key })
+      }
 
-    await client.query('COMMIT')
+      return {
+        orphanedBlobs: orphaned,
+        captures: deletedCaptures.rowCount ?? 0,
+        documentSets: deletedSets.rowCount ?? 0,
+        documentSetItems: Number(itemCount?.count ?? 0),
+      }
+    }))
   } catch (err) {
-    await rollbackQuietly(client)
     throw createError({
       statusCode: 500,
       statusMessage: `Archiv konnte nicht gelöscht werden: ${(err as Error).message}`,
     })
-  } finally {
-    client.release()
   }
 
-  const keys = orphanedBlobs.map((row) => row.s3_key)
+  const keys = orphanedBlobs.map((row) => row.s3Key)
   const [local, storage] = await Promise.all([removeLocalFiles(keys), removeStorageFiles(keys)])
 
   return {

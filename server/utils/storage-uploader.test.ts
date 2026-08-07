@@ -2,10 +2,11 @@ import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { getPool } from './db'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import { getDb } from './db'
 import { getServiceClient } from './supabase'
 
-vi.mock('./db', () => ({ getPool: vi.fn() }))
+vi.mock('./db', () => ({ getDb: vi.fn() }))
 vi.mock('./supabase', () => ({ getServiceClient: vi.fn() }))
 
 const uploadMock = vi.fn(async (..._args: unknown[]): Promise<{ error: { message: string } | null }> => ({
@@ -17,17 +18,19 @@ const { drainOutbox } = await import('./storage-uploader')
 
 function makeFakePool(rows: Array<{ content_hash: string; s3_key: string; content_type: string }>) {
   const updated: string[] = []
-  const query = vi.fn(async (sql: string, params: unknown[] = []) => {
-    if (sql.includes('SELECT content_hash, s3_key, content_type FROM artifact_blobs')) {
-      return { rows, rowCount: rows.length }
+  const query = vi.fn(async (queryArg: unknown, params: unknown[] = []) => {
+    const text = typeof queryArg === 'string' ? queryArg : (queryArg as { text: string }).text
+    const n = text.replace(/\s+/g, ' ').trim().toLowerCase()
+    if (n.startsWith('select "content_hash", "s3_key", "content_type" from "artifact_blobs"')) {
+      return { rows: rows.map((r) => [r.content_hash, r.s3_key, r.content_type]), rowCount: rows.length }
     }
-    if (sql.includes('UPDATE artifact_blobs SET uploaded_at')) {
-      updated.push(params[0] as string)
+    if (n.startsWith('update "artifact_blobs" set "uploaded_at"')) {
+      updated.push(params[1] as string)
       return { rows: [], rowCount: 1 }
     }
-    throw new Error(`unexpected query: ${sql}`)
+    throw new Error(`unexpected query: ${text}`)
   })
-  return { query, updated }
+  return { query, updated, db: drizzle({ query } as never) }
 }
 
 describe('drainOutbox', () => {
@@ -47,7 +50,7 @@ describe('drainOutbox', () => {
   })
 
   it('no-ops without a DB pool', async () => {
-    vi.mocked(getPool).mockReturnValue(null)
+    vi.mocked(getDb).mockReturnValue(null)
     vi.stubGlobal('useRuntimeConfig', () => ({ rawOutboxDir: outboxDir, storageBucket: 'raw-archive' }))
     const result = await drainOutbox()
     expect(result).toEqual({ uploaded: 0, failed: 0, missing: 0 })
@@ -55,7 +58,7 @@ describe('drainOutbox', () => {
   })
 
   it('no-ops without a bucket name', async () => {
-    vi.mocked(getPool).mockReturnValue({ query: vi.fn() } as never)
+    vi.mocked(getDb).mockReturnValue(drizzle({ query: vi.fn() } as never) as never)
     vi.stubGlobal('useRuntimeConfig', () => ({ rawOutboxDir: outboxDir, storageBucket: '' }))
     const result = await drainOutbox()
     expect(result).toEqual({ uploaded: 0, failed: 0, missing: 0 })
@@ -63,7 +66,7 @@ describe('drainOutbox', () => {
   })
 
   it('no-ops when Supabase is not configured', async () => {
-    vi.mocked(getPool).mockReturnValue({ query: vi.fn() } as never)
+    vi.mocked(getDb).mockReturnValue(drizzle({ query: vi.fn() } as never) as never)
     vi.mocked(getServiceClient).mockReturnValue(null)
     vi.stubGlobal('useRuntimeConfig', () => ({ rawOutboxDir: outboxDir, storageBucket: 'raw-archive' }))
     const result = await drainOutbox()
@@ -78,7 +81,7 @@ describe('drainOutbox', () => {
     await writeFile(filePath, Buffer.from('gzip-bytes'))
 
     const pool = makeFakePool([{ content_hash: 'abcdef', s3_key: key, content_type: 'application/json+gzip' }])
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.db as never)
     vi.stubGlobal('useRuntimeConfig', () => ({ rawOutboxDir: outboxDir, storageBucket: 'raw-archive' }))
 
     const result = await drainOutbox()
@@ -98,7 +101,7 @@ describe('drainOutbox', () => {
     const key = 'cd/missing.json.gz'
     // Intentionally do not create the outbox file: readFile fails.
     const pool = makeFakePool([{ content_hash: 'missing', s3_key: key, content_type: 'application/json+gzip' }])
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.db as never)
     vi.stubGlobal('useRuntimeConfig', () => ({ rawOutboxDir: outboxDir, storageBucket: 'raw-archive' }))
 
     const result = await drainOutbox()
@@ -116,7 +119,7 @@ describe('drainOutbox', () => {
     uploadMock.mockResolvedValueOnce({ error: { message: 'bucket not found' } })
 
     const pool = makeFakePool([{ content_hash: 'rejected', s3_key: key, content_type: 'application/json+gzip' }])
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.db as never)
     vi.stubGlobal('useRuntimeConfig', () => ({ rawOutboxDir: outboxDir, storageBucket: 'raw-archive' }))
 
     const result = await drainOutbox()

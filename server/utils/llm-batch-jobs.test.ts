@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
+import { drizzle } from 'drizzle-orm/node-postgres'
 
-vi.mock('./db', () => ({ getPool: vi.fn() }))
+vi.mock('./db', () => ({ getDb: vi.fn() }))
+
+function queryText(queryArg: unknown): string {
+  return typeof queryArg === 'string' ? queryArg : (queryArg as { text: string }).text
+}
 
 function makeFakePool() {
   const settings = new Map<string, unknown>()
@@ -15,8 +20,10 @@ function makeFakePool() {
     updated_at: string
     error_message: string | null
   }> = []
-  const query = vi.fn(async (sql: string, params: unknown[] = []) => {
-    if (sql.startsWith('INSERT INTO llm_batch_jobs')) {
+  const query = vi.fn(async (queryArg: unknown, params: unknown[] = []) => {
+    const text = queryText(queryArg)
+    const n = text.replace(/\s+/g, ' ').trim().toLowerCase()
+    if (n.startsWith('insert into "llm_batch_jobs"')) {
       rows.push({
         job_name: params[0] as string,
         source: params[1] as string,
@@ -30,44 +37,60 @@ function makeFakePool() {
       })
       return { rows: [], rowCount: 1 }
     }
-    if (sql.includes('SELECT job_name, source, status, item_count, custom_id_map, submitted_at, checked_at, updated_at')) {
-      const status = sql.includes('WHERE status =') ? params[0] as string : undefined
+    if (n.startsWith('select "job_name", "source", "status", "item_count", "custom_id_map", "submitted_at", "checked_at", "updated_at"')) {
+      const status = n.includes('where "llm_batch_jobs"."status" =') ? params[0] as string : undefined
       const limit = typeof params.at(-1) === 'number' ? params.at(-1) as number : undefined
       const selected = status ? rows.filter((r) => r.status === status) : [...rows]
-      const ordered = sql.includes('ORDER BY submitted_at DESC') ? selected.reverse() : selected
+      const ordered = n.includes('order by "llm_batch_jobs"."submitted_at" desc') ? [...selected].reverse() : selected
       const limited = limit ? ordered.slice(0, limit) : ordered
-      return { rows: limited, rowCount: limited.length }
+      // array-mode rows, in the select's field order.
+      return {
+        rows: limited.map((r) => [
+          r.job_name,
+          r.source,
+          r.status,
+          r.item_count,
+          r.custom_id_map,
+          r.submitted_at,
+          r.checked_at,
+          r.updated_at,
+          r.error_message,
+        ]),
+        rowCount: limited.length,
+      }
     }
-    if (sql.startsWith('DELETE FROM llm_batch_jobs')) {
+    if (n.startsWith('delete from "llm_batch_jobs"')) {
       const idx = rows.findIndex((r) => r.job_name === params[0])
       if (idx >= 0) rows.splice(idx, 1)
       return { rows: [], rowCount: idx >= 0 ? 1 : 0 }
     }
-    if (sql.startsWith('UPDATE llm_batch_jobs SET checked_at')) {
-      const row = rows.find((r) => r.job_name === params[0])
+    if (n.startsWith('update "llm_batch_jobs" set "checked_at"')) {
+      const row = rows.find((r) => r.job_name === params[1])
       if (row) {
+        row.checked_at = params[0] as string
+        row.updated_at = params[0] as string
+      }
+      return { rows: [], rowCount: row ? 1 : 0 }
+    }
+    if (n.startsWith('update "llm_batch_jobs" set "status"')) {
+      const row = rows.find((r) => r.job_name === params[3])
+      if (row) {
+        row.status = params[0] as string
         row.checked_at = params[1] as string
         row.updated_at = params[1] as string
+        row.error_message = (params[2] as string | null | undefined) ?? null
       }
       return { rows: [], rowCount: row ? 1 : 0 }
     }
-    if (sql.includes('UPDATE llm_batch_jobs') && sql.includes('SET status =')) {
-      const row = rows.find((r) => r.job_name === params[0])
-      if (row) {
-        row.status = params[1] as string
-        row.checked_at = params[2] as string
-        row.updated_at = params[2] as string
-        row.error_message = (params[3] as string | null | undefined) ?? null
-      }
-      return { rows: [], rowCount: row ? 1 : 0 }
-    }
-    if (sql.startsWith('SELECT value FROM app_settings')) {
+    if (n.startsWith('select "value" from "app_settings"')) {
       const value = settings.get(params[0] as string)
-      return { rows: value === undefined ? [] : [{ value }], rowCount: value === undefined ? 0 : 1 }
+      return { rows: value === undefined ? [] : [[value]], rowCount: value === undefined ? 0 : 1 }
     }
-    if (sql.startsWith('INSERT INTO app_settings') && sql.includes('value || jsonb_build_object')) {
+    if (n.includes('value || jsonb_build_object')) {
       // Atomic per-provider capability merge (recordLlmBatchCapability):
-      // params = [key, provider, jsonValue].
+      // params = [key, provider, jsonValue, provider, jsonValue] (Drizzle
+      // repeats the interpolated values for the INSERT and the ON CONFLICT
+      // SET clause separately).
       const key = params[0] as string
       const provider = params[1] as string
       const value = typeof params[2] === 'string' ? JSON.parse(params[2] as string) : params[2]
@@ -75,20 +98,20 @@ function makeFakePool() {
       settings.set(key, { ...current, [provider]: value })
       return { rows: [], rowCount: 1 }
     }
-    if (sql.startsWith('INSERT INTO app_settings') && !sql.includes('jsonb_build_object')) {
+    if (n.startsWith('insert into app_settings') && !n.includes('jsonb_build_object')) {
       // Generic key/value upsert: params = [key, jsonValue].
       const key = params[0] as string
       const value = typeof params[1] === 'string' ? JSON.parse(params[1] as string) : params[1]
       settings.set(key, value)
       return { rows: [], rowCount: 1 }
     }
-    if (sql.startsWith('INSERT INTO app_settings')) {
+    if (n.startsWith('insert into app_settings')) {
       const key = params[0] as string
       const day = params[1] as string
       const current = settings.get(key) as
         | { day?: string; jobs?: number; items?: number; estimatedTokens?: number; backoffUntil?: string | null }
         | undefined
-      if (params.length === 5) {
+      if (n.includes("'backoffuntil', null::text")) {
         const deltaJobs = params[2] as number
         const deltaItems = params[3] as number
         const deltaEstimatedTokens = params[4] as number
@@ -127,15 +150,17 @@ function makeFakePool() {
       }
       return { rows: [], rowCount: 1 }
     }
-    throw new Error(`unexpected query: ${sql}`)
+    throw new Error(`unexpected query: ${text}`)
   })
-  return { query, rows, settings }
+  function MockPool() {}
+  const pgPool = Object.assign(new (MockPool as unknown as new () => object)(), { query })
+  return { query, rows, settings, pool: drizzle(pgPool as never) }
 }
 
 describe('llm-batch-jobs', () => {
   it('is a no-op everywhere without a configured pool', async () => {
-    const { getPool } = await import('./db')
-    vi.mocked(getPool).mockReturnValue(null)
+    const { getDb } = await import('./db')
+    vi.mocked(getDb).mockReturnValue(null)
     const { insertLlmBatchJob, listPendingLlmBatchJobs, deleteLlmBatchJob } = await import('./llm-batch-jobs')
 
     await insertLlmBatchJob({ jobName: 'batches/1', source: 'enrich', itemCount: 5 })
@@ -144,9 +169,9 @@ describe('llm-batch-jobs', () => {
   })
 
   it('inserts a job and lists it as pending', async () => {
-    const { getPool } = await import('./db')
+    const { getDb } = await import('./db')
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
     const { insertLlmBatchJob, listPendingLlmBatchJobs } = await import('./llm-batch-jobs')
 
     await insertLlmBatchJob({ jobName: 'batches/abc', source: 'reprocess', itemCount: 3 })
@@ -168,9 +193,9 @@ describe('llm-batch-jobs', () => {
   })
 
   it('persists and returns an Anthropic custom_id map', async () => {
-    const { getPool } = await import('./db')
+    const { getDb } = await import('./db')
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
     const { insertLlmBatchJob, listPendingLlmBatchJobs } = await import('./llm-batch-jobs')
 
     await insertLlmBatchJob({
@@ -196,9 +221,9 @@ describe('llm-batch-jobs', () => {
   })
 
   it('deletes a job, removing it from the pending list', async () => {
-    const { getPool } = await import('./db')
+    const { getDb } = await import('./db')
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
     const { insertLlmBatchJob, listPendingLlmBatchJobs, deleteLlmBatchJob } = await import('./llm-batch-jobs')
 
     await insertLlmBatchJob({ jobName: 'batches/abc', source: 'enrich', itemCount: 3 })
@@ -208,9 +233,9 @@ describe('llm-batch-jobs', () => {
   })
 
   it('marks a job resolved and keeps it in recent history', async () => {
-    const { getPool } = await import('./db')
+    const { getDb } = await import('./db')
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
     const { insertLlmBatchJob, listPendingLlmBatchJobs, listRecentLlmBatchJobs, markLlmBatchJobResolved } = await import('./llm-batch-jobs')
 
     await insertLlmBatchJob({ jobName: 'batches/abc', source: 'enrich', itemCount: 3 })
@@ -227,9 +252,9 @@ describe('llm-batch-jobs', () => {
   })
 
   it('updates checked_at for a pending job', async () => {
-    const { getPool } = await import('./db')
+    const { getDb } = await import('./db')
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
     const { insertLlmBatchJob, listPendingLlmBatchJobs, markLlmBatchJobChecked } = await import('./llm-batch-jobs')
 
     await insertLlmBatchJob({ jobName: 'batches/abc', source: 'enrich', itemCount: 3 })
@@ -244,9 +269,9 @@ describe('llm-batch-jobs', () => {
   })
 
   it('records Gemini batch quota usage per UTC day', async () => {
-    const { getPool } = await import('./db')
+    const { getDb } = await import('./db')
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
     const { readGeminiBatchQuotaUsage, recordGeminiBatchQuotaUsage, setGeminiBatchQuotaBackoff } = await import('./llm-batch-jobs')
 
     await expect(readGeminiBatchQuotaUsage('2026-07-27')).resolves.toEqual({
@@ -277,9 +302,9 @@ describe('llm-batch-jobs', () => {
   })
 
   it('marks a job resolved with its error message and surfaces it in history', async () => {
-    const { getPool } = await import('./db')
+    const { getDb } = await import('./db')
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
     const { insertLlmBatchJob, listRecentLlmBatchJobs, markLlmBatchJobResolved } = await import('./llm-batch-jobs')
 
     await insertLlmBatchJob({ jobName: 'batches/abc', source: 'enrich', itemCount: 3 })
@@ -300,8 +325,8 @@ describe('llm-batch-jobs', () => {
   })
 
   it('tracks per-provider batch capability, defaulting to unset without a configured pool', async () => {
-    const { getPool } = await import('./db')
-    vi.mocked(getPool).mockReturnValue(null)
+    const { getDb } = await import('./db')
+    vi.mocked(getDb).mockReturnValue(null)
     const { getLlmBatchCapability, getAllLlmBatchCapabilities, recordLlmBatchCapability } = await import('./llm-batch-jobs')
 
     await expect(getLlmBatchCapability('gemini-native')).resolves.toBeNull()
@@ -319,9 +344,9 @@ describe('llm-batch-jobs', () => {
   })
 
   it('persists batch capability per provider without clobbering other providers', async () => {
-    const { getPool } = await import('./db')
+    const { getDb } = await import('./db')
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
     const { getAllLlmBatchCapabilities, recordLlmBatchCapability } = await import('./llm-batch-jobs')
 
     await recordLlmBatchCapability('gemini-native', { ok: false, message: 'broken', source: 'enrich' })
@@ -334,8 +359,8 @@ describe('llm-batch-jobs', () => {
   })
 
   it('never throws when a query fails', async () => {
-    const { getPool } = await import('./db')
-    vi.mocked(getPool).mockReturnValue({ query: vi.fn().mockRejectedValue(new Error('connection reset')) } as never)
+    const { getDb } = await import('./db')
+    vi.mocked(getDb).mockReturnValue(drizzle({ query: vi.fn().mockRejectedValue(new Error('connection reset')) } as never) as never)
     const { insertLlmBatchJob, listPendingLlmBatchJobs, deleteLlmBatchJob } = await import('./llm-batch-jobs')
 
     await expect(insertLlmBatchJob({ jobName: 'x', source: 'enrich', itemCount: 1 })).resolves.toBe(false)

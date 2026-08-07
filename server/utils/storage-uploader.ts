@@ -7,7 +7,9 @@
 
 import { readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { getPool } from './db'
+import { eq, isNull } from 'drizzle-orm'
+import { artifactBlobs } from '../db/schema'
+import { getDb } from './db'
 import { getServiceClient } from './supabase'
 
 function bucketName(): string | null {
@@ -16,12 +18,6 @@ function bucketName(): string | null {
 
 function outboxDir(): string {
   return (useRuntimeConfig().rawOutboxDir as string | undefined) || join(process.cwd(), '.raw_outbox')
-}
-
-interface PendingBlob {
-  content_hash: string
-  s3_key: string
-  content_type: string
 }
 
 export interface DrainResult {
@@ -38,7 +34,7 @@ function isMissingFileError(err: unknown): boolean {
  *  (returns zeros) without DB, Supabase config, or a bucket name. Never
  *  throws. */
 export async function drainOutbox(): Promise<DrainResult> {
-  const db = getPool()
+  const db = getDb()
   if (!db) return { uploaded: 0, failed: 0, missing: 0 }
   const bucket = bucketName()
   if (!bucket) return { uploaded: 0, failed: 0, missing: 0 }
@@ -49,9 +45,11 @@ export async function drainOutbox(): Promise<DrainResult> {
   let failed = 0
   let missing = 0
   try {
-    const { rows } = await db.query<PendingBlob>(
-      'SELECT content_hash, s3_key, content_type FROM artifact_blobs WHERE uploaded_at IS NULL',
-    )
+    const rows = await db.select({
+      content_hash: artifactBlobs.contentHash,
+      s3_key: artifactBlobs.s3Key,
+      content_type: artifactBlobs.contentType,
+    }).from(artifactBlobs).where(isNull(artifactBlobs.uploadedAt))
     if (rows.length === 0) return { uploaded: 0, failed: 0, missing: 0 }
 
     const dir = outboxDir()
@@ -71,9 +69,7 @@ export async function drainOutbox(): Promise<DrainResult> {
           .from(bucket)
           .upload(row.s3_key, body, { contentType: row.content_type, upsert: true })
         if (error) throw new Error(error.message)
-        await db.query('UPDATE artifact_blobs SET uploaded_at = now() WHERE content_hash = $1', [
-          row.content_hash,
-        ])
+        await db.update(artifactBlobs).set({ uploadedAt: new Date() }).where(eq(artifactBlobs.contentHash, row.content_hash))
         await rm(join(dir, row.s3_key), { force: true })
         uploaded++
       } catch (err) {

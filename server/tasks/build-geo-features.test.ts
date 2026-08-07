@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { drizzle } from 'drizzle-orm/node-postgres'
 import type { Pool, PoolClient } from 'pg'
 
 // buildGeoFeatures itself never touches Nitro's defineTask/useRuntimeConfig
@@ -234,7 +235,7 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
       const signal = new AbortController().signal
 
       // --- first run ---
-      const first = await buildGeoFeatures(client, signal)
+      const first = await buildGeoFeatures(drizzle(client), signal)
       const afterFirst = await readFeatures(pool)
 
       // Kind mapping + lake/river exclusion.
@@ -277,7 +278,7 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
       expect(firstMarker.rows).toHaveLength(1)
 
       // --- second run: must not duplicate anything ---
-      const second = await buildGeoFeatures(client, signal)
+      const second = await buildGeoFeatures(drizzle(client), signal)
       const afterSecond = await readFeatures(pool)
 
       expect(second.epoch).toBe(first.epoch + 1)
@@ -309,7 +310,7 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
       // second app container mid-rebuild, which runExclusiveTask (in-process
       // only) would not notice.
       await holder.query('SELECT pg_advisory_lock($1)', [4_820_251_104])
-      await expect(buildGeoFeatures(client, new AbortController().signal)).rejects.toThrow(/another rebuild/)
+      await expect(buildGeoFeatures(drizzle(client), new AbortController().signal)).rejects.toThrow(/another rebuild/)
       // Nothing was written, and above all nothing was deleted.
       expect(await readFeatures(pool)).toEqual([])
     } finally {
@@ -328,7 +329,7 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
       // empty, so a counter derived from geo_features alone would hand out
       // that same epoch again on the next run.
       await pool.query('DELETE FROM osm_local_elements WHERE country IN ($1, $2)', [TEST_COUNTRY, BORDER_COUNTRY])
-      const empty = await buildGeoFeatures(client, signal)
+      const empty = await buildGeoFeatures(drizzle(client), signal)
       expect(await readFeatures(pool)).toEqual([])
 
       const client2 = await pool.connect()
@@ -337,7 +338,7 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
       } finally {
         client2.release()
       }
-      const populated = await buildGeoFeatures(client, signal)
+      const populated = await buildGeoFeatures(drizzle(client), signal)
       expect(populated.epoch).toBeGreaterThan(empty.epoch)
 
       // The decisive part: what readers resolve as the newest complete epoch
@@ -357,7 +358,7 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
     const client = await pool.connect()
     try {
       const signal = new AbortController().signal
-      const first = await buildGeoFeatures(client, signal)
+      const first = await buildGeoFeatures(drizzle(client), signal)
       expect((await readFeatures(pool)).length).toBeGreaterThan(0)
 
       // 53200 (out_of_memory) stands in for any systemic failure — schema,
@@ -375,8 +376,8 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
         // The epoch this next, failing run will attempt to write under —
         // asked of the same function buildGeoFeatures uses, not a copy of its
         // query, so the two can't drift apart.
-        failedEpoch = await nextFeaturesEpoch(client)
-        await expect(buildGeoFeatures(client, signal)).rejects.toThrow(/simulated systemic failure/)
+        failedEpoch = await nextFeaturesEpoch(drizzle(client))
+        await expect(buildGeoFeatures(drizzle(client), signal)).rejects.toThrow(/simulated systemic failure/)
       } finally {
         await client.query('DROP TRIGGER zz_geo_features_boom ON geo_features; DROP FUNCTION zz_geo_features_boom();')
       }
@@ -403,7 +404,7 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
       // the PK, the fallback's candidate SELECT and rowSql both ignored
       // country: two candidates (one per country) each matched both rows,
       // inserting the border feature 4 times instead of 2.
-      await buildGeoFeatures(client, new AbortController().signal)
+      await buildGeoFeatures(drizzle(client), new AbortController().signal)
 
       const { rows } = await client.query<{ country: string; n: string }>(
         `SELECT country, count(*) AS n FROM geo_features

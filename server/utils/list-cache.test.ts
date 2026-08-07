@@ -35,11 +35,16 @@ const seAll: CrawlResult = {
   auctions: [{ platform: 'se-kronofogden', externalId: '3' } as CrawlResult['auctions'][number]],
 }
 
+function queryText(queryArg: unknown): string {
+  return typeof queryArg === 'string' ? queryArg : (queryArg as { text: string }).text
+}
+
 /** Minimal in-memory stand-in for the `pg` Pool. */
 function makeFakePool(rows: Row[] = []) {
   const upserted: Row[] = []
-  const query = vi.fn(async (sql: string, params: unknown[] = []) => {
-    if (sql.includes('SELECT value FROM app_settings WHERE key')) {
+  const query = vi.fn(async (queryArg: unknown, params: unknown[] = []) => {
+    const sql = queryText(queryArg)
+    if (sql.toLowerCase().includes('select "value" from "app_settings"')) {
       return { rows: [], rowCount: 0 }
     }
     if (sql.includes('SELECT result FROM list_cache WHERE country') && sql.includes('region')) {
@@ -90,7 +95,7 @@ describe('readListCache', () => {
 
     expect(await readListCache('fr', 'idf')).toBeNull()
     expect(pool.query).toHaveBeenCalledTimes(1)
-    expect(pool.query.mock.calls[0]?.[0]).toContain('app_settings')
+    expect(queryText(pool.query.mock.calls[0]?.[0])).toContain('app_settings')
   })
 
   it('serves an enabled country from Postgres', async () => {

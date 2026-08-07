@@ -6,15 +6,20 @@
 // over the same documents (reprocess.ts). `artifact_version_id` records which
 // manifest was evaluated. No-op without a configured pool.
 
+import { sql } from 'drizzle-orm'
 import type { Auction, AuctionExtraction, CuratedPhoto, PhotoCategory } from '~/types/auction'
 import { extractTranslatableExtractionTexts } from '~/lib/extraction-translation'
 import { normalizePhoto } from '~/lib/photo'
-import { getPool } from './db'
+import { getDb } from './db'
 import { cacheKey } from './verkehrswert-cache'
 import { normalizeDescriptionText } from './description-normalization'
 import { withDerivedExtractionFields } from './extract/merge-llm-result'
 
 export interface AuctionDetailsRow {
+  // Lets this satisfy db.execute<T>()'s Record<string, unknown> constraint —
+  // these rows come back from a raw sql`` fragment (37+ dynamic value
+  // columns, see writeAuctionDetails), not the typed query builder.
+  [key: string]: unknown
   id: number
   platform: string
   external_id: string
@@ -64,6 +69,7 @@ export interface AuctionDetailsRow {
 }
 
 interface AuctionPhotoRow {
+  [key: string]: unknown
   ordinal: number
   file: string
   category: PhotoCategory
@@ -200,13 +206,12 @@ function photoRowsEqual(rows: AuctionPhotoRow[], photos: CuratedPhoto[]): boolea
 }
 
 export async function readAuctionPhotos(auctionDetailsId: number): Promise<CuratedPhoto[]> {
-  const db = getPool()
+  const db = getDb()
   if (!db) return []
-  const { rows } = await db.query<AuctionPhotoRow>(
-    `SELECT ordinal, file, category, caption, is_property_photo
-     FROM auction_photos WHERE auction_details_id = $1 ORDER BY ordinal`,
-    [auctionDetailsId],
-  )
+  const { rows } = await db.execute<AuctionPhotoRow>(sql`
+    SELECT ordinal, file, category, caption, is_property_photo
+    FROM auction_photos WHERE auction_details_id = ${auctionDetailsId} ORDER BY ordinal
+  `)
   return rows.map((row) => ({
     file: row.file,
     category: row.category,
@@ -230,14 +235,13 @@ export async function readLatestAuctionDetails(
   const key = cacheKey(platform, externalId)
   const cached = latestCache.get(key)
   if (cached !== undefined) return cached
-  const db = getPool()
+  const db = getDb()
   if (!db) return null
-  const { rows } = await db.query<AuctionDetailsRow>(
-    `SELECT * FROM auction_details
-     WHERE platform = $1 AND external_id = $2
-     ORDER BY version DESC LIMIT 1`,
-    [platform, externalId],
-  )
+  const { rows } = await db.execute<AuctionDetailsRow>(sql`
+    SELECT * FROM auction_details
+    WHERE platform = ${platform} AND external_id = ${externalId}
+    ORDER BY version DESC LIMIT 1
+  `)
   const row = rows[0] ?? null
   // Only cache a hit. A miss may become a row through another app instance.
   if (row) latestCache.set(key, row)
@@ -249,12 +253,11 @@ export async function readAuctionDetailsAtVersion(
   externalId: string,
   version: number,
 ): Promise<AuctionDetailsRow | null> {
-  const db = getPool()
+  const db = getDb()
   if (!db) return null
-  const { rows } = await db.query<AuctionDetailsRow>(
-    `SELECT * FROM auction_details WHERE platform = $1 AND external_id = $2 AND version = $3`,
-    [platform, externalId, version],
-  )
+  const { rows } = await db.execute<AuctionDetailsRow>(sql`
+    SELECT * FROM auction_details WHERE platform = ${platform} AND external_id = ${externalId} AND version = ${version}
+  `)
   return rows[0] ?? null
 }
 
@@ -290,7 +293,7 @@ export async function writeAuctionDetails(
   extraction: AuctionExtraction | null,
   options: WriteAuctionDetailsOptions = {},
 ): Promise<WriteAuctionDetailsResult | null> {
-  const db = getPool()
+  const db = getDb()
   if (!db) return null
   const { platform, externalId } = auction
   const values = auctionDetailsValues(auction, extraction)
@@ -298,93 +301,79 @@ export async function writeAuctionDetails(
   values.artifact_version_id = options.artifactVersionId ?? null
   const extractedAt = extraction?.at ?? new Date().toISOString()
   const llmAnalyzedAt = extraction?.llmAnalyzedAt ?? null
+  const valueColumnNames = VALUE_COLUMNS.map(([name]) => name)
+  // Per-column casts (matching each column's own PG type, VALUE_COLUMNS'
+  // whole reason to exist) rather than a single ::jsonb/::text blanket cast:
+  // a bare NULL parameter inside a multi-column ROW constructor otherwise
+  // leaves Postgres unable to infer its type.
+  const castValueTuple = () => sql.join(VALUE_COLUMNS.map(([name, type]) => sql`${values[name]}::${sql.raw(type)}`), sql`, `)
 
-  const client = await db.connect()
-  try {
-    await client.query('BEGIN')
-    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`auction_details:${platform}:${externalId}`])
+  const result = await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`auction_details:${platform}:${externalId}`}))`)
 
-    const previous = await client.query<{ id: number }>(
-      `SELECT id FROM auction_details
-       WHERE platform = $1 AND external_id = $2
-       ORDER BY version DESC LIMIT 1`,
-      [platform, externalId],
-    )
+    const previous = await tx.execute<{ id: number }>(sql`
+      SELECT id FROM auction_details
+      WHERE platform = ${platform} AND external_id = ${externalId}
+      ORDER BY version DESC LIMIT 1
+    `)
     const previousRow = previous.rows[0] ?? null
     const previousPhotos = previousRow
-      ? await client.query<AuctionPhotoRow>(
-          `SELECT ordinal, file, category, caption, is_property_photo
-           FROM auction_photos WHERE auction_details_id = $1 ORDER BY ordinal`,
-          [previousRow.id],
-        )
+      ? await tx.execute<AuctionPhotoRow>(sql`
+          SELECT ordinal, file, category, caption, is_property_photo
+          FROM auction_photos WHERE auction_details_id = ${previousRow.id} ORDER BY ordinal
+        `)
       : { rows: [] as AuctionPhotoRow[] }
     const photosUnchanged = previousRow != null && photoRowsEqual(previousPhotos.rows, photos)
 
-    const unchanged = photosUnchanged ? await client.query<{ version: number }>(
-      `SELECT version FROM auction_details
-       WHERE platform = $1 AND external_id = $2
-         AND version = (SELECT max(version) FROM auction_details WHERE platform = $1 AND external_id = $2)
-         AND (${VALUE_COLUMNS.map(([name]) => name).join(', ')})
-             IS NOT DISTINCT FROM
-             (${VALUE_COLUMNS.map(([, type], i) => `$${i + 3}::${type}`).join(', ')})`,
-      [platform, externalId, ...VALUE_COLUMNS.map(([name]) => values[name])],
-    ) : { rows: [] as Array<{ version: number }> }
+    const unchanged = photosUnchanged ? await tx.execute<{ version: number }>(sql`
+      SELECT version FROM auction_details
+      WHERE platform = ${platform} AND external_id = ${externalId}
+        AND version = (SELECT max(version) FROM auction_details WHERE platform = ${platform} AND external_id = ${externalId})
+        AND (${sql.raw(valueColumnNames.join(', '))})
+            IS NOT DISTINCT FROM
+            (${castValueTuple()})
+    `) : { rows: [] as Array<{ version: number }> }
     const unchangedVersion = unchanged.rows[0]?.version
     if (unchangedVersion !== undefined) {
-      await client.query('COMMIT')
-      return { version: unchangedVersion, changed: false }
+      return { version: unchangedVersion, changed: false as const, row: null as AuctionDetailsRow | null }
     }
 
     // is_latest has a partial UNIQUE index (one true row per identity) —
     // the new row below defaults to is_latest = true, so the previous
     // latest must be demoted first or the insert violates that constraint.
     if (previousRow) {
-      await client.query('UPDATE auction_details SET is_latest = false WHERE id = $1', [previousRow.id])
+      await tx.execute(sql`UPDATE auction_details SET is_latest = false WHERE id = ${previousRow.id}`)
     }
 
-    const columns = ['platform', 'external_id', 'extracted_at', 'llm_analyzed_at', ...VALUE_COLUMNS.map(([name]) => name)]
-    const params = [platform, externalId, extractedAt, llmAnalyzedAt, ...VALUE_COLUMNS.map(([name]) => values[name])]
-    const placeholders = [
-      '$1',
-      '$2',
-      '$3',
-      '$4',
-      ...VALUE_COLUMNS.map(([, type], i) => `$${i + 5}::${type}`),
-    ]
-    const inserted = await client.query<AuctionDetailsRow>(
-      `INSERT INTO auction_details (${columns.join(', ')}, version)
-       VALUES (${placeholders.join(', ')},
-         COALESCE((SELECT max(version) + 1 FROM auction_details WHERE platform = $1 AND external_id = $2), 1))
-       RETURNING *`,
-      params,
+    const columnNames = ['platform', 'external_id', 'extracted_at', 'llm_analyzed_at', ...valueColumnNames]
+    const insertValues = sql.join(
+      [sql`${platform}`, sql`${externalId}`, sql`${extractedAt}`, sql`${llmAnalyzedAt}`, castValueTuple()],
+      sql`, `,
     )
+    const inserted = await tx.execute<AuctionDetailsRow>(sql`
+      INSERT INTO auction_details (${sql.raw(columnNames.join(', '))}, version)
+      VALUES (${insertValues},
+        COALESCE((SELECT max(version) + 1 FROM auction_details WHERE platform = ${platform} AND external_id = ${externalId}), 1))
+      RETURNING *
+    `)
     const row = inserted.rows[0]
     if (!row) throw new Error(`auction_details insert returned no row for ${platform}/${externalId}`)
+
     if (photos.length > 0) {
-      const photoValues: unknown[] = []
-      const photoTuples = photos.map((photo, ordinal) => {
-        const offset = photoValues.length
-        photoValues.push(row.id, ordinal, photo.file, photo.category, photo.caption, photo.isPropertyPhoto)
-        return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6})`
-      })
-      await client.query(
-        `INSERT INTO auction_photos
-           (auction_details_id, ordinal, file, category, caption, is_property_photo)
-         VALUES ${photoTuples.join(', ')}`,
-        photoValues,
+      const photoTuples = sql.join(
+        photos.map((photo, ordinal) => sql`(${row.id}, ${ordinal}, ${photo.file}, ${photo.category}, ${photo.caption}, ${photo.isPropertyPhoto})`),
+        sql`, `,
       )
+      await tx.execute(sql`
+        INSERT INTO auction_photos
+          (auction_details_id, ordinal, file, category, caption, is_property_photo)
+        VALUES ${photoTuples}
+      `)
     }
-    await client.query('COMMIT')
-    latestCache.set(cacheKey(platform, externalId), row)
-    return { version: row.version, changed: true }
-  } catch (err) {
-    try {
-      await client.query('ROLLBACK')
-    } catch {
-      // The original error is the useful one; rollback failures only add noise.
-    }
-    throw err
-  } finally {
-    client.release()
-  }
+
+    return { version: row.version, changed: true as const, row }
+  })
+
+  if (result.changed) latestCache.set(cacheKey(platform, externalId), result.row!)
+  return { version: result.version, changed: result.changed }
 }

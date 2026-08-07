@@ -4,11 +4,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { deflateRawSync } from 'node:zlib'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { getPool } from '../db'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import { getDb } from '../db'
 
-vi.mock('../db', () => ({ getPool: vi.fn() }))
+vi.mock('../db', () => ({ getDb: vi.fn() }))
 
-// Imported after the mock so the module under test picks up the mocked getPool.
+// Imported after the mock so the module under test picks up the mocked getDb.
 const { docxBufferToText, docxToText } = await import('./docx-text')
 
 function writeUInt16(n: number): Buffer {
@@ -149,35 +150,38 @@ interface FakeBlobRow {
   content_type: string
 }
 
+function queryText(queryArg: unknown): string {
+  return typeof queryArg === 'string' ? queryArg : (queryArg as { text: string }).text
+}
+
 /** Minimal in-memory stand-in for the `pg` Pool, matching raw-archive.ts's queries. */
 function makeFakePool() {
   const blobs = new Map<string, FakeBlobRow>()
   const captures: Array<{ kind: string; platform: string; externalId: string; sourceUrl: string | null }> = []
 
-  const query = vi.fn(async (sql: string, params: unknown[] = []) => {
-    if (sql.includes('SELECT uploaded_at FROM artifact_blobs')) {
+  const query = vi.fn(async (queryArg: unknown, params: unknown[] = []) => {
+    const text = queryText(queryArg)
+    const n = text.replace(/\s+/g, ' ').trim().toLowerCase()
+    if (n.startsWith('select "uploaded_at" from "artifact_blobs"')) {
       const hash = params[0] as string
-      return { rows: blobs.has(hash) ? [{ uploaded_at: null }] : [] }
+      return { rows: blobs.has(hash) ? [[null]] : [] }
     }
-    if (sql.includes('INSERT INTO artifact_blobs')) {
+    if (n.startsWith('insert into "artifact_blobs"')) {
       const [hash, s3_key, content_type] = params as [string, string, string]
       if (!blobs.has(hash)) blobs.set(hash, { s3_key, content_type })
       return { rows: [], rowCount: 1 }
     }
-    if (sql.includes('SELECT content_hash FROM artifact_captures')) {
-      return { rows: [] }
-    }
-    if (sql.includes('INSERT INTO artifact_captures')) {
+    if (n.includes('insert into artifact_captures')) {
       const [, kind, platform, externalId, , sourceUrl] = params as [
         string, string, string, string, string, string | null,
       ]
       captures.push({ kind, platform, externalId, sourceUrl })
       return { rows: [], rowCount: 1 }
     }
-    throw new Error(`unexpected query: ${sql}`)
+    throw new Error(`unexpected query: ${text}`)
   })
 
-  return { blobs, captures, query }
+  return { blobs, captures, query, db: drizzle({ query } as never) }
 }
 
 describe('docxToText document archiving', () => {
@@ -195,7 +199,7 @@ describe('docxToText document archiving', () => {
 
   it('archives the fetched DOCX as a document capture when identity is passed', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.db as never)
 
     const url = dataUrl(zipWithDocumentXml('<w:document><w:body><w:p><w:r><w:t>Appraisal</w:t></w:r></w:p></w:body></w:document>'))
     await cleanup(url)
@@ -215,7 +219,7 @@ describe('docxToText document archiving', () => {
 
   it('does not archive when no identity is passed', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.db as never)
 
     const url = dataUrl(zipWithDocumentXml('<w:document><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>'))
     await cleanup(url)
@@ -230,7 +234,7 @@ describe('docxToText document archiving', () => {
 
   it('dedups the same DOCX referenced by two auctions (one blob, two captures)', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.db as never)
 
     const xml = '<w:document><w:body><w:p><w:r><w:t>Shared appraisal</w:t></w:r></w:p></w:body></w:document>'
     const urlA = dataUrl(zipWithDocumentXml(xml))

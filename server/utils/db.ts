@@ -6,11 +6,14 @@
 // failure.
 
 import { join } from 'node:path'
-import { drizzle } from 'drizzle-orm/node-postgres'
+import { sql } from 'drizzle-orm'
+import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { Pool, type PoolClient } from 'pg'
+import * as schema from '../db/schema'
 
 let pool: Pool | null | undefined
+let db: NodePgDatabase<typeof schema> | null | undefined
 
 // ~60s of patience for a concurrently migrating instance to finish.
 const MIGRATION_LOCK_ATTEMPTS = 60
@@ -49,6 +52,14 @@ export function getPool(): Pool | null {
   return pool
 }
 
+/** Shared Drizzle instance over {@link getPool}, for every query outside the raw-SQL search path (see {@link withStatementTimeout}). */
+export function getDb(): NodePgDatabase<typeof schema> | null {
+  if (db !== undefined) return db
+  const p = getPool()
+  db = p ? drizzle(p, { schema }) : null
+  return db
+}
+
 /** Postgres SQLSTATE for a statement cancelled by `statement_timeout`. */
 const STATEMENT_TIMEOUT_SQLSTATE = '57014'
 
@@ -78,14 +89,18 @@ export async function withStatementTimeout<T>(
   fn: (client: PoolClient) => Promise<T>,
 ): Promise<T> {
   const client = await db.connect()
+  const tx = drizzle(client)
   try {
-    await client.query('BEGIN')
-    await client.query(`SET LOCAL statement_timeout = ${Math.trunc(timeoutMs)}`)
+    await tx.execute(sql`BEGIN`)
+    // Bind parameters aren't valid for SET LOCAL, so the value goes in via
+    // sql.raw — safe here since it's an internally computed integer, not
+    // user input.
+    await tx.execute(sql`SET LOCAL statement_timeout = ${sql.raw(String(Math.trunc(timeoutMs)))}`)
     const result = await fn(client)
-    await client.query('COMMIT')
+    await tx.execute(sql`COMMIT`)
     return result
   } catch (err) {
-    await client.query('ROLLBACK').catch(() => {})
+    await tx.execute(sql`ROLLBACK`).catch(() => {})
     throw err
   } finally {
     client.release()
@@ -93,9 +108,10 @@ export async function withStatementTimeout<T>(
 }
 
 export async function runMigrations(): Promise<void> {
-  const db = getPool()
-  if (!db) return
-  const client = await db.connect()
+  const pool = getPool()
+  if (!pool) return
+  const client = await pool.connect()
+  const tx = drizzle(client)
   let locked = false
   try {
     // All replicas share this session-scoped lock. It prevents two app
@@ -108,8 +124,8 @@ export async function runMigrations(): Promise<void> {
     // this wrapper still carries the whole guarantee.
     for (let attempt = 0; attempt < MIGRATION_LOCK_ATTEMPTS && !locked; attempt++) {
       if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, MIGRATION_LOCK_RETRY_MS))
-      const { rows } = await client.query<{ locked: boolean }>(
-        `SELECT pg_try_advisory_lock(hashtext('zvg-immo:schema-migrations')) AS locked`,
+      const { rows } = await tx.execute<{ locked: boolean }>(
+        sql`SELECT pg_try_advisory_lock(hashtext('zvg-immo:schema-migrations')) AS locked`,
       )
       locked = rows[0]?.locked === true
     }
@@ -118,11 +134,11 @@ export async function runMigrations(): Promise<void> {
     // can't see this fs access (readMigrationFiles() reads it dynamically at
     // runtime), so server/db/migrations/ must be copied into the runner image
     // explicitly (see Dockerfile).
-    await migrate(drizzle(client), { migrationsFolder: join(process.cwd(), 'server/db/migrations') })
+    await migrate(tx, { migrationsFolder: join(process.cwd(), 'server/db/migrations') })
   } finally {
     try {
       if (locked) {
-        await client.query(`SELECT pg_advisory_unlock(hashtext('zvg-immo:schema-migrations'))`)
+        await tx.execute(sql`SELECT pg_advisory_unlock(hashtext('zvg-immo:schema-migrations'))`)
       }
     } finally {
       client.release()

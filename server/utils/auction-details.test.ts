@@ -1,8 +1,9 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { drizzle } from 'drizzle-orm/node-postgres'
 import type { Auction, AuctionExtraction } from '~/types/auction'
-import { getPool } from './db'
+import { getDb } from './db'
 
-vi.mock('./db', () => ({ getPool: vi.fn() }))
+vi.mock('./db', () => ({ getDb: vi.fn() }))
 
 const {
   auctionDetailsValues,
@@ -127,7 +128,7 @@ describeDb('writeAuctionDetails (real Postgres)', () => {
   })
 
   beforeEach(async () => {
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(drizzle(pool) as never)
     invalidateAuctionDetailsCache()
     await pool.query('DELETE FROM auction_details')
     await pool.query('DELETE FROM artifact_versions')

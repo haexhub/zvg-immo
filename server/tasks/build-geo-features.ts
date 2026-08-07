@@ -20,7 +20,9 @@
 // exhaustion took prod down on 2026-08-03 (the ansible OSM reimport job).
 // Meant to run off-peak, triggered manually or via cron — never on the
 // request path.
-import { Pool, type PoolClient } from 'pg'
+import { Pool } from 'pg'
+import { sql } from 'drizzle-orm'
+import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { readDatabaseUrl } from '../utils/db'
 import { runExclusiveTask, throwIfTaskAborted } from '../utils/exclusive-task'
 
@@ -194,7 +196,7 @@ async function runBuildGeoFeatures(signal: AbortSignal): Promise<{ result: Build
   try {
     const client = await pool.connect()
     try {
-      return { result: await buildGeoFeatures(client, signal) }
+      return { result: await buildGeoFeatures(drizzle(client), signal) }
     } finally {
       client.release()
     }
@@ -217,18 +219,18 @@ export interface BuildGeoFeaturesResult {
  * it directly against a real Postgres connection without going through
  * Nitro's task/runtime-config globals.
  */
-export async function buildGeoFeatures(client: PoolClient, signal: AbortSignal): Promise<BuildGeoFeaturesResult> {
+export async function buildGeoFeatures(db: NodePgDatabase, signal: AbortSignal): Promise<BuildGeoFeaturesResult> {
   const startedAt = Date.now()
-  await acquireRebuildLock(client)
+  await acquireRebuildLock(db)
   try {
-    const epoch = await nextFeaturesEpoch(client)
+    const epoch = await nextFeaturesEpoch(db)
     console.log(`[build-geo-features] start, epoch=${epoch}`)
 
     const perKind: Record<string, { inserted: number; skipped: number }> = {}
     for (const mapping of KIND_MAPPINGS) {
       throwIfTaskAborted(signal)
       const kindStartedAt = Date.now()
-      const outcome = await buildKind(client, mapping, epoch, signal)
+      const outcome = await buildKind(db, mapping, epoch, signal)
       perKind[mapping.kind] = outcome
       console.log(
         `[build-geo-features] kind=${mapping.kind} inserted=${outcome.inserted} skipped=${outcome.skipped} `
@@ -240,15 +242,15 @@ export async function buildGeoFeatures(client: PoolClient, signal: AbortSignal):
     // aborted or failed run leaves the previous epoch's rows untouched and in
     // service, and simply gets redone (under yet another new epoch) next time.
     throwIfTaskAborted(signal)
-    const deletedStale = await swapInEpoch(client, epoch)
-    await client.query('ANALYZE geo_features')
+    const deletedStale = await swapInEpoch(db, epoch)
+    await db.execute(sql`ANALYZE geo_features`)
 
     const durationMs = Date.now() - startedAt
     console.log(`[build-geo-features] done in ${(durationMs / 1000).toFixed(0)}s, deleted ${deletedStale} stale rows`)
 
     return { epoch, perKind, deletedStale, durationMs }
   } finally {
-    await releaseRebuildLock(client)
+    await releaseRebuildLock(db)
   }
 }
 
@@ -264,16 +266,16 @@ export async function buildGeoFeatures(client: PoolClient, signal: AbortSignal):
 // open across a 44.5M-row scan would pin WAL and block autovacuum for hours.
 const REBUILD_LOCK_KEY = 4_820_251_104
 
-async function acquireRebuildLock(client: PoolClient): Promise<void> {
-  const { rows } = await client.query<{ locked: boolean }>('SELECT pg_try_advisory_lock($1) AS locked', [REBUILD_LOCK_KEY])
+async function acquireRebuildLock(db: NodePgDatabase): Promise<void> {
+  const { rows } = await db.execute<{ locked: boolean }>(sql`SELECT pg_try_advisory_lock(${REBUILD_LOCK_KEY}) AS locked`)
   if (!rows[0]?.locked) {
     throw new Error('[build-geo-features] another rebuild is already running (advisory lock held), skipping this run')
   }
 }
 
-async function releaseRebuildLock(client: PoolClient): Promise<void> {
+async function releaseRebuildLock(db: NodePgDatabase): Promise<void> {
   try {
-    await client.query('SELECT pg_advisory_unlock($1)', [REBUILD_LOCK_KEY])
+    await db.execute(sql`SELECT pg_advisory_unlock(${REBUILD_LOCK_KEY})`)
   } catch (err) {
     // The lock dies with the session anyway, so a failed unlock (e.g. the
     // connection already broke) must not mask the original error.
@@ -288,13 +290,13 @@ async function releaseRebuildLock(client: PoolClient): Promise<void> {
 // epoch number, the marker insert would hit ON CONFLICT DO NOTHING, MAX(epoch)
 // would stay behind — and readers would ignore every row the rebuild just
 // wrote. The epoch counter has to be monotonic across both.
-export async function nextFeaturesEpoch(client: PoolClient): Promise<number> {
-  const { rows } = await client.query<{ next_epoch: number }>(
-    `SELECT GREATEST(
-       (SELECT COALESCE(MAX(features_epoch), 0) FROM geo_features),
-       (SELECT COALESCE(MAX(epoch), 0) FROM geo_features_epochs)
-     ) + 1 AS next_epoch`,
-  )
+export async function nextFeaturesEpoch(db: NodePgDatabase): Promise<number> {
+  const { rows } = await db.execute<{ next_epoch: number }>(sql`
+    SELECT GREATEST(
+      (SELECT COALESCE(MAX(features_epoch), 0) FROM geo_features),
+      (SELECT COALESCE(MAX(epoch), 0) FROM geo_features_epochs)
+    ) + 1 AS next_epoch
+  `)
   return rows[0]?.next_epoch ?? 1
 }
 
@@ -306,44 +308,38 @@ export async function nextFeaturesEpoch(client: PoolClient): Promise<number> {
  * not yet visible would have it silently measure against nothing. Returns the
  * number of stale rows removed.
  */
-async function swapInEpoch(client: PoolClient, epoch: number): Promise<number> {
-  await client.query('BEGIN')
-  try {
-    const { rowCount } = await client.query('DELETE FROM geo_features WHERE features_epoch < $1', [epoch])
+async function swapInEpoch(db: NodePgDatabase, epoch: number): Promise<number> {
+  return db.transaction(async (tx) => {
+    const { rowCount } = await tx.execute(sql`DELETE FROM geo_features WHERE features_epoch < ${epoch}`)
     // Only now is this epoch complete — readers (WP-5's auction_geo_metrics
     // precompute job) resolve the current epoch via this table, never via
     // MAX(features_epoch) on geo_features directly, so a rebuild in progress
     // is never mistaken for done (see schema/geo.ts's geoFeaturesEpochs
     // comment).
-    await client.query('INSERT INTO geo_features_epochs (epoch) VALUES ($1) ON CONFLICT (epoch) DO NOTHING', [epoch])
-    await client.query('COMMIT')
+    await tx.execute(sql`INSERT INTO geo_features_epochs (epoch) VALUES (${epoch}) ON CONFLICT (epoch) DO NOTHING`)
     return rowCount ?? 0
-  } catch (err) {
-    // A failing ROLLBACK (broken connection) must not mask why the swap failed.
-    await client.query('ROLLBACK').catch(() => {})
-    throw err
-  }
+  })
 }
 
 // One INSERT ... SELECT per kind (committed as its own implicit transaction,
 // not batched into a shared one) so a failure in kind 14 never rolls back the
 // 13 before it, and a stuck kind never holds a lock for the whole run.
 async function buildKind(
-  client: PoolClient,
+  db: NodePgDatabase,
   mapping: KindMapping,
   epoch: number,
   signal: AbortSignal,
 ): Promise<{ inserted: number; skipped: number }> {
   throwIfTaskAborted(signal)
-  const sql = `
+  const query = sql`
     INSERT INTO geo_features (kind, name, country, osm_type, osm_id, geom_3035, features_epoch)
-    SELECT $1, o.tags ->> 'name', o.country, o.osm_type, o.osm_id, geom_3035, $2
+    SELECT ${mapping.kind}, o.tags ->> 'name', o.country, o.osm_type, o.osm_id, geom_3035, ${epoch}
     FROM osm_local_elements o
-    ${GEOMETRY_PIECE_JOIN}
-    WHERE ${mapping.where}
+    ${sql.raw(GEOMETRY_PIECE_JOIN)}
+    WHERE ${sql.raw(mapping.where)}
   `
   try {
-    const res = await client.query(sql, [mapping.kind, epoch])
+    const res = await db.execute(query)
     return { inserted: res.rowCount ?? 0, skipped: 0 }
   } catch (err) {
     // A single OSM element whose geometry ST_MakeValid/ST_Transform/
@@ -364,7 +360,7 @@ async function buildKind(
     console.warn(
       `[build-geo-features] kind=${mapping.kind} bulk insert failed (${(err as Error).message}), retrying row by row`,
     )
-    return await buildKindPerRow(client, mapping, epoch, signal, err)
+    return await buildKindPerRow(db, mapping, epoch, signal, err)
   }
 }
 
@@ -381,7 +377,7 @@ export function isSystemicDatabaseError(err: unknown): boolean {
 }
 
 async function buildKindPerRow(
-  client: PoolClient,
+  db: NodePgDatabase,
   mapping: KindMapping,
   epoch: number,
   signal: AbortSignal,
@@ -392,24 +388,22 @@ async function buildKindPerRow(
   // its own country through to rowSql — filtering by osm_type/osm_id alone
   // would match every country's row for a shared element and insert it once
   // per candidate per matching row instead of once per row.
-  const { rows: candidates } = await client.query<{ osm_type: string; osm_id: number; country: string }>(
-    `SELECT o.osm_type, o.osm_id, o.country FROM osm_local_elements o WHERE ${mapping.where}`,
-  )
-
-  const rowSql = `
-    INSERT INTO geo_features (kind, name, country, osm_type, osm_id, geom_3035, features_epoch)
-    SELECT $1, o.tags ->> 'name', o.country, o.osm_type, o.osm_id, geom_3035, $2
-    FROM osm_local_elements o
-    ${GEOMETRY_PIECE_JOIN}
-    WHERE o.osm_type = $3 AND o.osm_id = $4 AND o.country = $5
-  `
+  const { rows: candidates } = await db.execute<{ osm_type: string; osm_id: number; country: string }>(sql`
+    SELECT o.osm_type, o.osm_id, o.country FROM osm_local_elements o WHERE ${sql.raw(mapping.where)}
+  `)
 
   let inserted = 0
   let skipped = 0
   for (const { osm_type, osm_id, country } of candidates) {
     throwIfTaskAborted(signal)
     try {
-      const res = await client.query(rowSql, [mapping.kind, epoch, osm_type, osm_id, country])
+      const res = await db.execute(sql`
+        INSERT INTO geo_features (kind, name, country, osm_type, osm_id, geom_3035, features_epoch)
+        SELECT ${mapping.kind}, o.tags ->> 'name', o.country, o.osm_type, o.osm_id, geom_3035, ${epoch}
+        FROM osm_local_elements o
+        ${sql.raw(GEOMETRY_PIECE_JOIN)}
+        WHERE o.osm_type = ${osm_type} AND o.osm_id = ${osm_id} AND o.country = ${country}
+      `)
       inserted += res.rowCount ?? 0
     } catch (err) {
       if (isSystemicDatabaseError(err)) throw err
