@@ -108,26 +108,37 @@ onMounted(probeSession)
       </Card>
 
       <template v-else>
-        <SettingsLawyersCard />
-        <SettingsLlmConfigCard />
-        <SettingsLlmProfilesCard />
-        <SettingsLlmAssignmentsCard />
-        <SettingsLlmBatchCard />
-        <SettingsReprocessCard />
-        <SettingsCountrySourcesCard />
-        <SettingsOsmImportCard />
-        <SettingsGeoMetricsCard />
-        <SettingsExternalDataCard />
-        <SettingsDisplayCard />
+        <section class="space-y-4">
+          <h2 class="text-lg font-semibold text-muted-foreground">{{ $t('settings.sections.pipeline') }}</h2>
+          <SettingsCountrySourcesCard />
+          <SettingsOsmImportCard />
+          <SettingsGeoMetricsCard />
+          <SettingsExternalDataCard />
+          <SettingsReprocessCard />
+        </section>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>{{ $t('settings.archive.title') }}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <SettingsArchiveBrowser />
-          </CardContent>
-        </Card>
+        <section class="space-y-4">
+          <h2 class="text-lg font-semibold text-muted-foreground">{{ $t('settings.sections.llm') }}</h2>
+          <SettingsLlmConfigCard />
+          <SettingsLlmProfilesCard />
+          <SettingsLlmAssignmentsCard />
+          <SettingsLlmBatchCard />
+        </section>
+
+        <section class="space-y-4">
+          <h2 class="text-lg font-semibold text-muted-foreground">{{ $t('settings.sections.admin') }}</h2>
+          <SettingsLawyersCard />
+          <SettingsDisplayCard />
+
+          <Card>
+            <CardHeader>
+              <CardTitle>{{ $t('settings.archive.title') }}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <SettingsArchiveBrowser />
+            </CardContent>
+          </Card>
+        </section>
       </template>
     </div>
   </main>

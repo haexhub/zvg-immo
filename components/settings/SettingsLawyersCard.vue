@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Pencil, Trash2 } from 'lucide-vue-next'
-import { useSettingsError } from '~/composables/settings/useSettingsError'
+import { useSettingsAction } from '~/composables/settings/useSettingsAction'
 import type { AdminLawyer } from '~/server/api/settings/lawyers/index.get'
 
 interface LawyerFormState {
@@ -17,11 +17,9 @@ interface LawyerFormState {
 }
 
 const { t } = useI18n()
-const { normalizeSettingsError } = useSettingsError()
+const { pending: lawyersPending, error: lawyersError, run } = useSettingsAction()
 
 const lawyers = ref<AdminLawyer[]>([])
-const lawyersError = ref<string | null>(null)
-const lawyersPending = ref(false)
 const editingId = ref<string | null>(null)
 const showForm = ref(false)
 const form = ref<LawyerFormState>(emptyForm())
@@ -42,12 +40,8 @@ function emptyForm(): LawyerFormState {
 }
 
 async function loadLawyers(): Promise<void> {
-  try {
-    lawyers.value = await $fetch<AdminLawyer[]>('/api/settings/lawyers')
-    lawyersError.value = null
-  } catch (err) {
-    lawyersError.value = normalizeSettingsError(err, t('settings.lawyers.loadError'))
-  }
+  const res = await run(() => $fetch<AdminLawyer[]>('/api/settings/lawyers'), 'settings.lawyers.loadError')
+  if (res) lawyers.value = res
 }
 
 function startCreate(): void {
@@ -83,8 +77,6 @@ function splitList(v: string): string[] {
 }
 
 async function submitLawyerForm(): Promise<void> {
-  lawyersPending.value = true
-  lawyersError.value = null
   const commissionEur = form.value.commissionEur.trim()
   const body = {
     name: form.value.name.trim(),
@@ -98,64 +90,39 @@ async function submitLawyerForm(): Promise<void> {
     commissionCents: commissionEur ? Math.round(parseFloat(commissionEur) * 100) : null,
     active: form.value.active,
   }
-  try {
-    if (editingId.value) {
-      await $fetch(`/api/settings/lawyers/${editingId.value}`, { method: 'PUT', body })
-    } else {
-      await $fetch('/api/settings/lawyers', { method: 'POST', body })
-    }
-    await loadLawyers()
-    cancelForm()
-  } catch (err) {
-    lawyersError.value = normalizeSettingsError(err, t('settings.lawyers.saveError'))
-  } finally {
-    lawyersPending.value = false
-  }
+  const result = editingId.value
+    ? await run(() => $fetch<AdminLawyer>(`/api/settings/lawyers/${editingId.value}`, { method: 'PUT', body }), 'settings.lawyers.saveError')
+    : await run(() => $fetch<AdminLawyer>('/api/settings/lawyers', { method: 'POST', body }), 'settings.lawyers.saveError')
+  if (result === undefined) return
+  await loadLawyers()
+  cancelForm()
 }
 
 async function toggleActive(l: AdminLawyer): Promise<void> {
-  lawyersPending.value = true
-  lawyersError.value = null
-  try {
-    await $fetch(`/api/settings/lawyers/${l.id}`, {
-      method: 'PUT',
-      body: {
-        name: l.name,
-        firm: l.firm,
-        email: l.email,
-        phone: l.phone,
-        countries: l.countries,
-        specialization: l.specialization,
-        languages: l.languages,
-        website: l.website,
-        commissionCents: l.commissionCents,
-        active: !l.active,
-      },
-    })
-    await loadLawyers()
-  } catch (err) {
-    lawyersError.value = normalizeSettingsError(err, t('settings.lawyers.updateError'))
-  } finally {
-    lawyersPending.value = false
-  }
+  const result = await run(() => $fetch<AdminLawyer>(`/api/settings/lawyers/${l.id}`, {
+    method: 'PUT',
+    body: {
+      name: l.name,
+      firm: l.firm,
+      email: l.email,
+      phone: l.phone,
+      countries: l.countries,
+      specialization: l.specialization,
+      languages: l.languages,
+      website: l.website,
+      commissionCents: l.commissionCents,
+      active: !l.active,
+    },
+  }), 'settings.lawyers.updateError')
+  if (result !== undefined) await loadLawyers()
 }
 
 async function deleteLawyer(l: AdminLawyer): Promise<void> {
-  lawyersPending.value = true
-  lawyersError.value = null
-  try {
-    await $fetch(`/api/settings/lawyers/${l.id}`, { method: 'DELETE' })
-    await loadLawyers()
-  } catch (err) {
-    const e = typeof err === 'object' && err !== null
-      ? err as { statusCode?: number; statusMessage?: string }
-      : {}
-    lawyersError.value = e.statusCode === 409
-      ? (e.statusMessage ?? t('settings.lawyers.hasInquiries'))
-      : normalizeSettingsError(err, t('settings.lawyers.deleteError'))
-  } finally {
-    lawyersPending.value = false
-  }
+  // The server sets a specific 409 statusMessage when the lawyer still has
+  // inquiries ([id].delete.ts) — normalizeSettingsError already surfaces
+  // that verbatim, no bespoke status-code branch needed here.
+  const result = await run(() => $fetch<{ ok: true }>(`/api/settings/lawyers/${l.id}`, { method: 'DELETE' }), 'settings.lawyers.deleteError')
+  if (result !== undefined) await loadLawyers()
 }
 
 onMounted(loadLawyers)

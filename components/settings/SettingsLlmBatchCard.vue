@@ -17,13 +17,13 @@ onMounted(loadLlmBatchJobs)
 <template>
   <Card>
     <CardHeader>
-      <div class="flex items-center justify-between gap-3">
-        <CardTitle>{{ $t('settings.llmBatch.title') }}</CardTitle>
+      <CardTitle>{{ $t('settings.llmBatch.title') }}</CardTitle>
+      <CardAction>
         <Button type="button" variant="outline" size="sm" :disabled="llmBatchJobsPending" @click="loadLlmBatchJobs">
           <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': llmBatchJobsPending }" />
           {{ $t('settings.llmBatch.refresh') }}
         </Button>
-      </div>
+      </CardAction>
     </CardHeader>
     <CardContent class="space-y-4">
       <p class="text-sm text-muted-foreground">

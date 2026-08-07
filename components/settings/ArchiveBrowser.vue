@@ -5,11 +5,13 @@ import type { ArchiveRegionRow } from '~/server/api/settings/archive/regions.get
 import type { ArchiveCaseRow } from '~/server/api/settings/archive/cases.get'
 import type { ArchiveDocumentRow } from '~/server/api/settings/archive/documents.get'
 import type { DeleteRawArchiveCountryResult } from '~/server/utils/raw-archive-delete'
+import { useSettingsError } from '~/composables/settings/useSettingsError'
 
 type Level = 'country' | 'region' | 'case' | 'document'
 
 const { t } = useI18n()
 const intlLocale = useIntlLocale()
+const { normalizeSettingsError } = useSettingsError()
 
 const level = ref<Level>('country')
 const selectedCountry = ref<{ code: string; label: string } | null>(null)
@@ -35,8 +37,8 @@ async function withLoading<T>(fn: () => Promise<T>): Promise<T | undefined> {
   error.value = null
   try {
     return await fn()
-  } catch {
-    error.value = t('settings.archive.loadError')
+  } catch (err) {
+    error.value = normalizeSettingsError(err, t('settings.archive.loadError'))
     return undefined
   } finally {
     pending.value = false
@@ -77,8 +79,8 @@ async function deleteCountry(row: ArchiveCountryRow): Promise<void> {
       { method: 'DELETE' },
     )
     await loadCountries()
-  } catch {
-    error.value = t('settings.archive.deleteCountryError')
+  } catch (err) {
+    error.value = normalizeSettingsError(err, t('settings.archive.deleteCountryError'))
   } finally {
     deleteCountryPending.value = null
   }

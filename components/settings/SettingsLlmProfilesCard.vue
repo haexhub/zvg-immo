@@ -2,6 +2,7 @@
 import { Trash2 } from 'lucide-vue-next'
 import { useSettingsError } from '~/composables/settings/useSettingsError'
 import { useSettingsTaskOverview } from '~/composables/settings/useSettingsTaskOverview'
+import { useLlmProfileOptions } from '~/composables/settings/useLlmProfileOptions'
 import type { LlmExecutionMode, LlmProvider, LlmProviderScope } from '~/server/utils/app-settings'
 
 interface LlmProviderProfileForm {
@@ -42,18 +43,10 @@ interface LlmProfilesResponse {
   }>
 }
 
-interface LlmProviderProfileOption {
-  id: string
-  name: string
-  provider: LlmProvider
-  baseUrl: string
-  model: string
-  executionMode: LlmExecutionMode
-}
-
 const { t } = useI18n()
 const { normalizeSettingsError } = useSettingsError()
 const { llmBatchJobs, loadLlmBatchJobs } = useSettingsTaskOverview()
+const { setLlmProfileOptions } = useLlmProfileOptions()
 
 const LLM_PROVIDER_PRESETS: Record<LlmProvider, { baseUrl: string; model: string }> = {
   'claude-proxy': { baseUrl: 'http://haex-claude-proxy:8080', model: 'claude-sonnet-5' },
@@ -63,7 +56,6 @@ const LLM_PROVIDER_PRESETS: Record<LlmProvider, { baseUrl: string; model: string
 }
 
 const llmProfiles = ref<LlmProviderProfileForm[]>([])
-const llmProfileOptions = useState<LlmProviderProfileOption[]>('settings:llm-profile-options', () => [])
 const persistedLlmProfileIds = ref<Set<string>>(new Set())
 const llmProfilesError = ref<string | null>(null)
 const llmProfilesSaved = ref(false)
@@ -168,14 +160,7 @@ async function loadLlmProfiles(): Promise<void> {
   try {
     const res = await $fetch<LlmProfilesResponse>('/api/settings/llm-profiles')
     llmProfiles.value = res.profiles.map((profile) => makeProfileForm(profile))
-    llmProfileOptions.value = res.profiles.map(({ id, name, provider, baseUrl, model, executionMode }) => ({
-      id,
-      name,
-      provider,
-      baseUrl,
-      model,
-      executionMode,
-    }))
+    setLlmProfileOptions(res.profiles)
     persistedLlmProfileIds.value = new Set(res.profiles.map((profile) => profile.id))
     llmProfilesError.value = null
     await Promise.all(llmProfiles.value.map((profile) => loadProfileModelOptions(profile)))

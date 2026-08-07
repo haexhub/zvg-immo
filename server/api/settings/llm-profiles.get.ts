@@ -7,6 +7,7 @@ import {
   getLlmExtractionChainStrategy,
   getLlmProviderOverride,
   getLlmProviderProfileSettings,
+  KINDS,
   MAX_PROVIDER_CHAIN_LENGTH,
   type LlmExecutionMode,
   type LlmProvider,
@@ -58,27 +59,26 @@ export default defineEventHandler(async () => {
     | undefined
   const db = getPool()
   const settings = db ? await getLlmProviderProfileSettings(db) : { profiles: [], assignments: {} as LlmProviderAssignments }
+  // Insight kinds have no override yet by default — they mirror extraction's
+  // effective config until explicitly assigned their own chain (matches
+  // today's hardcoded behavior in the insight endpoint, which always rode
+  // the extraction override; see insight/[insightId].post.ts).
   const effective: Record<LlmProviderScope, {
     provider: string
     baseUrl: string
     model: string
     executionMode: LlmExecutionMode
-  }> = {
-    extraction: {
+  }> = {}
+  for (const kind of KINDS) {
+    effective[kind] = {
       provider: envConfig?.provider || 'openai-compatible',
       baseUrl: envConfig?.baseUrl || '',
       model: envConfig?.model || '',
       executionMode: 'sync',
-    },
-    translation: {
-      provider: envConfig?.provider || 'openai-compatible',
-      baseUrl: envConfig?.baseUrl || '',
-      model: envConfig?.model || '',
-      executionMode: 'sync',
-    },
+    }
   }
   if (db) {
-    for (const scope of ['extraction', 'translation'] as const) {
+    for (const scope of KINDS) {
       const override = await getLlmProviderOverride(db, scope).catch(() => null)
       if (override) {
         effective[scope] = {
@@ -96,5 +96,6 @@ export default defineEventHandler(async () => {
     strategy: db ? await getLlmExtractionChainStrategy(db).catch(() => DEFAULT_LLM_CHAIN_STRATEGY) : DEFAULT_LLM_CHAIN_STRATEGY,
     effective,
     maxChainLength: MAX_PROVIDER_CHAIN_LENGTH,
+    scopes: KINDS,
   }
 })

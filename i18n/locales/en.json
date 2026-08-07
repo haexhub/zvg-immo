@@ -106,6 +106,11 @@
     "heading": "Settings",
     "logoutAdmin": "Sign out",
     "logoutAdminError": "Sign out failed.",
+    "sections": {
+      "pipeline": "Crawling & enrichment",
+      "llm": "AI / LLM",
+      "admin": "Administration"
+    },
     "sessionExpired": "Session expired.",
     "messageDetails": {
       "show": "Show {count} entries",
@@ -249,6 +254,7 @@
       "noProfileAssigned": "Server default / fallback",
       "usingEnvDefault": "No override set — the server default is active: {provider} ({baseUrl})",
       "usingTranslationFallback": "No translation override set — translations currently use: {provider} ({baseUrl})",
+      "usingInsightFallback": "No override set — currently uses document extraction's: {provider} ({baseUrl})",
       "primary": "Primary",
       "fallbackN": "Fallback {n}",
       "poolMember": "Key {n}",
@@ -327,7 +333,7 @@
       "pending": "Requested at {at} — will be processed on the next daily run."
     },
     "geoMetrics": {
-      "title": "Environment filter precompute",
+      "title": "Environment filter calculation",
       "description": "Precomputes each auction's distance to sea/lake/river/mountain/airport/ski (from the OSM location data above) — the search's environment filters only read these precomputed values. Runs daily automatically, but can also be triggered here right away, e.g. after a manual OSM reimport.",
       "loadError": "Could not load status.",
       "rebuildError": "Rebuild failed.",
@@ -351,7 +357,23 @@
       "save": "Save",
       "refreshNow": "Refresh now",
       "refreshing": "Starting …",
-      "triggerError": "Failed to start."
+      "triggerError": "Failed to start.",
+      "usageHints": {
+        "fr-dvf-geolocated": "Market comparison on the detail page (France only).",
+        "eu-flood-risk-areas": "Flood risk note on the detail page.",
+        "eea-environmental-noise-directive": "Noise exposure (road/rail/airport) on the detail page.",
+        "cams-air-quality": "Air quality readings on the detail page.",
+        "open-meteo-climate-normals": "Climate chart on the detail page.",
+        "copernicus-effis": "Wildfire risk note on the detail page."
+      },
+      "cacheImport": {
+        "import": "Import cache now",
+        "importing": "Importing …",
+        "csvPathPlaceholder": "Path to the DVF CSV file",
+        "csvPathRequired": "csvPath is required.",
+        "done": "Import complete: {normalized} records ingested ({at}).",
+        "error": "Import failed."
+      }
     },
     "reprocess": {
       "title": "Reprocess test run",

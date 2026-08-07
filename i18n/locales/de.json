@@ -106,6 +106,11 @@
     "heading": "Einstellungen",
     "logoutAdmin": "Abmelden",
     "logoutAdminError": "Abmelden fehlgeschlagen.",
+    "sections": {
+      "pipeline": "Crawling & Anreicherung",
+      "llm": "KI / LLM",
+      "admin": "Verwaltung"
+    },
     "sessionExpired": "Sitzung abgelaufen.",
     "messageDetails": {
       "show": "{count} Einträge anzeigen",
@@ -249,6 +254,7 @@
       "noProfileAssigned": "Server-Standard / Fallback",
       "usingEnvDefault": "Kein Override gesetzt — der Server-Standard ist aktiv: {provider} ({baseUrl})",
       "usingTranslationFallback": "Kein Übersetzungs-Override gesetzt — Übersetzungen nutzen aktuell: {provider} ({baseUrl})",
+      "usingInsightFallback": "Kein eigener Override gesetzt — nutzt aktuell die Dokument-Extraktion: {provider} ({baseUrl})",
       "primary": "Primär",
       "fallbackN": "Fallback {n}",
       "poolMember": "Key {n}",
@@ -327,7 +333,7 @@
       "pending": "Angefordert am {at} — wird beim nächsten täglichen Lauf verarbeitet."
     },
     "geoMetrics": {
-      "title": "Umgebungsfilter-Precompute",
+      "title": "Umgebungsfilter-Berechnung",
       "description": "Berechnet Entfernungen zu Meer/See/Fluss/Berg/Flughafen/Ski (aus den OSM-Standortdaten oben) pro Auktion vor — die Umgebungsfilter in der Suche lesen nur aus diesen vorberechneten Werten. Läuft täglich automatisch, kann hier aber auch sofort angestoßen werden, z. B. nach einem manuellen OSM-Reimport.",
       "loadError": "Status konnte nicht geladen werden.",
       "rebuildError": "Neuberechnung fehlgeschlagen.",
@@ -351,10 +357,26 @@
       "save": "Speichern",
       "refreshNow": "Jetzt aktualisieren",
       "refreshing": "Wird angestoßen …",
-      "triggerError": "Anstoßen fehlgeschlagen."
+      "triggerError": "Anstoßen fehlgeschlagen.",
+      "usageHints": {
+        "fr-dvf-geolocated": "Marktvergleich auf der Detailseite (nur Frankreich).",
+        "eu-flood-risk-areas": "Hochwasser-Hinweis auf der Detailseite.",
+        "eea-environmental-noise-directive": "Lärmbelastung (Straße/Schiene/Flughafen) auf der Detailseite.",
+        "cams-air-quality": "Luftqualitäts-Werte auf der Detailseite.",
+        "open-meteo-climate-normals": "Klimadiagramm auf der Detailseite.",
+        "copernicus-effis": "Waldbrand-Hinweis auf der Detailseite."
+      },
+      "cacheImport": {
+        "import": "Cache jetzt importieren",
+        "importing": "Importiere …",
+        "csvPathPlaceholder": "Pfad zur DVF-CSV-Datei",
+        "csvPathRequired": "csvPath ist erforderlich.",
+        "done": "Import abgeschlossen: {normalized} Datensätze übernommen ({at}).",
+        "error": "Import fehlgeschlagen."
+      }
     },
     "reprocess": {
-      "title": "Reprocess-Testlauf",
+      "title": "Extraktions-Testlauf",
       "description": "Extraktion für eine begrenzte Anzahl Auktionen aus dem Archiv neu laufen lassen — z. B. um eine neue Provider-/Modell-Konfiguration zu verifizieren, bevor der volle Bestand neu verarbeitet wird.",
       "limitLabel": "Anzahl Auktionen",
       "countryLabel": "Land",

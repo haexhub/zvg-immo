@@ -55,6 +55,12 @@ export interface LlmBatchJobsOverview {
 }
 
 let progressPollTimer: ReturnType<typeof setInterval> | null = null
+// Module-scope, not useState: several settings cards call loadLlmBatchJobs()
+// from their own onMounted, all firing in the same tick — without this,
+// every /settings page load fired the same expensive endpoint 4x in
+// parallel. Cleared once the in-flight request settles, so a later call
+// still gets a fresh fetch.
+let loadLlmBatchJobsInFlight: Promise<void> | null = null
 
 function formatBatchDate(iso: string | null): string {
   if (!iso) return '-'
@@ -90,15 +96,23 @@ export function useSettingsTaskOverview() {
   })
 
   async function loadLlmBatchJobs(): Promise<void> {
-    llmBatchJobsPending.value = true
-    llmBatchJobsError.value = null
+    if (loadLlmBatchJobsInFlight) return loadLlmBatchJobsInFlight
+    loadLlmBatchJobsInFlight = (async () => {
+      llmBatchJobsPending.value = true
+      llmBatchJobsError.value = null
+      try {
+        llmBatchJobs.value = await $fetch<LlmBatchJobsOverview>('/api/settings/llm-batch-jobs', { cache: 'no-store' })
+        if (anyTrackedTaskRunning()) startProgressPolling()
+      } catch (err) {
+        llmBatchJobsError.value = normalizeSettingsError(err, t('settings.llmBatch.loadError'))
+      } finally {
+        llmBatchJobsPending.value = false
+      }
+    })()
     try {
-      llmBatchJobs.value = await $fetch<LlmBatchJobsOverview>('/api/settings/llm-batch-jobs', { cache: 'no-store' })
-      if (anyTrackedTaskRunning()) startProgressPolling()
-    } catch (err) {
-      llmBatchJobsError.value = normalizeSettingsError(err, t('settings.llmBatch.loadError'))
+      await loadLlmBatchJobsInFlight
     } finally {
-      llmBatchJobsPending.value = false
+      loadLlmBatchJobsInFlight = null
     }
   }
 

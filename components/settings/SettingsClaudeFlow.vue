@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ExternalLink, Loader2 } from 'lucide-vue-next'
 import { useSettingsError } from '~/composables/settings/useSettingsError'
+import { usePollWhileActive } from '~/composables/settings/usePollWhileActive'
 import type { ClaudeSetupStatus } from '~/server/api/settings/claude/status.get'
 
 const { t } = useI18n()
@@ -13,7 +14,6 @@ const claudeError = ref<string | null>(null)
 const isActiveFlow = computed(() =>
   !!status.value && ['awaiting-url', 'awaiting-code', 'finishing'].includes(status.value.state),
 )
-let pollTimer: ReturnType<typeof setInterval> | null = null
 
 async function refreshStatus(): Promise<void> {
   try {
@@ -83,23 +83,11 @@ async function claudeLogout(): Promise<void> {
   }
 }
 
-function startPolling(): void {
-  if (pollTimer) return
-  pollTimer = setInterval(() => {
-    if (!isActiveFlow.value) {
-      stopPolling()
-      return
-    }
-    void refreshStatus()
-  }, 2000)
-}
-
-function stopPolling(): void {
-  if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
-  }
-}
+const { start: startPolling, stop: stopPolling } = usePollWhileActive(
+  () => isActiveFlow.value,
+  refreshStatus,
+  { intervalMs: 2000 },
+)
 
 watch(isActiveFlow, (active) => {
   if (active) startPolling()
@@ -107,7 +95,6 @@ watch(isActiveFlow, (active) => {
 })
 
 onMounted(refreshStatus)
-onBeforeUnmount(stopPolling)
 </script>
 
 <template>

@@ -15,7 +15,13 @@ import { INSIGHT_REGISTRY } from './insights/registry'
 // against KINDS below instead (same as every other value this module reads
 // from app_settings).
 export type LlmMaxTokensKind = 'extraction' | 'translation' | string
-export type LlmProviderScope = 'extraction' | 'translation'
+// Widened the same way as LlmMaxTokensKind, for the same reason: an insight's
+// id is a plain string, so a closed union built from INSIGHT_REGISTRY would
+// collapse to `string` anyway. Validated at runtime against KINDS instead —
+// see coerceAssignments and providerOverrideKey below, both of which used to
+// hardcode ['extraction', 'translation'] and silently drop/collide on
+// anything else.
+export type LlmProviderScope = 'extraction' | 'translation' | string
 
 export const DEFAULT_ENABLED_COUNTRIES = ['de', 'se'] as const
 const ENABLED_COUNTRIES_KEY = 'enabled_countries'
@@ -182,7 +188,12 @@ const LLM_PROVIDER_ASSIGNMENTS_KEY = 'llm_provider_assignments'
 const LLM_EXTRACTION_CHAIN_STRATEGY_KEY = 'llm_extraction_chain_strategy'
 
 function providerOverrideKey(scope: LlmProviderScope): string {
-  return scope === 'translation' ? LLM_TRANSLATION_PROVIDER_OVERRIDE_KEY : LLM_PROVIDER_OVERRIDE_KEY
+  if (scope === 'translation') return LLM_TRANSLATION_PROVIDER_OVERRIDE_KEY
+  if (scope === 'extraction') return LLM_PROVIDER_OVERRIDE_KEY
+  // Any other scope (an insight id) gets its own key — falling through to
+  // LLM_PROVIDER_OVERRIDE_KEY here would silently alias every insight's
+  // single-override row onto extraction's.
+  return `llm_provider_override:${scope}`
 }
 
 function coerceProviderOverride(value: unknown): LlmProviderOverride | null {
@@ -246,7 +257,7 @@ function coerceAssignments(value: unknown, profileIds: ReadonlySet<string>): Llm
   if (!value || typeof value !== 'object') return {}
   const v = value as Record<string, unknown>
   const assignments: LlmProviderAssignments = {}
-  for (const scope of ['extraction', 'translation'] as const) {
+  for (const scope of KINDS) {
     const raw = v[scope]
     // A bare string is the pre-fallback-chain stored shape — accepted so an
     // existing single assignment keeps resolving without a migration step.
@@ -421,7 +432,7 @@ export async function deleteLlmProviderProfile(
   const { profiles, assignments } = await getLlmProviderProfileSettings(db)
   const remaining = profiles.filter((profile) => profile.id !== id)
   const prunedAssignments: LlmProviderAssignments = { ...assignments }
-  for (const scope of ['extraction', 'translation'] as const) {
+  for (const scope of Object.keys(assignments)) {
     const chain = prunedAssignments[scope]?.filter((assignedId) => assignedId !== id)
     if (chain && chain.length > 0) prunedAssignments[scope] = chain
     else delete prunedAssignments[scope]
