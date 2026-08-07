@@ -71,7 +71,12 @@ export interface ImportEuFloodRiskCacheSummary {
 }
 
 const DEFAULT_NEARBY_DISTANCE_METERS = 1_000
-const DEFAULT_PAGE_SIZE = 2_000
+// The EEA ArcGIS layer 500s on its own before returning a page once
+// resultRecordCount gets much above ~150 (confirmed live: 100/150 succeed in
+// a few seconds, 200+ reliably 500 after 20-40s) — the polygons in this
+// layer are apparently too complex for it to serialize larger pages. This is
+// why the cache was never successfully imported in production.
+const DEFAULT_PAGE_SIZE = 100
 export const EU_FLOOD_RISK_SOURCE_VERSION = 'eea-floods-ref-v03-r00-2025-08-05'
 export const EU_FLOOD_RISK_POLYGON_LAYER_URL =
   'https://water.discomap.eea.europa.eu/arcgis/rest/services/FloodsDirective/Floods2024_RiskZone_WM/MapServer/2'
