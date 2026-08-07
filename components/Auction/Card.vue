@@ -25,6 +25,7 @@ const emit = defineEmits<{
 const intlLocale = useIntlLocale()
 const { t } = useI18n()
 const { currency, eurToDisplay, nativeToDisplay } = useCurrencyDisplay()
+const { formatArea } = useAuctionDetailFormatters()
 const conditionLabel = useConditionLabel()
 const featureLabel = useFeatureLabel()
 
@@ -70,6 +71,13 @@ function bidLine(a: AuctionSummary): string | null {
   return converted.toLocaleString(intlLocale.value, { style: 'currency', currency: currency.value, maximumFractionDigits: 0 })
 }
 
+function sizeLine(a: AuctionSummary): string | null {
+  const parts: string[] = []
+  if (a.extraction?.livingAreaSqm != null) parts.push(t('search.cardLivingArea', { value: formatArea(a.extraction.livingAreaSqm) }))
+  if (a.extraction?.landAreaSqm != null) parts.push(t('search.cardLandArea', { value: formatArea(a.extraction.landAreaSqm) }))
+  return parts.length ? parts.join(' · ') : null
+}
+
 const swiperModules = [Navigation, Keyboard]
 
 // Below `sm`, cards are shown two-up in a horizontal-scroll rail — a
@@ -101,7 +109,7 @@ const isGallery = useMediaQuery('(min-width: 640px)')
         :keyboard="{ enabled: true }"
         :loop="props.auction.galleryUrls.length > 1"
         :lazy-preload-prev-next="0"
-        class="auction-card-swiper aspect-16/10 w-full overflow-hidden bg-muted"
+        class="auction-card-swiper aspect-square w-full overflow-hidden bg-muted"
       >
         <SwiperSlide v-for="(url, i) in props.auction.galleryUrls" :key="url">
           <img
@@ -118,12 +126,12 @@ const isGallery = useMediaQuery('(min-width: 640px)')
         v-else-if="props.auction.galleryUrls.length > 0"
         :src="props.auction.galleryUrls[0]"
         :alt="t('lotPopover.photoAlt', { n: 1, title: cardAltBase(props.auction) })"
-        class="aspect-16/10 w-full object-cover bg-muted"
+        class="aspect-square w-full object-cover bg-muted"
         referrerpolicy="no-referrer"
         loading="eager"
         fetchpriority="high"
       >
-      <div v-else class="flex aspect-16/10 items-center justify-center bg-muted text-muted-foreground text-sm">
+      <div v-else class="flex aspect-square items-center justify-center bg-muted text-muted-foreground text-sm">
         {{ $t('search.noPhoto') }}
       </div>
       <Badge v-if="props.auction.cancelled" variant="destructive" class="absolute z-10 left-2 top-2">{{ $t('search.cancelledBadge') }}</Badge>
@@ -142,7 +150,7 @@ const isGallery = useMediaQuery('(min-width: 640px)')
 
     <NuxtLink :to="detailPath(props.auction)" class="mt-3 flex-1 flex flex-col gap-1 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
       <p class="text-sm font-semibold leading-tight">{{ props.auction.address || props.auction.title || $t('search.unknownPropertyType') }}</p>
-      <span class="font-mono text-xs text-muted-foreground">{{ props.auction.caseNumber }}</span>
+      <span v-if="sizeLine(props.auction)" class="text-xs text-muted-foreground">{{ sizeLine(props.auction) }}</span>
       <div v-if="props.auction.extraction?.features?.length" class="flex flex-wrap gap-1">
         <span
           v-for="f in props.auction.extraction.features.slice(0, 3)"

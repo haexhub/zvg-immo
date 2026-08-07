@@ -23,28 +23,29 @@
     },
     "rails": {
       "country": {
-        "title": "Auktionen in {name}"
+        "title": "{name}"
       },
       "bestCondition": {
         "title": "Am besten gepflegt",
         "subtitle": "Neuwertige und gepflegte Objekte"
       },
       "sea": {
-        "title": "Immobilien am Meer",
+        "title": "Am Meer",
         "subtitle": "Bis 5 km zur Küste"
       },
       "mountains": {
-        "title": "Immobilien in den Bergen",
+        "title": "In den Bergen",
         "subtitle": "Bis 15 km zum nächsten Gipfel"
       },
       "lakes": {
-        "title": "Immobilien am See",
+        "title": "Am See",
         "subtitle": "Bis 5 km zum Wasser"
       },
       "rivers": {
-        "title": "Immobilien am Fluss",
+        "title": "Am Fluss",
         "subtitle": "Bis 2 km zum Fluss"
-      }
+      },
+      "showAll": "Alle anzeigen"
     },
     "footer": {
       "tagline": "Zwangsversteigerungen europaweit — auf einer Karte.",
@@ -83,6 +84,8 @@
     "original": "Original: {value}",
     "startingBid": "Startgebot: {value}",
     "currentBid": "Aktuelles Gebot: {value}",
+    "cardLivingArea": "Wohnfläche {value}",
+    "cardLandArea": "Grundstück {value}",
     "detailsLink": "Details →",
     "removeFromWatchlist": "Von Watchlist entfernen",
     "addToWatchlist": "Zur Watchlist hinzufügen",

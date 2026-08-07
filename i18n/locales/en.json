@@ -23,28 +23,29 @@
     },
     "rails": {
       "country": {
-        "title": "Auctions in {name}"
+        "title": "{name}"
       },
       "bestCondition": {
         "title": "Best maintained",
         "subtitle": "Like-new and well-kept properties"
       },
       "sea": {
-        "title": "Properties by the sea",
+        "title": "By the sea",
         "subtitle": "Within 5 km of the coast"
       },
       "mountains": {
-        "title": "Properties in the mountains",
+        "title": "In the mountains",
         "subtitle": "Within 15 km of the nearest peak"
       },
       "lakes": {
-        "title": "Properties by the lake",
+        "title": "By the lake",
         "subtitle": "Within 5 km of water"
       },
       "rivers": {
-        "title": "Properties by the river",
+        "title": "By the river",
         "subtitle": "Within 2 km of a river"
-      }
+      },
+      "showAll": "See all"
     },
     "footer": {
       "tagline": "Foreclosure auctions across Europe — on one map.",
@@ -83,6 +84,8 @@
     "original": "Original: {value}",
     "startingBid": "Starting bid: {value}",
     "currentBid": "Current bid: {value}",
+    "cardLivingArea": "Living area {value}",
+    "cardLandArea": "Plot {value}",
     "detailsLink": "Details →",
     "removeFromWatchlist": "Remove from watchlist",
     "addToWatchlist": "Add to watchlist",
