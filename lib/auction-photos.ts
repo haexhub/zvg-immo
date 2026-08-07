@@ -20,7 +20,12 @@ export function curatedAuctionPhotoUrls(
     const url = `/api/auction-image/${platform}/${externalId}/${encodeURIComponent(photo.file)}`
     if (!urls.includes(url)) urls.push(url)
   }
-  if (urls.length === 0 && thumbnailUrl) urls.push(thumbnailUrl)
+  // Only a same-origin thumbnail qualifies as a fallback — crawlers set
+  // `thumbnailUrl` to an absolute URL on the source platform for most
+  // countries (zvg-portal and the post-extraction case are the only
+  // same-origin producers), and hotlinking those would leak the viewer's
+  // request straight to a foreign site.
+  if (urls.length === 0 && thumbnailUrl?.startsWith('/')) urls.push(thumbnailUrl)
   return urls
 }
 
@@ -30,7 +35,8 @@ export function curatedAuctionPhotoUrls(
  * server/tasks/enrich.ts). Raw crawler URLs (`auction.photoUrls`,
  * `attachment.proxyUrl`) are pipeline input only and never reach display, since
  * some are short-lived signed URLs. The thumbnail is only a last-resort
- * fallback for before the pipeline has run once. */
+ * fallback for before the pipeline has run once, and only when it's already
+ * same-origin. */
 export function auctionPhotoUrls(auction: Auction): string[] {
   return curatedAuctionPhotoUrls(
     auction.platform,

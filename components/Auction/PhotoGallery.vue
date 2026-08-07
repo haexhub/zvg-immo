@@ -157,6 +157,12 @@ const swiperModules = [Navigation, Pagination, Keyboard]
       </div>
     </Teleport>
   </section>
+  <img
+    v-else
+    src="/images/no-photo.svg"
+    :alt="t('search.noPhoto')"
+    class="mb-8 h-64 w-full rounded-xl bg-muted object-contain p-16 sm:h-96"
+  >
 </template>
 
 <style scoped>

@@ -81,6 +81,10 @@ describe('auctionPhotoUrls', () => {
     expect(auctionPhotoUrls(auction())).toEqual([])
   })
 
+  it('ignores an off-origin thumbnail instead of hotlinking the source platform', () => {
+    expect(auctionPhotoUrls(auction({ thumbnailUrl: 'https://zvg.test/thumb.jpg' }))).toEqual([])
+  })
+
   it('deduplicates identical curated photo URLs', () => {
     expect(
       auctionPhotoUrls(
