@@ -132,6 +132,12 @@ const swiperModules = [Navigation, Pagination, Keyboard]
     </div>
     <div v-else-if="loading" class="mb-2 flex h-40 items-center justify-center rounded-md bg-gray-100 text-gray-500">{{ t('lotPopover.loadingPhotos') }}</div>
     <p v-else-if="loadError" class="mb-2 text-red-700">{{ loadError }}</p>
+    <img
+      v-else
+      src="/images/no-photo.svg"
+      :alt="t('search.noPhoto')"
+      class="mb-2 h-40 w-full rounded-md bg-gray-100 object-contain p-8"
+    >
 
     <div class="mb-0.5 text-sm font-semibold">{{ displayTitle ?? t('lotPopover.untitled') }}</div>
     <div class="mb-[0.4rem] text-gray-500">{{ displayAddress ?? '' }}</div>

@@ -131,9 +131,12 @@ const isGallery = useMediaQuery('(min-width: 640px)')
         loading="eager"
         fetchpriority="high"
       >
-      <div v-else class="flex aspect-square items-center justify-center bg-muted text-muted-foreground text-sm">
-        {{ $t('search.noPhoto') }}
-      </div>
+      <img
+        v-else
+        src="/images/no-photo.svg"
+        :alt="$t('search.noPhoto')"
+        class="aspect-square w-full bg-muted object-contain p-10"
+      >
       <Badge v-if="props.auction.cancelled" variant="destructive" class="absolute z-10 left-2 top-2">{{ $t('search.cancelledBadge') }}</Badge>
       <Badge v-else-if="props.auction.extraction?.condition" variant="secondary" class="absolute z-10 left-2 top-2">{{ conditionLabel(props.auction.extraction.condition) }}</Badge>
       <button
