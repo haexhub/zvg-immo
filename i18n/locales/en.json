@@ -317,6 +317,7 @@
       "llmStatusLastLlmError": "Last LLM error: {message}",
       "llmCountryCaption": "{llmCalls} LLM calls · {llmErrors} errors",
       "externalStatusRunning": "Location scoring running since {at} …",
+      "externalStatusProgress": "{done} of {total} checked",
       "externalStatusLastRun": "Last location scoring: {at} — {processed} checked, {written} stored, {duration}s.",
       "externalStatusLastError": "Location scoring last failed: {message}",
       "offloadStatusLastRun": "Photos offloaded: {at} — {removed} file(s), {freedMb} MB freed locally.",

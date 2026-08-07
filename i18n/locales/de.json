@@ -317,6 +317,7 @@
       "llmStatusLastLlmError": "Letzter LLM-Fehler: {message}",
       "llmCountryCaption": "{llmCalls} LLM-Aufrufe · {llmErrors} Fehler",
       "externalStatusRunning": "Lagebewertung läuft seit {at} …",
+      "externalStatusProgress": "{done} von {total} geprüft",
       "externalStatusLastRun": "Letzte Lagebewertung: {at} — {processed} geprüft, {written} gespeichert, {duration}s.",
       "externalStatusLastError": "Lagebewertung zuletzt fehlgeschlagen: {message}",
       "offloadStatusLastRun": "Fotos ausgelagert: {at} — {removed} Datei(en), {freedMb} MB lokal freigegeben.",
