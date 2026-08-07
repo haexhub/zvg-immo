@@ -71,12 +71,15 @@ export interface ImportEuFloodRiskCacheSummary {
 }
 
 const DEFAULT_NEARBY_DISTANCE_METERS = 1_000
-// The EEA ArcGIS layer 500s on its own before returning a page once
-// resultRecordCount gets much above ~150 (confirmed live: 100/150 succeed in
-// a few seconds, 200+ reliably 500 after 20-40s) — the polygons in this
-// layer are apparently too complex for it to serialize larger pages. This is
-// why the cache was never successfully imported in production.
+// The EEA ArcGIS layer 500s on its own, before returning anything, once a
+// page's combined geometry gets too complex to serialize — not at a fixed
+// row-count threshold (verified live: a 50-row window 500s while its own two
+// 25-row halves both succeed; a lower/heavier row range is fine at 150 rows).
+// This is why the cache was never successfully imported in production.
+// fetchPageWithRetry() below halves and retries a failing window instead of
+// gambling on one page size for the whole dataset.
 const DEFAULT_PAGE_SIZE = 100
+const MIN_PAGE_SIZE = 10
 export const EU_FLOOD_RISK_SOURCE_VERSION = 'eea-floods-ref-v03-r00-2025-08-05'
 export const EU_FLOOD_RISK_POLYGON_LAYER_URL =
   'https://water.discomap.eea.europa.eu/arcgis/rest/services/FloodsDirective/Floods2024_RiskZone_WM/MapServer/2'
@@ -145,7 +148,7 @@ export async function importEuFloodRiskGeoJsonCache(
 
   for (let offset = 0; ; offset += pageSize) {
     if (options.maxPages != null && pages >= options.maxPages) break
-    const page = await fetchArcGisGeoJsonPage(fetchImpl, serviceUrl, {
+    const page = await fetchPageWithRetry(fetchImpl, serviceUrl, {
       where,
       offset,
       pageSize,
@@ -272,6 +275,16 @@ function assessment(
   }
 }
 
+/** Carries the HTTP status so fetchPageWithRetry can tell a transient
+ *  server-side failure (worth splitting and retrying) apart from a request
+ *  that will fail identically at any page size (bad `where` clause, bad
+ *  response shape) — retrying those would just multiply the same failure. */
+class ArcGisHttpError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message)
+  }
+}
+
 async function fetchArcGisGeoJsonPage(
   fetchImpl: typeof fetch,
   serviceUrl: string,
@@ -288,7 +301,9 @@ async function fetchArcGisGeoJsonPage(
   url.searchParams.set('resultRecordCount', String(options.pageSize))
 
   const response = await fetchImpl(url)
-  if (!response.ok) throw new Error(`EU flood risk request failed: ${response.status} ${response.statusText}`)
+  if (!response.ok) {
+    throw new ArcGisHttpError(`EU flood risk request failed: ${response.status} ${response.statusText}`, response.status)
+  }
   const body = await response.json() as unknown
   if (hasArcGisError(body)) {
     throw new Error(`EU flood risk request failed: ${body.error.message}`)
@@ -297,6 +312,33 @@ async function fetchArcGisGeoJsonPage(
     throw new Error('EU flood risk response was not a GeoJSON FeatureCollection')
   }
   return body
+}
+
+async function fetchPageWithRetry(
+  fetchImpl: typeof fetch,
+  serviceUrl: string,
+  options: { where: string; offset: number; pageSize: number },
+): Promise<FloodRiskFeatureCollection> {
+  try {
+    return await fetchArcGisGeoJsonPage(fetchImpl, serviceUrl, options)
+  } catch (err) {
+    // Only a 5xx from the layer itself is the geometry-too-complex failure a
+    // smaller page can work around — a bad query or malformed response fails
+    // identically at any size, so splitting would just multiply the same
+    // failure across many requests instead of surfacing it once.
+    const isRetryable = err instanceof ArcGisHttpError && err.status >= 500
+    if (!isRetryable || options.pageSize < MIN_PAGE_SIZE * 2) throw err
+    const firstSize = Math.ceil(options.pageSize / 2)
+    const [first, second] = await Promise.all([
+      fetchPageWithRetry(fetchImpl, serviceUrl, { ...options, pageSize: firstSize }),
+      fetchPageWithRetry(fetchImpl, serviceUrl, {
+        where: options.where,
+        offset: options.offset + firstSize,
+        pageSize: options.pageSize - firstSize,
+      }),
+    ])
+    return { type: 'FeatureCollection', features: [...first.features, ...second.features] }
+  }
 }
 
 function hasArcGisError(input: unknown): input is { error: { message: string } } {
