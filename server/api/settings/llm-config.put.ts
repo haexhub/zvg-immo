@@ -10,7 +10,7 @@ export default defineEventHandler(async (event): Promise<Record<LlmMaxTokensKind
   if (!db) {
     throw createError({ statusCode: 503, statusMessage: 'Postgres ist nicht konfiguriert.' })
   }
-  const body = await readBody<Record<string, unknown>>(event).catch(() => ({}) as Record<string, unknown>)
+  const body = await readBody<Record<string, unknown>>(event).catch(() => undefined) ?? ({} as Record<string, unknown>)
   for (const kind of KINDS) {
     const value = body[kind]
     if (typeof value !== 'number' || !Number.isFinite(value)) {

@@ -7,7 +7,7 @@ const MAX_PAGE_SIZE = 10_000
 const MAX_MAX_PAGES = 10_000
 
 export default defineEventHandler(async (event): Promise<ImportEuFloodRiskCacheTaskSummary> => {
-  const body = await readBody<Record<string, unknown>>(event).catch(() => ({}) as Record<string, unknown>)
+  const body = await readBody<Record<string, unknown>>(event).catch(() => undefined) ?? ({} as Record<string, unknown>)
 
   const payload: ImportEuFloodRiskCachePayload = {
     cachePath: optionalString(body.cachePath),

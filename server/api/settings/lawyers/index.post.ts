@@ -6,7 +6,7 @@ import { parseLawyerInput } from '../../../utils/lawyer-input'
 import { toAdminLawyer, type AdminLawyer } from './index.get'
 
 export default defineEventHandler(async (event): Promise<AdminLawyer> => {
-  const body = await readBody<Record<string, unknown>>(event).catch(() => ({}))
+  const body = await readBody<Record<string, unknown>>(event).catch(() => undefined) ?? ({} as Record<string, unknown>)
   const input = parseLawyerInput(body)
 
   const supabase = getServiceClient()
