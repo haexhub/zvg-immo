@@ -1,43 +1,32 @@
 <script setup lang="ts">
-import { useSettingsError } from '~/composables/settings/useSettingsError'
+import { useSettingsAction } from '~/composables/settings/useSettingsAction'
 
-const { t } = useI18n()
-const { normalizeSettingsError } = useSettingsError()
+const { pending: displayPending, error: displayError, run } = useSettingsAction()
 
 const hideRulesOnlyDefault = ref(true)
-const displayError = ref<string | null>(null)
 const displaySaved = ref(false)
-const displayPending = ref(false)
 const displayLoaded = ref(false)
 
 async function loadDisplaySettings(): Promise<void> {
   displayLoaded.value = false
-  try {
-    const res = await $fetch<{ hideRulesOnlyAuctions: boolean }>('/api/settings/display')
-    hideRulesOnlyDefault.value = res.hideRulesOnlyAuctions
-    displayError.value = null
-    displayLoaded.value = true
-  } catch (err) {
-    displayError.value = normalizeSettingsError(err, t('settings.display.loadError'))
-  }
+  const res = await run(() => $fetch<{ hideRulesOnlyAuctions: boolean }>('/api/settings/display'), 'settings.display.loadError')
+  if (!res) return
+  hideRulesOnlyDefault.value = res.hideRulesOnlyAuctions
+  displayLoaded.value = true
 }
 
 async function saveDisplaySettings(): Promise<void> {
-  displayPending.value = true
-  displayError.value = null
   displaySaved.value = false
-  try {
-    const res = await $fetch<{ hideRulesOnlyAuctions: boolean }>('/api/settings/display', {
+  const res = await run(
+    () => $fetch<{ hideRulesOnlyAuctions: boolean }>('/api/settings/display', {
       method: 'PUT',
       body: { hideRulesOnlyAuctions: hideRulesOnlyDefault.value },
-    })
-    hideRulesOnlyDefault.value = res.hideRulesOnlyAuctions
-    displaySaved.value = true
-  } catch (err) {
-    displayError.value = normalizeSettingsError(err, t('settings.display.saveError'))
-  } finally {
-    displayPending.value = false
-  }
+    }),
+    'settings.display.saveError',
+  )
+  if (!res) return
+  hideRulesOnlyDefault.value = res.hideRulesOnlyAuctions
+  displaySaved.value = true
 }
 
 onMounted(loadDisplaySettings)

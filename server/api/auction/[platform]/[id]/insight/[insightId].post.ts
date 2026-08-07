@@ -87,7 +87,11 @@ export default defineEventHandler(async (event) => {
     const llmCfg = useRuntimeConfig().extractLlm as
       | { provider?: string; baseUrl?: string; apiKey?: string; model?: string }
       | undefined
-    const providerOverride = await getLlmProviderOverride(db, 'extraction').catch(() => null)
+    // An insight rides the extraction chain by default — same as before this
+    // scope existed — but resolves its own assigned chain first if /settings
+    // has one configured for it specifically.
+    const providerOverride = await getLlmProviderOverride(db, insightId).catch(() => null)
+      ?? await getLlmProviderOverride(db, 'extraction').catch(() => null)
     const config = resolveLlmConfig(providerOverride ?? llmCfg, {
       maxTokens: await getLlmMaxTokens(db, insightId),
     })

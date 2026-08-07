@@ -2,6 +2,7 @@
 import { Loader2, RefreshCw } from 'lucide-vue-next'
 import { useSettingsError } from '~/composables/settings/useSettingsError'
 import { useSettingsTaskOverview } from '~/composables/settings/useSettingsTaskOverview'
+import { usePollWhileActive } from '~/composables/settings/usePollWhileActive'
 import type { GeoMetricsStatus } from '~/server/api/settings/geo-metrics.get'
 import type { GeoMetricsRebuildResult } from '~/server/api/settings/geo-metrics.post'
 
@@ -28,15 +29,32 @@ async function load(): Promise<void> {
   }
 }
 
+// geo-metrics.get.ts has no live "rebuild running" flag (see build-geo-
+// features.ts: the chain has no task-run tracking of its own) — the best
+// signal available client-side is "the epoch we saw right before triggering
+// hasn't advanced yet". maxAttempts bounds this so a failed/stuck rebuild
+// doesn't poll forever with nothing to stop it.
+const rebuildTriggered = ref(false)
+const rebuildBaselineCompletedAt = ref<string | null>(null)
+const { start: startRebuildPolling } = usePollWhileActive(
+  () => rebuildTriggered.value && status.value?.latestEpochCompletedAt === rebuildBaselineCompletedAt.value,
+  load,
+  { intervalMs: 5000, maxAttempts: 240 },
+)
+
 async function rebuild(): Promise<void> {
   if (rebuildPending.value) return
   rebuildPending.value = true
   rebuildError.value = null
   rebuildStarted.value = false
+  // Captured before the POST, since load() below overwrites status.
+  rebuildBaselineCompletedAt.value = status.value?.latestEpochCompletedAt ?? null
   try {
     await $fetch<GeoMetricsRebuildResult>('/api/settings/geo-metrics', { method: 'POST' })
     rebuildStarted.value = true
+    rebuildTriggered.value = true
     await load()
+    startRebuildPolling()
   } catch (err) {
     rebuildError.value = normalizeSettingsError(err, t('settings.geoMetrics.rebuildError'))
   } finally {

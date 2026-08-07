@@ -2,6 +2,7 @@
 import { Loader2, RefreshCw } from 'lucide-vue-next'
 import { useSettingsError } from '~/composables/settings/useSettingsError'
 import { useSettingsTaskOverview } from '~/composables/settings/useSettingsTaskOverview'
+import { usePollWhileActive } from '~/composables/settings/usePollWhileActive'
 import type { OsmImportCountryStatus } from '~/server/api/settings/osm-import.get'
 
 const { t } = useI18n()
@@ -28,6 +29,19 @@ async function load(): Promise<void> {
   }
 }
 
+// The reimport itself does not run in this app: [country].post.ts only records
+// the request, and the host-level daily job clears it once it starts honoring
+// it (server/utils/osm-import-requests.ts). `requestedAt` therefore stays set
+// for hours, so this must not poll open-endedly — osm-import.get counts
+// osm_local_elements rows, which is millions of rows per country. Bounded to a
+// short window right after a manual request, the only moment the row count can
+// plausibly move while an admin is watching.
+const { start: startImportPolling } = usePollWhileActive(
+  () => countries.value.some((country) => !!country.requestedAt),
+  load,
+  { intervalMs: 30_000, maxAttempts: 20 },
+)
+
 async function requestReimport(code: string): Promise<void> {
   if (requestPending.value) return
   requestPending.value = code
@@ -35,6 +49,7 @@ async function requestReimport(code: string): Promise<void> {
   try {
     await $fetch(`/api/settings/osm-import/${code}`, { method: 'POST' })
     await load()
+    startImportPolling()
   } catch (err) {
     requestError.value = normalizeSettingsError(err, t('settings.osmImport.requestError'))
   } finally {
@@ -71,33 +86,32 @@ onMounted(load)
       <p v-if="loadError" class="text-sm text-destructive">{{ loadError }}</p>
       <p v-if="requestError" class="text-sm text-destructive">{{ requestError }}</p>
 
-      <div class="rounded-md border divide-y">
-        <div v-for="country in countries" :key="country.code" class="flex items-start gap-3 px-3 py-2.5">
-          <div class="min-w-0 flex-1">
-            <span class="block text-sm font-medium">
-              {{ countryLabel(country.code) }}
-              <span class="ml-1 font-mono text-xs uppercase text-muted-foreground">{{ country.code }}</span>
-            </span>
-            <span class="block text-xs text-muted-foreground">
-              {{ country.rowCount > 0 ? $t('settings.osmImport.rowCount', { count: country.rowCount }) : $t('settings.osmImport.noData') }}
-            </span>
-            <span v-if="country.requestedAt" class="block text-xs text-amber-600 dark:text-amber-400">
-              {{ $t('settings.osmImport.pending', { at: formatBatchDate(country.requestedAt) }) }}
-            </span>
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            class="shrink-0"
-            :disabled="requestPending !== null || !!country.requestedAt"
-            @click="requestReimport(country.code)"
-          >
-            <Loader2 v-if="requestPending === country.code" class="h-4 w-4 animate-spin" />
-            <RefreshCw v-else class="h-4 w-4" />
-            {{ requestPending === country.code ? $t('settings.osmImport.requesting') : $t('settings.osmImport.request') }}
-          </Button>
-        </div>
+      <div class="max-h-80 overflow-y-auto rounded-md border divide-y">
+        <SettingsCountryActionRow v-for="country in countries" :key="country.code">
+          <span class="block text-sm font-medium">
+            {{ countryLabel(country.code) }}
+            <span class="ml-1 font-mono text-xs uppercase text-muted-foreground">{{ country.code }}</span>
+          </span>
+          <span class="block text-xs text-muted-foreground">
+            {{ country.rowCount > 0 ? $t('settings.osmImport.rowCount', { count: country.rowCount }) : $t('settings.osmImport.noData') }}
+          </span>
+          <span v-if="country.requestedAt" class="block text-xs text-amber-600 dark:text-amber-400">
+            {{ $t('settings.osmImport.pending', { at: formatBatchDate(country.requestedAt) }) }}
+          </span>
+          <template #action>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              :disabled="requestPending !== null || !!country.requestedAt"
+              @click="requestReimport(country.code)"
+            >
+              <Loader2 v-if="requestPending === country.code" class="h-4 w-4 animate-spin" />
+              <RefreshCw v-else class="h-4 w-4" />
+              {{ requestPending === country.code ? $t('settings.osmImport.requesting') : $t('settings.osmImport.request') }}
+            </Button>
+          </template>
+        </SettingsCountryActionRow>
       </div>
     </CardContent>
   </Card>

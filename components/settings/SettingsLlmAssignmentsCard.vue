@@ -1,19 +1,11 @@
 <script setup lang="ts">
 import { ChevronDown, ChevronUp, X } from 'lucide-vue-next'
 import { useSettingsError } from '~/composables/settings/useSettingsError'
-import type { LlmChainStrategy, LlmExecutionMode, LlmProvider, LlmProviderScope } from '~/server/utils/app-settings'
-
-interface LlmProviderProfileForm {
-  id: string
-  name: string
-  provider: LlmProvider
-  baseUrl: string
-  model: string
-  executionMode: LlmExecutionMode
-}
+import { useLlmProfileOptions, type LlmProviderProfileOption } from '~/composables/settings/useLlmProfileOptions'
+import type { LlmChainStrategy, LlmExecutionMode, LlmProviderScope } from '~/server/utils/app-settings'
 
 interface LlmProfilesResponse {
-  profiles: LlmProviderProfileForm[]
+  profiles: LlmProviderProfileOption[]
   assignments: Partial<Record<LlmProviderScope, string[]>>
   strategy: LlmChainStrategy
   effective: Record<LlmProviderScope, {
@@ -23,14 +15,19 @@ interface LlmProfilesResponse {
     executionMode: LlmExecutionMode
   }>
   maxChainLength: number
+  scopes: LlmProviderScope[]
 }
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const { normalizeSettingsError } = useSettingsError()
 
-const LLM_PROVIDER_SCOPES: LlmProviderScope[] = ['extraction', 'translation']
+// extraction/translation are always present; any further scope is an
+// insight id (server/utils/insights/registry.ts) — fetched from
+// /api/settings/llm-profiles instead of hardcoded, so a newly registered
+// insight gets an assignment section automatically.
+const LLM_PROVIDER_SCOPES = ref<LlmProviderScope[]>(['extraction', 'translation'])
 const ADD_PLACEHOLDER = '__add'
-const llmProfiles = useState<LlmProviderProfileForm[]>('settings:llm-profile-options', () => [])
+const { llmProfileOptions: llmProfiles, setLlmProfileOptions } = useLlmProfileOptions()
 const llmProfileAssignments = reactive<Record<LlmProviderScope, string[]>>({
   extraction: [],
   translation: [],
@@ -39,6 +36,17 @@ const addSelection = reactive<Record<LlmProviderScope, string>>({
   extraction: ADD_PLACEHOLDER,
   translation: ADD_PLACEHOLDER,
 })
+
+function scopeLabel(scope: LlmProviderScope): string {
+  if (scope === 'extraction') return t('settings.llmAssignment.extractionTitle')
+  if (scope === 'translation') return t('settings.llmAssignment.translationTitle')
+  const key = `settings.llm.${scope}Label`
+  return te(key) ? t(key) : scope
+}
+
+function effectiveFor(scope: LlmProviderScope): { provider: string; baseUrl: string } {
+  return llmProfileEffective.value?.[scope] ?? { provider: '', baseUrl: '' }
+}
 const LLM_CHAIN_STRATEGY_OPTIONS: LlmChainStrategy[] = ['fallback', 'round-robin']
 // Only the extraction chain has a strategy: it's the one a background task
 // walks hundreds of times per run, so spreading it over several API keys is
@@ -89,30 +97,48 @@ function setStrategy(option: LlmChainStrategy): void {
   llmAssignmentsSaved.value = false
 }
 
-function chainLimitReached(scope: LlmProviderScope): boolean {
-  return llmProfileAssignments[scope].length >= maxChainLength.value
+// LlmProviderScope is an open string type (any insight id qualifies), so
+// llmProfileAssignments — keyed by it — can't be a closed Record; every
+// access needs a default since TS can no longer guarantee the key exists.
+// loadLlmAssignments seeds an entry per scope it knows about, so in practice
+// this only ever defaults for a scope that hasn't loaded yet.
+const NO_ASSIGNMENTS: readonly string[] = []
+
+// Read-only on purpose: the template calls this on every render, and seeding a
+// missing key here would write to reactive state mid-render.
+function assignmentsFor(scope: LlmProviderScope): readonly string[] {
+  return llmProfileAssignments[scope] ?? NO_ASSIGNMENTS
 }
 
-function availableProfiles(scope: LlmProviderScope): LlmProviderProfileForm[] {
+// Mutating counterpart, only ever reached from a click handler.
+function ensureAssignments(scope: LlmProviderScope): string[] {
+  return llmProfileAssignments[scope] ??= []
+}
+
+function chainLimitReached(scope: LlmProviderScope): boolean {
+  return assignmentsFor(scope).length >= maxChainLength.value
+}
+
+function availableProfiles(scope: LlmProviderScope): LlmProviderProfileOption[] {
   if (chainLimitReached(scope)) return []
-  const assigned = new Set(llmProfileAssignments[scope])
+  const assigned = new Set(assignmentsFor(scope))
   return llmProfiles.value.filter((profile) => !assigned.has(profile.id))
 }
 
 function addAssignment(scope: LlmProviderScope, id: string): void {
   if (id === ADD_PLACEHOLDER || chainLimitReached(scope)) return
-  llmProfileAssignments[scope].push(id)
+  ensureAssignments(scope).push(id)
   addSelection[scope] = ADD_PLACEHOLDER
   llmAssignmentsSaved.value = false
 }
 
 function removeAssignment(scope: LlmProviderScope, index: number): void {
-  llmProfileAssignments[scope].splice(index, 1)
+  ensureAssignments(scope).splice(index, 1)
   llmAssignmentsSaved.value = false
 }
 
 function moveAssignment(scope: LlmProviderScope, index: number, delta: -1 | 1): void {
-  const chain = llmProfileAssignments[scope]
+  const chain = ensureAssignments(scope)
   const target = index + delta
   if (target < 0 || target >= chain.length) return
   ;[chain[index], chain[target]] = [chain[target]!, chain[index]!]
@@ -122,16 +148,12 @@ function moveAssignment(scope: LlmProviderScope, index: number, delta: -1 | 1): 
 async function loadLlmAssignments(): Promise<void> {
   try {
     const res = await $fetch<LlmProfilesResponse>('/api/settings/llm-profiles')
-    llmProfiles.value = res.profiles.map(({ id, name, provider, baseUrl, model, executionMode }) => ({
-      id,
-      name,
-      provider,
-      baseUrl,
-      model,
-      executionMode,
-    }))
-    llmProfileAssignments.extraction = [...(res.assignments.extraction ?? [])]
-    llmProfileAssignments.translation = [...(res.assignments.translation ?? [])]
+    setLlmProfileOptions(res.profiles)
+    LLM_PROVIDER_SCOPES.value = res.scopes
+    for (const scope of res.scopes) {
+      llmProfileAssignments[scope] = [...(res.assignments[scope] ?? [])]
+      addSelection[scope] ??= ADD_PLACEHOLDER
+    }
     chainStrategy.value = res.strategy
     maxChainLength.value = res.maxChainLength
     llmProfileEffective.value = res.effective
@@ -146,15 +168,13 @@ async function saveLlmAssignments(): Promise<void> {
   llmAssignmentsError.value = null
   llmAssignmentsSaved.value = false
   try {
+    const assignments: Record<string, string[] | undefined> = {}
+    for (const scope of LLM_PROVIDER_SCOPES.value) {
+      assignments[scope] = llmProfileAssignments[scope]?.length ? llmProfileAssignments[scope] : undefined
+    }
     await $fetch('/api/settings/llm-assignments', {
       method: 'PUT',
-      body: {
-        assignments: {
-          extraction: llmProfileAssignments.extraction.length ? llmProfileAssignments.extraction : undefined,
-          translation: llmProfileAssignments.translation.length ? llmProfileAssignments.translation : undefined,
-        },
-        strategy: chainStrategy.value,
-      },
+      body: { assignments, strategy: chainStrategy.value },
     })
     await loadLlmAssignments()
     llmAssignmentsSaved.value = !llmAssignmentsError.value
@@ -183,9 +203,7 @@ onMounted(loadLlmAssignments)
 
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div v-for="scope in LLM_PROVIDER_SCOPES" :key="scope" class="space-y-2">
-          <Label>
-            {{ scope === 'translation' ? $t('settings.llmAssignment.translationTitle') : $t('settings.llmAssignment.extractionTitle') }}
-          </Label>
+          <Label>{{ scopeLabel(scope) }}</Label>
 
           <template v-if="scope === 'extraction'">
             <Select :model-value="chainStrategy" @update:model-value="(option) => setStrategy(option as LlmChainStrategy)">
@@ -201,9 +219,9 @@ onMounted(loadLlmAssignments)
             <p class="text-xs text-muted-foreground">{{ strategyHint() }}</p>
           </template>
 
-          <ul v-if="llmProfileAssignments[scope].length" class="space-y-1.5">
+          <ul v-if="assignmentsFor(scope).length" class="space-y-1.5">
             <li
-              v-for="(profileId, index) in llmProfileAssignments[scope]"
+              v-for="(profileId, index) in assignmentsFor(scope)"
               :key="profileId"
               class="flex items-center gap-1.5 rounded-md border px-2 py-1.5"
             >
@@ -221,7 +239,7 @@ onMounted(loadLlmAssignments)
               </Button>
               <Button
                 type="button" variant="ghost" size="icon" class="h-7 w-7 shrink-0"
-                :disabled="index === llmProfileAssignments[scope].length - 1"
+                :disabled="index === assignmentsFor(scope).length - 1"
                 :aria-label="$t('settings.llmAssignment.moveDown')"
                 @click="moveAssignment(scope, index, 1)"
               >
@@ -257,14 +275,16 @@ onMounted(loadLlmAssignments)
           <p v-if="chainLimitReached(scope)" class="text-xs text-muted-foreground">
             {{ $t('settings.llmAssignment.chainLimitReached', { max: maxChainLength }) }}
           </p>
-          <p v-else-if="llmProfileAssignments[scope].length > 1 && scope !== 'extraction'" class="text-xs text-muted-foreground">
+          <p v-else-if="assignmentsFor(scope).length > 1 && scope !== 'extraction'" class="text-xs text-muted-foreground">
             {{ $t('settings.llmAssignment.fallbackHint') }}
           </p>
-          <p v-if="llmProfileAssignments[scope].length === 0 && llmProfileEffective" class="text-xs text-muted-foreground">
-            {{ $t(scope === 'translation' ? 'settings.llmAssignment.usingTranslationFallback' : 'settings.llmAssignment.usingEnvDefault', {
-              provider: llmProfileEffective[scope].provider,
-              baseUrl: llmProfileEffective[scope].baseUrl,
-            }) }}
+          <p v-if="assignmentsFor(scope).length === 0 && llmProfileEffective" class="text-xs text-muted-foreground">
+            {{ $t(
+              scope === 'translation' ? 'settings.llmAssignment.usingTranslationFallback'
+                : scope === 'extraction' ? 'settings.llmAssignment.usingEnvDefault'
+                : 'settings.llmAssignment.usingInsightFallback',
+              effectiveFor(scope),
+            ) }}
           </p>
         </div>
       </div>

@@ -7,6 +7,7 @@ import {
   getLlmExtractionChainStrategy,
   getLlmProviderOverride,
   getLlmProviderProfileSettings,
+  KINDS,
   MAX_PROVIDER_CHAIN_LENGTH,
   type LlmExecutionMode,
   type LlmProvider,
@@ -63,24 +64,21 @@ export default defineEventHandler(async () => {
     baseUrl: string
     model: string
     executionMode: LlmExecutionMode
-  }> = {
-    extraction: {
+  }> = {}
+  for (const kind of KINDS) {
+    effective[kind] = {
       provider: envConfig?.provider || 'openai-compatible',
       baseUrl: envConfig?.baseUrl || '',
       model: envConfig?.model || '',
       executionMode: 'sync',
-    },
-    translation: {
-      provider: envConfig?.provider || 'openai-compatible',
-      baseUrl: envConfig?.baseUrl || '',
-      model: envConfig?.model || '',
-      executionMode: 'sync',
-    },
+    }
   }
+  const scopesWithOwnOverride = new Set<LlmProviderScope>()
   if (db) {
-    for (const scope of ['extraction', 'translation'] as const) {
+    for (const scope of KINDS) {
       const override = await getLlmProviderOverride(db, scope).catch(() => null)
       if (override) {
+        scopesWithOwnOverride.add(scope)
         effective[scope] = {
           provider: override.provider,
           baseUrl: override.baseUrl,
@@ -90,11 +88,25 @@ export default defineEventHandler(async () => {
       }
     }
   }
+  // An insight without its own chain actually runs on extraction's *resolved*
+  // config, not on the env default — insight/[insightId].post.ts falls back to
+  // getLlmProviderOverride(db, 'extraction'). Reporting the env default here
+  // would make the card claim "uses document extraction's provider" while
+  // printing whatever the env happens to hold, which is only what extraction
+  // itself falls back to when it has no override either.
+  const extractionEffective = effective.extraction
+  if (extractionEffective) {
+    for (const kind of KINDS) {
+      if (kind === 'extraction' || kind === 'translation' || scopesWithOwnOverride.has(kind)) continue
+      effective[kind] = { ...extractionEffective }
+    }
+  }
   return {
     profiles: settings.profiles.map(publicProfile),
     assignments: settings.assignments,
     strategy: db ? await getLlmExtractionChainStrategy(db).catch(() => DEFAULT_LLM_CHAIN_STRATEGY) : DEFAULT_LLM_CHAIN_STRATEGY,
     effective,
     maxChainLength: MAX_PROVIDER_CHAIN_LENGTH,
+    scopes: KINDS,
   }
 })

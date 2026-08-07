@@ -380,14 +380,16 @@ onBeforeUnmount(stopProgressPolling)
         </label>
 
         <div class="max-h-80 overflow-y-auto rounded-md border divide-y">
-          <div v-for="source in countrySources" :key="source.code" class="flex items-start gap-3 px-3 py-2.5 hover:bg-muted/50">
-            <Checkbox
-              class="mt-0.5"
-              :model-value="source.enabled"
-              :disabled="countrySourcesPending"
-              @update:model-value="toggleCountrySource(source.code)"
-            />
-            <button type="button" class="min-w-0 flex-1 text-left disabled:cursor-not-allowed disabled:opacity-60" :disabled="countrySourcesPending" @click="toggleCountrySource(source.code)">
+          <SettingsCountryActionRow v-for="source in countrySources" :key="source.code">
+            <template #leading>
+              <Checkbox
+                class="mt-0.5"
+                :model-value="source.enabled"
+                :disabled="countrySourcesPending"
+                @update:model-value="toggleCountrySource(source.code)"
+              />
+            </template>
+            <button type="button" class="min-w-0 w-full text-left disabled:cursor-not-allowed disabled:opacity-60" :disabled="countrySourcesPending" @click="toggleCountrySource(source.code)">
               <span class="block text-sm font-medium">
                 {{ countryLabel(source.code, source.name) }}
                 <span class="ml-1 font-mono text-xs uppercase text-muted-foreground">{{ source.code }}</span>
@@ -396,20 +398,21 @@ onBeforeUnmount(stopProgressPolling)
                 {{ source.platforms.map((platform) => platform.name).join(', ') }}
               </span>
             </button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              class="shrink-0"
-              :title="$t('settings.sources.enrichTitle')"
-              :disabled="!source.enabled || countrySourcesPending || countryEnrichPending !== null"
-              @click="enrichCountrySource(source)"
-            >
-              <Loader2 v-if="countryEnrichPending === source.code" class="h-4 w-4 animate-spin" />
-              <RefreshCw v-else class="h-4 w-4" />
-              {{ countryEnrichPending === source.code ? $t('settings.sources.enriching') : $t('settings.sources.enrich') }}
-            </Button>
-          </div>
+            <template #action>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                :title="$t('settings.sources.enrichTitle')"
+                :disabled="!source.enabled || countrySourcesPending || countryEnrichPending !== null"
+                @click="enrichCountrySource(source)"
+              >
+                <Loader2 v-if="countryEnrichPending === source.code" class="h-4 w-4 animate-spin" />
+                <RefreshCw v-else class="h-4 w-4" />
+                {{ countryEnrichPending === source.code ? $t('settings.sources.enriching') : $t('settings.sources.enrich') }}
+              </Button>
+            </template>
+          </SettingsCountryActionRow>
         </div>
 
         <p class="text-xs text-muted-foreground">
