@@ -142,6 +142,17 @@ function json(value: unknown): string | null {
   return value === undefined ? null : JSON.stringify(value)
 }
 
+/** Postgres array-literal syntax for a text[] parameter. Needed because
+ *  Drizzle's `sql` template expands a bound JS array into a parenthesized
+ *  parameter list (`($1, $2)`, meant for `IN (...)` clauses) rather than a
+ *  single array value — casting that row-constructor with `::text[]` is not
+ *  valid SQL. Serializing to this literal keeps the value parameterized
+ *  (still a single bound string) while giving Postgres real array syntax to
+ *  parse on the cast. */
+function pgTextArrayLiteral(values: readonly string[]): string {
+  return `{${values.map((v) => `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`).join(',')}}`
+}
+
 /**
  * Projects an auction plus its extraction onto the versioned
  * `auction_details` value columns.
@@ -309,7 +320,14 @@ export async function writeAuctionDetails(
   // whole reason to exist) rather than a single ::jsonb/::text blanket cast:
   // a bare NULL parameter inside a multi-column ROW constructor otherwise
   // leaves Postgres unable to infer its type.
-  const castValueTuple = () => sql.join(VALUE_COLUMNS.map(([name, type]) => sql`${values[name]}::${sql.raw(type)}`), sql`, `)
+  const castValueTuple = () => sql.join(
+    VALUE_COLUMNS.map(([name, type]) => {
+      const value = values[name]
+      const bound = type === 'text[]' && Array.isArray(value) ? pgTextArrayLiteral(value) : value
+      return sql`${bound}::${sql.raw(type)}`
+    }),
+    sql`, `,
+  )
 
   const result = await db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`auction_details:${platform}:${externalId}`}))`)

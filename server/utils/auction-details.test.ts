@@ -296,6 +296,27 @@ describeDb('writeAuctionDetails (real Postgres)', () => {
     expect(translations.rows[0].n).toBe(0)
   })
 
+  it('round-trips a non-empty features array', async () => {
+    // features is the one text[] column in VALUE_COLUMNS — Drizzle's sql``
+    // template expands a bound JS array into a parenthesized parameter list
+    // (`($1, $2, $3)`, meant for IN (...) clauses) rather than a single array
+    // parameter, so a naive per-column `${value}::${type}` cast breaks for
+    // this column specifically once the LLM actually returns features.
+    const write = await writeAuctionDetails(makeAuction(), makeExtraction({ features: ['garten', 'garage'] }))
+    expect(write).toEqual({ version: 1, changed: true })
+
+    const latest = await readLatestAuctionDetails('zvg-portal', '7265')
+    expect(latest?.features).toEqual(['garten', 'garage'])
+  })
+
+  it('round-trips an empty features array', async () => {
+    const write = await writeAuctionDetails(makeAuction(), makeExtraction({ features: [] }))
+    expect(write).toEqual({ version: 1, changed: true })
+
+    const latest = await readLatestAuctionDetails('zvg-portal', '7265')
+    expect(latest?.features).toEqual([])
+  })
+
   it('holds the advisory lock for the whole transaction', async () => {
     await writeAuctionDetails(makeAuction(), makeExtraction())
 
