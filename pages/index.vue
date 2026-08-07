@@ -110,11 +110,11 @@ const locationSummary = computed(() => {
 // SiteHeader's #header-search-target (see components/site/SiteHeader.vue) so
 // it stays reachable — and fully interactive — while browsing the rails
 // below. `heroSearchRef` sits on a sentinel wrapping just the form (not the
-// whole hero section, which also holds the trust line) — observing the
-// section itself would keep it "visible" until the trust line clears the
-// header too, leaving the form hidden-but-not-yet-teleported in between. The
-// sentinel's `min-h-12` also reserves the form's footprint once it teleports
-// away, so the rails below don't jump up.
+// whole hero section) — observing the section itself would keep it "visible"
+// until the section's own padding clears the header too, leaving the form
+// hidden-but-not-yet-teleported in between. The sentinel's `min-h-12` also
+// reserves the form's footprint once it teleports away, so the rails below
+// don't jump up.
 const heroSearchRef = ref<HTMLElement>()
 const heroSearchVisible = ref(true)
 useIntersectionObserver(
@@ -249,9 +249,6 @@ function pickRecent(query: Record<string, string>): void {
             </form>
           </Teleport>
         </div>
-        <ul class="flex flex-wrap items-center justify-center gap-x-5 gap-y-1.5 text-xs text-muted-foreground">
-          <li v-for="(item, i) in $tm('landing.hero.trust')" :key="i">{{ $rt(item) }}</li>
-        </ul>
       </div>
     </section>
 

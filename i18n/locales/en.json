@@ -18,8 +18,7 @@
   "landing": {
     "hero": {
       "searchPlaceholder": "Search location, property type or case number …",
-      "searchCta": "Search",
-      "trust": ["100% free", "No sign-up needed", "Live from court portals"]
+      "searchCta": "Search"
     },
     "rails": {
       "country": {
