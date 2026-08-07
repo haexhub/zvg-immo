@@ -38,7 +38,20 @@ interface ExternalDataSourceSetting {
   fields: ExternalDataSourceField[]
 }
 
+interface ExternalDataCoverageCountryRow {
+  country: string
+  total: number
+  covered: number
+}
+interface ExternalDataSourceCoverage {
+  id: string
+  total: number
+  covered: number
+  byCountry: ExternalDataCoverageCountryRow[]
+}
+
 const { t, te } = useI18n()
+const countryLabel = useCountryLabel()
 const { normalizeSettingsError } = useSettingsError()
 const { llmBatchJobs, formatBatchDate, loadLlmBatchJobs, startProgressPolling } = useSettingsTaskOverview()
 
@@ -50,6 +63,27 @@ const externalDataSourceSaved = ref<string | null>(null)
 const externalDataFieldDrafts = reactive<Record<string, string>>({})
 const enrichmentTriggerPending = ref(false)
 const enrichmentTriggerError = ref<string | null>(null)
+
+const coverage = ref<ExternalDataSourceCoverage[]>([])
+const coverageError = ref<string | null>(null)
+
+function percentOf(done: number, total: number): number {
+  return total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0
+}
+
+function coverageFor(sourceId: string): ExternalDataSourceCoverage | null {
+  return coverage.value.find((entry) => entry.id === sourceId) ?? null
+}
+
+async function loadCoverage(): Promise<void> {
+  try {
+    const res = await $fetch<{ sources: ExternalDataSourceCoverage[] }>('/api/settings/external-data/coverage')
+    coverage.value = res.sources
+    coverageError.value = null
+  } catch (err) {
+    coverageError.value = normalizeSettingsError(err, t('settings.externalData.coverage.loadError'))
+  }
+}
 
 async function triggerEnrichment(): Promise<void> {
   enrichmentTriggerPending.value = true
@@ -157,7 +191,7 @@ async function saveExternalDataSource(source: ExternalDataSourceSetting): Promis
 }
 
 onMounted(async () => {
-  await Promise.all([loadExternalDataSources(), loadLlmBatchJobs()])
+  await Promise.all([loadExternalDataSources(), loadLlmBatchJobs(), loadCoverage()])
 })
 </script>
 
@@ -183,6 +217,7 @@ onMounted(async () => {
       <p class="text-sm text-muted-foreground">{{ $t('settings.externalData.description') }}</p>
       <p v-if="externalDataSourcesError" class="text-sm text-destructive">{{ externalDataSourcesError }}</p>
       <p v-if="enrichmentTriggerError" class="text-sm text-destructive">{{ enrichmentTriggerError }}</p>
+      <p v-if="coverageError" class="text-sm text-destructive">{{ coverageError }}</p>
 
       <div v-if="llmBatchJobs?.externalEnrichmentStatus" class="text-sm space-y-1">
         <p v-if="llmBatchJobs.externalEnrichmentStatus.status === 'running'">
@@ -219,6 +254,35 @@ onMounted(async () => {
           >
             {{ source.isConfigured ? $t('settings.externalData.configured') : $t('settings.externalData.notConfigured') }}
           </Badge>
+        </div>
+
+        <div v-if="coverageFor(source.id)" class="space-y-2 rounded-md bg-muted/20 p-2">
+          <div class="flex items-baseline justify-between gap-2 text-xs">
+            <span class="font-medium text-foreground">{{ $t('settings.externalData.coverage.title') }}</span>
+            <span class="text-muted-foreground">
+              {{ $t('settings.externalData.coverage.summary', {
+                covered: coverageFor(source.id)!.covered,
+                total: coverageFor(source.id)!.total,
+                percent: percentOf(coverageFor(source.id)!.covered, coverageFor(source.id)!.total),
+              }) }}
+            </span>
+          </div>
+          <Progress :model-value="percentOf(coverageFor(source.id)!.covered, coverageFor(source.id)!.total)" />
+          <p v-if="coverageFor(source.id)!.byCountry.length === 0" class="text-xs text-muted-foreground">
+            {{ $t('settings.externalData.coverage.empty') }}
+          </p>
+          <ul v-else class="max-h-40 space-y-2 overflow-y-auto pr-1">
+            <li v-for="row in coverageFor(source.id)!.byCountry" :key="row.country" class="space-y-1">
+              <div class="flex items-baseline justify-between gap-2 text-xs">
+                <span class="text-foreground">
+                  {{ countryLabel(row.country) }}
+                  <span class="ml-1 font-mono uppercase text-muted-foreground">{{ row.country }}</span>
+                </span>
+                <span class="text-muted-foreground">{{ row.covered }}/{{ row.total }}</span>
+              </div>
+              <Progress :model-value="percentOf(row.covered, row.total)" class="h-1.5" />
+            </li>
+          </ul>
         </div>
 
         <div class="grid gap-3 sm:grid-cols-2">

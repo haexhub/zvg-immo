@@ -368,6 +368,12 @@
         "open-meteo-climate-normals": "Climate chart on the detail page.",
         "copernicus-effis": "Wildfire risk note on the detail page."
       },
+      "coverage": {
+        "title": "Data coverage",
+        "summary": "{covered} of {total} geocoded auctions ({percent}%)",
+        "empty": "No geocoded auctions for this source yet.",
+        "loadError": "Could not load data coverage."
+      },
       "cacheImport": {
         "import": "Import cache now",
         "importing": "Importing …",
