@@ -6,10 +6,16 @@
 // Sheet instead.
 import { useMediaQuery } from '@vueuse/core'
 
-defineProps<{
+const props = defineProps<{
   label: string
   summary: string
   align?: 'start' | 'end'
+  // Collapsed header (see useHeaderCompact): the segment drops its label line
+  // and shrinks to a single-line button instead of a full-width input field.
+  compact?: boolean
+  // Whether `summary` holds a real selection or just its placeholder — the
+  // compact button has no room for a placeholder and falls back to `label`.
+  hasValue?: boolean
 }>()
 
 const open = defineModel<boolean>('open', { required: true })
@@ -17,6 +23,14 @@ const open = defineModel<boolean>('open', { required: true })
 // popover-only behavior) — cuts the hydration mismatch on desktop, where
 // SSR and client now agree; mobile still corrects itself right after mount.
 const isDesktop = useMediaQuery('(min-width: 768px)', { ssrWidth: 1280 })
+
+const triggerClass = computed(() => [
+  'min-w-0 rounded-full text-left transition-colors',
+  // Three full-width segments leave ~85px of text each on a 390px phone, so the
+  // large state keeps the tighter padding until there's room for it.
+  props.compact ? 'max-w-32 px-4 py-1.5' : 'flex-1 px-4 py-3 sm:px-6',
+])
+const compactText = computed(() => (props.hasValue ? props.summary : props.label))
 </script>
 
 <template>
@@ -24,11 +38,13 @@ const isDesktop = useMediaQuery('(min-width: 768px)', { ssrWidth: 1280 })
     <PopoverTrigger as-child>
       <button
         type="button"
-        class="min-w-0 flex-1 rounded-full px-4 py-2 text-left transition-colors"
-        :class="open ? 'bg-background shadow' : 'hover:bg-background/60'"
+        :class="[triggerClass, open ? 'bg-background shadow' : 'hover:bg-background/60']"
       >
-        <span class="block text-xs font-semibold">{{ label }}</span>
-        <span class="block truncate text-sm text-muted-foreground">{{ summary }}</span>
+        <span v-if="compact" class="block truncate text-sm font-medium">{{ compactText }}</span>
+        <template v-else>
+          <span class="block truncate text-sm font-semibold">{{ label }}</span>
+          <span class="block truncate text-sm text-muted-foreground">{{ summary }}</span>
+        </template>
       </button>
     </PopoverTrigger>
     <PopoverContent class="w-md p-5" :align="align ?? 'start'">
@@ -40,11 +56,13 @@ const isDesktop = useMediaQuery('(min-width: 768px)', { ssrWidth: 1280 })
     <SheetTrigger as-child>
       <button
         type="button"
-        class="min-w-0 flex-1 rounded-full px-4 py-2 text-left transition-colors"
-        :class="open ? 'bg-background shadow' : 'hover:bg-background/60'"
+        :class="[triggerClass, open ? 'bg-background shadow' : 'hover:bg-background/60']"
       >
-        <span class="block text-xs font-semibold">{{ label }}</span>
-        <span class="block truncate text-sm text-muted-foreground">{{ summary }}</span>
+        <span v-if="compact" class="block truncate text-sm font-medium">{{ compactText }}</span>
+        <template v-else>
+          <span class="block truncate text-sm font-semibold">{{ label }}</span>
+          <span class="block truncate text-sm text-muted-foreground">{{ summary }}</span>
+        </template>
       </button>
     </SheetTrigger>
     <SheetContent side="bottom" class="h-dvh max-h-dvh w-full gap-0 rounded-none border-t-0 p-0">
