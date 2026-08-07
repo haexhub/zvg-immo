@@ -30,6 +30,7 @@ const props = defineProps<{
 }>()
 
 const { t, locale } = useI18n()
+const { formatDistance } = useAuctionDetailFormatters()
 const runtimeConfig = useRuntimeConfig()
 const mapTilerApiKey = computed(() => String(runtimeConfig.public.maptilerApiKey || '').trim())
 const baseLayer = ref<'streets' | 'satellite'>('streets')
@@ -114,13 +115,7 @@ function featureLabel(feature: LocationMapFeature): string {
 
 function featurePopup(feature: LocationMapFeature): string {
   const name = feature.name ? `${escapeHtml(feature.name)}<br>` : ''
-  return `${name}${escapeHtml(featureLabel(feature))}<br>${distanceLabel(feature.distanceMeters)}`
-}
-
-function distanceLabel(distanceMeters: number): string {
-  return distanceMeters < 1000
-    ? t('objektDetail.distanceMeters', { meters: distanceMeters.toLocaleString(undefined, { maximumFractionDigits: 0 }) })
-    : t('objektDetail.distanceKilometers', { kilometers: (distanceMeters / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 }) })
+  return `${name}${escapeHtml(featureLabel(feature))}<br>${formatDistance(feature.distanceMeters)}`
 }
 
 function escapeHtml(value: string): string {
@@ -242,7 +237,7 @@ function odorOverlayEntry(entries: OverlayEntry[]): void {
   const radius = Math.min(Math.max(nearest, 300), 5_000)
   const label = t('objektDetail.mapLayerOdorSignals')
   const feature = new Feature({ geometry: circularPolygon(props.lng, props.lat, radius) })
-  feature.set('popupHtml', `${label}<br>${distanceLabel(nearest)}`)
+  feature.set('popupHtml', `${label}<br>${formatDistance(nearest)}`)
   const layer = new VectorLayer({
     source: new VectorSource({ features: [feature] }),
     style: new Style({
