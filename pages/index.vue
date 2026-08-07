@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useIntersectionObserver } from '@vueuse/core'
+import { useIntersectionObserver, useMediaQuery } from '@vueuse/core'
 import { Search } from 'lucide-vue-next'
 import type { LandingRailsResponse } from '~/server/api/landing/rails.get'
 import type { CountryEntry } from '~/server/crawlers/registry'
@@ -97,8 +97,15 @@ const locationSummary = computed(() => {
 })
 
 // Airbnb-style collapsing header: once the hero search bar scrolls out from
-// under the sticky SiteHeader, a narrow summary pill takes its place so the
-// search stays reachable while browsing the rails below.
+// under the sticky SiteHeader, the same SearchBar instance teleports into
+// SiteHeader's #header-search-target (see components/site/SiteHeader.vue) so
+// it stays reachable — and fully interactive — while browsing the rails
+// below. `heroSearchRef` sits on a sentinel wrapping just the form (not the
+// whole hero section, which also holds the trust line) — observing the
+// section itself would keep it "visible" until the trust line clears the
+// header too, leaving the form hidden-but-not-yet-teleported in between. The
+// sentinel's `min-h-12` also reserves the form's footprint once it teleports
+// away, so the rails below don't jump up.
 const heroSearchRef = ref<HTMLElement>()
 const heroSearchVisible = ref(true)
 useIntersectionObserver(
@@ -106,11 +113,10 @@ useIntersectionObserver(
   ([entry]) => { heroSearchVisible.value = entry?.isIntersecting ?? true },
   { rootMargin: '-64px 0px 0px 0px' },
 )
-const showCompactSearch = computed(() => !heroSearchVisible.value)
-
-function scrollToHeroSearch(): void {
-  window.scrollTo({ top: 0, behavior: 'smooth' })
-}
+// The 3-segment SearchBar has no compact mobile layout — teleporting it into
+// the header's h-16 row on a narrow viewport would just recreate the cramped
+// overflow this page already avoids in the hero. Desktop-only for now.
+const isDesktop = useMediaQuery('(min-width: 768px)', { ssrWidth: 1280 })
 
 function toggleCountry(code: string): void {
   selectedCountries.value = toggleInArray(selectedCountries.value, code)
@@ -177,77 +183,68 @@ function pickRecent(query: Record<string, string>): void {
     <!-- Search -->
     <section class="border-b px-6 py-10 sm:py-14">
       <div class="mx-auto flex w-full max-w-2xl flex-col items-center gap-4 text-center">
-        <form ref="heroSearchRef" class="flex w-full max-w-2xl items-center gap-2" @submit.prevent="submitSearch">
-          <SearchBar
-            v-model:search="search"
-            v-model:price-min="priceMin"
-            v-model:price-max="priceMax"
-            v-model:land-area-min="landAreaMin"
-            v-model:land-area-max="landAreaMax"
-            v-model:living-area-min="livingAreaMin"
-            v-model:living-area-max="livingAreaMax"
-            v-model:year-built-min="yearBuiltMin"
-            v-model:year-built-max="yearBuiltMax"
-            v-model:renovation-year-min="renovationYearMin"
-            v-model:renovation-year-max="renovationYearMax"
-            v-model:authority-filter="authorityFilter"
-            v-model:category-filter="categoryFilter"
-            v-model:condition-filter="conditionFilter"
-            v-model:features-filter="featuresFilter"
-            v-model:only-with-photos="onlyWithPhotos"
-            v-model:include-cancelled="includeCancelled"
-            v-model:hide-rules-only="hideRulesOnly"
-            v-model:near-sea="nearSea"
-            v-model:near-lake="nearLake"
-            v-model:near-river="nearRiver"
-            v-model:near-mountain="nearMountain"
-            v-model:near-airport="nearAirport"
-            v-model:urban-rural="urbanRural"
-            :location-summary="locationSummary"
-            :countries="countries ?? []"
-            :selected-countries="selectedCountries"
-            :available-regions="availableRegions"
-            :selected-region-keys="selectedRegionKeys"
-            :categories="[]"
-            :currency="currency"
-            @toggle-country="toggleCountry"
-            @toggle-region="toggleRegion"
-            @select-country="toggleCountry"
-            @set-nearby="setNearby"
-            @pick-recent="pickRecent"
-          />
-          <Button type="submit" size="lg" class="h-12 w-12 shrink-0 rounded-full p-0">
-            <Search class="h-4 w-4" />
-            <span class="sr-only">{{ $t('landing.hero.searchCta') }}</span>
-          </Button>
-        </form>
+        <div ref="heroSearchRef" class="min-h-12 w-full">
+          <Teleport to="#header-search-target" :disabled="heroSearchVisible || !isDesktop">
+            <form
+              class="mx-auto flex w-full items-center gap-2"
+              :class="heroSearchVisible ? 'max-w-2xl' : 'max-w-md'"
+              @submit.prevent="submitSearch"
+            >
+              <SearchBar
+                v-model:search="search"
+                v-model:price-min="priceMin"
+                v-model:price-max="priceMax"
+                v-model:land-area-min="landAreaMin"
+                v-model:land-area-max="landAreaMax"
+                v-model:living-area-min="livingAreaMin"
+                v-model:living-area-max="livingAreaMax"
+                v-model:year-built-min="yearBuiltMin"
+                v-model:year-built-max="yearBuiltMax"
+                v-model:renovation-year-min="renovationYearMin"
+                v-model:renovation-year-max="renovationYearMax"
+                v-model:authority-filter="authorityFilter"
+                v-model:category-filter="categoryFilter"
+                v-model:condition-filter="conditionFilter"
+                v-model:features-filter="featuresFilter"
+                v-model:only-with-photos="onlyWithPhotos"
+                v-model:include-cancelled="includeCancelled"
+                v-model:hide-rules-only="hideRulesOnly"
+                v-model:near-sea="nearSea"
+                v-model:near-lake="nearLake"
+                v-model:near-river="nearRiver"
+                v-model:near-mountain="nearMountain"
+                v-model:near-airport="nearAirport"
+                v-model:urban-rural="urbanRural"
+                :location-summary="locationSummary"
+                :countries="countries ?? []"
+                :selected-countries="selectedCountries"
+                :available-regions="availableRegions"
+                :selected-region-keys="selectedRegionKeys"
+                :categories="[]"
+                :currency="currency"
+                @toggle-country="toggleCountry"
+                @toggle-region="toggleRegion"
+                @select-country="toggleCountry"
+                @set-nearby="setNearby"
+                @pick-recent="pickRecent"
+              />
+              <Button
+                type="submit"
+                size="lg"
+                class="shrink-0 rounded-full p-0"
+                :class="heroSearchVisible ? 'h-12 w-12' : 'h-9 w-9'"
+              >
+                <Search class="h-4 w-4" />
+                <span class="sr-only">{{ $t('landing.hero.searchCta') }}</span>
+              </Button>
+            </form>
+          </Teleport>
+        </div>
         <ul class="flex flex-wrap items-center justify-center gap-x-5 gap-y-1.5 text-xs text-muted-foreground">
           <li v-for="(item, i) in $tm('landing.hero.trust')" :key="i">{{ $rt(item) }}</li>
         </ul>
       </div>
     </section>
-
-    <!-- Collapsed search, shown once the hero bar scrolls under the header -->
-    <Transition
-      enter-active-class="transition duration-200 ease-out"
-      enter-from-class="opacity-0 -translate-y-1"
-      enter-to-class="opacity-100 translate-y-0"
-      leave-active-class="transition duration-150 ease-in"
-      leave-from-class="opacity-100 translate-y-0"
-      leave-to-class="opacity-0 -translate-y-1"
-    >
-      <div v-if="showCompactSearch" class="sticky top-16 z-30 border-b bg-background/95 px-4 py-2 backdrop-blur supports-backdrop-filter:bg-background/60">
-        <button
-          type="button"
-          class="mx-auto flex w-full max-w-sm items-center justify-between gap-3 rounded-full border bg-background px-4 py-2 shadow-sm transition-shadow hover:shadow-md"
-          :aria-label="$t('landing.hero.expandSearch')"
-          @click="scrollToHeroSearch"
-        >
-          <span class="truncate text-sm font-medium">{{ locationSummary }}</span>
-          <Search class="h-4 w-4 shrink-0 text-muted-foreground" />
-        </button>
-      </div>
-    </Transition>
 
     <!-- Category rails -->
     <div class="w-full px-3">
