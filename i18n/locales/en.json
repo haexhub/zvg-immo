@@ -349,7 +349,10 @@
       "saveError": "Save failed.",
       "saved": "Saved.",
       "saving": "Saving …",
-      "save": "Save"
+      "save": "Save",
+      "refreshNow": "Refresh now",
+      "refreshing": "Starting …",
+      "triggerError": "Failed to start."
     },
     "reprocess": {
       "title": "Reprocess test run",

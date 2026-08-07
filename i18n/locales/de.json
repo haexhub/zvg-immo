@@ -349,7 +349,10 @@
       "saveError": "Speichern fehlgeschlagen.",
       "saved": "Gespeichert.",
       "saving": "Speichere …",
-      "save": "Speichern"
+      "save": "Speichern",
+      "refreshNow": "Jetzt aktualisieren",
+      "refreshing": "Wird angestoßen …",
+      "triggerError": "Anstoßen fehlgeschlagen."
     },
     "reprocess": {
       "title": "Reprocess-Testlauf",

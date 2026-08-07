@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import { Loader2, RefreshCw } from 'lucide-vue-next'
 import { useSettingsError } from '~/composables/settings/useSettingsError'
+import { useSettingsTaskOverview } from '~/composables/settings/useSettingsTaskOverview'
 
 interface ExternalDataSourceField {
   key: string
@@ -20,6 +22,7 @@ interface ExternalDataSourceSetting {
 
 const { t } = useI18n()
 const { normalizeSettingsError } = useSettingsError()
+const { llmBatchJobs, formatBatchDate, loadLlmBatchJobs, startProgressPolling } = useSettingsTaskOverview()
 
 const externalDataSources = ref<ExternalDataSourceSetting[]>([])
 const externalDataSourcesLoaded = ref(false)
@@ -27,6 +30,22 @@ const externalDataSourcesError = ref<string | null>(null)
 const externalDataSourcePending = ref<string | null>(null)
 const externalDataSourceSaved = ref<string | null>(null)
 const externalDataFieldDrafts = reactive<Record<string, string>>({})
+const enrichmentTriggerPending = ref(false)
+const enrichmentTriggerError = ref<string | null>(null)
+
+async function triggerEnrichment(): Promise<void> {
+  enrichmentTriggerPending.value = true
+  enrichmentTriggerError.value = null
+  try {
+    await $fetch('/api/settings/external-data/enrichment', { method: 'POST' })
+    await loadLlmBatchJobs()
+    startProgressPolling()
+  } catch (err) {
+    enrichmentTriggerError.value = normalizeSettingsError(err, t('settings.externalData.triggerError'))
+  } finally {
+    enrichmentTriggerPending.value = false
+  }
+}
 
 function externalDataDraftKey(sourceId: string, fieldKey: string): string {
   return `${sourceId}:${fieldKey}`
@@ -69,17 +88,50 @@ async function saveExternalDataSource(source: ExternalDataSourceSetting): Promis
   }
 }
 
-onMounted(loadExternalDataSources)
+onMounted(async () => {
+  await Promise.all([loadExternalDataSources(), loadLlmBatchJobs()])
+})
 </script>
 
 <template>
   <Card>
     <CardHeader>
       <CardTitle>{{ $t('settings.externalData.title') }}</CardTitle>
+      <CardAction>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          :disabled="enrichmentTriggerPending"
+          @click="triggerEnrichment"
+        >
+          <Loader2 v-if="enrichmentTriggerPending" class="h-4 w-4 animate-spin" />
+          <RefreshCw v-else class="h-4 w-4" />
+          {{ enrichmentTriggerPending ? $t('settings.externalData.refreshing') : $t('settings.externalData.refreshNow') }}
+        </Button>
+      </CardAction>
     </CardHeader>
     <CardContent class="space-y-4">
       <p class="text-sm text-muted-foreground">{{ $t('settings.externalData.description') }}</p>
       <p v-if="externalDataSourcesError" class="text-sm text-destructive">{{ externalDataSourcesError }}</p>
+      <p v-if="enrichmentTriggerError" class="text-sm text-destructive">{{ enrichmentTriggerError }}</p>
+
+      <div v-if="llmBatchJobs?.externalEnrichmentStatus" class="text-sm space-y-1">
+        <p v-if="llmBatchJobs.externalEnrichmentStatus.status === 'running'">
+          {{ $t('settings.sources.externalStatusRunning', { at: formatBatchDate(llmBatchJobs.externalEnrichmentStatus.startedAt) }) }}
+        </p>
+        <p v-else-if="llmBatchJobs.externalEnrichmentStatus.finishedAt" class="text-muted-foreground">
+          {{ $t('settings.sources.externalStatusLastRun', {
+            at: formatBatchDate(llmBatchJobs.externalEnrichmentStatus.finishedAt),
+            processed: llmBatchJobs.externalEnrichmentStatus.lastResult?.processed ?? 0,
+            written: llmBatchJobs.externalEnrichmentStatus.lastResult?.written ?? 0,
+            duration: Math.round((llmBatchJobs.externalEnrichmentStatus.lastResult?.durationMs ?? 0) / 1000),
+          }) }}
+        </p>
+        <p v-if="llmBatchJobs.externalEnrichmentStatus.lastError" class="text-sm text-destructive">
+          {{ $t('settings.sources.externalStatusLastError', { message: llmBatchJobs.externalEnrichmentStatus.lastError }) }}
+        </p>
+      </div>
 
       <div v-for="source in externalDataSources" :key="source.id" class="space-y-3 rounded-md border p-3">
         <div class="flex items-start justify-between gap-3">

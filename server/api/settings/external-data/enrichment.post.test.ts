@@ -7,27 +7,16 @@ afterEach(() => {
 })
 
 describe('/api/settings/external-data/enrichment', () => {
-  it('runs external enrichment with an optional limit', async () => {
+  it('triggers external enrichment detached with an optional limit', async () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     vi.stubGlobal('readBody', vi.fn(async () => ({ limit: 25, country: 'se' })))
     vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
-    const runTask = vi.fn().mockResolvedValue({ result: {
-      processed: 25,
-      written: 10,
-      skippedMissingCoordinates: 0,
-      marketComparisons: 10,
-      landValueBaselines: 0,
-      hazards: 0,
-      locationContexts: 0,
-      staleResults: 0,
-      providerFailures: 0,
-      durationMs: 123,
-    } })
+    const runTask = vi.fn().mockResolvedValue({ result: {} })
     vi.stubGlobal('runTask', runTask)
 
     const handler = (await import('./enrichment.post')).default as unknown as (event: unknown) => Promise<unknown>
 
-    await expect(handler({})).resolves.toMatchObject({ processed: 25 })
+    await expect(handler({})).resolves.toStrictEqual({ started: true })
     expect(runTask).toHaveBeenCalledWith('external-enrichment', {
       payload: {
         limit: 25,
@@ -36,6 +25,17 @@ describe('/api/settings/external-data/enrichment', () => {
         externalId: undefined,
       },
     })
+  })
+
+  it('does not let a rejected task run reject the request', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    vi.stubGlobal('readBody', vi.fn(async () => ({})))
+    vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
+    vi.stubGlobal('runTask', vi.fn().mockRejectedValue(new Error('boom')))
+
+    const handler = (await import('./enrichment.post')).default as unknown as (event: unknown) => Promise<unknown>
+
+    await expect(handler({})).resolves.toStrictEqual({ started: true })
   })
 
   it('rejects an invalid limit', async () => {
