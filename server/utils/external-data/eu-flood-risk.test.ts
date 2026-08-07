@@ -305,5 +305,61 @@ describe('importEuFloodRiskGeoJsonCache', () => {
       serviceUrl: 'https://example.test/MapServer/2',
       fetchImpl: fetchImpl as unknown as typeof fetch,
     })).rejects.toThrow('Invalid query')
+    // A logical ArcGIS error (bad query, bad response shape) fails identically
+    // at any page size — must reject on the first request, not split-retry it
+    // into a dozen more requests that all fail the same way.
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('splits a page into smaller retried requests on a 5xx from the layer', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'zvg-eu-flood-'))
+    const fetchImpl = vi.fn(async (url: URL) => {
+      const count = Number(url.searchParams.get('resultRecordCount'))
+      if (count > 10) return new Response('Internal Server Error', { status: 500 })
+      const offset = Number(url.searchParams.get('resultOffset'))
+      return new Response(JSON.stringify({
+        type: 'FeatureCollection',
+        features: [{
+          type: 'Feature',
+          properties: { OBJECTID: offset + 1, countryCode: 'DE' },
+          geometry: {
+            type: 'Polygon',
+            coordinates: [[
+              [13.39, 52.51],
+              [13.41, 52.51],
+              [13.41, 52.53],
+              [13.39, 52.53],
+              [13.39, 52.51],
+            ]],
+          },
+        }],
+      }), { status: 200, headers: { 'content-type': 'application/json' } })
+    })
+
+    const summary = await importEuFloodRiskGeoJsonCache({
+      cachePath: join(tmp, 'eu-flood-risk.geojson'),
+      serviceUrl: 'https://example.test/MapServer/2',
+      pageSize: 20,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    })
+
+    expect(summary.fetched).toBe(2)
+    // 1 failed 20-row request, then 2 successful 10-row halves.
+    expect(fetchImpl).toHaveBeenCalledTimes(3)
+  })
+
+  it('does not split a failing page below MIN_PAGE_SIZE', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'zvg-eu-flood-'))
+    const fetchImpl = vi.fn(async () => new Response('Internal Server Error', { status: 500 }))
+
+    await expect(importEuFloodRiskGeoJsonCache({
+      cachePath: join(tmp, 'eu-flood-risk.geojson'),
+      serviceUrl: 'https://example.test/MapServer/2',
+      pageSize: 13,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    })).rejects.toThrow('500')
+
+    // 13 < MIN_PAGE_SIZE * 2 — splitting would create a sub-10-row request.
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 })

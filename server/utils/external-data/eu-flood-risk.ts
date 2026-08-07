@@ -275,6 +275,16 @@ function assessment(
   }
 }
 
+/** Carries the HTTP status so fetchPageWithRetry can tell a transient
+ *  server-side failure (worth splitting and retrying) apart from a request
+ *  that will fail identically at any page size (bad `where` clause, bad
+ *  response shape) — retrying those would just multiply the same failure. */
+class ArcGisHttpError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message)
+  }
+}
+
 async function fetchArcGisGeoJsonPage(
   fetchImpl: typeof fetch,
   serviceUrl: string,
@@ -291,7 +301,9 @@ async function fetchArcGisGeoJsonPage(
   url.searchParams.set('resultRecordCount', String(options.pageSize))
 
   const response = await fetchImpl(url)
-  if (!response.ok) throw new Error(`EU flood risk request failed: ${response.status} ${response.statusText}`)
+  if (!response.ok) {
+    throw new ArcGisHttpError(`EU flood risk request failed: ${response.status} ${response.statusText}`, response.status)
+  }
   const body = await response.json() as unknown
   if (hasArcGisError(body)) {
     throw new Error(`EU flood risk request failed: ${body.error.message}`)
@@ -310,7 +322,12 @@ async function fetchPageWithRetry(
   try {
     return await fetchArcGisGeoJsonPage(fetchImpl, serviceUrl, options)
   } catch (err) {
-    if (options.pageSize <= MIN_PAGE_SIZE) throw err
+    // Only a 5xx from the layer itself is the geometry-too-complex failure a
+    // smaller page can work around — a bad query or malformed response fails
+    // identically at any size, so splitting would just multiply the same
+    // failure across many requests instead of surfacing it once.
+    const isRetryable = err instanceof ArcGisHttpError && err.status >= 500
+    if (!isRetryable || options.pageSize < MIN_PAGE_SIZE * 2) throw err
     const firstSize = Math.ceil(options.pageSize / 2)
     const [first, second] = await Promise.all([
       fetchPageWithRetry(fetchImpl, serviceUrl, { ...options, pageSize: firstSize }),
