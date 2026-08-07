@@ -75,6 +75,19 @@ function coverageFor(sourceId: string): ExternalDataSourceCoverage | null {
   return coverage.value.find((entry) => entry.id === sourceId) ?? null
 }
 
+// external-enrichment reports numeric progress (unlike the detached
+// reprocess/enrich tasks' own cards, this one has no other way to show that
+// a full unscoped run is moving — it walks every auction sequentially and
+// paces every Open-Meteo call, so a run over the whole DB can take a long
+// time with nothing else to show for it in between.
+const enrichmentProgress = computed(() => {
+  const progress = llmBatchJobs.value?.externalEnrichmentStatus?.progress
+  if (!progress) return null
+  const total = Number(progress.total ?? 0)
+  const done = Number(progress.processed ?? 0) + Number(progress.skippedMissingCoordinates ?? 0)
+  return { total, done, percent: percentOf(done, total) }
+})
+
 async function loadCoverage(): Promise<void> {
   try {
     const res = await $fetch<{ sources: ExternalDataSourceCoverage[] }>('/api/settings/external-data/coverage')
@@ -220,9 +233,18 @@ onMounted(async () => {
       <p v-if="coverageError" class="text-sm text-destructive">{{ coverageError }}</p>
 
       <div v-if="llmBatchJobs?.externalEnrichmentStatus" class="text-sm space-y-1">
-        <p v-if="llmBatchJobs.externalEnrichmentStatus.status === 'running'">
-          {{ $t('settings.sources.externalStatusRunning', { at: formatBatchDate(llmBatchJobs.externalEnrichmentStatus.startedAt) }) }}
-        </p>
+        <template v-if="llmBatchJobs.externalEnrichmentStatus.status === 'running'">
+          <p>
+            {{ $t('settings.sources.externalStatusRunning', { at: formatBatchDate(llmBatchJobs.externalEnrichmentStatus.startedAt) }) }}
+          </p>
+          <template v-if="enrichmentProgress">
+            <div class="flex items-baseline justify-between gap-2 text-xs text-muted-foreground">
+              <span>{{ $t('settings.sources.externalStatusProgress', { done: enrichmentProgress.done, total: enrichmentProgress.total }) }}</span>
+              <span>{{ enrichmentProgress.percent }}%</span>
+            </div>
+            <Progress :model-value="enrichmentProgress.percent" />
+          </template>
+        </template>
         <p v-else-if="llmBatchJobs.externalEnrichmentStatus.finishedAt" class="text-muted-foreground">
           {{ $t('settings.sources.externalStatusLastRun', {
             at: formatBatchDate(llmBatchJobs.externalEnrichmentStatus.finishedAt),

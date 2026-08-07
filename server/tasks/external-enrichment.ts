@@ -23,7 +23,7 @@ import {
 } from '~/server/utils/external-data/config'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 import { runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-task'
-import { recordTaskRunEnd, recordTaskRunStart } from '~/server/utils/task-runs'
+import { recordTaskRunEnd, recordTaskRunProgress, recordTaskRunStart, type TaskRunSummary } from '~/server/utils/task-runs'
 
 export interface MarketComparisonAdapter {
   id: string
@@ -147,55 +147,63 @@ export async function runExternalEnrichment(
   const locationContextAdapters = options.locationContextAdapters ?? await defaultLocationContextAdapters(db, checkedAt, summary)
   throwIfTaskAborted(signal)
 
-  for (const rawAuction of records.map((record) => record.auction).filter((auction) => inScope(auction, options))) {
+  const scope = records.map((record) => record.auction).filter((auction) => inScope(auction, options))
+  const total = options.limit != null ? Math.min(scope.length, options.limit) : scope.length
+
+  for (const rawAuction of scope) {
     throwIfTaskAborted(signal)
     if (options.limit != null && summary.processed >= options.limit) break
-    const point = await resolvePoint(rawAuction)
-    if (!point) {
-      summary.skippedMissingCoordinates++
-      continue
-    }
-    const auction: Auction = { ...rawAuction, lat: point.lat, lng: point.lng }
-    summary.processed++
-    const key = cacheKey(auction.platform, auction.externalId)
-    const previous = existing[key]
+    try {
+      const point = await resolvePoint(rawAuction)
+      if (!point) {
+        summary.skippedMissingCoordinates++
+        continue
+      }
+      const auction: Auction = { ...rawAuction, lat: point.lat, lng: point.lng }
+      summary.processed++
+      const key = cacheKey(auction.platform, auction.externalId)
+      const previous = existing[key]
 
-    const marketComparison = await firstMarketComparison(auction, marketAdapters, summary)
-    throwIfTaskAborted(signal)
-    const landValueBaseline = await firstLandValueBaseline(auction, landValueAdapters, summary)
-    throwIfTaskAborted(signal)
-    const hazards = await allHazards(auction, hazardAdapters, summary)
-    throwIfTaskAborted(signal)
-    const locationContext = await firstLocationContext(auction, locationContextAdapters, summary)
-    throwIfTaskAborted(signal)
+      const marketComparison = await firstMarketComparison(auction, marketAdapters, summary)
+      throwIfTaskAborted(signal)
+      const landValueBaseline = await firstLandValueBaseline(auction, landValueAdapters, summary)
+      throwIfTaskAborted(signal)
+      const hazards = await allHazards(auction, hazardAdapters, summary)
+      throwIfTaskAborted(signal)
+      const locationContext = await firstLocationContext(auction, locationContextAdapters, summary)
+      throwIfTaskAborted(signal)
 
-    if (marketComparison) summary.marketComparisons++
-    if (landValueBaseline) summary.landValueBaselines++
-    summary.hazards += hazards.length
-    if (locationContext) summary.locationContexts++
-    summary.staleResults += hazards.filter((hazard) => hazard.stale).length
+      if (marketComparison) summary.marketComparisons++
+      if (landValueBaseline) summary.landValueBaselines++
+      summary.hazards += hazards.length
+      if (locationContext) summary.locationContexts++
+      summary.staleResults += hazards.filter((hazard) => hazard.stale).length
 
-    if (!marketComparison && !landValueBaseline && hazards.length === 0 && !locationContext) continue
+      if (!marketComparison && !landValueBaseline && hazards.length === 0 && !locationContext) continue
 
-    entries[key] = {
-      platform: auction.platform,
-      externalId: auction.externalId,
-      lat: point.lat,
-      lng: point.lng,
-      marketComparison: marketComparison ?? previous?.marketComparison ?? null,
-      landValueBaseline: landValueBaseline ?? previous?.landValueBaseline ?? null,
-      hazards: hazards.length > 0 ? hazards : previous?.hazards ?? null,
-      locationContext: locationContext ?? previous?.locationContext ?? null,
-      checkedAt,
-      sourceVersion: sourceVersion([
-        ...marketAdapters,
-        ...landValueAdapters,
-        ...hazardAdapters,
-        ...locationContextAdapters,
-      ]),
+      entries[key] = {
+        platform: auction.platform,
+        externalId: auction.externalId,
+        lat: point.lat,
+        lng: point.lng,
+        marketComparison: marketComparison ?? previous?.marketComparison ?? null,
+        landValueBaseline: landValueBaseline ?? previous?.landValueBaseline ?? null,
+        hazards: hazards.length > 0 ? hazards : previous?.hazards ?? null,
+        locationContext: locationContext ?? previous?.locationContext ?? null,
+        checkedAt,
+        sourceVersion: sourceVersion([
+          ...marketAdapters,
+          ...landValueAdapters,
+          ...hazardAdapters,
+          ...locationContextAdapters,
+        ]),
+      }
+    } finally {
+      void recordTaskRunProgress('external-enrichment', progressSnapshot(summary, total))
     }
   }
 
+  await recordTaskRunProgress('external-enrichment', progressSnapshot(summary, total), { flush: true })
   throwIfTaskAborted(signal)
   const ok = await writeLocationEnrichmentCache(entries)
   throwIfTaskAborted(signal)
@@ -205,6 +213,15 @@ export async function runExternalEnrichment(
   }
   summary.durationMs = Date.now() - startedAt
   return summary
+}
+
+function progressSnapshot(summary: ExternalEnrichmentSummary, total: number): TaskRunSummary {
+  return {
+    total,
+    processed: summary.processed,
+    skippedMissingCoordinates: summary.skippedMissingCoordinates,
+    providerFailures: summary.providerFailures,
+  }
 }
 
 function inScope(auction: Auction, options: ExternalEnrichmentOptions): boolean {
