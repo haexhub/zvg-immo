@@ -438,7 +438,7 @@ async function defaultLocationContextAdapters(
   return [withLocationContextEnhancers(osmAdapter, enhancers, summary)]
 }
 
-function withLocationContextEnhancers(
+export function withLocationContextEnhancers(
   adapter: LocationContextAdapter,
   enhancers: LocationContextEnhancer[],
   summary: ExternalEnrichmentSummary,
