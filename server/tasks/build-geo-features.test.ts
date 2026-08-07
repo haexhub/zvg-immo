@@ -56,7 +56,9 @@ const IDS = {
   building: { osm_type: 'way', osm_id: 900_008 }, // must never appear in geo_features
   borderLake: { osm_type: 'way', osm_id: 900_009 }, // same osm_id, once per country — see BORDER_COUNTRY above
   lowPeak: { osm_type: 'node', osm_id: 900_010 }, // natural=peak but ele below the mountain floor — must not surface as 'peak'
-  smallAirfield: { osm_type: 'way', osm_id: 900_011 }, // aerodrome without iata — must not surface as 'airport'
+  smallAirfield: { osm_type: 'way', osm_id: 900_011 }, // aerodrome, no international marker — must not surface as 'airport'
+  iataAirfield: { osm_type: 'way', osm_id: 900_012 }, // aerodrome with iata but not international — must not surface as 'airport'
+  lakeBay: { osm_type: 'way', osm_id: 900_013 }, // natural=bay on an inland lake — must not surface as 'sea'
 } as const
 
 async function seedFixture(client: PoolClient): Promise<void> {
@@ -121,18 +123,38 @@ async function seedFixture(client: PoolClient): Promise<void> {
   await client.query(
     `INSERT INTO osm_local_elements (osm_type, osm_id, geom, tags, country)
      VALUES ($1, $2, ST_GeomFromText('POLYGON((16 52,16.02 52,16.02 52.02,16 52.02,16 52))', 4326),
-       '{"aeroway": "aerodrome", "name": "Testflughafen", "iata": "TST"}'::jsonb, $3)`,
+       '{"aeroway": "aerodrome", "name": "Testflughafen", "iata": "TST", "aerodrome": "international"}'::jsonb, $3)`,
     [IDS.airport.osm_type, IDS.airport.osm_id, TEST_COUNTRY],
   )
 
-  // Same aeroway tag as a real airport, but no iata code — stands in for the
-  // small general-aviation airfields that made nearAirport barely exclude
-  // anything in Germany before this filter existed.
+  // Same aeroway tag as a real airport, but no international marker at all —
+  // stands in for the general-aviation/gliding strips that made nearAirport
+  // barely exclude anything in Germany before this filter existed.
   await client.query(
     `INSERT INTO osm_local_elements (osm_type, osm_id, geom, tags, country)
      VALUES ($1, $2, ST_GeomFromText('POLYGON((16.5 52,16.52 52,16.52 52.02,16.5 52.02,16.5 52))', 4326),
-       '{"aeroway": "aerodrome", "name": "Testflugplatz", "icao": "EDZZ"}'::jsonb, $3)`,
+       '{"aeroway": "aerodrome", "name": "Testflugplatz", "icao": "EDZZ", "aerodrome": "airsport"}'::jsonb, $3)`,
     [IDS.smallAirfield.osm_type, IDS.smallAirfield.osm_id, TEST_COUNTRY],
+  )
+
+  // Has an iata code but is a regional strip, not an international airport —
+  // stands in for the island air-taxi fields ("Flugplatz Baltrum"/"Juist") and
+  // military "Fliegerhorst" entries that an iata-only rule still let through.
+  await client.query(
+    `INSERT INTO osm_local_elements (osm_type, osm_id, geom, tags, country)
+     VALUES ($1, $2, ST_GeomFromText('POLYGON((17 52,17.02 52,17.02 52.02,17 52.02,17 52))', 4326),
+       '{"aeroway": "aerodrome", "name": "Testinselflugplatz", "iata": "TSI", "aerodrome:type": "regional"}'::jsonb, $3)`,
+    [IDS.iataAirfield.osm_type, IDS.iataAirfield.osm_id, TEST_COUNTRY],
+  )
+
+  // A bay on an inland lake — the Bodensee/Chiemsee case. natural=bay
+  // describes a shape, not a water body, so it must not make "am Meer" match
+  // a lake shore. Real marine bays stay covered by natural=coastline.
+  await client.query(
+    `INSERT INTO osm_local_elements (osm_type, osm_id, geom, tags, country)
+     VALUES ($1, $2, ST_GeomFromText('POLYGON((13.2 52,13.21 52,13.21 52.01,13.2 52.01,13.2 52))', 4326),
+       '{"natural": "bay", "name": "Testbucht am See"}'::jsonb, $3)`,
+    [IDS.lakeBay.osm_type, IDS.lakeBay.osm_id, TEST_COUNTRY],
   )
 
   // A hole entirely outside the shell — GEOS reports it invalid, and
@@ -244,8 +266,13 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
       expect(countFor(afterFirst, 'airport', IDS.airport.osm_id)).toBeGreaterThanOrEqual(1)
       // natural=peak below the mountain floor must not surface as 'peak'.
       expect(afterFirst.some((r) => Number(r.osm_id) === IDS.lowPeak.osm_id)).toBe(false)
-      // aerodrome without an iata code must not surface as 'airport'.
+      // An aerodrome with no international marker must not surface as 'airport'…
       expect(afterFirst.some((r) => Number(r.osm_id) === IDS.smallAirfield.osm_id)).toBe(false)
+      // …and neither must one that merely carries an iata code.
+      expect(afterFirst.some((r) => Number(r.osm_id) === IDS.iataAirfield.osm_id)).toBe(false)
+      // natural=bay on an inland lake must not surface as 'sea' ("am Meer" is
+      // not "am See"); it is no lake either, having no natural=water tag.
+      expect(afterFirst.some((r) => Number(r.osm_id) === IDS.lakeBay.osm_id)).toBe(false)
       // natural=water + water=river must not surface as lake nor as river.
       expect(afterFirst.some((r) => Number(r.osm_id) === IDS.riverWaterPolygon.osm_id)).toBe(false)
       // building is never mapped to any kind.
