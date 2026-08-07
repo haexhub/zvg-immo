@@ -368,6 +368,12 @@
         "open-meteo-climate-normals": "Klimadiagramm auf der Detailseite.",
         "copernicus-effis": "Waldbrand-Hinweis auf der Detailseite."
       },
+      "coverage": {
+        "title": "Datenabdeckung",
+        "summary": "{covered} von {total} geocodierten Auktionen ({percent} %)",
+        "empty": "Noch keine geocodierten Auktionen für diese Quelle.",
+        "loadError": "Datenabdeckung konnte nicht geladen werden."
+      },
       "cacheImport": {
         "import": "Cache jetzt importieren",
         "importing": "Importiere …",
