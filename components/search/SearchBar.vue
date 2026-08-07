@@ -1,10 +1,10 @@
 <script setup lang="ts">
 // Airbnb-style search bar: Location / Properties / Environment, each its own
 // popover — replaces the old SearchFilterBar (free-text + a button that just
-// forwarded to the Sheet sidebar). Used on both the landing hero
-// (pages/index.vue) and the search page header (layouts/search.vue), each
-// wiring it to its own filter state (a real useAuctionSearchState instance
-// on the search page, a lighter local one on the landing page).
+// forwarded to the Sheet sidebar). Rendered into SiteHeader's search row by
+// layouts/landing.vue and layouts/search.vue, each wiring it to its own filter
+// state (a real useAuctionSearchState instance on the search page, a lighter
+// local one on the landing page).
 import { ALL_SCOPE } from '~/lib/auction-constants'
 import type { CountryEntry } from '~/server/crawlers/registry'
 
@@ -53,6 +53,9 @@ const nearMountain = defineModel<number | null>('nearMountain', { required: true
 const nearAirport = defineModel<number | null>('nearAirport', { required: true })
 const urbanRural = defineModel<string>('urbanRural', { required: true })
 
+// Shrinks to three plain buttons once SiteHeader collapses on scroll.
+const compact = useHeaderCompact()
+
 type Segment = 'location' | 'properties' | 'environment' | null
 const activeSegment = ref<Segment>(null)
 function segmentOpen(segment: Segment) {
@@ -68,6 +71,11 @@ const environmentOpen = segmentOpen('environment')
 function handleSetNearby(lat: number, lng: number): void {
   emit('set-nearby', lat, lng)
 }
+
+// `locationSummary` already falls back to a placeholder ("Ort, Region oder
+// Land suchen") resp. to "Europa" on the search page — too long, and not a
+// selection, for the compact button. It tracks the same two inputs this reads.
+const locationHasValue = computed(() => props.selectedCountries.length > 0 || search.value.trim().length > 0)
 
 const propertiesSummary = computed(() => {
   let n = 0
@@ -102,11 +110,16 @@ const environmentSummary = computed(() => {
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-1 items-stretch rounded-full border bg-muted/40 shadow-sm">
+  <div
+    class="flex min-w-0 items-stretch rounded-full border bg-muted/40 shadow-sm"
+    :class="compact ? 'w-auto' : 'flex-1'"
+  >
     <SearchBarSegment
       v-model:open="locationOpen"
       :label="$t('searchBar.location.label')"
       :summary="locationSummary"
+      :compact="compact"
+      :has-value="locationHasValue"
       align="start"
     >
       <SearchLocationPopover
@@ -124,12 +137,14 @@ const environmentSummary = computed(() => {
       />
     </SearchBarSegment>
 
-    <Separator orientation="vertical" class="my-2 h-auto" />
+    <Separator orientation="vertical" class="h-auto" :class="compact ? 'my-1.5' : 'my-2'" />
 
     <SearchBarSegment
       v-model:open="propertiesOpen"
       :label="$t('searchBar.properties.label')"
       :summary="propertiesSummary > 0 ? $t('searchBar.activeCount', { count: propertiesSummary }) : $t('searchBar.properties.placeholder')"
+      :compact="compact"
+      :has-value="propertiesSummary > 0"
       align="start"
     >
       <SearchPropertiesPopover
@@ -156,12 +171,14 @@ const environmentSummary = computed(() => {
       />
     </SearchBarSegment>
 
-    <Separator orientation="vertical" class="my-2 h-auto" />
+    <Separator orientation="vertical" class="h-auto" :class="compact ? 'my-1.5' : 'my-2'" />
 
     <SearchBarSegment
       v-model:open="environmentOpen"
       :label="$t('searchBar.environment.label')"
       :summary="environmentSummary > 0 ? $t('searchBar.activeCount', { count: environmentSummary }) : $t('searchBar.environment.placeholder')"
+      :compact="compact"
+      :has-value="environmentSummary > 0"
       align="end"
     >
       <SearchEnvironmentPopover

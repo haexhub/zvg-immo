@@ -14,6 +14,9 @@ import { AUCTION_SEARCH_RESULT_KEY } from '~/composables/useAuctionSearchResult'
 const { eurToDisplay, displayToEur, currency } = useCurrencyDisplay()
 const propertyTypeLabel = usePropertyTypeLabel()
 const { locale } = useI18n()
+// Set by SiteHeader once the results pane is scrolled — shrinks the bar and
+// the sort button along with the header itself.
+const compact = useHeaderCompact()
 
 // Admin-configured default for the hideRulesOnly filter (/settings'
 // "Dashboard-Anzeige" — see server/utils/app-settings.ts's
@@ -87,7 +90,10 @@ onMounted(() => {
   <div class="h-screen overflow-hidden flex flex-col">
     <SiteHeader>
       <template #search>
-        <div class="mx-auto flex w-full max-w-3xl items-center gap-2">
+        <div
+          class="mx-auto flex w-full items-center gap-2 transition-all duration-200"
+          :class="compact ? 'max-w-full justify-center' : 'max-w-3xl'"
+        >
           <SearchBar
             v-model:search="search"
             v-model:price-min="priceMin"
@@ -113,7 +119,6 @@ onMounted(() => {
             v-model:near-mountain="nearMountain"
             v-model:near-airport="nearAirport"
             v-model:urban-rural="urbanRural"
-            class="flex-1"
             :location-summary="headerLabel"
             :countries="countries ?? []"
             :selected-countries="selectedCountries"
@@ -128,8 +133,11 @@ onMounted(() => {
             @pick-recent="pickRecent"
           />
           <Select v-model="sortBy">
+            <!-- SelectTrigger's own `data-[size=default]:h-9` outranks a plain
+                 `h-14`, so the large state answers in the same variant. -->
             <SelectTrigger
-              class="size-9 shrink-0 justify-center rounded-full p-0 [&>svg]:hidden"
+              class="shrink-0 justify-center rounded-full p-0 transition-all duration-200 [&>svg]:hidden"
+              :class="compact ? 'size-9' : 'w-14 data-[size=default]:h-14'"
               :title="$t('search.sortLabel')"
               :aria-label="$t('search.sortLabel')"
             >

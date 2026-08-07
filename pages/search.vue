@@ -15,9 +15,9 @@ const { user } = useAuth()
 const { t } = useI18n()
 
 // Desktop shows list + map side by side; below this breakpoint they collapse
-// into the two SearchTabs panes (see template) — matches SiteHeader's own
-// `md:` breakpoint. useMediaQuery reads matchMedia synchronously during setup
-// on the client, i.e. before the first hydration pass — gating it behind
+// into the two SearchTabs panes (see template) — matches the search bar's own
+// `md:` popover/sheet breakpoint. useMediaQuery reads matchMedia synchronously
+// during setup on the client, i.e. before the first hydration pass — gating it behind
 // `mounted` keeps that first client render identical to the SSR-safe mobile
 // markup, so the desktop swap happens as a normal post-hydration update
 // instead of a hydration mismatch (which otherwise corrupts the DOM).
