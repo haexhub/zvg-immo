@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { getDb } from '../db'
+import { queryText } from '~/test-support/drizzle-query'
 
 vi.mock('../db', () => ({ getDb: vi.fn() }))
 
@@ -154,10 +155,6 @@ async function cleanupTextCache(url: string): Promise<void> {
 interface FakeBlobRow {
   s3_key: string
   content_type: string
-}
-
-function queryText(queryArg: unknown): string {
-  return typeof queryArg === 'string' ? queryArg : (queryArg as { text: string }).text
 }
 
 /** Minimal in-memory stand-in for the `pg` Pool, matching raw-archive.ts's queries. */

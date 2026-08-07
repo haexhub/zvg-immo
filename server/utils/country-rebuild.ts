@@ -57,7 +57,7 @@ export async function deleteCountryCurrentData<TSchema extends Record<string, un
   // deletion must happen first. File removal cannot join the SQL transaction;
   // if the relational delete fails, rerun rebuildCountry to recover.
   const archive = await deleteRawArchiveCountry(country)
-  return db.transaction(async (tx) => {
+  const deleted = await db.transaction(async (tx) => {
     // These four tables don't carry their own `country` column — they key off
     // (platform, external_id) — so scoping to a country goes through the
     // `auctions` row for that identity, mirroring the old `USING auctions a`
@@ -83,7 +83,6 @@ export async function deleteCountryCurrentData<TSchema extends Record<string, un
     const listCacheResult = await tx.delete(listCache).where(eq(listCache.country, country))
     const auctionsResult = await tx.delete(auctions).where(eq(auctions.country, country))
 
-    invalidateLocationEnrichmentCache()
     return {
       listCache: listCacheResult.rowCount ?? 0,
       observations: observationsResult.rowCount ?? 0,
@@ -98,6 +97,11 @@ export async function deleteCountryCurrentData<TSchema extends Record<string, un
       artifactBlobs: archive.deleted.blobs,
     }
   })
+  // After the commit, not inside the callback: a concurrent request that
+  // repopulated the cache from rows this transaction had not removed yet would
+  // otherwise leave enrichment entries for deleted auctions behind.
+  invalidateLocationEnrichmentCache()
+  return deleted
 }
 
 export async function rebuildCountry(countryInput: string): Promise<CountryRebuildResult> {

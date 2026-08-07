@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { getDb } from './db'
 import { getServiceClient } from './supabase'
+import { queryText } from '~/test-support/drizzle-query'
 
 vi.mock('./db', () => ({ getDb: vi.fn() }))
 vi.mock('./supabase', () => ({ getServiceClient: vi.fn() }))
@@ -13,10 +14,6 @@ const removeMock = vi.fn(async (_keys: string[]) => ({ error: null }))
 const fakeSupabase = { storage: { from: vi.fn(() => ({ remove: removeMock })) } }
 
 const { deleteRawArchiveCountry } = await import('./raw-archive-delete')
-
-function queryText(queryArg: unknown): string {
-  return typeof queryArg === 'string' ? queryArg : (queryArg as { text: string }).text
-}
 
 /** Builds a `getDb()`-shaped fake: a real Drizzle instance wrapping a mock
  *  `pg.Pool`, so `db.transaction()` behaves like production (checks out one

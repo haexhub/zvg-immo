@@ -6,8 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import type { Auction } from '~/types/auction'
 import { getDb } from './db'
+import { queryText } from '~/test-support/drizzle-query'
 
-vi.mock('./db', () => ({ getDb: vi.fn() }))
+// Only getDb is faked; pgErrorCode stays real, since the unique-violation test
+// below depends on it unwrapping Drizzle's error wrapper the way production does.
+vi.mock('./db', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./db')>()),
+  getDb: vi.fn(),
+}))
 
 // Imported after the mock so the module under test picks up the mocked getDb.
 const {
@@ -62,14 +68,6 @@ interface FakeCaptureRow {
   capturedAt: string
   contentHash: string
   sourceUrl: string | null
-}
-
-/** Extracts the compiled SQL text Drizzle passes to `client.query()` — a
- *  `{text, ...}` config object for every query issued through the query
- *  builder or `db.execute(sql...)`, vs. the plain string a raw `client.query`
- *  call would have received before. */
-function queryText(queryArg: unknown): string {
-  return typeof queryArg === 'string' ? queryArg : (queryArg as { text: string }).text
 }
 
 /** Minimal in-memory stand-in for the `pg` Pool, matching the exact queries
@@ -628,6 +626,45 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
 
     expect(first).toMatchObject({ version: 1, changed: true })
     expect(second).toMatchObject({ version: 1, changed: false, setHash: first?.setHash })
+    expect(pool.documentSets.size).toBe(1)
+  })
+
+  it('archiveDocumentSet adopts the winner when a concurrent writer takes the version', async () => {
+    const pool = makeFakePool()
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
+    const insertRow = pool.query.getMockImplementation()!
+    let raised = false
+    pool.query.mockImplementation(async (queryArg: unknown, params: unknown[] = []) => {
+      const n = queryText(queryArg).replace(/\s+/g, ' ').trim().toLowerCase()
+      if (!raised && n.includes('into "artifact_versions" (')) {
+        raised = true
+        // The concurrent transaction committed this exact set first; ours then
+        // loses the unique index. The rejection is a bare pg error — Drizzle
+        // wraps it in a DrizzleQueryError on the way out, which is why the
+        // 23505 check has to look at the cause.
+        await insertRow(queryArg, params)
+        throw Object.assign(new Error('duplicate key value violates unique constraint'), { code: '23505' })
+      }
+      return insertRow(queryArg, params)
+    })
+
+    const result = await archiveDocumentSet(
+      { platform: 'test', country: 'de', externalId: '1' },
+      [{
+        ordinal: 0,
+        kind: 'document',
+        label: 'Gutachten',
+        filename: 'gutachten.pdf',
+        fileId: 'a',
+        sourceUrl: 'https://example.test/gutachten.pdf',
+        contentHash: 'hash-a',
+        contentType: 'application/pdf',
+      }],
+      '2026-07-19T00:00:00.000Z',
+    )
+
+    expect(raised).toBe(true)
+    expect(result).toMatchObject({ version: 1, changed: false })
     expect(pool.documentSets.size).toBe(1)
   })
 

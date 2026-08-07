@@ -9,7 +9,28 @@ import type { Pool, PoolClient } from 'pg'
 // server/tasks/*.test.ts uses.
 vi.stubGlobal('defineTask', (definition: unknown) => definition)
 
-const { buildGeoFeatures, nextFeaturesEpoch } = await import('./build-geo-features')
+const { buildGeoFeatures, isSystemicDatabaseError, nextFeaturesEpoch } = await import('./build-geo-features')
+
+// Runs without a database, unlike the suite below: this classification decides
+// whether a failed rebuild deletes the previous epoch's rows, and the inserts
+// now go through Drizzle, which hides the SQLSTATE inside its own wrapper.
+describe('isSystemicDatabaseError', () => {
+  const wrapped = (cause: unknown) =>
+    Object.assign(new Error('Failed query: insert into geo_features\nparams: lake,7'), { cause })
+
+  it('classifies a Drizzle-wrapped systemic SQLSTATE as systemic', () => {
+    for (const code of ['53200', '57014', '42P01', '08006']) {
+      expect(isSystemicDatabaseError(wrapped(Object.assign(new Error('boom'), { code })))).toBe(true)
+    }
+  })
+
+  it('still treats a single broken geometry as non-systemic', () => {
+    const geometryError = Object.assign(new Error('Geometry contains an interior ring outside'), { code: 'XX000' })
+    expect(isSystemicDatabaseError(wrapped(geometryError))).toBe(false)
+    expect(isSystemicDatabaseError(geometryError)).toBe(false)
+    expect(isSystemicDatabaseError(new Error('boom'))).toBe(false)
+  })
+})
 
 // Real Postgres, not a mock: this job's correctness lives entirely in SQL
 // (ST_MakeValid/ST_Transform/ST_Subdivide, the lake/river tag exclusion, the
@@ -377,7 +398,11 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
         // asked of the same function buildGeoFeatures uses, not a copy of its
         // query, so the two can't drift apart.
         failedEpoch = await nextFeaturesEpoch(drizzle(client))
-        await expect(buildGeoFeatures(drizzle(client), signal)).rejects.toThrow(/simulated systemic failure/)
+        // Asserted on the cause, not the message: Drizzle rethrows a
+        // DrizzleQueryError whose own message is only `Failed query: <sql>`.
+        await expect(buildGeoFeatures(drizzle(client), signal)).rejects.toMatchObject({
+          cause: expect.objectContaining({ code: '53200' }),
+        })
       } finally {
         await client.query('DROP TRIGGER zz_geo_features_boom ON geo_features; DROP FUNCTION zz_geo_features_boom();')
       }

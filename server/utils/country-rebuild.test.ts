@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import type { CrawlResult } from '~/types/auction'
+import { callQueryText, queryText } from '~/test-support/drizzle-query'
 
 const state = vi.hoisted(() => ({
   enabled: true,
@@ -18,6 +19,7 @@ const state = vi.hoisted(() => ({
   deleteRawArchiveCountry: vi.fn(),
   ensureAuctionIdentity: vi.fn(),
   writeAuctionCrawlFetchState: vi.fn(),
+  invalidateLocationEnrichmentCache: vi.fn(),
 }))
 
 vi.mock('../crawlers/registry', () => ({
@@ -50,6 +52,9 @@ vi.mock('./raw-archive-delete', () => ({
 }))
 vi.mock('./current-auctions', () => ({ ensureAuctionIdentity: state.ensureAuctionIdentity }))
 vi.mock('./auction-fetch-state', () => ({ writeAuctionCrawlFetchState: state.writeAuctionCrawlFetchState }))
+vi.mock('./external-data/location-enrichment', () => ({
+  invalidateLocationEnrichmentCache: state.invalidateLocationEnrichmentCache,
+}))
 
 // rowCount per table, keyed by a substring of the compiled `delete from
 // "<table>"` text Drizzle generates — lets each DELETE report a distinct,
@@ -64,12 +69,15 @@ const ROW_COUNTS: Record<string, number> = {
   '"auction_fetch_state"': 7,
 }
 
-function makePool() {
+function makePool(failOnTable?: string) {
   const clientQuery = vi.fn(async (query: unknown) => {
-    const text = typeof query === 'string' ? query : (query as { text: string }).text
+    const text = queryText(query)
     if (text === 'begin' || text === 'commit' || text === 'rollback') return { rowCount: 0 }
     const match = Object.keys(ROW_COUNTS).find((table) => text.startsWith(`delete from ${table}`))
-    if (match) return { rowCount: ROW_COUNTS[match] }
+    if (match) {
+      if (failOnTable === match) throw new Error(`delete on ${match} failed`)
+      return { rowCount: ROW_COUNTS[match] }
+    }
     throw new Error(`unexpected query: ${text}`)
   })
   const poolQuery = vi.fn(async (sql: string) => {
@@ -136,6 +144,7 @@ beforeEach(() => {
     deleted: { captures: 7, documentSets: 8, documentSetItems: 9, blobs: 10, localFiles: 0, storageFiles: 0 },
     failed: { localFiles: 0, storageFiles: 0 },
   })
+  state.invalidateLocationEnrichmentCache.mockReset()
 })
 
 describe('rebuildCountry', () => {
@@ -160,13 +169,10 @@ describe('rebuildCountry', () => {
     expect(result.crawled).toMatchObject({ ok: 1, failed: 0, auctions: 1 })
     const clientQuery = state.pool!.clientQuery
     expect(state.pool!.poolQuery).not.toHaveBeenCalled()
-    const queryText = (call: unknown[]) => {
-      const arg = call[0]
-      return typeof arg === 'string' ? arg : (arg as { text: string }).text
-    }
-    const sqlCalls = clientQuery.mock.calls.map(queryText)
+    const sqlCalls = clientQuery.mock.calls.map(callQueryText)
     expect(sqlCalls[0]).toBe('begin')
     expect(sqlCalls.at(-1)).toBe('commit')
+    expect(state.invalidateLocationEnrichmentCache).toHaveBeenCalledOnce()
     expect(sqlCalls.some((text) => text.startsWith('delete from "location_enrichment"'))).toBe(true)
     expect(sqlCalls.some((text) => text.startsWith('delete from "auction_translations"'))).toBe(true)
     expect(state.crawlSingle).toHaveBeenCalledWith({
@@ -179,6 +185,30 @@ describe('rebuildCountry', () => {
     expect(state.recordObservations).toHaveBeenCalledWith(seResult, expect.any(String))
     expect(state.matchAlerts).toHaveBeenCalledWith('se', 'all', seResult)
     expect(state.archiveAuction).toHaveBeenCalledWith(seResult.auctions[0], expect.any(String))
+  })
+
+  it('rolls the whole delete back when one table fails, and keeps the cache untouched', async () => {
+    // The auctions delete is the last one in the transaction, so the six
+    // deletes before it have already run when it fails — exactly the case that
+    // must not leave a half-emptied country behind.
+    state.pool = makePool('"auctions"')
+    state.db = drizzle(state.pool.pool as never)
+    const { rebuildCountry } = await import('./country-rebuild')
+
+    // Matched on the cause: Drizzle rethrows its own `Failed query: <sql>`
+    // wrapper and keeps the driver rejection underneath.
+    await expect(rebuildCountry('se')).rejects.toMatchObject({
+      cause: expect.objectContaining({ message: 'delete on "auctions" failed' }),
+    })
+
+    const sqlCalls = state.pool!.clientQuery.mock.calls.map(callQueryText)
+    expect(sqlCalls[0]).toBe('begin')
+    expect(sqlCalls).toContain('rollback')
+    expect(sqlCalls).not.toContain('commit')
+    // Invalidating here would drop a cache that still matches the (unchanged)
+    // rows, and no crawl runs after a failed delete either.
+    expect(state.invalidateLocationEnrichmentCache).not.toHaveBeenCalled()
+    expect(state.crawlSingle).not.toHaveBeenCalled()
   })
 
   it('rejects disabled countries before deleting data', async () => {

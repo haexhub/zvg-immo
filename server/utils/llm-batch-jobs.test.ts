@@ -1,11 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { drizzle } from 'drizzle-orm/node-postgres'
+import { queryText } from '~/test-support/drizzle-query'
 
 vi.mock('./db', () => ({ getDb: vi.fn() }))
-
-function queryText(queryArg: unknown): string {
-  return typeof queryArg === 'string' ? queryArg : (queryArg as { text: string }).text
-}
 
 function makeFakePool() {
   const settings = new Map<string, unknown>()

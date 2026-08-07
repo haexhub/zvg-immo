@@ -18,7 +18,7 @@ import { and, eq, sql } from 'drizzle-orm'
 import type { Auction } from '~/types/auction'
 import { artifactBlobs, artifactVersionItems, artifactVersions } from '../db/schema'
 import { countryDisplayName } from './countries'
-import { getDb } from './db'
+import { getDb, pgErrorCode } from './db'
 
 export type BlobContentType =
   | 'application/json'
@@ -423,7 +423,7 @@ export async function archiveDocumentSet(
           return { setHash, version: row.version, changed: true }
         })
       } catch (err) {
-        if ((err as { code?: string }).code === '23505') {
+        if (pgErrorCode(err) === '23505') {
           const winner = await db.select({ id: artifactVersions.id, version: artifactVersions.version })
             .from(artifactVersions)
             .where(identityMatch())

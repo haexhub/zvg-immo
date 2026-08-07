@@ -16,10 +16,6 @@ import { normalizeDescriptionText } from './description-normalization'
 import { withDerivedExtractionFields } from './extract/merge-llm-result'
 
 export interface AuctionDetailsRow {
-  // Lets this satisfy db.execute<T>()'s Record<string, unknown> constraint —
-  // these rows come back from a raw sql`` fragment (37+ dynamic value
-  // columns, see writeAuctionDetails), not the typed query builder.
-  [key: string]: unknown
   id: number
   platform: string
   external_id: string
@@ -69,13 +65,20 @@ export interface AuctionDetailsRow {
 }
 
 interface AuctionPhotoRow {
-  [key: string]: unknown
   ordinal: number
   file: string
   category: PhotoCategory
   caption: string | null
   is_property_photo: boolean
 }
+
+// These rows come back from raw sql`` fragments (37+ dynamic value columns,
+// see writeAuctionDetails), not the typed query builder, so they need the
+// Record<string, unknown> constraint db.execute<T>() imposes. Widening happens
+// here instead of on the row interfaces themselves — an index signature on
+// those would let a misspelled property access type-check as `unknown` for
+// every consumer.
+type Raw<T> = T & Record<string, unknown>
 
 /**
  * Columns that carry extracted content, with their Postgres types. These — and
@@ -208,7 +211,7 @@ function photoRowsEqual(rows: AuctionPhotoRow[], photos: CuratedPhoto[]): boolea
 export async function readAuctionPhotos(auctionDetailsId: number): Promise<CuratedPhoto[]> {
   const db = getDb()
   if (!db) return []
-  const { rows } = await db.execute<AuctionPhotoRow>(sql`
+  const { rows } = await db.execute<Raw<AuctionPhotoRow>>(sql`
     SELECT ordinal, file, category, caption, is_property_photo
     FROM auction_photos WHERE auction_details_id = ${auctionDetailsId} ORDER BY ordinal
   `)
@@ -237,7 +240,7 @@ export async function readLatestAuctionDetails(
   if (cached !== undefined) return cached
   const db = getDb()
   if (!db) return null
-  const { rows } = await db.execute<AuctionDetailsRow>(sql`
+  const { rows } = await db.execute<Raw<AuctionDetailsRow>>(sql`
     SELECT * FROM auction_details
     WHERE platform = ${platform} AND external_id = ${externalId}
     ORDER BY version DESC LIMIT 1
@@ -255,7 +258,7 @@ export async function readAuctionDetailsAtVersion(
 ): Promise<AuctionDetailsRow | null> {
   const db = getDb()
   if (!db) return null
-  const { rows } = await db.execute<AuctionDetailsRow>(sql`
+  const { rows } = await db.execute<Raw<AuctionDetailsRow>>(sql`
     SELECT * FROM auction_details WHERE platform = ${platform} AND external_id = ${externalId} AND version = ${version}
   `)
   return rows[0] ?? null
@@ -318,7 +321,7 @@ export async function writeAuctionDetails(
     `)
     const previousRow = previous.rows[0] ?? null
     const previousPhotos = previousRow
-      ? await tx.execute<AuctionPhotoRow>(sql`
+      ? await tx.execute<Raw<AuctionPhotoRow>>(sql`
           SELECT ordinal, file, category, caption, is_property_photo
           FROM auction_photos WHERE auction_details_id = ${previousRow.id} ORDER BY ordinal
         `)
@@ -350,7 +353,7 @@ export async function writeAuctionDetails(
       [sql`${platform}`, sql`${externalId}`, sql`${extractedAt}`, sql`${llmAnalyzedAt}`, castValueTuple()],
       sql`, `,
     )
-    const inserted = await tx.execute<AuctionDetailsRow>(sql`
+    const inserted = await tx.execute<Raw<AuctionDetailsRow>>(sql`
       INSERT INTO auction_details (${sql.raw(columnNames.join(', '))}, version)
       VALUES (${insertValues},
         COALESCE((SELECT max(version) + 1 FROM auction_details WHERE platform = ${platform} AND external_id = ${externalId}), 1))

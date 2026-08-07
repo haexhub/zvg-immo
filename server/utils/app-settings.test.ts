@@ -23,10 +23,7 @@ import {
   setLlmProviderProfileSettings,
   setLlmProviderOverride,
 } from './app-settings'
-
-function queryText(queryArg: unknown): string {
-  return typeof queryArg === 'string' ? queryArg : (queryArg as { text: string }).text
-}
+import { queryText } from '~/test-support/drizzle-query'
 
 /** Minimal in-memory stand-in for the `pg` Pool, matching the exact queries
  *  app-settings.ts issues (checked via the compiled SQL Drizzle sends to

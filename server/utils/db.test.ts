@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { callQueryText as queryText } from '~/test-support/drizzle-query'
 
 const mocks = vi.hoisted(() => ({
   poolQuery: vi.fn(),
@@ -12,14 +13,6 @@ vi.mock('pg', () => ({
   }),
 }))
 vi.mock('drizzle-orm/node-postgres/migrator', () => ({ migrate: mocks.migrate }))
-
-// db.ts issues its BEGIN/COMMIT/ROLLBACK/advisory-lock statements through a
-// real Drizzle session now, which calls client.query() with a {text, ...}
-// config object instead of a plain string — pull just the text back out.
-const queryText = (call: unknown[]): unknown => {
-  const arg = call[0]
-  return typeof arg === 'string' ? arg : (arg as { text: string }).text
-}
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -108,6 +101,44 @@ describe('isStatementTimeoutError', () => {
     expect(isStatementTimeoutError({ code: '23505' })).toBe(false)
     expect(isStatementTimeoutError(null)).toBe(false)
     expect(isStatementTimeoutError('57014')).toBe(false)
+  })
+})
+
+// Drizzle wraps every driver rejection in a DrizzleQueryError whose own message
+// is `Failed query: <sql>` and whose `cause` holds the pg error — so anything
+// reading `err.code` off a Drizzle-issued query sees nothing without this.
+describe('pgErrorCode / pgErrorMessage', () => {
+  const wrapped = (cause: unknown) =>
+    Object.assign(new Error('Failed query: insert into "x"\nparams: 1'), { cause })
+
+  it('reads the SQLSTATE out of a Drizzle-wrapped pg error', async () => {
+    const { pgErrorCode } = await import('./db')
+    const pgError = Object.assign(new Error('duplicate key value violates unique constraint'), { code: '23505' })
+    expect(pgErrorCode(wrapped(pgError))).toBe('23505')
+    expect(pgErrorCode(wrapped(wrapped(pgError)))).toBe('23505')
+    expect(pgErrorCode(pgError)).toBe('23505')
+  })
+
+  it('returns undefined when no SQLSTATE is present anywhere in the chain', async () => {
+    const { pgErrorCode } = await import('./db')
+    expect(pgErrorCode(wrapped(new Error('socket hang up')))).toBeUndefined()
+    expect(pgErrorCode(new Error('boom'))).toBeUndefined()
+    expect(pgErrorCode(null)).toBeUndefined()
+    expect(pgErrorCode('23505')).toBeUndefined()
+  })
+
+  it('prefers the pg message over Drizzle\'s "Failed query" wrapper', async () => {
+    const { pgErrorMessage } = await import('./db')
+    const pgError = Object.assign(new Error('Geometry contains an interior ring outside'), { code: 'XX000' })
+    expect(pgErrorMessage(wrapped(pgError))).toBe('Geometry contains an interior ring outside')
+    expect(pgErrorMessage(new Error('boom'))).toBe('boom')
+    expect(pgErrorMessage('plain string')).toBe('plain string')
+  })
+
+  it('recognizes a statement_timeout that arrives wrapped', async () => {
+    const { isStatementTimeoutError } = await import('./db')
+    const pgError = Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' })
+    expect(isStatementTimeoutError(wrapped(pgError))).toBe(true)
   })
 })
 

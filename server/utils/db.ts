@@ -60,16 +60,47 @@ export function getDb(): NodePgDatabase<typeof schema> | null {
   return db
 }
 
+/**
+ * The driver error behind a failed query. drizzle-orm wraps every node-postgres
+ * rejection in a `DrizzleQueryError` whose own message is just
+ * `Failed query: <sql>` and whose `cause` carries the real pg error — including
+ * the SQLSTATE. Anything reading `err.code` or `err.message` off a query issued
+ * through Drizzle has to look through that wrapper (nested, since a
+ * transaction can wrap again) or it silently sees nothing.
+ */
+function unwrapDbError(err: unknown): { code?: unknown; message?: unknown } | null {
+  let current = err
+  for (let depth = 0; depth < 5; depth++) {
+    if (typeof current !== 'object' || current === null) return null
+    const candidate = current as { code?: unknown; cause?: unknown }
+    if (typeof candidate.code === 'string') return candidate
+    if (candidate.cause === undefined || candidate.cause === null) return candidate
+    current = candidate.cause
+  }
+  return null
+}
+
+/** SQLSTATE of a failed query, unwrapped from Drizzle's wrapper (see {@link unwrapDbError}). */
+export function pgErrorCode(err: unknown): string | undefined {
+  const code = unwrapDbError(err)?.code
+  return typeof code === 'string' ? code : undefined
+}
+
+/**
+ * Message of the underlying pg error, for log lines that would otherwise print
+ * Drizzle's `Failed query: <full sql>\nparams: ...` blob instead of the reason.
+ */
+export function pgErrorMessage(err: unknown): string {
+  const message = unwrapDbError(err)?.message
+  if (typeof message === 'string') return message
+  return err instanceof Error ? err.message : String(err)
+}
+
 /** Postgres SQLSTATE for a statement cancelled by `statement_timeout`. */
 const STATEMENT_TIMEOUT_SQLSTATE = '57014'
 
 export function isStatementTimeoutError(err: unknown): boolean {
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    'code' in err &&
-    (err as { code?: unknown }).code === STATEMENT_TIMEOUT_SQLSTATE
-  )
+  return pgErrorCode(err) === STATEMENT_TIMEOUT_SQLSTATE
 }
 
 /**

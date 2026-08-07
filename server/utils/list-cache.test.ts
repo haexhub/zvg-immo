@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { CrawlResult } from '~/types/auction'
+import { queryText } from '~/test-support/drizzle-query'
 
 vi.mock('./db', () => ({ getPool: vi.fn() }))
 
@@ -33,10 +34,6 @@ const seAll: CrawlResult = {
   fetchedAt: '2026-01-01T00:00:00.000Z',
   totalReported: 1,
   auctions: [{ platform: 'se-kronofogden', externalId: '3' } as CrawlResult['auctions'][number]],
-}
-
-function queryText(queryArg: unknown): string {
-  return typeof queryArg === 'string' ? queryArg : (queryArg as { text: string }).text
 }
 
 /** Minimal in-memory stand-in for the `pg` Pool. */

@@ -23,7 +23,7 @@
 import { Pool } from 'pg'
 import { sql } from 'drizzle-orm'
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { readDatabaseUrl } from '../utils/db'
+import { pgErrorCode, pgErrorMessage, readDatabaseUrl } from '../utils/db'
 import { runExclusiveTask, throwIfTaskAborted } from '../utils/exclusive-task'
 
 const BUILD_POOL_MAX_CONNECTIONS = 2
@@ -358,7 +358,7 @@ async function buildKind(
     // epoch's still-good rows.
     if (isSystemicDatabaseError(err)) throw err
     console.warn(
-      `[build-geo-features] kind=${mapping.kind} bulk insert failed (${(err as Error).message}), retrying row by row`,
+      `[build-geo-features] kind=${mapping.kind} bulk insert failed (${pgErrorMessage(err)}), retrying row by row`,
     )
     return await buildKindPerRow(db, mapping, epoch, signal, err)
   }
@@ -372,8 +372,13 @@ async function buildKind(
 const SYSTEMIC_SQLSTATE_CLASSES = ['08', '28', '2B', '2D', '40', '42', '53', '54', '57', '58']
 
 export function isSystemicDatabaseError(err: unknown): boolean {
-  const code = (err as { code?: unknown } | null | undefined)?.code
-  return typeof code === 'string' && SYSTEMIC_SQLSTATE_CLASSES.includes(code.slice(0, 2))
+  // pgErrorCode, not err.code: queries go through Drizzle, which hides the
+  // SQLSTATE inside DrizzleQueryError.cause. Reading err.code directly would
+  // classify every systemic failure as a single bad geometry — the per-row
+  // pass would then report the whole kind as "skipped" and the rebuild would
+  // go on to delete the previous epoch's still-good rows.
+  const code = pgErrorCode(err)
+  return code !== undefined && SYSTEMIC_SQLSTATE_CLASSES.includes(code.slice(0, 2))
 }
 
 async function buildKindPerRow(
@@ -408,7 +413,7 @@ async function buildKindPerRow(
     } catch (err) {
       if (isSystemicDatabaseError(err)) throw err
       skipped++
-      console.warn(`[build-geo-features] kind=${mapping.kind} skipped ${osm_type}/${osm_id}/${country}: ${(err as Error).message}`)
+      console.warn(`[build-geo-features] kind=${mapping.kind} skipped ${osm_type}/${osm_id}/${country}: ${pgErrorMessage(err)}`)
     }
   }
   // Every single candidate failing is not "a handful of broken geometries" —

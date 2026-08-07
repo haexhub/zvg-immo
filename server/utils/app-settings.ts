@@ -7,7 +7,7 @@
 
 import type { Pool } from 'pg'
 import { eq, inArray, sql } from 'drizzle-orm'
-import { drizzle } from 'drizzle-orm/node-postgres'
+import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { appSettings } from '../db/schema'
 import { llmProviderRequiresApiKey, supportsLlmProviderExecutionMode } from './llm-provider-capabilities'
 import { INSIGHT_REGISTRY } from './insights/registry'
@@ -21,9 +21,17 @@ async function readSetting(db: Pool, key: string): Promise<{ value: unknown } | 
   return row
 }
 
+/** The single upsert shape every write below shares — usable with a Drizzle
+ *  instance or a transaction handle, so the conflict target and `updated_at`
+ *  handling stay in one place. */
+function upsertSetting(executor: Pick<NodePgDatabase, 'insert'>, key: string, value: unknown) {
+  const updatedAt = new Date()
+  return executor.insert(appSettings).values({ key, value, updatedAt })
+    .onConflictDoUpdate({ target: appSettings.key, set: { value, updatedAt } })
+}
+
 async function writeSetting(db: Pool, key: string, value: unknown): Promise<void> {
-  await drizzle(db).insert(appSettings).values({ key, value, updatedAt: new Date() })
-    .onConflictDoUpdate({ target: appSettings.key, set: { value, updatedAt: new Date() } })
+  await upsertSetting(drizzle(db), key, value)
 }
 
 // Widened to `string` rather than a closed union of insight ids: insight
@@ -333,10 +341,8 @@ export async function setLlmProviderProfileSettings(
   const profileIds = new Set(profiles.map((profile) => profile.id))
   const assignments = coerceAssignments(inputAssignments, profileIds)
   await drizzle(db).transaction(async (tx) => {
-    await tx.insert(appSettings).values({ key: LLM_PROVIDER_PROFILES_KEY, value: profiles, updatedAt: new Date() })
-      .onConflictDoUpdate({ target: appSettings.key, set: { value: profiles, updatedAt: new Date() } })
-    await tx.insert(appSettings).values({ key: LLM_PROVIDER_ASSIGNMENTS_KEY, value: assignments, updatedAt: new Date() })
-      .onConflictDoUpdate({ target: appSettings.key, set: { value: assignments, updatedAt: new Date() } })
+    await upsertSetting(tx, LLM_PROVIDER_PROFILES_KEY, profiles)
+    await upsertSetting(tx, LLM_PROVIDER_ASSIGNMENTS_KEY, assignments)
   })
   return { profiles, assignments }
 }
@@ -378,11 +384,9 @@ export async function setLlmProviderAssignments(
     ? (strategy as LlmChainStrategy)
     : null
   await drizzle(db).transaction(async (tx) => {
-    await tx.insert(appSettings).values({ key: LLM_PROVIDER_ASSIGNMENTS_KEY, value: assignments, updatedAt: new Date() })
-      .onConflictDoUpdate({ target: appSettings.key, set: { value: assignments, updatedAt: new Date() } })
+    await upsertSetting(tx, LLM_PROVIDER_ASSIGNMENTS_KEY, assignments)
     if (nextStrategy) {
-      await tx.insert(appSettings).values({ key: LLM_EXTRACTION_CHAIN_STRATEGY_KEY, value: nextStrategy, updatedAt: new Date() })
-        .onConflictDoUpdate({ target: appSettings.key, set: { value: nextStrategy, updatedAt: new Date() } })
+      await upsertSetting(tx, LLM_EXTRACTION_CHAIN_STRATEGY_KEY, nextStrategy)
     }
   })
   return { assignments, strategy: nextStrategy ?? (await getLlmExtractionChainStrategy(db)) }

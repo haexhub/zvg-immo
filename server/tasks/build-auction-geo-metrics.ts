@@ -14,7 +14,7 @@
 import { Pool } from 'pg'
 import { sql } from 'drizzle-orm'
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { readDatabaseUrl } from '../utils/db'
+import { pgErrorMessage, readDatabaseUrl } from '../utils/db'
 import { runExclusiveTask, throwIfTaskAborted } from '../utils/exclusive-task'
 import { GEO_METRIC_CATEGORIES, type GeoMetricCategory } from '../utils/geo-metric-categories'
 import { isSystemicDatabaseError } from './build-geo-features'
@@ -151,7 +151,7 @@ export async function buildAuctionGeoMetrics(
         if (isSystemicDatabaseError(err)) throw err
         skipped++
         console.warn(
-          `[build-auction-geo-metrics] skipped ${candidate.platform}/${candidate.external_id}: ${(err as Error).message}`,
+          `[build-auction-geo-metrics] skipped ${candidate.platform}/${candidate.external_id}: ${pgErrorMessage(err)}`,
         )
       }
     }
