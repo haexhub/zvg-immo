@@ -18,8 +18,7 @@
   "landing": {
     "hero": {
       "searchPlaceholder": "Ort, Objektart oder Aktenzeichen suchen …",
-      "searchCta": "Suchen",
-      "trust": ["100 % kostenlos", "Ohne Anmeldung", "Live von Amts- & Gerichtsportalen"]
+      "searchCta": "Suchen"
     },
     "rails": {
       "country": {
