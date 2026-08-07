@@ -46,8 +46,15 @@ interface KindMapping {
 // lands, instead of this file needing a second pass later.
 const KIND_MAPPINGS: KindMapping[] = [
   {
+    // `natural=beach` was in this list originally (matching the WP-4 doc's
+    // mapping table) but is not sea-specific in OSM: it marks beach material
+    // (sand/shingle) along lakes and rivers just as often as along the coast
+    // — Bavaria alone has hundreds of them (Isar, Donau, Alpine lakes). That
+    // made the `sea` kind match almost everywhere in Germany, so a nearSea
+    // filter barely excluded anything. `swimming` below already covers
+    // natural=beach on its own terms.
     kind: 'sea',
-    where: `(o.tags ->> 'natural' IN ('coastline', 'beach', 'bay', 'strait')
+    where: `(o.tags ->> 'natural' IN ('coastline', 'bay', 'strait')
       OR o.tags ->> 'water' IN ('sea', 'lagoon')
       OR o.tags ->> 'place' IN ('sea', 'ocean'))`,
   },
