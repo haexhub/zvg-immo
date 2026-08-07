@@ -3,7 +3,7 @@ import { Trash2 } from 'lucide-vue-next'
 import { useSettingsError } from '~/composables/settings/useSettingsError'
 import { useSettingsTaskOverview } from '~/composables/settings/useSettingsTaskOverview'
 import { useLlmProfileOptions } from '~/composables/settings/useLlmProfileOptions'
-import type { LlmExecutionMode, LlmProvider, LlmProviderScope } from '~/server/utils/app-settings'
+import type { LlmExecutionMode, LlmProvider } from '~/server/utils/app-settings'
 
 interface LlmProviderProfileForm {
   id: string
@@ -23,6 +23,9 @@ interface LlmProviderProfileForm {
   modelOptionsRequestId: number
 }
 
+// Only the fields this card actually reads. /api/settings/llm-profiles also
+// returns assignments/effective/strategy/scopes — those belong to
+// SettingsLlmAssignmentsCard, which fetches the same route for itself.
 interface LlmProfilesResponse {
   profiles: Array<{
     id: string
@@ -33,13 +36,6 @@ interface LlmProfilesResponse {
     executionMode: LlmExecutionMode
     apiKeySet: boolean
     apiKeyMissing: boolean
-  }>
-  assignments: Partial<Record<LlmProviderScope, string[]>>
-  effective: Record<LlmProviderScope, {
-    provider: string
-    baseUrl: string
-    model: string
-    executionMode: LlmExecutionMode
   }>
 }
 
