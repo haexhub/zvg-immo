@@ -8,7 +8,10 @@ const MAX_LIMIT = 1000
 // (externalEnrichmentStatus in /api/settings/llm-batch-jobs), same as the
 // country enrich flow's detached reprocess/external-enrichment calls.
 export default defineEventHandler(async (event): Promise<{ started: true }> => {
-  const body = await readBody<Record<string, unknown>>(event).catch(() => ({}) as Record<string, unknown>)
+  // Der Button schickt POST ohne Body: readBody wirft dann nicht, sondern
+  // liefert undefined (kein content-length -> h3 liest gar nicht erst) — der
+  // catch allein deckt das nicht ab, ein Property-Zugriff darauf wird zu 500.
+  const body = await readBody<Record<string, unknown>>(event).catch(() => undefined) ?? {}
   const limit = optionalLimit(body.limit)
   const country = optionalToken(body.country, 'country')
   const platform = optionalToken(body.platform, 'platform')
