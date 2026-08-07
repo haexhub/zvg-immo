@@ -237,7 +237,7 @@ function odorOverlayEntry(entries: OverlayEntry[]): void {
   const radius = Math.min(Math.max(nearest, 300), 5_000)
   const label = t('objektDetail.mapLayerOdorSignals')
   const feature = new Feature({ geometry: circularPolygon(props.lng, props.lat, radius) })
-  feature.set('popupHtml', `${label}<br>${formatDistance(nearest)}`)
+  feature.set('popupHtml', () => `${t('objektDetail.mapLayerOdorSignals')}<br>${formatDistance(nearest)}`)
   const layer = new VectorLayer({
     source: new VectorSource({ features: [feature] }),
     style: new Style({
@@ -252,7 +252,7 @@ function hazardOverlayEntries(entries: OverlayEntry[]): void {
   for (const hazard of props.hazards ?? []) {
     const color = hazardStatusColor(hazard.status)
     const circleFeature = new Feature({ geometry: circularPolygon(props.lng, props.lat, hazardRadius(hazard)) })
-    circleFeature.set('popupHtml', `${hazardOverlayLabel(hazard)}<br>${t('objektDetail.hazardSeverityLabel')} ${t(`objektDetail.hazardSeverity.${hazard.severity}`)}`)
+    circleFeature.set('popupHtml', () => `${hazardOverlayLabel(hazard)}<br>${t('objektDetail.hazardSeverityLabel')} ${t(`objektDetail.hazardSeverity.${hazard.severity}`)}`)
     const dotFeature = new Feature({ geometry: new Point(fromLonLat([props.lng, props.lat])) })
     const layer = new VectorLayer({
       source: new VectorSource({ features: [circleFeature, dotFeature] }),
@@ -281,7 +281,7 @@ function featureOverlayEntries(entries: OverlayEntry[]): void {
     }
     const olFeature = new Feature({ geometry: new Point(fromLonLat([feature.lng, feature.lat])) })
     olFeature.set('data', feature)
-    olFeature.set('popupHtml', featurePopup(feature))
+    olFeature.set('popupHtml', () => featurePopup(feature))
     source.addFeature(olFeature)
   }
   for (const [label, source] of layersByLabel) {
@@ -422,7 +422,11 @@ onMounted(async () => {
 
   map.on('click', (evt) => {
     const feature = map!.forEachFeatureAtPixel(evt.pixel, (f) => f)
-    const html = feature?.get('popupHtml') as string | undefined
+    // Stored as a thunk (not a plain string) so the popup re-renders with the
+    // active locale/formatters on every click instead of the one baked in
+    // when the layers were built in onMounted.
+    const popupHtml = feature?.get('popupHtml') as (() => string) | undefined
+    const html = popupHtml?.()
     if (!html) {
       popupOverlay.setPosition(undefined)
       return
