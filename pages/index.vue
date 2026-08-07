@@ -19,10 +19,19 @@ const [{ data: rails }, { data: countries }] = await Promise.all([
   }),
 ])
 
+// Radii in km, matching the meter cutoffs rails.get.ts's GEO_CATEGORIES
+// queries auction_geo_metrics with (5000/15000/5000/2000m) — keeps the "show
+// all" link's search-page results consistent with what's actually in the rail.
+const GEO_RAIL_QUERY: Record<'sea' | 'mountains' | 'lakes' | 'rivers', Record<string, string>> = {
+  sea: { nearSea: '5' },
+  mountains: { nearMountain: '15' },
+  lakes: { nearLake: '5' },
+  rivers: { nearRiver: '2' },
+}
 const geoRails = computed(() => {
   if (!rails.value) return []
   return (['sea', 'mountains', 'lakes', 'rivers'] as const)
-    .map((key) => ({ key, items: rails.value![key] }))
+    .map((key) => ({ key, items: rails.value![key], query: GEO_RAIL_QUERY[key] }))
     .filter((geo) => geo.items.length > 0)
 })
 
@@ -248,7 +257,12 @@ function pickRecent(query: Record<string, string>): void {
 
     <!-- Category rails -->
     <div class="w-full px-3">
-      <LandingCategoryRail v-for="rail in rails?.countryRails" :key="rail.code" :title="$t('landing.rails.country.title', { name: rail.name })">
+      <LandingCategoryRail
+        v-for="rail in rails?.countryRails"
+        :key="rail.code"
+        :title="$t('landing.rails.country.title', { name: rail.name })"
+        :to="{ path: '/search', query: { country: rail.code } }"
+      >
         <div v-for="a in rail.auctions" :key="`${a.platform}:${a.externalId}`" class="w-[calc(50%-0.5rem)] shrink-0 snap-start sm:w-72">
           <AuctionCard :auction="a" class="h-full" />
         </div>
@@ -258,6 +272,7 @@ function pickRecent(query: Record<string, string>): void {
         v-if="rails?.bestCondition.length"
         :title="$t('landing.rails.bestCondition.title')"
         :subtitle="$t('landing.rails.bestCondition.subtitle')"
+        :to="{ path: '/search', query: { condition: 'neuwertig,gepflegt' } }"
       >
         <div v-for="a in rails.bestCondition" :key="`${a.platform}:${a.externalId}`" class="w-[calc(50%-0.5rem)] shrink-0 snap-start sm:w-72">
           <AuctionCard :auction="a" class="h-full" />
@@ -269,6 +284,7 @@ function pickRecent(query: Record<string, string>): void {
         :key="geo.key"
         :title="$t(`landing.rails.${geo.key}.title`)"
         :subtitle="$t(`landing.rails.${geo.key}.subtitle`)"
+        :to="{ path: '/search', query: geo.query }"
       >
         <div v-for="a in geo.items" :key="`${a.platform}:${a.externalId}`" class="w-[calc(50%-0.5rem)] shrink-0 snap-start sm:w-72">
           <AuctionCard :auction="a" class="h-full" />
