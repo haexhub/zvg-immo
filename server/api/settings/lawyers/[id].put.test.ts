@@ -2,13 +2,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../../utils/supabase', () => ({ getServiceClient: vi.fn() }))
 
-function chain(result: { data: unknown; error: unknown }): any {
+function chain(result: { data: unknown; error: unknown }, eqSpy?: (...args: unknown[]) => void): any {
   const promise = Promise.resolve(result)
   return Object.assign(promise, {
-    update: vi.fn(() => chain(result)),
-    eq: vi.fn(() => chain(result)),
-    select: vi.fn(() => chain(result)),
-    single: vi.fn(() => chain(result)),
+    update: vi.fn(() => chain(result, eqSpy)),
+    eq: vi.fn((...args: unknown[]) => {
+      eqSpy?.(...args)
+      return chain(result, eqSpy)
+    }),
+    select: vi.fn(() => chain(result, eqSpy)),
+    single: vi.fn(() => chain(result, eqSpy)),
   })
 }
 
@@ -44,6 +47,7 @@ describe('/api/settings/lawyers/[id] PUT', () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
     vi.stubGlobal('readBody', vi.fn(async () => ({ name: 'Jane Doe', email: 'jane@example.com', countries: ['de'], active: false })))
+    const eqSpy = vi.fn()
     const update = vi.fn(() => chain({
       data: {
         id: '1', name: 'Jane Doe', firm: null, email: 'jane@example.com', phone: null,
@@ -51,14 +55,16 @@ describe('/api/settings/lawyers/[id] PUT', () => {
         commission_cents: null, active: false, created_at: '2026-01-01T00:00:00.000Z',
       },
       error: null,
-    }))
+    }, eqSpy))
     const from = vi.fn(() => ({ update }))
     const { getServiceClient } = await import('../../../utils/supabase')
     vi.mocked(getServiceClient).mockReturnValue({ from } as never)
 
     const handler = (await import('./[id].put')).default as unknown as (event: unknown) => Promise<unknown>
     await expect(handler(makeEvent('1'))).resolves.toMatchObject({ id: '1', active: false })
+    expect(from).toHaveBeenCalledWith('lawyers')
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ active: false }))
+    expect(eqSpy).toHaveBeenCalledWith('id', '1')
   })
 
   it('rejects with 404 when no row matches the id', async () => {

@@ -251,6 +251,7 @@ onMounted(async () => {
           <Input
             v-if="cacheImportConfig(source.id)?.requiresCsvPath"
             v-model="csvPathDrafts[source.id]"
+            :aria-label="$t('settings.externalData.cacheImport.csvPathPlaceholder')"
             :placeholder="$t('settings.externalData.cacheImport.csvPathPlaceholder')"
             class="max-w-xs"
           />

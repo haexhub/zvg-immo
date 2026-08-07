@@ -16,6 +16,10 @@ export function usePollWhileActive(
   let timer: ReturnType<typeof setTimeout> | null = null
   let running = false
   let attempts = 0
+  // Bumped on every start() so a callback from a stop()+start() cycle that
+  // raced past its own cycle's stop() can recognize it's stale and bail out
+  // instead of arming a second, untracked timer alongside the new cycle's.
+  let generation = 0
 
   function stop(): void {
     running = false
@@ -25,16 +29,21 @@ export function usePollWhileActive(
     }
   }
 
-  function schedule(): void {
+  function schedule(cycle: number): void {
     timer = setTimeout(async () => {
       timer = null
-      await refresh()
+      try {
+        await refresh()
+      } catch {
+        // A failed refresh must not silently end polling; the caller's
+        // refresh() is responsible for surfacing the error itself.
+      }
       // stop() during the awaited refresh (unmount, or a second start()) must
       // not be undone by re-arming the timer below.
-      if (!running) return
+      if (!running || cycle !== generation) return
       attempts++
       if (!isActive() || (maxAttempts != null && attempts >= maxAttempts)) stop()
-      else schedule()
+      else schedule(cycle)
     }, intervalMs)
   }
 
@@ -42,7 +51,8 @@ export function usePollWhileActive(
     if (running || !isActive()) return
     running = true
     attempts = 0
-    schedule()
+    generation++
+    schedule(generation)
   }
 
   onBeforeUnmount(stop)

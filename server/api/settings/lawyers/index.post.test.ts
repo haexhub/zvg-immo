@@ -2,12 +2,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../../utils/supabase', () => ({ getServiceClient: vi.fn() }))
 
-function chain(result: { data: unknown; error: unknown }): any {
+function chain(result: { data: unknown; error: unknown }, spies?: { select?: (...args: unknown[]) => void; single?: (...args: unknown[]) => void }): any {
   const promise = Promise.resolve(result)
   return Object.assign(promise, {
-    insert: vi.fn(() => chain(result)),
-    select: vi.fn(() => chain(result)),
-    single: vi.fn(() => chain(result)),
+    insert: vi.fn(() => chain(result, spies)),
+    select: vi.fn((...args: unknown[]) => {
+      spies?.select?.(...args)
+      return chain(result, spies)
+    }),
+    single: vi.fn((...args: unknown[]) => {
+      spies?.single?.(...args)
+      return chain(result, spies)
+    }),
   })
 }
 
@@ -42,6 +48,8 @@ describe('/api/settings/lawyers POST', () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
     vi.stubGlobal('readBody', vi.fn(async () => ({ name: 'Jane Doe', email: 'jane@example.com', countries: ['de'] })))
+    const selectSpy = vi.fn()
+    const singleSpy = vi.fn()
     const insert = vi.fn(() => chain({
       data: {
         id: '1', name: 'Jane Doe', firm: null, email: 'jane@example.com', phone: null,
@@ -49,14 +57,17 @@ describe('/api/settings/lawyers POST', () => {
         commission_cents: null, active: true, created_at: '2026-01-01T00:00:00.000Z',
       },
       error: null,
-    }))
+    }, { select: selectSpy, single: singleSpy }))
     const from = vi.fn(() => ({ insert }))
     const { getServiceClient } = await import('../../../utils/supabase')
     vi.mocked(getServiceClient).mockReturnValue({ from } as never)
 
     const handler = (await import('./index.post')).default as unknown as (event: unknown) => Promise<unknown>
     await expect(handler({})).resolves.toMatchObject({ id: '1', name: 'Jane Doe', active: true })
+    expect(from).toHaveBeenCalledWith('lawyers')
     expect(insert).toHaveBeenCalledWith(expect.objectContaining({ name: 'Jane Doe', email: 'jane@example.com', countries: ['de'] }))
+    expect(selectSpy).toHaveBeenCalledWith('id, name, firm, email, phone, countries, specialization, languages, website, commission_cents, active, created_at')
+    expect(singleSpy).toHaveBeenCalled()
   })
 
   it('rejects with 500 when the insert fails', async () => {

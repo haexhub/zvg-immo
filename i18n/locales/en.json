@@ -254,7 +254,7 @@
       "noProfileAssigned": "Server default / fallback",
       "usingEnvDefault": "No override set — the server default is active: {provider} ({baseUrl})",
       "usingTranslationFallback": "No translation override set — translations currently use: {provider} ({baseUrl})",
-      "usingInsightFallback": "No override set — currently uses document extraction's: {provider} ({baseUrl})",
+      "usingInsightFallback": "No override set — currently uses the document extraction assignment: {provider} ({baseUrl})",
       "primary": "Primary",
       "fallbackN": "Fallback {n}",
       "poolMember": "Key {n}",

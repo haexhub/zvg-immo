@@ -2,11 +2,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../../utils/supabase', () => ({ getServiceClient: vi.fn() }))
 
-function chain(result: { data: unknown; error: unknown }): any {
+function chain(result: { data: unknown; error: unknown }, orderSpy?: (...args: unknown[]) => void): any {
   const promise = Promise.resolve(result)
   return Object.assign(promise, {
-    select: vi.fn(() => chain(result)),
-    order: vi.fn(() => chain(result)),
+    select: vi.fn(() => chain(result, orderSpy)),
+    order: vi.fn((...args: unknown[]) => {
+      orderSpy?.(...args)
+      return chain(result, orderSpy)
+    }),
   })
 }
 
@@ -30,6 +33,7 @@ describe('/api/settings/lawyers GET', () => {
   it('maps rows to the admin lawyer shape, ordered by name', async () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
+    const orderSpy = vi.fn()
     const from = vi.fn(() => chain({
       data: [{
         id: '1',
@@ -46,7 +50,7 @@ describe('/api/settings/lawyers GET', () => {
         created_at: '2026-01-01T00:00:00.000Z',
       }],
       error: null,
-    }))
+    }, orderSpy))
     const { getServiceClient } = await import('../../../utils/supabase')
     vi.mocked(getServiceClient).mockReturnValue({ from } as never)
 
@@ -66,6 +70,7 @@ describe('/api/settings/lawyers GET', () => {
       createdAt: '2026-01-01T00:00:00.000Z',
     }])
     expect(from).toHaveBeenCalledWith('lawyers')
+    expect(orderSpy).toHaveBeenCalledWith('name', { ascending: true })
   })
 
   it('rejects with 500 on a database error', async () => {
