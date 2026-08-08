@@ -3,7 +3,7 @@ import { ChevronLeft, Loader2, Trash2 } from 'lucide-vue-next'
 import type { ArchiveCountryRow } from '~/server/api/settings/archive/countries.get'
 import type { ArchiveRegionRow } from '~/server/api/settings/archive/regions.get'
 import type { ArchiveCaseRow } from '~/server/api/settings/archive/cases.get'
-import type { ArchiveDocumentRow } from '~/server/api/settings/archive/documents.get'
+import type { ArchiveDocumentRow } from '~/server/utils/archive-documents'
 import type { DeleteRawArchiveCountryResult } from '~/server/utils/raw-archive-delete'
 import { useSettingsError } from '~/composables/settings/useSettingsError'
 

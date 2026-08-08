@@ -1,6 +1,6 @@
 # Admin-Technikseite pro Auktion + LLM-Modellvergleich
 
-Stand: 2026-08-08 · Status: WP-0 + WP-1 gemergt (PR #368), WP-6 umgesetzt, WP-2 bis WP-5 und WP-7 offen (parallele PRs, s. Reihenfolge)
+Stand: 2026-08-08 · Status: WP-0 bis WP-3 + WP-6 umgesetzt, WP-4+WP-5 in Review (PR #375), WP-7 in Review (PR #370)
 
 ## Ziel
 
@@ -125,33 +125,39 @@ korrekterweise `NULL`: dort läuft kein LLM.
 **Verifiziert:** `pnpm test`. Ein scoped `reprocess`-Lauf gegen eine echte
 Auktion steht noch aus.
 
-## WP-2 · Technik-API
+## WP-2 · Technik-API — ERLEDIGT
 
-`GET /api/settings/auction/[platform]/[id]/technical` — ein Endpoint, ein
-Aggregat, alles aus vorhandenen Tabellen:
+`GET /api/settings/auction/[platform]/[id]/technical`
+(`server/api/settings/auction/[platform]/[id]/technical.get.ts`), ein Endpoint,
+ein Aggregat (`server/utils/auction-technical.ts`), alles aus vorhandenen
+Tabellen:
 
 - **Identität & Geocoding** — `auctions` inkl. `geocode_attempted_at/result/provider`, `first_seen_at`, `updated_at`
-- **Crawl/Fetch-Zustand** — `auction_fetch_state`: `detail_fetched_at`, Attachments, `photo_failures`, `photos_checked_at`, `llm_failures`, `llm_last_attempted_at`, `llm_batch_job`
-- **Dokumentarchiv** — `artifact_versions` + `artifact_version_items` + `artifact_captures`/`artifact_blobs`. Die Query aus `server/api/settings/archive/documents.get.ts` in ein Util ziehen und von beiden Endpoints nutzen statt zu duplizieren.
-- **Extraktionshistorie** — alle `auction_details`-Zeilen mit Version, Zeitstempeln, `is_latest`/`is_trial`, Provenienz aus WP-1 (NULL-Provenienz heißt „unbekannt", nicht „kein LLM" — s. WP-1)
-- **LLM-Batch** — `llm_batch_jobs`-Zeilen, deren `custom_id_map` diese Identität enthält, plus Status
-- **Fehler** — `task_run_errors` gefiltert auf platform/external_id. Braucht einen neuen Index `(platform, external_id, created_at desc)`; vorhanden ist nur `(task, created_at desc)`.
-- **Externe Daten** — `location_enrichment`: pro `COVERAGE_SOURCE_IDS`-Quelle „vorhanden / fehlt", `checkedAt`, `sourceVersion`. Dazu `auction_geo_metrics` (inkl. `features_epoch`, `computed_at`, `point_hash`) und die verknüpfte `climate_cells`-Zeile. Prädikate aus `server/utils/external-data/coverage.ts` als Einzelauktions-Variante wiederverwenden.
+- **Crawl/Fetch-Zustand** — `readAuctionFetchState()` (bereits vorhanden) wiederverwendet statt dupliziert
+- **Dokumentarchiv** — Query aus `server/api/settings/archive/documents.get.ts` nach `server/utils/archive-documents.ts` gezogen, von beiden Endpoints genutzt
+- **Extraktionshistorie** — alle `auction_details`-Zeilen mit Version, Zeitstempeln, `is_latest`/`is_trial`, Provenienz aus WP-1
+- **LLM-Batch** — `listRecentLlmBatchJobs()` (letzte 50) client-seitig nach `custom_id_map`-Werten `"platform:externalId"` gefiltert, keine neue Query
+- **Fehler** — neue `listTaskRunErrorsForIdentity()` in `task-run-errors.ts`, task-übergreifend (enrich + reprocess) über den neuen Index `idx_task_run_errors_platform_external_created` aus WP-7
+- **Externe Daten** — `server/utils/external-data/auction-coverage.ts` (Einzelauktions-Variante von `coverage.ts`s Prädikaten) plus `auction_geo_metrics` + verknüpfte `climate_cells`-Zeile
 - **Übersetzungen** — `auction_translations`-Status je Sprache/Version inkl. `failed_config`
 
-**Verifizieren:** Integrationstest gegen Testcontainer-DB mit einer synthetischen
-Auktion; jede Sektion liefert Werte statt `null`.
+**Verifiziert:** `pnpm test` mit gemocktem Pool (`auction-technical.test.ts`,
+erweiterte `task-run-errors.test.ts`) — kein Testcontainer-Integrationstest
+gegen echtes Postgres, das bleibt offen, falls gewünscht.
 
-## WP-3 · Admin-Seite
+## WP-3 · Admin-Seite — ERLEDIGT
 
 `pages/admin/auktion/[platform]/[id].vue`.
 
 Auth-Muster wie `pages/settings.vue`: `onMounted` → `/api/settings/session`
-proben, sonst Login-Formular. Sektionen als Cards analog `components/settings/*`;
-`useSettingsError` und `useSettingsAction` wiederverwenden.
+proben, sonst Login-Formular (teilt `settings.login.*`-i18n-Keys). Sektionen als
+`Card`s, `useSettingsError` wiederverwendet. Neue i18n-Keys unter
+`settings.auctionTechnical.*` in `de.json` und `en.json`.
 
-Auf der öffentlichen Objektseite ein dezenter „Technik"-Link, der nur gerendert
-wird, wenn die Session-Probe erfolgreich war (clientseitig, kein SSR-Leak).
+Auf der öffentlichen Objektseite (`pages/objekt/[platform]/[id].vue`) ein
+dezenter „Technik"-Link neben dem Aktenzeichen, der nur clientseitig nach
+erfolgreicher Session-Probe gerendert wird (kein SSR-Leak) — neuer i18n-Key
+`objektDetail.technicalLink`.
 
 Neue i18n-Keys unter `settings.auctionTechnical.*` in `de.json` **und** `en.json`.
 
@@ -231,13 +237,18 @@ LLM-Zweig unbeantwortbar und WP-4 hat keine Fehlerrückmeldung.
 
 ```
 WP-0 (Trial-Fundament)  ─┐  ✅ #368
-WP-1 (Provenienz)       ─┤  ✅ #368  → WP-2 (API) → WP-3 (Seite) → WP-4 (Einzellauf) → WP-5 (Diff/Promote/Delete)
-WP-7 (Fehler-Logging)   ─┘  paralleler PR
-WP-6 (Public-Cleanup)   ── unabhängig, jederzeit ✅
+WP-1 (Provenienz)       ─┤  ✅ #368  → WP-2 (API) ✅ → WP-3 (Seite) ✅ → WP-4 (Einzellauf) → WP-5 (Diff/Promote/Delete)
+WP-7 (Fehler-Logging)   ─┘  in Review (PR #370)
+WP-6 (Public-Cleanup)   ── unabhängig, jederzeit ✅ (dieser PR)
 ```
 
+WP-4 und WP-5 sind bereits reviewt und gefixt, aber beim ersten Merge-Versuch
+auf einem verwaisten Stapel-Branch statt auf `main` gelandet (Retargeting kam
+zu spät) — Nachtrag in PR #375, inhaltlich identisch.
+
 WP-0 und WP-1 sind zusammen in PR #368 gemergt — WP-1 ohne WP-0 hätte keine
-sinnvolle Migration ergeben. WP-2+3, WP-4, WP-5, WP-6 und WP-7 sind je ein
-eigener PR, mehrere davon parallel von main abgezweigt statt aufeinander
-aufbauend — das gibt beim Mergen kleine, triviale Konflikte in diesem
-Abschnitt und der Statuszeile oben, kein Merge-Blocker.
+sinnvolle Migration ergeben. WP-2+3 sind ein PR (API ohne UI bringt nichts).
+WP-4, WP-5, WP-6 und WP-7 je einer, mehrere davon parallel von main
+abgezweigt statt aufeinander aufbauend — das gibt beim Mergen kleine,
+triviale Konflikte in diesem Abschnitt und der Statuszeile oben, kein
+Merge-Blocker.
