@@ -78,6 +78,10 @@ export interface LlmConfig {
   apiKey?: string
   model: string
   maxTokens?: number
+  /** Set when resolved from an assigned LlmProviderProfile — see
+   *  LlmProviderOverride.profileId. Threaded through so reprocess.ts can
+   *  record which profile won the fallback chain (WP-1 provenance). */
+  profileId?: string
 }
 
 export class LlmProviderError extends Error {
@@ -315,7 +319,7 @@ export function getProvider(config: LlmConfig): ExtractionProvider {
  *  Returns null when unconfigured (baseUrl unset) — same graceful-degrade
  *  contract as those callers. */
 export function resolveLlmConfig(
-  c: { provider?: string; baseUrl?: string; apiKey?: string; model?: string } | undefined,
+  c: { provider?: string; baseUrl?: string; apiKey?: string; model?: string; profileId?: string } | undefined,
   overrides?: { maxTokens?: number },
 ): LlmConfig | null {
   if (!c?.baseUrl) return null
@@ -327,6 +331,7 @@ export function resolveLlmConfig(
     provider,
     baseUrl: c.baseUrl,
     apiKey: c.apiKey || undefined,
+    profileId: c.profileId,
     model: c.model || (provider === 'gemini-native' ? 'gemini-flash-latest' : 'claude-haiku-4-5'),
     maxTokens: overrides?.maxTokens,
   }

@@ -8,7 +8,7 @@ import { readArtifactProcessingState } from '../utils/artifact-version-state'
 import { readExtractionChainStrategy, readExtractionLlmConfigChain } from '../utils/extract/llm-task-config'
 import { readLlmExecutionMode } from '../utils/app-settings'
 import { submitLlmBatch } from '../utils/extract/llm-batch'
-import { extractByLlm } from '../utils/extract/llm'
+import { extractByLlm, isLlmProviderUnavailable } from '../utils/extract/llm'
 import { prepareArchivedLlmDocuments } from '../utils/extract/llm-documents'
 import { writeAuctionDetails } from '../utils/auction-details'
 import { upsertCurrentAuctions } from '../utils/current-auctions'
@@ -219,7 +219,55 @@ describe('reprocessAuction structured provenance', () => {
       llmFailures: 2,
       artifactVersionId: 11,
       entry: { source: 'rules', confidence: 'high' },
+      llmConfigUsed: null,
+      llmDurationMs: null,
     })
+  })
+
+  it('records the fallback config that actually answered, not the primary', async () => {
+    const primary = { baseUrl: 'https://api.example.test', apiKey: 'k1', model: 'primary-model', provider: 'openai-compatible' as const }
+    const fallback = {
+      baseUrl: 'https://api.example.test', apiKey: 'k2', model: 'fallback-model', provider: 'openai-compatible' as const, profileId: 'profile-2',
+    }
+    vi.mocked(isLlmProviderUnavailable).mockReturnValueOnce(true)
+    vi.mocked(extractByLlm)
+      .mockRejectedValueOnce(new Error('rate limited'))
+      .mockImplementationOnce(async (_input, _config, opts) => {
+        opts?.onProviderAttempt?.()
+        return null
+      })
+
+    const result = await reprocessAuction(
+      'zvg-portal',
+      '7265',
+      undefined,
+      primary,
+      '2026-08-02T11:00:00.000Z',
+      { artifactState: emptyArtifactState, fallbackConfigs: [fallback] },
+    )
+
+    expect(result?.llmConfigUsed).toEqual(fallback)
+    expect(result?.llmDurationMs).toEqual(expect.any(Number))
+  })
+
+  it('leaves provenance empty when extraction bailed out before any provider request', async () => {
+    // extractByLlm returns null *without* calling onProviderAttempt when the
+    // archived snapshot yields no parts at all — attributing that rules-only
+    // version to a model that was never asked would misreport it.
+    const config = { baseUrl: 'https://api.example.test', apiKey: 'k', model: 'never-asked', provider: 'openai-compatible' as const }
+    vi.mocked(extractByLlm).mockResolvedValue(null)
+
+    const result = await reprocessAuction(
+      'zvg-portal',
+      '7265',
+      undefined,
+      config,
+      '2026-08-02T11:00:00.000Z',
+      { artifactState: emptyArtifactState },
+    )
+
+    expect(result?.llmConfigUsed).toBeNull()
+    expect(result?.llmDurationMs).toBeNull()
   })
 })
 
@@ -230,7 +278,14 @@ describe('runReprocess structured persistence', () => {
     expect(writeAuctionDetails).toHaveBeenCalledWith(
       expect.objectContaining({ extraction: expect.objectContaining({ source: 'rules' }) }),
       expect.objectContaining({ source: 'rules' }),
-      { artifactVersionId: null },
+      {
+        artifactVersionId: null,
+        llmProvider: null,
+        llmModel: null,
+        llmProfileId: null,
+        runTrigger: 'cron',
+        llmDurationMs: null,
+      },
     )
     expect(writeAuctionLlmPipelineState).toHaveBeenCalledWith('zvg-portal', '7265', {
       llmBatchJob: null,
@@ -278,7 +333,14 @@ describe('runReprocess structured persistence', () => {
     expect(writeAuctionDetails).toHaveBeenCalledWith(
       expect.any(Object),
       expect.objectContaining({ condition: 'gepflegt', documentSummary: 'Bisherige Zusammenfassung' }),
-      { artifactVersionId: 11 },
+      {
+        artifactVersionId: 11,
+        llmProvider: null,
+        llmModel: null,
+        llmProfileId: null,
+        runTrigger: 'cron',
+        llmDurationMs: null,
+      },
     )
     expect(writeAuctionLlmPipelineState).toHaveBeenLastCalledWith('zvg-portal', '7265', {
       llmBatchJob: 'batch-22',
@@ -313,6 +375,30 @@ describe('runReprocess structured persistence', () => {
       expect.objectContaining({ pdfPageImages: ['base64page1'] }),
       expect.anything(),
       expect.anything(),
+    )
+  })
+
+  it("records the winning model's provenance, run trigger and duration on the written version", async () => {
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+      baseUrl: 'https://api.example.test', apiKey: 'secret', model: 'vision-model', provider: 'gemini-native', profileId: 'profile-a',
+    }])
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+      opts?.onProviderAttempt?.()
+      return null
+    })
+
+    await expect(runReprocess({ country: 'de', trigger: 'manual' })).resolves.toMatchObject({ processed: 1 })
+
+    expect(writeAuctionDetails).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        llmProvider: 'gemini-native',
+        llmModel: 'vision-model',
+        llmProfileId: 'profile-a',
+        runTrigger: 'manual',
+        llmDurationMs: expect.any(Number),
+      }),
     )
   })
 })
@@ -428,7 +514,14 @@ describe('runReprocess crawl-owned field recovery (WP-3 SE root cause)', () => {
         thumbnailUrl: 'https://auktionstorget.kronofogden.se/images/1.jpg',
       }),
       expect.anything(),
-      { artifactVersionId: null },
+      {
+        artifactVersionId: null,
+        llmProvider: null,
+        llmModel: null,
+        llmProfileId: null,
+        runTrigger: 'cron',
+        llmDurationMs: null,
+      },
     )
   })
 

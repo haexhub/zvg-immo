@@ -153,6 +153,10 @@ export interface LlmProviderOverride {
    *  tradeoff for this solo-admin deployment (no other DB readers); revisit
    *  with at-rest encryption if that ever changes. */
   apiKey: string
+  /** Set only when this override was resolved from an assigned
+   *  LlmProviderProfile (resolveAssignedProfileChain) — lets reprocess.ts
+   *  record which profile actually produced a version (WP-1 provenance). */
+  profileId?: string
 }
 
 export interface LlmProviderProfile extends LlmProviderOverride {
@@ -424,6 +428,7 @@ async function resolveAssignedProfileChain(db: Pool, scope: LlmProviderScope): P
       model: profile.model,
       executionMode: scope === 'translation' ? 'sync' : profile.executionMode,
       apiKey: profile.apiKey,
+      profileId: profile.id,
     }))
 }
 

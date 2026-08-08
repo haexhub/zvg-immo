@@ -219,6 +219,23 @@ export const auctionDetails = pgTable('auction_details', {
   sourceRooms: numeric('source_rooms'),
   marketValueText: text('market_value_text'),
   isLatest: boolean('is_latest').notNull().default(true),
+  // Admin-triggered single-model comparison run (docs/plans/2026-08-08-
+  // admin-auktions-technikseite.md, WP-0): a trial version never sets
+  // isLatest and never demotes the current live row — writeAuctionDetails
+  // is the only place that enforces this. Promoting one to live is a
+  // separate, explicit action (WP-5), not handled here.
+  isTrial: boolean('is_trial').notNull().default(false),
+  // Provenance (WP-1) — deliberately outside VALUE_COLUMNS in
+  // auction-details.ts: a model swap alone must not mint a version when the
+  // extracted facts are identical. NULL for rows written by enrich.ts/
+  // geocode.ts/llm-batch-poll.ts, which don't pass these yet.
+  llmProvider: text('llm_provider'),
+  llmModel: text('llm_model'),
+  // References app_settings-stored LlmProviderProfile.id (a string, not a
+  // DB row) — no FK, profiles aren't a table.
+  llmProfileId: text('llm_profile_id'),
+  runTrigger: text('run_trigger'),
+  llmDurationMs: integer('llm_duration_ms'),
 }, (table) => [
   unique('auction_details_platform_external_id_version_key').on(table.platform, table.externalId, table.version),
   index('idx_auction_details_identity_version').on(table.platform, table.externalId, table.version.desc()),

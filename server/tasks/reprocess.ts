@@ -108,6 +108,10 @@ export interface ReprocessOptions {
    *  deliberate full batch run. Only takes effect when llm-batch.ts knows how
    *  to batch the configured provider. */
   batch?: boolean
+  /** WP-1 provenance: who started this run. Defaults to 'cron' — the
+   *  scheduled task never sets this; only the /settings-triggered manual
+   *  endpoint does. */
+  trigger?: 'cron' | 'manual'
 }
 
 export interface ReprocessResult {
@@ -468,6 +472,15 @@ export async function reprocessAuction(
   llmFailures: number
   artifactVersionId: number | null
   auction: Auction
+  /** The config a provider request actually went out with — the fallback
+   *  chain's winner, which can differ from the `llmConfig` param. Null when no
+   *  request happened at all (WP-1 provenance). */
+  llmConfigUsed: LlmConfig | null
+  /** Wall-clock of that provider request, null alongside llmConfigUsed. Only
+   *  the request itself: buildReprocessInput re-downloads every archived blob
+   *  and rasterizes scanned PDF pages, which would otherwise dominate and
+   *  make llm_duration_ms useless for comparing models. */
+  llmDurationMs: number | null
 } | null> {
   const artifactState = opts.artifactState ?? await readArtifactProcessingState(platform, externalId)
   let base = opts.prebuiltBase
@@ -481,11 +494,15 @@ export async function reprocessAuction(
       llmFailures: opts.priorLlmFailures ?? 0,
       artifactVersionId: artifactState.parsedArtifactVersionId,
       auction: base.auction,
+      llmConfigUsed: null,
+      llmDurationMs: null,
     }
   }
 
   const configs = [llmConfig, ...(opts.fallbackConfigs ?? [])]
   let llm: Awaited<ReturnType<typeof extractByLlm>> = null
+  let llmConfigUsed: LlmConfig | null = null
+  let llmDurationMs: number | null = null
   for (const [index, config] of configs.entries()) {
     if (index > 0) {
       // Rebuild rather than reuse base.input: nativeDocuments (gemini-native's
@@ -497,10 +514,24 @@ export async function reprocessAuction(
       base = rebuilt
     }
     try {
+      // Provenance hangs off onProviderAttempt, not off "extractByLlm
+      // returned": it bails out with null *before* attempting when the
+      // archived snapshot yields no parts at all (no title, no description,
+      // no documents), and stamping that rules-only version with a model
+      // that was never asked would misreport it on the WP-2 admin page.
+      let providerAttempted = false
+      const attemptStartedAt = Date.now()
       llm = await extractByLlm(base.input!, config, {
-        onProviderAttempt: opts.onLlmAttempt,
+        onProviderAttempt: () => {
+          providerAttempted = true
+          opts.onLlmAttempt?.()
+        },
         onProviderError: opts.onLlmError,
       })
+      if (providerAttempted) {
+        llmConfigUsed = config
+        llmDurationMs = Date.now() - attemptStartedAt
+      }
       break
     } catch (err) {
       if (isDailyQuotaError(err)) opts.onDailyQuotaExhausted?.(config)
@@ -536,6 +567,8 @@ export async function reprocessAuction(
       ? base.artifactVersionId
       : artifactState.parsedArtifactVersionId,
     auction: base.auction,
+    llmConfigUsed,
+    llmDurationMs,
   }
 }
 
@@ -679,6 +712,8 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
     llmFailures: number,
     archivedAuction: Auction,
     llmAttempted: boolean,
+    llmConfigUsed: LlmConfig | null = null,
+    llmDurationMs: number | null = null,
   ): Promise<void> {
     // record.auction is reconstructed from auctions LEFT JOIN LATERAL
     // auction_details (see auction-record.ts) — when no auction_details row
@@ -696,7 +731,14 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       : record.auction
     const updated: Auction = { ...base, extraction: entry }
     applyAuctionExtraction(updated, entry)
-    await writeAuctionDetails(updated, entry, { artifactVersionId })
+    await writeAuctionDetails(updated, entry, {
+      artifactVersionId,
+      llmProvider: llmConfigUsed ? (llmConfigUsed.provider ?? 'openai-compatible') : null,
+      llmModel: llmConfigUsed?.model ?? null,
+      llmProfileId: llmConfigUsed?.profileId ?? null,
+      runTrigger: opts.trigger ?? 'cron',
+      llmDurationMs,
+    })
     await upsertCurrentAuctions([updated], at)
     await writeAuctionLlmPipelineState(record.auction.platform, record.auction.externalId, {
       llmBatchJob: null,
@@ -874,7 +916,10 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       processed++
 
       // Persist each result immediately so a long run survives a deployment.
-      await persistEntry(record, result.entry, result.artifactVersionId, result.llmFailures, result.auction, result.llmCalled)
+      await persistEntry(
+        record, result.entry, result.artifactVersionId, result.llmFailures, result.auction, result.llmCalled,
+        result.llmConfigUsed, result.llmDurationMs,
+      )
     } catch (err) {
       // Also where a rate limit/quota error (see llm.ts's isRateLimitError())
       // lands: reprocessAuction/extractByLlm deliberately let it propagate

@@ -25,6 +25,7 @@ export default defineEventHandler(async (event) => {
     externalId: typeof body.externalId === 'string' ? body.externalId : undefined,
     caseNumber: typeof body.caseNumber === 'string' ? body.caseNumber : undefined,
     batch: typeof body.batch === 'boolean' ? body.batch : undefined,
+    trigger: 'manual',
   }
 
   const outcome = await runTask('reprocess', { payload: { ...opts } }) as { result: ReprocessResult }
