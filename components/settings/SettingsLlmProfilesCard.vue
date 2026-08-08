@@ -320,7 +320,10 @@ onMounted(async () => {
             <p v-else-if="providerBatchBroken(profile.provider)" class="text-xs text-destructive">
               {{ $t('settings.llmProvider.batchBroken', { message: providerCapability(profile.provider)?.message ?? '' }) }}
             </p>
-            <p v-if="profile.provider === 'openrouter'" class="text-xs text-muted-foreground">
+            <p
+              v-if="profile.provider === 'openrouter' && profile.executionMode === 'batch'"
+              class="text-xs text-muted-foreground"
+            >
               {{ $t('settings.llmProvider.batchTextOnly') }}
             </p>
           </div>

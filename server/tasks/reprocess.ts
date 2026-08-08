@@ -372,6 +372,10 @@ async function buildReprocessInput(
   return { fields, input, documentSetChanged, documentSetComplete, artifactVersionId, photoSourceIndices, auction }
 }
 
+/** One auction's built reprocess input — named so it can be handed from
+ *  runReprocess's batch path to reprocessAuction (see `prebuiltBase`). */
+type ReprocessInput = NonNullable<Awaited<ReturnType<typeof buildReprocessInput>>>
+
 /** Rules-only entry for a candidate no LLM attempt was made for (LLM
  *  disabled, or — in batch mode — an attempt was only just submitted and not
  *  yet resolved). Failure counter carried forward unchanged, since no
@@ -445,6 +449,13 @@ export async function reprocessAuction(
     onDailyQuotaExhausted?: (config: LlmConfig) => void
     artifactState?: ArtifactProcessingState
     priorLlmFailures?: number
+    /** An input the caller already built for this exact `llmConfig`.
+     *  runReprocess's batch path builds one, then falls through to here when
+     *  the provider's Batch API can't take the candidate (see
+     *  batchSupportsMultimodal) — and buildReprocessInput re-downloads every
+     *  archived blob and re-renders scanned PDF pages, so rebuilding it would
+     *  pay for the whole document set twice per auction. */
+    prebuiltBase?: ReprocessInput
   } = {},
 ): Promise<{
   entry: AuctionExtraction
@@ -454,7 +465,8 @@ export async function reprocessAuction(
   auction: Auction
 } | null> {
   const artifactState = opts.artifactState ?? await readArtifactProcessingState(platform, externalId)
-  let base = await buildReprocessInput(platform, externalId, priorEntry, llmConfig, { artifactState })
+  let base = opts.prebuiltBase
+    ?? await buildReprocessInput(platform, externalId, priorEntry, llmConfig, { artifactState })
   if (!base) return null
 
   if (!llmConfig) {
@@ -733,6 +745,16 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
         continue
       }
 
+      /** Set only when the batch path built an input and then handed the
+       *  candidate to the synchronous path below, which reuses it rather than
+       *  rebuilding the same document set (see reprocessAuction's
+       *  `prebuiltBase`). Safe to reuse across those two paths because the
+       *  fall-through is unreachable for the providers whose input actually
+       *  differs between them: supportsNativeBatchDocuments() and
+       *  buildReprocessInput's own `nativeDocuments` default only disagree for
+       *  gemini-native/claude-proxy, and both are batch-multimodal, so they
+       *  never fall through. */
+      let batchFallbackBase: ReprocessInput | undefined
       if (useBatch && llmReady) {
         const base = await buildReprocessInput(platform, externalId, priorEntry, llmConfig, {
           nativeDocuments: supportsNativeBatchDocuments(llmConfig),
@@ -763,6 +785,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
           await persistEntry(record, entry, artifactState.parsedArtifactVersionId, priorLlmFailures, base.auction)
           continue
         }
+        batchFallbackBase = base
       }
 
       // Models already known to be over their daily quota are dropped from
@@ -789,6 +812,10 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       const result = await reprocessAuction(platform, externalId, priorEntry, syncConfigs[0] ?? null, at, {
         artifactState,
         priorLlmFailures,
+        // Only handed over when the sync path starts on the very config the
+        // input above was built for — a rotated or quota-filtered chain head
+        // is a different provider and has to build its own.
+        prebuiltBase: syncConfigs[0] === llmConfig ? batchFallbackBase : undefined,
         fallbackConfigs: syncConfigs.slice(1),
         onDailyQuotaExhausted: (config) => {
           if (exhaustedConfigs.has(config)) return

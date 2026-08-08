@@ -301,7 +301,16 @@ describe('runReprocess structured persistence', () => {
 
     expect(result).toMatchObject({ processed: 1, llmCalls: 1 })
     expect(submitLlmBatch).not.toHaveBeenCalled()
-    expect(extractByLlm).toHaveBeenCalled()
+    // Handed the input the batch path already built rather than rebuilding it:
+    // preparing the document set downloads every archived blob and re-renders
+    // scanned PDF pages, and this fall-through is the normal case for a
+    // text-only batch provider (every auction carrying photos or a scan).
+    expect(prepareArchivedLlmDocuments).toHaveBeenCalledTimes(1)
+    expect(extractByLlm).toHaveBeenCalledWith(
+      expect.objectContaining({ pdfPageImages: ['base64page1'] }),
+      expect.anything(),
+      expect.anything(),
+    )
   })
 })
 
