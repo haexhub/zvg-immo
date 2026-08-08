@@ -55,12 +55,25 @@ export class OpenAiCompatibleProvider implements ExtractionProvider {
     return this.config.provider ?? 'openai-compatible'
   }
 
+  /** OpenRouter lists `:batch`-suffixed ids (e.g. `google/gemini-3.5-flash-lite:batch`)
+   *  as separate, cheaper catalog entries for its Batch API (see
+   *  openrouter-batch.ts, which sends the suffix as-is to POST /batches) —
+   *  but that suffix 404s unconditionally on /chat/completions. Auctions with
+   *  photos/PDFs bypass the batch queue and land here synchronously (see
+   *  batchSupportsMultimodal in ../llm-batch.ts), as does every non-extraction
+   *  use case (translation, usage-ideas, renovation-cost-estimate), so a
+   *  profile deliberately configured with a `:batch` model for its cost
+   *  savings must still work on this path. */
+  private get syncModel(): string {
+    return this.config.provider === 'openrouter' ? this.config.model.replace(/:batch$/, '') : this.config.model
+  }
+
   async extract(
     req: ExtractionRequest,
     opts?: { onRequestError?: (err: unknown) => void },
   ): Promise<Record<string, unknown> | null> {
     const body = {
-      model: this.config.model,
+      model: this.syncModel,
       // Raised from 512: the response now also carries `insights` (up to two
       // 20-item string lists plus free text) and a per-candidate-photo
       // curation array — the old budget truncated the larger JSON payload.
