@@ -98,4 +98,5 @@ export const taskRunErrors = pgTable('task_run_errors', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   index('idx_task_run_errors_task_created').on(table.task, table.createdAt.desc()),
+  index('idx_task_run_errors_platform_external_created').on(table.platform, table.externalId, table.createdAt.desc()),
 ]).enableRLS()

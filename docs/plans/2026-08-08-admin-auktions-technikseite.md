@@ -1,6 +1,6 @@
 # Admin-Technikseite pro Auktion + LLM-Modellvergleich
 
-Stand: 2026-08-08 · Status: WP-0 bis WP-5 + WP-6 umgesetzt, WP-7 in Review (PR #370)
+Stand: 2026-08-08 · Status: WP-0 bis WP-7 vollständig umgesetzt
 
 ## Ziel
 
@@ -247,20 +247,35 @@ bleiben in `AuctionDetail`, weil `hideRulesOnlyAuctions` und die
 Darstellung. Sie auch aus der API-Antwort zu entfernen wäre ein separater,
 größerer Eingriff — offen, falls gewünscht.
 
-## WP-7 · Fehler pro Auktion sichtbar machen
+## WP-7 · Fehler pro Auktion sichtbar machen — ERLEDIGT
 
-`runReprocess` schreibt im `catch`-Block (`server/tasks/reprocess.ts:923`)
-zusätzlich `recordTaskRunError('reprocess', { platform, externalId, category,
-message })`. `'reprocess'` ist im `TrackedTask`-Typ bereits enthalten
-(`server/utils/task-runs.ts:11`). Ohne das bleibt „wo gab es Fehler" für den
-LLM-Zweig unbeantwortbar und WP-4 hat keine Fehlerrückmeldung.
+`runReprocess` schreibt im `catch`-Block (`server/tasks/reprocess.ts`) zusätzlich
+`recordTaskRunError('reprocess', { platform, externalId, category, message })`,
+`category` ist `'rate_limit' | 'llm_provider' | 'llm'` je nach
+`isRateLimitError`/`isLlmProviderError`. `'reprocess'` war im `TrackedTask`-Typ
+bereits enthalten (`server/utils/task-runs.ts:11`). Neuer Index
+`idx_task_run_errors_platform_external_created` auf
+`(platform, external_id, created_at desc)` für WP-2s Einzelauktions-Query
+(Migration `0010_quiet_darwin.sql`).
+
+**Übersetzungsfehler brauchten das nicht:** `failAuctionTranslation`
+(`server/utils/content-translation.ts`) schreibt `status='failed'`,
+`error_message`, `failed_config` bereits durable in `auction_translations` —
+genau das, was WP-2 unter „Übersetzungen" liest. Der rohe Banner aus dem
+Screenshot, der diese Untersuchung ausgelöst hat
+(`pages/objekt/[platform]/[id].vue:159`, gespeist aus
+`useAuctionDetailTranslation.ts`), zeigt exakt diesen `error_message`-Wert
+1:1 auf der öffentlichen Seite an — das ist ein WP-6-Fall (Public-Cleanup),
+nicht WP-7. Ursprünglich stand nur die Analyse-Badge und der
+Extraktionshinweis unter WP-6; dieser Banner fehlte in der Aufzählung und
+gehört ergänzt, bevor WP-6 umgesetzt wird.
 
 ## Reihenfolge
 
-```
+```text
 WP-0 (Trial-Fundament)  ─┐  ✅ #368
 WP-1 (Provenienz)       ─┤  ✅ #368  → WP-2 (API) ✅ → WP-3 (Seite) ✅ → WP-4 (Einzellauf) ✅ → WP-5 (Diff/Promote/Delete) ✅
-WP-7 (Fehler-Logging)   ─┘  in Review (PR #370)
+WP-7 (Fehler-Logging)   ─┘  ✅ #370
 WP-6 (Public-Cleanup)   ── unabhängig, jederzeit ✅ (dieser PR)
 ```
 
