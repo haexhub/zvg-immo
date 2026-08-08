@@ -351,6 +351,34 @@ describe('runReprocess llm_failures cooldown', () => {
 
     await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 1, skipped: 0 })
   })
+
+  it('records the attempt when a cooldown-triggered retry throws instead of resolving to null', async () => {
+    // isLlmProviderUnavailable is mocked to false above, so reprocessAuction's
+    // per-config loop always rethrows immediately — the same shape a real
+    // rate-limit/unparseable-response error takes once it's the last
+    // configured model. That propagates past persistEntry entirely, so
+    // without the catch-block fix the cooldown timestamp would never
+    // advance and this record would retry every run instead of once/24h.
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(
+      lockedOutFetchState(new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString()), // past cooldown
+    )
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+      baseUrl: 'https://api.example.test', apiKey: 'secret', model: 'test-model', provider: 'openai-compatible',
+    }])
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+      opts?.onProviderAttempt?.()
+      throw new Error('provider unavailable')
+    })
+
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 0, skipped: 1 })
+
+    expect(writeAuctionLlmPipelineState).toHaveBeenCalledWith('zvg-portal', '7265', {
+      llmBatchJob: null,
+      llmArtifactVersionId: null,
+      llmFailures: 3,
+      llmAttempted: true,
+    })
+  })
 })
 
 // WP-3 SE root cause: record.auction is reconstructed from a LEFT JOIN

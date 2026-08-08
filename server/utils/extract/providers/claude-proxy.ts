@@ -5,7 +5,13 @@
 // GeminiNativeProvider.
 
 import type { ContentPart, ExtractionProvider, ExtractionRequest, LlmConfig } from '../llm'
-import { isRateLimitError, LlmProviderError, parseExtractionResponse, TRANSIENT_RETRY_DELAYS_MS } from '../llm'
+import {
+  isRateLimitError,
+  isTransientRequestError,
+  LlmProviderError,
+  parseExtractionResponse,
+  TRANSIENT_RETRY_DELAYS_MS,
+} from '../llm'
 
 type ClaudeContentBlock =
   | { type: 'text'; text: string }
@@ -76,8 +82,10 @@ export class ClaudeProxyProvider implements ExtractionProvider {
         if (isRateLimitError(err)) throw err
         // A transient failure (e.g. OpenRouter's thin-provider-pool 404, "no
         // endpoint available right now") gets a couple of quick retries on
-        // the same model before giving up — see TRANSIENT_RETRY_DELAYS_MS.
-        if (attempt < TRANSIENT_RETRY_DELAYS_MS.length) {
+        // the same model before giving up — see TRANSIENT_RETRY_DELAYS_MS. A
+        // 400/401/403 will fail identically every time, so skip straight to
+        // giving up instead of paying the retry delay for nothing.
+        if (isTransientRequestError(err) && attempt < TRANSIENT_RETRY_DELAYS_MS.length) {
           console.warn(
             `[extract/llm] request failed, retry ${attempt + 1}/${TRANSIENT_RETRY_DELAYS_MS.length}: ${(err as Error).message}`,
           )

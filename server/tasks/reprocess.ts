@@ -711,6 +711,13 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
   for (const { platform, externalId, country } of candidates) {
     throwIfTaskAborted(signal)
     const before = { processed, skipped, llmCalls, llmErrors }
+    // Hoisted out of the try block below so the catch can still see them: a
+    // thrown rate-limit/unparseable-response error (see the catch's comment)
+    // reaches onLlmAttempt before propagating past reprocessAuction, and the
+    // cooldown timestamp needs recording even though this candidate never
+    // reaches persistEntry.
+    let syncLlmAttempted = false
+    let priorLlmFailures = 0
     try {
       const key = cacheKey(platform, externalId)
       const record = records.get(key)
@@ -721,7 +728,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       const storedPriorEntry = record.auction.extraction ?? undefined
       const priorState = fetchStates.get(key)
       const priorEntry = storedPriorEntry
-      const priorLlmFailures = priorState?.llmFailures ?? 0
+      priorLlmFailures = priorState?.llmFailures ?? 0
       const artifactState = await readArtifactProcessingState(platform, externalId)
       const hasMissingLlmOnlyField = priorEntry
         ? priorEntry.condition === undefined ||
@@ -827,7 +834,6 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
         break
       }
 
-      let syncLlmAttempted = false
       let platformLlmCallsSoFar = platformLlmCalls
       const result = await reprocessAuction(platform, externalId, priorEntry, syncConfigs[0] ?? null, at, {
         artifactState,
@@ -878,6 +884,20 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       // rules-only once the limit is hit, long after the outage clears.
       console.warn(`[reprocess] failed for ${platform}:${externalId}: ${(err as Error).message}`)
       skipped++
+      if (syncLlmAttempted) {
+        // A real request went out this iteration even though the outcome
+        // never reached persistEntry (thrown, not resolved to null) — record
+        // it so a locked-out auction's 24h cooldown (see cooldownElapsed)
+        // actually advances instead of re-triggering every run forever.
+        // llmFailures stays at its prior count: a capacity outage still must
+        // never count toward MAX_LLM_FAILURES (see the comment above).
+        await writeAuctionLlmPipelineState(platform, externalId, {
+          llmBatchJob: null,
+          llmArtifactVersionId: null,
+          llmFailures: priorLlmFailures,
+          llmAttempted: true,
+        })
+      }
       if (isRateLimitError(err)) {
         warning = buildLlmRateLimitWarning(err, llmConfig)
         console.warn('[reprocess] LLM provider rate-limited — stopping this run early')

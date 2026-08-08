@@ -193,7 +193,18 @@ describe('GeminiNativeProvider.extract — 429 pacing/retry', () => {
     promise.catch(() => {})
     await vi.runAllTimersAsync()
     await expect(promise).rejects.toMatchObject({ name: 'LlmProviderError' })
-    expect(fetchMock).toHaveBeenCalledTimes(4) // 1 initial attempt + 3 retries
+    expect(fetchMock).toHaveBeenCalledTimes(3) // 1 initial attempt + 2 transient retries
+  })
+
+  it('does not retry a non-transient (e.g. 401/400) failure', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(error(401))
+    vi.stubGlobal('$fetch', fetchMock)
+    const provider = await freshProvider()
+    const promise = provider.extract(req)
+    promise.catch(() => {})
+    await vi.runAllTimersAsync()
+    await expect(promise).rejects.toMatchObject({ name: 'LlmProviderError' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
   it('calls onRequestError for a non-429 failure but not for a 429 (which rethrows instead)', async () => {
