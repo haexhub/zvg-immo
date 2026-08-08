@@ -101,6 +101,13 @@ const trialResult = ref<'success' | 'failed' | null>(null)
 const trialTriggerError = ref<string | null>(null)
 let trialBaselineVersions = new Set<number>()
 let trialBaselineErrorIds = new Set<number>()
+// Mirrors the { maxAttempts: 60 } below: usePollWhileActive stops its own
+// timer once exhausted, but never tells the caller — without tracking this
+// ourselves, a trial that never resolves (stuck provider, or a failure path
+// that somehow skips recordTaskRunError) would leave trialRunning stuck
+// `true` forever, disabling the button with no way to retry short of a reload.
+const TRIAL_POLL_MAX_ATTEMPTS = 60
+let trialPollAttempts = 0
 
 const { start: startTrialPolling } = usePollWhileActive(
   () => trialRunning.value,
@@ -115,25 +122,32 @@ const { start: startTrialPolling } = usePollWhileActive(
     } else if (newError) {
       trialRunning.value = false
       trialResult.value = 'failed'
+    } else if (++trialPollAttempts >= TRIAL_POLL_MAX_ATTEMPTS) {
+      trialRunning.value = false
+      trialTriggerError.value = t('settings.auctionTechnical.trial.timeout')
     }
   },
-  { intervalMs: 3000, maxAttempts: 60 },
+  { intervalMs: 3000, maxAttempts: TRIAL_POLL_MAX_ATTEMPTS },
 )
 
 async function startTrial(): Promise<void> {
-  if (!trialProfileId.value || !overview.value) return
+  if (!trialProfileId.value || !overview.value || trialRunning.value) return
   trialTriggerError.value = null
   trialResult.value = null
   trialBaselineVersions = new Set(overview.value.extractionHistory.map((v) => v.version))
   trialBaselineErrorIds = new Set(overview.value.errors.map((e) => e.id))
+  trialPollAttempts = 0
+  // Set before the request goes out (not just once it's confirmed started) so
+  // a fast double-click can't fire the same trial twice.
+  trialRunning.value = true
   try {
     await $fetch(`/api/settings/auction/${encodeURIComponent(platform)}/${encodeURIComponent(id)}/reprocess`, {
       method: 'POST',
       body: { profileId: trialProfileId.value },
     })
-    trialRunning.value = true
     startTrialPolling()
   } catch (err) {
+    trialRunning.value = false
     trialTriggerError.value = normalizeSettingsError(err, t('settings.auctionTechnical.trial.triggerError'))
   }
 }

@@ -502,7 +502,8 @@
         "running": "Trial running …",
         "success": "Trial finished — new trial version below.",
         "failed": "Trial failed — see errors below.",
-        "triggerError": "Trial run could not be started."
+        "triggerError": "Trial run could not be started.",
+        "timeout": "No result after 3 minutes — please reload the page to check status."
       },
       "fields": {
         "country": "Country/region",
