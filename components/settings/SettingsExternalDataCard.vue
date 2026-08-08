@@ -6,6 +6,12 @@ import { useSettingsTaskOverview } from '~/composables/settings/useSettingsTaskO
 interface CacheImportSourceConfig {
   endpoint: string
   requiresCsvPath?: boolean
+  // Copernicus EFFIS's WFS dataset is two orders of magnitude bigger than the
+  // other two (100k+ features, ~100 paginated requests) — its import runs
+  // detached (POST returns {started:true} immediately) instead of
+  // sync/awaited, same "detached" contract as e.g. reprocess/geo-metrics.
+  // Progress/result surface via llmBatchJobs.copernicusEffisImportStatus.
+  detached?: boolean
 }
 
 // Only these three configurable sources are backed by an out-of-band cache
@@ -17,7 +23,7 @@ interface CacheImportSourceConfig {
 // for the incident this gap already caused once.
 const CACHE_IMPORT_SOURCES: Record<string, CacheImportSourceConfig> = {
   'eu-flood-risk-areas': { endpoint: '/api/settings/external-data/eu-flood-risk-cache' },
-  'copernicus-effis': { endpoint: '/api/settings/external-data/copernicus-effis-cache' },
+  'copernicus-effis': { endpoint: '/api/settings/external-data/copernicus-effis-cache', detached: true },
   'fr-dvf-geolocated': { endpoint: '/api/settings/external-data/fr-dvf-cache', requiresCsvPath: true },
 }
 
@@ -88,6 +94,8 @@ const enrichmentProgress = computed(() => {
   return { total, done, percent: percentOf(done, total) }
 })
 
+const copernicusEffisImportStatus = computed(() => llmBatchJobs.value?.copernicusEffisImportStatus ?? null)
+
 async function loadCoverage(): Promise<void> {
   try {
     const res = await $fetch<{ sources: ExternalDataSourceCoverage[] }>('/api/settings/external-data/coverage')
@@ -138,6 +146,13 @@ async function triggerCacheImport(sourceId: string): Promise<void> {
   cacheImportResult[sourceId] = null
   try {
     const body = config.requiresCsvPath ? { csvPath } : {}
+    if (config.detached) {
+      await $fetch(config.endpoint, { method: 'POST', body })
+      cacheImportResult[sourceId] = t('settings.externalData.cacheImport.started')
+      await loadLlmBatchJobs()
+      startProgressPolling()
+      return
+    }
     const summary = await $fetch<{ normalized?: number; generatedAt?: string; skipped?: string }>(
       config.endpoint,
       { method: 'POST', body },
@@ -354,6 +369,23 @@ onMounted(async () => {
           </Button>
           <span v-if="cacheImportResult[source.id]" class="text-xs text-emerald-600 dark:text-emerald-500">{{ cacheImportResult[source.id] }}</span>
           <span v-if="cacheImportError[source.id]" class="text-xs text-destructive">{{ cacheImportError[source.id] }}</span>
+        </div>
+
+        <div v-if="source.id === 'copernicus-effis' && copernicusEffisImportStatus" class="text-xs space-y-1">
+          <p v-if="copernicusEffisImportStatus.status === 'running'" class="text-muted-foreground">
+            {{ $t('settings.sources.copernicusEffisStatusRunning', { at: formatBatchDate(copernicusEffisImportStatus.startedAt) }) }}
+          </p>
+          <p v-else-if="copernicusEffisImportStatus.finishedAt" class="text-muted-foreground">
+            {{ $t('settings.sources.copernicusEffisStatusLastRun', {
+              at: formatBatchDate(copernicusEffisImportStatus.finishedAt),
+              normalized: copernicusEffisImportStatus.lastResult?.normalized ?? 0,
+              fetched: copernicusEffisImportStatus.lastResult?.fetched ?? 0,
+              pages: copernicusEffisImportStatus.lastResult?.pages ?? 0,
+            }) }}
+          </p>
+          <p v-if="copernicusEffisImportStatus.lastError" class="text-destructive">
+            {{ $t('settings.sources.copernicusEffisStatusLastError', { message: copernicusEffisImportStatus.lastError }) }}
+          </p>
         </div>
       </div>
     </CardContent>

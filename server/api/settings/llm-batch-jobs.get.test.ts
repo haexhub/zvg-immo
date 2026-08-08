@@ -160,11 +160,13 @@ describe('/api/settings/llm-batch-jobs', () => {
       enrichStatus: IDLE_REPROCESS_STATUS,
       externalEnrichmentStatus: IDLE_REPROCESS_STATUS,
       offloadImagesStatus: IDLE_REPROCESS_STATUS,
+      copernicusEffisImportStatus: IDLE_REPROCESS_STATUS,
     })
     expect(getTaskRunStatus).toHaveBeenCalledWith('reprocess')
     expect(getTaskRunStatus).toHaveBeenCalledWith('enrich')
     expect(getTaskRunStatus).toHaveBeenCalledWith('external-enrichment')
     expect(getTaskRunStatus).toHaveBeenCalledWith('offload-images')
+    expect(getTaskRunStatus).toHaveBeenCalledWith('import-copernicus-effis-cache')
   })
 
   it('maps an "openrouter_"-wrapped jobName to the openrouter provider, not openai', async () => {

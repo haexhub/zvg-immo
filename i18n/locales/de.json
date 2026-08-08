@@ -322,7 +322,10 @@
       "externalStatusLastRun": "Letzte Lagebewertung: {at} — {processed} geprüft, {written} gespeichert, {duration}s.",
       "externalStatusLastError": "Lagebewertung zuletzt fehlgeschlagen: {message}",
       "offloadStatusLastRun": "Fotos ausgelagert: {at} — {removed} Datei(en), {freedMb} MB lokal freigegeben.",
-      "offloadStatusLastError": "Foto-Auslagerung zuletzt fehlgeschlagen: {message}"
+      "offloadStatusLastError": "Foto-Auslagerung zuletzt fehlgeschlagen: {message}",
+      "copernicusEffisStatusRunning": "Import läuft seit {at} — kann mehrere Minuten dauern …",
+      "copernicusEffisStatusLastRun": "Letzter Import: {at} — {normalized} von {fetched} Brandflächen übernommen ({pages} Seiten).",
+      "copernicusEffisStatusLastError": "Import zuletzt fehlgeschlagen: {message}"
     },
     "osmImport": {
       "title": "OSM-Standortdaten",
@@ -382,6 +385,7 @@
         "csvPathPlaceholder": "Pfad zur DVF-CSV-Datei",
         "csvPathRequired": "csvPath ist erforderlich.",
         "done": "Import abgeschlossen: {normalized} Datensätze übernommen ({at}).",
+        "started": "Import gestartet — läuft im Hintergrund und kann mehrere Minuten dauern. Status siehe oben.",
         "skipped": "Import übersprungen — für diese Quelle ist kein Cache-Pfad konfiguriert.",
         "error": "Import fehlgeschlagen."
       }

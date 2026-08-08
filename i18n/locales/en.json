@@ -322,7 +322,10 @@
       "externalStatusLastRun": "Last location scoring: {at} — {processed} checked, {written} stored, {duration}s.",
       "externalStatusLastError": "Location scoring last failed: {message}",
       "offloadStatusLastRun": "Photos offloaded: {at} — {removed} file(s), {freedMb} MB freed locally.",
-      "offloadStatusLastError": "Photo offload last failed: {message}"
+      "offloadStatusLastError": "Photo offload last failed: {message}",
+      "copernicusEffisStatusRunning": "Import running since {at} — can take several minutes …",
+      "copernicusEffisStatusLastRun": "Last import: {at} — {normalized} of {fetched} burnt areas kept ({pages} pages).",
+      "copernicusEffisStatusLastError": "Import last failed: {message}"
     },
     "osmImport": {
       "title": "OSM location data",
@@ -382,6 +385,7 @@
         "csvPathPlaceholder": "Path to the DVF CSV file",
         "csvPathRequired": "csvPath is required.",
         "done": "Import complete: {normalized} records ingested ({at}).",
+        "started": "Import started — runs in the background and can take several minutes. See status above.",
         "skipped": "Import skipped — this source has no cache path configured.",
         "error": "Import failed."
       }

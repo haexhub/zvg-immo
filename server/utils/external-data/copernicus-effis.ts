@@ -95,7 +95,7 @@ const DEFAULT_PAGE_SIZE = 1_000
 // layers (mf010.query's LatLonBoundingBox) — wide enough for every currently
 // active crawler country.
 const DEFAULT_BBOX: [number, number, number, number] = [-25, 25, 50, 72]
-export const COPERNICUS_EFFIS_SOURCE_VERSION = 'jrc-modis-ba-poly-2026-07-29'
+export const COPERNICUS_EFFIS_SOURCE_VERSION = 'jrc-modis-ba-poly-2026-08-08'
 export const COPERNICUS_EFFIS_WFS_URL = 'https://maps.effis.emergency.copernicus.eu/effis'
 const EFFIS_SOURCE = EXTERNAL_DATA_SOURCES.find((source) => source.id === 'copernicus-effis')!
 // EFFIS's own "Forest Fires in Europe" annual reports define a "large fire"
@@ -107,6 +107,18 @@ const EFFIS_SOURCE = EXTERNAL_DATA_SOURCES.find((source) => source.id === 'coper
 // only a missing AREA_HA maps to 'unknown'.
 const LARGE_FIRE_HA = 500
 const MEDIUM_FIRE_HA = 50
+// The full bbox above holds 100k+ polygons (measured live 2026-08-08:
+// 103,415), fairly evenly spread across 2016–present — matching-time per
+// auction is a full linear scan over every cached zone (see
+// buildWildfireHazardAssessment below), so caching all of it would make that
+// scan, and therefore the whole external-enrichment sweep, impractically
+// slow. Keeping only fires from the last few years and dropping small/
+// low-confidence detections cuts the cache down while keeping the
+// signal that actually matters for a current risk assessment: a large,
+// recent burn scar. A zone whose age or area can't be determined is
+// dropped rather than kept on the assumption it might qualify.
+const MAX_BURNT_AREA_AGE_YEARS = 8
+const MIN_BURNT_AREA_HA = 10
 
 export async function readBurntAreaCache(path: string, sourceVersion?: string): Promise<BurntAreaCollection> {
   const parsed = JSON.parse(await readFile(path, 'utf8')) as Partial<BurntAreaCollection> | null
@@ -144,6 +156,17 @@ export function parseBurntAreaGml(xml: string): BurntAreaZone[] {
   return zones
 }
 
+/** Keeps only zones recent and large enough to matter for a current risk
+ *  assessment — see the constants' comment above for why this exists. Drops
+ *  a zone whose age or area is unknown rather than assuming it qualifies. */
+function isRelevantZone(zone: BurntAreaZone, referenceDate: string): boolean {
+  if (zone.areaHa == null || zone.areaHa < MIN_BURNT_AREA_HA) return false
+  const fireYear = zone.fireDate ? Number(zone.fireDate.slice(0, 4)) : NaN
+  if (!Number.isFinite(fireYear)) return false
+  const referenceYear = new Date(referenceDate).getUTCFullYear()
+  return fireYear >= referenceYear - MAX_BURNT_AREA_AGE_YEARS
+}
+
 export async function importCopernicusEffisBurntAreaCache(
   options: ImportCopernicusEffisCacheOptions,
 ): Promise<ImportCopernicusEffisCacheSummary> {
@@ -163,7 +186,7 @@ export async function importCopernicusEffisBurntAreaCache(
     pages++
     const pageZones = parseBurntAreaGml(gml)
     fetched += pageZones.length
-    zones.push(...pageZones)
+    zones.push(...pageZones.filter((zone) => isRelevantZone(zone, generatedAt)))
     if (pageZones.length < pageSize) break
   }
 

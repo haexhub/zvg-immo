@@ -65,6 +65,10 @@ export interface LlmBatchJobsOverview {
   // Photo offload to the images bucket — scheduled only, so its status is the
   // one place to see whether the server volume is actually being drained.
   offloadImagesStatus: TaskRunStatus
+  // The Copernicus EFFIS burnt-area cache import. /settings triggers it
+  // detached (its WFS dataset is too big to fetch within a request) so this
+  // is the only place to see whether an "Import" click actually did anything.
+  copernicusEffisImportStatus: TaskRunStatus
 }
 
 const MAX_KEYS_PER_GROUP = 200
@@ -108,6 +112,7 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
     enrichStatus,
     externalEnrichmentStatus,
     offloadImagesStatus,
+    copernicusEffisImportStatus,
   ] = await Promise.all([
     listPendingLlmBatchJobs(),
     listRecentLlmBatchJobs(20),
@@ -116,6 +121,7 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
     getTaskRunStatus('enrich'),
     getTaskRunStatus('external-enrichment'),
     getTaskRunStatus('offload-images'),
+    getTaskRunStatus('import-copernicus-effis-cache'),
   ])
   // supportsLlmBatch() gates gemini-native on isGeminiBatchTierPaid() (see
   // llm-batch.ts), so on the free tier a real batch submit never happens and
@@ -217,5 +223,6 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
     enrichStatus,
     externalEnrichmentStatus,
     offloadImagesStatus,
+    copernicusEffisImportStatus,
   }
 })
