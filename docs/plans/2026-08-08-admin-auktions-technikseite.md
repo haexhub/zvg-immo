@@ -241,7 +241,7 @@ gehört ergänzt, bevor WP-6 umgesetzt wird.
 
 ## Reihenfolge
 
-```
+```text
 WP-0 (Trial-Fundament)  ─┐  ✅ #368
 WP-1 (Provenienz)       ─┤  ✅ #368  → WP-2 (API) → WP-3 (Seite) → WP-4 (Einzellauf) → WP-5 (Diff/Promote/Delete)
 WP-7 (Fehler-Logging)   ─┘  ✅

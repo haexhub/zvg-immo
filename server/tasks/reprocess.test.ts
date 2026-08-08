@@ -477,6 +477,21 @@ describe('runReprocess llm_failures cooldown', () => {
   })
 })
 
+describe('runReprocess task_run_errors categorization', () => {
+  it('categorizes a persistEntry (DB write) failure as persist, not llm', async () => {
+    vi.mocked(writeAuctionDetails).mockRejectedValue(new Error('connection terminated unexpectedly'))
+
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 1, skipped: 1 })
+
+    expect(recordTaskRunError).toHaveBeenCalledWith('reprocess', {
+      platform: 'zvg-portal',
+      externalId: '7265',
+      category: 'persist',
+      message: 'connection terminated unexpectedly',
+    })
+  })
+})
+
 // WP-3 SE root cause: record.auction is reconstructed from a LEFT JOIN
 // LATERAL onto auction_details (auction-record.ts) — for an identity with no
 // auction_details row yet (detailsId null; e.g. a fresh identity, or one
