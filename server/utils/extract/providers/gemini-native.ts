@@ -196,6 +196,14 @@ export class GeminiNativeProvider implements ExtractionProvider {
           console.warn(`[extract/llm] gemini 429, giving up after ${MAX_RETRIES} retries`)
           throw err
         }
+        // A transient failure (e.g. an upstream 5xx/timeout) gets the same
+        // few retries as a 429 before giving up — see withTransientRetry's
+        // rationale in ../llm.ts. Reuses this loop's own pacing (above)
+        // instead of a separate backoff.
+        if (attempt < MAX_RETRIES) {
+          console.warn(`[extract/llm] request failed, retry ${attempt + 1}/${MAX_RETRIES}: ${(err as Error).message}`)
+          continue
+        }
         // A caller that passes onRequestError (extractByLlm) wants to keep
         // batching past a single failed candidate; one that doesn't (e.g.
         // callSummaryLlm/callTranslationLlm) wants the failure to reject.

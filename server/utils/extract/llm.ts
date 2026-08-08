@@ -184,6 +184,16 @@ export function isLlmProviderUnavailable(err: unknown): boolean {
   return isRateLimitError(err) || isLlmProviderError(err)
 }
 
+/** Backoff between retries of a single transient request failure — e.g.
+ *  OpenRouter's thin-provider-pool 404 ("no endpoint available right now"),
+ *  which typically clears within a few seconds. Deliberately short: this
+ *  retries the *same* model before a caller gives up on it, not before
+ *  trying the next configured one in the chain. Each provider retries this
+ *  inline around its own $fetch call rather than through a shared generic
+ *  wrapper — wrapping $fetch's routed overload type through a generic
+ *  function tripped up vue-tsc ("excessive stack depth"). */
+export const TRANSIENT_RETRY_DELAYS_MS = [1_000, 3_000]
+
 const MAX_PDF_CHARS = 60_000
 const MAX_DOCUMENT_TEXT_CHARS = 80_000
 

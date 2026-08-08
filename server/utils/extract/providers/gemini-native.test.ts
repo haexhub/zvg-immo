@@ -172,7 +172,20 @@ describe('GeminiNativeProvider.extract — 429 pacing/retry', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
-  it('does not retry and surfaces a non-429 failure', async () => {
+  it('retries a transient (non-429) failure and returns the result once it succeeds', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(error(500))
+      .mockRejectedValueOnce(error(500))
+      .mockResolvedValueOnce(okResponse)
+    vi.stubGlobal('$fetch', fetchMock)
+    const provider = await freshProvider()
+    const promise = provider.extract(req)
+    await vi.runAllTimersAsync()
+    await expect(promise).resolves.toEqual({ propertyType: 'haus' })
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('surfaces a non-429 failure once retries are exhausted', async () => {
     const fetchMock = vi.fn().mockRejectedValue(error(500))
     vi.stubGlobal('$fetch', fetchMock)
     const provider = await freshProvider()
@@ -180,7 +193,7 @@ describe('GeminiNativeProvider.extract — 429 pacing/retry', () => {
     promise.catch(() => {})
     await vi.runAllTimersAsync()
     await expect(promise).rejects.toMatchObject({ name: 'LlmProviderError' })
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(4) // 1 initial attempt + 3 retries
   })
 
   it('calls onRequestError for a non-429 failure but not for a 429 (which rethrows instead)', async () => {
