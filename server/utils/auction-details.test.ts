@@ -1,13 +1,15 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import type { Auction, AuctionExtraction } from '~/types/auction'
-import { getDb } from './db'
+import { getDb, getPool } from './db'
 
-vi.mock('./db', () => ({ getDb: vi.fn() }))
+vi.mock('./db', () => ({ getDb: vi.fn(), getPool: vi.fn() }))
 
 const {
   auctionDetailsValues,
+  deleteAuctionDetailsVersion,
   invalidateAuctionDetailsCache,
+  promoteAuctionDetailsVersion,
   readAuctionDetailsAtVersion,
   readLatestAuctionDetails,
   writeAuctionDetails,
@@ -129,6 +131,9 @@ describeDb('writeAuctionDetails (real Postgres)', () => {
 
   beforeEach(async () => {
     vi.mocked(getDb).mockReturnValue(drizzle(pool) as never)
+    // readAuctionRecord/upsertCurrentAuctions (used by promoteAuctionDetailsVersion)
+    // go through getPool()'s plain pg.Pool API, not getDb()'s drizzle wrapper.
+    vi.mocked(getPool).mockReturnValue(pool)
     invalidateAuctionDetailsCache()
     await pool.query('DELETE FROM auction_details')
     await pool.query('DELETE FROM artifact_versions')
@@ -433,5 +438,75 @@ describeDb('writeAuctionDetails (real Postgres)', () => {
     } finally {
       blocker.release()
     }
+  })
+
+  describe('promoteAuctionDetailsVersion / deleteAuctionDetailsVersion (WP-5)', () => {
+    it('promotes a trial version to live, demoting the previous live row', async () => {
+      await writeAuctionDetails(makeAuction(), makeExtraction({ livingAreaSqm: 120 }))
+      await writeAuctionDetails(makeAuction(), makeExtraction({ livingAreaSqm: 150 }), { trial: true })
+
+      await expect(promoteAuctionDetailsVersion('zvg-portal', '7265', 2)).resolves.toBe('promoted')
+
+      const { rows } = await pool.query<{ version: number; is_latest: boolean; is_trial: boolean }>(
+        `SELECT version, is_latest, is_trial FROM auction_details
+         WHERE platform = 'zvg-portal' AND external_id = '7265' ORDER BY version`,
+      )
+      expect(rows).toEqual([
+        { version: 1, is_latest: false, is_trial: false },
+        { version: 2, is_latest: true, is_trial: false },
+      ])
+      const latest = await readLatestAuctionDetails('zvg-portal', '7265')
+      expect(Number(latest?.living_area_sqm)).toBe(150)
+    })
+
+    it('is idempotent when promoting the version that is already live', async () => {
+      await writeAuctionDetails(makeAuction(), makeExtraction())
+
+      await expect(promoteAuctionDetailsVersion('zvg-portal', '7265', 1)).resolves.toBe('promoted')
+
+      const { rows } = await pool.query<{ is_latest: boolean; is_trial: boolean }>(
+        `SELECT is_latest, is_trial FROM auction_details WHERE platform = 'zvg-portal' AND external_id = '7265' AND version = 1`,
+      )
+      expect(rows[0]).toEqual({ is_latest: true, is_trial: false })
+    })
+
+    it('promote returns not_found for a version that does not exist', async () => {
+      await writeAuctionDetails(makeAuction(), makeExtraction())
+
+      await expect(promoteAuctionDetailsVersion('zvg-portal', '7265', 99)).resolves.toBe('not_found')
+    })
+
+    it('refuses to delete the live version', async () => {
+      await writeAuctionDetails(makeAuction(), makeExtraction())
+
+      await expect(deleteAuctionDetailsVersion('zvg-portal', '7265', 1)).resolves.toBe('is_latest')
+      const { rows } = await pool.query('SELECT count(*)::int AS n FROM auction_details')
+      expect(rows[0].n).toBe(1)
+    })
+
+    it('deletes a non-live version and cascades its photos', async () => {
+      await writeAuctionDetails(makeAuction(), makeExtraction())
+      await writeAuctionDetails(
+        makeAuction(),
+        makeExtraction({
+          livingAreaSqm: 200,
+          photos: [{ file: 'front.jpg', category: 'aussen', caption: null, isPropertyPhoto: true }],
+        }),
+        { trial: true },
+      )
+
+      await expect(deleteAuctionDetailsVersion('zvg-portal', '7265', 2)).resolves.toBe('deleted')
+
+      const details = await pool.query<{ version: number }>('SELECT version FROM auction_details')
+      expect(details.rows.map((r) => r.version)).toEqual([1])
+      const photos = await pool.query('SELECT count(*)::int AS n FROM auction_photos')
+      expect(photos.rows[0].n).toBe(0)
+    })
+
+    it('delete returns not_found for a version that does not exist', async () => {
+      await writeAuctionDetails(makeAuction(), makeExtraction())
+
+      await expect(deleteAuctionDetailsVersion('zvg-portal', '7265', 99)).resolves.toBe('not_found')
+    })
   })
 })

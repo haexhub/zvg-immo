@@ -152,6 +152,150 @@ async function startTrial(): Promise<void> {
   }
 }
 
+// Vergleichen/Promote/Löschen (WP-5). Eine Checkbox-Auswahl bedient beide
+// Mehrfach-Aktionen: genau 2 ausgewählt -> Diff, 1+ ausgewählt -> Löschen.
+// Promote ist dagegen pro Zeile (genau eine Zielversion pro Aufruf).
+interface VersionDetail {
+  version: number
+  address: string | null
+  description: string | null
+  propertyType: string | null
+  landAreaSqm: number | null
+  livingAreaSqm: number | null
+  rooms: number | null
+  bedrooms: number | null
+  bathrooms: number | null
+  floor: string | null
+  heating: string | null
+  units: number | null
+  yearBuilt: number | null
+  marketValue: number | null
+  currency: string | null
+  marketValueEur: number | null
+  condition: unknown
+  features: string[] | null
+  insights: unknown
+  planningNotes: unknown
+  renovationNotes: string | null
+  startingBid: number | null
+  currentBid: number | null
+  securityDeposit: number | null
+  biddingNotes: string | null
+  extractionSource: string | null
+  extractionConfidence: string | null
+  documentSummary: string | null
+}
+
+const selectedVersions = ref<Set<number>>(new Set())
+const canDiff = computed(() => selectedVersions.value.size === 2)
+const selectedIsLatest = computed(() =>
+  [...selectedVersions.value].some((v) => overview.value?.extractionHistory.find((row) => row.version === v)?.isLatest),
+)
+const canBulkDelete = computed(() => selectedVersions.value.size >= 1 && !selectedIsLatest.value)
+
+function toggleVersionSelected(version: number): void {
+  if (selectedVersions.value.has(version)) selectedVersions.value.delete(version)
+  else selectedVersions.value.add(version)
+  // Reassigning triggers Vue's reactivity for a plain Set mutated in place.
+  selectedVersions.value = new Set(selectedVersions.value)
+  showDiff.value = false
+}
+
+const showDiff = ref(false)
+const diffPending = ref(false)
+const diffError = ref<string | null>(null)
+const diffShowAll = ref(false)
+const diffRows = ref<{ key: string; label: string; left: string; right: string; same: boolean }[]>([])
+
+function humanizeFieldKey(key: string): string {
+  return key.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase())
+}
+
+function displayValue(value: unknown): string {
+  if (value == null) return '—'
+  if (Array.isArray(value)) return value.length ? value.join(', ') : '—'
+  if (typeof value === 'object') return JSON.stringify(value)
+  return String(value)
+}
+
+const DIFF_FIELDS: Array<keyof VersionDetail> = [
+  'address', 'description', 'propertyType', 'landAreaSqm', 'livingAreaSqm', 'rooms', 'bedrooms',
+  'bathrooms', 'floor', 'heating', 'units', 'yearBuilt', 'marketValue', 'currency', 'marketValueEur',
+  'condition', 'features', 'insights', 'planningNotes', 'renovationNotes', 'startingBid', 'currentBid',
+  'securityDeposit', 'biddingNotes', 'extractionSource', 'extractionConfidence', 'documentSummary',
+]
+
+async function loadDiff(): Promise<void> {
+  if (!canDiff.value) return
+  const [left, right] = [...selectedVersions.value].sort((a, b) => a - b)
+  diffPending.value = true
+  diffError.value = null
+  try {
+    const [leftDetail, rightDetail] = await Promise.all([
+      $fetch<VersionDetail>(`/api/settings/auction/${encodeURIComponent(platform)}/${encodeURIComponent(id)}/versions/${left}`),
+      $fetch<VersionDetail>(`/api/settings/auction/${encodeURIComponent(platform)}/${encodeURIComponent(id)}/versions/${right}`),
+    ])
+    diffRows.value = DIFF_FIELDS.map((key) => {
+      const leftValue = displayValue(leftDetail[key])
+      const rightValue = displayValue(rightDetail[key])
+      return { key, label: humanizeFieldKey(key), left: leftValue, right: rightValue, same: leftValue === rightValue }
+    })
+    showDiff.value = true
+  } catch (err) {
+    diffError.value = normalizeSettingsError(err, t('settings.auctionTechnical.diff.loadError'))
+  } finally {
+    diffPending.value = false
+  }
+}
+
+const visibleDiffRows = computed(() => diffShowAll.value ? diffRows.value : diffRows.value.filter((row) => !row.same))
+
+const promotePending = ref<number | null>(null)
+const promoteError = ref<string | null>(null)
+
+async function promoteVersion(version: number): Promise<void> {
+  promotePending.value = version
+  promoteError.value = null
+  try {
+    await $fetch(`/api/settings/auction/${encodeURIComponent(platform)}/${encodeURIComponent(id)}/versions/${version}/promote`, {
+      method: 'POST',
+    })
+    await loadOverview()
+  } catch (err) {
+    promoteError.value = normalizeSettingsError(err, t('settings.auctionTechnical.versions.promoteError'))
+  } finally {
+    promotePending.value = null
+  }
+}
+
+const bulkDeletePending = ref(false)
+const bulkDeleteError = ref<string | null>(null)
+
+async function deleteSelected(): Promise<void> {
+  if (!canBulkDelete.value) return
+  if (!window.confirm(t('settings.auctionTechnical.versions.deleteConfirm', { count: selectedVersions.value.size }))) return
+  bulkDeletePending.value = true
+  bulkDeleteError.value = null
+  try {
+    for (const version of selectedVersions.value) {
+      await $fetch(`/api/settings/auction/${encodeURIComponent(platform)}/${encodeURIComponent(id)}/versions/${version}`, {
+        method: 'DELETE',
+      })
+    }
+  } catch (err) {
+    bulkDeleteError.value = normalizeSettingsError(err, t('settings.auctionTechnical.versions.deleteError'))
+  } finally {
+    // Always resync with the DB, even on a partial failure (e.g. a version
+    // deleted mid-loop before a later one 404s) — otherwise the table and the
+    // selection go stale, and retrying would just 404 on the already-deleted
+    // ones instead of reaching the rest.
+    selectedVersions.value = new Set()
+    showDiff.value = false
+    bulkDeletePending.value = false
+    await loadOverview()
+  }
+}
+
 function formatDate(value: string | null): string {
   if (!value) return '—'
   return new Date(value).toLocaleString(locale.value)
@@ -260,9 +404,51 @@ onMounted(probeSession)
                 <span v-if="trialResult === 'failed'" class="text-sm text-destructive">{{ $t('settings.auctionTechnical.trial.failed') }}</span>
                 <p v-if="trialTriggerError" class="w-full text-sm text-destructive">{{ trialTriggerError }}</p>
               </div>
+
+              <div class="mb-4 flex flex-wrap items-center gap-2 border-b pb-4">
+                <Button type="button" size="sm" variant="outline" :disabled="!canDiff || diffPending" @click="loadDiff">
+                  {{ diffPending ? $t('settings.auctionTechnical.diff.loading') : $t('settings.auctionTechnical.diff.compare') }}
+                </Button>
+                <Button type="button" size="sm" variant="destructive" :disabled="!canBulkDelete || bulkDeletePending" @click="deleteSelected">
+                  {{ $t('settings.auctionTechnical.versions.deleteSelected', { count: selectedVersions.size }) }}
+                </Button>
+                <span class="text-xs text-muted-foreground">{{ $t('settings.auctionTechnical.versions.selectHint') }}</span>
+                <p v-if="promoteError" class="w-full text-sm text-destructive">{{ promoteError }}</p>
+                <p v-if="bulkDeleteError" class="w-full text-sm text-destructive">{{ bulkDeleteError }}</p>
+                <p v-if="diffError" class="w-full text-sm text-destructive">{{ diffError }}</p>
+              </div>
+
+              <div v-if="showDiff" class="mb-4 space-y-2 rounded-md border p-3">
+                <div class="flex items-center justify-between">
+                  <p class="text-sm font-medium">{{ $t('settings.auctionTechnical.diff.title') }}</p>
+                  <label class="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Checkbox :model-value="diffShowAll" @update:model-value="(v) => diffShowAll = !!v" />
+                    {{ $t('settings.auctionTechnical.diff.showAll') }}
+                  </label>
+                </div>
+                <p v-if="!visibleDiffRows.length" class="text-sm text-muted-foreground">{{ $t('settings.auctionTechnical.diff.noDifferences') }}</p>
+                <Table v-else>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{{ $t('settings.auctionTechnical.fields.version') }}</TableHead>
+                      <TableHead>{{ [...selectedVersions].sort((a, b) => a - b)[0] }}</TableHead>
+                      <TableHead>{{ [...selectedVersions].sort((a, b) => a - b)[1] }}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    <TableRow v-for="row in visibleDiffRows" :key="row.key" :class="{ 'opacity-50': row.same }">
+                      <TableCell class="font-medium">{{ row.label }}</TableCell>
+                      <TableCell class="max-w-xs truncate">{{ row.left }}</TableCell>
+                      <TableCell class="max-w-xs truncate">{{ row.right }}</TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
+
               <Table v-if="overview.extractionHistory.length">
                 <TableHeader>
                   <TableRow>
+                    <TableHead />
                     <TableHead>{{ $t('settings.auctionTechnical.fields.version') }}</TableHead>
                     <TableHead>{{ $t('settings.auctionTechnical.fields.status') }}</TableHead>
                     <TableHead>{{ $t('settings.auctionTechnical.fields.provider') }}</TableHead>
@@ -270,10 +456,17 @@ onMounted(probeSession)
                     <TableHead>{{ $t('settings.auctionTechnical.fields.duration') }}</TableHead>
                     <TableHead>{{ $t('settings.auctionTechnical.fields.confidence') }}</TableHead>
                     <TableHead>{{ $t('settings.auctionTechnical.fields.createdAt') }}</TableHead>
+                    <TableHead />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   <TableRow v-for="row in overview.extractionHistory" :key="row.version">
+                    <TableCell>
+                      <Checkbox
+                        :model-value="selectedVersions.has(row.version)"
+                        @update:model-value="() => toggleVersionSelected(row.version)"
+                      />
+                    </TableCell>
                     <TableCell>{{ row.version }}</TableCell>
                     <TableCell class="space-x-1">
                       <Badge v-if="row.isLatest" variant="default">{{ $t('settings.auctionTechnical.badges.live') }}</Badge>
@@ -284,6 +477,16 @@ onMounted(probeSession)
                     <TableCell>{{ row.llmDurationMs != null ? `${row.llmDurationMs} ms` : '—' }}</TableCell>
                     <TableCell>{{ row.extractionConfidence ?? '—' }}</TableCell>
                     <TableCell>{{ formatDate(row.createdAt) }}</TableCell>
+                    <TableCell>
+                      <Button
+                        v-if="!row.isLatest"
+                        type="button" size="sm" variant="outline"
+                        :disabled="promotePending === row.version"
+                        @click="promoteVersion(row.version)"
+                      >
+                        {{ $t('settings.auctionTechnical.versions.promote') }}
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 </TableBody>
               </Table>

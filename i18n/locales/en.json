@@ -505,6 +505,22 @@
         "triggerError": "Trial run could not be started.",
         "timeout": "No result after 3 minutes — please reload the page to check status."
       },
+      "diff": {
+        "compare": "Compare",
+        "loading": "Loading comparison …",
+        "loadError": "Comparison could not be loaded.",
+        "title": "Version comparison",
+        "showAll": "Show identical fields too",
+        "noDifferences": "No differences in the displayed fields."
+      },
+      "versions": {
+        "selectHint": "Pick two to compare, one or more to delete.",
+        "promote": "Make live",
+        "promoteError": "Version could not be made live.",
+        "deleteSelected": "Delete selected ({count})",
+        "deleteConfirm": "Really delete {count} version(s)? This permanently removes their photos and translations.",
+        "deleteError": "Version(s) could not be deleted."
+      },
       "fields": {
         "country": "Country/region",
         "authority": "Court",
