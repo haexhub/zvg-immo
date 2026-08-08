@@ -6,7 +6,14 @@
 // what server/middleware/settings-auth.ts actually guards.
 import { ArrowLeft } from 'lucide-vue-next'
 import { useSettingsError } from '~/composables/settings/useSettingsError'
+import { useLlmProfileOptions } from '~/composables/settings/useLlmProfileOptions'
+import { usePollWhileActive } from '~/composables/settings/usePollWhileActive'
 import type { AuctionTechnicalOverview } from '~/server/utils/auction-technical'
+import type { LlmExecutionMode, LlmProvider } from '~/server/utils/app-settings'
+
+interface LlmProfilesResponse {
+  profiles: Array<{ id: string; name: string; provider: LlmProvider; baseUrl: string; model: string; executionMode: LlmExecutionMode }>
+}
 
 const route = useRoute()
 const platform = String(route.params.platform)
@@ -29,14 +36,25 @@ function clearAuthState(): void {
 }
 
 const { normalizeSettingsError } = useSettingsError()
+const { llmProfileOptions, setLlmProfileOptions } = useLlmProfileOptions()
 
 async function probeSession(): Promise<void> {
   try {
     const res = await $fetch<{ authed: boolean }>('/api/settings/session', { cache: 'no-store' })
     authed.value = res.authed
-    if (authed.value) await loadOverview()
+    if (authed.value) await Promise.all([loadOverview(), loadProfiles()])
   } catch {
     authed.value = false
+  }
+}
+
+async function loadProfiles(): Promise<void> {
+  try {
+    const res = await $fetch<LlmProfilesResponse>('/api/settings/llm-profiles')
+    setLlmProfileOptions(res.profiles)
+  } catch {
+    // The trial picker is just empty if this fails — loadOverview already
+    // surfaces the shared "session expired" case.
   }
 }
 
@@ -47,7 +65,7 @@ async function login(): Promise<void> {
     await $fetch('/api/settings/login', { method: 'POST', body: { password: passwordInput.value } })
     passwordInput.value = ''
     authed.value = true
-    await loadOverview()
+    await Promise.all([loadOverview(), loadProfiles()])
   } catch (err) {
     const e = typeof err === 'object' && err !== null
       ? err as { data?: { statusMessage?: string }; statusMessage?: string; message?: string }
@@ -71,6 +89,52 @@ async function loadOverview(): Promise<void> {
     if ((err as { statusCode?: number }).statusCode === 401) clearAuthState()
   } finally {
     overviewPending.value = false
+  }
+}
+
+// Einzellauf mit Profilauswahl (WP-4): kein dedizierter Status-Endpoint, die
+// Seite pollt stattdessen die Technik-Übersicht und erkennt Erfolg/Fehlschlag
+// an einer neuen Trial-Version bzw. einem neuen Fehler dieser Auktion (WP-7).
+const trialProfileId = ref<string>('')
+const trialRunning = ref(false)
+const trialResult = ref<'success' | 'failed' | null>(null)
+const trialTriggerError = ref<string | null>(null)
+let trialBaselineVersions = new Set<number>()
+let trialBaselineErrorIds = new Set<number>()
+
+const { start: startTrialPolling } = usePollWhileActive(
+  () => trialRunning.value,
+  async () => {
+    await loadOverview()
+    if (!overview.value) return
+    const newTrial = overview.value.extractionHistory.find((v) => v.isTrial && !trialBaselineVersions.has(v.version))
+    const newError = overview.value.errors.find((e) => !trialBaselineErrorIds.has(e.id))
+    if (newTrial) {
+      trialRunning.value = false
+      trialResult.value = 'success'
+    } else if (newError) {
+      trialRunning.value = false
+      trialResult.value = 'failed'
+    }
+  },
+  { intervalMs: 3000, maxAttempts: 60 },
+)
+
+async function startTrial(): Promise<void> {
+  if (!trialProfileId.value || !overview.value) return
+  trialTriggerError.value = null
+  trialResult.value = null
+  trialBaselineVersions = new Set(overview.value.extractionHistory.map((v) => v.version))
+  trialBaselineErrorIds = new Set(overview.value.errors.map((e) => e.id))
+  try {
+    await $fetch(`/api/settings/auction/${encodeURIComponent(platform)}/${encodeURIComponent(id)}/reprocess`, {
+      method: 'POST',
+      body: { profileId: trialProfileId.value },
+    })
+    trialRunning.value = true
+    startTrialPolling()
+  } catch (err) {
+    trialTriggerError.value = normalizeSettingsError(err, t('settings.auctionTechnical.trial.triggerError'))
   }
 }
 
@@ -164,6 +228,24 @@ onMounted(probeSession)
           <Card>
             <CardHeader><CardTitle>{{ $t('settings.auctionTechnical.sections.extractionHistory') }}</CardTitle></CardHeader>
             <CardContent>
+              <div class="mb-4 flex flex-wrap items-center gap-2 border-b pb-4">
+                <Select v-model="trialProfileId" :disabled="trialRunning">
+                  <SelectTrigger class="w-64">
+                    <SelectValue :placeholder="$t('settings.auctionTechnical.trial.profilePlaceholder')" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem v-for="profile in llmProfileOptions" :key="profile.id" :value="profile.id">
+                      {{ profile.name || profile.model }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button type="button" size="sm" :disabled="!trialProfileId || trialRunning" @click="startTrial">
+                  {{ trialRunning ? $t('settings.auctionTechnical.trial.running') : $t('settings.auctionTechnical.trial.start') }}
+                </Button>
+                <span v-if="trialResult === 'success'" class="text-sm text-emerald-600">{{ $t('settings.auctionTechnical.trial.success') }}</span>
+                <span v-if="trialResult === 'failed'" class="text-sm text-destructive">{{ $t('settings.auctionTechnical.trial.failed') }}</span>
+                <p v-if="trialTriggerError" class="w-full text-sm text-destructive">{{ trialTriggerError }}</p>
+              </div>
               <Table v-if="overview.extractionHistory.length">
                 <TableHeader>
                   <TableRow>
