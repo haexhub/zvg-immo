@@ -496,6 +496,15 @@
         "live": "Live",
         "trial": "Trial"
       },
+      "trial": {
+        "profilePlaceholder": "LLM-Profil wählen",
+        "start": "Testlauf starten",
+        "running": "Testlauf läuft …",
+        "success": "Testlauf abgeschlossen — neue Trial-Version unten.",
+        "failed": "Testlauf fehlgeschlagen — siehe Fehler unten.",
+        "triggerError": "Testlauf konnte nicht gestartet werden.",
+        "timeout": "Kein Ergebnis nach 3 Minuten — Status bitte auf der Seite neu laden."
+      },
       "fields": {
         "country": "Land/Region",
         "authority": "Amtsgericht",

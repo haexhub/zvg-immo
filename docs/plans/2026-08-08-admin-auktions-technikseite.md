@@ -1,6 +1,6 @@
 # Admin-Technikseite pro Auktion + LLM-Modellvergleich
 
-Stand: 2026-08-08 · Status: WP-0 + WP-1 gemergt (PR #368), WP-2+3 umgesetzt, WP-4 bis WP-7 offen
+Stand: 2026-08-08 · Status: WP-0 + WP-1 gemergt (PR #368), WP-2+3+4 umgesetzt, WP-5 bis WP-7 offen
 
 ## Ziel
 
@@ -161,23 +161,34 @@ erfolgreicher Session-Probe gerendert wird (kein SSR-Leak) — neuer i18n-Key
 
 Neue i18n-Keys unter `settings.auctionTechnical.*` in `de.json` **und** `en.json`.
 
-## WP-4 · Einzellauf mit Profilauswahl
+## WP-4 · Einzellauf mit Profilauswahl — ERLEDIGT
 
-`POST /api/settings/auction/[platform]/[id]/reprocess`, Body `{ profileId }`.
+`POST /api/settings/auction/[platform]/[id]/reprocess`, Body `{ profileId }`
+(`server/api/settings/auction/[platform]/[id]/reprocess.post.ts`).
 
-- Profil per `getLlmProviderProfiles` auflösen → `resolveLlmConfig` → ein
-  einzelner `LlmConfig`. Keine Kette, kein Fallback: gemessen werden soll genau
-  dieses Modell.
-- `reprocessAuction(...)` direkt aufrufen (bereits exportiert), Ergebnis mit
-  `trial: true` und Provenienz schreiben.
-- **Nicht** anfassen: `llm_failures`/`llm_last_attempted_at` — ein Experiment
-  darf keine Auktion in den `MAX_LLM_FAILURES`-Lockout treiben — und
-  `upsertCurrentAuctions`, damit die Suche unberührt bleibt.
-- **Detached** (`{started:true}`) wie die anderen Long-Runner; eine
-  Gutachten-Extraktion liegt über dem Reverse-Proxy-Timeout. Fortschritt braucht
-  keine neue Statustabelle: die Seite pollt Versionsliste und
-  `task_run_errors` dieser Auktion. Neue Trial-Version = fertig, neuer Fehler =
-  gescheitert. Setzt WP-7 voraus.
+- Neues `resolveLlmConfigForProfile(db, profileId)` in `llm-task-config.ts`:
+  Profil per `getLlmProviderProfiles` auflösen → `resolveLlmConfig` → ein
+  einzelner `LlmConfig`. Keine Kette, kein Fallback.
+- `server/utils/auction-admin-trial.ts` ruft `reprocessAuction(...)` direkt auf
+  (bereits exportiert) und schreibt das Ergebnis mit `trial: true` und
+  Provenienz (`runTrigger: 'manual'`).
+- **Nicht** angefasst: `llm_failures`/`llm_last_attempted_at` (kein
+  `writeAuctionLlmPipelineState`-Aufruf) und `upsertCurrentAuctions` — beide
+  Utils werden im Trial-Pfad schlicht nicht importiert.
+- **Detached** (`{started:true}`), Validierung (unbekanntes Profil/Auktion)
+  läuft synchron vorher. Fehler im Hintergrundlauf landen über
+  `recordTaskRunError('reprocess', { category: 'admin_trial', ... })` in
+  `task_run_errors` (WP-7).
+- Admin-Seite: Profil-Dropdown (`useLlmProfileOptions`, wie
+  `SettingsLlmProfilesCard`) + „Testlauf starten" in der
+  Extraktionshistorie-Card. Poll-Mechanik via `usePollWhileActive`: vor dem
+  Trigger ein Snapshot aus Versionen/Fehler-IDs, danach pollt die Seite
+  `loadOverview()` bis eine neue `isTrial`-Version (Erfolg) oder ein neuer
+  Fehler-Eintrag (Fehlschlag) auftaucht.
+
+**Verifiziert:** `pnpm test` (`auction-admin-trial.test.ts`,
+`llm-task-config.test.ts`, `reprocess.post.test.ts`) mit gemockten
+Abhängigkeiten — kein Lauf gegen eine echte Auktion.
 
 ## WP-5 · Vergleichen, freigeben, löschen
 
@@ -228,11 +239,11 @@ LLM-Zweig unbeantwortbar und WP-4 hat keine Fehlerrückmeldung.
 
 ```
 WP-0 (Trial-Fundament)  ─┐  ✅ #368
-WP-1 (Provenienz)       ─┤  ✅ #368  → WP-2 (API) ✅ → WP-3 (Seite) ✅ → WP-4 (Einzellauf) → WP-5 (Diff/Promote/Delete)
+WP-1 (Provenienz)       ─┤  ✅ #368  → WP-2 (API) ✅ → WP-3 (Seite) ✅ → WP-4 (Einzellauf) ✅ → WP-5 (Diff/Promote/Delete)
 WP-7 (Fehler-Logging)   ─┘  ✅ (paralleler PR, s. Kopf dieses Dokuments)
-WP-6 (Public-Cleanup)   ── unabhängig, jederzeit, offen
+WP-6 (Public-Cleanup)   ── unabhängig, jederzeit ✅ (paralleler PR)
 ```
 
 WP-0 und WP-1 sind zusammen in PR #368 gemergt — WP-1 ohne WP-0 hätte keine
-sinnvolle Migration ergeben. WP-2+3 sind ein PR (API ohne UI bringt nichts).
-WP-4, WP-5 und WP-6 je einer.
+sinnvolle Migration ergeben. WP-2+3 sind ein PR (API ohne UI bringt nichts),
+WP-4 baut direkt darauf (gestapelter Branch). Bleibt WP-5 offen.
