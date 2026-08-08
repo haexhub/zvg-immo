@@ -1,3 +1,4 @@
+import type { Pool } from 'pg'
 import { LLM_FAILURE_RETRY_COOLDOWN_HOURS, MAX_LLM_FAILURES } from '~/lib/llm-limits'
 import { getPool } from '../db'
 import {
@@ -6,6 +7,7 @@ import {
   getLlmExtractionChainStrategy,
   getLlmMaxTokens,
   getLlmProviderOverrideChain,
+  getLlmProviderProfiles,
   type LlmChainStrategy,
 } from '../app-settings'
 import { resolveLlmConfig, type LlmConfig } from './llm'
@@ -34,6 +36,21 @@ export async function readExtractionLlmConfigChain(): Promise<LlmConfig[]> {
   return sources
     .map((source) => resolveLlmConfig(source, { maxTokens }))
     .filter((config): config is LlmConfig => config != null)
+}
+
+/** Resolves one explicitly chosen profile (docs/plans/2026-08-08-admin-
+ *  auktions-technikseite.md, WP-4's admin single-run) into a single LlmConfig
+ *  — no chain, no fallback, so the measurement is of exactly that model. Null
+ *  when the id doesn't match a configured profile. */
+export async function resolveLlmConfigForProfile(db: Pool, profileId: string): Promise<LlmConfig | null> {
+  const profiles = await getLlmProviderProfiles(db)
+  const profile = profiles.find((candidate) => candidate.id === profileId)
+  if (!profile) return null
+  const maxTokens = await getLlmMaxTokens(db, 'extraction').catch(() => DEFAULT_LLM_MAX_TOKENS.extraction)
+  return resolveLlmConfig(
+    { provider: profile.provider, baseUrl: profile.baseUrl, apiKey: profile.apiKey, model: profile.model, profileId: profile.id },
+    { maxTokens },
+  )
 }
 
 /** Whether the extraction chain is a quality ranking ('fallback') or a pool of

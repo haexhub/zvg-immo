@@ -14,6 +14,8 @@ import { getDb } from './db'
 import { cacheKey } from './verkehrswert-cache'
 import { normalizeDescriptionText } from './description-normalization'
 import { withDerivedExtractionFields } from './extract/merge-llm-result'
+import { readAuctionRecord } from './auction-record'
+import { upsertCurrentAuctions } from './current-auctions'
 
 export interface AuctionDetailsRow {
   id: number
@@ -279,6 +281,79 @@ export async function readAuctionDetailsAtVersion(
     SELECT * FROM auction_details WHERE platform = ${platform} AND external_id = ${externalId} AND version = ${version}
   `)
   return rows[0] ?? null
+}
+
+/**
+ * Admin promote (docs/plans/2026-08-08-admin-auktions-technikseite.md, WP-5):
+ * flips `version` to `is_latest`/not-`is_trial` and demotes whatever was
+ * live before, in one transaction under the same advisory lock
+ * writeAuctionDetails uses — a concurrent cron write for this identity is
+ * serialized against this, not racing it. Refreshes the latest-cache and the
+ * search projection afterward so both immediately reflect the promoted
+ * version instead of only on the next write/rebuild.
+ */
+export async function promoteAuctionDetailsVersion(
+  platform: string,
+  externalId: string,
+  version: number,
+): Promise<'promoted' | 'not_found'> {
+  const db = getDb()
+  if (!db) return 'not_found'
+  const promoted = await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`auction_details:${platform}:${externalId}`}))`)
+    const target = await tx.execute<{ id: number }>(sql`
+      SELECT id FROM auction_details WHERE platform = ${platform} AND external_id = ${externalId} AND version = ${version}
+    `)
+    if (!target.rows[0]) return false
+    await tx.execute(sql`
+      UPDATE auction_details SET is_latest = false
+      WHERE platform = ${platform} AND external_id = ${externalId} AND is_latest = true AND version <> ${version}
+    `)
+    await tx.execute(sql`
+      UPDATE auction_details SET is_latest = true, is_trial = false
+      WHERE platform = ${platform} AND external_id = ${externalId} AND version = ${version}
+    `)
+    return true
+  })
+  if (!promoted) return 'not_found'
+
+  invalidateAuctionDetailsCache()
+  // upsertCurrentAuctions only touches identity/scheduling columns (title,
+  // dates, cancelled, coordinates) — none of which a promote changes — but
+  // the plan calls for it anyway so this stays the one place that bumps
+  // auctions.updated_at and re-checks the geocode-drift trigger after any
+  // detail-level write, promote included.
+  const record = await readAuctionRecord(platform, externalId)
+  if (record) await upsertCurrentAuctions([record.auction], new Date().toISOString())
+  return 'promoted'
+}
+
+/**
+ * Admin delete (WP-5): refused for the live version — promote another
+ * version first, so the partial-unique "exactly one is_latest row per
+ * identity" invariant (see the table comment above) is never left with zero.
+ * The WHERE clause makes that check-and-delete atomic instead of racing a
+ * concurrent promote of the same row; `is_latest` is re-read only to tell
+ * "already gone" apart from "still live" for a clearer error. Cascades
+ * (auction_photos, auction_translations) are declared on the FKs already.
+ */
+export async function deleteAuctionDetailsVersion(
+  platform: string,
+  externalId: string,
+  version: number,
+): Promise<'deleted' | 'not_found' | 'is_latest'> {
+  const db = getDb()
+  if (!db) return 'not_found'
+  const { rows } = await db.execute<{ version: number }>(sql`
+    DELETE FROM auction_details
+    WHERE platform = ${platform} AND external_id = ${externalId} AND version = ${version} AND is_latest = false
+    RETURNING version
+  `)
+  if (rows[0]) return 'deleted'
+  const { rows: existing } = await db.execute<{ version: number }>(sql`
+    SELECT version FROM auction_details WHERE platform = ${platform} AND external_id = ${externalId} AND version = ${version}
+  `)
+  return existing[0] ? 'is_latest' : 'not_found'
 }
 
 export interface WriteAuctionDetailsResult {
