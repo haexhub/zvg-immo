@@ -1,6 +1,6 @@
 # Admin-Technikseite pro Auktion + LLM-Modellvergleich
 
-Stand: 2026-08-08 · Status: WP-0 + WP-1 gemergt (PR #368), WP-2+3+4 umgesetzt, WP-5 bis WP-7 offen
+Stand: 2026-08-08 · Status: WP-0 bis WP-5 umgesetzt (WP-6+WP-7 parallel, s. Reihenfolge)
 
 ## Ziel
 
@@ -190,21 +190,36 @@ Neue i18n-Keys unter `settings.auctionTechnical.*` in `de.json` **und** `en.json
 `llm-task-config.test.ts`, `reprocess.post.test.ts`) mit gemockten
 Abhängigkeiten — kein Lauf gegen eine echte Auktion.
 
-## WP-5 · Vergleichen, freigeben, löschen
+## WP-5 · Vergleichen, freigeben, löschen — ERLEDIGT
 
-- **Diff:** zwei Versionen wählen, feldweiser Vergleich clientseitig über eine
-  gemeinsame Feldliste (die Zeilen kommen vollständig aus WP-2). Nur
-  Unterschiede hervorheben, Gleiches einklappbar.
-- **Promote:** `POST …/versions/[version]/promote` — in einer Transaktion die
-  alte `is_latest`-Zeile auf false, Zielzeile `is_latest = true, is_trial =
-  false`; danach `invalidateAuctionDetailsCache()` und `upsertCurrentAuctions`,
-  damit Suche und Detailseite die neue Version zeigen.
-- **Löschen:** `DELETE …/versions/[version]` — verweigert wenn `is_latest`
-  (erst promoten, dann löschen); damit bleibt die WP-0-Invariante „genau eine
-  Live-Zeile pro Identität" erhalten. Cascades sind bereits korrekt:
-  `auction_photos` über `auction_details_id`, `auction_translations` über die
-  zusammengesetzte FK (`server/db/schema/translations.ts:65`). Mehrfachauswahl
-  in der UI, Bestätigungsdialog.
+- **Diff:** `GET …/versions/[version]` (neu, getrennt von der Technik-Übersicht
+  — auf Abruf nur für die zwei gewählten Versionen, nicht für jede Version bei
+  jedem Seitenaufruf) liefert die vollen Feldwerte. Checkbox-Mehrfachauswahl in
+  der Extraktionshistorie-Tabelle: genau 2 ausgewählt aktiviert „Vergleichen",
+  clientseitiger feldweiser Vergleich über eine feste Feldliste
+  (`DIFF_FIELDS` in der Seite). Per Default nur Unterschiede sichtbar, „Auch
+  gleiche Felder anzeigen"-Checkbox klappt den Rest auf.
+- **Promote:** `POST …/versions/[version]/promote` →
+  `promoteAuctionDetailsVersion()` in `auction-details.ts` — in einer
+  Transaktion unter demselben Advisory-Lock wie `writeAuctionDetails` die alte
+  `is_latest`-Zeile auf false, Zielzeile `is_latest = true, is_trial = false`;
+  danach `invalidateAuctionDetailsCache()` und `upsertCurrentAuctions`. Pro
+  Zeile ein „Live schalten"-Button (nicht Teil der Mehrfachauswahl — Promote
+  hat immer genau ein Ziel).
+- **Löschen:** `DELETE …/versions/[version]` → `deleteAuctionDetailsVersion()`
+  — atomarer `DELETE … WHERE is_latest = false RETURNING version`, verweigert
+  also die Live-Version race-frei statt über ein separates Check-then-Delete.
+  Cascades bereits korrekt: `auction_photos` über `auction_details_id`,
+  `auction_translations` über die zusammengesetzte FK. Mehrfachauswahl bedient
+  Diff (genau 2) und Löschen (1+) über dieselben Checkboxen;
+  `window.confirm()` vor dem Löschen (gleiches Muster wie `ArchiveBrowser.vue`s
+  Länder-Löschen).
+
+**Verifiziert:** `describeDb`-Tests in `auction-details.test.ts` gegen einen
+frischen `supabase/postgres`-Container mit `pnpm db:migrate` (Promote
+demoted/befördert korrekt, ist idempotent auf der bereits-live Version;
+Delete verweigert die Live-Version, kaskadiert Fotos für eine Trial-Version).
+Endpoints per Unit-Test mit gemockten Utils.
 
 **Verifizieren:** Test „Promote hebt genau eine Zeile, Partial-Unique bleibt
 erfüllt" und „Delete einer Trial-Version entfernt zugehörige
@@ -239,11 +254,14 @@ LLM-Zweig unbeantwortbar und WP-4 hat keine Fehlerrückmeldung.
 
 ```
 WP-0 (Trial-Fundament)  ─┐  ✅ #368
-WP-1 (Provenienz)       ─┤  ✅ #368  → WP-2 (API) ✅ → WP-3 (Seite) ✅ → WP-4 (Einzellauf) ✅ → WP-5 (Diff/Promote/Delete)
+WP-1 (Provenienz)       ─┤  ✅ #368  → WP-2 (API) ✅ → WP-3 (Seite) ✅ → WP-4 (Einzellauf) ✅ → WP-5 (Diff/Promote/Delete) ✅
 WP-7 (Fehler-Logging)   ─┘  ✅ (paralleler PR, s. Kopf dieses Dokuments)
 WP-6 (Public-Cleanup)   ── unabhängig, jederzeit ✅ (paralleler PR)
 ```
 
 WP-0 und WP-1 sind zusammen in PR #368 gemergt — WP-1 ohne WP-0 hätte keine
-sinnvolle Migration ergeben. WP-2+3 sind ein PR (API ohne UI bringt nichts),
-WP-4 baut direkt darauf (gestapelter Branch). Bleibt WP-5 offen.
+sinnvolle Migration ergeben. WP-2+3, WP-4 und WP-5 sind je ein gestapelter PR
+(jeder baut auf dem vorigen Branch auf); WP-6 und WP-7 liefen parallel dazu
+von main ab. Alle fünf noch offenen PRs (#370–#374) ändern denselben
+Reihenfolge-/Statusabschnitt dieses Dokuments — beim Mergen sind dort kleine,
+triviale Konflikte zu erwarten, kein Blocker.
