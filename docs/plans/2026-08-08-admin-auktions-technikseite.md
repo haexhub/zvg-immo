@@ -227,7 +227,7 @@ Raus aus der Nutzeransicht:
 
 - Analyse-Badge in `pages/objekt/[platform]/[id].vue` samt `analysisStatus`-
   Computed und den `objektDetail.analysisStatus.*`-Keys
-- Extraktionshinweis „…automatisch extrahiert (hohe/niedrige Konfidenz)" in
+- Extraktionshinweis „…automatisch extrahiert (hohe/niedrige Konfidenz)“ in
   `components/Auction/DetailOverviewSections.vue` (`objektDetail.extractionNotice`
   entfernt, `confidenceHigh`/`confidenceLow` bleiben — werden noch in
   `DetailInsightsSection.vue` für Insight-Karten gebraucht)
