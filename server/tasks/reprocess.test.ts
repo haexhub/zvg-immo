@@ -12,6 +12,7 @@ import { extractByLlm, isLlmProviderUnavailable } from '../utils/extract/llm'
 import { prepareArchivedLlmDocuments } from '../utils/extract/llm-documents'
 import { writeAuctionDetails } from '../utils/auction-details'
 import { upsertCurrentAuctions } from '../utils/current-auctions'
+import { recordTaskRunError } from '../utils/task-run-errors'
 
 vi.mock('../utils/storage-download', () => ({
   findLatestCapture: vi.fn(),
@@ -69,6 +70,9 @@ vi.mock('../utils/task-runs', () => ({
   recordTaskRunStart: vi.fn(),
   recordTaskRunEnd: vi.fn(),
   recordTaskRunProgress: vi.fn(),
+}))
+vi.mock('../utils/task-run-errors', () => ({
+  recordTaskRunError: vi.fn(),
 }))
 
 vi.stubGlobal('defineTask', (definition: unknown) => definition)
@@ -463,6 +467,27 @@ describe('runReprocess llm_failures cooldown', () => {
       llmArtifactVersionId: null,
       llmFailures: 3,
       llmAttempted: true,
+    })
+    expect(recordTaskRunError).toHaveBeenCalledWith('reprocess', {
+      platform: 'zvg-portal',
+      externalId: '7265',
+      category: 'llm',
+      message: 'provider unavailable',
+    })
+  })
+})
+
+describe('runReprocess task_run_errors categorization', () => {
+  it('categorizes a persistEntry (DB write) failure as persist, not llm', async () => {
+    vi.mocked(writeAuctionDetails).mockRejectedValue(new Error('connection terminated unexpectedly'))
+
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 1, skipped: 1 })
+
+    expect(recordTaskRunError).toHaveBeenCalledWith('reprocess', {
+      platform: 'zvg-portal',
+      externalId: '7265',
+      category: 'persist',
+      message: 'connection terminated unexpectedly',
     })
   })
 })

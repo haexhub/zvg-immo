@@ -72,6 +72,7 @@ import { isSafePathSegment } from '~/server/utils/path-segment'
 import { downloadImage, mimeTypeFor } from '~/server/utils/image-storage'
 import { normalizePhoto } from '~/lib/photo'
 import { recordTaskRunEnd, recordTaskRunProgress, recordTaskRunStart, type TaskRunSummary } from '~/server/utils/task-runs'
+import { recordTaskRunError } from '~/server/utils/task-run-errors'
 import {
   ensureEnabledCountriesLoaded,
   getEnabledCountryCodes,
@@ -705,6 +706,18 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
   const batchItems: { key: string; input: LlmInput }[] = []
   const batchArtifactVersions = new Map<string, number | null>()
 
+  // Distinguishes a persistEntry (DB write) failure from an LLM-call failure
+  // in the catch block below — both land there, but they need different
+  // task_run_errors categories (a storage outage isn't an LLM problem).
+  const persistFailureMark = Symbol('persistFailure')
+  function markPersistFailure(err: unknown): unknown {
+    if (err instanceof Error) (err as Error & { [persistFailureMark]?: true })[persistFailureMark] = true
+    return err
+  }
+  function isPersistFailure(err: unknown): boolean {
+    return err instanceof Error && persistFailureMark in err
+  }
+
   async function persistEntry(
     record: AuctionRecord,
     entry: AuctionExtraction,
@@ -852,6 +865,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
           // submission loop below marks the real attempt once it actually
           // goes out (only some queued items may make it into submitted).
           await persistEntry(record, entry, artifactState.parsedArtifactVersionId, priorLlmFailures, base.auction, false)
+            .catch((persistErr) => { throw markPersistFailure(persistErr) })
           continue
         }
         batchFallbackBase = base
@@ -919,7 +933,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       await persistEntry(
         record, result.entry, result.artifactVersionId, result.llmFailures, result.auction, result.llmCalled,
         result.llmConfigUsed, result.llmDurationMs,
-      )
+      ).catch((persistErr) => { throw markPersistFailure(persistErr) })
     } catch (err) {
       // Also where a rate limit/quota error (see llm.ts's isRateLimitError())
       // lands: reprocessAuction/extractByLlm deliberately let it propagate
@@ -929,6 +943,15 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       // rules-only once the limit is hit, long after the outage clears.
       console.warn(`[reprocess] failed for ${platform}:${externalId}: ${(err as Error).message}`)
       skipped++
+      void recordTaskRunError('reprocess', {
+        platform,
+        externalId,
+        // persistEntry failures (DB writes) are marked below so a storage
+        // outage doesn't masquerade as an LLM failure in the error log —
+        // the two need different on-call responses.
+        category: isPersistFailure(err) ? 'persist' : isRateLimitError(err) ? 'rate_limit' : isLlmProviderError(err) ? 'llm_provider' : 'llm',
+        message: err instanceof Error ? err.message : String(err),
+      })
       if (syncLlmAttempted) {
         // A real request went out this iteration even though the outcome
         // never reached persistEntry (thrown, not resolved to null) — record
