@@ -472,10 +472,15 @@ export async function reprocessAuction(
   llmFailures: number
   artifactVersionId: number | null
   auction: Auction
-  /** The config actually attempted — the fallback chain's winner, which can
-   *  differ from the `llmConfig` param. Null when no LLM ran at all (WP-1
-   *  provenance). */
+  /** The config a provider request actually went out with — the fallback
+   *  chain's winner, which can differ from the `llmConfig` param. Null when no
+   *  request happened at all (WP-1 provenance). */
   llmConfigUsed: LlmConfig | null
+  /** Wall-clock of that provider request, null alongside llmConfigUsed. Only
+   *  the request itself: buildReprocessInput re-downloads every archived blob
+   *  and rasterizes scanned PDF pages, which would otherwise dominate and
+   *  make llm_duration_ms useless for comparing models. */
+  llmDurationMs: number | null
 } | null> {
   const artifactState = opts.artifactState ?? await readArtifactProcessingState(platform, externalId)
   let base = opts.prebuiltBase
@@ -490,12 +495,14 @@ export async function reprocessAuction(
       artifactVersionId: artifactState.parsedArtifactVersionId,
       auction: base.auction,
       llmConfigUsed: null,
+      llmDurationMs: null,
     }
   }
 
   const configs = [llmConfig, ...(opts.fallbackConfigs ?? [])]
   let llm: Awaited<ReturnType<typeof extractByLlm>> = null
-  let llmConfigUsed: LlmConfig = llmConfig
+  let llmConfigUsed: LlmConfig | null = null
+  let llmDurationMs: number | null = null
   for (const [index, config] of configs.entries()) {
     if (index > 0) {
       // Rebuild rather than reuse base.input: nativeDocuments (gemini-native's
@@ -507,11 +514,24 @@ export async function reprocessAuction(
       base = rebuilt
     }
     try {
+      // Provenance hangs off onProviderAttempt, not off "extractByLlm
+      // returned": it bails out with null *before* attempting when the
+      // archived snapshot yields no parts at all (no title, no description,
+      // no documents), and stamping that rules-only version with a model
+      // that was never asked would misreport it on the WP-2 admin page.
+      let providerAttempted = false
+      const attemptStartedAt = Date.now()
       llm = await extractByLlm(base.input!, config, {
-        onProviderAttempt: opts.onLlmAttempt,
+        onProviderAttempt: () => {
+          providerAttempted = true
+          opts.onLlmAttempt?.()
+        },
         onProviderError: opts.onLlmError,
       })
-      llmConfigUsed = config
+      if (providerAttempted) {
+        llmConfigUsed = config
+        llmDurationMs = Date.now() - attemptStartedAt
+      }
       break
     } catch (err) {
       if (isDailyQuotaError(err)) opts.onDailyQuotaExhausted?.(config)
@@ -548,6 +568,7 @@ export async function reprocessAuction(
       : artifactState.parsedArtifactVersionId,
     auction: base.auction,
     llmConfigUsed,
+    llmDurationMs,
   }
 }
 
@@ -856,7 +877,6 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       }
 
       let platformLlmCallsSoFar = platformLlmCalls
-      const reprocessStartedAt = Date.now()
       const result = await reprocessAuction(platform, externalId, priorEntry, syncConfigs[0] ?? null, at, {
         artifactState,
         priorLlmFailures,
@@ -898,7 +918,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       // Persist each result immediately so a long run survives a deployment.
       await persistEntry(
         record, result.entry, result.artifactVersionId, result.llmFailures, result.auction, result.llmCalled,
-        result.llmConfigUsed, result.llmCalled ? Date.now() - reprocessStartedAt : null,
+        result.llmConfigUsed, result.llmDurationMs,
       )
     } catch (err) {
       // Also where a rate limit/quota error (see llm.ts's isRateLimitError())

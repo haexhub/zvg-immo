@@ -220,6 +220,7 @@ describe('reprocessAuction structured provenance', () => {
       artifactVersionId: 11,
       entry: { source: 'rules', confidence: 'high' },
       llmConfigUsed: null,
+      llmDurationMs: null,
     })
   })
 
@@ -231,7 +232,10 @@ describe('reprocessAuction structured provenance', () => {
     vi.mocked(isLlmProviderUnavailable).mockReturnValueOnce(true)
     vi.mocked(extractByLlm)
       .mockRejectedValueOnce(new Error('rate limited'))
-      .mockResolvedValueOnce(null)
+      .mockImplementationOnce(async (_input, _config, opts) => {
+        opts?.onProviderAttempt?.()
+        return null
+      })
 
     const result = await reprocessAuction(
       'zvg-portal',
@@ -243,6 +247,27 @@ describe('reprocessAuction structured provenance', () => {
     )
 
     expect(result?.llmConfigUsed).toEqual(fallback)
+    expect(result?.llmDurationMs).toEqual(expect.any(Number))
+  })
+
+  it('leaves provenance empty when extraction bailed out before any provider request', async () => {
+    // extractByLlm returns null *without* calling onProviderAttempt when the
+    // archived snapshot yields no parts at all — attributing that rules-only
+    // version to a model that was never asked would misreport it.
+    const config = { baseUrl: 'https://api.example.test', apiKey: 'k', model: 'never-asked', provider: 'openai-compatible' as const }
+    vi.mocked(extractByLlm).mockResolvedValue(null)
+
+    const result = await reprocessAuction(
+      'zvg-portal',
+      '7265',
+      undefined,
+      config,
+      '2026-08-02T11:00:00.000Z',
+      { artifactState: emptyArtifactState },
+    )
+
+    expect(result?.llmConfigUsed).toBeNull()
+    expect(result?.llmDurationMs).toBeNull()
   })
 })
 
@@ -357,7 +382,10 @@ describe('runReprocess structured persistence', () => {
     vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
       baseUrl: 'https://api.example.test', apiKey: 'secret', model: 'vision-model', provider: 'gemini-native', profileId: 'profile-a',
     }])
-    vi.mocked(extractByLlm).mockResolvedValue(null)
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+      opts?.onProviderAttempt?.()
+      return null
+    })
 
     await expect(runReprocess({ country: 'de', trigger: 'manual' })).resolves.toMatchObject({ processed: 1 })
 

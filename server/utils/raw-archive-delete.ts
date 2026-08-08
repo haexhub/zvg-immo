@@ -150,6 +150,31 @@ export async function deleteRawArchiveCountry(countryInput: string): Promise<Del
       const deletedSets = await tx.delete(artifactVersions)
         .where(belongsToCountry(artifactVersions.platform, artifactVersions.externalId))
 
+      // fk_auction_details_artifact_version cascades the delete above into
+      // auction_details, but only into the versions that actually reference a
+      // manifest — the first, listing-only version (artifact_version_id NULL)
+      // survives. Whenever the cascade took the is_latest row and left such a
+      // version behind, the identity is left with *no* live row at all, and
+      // every read path keys off is_latest (WP-0), so the auction would serve
+      // empty details until it happens to be crawled and reprocessed again.
+      // Promote the newest surviving non-trial version instead; a trial is
+      // never eligible to go live implicitly.
+      await tx.execute(sql`
+        UPDATE auction_details SET is_latest = true
+        WHERE id IN (
+          SELECT DISTINCT ON (ad.platform, ad.external_id) ad.id
+          FROM auction_details ad
+          JOIN auctions a ON a.platform = ad.platform AND a.external_id = ad.external_id
+          WHERE a.country = ${country}
+            AND ad.is_trial = false
+            AND NOT EXISTS (
+              SELECT 1 FROM auction_details live
+              WHERE live.platform = ad.platform AND live.external_id = ad.external_id AND live.is_latest
+            )
+          ORDER BY ad.platform, ad.external_id, ad.version DESC
+        )
+      `)
+
       const deletedCaptures = await tx.delete(artifactCaptures)
         .where(belongsToCountry(artifactCaptures.platform, artifactCaptures.externalId))
 

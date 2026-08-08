@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { getDb } from './db'
 import { getServiceClient } from './supabase'
@@ -44,6 +44,9 @@ function makeClient() {
     }
     if (n.startsWith('delete from "artifact_versions"')) {
       return { rows: [], rowCount: 2 }
+    }
+    if (n.startsWith('update auction_details set is_latest = true')) {
+      return { rows: [], rowCount: 1 }
     }
     if (n.startsWith('delete from "artifact_captures"')) {
       return { rows: [], rowCount: 5 }
@@ -109,6 +112,12 @@ describe('deleteRawArchiveCountry', () => {
     })
     expect(client.queries.map((q) => q.sql)).toContain('begin')
     expect(client.queries.map((q) => q.sql)).toContain('commit')
+    // The is_latest repair belongs inside the same transaction as the cascade
+    // that caused the gap, scoped to this country.
+    const promotion = client.queries.findIndex((q) => q.sql.trim().toLowerCase().startsWith('update auction_details'))
+    expect(promotion).toBeGreaterThan(-1)
+    expect(client.queries[promotion]?.params).toEqual(['de'])
+    expect(promotion).toBeLessThan(client.queries.findIndex((q) => q.sql === 'commit'))
     expect(client.release).toHaveBeenCalledOnce()
     await expect(readFile(localPath)).rejects.toThrow()
     expect(fakeSupabase.storage.from).toHaveBeenCalledWith('raw-archive')
@@ -143,5 +152,88 @@ describe('deleteRawArchiveCountry', () => {
     expect(client.queries.map((q) => q.sql.toLowerCase())).toContain('rollback')
     expect(client.release).toHaveBeenCalledOnce()
     expect(removeMock).not.toHaveBeenCalled()
+  })
+})
+
+// The gap this repairs is produced by fk_auction_details_artifact_version's
+// ON DELETE CASCADE, so proving it needs a real database rather than the SQL
+// matcher above. Skipped unless one is configured.
+const TEST_DB = process.env.TEST_DATABASE_URL
+const describeDb = TEST_DB ? describe : describe.skip
+
+describeDb('deleteRawArchiveCountry is_latest repair (real Postgres)', () => {
+  let pool: import('pg').Pool
+
+  beforeAll(async () => {
+    const { Pool } = await import('pg')
+    pool = new Pool({ connectionString: TEST_DB })
+  })
+
+  afterAll(async () => {
+    await pool.end()
+  })
+
+  // Own identity and country: test files share the database, so nothing here
+  // may delete or insert rows another file is using.
+  const PLATFORM = 'archive-delete-test'
+  const EXTERNAL_ID = 'ad-1'
+  const COUNTRY = 'xx'
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    vi.mocked(getServiceClient).mockReturnValue(null as never)
+    vi.stubGlobal('useRuntimeConfig', () => ({ rawOutboxDir: tmpdir(), storageBucket: null }))
+    vi.mocked(getDb).mockReturnValue(drizzle(pool) as never)
+    // auction_details/artifact_versions cascade off the auctions row.
+    await pool.query('DELETE FROM auctions WHERE platform = $1', [PLATFORM])
+    await pool.query(
+      `INSERT INTO auctions (platform, external_id, country, region, authority, case_number, cancelled)
+       VALUES ($1, $2, $3, 'Brandenburg', 'Neuruppin', '7 K 168/25', false)`,
+      [PLATFORM, EXTERNAL_ID, COUNTRY],
+    )
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  /** v1 = listing-only (artifact_version_id NULL, out of the cascade's reach),
+   *  v2 = live and bound to the manifest the delete removes. */
+  async function seedVersions(v1: { isTrial: boolean }): Promise<void> {
+    const { rows } = await pool.query<{ id: string }>(
+      `INSERT INTO artifact_versions (captured_at, last_seen_at, platform, external_id, set_hash, version, document_count)
+       VALUES (now(), now(), $1, $2, 'set-hash-1', 1, 0) RETURNING id`,
+      [PLATFORM, EXTERNAL_ID],
+    )
+    await pool.query(
+      `INSERT INTO auction_details (platform, external_id, version, extracted_at, is_latest, is_trial, artifact_version_id)
+       VALUES ($1, $2, 1, now(), false, $3, NULL),
+              ($1, $2, 2, now(), true, false, $4)`,
+      [PLATFORM, EXTERNAL_ID, v1.isTrial, rows[0]?.id],
+    )
+  }
+
+  async function readVersions(): Promise<Array<{ version: number; is_latest: boolean }>> {
+    const { rows } = await pool.query<{ version: number; is_latest: boolean }>(
+      'SELECT version, is_latest FROM auction_details WHERE platform = $1 ORDER BY version',
+      [PLATFORM],
+    )
+    return rows
+  }
+
+  it('promotes the newest surviving version when the cascade took the live row', async () => {
+    await seedVersions({ isTrial: false })
+
+    await deleteRawArchiveCountry(COUNTRY)
+
+    expect(await readVersions()).toEqual([{ version: 1, is_latest: true }])
+  })
+
+  it('never promotes a trial version — going live stays an explicit action', async () => {
+    await seedVersions({ isTrial: true })
+
+    await deleteRawArchiveCountry(COUNTRY)
+
+    expect(await readVersions()).toEqual([{ version: 1, is_latest: false }])
   })
 })
