@@ -65,16 +65,18 @@ export const SUMMARY_COLUMNS_SQL = `
   photos.items AS photos`
 
 /**
- * Newest extraction version per auction. LATERAL rather than the plan's
+ * Live extraction version per auction. LATERAL rather than a top-level
  * `DISTINCT ON (platform, external_id) … ORDER BY version DESC` because the
- * query is driven from `auctions`: this walks
- * idx_auction_details_identity_version once per matched auction instead of
- * sorting the whole history table first. Same result set either way.
+ * query is driven from `auctions`: this walks the partial unique index
+ * idx_auction_details_latest once per matched auction — an index lookup on
+ * is_latest, not a version sort — instead of scanning the whole history
+ * table first. Also the reason this must stay `is_latest`, not
+ * `ORDER BY version DESC LIMIT 1`: a WP-0 trial version can outrank the live
+ * row in version without ever being it, and search must never surface one.
  */
 export const LATEST_DETAILS_JOIN_SQL = `LEFT JOIN LATERAL (
     SELECT ad.* FROM auction_details ad
-    WHERE ad.platform = a.platform AND ad.external_id = a.external_id
-    ORDER BY ad.version DESC LIMIT 1
+    WHERE ad.platform = a.platform AND ad.external_id = a.external_id AND ad.is_latest = true
   ) d ON true`
 
 // GIS WP-5: the Umgebung/proximity filters in auction-search-filters.ts

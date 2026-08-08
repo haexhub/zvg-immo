@@ -62,6 +62,13 @@ export interface AuctionDetailsRow {
   source_land_area_sqm: number | null
   source_rooms: number | null
   market_value_text: string | null
+  is_latest: boolean
+  is_trial: boolean
+  llm_provider: string | null
+  llm_model: string | null
+  llm_profile_id: string | null
+  run_trigger: string | null
+  llm_duration_ms: number | null
 }
 
 interface AuctionPhotoRow {
@@ -253,8 +260,7 @@ export async function readLatestAuctionDetails(
   if (!db) return null
   const { rows } = await db.execute<Raw<AuctionDetailsRow>>(sql`
     SELECT * FROM auction_details
-    WHERE platform = ${platform} AND external_id = ${externalId}
-    ORDER BY version DESC LIMIT 1
+    WHERE platform = ${platform} AND external_id = ${externalId} AND is_latest = true
   `)
   const row = rows[0] ?? null
   // Only cache a hit. A miss may become a row through another app instance.
@@ -286,6 +292,21 @@ export interface WriteAuctionDetailsOptions {
    * "listing/rules only" even when a newer archived manifest already exists.
    */
   artifactVersionId?: number | null
+  /**
+   * Admin-triggered single-model comparison run (WP-0): the new row is
+   * inserted with is_latest = false and never demotes the current live row,
+   * and the unchanged-check (which only ever compares against the live row)
+   * is skipped — an experiment reproducing the live facts is itself the
+   * result, not a no-op.
+   */
+  trial?: boolean
+  /** Provenance (WP-1) — who/what produced this version. Left null by
+   *  callers that don't track it yet (enrich.ts, geocode.ts, llm-batch-poll.ts). */
+  llmProvider?: string | null
+  llmModel?: string | null
+  llmProfileId?: string | null
+  runTrigger?: 'cron' | 'manual' | null
+  llmDurationMs?: number | null
 }
 
 /**
@@ -301,6 +322,9 @@ export interface WriteAuctionDetailsOptions {
  *
  * Callers pass the manifest actually evaluated. It stays NULL for listing-only
  * or rules-only extraction.
+ *
+ * See WriteAuctionDetailsOptions.trial for the admin comparison-run path,
+ * which never touches the live (is_latest) row.
  */
 export async function writeAuctionDetails(
   auction: Auction,
@@ -332,43 +356,59 @@ export async function writeAuctionDetails(
   const result = await db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`auction_details:${platform}:${externalId}`}))`)
 
+    // The live row, not the max version — once a trial version exists it can
+    // outrank the live row in version without ever being it (see below).
     const previous = await tx.execute<{ id: number }>(sql`
       SELECT id FROM auction_details
-      WHERE platform = ${platform} AND external_id = ${externalId}
-      ORDER BY version DESC LIMIT 1
+      WHERE platform = ${platform} AND external_id = ${externalId} AND is_latest = true
     `)
     const previousRow = previous.rows[0] ?? null
-    const previousPhotos = previousRow
-      ? await tx.execute<Raw<AuctionPhotoRow>>(sql`
-          SELECT ordinal, file, category, caption, is_property_photo
-          FROM auction_photos WHERE auction_details_id = ${previousRow.id} ORDER BY ordinal
-        `)
-      : { rows: [] as AuctionPhotoRow[] }
-    const photosUnchanged = previousRow != null && photoRowsEqual(previousPhotos.rows, photos)
 
-    const unchanged = photosUnchanged ? await tx.execute<{ version: number }>(sql`
-      SELECT version FROM auction_details
-      WHERE platform = ${platform} AND external_id = ${externalId}
-        AND version = (SELECT max(version) FROM auction_details WHERE platform = ${platform} AND external_id = ${externalId})
-        AND (${sql.raw(valueColumnNames.join(', '))})
-            IS NOT DISTINCT FROM
-            (${castValueTuple()})
-    `) : { rows: [] as Array<{ version: number }> }
-    const unchangedVersion = unchanged.rows[0]?.version
-    if (unchangedVersion !== undefined) {
-      return { version: unchangedVersion, changed: false as const, row: null as AuctionDetailsRow | null }
+    // A trial run (WP-0) skips the unchanged-check — reproducing the live
+    // facts with a different model IS the result, not a no-op — and must
+    // never demote the live row, or the experiment would go public.
+    if (!options.trial) {
+      const previousPhotos = previousRow
+        ? await tx.execute<Raw<AuctionPhotoRow>>(sql`
+            SELECT ordinal, file, category, caption, is_property_photo
+            FROM auction_photos WHERE auction_details_id = ${previousRow.id} ORDER BY ordinal
+          `)
+        : { rows: [] as AuctionPhotoRow[] }
+      const photosUnchanged = previousRow != null && photoRowsEqual(previousPhotos.rows, photos)
+
+      const unchanged = photosUnchanged ? await tx.execute<{ version: number }>(sql`
+        SELECT version FROM auction_details
+        WHERE id = ${previousRow!.id}
+          AND (${sql.raw(valueColumnNames.join(', '))})
+              IS NOT DISTINCT FROM
+              (${castValueTuple()})
+      `) : { rows: [] as Array<{ version: number }> }
+      const unchangedVersion = unchanged.rows[0]?.version
+      if (unchangedVersion !== undefined) {
+        return { version: unchangedVersion, changed: false as const, row: null as AuctionDetailsRow | null }
+      }
+
+      // is_latest has a partial UNIQUE index (one true row per identity) —
+      // the new row below is inserted with is_latest = true, so the previous
+      // latest must be demoted first or the insert violates that constraint.
+      if (previousRow) {
+        await tx.execute(sql`UPDATE auction_details SET is_latest = false WHERE id = ${previousRow.id}`)
+      }
     }
 
-    // is_latest has a partial UNIQUE index (one true row per identity) —
-    // the new row below defaults to is_latest = true, so the previous
-    // latest must be demoted first or the insert violates that constraint.
-    if (previousRow) {
-      await tx.execute(sql`UPDATE auction_details SET is_latest = false WHERE id = ${previousRow.id}`)
-    }
-
-    const columnNames = ['platform', 'external_id', 'extracted_at', 'llm_analyzed_at', ...valueColumnNames]
+    const columnNames = [
+      'platform', 'external_id', 'extracted_at', 'llm_analyzed_at', 'is_latest', 'is_trial',
+      'llm_provider', 'llm_model', 'llm_profile_id', 'run_trigger', 'llm_duration_ms',
+      ...valueColumnNames,
+    ]
     const insertValues = sql.join(
-      [sql`${platform}`, sql`${externalId}`, sql`${extractedAt}`, sql`${llmAnalyzedAt}`, castValueTuple()],
+      [
+        sql`${platform}`, sql`${externalId}`, sql`${extractedAt}`, sql`${llmAnalyzedAt}`,
+        sql`${!options.trial}`, sql`${options.trial ?? false}`,
+        sql`${options.llmProvider ?? null}`, sql`${options.llmModel ?? null}`, sql`${options.llmProfileId ?? null}`,
+        sql`${options.runTrigger ?? null}`, sql`${options.llmDurationMs ?? null}`,
+        castValueTuple(),
+      ],
       sql`, `,
     )
     const inserted = await tx.execute<Raw<AuctionDetailsRow>>(sql`
@@ -395,6 +435,8 @@ export async function writeAuctionDetails(
     return { version: row.version, changed: true as const, row }
   })
 
-  if (result.changed) latestCache.set(cacheKey(platform, externalId), result.row!)
+  // A trial row is never the live version — caching it here would make
+  // readLatestAuctionDetails serve the experiment instead of the live row.
+  if (result.changed && !options.trial) latestCache.set(cacheKey(platform, externalId), result.row!)
   return { version: result.version, changed: result.changed }
 }

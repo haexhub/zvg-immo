@@ -58,8 +58,7 @@ export async function readArtifactProcessingState(
     `SELECT av.id, av.platform, av.external_id, av.version, av.set_hash,
             (SELECT ad.artifact_version_id
              FROM auction_details ad
-             WHERE ad.platform = $1 AND ad.external_id = $2
-             ORDER BY ad.version DESC LIMIT 1) AS parsed_artifact_version_id
+             WHERE ad.platform = $1 AND ad.external_id = $2 AND ad.is_latest = true) AS parsed_artifact_version_id
      FROM artifact_versions av
      WHERE av.platform = $1 AND av.external_id = $2
      ORDER BY av.version DESC LIMIT 1`,

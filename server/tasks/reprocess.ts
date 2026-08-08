@@ -108,6 +108,10 @@ export interface ReprocessOptions {
    *  deliberate full batch run. Only takes effect when llm-batch.ts knows how
    *  to batch the configured provider. */
   batch?: boolean
+  /** WP-1 provenance: who started this run. Defaults to 'cron' — the
+   *  scheduled task never sets this; only the /settings-triggered manual
+   *  endpoint does. */
+  trigger?: 'cron' | 'manual'
 }
 
 export interface ReprocessResult {
@@ -468,6 +472,10 @@ export async function reprocessAuction(
   llmFailures: number
   artifactVersionId: number | null
   auction: Auction
+  /** The config actually attempted — the fallback chain's winner, which can
+   *  differ from the `llmConfig` param. Null when no LLM ran at all (WP-1
+   *  provenance). */
+  llmConfigUsed: LlmConfig | null
 } | null> {
   const artifactState = opts.artifactState ?? await readArtifactProcessingState(platform, externalId)
   let base = opts.prebuiltBase
@@ -481,11 +489,13 @@ export async function reprocessAuction(
       llmFailures: opts.priorLlmFailures ?? 0,
       artifactVersionId: artifactState.parsedArtifactVersionId,
       auction: base.auction,
+      llmConfigUsed: null,
     }
   }
 
   const configs = [llmConfig, ...(opts.fallbackConfigs ?? [])]
   let llm: Awaited<ReturnType<typeof extractByLlm>> = null
+  let llmConfigUsed: LlmConfig = llmConfig
   for (const [index, config] of configs.entries()) {
     if (index > 0) {
       // Rebuild rather than reuse base.input: nativeDocuments (gemini-native's
@@ -501,6 +511,7 @@ export async function reprocessAuction(
         onProviderAttempt: opts.onLlmAttempt,
         onProviderError: opts.onLlmError,
       })
+      llmConfigUsed = config
       break
     } catch (err) {
       if (isDailyQuotaError(err)) opts.onDailyQuotaExhausted?.(config)
@@ -536,6 +547,7 @@ export async function reprocessAuction(
       ? base.artifactVersionId
       : artifactState.parsedArtifactVersionId,
     auction: base.auction,
+    llmConfigUsed,
   }
 }
 
@@ -679,6 +691,8 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
     llmFailures: number,
     archivedAuction: Auction,
     llmAttempted: boolean,
+    llmConfigUsed: LlmConfig | null = null,
+    llmDurationMs: number | null = null,
   ): Promise<void> {
     // record.auction is reconstructed from auctions LEFT JOIN LATERAL
     // auction_details (see auction-record.ts) — when no auction_details row
@@ -696,7 +710,14 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       : record.auction
     const updated: Auction = { ...base, extraction: entry }
     applyAuctionExtraction(updated, entry)
-    await writeAuctionDetails(updated, entry, { artifactVersionId })
+    await writeAuctionDetails(updated, entry, {
+      artifactVersionId,
+      llmProvider: llmConfigUsed ? (llmConfigUsed.provider ?? 'openai-compatible') : null,
+      llmModel: llmConfigUsed?.model ?? null,
+      llmProfileId: llmConfigUsed?.profileId ?? null,
+      runTrigger: opts.trigger ?? 'cron',
+      llmDurationMs,
+    })
     await upsertCurrentAuctions([updated], at)
     await writeAuctionLlmPipelineState(record.auction.platform, record.auction.externalId, {
       llmBatchJob: null,
@@ -835,6 +856,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       }
 
       let platformLlmCallsSoFar = platformLlmCalls
+      const reprocessStartedAt = Date.now()
       const result = await reprocessAuction(platform, externalId, priorEntry, syncConfigs[0] ?? null, at, {
         artifactState,
         priorLlmFailures,
@@ -874,7 +896,10 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       processed++
 
       // Persist each result immediately so a long run survives a deployment.
-      await persistEntry(record, result.entry, result.artifactVersionId, result.llmFailures, result.auction, result.llmCalled)
+      await persistEntry(
+        record, result.entry, result.artifactVersionId, result.llmFailures, result.auction, result.llmCalled,
+        result.llmConfigUsed, result.llmCalled ? Date.now() - reprocessStartedAt : null,
+      )
     } catch (err) {
       // Also where a rate limit/quota error (see llm.ts's isRateLimitError())
       // lands: reprocessAuction/extractByLlm deliberately let it propagate

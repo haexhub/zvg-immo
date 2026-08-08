@@ -190,6 +190,98 @@ describeDb('writeAuctionDetails (real Postgres)', () => {
     expect(rows[0].n).toBe(1)
   })
 
+  it('a trial write never becomes is_latest and readLatestAuctionDetails keeps serving the live version', async () => {
+    const live = await writeAuctionDetails(makeAuction(), makeExtraction({ livingAreaSqm: 120 }))
+    expect(live).toEqual({ version: 1, changed: true })
+
+    const trial = await writeAuctionDetails(
+      makeAuction(),
+      makeExtraction({ livingAreaSqm: 999 }),
+      { trial: true },
+    )
+    expect(trial).toEqual({ version: 2, changed: true })
+
+    const latest = await readLatestAuctionDetails('zvg-portal', '7265')
+    expect(Number(latest?.living_area_sqm)).toBe(120)
+
+    const { rows } = await pool.query<{ version: number; is_latest: boolean; is_trial: boolean }>(
+      `SELECT version, is_latest, is_trial FROM auction_details
+       WHERE platform = 'zvg-portal' AND external_id = '7265' ORDER BY version`,
+    )
+    expect(rows).toEqual([
+      { version: 1, is_latest: true, is_trial: false },
+      { version: 2, is_latest: false, is_trial: true },
+    ])
+  })
+
+  it('a trial write skips the unchanged-check even when it reproduces the live values exactly', async () => {
+    // Reproducing the live facts with a different model IS the measurement —
+    // deduping it away like a normal re-run would silently hide that result.
+    await writeAuctionDetails(makeAuction(), makeExtraction())
+    const trial = await writeAuctionDetails(makeAuction(), makeExtraction(), { trial: true })
+    expect(trial).toEqual({ version: 2, changed: true })
+
+    const { rows } = await pool.query('SELECT count(*)::int AS n FROM auction_details')
+    expect(rows[0].n).toBe(2)
+  })
+
+  it('a normal write after a trial compares against the live row, not the trial, for both demotion and the unchanged-check', async () => {
+    // Before WP-0, "previous" was ORDER BY version DESC LIMIT 1 — once a
+    // trial version exists it outranks the live row in version without ever
+    // being it, so a cron run reproducing the live facts would wrongly diff
+    // against the trial's (different) values and mint a needless version.
+    await writeAuctionDetails(makeAuction(), makeExtraction({ livingAreaSqm: 120 })) // v1, live
+    await writeAuctionDetails(makeAuction(), makeExtraction({ livingAreaSqm: 200 }), { trial: true }) // v2, trial
+
+    const repeat = await writeAuctionDetails(makeAuction(), makeExtraction({ livingAreaSqm: 120 }))
+    expect(repeat).toEqual({ version: 1, changed: false })
+
+    const { rows } = await pool.query('SELECT count(*)::int AS n FROM auction_details')
+    expect(rows[0].n).toBe(2)
+
+    const changed = await writeAuctionDetails(makeAuction(), makeExtraction({ livingAreaSqm: 140 })) // v3, live
+    expect(changed).toEqual({ version: 3, changed: true })
+
+    const flags = await pool.query<{ version: number; is_latest: boolean }>(
+      `SELECT version, is_latest FROM auction_details
+       WHERE platform = 'zvg-portal' AND external_id = '7265' ORDER BY version`,
+    )
+    expect(flags.rows).toEqual([
+      { version: 1, is_latest: false },
+      { version: 2, is_latest: false },
+      { version: 3, is_latest: true },
+    ])
+  })
+
+  it('stores llm provenance and run trigger passed via options', async () => {
+    const write = await writeAuctionDetails(makeAuction(), makeExtraction(), {
+      llmProvider: 'gemini-native',
+      llmModel: 'gemini-flash-latest',
+      llmProfileId: 'profile-a',
+      runTrigger: 'manual',
+      llmDurationMs: 4200,
+    })
+    expect(write).toEqual({ version: 1, changed: true })
+
+    const { rows } = await pool.query<{
+      llm_provider: string
+      llm_model: string
+      llm_profile_id: string
+      run_trigger: string
+      llm_duration_ms: number
+    }>(
+      `SELECT llm_provider, llm_model, llm_profile_id, run_trigger, llm_duration_ms
+       FROM auction_details WHERE platform = 'zvg-portal' AND external_id = '7265'`,
+    )
+    expect(rows[0]).toEqual({
+      llm_provider: 'gemini-native',
+      llm_model: 'gemini-flash-latest',
+      llm_profile_id: 'profile-a',
+      run_trigger: 'manual',
+      llm_duration_ms: 4200,
+    })
+  })
+
   it('appends a version when only the curated photos changed', async () => {
     await writeAuctionDetails(
       makeAuction({ photoCount: 1 }),

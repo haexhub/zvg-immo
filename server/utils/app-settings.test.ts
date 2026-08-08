@@ -484,6 +484,7 @@ describe('getLlmProviderOverride', () => {
       model: 'gemini-flash-latest',
       executionMode: 'sync',
       apiKey: 'gemini-secret',
+      profileId: 'cheap-translation',
     })
     expect(await getLlmProviderOverride(db, 'extraction')).toEqual({
       provider: 'claude-proxy',
@@ -548,6 +549,7 @@ describe('getLlmProviderOverride', () => {
           model: 'gemini-3.1-flash-lite',
           executionMode: 'sync',
           apiKey: 'secret',
+          profileId: 'primary',
         },
         {
           provider: 'claude-proxy',
@@ -555,6 +557,7 @@ describe('getLlmProviderOverride', () => {
           model: 'claude-haiku-4-5-20251001',
           executionMode: 'sync',
           apiKey: '',
+          profileId: 'fallback',
         },
       ])
       // getLlmProviderOverride still returns just the primary — existing

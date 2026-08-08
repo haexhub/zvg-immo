@@ -126,8 +126,7 @@ const SELECT_SQL = `SELECT
 FROM auctions a
 LEFT JOIN LATERAL (
   SELECT ad.* FROM auction_details ad
-  WHERE ad.platform = a.platform AND ad.external_id = a.external_id
-  ORDER BY ad.version DESC LIMIT 1
+  WHERE ad.platform = a.platform AND ad.external_id = a.external_id AND ad.is_latest = true
 ) d ON true
 LEFT JOIN auction_fetch_state fs
   ON fs.platform = a.platform AND fs.external_id = a.external_id`
