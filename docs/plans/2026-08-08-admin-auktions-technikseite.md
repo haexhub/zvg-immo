@@ -1,6 +1,6 @@
 # Admin-Technikseite pro Auktion + LLM-Modellvergleich
 
-Stand: 2026-08-08 · Status: WP-0 bis WP-5 + WP-7 umgesetzt, WP-6 in Review (PR #372)
+Stand: 2026-08-08 · Status: WP-0 bis WP-7 vollständig umgesetzt
 
 ## Ziel
 
@@ -221,20 +221,23 @@ demoted/befördert korrekt, ist idempotent auf der bereits-live Version;
 Delete verweigert die Live-Version, kaskadiert Fotos für eine Trial-Version).
 Endpoints per Unit-Test mit gemockten Utils.
 
-## WP-6 · Public-Cleanup
+## WP-6 · Public-Cleanup — ERLEDIGT
 
 Raus aus der Nutzeransicht:
 
-- Analyse-Badge in `pages/objekt/[platform]/[id].vue:149` samt
-  `analysisStatus`-Computed und den `objektDetail.analysisStatus.*`-Keys
-- Extraktionshinweis „…automatisch extrahiert (hohe/niedrige Konfidenz)" in
-  `components/Auction/DetailOverviewSections.vue:363`
-- Roher `translationError`-Banner in `pages/objekt/[platform]/[id].vue:159-160`
-  (`role="alert"`, Text kommt 1:1 aus `apiErrorMessage(err, ...)` in
-  `useAuctionDetailTranslation.ts` — zeigt z.B. rohe Provider-Fehler wie
-  `openrouter: [POST] "…/chat/completions": 404 Not Found` öffentlich an).
-  Ersetzen durch stillen Fallback auf den unübersetzten Text; der Fehler
-  selbst bleibt über `auction_translations.error_message` einsehbar (WP-2).
+- Analyse-Badge in `pages/objekt/[platform]/[id].vue` samt `analysisStatus`-
+  Computed und den `objektDetail.analysisStatus.*`-Keys
+- Extraktionshinweis „…automatisch extrahiert (hohe/niedrige Konfidenz)“ in
+  `components/Auction/DetailOverviewSections.vue` (`objektDetail.extractionNotice`
+  entfernt, `confidenceHigh`/`confidenceLow` bleiben — werden noch in
+  `DetailInsightsSection.vue` für Insight-Karten gebraucht)
+- Roher `translationError`-Banner in `pages/objekt/[platform]/[id].vue`
+  (Auslöser dieser Untersuchung — zeigte z.B. `openrouter: [POST]
+  ".../chat/completions": 404 Not Found` 1:1 öffentlich an). Stiller Fallback:
+  `displayTitle`/`displayDescription`/etc. fallen ohnehin schon auf den
+  unübersetzten Text zurück, sobald keine `activeTranslation` vorliegt — der
+  Banner war rein additiv. Der Fehler bleibt über
+  `auction_translations.error_message` einsehbar (WP-2, PR #371).
 
 Bleiben: die `sourceChecked`-Attributionen bei Lage/Markt/Gefahren.
 
@@ -272,8 +275,8 @@ gehört ergänzt, bevor WP-6 umgesetzt wird.
 ```text
 WP-0 (Trial-Fundament)  ─┐  ✅ #368
 WP-1 (Provenienz)       ─┤  ✅ #368  → WP-2 (API) ✅ → WP-3 (Seite) ✅ → WP-4 (Einzellauf) ✅ → WP-5 (Diff/Promote/Delete) ✅
-WP-7 (Fehler-Logging)   ─┘  ✅ (dieser PR)
-WP-6 (Public-Cleanup)   ── unabhängig, jederzeit, in Review (PR #372)
+WP-7 (Fehler-Logging)   ─┘  ✅ #370
+WP-6 (Public-Cleanup)   ── unabhängig, jederzeit ✅ (dieser PR)
 ```
 
 WP-4/WP-5 sind über PR #375 nachgezogen worden, nachdem #373/#374 beim ersten
@@ -283,4 +286,4 @@ Review-Fassung.
 
 WP-0 und WP-1 sind zusammen in PR #368 gemergt — WP-1 ohne WP-0 hätte keine
 sinnvolle Migration ergeben. WP-2+3 sind ein PR (API ohne UI bringt nichts).
-WP-7 ist eigener PR. WP-4, WP-5 und WP-6 je einer.
+WP-4, WP-5, WP-6 und WP-7 je einer.

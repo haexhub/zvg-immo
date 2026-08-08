@@ -911,14 +911,6 @@
     "authority": "Court",
     "caseNumber": "Case number",
     "technicalLink": "Technical",
-    "analysisStatus": {
-      "pending": "Analysis pending",
-      "rules": "Enrich: rules",
-      "batch": "LLM running",
-      "llm": "LLM analyzed",
-      "failed": "LLM failed"
-    },
-    "extractionNotice": "Key facts automatically extracted from the appraisal/brochure ({confidence}).",
     "biddingNotes": "Note on the bidding process: {note}",
     "renovationNotes": "Renovation note: {note}",
     "confidenceHigh": "high confidence",

@@ -359,10 +359,7 @@ function hazardStatusClass(status: string): string {
         <dd class="text-sm font-medium">{{ conditionLabel(displayExtraction.condition) }}</dd>
       </div>
     </dl>
-    <p v-if="displayExtraction?.source === 'llm'" class="mt-4 text-xs text-muted-foreground">
-      {{ $t('objektDetail.extractionNotice', { confidence: displayExtraction.confidence === 'high' ? $t('objektDetail.confidenceHigh') : $t('objektDetail.confidenceLow') }) }}
-    </p>
-    <p v-if="displayExtraction?.renovationNotes" class="mt-1 text-xs text-muted-foreground">
+    <p v-if="displayExtraction?.renovationNotes" class="mt-4 text-xs text-muted-foreground">
       {{ $t('objektDetail.renovationNotes', { note: displayExtraction.renovationNotes }) }}
     </p>
   </DetailSectionCard>
