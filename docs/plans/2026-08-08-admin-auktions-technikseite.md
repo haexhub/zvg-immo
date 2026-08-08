@@ -221,10 +221,6 @@ demoted/befördert korrekt, ist idempotent auf der bereits-live Version;
 Delete verweigert die Live-Version, kaskadiert Fotos für eine Trial-Version).
 Endpoints per Unit-Test mit gemockten Utils.
 
-**Verifizieren:** Test „Promote hebt genau eine Zeile, Partial-Unique bleibt
-erfüllt" und „Delete einer Trial-Version entfernt zugehörige
-Fotos/Übersetzungen, Live-Version unberührt".
-
 ## WP-6 · Public-Cleanup
 
 Raus aus der Nutzeransicht:

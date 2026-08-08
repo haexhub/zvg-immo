@@ -268,13 +268,17 @@ async function deleteSelected(): Promise<void> {
         method: 'DELETE',
       })
     }
-    selectedVersions.value = new Set()
-    showDiff.value = false
-    await loadOverview()
   } catch (err) {
     bulkDeleteError.value = normalizeSettingsError(err, t('settings.auctionTechnical.versions.deleteError'))
   } finally {
+    // Always resync with the DB, even on a partial failure (e.g. a version
+    // deleted mid-loop before a later one 404s) — otherwise the table and the
+    // selection go stale, and retrying would just 404 on the already-deleted
+    // ones instead of reaching the rest.
+    selectedVersions.value = new Set()
+    showDiff.value = false
     bulkDeletePending.value = false
+    await loadOverview()
   }
 }
 
