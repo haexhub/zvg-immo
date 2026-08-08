@@ -647,4 +647,16 @@ describe('resolveLlmConfig', () => {
   it('treats an unknown provider string as openai-compatible', () => {
     expect(resolveLlmConfig({ provider: 'bogus', baseUrl: 'https://api.example' })?.provider).toBe('openai-compatible')
   })
+
+  it('preserves openrouter rather than collapsing it to openai-compatible — supportsLlmBatch/submitLlmBatch key off this exact value', () => {
+    expect(
+      resolveLlmConfig({ provider: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'sk-or-test', model: 'google/gemini-3.5-flash-lite' }),
+    ).toEqual({
+      provider: 'openrouter',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      apiKey: 'sk-or-test',
+      model: 'google/gemini-3.5-flash-lite',
+      maxTokens: undefined,
+    })
+  })
 })

@@ -293,7 +293,10 @@ export function resolveLlmConfig(
   overrides?: { maxTokens?: number },
 ): LlmConfig | null {
   if (!c?.baseUrl) return null
-  const provider = c.provider === 'claude-proxy' || c.provider === 'gemini-native' ? c.provider : 'openai-compatible'
+  const provider =
+    c.provider === 'claude-proxy' || c.provider === 'gemini-native' || c.provider === 'openrouter'
+      ? c.provider
+      : 'openai-compatible'
   return {
     provider,
     baseUrl: c.baseUrl,
