@@ -115,4 +115,26 @@ describe('OpenAiCompatibleProvider.extract', () => {
     await expect(rateLimitedPromise).rejects.toThrow('http 429')
     expect(rateLimitedOnRequestError).not.toHaveBeenCalled()
   })
+
+  it('strips the OpenRouter batch-pricing ":batch" suffix from the synchronous request model', async () => {
+    const okResponse = { choices: [{ message: { content: '{}' } }] }
+    const fetchMock = vi.fn().mockResolvedValue(okResponse)
+    vi.stubGlobal('$fetch', fetchMock)
+    const provider = new OpenAiCompatibleProvider({
+      ...config,
+      provider: 'openrouter',
+      model: 'google/gemini-3.5-flash-lite:batch',
+    })
+    await provider.extract(req)
+    expect(fetchMock.mock.calls[0]![1].body.model).toBe('google/gemini-3.5-flash-lite')
+  })
+
+  it('leaves a non-OpenRouter model untouched even if it happens to end in ":batch"', async () => {
+    const okResponse = { choices: [{ message: { content: '{}' } }] }
+    const fetchMock = vi.fn().mockResolvedValue(okResponse)
+    vi.stubGlobal('$fetch', fetchMock)
+    const provider = new OpenAiCompatibleProvider({ ...config, model: 'gpt:batch' })
+    await provider.extract(req)
+    expect(fetchMock.mock.calls[0]![1].body.model).toBe('gpt:batch')
+  })
 })
