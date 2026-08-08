@@ -44,7 +44,12 @@ import {
   supportsNativeBatchDocuments,
 } from '~/server/utils/extract/llm-batch'
 import { readLlmExecutionMode } from '~/server/utils/app-settings'
-import { MAX_LLM_FAILURES, readExtractionChainStrategy, readExtractionLlmConfigChain } from '~/server/utils/extract/llm-task-config'
+import {
+  LLM_FAILURE_RETRY_COOLDOWN_HOURS,
+  MAX_LLM_FAILURES,
+  readExtractionChainStrategy,
+  readExtractionLlmConfigChain,
+} from '~/server/utils/extract/llm-task-config'
 import { mergeLlmResult, withDerivedExtractionFields, type MergeInputFields } from '~/server/utils/extract/merge-llm-result'
 import { buildReprocessFields } from '~/server/utils/extract/reprocess-fields'
 import { applyAuctionExtraction } from '~/server/utils/auction-extraction'
@@ -595,6 +600,16 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
   const executionMode = await readLlmExecutionMode()
   const maxLlmPerRun = readMaxLlmPerRun()
   const at = new Date().toISOString()
+  const nowMs = new Date(at).getTime()
+  /** Whether a locked-out auction (llm_failures >= MAX_LLM_FAILURES) is past
+   *  its cooldown and can retry again — see LLM_FAILURE_RETRY_COOLDOWN_HOURS.
+   *  A never-attempted timestamp (older rows predating this column, or a
+   *  chain that's never actually made a request) counts as elapsed rather
+   *  than blocking eligibility on a value that doesn't exist yet. */
+  function cooldownElapsed(lastAttemptedAt: string | null | undefined): boolean {
+    if (!lastAttemptedAt) return true
+    return nowMs - new Date(lastAttemptedAt).getTime() >= LLM_FAILURE_RETRY_COOLDOWN_HOURS * 60 * 60 * 1000
+  }
   // Any provider without a Batch API integration falls back to the
   // synchronous path even if `batch: true` was requested.
   const batchRequested = opts.batch ?? executionMode === 'batch'
@@ -663,6 +678,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
     artifactVersionId: number | null,
     llmFailures: number,
     archivedAuction: Auction,
+    llmAttempted: boolean,
   ): Promise<void> {
     // record.auction is reconstructed from auctions LEFT JOIN LATERAL
     // auction_details (see auction-record.ts) — when no auction_details row
@@ -686,6 +702,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       llmBatchJob: null,
       llmArtifactVersionId: null,
       llmFailures,
+      llmAttempted,
     })
     record.auction = updated
     record.artifactVersionId = artifactVersionId
@@ -694,6 +711,13 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
   for (const { platform, externalId, country } of candidates) {
     throwIfTaskAborted(signal)
     const before = { processed, skipped, llmCalls, llmErrors }
+    // Hoisted out of the try block below so the catch can still see them: a
+    // thrown rate-limit/unparseable-response error (see the catch's comment)
+    // reaches onLlmAttempt before propagating past reprocessAuction, and the
+    // cooldown timestamp needs recording even though this candidate never
+    // reaches persistEntry.
+    let syncLlmAttempted = false
+    let priorLlmFailures = 0
     try {
       const key = cacheKey(platform, externalId)
       const record = records.get(key)
@@ -704,7 +728,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       const storedPriorEntry = record.auction.extraction ?? undefined
       const priorState = fetchStates.get(key)
       const priorEntry = storedPriorEntry
-      const priorLlmFailures = priorState?.llmFailures ?? 0
+      priorLlmFailures = priorState?.llmFailures ?? 0
       const artifactState = await readArtifactProcessingState(platform, externalId)
       const hasMissingLlmOnlyField = priorEntry
         ? priorEntry.condition === undefined ||
@@ -729,7 +753,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
           (priorEntry.source === 'rules' && priorEntry.confidence === 'low') ||
           (llmConfig != null && hasMissingLlmOnlyField) ||
           hasNewArchivedDocuments(artifactState)) &&
-          priorLlmFailures < MAX_LLM_FAILURES &&
+          (priorLlmFailures < MAX_LLM_FAILURES || cooldownElapsed(priorState?.llmLastAttemptedAt)) &&
           !isLlmBatchPending(priorState?.llmBatchJob
             ? { llmBatchJob: priorState.llmBatchJob, at: priorState.updatedAt }
             : undefined))
@@ -782,7 +806,10 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
             ? priorEntry
             : buildRulesOnlyEntry(base.fields, priorEntry, at)
           processed++
-          await persistEntry(record, entry, artifactState.parsedArtifactVersionId, priorLlmFailures, base.auction)
+          // llmAttempted: false — queued, not yet submitted. The batch
+          // submission loop below marks the real attempt once it actually
+          // goes out (only some queued items may make it into submitted).
+          await persistEntry(record, entry, artifactState.parsedArtifactVersionId, priorLlmFailures, base.auction, false)
           continue
         }
         batchFallbackBase = base
@@ -807,7 +834,6 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
         break
       }
 
-      let syncLlmAttempted = false
       let platformLlmCallsSoFar = platformLlmCalls
       const result = await reprocessAuction(platform, externalId, priorEntry, syncConfigs[0] ?? null, at, {
         artifactState,
@@ -848,7 +874,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       processed++
 
       // Persist each result immediately so a long run survives a deployment.
-      await persistEntry(record, result.entry, result.artifactVersionId, result.llmFailures, result.auction)
+      await persistEntry(record, result.entry, result.artifactVersionId, result.llmFailures, result.auction, result.llmCalled)
     } catch (err) {
       // Also where a rate limit/quota error (see llm.ts's isRateLimitError())
       // lands: reprocessAuction/extractByLlm deliberately let it propagate
@@ -858,6 +884,20 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       // rules-only once the limit is hit, long after the outage clears.
       console.warn(`[reprocess] failed for ${platform}:${externalId}: ${(err as Error).message}`)
       skipped++
+      if (syncLlmAttempted) {
+        // A real request went out this iteration even though the outcome
+        // never reached persistEntry (thrown, not resolved to null) — record
+        // it so a locked-out auction's 24h cooldown (see cooldownElapsed)
+        // actually advances instead of re-triggering every run forever.
+        // llmFailures stays at its prior count: a capacity outage still must
+        // never count toward MAX_LLM_FAILURES (see the comment above).
+        await writeAuctionLlmPipelineState(platform, externalId, {
+          llmBatchJob: null,
+          llmArtifactVersionId: null,
+          llmFailures: priorLlmFailures,
+          llmAttempted: true,
+        })
+      }
       if (isRateLimitError(err)) {
         warning = buildLlmRateLimitWarning(err, llmConfig)
         console.warn('[reprocess] LLM provider rate-limited — stopping this run early')
@@ -910,6 +950,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
               llmBatchJob: item.jobName,
               llmArtifactVersionId: batchArtifactVersions.get(item.key) ?? null,
               llmFailures: fetchStates.get(item.key)?.llmFailures ?? 0,
+              llmAttempted: true,
             },
           )
         }

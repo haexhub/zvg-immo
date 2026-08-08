@@ -1,4 +1,4 @@
-import { MAX_LLM_FAILURES } from '~/lib/llm-limits'
+import { LLM_FAILURE_RETRY_COOLDOWN_HOURS, MAX_LLM_FAILURES } from '~/lib/llm-limits'
 import { getPool } from '../db'
 import {
   DEFAULT_LLM_CHAIN_STRATEGY,
@@ -10,7 +10,7 @@ import {
 } from '../app-settings'
 import { resolveLlmConfig, type LlmConfig } from './llm'
 
-export { MAX_LLM_FAILURES }
+export { LLM_FAILURE_RETRY_COOLDOWN_HOURS, MAX_LLM_FAILURES }
 
 export async function readExtractionLlmConfig(): Promise<LlmConfig | null> {
   const [primary] = await readExtractionLlmConfigChain()

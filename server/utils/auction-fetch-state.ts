@@ -17,6 +17,7 @@ export interface AuctionFetchState {
   llmBatchJob: string | null
   llmArtifactVersionId: number | null
   llmFailures: number
+  llmLastAttemptedAt: string | null
   photosCheckedAt: string | null
   photoFailures: number
   photoPipelineVersion: number | null
@@ -37,6 +38,7 @@ interface AuctionFetchStateRow {
   llm_batch_job: string | null
   llm_artifact_version_id: string | number | null
   llm_failures: number
+  llm_last_attempted_at: Date | string | null
   photos_checked_at: Date | string | null
   photo_failures: number
   photo_pipeline_version: number | null
@@ -63,6 +65,7 @@ function fromRow(row: AuctionFetchStateRow): AuctionFetchState {
     llmBatchJob: row.llm_batch_job,
     llmArtifactVersionId: row.llm_artifact_version_id == null ? null : Number(row.llm_artifact_version_id),
     llmFailures: row.llm_failures,
+    llmLastAttemptedAt: iso(row.llm_last_attempted_at),
     photosCheckedAt: iso(row.photos_checked_at),
     photoFailures: row.photo_failures,
     photoPipelineVersion: row.photo_pipeline_version,
@@ -190,6 +193,13 @@ export interface LlmPipelineState {
   llmBatchJob: string | null
   llmArtifactVersionId: number | null
   llmFailures: number
+  /** Set only when an actual LLM request was made this write (whether it
+   *  succeeded or failed) — as opposed to a rules-only entry persisted with
+   *  the prior failure count unchanged. reprocess.ts's eligibility check
+   *  reads this back to let a locked-out auction (llm_failures >=
+   *  MAX_LLM_FAILURES) retry again after a cooldown instead of being
+   *  excluded forever — see LLM_FAILURE_RETRY_COOLDOWN_HOURS. */
+  llmAttempted?: boolean
 }
 
 /** Updates only LLM-pipeline columns, preserving concurrent crawler/photo writes. */
@@ -202,12 +212,13 @@ export async function writeAuctionLlmPipelineState(
   if (!db) return
   await db.query(
     `INSERT INTO auction_fetch_state
-       (platform, external_id, llm_batch_job, llm_artifact_version_id, llm_failures)
-     VALUES ($1, $2, $3, $4, $5)
+       (platform, external_id, llm_batch_job, llm_artifact_version_id, llm_failures, llm_last_attempted_at)
+     VALUES ($1, $2, $3, $4, $5, CASE WHEN $6 THEN now() ELSE NULL END)
      ON CONFLICT (platform, external_id) DO UPDATE SET
        llm_batch_job = EXCLUDED.llm_batch_job,
        llm_artifact_version_id = EXCLUDED.llm_artifact_version_id,
        llm_failures = EXCLUDED.llm_failures,
+       llm_last_attempted_at = CASE WHEN $6 THEN now() ELSE auction_fetch_state.llm_last_attempted_at END,
        updated_at = now()`,
     [
       platform,
@@ -215,6 +226,7 @@ export async function writeAuctionLlmPipelineState(
       state.llmBatchJob,
       state.llmArtifactVersionId,
       state.llmFailures,
+      state.llmAttempted ?? false,
     ],
   )
 }

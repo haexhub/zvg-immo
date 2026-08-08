@@ -288,6 +288,7 @@ export const auctionFetchState = pgTable('auction_fetch_state', {
   llmBatchJob: text('llm_batch_job'),
   llmArtifactVersionId: bigint('llm_artifact_version_id', { mode: 'number' }),
   llmFailures: integer('llm_failures').notNull().default(0),
+  llmLastAttemptedAt: timestamp('llm_last_attempted_at', { withTimezone: true }),
   photosCheckedAt: timestamp('photos_checked_at', { withTimezone: true }),
   photoFailures: integer('photo_failures').notNull().default(0),
   photoPipelineVersion: integer('photo_pipeline_version'),

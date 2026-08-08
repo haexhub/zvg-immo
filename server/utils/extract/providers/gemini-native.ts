@@ -6,7 +6,7 @@
 
 import { createHash } from 'node:crypto'
 import type { ContentPart, ExtractionProvider, ExtractionRequest, LlmConfig } from '../llm'
-import { isDailyQuotaError, isRateLimitError, LlmProviderError } from '../llm'
+import { isDailyQuotaError, isRateLimitError, isTransientRequestError, LlmProviderError, TRANSIENT_RETRY_DELAYS_MS } from '../llm'
 import { toGeminiSchema } from './gemini-schema'
 
 type GeminiPart = { text: string } | { inlineData: { mimeType: string; data: string } }
@@ -195,6 +195,17 @@ export class GeminiNativeProvider implements ExtractionProvider {
           // counted toward the retry-lockout.
           console.warn(`[extract/llm] gemini 429, giving up after ${MAX_RETRIES} retries`)
           throw err
+        }
+        // A transient failure (e.g. OpenRouter/upstream 404s, 5xx, timeouts)
+        // gets the same couple of retries as the other providers — see
+        // TRANSIENT_RETRY_DELAYS_MS in ../llm.ts — reusing this loop's own
+        // pacing (above) instead of a separate backoff. A 400/401/403 will
+        // fail identically every time, so skip straight to giving up.
+        if (isTransientRequestError(err) && attempt < TRANSIENT_RETRY_DELAYS_MS.length) {
+          console.warn(
+            `[extract/llm] request failed, retry ${attempt + 1}/${TRANSIENT_RETRY_DELAYS_MS.length}: ${(err as Error).message}`,
+          )
+          continue
         }
         // A caller that passes onRequestError (extractByLlm) wants to keep
         // batching past a single failed candidate; one that doesn't (e.g.

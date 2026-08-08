@@ -184,6 +184,32 @@ export function isLlmProviderUnavailable(err: unknown): boolean {
   return isRateLimitError(err) || isLlmProviderError(err)
 }
 
+/** Backoff between retries of a single transient request failure — e.g.
+ *  OpenRouter's thin-provider-pool 404 ("no endpoint available right now"),
+ *  which typically clears within a few seconds. Deliberately short: this
+ *  retries the *same* model before a caller gives up on it, not before
+ *  trying the next configured one in the chain. Each provider retries this
+ *  inline around its own $fetch call rather than through a shared generic
+ *  wrapper — wrapping $fetch's routed overload type through a generic
+ *  function tripped up vue-tsc ("excessive stack depth"). */
+export const TRANSIENT_RETRY_DELAYS_MS = [1_000, 3_000]
+
+/** Whether a request failure is worth retrying on the same model at all — as
+ *  opposed to a 400/401/403 that will fail identically every time and should
+ *  go straight to giving up (or the next configured chain model) instead of
+ *  paying TRANSIENT_RETRY_DELAYS_MS for a retry that can't succeed. No HTTP
+ *  status at all (network error, DNS failure, the AbortSignal.timeout()
+ *  every provider sets) always counts as transient. 404 is deliberately
+ *  included — it's OpenRouter's thin-provider-pool signal ("no endpoint
+ *  available right now" for the requested model), the case this retry exists
+ *  for — even though it can also mean "this model id doesn't exist" for a
+ *  genuinely broken config; the status code can't tell those apart. */
+export function isTransientRequestError(err: unknown): boolean {
+  const status = (err as { response?: { status?: number } })?.response?.status
+  if (status == null) return true
+  return status === 404 || status === 408 || status >= 500
+}
+
 const MAX_PDF_CHARS = 60_000
 const MAX_DOCUMENT_TEXT_CHARS = 80_000
 

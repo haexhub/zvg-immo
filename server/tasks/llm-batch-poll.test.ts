@@ -145,6 +145,7 @@ beforeEach(() => {
     llmBatchJob: 'batches/abc',
     llmArtifactVersionId: 22,
     llmFailures: 2,
+    llmLastAttemptedAt: null,
     photosCheckedAt: null,
     photoFailures: 0,
     photoPipelineVersion: null,

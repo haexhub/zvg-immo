@@ -172,8 +172,32 @@ describe('GeminiNativeProvider.extract — 429 pacing/retry', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
-  it('does not retry and surfaces a non-429 failure', async () => {
+  it('retries a transient (non-429) failure and returns the result once it succeeds', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(error(500))
+      .mockRejectedValueOnce(error(500))
+      .mockResolvedValueOnce(okResponse)
+    vi.stubGlobal('$fetch', fetchMock)
+    const provider = await freshProvider()
+    const promise = provider.extract(req)
+    await vi.runAllTimersAsync()
+    await expect(promise).resolves.toEqual({ propertyType: 'haus' })
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('surfaces a non-429 failure once retries are exhausted', async () => {
     const fetchMock = vi.fn().mockRejectedValue(error(500))
+    vi.stubGlobal('$fetch', fetchMock)
+    const provider = await freshProvider()
+    const promise = provider.extract(req)
+    promise.catch(() => {})
+    await vi.runAllTimersAsync()
+    await expect(promise).rejects.toMatchObject({ name: 'LlmProviderError' })
+    expect(fetchMock).toHaveBeenCalledTimes(3) // 1 initial attempt + 2 transient retries
+  })
+
+  it('does not retry a non-transient (e.g. 401/400) failure', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(error(401))
     vi.stubGlobal('$fetch', fetchMock)
     const provider = await freshProvider()
     const promise = provider.extract(req)

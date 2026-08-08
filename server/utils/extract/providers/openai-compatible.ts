@@ -4,7 +4,13 @@
 // is a baseUrl/apiKey/model config change, never a new class.
 
 import type { ContentPart, ExtractionProvider, ExtractionRequest, LlmConfig } from '../llm'
-import { isRateLimitError, LlmProviderError, UNIVERSAL_AUCTION_SCHEMA_NAME } from '../llm'
+import {
+  isRateLimitError,
+  isTransientRequestError,
+  LlmProviderError,
+  TRANSIENT_RETRY_DELAYS_MS,
+  UNIVERSAL_AUCTION_SCHEMA_NAME,
+} from '../llm'
 
 type OpenAiContentPart =
   | { type: 'text'; text: string }
@@ -69,29 +75,44 @@ export class OpenAiCompatibleProvider implements ExtractionProvider {
       },
     }
     let resp: unknown
-    try {
-      // Same rationale as ClaudeProxyProvider: bound the request so a stuck
-      // upstream call can't hang the enrich task's Promise.all forever.
-      resp = await $fetch(`${this.config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          ...(this.config.apiKey ? { authorization: `Bearer ${this.config.apiKey}` } : {}),
-        },
-        body,
-        signal: AbortSignal.timeout(60_000),
-      })
-    } catch (err) {
-      // Rethrow a rate limit/quota error instead of swallowing it to null —
-      // see isRateLimitError() — so it isn't counted toward the retry-lockout.
-      if (isRateLimitError(err)) throw err
-      // A caller that passes onRequestError (extractByLlm) wants to keep
-      // batching past a single failed candidate; one that doesn't (e.g.
-      // callSummaryLlm/callTranslationLlm) wants the failure to reject.
-      if (!opts?.onRequestError) throw new LlmProviderError(this.providerLabel, (err as Error).message, { cause: err })
-      console.warn(`[extract/llm] request failed: ${(err as Error).message}`)
-      opts.onRequestError(err)
-      return null
+    for (let attempt = 0; ; attempt++) {
+      try {
+        // Same rationale as ClaudeProxyProvider: bound the request so a stuck
+        // upstream call can't hang the enrich task's Promise.all forever.
+        resp = await $fetch(`${this.config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            ...(this.config.apiKey ? { authorization: `Bearer ${this.config.apiKey}` } : {}),
+          },
+          body,
+          signal: AbortSignal.timeout(60_000),
+        })
+        break
+      } catch (err) {
+        // Rethrow a rate limit/quota error instead of swallowing it to null —
+        // see isRateLimitError() — so it isn't counted toward the retry-lockout.
+        if (isRateLimitError(err)) throw err
+        // A transient failure (e.g. OpenRouter's thin-provider-pool 404, "no
+        // endpoint available right now") gets a couple of quick retries on
+        // the same model before giving up — see TRANSIENT_RETRY_DELAYS_MS. A
+        // 400/401/403 will fail identically every time, so skip straight to
+        // giving up instead of paying the retry delay for nothing.
+        if (isTransientRequestError(err) && attempt < TRANSIENT_RETRY_DELAYS_MS.length) {
+          console.warn(
+            `[extract/llm] request failed, retry ${attempt + 1}/${TRANSIENT_RETRY_DELAYS_MS.length}: ${(err as Error).message}`,
+          )
+          await new Promise((resolve) => setTimeout(resolve, TRANSIENT_RETRY_DELAYS_MS[attempt]))
+          continue
+        }
+        // A caller that passes onRequestError (extractByLlm) wants to keep
+        // batching past a single failed candidate; one that doesn't (e.g.
+        // callSummaryLlm/callTranslationLlm) wants the failure to reject.
+        if (!opts?.onRequestError) throw new LlmProviderError(this.providerLabel, (err as Error).message, { cause: err })
+        console.warn(`[extract/llm] request failed: ${(err as Error).message}`)
+        opts.onRequestError(err)
+        return null
+      }
     }
     const parsed = parseOpenAiExtractionResponse(resp)
     if (!parsed) throw new LlmProviderError(this.providerLabel, 'ungültige oder leere Provider-Antwort')
