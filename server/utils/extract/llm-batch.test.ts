@@ -50,12 +50,13 @@ describe('llm-batch provider gates', () => {
       .toBe(false)
   })
 
-  it('batchSupportsMultimodal is false only for OpenRouter, whose Batch API rejects image/document content', () => {
-    expect(batchSupportsMultimodal({ provider: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', model: 'x' })).toBe(false)
+  it('batchSupportsMultimodal is an explicit allowlist, not an OpenRouter exclusion — an unrecognized provider defaults to false', () => {
     expect(batchSupportsMultimodal({ provider: 'gemini-native', baseUrl: 'http://gemini', model: 'x' })).toBe(true)
     expect(batchSupportsMultimodal({ provider: 'claude-proxy', baseUrl: 'http://proxy', model: 'x' })).toBe(true)
     expect(batchSupportsMultimodal({ provider: 'openai-compatible', baseUrl: 'https://api.openai.com/v1', model: 'x' })).toBe(true)
-    expect(batchSupportsMultimodal(null)).toBe(true)
+    expect(batchSupportsMultimodal({ provider: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', model: 'x' })).toBe(false)
+    expect(batchSupportsMultimodal({ baseUrl: 'https://future-provider.example', model: 'x' })).toBe(false)
+    expect(batchSupportsMultimodal(null)).toBe(false)
   })
 
   it('isLlmBatchProviderBroken reflects the last recorded real submit attempt for that provider', async () => {
