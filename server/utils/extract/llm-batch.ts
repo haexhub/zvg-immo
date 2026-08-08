@@ -67,8 +67,13 @@ export function supportsNativeBatchDocuments(config: LlmConfig | null | undefine
 }
 
 /** Whether this provider's Batch API accepts non-text content (images/PDF
- *  bytes) in a request. OpenRouter's beta Batch API rejects any request
- *  carrying image/audio/video/file content outright (see
+ *  bytes) in a request. Explicit allowlist rather than excluding just
+ *  OpenRouter, so a future provider defaults to "no" (routed to the
+ *  synchronous path) until it's actually verified to handle multimodal batch
+ *  requests, instead of silently inheriting "yes" by not being OpenRouter —
+ *  same conservative-default posture as supportsNativeBatchDocuments above.
+ *  OpenRouter's beta Batch API is the one confirmed exception: it rejects
+ *  any request carrying image/audio/video/file content outright (see
  *  openrouter-batch.ts) — reprocess.ts checks this before routing a
  *  candidate into the batch queue, so a photo-bearing auction takes the
  *  synchronous path instead of being resubmitted to (and silently skipped
@@ -76,7 +81,9 @@ export function supportsNativeBatchDocuments(config: LlmConfig | null | undefine
  *  never marked submitted and so stays eligible for that batch path again
  *  next time. */
 export function batchSupportsMultimodal(config: LlmConfig | null | undefined): boolean {
-  return config?.provider !== 'openrouter'
+  return config?.provider === 'gemini-native' ||
+    config?.provider === 'claude-proxy' ||
+    config?.provider === 'openai-compatible'
 }
 
 // supportsLlmBatch above only checks static config shape (provider/apiKey/

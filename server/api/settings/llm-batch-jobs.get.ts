@@ -47,7 +47,8 @@ export interface LlmBatchJobsOverview {
   }
   jobs: LlmBatchJobOverviewItem[]
   recentJobs: LlmBatchJobOverviewItem[]
-  // Keyed by LlmProvider ('gemini-native' | 'openai-compatible' | 'claude-proxy')
+  // Keyed by LlmProvider ('gemini-native' | 'openai-compatible' | 'claude-proxy'
+  // | 'openrouter')
   // — whether the *last real* batch submit attempt for that provider was
   // accepted, so /settings can show why batch mode currently isn't running
   // instead of a silently stuck backlog.
