@@ -6,7 +6,6 @@ import { getPool } from '~/server/utils/db'
 import {
   readLocationEnrichmentCache,
   writeLocationEnrichmentCache,
-  type LocationEnrichmentCache,
 } from '~/server/utils/external-data/location-enrichment'
 import { createDvfFileMarketAdapter } from '~/server/utils/external-data/fr-dvf-cache'
 import { createEuFloodRiskFileAdapter } from '~/server/utils/external-data/eu-flood-risk'
@@ -125,7 +124,6 @@ export async function runExternalEnrichment(
   const checkedAt = now.toISOString()
   const records = await readAuctionRecords(options.country, { includePhotos: false })
   const existing = await readLocationEnrichmentCache()
-  const entries: LocationEnrichmentCache = {}
   const summary: ExternalEnrichmentSummary = {
     processed: 0,
     written: 0,
@@ -181,22 +179,36 @@ export async function runExternalEnrichment(
 
       if (!marketComparison && !landValueBaseline && hazards.length === 0 && !locationContext) continue
 
-      entries[key] = {
-        platform: auction.platform,
-        externalId: auction.externalId,
-        lat: point.lat,
-        lng: point.lng,
-        marketComparison: marketComparison ?? previous?.marketComparison ?? null,
-        landValueBaseline: landValueBaseline ?? previous?.landValueBaseline ?? null,
-        hazards: hazards.length > 0 ? hazards : previous?.hazards ?? null,
-        locationContext: locationContext ?? previous?.locationContext ?? null,
-        checkedAt,
-        sourceVersion: sourceVersion([
-          ...marketAdapters,
-          ...landValueAdapters,
-          ...hazardAdapters,
-          ...locationContextAdapters,
-        ]),
+      // Written immediately, per auction, instead of batched into one write
+      // after the whole scope finishes: a full sweep can run for a long time
+      // and gets superseded (aborted) whenever a newer external-enrichment
+      // invocation starts (runExclusiveTask) — with continuous background
+      // crawling that happens often, and a batch-at-the-end write meant every
+      // auction's freshly-computed result was thrown away with it, no matter
+      // how far the run had gotten.
+      const ok = await writeLocationEnrichmentCache({
+        [key]: {
+          platform: auction.platform,
+          externalId: auction.externalId,
+          lat: point.lat,
+          lng: point.lng,
+          marketComparison: marketComparison ?? previous?.marketComparison ?? null,
+          landValueBaseline: landValueBaseline ?? previous?.landValueBaseline ?? null,
+          hazards: hazards.length > 0 ? hazards : previous?.hazards ?? null,
+          locationContext: locationContext ?? previous?.locationContext ?? null,
+          checkedAt,
+          sourceVersion: sourceVersion([
+            ...marketAdapters,
+            ...landValueAdapters,
+            ...hazardAdapters,
+            ...locationContextAdapters,
+          ]),
+        },
+      })
+      if (ok) {
+        summary.written++
+      } else if (summary.errors.length < 100) {
+        summary.errors.push(`Anreicherungsdaten für ${auction.platform}/${auction.externalId} konnten nicht gespeichert werden.`)
       }
     } finally {
       void recordTaskRunProgress('external-enrichment', progressSnapshot(summary, total))
@@ -204,13 +216,6 @@ export async function runExternalEnrichment(
   }
 
   await recordTaskRunProgress('external-enrichment', progressSnapshot(summary, total), { flush: true })
-  throwIfTaskAborted(signal)
-  const ok = await writeLocationEnrichmentCache(entries)
-  throwIfTaskAborted(signal)
-  summary.written = ok ? Object.keys(entries).length : 0
-  if (!ok && Object.keys(entries).length > 0) {
-    summary.errors.push('Externe Anreicherungsdaten konnten nicht gespeichert werden.')
-  }
   summary.durationMs = Date.now() - startedAt
   return summary
 }
