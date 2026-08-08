@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { MAX_LLM_FAILURES } from '~/lib/llm-limits'
-import { hasCompletedLlmAnalysis as extractionHasCompletedLlmAnalysis } from '~/lib/auction-filters'
 import { classifyPropertyType } from '~/lib/property-type'
 import type { UsageIdea } from '~/lib/usage-idea'
 import type { RenovationCostItem } from '~/lib/renovation-cost'
@@ -34,7 +32,6 @@ const { data: a, error, pending } = await useFetch<AuctionDetail | null>(
 )
 
 const {
-  translationError,
   translationPending,
   displayTitle,
   displayAddress,
@@ -69,29 +66,6 @@ function category(): { id: string; label: string } | null {
 // allow-list, but the URL itself needs to be well-formed before we get there.
 const photoUrls = computed<string[]>(() => {
   return a.value ? auctionPhotoUrls(a.value) : []
-})
-
-type AnalysisStatus = 'pending' | 'rules' | 'batch' | 'llm' | 'failed'
-
-function hasCompletedLlmAnalysis(): boolean {
-  return extractionHasCompletedLlmAnalysis(a.value?.extraction)
-}
-
-const analysisStatus = computed<AnalysisStatus>(() => {
-  const e = a.value?.extraction
-  if (!e) return 'pending'
-  if (a.value?.processing?.llmBatchJob) return 'batch'
-  if (hasCompletedLlmAnalysis()) return 'llm'
-  if ((a.value?.processing?.llmFailures ?? 0) >= MAX_LLM_FAILURES) return 'failed'
-  return 'rules'
-})
-
-const analysisStatusClass = computed(() => {
-  if (analysisStatus.value === 'llm') return 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-50'
-  if (analysisStatus.value === 'batch') return 'border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-50'
-  if (analysisStatus.value === 'rules') return 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-50'
-  if (analysisStatus.value === 'failed') return 'border-destructive/30 bg-destructive/10 text-destructive hover:bg-destructive/10'
-  return 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-50'
 })
 
 // The normal description contains both the source listing and the detailed,
@@ -146,7 +120,6 @@ useHead(() => ({
           <Badge v-if="category()" class="bg-primary/10 text-primary hover:bg-primary/10">{{ category()?.label }}</Badge>
           <Badge variant="secondary">{{ a.authority }}</Badge>
           <Badge v-if="a.region" variant="outline">{{ a.region }}</Badge>
-          <Badge variant="outline" :class="analysisStatusClass">{{ $t(`objektDetail.analysisStatus.${analysisStatus}`) }}</Badge>
           <Badge v-if="a.cancelled" variant="destructive">{{ $t('objektDetail.cancelled') }}</Badge>
           <span class="font-mono text-muted-foreground">{{ a.caseNumber }}</span>
         </div>
@@ -156,9 +129,6 @@ useHead(() => ({
           <span v-if="titleTranslated" class="text-xs text-muted-foreground">({{ $t('objektDetail.autoTranslatedHint') }})</span>
         </div>
         <p v-if="displayAddress" class="text-muted-foreground">{{ displayAddress }}</p>
-        <p v-if="translationError" role="alert" class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          {{ translationError }}
-        </p>
       </header>
 
       <AuctionPhotoGallery :photos="photoUrls" :alt-base="displayTitle || $t('objektDetail.fallbackTitle')" />

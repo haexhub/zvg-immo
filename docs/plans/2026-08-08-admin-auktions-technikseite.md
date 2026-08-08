@@ -1,6 +1,6 @@
 # Admin-Technikseite pro Auktion + LLM-Modellvergleich
 
-Stand: 2026-08-08 · Status: WP-0 + WP-1 gemergt (PR #368), WP-2 bis WP-7 offen
+Stand: 2026-08-08 · Status: WP-0 + WP-1 gemergt (PR #368), WP-6 umgesetzt, WP-2 bis WP-5 und WP-7 offen (parallele PRs, s. Reihenfolge)
 
 ## Ziel
 
@@ -193,14 +193,23 @@ Neue i18n-Keys unter `settings.auctionTechnical.*` in `de.json` **und** `en.json
 erfüllt" und „Delete einer Trial-Version entfernt zugehörige
 Fotos/Übersetzungen, Live-Version unberührt".
 
-## WP-6 · Public-Cleanup
+## WP-6 · Public-Cleanup — ERLEDIGT
 
 Raus aus der Nutzeransicht:
 
-- Analyse-Badge in `pages/objekt/[platform]/[id].vue:149` samt
-  `analysisStatus`-Computed und den `objektDetail.analysisStatus.*`-Keys
+- Analyse-Badge in `pages/objekt/[platform]/[id].vue` samt `analysisStatus`-
+  Computed und den `objektDetail.analysisStatus.*`-Keys
 - Extraktionshinweis „…automatisch extrahiert (hohe/niedrige Konfidenz)" in
-  `components/Auction/DetailOverviewSections.vue:363`
+  `components/Auction/DetailOverviewSections.vue` (`objektDetail.extractionNotice`
+  entfernt, `confidenceHigh`/`confidenceLow` bleiben — werden noch in
+  `DetailInsightsSection.vue` für Insight-Karten gebraucht)
+- Roher `translationError`-Banner in `pages/objekt/[platform]/[id].vue`
+  (Auslöser dieser Untersuchung — zeigte z.B. `openrouter: [POST]
+  ".../chat/completions": 404 Not Found` 1:1 öffentlich an). Stiller Fallback:
+  `displayTitle`/`displayDescription`/etc. fallen ohnehin schon auf den
+  unübersetzten Text zurück, sobald keine `activeTranslation` vorliegt — der
+  Banner war rein additiv. Der Fehler bleibt über
+  `auction_translations.error_message` einsehbar (WP-2, PR #371).
 
 Bleiben: die `sourceChecked`-Attributionen bei Lage/Markt/Gefahren.
 
@@ -223,11 +232,12 @@ LLM-Zweig unbeantwortbar und WP-4 hat keine Fehlerrückmeldung.
 ```
 WP-0 (Trial-Fundament)  ─┐  ✅ #368
 WP-1 (Provenienz)       ─┤  ✅ #368  → WP-2 (API) → WP-3 (Seite) → WP-4 (Einzellauf) → WP-5 (Diff/Promote/Delete)
-WP-7 (Fehler-Logging)   ─┘  offen
-WP-6 (Public-Cleanup)   ── unabhängig, jederzeit
+WP-7 (Fehler-Logging)   ─┘  paralleler PR
+WP-6 (Public-Cleanup)   ── unabhängig, jederzeit ✅
 ```
 
 WP-0 und WP-1 sind zusammen in PR #368 gemergt — WP-1 ohne WP-0 hätte keine
-sinnvolle Migration ergeben. WP-7 und WP-6 sind je ein kleiner, unabhängig
-mergebarer PR. WP-2+3 gehören in einen PR (API ohne UI bringt nichts), WP-4 und
-WP-5 je einer. Bleiben vier PRs.
+sinnvolle Migration ergeben. WP-2+3, WP-4, WP-5, WP-6 und WP-7 sind je ein
+eigener PR, mehrere davon parallel von main abgezweigt statt aufeinander
+aufbauend — das gibt beim Mergen kleine, triviale Konflikte in diesem
+Abschnitt und der Statuszeile oben, kein Merge-Blocker.
