@@ -5,6 +5,9 @@
 
 import type { Pool } from 'pg'
 import type { Auction } from '~/types/auction'
+import { runExternalEnrichment } from '~/server/tasks/external-enrichment'
+import { runExclusiveTask } from '~/server/utils/exclusive-task'
+import { cacheKey } from '~/server/utils/verkehrswert-cache'
 import { getPool } from './db'
 import type { GeocodeStatus } from './geocode'
 
@@ -102,11 +105,22 @@ export function coordinatesMovedSignificantly(
  * anything happening on the auction side. It is not enough for "this auction's
  * coordinates just moved", though: up to 24 h of wrong context. Never awaited,
  * so the crawl/geocode path doesn't wait on external HTTP.
+ *
+ * Deliberately bypasses the `external-enrichment` Nitro task (and its shared
+ * `runExclusiveTask('external-enrichment', ...)` lock): that lock is also held
+ * by the nightly/manual/country-scoped sweep, and `runExclusiveTask` aborts
+ * whatever holds it whenever a new call comes in. With continuous background
+ * crawling, this fired for every newly-geocoded auction — often — and kept
+ * killing the sweep before it could finish (and before it could persist
+ * anything, since it only writes its results at the very end of its loop).
+ * Locking per-auction here instead only ever supersedes an earlier trigger
+ * for the *same* auction, leaving the sweep alone.
  */
 function triggerLocationEnrichment(platform: string, externalId: string): void {
-  // Absent outside the Nitro runtime (unit tests), where there is no task to run.
-  if (typeof runTask !== 'function') return
-  void runTask('external-enrichment', { payload: { platform, externalId } }).catch((err: unknown) => {
+  void runExclusiveTask(
+    `external-enrichment-single:${cacheKey(platform, externalId)}`,
+    (signal) => runExternalEnrichment({ platform, externalId }, signal),
+  ).catch((err: unknown) => {
     console.error(`[current-auctions] external enrichment trigger failed for ${platform}/${externalId}: ${(err as Error).message}`)
   })
 }
