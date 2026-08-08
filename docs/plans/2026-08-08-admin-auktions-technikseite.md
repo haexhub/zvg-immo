@@ -1,6 +1,6 @@
 # Admin-Technikseite pro Auktion + LLM-Modellvergleich
 
-Stand: 2026-08-08 · Status: WP-0 + WP-1 gemergt (PR #368), WP-2 bis WP-7 offen
+Stand: 2026-08-08 · Status: WP-0 + WP-1 gemergt (PR #368), WP-7 umgesetzt, WP-2 bis WP-6 offen
 
 ## Ziel
 
@@ -201,6 +201,12 @@ Raus aus der Nutzeransicht:
   `analysisStatus`-Computed und den `objektDetail.analysisStatus.*`-Keys
 - Extraktionshinweis „…automatisch extrahiert (hohe/niedrige Konfidenz)" in
   `components/Auction/DetailOverviewSections.vue:363`
+- Roher `translationError`-Banner in `pages/objekt/[platform]/[id].vue:159-160`
+  (`role="alert"`, Text kommt 1:1 aus `apiErrorMessage(err, ...)` in
+  `useAuctionDetailTranslation.ts` — zeigt z.B. rohe Provider-Fehler wie
+  `openrouter: [POST] "…/chat/completions": 404 Not Found` öffentlich an).
+  Ersetzen durch stillen Fallback auf den unübersetzten Text; der Fehler
+  selbst bleibt über `auction_translations.error_message` einsehbar (WP-2).
 
 Bleiben: die `sourceChecked`-Attributionen bei Lage/Markt/Gefahren.
 
@@ -210,24 +216,38 @@ bleiben in `AuctionDetail`, weil `hideRulesOnlyAuctions` und die
 Darstellung. Sie auch aus der API-Antwort zu entfernen wäre ein separater,
 größerer Eingriff — offen, falls gewünscht.
 
-## WP-7 · Fehler pro Auktion sichtbar machen
+## WP-7 · Fehler pro Auktion sichtbar machen — ERLEDIGT
 
-`runReprocess` schreibt im `catch`-Block (`server/tasks/reprocess.ts:923`)
-zusätzlich `recordTaskRunError('reprocess', { platform, externalId, category,
-message })`. `'reprocess'` ist im `TrackedTask`-Typ bereits enthalten
-(`server/utils/task-runs.ts:11`). Ohne das bleibt „wo gab es Fehler" für den
-LLM-Zweig unbeantwortbar und WP-4 hat keine Fehlerrückmeldung.
+`runReprocess` schreibt im `catch`-Block (`server/tasks/reprocess.ts`) zusätzlich
+`recordTaskRunError('reprocess', { platform, externalId, category, message })`,
+`category` ist `'rate_limit' | 'llm_provider' | 'llm'` je nach
+`isRateLimitError`/`isLlmProviderError`. `'reprocess'` war im `TrackedTask`-Typ
+bereits enthalten (`server/utils/task-runs.ts:11`). Neuer Index
+`idx_task_run_errors_platform_external_created` auf
+`(platform, external_id, created_at desc)` für WP-2s Einzelauktions-Query
+(Migration `0010_quiet_darwin.sql`).
+
+**Übersetzungsfehler brauchten das nicht:** `failAuctionTranslation`
+(`server/utils/content-translation.ts`) schreibt `status='failed'`,
+`error_message`, `failed_config` bereits durable in `auction_translations` —
+genau das, was WP-2 unter „Übersetzungen" liest. Der rohe Banner aus dem
+Screenshot, der diese Untersuchung ausgelöst hat
+(`pages/objekt/[platform]/[id].vue:159`, gespeist aus
+`useAuctionDetailTranslation.ts`), zeigt exakt diesen `error_message`-Wert
+1:1 auf der öffentlichen Seite an — das ist ein WP-6-Fall (Public-Cleanup),
+nicht WP-7. Ursprünglich stand nur die Analyse-Badge und der
+Extraktionshinweis unter WP-6; dieser Banner fehlte in der Aufzählung und
+gehört ergänzt, bevor WP-6 umgesetzt wird.
 
 ## Reihenfolge
 
 ```
 WP-0 (Trial-Fundament)  ─┐  ✅ #368
 WP-1 (Provenienz)       ─┤  ✅ #368  → WP-2 (API) → WP-3 (Seite) → WP-4 (Einzellauf) → WP-5 (Diff/Promote/Delete)
-WP-7 (Fehler-Logging)   ─┘  offen
-WP-6 (Public-Cleanup)   ── unabhängig, jederzeit
+WP-7 (Fehler-Logging)   ─┘  ✅
+WP-6 (Public-Cleanup)   ── unabhängig, jederzeit, offen
 ```
 
 WP-0 und WP-1 sind zusammen in PR #368 gemergt — WP-1 ohne WP-0 hätte keine
-sinnvolle Migration ergeben. WP-7 und WP-6 sind je ein kleiner, unabhängig
-mergebarer PR. WP-2+3 gehören in einen PR (API ohne UI bringt nichts), WP-4 und
-WP-5 je einer. Bleiben vier PRs.
+sinnvolle Migration ergeben. WP-7 ist eigener PR. WP-2+3 gehören in einen PR
+(API ohne UI bringt nichts), WP-4, WP-5 und WP-6 je einer.

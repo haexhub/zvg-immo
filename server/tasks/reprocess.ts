@@ -72,6 +72,7 @@ import { isSafePathSegment } from '~/server/utils/path-segment'
 import { downloadImage, mimeTypeFor } from '~/server/utils/image-storage'
 import { normalizePhoto } from '~/lib/photo'
 import { recordTaskRunEnd, recordTaskRunProgress, recordTaskRunStart, type TaskRunSummary } from '~/server/utils/task-runs'
+import { recordTaskRunError } from '~/server/utils/task-run-errors'
 import {
   ensureEnabledCountriesLoaded,
   getEnabledCountryCodes,
@@ -929,6 +930,12 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       // rules-only once the limit is hit, long after the outage clears.
       console.warn(`[reprocess] failed for ${platform}:${externalId}: ${(err as Error).message}`)
       skipped++
+      void recordTaskRunError('reprocess', {
+        platform,
+        externalId,
+        category: isRateLimitError(err) ? 'rate_limit' : isLlmProviderError(err) ? 'llm_provider' : 'llm',
+        message: err instanceof Error ? err.message : String(err),
+      })
       if (syncLlmAttempted) {
         // A real request went out this iteration even though the outcome
         // never reached persistEntry (thrown, not resolved to null) — record

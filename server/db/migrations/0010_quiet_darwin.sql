@@ -1,0 +1,1 @@
+CREATE INDEX "idx_task_run_errors_platform_external_created" ON "task_run_errors" USING btree ("platform","external_id","created_at" DESC NULLS LAST);
