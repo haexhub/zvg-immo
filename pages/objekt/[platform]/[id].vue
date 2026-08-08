@@ -55,6 +55,16 @@ const {
   parcelsTranslating,
 } = await useAuctionDetailTranslation({ auction: a, platform, id })
 
+// Admin-only "Technik" link (docs/plans/2026-08-08-admin-auktions-technikseite.md,
+// WP-3) — probed client-side only so an unauthenticated visitor's SSR HTML
+// never reveals that the link exists.
+const adminAuthed = ref(false)
+if (import.meta.client) {
+  $fetch<{ authed: boolean }>('/api/settings/session', { cache: 'no-store' })
+    .then((res) => { adminAuthed.value = res.authed })
+    .catch(() => { adminAuthed.value = false })
+}
+
 function category(): { id: string; label: string } | null {
   if (!a.value) return null
   const pt = a.value.extraction?.propertyType
@@ -149,6 +159,13 @@ useHead(() => ({
           <Badge variant="outline" :class="analysisStatusClass">{{ $t(`objektDetail.analysisStatus.${analysisStatus}`) }}</Badge>
           <Badge v-if="a.cancelled" variant="destructive">{{ $t('objektDetail.cancelled') }}</Badge>
           <span class="font-mono text-muted-foreground">{{ a.caseNumber }}</span>
+          <NuxtLink
+            v-if="adminAuthed"
+            :to="`/admin/auktion/${platform}/${id}`"
+            class="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+          >
+            {{ $t('objektDetail.technicalLink') }}
+          </NuxtLink>
         </div>
         <div class="flex flex-wrap items-baseline gap-2">
           <h1 class="text-2xl font-bold leading-tight">{{ displayTitle || $t('objektDetail.untitled') }}</h1>

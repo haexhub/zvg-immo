@@ -474,6 +474,68 @@
         "detail_html": "Detail HTML",
         "document_text": "Document text"
       }
+    },
+    "auctionTechnical": {
+      "title": "Technical — {platform}/{id}",
+      "heading": "Technical: {platform}/{id}",
+      "back": "Back to listing",
+      "loading": "Loading …",
+      "loadError": "Technical overview could not be loaded.",
+      "noData": "No data.",
+      "sections": {
+        "identity": "Identity & geocoding",
+        "fetchState": "Crawl/fetch state",
+        "extractionHistory": "Extraction history",
+        "errors": "Errors",
+        "translations": "Translations",
+        "externalData": "External data",
+        "llmBatchJobs": "LLM batch jobs",
+        "documents": "Document archive"
+      },
+      "badges": {
+        "live": "Live",
+        "trial": "Trial"
+      },
+      "fields": {
+        "country": "Country/region",
+        "authority": "Court",
+        "caseNumber": "Case number",
+        "coordinates": "Coordinates",
+        "geocodeResult": "Geocoding result",
+        "geocodeAttemptedAt": "Geocoding attempted at",
+        "firstSeenAt": "First seen",
+        "updatedAt": "Last updated",
+        "detailFetchedAt": "Detail fetched at",
+        "llmFailures": "LLM failures",
+        "llmLastAttemptedAt": "Last LLM attempt",
+        "llmBatchJob": "LLM batch job",
+        "photoFailures": "Photo failures",
+        "photosCheckedAt": "Photos checked at",
+        "attachments": "Attachments",
+        "version": "Version",
+        "status": "Status",
+        "provider": "Provider/model",
+        "runTrigger": "Trigger",
+        "duration": "Duration",
+        "confidence": "Confidence",
+        "createdAt": "Created at",
+        "lang": "Language",
+        "error": "Error",
+        "distSea": "Distance to sea (m)",
+        "distMountain": "Distance to mountain (m)",
+        "distAirport": "Distance to airport (m)",
+        "computedAt": "Computed at",
+        "climateSummer": "Summer avg",
+        "climateWinter": "Winter avg",
+        "climateSourceVersion": "Climate data source",
+        "jobName": "Job",
+        "submittedAt": "Submitted at",
+        "kind": "Kind",
+        "filename": "File",
+        "setVersion": "Document set version",
+        "byteSize": "Size",
+        "capturedAt": "Captured at"
+      }
     }
   },
   "localeSwitcher": {
@@ -824,6 +886,7 @@
     "constructionShort": "Construction",
     "authority": "Court",
     "caseNumber": "Case number",
+    "technicalLink": "Technical",
     "analysisStatus": {
       "pending": "Analysis pending",
       "rules": "Enrich: rules",
