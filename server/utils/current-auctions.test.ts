@@ -3,6 +3,9 @@ import type { Auction } from '~/types/auction'
 import { getPool } from './db'
 
 vi.mock('./db', () => ({ getPool: vi.fn() }))
+vi.mock('~/server/tasks/external-enrichment', () => ({ runExternalEnrichment: vi.fn(async () => ({})) }))
+
+const { runExternalEnrichment } = await import('~/server/tasks/external-enrichment')
 
 const {
   auctionToCurrentRow,
@@ -199,33 +202,35 @@ describe('coordinatesMovedSignificantly', () => {
 
 describe('upsertCurrentAuctions location-enrichment trigger', () => {
   it('triggers targeted location enrichment only when coordinates really moved', async () => {
-    const runTask = vi.fn(async () => ({}))
-    vi.stubGlobal('runTask', runTask)
-    try {
-      // First run: no previous row at all — first coordinates ever, must trigger.
-      vi.mocked(getPool).mockReturnValue(mockPool([]) as never)
-      await upsertCurrentAuctions([makeAuction({ lat: 52.1, lng: 13.2 })], '2026-08-02T11:00:00.000Z')
-      expect(runTask).toHaveBeenCalledWith('external-enrichment', {
-        payload: { platform: 'zvg-portal', externalId: '7265' },
-      })
+    const mockedRunExternalEnrichment = vi.mocked(runExternalEnrichment)
+    mockedRunExternalEnrichment.mockClear()
 
-      // Second run: coordinates only jittered — must not re-enrich.
-      runTask.mockClear()
-      vi.mocked(getPool).mockReturnValue(
-        mockPool([{ platform: 'zvg-portal', external_id: '7265', lat: '52.1', lng: '13.2' }]) as never,
-      )
-      await upsertCurrentAuctions([makeAuction({ lat: 52.1001, lng: 13.2 })], '2026-08-02T11:00:00.000Z')
-      expect(runTask).not.toHaveBeenCalled()
+    // First run: no previous row at all — first coordinates ever, must trigger.
+    vi.mocked(getPool).mockReturnValue(mockPool([]) as never)
+    await upsertCurrentAuctions([makeAuction({ lat: 52.1, lng: 13.2 })], '2026-08-02T11:00:00.000Z')
+    // Fire-and-forget: let the microtask queue drain before asserting.
+    await Promise.resolve()
+    expect(mockedRunExternalEnrichment).toHaveBeenCalledWith(
+      { platform: 'zvg-portal', externalId: '7265' },
+      expect.any(AbortSignal),
+    )
 
-      // Third run: a real relocation — must re-enrich.
-      vi.mocked(getPool).mockReturnValue(
-        mockPool([{ platform: 'zvg-portal', external_id: '7265', lat: '52.1001', lng: '13.2' }]) as never,
-      )
-      await upsertCurrentAuctions([makeAuction({ lat: 52.11, lng: 13.2 })], '2026-08-02T11:00:00.000Z')
-      expect(runTask).toHaveBeenCalledTimes(1)
-    } finally {
-      vi.unstubAllGlobals()
-    }
+    // Second run: coordinates only jittered — must not re-enrich.
+    mockedRunExternalEnrichment.mockClear()
+    vi.mocked(getPool).mockReturnValue(
+      mockPool([{ platform: 'zvg-portal', external_id: '7265', lat: '52.1', lng: '13.2' }]) as never,
+    )
+    await upsertCurrentAuctions([makeAuction({ lat: 52.1001, lng: 13.2 })], '2026-08-02T11:00:00.000Z')
+    await Promise.resolve()
+    expect(mockedRunExternalEnrichment).not.toHaveBeenCalled()
+
+    // Third run: a real relocation — must re-enrich.
+    vi.mocked(getPool).mockReturnValue(
+      mockPool([{ platform: 'zvg-portal', external_id: '7265', lat: '52.1001', lng: '13.2' }]) as never,
+    )
+    await upsertCurrentAuctions([makeAuction({ lat: 52.11, lng: 13.2 })], '2026-08-02T11:00:00.000Z')
+    await Promise.resolve()
+    expect(mockedRunExternalEnrichment).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -267,31 +272,29 @@ describeDb('upsertCurrentAuctions (real Postgres)', () => {
   })
 
   it('persists lat/lng onto auctions and re-enriches only on a real relocation', async () => {
-    const runTask = vi.fn(async () => ({}))
-    vi.stubGlobal('runTask', runTask)
-    try {
-      await upsertCurrentAuctions([makeAuction({ ...TEST_IDENTITY, lat: 52.1, lng: 13.2 })], '2026-08-02T11:00:00.000Z')
-      const { rows } = await pool.query<{ lat: string; lng: string }>(
-        'SELECT lat, lng FROM auctions WHERE platform = $1 AND external_id = $2',
-        [TEST_IDENTITY.platform, TEST_IDENTITY.externalId],
-      )
-      expect(Number(rows[0]?.lat)).toBe(52.1)
-      expect(Number(rows[0]?.lng)).toBe(13.2)
-      expect(runTask).toHaveBeenCalledWith('external-enrichment', {
-        payload: { platform: TEST_IDENTITY.platform, externalId: TEST_IDENTITY.externalId },
-      })
+    const mockedRunExternalEnrichment = vi.mocked(runExternalEnrichment)
+    await upsertCurrentAuctions([makeAuction({ ...TEST_IDENTITY, lat: 52.1, lng: 13.2 })], '2026-08-02T11:00:00.000Z')
+    const { rows } = await pool.query<{ lat: string; lng: string }>(
+      'SELECT lat, lng FROM auctions WHERE platform = $1 AND external_id = $2',
+      [TEST_IDENTITY.platform, TEST_IDENTITY.externalId],
+    )
+    expect(Number(rows[0]?.lat)).toBe(52.1)
+    expect(Number(rows[0]?.lng)).toBe(13.2)
+    await Promise.resolve()
+    expect(mockedRunExternalEnrichment).toHaveBeenCalledWith(
+      { platform: TEST_IDENTITY.platform, externalId: TEST_IDENTITY.externalId },
+      expect.any(AbortSignal),
+    )
 
-      runTask.mockClear()
-      await upsertCurrentAuctions([makeAuction({ ...TEST_IDENTITY, lat: 52.11, lng: 13.2 })], '2026-08-02T12:00:00.000Z')
-      const updated = await pool.query<{ lat: string }>(
-        'SELECT lat FROM auctions WHERE platform = $1 AND external_id = $2',
-        [TEST_IDENTITY.platform, TEST_IDENTITY.externalId],
-      )
-      expect(Number(updated.rows[0]?.lat)).toBe(52.11)
-      expect(runTask).toHaveBeenCalledTimes(1)
-    } finally {
-      vi.unstubAllGlobals()
-    }
+    mockedRunExternalEnrichment.mockClear()
+    await upsertCurrentAuctions([makeAuction({ ...TEST_IDENTITY, lat: 52.11, lng: 13.2 })], '2026-08-02T12:00:00.000Z')
+    const updated = await pool.query<{ lat: string }>(
+      'SELECT lat FROM auctions WHERE platform = $1 AND external_id = $2',
+      [TEST_IDENTITY.platform, TEST_IDENTITY.externalId],
+    )
+    expect(Number(updated.rows[0]?.lat)).toBe(52.11)
+    await Promise.resolve()
+    expect(mockedRunExternalEnrichment).toHaveBeenCalledTimes(1)
   })
 
   it('persists geocode_attempted_at/result/provider (WP-3 observability)', async () => {
