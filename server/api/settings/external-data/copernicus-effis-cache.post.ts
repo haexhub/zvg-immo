@@ -1,13 +1,16 @@
-import {
-  runImportCopernicusEffisCache,
-  type ImportCopernicusEffisCachePayload,
-  type ImportCopernicusEffisCacheTaskSummary,
-} from '~/server/tasks/import-copernicus-effis-cache'
+import type { ImportCopernicusEffisCachePayload } from '~/server/tasks/import-copernicus-effis-cache'
 
 const MAX_PAGE_SIZE = 10_000
 const MAX_MAX_PAGES = 10_000
 
-export default defineEventHandler(async (event): Promise<ImportCopernicusEffisCacheTaskSummary> => {
+// Detached, unlike the eu-flood-risk-cache/fr-dvf-cache imports next to it:
+// EFFIS's WFS dataset is two orders of magnitude bigger (100k+ features,
+// ~100 paginated requests measured live 2026-08-08) — a synchronous request
+// just times out with nothing to show for it, which is exactly what made
+// this button look like it had no effect. Progress/result surface through
+// task-runs (copernicusEffisImportStatus in /api/settings/llm-batch-jobs),
+// same as the external-enrichment sweep this app_settings already tracks.
+export default defineEventHandler(async (event): Promise<{ started: true }> => {
   const body = await readBody<Record<string, unknown>>(event).catch(() => undefined) ?? ({} as Record<string, unknown>)
 
   const payload: ImportCopernicusEffisCachePayload = {
@@ -20,7 +23,10 @@ export default defineEventHandler(async (event): Promise<ImportCopernicusEffisCa
     maxPages: optionalInteger(body.maxPages, 'maxPages', 1, MAX_MAX_PAGES),
   }
 
-  return await runImportCopernicusEffisCache(payload)
+  void runTask('import-copernicus-effis-cache', { payload: { ...payload } }).catch((err: unknown) => {
+    console.error('[settings/external-data/copernicus-effis-cache] trigger failed:', (err as Error).message)
+  })
+  return { started: true }
 })
 
 function optionalString(value: unknown): string | undefined {

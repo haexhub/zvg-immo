@@ -250,6 +250,37 @@ describe('importCopernicusEffisBurntAreaCache', () => {
     })
   })
 
+  it('drops zones that are too old, too small, or missing the data to tell', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'zvg-effis-'))
+    const cachePath = join(tmp, 'copernicus-effis.json')
+    const gml = sampleGml([
+      sampleFeature('recent-large', BERLIN_POS_LIST, '2022-08-10 00:00:00', 'DE', '600'), // kept: 4y old, 600ha
+      sampleFeature('too-old', BERLIN_POS_LIST, '2016-08-10 00:00:00', 'DE', '600'), // dropped: 10y old
+      sampleFeature('too-small', BERLIN_POS_LIST, '2022-08-10 00:00:00', 'DE', '2'), // dropped: below 10ha
+      '  <gml:featureMember><ms:modis.ba.poly gml:id="no-date">' +
+        `<ms:msGeometry><gml:Polygon srsName="EPSG:4326"><gml:exterior><gml:LinearRing>` +
+        `<gml:posList srsDimension="2">${BERLIN_POS_LIST}</gml:posList></gml:LinearRing></gml:exterior></gml:Polygon></ms:msGeometry>` +
+        '<ms:AREA_HA>600</ms:AREA_HA></ms:modis.ba.poly></gml:featureMember>', // dropped: no FIREDATE
+    ].join('\n'))
+    const fetchImpl = vi.fn(async (url: URL) => {
+      const startIndex = Number(url.searchParams.get('startindex'))
+      return new Response(startIndex === 0 ? gml : sampleGml(''), { status: 200, headers: { 'content-type': 'text/xml' } })
+    })
+
+    const summary = await importCopernicusEffisBurntAreaCache({
+      cachePath,
+      serviceUrl: 'https://example.test/effis',
+      generatedAt: '2026-08-08T00:00:00.000Z',
+      pageSize: 4,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    })
+
+    expect(summary.fetched).toBe(4)
+    expect(summary.normalized).toBe(1)
+    const cached = await readBurntAreaCache(cachePath)
+    expect(cached.zones.map((zone) => zone.id)).toEqual(['recent-large'])
+  })
+
   it('surfaces request failures instead of writing a cache', async () => {
     tmp = await mkdtemp(join(tmpdir(), 'zvg-effis-'))
     const fetchImpl = vi.fn(async () => new Response('error', { status: 500, statusText: 'Internal Server Error' }))

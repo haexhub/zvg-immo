@@ -9,6 +9,8 @@ import {
   getStoredExternalDataSourceConfig,
   resolveExternalDataSourceConfig,
 } from '~/server/utils/external-data/config'
+import { runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-task'
+import { recordTaskRunEnd, recordTaskRunStart } from '~/server/utils/task-runs'
 
 const COPERNICUS_EFFIS_SOURCE_ID = 'copernicus-effis'
 
@@ -66,7 +68,28 @@ export default defineTask({
     if (!payload.cachePath?.trim() && !(await configuredCachePath())) {
       return { result: { skipped: `${COPERNICUS_EFFIS_SOURCE_ID} has no configured cache path` } }
     }
-    return { result: await runImportCopernicusEffisCache(payload) }
+    return await runExclusiveTask('import-copernicus-effis-cache', async (signal) => {
+      // Recorded (unlike eu-flood-risk/fr-dvf's cache imports) because
+      // /settings triggers this one detached rather than sync/awaited: EFFIS's
+      // WFS dataset is two orders of magnitude bigger (100k+ features, ~100
+      // paginated requests measured live 2026-08-08) — long enough that a
+      // synchronous request just times out with nothing to show for it, which
+      // is exactly what made the admin's "Import" button look broken. Without
+      // a persisted status a failure would vanish with the promise, same
+      // rationale as external-enrichment.ts.
+      await recordTaskRunStart('import-copernicus-effis-cache')
+      try {
+        const result = await runImportCopernicusEffisCache(payload)
+        throwIfTaskAborted(signal)
+        await recordTaskRunEnd('import-copernicus-effis-cache', {
+          result: { fetched: result.fetched, normalized: result.normalized, pages: result.pages },
+        })
+        return { result }
+      } catch (err) {
+        await recordTaskRunEnd('import-copernicus-effis-cache', { error: (err as Error).message })
+        throw err
+      }
+    })
   },
 })
 
