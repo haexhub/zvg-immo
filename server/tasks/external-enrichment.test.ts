@@ -262,7 +262,7 @@ describe('runExternalEnrichment', () => {
     expect(geocodeAddress).toHaveBeenCalledWith('Paris', 'fr', { fetchMissing: false })
     expect(summary.skippedMissingCoordinates).toBe(1)
     expect(summary.processed).toBe(0)
-    expect(writeLocationEnrichmentCache).toHaveBeenCalledWith({})
+    expect(writeLocationEnrichmentCache).not.toHaveBeenCalled()
   })
 
   it('counts provider failures and continues with other adapters', async () => {
@@ -580,6 +580,47 @@ describe('runExternalEnrichment', () => {
     await expect(first).rejects.toThrow('external-enrichment wurde durch einen neueren Lauf beendet')
     await expect(second).resolves.toMatchObject({ result: expect.objectContaining({ processed: 1 }) })
     expect(contextAdapter.context).toHaveBeenCalledTimes(2)
+  })
+
+  it('persists each auction as it finishes, so an abort mid-run keeps already-processed results', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(
+      auction({ externalId: '1' }),
+      auction({ externalId: '2' }),
+    ))
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
+
+    const controller = new AbortController()
+    // Simulates a newer trigger superseding this run (runExclusiveTask) right
+    // after auction #1's result lands — before auction #2 is even looked at.
+    vi.mocked(writeLocationEnrichmentCache).mockImplementation(async (entries) => {
+      if ('test:1' in entries) controller.abort(new Error('external-enrichment wurde durch einen neueren Lauf beendet'))
+      return true
+    })
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    await expect(runExternalEnrichment({
+      marketAdapters: [],
+      landValueAdapters: [],
+      hazardAdapters: [],
+      locationContextAdapters: [{
+        id: 'osm-fixture',
+        sourceVersion: 'v1',
+        supports: () => true,
+        context: vi.fn(async () => locationContext),
+      }],
+    }, controller.signal)).rejects.toThrow('neueren Lauf')
+
+    // The old batch-at-the-end write would have discarded auction #1's result
+    // along with the abort — it must already be persisted by the time we get here.
+    expect(writeLocationEnrichmentCache).toHaveBeenCalledWith({
+      'test:1': expect.objectContaining({ locationContext }),
+    })
+    expect(writeLocationEnrichmentCache).not.toHaveBeenCalledWith(
+      expect.objectContaining({ 'test:2': expect.anything() }),
+    )
   })
 
   it('can limit processed auctions for manual spot runs', async () => {
