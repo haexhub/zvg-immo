@@ -24,9 +24,14 @@ function makeFakePool() {
     if (sql.startsWith('DELETE FROM task_run_errors')) {
       return { rows: [], rowCount: 0 }
     }
-    if (sql.startsWith('SELECT id, task, platform, external_id, category, message, created_at')) {
+    if (sql.startsWith('SELECT id, task, platform, external_id, category, message, created_at') && sql.includes('WHERE task')) {
       const [task, limit] = params as [string, number]
       const matching = rows.filter((row) => row.task === task).slice().reverse().slice(0, limit)
+      return { rows: matching, rowCount: matching.length }
+    }
+    if (sql.startsWith('SELECT id, task, platform, external_id, category, message, created_at') && sql.includes('WHERE platform')) {
+      const [platform, externalId, limit] = params as [string, string, number]
+      const matching = rows.filter((row) => row.platform === platform && row.external_id === externalId).slice().reverse().slice(0, limit)
       return { rows: matching, rowCount: matching.length }
     }
     throw new Error(`unexpected query: ${sql}`)
@@ -105,5 +110,27 @@ describe('task-run-errors', () => {
 
     await expect(recordTaskRunError('enrich', { category: 'crawl', message: 'x' })).resolves.toBeUndefined()
     await expect(listRecentTaskRunErrors('enrich')).resolves.toEqual([])
+  })
+
+  it('listTaskRunErrorsForIdentity spans tasks and filters by platform/externalId', async () => {
+    const { getPool } = await import('./db')
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { recordTaskRunError, listTaskRunErrorsForIdentity } = await import('./task-run-errors')
+
+    await recordTaskRunError('enrich', { category: 'document_archive_incomplete', message: 'crawl-side', platform: 'zvg-portal', externalId: '7265' })
+    await recordTaskRunError('reprocess', { category: 'llm_provider', message: 'llm-side', platform: 'zvg-portal', externalId: '7265' })
+    await recordTaskRunError('reprocess', { category: 'llm', message: 'other auction', platform: 'zvg-portal', externalId: '9999' })
+
+    const errors = await listTaskRunErrorsForIdentity('zvg-portal', '7265')
+    expect(errors.map((e) => e.message)).toEqual(['llm-side', 'crawl-side'])
+  })
+
+  it('listTaskRunErrorsForIdentity is a no-op without a configured pool', async () => {
+    const { getPool } = await import('./db')
+    vi.mocked(getPool).mockReturnValue(null)
+    const { listTaskRunErrorsForIdentity } = await import('./task-run-errors')
+
+    await expect(listTaskRunErrorsForIdentity('zvg-portal', '7265')).resolves.toEqual([])
   })
 })

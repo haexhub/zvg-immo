@@ -44,6 +44,41 @@ export async function recordTaskRunError(task: TrackedTask, entry: TaskRunErrorE
   }
 }
 
+/** Cross-task — an auction's pipeline history spans enrich (crawl-side) and
+ *  reprocess (LLM-side) errors alike. Uses
+ *  idx_task_run_errors_platform_external_created. */
+export async function listTaskRunErrorsForIdentity(platform: string, externalId: string, limit = 100): Promise<TaskRunError[]> {
+  const db = getPool()
+  if (!db) return []
+  try {
+    const { rows } = await db.query<{
+      id: number
+      task: string
+      platform: string | null
+      external_id: string | null
+      category: string
+      message: string
+      created_at: string
+    }>(
+      `SELECT id, task, platform, external_id, category, message, created_at
+       FROM task_run_errors WHERE platform = $1 AND external_id = $2 ORDER BY created_at DESC LIMIT $3`,
+      [platform, externalId, limit],
+    )
+    return rows.map((row) => ({
+      id: row.id,
+      task: row.task,
+      platform: row.platform,
+      externalId: row.external_id,
+      category: row.category,
+      message: row.message,
+      createdAt: row.created_at,
+    }))
+  } catch (err) {
+    console.warn(`[task-run-errors] list failed for ${platform}:${externalId}: ${(err as Error).message}`)
+    return []
+  }
+}
+
 export async function listRecentTaskRunErrors(task: TrackedTask, limit = 100): Promise<TaskRunError[]> {
   const db = getPool()
   if (!db) return []
