@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import {
   buildParts,
   clampExtraction,
@@ -10,52 +9,17 @@ import {
   type LlmInput,
 } from './llm'
 import { parseOpenAiExtractionResponse, toOpenAiContent } from './providers/openai-compatible'
+import { apiBase, customIdForKey, extractOfetchErrorMessage, isTransientBatchError } from './batch-shared'
 import { insertLlmBatchJob, recordLlmBatchCapability } from '../llm-batch-jobs'
 import type { PollResult } from './gemini-batch'
 import type { LlmBatchSubmitResult } from './llm-batch'
-
-/** ofetch's FetchError.message is generic ("[POST] "url": 400 Bad Request")
- *  — the actionable text lives in the parsed JSON body ofetch exposes as
- *  `.data`, shaped like Google's ({error:{message}}) for OpenAI too. */
-function extractOfetchErrorMessage(err: unknown): string {
-  const data = (err as { data?: unknown })?.data as { error?: { message?: unknown } } | undefined
-  if (data?.error && typeof data.error.message === 'string') return data.error.message
-  return err instanceof Error ? err.message : String(err)
-}
-
-/** Timeouts, connection failures and 5xx/429 responses say nothing about
- *  whether this account/model can batch at all — only a durable rejection
- *  should ever flip the recorded capability to broken, or a transient blip
- *  could disable batching for every subsequent run until someone notices and
- *  manually re-checks it. */
-function isTransientBatchError(err: unknown): boolean {
-  const status = (err as { status?: unknown; statusCode?: unknown; response?: { status?: unknown } })?.status
-  const statusCode =
-    typeof status === 'number' ? status : (err as { statusCode?: unknown })?.statusCode
-  const responseStatus = (err as { response?: { status?: unknown } })?.response?.status
-  const httpStatus = typeof statusCode === 'number' ? statusCode : typeof responseStatus === 'number' ? responseStatus : undefined
-  if (httpStatus != null && (httpStatus === 429 || httpStatus >= 500)) return true
-  const name = (err as { name?: unknown })?.name
-  if (name === 'AbortError' || name === 'TimeoutError') return true
-  const code = (err as { code?: unknown })?.code ?? (err as { cause?: { code?: unknown } })?.cause?.code
-  return typeof code === 'string' && /^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EPIPE)$/.test(code)
-}
 
 const MAX_OPENAI_BATCH_REQUESTS = 50_000
 const MAX_OPENAI_BATCH_FILE_BYTES = 200 * 1024 * 1024
 const OPENAI_BATCH_FILE_HEADROOM_BYTES = 1024 * 1024
 
-function apiBase(config: LlmConfig): string {
-  return config.baseUrl.replace(/\/$/, '')
-}
-
 function authHeaders(config: LlmConfig): Record<string, string> {
   return config.apiKey ? { authorization: `Bearer ${config.apiKey}` } : {}
-}
-
-function customIdForKey(key: string, index: number): string {
-  const hash = createHash('sha256').update(key).digest('base64url').slice(0, 18)
-  return `zvg_${index}_${hash}`.slice(0, 64)
 }
 
 function buildBatchLine(customId: string, input: LlmInput, config: LlmConfig): string | null {

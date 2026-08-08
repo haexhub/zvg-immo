@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { isLlmBatchProviderBroken, supportsLlmBatch, supportsNativeBatchDocuments } from './llm-batch'
+import {
+  batchSupportsMultimodal,
+  fetchLlmBatchResults,
+  isLlmBatchProviderBroken,
+  pollLlmBatch,
+  supportsLlmBatch,
+  supportsNativeBatchDocuments,
+} from './llm-batch'
 
-vi.mock('../llm-batch-jobs', () => ({ getLlmBatchCapability: vi.fn() }))
+vi.mock('../llm-batch-jobs', () => ({ getLlmBatchCapability: vi.fn(), insertLlmBatchJob: vi.fn(), recordLlmBatchCapability: vi.fn() }))
 
 describe('llm-batch provider gates', () => {
   beforeEach(() => {
@@ -34,6 +41,21 @@ describe('llm-batch provider gates', () => {
       .toBe(true)
     expect(supportsLlmBatch({ provider: 'claude-proxy', baseUrl: 'http://proxy', model: 'claude-haiku-4-5' }))
       .toBe(false)
+  })
+
+  it('supports OpenRouter with an API key', () => {
+    expect(supportsLlmBatch({ provider: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'sk-or-test', model: 'google/gemini-3.5-flash-lite' }))
+      .toBe(true)
+    expect(supportsLlmBatch({ provider: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', model: 'google/gemini-3.5-flash-lite' }))
+      .toBe(false)
+  })
+
+  it('batchSupportsMultimodal is false only for OpenRouter, whose Batch API rejects image/document content', () => {
+    expect(batchSupportsMultimodal({ provider: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', model: 'x' })).toBe(false)
+    expect(batchSupportsMultimodal({ provider: 'gemini-native', baseUrl: 'http://gemini', model: 'x' })).toBe(true)
+    expect(batchSupportsMultimodal({ provider: 'claude-proxy', baseUrl: 'http://proxy', model: 'x' })).toBe(true)
+    expect(batchSupportsMultimodal({ provider: 'openai-compatible', baseUrl: 'https://api.openai.com/v1', model: 'x' })).toBe(true)
+    expect(batchSupportsMultimodal(null)).toBe(true)
   })
 
   it('isLlmBatchProviderBroken reflects the last recorded real submit attempt for that provider', async () => {
@@ -73,5 +95,38 @@ describe('llm-batch provider gates', () => {
       .toBe(false)
     expect(supportsNativeBatchDocuments({ provider: 'openai-compatible', baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-test', model: 'gpt-test' }))
       .toBe(false)
+  })
+})
+
+describe('llm-batch dispatch avoids the OpenRouter/OpenAI jobName prefix collision', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('routes an "openrouter_"-wrapped jobName to the OpenRouter beta endpoint, not the OpenAI one', async () => {
+    const fetchFn = vi.fn(async () => ({ status: 'completed' })) as unknown as typeof $fetch
+    vi.stubGlobal('$fetch', fetchFn)
+    const config = { provider: 'openrouter' as const, baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'sk-or-test', model: 'x' }
+
+    await expect(pollLlmBatch('openrouter_batch_x', config)).resolves.toEqual({ state: 'succeeded' })
+    expect(fetchFn).toHaveBeenCalledWith('https://openrouter.ai/api/beta/batches/batch_x', expect.anything())
+  })
+
+  it('still routes a bare "batch_"-prefixed jobName to OpenAI', async () => {
+    const fetchFn = vi.fn(async () => ({ status: 'completed', output_file_id: 'file-out' })) as unknown as typeof $fetch
+    vi.stubGlobal('$fetch', fetchFn)
+    const config = { provider: 'openai-compatible' as const, baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-test', model: 'x' }
+
+    await expect(pollLlmBatch('batch_x', config)).resolves.toEqual({ state: 'succeeded', resultFileName: 'file-out' })
+    expect(fetchFn).toHaveBeenCalledWith('https://api.openai.com/v1/batches/batch_x', expect.anything())
+  })
+
+  it('fetchLlmBatchResults dispatches an "openrouter_"-wrapped jobName without requiring a resultFileName', async () => {
+    const fetchFn = vi.fn(async () => ({ results: [] })) as unknown as typeof $fetch
+    vi.stubGlobal('$fetch', fetchFn)
+    const config = { provider: 'openrouter' as const, baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'sk-or-test', model: 'x' }
+
+    await expect(fetchLlmBatchResults('openrouter_batch_x', undefined, config, {})).resolves.toEqual([])
+    expect(fetchFn).toHaveBeenCalledWith('https://openrouter.ai/api/beta/batches/batch_x', expect.anything())
   })
 })

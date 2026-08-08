@@ -97,6 +97,7 @@ function makeProfileForm(input?: Partial<LlmProviderProfileForm>): LlmProviderPr
 function profileSupportsBatch(profile: LlmProviderProfileForm): boolean {
   return profile.provider === 'gemini-native' ||
     profile.provider === 'claude-proxy' ||
+    profile.provider === 'openrouter' ||
     (profile.provider === 'openai-compatible' && isOpenAiBatchBaseUrl(profile.baseUrl))
 }
 
@@ -113,6 +114,7 @@ function profileCanSelectBatch(profile: LlmProviderProfileForm): boolean {
   return profile.provider === 'gemini-native' ||
     (
       (profile.provider === 'claude-proxy' ||
+        profile.provider === 'openrouter' ||
         (profile.provider === 'openai-compatible' && isOpenAiBatchBaseUrl(profile.baseUrl))) &&
       (profile.apiKeySet || !!profile.apiKey)
     )
@@ -317,6 +319,9 @@ onMounted(async () => {
             </p>
             <p v-else-if="providerBatchBroken(profile.provider)" class="text-xs text-destructive">
               {{ $t('settings.llmProvider.batchBroken', { message: providerCapability(profile.provider)?.message ?? '' }) }}
+            </p>
+            <p v-if="profile.provider === 'openrouter'" class="text-xs text-muted-foreground">
+              {{ $t('settings.llmProvider.batchTextOnly') }}
             </p>
           </div>
 

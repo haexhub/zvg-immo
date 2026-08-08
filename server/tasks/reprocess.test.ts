@@ -8,6 +8,8 @@ import { readArtifactProcessingState } from '../utils/artifact-version-state'
 import { readExtractionChainStrategy, readExtractionLlmConfigChain } from '../utils/extract/llm-task-config'
 import { readLlmExecutionMode } from '../utils/app-settings'
 import { submitLlmBatch } from '../utils/extract/llm-batch'
+import { extractByLlm } from '../utils/extract/llm'
+import { prepareArchivedLlmDocuments } from '../utils/extract/llm-documents'
 import { writeAuctionDetails } from '../utils/auction-details'
 import { upsertCurrentAuctions } from '../utils/current-auctions'
 
@@ -38,6 +40,14 @@ vi.mock('../utils/extract/llm-batch', () => ({
   submitLlmBatch: vi.fn(),
   supportsLlmBatch: vi.fn((config) => config != null),
   supportsNativeBatchDocuments: vi.fn(() => false),
+  batchSupportsMultimodal: vi.fn((config) => config?.provider !== 'openrouter'),
+}))
+vi.mock('../utils/extract/llm', () => ({
+  extractByLlm: vi.fn(),
+  isDailyQuotaError: vi.fn(() => false),
+  isLlmProviderError: vi.fn(() => false),
+  isLlmProviderUnavailable: vi.fn(() => false),
+  isRateLimitError: vi.fn(() => false),
 }))
 vi.mock('../utils/extract/llm-documents', () => ({
   prepareArchivedLlmDocuments: vi.fn(async (_auction, opts) => ({
@@ -273,6 +283,25 @@ describe('runReprocess structured persistence', () => {
       llmArtifactVersionId: 22,
       llmFailures: 2,
     })
+  })
+
+  it('routes a candidate needing multimodal content to the synchronous path when the configured batch provider is OpenRouter (text-only)', async () => {
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+      baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'sk-or-test', model: 'google/gemini-3.5-flash-lite', provider: 'openrouter',
+    }])
+    vi.mocked(prepareArchivedLlmDocuments).mockResolvedValueOnce({
+      input: { pdfPageImages: ['base64page1'] },
+      documentSetItems: [],
+      documentSetComplete: true,
+      artifactVersionId: null,
+    })
+    vi.mocked(extractByLlm).mockResolvedValue(null)
+
+    const result = await runReprocess({ country: 'de', batch: true })
+
+    expect(result).toMatchObject({ processed: 1, llmCalls: 1 })
+    expect(submitLlmBatch).not.toHaveBeenCalled()
+    expect(extractByLlm).toHaveBeenCalled()
   })
 })
 

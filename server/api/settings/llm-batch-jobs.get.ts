@@ -23,7 +23,7 @@ export interface LlmBatchJobOverviewItem {
   jobName: string
   source: 'enrich' | 'reprocess'
   status: LlmBatchJobStatus
-  provider: 'anthropic' | 'gemini' | 'openai'
+  provider: 'anthropic' | 'gemini' | 'openai' | 'openrouter'
   itemCount: number
   pendingCount: number
   requestKeys: string[]
@@ -69,6 +69,10 @@ export interface LlmBatchJobsOverview {
 const MAX_KEYS_PER_GROUP = 200
 
 function providerForJob(jobName: string): LlmBatchJobOverviewItem['provider'] {
+  // Checked first — OpenRouter's own batch ids also start with "batch_" (see
+  // openrouter-batch.ts), so our "openrouter_"-wrapped jobName must be
+  // matched before the "batch_" (OpenAI) branch.
+  if (jobName.startsWith('openrouter_')) return 'openrouter'
   if (jobName.startsWith('msgbatch_')) return 'anthropic'
   if (jobName.startsWith('batch_')) return 'openai'
   return 'gemini'
