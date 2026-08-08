@@ -496,6 +496,30 @@
         "live": "Live",
         "trial": "Trial"
       },
+      "trial": {
+        "profilePlaceholder": "LLM-Profil wählen",
+        "start": "Testlauf starten",
+        "running": "Testlauf läuft …",
+        "success": "Testlauf abgeschlossen — neue Trial-Version unten.",
+        "failed": "Testlauf fehlgeschlagen — siehe Fehler unten.",
+        "triggerError": "Testlauf konnte nicht gestartet werden."
+      },
+      "diff": {
+        "compare": "Vergleichen",
+        "loading": "Lade Vergleich …",
+        "loadError": "Vergleich konnte nicht geladen werden.",
+        "title": "Versionsvergleich",
+        "showAll": "Auch gleiche Felder anzeigen",
+        "noDifferences": "Keine Unterschiede in den angezeigten Feldern."
+      },
+      "versions": {
+        "selectHint": "Zwei auswählen zum Vergleichen, eine oder mehrere zum Löschen.",
+        "promote": "Live schalten",
+        "promoteError": "Version konnte nicht live geschaltet werden.",
+        "deleteSelected": "Ausgewählte löschen ({count})",
+        "deleteConfirm": "{count} Version(en) wirklich löschen? Das entfernt zugehörige Fotos und Übersetzungen unwiderruflich.",
+        "deleteError": "Version(en) konnten nicht gelöscht werden."
+      },
       "fields": {
         "country": "Land/Region",
         "authority": "Amtsgericht",
