@@ -4,6 +4,7 @@ import type { Auction, AuctionExtraction } from '~/types/auction'
 import { getDb, getPool } from './db'
 
 vi.mock('./db', () => ({ getDb: vi.fn(), getPool: vi.fn() }))
+vi.mock('~/server/tasks/external-enrichment', () => ({ runExternalEnrichment: vi.fn(async () => ({})) }))
 
 const {
   auctionDetailsValues,
