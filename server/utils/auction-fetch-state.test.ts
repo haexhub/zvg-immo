@@ -100,6 +100,7 @@ describe('auction fetch state writers', () => {
       llmBatchJob: 'batch-1',
       llmArtifactVersionId: 12,
       llmFailures: 2,
+      llmLastAttemptedAt: null,
       photosCheckedAt: '2026-08-02T11:00:00.000Z',
       photoFailures: 1,
       photoPipelineVersion: 3,

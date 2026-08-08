@@ -30,6 +30,7 @@ vi.mock('../utils/artifact-version-state', () => ({
 }))
 vi.mock('../utils/extract/llm-task-config', () => ({
   MAX_LLM_FAILURES: 3,
+  LLM_FAILURE_RETRY_COOLDOWN_HOURS: 24,
   readExtractionChainStrategy: vi.fn(),
   readExtractionLlmConfigChain: vi.fn(),
 }))
@@ -235,6 +236,7 @@ describe('runReprocess structured persistence', () => {
       llmBatchJob: null,
       llmArtifactVersionId: null,
       llmFailures: 0,
+      llmAttempted: false,
     })
     expect(vi.mocked(writeAuctionDetails).mock.invocationCallOrder[0])
       .toBeLessThan(vi.mocked(upsertCurrentAuctions).mock.invocationCallOrder[0]!)
@@ -252,7 +254,7 @@ describe('runReprocess structured persistence', () => {
       platform: 'zvg-portal', externalId: '7265', pdfUrl: null, pdfUrlUpstream: null,
       detailUrl: null, detailUrlUpstream: null, attachments: [], photoUrls: null,
       sourceUpdatedIso: null, detailFetchedAt: null, llmBatchJob: null,
-      llmArtifactVersionId: null, llmFailures: 2, photosCheckedAt: null,
+      llmArtifactVersionId: null, llmFailures: 2, llmLastAttemptedAt: null, photosCheckedAt: null,
       photoFailures: 0, photoPipelineVersion: null,
       updatedAt: '2026-08-02T10:00:00.000Z',
     }]]))
@@ -282,6 +284,7 @@ describe('runReprocess structured persistence', () => {
       llmBatchJob: 'batch-22',
       llmArtifactVersionId: 22,
       llmFailures: 2,
+      llmAttempted: true,
     })
   })
 
@@ -311,6 +314,42 @@ describe('runReprocess structured persistence', () => {
       expect.anything(),
       expect.anything(),
     )
+  })
+})
+
+describe('runReprocess llm_failures cooldown', () => {
+  function lockedOutFetchState(llmLastAttemptedAt: string | null) {
+    return new Map([['zvg-portal:7265', {
+      platform: 'zvg-portal', externalId: '7265', pdfUrl: null, pdfUrlUpstream: null,
+      detailUrl: null, detailUrlUpstream: null, attachments: [], photoUrls: null,
+      sourceUpdatedIso: null, detailFetchedAt: null, llmBatchJob: null,
+      llmArtifactVersionId: null, llmFailures: 3, llmLastAttemptedAt, photosCheckedAt: null,
+      photoFailures: 0, photoPipelineVersion: null,
+      updatedAt: '2026-08-02T10:00:00.000Z',
+    }]])
+  }
+
+  it('stays locked out within the cooldown window after MAX_LLM_FAILURES', async () => {
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(
+      lockedOutFetchState(new Date(Date.now() - 60 * 60 * 1000).toISOString()), // 1h ago
+    )
+
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 0, skipped: 1 })
+    expect(writeAuctionLlmPipelineState).not.toHaveBeenCalled()
+  })
+
+  it('becomes eligible again once the cooldown has elapsed', async () => {
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(
+      lockedOutFetchState(new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString()), // 25h ago
+    )
+
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 1, skipped: 0 })
+  })
+
+  it('treats a never-attempted timestamp as elapsed (rows predating this column)', async () => {
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(lockedOutFetchState(null))
+
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 1, skipped: 0 })
   })
 })
 

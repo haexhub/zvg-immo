@@ -57,6 +57,13 @@
       "when": 1786049111259,
       "tag": "0007_closed_victor_mancha",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786175815326,
+      "tag": "0008_salty_boomer",
+      "breakpoints": true
     }
   ]
 }
