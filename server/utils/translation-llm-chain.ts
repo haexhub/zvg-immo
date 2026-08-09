@@ -5,7 +5,7 @@
 // config fingerprinting instead of duplicating it.
 
 import type { Pool } from 'pg'
-import { getLlmMaxTokens, getLlmProviderOverrideChain, type LlmProviderOverride } from '~/server/utils/app-settings'
+import { getLlmKillSwitch, getLlmMaxTokens, getLlmProviderOverrideChain, type LlmProviderOverride } from '~/server/utils/app-settings'
 import { resolveLlmConfig, type LlmConfig } from '~/server/utils/extract/llm'
 import { sha256Hex } from '~/server/utils/raw-archive'
 
@@ -14,8 +14,10 @@ import { sha256Hex } from '~/server/utils/raw-archive'
  *  assigned to 'extraction', in order. Tried in sequence so a model that's
  *  rate-limited/over quota or otherwise unavailable (see gemini-native.ts)
  *  doesn't fail the whole request when another configured model could serve
- *  it. */
+ *  it. Empty when the admin kill switch (/settings) is on — same "nothing
+ *  configured" contract callers already handle. */
 export async function resolveActiveLlmConfigChain(db: Pool): Promise<LlmConfig[]> {
+  if (await getLlmKillSwitch(db).catch(() => false)) return []
   const llmCfg = useRuntimeConfig().extractLlm as
     | { provider?: string; baseUrl?: string; apiKey?: string; model?: string }
     | undefined

@@ -194,6 +194,16 @@
       "save": "Save",
       "cancel": "Cancel"
     },
+    "llmKillSwitch": {
+      "title": "Kill switch: LLM chain",
+      "description": "Immediately stops extraction, translation, insights, admin trial runs and new batch submissions app-wide — no redeploy needed. Already-submitted batch jobs are still fetched, only new requests are blocked.",
+      "label": "Disable the LLM chain",
+      "statusOn": "Stopped",
+      "statusOff": "Active",
+      "loadError": "Could not load status.",
+      "saveError": "Save failed.",
+      "retry": "Retry"
+    },
     "llm": {
       "title": "LLM configuration",
       "description": "Max output tokens limit per use case — takes effect on the next LLM call, no redeploy needed.",

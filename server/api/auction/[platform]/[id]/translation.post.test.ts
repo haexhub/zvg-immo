@@ -28,6 +28,7 @@ vi.mock('~/server/utils/app-settings', () => ({
   getLlmMaxTokens: vi.fn(),
   getLlmProviderOverride: vi.fn(),
   getLlmProviderOverrideChain: vi.fn(),
+  getLlmKillSwitch: vi.fn(),
 }))
 
 vi.mock('~/server/utils/extract/llm', async (importOriginal) => {
@@ -118,7 +119,7 @@ async function loadHandler(query: Record<string, string> = { lang: 'de' }) {
     readContentTranslation,
     writeContentTranslation,
   } = await import('~/server/utils/content-translation')
-  const { getLlmMaxTokens, getLlmProviderOverride, getLlmProviderOverrideChain } = await import('~/server/utils/app-settings')
+  const { getLlmKillSwitch, getLlmMaxTokens, getLlmProviderOverride, getLlmProviderOverrideChain } = await import('~/server/utils/app-settings')
   const { resolveLlmConfig } = await import('~/server/utils/extract/llm')
 
   vi.mocked(readAuctionRecord).mockResolvedValue({
@@ -137,6 +138,7 @@ async function loadHandler(query: Record<string, string> = { lang: 'de' }) {
   vi.mocked(getLlmProviderOverride).mockResolvedValue(null)
   vi.mocked(getLlmProviderOverrideChain).mockResolvedValue([])
   vi.mocked(getLlmMaxTokens).mockResolvedValue(8192)
+  vi.mocked(getLlmKillSwitch).mockResolvedValue(false)
   vi.mocked(resolveLlmConfig).mockReturnValue({
     provider: 'openai-compatible',
     baseUrl: 'https://api.example',

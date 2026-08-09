@@ -14,7 +14,7 @@ import { isSafePathSegment } from '~/server/utils/path-segment'
 import { getPool } from '~/server/utils/db'
 import { sha256Hex } from '~/server/utils/raw-archive'
 import { readInsight, writeInsight } from '~/server/utils/insight-cache'
-import { getLlmMaxTokens, getLlmProviderOverride } from '~/server/utils/app-settings'
+import { getLlmKillSwitch, getLlmMaxTokens, getLlmProviderOverride } from '~/server/utils/app-settings'
 import { getProvider, resolveLlmConfig } from '~/server/utils/extract/llm'
 import { getInsightDefinition } from '~/server/utils/insights/registry'
 import {
@@ -84,6 +84,9 @@ export default defineEventHandler(async (event) => {
   // below — otherwise two concurrent misses for the same key both slip past
   // the check before either registers, and both fire an LLM call.
   const gen = (async () => {
+    if (await getLlmKillSwitch(db).catch(() => false)) {
+      throw createError({ statusCode: 503, statusMessage: 'LLM-Kette ist per Kill-Switch deaktiviert.' })
+    }
     const llmCfg = useRuntimeConfig().extractLlm as
       | { provider?: string; baseUrl?: string; apiKey?: string; model?: string }
       | undefined

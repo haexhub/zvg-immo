@@ -23,6 +23,7 @@ vi.mock('~/server/utils/insight-cache', () => ({
 vi.mock('~/server/utils/app-settings', () => ({
   getLlmMaxTokens: vi.fn(),
   getLlmProviderOverride: vi.fn(),
+  getLlmKillSwitch: vi.fn(),
 }))
 
 vi.mock('~/server/utils/extract/llm', () => ({
@@ -102,7 +103,7 @@ async function loadHandler() {
   const { readAuctionRecord } = await import('~/server/utils/auction-record')
   const { getPool } = await import('~/server/utils/db')
   const { readInsight, writeInsight } = await import('~/server/utils/insight-cache')
-  const { getLlmMaxTokens, getLlmProviderOverride } = await import('~/server/utils/app-settings')
+  const { getLlmMaxTokens, getLlmProviderOverride, getLlmKillSwitch } = await import('~/server/utils/app-settings')
   const { resolveLlmConfig, getProvider } = await import('~/server/utils/extract/llm')
 
   vi.mocked(readAuctionRecord).mockResolvedValue({
@@ -116,6 +117,7 @@ async function loadHandler() {
   vi.mocked(writeInsight).mockResolvedValue(undefined)
   vi.mocked(getLlmProviderOverride).mockResolvedValue(null)
   vi.mocked(getLlmMaxTokens).mockResolvedValue(1536)
+  vi.mocked(getLlmKillSwitch).mockResolvedValue(false)
   vi.mocked(resolveLlmConfig).mockReturnValue({
     provider: 'openai-compatible',
     baseUrl: 'https://api.example',
@@ -132,6 +134,7 @@ async function loadHandler() {
     writeInsight: vi.mocked(writeInsight),
     resolveLlmConfig: vi.mocked(resolveLlmConfig),
     getProvider: vi.mocked(getProvider),
+    getLlmKillSwitch: vi.mocked(getLlmKillSwitch),
   }
 }
 
@@ -199,6 +202,16 @@ describe('/api/auction/:platform/:id/insight/:insightId', () => {
     resolveLlmConfig.mockReturnValue(null)
 
     await expect(callHandler(handler, 'usage-ideas')).rejects.toMatchObject({ statusCode: 503 })
+  })
+
+  it('returns 503 without calling the provider when the admin kill switch is on', async () => {
+    const { getInsightDefinition } = await import('~/server/utils/insights/registry')
+    vi.mocked(getInsightDefinition).mockReturnValue(testDefinition())
+    const { handler, getProvider, getLlmKillSwitch } = await loadHandler()
+    getLlmKillSwitch.mockResolvedValue(true)
+
+    await expect(callHandler(handler, 'usage-ideas')).rejects.toMatchObject({ statusCode: 503 })
+    expect(getProvider).not.toHaveBeenCalled()
   })
 
   it('deduplicates two concurrent requests for the same insight+content-hash', async () => {

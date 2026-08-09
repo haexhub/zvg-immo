@@ -4,6 +4,7 @@ import { readAuctionRecord } from './auction-record'
 import { writeAuctionDetails } from './auction-details'
 import { reprocessAuction } from '../tasks/reprocess'
 import { resolveLlmConfigForProfile } from './extract/llm-task-config'
+import { getLlmKillSwitch } from './app-settings'
 import { recordTaskRunError } from './task-run-errors'
 import { validateAdminTrialReprocess, runAdminTrialReprocess } from './auction-admin-trial'
 import type { Auction, AuctionExtraction } from '~/types/auction'
@@ -13,6 +14,7 @@ vi.mock('./auction-record', () => ({ readAuctionRecord: vi.fn() }))
 vi.mock('./auction-details', () => ({ writeAuctionDetails: vi.fn() }))
 vi.mock('../tasks/reprocess', () => ({ reprocessAuction: vi.fn() }))
 vi.mock('./extract/llm-task-config', () => ({ resolveLlmConfigForProfile: vi.fn() }))
+vi.mock('./app-settings', () => ({ getLlmKillSwitch: vi.fn() }))
 vi.mock('./task-run-errors', () => ({ recordTaskRunError: vi.fn() }))
 
 const CONFIG = { provider: 'openrouter' as const, baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'k', model: 'deepseek/deepseek-v4-pro', profileId: 'profile-1' }
@@ -33,6 +35,7 @@ function extraction(overrides: Partial<AuctionExtraction> = {}): AuctionExtracti
 
 beforeEach(() => {
   vi.mocked(getPool).mockReturnValue({} as never)
+  vi.mocked(getLlmKillSwitch).mockResolvedValue(false)
   vi.mocked(resolveLlmConfigForProfile).mockResolvedValue(CONFIG)
   vi.mocked(readAuctionRecord).mockResolvedValue({
     auction: auction(), detailsId: 7, detailsVersion: 3, artifactVersionId: 11,
@@ -63,6 +66,13 @@ describe('validateAdminTrialReprocess', () => {
 
   it('accepts a known profile and identity', async () => {
     await expect(validateAdminTrialReprocess('zvg-portal', '7265', 'profile-1')).resolves.toEqual({ ok: true })
+  })
+
+  it('rejects when the admin kill switch is on, without resolving the profile', async () => {
+    vi.mocked(getLlmKillSwitch).mockResolvedValue(true)
+
+    await expect(validateAdminTrialReprocess('zvg-portal', '7265', 'profile-1')).resolves.toEqual({ ok: false, reason: 'llm_disabled' })
+    expect(resolveLlmConfigForProfile).not.toHaveBeenCalled()
   })
 })
 
