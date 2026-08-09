@@ -280,6 +280,7 @@ export function useAuctionSearchState(options: {
     nearRiver,
     nearMountain,
     nearAirport,
+    nearSki,
     urbanRural,
     nearLat,
     nearLng,

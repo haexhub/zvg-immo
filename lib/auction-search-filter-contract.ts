@@ -106,6 +106,12 @@ export function parseAuctionSearchFilters(query: SearchFilterQuery, hideRulesOnl
     hideRulesOnly: first(query.llmOnly) === '1' ? true : first(query.llmOnly) === '0' ? false : hideRulesOnlyDefault,
   }
   for (const key of NUMBER_KEYS) parsed[key] = finiteNumber(query[key])
+  // A coordinate pair without a radius is not "unbounded" — it must still be
+  // an executable nearby filter for filterAuctions/SQL/alert matching, all of
+  // which skip distance filtering entirely when nearRadius is null.
+  if (parsed.nearLat != null && parsed.nearLng != null && parsed.nearRadius == null) {
+    parsed.nearRadius = 25
+  }
   const sort = first(query.sort)
   parsed.sortBy = SORT_OPTIONS.includes(sort as AuctionSearchSortBy) ? sort as AuctionSearchSortBy : 'default'
   return parsed

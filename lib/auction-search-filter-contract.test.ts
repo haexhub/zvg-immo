@@ -29,4 +29,9 @@ describe('auction search filter contract', () => {
     expect(activeAuctionSearchFilterCount(filters)).toBe(2)
     expect(unsupportedAlertFilterKeys(filters)).toEqual(['nearSea'])
   })
+
+  it('defaults a saved coordinate pair without a radius to 25km so distance filtering stays executable', () => {
+    const filters = parseAuctionSearchFilters({ nearLat: '52.5', nearLng: '13.4' })
+    expect(filters.nearRadius).toBe(25)
+  })
 })

@@ -121,9 +121,9 @@ they need and exit 0.
 
 ## Done criteria
 
-- [ ] Nuxt and direct Undici are patched in the lockfile.
-- [ ] No raw provider/DB message is returned by public routes in scope.
-- [ ] `pnpm run lint`, `pnpm exec nuxi typecheck`, `pnpm test`, and `pnpm build` pass.
+- [x] Nuxt and direct Undici are patched in the lockfile.
+- [x] No raw provider/DB message is returned by public routes in scope.
+- [x] `pnpm run lint`, `pnpm exec nuxi typecheck`, `pnpm test`, and `pnpm build` pass.
 
 ## STOP conditions
 

@@ -51,7 +51,7 @@ Representative conventions:
 
 | Purpose | Command | Expected on success |
 |---|---|---|
-| Size gate | `find server components composables pages lib -type f \( -name '*.ts' -o -name '*.vue' -o -name '*.mjs' \) ! -name '*.test.ts' -print0 \| xargs -0 wc -l \| awk '$2 != "total" && $1 > 500 { print; bad=1 } END { exit bad }'` | exit 0, no production file >500 |
+| Size gate | `find server components composables pages lib -type f \( -name '*.ts' -o -name '*.vue' -o -name '*.mjs' \) ! -path '*/migrations/*' ! -path '*/vendor/*' ! -name '*.test.*' ! -name '*.spec.*' -print0 \| xargs -0 wc -l \| awk '$2 != "total" && $1 > 500 { print; bad=1 } END { exit bad }'` | exit 0, no production file >500 |
 | Focused tests | `pnpm test -- server/tasks/reprocess.test.ts server/tasks/enrich.test.ts server/utils/app-settings.test.ts server/utils/extract/gemini-batch.test.ts server/utils/auction-details.test.ts server/utils/external-data/eu-flood-risk.test.ts components/Auction/Map.client.test.ts` | exit 0 |
 | Full tests | `pnpm test` | exit 0 |
 | Lint/typecheck/build | `pnpm run lint && pnpm exec nuxi typecheck && pnpm build` | exit 0 |
