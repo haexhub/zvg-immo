@@ -3,6 +3,7 @@
 // already verified event.context.user and 401'd otherwise.
 
 import { getServiceClient } from '../../utils/supabase'
+import { parseAuctionSearchFilters, unsupportedAlertFilterKeys } from '~/lib/auction-search-filter-contract'
 
 export default defineEventHandler(async (event): Promise<{ enabled: boolean }> => {
   const savedSearchId = String(event.context.params?.savedSearchId ?? '')
@@ -22,7 +23,7 @@ export default defineEventHandler(async (event): Promise<{ enabled: boolean }> =
   // is otherwise trusted input from the request path.
   const { data: search, error: searchError } = await supabase
     .from('saved_searches')
-    .select('id')
+    .select('id, filters')
     .eq('id', savedSearchId)
     .eq('user_id', userId)
     .maybeSingle()
@@ -31,6 +32,15 @@ export default defineEventHandler(async (event): Promise<{ enabled: boolean }> =
   }
   if (!search) {
     throw createError({ statusCode: 404, statusMessage: 'Gespeicherte Suche nicht gefunden.' })
+  }
+  if (enabled) {
+    const unsupported = unsupportedAlertFilterKeys(parseAuctionSearchFilters(search.filters as Record<string, unknown>))
+    if (unsupported.length) {
+      throw createError({
+        statusCode: 400,
+        statusMessage: `Diese gespeicherte Suche enthält nicht alertfähige Filter: ${unsupported.join(', ')}.`,
+      })
+    }
   }
 
   const { error } = await supabase
