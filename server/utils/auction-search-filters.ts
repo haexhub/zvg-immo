@@ -9,6 +9,7 @@ import { ensureEnabledCountriesLoaded, getEnabledCountryCodes } from '~/server/c
 import { getHideRulesOnlyAuctions } from '~/server/utils/app-settings'
 import { GEO_METRIC_CATEGORIES } from '~/server/utils/geo-metric-categories'
 import { proximityConditionAnyOf } from '~/server/utils/osm-proximity'
+import { commaList, finiteNumber, hasExplicitHideRulesOnly, parseAuctionSearchFilters } from '~/lib/auction-search-filter-contract'
 
 // A settlement counts as "urban" if a city/town-sized OSM place node sits
 // within this radius; otherwise the auction is "rural". Arbitrary but easy
@@ -24,22 +25,13 @@ export interface AuctionSearchFilter {
   values: unknown[]
 }
 
-export function commaList(value: unknown): string[] {
-  const raw = Array.isArray(value) ? value.join(',') : String(value ?? '')
-  return [...new Set(raw.split(',').map((entry) => entry.trim()).filter(Boolean))]
-}
-
-/** '' must yield null, not Number('') === 0 — callers use null to mean "unset". */
-export function finiteNumber(value: unknown): number | null {
-  if (value == null || value === '') return null
-  const parsed = Number(Array.isArray(value) ? value[0] : value)
-  return Number.isFinite(parsed) ? parsed : null
-}
+export { commaList, finiteNumber } from '~/lib/auction-search-filter-contract'
 
 export async function buildAuctionSearchFilter(
   db: Pool,
   query: Record<string, unknown>,
 ): Promise<AuctionSearchFilter> {
+  const filters = parseAuctionSearchFilters(query)
   const values: unknown[] = []
   const where: string[] = []
   const add = (value: unknown): string => {
@@ -53,7 +45,7 @@ export async function buildAuctionSearchFilter(
   // applied here — unlike the list caches this replaced, which filtered on read.
   await ensureEnabledCountriesLoaded()
   const enabled = getEnabledCountryCodes()
-  const requested = commaList(query.country)
+  const requested = filters.countries
     .filter((entry) => /^[a-z]{2}$/i.test(entry))
     .map((entry) => entry.toLowerCase())
   const countries = requested.length ? requested.filter((entry) => enabled.includes(entry)) : enabled
@@ -70,34 +62,31 @@ export async function buildAuctionSearchFilter(
   const regionNames = commaList(query.regionNames)
   if (regionNames.length) where.push(`(a.country || ':' || a.region) = ANY(${add(regionNames)}::text[])`)
 
-  const search = String(query.q ?? '').trim()
+  const search = filters.search.trim()
   if (search) {
     where.push(`concat_ws(' ', a.case_number, a.authority, a.title, d.address, d.description) ILIKE ${add(`%${search}%`)}`)
   }
-  const authority = String(query.authority ?? '')
+  const authority = filters.authority
   if (authority && authority !== 'all') where.push(`a.authority = ${add(authority)}`)
-  const category = String(query.category ?? '')
+  const category = filters.category
   if (category && category !== 'all') where.push(`d.property_type = ${add(category)}`)
   // Comma-list (not a single exact match) so the landing page's "best
   // maintained" rail can ask for multiple condition tiers at once
   // (neuwertig,gepflegt) — pages/search.vue's single-select UI still works
   // unchanged since commaList('x') === ['x'].
-  const conditions = commaList(query.condition).filter((entry) => entry !== 'all')
+  const conditions = commaList(filters.condition).filter((entry) => entry !== 'all')
   if (conditions.length) where.push(`d.condition #>> '{}' = ANY(${add(conditions)}::text[])`)
-  const features = commaList(query.features)
+  const features = filters.features
   if (features.length) where.push(`d.features && ${add(features)}::text[]`)
-  if (String(query.photos ?? '') === '1') where.push('d.photo_count > 0')
-  if (String(query.cancelled ?? '') !== '1') where.push('a.cancelled = false')
+  if (filters.onlyWithPhotos) where.push('d.photo_count > 0')
+  if (!filters.includeCancelled) where.push('a.cancelled = false')
 
   // pages/search.vue only puts llmOnly in the URL when the user overrode the
   // admin-configured default (/api/display-settings), so an absent parameter
   // means "use that default" — not "no filter".
-  const llmOnlyParam = String(query.llmOnly ?? '')
-  const hideRulesOnly = llmOnlyParam === '1'
-    ? true
-    : llmOnlyParam === '0'
-      ? false
-      : await getHideRulesOnlyAuctions(db)
+  const hideRulesOnly = hasExplicitHideRulesOnly(query)
+    ? filters.hideRulesOnly
+    : await getHideRulesOnlyAuctions(db)
   if (hideRulesOnly) {
     // The jsonb columns keep AuctionExtraction's "never checked" (SQL NULL)
     // vs "checked, found nothing" (jsonb null) distinction, so IS NOT NULL
@@ -113,16 +102,16 @@ export async function buildAuctionSearchFilter(
   }
 
   const ranges: Array<[unknown, string, '>=' | '<=']> = [
-    [query.priceMin, 'd.market_value_eur', '>='],
-    [query.priceMax, 'd.market_value_eur', '<='],
-    [query.landMin, 'd.land_area_sqm', '>='],
-    [query.landMax, 'd.land_area_sqm', '<='],
-    [query.livMin, 'd.living_area_sqm', '>='],
-    [query.livMax, 'd.living_area_sqm', '<='],
-    [query.yearBuiltMin, 'd.year_built', '>='],
-    [query.yearBuiltMax, 'd.year_built', '<='],
-    [query.renovationYearMin, 'd.last_renovation_year', '>='],
-    [query.renovationYearMax, 'd.last_renovation_year', '<='],
+    [filters.priceMin, 'd.market_value_eur', '>='],
+    [filters.priceMax, 'd.market_value_eur', '<='],
+    [filters.landMin, 'd.land_area_sqm', '>='],
+    [filters.landMax, 'd.land_area_sqm', '<='],
+    [filters.livMin, 'd.living_area_sqm', '>='],
+    [filters.livMax, 'd.living_area_sqm', '<='],
+    [filters.yearBuiltMin, 'd.year_built', '>='],
+    [filters.yearBuiltMax, 'd.year_built', '<='],
+    [filters.renovationYearMin, 'd.last_renovation_year', '>='],
+    [filters.renovationYearMax, 'd.last_renovation_year', '<='],
   ]
   for (const [raw, column, operator] of ranges) {
     const value = finiteNumber(raw)
@@ -136,7 +125,8 @@ export async function buildAuctionSearchFilter(
   // caller's FROM to LEFT JOIN auction_geo_metrics AS m — see
   // GEO_METRICS_JOIN_SQL (auctions.get.ts).
   for (const { param, column, cutoffMeters } of GEO_METRIC_CATEGORIES) {
-    const km = finiteNumber(query[param])
+    const candidate = filters[param as keyof typeof filters]
+    const km = typeof candidate === 'number' ? candidate : null
     if (km == null || km <= 0) continue
     // Clamping, not rejecting: past the cutoff the precompute stores NULL, so
     // a larger radius would match strictly *fewer* rows than a smaller one
@@ -151,7 +141,7 @@ export async function buildAuctionSearchFilter(
     where.push(`m.${column} <= ${add(meters)}`)
   }
 
-  const urbanRural = String(query.urbanRural ?? '')
+  const urbanRural = filters.urbanRural
   if (urbanRural === 'urban' || urbanRural === 'rural') {
     const nearCity = proximityConditionAnyOf('place', URBAN_PLACE_TAGS, URBAN_RADIUS_METERS, add)
     where.push(urbanRural === 'urban' ? nearCity : `NOT (${nearCity})`)
@@ -175,9 +165,9 @@ export async function buildAuctionSearchFilter(
   // "Immobilien in der Nähe" — the user's own browser-geolocated position,
   // filtered directly against the auction's own geocoded coordinates. No OSM
   // data involved, so it works everywhere an auction already has lat/lng.
-  const nearLat = finiteNumber(query.nearLat)
-  const nearLng = finiteNumber(query.nearLng)
-  const nearRadiusKm = finiteNumber(query.nearRadius)
+  const nearLat = filters.nearLat
+  const nearLng = filters.nearLng
+  const nearRadiusKm = filters.nearRadius
   if (nearLat != null && nearLng != null && nearRadiusKm != null && nearRadiusKm > 0) {
     where.push(`a.lat IS NOT NULL AND a.lng IS NOT NULL AND ST_DWithin(
       ST_MakePoint(a.lng, a.lat)::geography,

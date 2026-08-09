@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { auctionCategory, filterAuctions, hasCompletedLlmAnalysis, scopeByCountryRegion, type AuctionFilters } from './auction-filters'
 import type { Auction } from '~/types/auction'
+import { defaultAuctionSearchFilters } from '~/lib/auction-search-filter-contract'
 
 function makeAuction(overrides: Partial<Auction> = {}): Auction {
   return {
@@ -31,26 +32,8 @@ function makeAuction(overrides: Partial<Auction> = {}): Auction {
 }
 
 const BASE_FILTERS: AuctionFilters = {
-  countries: [],
+  ...defaultAuctionSearchFilters(),
   regionNameKeys: null,
-  search: '',
-  authority: 'all',
-  category: 'all',
-  condition: 'all',
-  features: [],
-  onlyWithPhotos: false,
-  includeCancelled: false,
-  hideRulesOnly: false,
-  priceMin: null,
-  priceMax: null,
-  landMin: null,
-  landMax: null,
-  livMin: null,
-  livMax: null,
-  yearBuiltMin: null,
-  yearBuiltMax: null,
-  renovationYearMin: null,
-  renovationYearMax: null,
 }
 
 describe('scopeByCountryRegion', () => {
@@ -104,6 +87,15 @@ describe('auctionCategory', () => {
 })
 
 describe('filterAuctions', () => {
+  it('honours the browser nearby filter, rejecting auctions outside the requested distance', () => {
+    const filters = { ...BASE_FILTERS, nearLat: 52.52, nearLng: 13.405, nearRadius: 10 }
+    const items = [
+      makeAuction({ externalId: 'berlin', lat: 52.52, lng: 13.405 }),
+      makeAuction({ externalId: 'hamburg', lat: 53.551, lng: 9.993 }),
+      makeAuction({ externalId: 'ungeocoded' }),
+    ]
+    expect(filterAuctions(items, filters).map((auction) => auction.externalId)).toEqual(['berlin'])
+  })
   it('excludes cancelled auctions by default', () => {
     const items = [makeAuction({ externalId: '1', cancelled: true }), makeAuction({ externalId: '2', cancelled: false })]
     expect(filterAuctions(items, BASE_FILTERS).map((a) => a.externalId)).toEqual(['2'])

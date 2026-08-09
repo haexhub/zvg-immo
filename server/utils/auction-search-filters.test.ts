@@ -155,11 +155,12 @@ describe('buildAuctionSearchFilter', () => {
     expect(values).toContain(25_000)
   })
 
-  it('skips the geolocation filter when the radius is missing', async () => {
+  it('defaults to a 25km radius so a coordinate pair without an explicit radius still filters by distance', async () => {
     const { buildAuctionSearchFilter } = await import('./auction-search-filters')
-    const { predicate } = await buildAuctionSearchFilter(db, { nearLat: '52.5', nearLng: '13.4', llmOnly: '0' })
+    const { predicate, values } = await buildAuctionSearchFilter(db, { nearLat: '52.5', nearLng: '13.4', llmOnly: '0' })
 
-    expect(predicate).not.toContain('ST_DWithin')
+    expect(predicate).toContain('ST_DWithin')
+    expect(values).toContain(25_000)
   })
 
   it('adds a bounding-box clause on a.lat/a.lng once the map viewport is complete', async () => {

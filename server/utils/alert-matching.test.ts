@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { filterAuctions } from '~/lib/auction-filters'
+import type { Auction } from '~/types/auction'
 
 const { getServiceClient, enqueueAlertDelivery } = vi.hoisted(() => ({
   getServiceClient: vi.fn(),
@@ -68,6 +70,11 @@ describe('toAuctionFilters', () => {
       photos: '1',
       cancelled: '1',
       llmOnly: '1',
+      nearLat: '52.5',
+      nearLng: '13.4',
+      nearRadius: '25',
+      nearSea: '5',
+      urbanRural: 'rural',
     })
 
     expect(filters.countries).toEqual(['de'])
@@ -84,6 +91,11 @@ describe('toAuctionFilters', () => {
     expect(filters.priceMax).toBeNull()
     expect(filters.landMin).toBe(500)
     expect(filters.landMax).toBeNull()
+    expect(filters.nearLat).toBe(52.5)
+    expect(filters.nearLng).toBe(13.4)
+    expect(filters.nearRadius).toBe(25)
+    expect(filters.nearSea).toBe(5)
+    expect(filters.urbanRural).toBe('rural')
   })
 
   it('defaults to no restriction / authority=all / category=all on an empty stored object', () => {
@@ -103,6 +115,20 @@ describe('toAuctionFilters', () => {
   it('drops region keys that no longer resolve against the current registry', () => {
     const filters = toAuctionFilters({ region: 'de:unknown-region' })
     expect(filters.regionNameKeys).toEqual(new Set())
+  })
+
+  it('shares nearby-distance semantics with the in-memory alert evaluator', () => {
+    const filters = toAuctionFilters({ nearLat: '52.52', nearLng: '13.405', nearRadius: '10' })
+    const base: Auction = {
+      platform: 'test', country: 'de', region: 'Sachsen', externalId: 'x', caseNumber: '1', authority: 'AG', title: null,
+      address: null, marketValueEur: null, marketValueText: null, auctionDateIso: null, auctionDateText: null,
+      cancelled: false, sourceUpdatedIso: null, pdfUrl: null, detailUrl: null, pdfUrlUpstream: null,
+      detailUrlUpstream: null, attachments: [], description: null, photoCount: 0, thumbnailUrl: null,
+    }
+    expect(filterAuctions([
+      { ...base, externalId: 'near', lat: 52.52, lng: 13.405 },
+      { ...base, externalId: 'far', lat: 53.551, lng: 9.993 },
+    ], filters).map((auction) => auction.externalId)).toEqual(['near'])
   })
 })
 
