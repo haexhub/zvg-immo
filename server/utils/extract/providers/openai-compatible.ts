@@ -48,6 +48,18 @@ export function parseOpenAiExtractionResponse(resp: unknown): Record<string, unk
   }
 }
 
+/** ofetch's default error message is just the HTTP status line ("403
+ *  Forbidden") — the actual reason (e.g. OpenRouter's "input flagged by
+ *  moderation" explanation for a 403) lives in the JSON error body ofetch
+ *  also attaches to the thrown error as `.data`. Append it when present so
+ *  callers/logs don't have to reproduce the request against the provider to
+ *  find out why. */
+function describeRequestError(err: unknown): string {
+  const base = (err as Error).message
+  const detail = (err as { data?: { error?: { message?: unknown } } })?.data?.error?.message
+  return typeof detail === 'string' && detail.trim() ? `${base} — ${detail}` : base
+}
+
 export class OpenAiCompatibleProvider implements ExtractionProvider {
   constructor(private config: LlmConfig) {}
 
@@ -113,7 +125,7 @@ export class OpenAiCompatibleProvider implements ExtractionProvider {
         // giving up instead of paying the retry delay for nothing.
         if (isTransientRequestError(err) && attempt < TRANSIENT_RETRY_DELAYS_MS.length) {
           console.warn(
-            `[extract/llm] request failed, retry ${attempt + 1}/${TRANSIENT_RETRY_DELAYS_MS.length}: ${(err as Error).message}`,
+            `[extract/llm] request failed, retry ${attempt + 1}/${TRANSIENT_RETRY_DELAYS_MS.length}: ${describeRequestError(err)}`,
           )
           await new Promise((resolve) => setTimeout(resolve, TRANSIENT_RETRY_DELAYS_MS[attempt]))
           continue
@@ -121,8 +133,8 @@ export class OpenAiCompatibleProvider implements ExtractionProvider {
         // A caller that passes onRequestError (extractByLlm) wants to keep
         // batching past a single failed candidate; one that doesn't (e.g.
         // callSummaryLlm/callTranslationLlm) wants the failure to reject.
-        if (!opts?.onRequestError) throw new LlmProviderError(this.providerLabel, (err as Error).message, { cause: err })
-        console.warn(`[extract/llm] request failed: ${(err as Error).message}`)
+        if (!opts?.onRequestError) throw new LlmProviderError(this.providerLabel, describeRequestError(err), { cause: err })
+        console.warn(`[extract/llm] request failed: ${describeRequestError(err)}`)
         opts.onRequestError(err)
         return null
       }
