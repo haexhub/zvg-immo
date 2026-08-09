@@ -4,6 +4,7 @@
 
 import { getServiceClient } from '../../utils/supabase'
 import type { SavedSearch } from './index.get'
+import { parseAuctionSearchFilters, unsupportedAlertFilterKeys } from '~/lib/auction-search-filter-contract'
 
 export default defineEventHandler(async (event): Promise<SavedSearch> => {
   const body = await readBody<{ name?: unknown; filters?: unknown }>(event).catch(
@@ -14,6 +15,13 @@ export default defineEventHandler(async (event): Promise<SavedSearch> => {
     throw createError({ statusCode: 400, statusMessage: 'Name fehlt.' })
   }
   const filters = body.filters && typeof body.filters === 'object' ? body.filters : {}
+  const unsupported = unsupportedAlertFilterKeys(parseAuctionSearchFilters(filters as Record<string, unknown>))
+  if (unsupported.length) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: `Diese Filter können für Benachrichtigungen noch nicht ausgewertet werden: ${unsupported.join(', ')}.`,
+    })
+  }
 
   const supabase = getServiceClient()
   if (!supabase) {

@@ -30,3 +30,19 @@ Rules:
 | SettingsClaudeFlow (in Reprocess/LlmProfiles/CountrySources/LlmBatch verschachtelt) | `/api/settings/claude/{status,login,code,reset,logout}` | sync, self-polling via `usePollWhileActive` solange ein Login-Flow aktiv ist |
 
 Geteilte Composables: `useSettingsError` (401 → Session-Expiry), `useSettingsAction` (pending/error/run-Boilerplate), `useSettingsTaskOverview` (llm-batch-jobs, gebündeltes Polling), `usePollWhileActive` (generisches Intervall-Polling mit Abbruchbedingung), `useLlmProfileOptions` (geteilte Profil-Liste zwischen LlmProfiles/LlmAssignments).
+
+## Search-Filter-Vertrag
+
+`lib/auction-search-filter-contract.ts` besitzt die persistierten Such-URL-
+und Saved-Search-Felder, Defaults, Parsing, Serialisierung und aktive
+Filterzählung. UI-`region`-Keys (`de:sn`) bleiben dabei bewusst getrennt von
+den für die SQL-Suche aufgelösten `regionNames`. Neue Filter zuerst dort
+definieren und mit Round-trip-Tests absichern.
+
+Alerts teilen die in-memory-Auswertung für alle verfügbaren Crawl-Felder;
+`nearLat`/`nearLng`/`nearRadius` werden per Distanz geprüft. Umgebungskriterien
+mit vorausberechneten Geo-/OSM-Metriken (`nearSea`, `nearLake`, `nearRiver`,
+`nearMountain`, `nearAirport`, `nearSki`, `urbanRural`) sind für frische
+Crawl-Batches nicht korrekt evaluierbar und werden beim Speichern bzw.
+Aktivieren eines Alerts mit 400 abgelehnt. Alte betroffene Subscriptions werden
+beim Matching übersprungen und protokolliert, nie stillschweigend gelockert.

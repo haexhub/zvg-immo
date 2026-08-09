@@ -7,10 +7,9 @@
 import type { Auction, AuctionExtraction } from '~/types/auction'
 import { ALL_PROPERTY_TYPE_CATEGORIES, classifyPropertyType, type PropertyTypeCategory } from '~/lib/property-type'
 import { CONDITIONS } from '~/lib/condition'
+import type { AuctionSearchFilters } from '~/lib/auction-search-filter-contract'
 
-export interface AuctionFilters {
-  /** ISO country codes to restrict to; empty = no restriction (every country). */
-  countries: string[]
+export interface AuctionFilters extends AuctionSearchFilters {
   /** `${countryCode}:${regionDisplayName}` pairs to restrict to; null = no
    *  restriction. Matches against `${a.country}:${a.region}` — callers resolve
    *  the selected `${countryCode}:${regionCode}` keys to display names via the
@@ -18,33 +17,6 @@ export interface AuctionFilters {
   regionNameKeys: Set<string> | null
   /** Free-text search; matched case-insensitively against Aktenzeichen,
    *  Amtsgericht, Objekt, Adresse and Beschreibung. Empty = no restriction. */
-  search: string
-  /** Amtsgericht name, or 'all'. */
-  authority: string
-  /** Property-type category id (see lib/property-type.ts), or 'all'. */
-  category: string
-  /** Minimum acceptable condition id (see lib/condition.ts, best→worst order),
-   *  or 'all'. Auctions with no known condition are excluded when this is set —
-   *  same convention as landMin/livMin below. */
-  condition: string
-  /** Feature ids (see lib/features.ts) the auction must have at least one of;
-   *  empty = no restriction. */
-  features: string[]
-  onlyWithPhotos: boolean
-  includeCancelled: boolean
-  /** Hides auctions whose extraction never had a completed LLM pass. Auctions
-   *  with no extraction at all are also hidden — treated the same as rules-only. */
-  hideRulesOnly: boolean
-  priceMin: number | null
-  priceMax: number | null
-  landMin: number | null
-  landMax: number | null
-  livMin: number | null
-  livMax: number | null
-  yearBuiltMin: number | null
-  yearBuiltMax: number | null
-  renovationYearMin: number | null
-  renovationYearMax: number | null
 }
 
 /** Restricts to the selected countries/regions only. Used both as the base
@@ -141,8 +113,19 @@ export function filterAuctions<T extends Auction>(items: T[], filters: AuctionFi
       if (filters.renovationYearMin != null && v < filters.renovationYearMin) return false
       if (filters.renovationYearMax != null && v > filters.renovationYearMax) return false
     }
+    if (filters.nearLat != null && filters.nearLng != null && filters.nearRadius != null && filters.nearRadius > 0) {
+      if (a.lat == null || a.lng == null || distanceKm(a.lat, a.lng, filters.nearLat, filters.nearLng) > filters.nearRadius) return false
+    }
     if (!q) return true
     const hay = `${a.caseNumber} ${a.authority} ${a.title ?? ''} ${a.address ?? ''} ${a.description ?? ''}`.toLowerCase()
     return hay.includes(q)
   })
+}
+
+function distanceKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const radians = Math.PI / 180
+  const dLat = (lat2 - lat1) * radians
+  const dLng = (lng2 - lng1) * radians
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * radians) * Math.cos(lat2 * radians) * Math.sin(dLng / 2) ** 2
+  return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }

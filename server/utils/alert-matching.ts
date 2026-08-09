@@ -14,6 +14,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Auction, CrawlResult } from '~/types/auction'
 import { filterAuctions, type AuctionFilters } from '~/lib/auction-filters'
+import { parseAuctionSearchFilters, unsupportedAlertFilterKeys } from '~/lib/auction-search-filter-contract'
 import { listCountries } from '../crawlers/registry'
 import { getServiceClient } from './supabase'
 import { sendMail } from './mailer'
@@ -24,23 +25,8 @@ import { sendMail } from './mailer'
  *  query-param → ref → AuctionFilters pipeline, just server-side against a
  *  stored jsonb blob instead of route.query. */
 export function toAuctionFilters(stored: Record<string, unknown>): AuctionFilters {
-  const str = (key: string): string => {
-    const v = stored[key]
-    return typeof v === 'string' ? v : ''
-  }
-  const num = (key: string): number | null => {
-    const v = str(key)
-    if (!v) return null
-    const n = Number(v)
-    return Number.isFinite(n) ? n : null
-  }
-  const list = (key: string): string[] => {
-    const v = str(key)
-    return v ? v.split(',').filter(Boolean) : []
-  }
-
-  const countries = list('country')
-  const regionKeys = list('region') // `${countryCode}:${regionCode}` pairs
+  const filters = parseAuctionSearchFilters(stored)
+  const regionKeys = filters.regionKeys // `${countryCode}:${regionCode}` pairs
 
   let regionNameKeys: Set<string> | null = null
   if (regionKeys.length > 0) {
@@ -57,28 +43,7 @@ export function toAuctionFilters(stored: Record<string, unknown>): AuctionFilter
     regionNameKeys = set
   }
 
-  return {
-    countries,
-    regionNameKeys,
-    search: str('q'),
-    authority: str('authority') || 'all',
-    category: str('category') || 'all',
-    condition: str('condition') || 'all',
-    features: list('features'),
-    onlyWithPhotos: str('photos') === '1',
-    includeCancelled: str('cancelled') === '1',
-    hideRulesOnly: str('llmOnly') === '1',
-    priceMin: num('priceMin'),
-    priceMax: num('priceMax'),
-    landMin: num('landMin'),
-    landMax: num('landMax'),
-    livMin: num('livMin'),
-    livMax: num('livMax'),
-    yearBuiltMin: num('yearBuiltMin'),
-    yearBuiltMax: num('yearBuiltMax'),
-    renovationYearMin: num('renovationYearMin'),
-    renovationYearMax: num('renovationYearMax'),
-  }
+  return { ...filters, regionNameKeys }
 }
 
 interface SubscriptionRow {
@@ -127,6 +92,14 @@ async function processSubscription(
   auctions: Auction[],
 ): Promise<void> {
   const filters = toAuctionFilters(storedFilters ?? {})
+  const unsupported = unsupportedAlertFilterKeys(filters)
+  if (unsupported.length) {
+    // Old rows may predate the write-time validation.  Do not turn their
+    // unsupported constraints into false-positive mail; a save/enable now
+    // returns a clear 400 instead.
+    console.warn(`[alert-matching] subscription ${subscriptionId}: unsupported filters: ${unsupported.join(', ')}`)
+    return
+  }
   const matched = filterAuctions(auctions, filters)
   if (matched.length === 0) return
 
