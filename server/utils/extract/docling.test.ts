@@ -59,7 +59,7 @@ describe('convertPdfToMarkdown', () => {
     const fetchMock = stubFetch()
     fetchMock.mockResolvedValue(okResponse('## Titel\n\n| a | b |'))
 
-    expect(await convertPdfToMarkdown(PDF, 'Gutachten.pdf')).toBe('## Titel\n\n| a | b |')
+    expect(await convertPdfToMarkdown(PDF, 'Gutachten.pdf')).toEqual({ markdown: '## Titel\n\n| a | b |', terminal: false })
 
     const [url, init] = fetchMock.mock.calls[0]!
     expect(url).toBe('http://docling:5001/v1/convert/file')
@@ -70,32 +70,32 @@ describe('convertPdfToMarkdown', () => {
     expect(form.get('image_export_mode')).toBe('placeholder')
   })
 
-  it('returns null without calling out when no URL is configured', async () => {
+  it('returns a non-terminal result without calling out when no URL is configured', async () => {
     doclingUrl = ''
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
 
-    expect(await convertPdfToMarkdown(PDF, 'x.pdf')).toBeNull()
+    expect(await convertPdfToMarkdown(PDF, 'x.pdf')).toEqual({ markdown: null, terminal: false })
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('returns null on a non-2xx response', async () => {
+  it('returns a non-terminal result on a non-2xx response — an outage must not blacklist the PDF', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 503, json: async () => ({}) })))
-    expect(await convertPdfToMarkdown(PDF, 'x.pdf')).toBeNull()
+    expect(await convertPdfToMarkdown(PDF, 'x.pdf')).toEqual({ markdown: null, terminal: false })
   })
 
-  it('returns null when the response carries no markdown', async () => {
+  it('returns a terminal result when a successful response carries no markdown', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
       status: 200,
       json: async () => ({ status: 'failure', document: { md_content: '   ' } }),
     })))
-    expect(await convertPdfToMarkdown(PDF, 'x.pdf')).toBeNull()
+    expect(await convertPdfToMarkdown(PDF, 'x.pdf')).toEqual({ markdown: null, terminal: true })
   })
 
-  it('returns null when the request throws', async () => {
+  it('returns a non-terminal result when the request throws', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('ECONNREFUSED') }))
-    expect(await convertPdfToMarkdown(PDF, 'x.pdf')).toBeNull()
+    expect(await convertPdfToMarkdown(PDF, 'x.pdf')).toEqual({ markdown: null, terminal: false })
   })
 
   // Two concurrent conversions would double peak memory in the Docling
@@ -126,8 +126,8 @@ describe('convertPdfToMarkdown', () => {
       .mockResolvedValueOnce(okResponse('# danach'))
     vi.stubGlobal('fetch', fetchMock)
 
-    expect(await convertPdfToMarkdown(PDF, 'a.pdf')).toBeNull()
-    expect(await convertPdfToMarkdown(PDF, 'b.pdf')).toBe('# danach')
+    expect(await convertPdfToMarkdown(PDF, 'a.pdf')).toEqual({ markdown: null, terminal: false })
+    expect(await convertPdfToMarkdown(PDF, 'b.pdf')).toEqual({ markdown: '# danach', terminal: false })
   })
 })
 
@@ -165,13 +165,25 @@ describe('markdownForPdf', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('records the failure so the next run skips the document', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500, json: async () => ({}) })))
+  it('records a terminal failure (2xx, no usable content) so the next run skips the document', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => okResponse('   ')))
     const db = fakePool()
 
     expect(await markdownForPdf(db, 'pdf-hash', PDF, { label: 'a.pdf', country: 'de' })).toBeNull()
     const insert = db.query.mock.calls.find((call) => /INSERT INTO document_markdown/i.test(call[0]))
     expect(insert?.[1]?.[1]).toBeNull()
+  })
+
+  // A Docling outage (5xx/network) must not durably blacklist every PDF an
+  // in-flight reprocess run happens to touch — only a genuine "no content"
+  // result from a successful response is worth caching.
+  it('does not record a transient failure (5xx/network), so a later run can retry', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500, json: async () => ({}) })))
+    const db = fakePool()
+
+    expect(await markdownForPdf(db, 'pdf-hash', PDF, { label: 'a.pdf', country: 'de' })).toBeNull()
+    const insert = db.query.mock.calls.find((call) => /INSERT INTO document_markdown/i.test(call[0]))
+    expect(insert).toBeUndefined()
   })
 
   it('re-converts when the cache row points at unreadable bytes', async () => {

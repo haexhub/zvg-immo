@@ -68,9 +68,20 @@ interface DoclingConvertResponse {
   errors?: unknown[]
 }
 
+export interface DoclingConversion {
+  markdown: string | null
+  /** True only when Docling answered (2xx) but produced no usable Markdown —
+   *  that document genuinely cannot be converted, so markdownForPdf may
+   *  permanently cache the failure. False for every other case (unconfigured,
+   *  unreachable, non-2xx, thrown error): those are transient outages and
+   *  must not blacklist a PDF that a retry could still convert. */
+  terminal: boolean
+}
+
 /**
- * Converts PDF bytes to Markdown. Returns null on any failure — unconfigured,
- * unreachable, non-2xx, or a response without Markdown content.
+ * Converts PDF bytes to Markdown. Never throws — unconfigured, unreachable,
+ * non-2xx and thrown errors all resolve to `{ markdown: null, terminal: false }`;
+ * only a successful response with no Markdown content is `terminal: true`.
  *
  * Defaults are deliberate: `do_ocr` is left on so scanned documents (11.9 % of
  * the archive) produce text at all, and `table_mode=accurate` is the reason
@@ -78,9 +89,9 @@ interface DoclingConvertResponse {
  * keeps embedded images out of the Markdown — photo extraction stays with the
  * existing pdfimages pipeline (server/utils/extract/pdf-images.ts).
  */
-export async function convertPdfToMarkdown(bytes: Buffer, label: string): Promise<string | null> {
+export async function convertPdfToMarkdown(bytes: Buffer, label: string): Promise<DoclingConversion> {
   const baseUrl = doclingBaseUrl()
-  if (!baseUrl) return null
+  if (!baseUrl) return { markdown: null, terminal: false }
 
   const form = new FormData()
   form.append('files', new Blob([new Uint8Array(bytes)], { type: 'application/pdf' }), label)
@@ -96,18 +107,18 @@ export async function convertPdfToMarkdown(bytes: Buffer, label: string): Promis
     }))
     if (!res.ok) {
       console.warn(`[docling] ${label}: HTTP ${res.status}`)
-      return null
+      return { markdown: null, terminal: false }
     }
     const body = (await res.json()) as DoclingConvertResponse
     const markdown = body.document?.md_content?.trim()
     if (!markdown) {
       console.warn(`[docling] ${label}: response carried no markdown (status=${body.status ?? '?'})`)
-      return null
+      return { markdown: null, terminal: true }
     }
-    return markdown
+    return { markdown, terminal: false }
   } catch (err) {
     console.warn(`[docling] ${label}: ${(err as Error).message}`)
-    return null
+    return { markdown: null, terminal: false }
   }
 }
 
@@ -166,7 +177,7 @@ export async function markdownForPdf(
   // No DB (dev/tests) → convert without caching rather than skipping, so the
   // behaviour stays observable. An unknown content hash means we have nothing
   // to key a cache entry on and takes the same path.
-  if (!db || !pdfContentHash) return convertPdfToMarkdown(bytes, opts.label)
+  if (!db || !pdfContentHash) return (await convertPdfToMarkdown(bytes, opts.label)).markdown
 
   const cached = await readCachedMarkdown(db, pdfContentHash).catch((err) => {
     console.warn(`[docling] cache read failed for ${pdfContentHash}: ${(err as Error).message}`)
@@ -180,11 +191,17 @@ export async function markdownForPdf(
     // through and convert again rather than silently dropping the document.
   }
 
-  const markdown = await convertPdfToMarkdown(bytes, opts.label)
-  if (!markdown) {
-    await recordConversion(db, pdfContentHash, null, 'conversion returned no markdown').catch(() => undefined)
+  const conversion = await convertPdfToMarkdown(bytes, opts.label)
+  if (!conversion.markdown) {
+    // Only a terminal failure (Docling responded, the document just has no
+    // usable content) is worth caching — a transient outage must not
+    // blacklist a PDF that a later retry could still convert.
+    if (conversion.terminal) {
+      await recordConversion(db, pdfContentHash, null, 'conversion returned no markdown').catch(() => undefined)
+    }
     return null
   }
+  const markdown = conversion.markdown
   // text/plain like archiveDocumentText's extracted prose — gzipped by
   // archiveBlob, and the archive browser already knows how to serve it.
   const markdownHash = await archiveBlob(Buffer.from(markdown, 'utf8'), 'text/plain', opts.country ?? 'unknown')
