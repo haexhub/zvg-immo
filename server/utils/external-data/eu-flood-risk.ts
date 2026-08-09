@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import type { Auction, HazardAssessment } from '~/types/auction'
 import type { HazardAssessmentAdapter } from '~/server/tasks/external-enrichment'
+import { minOf } from '~/lib/array-math'
 import { writeJsonCache } from '../json-cache'
 import { distanceMeters, type Point } from './geo'
 import { EXTERNAL_DATA_SOURCES } from './sources'
@@ -253,7 +254,7 @@ export function distanceToPolygonMeters(point: Point, polygon: GeoJsonPolygonCoo
   if (pointInPolygon(point, polygon)) return 0
   const rings = polygon.filter((ring) => ring.length >= 2)
   if (rings.length === 0) return Number.POSITIVE_INFINITY
-  return Math.min(...rings.map((ring) => distanceToRingMeters(point, ring)))
+  return minOf(rings.map((ring) => distanceToRingMeters(point, ring)))
 }
 
 function assessment(
@@ -369,7 +370,7 @@ function zoneContainsPoint(zone: FloodRiskZone, point: Point): boolean {
 }
 
 function distanceToZoneMeters(point: Point, zone: FloodRiskZone): number {
-  return Math.min(...zone.polygons.map((polygon) => distanceToPolygonMeters(point, polygon)))
+  return minOf(zone.polygons.map((polygon) => distanceToPolygonMeters(point, polygon)))
 }
 
 function ringContainsPoint(point: Point, ring: GeoJsonLinearRing): boolean {
@@ -392,7 +393,7 @@ function ringContainsPoint(point: Point, ring: GeoJsonLinearRing): boolean {
 function distanceToRingMeters(point: Point, ring: GeoJsonLinearRing): number {
   const segments = normalizedRingSegments(ring)
   if (segments.length === 0) return Number.POSITIVE_INFINITY
-  return Math.min(...segments.map(([a, b]) => distanceToSegmentMeters(point, a, b)))
+  return minOf(segments.map(([a, b]) => distanceToSegmentMeters(point, a, b)))
 }
 
 function normalizedRingSegments(ring: GeoJsonLinearRing): Array<[Point, Point]> {

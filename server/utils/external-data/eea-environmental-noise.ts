@@ -1,5 +1,6 @@
 import type { Auction, LocationContext, LocationNoiseIndicator, LocationNoiseObservation, LocationNoiseSource } from '~/types/auction'
 import type { LocationContextEnhancer } from '~/server/tasks/external-enrichment'
+import { maxOf } from '~/lib/array-math'
 import { EXTERNAL_DATA_SOURCES } from './sources'
 
 export interface EeaNoiseLayerConfig {
@@ -181,7 +182,7 @@ function strongestRasterValue(response: ArcGisIdentifyResponse): number | null {
     ...(response.properties?.Values ?? []),
   ].map(parseRasterValue).filter((value): value is number => value != null)
   if (values.length === 0) return null
-  return Math.max(...values)
+  return maxOf(values)
 }
 
 function parseRasterValue(value: string | number | null | undefined): number | null {

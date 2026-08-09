@@ -99,6 +99,24 @@ describe('distanceToPolygonMeters', () => {
     expect(distanceToPolygonMeters({ lat: 52.535, lng: 13.4 }, polygon)).toBeGreaterThan(500)
     expect(distanceToPolygonMeters({ lat: 52.535, lng: 13.4 }, polygon)).toBeLessThan(600)
   })
+
+  it('does not blow the call stack on a ring with tens of thousands of vertices', () => {
+    // Real burnt-area/flood-risk polygons (e.g. Copernicus EFFIS) can have
+    // rings this large. Math.min(...array) would throw "Maximum call stack
+    // size exceeded" here — regression test for that.
+    const vertexCount = 100_000
+    const ring: GeoJsonPolygonCoordinates[number] = Array.from({ length: vertexCount }, (_, i) => {
+      const angle = (i / vertexCount) * 2 * Math.PI
+      return [13.4 + 0.01 * Math.cos(angle), 52.52 + 0.01 * Math.sin(angle)] as [number, number]
+    })
+    ring.push(ring[0]!)
+    const polygon: GeoJsonPolygonCoordinates = [ring]
+
+    expect(() => distanceToPolygonMeters({ lat: 52.6, lng: 13.4 }, polygon)).not.toThrow()
+    const distance = distanceToPolygonMeters({ lat: 52.6, lng: 13.4 }, polygon)
+    expect(Number.isFinite(distance)).toBe(true)
+    expect(distance).toBeGreaterThan(0)
+  })
 })
 
 describe('buildFloodHazardAssessment', () => {

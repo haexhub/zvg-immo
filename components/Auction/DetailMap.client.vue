@@ -18,6 +18,7 @@ import type BaseLayer from 'ol/layer/Base'
 import type { TileCoord } from 'ol/tilecoord'
 import { OSM_ATTRIBUTION, mapTilerSatelliteStyleUrl, mapTilerStreetsStyleUrl } from '~/lib/map-tiles'
 import { mapPinDataUri, MAP_PIN_ANCHOR } from '~/lib/mapPinIcon'
+import { minOf } from '~/lib/array-math'
 import { useMapTilerVectorBaseLayer } from '~/composables/useMapTilerVectorBaseLayer'
 import type { HazardAssessment, LocationContext, LocationMapFeature } from '~/types/auction'
 
@@ -232,7 +233,7 @@ function odorOverlayEntry(entries: OverlayEntry[]): void {
     environment.nearestHeavyIndustryDistanceMeters,
     environment.nearestIndustrialDistanceMeters,
   ].filter((distance): distance is number => distance != null)
-  const nearest = signals.length ? Math.min(...signals) : null
+  const nearest = signals.length ? minOf(signals) : null
   if (nearest == null || nearest > 5_000) return
   const radius = Math.min(Math.max(nearest, 300), 5_000)
   const label = t('objektDetail.mapLayerOdorSignals')

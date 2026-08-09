@@ -1,5 +1,6 @@
 import { load } from 'cheerio'
 import type { Auction } from '~/types/auction'
+import { maxOf } from '~/lib/array-math'
 import { PL_BASE, LIST_PATH, LIST_PAGE_SIZE, COUNTRY, UA } from './constants'
 import { parsePlDate, clean } from './text'
 
@@ -97,7 +98,7 @@ export function parseListHtml(html: string, platformId: string): ParseResult {
     .map((_i, el) => parseInt($(el).text().trim(), 10))
     .get()
     .filter((n) => !isNaN(n))
-  const lastPage = pageNumbers.length ? Math.max(...pageNumbers) : null
+  const lastPage = pageNumbers.length ? maxOf(pageNumbers) : null
   const activeRaw = parseInt($('.v-pagination__item--is-active').first().text().trim(), 10)
   const currentPage = isNaN(activeRaw) ? null : activeRaw
 
