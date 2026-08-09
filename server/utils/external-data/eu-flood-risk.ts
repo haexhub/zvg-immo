@@ -253,7 +253,19 @@ export function distanceToPolygonMeters(point: Point, polygon: GeoJsonPolygonCoo
   if (pointInPolygon(point, polygon)) return 0
   const rings = polygon.filter((ring) => ring.length >= 2)
   if (rings.length === 0) return Number.POSITIVE_INFINITY
-  return Math.min(...rings.map((ring) => distanceToRingMeters(point, ring)))
+  return minOf(rings.map((ring) => distanceToRingMeters(point, ring)))
+}
+
+// Math.min(...values) spreads the array as call arguments — real burnt-area/
+// flood-risk ring geometries can have tens of thousands of vertices, which
+// blows V8's argument-count limit ("Maximum call stack size exceeded").
+// A plain loop has no such limit.
+function minOf(values: number[]): number {
+  let min = Number.POSITIVE_INFINITY
+  for (const value of values) {
+    if (value < min) min = value
+  }
+  return min
 }
 
 function assessment(
@@ -369,7 +381,7 @@ function zoneContainsPoint(zone: FloodRiskZone, point: Point): boolean {
 }
 
 function distanceToZoneMeters(point: Point, zone: FloodRiskZone): number {
-  return Math.min(...zone.polygons.map((polygon) => distanceToPolygonMeters(point, polygon)))
+  return minOf(zone.polygons.map((polygon) => distanceToPolygonMeters(point, polygon)))
 }
 
 function ringContainsPoint(point: Point, ring: GeoJsonLinearRing): boolean {
@@ -392,7 +404,7 @@ function ringContainsPoint(point: Point, ring: GeoJsonLinearRing): boolean {
 function distanceToRingMeters(point: Point, ring: GeoJsonLinearRing): number {
   const segments = normalizedRingSegments(ring)
   if (segments.length === 0) return Number.POSITIVE_INFINITY
-  return Math.min(...segments.map(([a, b]) => distanceToSegmentMeters(point, a, b)))
+  return minOf(segments.map(([a, b]) => distanceToSegmentMeters(point, a, b)))
 }
 
 function normalizedRingSegments(ring: GeoJsonLinearRing): Array<[Point, Point]> {
