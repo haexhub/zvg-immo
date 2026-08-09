@@ -19,6 +19,7 @@ Rules:
 | SettingsGeoMetricsCard | GET/POST `/api/settings/geo-metrics` | detached, **nur ganz Europa** (kein Pro-Land-Scoping) |
 | SettingsExternalDataCard | GET `/api/settings/external-data/sources`, PUT `.../sources/[id]`, POST `.../enrichment` | Enrichment detached; die drei Cache-Import-Buttons (`eu-flood-risk-cache`, `copernicus-effis-cache`, `fr-dvf-cache`) sind sync/awaited |
 | SettingsReprocessCard | POST `/api/settings/reprocess` | detached |
+| SettingsLlmKillSwitchCard | GET/PUT `/api/settings/llm-kill-switch` | sync, wirkt sofort ohne Redeploy; blockt extraction/translation/insights/admin-trial-run, indem die geteilten Config-Resolver (`readExtractionLlmConfigChain`, `resolveActiveLlmConfigChain`, `resolveLlmConfigForProfile`, Insight-Endpoint) auf "nicht konfiguriert" zurückfallen — bereits eingereichte Batch-Jobs werden weiter abgerufen |
 | SettingsLlmConfigCard | GET/PUT `/api/settings/llm-config` | sync |
 | SettingsLlmProfilesCard | GET/PUT `/api/settings/llm-profiles`, DELETE `.../llm-profiles/[id]`, POST `/api/settings/llm-provider/models` | sync |
 | SettingsLlmAssignmentsCard | GET `/api/settings/llm-profiles`, PUT `/api/settings/llm-assignments` | sync |

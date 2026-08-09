@@ -4,18 +4,21 @@ import {
   DEFAULT_ENABLED_COUNTRIES,
   DEFAULT_HIDE_RULES_ONLY_AUCTIONS,
   DEFAULT_LLM_EXECUTION_MODE,
+  DEFAULT_LLM_KILL_SWITCH,
   DEFAULT_LLM_MAX_TOKENS,
   clearLlmProviderOverride,
   deleteLlmProviderProfile,
   getAllLlmMaxTokens,
   getEnabledCountries,
   getHideRulesOnlyAuctions,
+  getLlmKillSwitch,
   getLlmMaxTokens,
   getLlmProviderProfileSettings,
   getLlmProviderOverride,
   getLlmProviderOverrideChain,
   setEnabledCountries,
   setHideRulesOnlyAuctions,
+  setLlmKillSwitch,
   setLlmMaxTokens,
   getLlmExtractionChainStrategy,
   setLlmProviderAssignments,
@@ -911,5 +914,18 @@ describe('getHideRulesOnlyAuctions', () => {
     const db = makeFakePool() as unknown as Pool
     await setHideRulesOnlyAuctions(db, false)
     expect(await getHideRulesOnlyAuctions(db)).toBe(false)
+  })
+})
+
+describe('getLlmKillSwitch', () => {
+  it('defaults to false when no row exists', async () => {
+    const db = makeFakePool() as unknown as Pool
+    expect(await getLlmKillSwitch(db)).toBe(DEFAULT_LLM_KILL_SWITCH)
+  })
+
+  it('returns a previously written value', async () => {
+    const db = makeFakePool() as unknown as Pool
+    await setLlmKillSwitch(db, true)
+    expect(await getLlmKillSwitch(db)).toBe(true)
   })
 })

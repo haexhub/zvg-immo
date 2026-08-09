@@ -16,12 +16,13 @@ import { applyAuctionExtraction } from './auction-extraction'
 import { writeAuctionDetails } from './auction-details'
 import { reprocessAuction } from '../tasks/reprocess'
 import { resolveLlmConfigForProfile } from './extract/llm-task-config'
+import { getLlmKillSwitch } from './app-settings'
 import { recordTaskRunError } from './task-run-errors'
 import type { Auction } from '~/types/auction'
 
 export type AdminTrialReprocessOutcome =
   | { ok: true }
-  | { ok: false; reason: 'unknown_profile' | 'not_found' }
+  | { ok: false; reason: 'unknown_profile' | 'not_found' | 'llm_disabled' }
 
 /** Resolves the profile and confirms the identity exists — fast, synchronous
  *  checks the caller can 400 on before returning `{started: true}` and
@@ -33,6 +34,7 @@ export async function validateAdminTrialReprocess(
 ): Promise<AdminTrialReprocessOutcome> {
   const db = getPool()
   if (!db) return { ok: false, reason: 'not_found' }
+  if (await getLlmKillSwitch(db).catch(() => false)) return { ok: false, reason: 'llm_disabled' }
   const config = await resolveLlmConfigForProfile(db, profileId)
   if (!config) return { ok: false, reason: 'unknown_profile' }
   const record = await readAuctionRecord(platform, externalId)

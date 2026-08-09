@@ -27,6 +27,9 @@ export default defineEventHandler(async (event) => {
     if (outcome.reason === 'unknown_profile') {
       throw createError({ statusCode: 400, statusMessage: `Unbekanntes LLM-Profil: ${profileId}` })
     }
+    if (outcome.reason === 'llm_disabled') {
+      throw createError({ statusCode: 503, statusMessage: 'LLM-Kette ist per Kill-Switch deaktiviert.' })
+    }
     throw createError({ statusCode: 404, statusMessage: 'auction not found' })
   }
 

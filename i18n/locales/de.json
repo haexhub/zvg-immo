@@ -194,6 +194,16 @@
       "save": "Speichern",
       "cancel": "Abbrechen"
     },
+    "llmKillSwitch": {
+      "title": "Not-Aus: LLM-Kette",
+      "description": "Stoppt Extraktion, Übersetzung, Insights, Admin-Testläufe und neue Batch-Submissions app-weit sofort — ohne Redeploy. Bereits eingereichte Batch-Jobs werden weiterhin abgerufen, es werden nur keine neuen Anfragen mehr gestellt.",
+      "label": "LLM-Kette deaktivieren",
+      "statusOn": "Gestoppt",
+      "statusOff": "Aktiv",
+      "loadError": "Status konnte nicht geladen werden.",
+      "saveError": "Speichern fehlgeschlagen.",
+      "retry": "Erneut versuchen"
+    },
     "llm": {
       "title": "LLM-Konfiguration",
       "description": "Max-Output-Tokens-Grenze pro Anwendungsfall — wirkt sofort für den nächsten LLM-Call, kein Redeploy nötig.",

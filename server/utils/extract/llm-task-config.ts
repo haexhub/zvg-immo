@@ -5,6 +5,7 @@ import {
   DEFAULT_LLM_CHAIN_STRATEGY,
   DEFAULT_LLM_MAX_TOKENS,
   getLlmExtractionChainStrategy,
+  getLlmKillSwitch,
   getLlmMaxTokens,
   getLlmProviderOverrideChain,
   getLlmProviderProfiles,
@@ -24,10 +25,11 @@ export async function readExtractionLlmConfig(): Promise<LlmConfig | null> {
  *  (no DB, no override, no ENV default); a single non-chain override/ENV
  *  default surfaces as a one-element array, same as before. */
 export async function readExtractionLlmConfigChain(): Promise<LlmConfig[]> {
+  const db = getPool()
+  if (db && (await getLlmKillSwitch(db).catch(() => false))) return []
   const c = useRuntimeConfig().extractLlm as
     | { provider?: string; baseUrl?: string; apiKey?: string; model?: string }
     | undefined
-  const db = getPool()
   const maxTokens = db
     ? await getLlmMaxTokens(db, 'extraction').catch(() => DEFAULT_LLM_MAX_TOKENS.extraction)
     : DEFAULT_LLM_MAX_TOKENS.extraction
@@ -43,6 +45,7 @@ export async function readExtractionLlmConfigChain(): Promise<LlmConfig[]> {
  *  — no chain, no fallback, so the measurement is of exactly that model. Null
  *  when the id doesn't match a configured profile. */
 export async function resolveLlmConfigForProfile(db: Pool, profileId: string): Promise<LlmConfig | null> {
+  if (await getLlmKillSwitch(db).catch(() => false)) return null
   const profiles = await getLlmProviderProfiles(db)
   const profile = profiles.find((candidate) => candidate.id === profileId)
   if (!profile) return null
