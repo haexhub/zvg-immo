@@ -445,6 +445,7 @@
       "itemsTotal": "{total} Requests",
       "submittedAt": "Eingereicht: {at}",
       "updatedAt": "Aktualisiert: {at}",
+      "groupCount": "{count}× identische Fehler",
       "status": {
         "pending": "Offen",
         "succeeded": "Erfolgreich",

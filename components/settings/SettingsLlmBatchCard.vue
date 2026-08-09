@@ -7,6 +7,7 @@ const {
   llmBatchJobsPending,
   llmBatchJobsError,
   llmBatchBacklog,
+  llmBatchRecentGroups,
   formatBatchDate,
   loadLlmBatchJobs,
 } = useSettingsTaskOverview()
@@ -151,32 +152,65 @@ onMounted(loadLlmBatchJobs)
 
       <div v-if="llmBatchJobs?.recentJobs.length" class="space-y-3">
         <div class="text-sm font-medium">{{ $t('settings.llmBatch.historyHeading') }}</div>
-        <div v-for="job in llmBatchJobs.recentJobs" :key="`recent:${job.jobName}`" class="border rounded-md p-3 space-y-2">
-          <div class="flex flex-wrap items-start justify-between gap-3">
-            <div class="min-w-0">
-              <div class="font-mono text-xs break-all">{{ job.jobName }}</div>
-              <div class="mt-1 flex flex-wrap gap-2">
-                <Badge variant="secondary">{{ job.provider }}</Badge>
-                <Badge variant="outline">{{ $t(`settings.llmBatch.source.${job.source}`) }}</Badge>
-                <Badge variant="outline">{{ $t(`settings.llmBatch.status.${job.status}`) }}</Badge>
+        <Accordion type="multiple" class="rounded-md border">
+          <AccordionItem v-for="group in llmBatchRecentGroups" :key="group.key" :value="group.key" class="px-3">
+            <AccordionTrigger class="py-3 hover:no-underline">
+              <div class="flex flex-1 flex-wrap items-center justify-between gap-3 pr-2 text-left">
+                <div class="flex min-w-0 items-center gap-2">
+                  <span v-if="group.jobs.length > 1" class="text-sm font-medium tabular-nums">
+                    {{ $t('settings.llmBatch.groupCount', { count: group.jobs.length }) }}
+                  </span>
+                  <span v-else class="font-mono text-xs break-all">{{ group.newestJob.jobName }}</span>
+                  <Badge variant="secondary">{{ group.provider }}</Badge>
+                  <Badge variant="outline">{{ $t(`settings.llmBatch.source.${group.source}`) }}</Badge>
+                  <Badge variant="outline">{{ $t(`settings.llmBatch.status.${group.status}`) }}</Badge>
+                </div>
+                <div class="shrink-0 text-right text-sm">
+                  <template v-if="group.jobs.length > 1">
+                    <div class="font-semibold tabular-nums">
+                      {{ $t('settings.llmBatch.itemsTotal', { total: group.totalItems }) }}
+                    </div>
+                    <div class="text-xs text-muted-foreground">
+                      {{ formatBatchDate(group.oldestJob.updatedAt) }} – {{ formatBatchDate(group.newestJob.updatedAt) }}
+                    </div>
+                  </template>
+                  <template v-else>
+                    <div class="font-semibold tabular-nums">
+                      {{ $t('settings.llmBatch.itemsTotal', { total: group.newestJob.itemCount }) }}
+                    </div>
+                    <div class="text-xs text-muted-foreground">
+                      {{ $t('settings.llmBatch.updatedAt', { at: formatBatchDate(group.newestJob.updatedAt) }) }}
+                    </div>
+                  </template>
+                </div>
               </div>
-            </div>
-            <div class="text-right text-sm">
-              <div class="font-semibold tabular-nums">
-                {{ $t('settings.llmBatch.itemsTotal', { total: job.itemCount }) }}
+            </AccordionTrigger>
+            <SettingsMessageDetails v-if="group.errorMessage" :text="group.errorMessage" variant="error" class="mb-3" />
+            <AccordionContent>
+              <div v-if="group.jobs.length > 1" class="space-y-2">
+                <div v-for="job in group.jobs" :key="`recent:${job.jobName}`" class="rounded border p-2 space-y-2">
+                  <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div class="min-w-0 font-mono text-xs break-all">{{ job.jobName }}</div>
+                    <div class="shrink-0 text-right text-sm">
+                      <div class="font-semibold tabular-nums">{{ $t('settings.llmBatch.itemsTotal', { total: job.itemCount }) }}</div>
+                      <div class="text-xs text-muted-foreground">{{ $t('settings.llmBatch.updatedAt', { at: formatBatchDate(job.updatedAt) }) }}</div>
+                    </div>
+                  </div>
+                  <div v-if="job.requestKeys.length" class="max-h-28 overflow-auto rounded border bg-muted/30 p-2">
+                    <div v-for="key in job.requestKeys" :key="`recent:${job.jobName}:${key}`" class="font-mono text-xs leading-6">
+                      {{ key }}
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div class="text-xs text-muted-foreground">
-                {{ $t('settings.llmBatch.updatedAt', { at: formatBatchDate(job.updatedAt) }) }}
+              <div v-else-if="group.newestJob.requestKeys.length" class="max-h-28 overflow-auto rounded border bg-muted/30 p-2">
+                <div v-for="key in group.newestJob.requestKeys" :key="`recent:${group.newestJob.jobName}:${key}`" class="font-mono text-xs leading-6">
+                  {{ key }}
+                </div>
               </div>
-            </div>
-          </div>
-          <SettingsMessageDetails v-if="job.errorMessage" :text="job.errorMessage" variant="error" />
-          <div v-if="job.requestKeys.length" class="max-h-28 overflow-auto rounded border bg-muted/30 p-2">
-            <div v-for="key in job.requestKeys" :key="`recent:${job.jobName}:${key}`" class="font-mono text-xs leading-6">
-              {{ key }}
-            </div>
-          </div>
-        </div>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
       </div>
     </CardContent>
   </Card>

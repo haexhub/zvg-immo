@@ -445,6 +445,7 @@
       "itemsTotal": "{total} requests",
       "submittedAt": "Submitted: {at}",
       "updatedAt": "Updated: {at}",
+      "groupCount": "{count}× identical failures",
       "status": {
         "pending": "Open",
         "succeeded": "Succeeded",
