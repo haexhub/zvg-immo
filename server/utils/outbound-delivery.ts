@@ -239,17 +239,31 @@ async function markDeliverySent(db: Pool, delivery: ClaimedDelivery): Promise<vo
 async function markDeliveryFailure(db: Pool, delivery: ClaimedDelivery, err: unknown): Promise<void> {
   const terminal = delivery.attempts >= MAX_DELIVERY_ATTEMPTS
   const status: DeliveryStatus = terminal ? 'failed' : 'pending'
-  await db.query(
-    `UPDATE outbound_deliveries
-     SET status = $2, locked_at = NULL, last_error_class = $3,
-         next_attempt_at = CASE WHEN $2 = 'pending' THEN $4 ELSE next_attempt_at END
-     WHERE id = $1`,
-    [delivery.id, status, classifyDeliveryError(err), deliveryRetryAt(delivery.attempts)],
-  )
-  if (delivery.kind === 'lawyer_inquiry' && terminal) {
-    await db.query(`UPDATE lawyer_inquiries SET delivery_status = 'failed' WHERE id = $1`, [
-      (delivery.payload as LawyerInquiryPayload).inquiryId,
-    ])
+  // Both writes must land together: a crash between them would otherwise
+  // leave outbound_deliveries terminally 'failed' while lawyer_inquiries
+  // still reports 'pending' forever (see markDeliverySent for the same
+  // pattern on the success path).
+  const client = await db.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query(
+      `UPDATE outbound_deliveries
+       SET status = $2, locked_at = NULL, last_error_class = $3,
+           next_attempt_at = CASE WHEN $2 = 'pending' THEN $4 ELSE next_attempt_at END
+       WHERE id = $1`,
+      [delivery.id, status, classifyDeliveryError(err), deliveryRetryAt(delivery.attempts)],
+    )
+    if (delivery.kind === 'lawyer_inquiry' && terminal) {
+      await client.query(`UPDATE lawyer_inquiries SET delivery_status = 'failed' WHERE id = $1`, [
+        (delivery.payload as LawyerInquiryPayload).inquiryId,
+      ])
+    }
+    await client.query('COMMIT')
+  } catch (transactionErr) {
+    await client.query('ROLLBACK').catch(() => {})
+    throw transactionErr
+  } finally {
+    client.release()
   }
 }
 
