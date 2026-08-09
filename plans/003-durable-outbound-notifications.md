@@ -15,6 +15,15 @@
 - **Depends on**: `plans/001-patch-dependencies-and-error-boundaries.md`
 - **Category**: bug, security, tests, migration
 - **Planned at**: commit `abceeb9`, 2026-08-09
+- **Completed by**: commit `dff7436` (`Make outbound notifications durable`, PR #389)
+
+## Completion record
+
+Implemented and merged in PR #389: a private, at-least-once delivery outbox
+with a scheduled/boot-safe worker; transactionally idempotent lawyer inquiries;
+message and rate bounds; server-only canonical mail origins; and settings
+visibility for terminal delivery failures. The plan's remaining text is kept as
+the implementation record.
 
 ## Why this matters
 

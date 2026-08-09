@@ -15,6 +15,13 @@
 - **Depends on**: `plans/001-patch-dependencies-and-error-boundaries.md`
 - **Category**: bug, tech-debt, tests
 - **Planned at**: commit `abceeb9`, 2026-08-09
+- **Completed by**: commit `03945c0` (`Unify saved search filter contract`, PR #388)
+
+## Completion record
+
+Implemented and merged in PR #388. The shared filter contract now covers the
+saved-search, discovery and alert paths. This plan is retained as a historical
+implementation record; do not reopen it while working on subsequent plans.
 
 ## Why this matters
 

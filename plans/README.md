@@ -10,8 +10,8 @@ progress work in the user worktree.
 | Plan | Title | Priority | Effort | Depends on | Status |
 |---|---|---|---|---|---|
 | 001 | Patch vulnerable runtime dependencies and public error boundaries | P1 | S | — | DONE (`8d134b3`, PR #385) |
-| 002 | Establish one saved-search filter contract | P1 | L | 001 | DONE |
-| 003 | Make outbound notifications durable and abuse-resistant | P1 | L | 001 | DONE (2026-08-09, durable outbox + idempotency) |
+| 002 | Establish one saved-search filter contract | P1 | L | 001 | DONE (`03945c0`, PR #388) |
+| 003 | Make outbound notifications durable and abuse-resistant | P1 | L | 001 | DONE (`dff7436`, PR #389) |
 | 004 | Make public data reads bounded and cache-only | P2 | L | 002 | DONE (2026-08-09; bounded v1 reads and cache-only map polling) |
 | 005 | Split oversized production modules along domain boundaries | P2 | L | 002, 003, 004 | TODO |
 
@@ -22,10 +22,10 @@ Status values: TODO | IN PROGRESS | DONE | BLOCKED | REJECTED.
 - Plan 001 was completed in commit `8d134b3` (PR #385): compatible Nuxt/
   Undici upgrades, self-contained Nuxt preparation for lint/typecheck, and
   public error-boundary tests are in `main`.
-- Plan 002 first pins the query/filter contract used by alerts, search and the
-  later data/read changes.
-- Plan 003 changes durable data and mail semantics; it must not be hidden in a
-  size-only refactor.
+- Plan 002 pinned the query/filter contract used by alerts, search and the
+  later data/read changes in PR #388.
+- Plan 003 made data and mail semantics durable in PR #389; it remains a
+  dependency of the later size-only refactor.
 - Plan 005 is last: it moves tested behaviour but deliberately does not change
   public contracts or product semantics.
 
