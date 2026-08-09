@@ -38,6 +38,7 @@ export interface LlmBatchJobsOverview {
   totalRequests: number
   backlog: {
     readyRequests: number
+    neverExtracted: number
     lowConfidenceRules: number
     missingLlmFields: number
     orphanedBatchMarkers: number
@@ -45,6 +46,11 @@ export interface LlmBatchJobsOverview {
     sampleRequestKeys: string[]
     orphanedRequestKeys: string[]
   }
+  // Same readyRequests/failedLimit split as `backlog`, grouped by
+  // auctions.country — lets /settings offer a per-country "process now"
+  // trigger instead of only a global count. Countries with neither an open
+  // nor a locked-out item are omitted.
+  backlogByCountry: Record<string, { readyRequests: number; failedLimit: number }>
   jobs: LlmBatchJobOverviewItem[]
   recentJobs: LlmBatchJobOverviewItem[]
   // Keyed by LlmProvider ('gemini-native' | 'openai-compatible' | 'claude-proxy'
@@ -145,12 +151,22 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
   const pendingJobNames = new Set(jobs.map((job) => job.jobName))
   const knownRecentJobNames = new Set(recentJobs.map((job) => job.jobName))
   let readyRequests = 0
+  let neverExtracted = 0
   let lowConfidenceRules = 0
   let missingLlmFields = 0
   let orphanedBatchMarkers = 0
   let failedLimit = 0
   const sampleRequestKeys: string[] = []
   const orphanedRequestKeys: string[] = []
+  const backlogByCountry = new Map<string, { readyRequests: number; failedLimit: number }>()
+  function countryBucket(country: string): { readyRequests: number; failedLimit: number } {
+    let bucket = backlogByCountry.get(country)
+    if (!bucket) {
+      bucket = { readyRequests: 0, failedLimit: 0 }
+      backlogByCountry.set(country, bucket)
+    }
+    return bucket
+  }
 
   for (const { auction } of records) {
     const entry = auction.extraction
@@ -166,18 +182,25 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
       }
       continue
     }
-    if (!entry) continue
 
-    const lowRules = entry.source === 'rules' && entry.confidence === 'low'
-    const missingFields = hasMissingLlmFields(entry)
+    // No auction_details row at all — a brand-new crawl this task's cron
+    // hasn't reached yet, never run through even the rules-only fallback.
+    // Previously fell through the `!entry` guard below and never counted
+    // toward readyRequests, silently undercounting the true open backlog.
+    const isUnextracted = !entry
+    const lowRules = !isUnextracted && entry.source === 'rules' && entry.confidence === 'low'
+    const missingFields = !isUnextracted && hasMissingLlmFields(entry)
+    if (isUnextracted) neverExtracted++
     if (lowRules) lowConfidenceRules++
     if (missingFields) missingLlmFields++
     if ((state?.llmFailures ?? 0) >= MAX_LLM_FAILURES) {
       failedLimit++
+      countryBucket(auction.country).failedLimit++
       continue
     }
-    if (lowRules || missingFields) {
+    if (isUnextracted || lowRules || missingFields) {
       readyRequests++
+      countryBucket(auction.country).readyRequests++
       if (sampleRequestKeys.length < MAX_KEYS_PER_GROUP) sampleRequestKeys.push(key)
     }
   }
@@ -209,6 +232,7 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
     totalRequests: overviewJobs.reduce((sum, job) => sum + job.pendingCount, 0),
     backlog: {
       readyRequests,
+      neverExtracted,
       lowConfidenceRules,
       missingLlmFields,
       orphanedBatchMarkers,
@@ -216,6 +240,7 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
       sampleRequestKeys: sampleRequestKeys.sort(),
       orphanedRequestKeys: orphanedRequestKeys.sort(),
     },
+    backlogByCountry: Object.fromEntries(backlogByCountry),
     jobs: overviewJobs,
     recentJobs: recentJobs.map(mapJob),
     capabilities: effectiveCapabilities,
