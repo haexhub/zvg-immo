@@ -20,6 +20,7 @@ export interface AuctionFetchState {
   llmLastAttemptedAt: string | null
   photosCheckedAt: string | null
   photoFailures: number
+  photoLastAttemptedAt: string | null
   photoPipelineVersion: number | null
   updatedAt: string
 }
@@ -41,6 +42,7 @@ interface AuctionFetchStateRow {
   llm_last_attempted_at: Date | string | null
   photos_checked_at: Date | string | null
   photo_failures: number
+  photo_last_attempted_at: Date | string | null
   photo_pipeline_version: number | null
   updated_at: Date | string
 }
@@ -68,6 +70,7 @@ function fromRow(row: AuctionFetchStateRow): AuctionFetchState {
     llmLastAttemptedAt: iso(row.llm_last_attempted_at),
     photosCheckedAt: iso(row.photos_checked_at),
     photoFailures: row.photo_failures,
+    photoLastAttemptedAt: iso(row.photo_last_attempted_at),
     photoPipelineVersion: row.photo_pipeline_version,
     updatedAt: iso(row.updated_at)!,
   }
@@ -160,6 +163,13 @@ export interface PhotoPipelineState {
   photosCheckedAt?: string | null
   photoFailures?: number
   photoPipelineVersion?: number | null
+  /** Set only when an actual photo-pipeline attempt was made this write
+   *  (whether it succeeded or failed) — as opposed to a write that leaves the
+   *  prior failure count unchanged. enrich.ts's eligibility check reads this
+   *  back to let a locked-out auction (photoFailures >= MAX_PHOTO_FAILURES)
+   *  retry again after a cooldown instead of being excluded forever, mirroring
+   *  llmAttempted/LLM_FAILURE_RETRY_COOLDOWN_HOURS. */
+  photoAttempted?: boolean
 }
 
 /** Updates only photo-pipeline columns, preserving concurrent crawler/LLM writes. */
@@ -172,11 +182,12 @@ export async function writeAuctionPhotoPipelineState(
   if (!db) return
   await db.query(
     `INSERT INTO auction_fetch_state
-       (platform, external_id, photos_checked_at, photo_failures, photo_pipeline_version)
-     VALUES ($1, $2, $3, $4, $5)
+       (platform, external_id, photos_checked_at, photo_failures, photo_last_attempted_at, photo_pipeline_version)
+     VALUES ($1, $2, $3, $4, CASE WHEN $6 THEN now() ELSE NULL END, $5)
      ON CONFLICT (platform, external_id) DO UPDATE SET
        photos_checked_at = EXCLUDED.photos_checked_at,
        photo_failures = EXCLUDED.photo_failures,
+       photo_last_attempted_at = CASE WHEN $6 THEN now() ELSE auction_fetch_state.photo_last_attempted_at END,
        photo_pipeline_version = EXCLUDED.photo_pipeline_version,
        updated_at = now()`,
     [
@@ -185,6 +196,7 @@ export async function writeAuctionPhotoPipelineState(
       state.photosCheckedAt ?? null,
       state.photoFailures ?? 0,
       state.photoPipelineVersion ?? null,
+      state.photoAttempted ?? false,
     ],
   )
 }

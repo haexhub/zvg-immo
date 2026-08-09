@@ -148,6 +148,7 @@ beforeEach(() => {
     llmLastAttemptedAt: null,
     photosCheckedAt: null,
     photoFailures: 0,
+    photoLastAttemptedAt: null,
     photoPipelineVersion: null,
     updatedAt: '2026-08-02T10:00:00.000Z',
   }]]))

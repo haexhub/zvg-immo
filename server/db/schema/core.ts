@@ -308,6 +308,7 @@ export const auctionFetchState = pgTable('auction_fetch_state', {
   llmLastAttemptedAt: timestamp('llm_last_attempted_at', { withTimezone: true }),
   photosCheckedAt: timestamp('photos_checked_at', { withTimezone: true }),
   photoFailures: integer('photo_failures').notNull().default(0),
+  photoLastAttemptedAt: timestamp('photo_last_attempted_at', { withTimezone: true }),
   photoPipelineVersion: integer('photo_pipeline_version'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [

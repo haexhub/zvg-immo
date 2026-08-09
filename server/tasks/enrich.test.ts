@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Auction, CrawlResult } from '~/types/auction'
+import type { Attachment, Auction, CrawlResult } from '~/types/auction'
+import type { AuctionFetchState } from '../utils/auction-fetch-state'
 import { crawlAll } from '../crawlers/registry'
 import { ensureAuctionIdentity, upsertCurrentAuctions } from '../utils/current-auctions'
 import { writeAuctionDetails } from '../utils/auction-details'
@@ -11,6 +12,7 @@ import {
   writeAuctionPhotoPipelineState,
 } from '../utils/auction-fetch-state'
 import { downloadNativeImages } from '../utils/extract/native-images'
+import { extractDocumentPhotos } from '../utils/extract/document-images'
 import { archiveAuction } from '../utils/raw-archive'
 import { recordObservations } from '../utils/history'
 import { writeListCache } from '../utils/list-cache'
@@ -95,6 +97,31 @@ function auction(): Auction {
   }
 }
 
+function fetchState(overrides: Partial<AuctionFetchState> = {}): AuctionFetchState {
+  return {
+    platform: 'test-platform',
+    externalId: '42',
+    pdfUrl: null,
+    pdfUrlUpstream: null,
+    detailUrl: null,
+    detailUrlUpstream: null,
+    attachments: [],
+    photoUrls: ['https://example.test/front.jpg'],
+    sourceUpdatedIso: null,
+    detailFetchedAt: '2026-08-01T10:00:00.000Z',
+    llmBatchJob: null,
+    llmArtifactVersionId: null,
+    llmFailures: 0,
+    llmLastAttemptedAt: null,
+    photosCheckedAt: null,
+    photoFailures: 0,
+    photoLastAttemptedAt: null,
+    photoPipelineVersion: 1,
+    updatedAt: '2026-08-01T10:00:00.000Z',
+    ...overrides,
+  }
+}
+
 function crawlResult(auctions: Auction[]): CrawlResult & { errors: [] } {
   return {
     platform: 'all',
@@ -169,7 +196,67 @@ describe('runEnrich structured persistence', () => {
       photosCheckedAt: expect.any(String),
       photoFailures: 0,
       photoPipelineVersion: expect.any(Number),
+      photoAttempted: true,
     })
     expect(writeAuctionDetails).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries the photo pipeline past MAX_PHOTO_FAILURES once the cooldown elapsed', async () => {
+    const listing = { ...auction(), photoUrls: ['https://example.test/front.jpg'] }
+    vi.mocked(crawlAll).mockResolvedValue(crawlResult([listing]))
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([
+      ['test-platform:42', fetchState({
+        photoFailures: 3,
+        photoLastAttemptedAt: '2026-01-01T00:00:00.000Z',
+      })],
+    ]))
+
+    await runEnrich({ country: 'de' })
+
+    expect(downloadNativeImages).toHaveBeenCalled()
+  })
+
+  it('does not retry the photo pipeline within the cooldown window', async () => {
+    const listing = { ...auction(), photoUrls: ['https://example.test/front.jpg'] }
+    vi.mocked(crawlAll).mockResolvedValue(crawlResult([listing]))
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([
+      ['test-platform:42', fetchState({
+        photoFailures: 3,
+        photoLastAttemptedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+      })],
+    ]))
+
+    await runEnrich({ country: 'de' })
+
+    expect(downloadNativeImages).not.toHaveBeenCalled()
+  })
+
+  it('keeps successfully downloaded native photos when document extraction fails', async () => {
+    const attachment: Attachment = {
+      kind: 'appraisal',
+      label: 'Gutachten',
+      filename: 'gutachten.pdf',
+      sizeBytes: null,
+      fileId: 'gutachten',
+      proxyUrl: 'https://example.test/gutachten.pdf',
+    }
+    const listing = { ...auction(), photoUrls: ['https://example.test/front.jpg'], attachments: [attachment] }
+    vi.mocked(crawlAll).mockResolvedValue(crawlResult([listing]))
+    vi.mocked(downloadNativeImages).mockResolvedValue(['abc123.jpg'])
+    vi.mocked(extractDocumentPhotos).mockRejectedValue(new Error('pdfimages extraction failed'))
+
+    await runEnrich({ country: 'de' })
+
+    expect(writeAuctionDetails).toHaveBeenCalledWith(
+      listing,
+      expect.objectContaining({ photos: [expect.objectContaining({ file: 'abc123.jpg' })] }),
+      expect.anything(),
+    )
+    expect(writeAuctionPhotoPipelineState).toHaveBeenCalledWith('test-platform', '42', {
+      photosCheckedAt: null,
+      photoFailures: 1,
+      photoPipelineVersion: null,
+      photoAttempted: true,
+    })
   })
 })
