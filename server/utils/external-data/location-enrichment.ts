@@ -6,9 +6,20 @@ import { cacheKey } from '../verkehrswert-cache'
 export type LocationEnrichmentCache = Record<string, LocationEnrichment>
 
 let cachePromise: Promise<LocationEnrichmentCache> | null = null
+const detailCache = new Map<string, LocationEnrichment>()
+const MAX_DETAIL_CACHE_ENTRIES = 500
+
+function cacheDetail(key: string, enrichment: LocationEnrichment): void {
+  // Map insertion order gives us a tiny bounded LRU without coupling detail
+  // reads to the batch cache (which deliberately materializes the whole table).
+  detailCache.delete(key)
+  detailCache.set(key, enrichment)
+  if (detailCache.size > MAX_DETAIL_CACHE_ENTRIES) detailCache.delete(detailCache.keys().next().value!)
+}
 
 export function invalidateLocationEnrichmentCache(): void {
   cachePromise = null
+  detailCache.clear()
 }
 
 export async function readLocationEnrichmentCache(): Promise<LocationEnrichmentCache> {
@@ -26,28 +37,56 @@ export async function readLocationEnrichment(
   platform: string,
   externalId: string,
 ): Promise<LocationEnrichment | null> {
-  const cache = await readLocationEnrichmentCache()
-  return cache[cacheKey(platform, externalId)] ?? null
+  const key = cacheKey(platform, externalId)
+  const cached = detailCache.get(key)
+  if (cached) {
+    cacheDetail(key, cached)
+    return cached
+  }
+  const db = getPool()
+  if (!db) return null
+  try {
+    const { rows } = await db.query<LocationEnrichmentRow>(
+      `SELECT platform, external_id, enrichment, checked_at
+       FROM location_enrichment
+       WHERE platform = $1 AND external_id = $2`,
+      [platform, externalId],
+    )
+    const row = rows[0]
+    if (!row) return null
+    const enrichment = fromRow(row)
+    cacheDetail(key, enrichment)
+    return enrichment
+  } catch (err) {
+    console.warn(`[location-enrichment] detail read failed: ${(err as Error).message}`)
+    return null
+  }
+}
+
+interface LocationEnrichmentRow {
+  platform: string
+  external_id: string
+  enrichment: LocationEnrichment
+  checked_at: string | Date
+}
+
+function fromRow(row: LocationEnrichmentRow): LocationEnrichment {
+  return {
+    ...row.enrichment,
+    platform: row.platform,
+    externalId: row.external_id,
+    checkedAt: normalizeIso(row.enrichment.checkedAt ?? row.checked_at),
+  }
 }
 
 async function loadLocationEnrichmentCache(): Promise<LocationEnrichmentCache> {
   const db = getPool()
   if (!db) return {}
-  const { rows } = await db.query<{
-    platform: string
-    external_id: string
-    enrichment: LocationEnrichment
-    checked_at: string | Date
-  }>('SELECT platform, external_id, enrichment, checked_at FROM location_enrichment')
+  const { rows } = await db.query<LocationEnrichmentRow>('SELECT platform, external_id, enrichment, checked_at FROM location_enrichment')
   const cache: LocationEnrichmentCache = {}
   for (const row of rows) {
     const key = cacheKey(row.platform, row.external_id)
-    cache[key] = {
-      ...row.enrichment,
-      platform: row.platform,
-      externalId: row.external_id,
-      checkedAt: normalizeIso(row.enrichment.checkedAt ?? row.checked_at),
-    }
+    cache[key] = fromRow(row)
   }
   return cache
 }
@@ -57,6 +96,7 @@ export async function writeLocationEnrichmentCache(
 ): Promise<boolean> {
   const cache = await readLocationEnrichmentCache()
   Object.assign(cache, entries)
+  for (const [key, entry] of Object.entries(entries)) cacheDetail(key, entry)
   return writeLocationEnrichmentCacheToDb(entries)
 }
 

@@ -61,3 +61,19 @@ mit vorausberechneten Geo-/OSM-Metriken (`nearSea`, `nearLake`, `nearRiver`,
 Crawl-Batches nicht korrekt evaluierbar und werden beim Speichern bzw.
 Aktivieren eines Alerts mit 400 abgelehnt. Alte betroffene Subscriptions werden
 beim Matching übersprungen und protokolliert, nie stillschweigend gelockert.
+
+## Öffentliche Daten-Lesepfade
+
+`/api/data/v1/auctions` liest über `server/utils/data-api-auction.ts` eine
+schmale `PublicAuction`-Projektion mit parameterisierten Filtern, stabilem
+`platform/external_id`-Sort, `COUNT(*)`, `LIMIT` und `OFFSET`. Die Collection
+zeigt ausschließlich aktuelle (nicht abgelaufene) Auktionen; der einzelne
+Detail-Endpunkt bleibt ein historischer Permalink. `auction-record.ts` bleibt
+der separate, breite interne Detail-Leser.
+
+`/api/auctions-geo` ist auch bei dem Legacy-Parameter `fetch=1` cache-only;
+fehlende Geocodes erzeugt ausschließlich der exklusive geplante/Admin-Task.
+`pages/search.vue` pollt nur den Cache-Fortschritt und bricht einen laufenden
+Poll beim Stoppen ab. Detail-Reads für `location_enrichment` sind per
+`platform` und `external_id` abgefragt und haben einen eigenen invalidierbaren
+Key-Cache; die Volltabellen-Cache-Funktion bleibt allein für Batch-Enrichment.

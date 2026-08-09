@@ -125,9 +125,9 @@ describe('/api/auctions-geo', () => {
     })
   })
 
-  it('never trusts a stored (0,0) as a real position and re-geocodes from the address', async () => {
+  it('never trusts a stored (0,0) as a real position, but keeps public fetch=1 cache-only', async () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
-    vi.stubGlobal('getQuery', () => ({ country: 'de', fetch: '0' }))
+    vi.stubGlobal('getQuery', () => ({ country: 'de', fetch: '1' }))
     vi.stubGlobal('setResponseHeader', vi.fn())
     vi.stubGlobal('createError', (input: object) => Object.assign(new Error('api error'), input))
     const query = vi.fn().mockResolvedValue({
@@ -157,6 +157,7 @@ describe('/api/auctions-geo', () => {
       unresolvableCount: 0,
       auctions: [{ platform: 'zvg-portal', externalId: '44', lat: 48.137, lng: 11.575 }],
     })
+    expect(geocodeAddress).toHaveBeenCalledWith('Musterstraße 1', 'de', { fetchMissing: false })
   })
 
   it('selects lat/lng from auctions ("a"), not the versioned auction_details ("d")', async () => {

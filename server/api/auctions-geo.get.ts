@@ -75,7 +75,10 @@ export default defineEventHandler(async (event): Promise<GeoCrawlResult> => {
     throw err
   }
 
-  const fetchMissing = query.fetch === '1'
+  // This public endpoint only observes the disk cache. Cache misses are
+  // resolved by the exclusive scheduled/admin geocode task, never by map
+  // polling (even if an old client still sends fetch=1).
+  const fetchMissing = false
   const markers: Array<GeoAuction | undefined> = new Array(rows.length)
   let unresolvableCount = 0
   // Distinct from auctions.length: rows placed at their country's centroid

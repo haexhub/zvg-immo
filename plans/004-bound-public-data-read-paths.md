@@ -14,6 +14,7 @@
 - **Depends on**: `plans/002-unify-search-filter-contract.md`
 - **Category**: bug, perf, tests
 - **Planned at**: commit `abceeb9`, 2026-08-09
+- **Completed**: 2026-08-09 — verified on an isolated worktree/branch
 
 ## Why this matters
 
@@ -103,11 +104,11 @@ the full-table query.
 
 ## Done criteria
 
-- [ ] Data-v1 collection work is bounded by page size, not total auctions.
-- [ ] The current-auction contract excludes expired listings consistently.
-- [ ] Public map reads cannot enqueue external geocoding.
-- [ ] Detail enrichment reads do not materialize the whole table.
-- [ ] All focused and full verification commands pass.
+- [x] Data-v1 collection work is bounded by page size, not total auctions.
+- [x] The current-auction contract excludes expired listings consistently.
+- [x] Public map reads cannot enqueue external geocoding.
+- [x] Detail enrichment reads do not materialize the whole table.
+- [x] All focused and full verification commands pass.
 
 ## STOP conditions
 
