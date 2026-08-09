@@ -58,9 +58,8 @@ const { data, pending, courts, categories: kategorienMitCount } = injectedSearch
 const mapVisible = computed(() => isDesktop.value || view.value === 'map')
 
 // Geo-fetch is gated behind the map being visible but reacts to country/region
-// changes. The first request stays cache-only so the map appears instantly; a
-// narrowed single-country view then lets the poller ask the server to resolve
-// missing coordinates in the background.
+// changes. Requests stay cache-only; a narrowed single-country view polls the
+// progress written by the exclusive scheduled/admin geocode task.
 const shouldFetchMissingGeo = computed(() => selectedCountries.value.length === 1)
 const {
   data: geoData,
@@ -93,6 +92,7 @@ const geocodingInProgress = computed(() => {
 
 let geoPollTimer: ReturnType<typeof setInterval> | null = null
 let pollInFlight = false
+let geoPollAbortController: AbortController | null = null
 const geoBackgroundError = ref<{ message: string } | null>(null)
 async function pollGeoOnce(): Promise<void> {
   // Direct $fetch bypasses the useFetch payload cache that holds the first
@@ -100,27 +100,29 @@ async function pollGeoOnce(): Promise<void> {
   // Snapshot the selection so a stale response never overwrites data the
   // user requested for a different country/region mid-flight.
   const requestQuery = { ...queryParams.value }
-  const fetchParam = shouldFetchMissingGeo.value ? '1' : '0'
   pollInFlight = true
+  const abortController = new AbortController()
+  geoPollAbortController = abortController
   geoBackgroundError.value = null
   try {
     const fresh = await $fetch<GeoCrawlResult>('/api/auctions-geo', {
       query: {
         ...requestQuery,
-        fetch: fetchParam,
+        fetch: '0',
       },
       // Bypass the HTTP cache so each poll sees the growing geocode cache.
       cache: 'no-store',
+      signal: abortController.signal,
     })
     if (
       JSON.stringify(requestQuery) === JSON.stringify(queryParams.value)
-      && fetchParam === (shouldFetchMissingGeo.value ? '1' : '0')
     ) {
       geoData.value = fresh
     }
   } catch (err) {
     geoBackgroundError.value = { message: apiErrorMessage(err, t('search.geoError')) }
   } finally {
+    if (geoPollAbortController === abortController) geoPollAbortController = null
     pollInFlight = false
   }
 }
@@ -148,6 +150,8 @@ function stopGeoPoll(): void {
     clearInterval(geoPollTimer)
     geoPollTimer = null
   }
+  geoPollAbortController?.abort()
+  geoPollAbortController = null
 }
 watch([geocodingInProgress, mapVisible, shouldFetchMissingGeo], ([running, visible, shouldFetch]) => {
   if (running && visible && shouldFetch) startGeoPoll()

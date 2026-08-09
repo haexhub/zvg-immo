@@ -44,7 +44,10 @@ export default defineEventHandler(async (event): Promise<PaginatedResponse<Publi
   const [{ rows: countRows }, { rows }] = await Promise.all([
     db.execute<{ total: string }>(sql`SELECT count(*) AS total FROM auction_observations ${where}`),
     db.execute(sql`
-      SELECT *
+      SELECT platform, country, region, external_id, authority, case_number,
+        title, property_type, land_area_sqm, living_area_sqm, rooms, units,
+        market_value_eur, market_value, currency, auction_date_iso, cancelled,
+        captured_at
       FROM auction_observations
       ${where}
       ORDER BY captured_at DESC, platform, external_id
