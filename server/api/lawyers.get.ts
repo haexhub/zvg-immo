@@ -6,6 +6,7 @@
 // server/db/schema/lawyers.ts's comment on the `lawyers` table.
 
 import { getServiceClient } from '../utils/supabase'
+import { publicError } from '../utils/public-error'
 
 export interface PublicLawyer {
   id: string
@@ -36,7 +37,7 @@ export default defineEventHandler(async (event): Promise<PublicLawyer[]> => {
     .contains('countries', [country])
     .order('name', { ascending: true })
   if (error) {
-    throw createError({ statusCode: 500, statusMessage: error.message })
+    throw publicError('GET /api/lawyers', 500, 'Anwälte konnten nicht geladen werden.', error)
   }
   return (data ?? []).map((row) => ({
     id: row.id as string,
