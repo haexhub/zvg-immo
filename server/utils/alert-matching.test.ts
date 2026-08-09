@@ -1,4 +1,12 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+const { getServiceClient, enqueueAlertDelivery } = vi.hoisted(() => ({
+  getServiceClient: vi.fn(),
+  enqueueAlertDelivery: vi.fn(),
+}))
+
+vi.mock('./supabase', () => ({ getServiceClient }))
+vi.mock('./outbound-delivery', () => ({ enqueueAlertDelivery }))
 
 // toAuctionFilters resolves `${countryCode}:${regionCode}` pairs to
 // `${countryCode}:${regionDisplayName}` via listCountries() — stub the
@@ -14,7 +22,35 @@ vi.mock('../crawlers/registry', () => ({
   ],
 }))
 
-const { toAuctionFilters } = await import('./alert-matching')
+const { toAuctionFilters, matchAlerts } = await import('./alert-matching')
+
+const auction = {
+  platform: 'portal', externalId: '42', title: 'Haus', authority: 'AG Test',
+  caseNumber: '1 K 2/26', country: 'de', region: 'Sachsen', cancelled: false,
+} as never
+
+function alertSupabase(options: { email?: string, userError?: Error } = {}) {
+  const inserted = vi.fn(async () => ({ error: null }))
+  const notifiedSelect = {
+    select: vi.fn(() => ({ eq: vi.fn(async () => ({ data: [], error: null })) })),
+    insert: inserted,
+  }
+  const client = {
+    from: vi.fn((table: string) => table === 'alert_subscriptions'
+      ? { select: vi.fn(() => ({ eq: vi.fn(async () => ({
+        data: [{ id: 'sub-1', user_id: 'user-1', saved_searches: { filters: {} } }], error: null,
+      })) })) }
+      : notifiedSelect),
+    auth: { admin: { getUserById: vi.fn(async () => ({
+      data: { user: options.email ? { email: options.email } : null }, error: options.userError ?? null,
+    })) } },
+  }
+  return { client, inserted }
+}
+
+afterEach(() => {
+  vi.clearAllMocks()
+})
 
 describe('toAuctionFilters', () => {
   it('parses the stored query-param shape (saved_searches.filters) into AuctionFilters', () => {
@@ -67,5 +103,29 @@ describe('toAuctionFilters', () => {
   it('drops region keys that no longer resolve against the current registry', () => {
     const filters = toAuctionFilters({ region: 'de:unknown-region' })
     expect(filters.regionNameKeys).toEqual(new Set())
+  })
+})
+
+describe('alert delivery state', () => {
+  it('does not record a match when the recipient lookup fails', async () => {
+    const { client, inserted } = alertSupabase({ userError: new Error('directory unavailable') })
+    getServiceClient.mockReturnValue(client)
+
+    await matchAlerts('de', 'sn', { auctions: [auction] } as never)
+
+    expect(inserted).not.toHaveBeenCalled()
+  })
+
+  it('does not record a match when durable enqueue fails, so a later crawl can retry', async () => {
+    const { client, inserted } = alertSupabase({ email: 'person@example.test' })
+    getServiceClient.mockReturnValue(client)
+    enqueueAlertDelivery.mockRejectedValueOnce(new Error('database down')).mockResolvedValueOnce(true)
+
+    await matchAlerts('de', 'sn', { auctions: [auction] } as never)
+    expect(inserted).not.toHaveBeenCalled()
+
+    await matchAlerts('de', 'sn', { auctions: [auction] } as never)
+    expect(enqueueAlertDelivery).toHaveBeenCalledTimes(2)
+    expect(inserted).not.toHaveBeenCalled()
   })
 })

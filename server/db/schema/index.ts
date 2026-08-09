@@ -5,6 +5,7 @@
 // why auctions/artifact_*/auction_details specifically had to stay together.
 export * from './access'
 export * from './lawyers'
+export * from './outbound'
 export * from './core'
 export * from './translations'
 export * from './observations'

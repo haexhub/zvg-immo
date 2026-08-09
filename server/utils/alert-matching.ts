@@ -16,7 +16,7 @@ import type { Auction, CrawlResult } from '~/types/auction'
 import { filterAuctions, type AuctionFilters } from '~/lib/auction-filters'
 import { listCountries } from '../crawlers/registry'
 import { getServiceClient } from './supabase'
-import { sendMail } from './mailer'
+import { enqueueAlertDelivery } from './outbound-delivery'
 
 /** Converts saved_searches.filters (the raw route.query object pages/index.vue
  *  POSTs, see lib/auction-filters.ts's header comment) into the AuctionFilters
@@ -142,14 +142,6 @@ async function processSubscription(
   const fresh = matched.filter((a) => !notified.has(`${a.platform}:${a.externalId}`))
   if (fresh.length === 0) return
 
-  const { error: insertError } = await supabase
-    .from('notified_matches')
-    .insert(fresh.map((a) => ({ alert_subscription_id: subscriptionId, platform: a.platform, external_id: a.externalId })))
-  if (insertError) {
-    console.warn(`[alert-matching] insert notified_matches failed: ${insertError.message}`)
-    return
-  }
-
   const { data: userData, error: userError } = await supabase.auth.admin.getUserById(userId)
   const email = userData?.user?.email
   if (userError || !email) {
@@ -159,13 +151,19 @@ async function processSubscription(
 
   for (const a of fresh) {
     try {
-      await sendMail({
+      const queued = await enqueueAlertDelivery({
         to: email,
         subject: `Neue Auktion: ${a.title ?? a.caseNumber}`,
         text: buildMailBody(a),
+        alertSubscriptionId: subscriptionId,
+        platform: a.platform,
+        externalId: a.externalId,
       })
+      if (!queued) {
+        console.warn(`[alert-matching] durable outbox unavailable for ${a.platform}/${a.externalId}`)
+      }
     } catch (err) {
-      console.warn(`[alert-matching] mail send failed for ${a.platform}/${a.externalId}: ${(err as Error).message}`)
+      console.warn(`[alert-matching] enqueue failed for ${a.platform}/${a.externalId}: ${(err as Error).message}`)
     }
   }
 }

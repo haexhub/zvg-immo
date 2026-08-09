@@ -5,14 +5,20 @@
 // Relay-only, no direct contact: the lawyer's email is never exposed to the
 // client (see server/api/lawyers.get.ts) — this route is the only path that
 // reaches it, and only server-side, via server/utils/mailer.ts. That's also
-// why a failed send is a hard error (502) here, unlike the alert matcher's
-// best-effort mail (server/utils/alert-matching.ts): the whole point of this
-// action is that the mail arrives, so a swallowed failure would leave the
-// user believing they'd contacted the lawyer when they hadn't.
+// A successful response means the commission-bearing inquiry and its mail
+// intent were atomically persisted. It deliberately does not claim that SMTP
+// has completed: server/tasks/outbound-delivery.ts retries that at-least-once
+// transport independently.
 
 import { getServiceClient } from '../../utils/supabase'
-import { sendMail } from '../../utils/mailer'
 import { readAuctionRecord } from '../../utils/auction-record'
+import {
+  canonicalAppOrigin,
+  createLawyerInquiryWithDelivery,
+  LawyerInquiryRateLimitError,
+  MAX_LAWYER_INQUIRY_MESSAGE_LENGTH,
+  validateIdempotencyKey,
+} from '../../utils/outbound-delivery'
 
 export interface LawyerInquiry {
   id: string
@@ -22,6 +28,7 @@ export interface LawyerInquiry {
   message: string
   commissionCents: number | null
   commissionStatus: string
+  deliveryStatus: string
   createdAt: string
 }
 
@@ -38,6 +45,13 @@ export default defineEventHandler(async (event): Promise<LawyerInquiry> => {
   const message = typeof body.message === 'string' ? body.message.trim() : ''
   if (!lawyerId || !platform || !externalId || !message) {
     throw createError({ statusCode: 400, statusMessage: 'lawyerId, platform, externalId und message sind erforderlich.' })
+  }
+  if (message.length > MAX_LAWYER_INQUIRY_MESSAGE_LENGTH) {
+    throw createError({ statusCode: 413, statusMessage: `Die Nachricht darf höchstens ${MAX_LAWYER_INQUIRY_MESSAGE_LENGTH} Zeichen enthalten.` })
+  }
+  const idempotencyKey = getRequestHeader(event, 'idempotency-key')?.trim() ?? ''
+  if (!validateIdempotencyKey(idempotencyKey)) {
+    throw createError({ statusCode: 400, statusMessage: 'Ein gültiger Idempotency-Key ist erforderlich.' })
   }
 
   const record = await readAuctionRecord(platform, externalId)
@@ -73,31 +87,28 @@ export default defineEventHandler(async (event): Promise<LawyerInquiry> => {
   // must not rewrite this historical billing record.
   const commissionCents = (lawyer.commission_cents as number | null) ?? null
 
-  const { data: inserted, error: insertError } = await supabase
-    .from('lawyer_inquiries')
-    .insert({
-      user_id: userId,
-      lawyer_id: lawyerId,
-      platform,
-      external_id: externalId,
-      message,
-      commission_cents: commissionCents,
-    })
-    .select('id, lawyer_id, platform, external_id, message, commission_cents, commission_status, created_at')
-    .single()
-  if (insertError || !inserted) {
-    throw createError({ statusCode: 500, statusMessage: insertError?.message ?? 'Anfrage konnte nicht gespeichert werden.' })
-  }
-
   const auctionLabel = `${auction.authority} · ${auction.caseNumber}`
-  const origin = getRequestURL(event).origin
+  let origin: string
+  try {
+    origin = canonicalAppOrigin()
+  } catch (err) {
+    throw createError({ statusCode: 503, statusMessage: (err as Error).message })
+  }
   const auctionLink = `${origin}/objekt/${encodeURIComponent(platform)}/${encodeURIComponent(externalId)}`
   try {
-    await sendMail({
-      to: lawyer.email as string,
-      replyTo: userEmail,
-      subject: `Neue Anfrage über zvg-immo: ${auctionLabel}`,
-      text: [
+    const inserted = await createLawyerInquiryWithDelivery({
+      userId,
+      lawyerId,
+      platform,
+      externalId,
+      message,
+      commissionCents,
+      idempotencyKey,
+      mail: {
+        to: lawyer.email as string,
+        replyTo: userEmail,
+        subject: `Neue Anfrage über zvg-immo: ${auctionLabel}`,
+        text: [
         `Sie haben über zvg-immo eine Anfrage zu folgender Zwangsversteigerung erhalten:`,
         auctionLabel,
         auctionLink,
@@ -107,19 +118,23 @@ export default defineEventHandler(async (event): Promise<LawyerInquiry> => {
         '',
         userEmail ? `Antworten Sie direkt auf diese E-Mail, um ${userEmail} zu erreichen.` : '',
       ].filter(Boolean).join('\n'),
+      },
     })
+    return {
+      id: inserted.id,
+      lawyerId: inserted.lawyerId,
+      platform: inserted.platform,
+      externalId: inserted.externalId,
+      message: inserted.message,
+      commissionCents: inserted.commissionCents,
+      commissionStatus: inserted.commissionStatus,
+      deliveryStatus: inserted.deliveryStatus,
+      createdAt: inserted.createdAt,
+    }
   } catch (err) {
-    throw createError({ statusCode: 502, statusMessage: `Mail-Versand fehlgeschlagen: ${(err as Error).message}` })
-  }
-
-  return {
-    id: inserted.id as string,
-    lawyerId: inserted.lawyer_id as string,
-    platform: inserted.platform as string | null,
-    externalId: inserted.external_id as string | null,
-    message: inserted.message as string,
-    commissionCents: inserted.commission_cents as number | null,
-    commissionStatus: inserted.commission_status as string,
-    createdAt: inserted.created_at as string,
+    if (err instanceof LawyerInquiryRateLimitError) {
+      throw createError({ statusCode: 429, statusMessage: err.message })
+    }
+    throw createError({ statusCode: 500, statusMessage: `Anfrage konnte nicht gespeichert werden: ${(err as Error).message}` })
   }
 })
