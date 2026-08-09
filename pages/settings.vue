@@ -129,6 +129,7 @@ onMounted(probeSession)
         <section class="space-y-4">
           <h2 class="text-lg font-semibold text-muted-foreground">{{ $t('settings.sections.admin') }}</h2>
           <SettingsLawyersCard />
+          <SettingsOutboundDeliveriesCard />
           <SettingsDisplayCard />
 
           <Card>

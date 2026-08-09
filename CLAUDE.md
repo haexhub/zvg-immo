@@ -31,6 +31,21 @@ Rules:
 
 Geteilte Composables: `useSettingsError` (401 → Session-Expiry), `useSettingsAction` (pending/error/run-Boilerplate), `useSettingsTaskOverview` (llm-batch-jobs, gebündeltes Polling), `usePollWhileActive` (generisches Intervall-Polling mit Abbruchbedingung), `useLlmProfileOptions` (geteilte Profil-Liste zwischen LlmProfiles/LlmAssignments).
 
+## Ausgehende Nachrichten
+
+`outbound_deliveries` ist die langlebige, private Mail-Outbox. `outbound-delivery`
+läuft alle fünf Minuten und beim Boot, claimed Zeilen mit `FOR UPDATE SKIP LOCKED`
+und liefert mindestens einmal (kein Exactly-once-Versprechen). Erfolgreiche Alerts
+werden erst danach in `notified_matches` bestätigt; fehlgeschlagene Zustellungen
+werden exponentiell verzögert und nach sechs Versuchen terminal `failed`.
+`/api/settings/outbound-deliveries` zeigt nur sekretfreie Zähler/Fehlerklassen.
+
+Anwaltsanfragen verlangen einen browsergenerierten `Idempotency-Key` (UUID),
+werden zusammen mit genau einer Outbox-Zeile transaktional gespeichert und sind
+auf 4.000 Zeichen sowie fünf Anfragen je Nutzer/Anwalt/Stunde begrenzt. Mail-Links
+kommen ausschließlich von `NUXT_APP_ORIGIN` (`runtimeConfig.appOrigin`), nie vom
+Request-Host.
+
 ## Search-Filter-Vertrag
 
 `lib/auction-search-filter-contract.ts` besitzt die persistierten Such-URL-

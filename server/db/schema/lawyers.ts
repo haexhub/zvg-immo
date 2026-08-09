@@ -11,6 +11,7 @@ import {
   pgTable,
   text,
   timestamp,
+  unique,
   uuid,
 } from 'drizzle-orm/pg-core'
 
@@ -43,12 +44,17 @@ export const lawyerInquiries = pgTable('lawyer_inquiries', {
   platform: text('platform'),
   externalId: text('external_id'),
   message: text('message').notNull(),
+  // A browser-generated UUID identifies one user intent across retries. It is
+  // scoped to the user so clients cannot collide with another account.
+  idempotencyKey: text('idempotency_key').notNull(),
   commissionCents: integer('commission_cents'),
   commissionStatus: text('commission_status').notNull().default('pending'),
+  deliveryStatus: text('delivery_status').notNull().default('pending'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   index('idx_inquiries_lawyer_time').on(table.lawyerId, table.createdAt.desc()),
   index('idx_inquiries_user_time').on(table.userId, table.createdAt.desc()),
+  unique('lawyer_inquiries_user_id_idempotency_key').on(table.userId, table.idempotencyKey),
   pgPolicy('own_rows', {
     for: 'all',
     using: sql`${table.userId} = auth.uid()`,

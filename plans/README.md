@@ -11,7 +11,7 @@ progress work in the user worktree.
 |---|---|---|---|---|---|
 | 001 | Patch vulnerable runtime dependencies and public error boundaries | P1 | S | — | DONE (`8d134b3`, PR #385) |
 | 002 | Establish one saved-search filter contract | P1 | L | 001 | DONE |
-| 003 | Make outbound notifications durable and abuse-resistant | P1 | L | 001 | TODO |
+| 003 | Make outbound notifications durable and abuse-resistant | P1 | L | 001 | DONE (2026-08-09, durable outbox + idempotency) |
 | 004 | Make public data reads bounded and cache-only | P2 | L | 002 | TODO |
 | 005 | Split oversized production modules along domain boundaries | P2 | L | 002, 003, 004 | TODO |
 

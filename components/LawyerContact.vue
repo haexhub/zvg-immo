@@ -44,14 +44,17 @@ const message = ref('')
 const pending = ref(false)
 const error = ref<string | null>(null)
 const sent = ref(false)
+const idempotencyKey = ref<string | null>(null)
 
 async function submit(): Promise<void> {
   if (!selectedLawyerId.value || !message.value.trim()) return
   pending.value = true
   error.value = null
+  idempotencyKey.value ??= crypto.randomUUID()
   try {
     await authFetch('/api/lawyer-inquiries', {
       method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey.value },
       body: {
         lawyerId: selectedLawyerId.value,
         platform: props.platform,
@@ -61,6 +64,7 @@ async function submit(): Promise<void> {
     })
     sent.value = true
     message.value = ''
+    idempotencyKey.value = null
   } catch (err) {
     error.value = (err as { statusMessage?: string; message?: string }).statusMessage
       || (err as Error).message

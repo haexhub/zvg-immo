@@ -144,6 +144,11 @@ export default defineNuxtConfig({
     // migrations are skipped (see db.ts) rather than failing hard.
     //   NUXT_DATABASE_URL=postgres://postgres:<pw>@db:5432/postgres
     databaseUrl: '',
+    // Canonical server-side origin for links in outbound mail. Never derive
+    // those links from the request Host header, which an untrusted proxy/client
+    // can influence. Matches i18n.baseUrl above but remains server-only.
+    //   NUXT_APP_ORIGIN=https://zvg.haex.cloud
+    appOrigin: 'https://zvg.haex.cloud',
     // External market/risk datasets are ingested out-of-band into local or
     // Postgres-backed caches; detail pages only read location_enrichment.
     // Empty values keep the external-enrichment task inert unless overridden
@@ -257,6 +262,9 @@ export default defineNuxtConfig({
       // robust portals refresh hourly while rate-limited ones stay on a longer
       // interval — an always-on background watch for new/updated auctions.
       '0 * * * *': ['refresh'],
+      // Every five minutes: retry durable mail deliveries. The worker locks
+      // rows with SKIP LOCKED, so overlapping app instances are safe.
+      '*/5 * * * *': ['outbound-delivery'],
       // Hourly, offset 15 min from refresh: runs regex rules + the LLM against
       // whatever 'enrich' has archived so far, scoped to the enabled admin
       // data sources — independent of enrich's own schedule (see

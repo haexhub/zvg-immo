@@ -8,6 +8,7 @@
 
 ## Status
 
+- **Implementation**: DONE, 2026-08-09
 - **Priority**: P1
 - **Effort**: L
 - **Risk**: HIGH
@@ -104,11 +105,11 @@ the configured canonical origin.
 
 ## Done criteria
 
-- [ ] No notification becomes permanently sent before durable transport success.
-- [ ] Repeating an inquiry cannot duplicate a commission-bearing lead.
-- [ ] Relay message size and rate limits are enforced server-side.
-- [ ] Outbound links are configuration-derived, never request-host-derived.
-- [ ] Full lint/typecheck/test/build gates pass.
+- [x] No notification becomes permanently sent before durable transport success.
+- [x] Repeating an inquiry cannot duplicate a commission-bearing lead.
+- [x] Relay message size and rate limits are enforced server-side.
+- [x] Outbound links are configuration-derived, never request-host-derived.
+- [x] Full lint/typecheck/test/build gates pass.
 
 ## STOP conditions
 
