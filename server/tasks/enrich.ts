@@ -74,6 +74,11 @@ const WARNING_PREVIEW_LIMIT = 50
 // immediately (photosCheckedAt gets set); this bound only guards against
 // persistent errors.
 const MAX_PHOTO_FAILURES = 3
+// Mirrors LLM_FAILURE_RETRY_COOLDOWN_HOURS (lib/llm-limits.ts): once a listing
+// hits MAX_PHOTO_FAILURES, retry it again after this many hours instead of
+// excluding it forever — a transient upstream problem (rate limit, network
+// blip) shouldn't need a manual DB reset to clear.
+const PHOTO_FAILURE_RETRY_COOLDOWN_HOURS = 24
 const PHOTO_PIPELINE_VERSION = 4
 const KRONOFOGDEN_GALLERY_PHOTO_PIPELINE_VERSION = 5
 const CONTENT_HASH_IMAGE_FILE_RE = /^([0-9a-f]{8,32})\.(?:jpe?g|png|webp)$/i
@@ -258,12 +263,23 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
       a.platform === 'se-kronofogden' && (a.photoUrls?.length ?? 0) > 0
         ? KRONOFOGDEN_GALLERY_PHOTO_PIPELINE_VERSION
         : PHOTO_PIPELINE_VERSION
+    // Whether a locked-out listing (photoFailures >= MAX_PHOTO_FAILURES) is
+    // past its cooldown and can retry again — see
+    // PHOTO_FAILURE_RETRY_COOLDOWN_HOURS. A never-attempted timestamp (older
+    // rows predating this column) counts as elapsed rather than blocking
+    // eligibility on a value that doesn't exist yet.
+    const nowMs = Date.now()
+    function cooldownElapsed(lastAttemptedAt: string | null | undefined): boolean {
+      if (!lastAttemptedAt) return true
+      return nowMs - new Date(lastAttemptedAt).getTime() >= PHOTO_FAILURE_RETRY_COOLDOWN_HOURS * 60 * 60 * 1000
+    }
     // A prior attempt may never have run the actual photo pipeline or may
     // have thrown before completing. `photosCheckedAt` unset means "never
     // attempted". `photoPipelineVersion` lets one improved pipeline pass
     // revisit older confirmed-empty false negatives. Bounded by
     // MAX_PHOTO_FAILURES so a listing whose PDF/URLs genuinely cannot be
-    // mined doesn't retry forever.
+    // mined doesn't retry forever — unless the cooldown since the last
+    // attempt has elapsed (see cooldownElapsed above).
     const needsPhotoBackfill = (a: Auction): boolean => {
       const key = cacheKey(a.platform, a.externalId)
       const hit = records.get(key)?.auction.extraction
@@ -273,16 +289,15 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
       const pipelineDue =
         state?.photosCheckedAt == null ||
         (state.photoPipelineVersion ?? 1) < targetVersion
+      const belowFailureCap =
+        (state?.photoFailures ?? 0) < MAX_PHOTO_FAILURES || cooldownElapsed(state?.photoLastAttemptedAt)
       if (opts.force) {
-        return (
-          (photos === 0 || nativePhotoUrls(a).length > 0 || a.attachments.length > 0) &&
-          (state?.photoFailures ?? 0) < MAX_PHOTO_FAILURES
-        )
+        return (photos === 0 || nativePhotoUrls(a).length > 0 || a.attachments.length > 0) && belowFailureCap
       }
       return (
         pipelineDue &&
         (photos === 0 || nativePhotoUrls(a).length > 0 || a.attachments.length > 0) &&
-        (state?.photoFailures ?? 0) < MAX_PHOTO_FAILURES
+        belowFailureCap
       )
     }
     const eligible = result.auctions.filter(
@@ -401,7 +416,8 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
         let photosCheckedAt = priorFetchState?.photosCheckedAt ?? null
         let photoFailures = priorFetchState?.photoFailures ?? 0
         let photoPipelineVersion = priorFetchState?.photoPipelineVersion ?? null
-        if (needsPhotoBackfill(a) && isSafePathSegment(a.platform) && isSafePathSegment(a.externalId)) {
+        const photoAttempted = needsPhotoBackfill(a) && isSafePathSegment(a.platform) && isSafePathSegment(a.externalId)
+        if (photoAttempted) {
           const destDir = join(IMAGES_DIR, a.platform, a.externalId)
           const priorPhotos = priorEntry?.photos?.map(normalizePhoto) ?? []
           const targetVersion = targetPhotoPipelineVersion(a)
@@ -416,8 +432,13 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
           const addDisplayedPhotos = (names: readonly string[]) => {
             photos = [...new Set([...photos, ...names])]
           }
-          try {
-            if (nativeFotoUrls.length > 0) {
+          // Native gallery download and document/PDF mining are independent
+          // sources — each gets its own try/catch so one throwing (a
+          // transient upstream problem) doesn't discard photos the other
+          // already found, and doesn't skip the other source entirely.
+          const sourceErrors: string[] = []
+          if (nativeFotoUrls.length > 0) {
+            try {
               const nativePhotos = await downloadNativeImages([...new Set(nativeFotoUrls)], { destDir })
               addNewlyDownloadedPhotos(nativePhotos)
               addDisplayedPhotos(nativePhotos)
@@ -425,9 +446,13 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
                 const hash = imageContentHashFromFilename(name)
                 if (hash) nativePhotoHashes.add(hash)
               }
+            } catch (err) {
+              sourceErrors.push((err as Error).message)
             }
-            if (a.attachments.length > 0) {
-              photoExtractions++
+          }
+          if (a.attachments.length > 0) {
+            photoExtractions++
+            try {
               const documentPhotos = await extractDocumentPhotos(a.attachments, {
                 destDir,
               })
@@ -438,8 +463,12 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
                   return !hash || !nativePhotoHashes.has(hash)
                 }),
               )
+            } catch (err) {
+              sourceErrors.push((err as Error).message)
             }
-            photosTotal += photos.length
+          }
+          photosTotal += photos.length
+          try {
             // Archive every freshly downloaded photo's raw bytes (kind='photo')
             // and mirror it into the images bucket (WP-4) when configured, so
             // /api/auction-image can fall back to Supabase once the local cache
@@ -450,18 +479,22 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
               await archivePhotoBlob(bytes, mimeTypeFor(name) as any, documentIdentity, at)
               if (imagesBucketConfigured()) await uploadImage(bytes, `${a.platform}/${a.externalId}/${name}`)
             }
+          } catch (err) {
+            sourceErrors.push((err as Error).message)
+          }
+          if (sourceErrors.length > 0) {
+            photoFailures++
+            pushRunError('photo_extraction', `Fotoextraktion ${a.platform}:${a.externalId}: ${sourceErrors.join('; ')}`, a)
+            if (photos.length === 0 && priorPhotos.length > 0) {
+              photos = priorPhotos.map((photo) => photo.file)
+            }
+          } else {
             // Completed without throwing — "checked", regardless of whether
             // any photos were actually found (a legitimately photo-less
             // listing/document stops being retried from here on).
             photosCheckedAt = at
             photoFailures = 0
             photoPipelineVersion = targetPhotoPipelineVersion(a)
-          } catch (err) {
-            photoFailures++
-            pushRunError('photo_extraction', `Fotoextraktion ${a.platform}:${a.externalId}: ${(err as Error).message}`, a)
-            if (photos.length === 0 && priorPhotos.length > 0) {
-              photos = priorPhotos.map((photo) => photo.file)
-            }
           }
           curatedPhotos = photos.length > 0
             ? photos.map((name) => priorPhotos.find((photo) => photo.file === name) ?? normalizePhoto(name))
@@ -496,6 +529,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
           photosCheckedAt,
           photoFailures,
           photoPipelineVersion,
+          photoAttempted,
         })
         archived++
         archivedByCountry.set(a.country, (archivedByCountry.get(a.country) ?? 0) + 1)

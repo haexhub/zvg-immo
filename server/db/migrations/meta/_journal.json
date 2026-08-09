@@ -78,6 +78,13 @@
       "when": 1786212765423,
       "tag": "0010_quiet_darwin",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1786305504398,
+      "tag": "0011_third_katie_power",
+      "breakpoints": true
     }
   ]
 }

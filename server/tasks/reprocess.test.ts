@@ -314,7 +314,7 @@ describe('runReprocess structured persistence', () => {
       detailUrl: null, detailUrlUpstream: null, attachments: [], photoUrls: null,
       sourceUpdatedIso: null, detailFetchedAt: null, llmBatchJob: null,
       llmArtifactVersionId: null, llmFailures: 2, llmLastAttemptedAt: null, photosCheckedAt: null,
-      photoFailures: 0, photoPipelineVersion: null,
+      photoFailures: 0, photoLastAttemptedAt: null, photoPipelineVersion: null,
       updatedAt: '2026-08-02T10:00:00.000Z',
     }]]))
     vi.mocked(readArtifactProcessingState).mockResolvedValue({
@@ -414,7 +414,7 @@ describe('runReprocess llm_failures cooldown', () => {
       detailUrl: null, detailUrlUpstream: null, attachments: [], photoUrls: null,
       sourceUpdatedIso: null, detailFetchedAt: null, llmBatchJob: null,
       llmArtifactVersionId: null, llmFailures: 3, llmLastAttemptedAt, photosCheckedAt: null,
-      photoFailures: 0, photoPipelineVersion: null,
+      photoFailures: 0, photoLastAttemptedAt: null, photoPipelineVersion: null,
       updatedAt: '2026-08-02T10:00:00.000Z',
     }]])
   }

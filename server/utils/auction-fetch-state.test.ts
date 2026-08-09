@@ -50,6 +50,7 @@ describe('auction fetch state writers', () => {
       photosCheckedAt: '2026-08-02T10:00:00.000Z',
       photoFailures: 2,
       photoPipelineVersion: 3,
+      photoAttempted: true,
     })
     await writeAuctionLlmPipelineState('test', '1', {
       llmBatchJob: 'batch-1',
@@ -64,8 +65,11 @@ describe('auction fetch state writers', () => {
 
     const photoSql = String(calls[1]?.[0])
     expect(photoSql).toContain('photo_failures = EXCLUDED.photo_failures')
+    expect(photoSql).toContain('photo_last_attempted_at =')
     expect(photoSql).not.toContain('llm_batch_job = EXCLUDED')
     expect(photoSql).not.toContain('attachments = EXCLUDED')
+    const photoParams = calls[1]?.[1] as unknown[]
+    expect(photoParams?.[5]).toBe(true)
 
     const llmSql = String(calls[2]?.[0])
     expect(llmSql).toContain('llm_batch_job = EXCLUDED.llm_batch_job')
@@ -103,6 +107,7 @@ describe('auction fetch state writers', () => {
       llmLastAttemptedAt: null,
       photosCheckedAt: '2026-08-02T11:00:00.000Z',
       photoFailures: 1,
+      photoLastAttemptedAt: null,
       photoPipelineVersion: 3,
       updatedAt: '2026-08-02T11:00:00.000Z',
     })
