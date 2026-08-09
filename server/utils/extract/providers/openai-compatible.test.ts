@@ -98,6 +98,19 @@ describe('OpenAiCompatibleProvider.extract', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  it('appends the provider-supplied error detail (e.g. OpenRouter\'s moderation reason) to the thrown message', async () => {
+    const err = Object.assign(new Error('http 403'), {
+      response: { status: 403 },
+      data: { error: { message: 'Your input was flagged by moderation.' } },
+    })
+    vi.stubGlobal('$fetch', vi.fn().mockRejectedValue(err))
+    const provider = new OpenAiCompatibleProvider(config)
+    const promise = provider.extract(req)
+    promise.catch(() => {})
+    await vi.runAllTimersAsync()
+    await expect(promise).rejects.toThrow('http 403 — Your input was flagged by moderation.')
+  })
+
   it('calls onRequestError once retries are exhausted for a non-429 failure, but not for a 429 (which rethrows instead)', async () => {
     vi.stubGlobal('$fetch', vi.fn().mockRejectedValue(error(500)))
     const provider = new OpenAiCompatibleProvider(config)
