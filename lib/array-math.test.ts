@@ -16,6 +16,10 @@ describe('minOf', () => {
     expect(() => minOf(values)).not.toThrow()
     expect(minOf(values)).toBe(0)
   })
+
+  it('propagates NaN like Math.min', () => {
+    expect(minOf([1, Number.NaN, 2])).toBeNaN()
+  })
 })
 
 describe('maxOf', () => {
@@ -32,5 +36,9 @@ describe('maxOf', () => {
     const values = Array.from({ length: 200_000 }, (_, i) => i)
     expect(() => maxOf(values)).not.toThrow()
     expect(maxOf(values)).toBe(199_999)
+  })
+
+  it('propagates NaN like Math.max', () => {
+    expect(maxOf([1, Number.NaN, 2])).toBeNaN()
   })
 })

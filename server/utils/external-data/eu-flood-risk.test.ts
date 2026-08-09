@@ -113,7 +113,9 @@ describe('distanceToPolygonMeters', () => {
     const polygon: GeoJsonPolygonCoordinates = [ring]
 
     expect(() => distanceToPolygonMeters({ lat: 52.6, lng: 13.4 }, polygon)).not.toThrow()
-    expect(distanceToPolygonMeters({ lat: 52.6, lng: 13.4 }, polygon)).toBeGreaterThan(0)
+    const distance = distanceToPolygonMeters({ lat: 52.6, lng: 13.4 }, polygon)
+    expect(Number.isFinite(distance)).toBe(true)
+    expect(distance).toBeGreaterThan(0)
   })
 })
 

@@ -9,7 +9,7 @@
 export function minOf(values: number[]): number {
   let min = Number.POSITIVE_INFINITY
   for (const value of values) {
-    if (value < min) min = value
+    min = Math.min(min, value)
   }
   return min
 }
@@ -17,7 +17,7 @@ export function minOf(values: number[]): number {
 export function maxOf(values: number[]): number {
   let max = Number.NEGATIVE_INFINITY
   for (const value of values) {
-    if (value > max) max = value
+    max = Math.max(max, value)
   }
   return max
 }

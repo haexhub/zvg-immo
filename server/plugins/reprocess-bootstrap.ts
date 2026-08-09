@@ -23,7 +23,7 @@ export default defineNitroPlugin(() => {
       const status = await getTaskRunStatus('reprocess')
       if (status.startedAt) {
         const ageMs = Date.now() - new Date(status.startedAt).getTime()
-        if (ageMs < MIN_INTERVAL_MS) {
+        if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs < MIN_INTERVAL_MS) {
           console.log(`[reprocess-bootstrap] reprocess already started ${(ageMs / 60_000).toFixed(1)}min ago — skipping boot run`)
           return
         }
