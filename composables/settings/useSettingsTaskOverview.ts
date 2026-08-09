@@ -14,6 +14,26 @@ export interface LlmBatchJobOverviewItem {
   errorMessage?: string | null
 }
 
+// Consecutive recentJobs entries sharing the same status/source/provider/
+// errorMessage get folded into one group — a crash-loop-style burst of
+// identical failures (see reprocess-bootstrap.ts) otherwise renders as N
+// near-duplicate cards instead of one "N× failed" summary.
+export interface LlmBatchJobGroup {
+  key: string
+  status: string
+  source: LlmBatchJobOverviewItem['source']
+  provider: LlmBatchJobOverviewItem['provider']
+  errorMessage: string | null
+  totalItems: number
+  // recentJobs is sorted newest-first, so the first job pushed into a group
+  // is the newest and the last one pushed is the oldest — kept as their own
+  // fields (rather than jobs[0]/jobs.at(-1)) so templates don't need
+  // possibly-undefined array-index checks for a group that's never empty.
+  newestJob: LlmBatchJobOverviewItem
+  oldestJob: LlmBatchJobOverviewItem
+  jobs: LlmBatchJobOverviewItem[]
+}
+
 interface LlmBatchCapability {
   ok: boolean
   source: 'config' | 'attempt'
@@ -97,6 +117,37 @@ export function useSettingsTaskOverview() {
     orphanedRequestKeys: [],
   })
 
+  const llmBatchRecentGroups = computed<LlmBatchJobGroup[]>(() => {
+    const groups: LlmBatchJobGroup[] = []
+    for (const job of llmBatchJobs.value?.recentJobs ?? []) {
+      const last = groups[groups.length - 1]
+      if (
+        job.errorMessage &&
+        last?.errorMessage === job.errorMessage &&
+        last.status === job.status &&
+        last.source === job.source &&
+        last.provider === job.provider
+      ) {
+        last.jobs.push(job)
+        last.totalItems += job.itemCount
+        last.oldestJob = job
+        continue
+      }
+      groups.push({
+        key: job.jobName,
+        status: job.status,
+        source: job.source,
+        provider: job.provider,
+        errorMessage: job.errorMessage ?? null,
+        totalItems: job.itemCount,
+        newestJob: job,
+        oldestJob: job,
+        jobs: [job],
+      })
+    }
+    return groups
+  })
+
   async function loadLlmBatchJobs(): Promise<void> {
     if (loadLlmBatchJobsInFlight) return loadLlmBatchJobsInFlight
     loadLlmBatchJobsInFlight = (async () => {
@@ -136,6 +187,7 @@ export function useSettingsTaskOverview() {
     llmBatchJobsPending,
     llmBatchJobsError,
     llmBatchBacklog,
+    llmBatchRecentGroups,
     formatBatchDate,
     loadLlmBatchJobs,
     startProgressPolling,
