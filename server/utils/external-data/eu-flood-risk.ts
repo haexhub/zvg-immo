@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import type { Auction, HazardAssessment } from '~/types/auction'
 import type { HazardAssessmentAdapter } from '~/server/tasks/external-enrichment'
+import { minOf } from '~/lib/array-math'
 import { writeJsonCache } from '../json-cache'
 import { distanceMeters, type Point } from './geo'
 import { EXTERNAL_DATA_SOURCES } from './sources'
@@ -254,18 +255,6 @@ export function distanceToPolygonMeters(point: Point, polygon: GeoJsonPolygonCoo
   const rings = polygon.filter((ring) => ring.length >= 2)
   if (rings.length === 0) return Number.POSITIVE_INFINITY
   return minOf(rings.map((ring) => distanceToRingMeters(point, ring)))
-}
-
-// Math.min(...values) spreads the array as call arguments — real burnt-area/
-// flood-risk ring geometries can have tens of thousands of vertices, which
-// blows V8's argument-count limit ("Maximum call stack size exceeded").
-// A plain loop has no such limit.
-function minOf(values: number[]): number {
-  let min = Number.POSITIVE_INFINITY
-  for (const value of values) {
-    if (value < min) min = value
-  }
-  return min
 }
 
 function assessment(

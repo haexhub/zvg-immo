@@ -1,3 +1,5 @@
+import { maxOf, minOf } from './array-math'
+
 export type CountryBounds = [[number, number], [number, number]]
 
 export const COUNTRY_BOUNDS: Partial<Record<string, CountryBounds>> = {
@@ -71,9 +73,9 @@ export function boundsForCountries(countryCodes: readonly string[]): CountryBoun
 
   if (bounds.length === 0) return null
 
-  const south = Math.min(...bounds.map((b) => b[0][0]))
-  const west = Math.min(...bounds.map((b) => b[0][1]))
-  const north = Math.max(...bounds.map((b) => b[1][0]))
-  const east = Math.max(...bounds.map((b) => b[1][1]))
+  const south = minOf(bounds.map((b) => b[0][0]))
+  const west = minOf(bounds.map((b) => b[0][1]))
+  const north = maxOf(bounds.map((b) => b[1][0]))
+  const east = maxOf(bounds.map((b) => b[1][1]))
   return [[south, west], [north, east]]
 }

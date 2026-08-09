@@ -12,6 +12,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { extname, join } from 'node:path'
 import { promisify } from 'node:util'
+import { maxOf, minOf } from '~/lib/array-math'
 import { fetchPdfBuffer } from './pdf-text'
 import { imageContentHash } from './image-bytes'
 
@@ -225,17 +226,17 @@ export function findFragmentedImageClusters(
       const keys = nums.map((num) => imageKey(page.page, num))
       if (!keys.some((key) => wantedKeys.has(key))) continue
 
-      const left = Math.max(0, Math.min(...group.map((img) => img.left)) - CLUSTER_CROP_PADDING)
-      const top = Math.max(0, Math.min(...group.map((img) => img.top)) - CLUSTER_CROP_PADDING)
-      const right = Math.min(page.width, Math.max(...group.map((img) => img.left + img.width)) + CLUSTER_CROP_PADDING)
-      const bottom = Math.min(page.height, Math.max(...group.map((img) => img.top + img.height)) + CLUSTER_CROP_PADDING)
+      const left = Math.max(0, minOf(group.map((img) => img.left)) - CLUSTER_CROP_PADDING)
+      const top = Math.max(0, minOf(group.map((img) => img.top)) - CLUSTER_CROP_PADDING)
+      const right = Math.min(page.width, maxOf(group.map((img) => img.left + img.width)) + CLUSTER_CROP_PADDING)
+      const bottom = Math.min(page.height, maxOf(group.map((img) => img.top + img.height)) + CLUSTER_CROP_PADDING)
       const width = right - left
       const height = bottom - top
       if (width < FRAGMENTED_CLUSTER.minWidth || height < FRAGMENTED_CLUSTER.minHeight) continue
       if (nums.length === 0) continue
       clusters.push({
         page: page.page,
-        num: Math.min(...nums),
+        num: minOf(nums),
         left,
         top,
         width,
