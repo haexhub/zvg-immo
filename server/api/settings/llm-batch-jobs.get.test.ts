@@ -22,7 +22,7 @@ const IDLE_REPROCESS_STATUS = {
   progressByCountry: null,
 }
 
-function record(key: string, extraction: Record<string, unknown>) {
+function record(key: string, extraction: Record<string, unknown> | undefined, country = 'de') {
   const separator = key.indexOf(':')
   return {
     detailsId: 1,
@@ -30,6 +30,7 @@ function record(key: string, extraction: Record<string, unknown>) {
     auction: {
       platform: key.slice(0, separator),
       externalId: key.slice(separator + 1),
+      country,
       extraction,
     },
   } as never
@@ -89,6 +90,9 @@ describe('/api/settings/llm-batch-jobs', () => {
       record('zvg-portal:3', { at: '2026-07-26T18:00:00.000Z' }),
       record('zvg-portal:4', { source: 'rules', confidence: 'low', at: '2026-07-26T18:00:00.000Z' }),
       record('zvg-portal:5', { llmBatchJob: 'deleted_job', at: '2026-07-26T18:00:00.000Z' }),
+      // Never run through even the rules-only fallback (brand-new crawl) —
+      // must still count toward readyRequests, not be silently dropped.
+      record('zvg-portal:6', undefined, 'se'),
     ])
     vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([
       ['zvg-portal:1', { llmBatchJob: 'msgbatch_abc', llmFailures: 0 } as never],
@@ -102,13 +106,18 @@ describe('/api/settings/llm-batch-jobs', () => {
       totalJobs: 1,
       totalRequests: 2,
       backlog: {
-        readyRequests: 2,
+        readyRequests: 3,
+        neverExtracted: 1,
         lowConfidenceRules: 1,
         missingLlmFields: 2,
         orphanedBatchMarkers: 1,
         failedLimit: 0,
-        sampleRequestKeys: ['zvg-portal:3', 'zvg-portal:4'],
+        sampleRequestKeys: ['zvg-portal:3', 'zvg-portal:4', 'zvg-portal:6'],
         orphanedRequestKeys: ['zvg-portal:5'],
+      },
+      backlogByCountry: {
+        de: { readyRequests: 2, failedLimit: 0 },
+        se: { readyRequests: 1, failedLimit: 0 },
       },
       jobs: [
         {

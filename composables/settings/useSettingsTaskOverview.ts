@@ -60,6 +60,7 @@ export interface LlmBatchJobsOverview {
   recentJobs: LlmBatchJobOverviewItem[]
   backlog: {
     readyRequests: number
+    neverExtracted: number
     lowConfidenceRules: number
     missingLlmFields: number
     orphanedBatchMarkers: number
@@ -67,6 +68,7 @@ export interface LlmBatchJobsOverview {
     sampleRequestKeys: string[]
     orphanedRequestKeys: string[]
   }
+  backlogByCountry: Record<string, { readyRequests: number; failedLimit: number }>
   capabilities: Partial<Record<LlmProvider, LlmBatchCapability>>
   enrichStatus: TaskRunStatus
   reprocessStatus: TaskRunStatus
@@ -109,6 +111,7 @@ export function useSettingsTaskOverview() {
 
   const llmBatchBacklog = computed(() => llmBatchJobs.value?.backlog ?? {
     readyRequests: 0,
+    neverExtracted: 0,
     lowConfidenceRules: 0,
     missingLlmFields: 0,
     orphanedBatchMarkers: 0,
@@ -116,6 +119,8 @@ export function useSettingsTaskOverview() {
     sampleRequestKeys: [],
     orphanedRequestKeys: [],
   })
+
+  const llmBatchBacklogByCountry = computed(() => llmBatchJobs.value?.backlogByCountry ?? {})
 
   const llmBatchRecentGroups = computed<LlmBatchJobGroup[]>(() => {
     const groups: LlmBatchJobGroup[] = []
@@ -187,6 +192,7 @@ export function useSettingsTaskOverview() {
     llmBatchJobsPending,
     llmBatchJobsError,
     llmBatchBacklog,
+    llmBatchBacklogByCountry,
     llmBatchRecentGroups,
     formatBatchDate,
     loadLlmBatchJobs,
