@@ -12,6 +12,7 @@ import type { Pool } from 'pg'
 import { readAuctionRecord } from '~/server/utils/auction-record'
 import { isSafePathSegment } from '~/server/utils/path-segment'
 import { getPool } from '~/server/utils/db'
+import { publicError } from '~/server/utils/public-error'
 import { sha256Hex } from '~/server/utils/raw-archive'
 import {
   claimAuctionTranslation,
@@ -190,11 +191,12 @@ export default defineEventHandler(async (event) => {
     // unchanged" — otherwise every pre-existing failed row would bypass the
     // backoff the first time it's touched after this ships.
     if (stored.failedConfig == null || stored.failedConfig === currentFingerprint) {
-      throw createError({
-        statusCode: 502,
-        statusMessage: 'Übersetzung fehlgeschlagen',
-        data: { detail: stored.errorMessage ?? 'Unbekannter Übersetzungsfehler' },
-      })
+      throw publicError(
+        'POST /api/auction/:platform/:id/translation',
+        502,
+        'Übersetzung fehlgeschlagen.',
+        stored.errorMessage ?? 'Unbekannter Übersetzungsfehler',
+      )
     }
   }
   if (stored?.status === 'pending' && !stored.claimStale) {
@@ -290,11 +292,7 @@ export default defineEventHandler(async (event) => {
       const message = err instanceof Error ? err.message : String(err)
       const failedFingerprint = attemptedConfigs.length > 0 ? fingerprintConfigChain(attemptedConfigs) : null
       await failAuctionTranslation(db, platform, id, detailsVersion, targetLang, claim, message, failedFingerprint)
-      throw createError({
-        statusCode: 502,
-        statusMessage: 'Übersetzung fehlgeschlagen',
-        data: { detail: message },
-      })
+      throw publicError('POST /api/auction/:platform/:id/translation', 502, 'Übersetzung fehlgeschlagen.', message)
     }
   })()
 

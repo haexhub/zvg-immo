@@ -336,13 +336,13 @@ describe('/api/auction/:platform/:id/translation', () => {
       extractionTexts: null,
     })
 
-    await expect(handler({
+    const error = await handler({
       context: { params: { platform: 'se-kronofogden', id: '101738' } },
       node: { req: { socket: { remoteAddress: '127.0.0.1' } } },
-    })).rejects.toMatchObject({
-      statusCode: 502,
-      data: { detail: 'Provider nicht erreichbar' },
-    })
+    }).catch((cause: unknown) => cause)
+
+    expect(error).toMatchObject({ statusCode: 502, statusMessage: 'Übersetzung fehlgeschlagen.' })
+    expect(JSON.stringify(error)).not.toContain('Provider nicht erreichbar')
 
     expect(claimAuctionTranslation).not.toHaveBeenCalled()
     expect(callTranslationLlm).not.toHaveBeenCalled()
@@ -369,13 +369,13 @@ describe('/api/auction/:platform/:id/translation', () => {
       extractionTexts: null,
     })
 
-    await expect(handler({
+    const error = await handler({
       context: { params: { platform: 'se-kronofogden', id: '101738' } },
       node: { req: { socket: { remoteAddress: '127.0.0.1' } } },
-    })).rejects.toMatchObject({
-      statusCode: 502,
-      data: { detail: 'Provider nicht erreichbar' },
-    })
+    }).catch((cause: unknown) => cause)
+
+    expect(error).toMatchObject({ statusCode: 502, statusMessage: 'Übersetzung fehlgeschlagen.' })
+    expect(JSON.stringify(error)).not.toContain('Provider nicht erreichbar')
 
     expect(claimAuctionTranslation).not.toHaveBeenCalled()
     expect(callTranslationLlm).not.toHaveBeenCalled()

@@ -121,7 +121,7 @@ function stubFetch(responses: Record<string, Buffer | string>): void {
       const body = responses[url]
       if (body == null) throw new Error(`unstubbed URL: ${url}`)
       const bytes = typeof body === 'string' ? Buffer.from(body, 'utf8') : body
-      return new Response(bytes, { status: 200 })
+      return new Response(Uint8Array.from(bytes), { status: 200 })
     }),
   )
 }

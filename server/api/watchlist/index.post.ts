@@ -4,6 +4,7 @@
 // checking whether the item is already there.
 
 import { getServiceClient } from '../../utils/supabase'
+import { publicError } from '../../utils/public-error'
 import type { WatchlistItem } from './index.get'
 
 const UNIQUE_VIOLATION = '23505'
@@ -43,12 +44,12 @@ export default defineEventHandler(async (event): Promise<WatchlistItem> => {
       .eq('external_id', externalId)
       .single()
     if (existing.error || !existing.data) {
-      throw createError({ statusCode: 500, statusMessage: existing.error?.message ?? 'Speichern fehlgeschlagen.' })
+      throw publicError('POST /api/watchlist', 500, 'Speichern fehlgeschlagen.', existing.error)
     }
     return toWatchlistItem(existing.data)
   }
   if (error || !data) {
-    throw createError({ statusCode: 500, statusMessage: error?.message ?? 'Speichern fehlgeschlagen.' })
+    throw publicError('POST /api/watchlist', 500, 'Speichern fehlgeschlagen.', error)
   }
   return toWatchlistItem(data)
 })

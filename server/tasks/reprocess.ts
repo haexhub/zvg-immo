@@ -280,8 +280,8 @@ async function buildCandidateImages(
       // Local cache first, then the images bucket: an ended auction's photos may
       // have been offloaded (server/tasks/offload-images.ts), and falling
       // through to text-only extraction would silently produce a worse result.
-      let bytes = await readFile(join(destDir, photo.file)).catch(() => null)
-      if (!bytes) bytes = await downloadImage(`${platform}/${externalId}/${photo.file}`)
+      const localBytes = await readFile(join(destDir, photo.file)).catch(() => null)
+      const bytes = localBytes ?? await downloadImage(`${platform}/${externalId}/${photo.file}`)
       if (!bytes) {
         console.warn(`[reprocess] candidate image unavailable for ${platform}:${externalId}/${photo.file}`)
         return null
