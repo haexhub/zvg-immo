@@ -208,6 +208,13 @@ function odorOverlayEntry(entries: OverlayEntry[]): void {
   addOverlayEntry(entries, label, layer, false, 'odor')
 }
 
+// Set by hovering a legend row (see hoveredFeatureKind/hoveredHazardKind
+// below) so the matching markers can be scaled up and drawn on top — the
+// vector layers' style functions read these on every render.
+const hoveredFeatureKind = ref<string | null>(null)
+const hoveredHazardKind = ref<string | null>(null)
+const HOVER_SCALE = 1.5
+
 function hazardOverlayEntries(entries: OverlayEntry[]): void {
   for (const hazard of props.hazards ?? []) {
     const color = hazardStatusColor(hazard.status)
@@ -217,12 +224,16 @@ function hazardOverlayEntries(entries: OverlayEntry[]): void {
     const layer = new VectorLayer({
       source: new VectorSource({ features: [circleFeature, dotFeature] }),
       style: (feature) => {
+        const hovered = hoveredHazardKind.value === hazard.hazard
         if (feature === dotFeature) {
-          return new Style({ image: new Icon({ src: hazardIconDataUri(hazard.hazard, color) }) })
+          return new Style({
+            image: new Icon({ src: hazardIconDataUri(hazard.hazard, color), scale: hovered ? HOVER_SCALE : 1 }),
+            zIndex: hovered ? 10 : 0,
+          })
         }
         return new Style({
-          stroke: new Stroke({ color, width: 2, lineDash: hazard.status === 'inside' ? undefined : [6, 6] }),
-          fill: new Fill({ color: rgba(color, hazard.status === 'inside' ? 0.18 : 0.08) }),
+          stroke: new Stroke({ color, width: hovered ? 3.5 : 2, lineDash: hazard.status === 'inside' ? undefined : [6, 6] }),
+          fill: new Fill({ color: rgba(color, (hazard.status === 'inside' ? 0.18 : 0.08) * (hovered ? 2 : 1)) }),
         })
       },
     })
@@ -249,7 +260,11 @@ function featureOverlayEntries(entries: OverlayEntry[]): void {
       source,
       style: (olFeature) => {
         const data = olFeature.get('data') as LocationMapFeature
-        return new Style({ image: new Icon({ src: featureIconDataUri(data.kind, featureColor(data)) }) })
+        const hovered = hoveredFeatureKind.value === data.kind
+        return new Style({
+          image: new Icon({ src: featureIconDataUri(data.kind, featureColor(data)), scale: hovered ? HOVER_SCALE : 1 }),
+          zIndex: hovered ? 10 : 0,
+        })
       },
     })
     // Visible by default, unlike the noise/flood/hazard/odor overlays above —
@@ -265,6 +280,13 @@ let map: OlMap | null = null
 
 const panelOpen = ref(false)
 const overlayEntries = shallowRef<OverlayEntry[]>([])
+
+// Style functions above read the hovered-kind refs directly, but OL only
+// re-invokes them on a render pass — nudge every overlay layer to redraw
+// when the hover target changes so the highlight actually appears.
+watch([hoveredFeatureKind, hoveredHazardKind], () => {
+  for (const entry of overlayEntries.value) entry.layer.changed()
+})
 
 function toggleOverlay(entry: OverlayEntry): void {
   entry.visible.value = !entry.visible.value
@@ -349,7 +371,10 @@ onMounted(async () => {
   const markerFeature = new Feature({ geometry: new Point(fromLonLat([props.lng, props.lat])) })
   const markerLayer = new VectorLayer({
     source: new VectorSource({ features: [markerFeature] }),
-    style: new Style({ image: new Icon({ src: mapPinDataUri('#2563eb'), anchor: MAP_PIN_ANCHOR }) }),
+    // Scaled up (and drawn last/on top, see the layers array below) so the
+    // subject property always reads as the one marker that matters, distinct
+    // from the same-size POI/hazard icons around it.
+    style: new Style({ image: new Icon({ src: mapPinDataUri('#2563eb'), anchor: MAP_PIN_ANCHOR, scale: 1.6 }), zIndex: 20 }),
   })
 
   const popupOverlay = new Overlay({
@@ -439,23 +464,37 @@ onBeforeUnmount(() => {
         {{ t('map.legend') }}
       </button>
       <div v-if="legendOpen" id="auction-detail-map-legend-panel" :class="controlPanelClass">
-        <div class="flex min-h-[18px] items-center gap-1.5">
-          <span class="h-2.5 w-2.5 shrink-0 rotate-[-45deg] rounded-[50%_50%_50%_0] bg-blue-600" />
+        <div class="flex min-h-6 items-center gap-1.5">
+          <img :src="mapPinDataUri('#2563eb')" alt="" class="h-6 w-6 shrink-0">
           {{ t('map.legendSubject') }}
         </div>
-        <div v-for="entry in featureLegendEntries" :key="entry.key" class="flex min-h-[18px] items-center gap-1.5">
-          <img :src="entry.icon" alt="" class="h-4 w-4 shrink-0">
+        <div
+          v-for="entry in featureLegendEntries"
+          :key="entry.key"
+          class="-mx-1 flex min-h-6 items-center gap-1.5 rounded px-1 hover:bg-slate-900/10"
+          @mouseenter="hoveredFeatureKind = entry.key"
+          @mouseleave="hoveredFeatureKind = null"
+        >
+          <img :src="entry.icon" alt="" class="h-6 w-6 shrink-0">
           {{ entry.label }}
         </div>
         <template v-if="hazardLegendEntries.length">
           <div class="mt-1 border-t border-slate-900/10 pt-1 font-semibold">{{ t('objektDetail.hazardsTitle') }}</div>
-          <div v-for="entry in hazardLegendEntries" :key="entry.key" class="flex min-h-[18px] items-center gap-1.5">
-            <img :src="entry.icon" alt="" class="h-4 w-4 shrink-0">
+          <div
+            v-for="entry in hazardLegendEntries"
+            :key="entry.key"
+            class="-mx-1 flex min-h-6 items-center gap-1.5 rounded px-1 hover:bg-slate-900/10"
+            @mouseenter="hoveredHazardKind = entry.key"
+            @mouseleave="hoveredHazardKind = null"
+          >
+            <img :src="entry.icon" alt="" class="h-6 w-6 shrink-0">
             {{ entry.label }}
           </div>
         </template>
-        <div v-if="showOdorLegend" class="flex min-h-[18px] items-center gap-1.5">
-          <span class="h-2.5 w-2.5 shrink-0 rounded-full border-[1.5px] border-dashed border-red-950 bg-red-500/15" />
+        <div v-if="showOdorLegend" class="flex min-h-6 items-center gap-1.5">
+          <span class="flex h-6 w-6 shrink-0 items-center justify-center">
+            <span class="h-4 w-4 rounded-full border-[1.5px] border-dashed border-red-950 bg-red-500/15" />
+          </span>
           {{ t('objektDetail.mapLayerOdorSignals') }}
         </div>
       </div>
