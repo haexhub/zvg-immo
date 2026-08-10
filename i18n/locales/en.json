@@ -209,8 +209,6 @@
       "description": "Max output tokens limit per use case — takes effect on the next LLM call, no redeploy needed.",
       "extractionLabel": "Extraction",
       "translationLabel": "Translation",
-      "usage-ideasLabel": "Usage ideas",
-      "renovation-cost-estimateLabel": "Renovation cost",
       "loadError": "Configuration could not be loaded.",
       "invalidValue": "Please enter a valid number for every field.",
       "saveError": "Save failed.",
@@ -654,26 +652,6 @@
     "denkmalschutz": "Listed building",
     "vermietet": "Tenanted"
   },
-  "usageIdeaType": {
-    "owner-occupation": "Owner occupation",
-    "owner-occupation-with-sublet": "Owner occupation with sublet",
-    "vacation-rental": "Vacation rental",
-    "farm": "Farm",
-    "agricultural": "Agricultural use",
-    "forestry": "Forestry",
-    "warehouse": "Warehouse",
-    "other": "Other"
-  },
-  "renovationCostCategory": {
-    "roof": "Roof",
-    "facade-insulation": "Facade/insulation",
-    "windows": "Windows",
-    "heating": "Heating",
-    "electrical": "Electrical",
-    "plumbing-bathroom": "Plumbing/bathroom",
-    "flooring": "Flooring",
-    "other": "Other"
-  },
   "attachmentKind": {
     "announcement": "Announcement",
     "photo": "Photos",
@@ -935,8 +913,6 @@
     "technicalLink": "Technical",
     "biddingNotes": "Note on the bidding process: {note}",
     "renovationNotes": "Renovation note: {note}",
-    "confidenceHigh": "high confidence",
-    "confidenceLow": "low confidence",
     "location": "Location, surroundings & infrastructure",
     "openDetailPage": "Open detail page ↗",
     "announcementOriginal": "Announcement (original) ↗",
@@ -1299,18 +1275,6 @@
     "developmentCharges": "Development charges",
     "redevelopmentArea": "Redevelopment area",
     "conservationArea": "Conservation area",
-    "usageIdeasTitle": "Usage ideas",
-    "usageIdeasGenerate": "Suggest usage ideas",
-    "usageIdeasPending": "Generating ideas …",
-    "usageIdeasError": "Usage ideas could not be generated.",
-    "usageIdeasRetry": "Retry",
-    "usageIdeasEmpty": "No usage ideas identified.",
-    "renovationCostTitle": "Renovation cost",
-    "renovationCostGenerate": "Estimate renovation cost",
-    "renovationCostPending": "Generating estimate …",
-    "renovationCostError": "Renovation cost could not be estimated.",
-    "renovationCostRetry": "Retry",
-    "renovationCostEmpty": "No significant renovation need detected.",
     "gallery": {
       "close": "Close"
     }

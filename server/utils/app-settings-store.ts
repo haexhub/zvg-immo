@@ -2,7 +2,6 @@ import type { Pool } from 'pg'
 import { eq, inArray } from 'drizzle-orm'
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { appSettings } from '../db/schema'
-import { INSIGHT_REGISTRY } from './insights/registry'
 
 /** Shared app_settings I/O. All public settings helpers still accept a raw Pool. */
 export async function readSetting(db: Pool, key: string): Promise<{ value: unknown } | undefined> {
@@ -42,11 +41,10 @@ export async function setEnabledCountries(db: Pool, countries: readonly string[]
   await writeSetting(db, ENABLED_COUNTRIES_KEY, coerceEnabledCountries([...countries]))
 }
 
-export const KINDS: LlmMaxTokensKind[] = ['extraction', 'translation', ...INSIGHT_REGISTRY.map((d) => d.id)]
+export const KINDS: LlmMaxTokensKind[] = ['extraction', 'translation']
 export const DEFAULT_LLM_MAX_TOKENS: Record<LlmMaxTokensKind, number> = {
   extraction: 4096,
   translation: 8192,
-  ...Object.fromEntries(INSIGHT_REGISTRY.map((d) => [d.id, d.maxTokensDefault])),
 }
 
 const MIN_MAX_TOKENS = 256

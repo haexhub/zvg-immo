@@ -1,7 +1,5 @@
 <script setup lang="ts">
 import { classifyPropertyType } from '~/lib/property-type'
-import type { UsageIdea } from '~/lib/usage-idea'
-import type { RenovationCostItem } from '~/lib/renovation-cost'
 import type { AuctionDetail } from '~/server/api/auction/[platform]/[id].get'
 import { auctionPhotoUrls } from '~/lib/auction-photos'
 import { safeHref } from '~/lib/utils'
@@ -14,18 +12,6 @@ const platform = String(route.params.platform)
 const id = String(route.params.id)
 const { t, locale } = useI18n()
 const propertyTypeLabel = usePropertyTypeLabel()
-const {
-  payload: usageIdeas,
-  pending: usageIdeasPending,
-  error: usageIdeasError,
-  generate: generateUsageIdeas,
-} = useAuctionInsight<UsageIdea[]>('usage-ideas', platform, id)
-const {
-  payload: renovationCost,
-  pending: renovationCostPending,
-  error: renovationCostError,
-  generate: generateRenovationCost,
-} = useAuctionInsight<RenovationCostItem[]>('renovation-cost-estimate', platform, id)
 const { data: a, error, pending } = await useFetch<AuctionDetail | null>(
   `/api/auction/${platform}/${id}`,
   { default: () => null },
@@ -173,14 +159,6 @@ useHead(() => ({
             :location-character-translating="locationCharacterTranslating"
             :planning-notes-translating="planningNotesTranslating"
             :parcels-translating="parcelsTranslating"
-            :usage-ideas="usageIdeas ?? null"
-            :usage-ideas-pending="usageIdeasPending"
-            :usage-ideas-error="usageIdeasError"
-            :renovation-cost="renovationCost ?? null"
-            :renovation-cost-pending="renovationCostPending"
-            :renovation-cost-error="renovationCostError"
-            @generate-usage-ideas="generateUsageIdeas"
-            @generate-renovation-cost="generateRenovationCost"
           />
         </div>
 

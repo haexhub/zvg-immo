@@ -141,14 +141,21 @@ describe('getLlmMaxTokens', () => {
   it('falls back to the default when no row exists', async () => {
     const db = makeFakePool() as unknown as Pool
     expect(await getLlmMaxTokens(db, 'extraction')).toBe(DEFAULT_LLM_MAX_TOKENS.extraction)
-    expect(await getLlmMaxTokens(db, 'usage-ideas')).toBe(DEFAULT_LLM_MAX_TOKENS['usage-ideas'])
     expect(await getLlmMaxTokens(db, 'translation')).toBe(DEFAULT_LLM_MAX_TOKENS.translation)
+  })
+
+  // 'custom-kind' stands in for any kind beyond extraction/translation
+  // (LlmMaxTokensKind accepts any string) — it has no configured default, so
+  // the fallback is the hard floor (MIN_MAX_TOKENS), not a per-kind default.
+  it('falls back to the floor for a kind with no configured default', async () => {
+    const db = makeFakePool() as unknown as Pool
+    expect(await getLlmMaxTokens(db, 'custom-kind')).toBe(256)
   })
 
   it('returns a previously written value', async () => {
     const db = makeFakePool() as unknown as Pool
-    await setLlmMaxTokens(db, 'usage-ideas', 2048)
-    expect(await getLlmMaxTokens(db, 'usage-ideas')).toBe(2048)
+    await setLlmMaxTokens(db, 'custom-kind', 2048)
+    expect(await getLlmMaxTokens(db, 'custom-kind')).toBe(2048)
   })
 
   it('falls back to the default on a malformed value', async () => {
@@ -175,7 +182,7 @@ describe('getLlmMaxTokens', () => {
       if (queryText(queryArg).toLowerCase().startsWith('select "value"')) return { rows: [[1024.6]] }
       throw new Error('unexpected')
     }
-    expect(await getLlmMaxTokens(db, 'usage-ideas')).toBe(1025)
+    expect(await getLlmMaxTokens(db, 'custom-kind')).toBe(1025)
   })
 })
 
@@ -185,8 +192,6 @@ describe('getAllLlmMaxTokens', () => {
     await setLlmMaxTokens(db, 'translation', 16_000)
     expect(await getAllLlmMaxTokens(db)).toEqual({
       extraction: DEFAULT_LLM_MAX_TOKENS.extraction,
-      'usage-ideas': DEFAULT_LLM_MAX_TOKENS['usage-ideas'],
-      'renovation-cost-estimate': DEFAULT_LLM_MAX_TOKENS['renovation-cost-estimate'],
       translation: 16_000,
     })
   })
@@ -195,8 +200,8 @@ describe('getAllLlmMaxTokens', () => {
 describe('setLlmMaxTokens', () => {
   it('clamps a too-low value up to the minimum', async () => {
     const db = makeFakePool() as unknown as Pool
-    await setLlmMaxTokens(db, 'usage-ideas', 10)
-    expect(await getLlmMaxTokens(db, 'usage-ideas')).toBe(256)
+    await setLlmMaxTokens(db, 'custom-kind', 10)
+    expect(await getLlmMaxTokens(db, 'custom-kind')).toBe(256)
   })
 
   it('clamps a too-high value down to the maximum', async () => {
@@ -207,15 +212,15 @@ describe('setLlmMaxTokens', () => {
 
   it('rounds a non-integer value', async () => {
     const db = makeFakePool() as unknown as Pool
-    await setLlmMaxTokens(db, 'usage-ideas', 1024.6)
-    expect(await getLlmMaxTokens(db, 'usage-ideas')).toBe(1025)
+    await setLlmMaxTokens(db, 'custom-kind', 1024.6)
+    expect(await getLlmMaxTokens(db, 'custom-kind')).toBe(1025)
   })
 
   it('overwrites a previously set value', async () => {
     const db = makeFakePool() as unknown as Pool
-    await setLlmMaxTokens(db, 'usage-ideas', 2048)
-    await setLlmMaxTokens(db, 'usage-ideas', 3000)
-    expect(await getLlmMaxTokens(db, 'usage-ideas')).toBe(3000)
+    await setLlmMaxTokens(db, 'custom-kind', 2048)
+    await setLlmMaxTokens(db, 'custom-kind', 3000)
+    expect(await getLlmMaxTokens(db, 'custom-kind')).toBe(3000)
   })
 })
 
