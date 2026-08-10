@@ -42,82 +42,6 @@ const enabledCountrySourceCount = computed(
   () => countrySources.value.filter((source) => source.enabled).length,
 )
 
-function progressNumber(value: number | string | null | undefined): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0
-}
-
-function percentOf(done: number, total: number): number {
-  return total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 100
-}
-
-interface CrawlCountryRow {
-  code: string
-  label: string
-  regionsDone: number
-  regionsTotal: number
-  archivedDone: number
-  archivedTotal: number
-  percent: number
-}
-
-const crawlProgressByCountry = computed<CrawlCountryRow[]>(() => {
-  const byCountry = llmBatchJobs.value?.enrichStatus?.progressByCountry
-  if (!byCountry) return []
-  return Object.entries(byCountry)
-    .map(([code, p]) => {
-      const regionsDone = progressNumber(p.regionsDone)
-      const regionsTotal = progressNumber(p.regionsTotal)
-      const archivedDone = progressNumber(p.archivedDone)
-      const archivedTotal = progressNumber(p.archivedTotal)
-      return {
-        code,
-        label: countryLabel(code),
-        regionsDone,
-        regionsTotal,
-        archivedDone,
-        archivedTotal,
-        // A run crawls all sources first and only then knows how many
-        // listings there are to archive, so archivedTotal is 0 for the whole
-        // first phase — track the phase that is actually running, otherwise
-        // every bar sits at 100% while the crawl has barely started.
-        percent: archivedTotal > 0
-          ? percentOf(archivedDone, archivedTotal)
-          : percentOf(regionsDone, regionsTotal),
-      }
-    })
-    .sort((a, b) => a.label.localeCompare(b.label, 'de'))
-})
-
-interface LlmCountryRow {
-  code: string
-  label: string
-  done: number
-  total: number
-  percent: number
-  llmCalls: number
-  llmErrors: number
-}
-
-const llmProgressByCountry = computed<LlmCountryRow[]>(() => {
-  const byCountry = llmBatchJobs.value?.reprocessStatus?.progressByCountry
-  if (!byCountry) return []
-  return Object.entries(byCountry)
-    .map(([code, p]) => {
-      const done = progressNumber(p.processed) + progressNumber(p.skipped)
-      const total = progressNumber(p.candidatesTotal)
-      return {
-        code,
-        label: countryLabel(code),
-        done,
-        total,
-        percent: percentOf(done, total),
-        llmCalls: progressNumber(p.llmCalls),
-        llmErrors: progressNumber(p.llmErrors),
-      }
-    })
-    .sort((a, b) => a.label.localeCompare(b.label, 'de'))
-})
-
 async function loadCountrySources(): Promise<void> {
   try {
     const res = await $fetch<CountrySourceSettings>('/api/settings/countries')
@@ -246,23 +170,6 @@ onBeforeUnmount(stopProgressPolling)
             duration: Math.round((llmBatchJobs.enrichStatus.lastResult?.durationMs ?? 0) / 1000),
           }) }}
         </p>
-        <ul v-if="crawlProgressByCountry.length" class="space-y-3 rounded-md border p-3">
-          <li v-for="row in crawlProgressByCountry" :key="row.code" class="space-y-1">
-            <div class="flex items-baseline justify-between gap-2 text-xs">
-              <span class="font-medium text-foreground">
-                {{ row.label }}
-                <span class="ml-1 font-mono uppercase text-muted-foreground">{{ row.code }}</span>
-              </span>
-              <span class="text-muted-foreground">
-                {{ $t('settings.sources.crawlCountryRegions', { done: row.regionsDone, total: row.regionsTotal }) }}
-              </span>
-            </div>
-            <Progress :model-value="row.percent" />
-            <p class="text-xs text-muted-foreground">
-              {{ $t('settings.sources.crawlCountryListings', { done: row.archivedDone, total: row.archivedTotal }) }}
-            </p>
-          </li>
-        </ul>
         <SettingsMessageDetails
           v-if="llmBatchJobs.enrichStatus.lastError"
           :text="$t('settings.sources.enrichStatusLastError', { message: llmBatchJobs.enrichStatus.lastError })"
@@ -287,21 +194,6 @@ onBeforeUnmount(stopProgressPolling)
             duration: Math.round((llmBatchJobs.reprocessStatus.lastResult?.durationMs ?? 0) / 1000),
           }) }}
         </p>
-        <ul v-if="llmProgressByCountry.length" class="space-y-3 rounded-md border p-3">
-          <li v-for="row in llmProgressByCountry" :key="row.code" class="space-y-1">
-            <div class="flex items-baseline justify-between gap-2 text-xs">
-              <span class="font-medium text-foreground">
-                {{ row.label }}
-                <span class="ml-1 font-mono uppercase text-muted-foreground">{{ row.code }}</span>
-              </span>
-              <span class="text-muted-foreground">{{ row.done }}/{{ row.total }}</span>
-            </div>
-            <Progress :model-value="row.percent" />
-            <p class="text-xs text-muted-foreground">
-              {{ $t('settings.sources.llmCountryCaption', { llmCalls: row.llmCalls, llmErrors: row.llmErrors }) }}
-            </p>
-          </li>
-        </ul>
         <SettingsMessageDetails
           v-if="llmBatchJobs.reprocessStatus.lastWarning"
           :text="$t('settings.sources.llmStatusLastWarning', { message: llmBatchJobs.reprocessStatus.lastWarning })"

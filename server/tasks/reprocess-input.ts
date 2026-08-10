@@ -46,6 +46,12 @@ export interface ReprocessOptions {
    *  scheduled task never sets this; only the /settings-triggered manual
    *  endpoint does. */
   trigger?: 'cron' | 'manual'
+  /** Bypasses only the MAX_LLM_FAILURES cooldown gate (see cooldownElapsed
+   *  in reprocess-run.ts), unlike `force` which also bypasses the "does this
+   *  candidate actually need an attempt" check. Lets /settings retry a
+   *  country's currently locked-out auctions immediately without re-running
+   *  the LLM on ones that already succeeded. */
+  ignoreCooldown?: boolean
 }
 
 export interface ReprocessResult {

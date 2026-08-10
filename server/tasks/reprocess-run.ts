@@ -230,7 +230,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
           (priorEntry.source === 'rules' && priorEntry.confidence === 'low') ||
           (llmConfig != null && hasMissingLlmOnlyField) ||
           hasNewArchivedDocuments(artifactState)) &&
-          (priorLlmFailures < MAX_LLM_FAILURES || cooldownElapsed(priorState?.llmLastAttemptedAt)) &&
+          (priorLlmFailures < MAX_LLM_FAILURES || cooldownElapsed(priorState?.llmLastAttemptedAt) || opts.ignoreCooldown) &&
           !isLlmBatchPending(priorState?.llmBatchJob
             ? { llmBatchJob: priorState.llmBatchJob, at: priorState.updatedAt }
             : undefined))

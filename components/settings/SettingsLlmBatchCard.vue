@@ -1,56 +1,16 @@
 <script setup lang="ts">
 import { Loader2, RefreshCw } from 'lucide-vue-next'
-import { useSettingsError } from '~/composables/settings/useSettingsError'
 import { useSettingsTaskOverview } from '~/composables/settings/useSettingsTaskOverview'
 
-const { t } = useI18n()
-const countryLabel = useCountryLabel()
-const { normalizeSettingsError } = useSettingsError()
 const {
   llmBatchJobs,
   llmBatchJobsPending,
   llmBatchJobsError,
   llmBatchBacklog,
-  llmBatchBacklogByCountry,
   llmBatchRecentGroups,
   formatBatchDate,
   loadLlmBatchJobs,
-  startProgressPolling,
 } = useSettingsTaskOverview()
-
-const backlogTriggerPending = ref<string | null>(null)
-const backlogTriggerError = ref<string | null>(null)
-
-interface BacklogCountryRow {
-  code: string
-  label: string
-  readyRequests: number
-  failedLimit: number
-}
-
-// Only countries with something to show — sorted worst-backlog-first so the
-// most urgent country is the first trigger button an admin sees.
-const backlogCountryRows = computed<BacklogCountryRow[]>(() =>
-  Object.entries(llmBatchBacklogByCountry.value)
-    .filter(([, counts]) => counts.readyRequests > 0 || counts.failedLimit > 0)
-    .map(([code, counts]) => ({ code, label: countryLabel(code), ...counts }))
-    .sort((a, b) => b.readyRequests - a.readyRequests),
-)
-
-async function triggerCountryBacklog(code: string): Promise<void> {
-  if (backlogTriggerPending.value) return
-  backlogTriggerPending.value = code
-  backlogTriggerError.value = null
-  startProgressPolling()
-  try {
-    await $fetch(`/api/settings/countries/${code}/reprocess-backlog`, { method: 'POST' })
-    await loadLlmBatchJobs()
-  } catch (err) {
-    backlogTriggerError.value = normalizeSettingsError(err, t('settings.llmBatch.backlogTriggerError'))
-  } finally {
-    backlogTriggerPending.value = null
-  }
-}
 
 onMounted(loadLlmBatchJobs)
 </script>
@@ -141,56 +101,6 @@ onMounted(loadLlmBatchJobs)
       <p v-if="llmBatchBacklog.failedLimit > 0" class="text-sm text-muted-foreground">
         {{ $t('settings.llmBatch.failedLimit', { count: llmBatchBacklog.failedLimit }) }}
       </p>
-
-      <div v-if="backlogCountryRows.length" class="space-y-2">
-        <div class="text-sm font-medium">{{ $t('settings.llmBatch.byCountryHeading') }}</div>
-        <p v-if="backlogTriggerError" class="text-sm text-destructive">{{ backlogTriggerError }}</p>
-        <div class="max-h-80 overflow-y-auto rounded-md border divide-y">
-          <SettingsCountryActionRow v-for="row in backlogCountryRows" :key="row.code">
-            <span class="block text-sm font-medium">
-              {{ row.label }}
-              <span class="ml-1 font-mono text-xs uppercase text-muted-foreground">{{ row.code }}</span>
-            </span>
-            <span class="block text-xs text-muted-foreground">
-              {{ $t('settings.llmBatch.countryReady', { count: row.readyRequests }) }}
-              <template v-if="row.failedLimit">
-                · {{ $t('settings.llmBatch.countryFailedLimit', { count: row.failedLimit }) }}
-              </template>
-            </span>
-            <template #action>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                :disabled="row.readyRequests === 0 || backlogTriggerPending !== null"
-                @click="triggerCountryBacklog(row.code)"
-              >
-                <Loader2 v-if="backlogTriggerPending === row.code" class="h-4 w-4 animate-spin" />
-                <RefreshCw v-else class="h-4 w-4" />
-                {{ backlogTriggerPending === row.code ? $t('settings.llmBatch.countryProcessing') : $t('settings.llmBatch.countryProcess') }}
-              </Button>
-            </template>
-          </SettingsCountryActionRow>
-        </div>
-      </div>
-
-      <div v-if="llmBatchBacklog.sampleRequestKeys.length" class="space-y-2">
-        <div class="text-sm font-medium">{{ $t('settings.llmBatch.readySample') }}</div>
-        <div class="max-h-32 overflow-auto rounded border bg-muted/30 p-2">
-          <div v-for="key in llmBatchBacklog.sampleRequestKeys" :key="`ready:${key}`" class="font-mono text-xs leading-6">
-            {{ key }}
-          </div>
-        </div>
-      </div>
-
-      <div v-if="llmBatchBacklog.orphanedRequestKeys.length" class="space-y-2">
-        <div class="text-sm font-medium">{{ $t('settings.llmBatch.orphanedSample') }}</div>
-        <div class="max-h-32 overflow-auto rounded border bg-muted/30 p-2">
-          <div v-for="key in llmBatchBacklog.orphanedRequestKeys" :key="`orphaned:${key}`" class="font-mono text-xs leading-6">
-            {{ key }}
-          </div>
-        </div>
-      </div>
 
       <p v-if="!llmBatchJobsPending && (!llmBatchJobs || llmBatchJobs.jobs.length === 0)" class="text-sm text-muted-foreground">
         {{ $t('settings.llmBatch.empty') }}

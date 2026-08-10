@@ -428,6 +428,14 @@ describe('runReprocess llm_failures cooldown', () => {
     expect(writeAuctionLlmPipelineState).not.toHaveBeenCalled()
   })
 
+  it('ignoreCooldown bypasses the lockout immediately, without waiting for the 24h window', async () => {
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(
+      lockedOutFetchState(new Date(Date.now() - 60 * 60 * 1000).toISOString()), // 1h ago — still locked normally
+    )
+
+    await expect(runReprocess({ country: 'de', ignoreCooldown: true })).resolves.toMatchObject({ processed: 1, skipped: 0 })
+  })
+
   it('becomes eligible again once the cooldown has elapsed', async () => {
     vi.mocked(readAuctionFetchStates).mockResolvedValue(
       lockedOutFetchState(new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString()), // 25h ago
