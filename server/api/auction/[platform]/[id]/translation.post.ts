@@ -25,7 +25,7 @@ import {
 import { isLlmProviderUnavailable, type LlmConfig } from '~/server/utils/extract/llm'
 import { callTranslationLlm, type TranslationResult } from '~/server/utils/extract/text-llm'
 import { fingerprintConfigChain, resolveActiveLlmConfigChain } from '~/server/utils/translation-llm-chain'
-import { countryContentLanguage, isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
+import { CONTENT_TARGET_LANGS, countryContentLanguage, isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
 import { extractTranslatableExtractionTexts, translationContentSource } from '~/lib/extraction-translation'
 import {
   checkInMemoryRateLimit,
@@ -35,7 +35,10 @@ import {
 import { requestClientIp } from '~/server/utils/request-client-ip'
 import type { Auction } from '~/types/auction'
 
-const SUPPORTED_TARGET_LANGS = new Set<ContentTargetLang>(['de', 'en'])
+// Exported (unchanged otherwise) so the /settings per-auction retry trigger
+// (translation-retry.post.ts) can reuse the exact same prompt/fallback logic
+// instead of drifting a second copy of it.
+export const SUPPORTED_TARGET_LANGS = new Set<ContentTargetLang>(CONTENT_TARGET_LANGS)
 
 const LANG_NAMES: Record<ContentTargetLang, string> = { de: 'German', en: 'English' }
 const LANGUAGE_DISPLAY_NAMES = new Intl.DisplayNames(['en'], { type: 'language' })
@@ -87,7 +90,7 @@ function buildPrompt(
   return lines.join('\n')
 }
 
-async function tryTranslate(
+export async function tryTranslate(
   title: string | null,
   address: string | null,
   description: string | null,

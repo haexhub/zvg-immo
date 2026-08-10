@@ -316,15 +316,12 @@
       "enrichStatusLastRun": "Last crawl/archive run: {at} — {archived} archived, {duration}s.",
       "enrichStatusLastError": "Crawl/archive last failed: {message}",
       "refreshOverview": "Refresh status",
-      "crawlCountryRegions": "Sources {done}/{total}",
-      "crawlCountryListings": "{done}/{total} listings archived",
       "llmStatusRunning": "LLM extraction running since {at} …",
       "llmStatusLastRun": "Last LLM extraction: {at} — {processed} processed, {llmCalls} LLM calls, {duration}s.",
       "llmStatusLastWarning": "LLM notice: {message}",
       "llmStatusLastError": "LLM extraction last failed: {message}",
       "llmStatusLlmErrors": "{count} LLM request failure(s) in the last run",
       "llmStatusLastLlmError": "Last LLM error: {message}",
-      "llmCountryCaption": "{llmCalls} LLM calls · {llmErrors} errors",
       "externalStatusRunning": "Location scoring running since {at} …",
       "externalStatusProgress": "{done} of {total} checked",
       "externalStatusLastRun": "Last location scoring: {at} — {processed} checked, {written} stored, {duration}s.",
@@ -334,6 +331,14 @@
       "copernicusEffisStatusRunning": "Import running since {at} — can take several minutes …",
       "copernicusEffisStatusLastRun": "Last import: {at} — {normalized} of {fetched} burnt areas kept ({pages} pages).",
       "copernicusEffisStatusLastError": "Import last failed: {message}"
+    },
+    "crawlStatus": {
+      "title": "Crawling status",
+      "description": "Per country: how many listings are fully crawled, how many are still open, and which ones' last attempt failed. Click a segment to see the affected listings.",
+      "refresh": "Refresh status",
+      "retry": "Crawl now",
+      "retryError": "Could not start the crawl.",
+      "empty": "No countries enabled."
     },
     "osmImport": {
       "title": "OSM location data",
@@ -436,14 +441,6 @@
       "missingLlmFields": "LLM fields open",
       "orphanedBatchMarkers": "Orphaned markers",
       "failedLimit": "{count} listings reached the LLM failure limit.",
-      "byCountryHeading": "Open per country",
-      "countryReady": "{count} open",
-      "countryFailedLimit": "{count} locked (failure limit)",
-      "countryProcess": "Process now",
-      "countryProcessing": "Starting …",
-      "backlogTriggerError": "Could not start processing.",
-      "readySample": "Examples: not queued yet",
-      "orphanedSample": "Examples: marker without a known open job",
       "openHeading": "Open provider jobs",
       "historyHeading": "Recent batch jobs",
       "pendingOfTotal": "{pending} of {total} open",
@@ -461,6 +458,40 @@
         "enrich": "Enrich",
         "reprocess": "Reprocess"
       }
+    },
+    "llmStatus": {
+      "title": "LLM status",
+      "description": "Per country: how many listings were successfully extracted by the LLM, how many are still waiting, and which ones hit the failure limit. Click a segment to see the affected listings.",
+      "refresh": "Refresh status",
+      "retryOpen": "Start open",
+      "retryFailed": "Retry failed",
+      "retryError": "Could not start processing.",
+      "empty": "No countries enabled.",
+      "colFailures": "Failures"
+    },
+    "translationStatus": {
+      "title": "Translation status",
+      "description": "Translations only exist once a listing was actually viewed in another language — these numbers show translation attempts, not all listings. Each row can retrigger that one translation individually.",
+      "refresh": "Refresh status",
+      "retryRow": "Retry this translation",
+      "retryError": "Could not start the translation.",
+      "empty": "No translation attempts yet.",
+      "colLang": "Language"
+    },
+    "statusOverview": {
+      "loadError": "Could not load status.",
+      "listLoadError": "Could not load the list.",
+      "listEmpty": "No listings in this segment.",
+      "bucketDone": "Done",
+      "bucketOpen": "Open",
+      "bucketError": "Failed",
+      "colPlatform": "Platform",
+      "colTitle": "Listing",
+      "colRegion": "Region",
+      "colError": "Last error",
+      "pageInfo": "{from}–{to} of {total}",
+      "prevPage": "Previous",
+      "nextPage": "Next"
     },
     "archive": {
       "title": "Raw archive",

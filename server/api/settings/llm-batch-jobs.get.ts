@@ -4,7 +4,6 @@
 // currently waiting for a provider response, plus enough history/backlog
 // context to debug why listings are still rules-only.
 
-import type { AuctionExtraction } from '~/types/auction'
 import { MAX_LLM_FAILURES } from '~/lib/llm-limits'
 import {
   getAllLlmBatchCapabilities,
@@ -15,6 +14,7 @@ import {
 } from '~/server/utils/llm-batch-jobs'
 import { readAuctionRecords } from '~/server/utils/auction-record'
 import { readAuctionFetchStates } from '~/server/utils/auction-fetch-state'
+import { hasMissingLlmFields } from '~/server/utils/llm-status'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 import { isGeminiBatchTierPaid } from '~/server/utils/extract/gemini-batch'
 import { getTaskRunStatus, type TaskRunStatus } from '~/server/utils/task-runs'
@@ -87,26 +87,6 @@ function providerForJob(jobName: string): LlmBatchJobOverviewItem['provider'] {
   if (jobName.startsWith('msgbatch_')) return 'anthropic'
   if (jobName.startsWith('batch_')) return 'openai'
   return 'gemini'
-}
-
-function hasMissingLlmFields(entry: AuctionExtraction): boolean {
-  return (
-    entry.condition === undefined ||
-    entry.features === undefined ||
-    entry.bedrooms === undefined ||
-    entry.bathrooms === undefined ||
-    entry.floor === undefined ||
-    entry.bathroomHasTub === undefined ||
-    entry.bathroomHasShower === undefined ||
-    entry.heating === undefined ||
-    entry.yearBuilt === undefined ||
-    entry.lastRenovationYear === undefined ||
-    entry.renovationNotes === undefined ||
-    entry.insights === undefined ||
-    entry.planningNotes === undefined ||
-    entry.documentSummary === undefined ||
-    entry.marketValueEur === undefined
-  )
 }
 
 export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {

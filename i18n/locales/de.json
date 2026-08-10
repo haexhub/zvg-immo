@@ -316,15 +316,12 @@
       "enrichStatusLastRun": "Letzter Crawl/Archiv-Lauf: {at} — {archived} archiviert, {duration}s.",
       "enrichStatusLastError": "Crawl/Archiv zuletzt fehlgeschlagen: {message}",
       "refreshOverview": "Status aktualisieren",
-      "crawlCountryRegions": "Quellen {done}/{total}",
-      "crawlCountryListings": "{done}/{total} Anzeigen archiviert",
       "llmStatusRunning": "LLM-Extraktion läuft seit {at} …",
       "llmStatusLastRun": "Letzte LLM-Extraktion: {at} — {processed} verarbeitet, {llmCalls} LLM-Aufrufe, {duration}s.",
       "llmStatusLastWarning": "LLM-Hinweis: {message}",
       "llmStatusLastError": "LLM-Extraktion zuletzt fehlgeschlagen: {message}",
       "llmStatusLlmErrors": "{count} LLM-Anfragefehler im letzten Lauf",
       "llmStatusLastLlmError": "Letzter LLM-Fehler: {message}",
-      "llmCountryCaption": "{llmCalls} LLM-Aufrufe · {llmErrors} Fehler",
       "externalStatusRunning": "Lagebewertung läuft seit {at} …",
       "externalStatusProgress": "{done} von {total} geprüft",
       "externalStatusLastRun": "Letzte Lagebewertung: {at} — {processed} geprüft, {written} gespeichert, {duration}s.",
@@ -334,6 +331,14 @@
       "copernicusEffisStatusRunning": "Import läuft seit {at} — kann mehrere Minuten dauern …",
       "copernicusEffisStatusLastRun": "Letzter Import: {at} — {normalized} von {fetched} Brandflächen übernommen ({pages} Seiten).",
       "copernicusEffisStatusLastError": "Import zuletzt fehlgeschlagen: {message}"
+    },
+    "crawlStatus": {
+      "title": "Crawling-Status",
+      "description": "Pro Land: wie viele Anzeigen sind vollständig gecrawlt, welche sind noch offen und bei welchen ist der letzte Versuch fehlgeschlagen. Auf ein Segment klicken zeigt die betroffenen Anzeigen.",
+      "refresh": "Status aktualisieren",
+      "retry": "Jetzt crawlen",
+      "retryError": "Crawl konnte nicht gestartet werden.",
+      "empty": "Keine Länder aktiv."
     },
     "osmImport": {
       "title": "OSM-Standortdaten",
@@ -436,14 +441,6 @@
       "missingLlmFields": "LLM-Felder offen",
       "orphanedBatchMarkers": "Verwaiste Marker",
       "failedLimit": "{count} Anzeigen haben das LLM-Fehlerlimit erreicht.",
-      "byCountryHeading": "Offen pro Land",
-      "countryReady": "{count} offen",
-      "countryFailedLimit": "{count} gesperrt (Fehlerlimit)",
-      "countryProcess": "Jetzt verarbeiten",
-      "countryProcessing": "Wird gestartet …",
-      "backlogTriggerError": "Verarbeitung konnte nicht gestartet werden.",
-      "readySample": "Beispiele: noch nicht eingereiht",
-      "orphanedSample": "Beispiele: Marker ohne bekannten offenen Job",
       "openHeading": "Offene Provider-Jobs",
       "historyHeading": "Letzte Batch-Jobs",
       "pendingOfTotal": "{pending} von {total} offen",
@@ -461,6 +458,40 @@
         "enrich": "Enrich",
         "reprocess": "Reprocess"
       }
+    },
+    "llmStatus": {
+      "title": "LLM-Status",
+      "description": "Pro Land: wie viele Anzeigen sind erfolgreich per LLM extrahiert, welche warten noch und bei welchen ist das Fehlerlimit erreicht. Auf ein Segment klicken zeigt die betroffenen Anzeigen.",
+      "refresh": "Status aktualisieren",
+      "retryOpen": "Offene starten",
+      "retryFailed": "Fehlerhafte erneut starten",
+      "retryError": "Verarbeitung konnte nicht gestartet werden.",
+      "empty": "Keine Länder aktiv.",
+      "colFailures": "Fehlversuche"
+    },
+    "translationStatus": {
+      "title": "Übersetzungs-Status",
+      "description": "Übersetzungen entstehen nur, wenn eine Anzeige tatsächlich in einer anderen Sprache aufgerufen wurde — die Zahlen zeigen also Übersetzungsversuche, nicht alle Anzeigen. Pro Zeile lässt sich eine einzelne Übersetzung erneut anstoßen.",
+      "refresh": "Status aktualisieren",
+      "retryRow": "Diese Übersetzung erneut starten",
+      "retryError": "Übersetzung konnte nicht gestartet werden.",
+      "empty": "Noch keine Übersetzungsversuche.",
+      "colLang": "Sprache"
+    },
+    "statusOverview": {
+      "loadError": "Status konnte nicht geladen werden.",
+      "listLoadError": "Liste konnte nicht geladen werden.",
+      "listEmpty": "Keine Anzeigen in diesem Bereich.",
+      "bucketDone": "Erledigt",
+      "bucketOpen": "Offen",
+      "bucketError": "Fehlerhaft",
+      "colPlatform": "Plattform",
+      "colTitle": "Anzeige",
+      "colRegion": "Region",
+      "colError": "Letzter Fehler",
+      "pageInfo": "{from}–{to} von {total}",
+      "prevPage": "Zurück",
+      "nextPage": "Weiter"
     },
     "archive": {
       "title": "Roh-Archiv",

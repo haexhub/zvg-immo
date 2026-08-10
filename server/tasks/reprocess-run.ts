@@ -225,15 +225,16 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
           priorEntry.marketValueEur === undefined
         : false
       const eligible =
-        opts.force ||
-        ((!priorEntry ||
-          (priorEntry.source === 'rules' && priorEntry.confidence === 'low') ||
-          (llmConfig != null && hasMissingLlmOnlyField) ||
-          hasNewArchivedDocuments(artifactState)) &&
-          (priorLlmFailures < MAX_LLM_FAILURES || cooldownElapsed(priorState?.llmLastAttemptedAt)) &&
-          !isLlmBatchPending(priorState?.llmBatchJob
-            ? { llmBatchJob: priorState.llmBatchJob, at: priorState.updatedAt }
-            : undefined))
+        (!opts.failedOnly || priorLlmFailures >= MAX_LLM_FAILURES) &&
+        (opts.force ||
+          ((!priorEntry ||
+            (priorEntry.source === 'rules' && priorEntry.confidence === 'low') ||
+            (llmConfig != null && hasMissingLlmOnlyField) ||
+            hasNewArchivedDocuments(artifactState)) &&
+            (priorLlmFailures < MAX_LLM_FAILURES || cooldownElapsed(priorState?.llmLastAttemptedAt) || opts.ignoreCooldown) &&
+            !isLlmBatchPending(priorState?.llmBatchJob
+              ? { llmBatchJob: priorState.llmBatchJob, at: priorState.updatedAt }
+              : undefined)))
       if (!eligible) {
         skipped++
         continue

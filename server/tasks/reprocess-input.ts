@@ -46,6 +46,19 @@ export interface ReprocessOptions {
    *  scheduled task never sets this; only the /settings-triggered manual
    *  endpoint does. */
   trigger?: 'cron' | 'manual'
+  /** Bypasses only the MAX_LLM_FAILURES cooldown gate (see cooldownElapsed
+   *  in reprocess-run.ts), unlike `force` which also bypasses the "does this
+   *  candidate actually need an attempt" check. Lets /settings retry a
+   *  country's currently locked-out auctions immediately without re-running
+   *  the LLM on ones that already succeeded. */
+  ignoreCooldown?: boolean
+  /** Restricts eligibility to candidates already locked out
+   *  (llm_failures >= MAX_LLM_FAILURES). Paired with ignoreCooldown by the
+   *  /settings "Retry failed" action so it only ever touches the 'error'
+   *  bucket — without this, a country's normal open/never-attempted
+   *  candidates would also be picked up and burn LLM budget the action
+   *  never asked to spend. */
+  failedOnly?: boolean
 }
 
 export interface ReprocessResult {
