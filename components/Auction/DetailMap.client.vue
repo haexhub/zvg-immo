@@ -11,14 +11,14 @@ import Point from 'ol/geom/Point'
 import { circular } from 'ol/geom/Polygon'
 import { fromLonLat } from 'ol/proj'
 import { createXYZ } from 'ol/tilegrid'
-import { Circle as CircleStyle, Fill, Icon, Stroke, Style } from 'ol/style'
+import { Fill, Icon, Stroke, Style } from 'ol/style'
 import Overlay from 'ol/Overlay'
 import { defaults as defaultInteractions } from 'ol/interaction/defaults'
 import type BaseLayer from 'ol/layer/Base'
 import type { TileCoord } from 'ol/tilecoord'
 import { OSM_ATTRIBUTION, mapTilerSatelliteStyleUrl, mapTilerStreetsStyleUrl } from '~/lib/map-tiles'
 import { mapPinDataUri, MAP_PIN_ANCHOR } from '~/lib/mapPinIcon'
-import { featureIconDataUri } from '~/lib/mapFeatureIcon'
+import { featureIconDataUri, hazardIconDataUri } from '~/lib/mapFeatureIcon'
 import { minOf } from '~/lib/array-math'
 import { featureColor, hazardRadius, hazardStatusColor, rgba } from '~/lib/auction-map-overlays'
 import { useMapTilerVectorBaseLayer } from '~/composables/useMapTilerVectorBaseLayer'
@@ -218,7 +218,7 @@ function hazardOverlayEntries(entries: OverlayEntry[]): void {
       source: new VectorSource({ features: [circleFeature, dotFeature] }),
       style: (feature) => {
         if (feature === dotFeature) {
-          return new Style({ image: new CircleStyle({ radius: 7, fill: new Fill({ color }), stroke: new Stroke({ color, width: 2 }) }) })
+          return new Style({ image: new Icon({ src: hazardIconDataUri(hazard.hazard, color) }) })
         }
         return new Style({
           stroke: new Stroke({ color, width: 2, lineDash: hazard.status === 'inside' ? undefined : [6, 6] }),
@@ -291,13 +291,11 @@ const featureLegendEntries = computed<LegendEntry[]>(() => {
   return [...byKind.values()]
 })
 
-const hazardStatusLegendEntries = computed<LegendEntry[]>(() => {
-  if (!props.hazards?.length) return []
-  return (['inside', 'nearby', 'outside', 'unknown'] as const).map((status) => ({
-    key: status,
-    color: hazardStatusColor(status),
-    label: t(`objektDetail.hazardStatus.${status}`),
-  }))
+const hazardLegendEntries = computed<LegendEntry[]>(() => {
+  return (props.hazards ?? []).map((hazard) => {
+    const color = hazardStatusColor(hazard.status)
+    return { key: hazard.hazard, color, label: hazardOverlayLabel(hazard), icon: hazardIconDataUri(hazard.hazard, color) }
+  })
 })
 
 const showOdorLegend = computed(() => overlayEntries.value.some((entry) => entry.id === 'odor'))
@@ -449,10 +447,10 @@ onBeforeUnmount(() => {
           <img :src="entry.icon" alt="" class="h-4 w-4 shrink-0">
           {{ entry.label }}
         </div>
-        <template v-if="hazardStatusLegendEntries.length">
+        <template v-if="hazardLegendEntries.length">
           <div class="mt-1 border-t border-slate-900/10 pt-1 font-semibold">{{ t('objektDetail.hazardsTitle') }}</div>
-          <div v-for="entry in hazardStatusLegendEntries" :key="entry.key" class="flex min-h-[18px] items-center gap-1.5">
-            <span class="h-2.5 w-2.5 shrink-0 rounded-full" :style="{ backgroundColor: entry.color }" />
+          <div v-for="entry in hazardLegendEntries" :key="entry.key" class="flex min-h-[18px] items-center gap-1.5">
+            <img :src="entry.icon" alt="" class="h-4 w-4 shrink-0">
             {{ entry.label }}
           </div>
         </template>

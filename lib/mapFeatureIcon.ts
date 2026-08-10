@@ -1,4 +1,4 @@
-import type { LocationMapFeatureKind } from '~/types/auction'
+import type { HazardKind, LocationMapFeatureKind } from '~/types/auction'
 
 // One glyph per feature kind, sourced from lucide-vue-next's icon set —
 // plain <path>/<circle> markup in a 24x24 box, stroke-drawn like every
@@ -29,14 +29,38 @@ const FEATURE_ICON_GLYPHS: Record<LocationMapFeatureKind, string> = {
   leisure: '<path d="m16 6 4 14"/><path d="M12 6v14"/><path d="M8 8v12"/><path d="M4 4v16"/>',
 }
 
+// One glyph per hazard kind, same lucide sourcing convention as
+// FEATURE_ICON_GLYPHS above. The map still draws each hazard's proximity
+// zone as a colored area (it's a radius, not a point), but the center marker
+// on that area and the legend swatch next to it used to be a bare
+// status-colored dot — indistinguishable between e.g. flood and wildfire
+// zones of the same severity.
+const HAZARD_KIND_ICON_GLYPHS: Record<HazardKind, string> = {
+  flood: '<path d="M2 6c.6.5 1.2 1 2.5 1C7 7 7 5 9.5 5c2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M2 12c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M2 18c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/>',
+  wildfire: '<path d="M12 3q1 4 4 6.5t3 5.5a1 1 0 0 1-14 0 5 5 0 0 1 1-3 1 1 0 0 0 5 0c0-2-1.5-3-1.5-5q0-2 2.5-4"/>',
+  avalanche: '<path d="m8 3 4 8 5-5 5 15H2L8 3z"/><path d="M4.14 15.08c2.62-1.57 5.24-1.43 7.86.42 2.74 1.94 5.49 2 8.23.19"/>',
+  earthquake: '<path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/>',
+  landslide: '<path d="m8 3 4 8 5-5 5 15H2L8 3z"/>',
+  storm: '<path d="M21 4H3"/><path d="M18 8H6"/><path d="M19 12H9"/><path d="M16 16h-6"/><path d="M11 20H9"/>',
+  hail: '<path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/><path d="M16 14v2"/><path d="M8 14v2"/><path d="M16 20h.01"/><path d="M8 20h.01"/><path d="M12 16v2"/><path d="M12 22h.01"/>',
+  snow_load: '<path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/><path d="M8 15h.01"/><path d="M8 19h.01"/><path d="M12 17h.01"/><path d="M12 21h.01"/><path d="M16 15h.01"/><path d="M16 19h.01"/>',
+}
+
 // Same 32x32-canvas convention as mapPinIcon.ts's mapPinDataUri: a filled
 // circle in the category color with a white stroke, sized to match the
 // subject-property pin so all detail-map markers read at a consistent scale.
-export function featureIconDataUri(kind: LocationMapFeatureKind, color: string): string {
-  const glyph = FEATURE_ICON_GLYPHS[kind]
+function glyphIconDataUri(glyph: string, color: string): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">`
     + `<circle cx="16" cy="16" r="10" fill="${color}" stroke="#fff" stroke-width="2"/>`
     + `<g transform="translate(10 10) scale(0.5)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${glyph}</g>`
     + `</svg>`
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+}
+
+export function featureIconDataUri(kind: LocationMapFeatureKind, color: string): string {
+  return glyphIconDataUri(FEATURE_ICON_GLYPHS[kind], color)
+}
+
+export function hazardIconDataUri(kind: HazardKind, color: string): string {
+  return glyphIconDataUri(HAZARD_KIND_ICON_GLYPHS[kind], color)
 }
