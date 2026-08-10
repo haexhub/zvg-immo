@@ -18,7 +18,7 @@ import type BaseLayer from 'ol/layer/Base'
 import type { TileCoord } from 'ol/tilecoord'
 import { OSM_ATTRIBUTION, mapTilerSatelliteStyleUrl, mapTilerStreetsStyleUrl } from '~/lib/map-tiles'
 import { mapPinDataUri, MAP_PIN_ANCHOR } from '~/lib/mapPinIcon'
-import { featureIconDataUri, hazardIconDataUri } from '~/lib/mapFeatureIcon'
+import { featureIconDataUri, hazardIconDataUri, odorLegendIconDataUri } from '~/lib/mapFeatureIcon'
 import { minOf } from '~/lib/array-math'
 import { featureColor, hazardRadius, hazardStatusColor, rgba } from '~/lib/auction-map-overlays'
 import { useMapTilerVectorBaseLayer } from '~/composables/useMapTilerVectorBaseLayer'
@@ -37,6 +37,11 @@ const { formatDistance } = useAuctionDetailFormatters()
 const runtimeConfig = useRuntimeConfig()
 const mapTilerApiKey = computed(() => String(runtimeConfig.public.maptilerApiKey || '').trim())
 const baseLayer = ref<'streets' | 'satellite'>('streets')
+// Same blue as Auction/Map.client.vue's PIN_COLOR (Tailwind's blue-600,
+// matching accent-blue-600 further down) — named once here since it's baked
+// into an SVG data URI for both the map marker and the legend swatch below,
+// not a DOM class Tailwind could reach.
+const SUBJECT_PIN_COLOR = '#2563eb'
 const controlToggleClass = 'cursor-pointer rounded-md border border-slate-900/15 bg-white/95 px-2.5 py-1 text-xs font-semibold text-gray-900 shadow-sm'
 const controlPanelClass = 'max-h-60 w-60 overflow-y-auto rounded-md border border-slate-900/15 bg-white/95 px-2 py-1.5 text-xs leading-tight text-gray-900 shadow-sm backdrop-blur-sm'
 const layerLabelClass = 'flex min-h-5 cursor-pointer items-center gap-1'
@@ -208,6 +213,21 @@ function odorOverlayEntry(entries: OverlayEntry[]): void {
   addOverlayEntry(entries, label, layer, false, 'odor')
 }
 
+// Set by hovering a legend row (see hoveredFeatureKind/hoveredHazardKind
+// below) so the matching markers can be scaled up and drawn on top — the
+// vector layers' style functions read these on every render.
+const hoveredFeatureKind = ref<string | null>(null)
+const hoveredHazardKind = ref<string | null>(null)
+const HOVER_SCALE = 1.5
+const HOVER_LAYER_Z_INDEX = 10
+
+// Style.zIndex (used above) only reorders features *within* one layer — each
+// hazard/feature-label group is its own separate VectorLayer, so lifting a
+// hovered marker above one from a *different* layer needs that layer raised
+// too. Layers register their kind(s) here; the watch below sets each one's
+// zIndex based on whether the hovered kind is among them.
+const hoverableLayers: { layer: VectorLayer<VectorSource>, group: 'feature' | 'hazard', kinds: Set<string> }[] = []
+
 function hazardOverlayEntries(entries: OverlayEntry[]): void {
   for (const hazard of props.hazards ?? []) {
     const color = hazardStatusColor(hazard.status)
@@ -217,28 +237,36 @@ function hazardOverlayEntries(entries: OverlayEntry[]): void {
     const layer = new VectorLayer({
       source: new VectorSource({ features: [circleFeature, dotFeature] }),
       style: (feature) => {
+        const hovered = hoveredHazardKind.value === hazard.hazard
         if (feature === dotFeature) {
-          return new Style({ image: new Icon({ src: hazardIconDataUri(hazard.hazard, color) }) })
+          return new Style({
+            image: new Icon({ src: hazardIconDataUri(hazard.hazard, color), scale: hovered ? HOVER_SCALE : 1 }),
+            zIndex: hovered ? 10 : 0,
+          })
         }
         return new Style({
-          stroke: new Stroke({ color, width: 2, lineDash: hazard.status === 'inside' ? undefined : [6, 6] }),
-          fill: new Fill({ color: rgba(color, hazard.status === 'inside' ? 0.18 : 0.08) }),
+          stroke: new Stroke({ color, width: hovered ? 3.5 : 2, lineDash: hazard.status === 'inside' ? undefined : [6, 6] }),
+          fill: new Fill({ color: rgba(color, (hazard.status === 'inside' ? 0.18 : 0.08) * (hovered ? 2 : 1)) }),
         })
       },
     })
+    hoverableLayers.push({ layer, group: 'hazard', kinds: new Set([hazard.hazard]) })
     addOverlayEntry(entries, hazardMapLayerLabel(hazard), layer, false)
   }
 }
 
 function featureOverlayEntries(entries: OverlayEntry[]): void {
   const layersByLabel = new Map<string, VectorSource>()
+  const kindsByLabel = new Map<string, Set<string>>()
   for (const feature of props.locationContext?.mapFeatures ?? []) {
     const label = featureLayerLabel(feature)
     let source = layersByLabel.get(label)
     if (!source) {
       source = new VectorSource()
       layersByLabel.set(label, source)
+      kindsByLabel.set(label, new Set())
     }
+    kindsByLabel.get(label)!.add(feature.kind)
     const olFeature = new Feature({ geometry: new Point(fromLonLat([feature.lng, feature.lat])) })
     olFeature.set('data', feature)
     olFeature.set('popupHtml', () => featurePopup(feature))
@@ -249,9 +277,14 @@ function featureOverlayEntries(entries: OverlayEntry[]): void {
       source,
       style: (olFeature) => {
         const data = olFeature.get('data') as LocationMapFeature
-        return new Style({ image: new Icon({ src: featureIconDataUri(data.kind, featureColor(data)) }) })
+        const hovered = hoveredFeatureKind.value === data.kind
+        return new Style({
+          image: new Icon({ src: featureIconDataUri(data.kind, featureColor(data)), scale: hovered ? HOVER_SCALE : 1 }),
+          zIndex: hovered ? 10 : 0,
+        })
       },
     })
+    hoverableLayers.push({ layer, group: 'feature', kinds: kindsByLabel.get(label)! })
     // Visible by default, unlike the noise/flood/hazard/odor overlays above —
     // matches the Leaflet version, which added these straight to the map
     // instead of only registering them with the layer-switcher control.
@@ -266,6 +299,19 @@ let map: OlMap | null = null
 const panelOpen = ref(false)
 const overlayEntries = shallowRef<OverlayEntry[]>([])
 
+// Style functions above read the hovered-kind refs directly, but OL only
+// re-invokes them on a render pass — nudge every overlay layer to redraw
+// when the hover target changes so the highlight actually appears. Layers
+// default to zIndex 0 when unset, so resetting a non-matching layer to 0
+// here is enough to drop it back below the (still-10) hovered one.
+watch([hoveredFeatureKind, hoveredHazardKind], () => {
+  for (const entry of overlayEntries.value) entry.layer.changed()
+  for (const { layer, group, kinds } of hoverableLayers) {
+    const hovered = group === 'feature' ? hoveredFeatureKind.value : hoveredHazardKind.value
+    layer.setZIndex(hovered != null && kinds.has(hovered) ? HOVER_LAYER_Z_INDEX : 0)
+  }
+})
+
 function toggleOverlay(entry: OverlayEntry): void {
   entry.visible.value = !entry.visible.value
   entry.layer.setVisible(entry.visible.value)
@@ -275,7 +321,7 @@ interface LegendEntry {
   key: string
   color: string
   label: string
-  icon?: string
+  icon: string
 }
 
 const legendOpen = ref(true)
@@ -349,7 +395,13 @@ onMounted(async () => {
   const markerFeature = new Feature({ geometry: new Point(fromLonLat([props.lng, props.lat])) })
   const markerLayer = new VectorLayer({
     source: new VectorSource({ features: [markerFeature] }),
-    style: new Style({ image: new Icon({ src: mapPinDataUri('#2563eb'), anchor: MAP_PIN_ANCHOR }) }),
+    // Scaled up and always above every hazard/feature layer (including a
+    // hovered one, see HOVER_LAYER_Z_INDEX above) so the subject property
+    // always reads as the one marker that matters. Set on the layer itself,
+    // not just the Style, since Style.zIndex alone can't lift a feature
+    // above features that live in a different layer.
+    zIndex: 20,
+    style: new Style({ image: new Icon({ src: mapPinDataUri(SUBJECT_PIN_COLOR), anchor: MAP_PIN_ANCHOR, scale: 1.6 }) }),
   })
 
   const popupOverlay = new Overlay({
@@ -428,37 +480,21 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </div>
-    <div class="absolute bottom-2 left-2 z-10 flex flex-col items-start gap-1">
-      <button
-        type="button"
-        :class="controlToggleClass"
-        :aria-expanded="legendOpen"
-        aria-controls="auction-detail-map-legend-panel"
-        @click="legendOpen = !legendOpen"
-      >
-        {{ t('map.legend') }}
-      </button>
-      <div v-if="legendOpen" id="auction-detail-map-legend-panel" :class="controlPanelClass">
-        <div class="flex min-h-[18px] items-center gap-1.5">
-          <span class="h-2.5 w-2.5 shrink-0 rotate-[-45deg] rounded-[50%_50%_50%_0] bg-blue-600" />
-          {{ t('map.legendSubject') }}
-        </div>
-        <div v-for="entry in featureLegendEntries" :key="entry.key" class="flex min-h-[18px] items-center gap-1.5">
-          <img :src="entry.icon" alt="" class="h-4 w-4 shrink-0">
-          {{ entry.label }}
-        </div>
-        <template v-if="hazardLegendEntries.length">
-          <div class="mt-1 border-t border-slate-900/10 pt-1 font-semibold">{{ t('objektDetail.hazardsTitle') }}</div>
-          <div v-for="entry in hazardLegendEntries" :key="entry.key" class="flex min-h-[18px] items-center gap-1.5">
-            <img :src="entry.icon" alt="" class="h-4 w-4 shrink-0">
-            {{ entry.label }}
-          </div>
-        </template>
-        <div v-if="showOdorLegend" class="flex min-h-[18px] items-center gap-1.5">
-          <span class="h-2.5 w-2.5 shrink-0 rounded-full border-[1.5px] border-dashed border-red-950 bg-red-500/15" />
-          {{ t('objektDetail.mapLayerOdorSignals') }}
-        </div>
-      </div>
-    </div>
+    <AuctionDetailMapLegend
+      v-model:open="legendOpen"
+      :feature-entries="featureLegendEntries"
+      :hazard-entries="hazardLegendEntries"
+      :show-odor="showOdorLegend"
+      :subject-icon="mapPinDataUri(SUBJECT_PIN_COLOR)"
+      :subject-label="t('map.legendSubject')"
+      :hazards-title="t('objektDetail.hazardsTitle')"
+      :odor-icon="odorLegendIconDataUri()"
+      :odor-label="t('objektDetail.mapLayerOdorSignals')"
+      :toggle-class="controlToggleClass"
+      :panel-class="controlPanelClass"
+      :toggle-label="t('map.legend')"
+      @hover-feature="hoveredFeatureKind = $event"
+      @hover-hazard="hoveredHazardKind = $event"
+    />
   </div>
 </template>
