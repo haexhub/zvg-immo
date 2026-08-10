@@ -37,6 +37,11 @@ const { formatDistance } = useAuctionDetailFormatters()
 const runtimeConfig = useRuntimeConfig()
 const mapTilerApiKey = computed(() => String(runtimeConfig.public.maptilerApiKey || '').trim())
 const baseLayer = ref<'streets' | 'satellite'>('streets')
+// Same blue as Auction/Map.client.vue's PIN_COLOR (Tailwind's blue-600,
+// matching accent-blue-600 further down) — named once here since it's baked
+// into an SVG data URI for both the map marker and the legend swatch below,
+// not a DOM class Tailwind could reach.
+const SUBJECT_PIN_COLOR = '#2563eb'
 const controlToggleClass = 'cursor-pointer rounded-md border border-slate-900/15 bg-white/95 px-2.5 py-1 text-xs font-semibold text-gray-900 shadow-sm'
 const controlPanelClass = 'max-h-60 w-60 overflow-y-auto rounded-md border border-slate-900/15 bg-white/95 px-2 py-1.5 text-xs leading-tight text-gray-900 shadow-sm backdrop-blur-sm'
 const layerLabelClass = 'flex min-h-5 cursor-pointer items-center gap-1'
@@ -374,7 +379,7 @@ onMounted(async () => {
     // Scaled up (and drawn last/on top, see the layers array below) so the
     // subject property always reads as the one marker that matters, distinct
     // from the same-size POI/hazard icons around it.
-    style: new Style({ image: new Icon({ src: mapPinDataUri('#2563eb'), anchor: MAP_PIN_ANCHOR, scale: 1.6 }), zIndex: 20 }),
+    style: new Style({ image: new Icon({ src: mapPinDataUri(SUBJECT_PIN_COLOR), anchor: MAP_PIN_ANCHOR, scale: 1.6 }), zIndex: 20 }),
   })
 
   const popupOverlay = new Overlay({
@@ -458,7 +463,7 @@ onBeforeUnmount(() => {
       :feature-entries="featureLegendEntries"
       :hazard-entries="hazardLegendEntries"
       :show-odor="showOdorLegend"
-      :subject-icon="mapPinDataUri('#2563eb')"
+      :subject-icon="mapPinDataUri(SUBJECT_PIN_COLOR)"
       :subject-label="t('map.legendSubject')"
       :hazards-title="t('objektDetail.hazardsTitle')"
       :odor-icon="odorLegendIconDataUri()"
