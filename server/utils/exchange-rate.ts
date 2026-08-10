@@ -26,6 +26,7 @@ export async function getRates(): Promise<Record<string, number>> {
   if (memory && Date.now() - new Date(memory.fetchedAt).getTime() < TTL_MS) {
     return { ...PEGGED_RATES, ...memory.rates }
   }
+  let stale: RateCache | null = null
   try {
     const buf = await readFile(CACHE_PATH, 'utf8')
     const cached: RateCache = JSON.parse(buf)
@@ -33,10 +34,23 @@ export async function getRates(): Promise<Record<string, number>> {
       memory = cached
       return { ...PEGGED_RATES, ...cached.rates }
     }
+    stale = cached // expired, but kept as a fallback below
   } catch {
     // cache miss — fetch fresh below
   }
-  return { ...PEGGED_RATES, ...(await fetchAndCache()) }
+  try {
+    return { ...PEGGED_RATES, ...(await fetchAndCache()) }
+  } catch (err) {
+    // ECB unreachable/erroring — serve the last known rates rather than
+    // failing every request until it recovers. No fallback available on a
+    // cold cache (first-ever run), so that case still throws.
+    if (stale) {
+      console.warn(`[exchange-rate] live fetch failed, serving stale cache from ${stale.fetchedAt}: ${(err as Error).message}`)
+      memory = stale
+      return { ...PEGGED_RATES, ...stale.rates }
+    }
+    throw err
+  }
 }
 
 /** Converts `amount` in `currency` to EUR, rounded to the nearest integer. */
