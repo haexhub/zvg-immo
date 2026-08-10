@@ -1,6 +1,13 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFile } from 'node:fs/promises'
 import type { Auction } from '~/types/auction'
 import { deriveMarketValueEur, toEur } from './exchange-rate'
+
+vi.mock('node:fs/promises', () => ({
+  readFile: vi.fn(),
+  writeFile: vi.fn(),
+  mkdir: vi.fn(),
+}))
 
 const RATES = { CZK: 25, GBP: 0.85, BAM: 1.95583 }
 
@@ -87,5 +94,65 @@ describe('deriveMarketValueEur', () => {
     const a = auction({ marketValue: 150_000, currency: 'BAM' })
     deriveMarketValueEur(a, RATES)
     expect(a.marketValueEur).toBe(Math.round(150_000 / 1.95583))
+  })
+})
+
+describe('getRates', () => {
+  beforeEach(() => {
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+  })
+
+  it('falls back to the expired disk cache when the live ECB fetch fails', async () => {
+    const staleFetchedAt = new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString() // 30h old, past the 24h TTL
+    vi.mocked(readFile).mockResolvedValue(JSON.stringify({ fetchedAt: staleFetchedAt, rates: { USD: 1.1 } }))
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')))
+
+    const { getRates } = await import('./exchange-rate')
+    const rates = await getRates()
+    expect(rates.USD).toBe(1.1)
+  })
+
+  it('throws when there is no disk cache to fall back to and the live fetch fails', async () => {
+    vi.mocked(readFile).mockRejectedValue(new Error('ENOENT'))
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')))
+
+    const { getRates } = await import('./exchange-rate')
+    await expect(getRates()).rejects.toThrow('network down')
+  })
+
+  it('does not retry the live fetch on every call while serving a stale fallback', async () => {
+    vi.useFakeTimers()
+    const staleFetchedAt = new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString() // 30h old, past the 24h TTL
+    vi.mocked(readFile).mockResolvedValue(JSON.stringify({ fetchedAt: staleFetchedAt, rates: { USD: 1.1 } }))
+    const fetchMock = vi.fn().mockRejectedValue(new Error('network down'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { getRates } = await import('./exchange-rate')
+    await getRates()
+    await getRates()
+    await getRates()
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries the live fetch once the retry cooldown has elapsed', async () => {
+    vi.useFakeTimers()
+    const staleFetchedAt = new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString() // 30h old, past the 24h TTL
+    vi.mocked(readFile).mockResolvedValue(JSON.stringify({ fetchedAt: staleFetchedAt, rates: { USD: 1.1 } }))
+    const fetchMock = vi.fn().mockRejectedValue(new Error('network down'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { getRates } = await import('./exchange-rate')
+    await getRates()
+    vi.advanceTimersByTime(5 * 60 * 1000 + 1) // past the 5min retry cooldown
+    await getRates()
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 })
