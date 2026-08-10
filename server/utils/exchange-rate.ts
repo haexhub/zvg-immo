@@ -5,6 +5,10 @@ import type { Auction } from '~/types/auction'
 const CACHE_PATH = join(process.cwd(), '.cache_zvg', 'exchange-rates.json')
 const ECB_URL = 'https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml'
 const TTL_MS = 24 * 60 * 60 * 1000
+// After a failed live fetch falls back to a stale cache entry, wait this
+// long before retrying ECB again instead of re-attempting on every request.
+const RETRY_COOLDOWN_MS = 5 * 60 * 1000
+const FETCH_TIMEOUT_MS = 10_000
 
 // Currencies pegged to EUR at a fixed rate that the ECB reference-rate feed
 // doesn't publish (too minor to be in its ~30-currency list). Merged into
@@ -20,11 +24,19 @@ interface RateCache {
 }
 
 let memory: RateCache | null = null
+// Timestamp of the last failed live fetch that fell back to `memory` holding
+// a stale entry. Kept separate from `memory.fetchedAt` so a served-stale
+// entry isn't mistaken for a fresh one, while still gating retries.
+let staleSince: number | null = null
 
 /** Returns exchange rates: units of each currency per 1 EUR. */
 export async function getRates(): Promise<Record<string, number>> {
-  if (memory && Date.now() - new Date(memory.fetchedAt).getTime() < TTL_MS) {
-    return { ...PEGGED_RATES, ...memory.rates }
+  if (memory) {
+    const fresh = Date.now() - new Date(memory.fetchedAt).getTime() < TTL_MS
+    const withinRetryCooldown = staleSince !== null && Date.now() - staleSince < RETRY_COOLDOWN_MS
+    if (fresh || withinRetryCooldown) {
+      return { ...PEGGED_RATES, ...memory.rates }
+    }
   }
   let stale: RateCache | null = null
   try {
@@ -32,6 +44,7 @@ export async function getRates(): Promise<Record<string, number>> {
     const cached: RateCache = JSON.parse(buf)
     if (Date.now() - new Date(cached.fetchedAt).getTime() < TTL_MS) {
       memory = cached
+      staleSince = null
       return { ...PEGGED_RATES, ...cached.rates }
     }
     stale = cached // expired, but kept as a fallback below
@@ -39,14 +52,19 @@ export async function getRates(): Promise<Record<string, number>> {
     // cache miss — fetch fresh below
   }
   try {
-    return { ...PEGGED_RATES, ...(await fetchAndCache()) }
+    const rates = await fetchAndCache()
+    staleSince = null
+    return { ...PEGGED_RATES, ...rates }
   } catch (err) {
-    // ECB unreachable/erroring — serve the last known rates rather than
-    // failing every request until it recovers. No fallback available on a
-    // cold cache (first-ever run), so that case still throws.
+    // ECB unreachable/erroring (or timed out, see FETCH_TIMEOUT_MS) — serve
+    // the last known rates rather than failing every request until it
+    // recovers, retrying only after RETRY_COOLDOWN_MS instead of on every
+    // call. No fallback available on a cold cache (first-ever run), so that
+    // case still throws.
     if (stale) {
       console.warn(`[exchange-rate] live fetch failed, serving stale cache from ${stale.fetchedAt}: ${(err as Error).message}`)
       memory = stale
+      staleSince = Date.now()
       return { ...PEGGED_RATES, ...stale.rates }
     }
     throw err
@@ -88,7 +106,10 @@ export function deriveMarketValueEur(auction: Auction, rates: Record<string, num
 }
 
 async function fetchAndCache(): Promise<Record<string, number>> {
-  const res = await fetch(ECB_URL, { headers: { 'User-Agent': 'zvg-immo/1.0' } })
+  const res = await fetch(ECB_URL, {
+    headers: { 'User-Agent': 'zvg-immo/1.0' },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  })
   if (!res.ok) throw new Error(`ECB rate fetch failed: ${res.status}`)
   const xml = await res.text()
   const rates: Record<string, number> = {}
