@@ -10,27 +10,23 @@ import { useLlmProfileOptions } from '~/composables/settings/useLlmProfileOption
 import { usePollWhileActive } from '~/composables/settings/usePollWhileActive'
 import type { AuctionTechnicalOverview } from '~/server/utils/auction-technical'
 import type { LlmExecutionMode, LlmProvider } from '~/server/utils/app-settings'
-
+import { DIFF_FIELDS, displayValue, formatBytes, formatDate as formatDateValue, humanizeFieldKey, type VersionDetail } from '~/lib/auction-technical-helpers'
 interface LlmProfilesResponse {
   profiles: Array<{ id: string; name: string; provider: LlmProvider; baseUrl: string; model: string; executionMode: LlmExecutionMode }>
 }
-
 const route = useRoute()
 const platform = String(route.params.platform)
 const id = String(route.params.id)
 const { t, locale } = useI18n()
-
+const formatDate = (value: string | null): string => formatDateValue(value, locale.value)
 useHead({ title: t('settings.auctionTechnical.title', { platform, id }) })
-
 const authed = ref(false)
 const passwordInput = ref('')
 const authError = ref<string | null>(null)
 const authPending = ref(false)
-
 const overview = ref<AuctionTechnicalOverview | null>(null)
 const overviewPending = ref(false)
 const overviewError = ref<string | null>(null)
-
 function clearAuthState(): void {
   authed.value = false
 }
@@ -141,37 +137,6 @@ async function startTrial(): Promise<void> {
 // Vergleichen/Promote/Löschen (WP-5). Eine Checkbox-Auswahl bedient beide
 // Mehrfach-Aktionen: genau 2 ausgewählt -> Diff, 1+ ausgewählt -> Löschen.
 // Promote ist dagegen pro Zeile (genau eine Zielversion pro Aufruf).
-interface VersionDetail {
-  version: number
-  address: string | null
-  description: string | null
-  propertyType: string | null
-  landAreaSqm: number | null
-  livingAreaSqm: number | null
-  rooms: number | null
-  bedrooms: number | null
-  bathrooms: number | null
-  floor: string | null
-  heating: string | null
-  units: number | null
-  yearBuilt: number | null
-  marketValue: number | null
-  currency: string | null
-  marketValueEur: number | null
-  condition: unknown
-  features: string[] | null
-  insights: unknown
-  planningNotes: unknown
-  renovationNotes: string | null
-  startingBid: number | null
-  currentBid: number | null
-  securityDeposit: number | null
-  biddingNotes: string | null
-  extractionSource: string | null
-  extractionConfidence: string | null
-  documentSummary: string | null
-}
-
 const selectedVersions = ref<Set<number>>(new Set())
 const canDiff = computed(() => selectedVersions.value.size === 2)
 const selectedIsLatest = computed(() =>
@@ -192,24 +157,6 @@ const diffPending = ref(false)
 const diffError = ref<string | null>(null)
 const diffShowAll = ref(false)
 const diffRows = ref<{ key: string; label: string; left: string; right: string; same: boolean }[]>([])
-
-function humanizeFieldKey(key: string): string {
-  return key.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase())
-}
-
-function displayValue(value: unknown): string {
-  if (value == null) return '—'
-  if (Array.isArray(value)) return value.length ? value.join(', ') : '—'
-  if (typeof value === 'object') return JSON.stringify(value)
-  return String(value)
-}
-
-const DIFF_FIELDS: Array<keyof VersionDetail> = [
-  'address', 'description', 'propertyType', 'landAreaSqm', 'livingAreaSqm', 'rooms', 'bedrooms',
-  'bathrooms', 'floor', 'heating', 'units', 'yearBuilt', 'marketValue', 'currency', 'marketValueEur',
-  'condition', 'features', 'insights', 'planningNotes', 'renovationNotes', 'startingBid', 'currentBid',
-  'securityDeposit', 'biddingNotes', 'extractionSource', 'extractionConfidence', 'documentSummary',
-]
 
 async function loadDiff(): Promise<void> {
   if (!canDiff.value) return
@@ -282,23 +229,6 @@ async function deleteSelected(): Promise<void> {
   }
 }
 
-function formatDate(value: string | null): string {
-  if (!value) return '—'
-  return new Date(value).toLocaleString(locale.value)
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  const units = ['KB', 'MB', 'GB']
-  let value = bytes / 1024
-  let unitIndex = 0
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024
-    unitIndex++
-  }
-  return `${value.toFixed(1)} ${units[unitIndex]}`
-}
-
 onMounted(probeSession)
 </script>
 
@@ -314,60 +244,23 @@ onMounted(probeSession)
         {{ $t('settings.auctionTechnical.heading', { platform, id }) }}
       </h1>
 
-      <Card v-if="!authed" class="mx-auto max-w-2xl">
-        <CardHeader>
-          <CardTitle>{{ $t('settings.login.title') }}</CardTitle>
-        </CardHeader>
-        <CardContent class="space-y-4">
-          <p class="text-sm text-muted-foreground">{{ $t('settings.login.protected') }}</p>
-          <form class="space-y-3" @submit.prevent="login">
-            <Input
-              v-model="passwordInput"
-              type="password"
-              autocomplete="current-password"
-              :placeholder="$t('settings.login.passwordPlaceholder')"
-              :disabled="authPending"
-            />
-            <p v-if="authError" class="text-sm text-destructive">{{ authError }}</p>
-            <Button type="submit" class="w-full" :disabled="authPending || !passwordInput">
-              {{ authPending ? $t('settings.login.submitting') : $t('settings.login.submit') }}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+      <AdminAuctionTechnicalLoginCard
+        v-if="!authed"
+        v-model:password="passwordInput"
+        :pending="authPending"
+        :error="authError"
+        @submit="login"
+      />
 
       <template v-else>
         <p v-if="overviewPending" class="text-sm text-muted-foreground">{{ $t('settings.auctionTechnical.loading') }}</p>
         <p v-if="overviewError" class="text-sm text-destructive">{{ overviewError }}</p>
 
         <template v-if="overview">
-          <Card>
-            <CardHeader><CardTitle>{{ $t('settings.auctionTechnical.sections.identity') }}</CardTitle></CardHeader>
-            <CardContent class="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
-              <div><div class="text-xs text-muted-foreground">{{ $t('settings.auctionTechnical.fields.country') }}</div><div>{{ overview.identity.country }} / {{ overview.identity.region }}</div></div>
-              <div><div class="text-xs text-muted-foreground">{{ $t('settings.auctionTechnical.fields.authority') }}</div><div>{{ overview.identity.authority }}</div></div>
-              <div><div class="text-xs text-muted-foreground">{{ $t('settings.auctionTechnical.fields.caseNumber') }}</div><div>{{ overview.identity.caseNumber }}</div></div>
-              <div><div class="text-xs text-muted-foreground">{{ $t('settings.auctionTechnical.fields.coordinates') }}</div><div>{{ overview.identity.lat ?? '—' }}, {{ overview.identity.lng ?? '—' }}</div></div>
-              <div><div class="text-xs text-muted-foreground">{{ $t('settings.auctionTechnical.fields.geocodeResult') }}</div><div>{{ overview.identity.geocodeResult ?? '—' }} ({{ overview.identity.geocodeProvider ?? '—' }})</div></div>
-              <div><div class="text-xs text-muted-foreground">{{ $t('settings.auctionTechnical.fields.geocodeAttemptedAt') }}</div><div>{{ formatDate(overview.identity.geocodeAttemptedAt) }}</div></div>
-              <div><div class="text-xs text-muted-foreground">{{ $t('settings.auctionTechnical.fields.firstSeenAt') }}</div><div>{{ formatDate(overview.identity.firstSeenAt) }}</div></div>
-              <div><div class="text-xs text-muted-foreground">{{ $t('settings.auctionTechnical.fields.updatedAt') }}</div><div>{{ formatDate(overview.identity.updatedAt) }}</div></div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader><CardTitle>{{ $t('settings.auctionTechnical.sections.fetchState') }}</CardTitle></CardHeader>
-            <CardContent v-if="overview.fetchState" class="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
-              <div><div class="text-xs text-muted-foreground">{{ $t('settings.auctionTechnical.fields.detailFetchedAt') }}</div><div>{{ formatDate(overview.fetchState.detailFetchedAt) }}</div></div>
-              <div><div class="text-xs text-muted-foreground">{{ $t('settings.auctionTechnical.fields.llmFailures') }}</div><div>{{ overview.fetchState.llmFailures }}</div></div>
-              <div><div class="text-xs text-muted-foreground">{{ $t('settings.auctionTechnical.fields.llmLastAttemptedAt') }}</div><div>{{ formatDate(overview.fetchState.llmLastAttemptedAt) }}</div></div>
-              <div><div class="text-xs text-muted-foreground">{{ $t('settings.auctionTechnical.fields.llmBatchJob') }}</div><div>{{ overview.fetchState.llmBatchJob ?? '—' }}</div></div>
-              <div><div class="text-xs text-muted-foreground">{{ $t('settings.auctionTechnical.fields.photoFailures') }}</div><div>{{ overview.fetchState.photoFailures }}</div></div>
-              <div><div class="text-xs text-muted-foreground">{{ $t('settings.auctionTechnical.fields.photosCheckedAt') }}</div><div>{{ formatDate(overview.fetchState.photosCheckedAt) }}</div></div>
-              <div><div class="text-xs text-muted-foreground">{{ $t('settings.auctionTechnical.fields.attachments') }}</div><div>{{ overview.fetchState.attachments.length }}</div></div>
-            </CardContent>
-            <CardContent v-else class="text-sm text-muted-foreground">{{ $t('settings.auctionTechnical.noData') }}</CardContent>
-          </Card>
+          <AdminAuctionTechnicalOverviewCards
+            :overview="overview"
+            :format-date="formatDate"
+          />
 
           <Card>
             <CardHeader><CardTitle>{{ $t('settings.auctionTechnical.sections.extractionHistory') }}</CardTitle></CardHeader>

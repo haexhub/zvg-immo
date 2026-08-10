@@ -34,6 +34,9 @@ jobs:
       - name: Generate Nuxt types
         run: pnpm exec nuxi prepare
 
+      - name: Production source size gate
+        run: find server components composables pages lib -type f \( -name '*.ts' -o -name '*.vue' -o -name '*.mjs' \) ! -path '*/migrations/*' ! -path '*/vendor/*' ! -name '*.test.*' ! -name '*.spec.*' -print0 | xargs -0 wc -l | awk '$2 != "total" && $1 > 500 { print; bad=1 } END { exit bad }'
+
       - name: Lint
         run: pnpm run lint
 

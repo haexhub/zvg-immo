@@ -5,6 +5,8 @@ import { minOf } from '~/lib/array-math'
 import { writeJsonCache } from '../json-cache'
 import { distanceMeters, type Point } from './geo'
 import { EXTERNAL_DATA_SOURCES } from './sources'
+import { distanceToPolygonMeters, pointInPolygon } from './eu-flood-risk-assessment'
+export { distanceToPolygonMeters, pointInPolygon } from './eu-flood-risk-assessment'
 
 export type GeoJsonPosition = [number, number] | [number, number, number]
 export type GeoJsonLinearRing = GeoJsonPosition[]
@@ -245,18 +247,6 @@ export async function createEuFloodRiskFileAdapter(
   }
 }
 
-export function pointInPolygon(point: Point, polygon: GeoJsonPolygonCoordinates): boolean {
-  if (!ringContainsPoint(point, polygon[0] ?? [])) return false
-  return !polygon.slice(1).some((hole) => ringContainsPoint(point, hole))
-}
-
-export function distanceToPolygonMeters(point: Point, polygon: GeoJsonPolygonCoordinates): number {
-  if (pointInPolygon(point, polygon)) return 0
-  const rings = polygon.filter((ring) => ring.length >= 2)
-  if (rings.length === 0) return Number.POSITIVE_INFINITY
-  return minOf(rings.map((ring) => distanceToRingMeters(point, ring)))
-}
-
 function assessment(
   status: HazardAssessment['status'],
   severity: HazardAssessment['severity'],
@@ -373,64 +363,6 @@ function distanceToZoneMeters(point: Point, zone: FloodRiskZone): number {
   return minOf(zone.polygons.map((polygon) => distanceToPolygonMeters(point, polygon)))
 }
 
-function ringContainsPoint(point: Point, ring: GeoJsonLinearRing): boolean {
-  let inside = false
-  const x = point.lng
-  const y = point.lat
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const xi = ring[i]?.[0]
-    const yi = ring[i]?.[1]
-    const xj = ring[j]?.[0]
-    const yj = ring[j]?.[1]
-    if (xi == null || yi == null || xj == null || yj == null) continue
-    const intersects = ((yi > y) !== (yj > y)) &&
-      (x < ((xj - xi) * (y - yi)) / (yj - yi) + xi)
-    if (intersects) inside = !inside
-  }
-  return inside
-}
-
-function distanceToRingMeters(point: Point, ring: GeoJsonLinearRing): number {
-  const segments = normalizedRingSegments(ring)
-  if (segments.length === 0) return Number.POSITIVE_INFINITY
-  return minOf(segments.map(([a, b]) => distanceToSegmentMeters(point, a, b)))
-}
-
-function normalizedRingSegments(ring: GeoJsonLinearRing): Array<[Point, Point]> {
-  const points = ring
-    .filter((position) => Number.isFinite(position[0]) && Number.isFinite(position[1]))
-    .map((position) => ({ lng: position[0], lat: position[1] }))
-  if (points.length < 2) return []
-  const closed = samePoint(points[0]!, points[points.length - 1]!)
-    ? points
-    : [...points, points[0]!]
-  return closed.slice(1).map((point, index) => [closed[index]!, point])
-}
-
-function distanceToSegmentMeters(point: Point, a: Point, b: Point): number {
-  const projected = projectPointToSegment(point, a, b)
-  return distanceMeters(point, projected)
-}
-
-function projectPointToSegment(point: Point, a: Point, b: Point): Point {
-  const latScale = 111_320
-  const lngScale = 111_320 * Math.cos(toRadians(point.lat))
-  const px = point.lng * lngScale
-  const py = point.lat * latScale
-  const ax = a.lng * lngScale
-  const ay = a.lat * latScale
-  const bx = b.lng * lngScale
-  const by = b.lat * latScale
-  const dx = bx - ax
-  const dy = by - ay
-  const lengthSq = dx * dx + dy * dy
-  if (lengthSq === 0) return a
-  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lengthSq))
-  return {
-    lng: (ax + t * dx) / lngScale,
-    lat: (ay + t * dy) / latScale,
-  }
-}
 
 function polygonsForFeature(feature: FloodRiskFeature): GeoJsonPolygonCoordinates[] {
   const geometry = feature.geometry
@@ -495,12 +427,4 @@ function isFeatureCollection(input: unknown): input is FloodRiskFeatureCollectio
 function isFeature(input: unknown): input is FloodRiskFeature {
   if (!input || typeof input !== 'object') return false
   return (input as Partial<FloodRiskFeature>).type === 'Feature'
-}
-
-function samePoint(a: Point, b: Point): boolean {
-  return a.lat === b.lat && a.lng === b.lng
-}
-
-function toRadians(degrees: number): number {
-  return (degrees * Math.PI) / 180
 }
