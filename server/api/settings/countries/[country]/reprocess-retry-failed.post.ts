@@ -4,8 +4,11 @@
 // Unlike force (which would also re-spend the LLM budget on every
 // already-successful auction in the country), ignoreCooldown only bypasses
 // the cooldown gate — a candidate still has to actually need an attempt
-// (see reprocess-run.ts's eligibility check). Same detached shape as
-// reprocess-backlog.post.ts, just for the 'error' bucket instead of 'open'.
+// (see reprocess-run.ts's eligibility check). failedOnly additionally
+// restricts eligibility to the 'error' bucket itself, so this action never
+// picks up a country's ordinary open/never-attempted candidates. Same
+// detached shape as reprocess-backlog.post.ts, just for 'error' instead of
+// 'open'.
 
 import { ensureEnabledCountriesLoaded, isCountryEnabled, listRegisteredCountries } from '~/server/crawlers/registry'
 
@@ -20,7 +23,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: `${registered.name} ist deaktiviert.` })
   }
 
-  void runTask('reprocess', { payload: { country, force: false, ignoreCooldown: true, trigger: 'manual' } }).catch((err: unknown) => {
+  void runTask('reprocess', { payload: { country, force: false, ignoreCooldown: true, failedOnly: true, trigger: 'manual' } }).catch((err: unknown) => {
     console.error('[settings/reprocess-retry-failed] trigger failed:', (err as Error).message)
   })
   return { started: true }

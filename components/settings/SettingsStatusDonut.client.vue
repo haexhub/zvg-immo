@@ -31,14 +31,14 @@ const BUCKETS: { key: StatusBucket; color: string; icon: typeof CheckCircle2 }[]
   { key: 'error', color: '#d03b3b', icon: AlertCircle },
 ]
 
-const bucketLabel: Record<StatusBucket, string> = {
+const bucketLabel = computed<Record<StatusBucket, string>>(() => ({
   done: t('settings.statusOverview.bucketDone'),
   open: t('settings.statusOverview.bucketOpen'),
   error: t('settings.statusOverview.bucketError'),
-}
+}))
 
 const chartData = computed(() => ({
-  labels: BUCKETS.map((b) => bucketLabel[b.key]),
+  labels: BUCKETS.map((b) => bucketLabel.value[b.key]),
   datasets: [{
     data: BUCKETS.map((b) => props.counts[b.key]),
     backgroundColor: BUCKETS.map((b) => b.color),

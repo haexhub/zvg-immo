@@ -2,6 +2,7 @@
 import { Loader2, RefreshCw } from 'lucide-vue-next'
 import { useSettingsAction } from '~/composables/settings/useSettingsAction'
 import { useSettingsStatusOverview, type StatusBucket } from '~/composables/settings/useSettingsStatusOverview'
+import { useSettingsTaskOverview } from '~/composables/settings/useSettingsTaskOverview'
 
 const { rows, pending, error, load, list, listPending, listError, loadList, clearList, LIST_LIMIT } = useSettingsStatusOverview('llm')
 
@@ -28,18 +29,22 @@ function changePage(step: number): void {
   void loadList(selectedCountry.value, selectedBucket.value, offset.value)
 }
 
+const { startProgressPolling } = useSettingsTaskOverview()
+
 // Two independent trigger endpoints share one pending/error pair: they're
 // mutually exclusive per country row (never fired at the same time) and
 // both just kick off the same detached reprocess task.
 const retryAction = useSettingsAction()
 async function retryOpen(code: string): Promise<void> {
   await retryAction.run(async () => {
+    startProgressPolling()
     await $fetch(`/api/settings/countries/${code}/reprocess-backlog`, { method: 'POST' })
     await load()
   }, 'settings.llmStatus.retryError')
 }
 async function retryFailed(code: string): Promise<void> {
   await retryAction.run(async () => {
+    startProgressPolling()
     await $fetch(`/api/settings/countries/${code}/reprocess-retry-failed`, { method: 'POST' })
     await load()
   }, 'settings.llmStatus.retryError')

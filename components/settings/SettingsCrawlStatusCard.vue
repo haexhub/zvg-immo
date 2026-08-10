@@ -2,6 +2,7 @@
 import { Loader2, RefreshCw } from 'lucide-vue-next'
 import { useSettingsAction } from '~/composables/settings/useSettingsAction'
 import { useSettingsStatusOverview, type StatusBucket } from '~/composables/settings/useSettingsStatusOverview'
+import { useSettingsTaskOverview } from '~/composables/settings/useSettingsTaskOverview'
 
 const { rows, pending, error, load, list, listPending, listError, loadList, clearList, LIST_LIMIT } = useSettingsStatusOverview('crawl')
 
@@ -28,9 +29,12 @@ function changePage(step: number): void {
   void loadList(selectedCountry.value, selectedBucket.value, offset.value)
 }
 
+const { startProgressPolling } = useSettingsTaskOverview()
+
 const crawlAction = useSettingsAction()
 async function retryCountry(code: string): Promise<void> {
   await crawlAction.run(async () => {
+    startProgressPolling()
     await $fetch(`/api/settings/countries/${code}/enrich`, { method: 'POST', body: {} })
     await load()
   }, 'settings.crawlStatus.retryError')

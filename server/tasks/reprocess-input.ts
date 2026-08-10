@@ -52,6 +52,13 @@ export interface ReprocessOptions {
    *  country's currently locked-out auctions immediately without re-running
    *  the LLM on ones that already succeeded. */
   ignoreCooldown?: boolean
+  /** Restricts eligibility to candidates already locked out
+   *  (llm_failures >= MAX_LLM_FAILURES). Paired with ignoreCooldown by the
+   *  /settings "Retry failed" action so it only ever touches the 'error'
+   *  bucket — without this, a country's normal open/never-attempted
+   *  candidates would also be picked up and burn LLM budget the action
+   *  never asked to spend. */
+  failedOnly?: boolean
 }
 
 export interface ReprocessResult {

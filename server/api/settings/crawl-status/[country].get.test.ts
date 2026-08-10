@@ -33,4 +33,26 @@ describe('/api/settings/crawl-status/[country]', () => {
 
     expect(readCrawlStatusList).toHaveBeenCalledWith('de', 'error', { limit: 50, offset: 0 })
   })
+
+  it('rejects a fractional limit', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    vi.stubGlobal('getRouterParam', () => 'de')
+    vi.stubGlobal('getQuery', () => ({ bucket: 'error', limit: '1.5' }))
+    vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
+
+    const handler = (await import('./[country].get')).default as (event: unknown) => Promise<unknown>
+
+    await expect(handler({})).rejects.toMatchObject({ statusCode: 400 })
+  })
+
+  it('rejects a fractional offset', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    vi.stubGlobal('getRouterParam', () => 'de')
+    vi.stubGlobal('getQuery', () => ({ bucket: 'error', offset: '1.5' }))
+    vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
+
+    const handler = (await import('./[country].get')).default as (event: unknown) => Promise<unknown>
+
+    await expect(handler({})).rejects.toMatchObject({ statusCode: 400 })
+  })
 })

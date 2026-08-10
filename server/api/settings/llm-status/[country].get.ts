@@ -1,6 +1,7 @@
 import { getPool } from '~/server/utils/db'
 import { readAuctionRecords } from '~/server/utils/auction-record'
 import { classifyLlmStatus, type LlmStatusBucket } from '~/server/utils/llm-status'
+import { ensureEnabledCountriesLoaded, listRegisteredCountries } from '~/server/crawlers/registry'
 
 export interface LlmStatusItem {
   platform: string
@@ -42,6 +43,10 @@ export default defineEventHandler(async (event): Promise<LlmStatusList> => {
   const country = (getRouterParam(event, 'country') ?? '').trim().toLowerCase()
   if (!country) {
     throw createError({ statusCode: 400, statusMessage: 'country fehlt.' })
+  }
+  await ensureEnabledCountriesLoaded()
+  if (!listRegisteredCountries().some((candidate) => candidate.code === country)) {
+    throw createError({ statusCode: 400, statusMessage: `Unbekannte Länderquelle: ${country}` })
   }
   const query = getQuery(event)
   const bucket = String(query.bucket ?? '') as LlmStatusBucket

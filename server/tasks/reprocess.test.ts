@@ -483,6 +483,24 @@ describe('runReprocess llm_failures cooldown', () => {
       message: 'provider unavailable',
     })
   })
+
+  it('failedOnly skips an open candidate below MAX_LLM_FAILURES even though it would otherwise be eligible', async () => {
+    // Default beforeEach state: no fetch state at all, i.e. llm_failures=0 —
+    // the country's ordinary open/never-attempted bucket, not 'error'. The
+    // /settings "Retry failed" action must never touch this (see
+    // reprocess-retry-failed.post.ts).
+    await expect(runReprocess({ country: 'de', failedOnly: true, ignoreCooldown: true }))
+      .resolves.toMatchObject({ processed: 0, skipped: 1 })
+  })
+
+  it('failedOnly still processes a genuinely locked-out candidate', async () => {
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(
+      lockedOutFetchState(new Date(Date.now() - 60 * 60 * 1000).toISOString()), // 1h ago — locked without ignoreCooldown
+    )
+
+    await expect(runReprocess({ country: 'de', failedOnly: true, ignoreCooldown: true }))
+      .resolves.toMatchObject({ processed: 1, skipped: 0 })
+  })
 })
 
 describe('runReprocess task_run_errors categorization', () => {

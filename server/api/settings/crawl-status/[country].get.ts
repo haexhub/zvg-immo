@@ -14,7 +14,12 @@ export default defineEventHandler(async (event): Promise<CrawlStatusList> => {
   if (!BUCKETS.includes(bucket)) {
     throw createError({ statusCode: 400, statusMessage: `bucket muss done, error oder open sein.` })
   }
-  const limit = Math.min(MAX_LIMIT, Math.max(1, Number(query.limit) || DEFAULT_LIMIT))
-  const offset = Math.max(0, Number(query.offset) || 0)
+  const requestedLimit = Number(query.limit ?? DEFAULT_LIMIT)
+  const requestedOffset = Number(query.offset ?? 0)
+  if (!Number.isInteger(requestedLimit) || !Number.isInteger(requestedOffset)) {
+    throw createError({ statusCode: 400, statusMessage: 'limit und offset müssen ganze Zahlen sein.' })
+  }
+  const limit = Math.min(MAX_LIMIT, Math.max(1, requestedLimit))
+  const offset = Math.max(0, requestedOffset)
   return readCrawlStatusList(country, bucket, { limit, offset })
 })

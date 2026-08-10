@@ -2,6 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('~/server/utils/auction-record', () => ({ readAuctionRecords: vi.fn() }))
 vi.mock('~/server/utils/db', () => ({ getPool: vi.fn() }))
+vi.mock('~/server/crawlers/registry', () => ({
+  ensureEnabledCountriesLoaded: vi.fn(),
+  listRegisteredCountries: vi.fn(() => [{ code: 'de', name: 'Deutschland', regions: [] }]),
+}))
 
 const COMPLETE_LLM_FIELDS = {
   condition: null, features: [], bedrooms: null, bathrooms: null, floor: null,
@@ -40,6 +44,17 @@ describe('/api/settings/llm-status/[country]', () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     vi.stubGlobal('getRouterParam', () => 'de')
     vi.stubGlobal('getQuery', () => ({ bucket: 'nonsense' }))
+    vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
+
+    const handler = (await import('./[country].get')).default as (event: unknown) => Promise<unknown>
+
+    await expect(handler({})).rejects.toMatchObject({ statusCode: 400 })
+  })
+
+  it('rejects an unregistered country code', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    vi.stubGlobal('getRouterParam', () => 'zz')
+    vi.stubGlobal('getQuery', () => ({ bucket: 'open' }))
     vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
 
     const handler = (await import('./[country].get')).default as (event: unknown) => Promise<unknown>
