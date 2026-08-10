@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { Component } from 'vue'
 import type {
   LocationAirQualityLevel,
   LocationAmenityKind,
@@ -13,6 +14,37 @@ import type { AuctionDetail } from '~/server/api/auction/[platform]/[id].get'
 import { safeHref } from '~/lib/utils'
 import { useAuctionDetailFormatters } from '~/composables/useAuctionDetailFormatters'
 import { usePlaceNameTranslations } from '~/composables/usePlaceNameTranslations'
+import {
+  Coffee,
+  Fuel,
+  GraduationCap,
+  Hospital,
+  Landmark,
+  Library,
+  Pill,
+  ShoppingCart,
+  Stethoscope,
+  Trees,
+  Utensils,
+  UtensilsCrossed,
+} from 'lucide-vue-next'
+
+// Same glyph choice per kind as the detail map's POI markers (lib/mapFeatureIcon.ts)
+// so a "Supermarkt" reads as the same shape whether it's a map pin or a list row.
+const AMENITY_ICONS: Record<LocationAmenityKind, Component> = {
+  groceries: ShoppingCart,
+  education: GraduationCap,
+  healthcare: Stethoscope,
+  hospital: Hospital,
+  pharmacy: Pill,
+  banking: Landmark,
+  fuel: Fuel,
+  food: UtensilsCrossed,
+  restaurant: Utensils,
+  cafe: Coffee,
+  leisure: Library,
+  recreation: Trees,
+}
 
 const props = defineProps<{
   auction: AuctionDetail
@@ -422,7 +454,10 @@ function neighborhoodNoteLabel(note: NeighborhoodContext['notes'][number] | stri
                 <h3 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.dailyNeedsTitle') }}</h3>
                 <dl class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
                   <div v-for="item in locationAmenities" :key="item.kind">
-                    <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ amenityKindLabel(item.kind) }}</dt>
+                    <dt class="flex items-center gap-1.5 text-xs uppercase tracking-wide text-muted-foreground">
+                      <component :is="AMENITY_ICONS[item.kind]" class="h-3.5 w-3.5 shrink-0" />
+                      {{ amenityKindLabel(item.kind) }}
+                    </dt>
                     <dd class="font-medium tabular-nums">{{ formatDistance(item.nearestDistanceMeters) }}</dd>
                     <dd class="text-xs text-muted-foreground">{{ $t('objektDetail.amenityCounts', { near: item.countWithin1000m, wider: item.countWithin5000m }) }}</dd>
                   </div>
