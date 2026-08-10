@@ -32,12 +32,6 @@ export function featureColor(feature: LocationMapFeature): string {
   return '#64748b'
 }
 
-export function featureRadius(feature: LocationMapFeature): number {
-  if (feature.kind === 'major_road') return 8
-  if (feature.kind === 'industry' || feature.kind === 'commercial') return 7
-  return 6
-}
-
 export function rgba(hex: string, alpha: number): string {
   const n = Number.parseInt(hex.slice(1), 16)
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`

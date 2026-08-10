@@ -18,8 +18,9 @@ import type BaseLayer from 'ol/layer/Base'
 import type { TileCoord } from 'ol/tilecoord'
 import { OSM_ATTRIBUTION, mapTilerSatelliteStyleUrl, mapTilerStreetsStyleUrl } from '~/lib/map-tiles'
 import { mapPinDataUri, MAP_PIN_ANCHOR } from '~/lib/mapPinIcon'
+import { featureIconDataUri } from '~/lib/mapFeatureIcon'
 import { minOf } from '~/lib/array-math'
-import { featureColor, featureRadius, hazardRadius, hazardStatusColor, rgba } from '~/lib/auction-map-overlays'
+import { featureColor, hazardRadius, hazardStatusColor, rgba } from '~/lib/auction-map-overlays'
 import { useMapTilerVectorBaseLayer } from '~/composables/useMapTilerVectorBaseLayer'
 import type { HazardAssessment, LocationContext, LocationMapFeature } from '~/types/auction'
 
@@ -248,14 +249,7 @@ function featureOverlayEntries(entries: OverlayEntry[]): void {
       source,
       style: (olFeature) => {
         const data = olFeature.get('data') as LocationMapFeature
-        const color = featureColor(data)
-        return new Style({
-          image: new CircleStyle({
-            radius: featureRadius(data),
-            fill: new Fill({ color: rgba(color, data.kind === 'major_road' ? 0.45 : 0.75) }),
-            stroke: new Stroke({ color, width: 2 }),
-          }),
-        })
+        return new Style({ image: new Icon({ src: featureIconDataUri(data.kind, featureColor(data)) }) })
       },
     })
     // Visible by default, unlike the noise/flood/hazard/odor overlays above —
@@ -281,6 +275,7 @@ interface LegendEntry {
   key: string
   color: string
   label: string
+  icon?: string
 }
 
 const legendOpen = ref(true)
@@ -289,7 +284,8 @@ const featureLegendEntries = computed<LegendEntry[]>(() => {
   const byKind = new Map<string, LegendEntry>()
   for (const feature of props.locationContext?.mapFeatures ?? []) {
     if (!byKind.has(feature.kind)) {
-      byKind.set(feature.kind, { key: feature.kind, color: featureColor(feature), label: featureLabel(feature) })
+      const color = featureColor(feature)
+      byKind.set(feature.kind, { key: feature.kind, color, label: featureLabel(feature), icon: featureIconDataUri(feature.kind, color) })
     }
   }
   return [...byKind.values()]
@@ -450,7 +446,7 @@ onBeforeUnmount(() => {
           {{ t('map.legendSubject') }}
         </div>
         <div v-for="entry in featureLegendEntries" :key="entry.key" class="flex min-h-[18px] items-center gap-1.5">
-          <span class="h-2.5 w-2.5 shrink-0 rounded-full" :style="{ backgroundColor: entry.color }" />
+          <img :src="entry.icon" alt="" class="h-4 w-4 shrink-0">
           {{ entry.label }}
         </div>
         <template v-if="hazardStatusLegendEntries.length">
