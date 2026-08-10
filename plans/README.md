@@ -13,7 +13,7 @@ progress work in the user worktree.
 | 002 | Establish one saved-search filter contract | P1 | L | 001 | DONE (`03945c0`, PR #388) |
 | 003 | Make outbound notifications durable and abuse-resistant | P1 | L | 001 | DONE (`dff7436`, PR #389) |
 | 004 | Make public data reads bounded and cache-only | P2 | L | 002 | DONE (2026-08-09; bounded v1 reads and cache-only map polling) |
-| 005 | Split oversized production modules along domain boundaries | P2 | L | 002, 003, 004 | TODO |
+| 005 | Split oversized production modules along domain boundaries | P2 | L | 002, 003, 004 | DONE (2026-08-10; behaviour-preserving domain splits and CI size gate) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED | REJECTED.
 

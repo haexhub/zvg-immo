@@ -62,6 +62,15 @@ Crawl-Batches nicht korrekt evaluierbar und werden beim Speichern bzw.
 Aktivieren eines Alerts mit 400 abgelehnt. Alte betroffene Subscriptions werden
 beim Matching übersprungen und protokolliert, nie stillschweigend gelockert.
 
+## Modulgrößen
+
+Produktionsdateien unter `server`, `components`, `composables`, `pages` und
+`lib` bleiben bei höchstens 500 Zeilen. Der CI-Size-Gate in
+`.github/workflows/ci.yml` prüft dies ohne Tests, Migrationen und Vendor-Code.
+Bei Reprocess liegen Kandidaten/Input-Helper, Einzelauswertung und Orchestrierung
+in getrennten Task-Modulen; Enrich trennt Auswahl, Worker und Abschluss-
+Persistenz. Die öffentlichen Task- und Utility-Importpfade bleiben Fassaden.
+
 ## Öffentliche Daten-Lesepfade
 
 `/api/data/v1/auctions` liest über `server/utils/data-api-auction.ts` eine

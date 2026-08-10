@@ -8,6 +8,7 @@
 
 ## Status
 
+- **Status**: DONE (2026-08-10)
 - **Priority**: P2
 - **Effort**: L
 - **Risk**: HIGH
@@ -125,10 +126,10 @@ typecheck, test and build.
 
 ## Done criteria
 
-- [ ] No in-scope production source file exceeds 500 lines.
-- [ ] Every extraction has a coherent domain boundary and no new circular imports.
-- [ ] Existing public entrypoint exports/route payloads are unchanged.
-- [ ] Focused tests, full tests, lint, typecheck, build and the CI size gate pass.
+- [x] No in-scope production source file exceeds 500 lines.
+- [x] Every extraction has a coherent domain boundary and no new circular imports.
+- [x] Existing public entrypoint exports/route payloads are unchanged.
+- [x] Focused tests, full tests, lint, typecheck, build and the CI size gate pass.
 
 ## STOP conditions
 
