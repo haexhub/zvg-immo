@@ -219,6 +219,14 @@ function odorOverlayEntry(entries: OverlayEntry[]): void {
 const hoveredFeatureKind = ref<string | null>(null)
 const hoveredHazardKind = ref<string | null>(null)
 const HOVER_SCALE = 1.5
+const HOVER_LAYER_Z_INDEX = 10
+
+// Style.zIndex (used above) only reorders features *within* one layer — each
+// hazard/feature-label group is its own separate VectorLayer, so lifting a
+// hovered marker above one from a *different* layer needs that layer raised
+// too. Layers register their kind(s) here; the watch below sets each one's
+// zIndex based on whether the hovered kind is among them.
+const hoverableLayers: { layer: VectorLayer<VectorSource>, group: 'feature' | 'hazard', kinds: Set<string> }[] = []
 
 function hazardOverlayEntries(entries: OverlayEntry[]): void {
   for (const hazard of props.hazards ?? []) {
@@ -242,19 +250,23 @@ function hazardOverlayEntries(entries: OverlayEntry[]): void {
         })
       },
     })
+    hoverableLayers.push({ layer, group: 'hazard', kinds: new Set([hazard.hazard]) })
     addOverlayEntry(entries, hazardMapLayerLabel(hazard), layer, false)
   }
 }
 
 function featureOverlayEntries(entries: OverlayEntry[]): void {
   const layersByLabel = new Map<string, VectorSource>()
+  const kindsByLabel = new Map<string, Set<string>>()
   for (const feature of props.locationContext?.mapFeatures ?? []) {
     const label = featureLayerLabel(feature)
     let source = layersByLabel.get(label)
     if (!source) {
       source = new VectorSource()
       layersByLabel.set(label, source)
+      kindsByLabel.set(label, new Set())
     }
+    kindsByLabel.get(label)!.add(feature.kind)
     const olFeature = new Feature({ geometry: new Point(fromLonLat([feature.lng, feature.lat])) })
     olFeature.set('data', feature)
     olFeature.set('popupHtml', () => featurePopup(feature))
@@ -272,6 +284,7 @@ function featureOverlayEntries(entries: OverlayEntry[]): void {
         })
       },
     })
+    hoverableLayers.push({ layer, group: 'feature', kinds: kindsByLabel.get(label)! })
     // Visible by default, unlike the noise/flood/hazard/odor overlays above —
     // matches the Leaflet version, which added these straight to the map
     // instead of only registering them with the layer-switcher control.
@@ -288,9 +301,15 @@ const overlayEntries = shallowRef<OverlayEntry[]>([])
 
 // Style functions above read the hovered-kind refs directly, but OL only
 // re-invokes them on a render pass — nudge every overlay layer to redraw
-// when the hover target changes so the highlight actually appears.
+// when the hover target changes so the highlight actually appears. Layers
+// default to zIndex 0 when unset, so resetting a non-matching layer to 0
+// here is enough to drop it back below the (still-10) hovered one.
 watch([hoveredFeatureKind, hoveredHazardKind], () => {
   for (const entry of overlayEntries.value) entry.layer.changed()
+  for (const { layer, group, kinds } of hoverableLayers) {
+    const hovered = group === 'feature' ? hoveredFeatureKind.value : hoveredHazardKind.value
+    layer.setZIndex(hovered != null && kinds.has(hovered) ? HOVER_LAYER_Z_INDEX : 0)
+  }
 })
 
 function toggleOverlay(entry: OverlayEntry): void {
@@ -376,10 +395,13 @@ onMounted(async () => {
   const markerFeature = new Feature({ geometry: new Point(fromLonLat([props.lng, props.lat])) })
   const markerLayer = new VectorLayer({
     source: new VectorSource({ features: [markerFeature] }),
-    // Scaled up (and drawn last/on top, see the layers array below) so the
-    // subject property always reads as the one marker that matters, distinct
-    // from the same-size POI/hazard icons around it.
-    style: new Style({ image: new Icon({ src: mapPinDataUri(SUBJECT_PIN_COLOR), anchor: MAP_PIN_ANCHOR, scale: 1.6 }), zIndex: 20 }),
+    // Scaled up and always above every hazard/feature layer (including a
+    // hovered one, see HOVER_LAYER_Z_INDEX above) so the subject property
+    // always reads as the one marker that matters. Set on the layer itself,
+    // not just the Style, since Style.zIndex alone can't lift a feature
+    // above features that live in a different layer.
+    zIndex: 20,
+    style: new Style({ image: new Icon({ src: mapPinDataUri(SUBJECT_PIN_COLOR), anchor: MAP_PIN_ANCHOR, scale: 1.6 }) }),
   })
 
   const popupOverlay = new Overlay({
