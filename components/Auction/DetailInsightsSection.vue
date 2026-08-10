@@ -1,27 +1,6 @@
 <script setup lang="ts">
-import type { Component } from 'vue'
-import type { UsageIdea, UsageIdeaType } from '~/lib/usage-idea'
-import type { RenovationCostCategory, RenovationCostItem } from '~/lib/renovation-cost'
 import type { AuctionDetail } from '~/server/api/auction/[platform]/[id].get'
 import { useAuctionDetailFormatters } from '~/composables/useAuctionDetailFormatters'
-import {
-  BrickWall,
-  Bath,
-  Blinds,
-  Heater,
-  Home,
-  Layers3,
-  Lightbulb,
-  Loader2,
-  Sprout,
-  SquareStack,
-  Tractor,
-  TreePine,
-  Warehouse,
-  Waves,
-  Wrench,
-  Zap,
-} from 'lucide-vue-next'
 
 const props = defineProps<{
   extraction: AuctionDetail['extraction'] | null
@@ -31,44 +10,9 @@ const props = defineProps<{
   locationCharacterTranslating: boolean
   planningNotesTranslating: boolean
   parcelsTranslating: boolean
-  usageIdeas: UsageIdea[] | null
-  usageIdeasPending: boolean
-  usageIdeasError: string | null
-  renovationCost: RenovationCostItem[] | null
-  renovationCostPending: boolean
-  renovationCostError: string | null
 }>()
 
-const emit = defineEmits<{
-  generateUsageIdeas: []
-  generateRenovationCost: []
-}>()
-
-const usageIdeaTypeLabel = useUsageIdeaTypeLabel()
-const renovationCostCategoryLabel = useRenovationCostCategoryLabel()
-const { formatArea, formatLandValue, formatCostRange } = useAuctionDetailFormatters()
-
-const USAGE_IDEA_ICONS: Partial<Record<UsageIdeaType, Component>> = {
-  'owner-occupation': Home,
-  'owner-occupation-with-sublet': Layers3,
-  'vacation-rental': Waves,
-  farm: Tractor,
-  agricultural: Sprout,
-  forestry: TreePine,
-  warehouse: Warehouse,
-  other: Lightbulb,
-}
-
-const RENOVATION_COST_ICONS: Partial<Record<RenovationCostCategory, Component>> = {
-  roof: Home,
-  'facade-insulation': BrickWall,
-  windows: Blinds,
-  heating: Heater,
-  electrical: Zap,
-  'plumbing-bathroom': Bath,
-  flooring: SquareStack,
-  other: Wrench,
-}
+const { formatArea, formatLandValue } = useAuctionDetailFormatters()
 
 const planningNotesHasContent = computed(() => {
   const p = props.extraction?.planningNotes
@@ -185,82 +129,6 @@ const landParcelItems = computed(() => props.extraction?.planningNotes?.landParc
         </li>
       </ul>
       <p v-else class="text-sm text-muted-foreground">{{ $t('objektDetail.noKnownParcels') }}</p>
-    </DetailSectionCard>
-
-    <DetailSectionCard :title="$t('objektDetail.usageIdeasTitle')">
-      <ul v-if="usageIdeas?.length" class="space-y-3 text-sm">
-        <li v-for="(idea, i) in usageIdeas" :key="i" class="flex items-start gap-3">
-          <component :is="USAGE_IDEA_ICONS[idea.type] ?? Lightbulb" class="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-          <div class="min-w-0">
-            <p class="font-medium leading-snug">{{ usageIdeaTypeLabel(idea.type, idea.label) }}</p>
-            <p class="mt-0.5 text-xs leading-relaxed text-muted-foreground">{{ idea.rationale }}</p>
-          </div>
-        </li>
-      </ul>
-      <p v-else-if="usageIdeas" class="text-sm text-muted-foreground">
-        {{ $t('objektDetail.usageIdeasEmpty') }}
-      </p>
-      <div v-else-if="usageIdeasError" class="flex items-center gap-2">
-        <p class="text-sm text-destructive">{{ usageIdeasError }}</p>
-        <Button type="button" size="sm" variant="outline" @click="emit('generateUsageIdeas')">
-          {{ $t('objektDetail.usageIdeasRetry') }}
-        </Button>
-      </div>
-      <div
-        v-else-if="usageIdeasPending"
-        class="inline-flex items-center gap-1.5 text-sm text-muted-foreground"
-        role="status"
-        aria-live="polite"
-      >
-        <Loader2 class="h-3.5 w-3.5 animate-spin text-primary" aria-hidden="true" />
-        <span>{{ $t('objektDetail.usageIdeasPending') }}</span>
-      </div>
-      <Button v-else type="button" size="sm" variant="outline" @click="emit('generateUsageIdeas')">
-        {{ $t('objektDetail.usageIdeasGenerate') }}
-      </Button>
-    </DetailSectionCard>
-
-    <DetailSectionCard :title="$t('objektDetail.renovationCostTitle')">
-      <ul v-if="renovationCost?.length" class="space-y-3 text-sm">
-        <li v-for="(item, i) in renovationCost" :key="i" class="flex items-start gap-3">
-          <component :is="RENOVATION_COST_ICONS[item.category] ?? Wrench" class="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-          <div class="min-w-0 flex-1">
-            <div class="flex items-baseline justify-between gap-3">
-              <p class="font-medium leading-snug">{{ renovationCostCategoryLabel(item.category, item.label) }}</p>
-              <span class="shrink-0 text-xs font-medium tabular-nums text-foreground/90">
-                {{ formatCostRange(item.costMinEur, item.costMaxEur) }}
-              </span>
-            </div>
-            <p class="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-              {{ item.rationale }}
-              <span v-if="item.confidence">
-                ({{ item.confidence === 'high' ? $t('objektDetail.confidenceHigh') : $t('objektDetail.confidenceLow') }})
-              </span>
-            </p>
-          </div>
-        </li>
-      </ul>
-      <p v-else-if="renovationCost" class="text-sm text-muted-foreground">
-        {{ $t('objektDetail.renovationCostEmpty') }}
-      </p>
-      <div v-else-if="renovationCostError" class="flex items-center gap-2">
-        <p class="text-sm text-destructive">{{ renovationCostError }}</p>
-        <Button type="button" size="sm" variant="outline" @click="emit('generateRenovationCost')">
-          {{ $t('objektDetail.renovationCostRetry') }}
-        </Button>
-      </div>
-      <div
-        v-else-if="renovationCostPending"
-        class="inline-flex items-center gap-1.5 text-sm text-muted-foreground"
-        role="status"
-        aria-live="polite"
-      >
-        <Loader2 class="h-3.5 w-3.5 animate-spin text-primary" aria-hidden="true" />
-        <span>{{ $t('objektDetail.renovationCostPending') }}</span>
-      </div>
-      <Button v-else type="button" size="sm" variant="outline" @click="emit('generateRenovationCost')">
-        {{ $t('objektDetail.renovationCostGenerate') }}
-      </Button>
     </DetailSectionCard>
   </div>
 </template>

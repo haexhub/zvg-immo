@@ -73,9 +73,8 @@ export class OpenAiCompatibleProvider implements ExtractionProvider {
    *  but that suffix 404s unconditionally on /chat/completions. Auctions with
    *  photos/PDFs bypass the batch queue and land here synchronously (see
    *  batchSupportsMultimodal in ../llm-batch.ts), as does every non-extraction
-   *  use case (translation, usage-ideas, renovation-cost-estimate), so a
-   *  profile deliberately configured with a `:batch` model for its cost
-   *  savings must still work on this path. */
+   *  use case (translation), so a profile deliberately configured with a
+   *  `:batch` model for its cost savings must still work on this path. */
   private get syncModel(): string {
     return this.config.provider === 'openrouter' ? this.config.model.replace(/:batch$/, '') : this.config.model
   }

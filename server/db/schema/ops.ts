@@ -72,18 +72,6 @@ export const appSettings = pgTable('app_settings', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }).enableRLS()
 
-// Generic cache for on-demand LLM insight cards (Nutzungsideen, Sanierungskosten,
-// ...). One table for every future insight instead of one table per feature.
-// Immutable per (insight_id, content_hash), same contract as content_translations.
-export const auctionInsights = pgTable('auction_insights', {
-  insightId: text('insight_id').notNull(),
-  contentHash: text('content_hash').notNull(),
-  payload: jsonb('payload').notNull(),
-  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [
-  primaryKey({ columns: [table.insightId, table.contentHash] }),
-]).enableRLS()
-
 // Per-item error history for tracked tasks (enrich/reprocess/...), distinct
 // from task_run_status's single lastWarning/lastError string (app_settings).
 // Rows age out on write (server/utils/task-run-errors.ts) instead of a fixed

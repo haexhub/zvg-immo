@@ -84,15 +84,6 @@ export function useAuctionDetailFormatters() {
     return formatPricePerSqm(eurPerSqm)
   }
 
-  function formatCostRange(costMinEur: number, costMaxEur: number): string {
-    const min = eurToDisplay(costMinEur)
-    const max = eurToDisplay(costMaxEur)
-    if (min == null || max == null) return '–'
-    const fmt = (n: number) =>
-      n.toLocaleString(intlLocale.value, { style: 'currency', currency: currency.value, maximumFractionDigits: 0 })
-    return min === max ? fmt(min) : `${fmt(min)} – ${fmt(max)}`
-  }
-
   function demographicSignalLabel(level: LocationDemographicContext['youthSignal']): string {
     return t(`objektDetail.demographicSignalLevel.${level}`)
   }
@@ -116,7 +107,6 @@ export function useAuctionDetailFormatters() {
     formatConcentration,
     formatPopulation,
     formatLandValue,
-    formatCostRange,
     demographicSignalLabel,
     icsFilename,
   }

@@ -88,12 +88,11 @@ export default defineEventHandler(async () => {
       }
     }
   }
-  // An insight without its own chain actually runs on extraction's *resolved*
-  // config, not on the env default — insight/[insightId].post.ts falls back to
-  // getLlmProviderOverride(db, 'extraction'). Reporting the env default here
-  // would make the card claim "uses document extraction's provider" while
-  // printing whatever the env happens to hold, which is only what extraction
-  // itself falls back to when it has no override either.
+  // A scope without its own chain actually runs on extraction's *resolved*
+  // config, not on the env default. Reporting the env default here would make
+  // the card claim "uses document extraction's provider" while printing
+  // whatever the env happens to hold, which is only what extraction itself
+  // falls back to when it has no override either.
   const extractionEffective = effective.extraction
   if (extractionEffective) {
     for (const kind of KINDS) {
