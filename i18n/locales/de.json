@@ -469,6 +469,15 @@
       "empty": "Keine Länder aktiv.",
       "colFailures": "Fehlversuche"
     },
+    "translationStatus": {
+      "title": "Übersetzungs-Status",
+      "description": "Übersetzungen entstehen nur, wenn eine Anzeige tatsächlich in einer anderen Sprache aufgerufen wurde — die Zahlen zeigen also Übersetzungsversuche, nicht alle Anzeigen. Pro Zeile lässt sich eine einzelne Übersetzung erneut anstoßen.",
+      "refresh": "Status aktualisieren",
+      "retryRow": "Diese Übersetzung erneut starten",
+      "retryError": "Übersetzung konnte nicht gestartet werden.",
+      "empty": "Noch keine Übersetzungsversuche.",
+      "colLang": "Sprache"
+    },
     "statusOverview": {
       "loadError": "Status konnte nicht geladen werden.",
       "listLoadError": "Liste konnte nicht geladen werden.",

@@ -125,6 +125,7 @@ onMounted(probeSession)
           <SettingsLlmProfilesCard />
           <SettingsLlmAssignmentsCard />
           <SettingsLlmStatusCard />
+          <SettingsTranslationStatusCard />
           <SettingsLlmBatchCard />
         </section>
 

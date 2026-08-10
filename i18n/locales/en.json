@@ -469,6 +469,15 @@
       "empty": "No countries enabled.",
       "colFailures": "Failures"
     },
+    "translationStatus": {
+      "title": "Translation status",
+      "description": "Translations only exist once a listing was actually viewed in another language — these numbers show translation attempts, not all listings. Each row can retrigger that one translation individually.",
+      "refresh": "Refresh status",
+      "retryRow": "Retry this translation",
+      "retryError": "Could not start the translation.",
+      "empty": "No translation attempts yet.",
+      "colLang": "Language"
+    },
     "statusOverview": {
       "loadError": "Could not load status.",
       "listLoadError": "Could not load the list.",

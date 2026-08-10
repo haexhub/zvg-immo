@@ -3,6 +3,8 @@
 // a country must not imply adding a selectable UI locale here.
 export type ContentTargetLang = 'de' | 'en'
 
+export const CONTENT_TARGET_LANGS: readonly ContentTargetLang[] = ['de', 'en']
+
 const REGION_DISPLAY_NAMES = new Intl.DisplayNames(['en'], { type: 'region' })
 
 function isKnownRegion(code: string): boolean {

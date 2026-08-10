@@ -15,9 +15,14 @@ export interface StatusListItem {
   title: string | null
   region: string
   caseNumber: string
-  auctionDateIso: string | null
+  /** crawl-/llm-status only: not returned by translation-status (see startedAt). */
+  auctionDateIso?: string | null
   lastErrorMessage: string | null
   llmFailures?: number
+  /** translation-status only: which target language this row is for. */
+  lang?: string
+  /** translation-status only: when this attempt was claimed. */
+  startedAt?: string
 }
 
 export interface StatusList {
@@ -32,11 +37,12 @@ export interface StatusCountryRow extends StatusCounts {
 
 const LIST_LIMIT = 50
 
-/** Shared data-fetching for the crawl- and LLM-status donut cards: both load
- *  the same shape (per-country done/error/open counts, plus a paginated
- *  drill-down list for whichever segment is selected), just against
- *  different endpoints — see server/api/settings/{crawl,llm}-status[.get.ts|/[country].get.ts]. */
-export function useSettingsStatusOverview(kind: 'crawl' | 'llm') {
+/** Shared data-fetching for the crawl-, LLM- and translation-status donut
+ *  cards: all three load the same shape (per-country done/error/open counts,
+ *  plus a paginated drill-down list for whichever segment is selected), just
+ *  against different endpoints — see
+ *  server/api/settings/{crawl,llm,translation}-status[.get.ts|/[country].get.ts]. */
+export function useSettingsStatusOverview(kind: 'crawl' | 'llm' | 'translation') {
   const countryLabel = useCountryLabel()
   const overview = useSettingsAction()
   const listAction = useSettingsAction()
