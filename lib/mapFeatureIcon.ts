@@ -64,3 +64,15 @@ export function featureIconDataUri(kind: LocationMapFeatureKind, color: string):
 export function hazardIconDataUri(kind: HazardKind, color: string): string {
   return glyphIconDataUri(HAZARD_KIND_ICON_GLYPHS[kind], color)
 }
+
+// The odor overlay itself draws a dashed, translucent circle (see
+// odorOverlayEntry in DetailMap.client.vue) rather than a point marker, so
+// its legend swatch mirrors that instead of the solid-fill convention above.
+// Still the same 32x32 canvas as every other legend icon, so it drops into
+// the same <img class="h-6 w-6"> box without any one-off markup.
+export function odorLegendIconDataUri(): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">`
+    + `<circle cx="16" cy="16" r="10" fill="#ef4444" fill-opacity="0.15" stroke="#7f1d1d" stroke-width="2" stroke-dasharray="4 3"/>`
+    + `</svg>`
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+}

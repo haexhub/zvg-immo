@@ -18,7 +18,7 @@ import type BaseLayer from 'ol/layer/Base'
 import type { TileCoord } from 'ol/tilecoord'
 import { OSM_ATTRIBUTION, mapTilerSatelliteStyleUrl, mapTilerStreetsStyleUrl } from '~/lib/map-tiles'
 import { mapPinDataUri, MAP_PIN_ANCHOR } from '~/lib/mapPinIcon'
-import { featureIconDataUri, hazardIconDataUri } from '~/lib/mapFeatureIcon'
+import { featureIconDataUri, hazardIconDataUri, odorLegendIconDataUri } from '~/lib/mapFeatureIcon'
 import { minOf } from '~/lib/array-math'
 import { featureColor, hazardRadius, hazardStatusColor, rgba } from '~/lib/auction-map-overlays'
 import { useMapTilerVectorBaseLayer } from '~/composables/useMapTilerVectorBaseLayer'
@@ -297,7 +297,7 @@ interface LegendEntry {
   key: string
   color: string
   label: string
-  icon?: string
+  icon: string
 }
 
 const legendOpen = ref(true)
@@ -453,51 +453,21 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </div>
-    <div class="absolute bottom-2 left-2 z-10 flex flex-col items-start gap-1">
-      <button
-        type="button"
-        :class="controlToggleClass"
-        :aria-expanded="legendOpen"
-        aria-controls="auction-detail-map-legend-panel"
-        @click="legendOpen = !legendOpen"
-      >
-        {{ t('map.legend') }}
-      </button>
-      <div v-if="legendOpen" id="auction-detail-map-legend-panel" :class="controlPanelClass">
-        <div class="flex min-h-6 items-center gap-1.5">
-          <img :src="mapPinDataUri('#2563eb')" alt="" class="h-6 w-6 shrink-0">
-          {{ t('map.legendSubject') }}
-        </div>
-        <div
-          v-for="entry in featureLegendEntries"
-          :key="entry.key"
-          class="-mx-1 flex min-h-6 items-center gap-1.5 rounded px-1 hover:bg-slate-900/10"
-          @mouseenter="hoveredFeatureKind = entry.key"
-          @mouseleave="hoveredFeatureKind = null"
-        >
-          <img :src="entry.icon" alt="" class="h-6 w-6 shrink-0">
-          {{ entry.label }}
-        </div>
-        <template v-if="hazardLegendEntries.length">
-          <div class="mt-1 border-t border-slate-900/10 pt-1 font-semibold">{{ t('objektDetail.hazardsTitle') }}</div>
-          <div
-            v-for="entry in hazardLegendEntries"
-            :key="entry.key"
-            class="-mx-1 flex min-h-6 items-center gap-1.5 rounded px-1 hover:bg-slate-900/10"
-            @mouseenter="hoveredHazardKind = entry.key"
-            @mouseleave="hoveredHazardKind = null"
-          >
-            <img :src="entry.icon" alt="" class="h-6 w-6 shrink-0">
-            {{ entry.label }}
-          </div>
-        </template>
-        <div v-if="showOdorLegend" class="flex min-h-6 items-center gap-1.5">
-          <span class="flex h-6 w-6 shrink-0 items-center justify-center">
-            <span class="h-4 w-4 rounded-full border-[1.5px] border-dashed border-red-950 bg-red-500/15" />
-          </span>
-          {{ t('objektDetail.mapLayerOdorSignals') }}
-        </div>
-      </div>
-    </div>
+    <AuctionDetailMapLegend
+      v-model:open="legendOpen"
+      :feature-entries="featureLegendEntries"
+      :hazard-entries="hazardLegendEntries"
+      :show-odor="showOdorLegend"
+      :subject-icon="mapPinDataUri('#2563eb')"
+      :subject-label="t('map.legendSubject')"
+      :hazards-title="t('objektDetail.hazardsTitle')"
+      :odor-icon="odorLegendIconDataUri()"
+      :odor-label="t('objektDetail.mapLayerOdorSignals')"
+      :toggle-class="controlToggleClass"
+      :panel-class="controlPanelClass"
+      :toggle-label="t('map.legend')"
+      @hover-feature="hoveredFeatureKind = $event"
+      @hover-hazard="hoveredHazardKind = $event"
+    />
   </div>
 </template>
