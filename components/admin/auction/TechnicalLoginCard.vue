@@ -30,6 +30,4 @@ const emit = defineEmits<{ submit: [] }>()
       </form>
     </CardContent>
   </Card>
-
-
 </template>

@@ -36,6 +36,8 @@ import { recordTaskRunEnd, recordTaskRunProgress, recordTaskRunStart, type TaskR
 import { recordTaskRunError } from '~/server/utils/task-run-errors'
 import { runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-task'
 import { fillAuctionGeocodes } from '~/server/utils/auction-geocoding'
+import { prepareEnrichWork } from './enrich-work-selection'
+import { finalizeEnrichPersistence } from './enrich-persistence'
 
 const IMAGES_DIR = join(process.cwd(), '.cache_zvg', 'images')
 
@@ -44,19 +46,6 @@ const ENRICH_CONCURRENCY = 8
 // (/settings). Every error is recorded in full in task_run_errors regardless
 // of this limit — this only bounds the inline summary's length.
 const WARNING_PREVIEW_LIMIT = 50
-// Give up retrying a listing whose photo pipeline (native download / document
-// extraction) keeps *throwing* after this many attempts. A listing that
-// completes an attempt but legitimately has no usable photos stops retrying
-// immediately (photosCheckedAt gets set); this bound only guards against
-// persistent errors.
-const MAX_PHOTO_FAILURES = 3
-// Mirrors LLM_FAILURE_RETRY_COOLDOWN_HOURS (lib/llm-limits.ts): once a listing
-// hits MAX_PHOTO_FAILURES, retry it again after this many hours instead of
-// excluding it forever — a transient upstream problem (rate limit, network
-// blip) shouldn't need a manual DB reset to clear.
-const PHOTO_FAILURE_RETRY_COOLDOWN_HOURS = 24
-const PHOTO_PIPELINE_VERSION = 4
-const KRONOFOGDEN_GALLERY_PHOTO_PIPELINE_VERSION = 5
 const CONTENT_HASH_IMAGE_FILE_RE = /^([0-9a-f]{8,32})\.(?:jpe?g|png|webp)$/i
 
 function imageContentHashFromFilename(name: string): string | null {
@@ -74,9 +63,6 @@ export interface EnrichOptions {
   /** Persist each regional crawl into the serving list cache while archiving. */
   writeListCache?: boolean
 }
-
-import { prepareEnrichWork } from './enrich-work-selection'
-import { finalizeEnrichPersistence } from './enrich-persistence'
 
 export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) {
     const startedAt = Date.now()

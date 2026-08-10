@@ -35,6 +35,4 @@ defineProps<{
     </CardContent>
     <CardContent v-else class="text-sm text-muted-foreground">{{ $t('settings.auctionTechnical.noData') }}</CardContent>
   </Card>
-
-
 </template>

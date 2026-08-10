@@ -78,6 +78,4 @@ export async function finalizeEnrichPersistence({
   for (const failure of result.errors) {
     pushRunError('crawl', `${failure.country}/${failure.region}: ${failure.message}`)
   }
-
-
 }

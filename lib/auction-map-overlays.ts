@@ -1,11 +1,20 @@
 import type { HazardAssessment, LocationMapFeature } from '~/types/auction'
 
 export function hazardStatusColor(status: HazardAssessment['status']): string {
-  return status === 'inside' ? '#dc2626' : status === 'nearby' ? '#d97706' : status === 'outside' ? '#16a34a' : '#64748b'
+  if (status === 'inside') return '#dc2626'
+  if (status === 'nearby') return '#d97706'
+  if (status === 'outside') return '#16a34a'
+  return '#64748b'
 }
+
 export function hazardRadius(hazard: HazardAssessment): number {
-  return hazard.status === 'inside' ? 250 : hazard.distanceMeters != null && hazard.distanceMeters > 0 ? Math.min(Math.max(hazard.distanceMeters, 250), 5_000) : 500
+  if (hazard.status === 'inside') return 250
+  if (hazard.distanceMeters != null && hazard.distanceMeters > 0) {
+    return Math.min(Math.max(hazard.distanceMeters, 250), 5_000)
+  }
+  return 500
 }
+
 export function featureColor(feature: LocationMapFeature): string {
   if (feature.kind === 'industry') return '#dc2626'
   if (feature.kind === 'commercial') return '#ea580c'
@@ -19,9 +28,16 @@ export function featureColor(feature: LocationMapFeature): string {
   if (feature.kind === 'groceries') return '#059669'
   if (feature.kind === 'restaurant') return '#f97316'
   if (feature.kind === 'cafe') return '#a16207'
-  return feature.kind === 'recreation' ? '#65a30d' : '#64748b'
+  if (feature.kind === 'recreation') return '#65a30d'
+  return '#64748b'
 }
-export const featureRadius = (feature: LocationMapFeature) => feature.kind === 'major_road' ? 8 : feature.kind === 'industry' || feature.kind === 'commercial' ? 7 : 6
+
+export function featureRadius(feature: LocationMapFeature): number {
+  if (feature.kind === 'major_road') return 8
+  if (feature.kind === 'industry' || feature.kind === 'commercial') return 7
+  return 6
+}
+
 export function rgba(hex: string, alpha: number): string {
   const n = Number.parseInt(hex.slice(1), 16)
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`
