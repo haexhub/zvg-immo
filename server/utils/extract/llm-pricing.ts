@@ -51,3 +51,15 @@ export function estimateCostUsd(
   const outputCost = ((outputTokens ?? 0) / 1_000_000) * pricing.outputPerMillion
   return inputCost + outputCost
 }
+
+/** Shared by every writer of a per-call cost (llm-usage.ts's llm_usage_events
+ *  log, auction-details.ts's per-version llmCostUsd): prefer the provider's
+ *  own billed amount when the request asked for it (see openai-compatible.ts's
+ *  `usage: { include: true }` for OpenRouter), falling back to the static
+ *  price table otherwise. */
+export function resolveCostUsd(
+  model: string,
+  usage: { inputTokens: number | null; outputTokens: number | null; costUsd?: number | null } | null,
+): number | null {
+  return usage?.costUsd ?? estimateCostUsd(model, usage?.inputTokens ?? null, usage?.outputTokens ?? null)
+}

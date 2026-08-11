@@ -108,6 +108,12 @@ export class OpenAiCompatibleProvider implements ExtractionProvider {
         { role: 'system', content: req.systemPrompt },
         { role: 'user', content: toOpenAiContent(req.parts) },
       ],
+      // OpenRouter-only extension: without this opt-in, its `usage` block
+      // never carries the `cost` field parseOpenAiUsage reads — every call
+      // silently fell back to the static price table (see llm-pricing.ts),
+      // which doesn't know about most OpenRouter catalog ids. Other
+      // OpenAI-compatible backends ignore unknown body fields.
+      ...(this.config.provider === 'openrouter' ? { usage: { include: true } } : {}),
       response_format: {
         type: 'json_schema',
         json_schema: { name: UNIVERSAL_AUCTION_SCHEMA_NAME, schema: req.schema, strict: true },

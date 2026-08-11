@@ -2,8 +2,9 @@ import type { Auction, AuctionExtraction } from '~/types/auction'
 import { batchSupportsMultimodal, isLlmBatchPending, isLlmBatchProviderBroken, submitLlmBatch, supportsLlmBatch, supportsNativeBatchDocuments } from '~/server/utils/extract/llm-batch'
 import { readLlmExecutionMode } from '~/server/utils/app-settings'
 import { LLM_FAILURE_RETRY_COOLDOWN_HOURS, MAX_LLM_FAILURES, readExtractionChainStrategy, readExtractionLlmConfigChain } from '~/server/utils/extract/llm-task-config'
-import { type LlmConfig, type LlmInput, isLlmProviderError, isRateLimitError } from '~/server/utils/extract/llm'
+import { type LlmConfig, type LlmInput, type LlmUsage, isLlmProviderError, isRateLimitError } from '~/server/utils/extract/llm'
 import { recordLlmUsage } from '~/server/utils/llm-usage'
+import { resolveCostUsd } from '~/server/utils/extract/llm-pricing'
 import { applyAuctionExtraction } from '~/server/utils/auction-extraction'
 import { readAuctionRecordMap, type AuctionRecord } from '~/server/utils/auction-record'
 import { upsertCurrentAuctions } from '~/server/utils/current-auctions'
@@ -150,6 +151,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
     llmAttempted: boolean,
     llmConfigUsed: LlmConfig | null = null,
     llmDurationMs: number | null = null,
+    llmUsage: LlmUsage | null = null,
   ): Promise<void> {
     // record.auction is reconstructed from auctions LEFT JOIN LATERAL
     // auction_details (see auction-record.ts) — when no auction_details row
@@ -174,6 +176,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       llmProfileId: llmConfigUsed?.profileId ?? null,
       runTrigger: opts.trigger ?? 'cron',
       llmDurationMs,
+      llmCostUsd: llmConfigUsed ? resolveCostUsd(llmConfigUsed.model, llmUsage) : null,
     })
     await upsertCurrentAuctions([updated], at)
     await writeAuctionLlmPipelineState(record.auction.platform, record.auction.externalId, {
@@ -362,7 +365,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       // Persist each result immediately so a long run survives a deployment.
       await persistEntry(
         record, result.entry, result.artifactVersionId, result.llmFailures, result.auction, result.llmCalled,
-        result.llmConfigUsed, result.llmDurationMs,
+        result.llmConfigUsed, result.llmDurationMs, result.llmUsage,
       ).catch((persistErr) => { throw markPersistFailure(persistErr) })
     } catch (err) {
       // Also where a rate limit/quota error (see llm.ts's isRateLimitError())

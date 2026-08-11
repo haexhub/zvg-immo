@@ -1,0 +1,1 @@
+ALTER TABLE "auction_details" ADD COLUMN "llm_cost_usd" double precision;

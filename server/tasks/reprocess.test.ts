@@ -315,6 +315,7 @@ describe('runReprocess structured persistence', () => {
         llmProfileId: null,
         runTrigger: 'cron',
         llmDurationMs: null,
+        llmCostUsd: null,
       },
     )
     expect(writeAuctionLlmPipelineState).toHaveBeenCalledWith('zvg-portal', '7265', {
@@ -370,6 +371,7 @@ describe('runReprocess structured persistence', () => {
         llmProfileId: null,
         runTrigger: 'cron',
         llmDurationMs: null,
+        llmCostUsd: null,
       },
     )
     expect(writeAuctionLlmPipelineState).toHaveBeenLastCalledWith('zvg-portal', '7265', {
@@ -458,6 +460,25 @@ describe('runReprocess structured persistence', () => {
       errorMessage: 'Keine gültige Extraktion in der Provider-Antwort',
       durationMs: expect.any(Number),
     })
+  })
+
+  it('writes the provider-reported cost on the version when the synchronous call reports one', async () => {
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+      baseUrl: 'https://api.example.test', apiKey: 'secret', model: 'vision-model', provider: 'gemini-native', profileId: 'profile-a',
+    }])
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+      opts?.onProviderAttempt?.()
+      opts?.onUsage?.({ inputTokens: 800, outputTokens: 120, costUsd: 0.0042 })
+      return null
+    })
+
+    await expect(runReprocess({ country: 'de', trigger: 'manual' })).resolves.toMatchObject({ processed: 1 })
+
+    expect(writeAuctionDetails).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ llmCostUsd: 0.0042 }),
+    )
   })
 
   it('records a failed call even when the provider did not report token counts', async () => {
@@ -644,6 +665,7 @@ describe('runReprocess crawl-owned field recovery (WP-3 SE root cause)', () => {
         llmProfileId: null,
         runTrigger: 'cron',
         llmDurationMs: null,
+        llmCostUsd: null,
       },
     )
   })

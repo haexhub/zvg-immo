@@ -19,6 +19,7 @@ import { resolveLlmConfigForProfile } from './extract/llm-task-config'
 import { getLlmKillSwitch } from './app-settings'
 import { recordTaskRunError } from './task-run-errors'
 import { recordLlmUsage } from './llm-usage'
+import { resolveCostUsd } from './extract/llm-pricing'
 import type { Auction } from '~/types/auction'
 
 export type AdminTrialReprocessOutcome =
@@ -79,6 +80,7 @@ export async function runAdminTrialReprocess(platform: string, externalId: strin
       llmProfileId: result.llmConfigUsed?.profileId ?? null,
       runTrigger: 'manual',
       llmDurationMs: result.llmDurationMs,
+      llmCostUsd: result.llmConfigUsed ? resolveCostUsd(result.llmConfigUsed.model, result.llmUsage) : null,
       trial: true,
     })
     if (result.llmConfigUsed && result.llmUsage) {

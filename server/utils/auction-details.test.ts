@@ -266,6 +266,7 @@ describeDb('writeAuctionDetails (real Postgres)', () => {
       llmProfileId: 'profile-a',
       runTrigger: 'manual',
       llmDurationMs: 4200,
+      llmCostUsd: 0.0042,
     })
     expect(write).toEqual({ version: 1, changed: true })
 
@@ -275,8 +276,9 @@ describeDb('writeAuctionDetails (real Postgres)', () => {
       llm_profile_id: string
       run_trigger: string
       llm_duration_ms: number
+      llm_cost_usd: number
     }>(
-      `SELECT llm_provider, llm_model, llm_profile_id, run_trigger, llm_duration_ms
+      `SELECT llm_provider, llm_model, llm_profile_id, run_trigger, llm_duration_ms, llm_cost_usd
        FROM auction_details WHERE platform = 'zvg-portal' AND external_id = '7265'`,
     )
     expect(rows[0]).toEqual({
@@ -285,6 +287,7 @@ describeDb('writeAuctionDetails (real Postgres)', () => {
       llm_profile_id: 'profile-a',
       run_trigger: 'manual',
       llm_duration_ms: 4200,
+      llm_cost_usd: 0.0042,
     })
   })
 

@@ -46,6 +46,7 @@ const DETAILS_ROW = {
   llm_profile_id: 'profile-1',
   run_trigger: 'cron',
   llm_duration_ms: 4200,
+  llm_cost_usd: 0.012,
 }
 
 const GEO_ROW = {
@@ -156,6 +157,7 @@ describe('readAuctionTechnicalOverview', () => {
       llmProfileId: 'profile-1',
       runTrigger: 'cron',
       llmDurationMs: 4200,
+      llmCostUsd: 0.012,
     }])
     expect(overview?.llmCalls).toEqual([{
       id: 42,

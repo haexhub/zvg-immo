@@ -12,6 +12,7 @@ import {
   bigint,
   bigserial,
   boolean,
+  doublePrecision,
   foreignKey,
   index,
   integer,
@@ -267,6 +268,11 @@ export const auctionDetails = pgTable('auction_details', {
   llmProfileId: text('llm_profile_id'),
   runTrigger: text('run_trigger'),
   llmDurationMs: integer('llm_duration_ms'),
+  // Same provenance rationale as llmDurationMs above — resolved the same way
+  // llm_usage_events does (provider-reported amount, falling back to the
+  // static price table), so the admin technical page can show per-version
+  // cost without a fragile runtime join against that separate log.
+  llmCostUsd: doublePrecision('llm_cost_usd'),
 }, (table) => [
   unique('auction_details_platform_external_id_version_key').on(table.platform, table.externalId, table.version),
   index('idx_auction_details_identity_version').on(table.platform, table.externalId, table.version.desc()),
