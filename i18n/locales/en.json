@@ -361,7 +361,11 @@
       "requestError": "Could not request reimport.",
       "refresh": "Refresh status",
       "rowCount": "{count} features loaded",
+      "rawRowCount": "{count} raw OSM features available",
       "noData": "No data yet",
+      "requestMissing": "Load missing data",
+      "loadOpen": "Load open OSM data",
+      "retryBlocked": "Reload blocked OSM data",
       "request": "Request reimport",
       "requesting": "Requesting …",
       "pending": "Requested at {at} — will be processed on the next daily run."
@@ -535,10 +539,13 @@
       "nextPage": "Next"
     },
     "countryOverview": {
-      "description": "All processing states and OSM location data are grouped by country. Click a chart segment to open its related table.",
-      "osmAvailable": "Data available",
+      "description": "All processing states and OSM location data are grouped by country. Click a processing chart segment to open its related table.",
+      "osmAvailable": "Features available",
       "osmRequested": "Import requested",
       "osmMissing": "No data",
+      "osmAttached": "OSM data attached",
+      "osmOpen": "Open auctions",
+      "osmBlocked": "OSM data unavailable",
       "tableTitle": "Listings: {status}",
       "filterPlaceholder": "Filter table …",
       "filterHint": "Filters platform, listing, and region",
