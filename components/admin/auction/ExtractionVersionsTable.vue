@@ -37,6 +37,7 @@ const { locale } = useI18n()
         <TableCell>
           <Checkbox
             :model-value="props.selectedVersions.has(row.version)"
+            :aria-label="`${$t('settings.auctionTechnical.fields.version')}: ${row.version}`"
             @update:model-value="() => emit('toggle-version', row.version)"
           />
         </TableCell>
