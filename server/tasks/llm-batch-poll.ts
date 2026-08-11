@@ -123,6 +123,30 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
         // extra code needed, isLlmBatchPending's 48h age check makes them
         // eligible again on its own once this job marker expires.
         await markLlmBatchJobResolved(job.jobName, poll.state, at, poll.errorMessage ?? null)
+        // A failed/expired batch does not yield per-item result lines, but
+        // every submitted item still needs a visible outcome on its auction.
+        // The partial unique index in llm_usage_events makes this safe when a
+        // provider later exposes the same item while recovering a job.
+        if (job.provider && job.model) {
+          await Promise.all(Object.values(job.customIdMap).map(async (key) => {
+            const identity = splitKey(key)
+            if (!identity) return
+            await recordLlmUsage({
+              task: 'extraction',
+              executionMode: 'batch',
+              source: job.source,
+              provider: job.provider,
+              model: job.model,
+              profileId: job.profileId,
+              platform: identity.platform,
+              externalId: identity.externalId,
+              usage: null,
+              status: 'failed',
+              errorMessage: poll.errorMessage ?? `Batch-Job ${poll.state}`,
+              batchJobName: job.jobName,
+            })
+          }))
+        }
         console.warn(`[llm-batch-poll] job ${job.jobName} ${poll.state}${poll.errorMessage ? `: ${poll.errorMessage}` : ''}`)
         continue
       }
@@ -133,6 +157,25 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
         throwIfTaskAborted(signal)
         const identity = splitKey(key)
         if (!identity) continue
+        // Account for the provider outcome before touching auction storage:
+        // a later persistence failure must not hide a call that already cost
+        // tokens (and the batch identity keeps poll retries idempotent).
+        if (job.provider && job.model) {
+          await recordLlmUsage({
+            task: 'extraction',
+            executionMode: 'batch',
+            source: job.source,
+            provider: job.provider,
+            model: job.model,
+            profileId: job.profileId,
+            platform: identity.platform,
+            externalId: identity.externalId,
+            usage,
+            status: extraction === null ? 'failed' : 'succeeded',
+            errorMessage: extraction === null ? error ?? 'Keine gültige Extraktion in der Batch-Antwort' : null,
+            batchJobName: job.jobName,
+          })
+        }
         if (extraction === null) {
           void recordTaskRunError('reprocess', {
             category: 'llm',
@@ -172,20 +215,6 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
           llmProfileId: job.profileId,
           runTrigger: 'cron',
         })
-        if (job.provider && job.model && usage) {
-          await recordLlmUsage({
-            task: 'extraction',
-            executionMode: 'batch',
-            source: job.source,
-            provider: job.provider,
-            model: job.model,
-            profileId: job.profileId,
-            platform: identity.platform,
-            externalId: identity.externalId,
-            usage,
-            batchJobName: job.jobName,
-          })
-        }
         await upsertCurrentAuctions([updated], at)
         await writeAuctionLlmPipelineState(identity.platform, identity.externalId, {
           llmBatchJob: null,

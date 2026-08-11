@@ -14,6 +14,15 @@ export async function reprocessAuction(
   opts: {
     onLlmAttempt?: () => void
     onLlmError?: (err: unknown) => void
+    /** Records the outcome of every actual provider invocation, including a
+     * failed primary attempt before a fallback model succeeds. */
+    onLlmCall?: (call: {
+      config: LlmConfig
+      durationMs: number
+      usage: LlmUsage | null
+      status: 'succeeded' | 'failed'
+      errorMessage: string | null
+    }) => void | Promise<void>
     /** Tried in order after `llmConfig`, only when the current model is
      *  rate-limited/over quota or otherwise unavailable (see
      *  isLlmProviderUnavailable) — not on a caller-side error. */
@@ -85,28 +94,50 @@ export async function reprocessAuction(
       if (!rebuilt) break
       base = rebuilt
     }
+    let providerAttempted = false
+    let providerError: string | null = null
+    let attemptUsage: LlmUsage | null = null
+    const attemptStartedAt = Date.now()
     try {
       // Provenance hangs off onProviderAttempt, not off "extractByLlm
       // returned": it bails out with null *before* attempting when the
       // archived snapshot yields no parts at all (no title, no description,
       // no documents), and stamping that rules-only version with a model
       // that was never asked would misreport it on the WP-2 admin page.
-      let providerAttempted = false
-      const attemptStartedAt = Date.now()
       llm = await extractByLlm(base.input!, config, {
         onProviderAttempt: () => {
           providerAttempted = true
           opts.onLlmAttempt?.()
         },
-        onProviderError: opts.onLlmError,
-        onUsage: (usage) => { llmUsage = usage },
+        onProviderError: (err) => {
+          providerError = err instanceof Error ? err.message : String(err)
+          opts.onLlmError?.(err)
+        },
+        onUsage: (usage) => { attemptUsage = usage },
       })
       if (providerAttempted) {
         llmConfigUsed = config
         llmDurationMs = Date.now() - attemptStartedAt
+        llmUsage = attemptUsage
+        await opts.onLlmCall?.({
+          config,
+          durationMs: llmDurationMs,
+          usage: attemptUsage,
+          status: llm === null ? 'failed' : 'succeeded',
+          errorMessage: llm === null ? providerError ?? 'Keine gültige Extraktion in der Provider-Antwort' : null,
+        })
       }
       break
     } catch (err) {
+      if (providerAttempted) {
+        await opts.onLlmCall?.({
+          config,
+          durationMs: Date.now() - attemptStartedAt,
+          usage: attemptUsage,
+          status: 'failed',
+          errorMessage: err instanceof Error ? err.message : String(err),
+        })
+      }
       if (isDailyQuotaError(err)) opts.onDailyQuotaExhausted?.(config)
       const isLast = index === configs.length - 1
       if (isLast || !isLlmProviderUnavailable(err)) throw err

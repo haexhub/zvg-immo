@@ -35,10 +35,15 @@ export function toOpenAiContent(parts: ContentPart[]): OpenAiContentPart[] {
  *  block. Every field is optional/absent on some backends, so each is read
  *  independently rather than requiring the whole object. */
 export function parseOpenAiUsage(resp: unknown): LlmUsage {
-  const usage = (resp as { usage?: unknown })?.usage as { prompt_tokens?: unknown; completion_tokens?: unknown } | undefined
+  const usage = (resp as { usage?: unknown })?.usage as {
+    prompt_tokens?: unknown
+    completion_tokens?: unknown
+    cost?: unknown
+  } | undefined
   const inputTokens = typeof usage?.prompt_tokens === 'number' ? usage.prompt_tokens : null
   const outputTokens = typeof usage?.completion_tokens === 'number' ? usage.completion_tokens : null
-  return { inputTokens, outputTokens }
+  const costUsd = typeof usage?.cost === 'number' && Number.isFinite(usage.cost) ? usage.cost : null
+  return costUsd == null ? { inputTokens, outputTokens } : { inputTokens, outputTokens, costUsd }
 }
 
 /** Pull the structured object out of the first choice's message content,

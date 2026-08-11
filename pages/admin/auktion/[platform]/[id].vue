@@ -19,6 +19,11 @@ const platform = String(route.params.platform)
 const id = String(route.params.id)
 const { t, locale } = useI18n()
 const formatDate = (value: string | null): string => formatDateValue(value, locale.value)
+const formatCost = (value: number | null): string => value == null
+  ? '—'
+  : new Intl.NumberFormat(locale.value, { style: 'currency', currency: 'USD', maximumFractionDigits: 6 }).format(value)
+const formatTokens = (input: number | null, output: number | null): string =>
+  input == null && output == null ? '—' : `${input ?? '—'} / ${output ?? '—'}`
 useHead({ title: t('settings.auctionTechnical.title', { platform, id }) })
 const authed = ref(false)
 const passwordInput = ref('')
@@ -383,6 +388,41 @@ onMounted(probeSession)
                 </div>
                 <div class="text-destructive">{{ err.message }}</div>
               </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle>{{ $t('settings.auctionTechnical.sections.llmCalls') }}</CardTitle></CardHeader>
+            <CardContent>
+              <Table v-if="overview.llmCalls.length">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{{ $t('settings.auctionTechnical.fields.provider') }}</TableHead>
+                    <TableHead>{{ $t('settings.auctionTechnical.fields.executionMode') }}</TableHead>
+                    <TableHead>{{ $t('settings.auctionTechnical.fields.status') }}</TableHead>
+                    <TableHead>{{ $t('settings.auctionTechnical.fields.tokens') }}</TableHead>
+                    <TableHead>{{ $t('settings.auctionTechnical.fields.cost') }}</TableHead>
+                    <TableHead>{{ $t('settings.auctionTechnical.fields.duration') }}</TableHead>
+                    <TableHead>{{ $t('settings.auctionTechnical.fields.createdAt') }}</TableHead>
+                    <TableHead>{{ $t('settings.auctionTechnical.fields.error') }}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <TableRow v-for="call in overview.llmCalls" :key="call.id">
+                    <TableCell>{{ `${call.provider}/${call.model}` }}</TableCell>
+                    <TableCell>{{ call.executionMode }}</TableCell>
+                    <TableCell>
+                      <Badge :variant="call.status === 'failed' ? 'destructive' : 'default'">{{ call.status }}</Badge>
+                    </TableCell>
+                    <TableCell>{{ formatTokens(call.inputTokens, call.outputTokens) }}</TableCell>
+                    <TableCell>{{ formatCost(call.costUsd) }}</TableCell>
+                    <TableCell>{{ call.durationMs != null ? `${call.durationMs} ms` : '—' }}</TableCell>
+                    <TableCell>{{ formatDate(call.occurredAt) }}</TableCell>
+                    <TableCell class="max-w-md text-destructive">{{ call.errorMessage ?? '—' }}</TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+              <p v-else class="text-sm text-muted-foreground">{{ $t('settings.auctionTechnical.noData') }}</p>
             </CardContent>
           </Card>
 

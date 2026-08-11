@@ -23,7 +23,10 @@ export interface RecordLlmUsageInput {
   profileId: string | null
   platform: string | null
   externalId: string | null
-  usage: LlmUsage
+  usage: LlmUsage | null
+  status?: 'succeeded' | 'failed'
+  errorMessage?: string | null
+  durationMs?: number | null
   /** Set for a batch-job item — together with platform/externalId, its
    *  stable result identity. A retry after a later write in the same batch
    *  item fails (llm-batch-poll.ts) re-enters this with the same identity;
@@ -46,9 +49,19 @@ export async function recordLlmUsage(event: RecordLlmUsageInput): Promise<void> 
       profileId: event.profileId,
       platform: event.platform,
       externalId: event.externalId,
-      inputTokens: event.usage.inputTokens,
-      outputTokens: event.usage.outputTokens,
-      costUsd: estimateCostUsd(event.model, event.usage.inputTokens, event.usage.outputTokens),
+      inputTokens: event.usage?.inputTokens ?? null,
+      outputTokens: event.usage?.outputTokens ?? null,
+      // Prefer the provider's own amount (currently OpenRouter); the static
+      // price table remains the fallback for providers that expose tokens
+      // but no billed amount.
+      costUsd: event.usage?.costUsd ?? estimateCostUsd(
+        event.model,
+        event.usage?.inputTokens ?? null,
+        event.usage?.outputTokens ?? null,
+      ),
+      status: event.status ?? 'succeeded',
+      errorMessage: event.errorMessage ?? null,
+      durationMs: event.durationMs ?? null,
       batchJobName: event.batchJobName ?? null,
     }).onConflictDoNothing({
       target: [llmUsageEvents.batchJobName, llmUsageEvents.platform, llmUsageEvents.externalId],

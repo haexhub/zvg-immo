@@ -121,6 +121,9 @@ export interface ExtractionRequest {
 export interface LlmUsage {
   inputTokens: number | null
   outputTokens: number | null
+  /** Provider-reported USD spend when available (OpenRouter supplies this
+   * for compatible responses).  Otherwise the caller uses its price table. */
+  costUsd?: number | null
 }
 
 /** Narrow seam between prompt/schema building (provider-agnostic) and the
