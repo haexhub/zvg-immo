@@ -986,6 +986,17 @@
     "translationPendingHint": "Übersetzung läuft",
     "translationError": "Die Übersetzung konnte nicht geladen werden.",
     "auctionDataTitle": "Auktionsdaten",
+    "relatedAuctionsTitle": "Zusammenhängende Auktionen",
+    "relatedAuctions": {
+      "same_proceeding": {
+        "title": "Gleiches Verfahren, weitere Quelle",
+        "hint": "Diese Veröffentlichung beschreibt nach Gericht, Aktenzeichen und Termin dasselbe Verfahren. Dokumente und Angaben der einzelnen Quellen bleiben separat verfügbar."
+      },
+      "same_address": {
+        "title": "Weitere Auktionen an derselben Adresse",
+        "hint": "Diese Auktionen teilen eine Adresse. Sie können unterschiedliche Wohnungen, Anteile, Lose oder Verfahren betreffen."
+      }
+    },
     "propertyDataTitle": "Objektdaten",
     "courtInfoTitle": "Gerichtsinformationen",
     "versteigerungstermin": "Versteigerungstermin",

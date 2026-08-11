@@ -10,6 +10,7 @@ const registryMock = vi.hoisted(() => ({
 
 vi.mock('../../../utils/geocode', () => ({ geocodeAddress: vi.fn() }))
 vi.mock('../../../utils/auction-record', () => ({ readAuctionRecord: vi.fn() }))
+vi.mock('../../../utils/auction-relationships', () => ({ readAuctionRelationships: vi.fn() }))
 vi.mock('../../../utils/external-data/location-enrichment', () => ({ readLocationEnrichment: vi.fn() }))
 vi.mock('../../../utils/list-cache', () => ({ readMergedListCache: vi.fn() }))
 vi.mock('../../../utils/verkehrswert-cache', () => ({
@@ -63,11 +64,13 @@ async function loadHandler() {
 
   const { geocodeAddress } = await import('../../../utils/geocode')
   const { readAuctionRecord } = await import('../../../utils/auction-record')
+  const { readAuctionRelationships } = await import('../../../utils/auction-relationships')
   const { readLocationEnrichment } = await import('../../../utils/external-data/location-enrichment')
   const { readMergedListCache } = await import('../../../utils/list-cache')
   const { getRates } = await import('../../../utils/exchange-rate')
 
   vi.mocked(readAuctionRecord).mockResolvedValue(null)
+  vi.mocked(readAuctionRelationships).mockResolvedValue([])
   vi.mocked(geocodeAddress).mockResolvedValue(null)
   vi.mocked(readLocationEnrichment).mockResolvedValue(null)
   vi.mocked(readMergedListCache).mockResolvedValue(null)
@@ -135,6 +138,7 @@ describe('/api/auction/:platform/:id location enrichment overlay', () => {
     const { readAuctionRecord } = await import('../../../utils/auction-record')
     const { geocodeAddress } = await import('../../../utils/geocode')
     const { readLocationEnrichment } = await import('../../../utils/external-data/location-enrichment')
+    const { readAuctionRelationships } = await import('../../../utils/auction-relationships')
     const handler = await loadHandler()
 
     vi.mocked(readAuctionRecord).mockResolvedValue({
@@ -145,6 +149,12 @@ describe('/api/auction/:platform/:id location enrichment overlay', () => {
     })
     vi.mocked(geocodeAddress).mockResolvedValue({ lat: 1, lng: 2, displayName: 'Ignored' } as never)
     vi.mocked(readLocationEnrichment).mockResolvedValue(enrichment)
+    vi.mocked(readAuctionRelationships).mockResolvedValue([{
+      platform: 'zvbawu', externalId: '1330381', kind: 'same_proceeding', confidence: 'high',
+      country: 'de', region: 'Baden-Württemberg', authority: 'Biberach', caseNumber: '2 K 15/18',
+      title: 'Doppelhaushälfte', address: 'Am Annaweiher 17, 17/1, 88447 Warthausen',
+      auctionDateIso: '2026-10-01T09:00:00.000Z', auctionDateText: '01.10.2026, 09:00 Uhr', marketValueEur: 451000,
+    }])
 
     await expect(handler({ context: { params: { platform: 'zvg-portal', id: '7265' } } })).resolves.toMatchObject({
       platform: 'zvg-portal',
@@ -152,8 +162,10 @@ describe('/api/auction/:platform/:id location enrichment overlay', () => {
       lat: 48.1,
       lng: 11.5,
       locationEnrichment: enrichment,
+      relatedAuctions: [expect.objectContaining({ externalId: '1330381', kind: 'same_proceeding' })],
     })
     expect(readLocationEnrichment).toHaveBeenCalledWith('zvg-portal', '7265')
+    expect(readAuctionRelationships).toHaveBeenCalledWith('zvg-portal', '7265')
   })
 
   it('treats a findOne miss as definitive and skips the region crawl', async () => {

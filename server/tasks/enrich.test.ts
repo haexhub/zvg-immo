@@ -24,6 +24,7 @@ vi.mock('../crawlers/registry', () => ({
   platforms: [],
 }))
 vi.mock('../utils/current-auctions', () => ({ ensureAuctionIdentity: vi.fn(), upsertCurrentAuctions: vi.fn() }))
+vi.mock('../utils/auction-relationships', () => ({ rebuildAutomaticAuctionRelationships: vi.fn() }))
 vi.mock('../utils/auction-details', () => ({ writeAuctionDetails: vi.fn() }))
 vi.mock('../utils/auction-record', () => ({ readAuctionRecordMap: vi.fn() }))
 vi.mock('../utils/artifact-version-state', () => ({ readLatestArtifactVersions: vi.fn() }))
