@@ -11,6 +11,7 @@ import { ensureEnabledCountriesLoaded, isCountryEnabled, platforms } from '../..
 import { readMergedListCache } from '../../../utils/list-cache'
 import { readLocationEnrichment } from '../../../utils/external-data/location-enrichment'
 import { readAuctionRecord } from '../../../utils/auction-record'
+import { readAuctionRelationships, type RelatedAuction } from '../../../utils/auction-relationships'
 
 const LIVE_MISS_TTL_MS = 60_000
 const liveMissCache = new Map<string, number>()
@@ -19,6 +20,7 @@ export interface AuctionDetail extends Auction {
   lat: number | null
   lng: number | null
   locationEnrichment: LocationEnrichment | null
+  relatedAuctions: RelatedAuction[]
 }
 
 function cloneAuction(a: Auction): Auction {
@@ -111,6 +113,9 @@ export default defineEventHandler(async (event): Promise<AuctionDetail> => {
   const lat = sourcePoint?.lat ?? point?.lat ?? null
   const lng = sourcePoint?.lng ?? point?.lng ?? null
   applyDescriptionMarketValue(auction)
-  const locationEnrichment = await readLocationEnrichment(platform, id)
-  return { ...auction, lat, lng, locationEnrichment }
+  const [locationEnrichment, relatedAuctions] = await Promise.all([
+    readLocationEnrichment(platform, id),
+    readAuctionRelationships(platform, id),
+  ])
+  return { ...auction, lat, lng, locationEnrichment, relatedAuctions }
 })

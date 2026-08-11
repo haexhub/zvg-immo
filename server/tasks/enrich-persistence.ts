@@ -8,6 +8,7 @@ import { normalizeAuctionDescriptions } from '~/server/utils/description-normali
 import { recordObservations } from '~/server/utils/history'
 import { writeAuctionCrawlFetchState } from '~/server/utils/auction-fetch-state'
 import { writeAuctionDetails } from '~/server/utils/auction-details'
+import { rebuildAutomaticAuctionRelationships } from '~/server/utils/auction-relationships'
 import { cacheKey, readVerkehrswertCache } from '~/server/utils/verkehrswert-cache'
 import { throwIfTaskAborted } from '~/server/utils/exclusive-task'
 
@@ -75,6 +76,10 @@ export async function finalizeEnrichPersistence({
   // tooling) — additive, no-op without NUXT_DATABASE_URL. See
   // server/utils/current-auctions.ts.
   await upsertCurrentAuctions(result.auctions, at)
+  // Associations are navigation metadata, never a merge. Rebuild only the
+  // countries touched by this complete crawl result, after its current details
+  // are visible to the relationship query.
+  await rebuildAutomaticAuctionRelationships(result.auctions.map((auction) => auction.country))
   for (const failure of result.errors) {
     pushRunError('crawl', `${failure.country}/${failure.region}: ${failure.message}`)
   }

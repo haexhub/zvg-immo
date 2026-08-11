@@ -66,6 +66,37 @@ export const auctions = pgTable('auctions', {
   index('idx_auctions_country_region').on(table.country, table.region),
 ]).enableRLS()
 
+// A directed, canonical (left < right) edge between two independently stored
+// source auctions. This deliberately is not a merge: both auctions retain
+// their own court data, source URLs and document sets. `source` reserves room
+// for a later admin confirmation without mixing it with computed edges.
+export const auctionRelationships = pgTable('auction_relationships', {
+  leftPlatform: text('left_platform').notNull(),
+  leftExternalId: text('left_external_id').notNull(),
+  rightPlatform: text('right_platform').notNull(),
+  rightExternalId: text('right_external_id').notNull(),
+  kind: text('kind').notNull(), // 'same_proceeding' | 'same_address'
+  confidence: text('confidence').notNull(), // 'high' | 'medium'
+  source: text('source').notNull().default('auto'), // 'auto' | 'manual'
+  evidence: jsonb('evidence').notNull().default({}),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  primaryKey({ columns: [table.leftPlatform, table.leftExternalId, table.rightPlatform, table.rightExternalId] }),
+  index('idx_auction_relationships_left').on(table.leftPlatform, table.leftExternalId),
+  index('idx_auction_relationships_right').on(table.rightPlatform, table.rightExternalId),
+  foreignKey({
+    name: 'fk_auction_relationships_left_auction',
+    columns: [table.leftPlatform, table.leftExternalId],
+    foreignColumns: [auctions.platform, auctions.externalId],
+  }).onDelete('cascade'),
+  foreignKey({
+    name: 'fk_auction_relationships_right_auction',
+    columns: [table.rightPlatform, table.rightExternalId],
+    foreignColumns: [auctions.platform, auctions.externalId],
+  }).onDelete('cascade'),
+]).enableRLS()
+
 // G1 Roh-Archiv Schicht 1. artifact_blobs = deduplicated bytes (S3 key =
 // content_hash, sha256).
 export const artifactBlobs = pgTable('artifact_blobs', {

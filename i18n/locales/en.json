@@ -986,6 +986,17 @@
     "translationPendingHint": "Translating",
     "translationError": "The translation could not be loaded.",
     "auctionDataTitle": "Auction data",
+    "relatedAuctionsTitle": "Related auctions",
+    "relatedAuctions": {
+      "same_proceeding": {
+        "title": "Same proceeding, another source",
+        "hint": "This publication describes the same proceeding based on court, case number and appointment. Documents and information from each source remain available separately."
+      },
+      "same_address": {
+        "title": "More auctions at the same address",
+        "hint": "These auctions share an address. They may concern different apartments, shares, lots or proceedings."
+      }
+    },
     "propertyDataTitle": "Property data",
     "courtInfoTitle": "Court information",
     "versteigerungstermin": "Auction date",

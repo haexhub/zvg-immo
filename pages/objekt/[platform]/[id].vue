@@ -160,6 +160,8 @@ useHead(() => ({
             :planning-notes-translating="planningNotesTranslating"
             :parcels-translating="parcelsTranslating"
           />
+
+          <AuctionRelatedAuctionsSection :related-auctions="a.relatedAuctions" />
         </div>
 
         <CostCalculator v-if="a.country === 'de'" :market-value-eur="a.marketValueEur" :region="a.region" />
