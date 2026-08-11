@@ -31,7 +31,9 @@ describe('/api/settings/translation-status/[country]', () => {
     const handler = (await import('./[country].get')).default as (event: unknown) => Promise<unknown>
     await handler({})
 
-    expect(readTranslationStatusList).toHaveBeenCalledWith('se', 'open', { limit: 50, offset: 0 })
+    expect(readTranslationStatusList).toHaveBeenCalledWith('se', 'open', {
+      limit: 50, offset: 0, search: '', sort: undefined, direction: 'asc', lang: undefined,
+    })
   })
 
   it('forwards a valid target-language filter', async () => {
@@ -45,6 +47,18 @@ describe('/api/settings/translation-status/[country]', () => {
     const handler = (await import('./[country].get')).default as (event: unknown) => Promise<unknown>
     await handler({})
 
-    expect(readTranslationStatusList).toHaveBeenCalledWith('se', 'open', { limit: 50, offset: 0, lang: 'en' })
+    expect(readTranslationStatusList).toHaveBeenCalledWith('se', 'open', {
+      limit: 50, offset: 0, search: '', sort: undefined, direction: 'asc', lang: 'en',
+    })
+  })
+
+  it('rejects a non-string target-language filter instead of broadening the result', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    vi.stubGlobal('getRouterParam', () => 'SE')
+    vi.stubGlobal('getQuery', () => ({ bucket: 'open', lang: 123 }))
+    vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
+
+    const handler = (await import('./[country].get')).default as (event: unknown) => Promise<unknown>
+    await expect(handler({})).rejects.toMatchObject({ statusCode: 400, statusMessage: 'lang muss de oder en sein.' })
   })
 })

@@ -61,6 +61,11 @@ interface TranslationCandidate {
   startedAt: Date | string | null
 }
 
+interface TranslationCandidateFilters {
+  country?: string
+  lang?: ContentTargetLang
+}
+
 const BUCKET_BY_STATUS: Record<string, TranslationStatusBucket> = {
   completed: 'done',
   failed: 'error',
@@ -82,15 +87,22 @@ function isStalePending(candidate: TranslationCandidate): boolean {
   return Number.isFinite(startedAt) && startedAt < Date.now() - AUCTION_TRANSLATION_CLAIM_LEASE_MS
 }
 
+function isInBucket(candidate: TranslationCandidate, bucket: TranslationStatusBucket): boolean {
+  if (bucketOf(candidate) !== bucket) return false
+  return bucket !== 'open' || candidate.status == null || isStalePending(candidate)
+}
+
 /**
  * Returns every viable translation target for the latest detail version.
  * Filtering source-language passthroughs in TypeScript deliberately reuses
  * countryContentLanguage's CLDR inference, so enabling a new country keeps
  * this overview in lockstep with the public translation endpoint.
  */
-async function readTranslationCandidates(): Promise<TranslationCandidate[]> {
+async function readTranslationCandidates(filters: TranslationCandidateFilters = {}): Promise<TranslationCandidate[]> {
   const db = getPool()
   if (!db) return []
+  const country = filters.country?.toLowerCase()
+  const targetLanguages = filters.lang ? [filters.lang] : CONTENT_TARGET_LANGS
   const { rows } = await db.query<{
     country: string
     platform: string
@@ -112,9 +124,10 @@ async function readTranslationCandidates(): Promise<TranslationCandidate[]> {
        LEFT JOIN auction_translations t
          ON t.platform = a.platform AND t.external_id = a.external_id
         AND t.version = d.version AND t.lang = target.lang
-      WHERE a.title IS NOT NULL OR d.address IS NOT NULL OR d.description IS NOT NULL
-         OR d.document_summary IS NOT NULL OR d.extraction_texts IS NOT NULL`,
-    [CONTENT_TARGET_LANGS],
+      WHERE ($2::text IS NULL OR lower(a.country) = $2)
+        AND (a.title IS NOT NULL OR d.address IS NOT NULL OR d.description IS NOT NULL
+          OR d.document_summary IS NOT NULL OR d.extraction_texts IS NOT NULL)`,
+    [targetLanguages, country ?? null],
   )
   return rows
     .filter((row) => !isPassthroughLanguage(row.country, row.lang as ContentTargetLang))
@@ -154,6 +167,7 @@ export async function readTranslationStatusByCountryAndLanguage(): Promise<Recor
   const candidates = await readTranslationCandidates()
   const out: Record<string, TranslationStatusByLanguage> = {}
   for (const candidate of candidates) {
+    if (candidate.status === 'pending' && !isStalePending(candidate)) continue
     const languages = out[candidate.country] ?? (out[candidate.country] = {})
     const counts = languages[candidate.lang] ?? (languages[candidate.lang] = { done: 0, error: 0, open: 0, total: 0 })
     counts[bucketOf(candidate)]++
@@ -171,11 +185,10 @@ export async function readTranslationStatusIdentities(
   lang?: ContentTargetLang,
 ): Promise<{ platform: string; externalId: string; lang: ContentTargetLang }[]> {
   const normalizedCountry = country.toLowerCase()
-  const candidates = await readTranslationCandidates()
+  const candidates = await readTranslationCandidates({ country: normalizedCountry, lang })
   return candidates
-    .filter((candidate) => candidate.country === normalizedCountry && bucketOf(candidate) === bucket && (!lang || candidate.lang === lang))
-    .filter((candidate) => bucket !== 'open' || candidate.status == null || isStalePending(candidate))
-    .map(({ platform, externalId, lang }) => ({ platform, externalId, lang }))
+    .filter((candidate) => candidate.country === normalizedCountry && isInBucket(candidate, bucket) && (!lang || candidate.lang === lang))
+    .map(({ platform, externalId, lang: targetLang }) => ({ platform, externalId, lang: targetLang }))
 }
 
 export async function readTranslationStatusList(
@@ -185,8 +198,8 @@ export async function readTranslationStatusList(
 ): Promise<TranslationStatusList> {
   const normalizedCountry = country.toLowerCase()
   const filter = search.trim().toLocaleLowerCase()
-  const candidates = (await readTranslationCandidates())
-    .filter((candidate) => candidate.country === normalizedCountry && bucketOf(candidate) === bucket && (!lang || candidate.lang === lang))
+  const candidates = (await readTranslationCandidates({ country: normalizedCountry, lang }))
+    .filter((candidate) => candidate.country === normalizedCountry && isInBucket(candidate, bucket) && (!lang || candidate.lang === lang))
     .filter((candidate) => !filter || [
       candidate.platform,
       candidate.externalId,
@@ -199,13 +212,25 @@ export async function readTranslationStatusList(
 
   const field = sort ?? 'startedAt'
   candidates.sort((left, right) => {
+    if (field === 'startedAt') {
+      const milliseconds = (candidate: TranslationCandidate): number => {
+        if (candidate.startedAt == null) return Number.NEGATIVE_INFINITY
+        const value = new Date(candidate.startedAt).getTime()
+        return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY
+      }
+      const result = milliseconds(left) - milliseconds(right)
+        || left.platform.localeCompare(right.platform)
+        || left.externalId.localeCompare(right.externalId)
+        || left.lang.localeCompare(right.lang)
+      return direction === 'desc' ? -result : result
+    }
     const value = (candidate: TranslationCandidate): string => {
       if (field === 'platform') return candidate.platform
       if (field === 'title') return candidate.title ?? ''
       if (field === 'region') return candidate.region
       if (field === 'error') return candidate.lastErrorMessage ?? ''
       if (field === 'lang') return candidate.lang
-      return isoOrNull(candidate.startedAt) ?? ''
+      return ''
     }
     const result = value(left).localeCompare(value(right))
       || left.platform.localeCompare(right.platform)

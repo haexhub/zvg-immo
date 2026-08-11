@@ -5,6 +5,7 @@ import type { StatusBucket, StatusCounts, StatusList, StatusListItem } from '~/c
 import type { StatusPieSegment } from './SettingsStatusPie.client.vue'
 import SettingsStatusPie from './SettingsStatusPie.client.vue'
 import SettingsAutomationControlsCard from './SettingsAutomationControlsCard.vue'
+import SettingsTranslationLanguageStatusCard from './SettingsTranslationLanguageStatusCard.vue'
 import { useSettingsError } from '~/composables/settings/useSettingsError'
 import { useSettingsTaskOverview } from '~/composables/settings/useSettingsTaskOverview'
 import { usePollWhileActive } from '~/composables/settings/usePollWhileActive'
@@ -405,27 +406,18 @@ onBeforeUnmount(() => clearTimeout(filterTimer))
                 </div>
               </section>
 
-              <section v-for="lang in translationTargetLanguages(country)" :key="`translation:${lang}`" class="flex min-w-0 flex-col rounded-lg border bg-muted/15 p-4">
-                <h3 class="mb-3 text-sm font-semibold">{{ $t('settings.translationStatus.titleForLang', { lang: lang.toUpperCase() }) }}</h3>
-                <SettingsStatusPie
-                  :segments="translationSegments(country, lang)"
-                  :selected="selectedBucket(country, 'translation', lang)"
-                  :size="208"
-                  @select="(bucket) => selectSegment(country, 'translation', bucket, lang)"
-                />
-                <div class="mt-4 grid gap-2">
-                  <Button type="button" variant="outline" size="sm" :disabled="actionPending !== null || (translationByCountry[country]?.[lang]?.open ?? 0) === 0" @click="runBulkRetry(country, 'translation', 'open', lang)">
-                    <Loader2 v-if="actionPending === `${country}:translation:${lang}:open`" class="h-4 w-4 animate-spin" />
-                    <RefreshCw v-else class="h-4 w-4" />
-                    {{ $t('settings.translationStatus.retryOpen') }}
-                  </Button>
-                  <Button type="button" variant="outline" size="sm" :disabled="actionPending !== null || (translationByCountry[country]?.[lang]?.error ?? 0) === 0" @click="runBulkRetry(country, 'translation', 'error', lang)">
-                    <Loader2 v-if="actionPending === `${country}:translation:${lang}:error`" class="h-4 w-4 animate-spin" />
-                    <RefreshCw v-else class="h-4 w-4" />
-                    {{ $t('settings.translationStatus.retryFailed') }}
-                  </Button>
-                </div>
-              </section>
+              <SettingsTranslationLanguageStatusCard
+                v-for="lang in translationTargetLanguages(country)"
+                :key="`translation:${lang}`"
+                :country="country"
+                :lang="lang"
+                :counts="translationByCountry[country]?.[lang] ?? EMPTY_COUNTS"
+                :selected="selectedBucket(country, 'translation', lang)"
+                :action-pending="actionPending"
+                :segments="translationSegments(country, lang)"
+                @select="(bucket: string) => selectSegment(country, 'translation', bucket, lang)"
+                @retry="(bucket: 'open' | 'error') => runBulkRetry(country, 'translation', bucket, lang)"
+              />
 
               <section class="flex min-w-0 flex-col rounded-lg border bg-muted/15 p-4">
                 <h3 class="mb-3 text-sm font-semibold">{{ $t('settings.osmImport.title') }}</h3>
