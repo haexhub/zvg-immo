@@ -57,3 +57,26 @@ export function customIdForKey(key: string, index: number): string {
 export function apiBase(config: LlmConfig): string {
   return config.baseUrl.replace(/\/$/, '')
 }
+
+/** Per-item error text for the OpenAI/OpenRouter-style batch result line
+ *  shape (`{error, response:{status_code, body}}`) — used when one item
+ *  within an otherwise-successful job failed. Checked in order: an explicit
+ *  top-level `error.message`, then a non-200 response body's own
+ *  `error.message`, then a bare HTTP status as a last resort. Feeds
+ *  llm-batch-poll.ts's task_run_errors write, which is why a batch-path
+ *  failure used to show up in /settings' LLM-status card with no message at
+ *  all (see llm-batch-poll.ts's header). */
+export function extractBatchItemErrorMessage(
+  error: unknown,
+  response: { status_code?: unknown; body?: unknown } | null | undefined,
+): string | null {
+  const topError = error as { message?: unknown } | undefined
+  if (typeof topError?.message === 'string') return topError.message
+  const status = response?.status_code
+  if (typeof status === 'number' && status !== 200) {
+    const body = response?.body as { error?: { message?: unknown } } | undefined
+    if (typeof body?.error?.message === 'string') return body.error.message
+    return `HTTP ${status}`
+  }
+  return null
+}

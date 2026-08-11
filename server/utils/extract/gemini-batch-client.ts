@@ -61,9 +61,16 @@ export async function fetchGeminiBatchResults(resultFileName: string, config: Ll
       const key = typeof parsed.key === 'string' ? parsed.key : typeof metadata?.key === 'string' ? metadata.key : customIdMap[indexKey]
       if (typeof key !== 'string') continue
       const response = parsed.response ?? (Array.isArray(parsed.candidates) ? parsed : null)
-      const raw = parsed.error ? null : parseGeminiExtractionResponse(response)
-      const usage = parsed.error ? null : parseGeminiUsage(response)
-      out.push({ key, extraction: raw ? clampExtraction(raw) : null, usage })
+      const itemError = parsed.error as { message?: unknown } | undefined
+      const raw = itemError ? null : parseGeminiExtractionResponse(response)
+      const usage = itemError ? null : parseGeminiUsage(response)
+      const extraction = raw ? clampExtraction(raw) : null
+      out.push({
+        key,
+        extraction,
+        usage,
+        error: extraction ? null : ((typeof itemError?.message === 'string' ? itemError.message : undefined) ?? 'Keine gültige Extraktion in der Batch-Antwort'),
+      })
     }
     return out
   } catch (err) { console.warn(`[gemini-batch] fetch results failed: ${(err as Error).message}`); return [] }

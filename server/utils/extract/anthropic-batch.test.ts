@@ -237,7 +237,7 @@ describe('fetchAnthropicBatchResults', () => {
     expect(results[0]!.key).toBe('zvg-portal:7265')
     expect(results[0]!.extraction?.propertyType).toBe('einfamilienhaus')
     expect(results[0]!.extraction?.landAreaSqm).toBe(500)
-    expect(results[1]).toEqual({ key: 'zvg-portal:9999', extraction: null, usage: null })
+    expect(results[1]).toEqual({ key: 'zvg-portal:9999', extraction: null, usage: null, error: 'Batch-Ergebnis: errored' })
   })
 
   it('reads token usage off a succeeded result', async () => {

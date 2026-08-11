@@ -109,6 +109,7 @@
     "logoutAdmin": "Abmelden",
     "logoutAdminError": "Abmelden fehlgeschlagen.",
     "sections": {
+      "status": "Status",
       "pipeline": "Crawling & Anreicherung",
       "llm": "KI / LLM",
       "admin": "Verwaltung"
@@ -336,8 +337,9 @@
       "title": "Crawling-Status",
       "description": "Pro Land: wie viele Anzeigen sind vollständig gecrawlt, welche sind noch offen und bei welchen ist der letzte Versuch fehlgeschlagen. Auf ein Segment klicken zeigt die betroffenen Anzeigen.",
       "refresh": "Status aktualisieren",
-      "retry": "Jetzt crawlen",
-      "retryError": "Crawl konnte nicht gestartet werden.",
+      "retryOpen": "Offene crawlen",
+      "retryFailed": "Fehlerhafte erneut crawlen",
+      "retryRow": "Diese Anzeige erneut crawlen",
       "empty": "Keine Länder aktiv."
     },
     "osmImport": {
@@ -490,7 +492,7 @@
       "refresh": "Status aktualisieren",
       "retryOpen": "Offene starten",
       "retryFailed": "Fehlerhafte erneut starten",
-      "retryError": "Verarbeitung konnte nicht gestartet werden.",
+      "retryRow": "Diese Anzeige erneut verarbeiten",
       "empty": "Keine Länder aktiv.",
       "colFailures": "Fehlversuche"
     },
@@ -498,8 +500,9 @@
       "title": "Übersetzungs-Status",
       "description": "Übersetzungen entstehen nur, wenn eine Anzeige tatsächlich in einer anderen Sprache aufgerufen wurde — die Zahlen zeigen also Übersetzungsversuche, nicht alle Anzeigen. Pro Zeile lässt sich eine einzelne Übersetzung erneut anstoßen.",
       "refresh": "Status aktualisieren",
+      "retryOpen": "Offene erneut starten",
+      "retryFailed": "Fehlerhafte erneut starten",
       "retryRow": "Diese Übersetzung erneut starten",
-      "retryError": "Übersetzung konnte nicht gestartet werden.",
       "empty": "Noch keine Übersetzungsversuche.",
       "colLang": "Sprache"
     },
@@ -507,6 +510,7 @@
       "loadError": "Status konnte nicht geladen werden.",
       "listLoadError": "Liste konnte nicht geladen werden.",
       "listEmpty": "Keine Anzeigen in diesem Bereich.",
+      "retryError": "Erneuter Versuch fehlgeschlagen.",
       "bucketDone": "Erledigt",
       "bucketOpen": "Offen",
       "bucketError": "Fehlerhaft",

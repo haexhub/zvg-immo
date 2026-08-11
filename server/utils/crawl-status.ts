@@ -77,6 +77,24 @@ export async function readCrawlStatusByCountry(): Promise<Record<string, CrawlSt
   return out
 }
 
+/** Every identity in one country/bucket, unpaginated — feeds the crawl-status
+ *  card's "nur offene"/"nur fehlerhafte" bulk retry buttons (see
+ *  server/tasks/enrich-worker.ts's `identities` scoping), unlike
+ *  readCrawlStatusList's paginated page-at-a-time shape for the drill-down
+ *  table. */
+export async function readCrawlStatusIdentities(
+  country: string,
+  bucket: CrawlStatusBucket,
+): Promise<{ platform: string; externalId: string }[]> {
+  const db = getPool()
+  if (!db) return []
+  const { rows } = await db.query<{ platform: string; external_id: string }>(
+    `${STATUS_CTE} SELECT platform, external_id FROM crawl_status WHERE country = $1 AND bucket = $2`,
+    [country, bucket],
+  )
+  return rows.map((row) => ({ platform: row.platform, externalId: row.external_id }))
+}
+
 export async function readCrawlStatusList(
   country: string,
   bucket: CrawlStatusBucket,

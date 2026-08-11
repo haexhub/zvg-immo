@@ -7,6 +7,8 @@
 // the row (no separate error log to join, unlike task_run_errors for crawl).
 
 import { getPool } from './db'
+import { AUCTION_TRANSLATION_CLAIM_LEASE } from './content-translation'
+import type { ContentTargetLang } from '~/lib/content-language'
 
 export type TranslationStatusBucket = 'done' | 'error' | 'open'
 
@@ -63,6 +65,34 @@ export async function readTranslationStatusByCountry(): Promise<Record<string, T
     counts.total += n
   }
   return out
+}
+
+/** Every retryable (auction, lang) identity in one country/bucket,
+ *  unpaginated. A pending row is retried only after its claim lease has
+ *  expired: claimAuctionTranslation cannot safely take an active claim over,
+ *  so including it here made the bulk endpoint report a successful retry
+ *  without actually starting one. */
+export async function readTranslationStatusIdentities(
+  country: string,
+  bucket: TranslationStatusBucket,
+): Promise<{ platform: string; externalId: string; lang: ContentTargetLang }[]> {
+  const db = getPool()
+  if (!db) return []
+  const status = Object.entries(BUCKET_BY_STATUS).find(([, b]) => b === bucket)?.[0]
+  if (!status) return []
+  const pendingLeaseClause = bucket === 'open'
+    ? ' AND t.started_at < now() - $3::interval'
+    : ''
+  const { rows } = await db.query<{ platform: string; external_id: string; lang: string }>(
+    `SELECT a.platform, a.external_id, t.lang
+     FROM auction_translations t
+     JOIN auctions a ON a.platform = t.platform AND a.external_id = t.external_id
+     WHERE a.country = $1 AND t.status = $2${pendingLeaseClause}`,
+    bucket === 'open'
+      ? [country, status, AUCTION_TRANSLATION_CLAIM_LEASE]
+      : [country, status],
+  )
+  return rows.map((row) => ({ platform: row.platform, externalId: row.external_id, lang: row.lang as ContentTargetLang }))
 }
 
 export async function readTranslationStatusList(

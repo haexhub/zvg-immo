@@ -230,7 +230,7 @@ export async function fetchAnthropicBatchResults(
   for (const line of text.split('\n')) {
     const trimmed = line.trim()
     if (!trimmed) continue
-    let parsed: { custom_id?: unknown; result?: { type?: unknown; message?: unknown } }
+    let parsed: { custom_id?: unknown; result?: { type?: unknown; message?: unknown; error?: { message?: unknown } } }
     try {
       parsed = JSON.parse(trimmed) as typeof parsed
     } catch (err) {
@@ -242,7 +242,14 @@ export async function fetchAnthropicBatchResults(
     const succeeded = parsed.result?.type === 'succeeded'
     const raw = succeeded ? parseExtractionResponse(parsed.result!.message) : null
     const usage = succeeded ? parseClaudeUsage(parsed.result!.message) : null
-    out.push({ key, extraction: raw ? clampExtraction(raw) : null, usage })
+    const extraction = raw ? clampExtraction(raw) : null
+    const error = extraction
+      ? null
+      : (typeof parsed.result?.error?.message === 'string' ? parsed.result.error.message : undefined) ??
+        (typeof parsed.result?.type === 'string' && !succeeded
+          ? `Batch-Ergebnis: ${parsed.result.type}`
+          : 'Keine gültige Extraktion in der Batch-Antwort')
+    out.push({ key, extraction, usage, error })
   }
   return out
 }

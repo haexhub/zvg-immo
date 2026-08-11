@@ -34,6 +34,8 @@ export interface LlmBatchResultItem {
   key: string
   extraction: ClampedExtraction | null
   usage: LlmUsage | null
+  /** Provider detail for an item that completed without a valid extraction. */
+  error?: string | null
 }
 
 // A submitted-but-not-yet-polled item is marked with `llmBatchJob` in

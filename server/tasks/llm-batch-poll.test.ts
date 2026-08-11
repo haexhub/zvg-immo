@@ -14,6 +14,7 @@ import {
 } from '../utils/llm-batch-jobs'
 import { recordLlmUsage } from '../utils/llm-usage'
 import { getPool } from '../utils/db'
+import { recordTaskRunError } from '../utils/task-run-errors'
 
 vi.mock('../utils/extract/llm-batch', () => ({ pollLlmBatch: vi.fn(), fetchLlmBatchResults: vi.fn() }))
 vi.mock('../utils/extract/llm-task-config', () => ({
@@ -34,6 +35,7 @@ vi.mock('../utils/llm-batch-jobs', () => ({
 }))
 vi.mock('../utils/llm-usage', () => ({ recordLlmUsage: vi.fn() }))
 vi.mock('../utils/db', () => ({ getPool: vi.fn() }))
+vi.mock('../utils/task-run-errors', () => ({ recordTaskRunError: vi.fn() }))
 vi.stubGlobal('defineTask', (definition: unknown) => definition)
 
 const { runLlmBatchPoll } = await import('./llm-batch-poll')
@@ -321,7 +323,7 @@ describe('runLlmBatchPoll', () => {
     vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job()])
     vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/result' })
     vi.mocked(fetchLlmBatchResults).mockResolvedValue([
-      { key: 'zvg-portal:7265', extraction: null, usage: null },
+      { key: 'zvg-portal:7265', extraction: null, usage: null, error: 'provider rejected request' },
     ])
 
     await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 1, merged: 1 })
@@ -329,6 +331,12 @@ describe('runLlmBatchPoll', () => {
       llmBatchJob: null,
       llmArtifactVersionId: null,
       llmFailures: 3,
+    })
+    expect(recordTaskRunError).toHaveBeenCalledWith('reprocess', {
+      category: 'llm',
+      message: 'provider rejected request',
+      platform: 'zvg-portal',
+      externalId: '7265',
     })
   })
 

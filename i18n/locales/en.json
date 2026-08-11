@@ -109,6 +109,7 @@
     "logoutAdmin": "Sign out",
     "logoutAdminError": "Sign out failed.",
     "sections": {
+      "status": "Status",
       "pipeline": "Crawling & enrichment",
       "llm": "AI / LLM",
       "admin": "Administration"
@@ -336,8 +337,9 @@
       "title": "Crawling status",
       "description": "Per country: how many listings are fully crawled, how many are still open, and which ones' last attempt failed. Click a segment to see the affected listings.",
       "refresh": "Refresh status",
-      "retry": "Crawl now",
-      "retryError": "Could not start the crawl.",
+      "retryOpen": "Crawl open",
+      "retryFailed": "Retry failed",
+      "retryRow": "Retry crawling this listing",
       "empty": "No countries enabled."
     },
     "osmImport": {
@@ -490,7 +492,7 @@
       "refresh": "Refresh status",
       "retryOpen": "Start open",
       "retryFailed": "Retry failed",
-      "retryError": "Could not start processing.",
+      "retryRow": "Retry processing this listing",
       "empty": "No countries enabled.",
       "colFailures": "Failures"
     },
@@ -498,8 +500,9 @@
       "title": "Translation status",
       "description": "Translations only exist once a listing was actually viewed in another language — these numbers show translation attempts, not all listings. Each row can retrigger that one translation individually.",
       "refresh": "Refresh status",
+      "retryOpen": "Retry open",
+      "retryFailed": "Retry failed",
       "retryRow": "Retry this translation",
-      "retryError": "Could not start the translation.",
       "empty": "No translation attempts yet.",
       "colLang": "Language"
     },
@@ -507,6 +510,7 @@
       "loadError": "Could not load status.",
       "listLoadError": "Could not load the list.",
       "listEmpty": "No listings in this segment.",
+      "retryError": "Retry could not be started.",
       "bucketDone": "Done",
       "bucketOpen": "Open",
       "bucketError": "Failed",

@@ -8,7 +8,7 @@ import {
   type LlmInput,
 } from './llm'
 import { parseOpenAiExtractionResponse, parseOpenAiUsage, toOpenAiContent } from './providers/openai-compatible'
-import { apiBase, customIdForKey, extractOfetchErrorMessage, isTransientBatchError } from './batch-shared'
+import { apiBase, customIdForKey, extractBatchItemErrorMessage, extractOfetchErrorMessage, isTransientBatchError } from './batch-shared'
 import { insertLlmBatchJob, recordLlmBatchCapability } from '../llm-batch-jobs'
 import type { PollResult } from './gemini-batch'
 import type { LlmBatchResultItem, LlmBatchSubmitResult } from './llm-batch'
@@ -266,7 +266,13 @@ export async function fetchOpenAiBatchResults(
     const ok = !parsed.error && parsed.response?.status_code === 200
     const raw = ok ? parseOpenAiExtractionResponse(parsed.response!.body) : null
     const usage = ok ? parseOpenAiUsage(parsed.response!.body) : null
-    out.push({ key, extraction: raw ? clampExtraction(raw) : null, usage })
+    const extraction = raw ? clampExtraction(raw) : null
+    out.push({
+      key,
+      extraction,
+      usage,
+      error: extraction ? null : (extractBatchItemErrorMessage(parsed.error, parsed.response) ?? 'Keine gültige Extraktion in der Batch-Antwort'),
+    })
   }
   return out
 }

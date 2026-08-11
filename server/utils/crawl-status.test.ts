@@ -3,7 +3,7 @@ import { getPool } from './db'
 
 vi.mock('./db', () => ({ getPool: vi.fn() }))
 
-const { readCrawlStatusByCountry, readCrawlStatusList } = await import('./crawl-status')
+const { readCrawlStatusByCountry, readCrawlStatusList, readCrawlStatusIdentities } = await import('./crawl-status')
 
 afterEach(() => vi.clearAllMocks())
 
@@ -52,5 +52,28 @@ describe('readCrawlStatusList', () => {
       total: 42,
     })
     expect(query.mock.calls[0]?.[1]).toEqual(['de', 'error', 50, 0])
+  })
+})
+
+describe('readCrawlStatusIdentities', () => {
+  it('returns every matching identity unpaginated, for the bulk retry endpoints', async () => {
+    const query = vi.fn().mockResolvedValue({
+      rows: [
+        { platform: 'zvg-portal', external_id: '1' },
+        { platform: 'mv-zvgcom', external_id: '2' },
+      ],
+    })
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+
+    await expect(readCrawlStatusIdentities('de', 'open')).resolves.toEqual([
+      { platform: 'zvg-portal', externalId: '1' },
+      { platform: 'mv-zvgcom', externalId: '2' },
+    ])
+    expect(query.mock.calls[0]?.[1]).toEqual(['de', 'open'])
+  })
+
+  it('returns an empty array when no DB is configured', async () => {
+    vi.mocked(getPool).mockReturnValue(null)
+    await expect(readCrawlStatusIdentities('de', 'open')).resolves.toEqual([])
   })
 })

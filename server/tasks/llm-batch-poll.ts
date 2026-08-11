@@ -23,6 +23,7 @@ import {
 import { runExclusiveTask, throwIfTaskAborted } from '../utils/exclusive-task'
 import { recordLlmUsage } from '../utils/llm-usage'
 import { getPool } from '../utils/db'
+import { recordTaskRunError } from '../utils/task-run-errors'
 
 const DEFAULT_GEMINI_FREE_BATCH_POLL_INTERVAL_HOURS = 6
 
@@ -128,10 +129,18 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
 
       const results = await fetchLlmBatchResults(job.jobName, poll.resultFileName, jobConfig, job.customIdMap)
       throwIfTaskAborted(signal)
-      for (const { key, extraction, usage } of results) {
+      for (const { key, extraction, usage, error } of results) {
         throwIfTaskAborted(signal)
         const identity = splitKey(key)
         if (!identity) continue
+        if (extraction === null) {
+          void recordTaskRunError('reprocess', {
+            category: 'llm',
+            message: error ?? 'Keine gültige Extraktion in der Batch-Antwort',
+            platform: identity.platform,
+            externalId: identity.externalId,
+          })
+        }
         const record = records.get(key)
         if (!record) continue
         const storedPriorEntry = record.auction.extraction ?? undefined
