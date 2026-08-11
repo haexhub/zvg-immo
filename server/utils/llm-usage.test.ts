@@ -55,6 +55,36 @@ describe('recordLlmUsage', () => {
     expect(captured?.params).toContain(6)
   })
 
+  it('inserts with an ON CONFLICT DO NOTHING clause keyed on the batch result identity', async () => {
+    let captured: { text: string; params: unknown[] } | undefined
+    const query = vi.fn(async (queryArg: unknown, params: unknown[] = []) => {
+      const text = queryText(queryArg)
+      if (text.toLowerCase().startsWith('insert into "llm_usage_events"')) {
+        captured = { text, params }
+        return { rows: [], rowCount: 1 }
+      }
+      throw new Error(`unexpected query: ${text}`)
+    })
+    vi.mocked(getDb).mockReturnValue(drizzle({ query } as never))
+
+    await recordLlmUsage({
+      task: 'extraction',
+      executionMode: 'batch',
+      source: 'reprocess',
+      provider: 'gemini-native',
+      model: 'gemini-flash-latest',
+      profileId: 'profile-a',
+      platform: 'de-foo',
+      externalId: '123',
+      usage: { inputTokens: 100, outputTokens: 50 },
+      batchJobName: 'batches/abc',
+    })
+
+    expect(captured?.text.toLowerCase()).toContain('on conflict')
+    expect(captured?.text.toLowerCase()).toContain('do nothing')
+    expect(captured?.params).toContain('batches/abc')
+  })
+
   it('logs and swallows a DB error instead of throwing', async () => {
     const query = vi.fn().mockRejectedValue(new Error('connection reset'))
     vi.mocked(getDb).mockReturnValue(drizzle({ query } as never))

@@ -2,6 +2,7 @@
 // operational tables. All server-internal: RLS is enabled on every one of
 // them with no policies (default-deny for PostgREST's anon/authenticated
 // roles) — the backend connects as table owner and bypasses RLS regardless.
+import { sql } from 'drizzle-orm'
 import {
   bigserial,
   doublePrecision,
@@ -13,6 +14,7 @@ import {
   primaryKey,
   text,
   timestamp,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core'
 import { auctions } from './core'
 
@@ -94,9 +96,17 @@ export const llmUsageEvents = pgTable('llm_usage_events', {
   // Estimated from a static pricing table at write time — null when the
   // model isn't in it, never guessed/rounded to 0 (see llm-pricing.ts).
   costUsd: doublePrecision('cost_usd'),
+  // Set only for a batch-job item (see llm-batch-poll.ts), null for sync
+  // calls. Together with platform/externalId this is that item's stable
+  // result identity — the unique index below lets recordLlmUsage no-op a
+  // retry-after-partial-failure instead of double-counting the same call.
+  batchJobName: text('batch_job_name'),
 }, (table) => [
   index('idx_llm_usage_events_occurred_at').on(table.occurredAt.desc()),
   index('idx_llm_usage_events_task_occurred').on(table.task, table.occurredAt.desc()),
+  uniqueIndex('idx_llm_usage_events_batch_identity')
+    .on(table.batchJobName, table.platform, table.externalId)
+    .where(sql`${table.batchJobName} is not null`),
 ]).enableRLS()
 
 // Generic key/value store for admin-configurable dashboard settings without

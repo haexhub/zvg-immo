@@ -60,4 +60,17 @@ describe('/api/settings/llm-costs', () => {
     await handlerC({})
     expect(readLlmCostOverview).toHaveBeenLastCalledWith(30)
   })
+
+  it('falls back to the default for a decimal ?days instead of rounding it', async () => {
+    const { readLlmCostOverview } = await import('~/server/utils/llm-usage')
+    vi.mocked(readLlmCostOverview).mockResolvedValue({
+      windowDays: 30, totalCostUsd: 0, totalUnpricedCalls: 0, totalInputTokens: 0, totalOutputTokens: 0,
+      todayCostUsd: 0, breakdown: [], daily: [],
+    })
+
+    const handler = await loadHandler({ days: '1.5' })
+    await handler({})
+
+    expect(readLlmCostOverview).toHaveBeenCalledWith(30)
+  })
 })

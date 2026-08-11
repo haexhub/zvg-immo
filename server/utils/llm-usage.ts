@@ -5,6 +5,7 @@
 // call that already happened, same posture as recordLlmBatchCapability in
 // llm-batch-jobs.ts.
 
+import { sql } from 'drizzle-orm'
 import { llmUsageEvents } from '../db/schema'
 import type { LlmUsage } from './extract/llm'
 import { estimateCostUsd } from './extract/llm-pricing'
@@ -23,6 +24,13 @@ export interface RecordLlmUsageInput {
   platform: string | null
   externalId: string | null
   usage: LlmUsage
+  /** Set for a batch-job item — together with platform/externalId, its
+   *  stable result identity. A retry after a later write in the same batch
+   *  item fails (llm-batch-poll.ts) re-enters this with the same identity;
+   *  the unique index + conflict-ignore below drops that duplicate instead
+   *  of double-counting the call. Omitted (null) for sync calls, which have
+   *  no such retry-replay and no identity to dedupe on. */
+  batchJobName?: string | null
 }
 
 export async function recordLlmUsage(event: RecordLlmUsageInput): Promise<void> {
@@ -41,6 +49,10 @@ export async function recordLlmUsage(event: RecordLlmUsageInput): Promise<void> 
       inputTokens: event.usage.inputTokens,
       outputTokens: event.usage.outputTokens,
       costUsd: estimateCostUsd(event.model, event.usage.inputTokens, event.usage.outputTokens),
+      batchJobName: event.batchJobName ?? null,
+    }).onConflictDoNothing({
+      target: [llmUsageEvents.batchJobName, llmUsageEvents.platform, llmUsageEvents.externalId],
+      where: sql`${llmUsageEvents.batchJobName} is not null`,
     })
   } catch (err) {
     console.warn(`[llm-usage] record failed: ${(err as Error).message}`)

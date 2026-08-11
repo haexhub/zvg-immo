@@ -9,8 +9,8 @@ const MAX_WINDOW_DAYS = 90
 
 export default defineEventHandler(async (event) => {
   const raw = Number(getQuery(event).days)
-  const windowDays = Number.isFinite(raw) && raw >= 1 && raw <= MAX_WINDOW_DAYS
-    ? Math.round(raw)
+  const windowDays = Number.isInteger(raw) && raw >= 1 && raw <= MAX_WINDOW_DAYS
+    ? raw
     : DEFAULT_WINDOW_DAYS
   return await readLlmCostOverview(windowDays)
 })
