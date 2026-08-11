@@ -17,7 +17,11 @@ export function useThemePreference() {
   const ready = useState('theme-preference-ready', () => false)
 
   function init(): void {
-    if (ready.value) return
+    // Mirrors useAuth.ts: both the account-metadata watch and the matchMedia
+    // listener are client-only, so `ready` must stay false through SSR —
+    // otherwise it gets serialized as `true` into the payload and the client
+    // skips this setup entirely on hydration, never wiring either up.
+    if (ready.value || import.meta.server) return
     ready.value = true
     watch(
       user,
@@ -29,13 +33,11 @@ export function useThemePreference() {
       },
       { immediate: true },
     )
-    if (typeof window !== 'undefined') {
-      const mql = window.matchMedia('(prefers-color-scheme: dark)')
-      systemPrefersDark.value = mql.matches
-      mql.addEventListener('change', (e) => {
-        systemPrefersDark.value = e.matches
-      })
-    }
+    const mql = window.matchMedia('(prefers-color-scheme: dark)')
+    systemPrefersDark.value = mql.matches
+    mql.addEventListener('change', (e) => {
+      systemPrefersDark.value = e.matches
+    })
   }
 
   /** Explicit switcher action: applies immediately (persisted via cookie for
