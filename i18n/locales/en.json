@@ -214,7 +214,8 @@
       "llmHelp": "Scheduled and startup-triggered LLM processing.",
       "manualHint": "Manual country and single-item actions deliberately remain available, so they can run without competition from background jobs.",
       "loadError": "Could not load automation status.",
-      "saveError": "Could not save automation status."
+      "saveError": "Could not save automation status.",
+      "retry": "Retry"
     },
     "llm": {
       "title": "LLM configuration",

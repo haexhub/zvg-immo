@@ -214,7 +214,8 @@
       "llmHelp": "Geplante und beim Serverstart ausgelöste LLM-Verarbeitung.",
       "manualHint": "Manuelle Länder- und Einzelaktionen bleiben bewusst verfügbar, damit sie ohne Konkurrenz durch Hintergrundläufe ausgeführt werden können.",
       "loadError": "Automatisierungsstatus konnte nicht geladen werden.",
-      "saveError": "Automatisierungsstatus konnte nicht gespeichert werden."
+      "saveError": "Automatisierungsstatus konnte nicht gespeichert werden.",
+      "retry": "Erneut versuchen"
     },
     "llm": {
       "title": "LLM-Konfiguration",

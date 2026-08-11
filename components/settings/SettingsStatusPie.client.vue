@@ -17,6 +17,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{ select: [key: string] }>()
 
+const { locale } = useI18n()
+
 ChartJS.register(PieController, ArcElement, Tooltip)
 
 const chartData = computed(() => ({
@@ -45,7 +47,7 @@ const chartOptions = computed(() => ({
       caretPadding: 10,
       displayColors: false,
       callbacks: {
-        label: (ctx: { label: string; parsed: number }) => `${ctx.label}: ${ctx.parsed.toLocaleString()}`,
+        label: (ctx: { label: string; parsed: number }) => `${ctx.label}: ${ctx.parsed.toLocaleString(locale.value)}`,
       },
     },
   },
@@ -58,7 +60,7 @@ const chartOptions = computed(() => ({
 
 <template>
   <div class="flex flex-col items-center gap-3">
-    <div :style="{ width: `${size ?? 208}px`, height: `${size ?? 208}px` }" class="max-w-full shrink-0">
+    <div :style="{ width: `${size ?? 208}px`, height: `${size ?? 208}px` }" class="max-w-full shrink-0" aria-hidden="true">
       <Chart type="pie" :data="chartData" :options="chartOptions" />
     </div>
     <ul class="grid w-full gap-1 text-sm">
@@ -74,7 +76,7 @@ const chartOptions = computed(() => ({
             <span class="h-3 w-3 shrink-0 rounded-sm" :style="{ backgroundColor: segment.color }" />
             <span class="truncate text-muted-foreground">{{ segment.label }}</span>
           </span>
-          <span class="shrink-0 tabular-nums text-foreground">{{ segment.value.toLocaleString() }}</span>
+          <span class="shrink-0 tabular-nums text-foreground">{{ segment.value.toLocaleString(locale) }}</span>
         </button>
       </li>
     </ul>

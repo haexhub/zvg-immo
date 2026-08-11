@@ -22,7 +22,9 @@ export interface LlmStatusList {
 const BUCKETS: LlmStatusBucket[] = ['done', 'error', 'open']
 const DEFAULT_LIMIT = 50
 const MAX_LIMIT = 200
-const SORT_FIELDS = ['platform', 'title', 'region', 'error', 'failures'] as const
+// `error` is intentionally unsupported: last error messages are resolved only
+// for the visible page below, so the full set cannot be ordered by that column.
+const SORT_FIELDS = ['platform', 'title', 'region', 'failures'] as const
 type LlmStatusSort = typeof SORT_FIELDS[number]
 
 /** Only looked up for the page actually being rendered — task_run_errors

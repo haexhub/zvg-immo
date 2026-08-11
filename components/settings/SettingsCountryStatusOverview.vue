@@ -21,6 +21,16 @@ const countryLabel = useCountryLabel()
 const { normalizeSettingsError } = useSettingsError()
 const { startProgressPolling, formatBatchDate } = useSettingsTaskOverview()
 
+// retryTranslationsBulk (server/utils/translation-retry.ts) runs detached and
+// exposes no running/idle status endpoint, unlike enrich/reprocess. There is
+// nothing to check for "still active", so this only bounds the window via
+// maxAttempts — same shape as the OSM import polling below.
+const { start: startTranslationRetryPolling } = usePollWhileActive(
+  () => true,
+  async () => { await Promise.all([load(), loadList()]) },
+  { intervalMs: 3000, maxAttempts: 10 },
+)
+
 const counts = ref<Record<StatusKind, Record<string, StatusCounts>>>({ crawl: {}, llm: {}, translation: {} })
 const osmByCountry = ref<Record<string, OsmImportCountryStatus>>({})
 const pending = ref(false)
@@ -48,6 +58,7 @@ const tableAccordion = computed<string>({
   },
 })
 let filterTimer: ReturnType<typeof setTimeout> | undefined
+let listRequestId = 0
 
 const countryCodes = computed(() => {
   const all = new Set([
@@ -132,10 +143,11 @@ function selectedBucket(country: string, kind: StatusKind): StatusBucket | null 
 async function loadList(): Promise<void> {
   const target = selected.value
   if (!target) return
+  const requestId = ++listRequestId
   listPending.value = true
   listError.value = null
   try {
-    list.value = await $fetch<StatusList>(`/api/settings/${target.kind}-status/${target.country}`, {
+    const result = await $fetch<StatusList>(`/api/settings/${target.kind}-status/${target.country}`, {
       query: {
         bucket: target.bucket,
         limit: PAGE_SIZE,
@@ -145,10 +157,13 @@ async function loadList(): Promise<void> {
         direction: tableDirection.value,
       },
     })
+    if (requestId !== listRequestId) return
+    list.value = result
   } catch (err) {
+    if (requestId !== listRequestId) return
     listError.value = normalizeSettingsError(err, t('settings.statusOverview.listLoadError'))
   } finally {
-    listPending.value = false
+    if (requestId === listRequestId) listPending.value = false
   }
 }
 
@@ -158,8 +173,16 @@ function selectSegment(country: string, kind: StatusKind, bucket: string): void 
     selected.value = null
     return
   }
+  // Sort fields are kind-specific: `lang`/`startedAt` are translation-only and
+  // `failures` is LLM-only. Carrying one over to another kind makes the
+  // endpoint reject the request with 400.
+  if (selected.value?.kind !== kind) {
+    tableSort.value = 'platform'
+    tableDirection.value = 'asc'
+  }
   selected.value = { country, kind, bucket: statusBucket }
   tableOffset.value = 0
+  clearTimeout(filterTimer)
   tableSearch.value = ''
   void loadList()
 }
@@ -177,6 +200,7 @@ async function runBulkRetry(country: string, kind: StatusKind, bucket: 'open' | 
       await $fetch(`/api/settings/countries/${country}/${bucket === 'open' ? 'reprocess-backlog' : 'reprocess-retry-failed'}`, { method: 'POST' })
     } else {
       await $fetch(`/api/settings/countries/${country}/${bucket === 'open' ? 'translation-retry-open' : 'translation-retry-failed'}`, { method: 'POST' })
+      startTranslationRetryPolling()
     }
     await load()
   } catch (err) {
@@ -252,6 +276,7 @@ watch(tableSearch, () => {
 })
 
 onMounted(load)
+onBeforeUnmount(() => clearTimeout(filterTimer))
 </script>
 
 <template>

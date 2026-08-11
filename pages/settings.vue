@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { ArrowLeft } from 'lucide-vue-next'
-import SettingsCountryStatusOverview from '~/components/settings/SettingsCountryStatusOverview.vue'
 import { settingsSessionExpiredKey, useSettingsError } from '~/composables/settings/useSettingsError'
 import { useSettingsTaskOverview } from '~/composables/settings/useSettingsTaskOverview'
 
@@ -109,9 +108,7 @@ onMounted(probeSession)
       </Card>
 
       <template v-else>
-        <section class="space-y-4">
-          <SettingsCountryStatusOverview />
-        </section>
+        <SettingsCountryStatusOverview />
 
         <section class="space-y-4">
           <h2 class="text-lg font-semibold text-muted-foreground">{{ $t('settings.sections.pipeline') }}</h2>

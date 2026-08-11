@@ -1,5 +1,6 @@
 import type { Pool } from 'pg'
-import { readSetting, writeSetting } from './app-settings-store'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import { readSetting, upsertSetting, writeSetting } from './app-settings-store'
 
 const HIDE_RULES_ONLY_KEY = 'hide_rules_only_auctions'
 export const DEFAULT_HIDE_RULES_ONLY_AUCTIONS = true
@@ -53,4 +54,17 @@ export async function getAutomaticLlmEnabled(db: Pool): Promise<boolean> {
 
 export async function setAutomaticLlmEnabled(db: Pool, value: boolean): Promise<void> {
   await writeSetting(db, AUTOMATIC_LLM_ENABLED_KEY, value)
+}
+
+/** Writes both automation preferences in one transaction, so a failure on the
+ * second upsert cannot leave one preference changed while the caller's error
+ * handling assumes neither write took effect. */
+export async function setAutomationSettings(
+  db: Pool,
+  value: { crawlersEnabled: boolean; llmEnabled: boolean },
+): Promise<void> {
+  await drizzle(db).transaction(async (tx) => {
+    await upsertSetting(tx, AUTOMATIC_CRAWLING_ENABLED_KEY, value.crawlersEnabled)
+    await upsertSetting(tx, AUTOMATIC_LLM_ENABLED_KEY, value.llmEnabled)
+  })
 }

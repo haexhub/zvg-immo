@@ -41,7 +41,10 @@ onMounted(load)
     </CardHeader>
     <CardContent class="space-y-4">
       <p class="text-sm text-muted-foreground">{{ $t('settings.automation.description') }}</p>
-      <p v-if="error" class="text-sm text-destructive">{{ error }}</p>
+      <div v-if="error" class="flex items-center gap-2">
+        <p class="text-sm text-destructive">{{ error }}</p>
+        <Button type="button" variant="outline" size="sm" :disabled="pending" @click="load">{{ $t('settings.automation.retry') }}</Button>
+      </div>
       <div class="grid gap-3 sm:grid-cols-2">
         <Label class="flex items-start gap-3 rounded-md border p-3" :class="{ 'opacity-60': !settings.crawlersEnabled }">
           <Checkbox :model-value="settings.crawlersEnabled" :disabled="!loaded || pending" @update:model-value="(value) => update('crawlersEnabled', value === true)" />

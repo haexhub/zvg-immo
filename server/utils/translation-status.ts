@@ -35,7 +35,8 @@ export interface TranslationStatusList {
   total: number
 }
 
-export type TranslationStatusSort = 'platform' | 'title' | 'region' | 'error' | 'lang' | 'startedAt'
+export const TRANSLATION_STATUS_SORTS = ['platform', 'title', 'region', 'error', 'lang', 'startedAt'] as const
+export type TranslationStatusSort = typeof TRANSLATION_STATUS_SORTS[number]
 
 export interface TranslationStatusListOptions {
   limit?: number
@@ -123,7 +124,9 @@ export async function readTranslationStatusList(
     const filterClause = filter
       ? ` AND concat_ws(' ', a.platform, a.external_id, a.title, a.region, a.case_number, t.lang, t.error_message) ILIKE $${params.push(`%${filter}%`)}`
       : ''
-    const order = `${orderBy[sort || 'platform']} ${direction === 'desc' ? 'DESC' : 'ASC'}, a.platform ASC, a.external_id ASC`
+    const order = sort
+      ? `${orderBy[sort]} ${direction === 'desc' ? 'DESC' : 'ASC'}, a.platform ASC, a.external_id ASC`
+      : 't.started_at DESC, a.platform ASC, a.external_id ASC'
     const pageParams = [...params, limit, offset]
     const [{ rows }, { rows: countRows }] = await Promise.all([
       db.query<{

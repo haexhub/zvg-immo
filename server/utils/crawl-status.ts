@@ -32,7 +32,8 @@ export interface CrawlStatusList {
   total: number
 }
 
-export type CrawlStatusSort = 'platform' | 'title' | 'region' | 'error'
+export const CRAWL_STATUS_SORTS = ['platform', 'title', 'region', 'error'] as const
+export type CrawlStatusSort = typeof CRAWL_STATUS_SORTS[number]
 
 export interface CrawlStatusListOptions {
   limit?: number

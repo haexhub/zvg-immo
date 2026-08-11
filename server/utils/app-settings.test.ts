@@ -951,8 +951,11 @@ describe('automatic processing preferences', () => {
   it('persists crawler and LLM automation independently', async () => {
     const db = makeFakePool() as unknown as Pool
     await setAutomaticCrawlingEnabled(db, false)
-    await setAutomaticLlmEnabled(db, false)
     await expect(getAutomaticCrawlingEnabled(db)).resolves.toBe(false)
+    await expect(getAutomaticLlmEnabled(db)).resolves.toBe(true)
+
+    await setAutomaticLlmEnabled(db, false)
     await expect(getAutomaticLlmEnabled(db)).resolves.toBe(false)
+    await expect(getAutomaticCrawlingEnabled(db)).resolves.toBe(false)
   })
 })
