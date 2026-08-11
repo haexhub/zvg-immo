@@ -142,7 +142,7 @@ async function identifyNoiseValue(
     }))
     const res = await fetchImpl(url, {
       headers: {
-        'user-agent': 'PropHammer location enrichment (contact via deployment operator)',
+        'user-agent': 'ImmoHammer location enrichment (contact via deployment operator)',
       },
       signal: controller.signal,
     })
