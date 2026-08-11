@@ -310,7 +310,7 @@
     },
     "sources": {
       "title": "Data sources",
-      "description": "Enabled countries appear in search, are served from cache, and are crawled regularly. Changes take effect immediately; after enabling a new source, you can trigger a refresh manually.",
+      "description": "Enabled countries appear in search and in the country overview, are served from cache, and are crawled regularly. Changes take effect immediately.",
       "enabledCount": "{enabled} of {total} sources enabled",
       "loadError": "Data sources could not be loaded.",
       "saveError": "Data sources could not be saved.",
@@ -526,6 +526,7 @@
       "loadError": "Could not load status.",
       "listLoadError": "Could not load the list.",
       "listEmpty": "No listings in this segment.",
+      "noData": "No data",
       "retryError": "Retry could not be started.",
       "bucketDone": "Done",
       "bucketOpen": "Open",
@@ -540,6 +541,9 @@
     },
     "countryOverview": {
       "description": "All processing states and OSM location data are grouped by country. Click a processing chart segment to open its related table.",
+      "forceCrawl": "Force crawler",
+      "forceLlm": "Force LLM extraction",
+      "forceError": "The action could not be started.",
       "osmAvailable": "Features available",
       "osmRequested": "Import requested",
       "osmMissing": "No data",

@@ -17,15 +17,19 @@ const props = defineProps<{
 
 const emit = defineEmits<{ select: [key: string] }>()
 
-const { locale } = useI18n()
+const { locale, t } = useI18n()
 
 ChartJS.register(PieController, ArcElement, Tooltip)
 
+const hasValues = computed(() => props.segments.some((segment) => segment.value > 0))
+
 const chartData = computed(() => ({
-  labels: props.segments.map((segment) => segment.label),
+  labels: hasValues.value ? props.segments.map((segment) => segment.label) : [t('settings.statusOverview.noData')],
   datasets: [{
-    data: props.segments.map((segment) => segment.value),
-    backgroundColor: props.segments.map((segment) => segment.color),
+    // Chart.js draws no pie at all for an all-zero dataset. Render a neutral
+    // placeholder instead so every configured country has the same diagram.
+    data: hasValues.value ? props.segments.map((segment) => segment.value) : [1],
+    backgroundColor: hasValues.value ? props.segments.map((segment) => segment.color) : ['#737373'],
     borderColor: '#fcfcfb',
     borderWidth: 3,
     hoverOffset: 8,
@@ -52,6 +56,7 @@ const chartOptions = computed(() => ({
     },
   },
   onClick: (_event: unknown, elements: { index: number }[]) => {
+    if (!hasValues.value) return
     const segment = elements[0] && props.segments[elements[0].index]
     if (segment) emit('select', segment.key)
   },
