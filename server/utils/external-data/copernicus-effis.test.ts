@@ -250,6 +250,39 @@ describe('importCopernicusEffisBurntAreaCache', () => {
     })
   })
 
+  it('simplifies the raster staircase out of the cached outlines', async () => {
+    // MODIS outlines carry every 250 m cell corner: 8.25M vertices / 602 MB
+    // parsed in the production cache, which the process-wide adapter cache
+    // would then hold resident.
+    tmp = await mkdtemp(join(tmpdir(), 'zvg-effis-'))
+    const cachePath = join(tmp, 'copernicus-effis.json')
+    const staircase: string[] = []
+    for (let i = 0; i <= 200; i++) staircase.push(`52.51 ${(13.39 + (0.02 * i) / 200).toFixed(6)}`)
+    for (let i = 1; i <= 200; i++) staircase.push(`${(52.51 + (0.02 * i) / 200).toFixed(6)} 13.41`)
+    staircase.push('52.53 13.39', '52.51 13.39')
+    const fetchImpl = vi.fn(async (url: URL) => {
+      const startIndex = Number(url.searchParams.get('startindex'))
+      const body = startIndex === 0
+        ? sampleGml(sampleFeature('staircase', staircase.join(' '), '2022-08-10 00:00:00', 'DE', '600'))
+        : sampleGml('')
+      return new Response(body, { status: 200, headers: { 'content-type': 'text/xml' } })
+    })
+
+    await importCopernicusEffisBurntAreaCache({
+      cachePath,
+      serviceUrl: 'https://example.test/effis',
+      generatedAt: checkedAt,
+      pageSize: 1,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    })
+
+    const cached = await readBurntAreaCache(cachePath)
+    expect(cached.zones[0]!.polygon[0]!.length).toBeLessThan(10)
+    // Still the same square, so the assessment it produces is unchanged.
+    expect(buildWildfireHazardAssessment(auction({ lat: 52.52, lng: 13.4 }), cached, { checkedAt }))
+      .toMatchObject({ status: 'inside' })
+  })
+
   it('drops zones that are too old, too small, or missing the data to tell', async () => {
     tmp = await mkdtemp(join(tmpdir(), 'zvg-effis-'))
     const cachePath = join(tmp, 'copernicus-effis.json')

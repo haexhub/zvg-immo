@@ -33,6 +33,7 @@ const props = defineProps<{
 }>()
 
 const { t, locale } = useI18n()
+const { hazardDetailLine, hazardOverlayLabel } = useHazardDisplay()
 const { formatDistance } = useAuctionDetailFormatters()
 const runtimeConfig = useRuntimeConfig()
 const mapTilerApiKey = computed(() => String(runtimeConfig.public.maptilerApiKey || '').trim())
@@ -60,10 +61,6 @@ const vectorStyleUrl = computed(() => {
 })
 const olMapRef = shallowRef<OlMap | null>(null)
 useMapTilerVectorBaseLayer({ map: olMapRef, styleUrl: vectorStyleUrl, lang: locale })
-
-function hazardOverlayLabel(hazard: HazardAssessment): string {
-  return `${t(`objektDetail.hazard.${hazard.hazard}`)}: ${t(`objektDetail.hazardStatus.${hazard.status}`)}`
-}
 
 function hazardMapLayerLabel(hazard: HazardAssessment): string {
   return `${t(`objektDetail.mapLayerHazardPrefix`)} ${t(`objektDetail.hazard.${hazard.hazard}`)}`
@@ -232,7 +229,7 @@ function hazardOverlayEntries(entries: OverlayEntry[]): void {
   for (const hazard of props.hazards ?? []) {
     const color = hazardStatusColor(hazard.status)
     const circleFeature = new Feature({ geometry: circularPolygon(props.lng, props.lat, hazardRadius(hazard)) })
-    circleFeature.set('popupHtml', () => `${hazardOverlayLabel(hazard)}<br>${t('objektDetail.hazardSeverityLabel')} ${t(`objektDetail.hazardSeverity.${hazard.severity}`)}`)
+    circleFeature.set('popupHtml', () => [hazardOverlayLabel(hazard), hazardDetailLine(hazard)].filter(Boolean).join('<br>'))
     const dotFeature = new Feature({ geometry: new Point(fromLonLat([props.lng, props.lat])) })
     const layer = new VectorLayer({
       source: new VectorSource({ features: [circleFeature, dotFeature] }),
