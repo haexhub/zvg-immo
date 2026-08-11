@@ -128,6 +128,7 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
         // The partial unique index in llm_usage_events makes this safe when a
         // provider later exposes the same item while recovering a job.
         if (job.provider && job.model) {
+          const { provider, model } = job
           await Promise.all(Object.values(job.customIdMap).map(async (key) => {
             const identity = splitKey(key)
             if (!identity) return
@@ -135,8 +136,8 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
               task: 'extraction',
               executionMode: 'batch',
               source: job.source,
-              provider: job.provider,
-              model: job.model,
+              provider,
+              model,
               profileId: job.profileId,
               platform: identity.platform,
               externalId: identity.externalId,
