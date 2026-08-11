@@ -514,9 +514,10 @@
     },
     "translationStatus": {
       "title": "Übersetzungs-Status",
-      "description": "Übersetzungen entstehen nur, wenn eine Anzeige tatsächlich in einer anderen Sprache aufgerufen wurde — die Zahlen zeigen also Übersetzungsversuche, nicht alle Anzeigen. Pro Zeile lässt sich eine einzelne Übersetzung erneut anstoßen.",
+      "titleForLang": "Übersetzungs-Status ({lang})",
+      "description": "Pro Land und Zielsprache: alle verfügbaren Übersetzungen, fehlgeschlagene Versuche und der noch offene LLM-Übersetzungs-Backlog. Anzeigen in ihrer Quellsprache werden nicht gezählt.",
       "refresh": "Status aktualisieren",
-      "retryOpen": "Offene erneut starten",
+      "retryOpen": "Offene starten",
       "retryFailed": "Fehlerhafte erneut starten",
       "retryRow": "Diese Übersetzung erneut starten",
       "empty": "Noch keine Übersetzungsversuche.",

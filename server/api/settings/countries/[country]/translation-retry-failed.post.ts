@@ -6,7 +6,8 @@
 
 import { getPool } from '~/server/utils/db'
 import { readTranslationStatusIdentities } from '~/server/utils/translation-status'
-import { retryTranslationsBulk } from '~/server/utils/translation-retry'
+import { MAX_BULK_TRANSLATION_RETRIES, retryTranslationsBulk } from '~/server/utils/translation-retry'
+import { parseTargetLang } from '~/server/utils/target-lang'
 
 export default defineEventHandler(async (event) => {
   const country = (getRouterParam(event, 'country') ?? '').trim().toLowerCase()
@@ -15,12 +16,16 @@ export default defineEventHandler(async (event) => {
   }
   const db = getPool()
   if (!db) throw createError({ statusCode: 503, statusMessage: 'translation cache not configured' })
+  const body = await readBody<{ lang?: unknown }>(event)
+  const lang = parseTargetLang(body?.lang)
 
-  const items = await readTranslationStatusIdentities(country, 'error')
-  if (items.length === 0) return { started: false }
+  const items = await readTranslationStatusIdentities(country, 'error', lang)
+  const selected = items.slice(0, MAX_BULK_TRANSLATION_RETRIES)
+  if (selected.length === 0) return { started: false, selected: 0, remaining: 0 }
 
-  void retryTranslationsBulk(db, items).catch((err: unknown) => {
+  void retryTranslationsBulk(db, selected).catch((err: unknown) => {
     console.error('[settings/translation-retry-failed] trigger failed:', (err as Error).message)
   })
-  return { started: true }
+  console.info(`[translation-retry-bulk] bucket=error country=${country} lang=${lang ?? 'all'} selected=${selected.length} remaining=${items.length - selected.length}`)
+  return { started: true, selected: selected.length, remaining: items.length - selected.length }
 })

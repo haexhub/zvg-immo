@@ -1,14 +1,12 @@
-// Admin overview for the lazy per-auction translation pipeline
-// (auction_translations — see server/db/schema/translations.ts), per country.
-// Unlike crawl/LLM status, there is no proactive backlog of "auctions still
-// needing translation": a row only exists once a visitor viewed an auction in
-// a non-source language (or an admin retried it), so the universe here is
-// translation attempts, not all auctions. status already lives directly on
-// the row (no separate error log to join, unlike task_run_errors for crawl).
+// Admin overview for the per-auction translation pipeline.  A translation is
+// normally created lazily when a visitor opens an auction in another locale,
+// but the status view is also the control surface for processing the complete
+// backlog.  It therefore builds the set of *current* auction-version/target-
+// language pairs first, then overlays any durable translation attempt.
 
+import { CONTENT_TARGET_LANGS, isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
+import { AUCTION_TRANSLATION_CLAIM_LEASE_MS } from './content-translation'
 import { getPool } from './db'
-import { AUCTION_TRANSLATION_CLAIM_LEASE } from './content-translation'
-import type { ContentTargetLang } from '~/lib/content-language'
 
 export type TranslationStatusBucket = 'done' | 'error' | 'open'
 
@@ -19,6 +17,8 @@ export interface TranslationStatusCounts {
   total: number
 }
 
+export type TranslationStatusByLanguage = Partial<Record<ContentTargetLang, TranslationStatusCounts>>
+
 export interface TranslationStatusItem {
   platform: string
   externalId: string
@@ -27,7 +27,8 @@ export interface TranslationStatusItem {
   caseNumber: string
   lang: string
   lastErrorMessage: string | null
-  startedAt: string
+  /** null means this target-language pair has not been started yet. */
+  startedAt: string | null
 }
 
 export interface TranslationStatusList {
@@ -44,6 +45,25 @@ export interface TranslationStatusListOptions {
   search?: string
   sort?: TranslationStatusSort
   direction?: 'asc' | 'desc'
+  lang?: ContentTargetLang
+}
+
+interface TranslationCandidate {
+  country: string
+  platform: string
+  externalId: string
+  title: string | null
+  region: string
+  caseNumber: string
+  lang: ContentTargetLang
+  status: 'pending' | 'completed' | 'failed' | null
+  lastErrorMessage: string | null
+  startedAt: Date | string | null
+}
+
+interface TranslationCandidateFilters {
+  country?: string
+  lang?: ContentTargetLang
 }
 
 const BUCKET_BY_STATUS: Record<string, TranslationStatusBucket> = {
@@ -57,140 +77,179 @@ function isoOrNull(value: Date | string | null): string | null {
   return value instanceof Date ? value.toISOString() : value
 }
 
-export async function readTranslationStatusByCountry(): Promise<Record<string, TranslationStatusCounts>> {
-  const db = getPool()
-  if (!db) return {}
-  const { rows } = await db.query<{ country: string; status: string; count: string }>(
-    `SELECT a.country, t.status, count(*) AS count
-     FROM auction_translations t
-     JOIN auctions a ON a.platform = t.platform AND a.external_id = t.external_id
-     GROUP BY a.country, t.status`,
-  )
-  const out: Record<string, TranslationStatusCounts> = {}
-  for (const row of rows) {
-    const bucket = BUCKET_BY_STATUS[row.status]
-    if (!bucket) continue
-    const counts = out[row.country] ?? (out[row.country] = { done: 0, error: 0, open: 0, total: 0 })
-    const n = Number(row.count)
-    counts[bucket] += n
-    counts.total += n
-  }
-  return out
+function bucketOf(candidate: TranslationCandidate): TranslationStatusBucket {
+  return candidate.status == null ? 'open' : (BUCKET_BY_STATUS[candidate.status] ?? 'open')
 }
 
-/** Every retryable (auction, lang) identity in one country/bucket,
- *  unpaginated. A pending row is retried only after its claim lease has
- *  expired: claimAuctionTranslation cannot safely take an active claim over,
- *  so including it here made the bulk endpoint report a successful retry
- *  without actually starting one. */
-export async function readTranslationStatusIdentities(
-  country: string,
-  bucket: TranslationStatusBucket,
-): Promise<{ platform: string; externalId: string; lang: ContentTargetLang }[]> {
+function isStalePending(candidate: TranslationCandidate): boolean {
+  if (candidate.status !== 'pending' || candidate.startedAt == null) return false
+  const startedAt = new Date(candidate.startedAt).getTime()
+  return Number.isFinite(startedAt) && startedAt < Date.now() - AUCTION_TRANSLATION_CLAIM_LEASE_MS
+}
+
+function isInBucket(candidate: TranslationCandidate, bucket: TranslationStatusBucket): boolean {
+  if (bucketOf(candidate) !== bucket) return false
+  return bucket !== 'open' || candidate.status == null || isStalePending(candidate)
+}
+
+/**
+ * Returns every viable translation target for the latest detail version.
+ * Filtering source-language passthroughs in TypeScript deliberately reuses
+ * countryContentLanguage's CLDR inference, so enabling a new country keeps
+ * this overview in lockstep with the public translation endpoint.
+ */
+async function readTranslationCandidates(filters: TranslationCandidateFilters = {}): Promise<TranslationCandidate[]> {
   const db = getPool()
   if (!db) return []
-  const status = Object.entries(BUCKET_BY_STATUS).find(([, b]) => b === bucket)?.[0]
-  if (!status) return []
-  const pendingLeaseClause = bucket === 'open'
-    ? ' AND t.started_at < now() - $3::interval'
-    : ''
-  const { rows } = await db.query<{ platform: string; external_id: string; lang: string }>(
-    `SELECT a.platform, a.external_id, t.lang
-     FROM auction_translations t
-     JOIN auctions a ON a.platform = t.platform AND a.external_id = t.external_id
-     WHERE a.country = $1 AND t.status = $2${pendingLeaseClause}`,
-    bucket === 'open'
-      ? [country, status, AUCTION_TRANSLATION_CLAIM_LEASE]
-      : [country, status],
+  const country = filters.country?.toLowerCase()
+  const targetLanguages = filters.lang ? [filters.lang] : CONTENT_TARGET_LANGS
+  const { rows } = await db.query<{
+    country: string
+    platform: string
+    external_id: string
+    title: string | null
+    region: string
+    case_number: string
+    lang: string
+    status: 'pending' | 'completed' | 'failed' | null
+    error_message: string | null
+    started_at: Date | string | null
+  }>(
+    `SELECT a.country, a.platform, a.external_id, a.title, a.region, a.case_number,
+            target.lang, t.status, t.error_message, t.started_at
+       FROM auctions a
+       JOIN auction_details d
+         ON d.platform = a.platform AND d.external_id = a.external_id AND d.is_latest = true
+       CROSS JOIN unnest($1::text[]) AS target(lang)
+       LEFT JOIN auction_translations t
+         ON t.platform = a.platform AND t.external_id = a.external_id
+        AND t.version = d.version AND t.lang = target.lang
+      WHERE ($2::text IS NULL OR lower(a.country) = $2)
+        AND (a.title IS NOT NULL OR d.address IS NOT NULL OR d.description IS NOT NULL
+          OR d.document_summary IS NOT NULL OR d.extraction_texts IS NOT NULL)`,
+    [targetLanguages, country ?? null],
   )
-  return rows.map((row) => ({ platform: row.platform, externalId: row.external_id, lang: row.lang as ContentTargetLang }))
-}
-
-export async function readTranslationStatusList(
-  country: string,
-  bucket: TranslationStatusBucket,
-  { limit = 50, offset = 0, search = '', sort, direction = 'asc' }: TranslationStatusListOptions = {},
-): Promise<TranslationStatusList> {
-  const db = getPool()
-  if (!db) return { items: [], total: 0 }
-  const status = Object.entries(BUCKET_BY_STATUS).find(([, b]) => b === bucket)?.[0]
-  if (!status) return { items: [], total: 0 }
-  const filter = search.trim()
-  if (filter || sort) {
-    const orderBy: Record<TranslationStatusSort, string> = {
-      platform: 'a.platform', title: 'a.title', region: 'a.region', error: 't.error_message', lang: 't.lang', startedAt: 't.started_at',
-    }
-    const params: (string | number)[] = [country, status]
-    const filterClause = filter
-      ? ` AND concat_ws(' ', a.platform, a.external_id, a.title, a.region, a.case_number, t.lang, t.error_message) ILIKE $${params.push(`%${filter}%`)}`
-      : ''
-    const order = sort
-      ? `${orderBy[sort]} ${direction === 'desc' ? 'DESC' : 'ASC'}, a.platform ASC, a.external_id ASC`
-      : 't.started_at DESC, a.platform ASC, a.external_id ASC'
-    const pageParams = [...params, limit, offset]
-    const [{ rows }, { rows: countRows }] = await Promise.all([
-      db.query<{
-        platform: string; external_id: string; title: string | null; region: string; case_number: string
-        lang: string; error_message: string | null; started_at: Date | string
-      }>(
-        `SELECT a.platform, a.external_id, a.title, a.region, a.case_number, t.lang, t.error_message, t.started_at
-         FROM auction_translations t JOIN auctions a ON a.platform = t.platform AND a.external_id = t.external_id
-         WHERE a.country = $1 AND t.status = $2${filterClause}
-         ORDER BY ${order} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
-        pageParams,
-      ),
-      db.query<{ count: string }>(
-        `SELECT count(*) AS count FROM auction_translations t JOIN auctions a ON a.platform = t.platform AND a.external_id = t.external_id
-         WHERE a.country = $1 AND t.status = $2${filterClause}`,
-        params,
-      ),
-    ])
-    return {
-      items: rows.map((row) => ({
-        platform: row.platform, externalId: row.external_id, title: row.title, region: row.region,
-        caseNumber: row.case_number, lang: row.lang, lastErrorMessage: row.error_message, startedAt: isoOrNull(row.started_at)!,
-      })),
-      total: Number(countRows[0]?.count ?? 0),
-    }
-  }
-  const [{ rows }, { rows: countRows }] = await Promise.all([
-    db.query<{
-      platform: string
-      external_id: string
-      title: string | null
-      region: string
-      case_number: string
-      lang: string
-      error_message: string | null
-      started_at: Date | string
-    }>(
-      `SELECT a.platform, a.external_id, a.title, a.region, a.case_number,
-              t.lang, t.error_message, t.started_at
-       FROM auction_translations t
-       JOIN auctions a ON a.platform = t.platform AND a.external_id = t.external_id
-       WHERE a.country = $1 AND t.status = $2
-       ORDER BY t.started_at DESC LIMIT $3 OFFSET $4`,
-      [country, status, limit, offset],
-    ),
-    db.query<{ count: string }>(
-      `SELECT count(*) AS count
-       FROM auction_translations t
-       JOIN auctions a ON a.platform = t.platform AND a.external_id = t.external_id
-       WHERE a.country = $1 AND t.status = $2`,
-      [country, status],
-    ),
-  ])
-  return {
-    items: rows.map((row) => ({
+  return rows
+    .filter((row) => !isPassthroughLanguage(row.country, row.lang as ContentTargetLang))
+    .map((row) => ({
+      country: row.country.toLowerCase(),
       platform: row.platform,
       externalId: row.external_id,
       title: row.title,
       region: row.region,
       caseNumber: row.case_number,
-      lang: row.lang,
+      lang: row.lang as ContentTargetLang,
+      status: row.status,
       lastErrorMessage: row.error_message,
-      startedAt: isoOrNull(row.started_at)!,
+      startedAt: row.started_at,
+    }))
+}
+
+export async function readTranslationStatusByCountry(): Promise<Record<string, TranslationStatusCounts>> {
+  const byLanguage = await readTranslationStatusByCountryAndLanguage()
+  const out: Record<string, TranslationStatusCounts> = {}
+  for (const [country, languages] of Object.entries(byLanguage)) {
+    const counts = out[country] = { done: 0, error: 0, open: 0, total: 0 }
+    for (const languageCounts of Object.values(languages)) {
+      if (!languageCounts) continue
+      counts.done += languageCounts.done
+      counts.error += languageCounts.error
+      counts.open += languageCounts.open
+      counts.total += languageCounts.total
+    }
+  }
+  return out
+}
+
+/** Same status universe as the aggregate, retained by target language for the
+ * country overview's separate German/English cards. */
+export async function readTranslationStatusByCountryAndLanguage(): Promise<Record<string, TranslationStatusByLanguage>> {
+  const candidates = await readTranslationCandidates()
+  const out: Record<string, TranslationStatusByLanguage> = {}
+  for (const candidate of candidates) {
+    if (candidate.status === 'pending' && !isStalePending(candidate)) continue
+    const languages = out[candidate.country] ?? (out[candidate.country] = {})
+    const counts = languages[candidate.lang] ?? (languages[candidate.lang] = { done: 0, error: 0, open: 0, total: 0 })
+    counts[bucketOf(candidate)]++
+    counts.total++
+  }
+  return out
+}
+
+/** Every retryable (auction, lang) identity in one country/bucket.
+ * Unstarted candidates are retryable open entries; active pending claims are
+ * intentionally excluded until their lease expires. */
+export async function readTranslationStatusIdentities(
+  country: string,
+  bucket: TranslationStatusBucket,
+  lang?: ContentTargetLang,
+): Promise<{ platform: string; externalId: string; lang: ContentTargetLang }[]> {
+  const normalizedCountry = country.toLowerCase()
+  const candidates = await readTranslationCandidates({ country: normalizedCountry, lang })
+  return candidates
+    .filter((candidate) => candidate.country === normalizedCountry && isInBucket(candidate, bucket) && (!lang || candidate.lang === lang))
+    .map(({ platform, externalId, lang: targetLang }) => ({ platform, externalId, lang: targetLang }))
+}
+
+export async function readTranslationStatusList(
+  country: string,
+  bucket: TranslationStatusBucket,
+  { limit = 50, offset = 0, search = '', sort, direction = 'asc', lang }: TranslationStatusListOptions = {},
+): Promise<TranslationStatusList> {
+  const normalizedCountry = country.toLowerCase()
+  const filter = search.trim().toLocaleLowerCase()
+  const candidates = (await readTranslationCandidates({ country: normalizedCountry, lang }))
+    .filter((candidate) => candidate.country === normalizedCountry && isInBucket(candidate, bucket) && (!lang || candidate.lang === lang))
+    .filter((candidate) => !filter || [
+      candidate.platform,
+      candidate.externalId,
+      candidate.title,
+      candidate.region,
+      candidate.caseNumber,
+      candidate.lang,
+      candidate.lastErrorMessage,
+    ].some((value) => value?.toLocaleLowerCase().includes(filter)))
+
+  const field = sort ?? 'startedAt'
+  candidates.sort((left, right) => {
+    if (field === 'startedAt') {
+      const milliseconds = (candidate: TranslationCandidate): number => {
+        if (candidate.startedAt == null) return Number.NEGATIVE_INFINITY
+        const value = new Date(candidate.startedAt).getTime()
+        return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY
+      }
+      const result = milliseconds(left) - milliseconds(right)
+        || left.platform.localeCompare(right.platform)
+        || left.externalId.localeCompare(right.externalId)
+        || left.lang.localeCompare(right.lang)
+      return direction === 'desc' ? -result : result
+    }
+    const value = (candidate: TranslationCandidate): string => {
+      if (field === 'platform') return candidate.platform
+      if (field === 'title') return candidate.title ?? ''
+      if (field === 'region') return candidate.region
+      if (field === 'error') return candidate.lastErrorMessage ?? ''
+      if (field === 'lang') return candidate.lang
+      return ''
+    }
+    const result = value(left).localeCompare(value(right))
+      || left.platform.localeCompare(right.platform)
+      || left.externalId.localeCompare(right.externalId)
+      || left.lang.localeCompare(right.lang)
+    return direction === 'desc' ? -result : result
+  })
+
+  return {
+    total: candidates.length,
+    items: candidates.slice(offset, offset + limit).map((candidate) => ({
+      platform: candidate.platform,
+      externalId: candidate.externalId,
+      title: candidate.title,
+      region: candidate.region,
+      caseNumber: candidate.caseNumber,
+      lang: candidate.lang,
+      lastErrorMessage: candidate.lastErrorMessage,
+      startedAt: isoOrNull(candidate.startedAt),
     })),
-    total: Number(countRows[0]?.count ?? 0),
   }
 }

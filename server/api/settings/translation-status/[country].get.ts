@@ -1,4 +1,5 @@
 import { readTranslationStatusList, TRANSLATION_STATUS_SORTS, type TranslationStatusBucket, type TranslationStatusList, type TranslationStatusSort } from '~/server/utils/translation-status'
+import { parseTargetLang } from '~/server/utils/target-lang'
 
 const BUCKETS: TranslationStatusBucket[] = ['done', 'error', 'open']
 const DEFAULT_LIMIT = 50
@@ -19,13 +20,19 @@ export default defineEventHandler(async (event): Promise<TranslationStatusList> 
   const search = String(query.search ?? '').trim()
   const sort = String(query.sort ?? '')
   const direction = String(query.direction ?? 'asc')
+  const lang = parseTargetLang(query.lang)
   if (sort && !TRANSLATION_STATUS_SORTS.includes(sort as TranslationStatusSort)) {
     throw createError({ statusCode: 400, statusMessage: 'sort ist ungültig.' })
   }
   if (!['asc', 'desc'].includes(direction)) {
     throw createError({ statusCode: 400, statusMessage: 'direction muss asc oder desc sein.' })
   }
-  return readTranslationStatusList(country, bucket, search || sort
-    ? { limit, offset, search, sort: (sort || undefined) as TranslationStatusSort | undefined, direction: direction as 'asc' | 'desc' }
-    : { limit, offset })
+  return readTranslationStatusList(country, bucket, {
+    limit,
+    offset,
+    search,
+    sort: (sort || undefined) as TranslationStatusSort | undefined,
+    direction: direction as 'asc' | 'desc',
+    lang,
+  })
 })

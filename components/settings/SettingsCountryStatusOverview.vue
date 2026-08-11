@@ -5,9 +5,11 @@ import type { StatusBucket, StatusCounts, StatusList, StatusListItem } from '~/c
 import type { StatusPieSegment } from './SettingsStatusPie.client.vue'
 import SettingsStatusPie from './SettingsStatusPie.client.vue'
 import SettingsAutomationControlsCard from './SettingsAutomationControlsCard.vue'
+import SettingsTranslationLanguageStatusCard from './SettingsTranslationLanguageStatusCard.vue'
 import { useSettingsError } from '~/composables/settings/useSettingsError'
 import { useSettingsTaskOverview } from '~/composables/settings/useSettingsTaskOverview'
 import { usePollWhileActive } from '~/composables/settings/usePollWhileActive'
+import { CONTENT_TARGET_LANGS, isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
 
 type ProcessingStatusKind = 'crawl' | 'llm' | 'translation'
 type StatusKind = ProcessingStatusKind | 'osm'
@@ -33,6 +35,7 @@ const { start: startTranslationRetryPolling } = usePollWhileActive(
 )
 
 const counts = ref<Record<ProcessingStatusKind, Record<string, StatusCounts>>>({ crawl: {}, llm: {}, translation: {} })
+const translationByCountry = ref<Record<string, Partial<Record<ContentTargetLang, StatusCounts>>>>({})
 const osmByCountry = ref<Record<string, OsmImportCountryStatus>>({})
 const pending = ref(false)
 const loadError = ref<string | null>(null)
@@ -43,7 +46,7 @@ const actionError = ref<string | null>(null)
 // attempts yet) still receives every status card.
 const enabledCountryCodes = ref<string[] | null>(null)
 
-const selected = ref<{ country: string; kind: StatusKind; bucket: StatusBucket } | null>(null)
+const selected = ref<{ country: string; kind: StatusKind; bucket: StatusBucket; targetLang?: ContentTargetLang } | null>(null)
 const list = ref<StatusList>({ items: [], total: 0 })
 const listPending = ref(false)
 const listError = ref<string | null>(null)
@@ -112,6 +115,20 @@ function statusSegments(kind: ProcessingStatusKind, country: string): StatusPieS
   }))
 }
 
+function translationTargetLanguages(country: string): ContentTargetLang[] {
+  return CONTENT_TARGET_LANGS.filter((lang) => !isPassthroughLanguage(country, lang))
+}
+
+function translationSegments(country: string, lang: ContentTargetLang): StatusPieSegment[] {
+  const row = translationByCountry.value[country]?.[lang] ?? EMPTY_COUNTS
+  return (['done', 'open', 'error'] as const).map((bucket) => ({
+    key: bucket,
+    label: bucketLabels.value[bucket],
+    color: STATUS_COLORS[bucket],
+    value: row[bucket],
+  }))
+}
+
 function osmSegments(country: string): StatusPieSegment[] {
   const osm = osmByCountry.value[country]
   return [
@@ -128,10 +145,11 @@ async function load(): Promise<void> {
     const [crawl, llm, translation, osm] = await Promise.all([
       $fetch<Record<string, StatusCounts>>('/api/settings/crawl-status'),
       $fetch<Record<string, StatusCounts>>('/api/settings/llm-status'),
-      $fetch<Record<string, StatusCounts>>('/api/settings/translation-status'),
+      $fetch<Record<string, Partial<Record<ContentTargetLang, StatusCounts>>>>('/api/settings/translation-status-by-language'),
       $fetch<{ countries: OsmImportCountryStatus[] }>('/api/settings/osm-import'),
     ])
-    counts.value = { crawl, llm, translation }
+    counts.value = { crawl, llm, translation: {} }
+    translationByCountry.value = translation
     osmByCountry.value = Object.fromEntries(osm.countries.map((country) => [country.code, country]))
   } catch (err) {
     loadError.value = normalizeSettingsError(err, t('settings.statusOverview.loadError'))
@@ -152,8 +170,8 @@ const { start: startOsmPolling } = usePollWhileActive(
   { intervalMs: 30_000, maxAttempts: 20 },
 )
 
-function selectedBucket(country: string, kind: StatusKind): StatusBucket | null {
-  return selected.value?.country === country && selected.value.kind === kind ? selected.value.bucket : null
+function selectedBucket(country: string, kind: StatusKind, targetLang?: ContentTargetLang): StatusBucket | null {
+  return selected.value?.country === country && selected.value.kind === kind && selected.value.targetLang === targetLang ? selected.value.bucket : null
 }
 
 async function loadList(): Promise<void> {
@@ -171,6 +189,7 @@ async function loadList(): Promise<void> {
         search: tableSearch.value || undefined,
         sort: tableSort.value,
         direction: tableDirection.value,
+        lang: target.kind === 'translation' ? target.targetLang : undefined,
       },
     })
     if (requestId !== listRequestId) return
@@ -183,9 +202,9 @@ async function loadList(): Promise<void> {
   }
 }
 
-function selectSegment(country: string, kind: StatusKind, bucket: string): void {
+function selectSegment(country: string, kind: StatusKind, bucket: string, targetLang?: ContentTargetLang): void {
   const statusBucket = bucket as StatusBucket
-  if (selected.value?.country === country && selected.value.kind === kind && selected.value.bucket === statusBucket) {
+  if (selected.value?.country === country && selected.value.kind === kind && selected.value.targetLang === targetLang && selected.value.bucket === statusBucket) {
     selected.value = null
     return
   }
@@ -196,15 +215,15 @@ function selectSegment(country: string, kind: StatusKind, bucket: string): void 
     tableSort.value = 'platform'
     tableDirection.value = 'asc'
   }
-  selected.value = { country, kind, bucket: statusBucket }
+  selected.value = { country, kind, bucket: statusBucket, targetLang }
   tableOffset.value = 0
   clearTimeout(filterTimer)
   tableSearch.value = ''
   void loadList()
 }
 
-async function runBulkRetry(country: string, kind: StatusKind, bucket: 'open' | 'error'): Promise<void> {
-  const key = `${country}:${kind}:${bucket}`
+async function runBulkRetry(country: string, kind: StatusKind, bucket: 'open' | 'error', targetLang?: ContentTargetLang): Promise<void> {
+  const key = `${country}:${kind}:${targetLang ?? ''}:${bucket}`
   actionPending.value = key
   actionError.value = null
   try {
@@ -215,7 +234,7 @@ async function runBulkRetry(country: string, kind: StatusKind, bucket: 'open' | 
       startProgressPolling()
       await $fetch(`/api/settings/countries/${country}/${bucket === 'open' ? 'reprocess-backlog' : 'reprocess-retry-failed'}`, { method: 'POST' })
     } else if (kind === 'translation') {
-      await $fetch(`/api/settings/countries/${country}/${bucket === 'open' ? 'translation-retry-open' : 'translation-retry-failed'}`, { method: 'POST' })
+      await $fetch(`/api/settings/countries/${country}/${bucket === 'open' ? 'translation-retry-open' : 'translation-retry-failed'}`, { method: 'POST', body: { lang: targetLang } })
       startTranslationRetryPolling()
     } else if (bucket === 'open') {
       await $fetch(`/api/settings/osm-enrichment/${country}`, { method: 'POST' })
@@ -352,9 +371,9 @@ onBeforeUnmount(() => clearTimeout(filterTimer))
         <Card class="overflow-visible">
           <CardContent class="space-y-5">
             <div class="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
-              <section v-for="kind in (['crawl', 'llm', 'translation'] as ProcessingStatusKind[])" :key="kind" class="flex min-w-0 flex-col rounded-lg border bg-muted/15 p-4">
+              <section v-for="kind in (['crawl', 'llm'] as const)" :key="kind" class="flex min-w-0 flex-col rounded-lg border bg-muted/15 p-4">
                 <h3 class="mb-3 text-sm font-semibold">
-                  {{ kind === 'crawl' ? $t('settings.crawlStatus.title') : kind === 'llm' ? $t('settings.llmStatus.title') : $t('settings.translationStatus.title') }}
+                  {{ kind === 'crawl' ? $t('settings.crawlStatus.title') : $t('settings.llmStatus.title') }}
                 </h3>
                 <SettingsStatusPie
                   :segments="statusSegments(kind, country)"
@@ -364,7 +383,6 @@ onBeforeUnmount(() => clearTimeout(filterTimer))
                 />
                 <div class="mt-4 grid gap-2">
                   <Button
-                    v-if="kind === 'crawl' || kind === 'llm'"
                     type="button"
                     variant="secondary"
                     size="sm"
@@ -376,17 +394,30 @@ onBeforeUnmount(() => clearTimeout(filterTimer))
                     {{ kind === 'crawl' ? $t('settings.countryOverview.forceCrawl') : $t('settings.countryOverview.forceLlm') }}
                   </Button>
                   <Button type="button" variant="outline" size="sm" :disabled="actionPending !== null || (counts[kind][country]?.open ?? 0) === 0" @click="runBulkRetry(country, kind, 'open')">
-                    <Loader2 v-if="actionPending === `${country}:${kind}:open`" class="h-4 w-4 animate-spin" />
+                    <Loader2 v-if="actionPending === `${country}:${kind}::open`" class="h-4 w-4 animate-spin" />
                     <RefreshCw v-else class="h-4 w-4" />
-                    {{ kind === 'crawl' ? $t('settings.crawlStatus.retryOpen') : kind === 'llm' ? $t('settings.llmStatus.retryOpen') : $t('settings.translationStatus.retryOpen') }}
+                    {{ kind === 'crawl' ? $t('settings.crawlStatus.retryOpen') : $t('settings.llmStatus.retryOpen') }}
                   </Button>
                   <Button type="button" variant="outline" size="sm" :disabled="actionPending !== null || (counts[kind][country]?.error ?? 0) === 0" @click="runBulkRetry(country, kind, 'error')">
-                    <Loader2 v-if="actionPending === `${country}:${kind}:error`" class="h-4 w-4 animate-spin" />
+                    <Loader2 v-if="actionPending === `${country}:${kind}::error`" class="h-4 w-4 animate-spin" />
                     <RefreshCw v-else class="h-4 w-4" />
-                    {{ kind === 'crawl' ? $t('settings.crawlStatus.retryFailed') : kind === 'llm' ? $t('settings.llmStatus.retryFailed') : $t('settings.translationStatus.retryFailed') }}
+                    {{ kind === 'crawl' ? $t('settings.crawlStatus.retryFailed') : $t('settings.llmStatus.retryFailed') }}
                   </Button>
                 </div>
               </section>
+
+              <SettingsTranslationLanguageStatusCard
+                v-for="lang in translationTargetLanguages(country)"
+                :key="`translation:${lang}`"
+                :country="country"
+                :lang="lang"
+                :counts="translationByCountry[country]?.[lang] ?? EMPTY_COUNTS"
+                :selected="selectedBucket(country, 'translation', lang)"
+                :action-pending="actionPending"
+                :segments="translationSegments(country, lang)"
+                @select="(bucket: string) => selectSegment(country, 'translation', bucket, lang)"
+                @retry="(bucket: 'open' | 'error') => runBulkRetry(country, 'translation', bucket, lang)"
+              />
 
               <section class="flex min-w-0 flex-col rounded-lg border bg-muted/15 p-4">
                 <h3 class="mb-3 text-sm font-semibold">{{ $t('settings.osmImport.title') }}</h3>
@@ -397,12 +428,12 @@ onBeforeUnmount(() => clearTimeout(filterTimer))
                 </p>
                 <div class="mt-4 grid gap-2">
                   <Button type="button" variant="outline" size="sm" :disabled="actionPending !== null || (osmByCountry[country]?.openAuctions ?? 0) === 0" @click="runBulkRetry(country, 'osm', 'open')">
-                    <Loader2 v-if="actionPending === `${country}:osm:open`" class="h-4 w-4 animate-spin" />
+                    <Loader2 v-if="actionPending === `${country}:osm::open`" class="h-4 w-4 animate-spin" />
                     <RefreshCw v-else class="h-4 w-4" />
                     {{ $t('settings.osmImport.loadOpen') }}
                   </Button>
                   <Button type="button" variant="outline" size="sm" :disabled="actionPending !== null || (osmByCountry[country]?.errorAuctions ?? 0) === 0" @click="runBulkRetry(country, 'osm', 'error')">
-                    <Loader2 v-if="actionPending === `${country}:osm:error`" class="h-4 w-4 animate-spin" />
+                    <Loader2 v-if="actionPending === `${country}:osm::error`" class="h-4 w-4 animate-spin" />
                     <RefreshCw v-else class="h-4 w-4" />
                     {{ $t('settings.osmImport.retryBlocked') }}
                   </Button>

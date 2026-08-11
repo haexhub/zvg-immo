@@ -514,9 +514,10 @@
     },
     "translationStatus": {
       "title": "Translation status",
-      "description": "Translations only exist once a listing was actually viewed in another language — these numbers show translation attempts, not all listings. Each row can retrigger that one translation individually.",
+      "titleForLang": "Translation status ({lang})",
+      "description": "Per country and target language: available translations, failed attempts, and the remaining LLM translation backlog. Listings in their source language are not counted.",
       "refresh": "Refresh status",
-      "retryOpen": "Retry open",
+      "retryOpen": "Start open translations",
       "retryFailed": "Retry failed",
       "retryRow": "Retry this translation",
       "empty": "No translation attempts yet.",

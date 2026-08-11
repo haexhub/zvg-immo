@@ -114,6 +114,10 @@ export async function retryAuctionTranslation(
 // awaits one item's full claim+translate before picking up the next, unlike
 // the single-row path above which is intentionally fire-and-forget.
 const BULK_RETRY_CONCURRENCY = 3
+/** Caps one admin invocation so a country-wide backlog cannot create an
+ * unbounded amount of queued LLM work. Further clicks continue with remaining
+ * unstarted rows once the current claims finish or expire. */
+export const MAX_BULK_TRANSLATION_RETRIES = 100
 
 /** Country-wide bulk retry (settings translation card's "offene"/"fehlerhafte"
  *  buttons) — best-effort per item, does not throw. */
