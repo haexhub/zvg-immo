@@ -5,7 +5,7 @@ import { normalizePhoto } from '~/lib/photo'
 import { crawlAll, ensureEnabledCountriesLoaded, listRegions, platforms } from '~/server/crawlers/registry'
 import { ensureAuctionIdentity, upsertCurrentAuctions } from '~/server/utils/current-auctions'
 import { writeAuctionDetails } from '~/server/utils/auction-details'
-import { readAuctionRecordMap } from '~/server/utils/auction-record'
+import { readAuctionRecordMap, type AuctionRecord } from '~/server/utils/auction-record'
 import { applyAuctionExtraction } from '~/server/utils/auction-extraction'
 import { mergeStoredAuction } from '~/server/utils/auction-merge'
 import { readLatestArtifactVersions } from '~/server/utils/artifact-version-state'
@@ -36,7 +36,7 @@ import { recordTaskRunEnd, recordTaskRunProgress, recordTaskRunStart, type TaskR
 import { recordTaskRunError } from '~/server/utils/task-run-errors'
 import { runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-task'
 import { fillAuctionGeocodes } from '~/server/utils/auction-geocoding'
-import { prepareEnrichWork } from './enrich-work-selection'
+import { loadScopedRetryResult, prepareEnrichWork } from './enrich-work-selection'
 import { finalizeEnrichPersistence } from './enrich-persistence'
 
 const IMAGES_DIR = join(process.cwd(), '.cache_zvg', 'images')
@@ -62,12 +62,22 @@ export interface EnrichOptions {
   force?: boolean
   /** Persist each regional crawl into the serving list cache while archiving. */
   writeListCache?: boolean
+  /** Skip the live region crawl and (re)archive exactly these already-known
+   *  auctions instead — the crawl-status card's single-auction and
+   *  open/failed bulk retry triggers. Every listed identity is always
+   *  processed regardless of existing cache markers (acts like `force`, just
+   *  scoped to these); finalizeEnrichPersistence's country-wide bookkeeping
+   *  (stale-listing cleanup, history snapshot) is skipped since there was no
+   *  live crawl backing it — the per-auction worker loop below already
+   *  persists everything these identities need. */
+  identities?: { platform: string; externalId: string }[]
 }
 
 export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) {
     const startedAt = Date.now()
     const capturedAt = new Date(startedAt).toISOString()
-    console.log(`[enrich] start${opts.country ? ` (country=${opts.country})` : ''}${opts.force ? ' force=true' : ''}`)
+    const scopedRetry = (opts.identities?.length ?? 0) > 0
+    console.log(`[enrich] start${opts.country ? ` (country=${opts.country})` : ''}${opts.force ? ' force=true' : ''}${scopedRetry ? ` identities=${opts.identities!.length}` : ''}`)
 
     let regionsDone = 0
     let regionsTotal = 0
@@ -113,12 +123,22 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
       runErrors.push(message)
       void recordTaskRunError('enrich', { category, message, platform: identity?.platform, externalId: identity?.externalId })
     }
-    const result = await crawlAll({
-      immobilienOnly: true,
-      enrichDetails: false,
-      country: opts.country,
-      signal,
-      onRegionResult: opts.writeListCache
+    // Scoped retry skips the live region crawl entirely — see
+    // loadScopedRetryResult. `preloadedRecords` is reused below instead of
+    // re-reading the same records map a second time.
+    let preloadedRecords: Map<string, AuctionRecord> | undefined
+    let result: Awaited<ReturnType<typeof crawlAll>>
+    if (scopedRetry) {
+      const scoped = await loadScopedRetryResult(opts.country, opts.identities!, capturedAt)
+      result = scoped.result
+      preloadedRecords = scoped.records
+    } else {
+      result = await crawlAll({
+        immobilienOnly: true,
+        enrichDetails: false,
+        country: opts.country,
+        signal,
+        onRegionResult: opts.writeListCache
           ? async (country, region, regionResult) => {
             await writeListCache(country, region, regionResult)
             await matchAlerts(country, region, regionResult)
@@ -131,20 +151,21 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
               await archiveAuction(auction, capturedAt)
             }
           }
-        : undefined,
-      onRegionDone: (done, total, last) => {
-        regionsDone = done
-        regionsTotal = total
-        const entry = regionsByCountry.get(last.country) ?? { done: 0, total: 0 }
-        entry.done++
-        regionsByCountry.set(last.country, entry)
-        void recordTaskRunProgress(
-          'enrich',
-          { regionsDone, regionsTotal, archivedDone: 0, archivedTotal: 0 },
-          { progressByCountry: snapshotProgressByCountry() },
-        )
-      },
-    })
+          : undefined,
+        onRegionDone: (done, total, last) => {
+          regionsDone = done
+          regionsTotal = total
+          const entry = regionsByCountry.get(last.country) ?? { done: 0, total: 0 }
+          entry.done++
+          regionsByCountry.set(last.country, entry)
+          void recordTaskRunProgress(
+            'enrich',
+            { regionsDone, regionsTotal, archivedDone: 0, archivedTotal: 0 },
+            { progressByCountry: snapshotProgressByCountry() },
+          )
+        },
+      })
+    }
     // Identity must exist before this task's own tail loop below archives
     // detail data (archiveAuction's artifact_captures row has an FK on
     // (platform, external_id)) — refresh.ts/country-rebuild.ts already do
@@ -154,7 +175,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
     await writeAuctionCrawlFetchState(result.auctions)
     const fetchStates = await readAuctionFetchStates()
     const artifactVersions = await readLatestArtifactVersions()
-    const records = await readAuctionRecordMap(opts.country)
+    const records = preloadedRecords ?? await readAuctionRecordMap(opts.country)
     const cachedGeocodes = await fillAuctionGeocodes(result.auctions, { fetchMissing: false })
     if (cachedGeocodes.geocoded > 0 || cachedGeocodes.failed > 0) {
       console.log(
@@ -441,15 +462,20 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
       { progressByCountry: snapshotProgressByCountry(), flush: true },
     )
 
-    await finalizeEnrichPersistence({
-      result,
-      records,
-      persistedDetails,
-      capturedAt,
-      at,
-      pushRunError,
-      signal,
-    })
+    // Country-wide bookkeeping (stale-listing cleanup, history snapshot) only
+    // makes sense against a real crawl result — a scoped retry's worker loop
+    // above already persisted everything its identities need.
+    if (!scopedRetry) {
+      await finalizeEnrichPersistence({
+        result,
+        records,
+        persistedDetails,
+        capturedAt,
+        at,
+        pushRunError,
+        signal,
+      })
+    }
 
     const durationMs = Date.now() - startedAt
     console.log(

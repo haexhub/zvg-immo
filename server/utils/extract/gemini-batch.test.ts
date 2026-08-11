@@ -467,7 +467,7 @@ describe('fetchGeminiBatchResults', () => {
     expect(results[0]!.key).toBe('zvg-portal:1')
     expect(results[0]!.extraction?.propertyType).toBe('einfamilienhaus')
     expect(results[0]!.extraction?.landAreaSqm).toBe(500)
-    expect(results[1]).toEqual({ key: 'zvg-portal:2', extraction: null })
+    expect(results[1]).toEqual({ key: 'zvg-portal:2', extraction: null, error: 'internal error' })
   })
 
   it('skips malformed lines instead of throwing', async () => {
@@ -477,7 +477,7 @@ describe('fetchGeminiBatchResults', () => {
 
     const results = await fetchGeminiBatchResults('files/results', config)
 
-    expect(results).toEqual([{ key: 'zvg-portal:1', extraction: null }])
+    expect(results).toEqual([{ key: 'zvg-portal:1', extraction: null, error: 'Keine gültige Extraktion in der Batch-Antwort' }])
   })
 
   it('falls back to metadata.key and input-order customIdMap for result lines', async () => {
@@ -499,6 +499,7 @@ describe('fetchGeminiBatchResults', () => {
     expect(results[1]).toEqual({
       key: 'zvg-portal:2',
       extraction: expect.objectContaining({ landAreaSqm: 600 }),
+      error: null,
     })
   })
 

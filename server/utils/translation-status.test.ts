@@ -3,7 +3,7 @@ import { getPool } from './db'
 
 vi.mock('./db', () => ({ getPool: vi.fn() }))
 
-const { readTranslationStatusByCountry, readTranslationStatusList } = await import('./translation-status')
+const { readTranslationStatusByCountry, readTranslationStatusList, readTranslationStatusIdentities } = await import('./translation-status')
 
 afterEach(() => vi.clearAllMocks())
 
@@ -53,5 +53,28 @@ describe('readTranslationStatusList', () => {
       total: 9,
     })
     expect(query.mock.calls[0]?.[1]).toEqual(['se', 'failed', 50, 0])
+  })
+})
+
+describe('readTranslationStatusIdentities', () => {
+  it('returns every matching (auction, lang) identity unpaginated, for the bulk retry endpoints', async () => {
+    const query = vi.fn().mockResolvedValue({
+      rows: [
+        { platform: 'se-kronofogden', external_id: '101738', lang: 'de' },
+        { platform: 'se-kronofogden', external_id: '101914', lang: 'en' },
+      ],
+    })
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+
+    await expect(readTranslationStatusIdentities('se', 'error')).resolves.toEqual([
+      { platform: 'se-kronofogden', externalId: '101738', lang: 'de' },
+      { platform: 'se-kronofogden', externalId: '101914', lang: 'en' },
+    ])
+    expect(query.mock.calls[0]?.[1]).toEqual(['se', 'failed'])
+  })
+
+  it('returns an empty array when no DB is configured', async () => {
+    vi.mocked(getPool).mockReturnValue(null)
+    await expect(readTranslationStatusIdentities('se', 'error')).resolves.toEqual([])
   })
 })

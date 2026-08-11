@@ -192,7 +192,7 @@ describe('fetchOpenRouterBatchResults', () => {
     expect(results[0]!.key).toBe('zvg-portal:7265')
     expect(results[0]!.extraction?.propertyType).toBe('einfamilienhaus')
     expect(results[0]!.extraction?.landAreaSqm).toBe(500)
-    expect(results[1]).toEqual({ key: 'zvg-portal:9999', extraction: null })
+    expect(results[1]).toEqual({ key: 'zvg-portal:9999', extraction: null, error: 'failed' })
   })
 
   it('returns an empty array when the fetch fails', async () => {

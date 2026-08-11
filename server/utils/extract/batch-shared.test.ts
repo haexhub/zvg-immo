@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { apiBase, customIdForKey, extractOfetchErrorMessage, isTransientBatchError } from './batch-shared'
+import { apiBase, customIdForKey, extractBatchItemErrorMessage, extractOfetchErrorMessage, isTransientBatchError } from './batch-shared'
 
 describe('extractOfetchErrorMessage', () => {
   it('reads the plain {error:{message}} shape (OpenAI/Anthropic/OpenRouter)', () => {
@@ -46,6 +46,25 @@ describe('customIdForKey', () => {
 
   it('stays within the 64-char id limit most batch APIs impose', () => {
     expect(customIdForKey('zvg-portal:7265', 12345).length).toBeLessThanOrEqual(64)
+  })
+})
+
+describe('extractBatchItemErrorMessage', () => {
+  it('prefers an explicit top-level error message', () => {
+    expect(extractBatchItemErrorMessage({ message: 'rate limited' }, { status_code: 200 })).toBe('rate limited')
+  })
+
+  it('falls back to the response body\'s own error message on a non-200 status', () => {
+    expect(extractBatchItemErrorMessage(null, { status_code: 400, body: { error: { message: 'bad request' } } })).toBe('bad request')
+  })
+
+  it('falls back to a bare HTTP status when the body has no message', () => {
+    expect(extractBatchItemErrorMessage(null, { status_code: 500, body: null })).toBe('HTTP 500')
+  })
+
+  it('returns null when there is nothing to report (a genuine 200 with no error)', () => {
+    expect(extractBatchItemErrorMessage(null, { status_code: 200, body: {} })).toBeNull()
+    expect(extractBatchItemErrorMessage(undefined, undefined)).toBeNull()
   })
 })
 

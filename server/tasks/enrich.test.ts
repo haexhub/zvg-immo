@@ -260,3 +260,36 @@ describe('runEnrich structured persistence', () => {
     })
   })
 })
+
+describe('runEnrich scoped identity retry', () => {
+  it('skips the live crawl and force-reprocesses exactly the requested identity, bypassing finalizeEnrichPersistence', async () => {
+    const listing = auction()
+    vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map([
+      ['test-platform:42', { auction: listing, detailsId: 1, detailsVersion: 1, artifactVersionId: 5 }],
+    ]))
+    // Looks already-done (detailFetchedAt set) — without identities forcing
+    // it, needsEnrich would skip it entirely.
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([
+      ['test-platform:42', fetchState({ detailFetchedAt: '2026-08-01T10:00:00.000Z' })],
+    ]))
+
+    const outcome = await runEnrich({ identities: [{ platform: 'test-platform', externalId: '42' }] })
+
+    expect(crawlAll).not.toHaveBeenCalled()
+    expect(archiveAuction).toHaveBeenCalledWith(listing, expect.any(String))
+    expect(upsertCurrentAuctions).toHaveBeenCalledWith([listing], expect.any(String))
+    // finalizeEnrichPersistence's country-wide bookkeeping doesn't apply to a
+    // scoped retry — recordObservations would otherwise fire here too.
+    expect(recordObservations).not.toHaveBeenCalled()
+    expect(outcome.result).toMatchObject({ crawled: 1, archived: 1 })
+  })
+
+  it('drops identities that no longer exist in the records map instead of throwing', async () => {
+    vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map())
+
+    const outcome = await runEnrich({ identities: [{ platform: 'test-platform', externalId: 'gone' }] })
+
+    expect(crawlAll).not.toHaveBeenCalled()
+    expect(outcome.result).toMatchObject({ crawled: 0, archived: 0 })
+  })
+})

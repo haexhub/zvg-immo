@@ -214,7 +214,7 @@ export async function fetchAnthropicBatchResults(
   jobName: string,
   config: LlmConfig,
   customIdMap: Record<string, string>,
-): Promise<{ key: string; extraction: ClampedExtraction | null }[]> {
+): Promise<{ key: string; extraction: ClampedExtraction | null; error?: string | null }[]> {
   const text = await $fetch<string>(`${apiBase(config)}/v1/messages/batches/${jobName}/results`, {
     headers: {
       'anthropic-version': '2023-06-01',
@@ -223,11 +223,11 @@ export async function fetchAnthropicBatchResults(
     signal: AbortSignal.timeout(120_000),
     responseType: 'text',
   })
-  const out: { key: string; extraction: ClampedExtraction | null }[] = []
+  const out: { key: string; extraction: ClampedExtraction | null; error?: string | null }[] = []
   for (const line of text.split('\n')) {
     const trimmed = line.trim()
     if (!trimmed) continue
-    let parsed: { custom_id?: unknown; result?: { type?: unknown; message?: unknown } }
+    let parsed: { custom_id?: unknown; result?: { type?: unknown; message?: unknown; error?: { message?: unknown } } }
     try {
       parsed = JSON.parse(trimmed) as typeof parsed
     } catch (err) {
@@ -236,8 +236,14 @@ export async function fetchAnthropicBatchResults(
     }
     if (typeof parsed.custom_id !== 'string') continue
     const key = customIdMap[parsed.custom_id] ?? parsed.custom_id
-    const raw = parsed.result?.type === 'succeeded' ? parseExtractionResponse(parsed.result.message) : null
-    out.push({ key, extraction: raw ? clampExtraction(raw) : null })
+    const resultType = typeof parsed.result?.type === 'string' ? parsed.result.type : undefined
+    const raw = resultType === 'succeeded' ? parseExtractionResponse(parsed.result!.message) : null
+    const extraction = raw ? clampExtraction(raw) : null
+    const error = extraction
+      ? null
+      : (typeof parsed.result?.error?.message === 'string' ? parsed.result.error.message : undefined) ??
+        (resultType && resultType !== 'succeeded' ? `Batch-Ergebnis: ${resultType}` : 'Keine gültige Extraktion in der Batch-Antwort')
+    out.push({ key, extraction, error })
   }
   return out
 }

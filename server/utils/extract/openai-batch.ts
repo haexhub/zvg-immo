@@ -9,7 +9,7 @@ import {
   type LlmInput,
 } from './llm'
 import { parseOpenAiExtractionResponse, toOpenAiContent } from './providers/openai-compatible'
-import { apiBase, customIdForKey, extractOfetchErrorMessage, isTransientBatchError } from './batch-shared'
+import { apiBase, customIdForKey, extractBatchItemErrorMessage, extractOfetchErrorMessage, isTransientBatchError } from './batch-shared'
 import { insertLlmBatchJob, recordLlmBatchCapability } from '../llm-batch-jobs'
 import type { PollResult } from './gemini-batch'
 import type { LlmBatchSubmitResult } from './llm-batch'
@@ -238,13 +238,13 @@ export async function fetchOpenAiBatchResults(
   outputFileId: string,
   config: LlmConfig,
   customIdMap: Record<string, string>,
-): Promise<{ key: string; extraction: ClampedExtraction | null }[]> {
+): Promise<{ key: string; extraction: ClampedExtraction | null; error?: string | null }[]> {
   const text = await $fetch<string>(`${apiBase(config)}/files/${outputFileId}/content`, {
     headers: authHeaders(config),
     signal: AbortSignal.timeout(120_000),
     responseType: 'text',
   })
-  const out: { key: string; extraction: ClampedExtraction | null }[] = []
+  const out: { key: string; extraction: ClampedExtraction | null; error?: string | null }[] = []
   for (const line of text.split('\n')) {
     const trimmed = line.trim()
     if (!trimmed) continue
@@ -265,7 +265,12 @@ export async function fetchOpenAiBatchResults(
       parsed.error || parsed.response?.status_code !== 200
         ? null
         : parseOpenAiExtractionResponse(parsed.response.body)
-    out.push({ key, extraction: raw ? clampExtraction(raw) : null })
+    const extraction = raw ? clampExtraction(raw) : null
+    out.push({
+      key,
+      extraction,
+      error: extraction ? null : (extractBatchItemErrorMessage(parsed.error, parsed.response) ?? 'Keine gültige Extraktion in der Batch-Antwort'),
+    })
   }
   return out
 }

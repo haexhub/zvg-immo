@@ -12,6 +12,7 @@ import {
   markLlmBatchJobResolved,
   type LlmBatchJob,
 } from '../utils/llm-batch-jobs'
+import { recordTaskRunError } from '../utils/task-run-errors'
 
 vi.mock('../utils/extract/llm-batch', () => ({ pollLlmBatch: vi.fn(), fetchLlmBatchResults: vi.fn() }))
 vi.mock('../utils/extract/llm-task-config', () => ({ readExtractionLlmConfig: vi.fn() }))
@@ -27,6 +28,7 @@ vi.mock('../utils/llm-batch-jobs', () => ({
   markLlmBatchJobChecked: vi.fn(),
   markLlmBatchJobResolved: vi.fn(),
 }))
+vi.mock('../utils/task-run-errors', () => ({ recordTaskRunError: vi.fn() }))
 vi.stubGlobal('defineTask', (definition: unknown) => definition)
 
 const { runLlmBatchPoll } = await import('./llm-batch-poll')
@@ -230,11 +232,11 @@ describe('runLlmBatchPoll', () => {
     expect(upsertCurrentAuctions).not.toHaveBeenCalled()
   })
 
-  it('increments failures and clears state for a null batch extraction', async () => {
+  it('increments failures, clears state and records the failure message for a null batch extraction', async () => {
     vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job()])
     vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/result' })
     vi.mocked(fetchLlmBatchResults).mockResolvedValue([
-      { key: 'zvg-portal:7265', extraction: null },
+      { key: 'zvg-portal:7265', extraction: null, error: 'Batch item errored' },
     ])
 
     await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 1, merged: 1 })
@@ -242,6 +244,12 @@ describe('runLlmBatchPoll', () => {
       llmBatchJob: null,
       llmArtifactVersionId: null,
       llmFailures: 3,
+    })
+    expect(recordTaskRunError).toHaveBeenCalledWith('reprocess', {
+      category: 'llm',
+      message: 'Batch item errored',
+      platform: 'zvg-portal',
+      externalId: '7265',
     })
   })
 

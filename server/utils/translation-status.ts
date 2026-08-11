@@ -7,6 +7,7 @@
 // the row (no separate error log to join, unlike task_run_errors for crawl).
 
 import { getPool } from './db'
+import type { ContentTargetLang } from '~/lib/content-language'
 
 export type TranslationStatusBucket = 'done' | 'error' | 'open'
 
@@ -63,6 +64,29 @@ export async function readTranslationStatusByCountry(): Promise<Record<string, T
     counts.total += n
   }
   return out
+}
+
+/** Every (auction, lang) identity in one country/bucket, unpaginated — feeds
+ *  the translation-status card's "nur offene"/"nur fehlerhafte" bulk retry
+ *  buttons (see server/utils/translation-retry.ts's retryTranslationsBulk),
+ *  unlike readTranslationStatusList's paginated page-at-a-time shape for the
+ *  drill-down table. */
+export async function readTranslationStatusIdentities(
+  country: string,
+  bucket: TranslationStatusBucket,
+): Promise<{ platform: string; externalId: string; lang: ContentTargetLang }[]> {
+  const db = getPool()
+  if (!db) return []
+  const status = Object.entries(BUCKET_BY_STATUS).find(([, b]) => b === bucket)?.[0]
+  if (!status) return []
+  const { rows } = await db.query<{ platform: string; external_id: string; lang: string }>(
+    `SELECT a.platform, a.external_id, t.lang
+     FROM auction_translations t
+     JOIN auctions a ON a.platform = t.platform AND a.external_id = t.external_id
+     WHERE a.country = $1 AND t.status = $2`,
+    [country, status],
+  )
+  return rows.map((row) => ({ platform: row.platform, externalId: row.external_id, lang: row.lang as ContentTargetLang }))
 }
 
 export async function readTranslationStatusList(

@@ -38,7 +38,7 @@ import {
   type LlmInput,
 } from './llm'
 import { parseOpenAiExtractionResponse, toOpenAiContent } from './providers/openai-compatible'
-import { apiBase, customIdForKey, extractOfetchErrorMessage, isTransientBatchError } from './batch-shared'
+import { apiBase, customIdForKey, extractBatchItemErrorMessage, extractOfetchErrorMessage, isTransientBatchError } from './batch-shared'
 import { insertLlmBatchJob, recordLlmBatchCapability } from '../llm-batch-jobs'
 import type { PollResult } from './gemini-batch'
 import type { LlmBatchSubmitResult } from './llm-batch'
@@ -174,7 +174,7 @@ export async function fetchOpenRouterBatchResults(
   jobName: string,
   config: LlmConfig,
   customIdMap: Record<string, string>,
-): Promise<{ key: string; extraction: ClampedExtraction | null }[]> {
+): Promise<{ key: string; extraction: ClampedExtraction | null; error?: string | null }[]> {
   const id = jobName.slice(JOB_NAME_PREFIX.length)
   try {
     const resp = await $fetch<{
@@ -187,7 +187,7 @@ export async function fetchOpenRouterBatchResults(
       headers: authHeaders(config),
       signal: AbortSignal.timeout(30_000),
     })
-    const out: { key: string; extraction: ClampedExtraction | null }[] = []
+    const out: { key: string; extraction: ClampedExtraction | null; error?: string | null }[] = []
     for (const result of resp.results ?? []) {
       if (typeof result.custom_id !== 'string') continue
       const key = customIdMap[result.custom_id] ?? result.custom_id
@@ -195,7 +195,12 @@ export async function fetchOpenRouterBatchResults(
         result.error || result.response?.status_code !== 200
           ? null
           : parseOpenAiExtractionResponse(result.response.body)
-      out.push({ key, extraction: raw ? clampExtraction(raw) : null })
+      const extraction = raw ? clampExtraction(raw) : null
+      out.push({
+        key,
+        extraction,
+        error: extraction ? null : (extractBatchItemErrorMessage(result.error, result.response) ?? 'Keine gültige Extraktion in der Batch-Antwort'),
+      })
     }
     return out
   } catch (err) {

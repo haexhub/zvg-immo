@@ -47,10 +47,10 @@ export async function pollGeminiBatch(jobName: string, config: LlmConfig): Promi
     return { state: 'pending' }
   } catch (err) { console.warn(`[gemini-batch] poll failed for ${jobName}: ${(err as Error).message}`); return { state: 'pending' } }
 }
-export async function fetchGeminiBatchResults(resultFileName: string, config: LlmConfig, customIdMap: Record<string, string> = {}): Promise<{ key: string; extraction: ClampedExtraction | null }[]> {
+export async function fetchGeminiBatchResults(resultFileName: string, config: LlmConfig, customIdMap: Record<string, string> = {}): Promise<{ key: string; extraction: ClampedExtraction | null; error?: string | null }[]> {
   try {
     const text = await $fetch<string>(`${apiBase(config)}/download/v1beta/${resultFileName}:download`, { query: { alt: 'media' }, headers: { 'x-goog-api-key': config.apiKey ?? '' }, signal: AbortSignal.timeout(120_000), responseType: 'text' })
-    const out: { key: string; extraction: ClampedExtraction | null }[] = []; let lineIndex = 0
+    const out: { key: string; extraction: ClampedExtraction | null; error?: string | null }[] = []; let lineIndex = 0
     for (const line of text.split('\n')) {
       const trimmed = line.trim(); if (!trimmed) continue; const indexKey = String(lineIndex++)
       let parsed: { key?: unknown; metadata?: unknown; response?: unknown; error?: unknown; candidates?: unknown }
@@ -59,8 +59,14 @@ export async function fetchGeminiBatchResults(resultFileName: string, config: Ll
       const key = typeof parsed.key === 'string' ? parsed.key : typeof metadata?.key === 'string' ? metadata.key : customIdMap[indexKey]
       if (typeof key !== 'string') continue
       const response = parsed.response ?? (Array.isArray(parsed.candidates) ? parsed : null)
-      const raw = parsed.error ? null : parseGeminiExtractionResponse(response)
-      out.push({ key, extraction: raw ? clampExtraction(raw) : null })
+      const itemError = parsed.error as { message?: unknown } | undefined
+      const raw = itemError ? null : parseGeminiExtractionResponse(response)
+      const extraction = raw ? clampExtraction(raw) : null
+      out.push({
+        key,
+        extraction,
+        error: extraction ? null : ((typeof itemError?.message === 'string' ? itemError.message : undefined) ?? 'Keine gültige Extraktion in der Batch-Antwort'),
+      })
     }
     return out
   } catch (err) { console.warn(`[gemini-batch] fetch results failed: ${(err as Error).message}`); return [] }

@@ -1,6 +1,7 @@
-import type { Auction } from '~/types/auction'
+import type { Auction, CrawlResult } from '~/types/auction'
+import { MULTI_PLATFORM } from '~/lib/auction-constants'
 import { platforms } from '~/server/crawlers/registry'
-import type { AuctionRecord } from '~/server/utils/auction-record'
+import { readAuctionRecordMap, type AuctionRecord } from '~/server/utils/auction-record'
 import { cacheKey, readVerkehrswertCache } from '~/server/utils/verkehrswert-cache'
 import { getRates } from '~/server/utils/exchange-rate'
 import { interleaveByPlatform } from '~/server/utils/interleave-by-platform'
@@ -12,6 +13,30 @@ const MAX_PHOTO_FAILURES = 3
 const PHOTO_FAILURE_RETRY_COOLDOWN_HOURS = 24
 const PHOTO_PIPELINE_VERSION = 4
 const KRONOFOGDEN_GALLERY_PHOTO_PIPELINE_VERSION = 5
+
+/** Builds a crawlAll()-shaped result for exactly the requested identities,
+ *  loaded from the same records map the rest of a scoped retry run needs
+ *  anyway (`records`, returned alongside for reuse as runEnrich's
+ *  `preloadedRecords`) — instead of paying for a live crawlAll() to
+ *  rediscover auctions the caller already knows about. */
+export async function loadScopedRetryResult(
+  country: string | undefined,
+  identities: { platform: string; externalId: string }[],
+  capturedAt: string,
+): Promise<{ result: CrawlResult & { errors: [] }; records: Map<string, AuctionRecord> }> {
+  const records = await readAuctionRecordMap(country)
+  const wanted = new Set(identities.map((i) => cacheKey(i.platform, i.externalId)))
+  const auctions = [...records.values()]
+    .filter((r) => wanted.has(cacheKey(r.auction.platform, r.auction.externalId)))
+    .map((r) => r.auction)
+  return {
+    records,
+    result: {
+      platform: MULTI_PLATFORM, source: '', countries: [...new Set(auctions.map((a) => a.country))],
+      regions: [], fetchedAt: capturedAt, totalReported: null, auctions, errors: [],
+    },
+  }
+}
 
 export async function prepareEnrichWork({
   opts,
@@ -27,6 +52,11 @@ export async function prepareEnrichWork({
   records: Map<string, AuctionRecord>
 }) {
   const byPlatform = new Map(platforms.map((p) => [p.id, p]))
+  // opts.identities means `auctions` is already exactly the caller's scoped
+  // retry set (see runEnrich) — treat it like force everywhere below, so a
+  // manual "retry this one" / "retry failed" click always re-archives what
+  // was asked for, regardless of whether it currently looks done.
+  const scopedForce = opts.force || (opts.identities?.length ?? 0) > 0
   const rates = await getRates()
   // Re-read below, right before the tail loop: geocode runs 30 min before
   // enrich (see nuxt.config.ts) but can still be writing this cache while
@@ -45,14 +75,14 @@ export async function prepareEnrichWork({
     if (!crawler?.enrichOne) return false
     const key = cacheKey(a.platform, a.externalId)
     const prev = fetchStates.get(key)
-    return opts.force || !prev?.detailFetchedAt || (a.sourceUpdatedIso != null && prev.sourceUpdatedIso !== a.sourceUpdatedIso)
+    return scopedForce || !prev?.detailFetchedAt || (a.sourceUpdatedIso != null && prev.sourceUpdatedIso !== a.sourceUpdatedIso)
   }
   const needsDocumentSetCheck = (a: Auction): boolean => {
     const key = cacheKey(a.platform, a.externalId)
     const latestArtifact = artifactVersions.get(key)
     const prev = fetchStates.get(key)
     return (
-      opts.force ||
+      scopedForce ||
       (!latestArtifact && (a.attachments.length > 0 || prev?.detailFetchedAt == null)) ||
       (a.sourceUpdatedIso != null && prev?.sourceUpdatedIso !== a.sourceUpdatedIso)
     )
@@ -99,7 +129,7 @@ export async function prepareEnrichWork({
       (state.photoPipelineVersion ?? 1) < targetVersion
     const belowFailureCap =
       (state?.photoFailures ?? 0) < MAX_PHOTO_FAILURES || cooldownElapsed(state?.photoLastAttemptedAt)
-    if (opts.force) {
+    if (scopedForce) {
       return (photos === 0 || nativePhotoUrls(a).length > 0 || a.attachments.length > 0) && belowFailureCap
     }
     return (
@@ -110,7 +140,7 @@ export async function prepareEnrichWork({
   }
   const eligible = auctions.filter(
     (a) =>
-      opts.force ||
+      scopedForce ||
       !records.get(cacheKey(a.platform, a.externalId))?.auction.extraction ||
       needsEnrich(a) ||
       needsDocumentSetCheck(a) ||

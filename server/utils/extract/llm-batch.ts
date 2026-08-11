@@ -129,7 +129,7 @@ export async function fetchLlmBatchResults(
   resultFileName: string | undefined,
   config: LlmConfig,
   customIdMap: Record<string, string>,
-): Promise<{ key: string; extraction: ClampedExtraction | null }[]> {
+): Promise<{ key: string; extraction: ClampedExtraction | null; error?: string | null }[]> {
   if (jobName.startsWith('openrouter_')) return fetchOpenRouterBatchResults(jobName, config, customIdMap)
   if (jobName.startsWith('msgbatch_')) return fetchAnthropicBatchResults(jobName, config, customIdMap)
   if (jobName.startsWith('batch_')) {
