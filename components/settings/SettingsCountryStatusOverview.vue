@@ -9,7 +9,8 @@ import { useSettingsError } from '~/composables/settings/useSettingsError'
 import { useSettingsTaskOverview } from '~/composables/settings/useSettingsTaskOverview'
 import { usePollWhileActive } from '~/composables/settings/usePollWhileActive'
 
-type StatusKind = 'crawl' | 'llm' | 'translation'
+type ProcessingStatusKind = 'crawl' | 'llm' | 'translation'
+type StatusKind = ProcessingStatusKind | 'osm'
 type TableSort = 'platform' | 'title' | 'region' | 'error' | 'lang' | 'failures' | 'startedAt'
 
 const PAGE_SIZE = 25
@@ -31,7 +32,7 @@ const { start: startTranslationRetryPolling } = usePollWhileActive(
   { intervalMs: 3000, maxAttempts: 10 },
 )
 
-const counts = ref<Record<StatusKind, Record<string, StatusCounts>>>({ crawl: {}, llm: {}, translation: {} })
+const counts = ref<Record<ProcessingStatusKind, Record<string, StatusCounts>>>({ crawl: {}, llm: {}, translation: {} })
 const osmByCountry = ref<Record<string, OsmImportCountryStatus>>({})
 const pending = ref(false)
 const loadError = ref<string | null>(null)
@@ -85,10 +86,12 @@ const bucketLabels = computed<Record<StatusBucket, string>>(() => ({
 
 const selectedStatusLabel = computed(() => {
   const target = selected.value
-  return target ? bucketLabels.value[target.bucket] : ''
+  if (!target) return ''
+  if (target.kind === 'osm') return osmSegments(target.country).find((segment) => segment.key === target.bucket)?.label ?? ''
+  return bucketLabels.value[target.bucket]
 })
 
-function statusSegments(kind: StatusKind, country: string): StatusPieSegment[] {
+function statusSegments(kind: ProcessingStatusKind, country: string): StatusPieSegment[] {
   const row = counts.value[kind][country] ?? EMPTY_COUNTS
   return (['done', 'open', 'error'] as const).map((bucket) => ({
     key: bucket,
@@ -100,15 +103,10 @@ function statusSegments(kind: StatusKind, country: string): StatusPieSegment[] {
 
 function osmSegments(country: string): StatusPieSegment[] {
   const osm = osmByCountry.value[country]
-  if (osm?.requestedAt) return [
-    { key: 'available', label: t('settings.countryOverview.osmAvailable'), color: '#0ca30c', value: osm.rowCount > 0 ? 1 : 0 },
-    { key: 'requested', label: t('settings.countryOverview.osmRequested'), color: '#fab219', value: 1 },
-    { key: 'missing', label: t('settings.countryOverview.osmMissing'), color: '#d03b3b', value: 0 },
-  ]
   return [
-    { key: 'available', label: t('settings.countryOverview.osmAvailable'), color: '#0ca30c', value: osm?.rowCount ? 1 : 0 },
-    { key: 'requested', label: t('settings.countryOverview.osmRequested'), color: '#fab219', value: 0 },
-    { key: 'missing', label: t('settings.countryOverview.osmMissing'), color: '#d03b3b', value: osm?.rowCount ? 0 : 1 },
+    { key: 'done', label: t('settings.countryOverview.osmAttached'), color: STATUS_COLORS.done, value: osm?.attachedAuctions ?? 0 },
+    { key: 'open', label: t('settings.countryOverview.osmOpen'), color: STATUS_COLORS.open, value: osm?.openAuctions ?? 0 },
+    { key: 'error', label: t('settings.countryOverview.osmBlocked'), color: STATUS_COLORS.error, value: osm?.errorAuctions ?? 0 },
   ]
 }
 
@@ -205,9 +203,15 @@ async function runBulkRetry(country: string, kind: StatusKind, bucket: 'open' | 
     } else if (kind === 'llm') {
       startProgressPolling()
       await $fetch(`/api/settings/countries/${country}/${bucket === 'open' ? 'reprocess-backlog' : 'reprocess-retry-failed'}`, { method: 'POST' })
-    } else {
+    } else if (kind === 'translation') {
       await $fetch(`/api/settings/countries/${country}/${bucket === 'open' ? 'translation-retry-open' : 'translation-retry-failed'}`, { method: 'POST' })
       startTranslationRetryPolling()
+    } else if (bucket === 'open') {
+      await $fetch(`/api/settings/osm-enrichment/${country}`, { method: 'POST' })
+      startProgressPolling()
+    } else {
+      await $fetch(`/api/settings/osm-import/${country}`, { method: 'POST' })
+      startOsmPolling()
     }
     await load()
   } catch (err) {
@@ -229,26 +233,15 @@ async function retryItem(item: StatusListItem): Promise<void> {
     } else if (target.kind === 'llm') {
       startProgressPolling()
       await $fetch(`/api/settings/auction/${item.platform}/${item.externalId}/reprocess-retry`, { method: 'POST' })
-    } else {
+    } else if (target.kind === 'translation') {
       await $fetch(`/api/settings/auction/${item.platform}/${item.externalId}/translation-retry`, { method: 'POST', body: { lang: item.lang } })
+    } else {
+      await $fetch(`/api/settings/osm-enrichment/${target.country}`, { method: 'POST', body: { platform: item.platform, externalId: item.externalId } })
+      startProgressPolling()
     }
     await Promise.all([loadList(), load()])
   } catch (err) {
     actionError.value = normalizeSettingsError(err, t('settings.statusOverview.retryError'))
-  } finally {
-    actionPending.value = null
-  }
-}
-
-async function requestOsmImport(country: string): Promise<void> {
-  actionPending.value = `osm:${country}`
-  actionError.value = null
-  try {
-    await $fetch(`/api/settings/osm-import/${country}`, { method: 'POST' })
-    await load()
-    startOsmPolling()
-  } catch (err) {
-    actionError.value = normalizeSettingsError(err, t('settings.osmImport.requestError'))
   } finally {
     actionPending.value = null
   }
@@ -317,7 +310,7 @@ onBeforeUnmount(() => clearTimeout(filterTimer))
         <Card class="overflow-visible">
           <CardContent class="space-y-5">
             <div class="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
-              <section v-for="kind in (['crawl', 'llm', 'translation'] as StatusKind[])" :key="kind" class="flex min-w-0 flex-col rounded-lg border bg-muted/15 p-4">
+              <section v-for="kind in (['crawl', 'llm', 'translation'] as ProcessingStatusKind[])" :key="kind" class="flex min-w-0 flex-col rounded-lg border bg-muted/15 p-4">
                 <h3 class="mb-3 text-sm font-semibold">
                   {{ kind === 'crawl' ? $t('settings.crawlStatus.title') : kind === 'llm' ? $t('settings.llmStatus.title') : $t('settings.translationStatus.title') }}
                 </h3>
@@ -343,17 +336,23 @@ onBeforeUnmount(() => clearTimeout(filterTimer))
 
               <section class="flex min-w-0 flex-col rounded-lg border bg-muted/15 p-4">
                 <h3 class="mb-3 text-sm font-semibold">{{ $t('settings.osmImport.title') }}</h3>
-                <SettingsStatusPie :segments="osmSegments(country)" :size="208" @select="() => undefined" />
+                <SettingsStatusPie :segments="osmSegments(country)" :selected="selectedBucket(country, 'osm')" :size="208" @select="(bucket) => selectSegment(country, 'osm', bucket)" />
                 <p class="mt-3 min-h-10 text-center text-xs text-muted-foreground">
                   <template v-if="osmByCountry[country]?.requestedAt">{{ $t('settings.osmImport.pending', { at: formatBatchDate(osmByCountry[country].requestedAt!) }) }}</template>
-                  <template v-else-if="osmByCountry[country]?.rowCount">{{ $t('settings.osmImport.rowCount', { count: osmByCountry[country].rowCount }) }}</template>
-                  <template v-else>{{ $t('settings.osmImport.noData') }}</template>
+                  <template v-else>{{ $t('settings.osmImport.rawRowCount', { count: osmByCountry[country]?.rowCount ?? 0 }) }}</template>
                 </p>
-                <Button type="button" variant="outline" size="sm" class="mt-4" :disabled="actionPending !== null || !!osmByCountry[country]?.requestedAt" @click="requestOsmImport(country)">
-                  <Loader2 v-if="actionPending === `osm:${country}`" class="h-4 w-4 animate-spin" />
-                  <RefreshCw v-else class="h-4 w-4" />
-                  {{ actionPending === `osm:${country}` ? $t('settings.osmImport.requesting') : $t('settings.osmImport.request') }}
-                </Button>
+                <div class="mt-4 grid gap-2">
+                  <Button type="button" variant="outline" size="sm" :disabled="actionPending !== null || (osmByCountry[country]?.openAuctions ?? 0) === 0" @click="runBulkRetry(country, 'osm', 'open')">
+                    <Loader2 v-if="actionPending === `${country}:osm:open`" class="h-4 w-4 animate-spin" />
+                    <RefreshCw v-else class="h-4 w-4" />
+                    {{ $t('settings.osmImport.loadOpen') }}
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" :disabled="actionPending !== null || (osmByCountry[country]?.errorAuctions ?? 0) === 0" @click="runBulkRetry(country, 'osm', 'error')">
+                    <Loader2 v-if="actionPending === `${country}:osm:error`" class="h-4 w-4 animate-spin" />
+                    <RefreshCw v-else class="h-4 w-4" />
+                    {{ $t('settings.osmImport.retryBlocked') }}
+                  </Button>
+                </div>
               </section>
             </div>
 
@@ -395,7 +394,7 @@ onBeforeUnmount(() => clearTimeout(filterTimer))
                             <TableCell v-if="selected?.kind === 'translation'" class="font-mono text-xs uppercase">{{ item.lang }}</TableCell>
                             <TableCell v-if="selected?.kind === 'llm' && selected.bucket === 'error'" class="text-xs tabular-nums">{{ item.llmFailures }}</TableCell>
                             <TableCell v-if="selected?.bucket === 'error'" class="max-w-md whitespace-normal break-words text-xs text-destructive">{{ item.lastErrorMessage }}</TableCell>
-                            <TableCell class="text-right"><Button type="button" variant="ghost" size="icon-sm" :disabled="actionPending !== null" :title="$t('settings.countryOverview.retryRow')" @click="retryItem(item)"><Loader2 v-if="actionPending === `item:${item.platform}:${item.externalId}:${item.lang ?? ''}`" class="h-4 w-4 animate-spin" /><RefreshCw v-else class="h-4 w-4" /></Button></TableCell>
+                            <TableCell class="text-right"><Button v-if="selected?.kind !== 'osm' || selected.bucket === 'open'" type="button" variant="ghost" size="icon-sm" :disabled="actionPending !== null" :title="$t('settings.countryOverview.retryRow')" @click="retryItem(item)"><Loader2 v-if="actionPending === `item:${item.platform}:${item.externalId}:${item.lang ?? ''}`" class="h-4 w-4 animate-spin" /><RefreshCw v-else class="h-4 w-4" /></Button></TableCell>
                           </TableRow>
                         </TableBody>
                       </Table>

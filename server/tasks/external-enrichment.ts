@@ -69,6 +69,10 @@ export interface ExternalEnrichmentOptions {
   country?: string
   platform?: string
   externalId?: string
+  /** Restrict the run to the local OpenStreetMap location-context adapter. */
+  osmOnly?: boolean
+  /** Skip auctions that already have an OpenStreetMap location context. */
+  onlyMissingLocationContext?: boolean
 }
 
 export interface ExternalEnrichmentSummary {
@@ -139,13 +143,16 @@ export async function runExternalEnrichment(
   }
 
   const db = getPool()
-  const marketAdapters = options.marketAdapters ?? await defaultMarketAdapters(db)
-  const landValueAdapters = options.landValueAdapters ?? []
-  const hazardAdapters = options.hazardAdapters ?? await defaultHazardAdapters(db, checkedAt, summary)
+  const marketAdapters = options.osmOnly ? [] : options.marketAdapters ?? await defaultMarketAdapters(db)
+  const landValueAdapters = options.osmOnly ? [] : options.landValueAdapters ?? []
+  const hazardAdapters = options.osmOnly ? [] : options.hazardAdapters ?? await defaultHazardAdapters(db, checkedAt, summary)
   const locationContextAdapters = options.locationContextAdapters ?? await defaultLocationContextAdapters(db, checkedAt, summary)
   throwIfTaskAborted(signal)
 
-  const scope = records.map((record) => record.auction).filter((auction) => inScope(auction, options))
+  const scope = records.map((record) => record.auction).filter((auction) =>
+    inScope(auction, options)
+    && (!options.onlyMissingLocationContext || existing[cacheKey(auction.platform, auction.externalId)]?.locationContext?.source.id !== 'openstreetmap-overpass'),
+  )
   const total = options.limit != null ? Math.min(scope.length, options.limit) : scope.length
 
   for (const rawAuction of scope) {

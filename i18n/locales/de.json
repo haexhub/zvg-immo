@@ -361,7 +361,11 @@
       "requestError": "Reimport konnte nicht angefordert werden.",
       "refresh": "Status aktualisieren",
       "rowCount": "{count} Objekte geladen",
+      "rawRowCount": "{count} OSM-Rohobjekte verfügbar",
       "noData": "Noch keine Daten",
+      "requestMissing": "Fehlende Daten laden",
+      "loadOpen": "Offene OSM-Daten laden",
+      "retryBlocked": "Blockierte OSM-Daten erneut laden",
       "request": "Reimport anfordern",
       "requesting": "Anfordern …",
       "pending": "Angefordert am {at} — wird beim nächsten täglichen Lauf verarbeitet."
@@ -535,10 +539,13 @@
       "nextPage": "Weiter"
     },
     "countryOverview": {
-      "description": "Alle Verarbeitungsstände und OSM-Standortdaten sind pro Land zusammengefasst. Ein Klick auf ein Diagrammsegment öffnet die zugehörige Tabelle.",
-      "osmAvailable": "Daten vorhanden",
+      "description": "Alle Verarbeitungsstände und OSM-Standortdaten sind pro Land zusammengefasst. Ein Klick auf ein Verarbeitungsdiagramm öffnet die zugehörige Tabelle.",
+      "osmAvailable": "Objekte vorhanden",
       "osmRequested": "Import angefordert",
       "osmMissing": "Keine Daten",
+      "osmAttached": "OSM-Daten angehangen",
+      "osmOpen": "Offene Auktionen",
+      "osmBlocked": "OSM-Daten nicht verfügbar",
       "tableTitle": "Anzeigen: {status}",
       "filterPlaceholder": "Tabelle filtern …",
       "filterHint": "Filtert Plattform, Anzeige und Region",
