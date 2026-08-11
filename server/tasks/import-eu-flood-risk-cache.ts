@@ -70,7 +70,13 @@ export default defineTask({
     // (server/api/settings/external-data/eu-flood-risk-cache.post.ts) still
     // runs, so the cache can be pre-populated before configuring the source.
     if (!payload.cachePath?.trim() && !(await configuredCachePath())) {
-      return { result: { skipped: `${EU_FLOOD_RISK_SOURCE_ID} has no configured cache path` } }
+      const skipped = `${EU_FLOOD_RISK_SOURCE_ID} has no configured cache path`
+      // Recorded even for a no-op: without this, a /settings trigger on an
+      // unconfigured source left euFloodRiskImportStatus untouched, so the
+      // card's "Import gestartet" message never got contradicted by anything.
+      await recordTaskRunStart('import-eu-flood-risk-cache')
+      await recordTaskRunEnd('import-eu-flood-risk-cache', { error: skipped })
+      return { result: { skipped } }
     }
     return await runExclusiveTask('import-eu-flood-risk-cache', async (signal) => {
       // Recorded because /settings triggers this detached: even generalized
@@ -79,7 +85,7 @@ export default defineTask({
       // rationale as import-copernicus-effis-cache.ts.
       await recordTaskRunStart('import-eu-flood-risk-cache')
       try {
-        const result = await runImportEuFloodRiskCache(payload)
+        const result = await runImportEuFloodRiskCache(payload, signal)
         throwIfTaskAborted(signal)
         await recordTaskRunEnd('import-eu-flood-risk-cache', {
           result: { fetched: result.fetched, normalized: result.normalized, pages: result.pages },
@@ -95,6 +101,7 @@ export default defineTask({
 
 export async function runImportEuFloodRiskCache(
   payload: ImportEuFloodRiskCachePayload = {},
+  signal?: AbortSignal,
 ): Promise<ImportEuFloodRiskCacheTaskSummary> {
   const generatedAt = payload.generatedAt ?? new Date().toISOString()
   const sourceVersion = payload.sourceVersion?.trim() || EU_FLOOD_RISK_SOURCE_VERSION
@@ -110,6 +117,7 @@ export async function runImportEuFloodRiskCache(
     pageSize: payload.pageSize,
     maxPages: payload.maxPages,
     countryCodes,
+    signal,
   })
 }
 

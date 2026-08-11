@@ -358,6 +358,27 @@ describe('zone matching', () => {
       { checkedAt },
     )).toMatchObject({ status: 'inside' })
   })
+
+  it('skips a zone without usable bounds once a finite best distance exists', () => {
+    // neighbour has a finite bounding-box distance and always sorts before
+    // the unbounded zone, so it sets nearestZone()'s best distance first;
+    // the unbounded zone's infinite lower bound then exceeds that best and
+    // the walk breaks before ever measuring it — even though the point
+    // actually sits inside it. Documents the trade-off the nearestZone()
+    // comment now states explicitly.
+    const inside = squareZone(0, 0, 0)
+    const neighbour = squareZone(1, 0.0201, 0)
+    const collection = {
+      sourceVersion: 'fixture-v1',
+      generatedAt: checkedAt,
+      zones: [{ ...inside, bounds: null }, neighbour],
+    }
+    const point = { lat: 52.52, lng: 13.4 }
+
+    const assessment = buildFloodHazardAssessment(auction(point), collection, { checkedAt })
+    expect(assessment?.status).not.toBe('inside')
+    expect(assessment?.distanceMeters).toBe(Math.round(distanceToPolygonMeters(point, neighbour.polygons[0]!)))
+  })
 })
 
 describe('importEuFloodRiskGeoJsonCache', () => {

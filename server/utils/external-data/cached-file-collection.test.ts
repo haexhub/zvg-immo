@@ -82,6 +82,27 @@ describe('readCachedFileCollection', () => {
     expect(a).not.toBe(b)
   })
 
+  it('evicts the previous entry when the discriminator changes for the same path', async () => {
+    // Regression guard: before, a discriminator change (e.g. an admin
+    // switching a source version) kept the old discriminator's parse
+    // resident under its own cache key forever, alongside the new one — for
+    // a 182 MB cache that's ~600 MB of heap per version ever seen. Switching
+    // back to 'a' must reload, proving the 'a' entry was actually evicted
+    // (not just shadowed) when 'b' was loaded.
+    const path = await cacheFile('{}')
+    const loads: string[] = []
+    const load = async (version: string) => {
+      loads.push(version)
+      return { version }
+    }
+
+    await readCachedFileCollection(path, () => load('a'), 'a')
+    await readCachedFileCollection(path, () => load('b'), 'b')
+    await readCachedFileCollection(path, () => load('a'), 'a')
+
+    expect(loads).toEqual(['a', 'b', 'a'])
+  })
+
   it('propagates a missing file instead of serving a stale collection', async () => {
     const path = await cacheFile('{"zones":[]}')
     await readCachedFileCollection(path, async () => ({ zones: [] }))

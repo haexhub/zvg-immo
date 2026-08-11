@@ -270,7 +270,7 @@ export async function createCopernicusEffisBurntAreaFileAdapter(
   const collection = await readCachedFileCollection(
     options.cachePath,
     (path) => readBurntAreaCache(path, options.sourceVersion),
-    `${options.cachePath} ${options.sourceVersion ?? ''}`,
+    options.sourceVersion ?? '',
   )
   return {
     id: 'copernicus-effis-burnt-area-file-cache',

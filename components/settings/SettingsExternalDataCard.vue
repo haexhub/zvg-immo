@@ -158,10 +158,11 @@ async function triggerCacheImport(sourceId: string): Promise<void> {
       config.endpoint,
       { method: 'POST', body },
     )
-    // import-eu-flood-risk-cache's task guard returns `{ skipped }` instead of
-    // importing when the source has no cache path configured anywhere. Without
-    // this branch that no-op renders as a successful import of `undefined`
-    // records.
+    // fr-dvf-geolocated is the only source that reaches this synchronous
+    // branch (eu-flood-risk-areas and copernicus-effis both run detached
+    // above, see CACHE_IMPORT_SOURCES). Guards against `summary.normalized`
+    // missing so a malformed response renders as an error instead of a
+    // successful import of `undefined` records.
     if (typeof summary.normalized !== 'number') {
       cacheImportError[sourceId] = t('settings.externalData.cacheImport.skipped')
       return

@@ -156,7 +156,7 @@ export async function createEuFloodRiskFileAdapter(
   const collection = await readCachedFileCollection(
     options.geoJsonPath,
     (path) => readFloodRiskGeoJson(path, options.sourceVersion),
-    `${options.geoJsonPath} ${options.sourceVersion ?? ''}`,
+    options.sourceVersion ?? '',
   )
   return {
     id: 'eu-flood-risk-file-cache',
@@ -202,8 +202,10 @@ function isStale(generatedAt: string, checkedAt: string, maxAgeDays: number | un
  * that can still win: candidates are ordered by their bounding box distance
  * (a lower bound for the outline distance), and the walk stops as soon as
  * that lower bound passes the best exact distance found so far. Zones without
- * usable coordinates keep an infinite bound and are measured last, preserving
- * the previous "scan everything" result.
+ * usable coordinates get an infinite bound, so they are measured only while
+ * no finite best distance exists yet — once any bounded zone has set one,
+ * an unbounded zone is skipped without ever being checked, even if it would
+ * have been the true nearest (or containing) match.
  */
 function nearestZone(
   point: Point,

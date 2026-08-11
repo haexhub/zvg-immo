@@ -17,6 +17,10 @@ export interface ImportEuFloodRiskCacheOptions {
   maxPages?: number
   countryCodes?: string[]
   fetchImpl?: typeof fetch
+  /** Cancels an in-flight page fetch, e.g. when /settings fires a newer
+   *  trigger and runExclusiveTask aborts this run. Without it, a stalled
+   *  connection to the EEA service had no bound at all. */
+  signal?: AbortSignal
 }
 
 export interface ImportEuFloodRiskCacheSummary {
@@ -37,6 +41,13 @@ export interface ImportEuFloodRiskCacheSummary {
 // gambling on one page size for the whole dataset.
 const DEFAULT_PAGE_SIZE = 100
 const MIN_PAGE_SIZE = 10
+// Bounds a single page request so a stalled connection can't leave the
+// detached task's status stuck at "running" forever.
+const REQUEST_TIMEOUT_MS = 30_000
+// A short pause between a split page's two halves, so a retry burst doesn't
+// slam a layer that already 500'd once — same total request count, less
+// concurrent pressure.
+const RETRY_SPLIT_DELAY_MS = 100
 
 // The 2024 reporting cycle only holds nine countries (EE, FI, FR, HU, LV, RO,
 // SE, SI, SK — verified live 2026-08-11 via returnDistinctValues) and notably
@@ -80,6 +91,7 @@ export async function importEuFloodRiskGeoJsonCache(
       where,
       offset,
       pageSize,
+      signal: options.signal,
     })
     pages++
     features.push(...page.features.filter(isFeature))
@@ -127,7 +139,7 @@ class ArcGisHttpError extends Error {
 async function fetchArcGisGeoJsonPage(
   fetchImpl: typeof fetch,
   serviceUrl: string,
-  options: { where: string; offset: number; pageSize: number },
+  options: { where: string; offset: number; pageSize: number; signal?: AbortSignal },
 ): Promise<FloodRiskFeatureCollection> {
   const url = new URL(`${serviceUrl.replace(/\/$/, '')}/query`)
   url.searchParams.set('f', 'geojson')
@@ -141,7 +153,7 @@ async function fetchArcGisGeoJsonPage(
   url.searchParams.set('resultOffset', String(options.offset))
   url.searchParams.set('resultRecordCount', String(options.pageSize))
 
-  const response = await fetchImpl(url)
+  const response = await fetchImpl(url, { signal: requestSignal(options.signal) })
   if (!response.ok) {
     throw new ArcGisHttpError(`EU flood risk request failed: ${response.status} ${response.statusText}`, response.status)
   }
@@ -158,7 +170,7 @@ async function fetchArcGisGeoJsonPage(
 async function fetchPageWithRetry(
   fetchImpl: typeof fetch,
   serviceUrl: string,
-  options: { where: string; offset: number; pageSize: number },
+  options: { where: string; offset: number; pageSize: number; signal?: AbortSignal },
 ): Promise<FloodRiskFeatureCollection> {
   try {
     return await fetchArcGisGeoJsonPage(fetchImpl, serviceUrl, options)
@@ -170,16 +182,30 @@ async function fetchPageWithRetry(
     const isRetryable = err instanceof ArcGisHttpError && err.status >= 500
     if (!isRetryable || options.pageSize < MIN_PAGE_SIZE * 2) throw err
     const firstSize = Math.ceil(options.pageSize / 2)
-    const [first, second] = await Promise.all([
-      fetchPageWithRetry(fetchImpl, serviceUrl, { ...options, pageSize: firstSize }),
-      fetchPageWithRetry(fetchImpl, serviceUrl, {
-        where: options.where,
-        offset: options.offset + firstSize,
-        pageSize: options.pageSize - firstSize,
-      }),
-    ])
+    // Sequential, not Promise.all: the split was triggered by a 5xx from a
+    // layer that's already struggling, and firing both halves at once only
+    // adds to that pressure for the same total request count.
+    const first = await fetchPageWithRetry(fetchImpl, serviceUrl, { ...options, pageSize: firstSize })
+    await sleep(RETRY_SPLIT_DELAY_MS)
+    const second = await fetchPageWithRetry(fetchImpl, serviceUrl, {
+      where: options.where,
+      offset: options.offset + firstSize,
+      pageSize: options.pageSize - firstSize,
+      signal: options.signal,
+    })
     return { type: 'FeatureCollection', features: [...first.features, ...second.features] }
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+// Combines the caller's cancellation (a superseded /settings trigger) with a
+// per-request timeout, so a single stalled connection can't hang forever.
+function requestSignal(signal: AbortSignal | undefined): AbortSignal {
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+  return signal ? AbortSignal.any([signal, timeout]) : timeout
 }
 
 function hasArcGisError(input: unknown): input is { error: { message: string } } {
