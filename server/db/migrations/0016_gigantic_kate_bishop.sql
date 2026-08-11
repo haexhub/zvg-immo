@@ -24,13 +24,13 @@ WITH current_details AS (
   WHERE is_latest = true
 ), candidates AS (
   SELECT a.platform, a.external_id, a.country, lower(trim(a.authority)) AS authority_key,
-    lower(trim(regexp_replace(a.case_number, '\\s+', ' ', 'g'))) AS case_raw,
+    lower(trim(regexp_replace(a.case_number, E'\\s+', ' ', 'g'))) AS case_raw,
     a.auction_date_iso,
     regexp_replace(replace(translate(lower(coalesce(d.address, '')), 'äöü', 'aou'), 'ß', 'ss'), '[^[:alnum:]]', '', 'g') AS address_key
   FROM auctions a
   LEFT JOIN current_details d ON d.platform = a.platform AND d.external_id = a.external_id
 ), normalized AS (
-  SELECT *, regexp_match(case_raw, '^0*([0-9]+)\\s*k\\s*0*([0-9]+)\\s*/\\s*0*([0-9]{2,4})$') AS case_parts
+  SELECT *, regexp_match(case_raw, E'^0*([0-9]+)\\s*k\\s*0*([0-9]+)\\s*/\\s*0*([0-9]{2,4})$') AS case_parts
   FROM candidates
 ), keyed AS (
   SELECT *, CASE WHEN case_parts IS NULL THEN NULL ELSE

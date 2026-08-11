@@ -2,7 +2,7 @@
 // `same_proceeding` is deliberately strict; `same_address` is a navigation
 // hint only, useful for multiple units in one building or related proceedings.
 
-import type { Pool } from 'pg'
+import type { Pool, PoolClient } from 'pg'
 import { getPool } from './db'
 
 export type AuctionRelationshipKind = 'same_proceeding' | 'same_address'
@@ -175,31 +175,41 @@ export async function rebuildAutomaticAuctionRelationships(countries: string[]):
   const uniqueCountries = [...new Set(countries.map((country) => country.toLowerCase()).filter(Boolean))]
   if (!db || uniqueCountries.length === 0) return
 
-  const { rows } = await db.query<RelationshipCandidateRow>(`
-    SELECT a.platform, a.external_id, a.country, a.authority, a.case_number,
-      d.address, a.auction_date_iso
-    FROM auctions a
-    LEFT JOIN LATERAL (
-      SELECT address FROM auction_details
-      WHERE platform = a.platform AND external_id = a.external_id AND is_latest = true
-      LIMIT 1
-    ) d ON true
-    WHERE a.country = ANY($1::text[])
-  `, [uniqueCountries])
-  const relationships = buildAutomaticRelationships(rows.map(toCandidate))
+  const client = await db.connect()
+  try {
+    await client.query('BEGIN')
+    const { rows } = await client.query<RelationshipCandidateRow>(`
+      SELECT a.platform, a.external_id, a.country, a.authority, a.case_number,
+        d.address, a.auction_date_iso
+      FROM auctions a
+      LEFT JOIN LATERAL (
+        SELECT address FROM auction_details
+        WHERE platform = a.platform AND external_id = a.external_id AND is_latest = true
+        LIMIT 1
+      ) d ON true
+      WHERE a.country = ANY($1::text[])
+    `, [uniqueCountries])
+    const relationships = buildAutomaticRelationships(rows.map(toCandidate))
 
-  await db.query(`
-    DELETE FROM auction_relationships r
-    USING auctions a
-    WHERE r.source = 'auto'
-      AND (a.platform = r.left_platform AND a.external_id = r.left_external_id
-        OR a.platform = r.right_platform AND a.external_id = r.right_external_id)
-      AND a.country = ANY($1::text[])
-  `, [uniqueCountries])
-  await insertAutomaticRelationships(db, relationships)
+    await client.query(`
+      DELETE FROM auction_relationships r
+      USING auctions a
+      WHERE r.source = 'auto'
+        AND (a.platform = r.left_platform AND a.external_id = r.left_external_id
+          OR a.platform = r.right_platform AND a.external_id = r.right_external_id)
+        AND a.country = ANY($1::text[])
+    `, [uniqueCountries])
+    await insertAutomaticRelationships(client, relationships)
+    await client.query('COMMIT')
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {})
+    throw err
+  } finally {
+    client.release()
+  }
 }
 
-async function insertAutomaticRelationships(db: Pool, relationships: AutomaticRelationship[]): Promise<void> {
+async function insertAutomaticRelationships(db: Pool | PoolClient, relationships: AutomaticRelationship[]): Promise<void> {
   const CHUNK_SIZE = 500
   for (let start = 0; start < relationships.length; start += CHUNK_SIZE) {
     const chunk = relationships.slice(start, start + CHUNK_SIZE)
@@ -256,38 +266,43 @@ function number(value: string | number | null): number | null {
 export async function readAuctionRelationships(platform: string, externalId: string): Promise<RelatedAuction[]> {
   const db = getPool()
   if (!db) return []
-  const { rows } = await db.query<RelatedAuctionRow>(`
-    SELECT target.platform, target.external_id, r.kind, r.confidence,
-      target.country, target.region, target.authority, target.case_number,
-      target.title, d.address, target.auction_date_iso, target.auction_date_text,
-      d.market_value_eur
-    FROM auction_relationships r
-    JOIN auctions target ON (target.platform, target.external_id) =
-      (CASE WHEN r.left_platform = $1 AND r.left_external_id = $2 THEN r.right_platform ELSE r.left_platform END,
-       CASE WHEN r.left_platform = $1 AND r.left_external_id = $2 THEN r.right_external_id ELSE r.left_external_id END)
-    LEFT JOIN LATERAL (
-      SELECT address, market_value_eur FROM auction_details
-      WHERE platform = target.platform AND external_id = target.external_id AND is_latest = true
-      LIMIT 1
-    ) d ON true
-    WHERE (r.left_platform = $1 AND r.left_external_id = $2)
-       OR (r.right_platform = $1 AND r.right_external_id = $2)
-    ORDER BY CASE r.kind WHEN 'same_proceeding' THEN 0 ELSE 1 END,
-      target.auction_date_iso NULLS LAST, target.platform, target.external_id
-  `, [platform, externalId])
-  return rows.map((row) => ({
-    platform: row.platform,
-    externalId: row.external_id,
-    kind: row.kind,
-    confidence: row.confidence,
-    country: row.country,
-    region: row.region,
-    authority: row.authority,
-    caseNumber: row.case_number,
-    title: row.title,
-    address: row.address,
-    auctionDateIso: iso(row.auction_date_iso),
-    auctionDateText: row.auction_date_text,
-    marketValueEur: number(row.market_value_eur),
-  }))
+  try {
+    const { rows } = await db.query<RelatedAuctionRow>(`
+      SELECT target.platform, target.external_id, r.kind, r.confidence,
+        target.country, target.region, target.authority, target.case_number,
+        target.title, d.address, target.auction_date_iso, target.auction_date_text,
+        d.market_value_eur
+      FROM auction_relationships r
+      JOIN auctions target ON (target.platform, target.external_id) =
+        (CASE WHEN r.left_platform = $1 AND r.left_external_id = $2 THEN r.right_platform ELSE r.left_platform END,
+         CASE WHEN r.left_platform = $1 AND r.left_external_id = $2 THEN r.right_external_id ELSE r.left_external_id END)
+      LEFT JOIN LATERAL (
+        SELECT address, market_value_eur FROM auction_details
+        WHERE platform = target.platform AND external_id = target.external_id AND is_latest = true
+        LIMIT 1
+      ) d ON true
+      WHERE (r.left_platform = $1 AND r.left_external_id = $2)
+         OR (r.right_platform = $1 AND r.right_external_id = $2)
+      ORDER BY CASE r.kind WHEN 'same_proceeding' THEN 0 ELSE 1 END,
+        target.auction_date_iso NULLS LAST, target.platform, target.external_id
+    `, [platform, externalId])
+    return rows.map((row) => ({
+      platform: row.platform,
+      externalId: row.external_id,
+      kind: row.kind,
+      confidence: row.confidence,
+      country: row.country,
+      region: row.region,
+      authority: row.authority,
+      caseNumber: row.case_number,
+      title: row.title,
+      address: row.address,
+      auctionDateIso: iso(row.auction_date_iso),
+      auctionDateText: row.auction_date_text,
+      marketValueEur: number(row.market_value_eur),
+    }))
+  } catch (err) {
+    console.warn(`[auction-relationships] detail read failed: ${(err as Error).message}`)
+    return []
+  }
 }
