@@ -70,6 +70,13 @@ const countryCodes = computed(() => {
   return [...all].sort((a, b) => countryLabel(a).localeCompare(countryLabel(b)))
 })
 
+const activeCountry = ref('')
+
+watch(countryCodes, (codes) => {
+  if (codes.length === 0) activeCountry.value = ''
+  else if (!codes.includes(activeCountry.value)) activeCountry.value = codes[0] ?? ''
+}, { immediate: true })
+
 const bucketLabels = computed<Record<StatusBucket, string>>(() => ({
   done: t('settings.statusOverview.bucketDone'),
   open: t('settings.statusOverview.bucketOpen'),
@@ -298,107 +305,112 @@ onBeforeUnmount(() => clearTimeout(filterTimer))
     <p v-if="actionError" class="text-sm text-destructive">{{ actionError }}</p>
     <p v-if="!pending && countryCodes.length === 0" class="text-sm text-muted-foreground">{{ $t('settings.crawlStatus.empty') }}</p>
 
-    <Card v-for="country in countryCodes" :key="country" class="overflow-visible">
-      <CardHeader class="border-b">
-        <CardTitle class="flex items-baseline gap-2">
+    <Tabs v-if="countryCodes.length > 0" v-model="activeCountry">
+      <TabsList class="h-auto w-full flex-wrap justify-start gap-1">
+        <TabsTrigger v-for="country in countryCodes" :key="country" :value="country" class="gap-1.5">
           {{ countryLabel(country) }}
-          <span class="font-mono text-sm font-normal uppercase text-muted-foreground">{{ country }}</span>
-        </CardTitle>
-      </CardHeader>
-      <CardContent class="space-y-5 pt-6">
-        <div class="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
-          <section v-for="kind in (['crawl', 'llm', 'translation'] as StatusKind[])" :key="kind" class="flex min-w-0 flex-col rounded-lg border bg-muted/15 p-4">
-            <h3 class="mb-3 text-sm font-semibold">
-              {{ kind === 'crawl' ? $t('settings.crawlStatus.title') : kind === 'llm' ? $t('settings.llmStatus.title') : $t('settings.translationStatus.title') }}
-            </h3>
-            <SettingsStatusPie
-              :segments="statusSegments(kind, country)"
-              :selected="selectedBucket(country, kind)"
-              :size="208"
-              @select="(bucket) => selectSegment(country, kind, bucket)"
-            />
-            <div class="mt-4 grid gap-2">
-              <Button type="button" variant="outline" size="sm" :disabled="actionPending !== null || (counts[kind][country]?.open ?? 0) === 0" @click="runBulkRetry(country, kind, 'open')">
-                <Loader2 v-if="actionPending === `${country}:${kind}:open`" class="h-4 w-4 animate-spin" />
-                <RefreshCw v-else class="h-4 w-4" />
-                {{ kind === 'crawl' ? $t('settings.crawlStatus.retryOpen') : kind === 'llm' ? $t('settings.llmStatus.retryOpen') : $t('settings.translationStatus.retryOpen') }}
-              </Button>
-              <Button type="button" variant="outline" size="sm" :disabled="actionPending !== null || (counts[kind][country]?.error ?? 0) === 0" @click="runBulkRetry(country, kind, 'error')">
-                <Loader2 v-if="actionPending === `${country}:${kind}:error`" class="h-4 w-4 animate-spin" />
-                <RefreshCw v-else class="h-4 w-4" />
-                {{ kind === 'crawl' ? $t('settings.crawlStatus.retryFailed') : kind === 'llm' ? $t('settings.llmStatus.retryFailed') : $t('settings.translationStatus.retryFailed') }}
-              </Button>
+          <span class="font-mono text-xs uppercase opacity-70">{{ country }}</span>
+        </TabsTrigger>
+      </TabsList>
+
+      <TabsContent v-for="country in countryCodes" :key="country" :value="country">
+        <Card class="overflow-visible">
+          <CardContent class="space-y-5">
+            <div class="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+              <section v-for="kind in (['crawl', 'llm', 'translation'] as StatusKind[])" :key="kind" class="flex min-w-0 flex-col rounded-lg border bg-muted/15 p-4">
+                <h3 class="mb-3 text-sm font-semibold">
+                  {{ kind === 'crawl' ? $t('settings.crawlStatus.title') : kind === 'llm' ? $t('settings.llmStatus.title') : $t('settings.translationStatus.title') }}
+                </h3>
+                <SettingsStatusPie
+                  :segments="statusSegments(kind, country)"
+                  :selected="selectedBucket(country, kind)"
+                  :size="208"
+                  @select="(bucket) => selectSegment(country, kind, bucket)"
+                />
+                <div class="mt-4 grid gap-2">
+                  <Button type="button" variant="outline" size="sm" :disabled="actionPending !== null || (counts[kind][country]?.open ?? 0) === 0" @click="runBulkRetry(country, kind, 'open')">
+                    <Loader2 v-if="actionPending === `${country}:${kind}:open`" class="h-4 w-4 animate-spin" />
+                    <RefreshCw v-else class="h-4 w-4" />
+                    {{ kind === 'crawl' ? $t('settings.crawlStatus.retryOpen') : kind === 'llm' ? $t('settings.llmStatus.retryOpen') : $t('settings.translationStatus.retryOpen') }}
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" :disabled="actionPending !== null || (counts[kind][country]?.error ?? 0) === 0" @click="runBulkRetry(country, kind, 'error')">
+                    <Loader2 v-if="actionPending === `${country}:${kind}:error`" class="h-4 w-4 animate-spin" />
+                    <RefreshCw v-else class="h-4 w-4" />
+                    {{ kind === 'crawl' ? $t('settings.crawlStatus.retryFailed') : kind === 'llm' ? $t('settings.llmStatus.retryFailed') : $t('settings.translationStatus.retryFailed') }}
+                  </Button>
+                </div>
+              </section>
+
+              <section class="flex min-w-0 flex-col rounded-lg border bg-muted/15 p-4">
+                <h3 class="mb-3 text-sm font-semibold">{{ $t('settings.osmImport.title') }}</h3>
+                <SettingsStatusPie :segments="osmSegments(country)" :size="208" @select="() => undefined" />
+                <p class="mt-3 min-h-10 text-center text-xs text-muted-foreground">
+                  <template v-if="osmByCountry[country]?.requestedAt">{{ $t('settings.osmImport.pending', { at: formatBatchDate(osmByCountry[country].requestedAt!) }) }}</template>
+                  <template v-else-if="osmByCountry[country]?.rowCount">{{ $t('settings.osmImport.rowCount', { count: osmByCountry[country].rowCount }) }}</template>
+                  <template v-else>{{ $t('settings.osmImport.noData') }}</template>
+                </p>
+                <Button type="button" variant="outline" size="sm" class="mt-4" :disabled="actionPending !== null || !!osmByCountry[country]?.requestedAt" @click="requestOsmImport(country)">
+                  <Loader2 v-if="actionPending === `osm:${country}`" class="h-4 w-4 animate-spin" />
+                  <RefreshCw v-else class="h-4 w-4" />
+                  {{ actionPending === `osm:${country}` ? $t('settings.osmImport.requesting') : $t('settings.osmImport.request') }}
+                </Button>
+              </section>
             </div>
-          </section>
 
-          <section class="flex min-w-0 flex-col rounded-lg border bg-muted/15 p-4">
-            <h3 class="mb-3 text-sm font-semibold">{{ $t('settings.osmImport.title') }}</h3>
-            <SettingsStatusPie :segments="osmSegments(country)" :size="208" @select="() => undefined" />
-            <p class="mt-3 min-h-10 text-center text-xs text-muted-foreground">
-              <template v-if="osmByCountry[country]?.requestedAt">{{ $t('settings.osmImport.pending', { at: formatBatchDate(osmByCountry[country].requestedAt!) }) }}</template>
-              <template v-else-if="osmByCountry[country]?.rowCount">{{ $t('settings.osmImport.rowCount', { count: osmByCountry[country].rowCount }) }}</template>
-              <template v-else>{{ $t('settings.osmImport.noData') }}</template>
-            </p>
-            <Button type="button" variant="outline" size="sm" class="mt-4" :disabled="actionPending !== null || !!osmByCountry[country]?.requestedAt" @click="requestOsmImport(country)">
-              <Loader2 v-if="actionPending === `osm:${country}`" class="h-4 w-4 animate-spin" />
-              <RefreshCw v-else class="h-4 w-4" />
-              {{ actionPending === `osm:${country}` ? $t('settings.osmImport.requesting') : $t('settings.osmImport.request') }}
-            </Button>
-          </section>
-        </div>
-
-        <Accordion v-if="selected?.country === country" v-model="tableAccordion" type="single" collapsible class="rounded-md border px-4">
-          <AccordionItem value="status-table" class="border-b-0">
-            <AccordionTrigger class="py-4 hover:no-underline">
-              {{ $t('settings.countryOverview.tableTitle', { status: selectedStatusLabel }) }}
-            </AccordionTrigger>
-            <AccordionContent class="pb-4">
-              <div class="mb-3 flex flex-wrap items-center gap-2">
-                <div class="relative min-w-56 flex-1">
-                  <Search class="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input v-model="tableSearch" :placeholder="$t('settings.countryOverview.filterPlaceholder')" class="pl-8" />
-                </div>
-                <span class="text-xs text-muted-foreground">{{ $t('settings.countryOverview.filterHint') }}</span>
-              </div>
-              <p v-if="listError" class="mb-3 text-sm text-destructive">{{ listError }}</p>
-              <Loader2 v-if="listPending" class="m-4 h-5 w-5 animate-spin text-muted-foreground" />
-              <template v-else>
-                <p v-if="list.items.length === 0" class="text-sm text-muted-foreground">{{ $t('settings.statusOverview.listEmpty') }}</p>
-                <div v-else class="overflow-x-auto rounded-md border">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead><button type="button" class="inline-flex items-center gap-1 hover:text-foreground" @click="setSort('platform')">{{ $t('settings.statusOverview.colPlatform') }}<component :is="sortIcon('platform')" class="h-3.5 w-3.5" /></button></TableHead>
-                        <TableHead><button type="button" class="inline-flex items-center gap-1 hover:text-foreground" @click="setSort('title')">{{ $t('settings.statusOverview.colTitle') }}<component :is="sortIcon('title')" class="h-3.5 w-3.5" /></button></TableHead>
-                        <TableHead><button type="button" class="inline-flex items-center gap-1 hover:text-foreground" @click="setSort('region')">{{ $t('settings.statusOverview.colRegion') }}<component :is="sortIcon('region')" class="h-3.5 w-3.5" /></button></TableHead>
-                        <TableHead v-if="selected?.kind === 'translation'"><button type="button" class="inline-flex items-center gap-1 hover:text-foreground" @click="setSort('lang')">{{ $t('settings.translationStatus.colLang') }}<component :is="sortIcon('lang')" class="h-3.5 w-3.5" /></button></TableHead>
-                        <TableHead v-if="selected?.kind === 'llm' && selected.bucket === 'error'"><button type="button" class="inline-flex items-center gap-1 hover:text-foreground" @click="setSort('failures')">{{ $t('settings.llmStatus.colFailures') }}<component :is="sortIcon('failures')" class="h-3.5 w-3.5" /></button></TableHead>
-                        <TableHead v-if="selected?.bucket === 'error'"><template v-if="selected?.kind === 'llm'">{{ $t('settings.statusOverview.colError') }}</template><button v-else type="button" class="inline-flex items-center gap-1 hover:text-foreground" @click="setSort('error')">{{ $t('settings.statusOverview.colError') }}<component :is="sortIcon('error')" class="h-3.5 w-3.5" /></button></TableHead>
-                        <TableHead class="w-10" />
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      <TableRow v-for="item in list.items" :key="`${item.platform}:${item.externalId}:${item.lang ?? ''}`">
-                        <TableCell class="whitespace-nowrap font-mono text-xs">{{ item.platform }}</TableCell>
-                        <TableCell class="max-w-xs truncate"><NuxtLink :to="`/admin/auktion/${item.platform}/${item.externalId}`" class="hover:underline">{{ item.title || item.caseNumber }}</NuxtLink></TableCell>
-                        <TableCell class="whitespace-nowrap text-xs text-muted-foreground">{{ item.region }}</TableCell>
-                        <TableCell v-if="selected?.kind === 'translation'" class="font-mono text-xs uppercase">{{ item.lang }}</TableCell>
-                        <TableCell v-if="selected?.kind === 'llm' && selected.bucket === 'error'" class="text-xs tabular-nums">{{ item.llmFailures }}</TableCell>
-                        <TableCell v-if="selected?.bucket === 'error'" class="max-w-md whitespace-normal break-words text-xs text-destructive">{{ item.lastErrorMessage }}</TableCell>
-                        <TableCell class="text-right"><Button type="button" variant="ghost" size="icon-sm" :disabled="actionPending !== null" :title="$t('settings.countryOverview.retryRow')" @click="retryItem(item)"><Loader2 v-if="actionPending === `item:${item.platform}:${item.externalId}:${item.lang ?? ''}`" class="h-4 w-4 animate-spin" /><RefreshCw v-else class="h-4 w-4" /></Button></TableCell>
-                      </TableRow>
-                    </TableBody>
-                  </Table>
-                </div>
-                <div v-if="list.total > PAGE_SIZE" class="mt-3 flex items-center justify-between text-xs text-muted-foreground">
-                  <span>{{ $t('settings.statusOverview.pageInfo', { from: tableOffset + 1, to: Math.min(tableOffset + PAGE_SIZE, list.total), total: list.total }) }}</span>
-                  <div class="flex gap-2"><Button type="button" variant="ghost" size="sm" :disabled="tableOffset === 0" @click="changePage(-1)">{{ $t('settings.statusOverview.prevPage') }}</Button><Button type="button" variant="ghost" size="sm" :disabled="tableOffset + PAGE_SIZE >= list.total" @click="changePage(1)">{{ $t('settings.statusOverview.nextPage') }}</Button></div>
-                </div>
-              </template>
-            </AccordionContent>
-          </AccordionItem>
-        </Accordion>
-      </CardContent>
-    </Card>
+            <Accordion v-if="selected?.country === country" v-model="tableAccordion" type="single" collapsible class="rounded-md border px-4">
+              <AccordionItem value="status-table" class="border-b-0">
+                <AccordionTrigger class="py-4 hover:no-underline">
+                  {{ $t('settings.countryOverview.tableTitle', { status: selectedStatusLabel }) }}
+                </AccordionTrigger>
+                <AccordionContent class="pb-4">
+                  <div class="mb-3 flex flex-wrap items-center gap-2">
+                    <div class="relative min-w-56 flex-1">
+                      <Search class="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                      <Input v-model="tableSearch" :placeholder="$t('settings.countryOverview.filterPlaceholder')" class="pl-8" />
+                    </div>
+                    <span class="text-xs text-muted-foreground">{{ $t('settings.countryOverview.filterHint') }}</span>
+                  </div>
+                  <p v-if="listError" class="mb-3 text-sm text-destructive">{{ listError }}</p>
+                  <Loader2 v-if="listPending" class="m-4 h-5 w-5 animate-spin text-muted-foreground" />
+                  <template v-else>
+                    <p v-if="list.items.length === 0" class="text-sm text-muted-foreground">{{ $t('settings.statusOverview.listEmpty') }}</p>
+                    <div v-else class="overflow-x-auto rounded-md border">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead><button type="button" class="inline-flex items-center gap-1 hover:text-foreground" @click="setSort('platform')">{{ $t('settings.statusOverview.colPlatform') }}<component :is="sortIcon('platform')" class="h-3.5 w-3.5" /></button></TableHead>
+                            <TableHead><button type="button" class="inline-flex items-center gap-1 hover:text-foreground" @click="setSort('title')">{{ $t('settings.statusOverview.colTitle') }}<component :is="sortIcon('title')" class="h-3.5 w-3.5" /></button></TableHead>
+                            <TableHead><button type="button" class="inline-flex items-center gap-1 hover:text-foreground" @click="setSort('region')">{{ $t('settings.statusOverview.colRegion') }}<component :is="sortIcon('region')" class="h-3.5 w-3.5" /></button></TableHead>
+                            <TableHead v-if="selected?.kind === 'translation'"><button type="button" class="inline-flex items-center gap-1 hover:text-foreground" @click="setSort('lang')">{{ $t('settings.translationStatus.colLang') }}<component :is="sortIcon('lang')" class="h-3.5 w-3.5" /></button></TableHead>
+                            <TableHead v-if="selected?.kind === 'llm' && selected.bucket === 'error'"><button type="button" class="inline-flex items-center gap-1 hover:text-foreground" @click="setSort('failures')">{{ $t('settings.llmStatus.colFailures') }}<component :is="sortIcon('failures')" class="h-3.5 w-3.5" /></button></TableHead>
+                            <TableHead v-if="selected?.bucket === 'error'"><template v-if="selected?.kind === 'llm'">{{ $t('settings.statusOverview.colError') }}</template><button v-else type="button" class="inline-flex items-center gap-1 hover:text-foreground" @click="setSort('error')">{{ $t('settings.statusOverview.colError') }}<component :is="sortIcon('error')" class="h-3.5 w-3.5" /></button></TableHead>
+                            <TableHead class="w-10" />
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          <TableRow v-for="item in list.items" :key="`${item.platform}:${item.externalId}:${item.lang ?? ''}`">
+                            <TableCell class="whitespace-nowrap font-mono text-xs">{{ item.platform }}</TableCell>
+                            <TableCell class="max-w-xs truncate"><NuxtLink :to="`/admin/auktion/${item.platform}/${item.externalId}`" class="hover:underline">{{ item.title || item.caseNumber }}</NuxtLink></TableCell>
+                            <TableCell class="whitespace-nowrap text-xs text-muted-foreground">{{ item.region }}</TableCell>
+                            <TableCell v-if="selected?.kind === 'translation'" class="font-mono text-xs uppercase">{{ item.lang }}</TableCell>
+                            <TableCell v-if="selected?.kind === 'llm' && selected.bucket === 'error'" class="text-xs tabular-nums">{{ item.llmFailures }}</TableCell>
+                            <TableCell v-if="selected?.bucket === 'error'" class="max-w-md whitespace-normal break-words text-xs text-destructive">{{ item.lastErrorMessage }}</TableCell>
+                            <TableCell class="text-right"><Button type="button" variant="ghost" size="icon-sm" :disabled="actionPending !== null" :title="$t('settings.countryOverview.retryRow')" @click="retryItem(item)"><Loader2 v-if="actionPending === `item:${item.platform}:${item.externalId}:${item.lang ?? ''}`" class="h-4 w-4 animate-spin" /><RefreshCw v-else class="h-4 w-4" /></Button></TableCell>
+                          </TableRow>
+                        </TableBody>
+                      </Table>
+                    </div>
+                    <div v-if="list.total > PAGE_SIZE" class="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+                      <span>{{ $t('settings.statusOverview.pageInfo', { from: tableOffset + 1, to: Math.min(tableOffset + PAGE_SIZE, list.total), total: list.total }) }}</span>
+                      <div class="flex gap-2"><Button type="button" variant="ghost" size="sm" :disabled="tableOffset === 0" @click="changePage(-1)">{{ $t('settings.statusOverview.prevPage') }}</Button><Button type="button" variant="ghost" size="sm" :disabled="tableOffset + PAGE_SIZE >= list.total" @click="changePage(1)">{{ $t('settings.statusOverview.nextPage') }}</Button></div>
+                    </div>
+                  </template>
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
+          </CardContent>
+        </Card>
+      </TabsContent>
+    </Tabs>
   </section>
 </template>
