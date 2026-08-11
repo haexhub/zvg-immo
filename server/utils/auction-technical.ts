@@ -46,6 +46,7 @@ export interface AuctionDetailsVersionRow {
   llmProfileId: string | null
   runTrigger: string | null
   llmDurationMs: number | null
+  llmCostUsd: number | null
 }
 
 export interface AuctionGeoMetricsRow {
@@ -178,13 +179,14 @@ interface DetailsVersionQueryRow {
   llm_profile_id: string | null
   run_trigger: string | null
   llm_duration_ms: number | null
+  llm_cost_usd: number | null
 }
 
 async function readExtractionHistory(db: Pool, platform: string, externalId: string): Promise<AuctionDetailsVersionRow[]> {
   const { rows } = await db.query<DetailsVersionQueryRow>(
     `SELECT version, created_at, extracted_at, is_latest, is_trial, artifact_version_id,
             extraction_source, extraction_confidence, llm_analyzed_at,
-            llm_provider, llm_model, llm_profile_id, run_trigger, llm_duration_ms
+            llm_provider, llm_model, llm_profile_id, run_trigger, llm_duration_ms, llm_cost_usd
      FROM auction_details WHERE platform = $1 AND external_id = $2 ORDER BY version DESC`,
     [platform, externalId],
   )
@@ -203,6 +205,7 @@ async function readExtractionHistory(db: Pool, platform: string, externalId: str
     llmProfileId: row.llm_profile_id,
     runTrigger: row.run_trigger,
     llmDurationMs: row.llm_duration_ms,
+    llmCostUsd: row.llm_cost_usd,
   }))
 }
 

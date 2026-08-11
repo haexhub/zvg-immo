@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { AuctionLlmCallRow } from '~/server/utils/auction-technical'
+import { formatCost } from '~/lib/auction-technical-helpers'
 
 const props = defineProps<{
   calls: AuctionLlmCallRow[]
@@ -7,9 +8,6 @@ const props = defineProps<{
 }>()
 
 const { locale } = useI18n()
-const formatCost = (value: number | null): string => value == null
-  ? '—'
-  : new Intl.NumberFormat(locale.value, { style: 'currency', currency: 'USD', maximumFractionDigits: 6 }).format(value)
 const formatTokens = (input: number | null, output: number | null): string =>
   input == null && output == null ? '—' : `${input ?? '—'} / ${output ?? '—'}`
 </script>
@@ -37,7 +35,7 @@ const formatTokens = (input: number | null, output: number | null): string =>
             <TableCell>{{ call.executionMode }}</TableCell>
             <TableCell><Badge :variant="call.status === 'failed' ? 'destructive' : 'default'">{{ call.status }}</Badge></TableCell>
             <TableCell>{{ formatTokens(call.inputTokens, call.outputTokens) }}</TableCell>
-            <TableCell>{{ formatCost(call.costUsd) }}</TableCell>
+            <TableCell>{{ formatCost(call.costUsd, locale) }}</TableCell>
             <TableCell>{{ call.durationMs != null ? `${call.durationMs} ms` : '—' }}</TableCell>
             <TableCell>{{ props.formatDate(call.occurredAt) }}</TableCell>
             <TableCell class="max-w-md text-destructive">{{ call.errorMessage ?? '—' }}</TableCell>

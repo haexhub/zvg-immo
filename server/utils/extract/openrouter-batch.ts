@@ -76,6 +76,9 @@ function buildBatchRequest(customId: string, input: LlmInput, config: LlmConfig)
         type: 'json_schema',
         json_schema: { name: UNIVERSAL_AUCTION_SCHEMA_NAME, schema: UNIVERSAL_AUCTION_SCHEMA, strict: true },
       },
+      // See openai-compatible.ts's matching opt-in — without it, this item's
+      // usage block never carries the billed cost.
+      usage: { include: true },
     },
   }
 }

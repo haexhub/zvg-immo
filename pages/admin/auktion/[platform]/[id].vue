@@ -324,52 +324,14 @@ onMounted(probeSession)
                 </Table>
               </div>
 
-              <Table v-if="overview.extractionHistory.length">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead />
-                    <TableHead>{{ $t('settings.auctionTechnical.fields.version') }}</TableHead>
-                    <TableHead>{{ $t('settings.auctionTechnical.fields.status') }}</TableHead>
-                    <TableHead>{{ $t('settings.auctionTechnical.fields.provider') }}</TableHead>
-                    <TableHead>{{ $t('settings.auctionTechnical.fields.runTrigger') }}</TableHead>
-                    <TableHead>{{ $t('settings.auctionTechnical.fields.duration') }}</TableHead>
-                    <TableHead>{{ $t('settings.auctionTechnical.fields.confidence') }}</TableHead>
-                    <TableHead>{{ $t('settings.auctionTechnical.fields.createdAt') }}</TableHead>
-                    <TableHead />
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  <TableRow v-for="row in overview.extractionHistory" :key="row.version">
-                    <TableCell>
-                      <Checkbox
-                        :model-value="selectedVersions.has(row.version)"
-                        @update:model-value="() => toggleVersionSelected(row.version)"
-                      />
-                    </TableCell>
-                    <TableCell>{{ row.version }}</TableCell>
-                    <TableCell class="space-x-1">
-                      <Badge v-if="row.isLatest" variant="default">{{ $t('settings.auctionTechnical.badges.live') }}</Badge>
-                      <Badge v-if="row.isTrial" variant="secondary">{{ $t('settings.auctionTechnical.badges.trial') }}</Badge>
-                    </TableCell>
-                    <TableCell>{{ row.llmProvider ? `${row.llmProvider}/${row.llmModel}` : (row.extractionSource ?? '—') }}</TableCell>
-                    <TableCell>{{ row.runTrigger ?? '—' }}</TableCell>
-                    <TableCell>{{ row.llmDurationMs != null ? `${row.llmDurationMs} ms` : '—' }}</TableCell>
-                    <TableCell>{{ row.extractionConfidence ?? '—' }}</TableCell>
-                    <TableCell>{{ formatDate(row.createdAt) }}</TableCell>
-                    <TableCell>
-                      <Button
-                        v-if="!row.isLatest"
-                        type="button" size="sm" variant="outline"
-                        :disabled="promotePending === row.version"
-                        @click="promoteVersion(row.version)"
-                      >
-                        {{ $t('settings.auctionTechnical.versions.promote') }}
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
-              <p v-else class="text-sm text-muted-foreground">{{ $t('settings.auctionTechnical.noData') }}</p>
+              <AdminAuctionExtractionVersionsTable
+                :rows="overview.extractionHistory"
+                :selected-versions="selectedVersions"
+                :promote-pending="promotePending"
+                :format-date="formatDate"
+                @toggle-version="toggleVersionSelected"
+                @promote="promoteVersion"
+              />
             </CardContent>
           </Card>
 

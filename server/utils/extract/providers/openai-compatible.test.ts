@@ -47,6 +47,14 @@ describe('parseOpenAiUsage', () => {
   it('returns nulls when usage is missing', () => {
     expect(parseOpenAiUsage({})).toEqual({ inputTokens: null, outputTokens: null })
   })
+
+  it('reads the OpenRouter-reported cost when present', () => {
+    expect(parseOpenAiUsage({ usage: { prompt_tokens: 120, completion_tokens: 45, cost: 0.0042 } })).toEqual({
+      inputTokens: 120,
+      outputTokens: 45,
+      costUsd: 0.0042,
+    })
+  })
 })
 
 describe('OpenAiCompatibleProvider.extract', () => {
@@ -162,6 +170,24 @@ describe('OpenAiCompatibleProvider.extract', () => {
     const provider = new OpenAiCompatibleProvider({ ...config, model: 'gpt:batch' })
     await provider.extract(req)
     expect(fetchMock.mock.calls[0]![1].body.model).toBe('gpt:batch')
+  })
+
+  it('opts into OpenRouter usage accounting so the response reports billed cost', async () => {
+    const okResponse = { choices: [{ message: { content: '{}' } }] }
+    const fetchMock = vi.fn().mockResolvedValue(okResponse)
+    vi.stubGlobal('$fetch', fetchMock)
+    const provider = new OpenAiCompatibleProvider({ ...config, provider: 'openrouter', model: 'google/gemini-3.5-flash-lite' })
+    await provider.extract(req)
+    expect(fetchMock.mock.calls[0]![1].body.usage).toEqual({ include: true })
+  })
+
+  it('does not send the OpenRouter usage-accounting flag to another provider', async () => {
+    const okResponse = { choices: [{ message: { content: '{}' } }] }
+    const fetchMock = vi.fn().mockResolvedValue(okResponse)
+    vi.stubGlobal('$fetch', fetchMock)
+    const provider = new OpenAiCompatibleProvider(config)
+    await provider.extract(req)
+    expect(fetchMock.mock.calls[0]![1].body.usage).toBeUndefined()
   })
 
   it('calls onUsage with the token counts once a response is received, even if unparseable', async () => {

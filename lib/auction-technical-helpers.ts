@@ -52,6 +52,11 @@ export function formatDate(value: string | null, locale?: string): string {
   return new Date(value).toLocaleString(locale)
 }
 
+export function formatCost(value: number | null, locale?: string): string {
+  if (value == null) return '—'
+  return new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD', maximumFractionDigits: 6 }).format(value)
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   const units = ['KB', 'MB', 'GB']

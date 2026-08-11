@@ -8,7 +8,7 @@
 import { sql } from 'drizzle-orm'
 import { llmUsageEvents } from '../db/schema'
 import type { LlmUsage } from './extract/llm'
-import { estimateCostUsd } from './extract/llm-pricing'
+import { resolveCostUsd } from './extract/llm-pricing'
 import { getDb, getPool } from './db'
 
 export type LlmUsageTask = 'extraction' | 'translation' | 'place-name-translation'
@@ -51,14 +51,7 @@ export async function recordLlmUsage(event: RecordLlmUsageInput): Promise<void> 
       externalId: event.externalId,
       inputTokens: event.usage?.inputTokens ?? null,
       outputTokens: event.usage?.outputTokens ?? null,
-      // Prefer the provider's own amount (currently OpenRouter); the static
-      // price table remains the fallback for providers that expose tokens
-      // but no billed amount.
-      costUsd: event.usage?.costUsd ?? estimateCostUsd(
-        event.model,
-        event.usage?.inputTokens ?? null,
-        event.usage?.outputTokens ?? null,
-      ),
+      costUsd: resolveCostUsd(event.model, event.usage),
       status: event.status ?? 'succeeded',
       errorMessage: event.errorMessage ?? null,
       durationMs: event.durationMs ?? null,

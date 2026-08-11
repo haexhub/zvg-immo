@@ -54,6 +54,8 @@ describe('submitOpenRouterBatch', () => {
         body: expect.objectContaining({ endpoint: '/v1/chat/completions', model: 'google/gemini-3.5-flash-lite' }),
       }),
     )
+    const submittedRequests = (vi.mocked($fetch).mock.calls[0]![1] as { body: { requests: Array<{ body: { usage?: { include: boolean } } }> } }).body.requests
+    expect(submittedRequests[0]!.body.usage).toEqual({ include: true })
     const recorded = vi.mocked(insertLlmBatchJob).mock.calls[0]?.[0]
     expect(recorded).toMatchObject({ jobName: 'openrouter_batch_abc', source: 'reprocess', itemCount: 1 })
     expect(Object.values(recorded?.customIdMap ?? {})).toEqual(['zvg-portal:7265'])

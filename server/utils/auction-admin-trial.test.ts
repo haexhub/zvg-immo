@@ -93,6 +93,7 @@ describe('runAdminTrialReprocess', () => {
       llmProfileId: 'profile-1',
       runTrigger: 'manual',
       llmDurationMs: 1234,
+      llmCostUsd: null,
       trial: true,
     })
     expect(recordLlmUsage).toHaveBeenCalledWith({
@@ -107,6 +108,19 @@ describe('runAdminTrialReprocess', () => {
       usage: { inputTokens: 500, outputTokens: 150 },
     })
     expect(recordTaskRunError).not.toHaveBeenCalled()
+  })
+
+  it('resolves llmCostUsd from the provider-reported amount when present', async () => {
+    vi.mocked(reprocessAuction).mockResolvedValue({
+      entry: extraction(), llmCalled: true, llmFailures: 0, artifactVersionId: 11,
+      auction: auction(), llmConfigUsed: CONFIG, llmDurationMs: 1234,
+      llmUsage: { inputTokens: 500, outputTokens: 150, costUsd: 0.0042 },
+    })
+
+    await runAdminTrialReprocess('zvg-portal', '7265', 'profile-1')
+
+    const [, , optionsArg] = vi.mocked(writeAuctionDetails).mock.calls[0]!
+    expect(optionsArg).toMatchObject({ llmCostUsd: 0.0042 })
   })
 
   it('records an error and skips the write when the profile is unknown', async () => {
