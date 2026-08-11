@@ -310,7 +310,7 @@
     },
     "sources": {
       "title": "Datenquellen",
-      "description": "Aktivierte Länder werden in der Suche angezeigt, aus dem Cache ausgeliefert und regelmäßig gecrawlt. Änderungen wirken sofort; für eine neu aktivierte Quelle kannst du anschließend den Refresh manuell starten.",
+      "description": "Aktivierte Länder werden in der Suche und in der Länderübersicht angezeigt, aus dem Cache ausgeliefert und regelmäßig gecrawlt. Änderungen wirken sofort.",
       "enabledCount": "{enabled} von {total} Quellen aktiv",
       "loadError": "Datenquellen konnten nicht geladen werden.",
       "saveError": "Datenquellen konnten nicht gespeichert werden.",
@@ -526,6 +526,7 @@
       "loadError": "Status konnte nicht geladen werden.",
       "listLoadError": "Liste konnte nicht geladen werden.",
       "listEmpty": "Keine Anzeigen in diesem Bereich.",
+      "noData": "Keine Daten",
       "retryError": "Erneuter Versuch fehlgeschlagen.",
       "bucketDone": "Erledigt",
       "bucketOpen": "Offen",
@@ -540,6 +541,9 @@
     },
     "countryOverview": {
       "description": "Alle Verarbeitungsstände und OSM-Standortdaten sind pro Land zusammengefasst. Ein Klick auf ein Verarbeitungsdiagramm öffnet die zugehörige Tabelle.",
+      "forceCrawl": "Crawler erzwingen",
+      "forceLlm": "LLM-Extraktion erzwingen",
+      "forceError": "Aktion konnte nicht gestartet werden.",
       "osmAvailable": "Objekte vorhanden",
       "osmRequested": "Import angefordert",
       "osmMissing": "Keine Daten",

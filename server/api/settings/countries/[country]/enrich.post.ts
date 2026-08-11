@@ -15,12 +15,15 @@ import { ensureEnabledCountriesLoaded, isCountryEnabled, listRegisteredCountries
 
 interface EnrichCountryBody {
   forceExtraction?: boolean
+  /** Set by the dashboard's crawler action when LLM extraction is started separately. */
+  runExtraction?: boolean
 }
 
 export default defineEventHandler(async (event) => {
   const country = (getRouterParam(event, 'country') ?? '').trim().toLowerCase()
   const body = await readBody<EnrichCountryBody>(event).catch(() => undefined) ?? ({} as EnrichCountryBody)
   const forceExtraction = body.forceExtraction === true
+  const runExtraction = body.runExtraction !== false
   await ensureEnabledCountriesLoaded()
   const registered = listRegisteredCountries().find((candidate) => candidate.code === country)
   if (!registered) {
@@ -34,9 +37,11 @@ export default defineEventHandler(async (event) => {
   // Detached on purpose — see the file header. A rejection here is still
   // recorded as the task's lastError by its own defineTask wrapper; the catch
   // only keeps the trigger itself from becoming an unhandled rejection.
-  void runTask('reprocess', { payload: { country, force: forceExtraction, trigger: 'manual' } }).catch((err: unknown) => {
-    console.error('[settings/enrich] reprocess trigger failed:', (err as Error).message)
-  })
+  if (runExtraction) {
+    void runTask('reprocess', { payload: { country, force: forceExtraction, trigger: 'manual' } }).catch((err: unknown) => {
+      console.error('[settings/enrich] reprocess trigger failed:', (err as Error).message)
+    })
+  }
   void runTask('external-enrichment', { payload: { country } }).catch((err: unknown) => {
     console.error('[settings/enrich] external enrichment trigger failed:', (err as Error).message)
   })
@@ -46,7 +51,7 @@ export default defineEventHandler(async (event) => {
       ? {
           ...outcome.result,
           warning: outcome.warning ?? null,
-          followUpTasksStarted: true,
+          followUpTasksStarted: runExtraction,
         }
       : outcome?.result,
   }

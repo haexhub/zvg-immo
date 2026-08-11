@@ -38,6 +38,10 @@ const pending = ref(false)
 const loadError = ref<string | null>(null)
 const actionPending = ref<string | null>(null)
 const actionError = ref<string | null>(null)
+// The status endpoints only return countries that have matching rows. Keep the
+// configured set separately so an enabled country (notably one with no LLM
+// attempts yet) still receives every status card.
+const enabledCountryCodes = ref<string[] | null>(null)
 
 const selected = ref<{ country: string; kind: StatusKind; bucket: StatusBucket } | null>(null)
 const list = ref<StatusList>({ items: [], total: 0 })
@@ -62,6 +66,9 @@ let filterTimer: ReturnType<typeof setTimeout> | undefined
 let listRequestId = 0
 
 const countryCodes = computed(() => {
+  if (enabledCountryCodes.value !== null) {
+    return [...enabledCountryCodes.value].sort((a, b) => countryLabel(a).localeCompare(countryLabel(b)))
+  }
   const all = new Set([
     ...Object.keys(counts.value.crawl),
     ...Object.keys(counts.value.llm),
@@ -70,6 +77,10 @@ const countryCodes = computed(() => {
   ])
   return [...all].sort((a, b) => countryLabel(a).localeCompare(countryLabel(b)))
 })
+
+function setEnabledCountries(codes: string[]): void {
+  enabledCountryCodes.value = codes
+}
 
 const activeCountry = ref('')
 
@@ -221,6 +232,31 @@ async function runBulkRetry(country: string, kind: StatusKind, bucket: 'open' | 
   }
 }
 
+async function forceCountryRun(country: string, kind: 'crawl' | 'llm'): Promise<void> {
+  const key = `${country}:${kind}:force`
+  actionPending.value = key
+  actionError.value = null
+  startProgressPolling()
+  try {
+    if (kind === 'crawl') {
+      // Crawling and LLM extraction are intentionally separate manual actions
+      // in this overview. The country endpoint defaults to the historic
+      // combined behavior, so opt out of its detached reprocess follow-up.
+      await $fetch(`/api/settings/countries/${country}/enrich`, {
+        method: 'POST',
+        body: { runExtraction: false },
+      })
+    } else {
+      await $fetch(`/api/settings/countries/${country}/reprocess-force`, { method: 'POST' })
+    }
+    await load()
+  } catch (err) {
+    actionError.value = normalizeSettingsError(err, t('settings.countryOverview.forceError'))
+  } finally {
+    actionPending.value = null
+  }
+}
+
 async function retryItem(item: StatusListItem): Promise<void> {
   const target = selected.value
   if (!target || actionPending.value) return
@@ -298,6 +334,12 @@ onBeforeUnmount(() => clearTimeout(filterTimer))
     <p v-if="actionError" class="text-sm text-destructive">{{ actionError }}</p>
     <p v-if="!pending && countryCodes.length === 0" class="text-sm text-muted-foreground">{{ $t('settings.crawlStatus.empty') }}</p>
 
+    <Card>
+      <CardContent class="pt-6">
+        <SettingsCountrySourcesCard @countries="setEnabledCountries" />
+      </CardContent>
+    </Card>
+
     <Tabs v-if="countryCodes.length > 0" v-model="activeCountry">
       <TabsList class="h-auto w-full flex-wrap justify-start gap-1">
         <TabsTrigger v-for="country in countryCodes" :key="country" :value="country" class="gap-1.5">
@@ -321,6 +363,18 @@ onBeforeUnmount(() => clearTimeout(filterTimer))
                   @select="(bucket) => selectSegment(country, kind, bucket)"
                 />
                 <div class="mt-4 grid gap-2">
+                  <Button
+                    v-if="kind === 'crawl' || kind === 'llm'"
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    :disabled="actionPending !== null"
+                    @click="forceCountryRun(country, kind)"
+                  >
+                    <Loader2 v-if="actionPending === `${country}:${kind}:force`" class="h-4 w-4 animate-spin" />
+                    <RefreshCw v-else class="h-4 w-4" />
+                    {{ kind === 'crawl' ? $t('settings.countryOverview.forceCrawl') : $t('settings.countryOverview.forceLlm') }}
+                  </Button>
                   <Button type="button" variant="outline" size="sm" :disabled="actionPending !== null || (counts[kind][country]?.open ?? 0) === 0" @click="runBulkRetry(country, kind, 'open')">
                     <Loader2 v-if="actionPending === `${country}:${kind}:open`" class="h-4 w-4 animate-spin" />
                     <RefreshCw v-else class="h-4 w-4" />
