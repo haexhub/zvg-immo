@@ -21,8 +21,8 @@ export interface StatusListItem {
   llmFailures?: number
   /** translation-status only: which target language this row is for. */
   lang?: string
-  /** translation-status only: when this attempt was claimed. */
-  startedAt?: string
+  /** translation-status only: when this attempt was claimed; null if still unstarted. */
+  startedAt?: string | null
 }
 
 export interface StatusList {

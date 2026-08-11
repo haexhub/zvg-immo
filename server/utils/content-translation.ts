@@ -26,6 +26,7 @@ export interface ContentTranslationRow {
 // take the claim over once it is this old.
 /** Keep status-driven retries aligned with the atomic takeover gate below. */
 export const AUCTION_TRANSLATION_CLAIM_LEASE = '10 minutes'
+export const AUCTION_TRANSLATION_CLAIM_LEASE_MS = 10 * 60 * 1000
 // A failed attempt is remembered and served as the error for this long, then a
 // retry is allowed. A provider rate limit or outage must not lock an auction
 // out of ever getting a translation — the same lockout that PR #200 had to undo

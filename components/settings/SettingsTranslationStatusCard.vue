@@ -3,12 +3,9 @@ import type { StatusListItem } from '~/composables/settings/useSettingsStatusOve
 
 const { t } = useI18n()
 
-// Translation has no proactive backlog to grow (a row only exists once a
-// visitor viewed an auction in another language, or an admin retried it) —
-// unlike crawl/LLM, "retry open" here only re-runs rows already stuck
-// pending, it never creates new ones. No startProgressPolling: these don't
-// go through the tracked task-run system crawl/LLM's country-wide triggers
-// use, the translation-status card just re-polls its own list.
+// The overview includes the proactive translation backlog as well as existing
+// attempts. No startProgressPolling: these jobs do not go through crawl/LLM's
+// tracked task-run system, so the card re-polls its own list.
 async function retryOpen(code: string): Promise<void> {
   await $fetch(`/api/settings/countries/${code}/translation-retry-open`, { method: 'POST' })
 }
