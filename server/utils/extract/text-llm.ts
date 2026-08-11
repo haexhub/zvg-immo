@@ -7,7 +7,7 @@
 // instead of a caller hardcoding Anthropic's /v1/messages format directly and
 // silently breaking when the config points at a different provider.
 
-import { getProvider, type LlmConfig } from './llm'
+import { getProvider, type LlmConfig, type LlmUsage } from './llm'
 import type {
   TranslatableExtractionTexts,
   TranslatableInsightsTexts,
@@ -249,12 +249,16 @@ export async function callTranslationLlm(
   documentSummary: string | null,
   extractionTexts: TranslatableExtractionTexts | null,
   config: LlmConfig,
+  onUsage?: (usage: LlmUsage) => void,
 ): Promise<TranslationResult | null> {
-  const raw = await getProvider(config).extract({
-    systemPrompt,
-    schema: TRANSLATION_SCHEMA,
-    parts: [{ type: 'text', text: userText }],
-  })
+  const raw = await getProvider(config).extract(
+    {
+      systemPrompt,
+      schema: TRANSLATION_SCHEMA,
+      parts: [{ type: 'text', text: userText }],
+    },
+    { onUsage },
+  )
   if (!raw) return null
   const translatedTitle = typeof raw.title === 'string' ? raw.title.trim() : null
   const translatedAddress = typeof raw.address === 'string' ? raw.address.trim() : null
@@ -293,6 +297,7 @@ export async function callPlaceNameTranslationLlm(
   names: readonly string[],
   targetLangName: string,
   config: LlmConfig,
+  onUsage?: (usage: LlmUsage) => void,
 ): Promise<string[] | null> {
   const systemPrompt =
     'Du übersetzt/transliterierst geographische Eigennamen (Städte, Dörfer, Industriestandorte, Flughäfen). ' +
@@ -305,11 +310,14 @@ export async function callPlaceNameTranslationLlm(
     '',
     JSON.stringify(names),
   ].join('\n')
-  const raw = await getProvider(config).extract({
-    systemPrompt,
-    schema: PLACE_NAME_TRANSLATION_SCHEMA,
-    parts: [{ type: 'text', text: userText }],
-  })
+  const raw = await getProvider(config).extract(
+    {
+      systemPrompt,
+      schema: PLACE_NAME_TRANSLATION_SCHEMA,
+      parts: [{ type: 'text', text: userText }],
+    },
+    { onUsage },
+  )
   const translated = raw?.names
   if (!Array.isArray(translated) || translated.length !== names.length) return null
   const out = translated.map((value) => (typeof value === 'string' ? value.trim() : ''))

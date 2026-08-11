@@ -13,6 +13,7 @@ import { prepareArchivedLlmDocuments } from '../utils/extract/llm-documents'
 import { writeAuctionDetails } from '../utils/auction-details'
 import { upsertCurrentAuctions } from '../utils/current-auctions'
 import { recordTaskRunError } from '../utils/task-run-errors'
+import { recordLlmUsage } from '../utils/llm-usage'
 
 vi.mock('../utils/storage-download', () => ({
   findLatestCapture: vi.fn(),
@@ -73,6 +74,9 @@ vi.mock('../utils/task-runs', () => ({
 }))
 vi.mock('../utils/task-run-errors', () => ({
   recordTaskRunError: vi.fn(),
+}))
+vi.mock('../utils/llm-usage', () => ({
+  recordLlmUsage: vi.fn(),
 }))
 
 vi.stubGlobal('defineTask', (definition: unknown) => definition)
@@ -404,6 +408,45 @@ describe('runReprocess structured persistence', () => {
         llmDurationMs: expect.any(Number),
       }),
     )
+  })
+
+  it('records token usage/cost for the winning model when the provider reports it', async () => {
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+      baseUrl: 'https://api.example.test', apiKey: 'secret', model: 'vision-model', provider: 'gemini-native', profileId: 'profile-a',
+    }])
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+      opts?.onProviderAttempt?.()
+      opts?.onUsage?.({ inputTokens: 800, outputTokens: 120 })
+      return null
+    })
+
+    await expect(runReprocess({ country: 'de', trigger: 'manual' })).resolves.toMatchObject({ processed: 1 })
+
+    expect(recordLlmUsage).toHaveBeenCalledWith({
+      task: 'extraction',
+      executionMode: 'sync',
+      source: 'reprocess',
+      provider: 'gemini-native',
+      model: 'vision-model',
+      profileId: 'profile-a',
+      platform: 'zvg-portal',
+      externalId: '7265',
+      usage: { inputTokens: 800, outputTokens: 120 },
+    })
+  })
+
+  it('does not record usage when the provider never reported token counts', async () => {
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+      baseUrl: 'https://api.example.test', apiKey: 'secret', model: 'vision-model', provider: 'gemini-native', profileId: 'profile-a',
+    }])
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+      opts?.onProviderAttempt?.()
+      return null
+    })
+
+    await expect(runReprocess({ country: 'de', trigger: 'manual' })).resolves.toMatchObject({ processed: 1 })
+
+    expect(recordLlmUsage).not.toHaveBeenCalled()
   })
 })
 

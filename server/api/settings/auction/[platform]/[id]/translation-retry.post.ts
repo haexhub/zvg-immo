@@ -27,6 +27,7 @@ import {
 import { isLlmProviderUnavailable, type LlmConfig } from '~/server/utils/extract/llm'
 import type { TranslationResult } from '~/server/utils/extract/text-llm'
 import { fingerprintConfigChain, resolveActiveLlmConfigChain } from '~/server/utils/translation-llm-chain'
+import { recordLlmUsage } from '~/server/utils/llm-usage'
 import { countryContentLanguage, type ContentTargetLang } from '~/lib/content-language'
 import { extractTranslatableExtractionTexts } from '~/lib/extraction-translation'
 import {
@@ -66,7 +67,19 @@ async function runRetry(
     let result: TranslationResult | null = null
     for (const [index, config] of configs.entries()) {
       try {
-        result = await tryTranslate(title, address, description, documentSummary, extractionTexts, targetLang, sourceLang, config)
+        result = await tryTranslate(title, address, description, documentSummary, extractionTexts, targetLang, sourceLang, config, (usage) => {
+          void recordLlmUsage({
+            task: 'translation',
+            executionMode: 'sync',
+            source: null,
+            provider: config.provider ?? 'openai-compatible',
+            model: config.model,
+            profileId: config.profileId ?? null,
+            platform,
+            externalId,
+            usage,
+          })
+        })
         break
       } catch (err) {
         const isLast = index === configs.length - 1

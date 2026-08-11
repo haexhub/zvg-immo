@@ -1,6 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ExtractionRequest } from '../llm'
-import { ClaudeProxyProvider } from './claude-proxy'
+import { ClaudeProxyProvider, parseClaudeUsage } from './claude-proxy'
+
+describe('parseClaudeUsage', () => {
+  it('reads input/output tokens', () => {
+    expect(parseClaudeUsage({ usage: { input_tokens: 200, output_tokens: 60 } })).toEqual({
+      inputTokens: 200,
+      outputTokens: 60,
+    })
+  })
+
+  it('returns nulls when usage is missing', () => {
+    expect(parseClaudeUsage({})).toEqual({ inputTokens: null, outputTokens: null })
+  })
+})
 
 describe('ClaudeProxyProvider.extract', () => {
   const config = { baseUrl: 'https://proxy.example', apiKey: 'k', model: 'claude-haiku-4-5' }
@@ -80,5 +93,25 @@ describe('ClaudeProxyProvider.extract', () => {
     await vi.runAllTimersAsync()
     await expect(rateLimitedPromise).rejects.toThrow('http 429')
     expect(rateLimitedOnRequestError).not.toHaveBeenCalled()
+  })
+
+  it('calls onUsage with the token counts once a response is received', async () => {
+    const okResponse = {
+      content: [{ type: 'tool_use', name: 'final_result', input: { propertyType: 'haus' } }],
+      usage: { input_tokens: 200, output_tokens: 60 },
+    }
+    vi.stubGlobal('$fetch', vi.fn().mockResolvedValue(okResponse))
+    const provider = new ClaudeProxyProvider(config)
+    const onUsage = vi.fn()
+    await provider.extract(req, { onUsage })
+    expect(onUsage).toHaveBeenCalledWith({ inputTokens: 200, outputTokens: 60 })
+  })
+
+  it('never calls onUsage on a request failure (no response to read usage off)', async () => {
+    vi.stubGlobal('$fetch', vi.fn().mockRejectedValue(error(401)))
+    const provider = new ClaudeProxyProvider(config)
+    const onUsage = vi.fn()
+    await provider.extract(req, { onUsage }).catch(() => {})
+    expect(onUsage).not.toHaveBeenCalled()
   })
 })

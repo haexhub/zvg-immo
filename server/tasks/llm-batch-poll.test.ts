@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Auction, AuctionExtraction } from '~/types/auction'
 import { fetchLlmBatchResults, pollLlmBatch } from '../utils/extract/llm-batch'
-import { readExtractionLlmConfig } from '../utils/extract/llm-task-config'
+import { readExtractionLlmConfig, resolveLlmConfigForProfile } from '../utils/extract/llm-task-config'
 import { readAuctionRecordMap } from '../utils/auction-record'
 import { readAuctionFetchStates, writeAuctionLlmPipelineState } from '../utils/auction-fetch-state'
 import { upsertCurrentAuctions } from '../utils/current-auctions'
@@ -12,9 +12,14 @@ import {
   markLlmBatchJobResolved,
   type LlmBatchJob,
 } from '../utils/llm-batch-jobs'
+import { recordLlmUsage } from '../utils/llm-usage'
+import { getPool } from '../utils/db'
 
 vi.mock('../utils/extract/llm-batch', () => ({ pollLlmBatch: vi.fn(), fetchLlmBatchResults: vi.fn() }))
-vi.mock('../utils/extract/llm-task-config', () => ({ readExtractionLlmConfig: vi.fn() }))
+vi.mock('../utils/extract/llm-task-config', () => ({
+  readExtractionLlmConfig: vi.fn(),
+  resolveLlmConfigForProfile: vi.fn(),
+}))
 vi.mock('../utils/auction-record', () => ({ readAuctionRecordMap: vi.fn() }))
 vi.mock('../utils/auction-fetch-state', () => ({
   readAuctionFetchStates: vi.fn(),
@@ -27,6 +32,8 @@ vi.mock('../utils/llm-batch-jobs', () => ({
   markLlmBatchJobChecked: vi.fn(),
   markLlmBatchJobResolved: vi.fn(),
 }))
+vi.mock('../utils/llm-usage', () => ({ recordLlmUsage: vi.fn() }))
+vi.mock('../utils/db', () => ({ getPool: vi.fn() }))
 vi.stubGlobal('defineTask', (definition: unknown) => definition)
 
 const { runLlmBatchPoll } = await import('./llm-batch-poll')
@@ -84,6 +91,9 @@ function job(overrides: Partial<LlmBatchJob> = {}): LlmBatchJob {
     checkedAt: null,
     updatedAt: '2026-08-02T10:00:00.000Z',
     errorMessage: null,
+    provider: null,
+    model: null,
+    profileId: null,
     ...overrides,
   }
 }
@@ -124,6 +134,7 @@ beforeEach(() => {
     model: 'gemini-test',
     provider: 'gemini-native',
   })
+  vi.mocked(getPool).mockReturnValue({} as never)
   const stored = auction()
   vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map([['zvg-portal:7265', {
     auction: stored,
@@ -196,14 +207,14 @@ describe('runLlmBatchPoll', () => {
     vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job()])
     vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/result' })
     vi.mocked(fetchLlmBatchResults).mockResolvedValue([
-      { key: 'zvg-portal:7265', extraction: llmResult },
+      { key: 'zvg-portal:7265', extraction: llmResult, usage: null },
     ])
 
     await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 1, merged: 1 })
     expect(writeAuctionDetails).toHaveBeenCalledWith(
       expect.objectContaining({ extraction: expect.objectContaining({ condition: 'gepflegt', yearBuilt: 1998 }) }),
       expect.objectContaining({ condition: 'gepflegt', yearBuilt: 1998 }),
-      { artifactVersionId: 22 },
+      { artifactVersionId: 22, llmProvider: null, llmModel: null, llmProfileId: null, runTrigger: 'cron' },
     )
     expect(upsertCurrentAuctions).toHaveBeenCalledTimes(1)
     expect(vi.mocked(writeAuctionDetails).mock.invocationCallOrder[0])
@@ -214,13 +225,89 @@ describe('runLlmBatchPoll', () => {
       llmFailures: 0,
     })
     expect(markLlmBatchJobResolved).toHaveBeenCalledWith('batches/abc', 'succeeded', expect.any(String))
+    expect(recordLlmUsage).not.toHaveBeenCalled()
+  })
+
+  it('records token usage against the job\'s submit-time provider/model, not the poll-time config', async () => {
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([
+      job({ provider: 'gemini-native', model: 'gemini-flash-latest', profileId: 'profile-a' }),
+    ])
+    vi.mocked(resolveLlmConfigForProfile).mockResolvedValue({
+      baseUrl: 'https://profile-a.example', apiKey: 'profile-a-key', model: 'gemini-flash-latest', provider: 'gemini-native',
+    })
+    vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/result' })
+    vi.mocked(fetchLlmBatchResults).mockResolvedValue([
+      { key: 'zvg-portal:7265', extraction: llmResult, usage: { inputTokens: 900, outputTokens: 200 } },
+    ])
+
+    await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 1, merged: 1 })
+
+    expect(writeAuctionDetails).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ llmProvider: 'gemini-native', llmModel: 'gemini-flash-latest', llmProfileId: 'profile-a' }),
+    )
+    expect(recordLlmUsage).toHaveBeenCalledWith({
+      task: 'extraction',
+      executionMode: 'batch',
+      source: 'reprocess',
+      provider: 'gemini-native',
+      model: 'gemini-flash-latest',
+      profileId: 'profile-a',
+      platform: 'zvg-portal',
+      externalId: '7265',
+      usage: { inputTokens: 900, outputTokens: 200 },
+      batchJobName: 'batches/abc',
+    })
+  })
+
+  it('polls and fetches with the job\'s own submit-time profile, not the current chain config', async () => {
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([
+      job({ provider: 'gemini-native', model: 'gemini-flash-latest', profileId: 'profile-a' }),
+    ])
+    const profileConfig = {
+      baseUrl: 'https://profile-a.example', apiKey: 'profile-a-key', model: 'gemini-flash-latest', provider: 'gemini-native' as const,
+    }
+    vi.mocked(resolveLlmConfigForProfile).mockResolvedValue(profileConfig)
+    vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/result' })
+    vi.mocked(fetchLlmBatchResults).mockResolvedValue([])
+
+    await runLlmBatchPoll()
+
+    expect(resolveLlmConfigForProfile).toHaveBeenCalledWith({}, 'profile-a')
+    expect(pollLlmBatch).toHaveBeenCalledWith('batches/abc', { ...profileConfig, model: 'gemini-flash-latest' })
+    expect(fetchLlmBatchResults).toHaveBeenCalledWith('batches/abc', 'files/result', { ...profileConfig, model: 'gemini-flash-latest' }, {})
+  })
+
+  it('falls back to the current chain config for a legacy job without a profile snapshot', async () => {
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job({ profileId: null })])
+    vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'pending' })
+
+    await runLlmBatchPoll()
+
+    expect(resolveLlmConfigForProfile).not.toHaveBeenCalled()
+    expect(pollLlmBatch).toHaveBeenCalledWith('batches/abc', {
+      baseUrl: 'https://example.test', apiKey: 'test', model: 'gemini-test', provider: 'gemini-native',
+    })
+  })
+
+  it('falls back to the current chain config when the job\'s profile no longer resolves', async () => {
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job({ profileId: 'deleted-profile' })])
+    vi.mocked(resolveLlmConfigForProfile).mockResolvedValue(null)
+    vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'pending' })
+
+    await runLlmBatchPoll()
+
+    expect(pollLlmBatch).toHaveBeenCalledWith('batches/abc', {
+      baseUrl: 'https://example.test', apiKey: 'test', model: 'gemini-test', provider: 'gemini-native',
+    })
   })
 
   it('keeps a succeeded job pending when writing structured details fails', async () => {
     vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job()])
     vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/result' })
     vi.mocked(fetchLlmBatchResults).mockResolvedValue([
-      { key: 'zvg-portal:7265', extraction: llmResult },
+      { key: 'zvg-portal:7265', extraction: llmResult, usage: null },
     ])
     vi.mocked(writeAuctionDetails).mockRejectedValue(new Error('database unavailable'))
 
@@ -234,7 +321,7 @@ describe('runLlmBatchPoll', () => {
     vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job()])
     vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/result' })
     vi.mocked(fetchLlmBatchResults).mockResolvedValue([
-      { key: 'zvg-portal:7265', extraction: null },
+      { key: 'zvg-portal:7265', extraction: null, usage: null },
     ])
 
     await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 1, merged: 1 })

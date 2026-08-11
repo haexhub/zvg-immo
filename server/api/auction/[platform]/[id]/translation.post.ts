@@ -22,9 +22,10 @@ import {
   readContentTranslation,
   writeContentTranslation,
 } from '~/server/utils/content-translation'
-import { isLlmProviderUnavailable, type LlmConfig } from '~/server/utils/extract/llm'
+import { isLlmProviderUnavailable, type LlmConfig, type LlmUsage } from '~/server/utils/extract/llm'
 import { callTranslationLlm, type TranslationResult } from '~/server/utils/extract/text-llm'
 import { fingerprintConfigChain, resolveActiveLlmConfigChain } from '~/server/utils/translation-llm-chain'
+import { recordLlmUsage } from '~/server/utils/llm-usage'
 import { CONTENT_TARGET_LANGS, countryContentLanguage, isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
 import { extractTranslatableExtractionTexts, translationContentSource } from '~/lib/extraction-translation'
 import {
@@ -99,6 +100,7 @@ export async function tryTranslate(
   targetLang: ContentTargetLang,
   sourceLang: string | null,
   config: Parameters<typeof callTranslationLlm>[7],
+  onUsage?: (usage: LlmUsage) => void,
 ): Promise<TranslationResult | null> {
   return await callTranslationLlm(
     SYSTEM_PROMPT,
@@ -109,6 +111,7 @@ export async function tryTranslate(
     documentSummary,
     extractionTexts,
     config,
+    onUsage,
   )
 }
 
@@ -265,7 +268,19 @@ export default defineEventHandler(async (event) => {
       let result: TranslationResult | null = null
       for (const [index, config] of configs.entries()) {
         try {
-          result = await tryTranslate(title, address, description, documentSummary, extractionTexts, targetLang, sourceLang, config)
+          result = await tryTranslate(title, address, description, documentSummary, extractionTexts, targetLang, sourceLang, config, (usage) => {
+            void recordLlmUsage({
+              task: 'translation',
+              executionMode: 'sync',
+              source: null,
+              provider: config.provider ?? 'openai-compatible',
+              model: config.model,
+              profileId: config.profileId ?? null,
+              platform,
+              externalId: id,
+              usage,
+            })
+          })
           break
         } catch (err) {
           const isLast = index === configs.length - 1

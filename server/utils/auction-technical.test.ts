@@ -179,11 +179,13 @@ describe('readAuctionTechnicalOverview', () => {
         jobName: 'job-a', source: 'reprocess', status: 'pending', itemCount: 2,
         customIdMap: { c1: 'zvg-portal:7265', c2: 'zvg-portal:9999' },
         submittedAt: '2026-08-02T09:00:00.000Z', checkedAt: null, updatedAt: '2026-08-02T09:00:00.000Z', errorMessage: null,
+        provider: null, model: null, profileId: null,
       },
       {
         jobName: 'job-b', source: 'reprocess', status: 'succeeded', itemCount: 1,
         customIdMap: { c1: 'zvg-portal:9999' },
         submittedAt: '2026-08-01T09:00:00.000Z', checkedAt: '2026-08-01T10:00:00.000Z', updatedAt: '2026-08-01T10:00:00.000Z', errorMessage: null,
+        provider: null, model: null, profileId: null,
       },
     ])
 

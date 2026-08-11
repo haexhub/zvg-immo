@@ -6,6 +6,7 @@ import { reprocessAuction } from '../tasks/reprocess'
 import { resolveLlmConfigForProfile } from './extract/llm-task-config'
 import { getLlmKillSwitch } from './app-settings'
 import { recordTaskRunError } from './task-run-errors'
+import { recordLlmUsage } from './llm-usage'
 import { validateAdminTrialReprocess, runAdminTrialReprocess } from './auction-admin-trial'
 import type { Auction, AuctionExtraction } from '~/types/auction'
 
@@ -16,6 +17,7 @@ vi.mock('../tasks/reprocess', () => ({ reprocessAuction: vi.fn() }))
 vi.mock('./extract/llm-task-config', () => ({ resolveLlmConfigForProfile: vi.fn() }))
 vi.mock('./app-settings', () => ({ getLlmKillSwitch: vi.fn() }))
 vi.mock('./task-run-errors', () => ({ recordTaskRunError: vi.fn() }))
+vi.mock('./llm-usage', () => ({ recordLlmUsage: vi.fn() }))
 
 const CONFIG = { provider: 'openrouter' as const, baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'k', model: 'deepseek/deepseek-v4-pro', profileId: 'profile-1' }
 
@@ -43,6 +45,7 @@ beforeEach(() => {
   vi.mocked(reprocessAuction).mockResolvedValue({
     entry: extraction(), llmCalled: true, llmFailures: 0, artifactVersionId: 11,
     auction: auction(), llmConfigUsed: CONFIG, llmDurationMs: 1234,
+    llmUsage: { inputTokens: 500, outputTokens: 150 },
   })
   vi.mocked(writeAuctionDetails).mockResolvedValue({ version: 4, changed: true })
 })
@@ -91,6 +94,17 @@ describe('runAdminTrialReprocess', () => {
       runTrigger: 'manual',
       llmDurationMs: 1234,
       trial: true,
+    })
+    expect(recordLlmUsage).toHaveBeenCalledWith({
+      task: 'extraction',
+      executionMode: 'sync',
+      source: 'admin-trial',
+      provider: 'openrouter',
+      model: 'deepseek/deepseek-v4-pro',
+      profileId: 'profile-1',
+      platform: 'zvg-portal',
+      externalId: '7265',
+      usage: { inputTokens: 500, outputTokens: 150 },
     })
     expect(recordTaskRunError).not.toHaveBeenCalled()
   })

@@ -22,6 +22,14 @@ export interface LlmBatchJob {
   checkedAt: string | null
   updatedAt: string
   errorMessage: string | null
+  /** The LlmConfig actually used at submit time — null for rows written
+   *  before these columns existed. Read back at poll/merge time
+   *  (llm-batch-poll.ts) instead of guessing from the poll-time config,
+   *  which can point at a different model by the time a batch (up to 48h)
+   *  completes — see server/utils/llm-usage.ts. */
+  provider: string | null
+  model: string | null
+  profileId: string | null
 }
 
 // Records whether the *last* real attempt (not a deliberate quota/backoff
@@ -301,6 +309,9 @@ export async function insertLlmBatchJob(job: {
   source: 'enrich' | 'reprocess'
   itemCount: number
   customIdMap?: Record<string, string>
+  provider?: string
+  model?: string
+  profileId?: string | null
 }): Promise<boolean> {
   const db = getDb()
   if (!db) return true
@@ -310,6 +321,9 @@ export async function insertLlmBatchJob(job: {
       source: job.source,
       itemCount: job.itemCount,
       customIdMap: job.customIdMap ?? {},
+      provider: job.provider ?? null,
+      model: job.model ?? null,
+      profileId: job.profileId ?? null,
     })
     return true
   } catch (err) {
@@ -345,6 +359,9 @@ async function listLlmBatchJobs(opts: {
       checkedAt: llmBatchJobs.checkedAt,
       updatedAt: llmBatchJobs.updatedAt,
       errorMessage: llmBatchJobs.errorMessage,
+      provider: llmBatchJobs.provider,
+      model: llmBatchJobs.model,
+      profileId: llmBatchJobs.profileId,
     })
       .from(llmBatchJobs)
       .where(opts.status ? eq(llmBatchJobs.status, opts.status) : undefined)
@@ -362,6 +379,9 @@ async function listLlmBatchJobs(opts: {
       checkedAt: r.checkedAt == null ? null : toIso(r.checkedAt),
       updatedAt: toIso(r.updatedAt),
       errorMessage: r.errorMessage,
+      provider: r.provider,
+      model: r.model,
+      profileId: r.profileId,
     }))
   } catch (err) {
     console.warn(`[llm-batch-jobs] list failed: ${(err as Error).message}`)

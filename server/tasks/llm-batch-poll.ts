@@ -5,7 +5,8 @@
 // gets merged promptly instead of waiting for the next tick.
 
 import { fetchLlmBatchResults, pollLlmBatch } from '../utils/extract/llm-batch'
-import { readExtractionLlmConfig } from '../utils/extract/llm-task-config'
+import { readExtractionLlmConfig, resolveLlmConfigForProfile } from '../utils/extract/llm-task-config'
+import type { LlmConfig } from '../utils/extract/llm'
 import { mergeLlmResult } from '../utils/extract/merge-llm-result'
 import { buildReprocessFields } from '../utils/extract/reprocess-fields'
 import { applyAuctionExtraction } from '../utils/auction-extraction'
@@ -20,6 +21,8 @@ import {
   type LlmBatchJob,
 } from '../utils/llm-batch-jobs'
 import { runExclusiveTask, throwIfTaskAborted } from '../utils/exclusive-task'
+import { recordLlmUsage } from '../utils/llm-usage'
+import { getPool } from '../utils/db'
 
 const DEFAULT_GEMINI_FREE_BATCH_POLL_INTERVAL_HOURS = 6
 
@@ -59,6 +62,19 @@ function splitKey(key: string): { platform: string; externalId: string } | null 
   return { platform: key.slice(0, i), externalId: key.slice(i + 1) }
 }
 
+// A batch can take up to 48h to complete, long enough for the assigned
+// profile/model to have changed in between — poll/fetch with the job's own
+// submit-time profile where one was recorded, falling back to the current
+// chain's config only for legacy jobs submitted before that snapshot
+// existed (or a since-deleted profile).
+async function resolveJobLlmConfig(job: LlmBatchJob, fallback: LlmConfig): Promise<LlmConfig> {
+  if (!job.profileId) return fallback
+  const pool = getPool()
+  if (!pool) return fallback
+  const resolved = await resolveLlmConfigForProfile(pool, job.profileId)
+  return resolved ? { ...resolved, model: job.model ?? resolved.model } : fallback
+}
+
 export default defineTask({
   meta: {
     name: 'llm-batch-poll',
@@ -95,7 +111,8 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
     if (shouldSkipGeminiFreePoll(job, now)) continue
     checked++
     try {
-      const poll = await pollLlmBatch(job.jobName, llmConfig)
+      const jobConfig = await resolveJobLlmConfig(job, llmConfig)
+      const poll = await pollLlmBatch(job.jobName, jobConfig)
       throwIfTaskAborted(signal)
       await markLlmBatchJobChecked(job.jobName, at)
       if (poll.state === 'pending') continue
@@ -109,9 +126,9 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
         continue
       }
 
-      const results = await fetchLlmBatchResults(job.jobName, poll.resultFileName, llmConfig, job.customIdMap)
+      const results = await fetchLlmBatchResults(job.jobName, poll.resultFileName, jobConfig, job.customIdMap)
       throwIfTaskAborted(signal)
-      for (const { key, extraction } of results) {
+      for (const { key, extraction, usage } of results) {
         throwIfTaskAborted(signal)
         const identity = splitKey(key)
         if (!identity) continue
@@ -135,9 +152,31 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
         )
         const updated = { ...record.auction, extraction: mergedEntry }
         applyAuctionExtraction(updated, mergedEntry)
+        // provider/model/profileId come from the job's own submit-time
+        // snapshot, not the poll-time llmConfig above — a batch can take up
+        // to 48h to complete, long enough for the assigned model to have
+        // changed in between (see llm-batch-jobs.ts).
         await writeAuctionDetails(updated, mergedEntry, {
           artifactVersionId,
+          llmProvider: job.provider,
+          llmModel: job.model,
+          llmProfileId: job.profileId,
+          runTrigger: 'cron',
         })
+        if (job.provider && job.model && usage) {
+          await recordLlmUsage({
+            task: 'extraction',
+            executionMode: 'batch',
+            source: job.source,
+            provider: job.provider,
+            model: job.model,
+            profileId: job.profileId,
+            platform: identity.platform,
+            externalId: identity.externalId,
+            usage,
+            batchJobName: job.jobName,
+          })
+        }
         await upsertCurrentAuctions([updated], at)
         await writeAuctionLlmPipelineState(identity.platform, identity.externalId, {
           llmBatchJob: null,

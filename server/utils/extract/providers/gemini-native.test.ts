@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ExtractionRequest } from '../llm'
-import { parseGeminiExtractionResponse, toGeminiParts } from './gemini-native'
+import { parseGeminiExtractionResponse, parseGeminiUsage, toGeminiParts } from './gemini-native'
 
 describe('toGeminiParts', () => {
   it('translates text, image and document parts to Gemini parts', () => {
@@ -35,6 +35,19 @@ describe('parseGeminiExtractionResponse', () => {
     expect(parseGeminiExtractionResponse({})).toBeNull()
     expect(parseGeminiExtractionResponse({ candidates: [] })).toBeNull()
     expect(parseGeminiExtractionResponse({ candidates: [{ content: { parts: [{ text: 'not json' }] } }] })).toBeNull()
+  })
+})
+
+describe('parseGeminiUsage', () => {
+  it('reads prompt/candidates token counts', () => {
+    expect(parseGeminiUsage({ usageMetadata: { promptTokenCount: 260_000, candidatesTokenCount: 512 } })).toEqual({
+      inputTokens: 260_000,
+      outputTokens: 512,
+    })
+  })
+
+  it('returns nulls when usageMetadata is missing', () => {
+    expect(parseGeminiUsage({})).toEqual({ inputTokens: null, outputTokens: null })
   })
 })
 
@@ -286,9 +299,20 @@ describe('GeminiNativeProvider.extract — 429 pacing/retry', () => {
   // independent: a key can sit well under its request limit while its
   // Gutachten PDFs blow the token one (measured in prod 2026-08-01: 6/15 RPM,
   // 298.92k/250k TPM).
-  function okResponseWithTokens(promptTokenCount: number) {
-    return { ...okResponse, usageMetadata: { promptTokenCount } }
+  function okResponseWithTokens(promptTokenCount: number, candidatesTokenCount = 0) {
+    return { ...okResponse, usageMetadata: { promptTokenCount, candidatesTokenCount } }
   }
+
+  it('calls onUsage with the token counts once a response is received', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okResponseWithTokens(1_000, 200))
+    vi.stubGlobal('$fetch', fetchMock)
+    const provider = await freshProvider()
+    const onUsage = vi.fn()
+    const promise = provider.extract(req, { onUsage })
+    await vi.runAllTimersAsync()
+    await promise
+    expect(onUsage).toHaveBeenCalledWith({ inputTokens: 1_000, outputTokens: 200 })
+  })
 
   it('does not delay a fresh bucket even for an oversized first request', async () => {
     const fetchMock = vi.fn().mockResolvedValue(okResponseWithTokens(300_000))

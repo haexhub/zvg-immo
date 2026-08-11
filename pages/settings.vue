@@ -127,6 +127,7 @@ onMounted(probeSession)
           <SettingsLlmStatusCard />
           <SettingsTranslationStatusCard />
           <SettingsLlmBatchCard />
+          <SettingsLlmCostCard />
         </section>
 
         <section class="space-y-4">

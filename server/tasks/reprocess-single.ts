@@ -1,5 +1,5 @@
 import type { Auction, AuctionExtraction, CuratedPhoto } from '~/types/auction'
-import { extractByLlm, isDailyQuotaError, isLlmProviderUnavailable, type LlmConfig, type PhotoCuration } from '~/server/utils/extract/llm'
+import { extractByLlm, isDailyQuotaError, isLlmProviderUnavailable, type LlmConfig, type LlmUsage, type PhotoCuration } from '~/server/utils/extract/llm'
 import { mergeLlmResult } from '~/server/utils/extract/merge-llm-result'
 import { readArtifactProcessingState, type ArtifactProcessingState } from '~/server/utils/artifact-version-state'
 import { normalizePhoto } from '~/lib/photo'
@@ -48,6 +48,9 @@ export async function reprocessAuction(
    *  and rasterizes scanned PDF pages, which would otherwise dominate and
    *  make llm_duration_ms useless for comparing models. */
   llmDurationMs: number | null
+  /** Token usage of that same request, null alongside llmConfigUsed — see
+   *  server/utils/llm-usage.ts. */
+  llmUsage: LlmUsage | null
 } | null> {
   const artifactState = opts.artifactState ?? await readArtifactProcessingState(platform, externalId)
   let base = opts.prebuiltBase
@@ -63,6 +66,7 @@ export async function reprocessAuction(
       auction: base.auction,
       llmConfigUsed: null,
       llmDurationMs: null,
+      llmUsage: null,
     }
   }
 
@@ -70,6 +74,7 @@ export async function reprocessAuction(
   let llm: Awaited<ReturnType<typeof extractByLlm>> = null
   let llmConfigUsed: LlmConfig | null = null
   let llmDurationMs: number | null = null
+  let llmUsage: LlmUsage | null = null
   for (const [index, config] of configs.entries()) {
     if (index > 0) {
       // Rebuild rather than reuse base.input: nativeDocuments (gemini-native's
@@ -94,6 +99,7 @@ export async function reprocessAuction(
           opts.onLlmAttempt?.()
         },
         onProviderError: opts.onLlmError,
+        onUsage: (usage) => { llmUsage = usage },
       })
       if (providerAttempted) {
         llmConfigUsed = config
@@ -136,5 +142,6 @@ export async function reprocessAuction(
     auction: base.auction,
     llmConfigUsed,
     llmDurationMs,
+    llmUsage,
   }
 }

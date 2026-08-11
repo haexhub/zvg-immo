@@ -24,6 +24,7 @@ Rules:
 | SettingsLlmProfilesCard | GET/PUT `/api/settings/llm-profiles`, DELETE `.../llm-profiles/[id]`, POST `/api/settings/llm-provider/models` | sync |
 | SettingsLlmAssignmentsCard | GET `/api/settings/llm-profiles`, PUT `/api/settings/llm-assignments` | sync |
 | SettingsLlmBatchCard | GET `/api/settings/llm-batch-jobs` (geteiltes Status-Overview für Reprocess/Enrich/External-Enrichment/Offload) | sync |
+| SettingsLlmCostCard | GET `/api/settings/llm-costs` (aggregiert `llm_usage_events`) | sync |
 | SettingsLawyersCard | GET/POST/PUT/DELETE `/api/settings/lawyers[/id]` | sync |
 | SettingsDisplayCard | GET/PUT `/api/settings/display` | sync |
 | ArchiveBrowser | GET `/api/settings/archive/{countries,regions,cases,documents}`, DELETE `.../archive/countries/[code]` | sync |

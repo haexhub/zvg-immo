@@ -5,7 +5,7 @@
 // that Gemini reads scanned Gutachten correctly without a rasterize/OCR step.
 
 import { createHash } from 'node:crypto'
-import type { ContentPart, ExtractionProvider, ExtractionRequest, LlmConfig } from '../llm'
+import type { ContentPart, ExtractionProvider, ExtractionRequest, LlmConfig, LlmUsage } from '../llm'
 import { isDailyQuotaError, isRateLimitError, isTransientRequestError, LlmProviderError, TRANSIENT_RETRY_DELAYS_MS } from '../llm'
 import { toGeminiSchema } from './gemini-schema'
 
@@ -16,6 +16,18 @@ export function toGeminiParts(parts: ContentPart[]): GeminiPart[] {
     if (part.type === 'text') return { text: part.text }
     return { inlineData: { mimeType: part.mimeType, data: part.data } }
   })
+}
+
+/** Reads `usageMetadata.{promptTokenCount,candidatesTokenCount}` — the same
+ *  field recordTokenUsage() below already reads for TPM pacing, exposed here
+ *  for cost accounting too. */
+export function parseGeminiUsage(resp: unknown): LlmUsage {
+  const usage = (resp as { usageMetadata?: unknown })?.usageMetadata as
+    | { promptTokenCount?: unknown; candidatesTokenCount?: unknown }
+    | undefined
+  const inputTokens = typeof usage?.promptTokenCount === 'number' ? usage.promptTokenCount : null
+  const outputTokens = typeof usage?.candidatesTokenCount === 'number' ? usage.candidatesTokenCount : null
+  return { inputTokens, outputTokens }
 }
 
 export function parseGeminiExtractionResponse(resp: unknown): Record<string, unknown> | null {
@@ -140,7 +152,7 @@ export class GeminiNativeProvider implements ExtractionProvider {
 
   async extract(
     req: ExtractionRequest,
-    opts?: { onRequestError?: (err: unknown) => void },
+    opts?: { onRequestError?: (err: unknown) => void; onUsage?: (usage: LlmUsage) => void },
   ): Promise<Record<string, unknown> | null> {
     const model = this.config.model || DEFAULT_MODEL
     const body = {
@@ -216,6 +228,7 @@ export class GeminiNativeProvider implements ExtractionProvider {
         return null
       }
     }
+    opts?.onUsage?.(parseGeminiUsage(resp))
     const parsed = parseGeminiExtractionResponse(resp)
     if (!parsed) throw new LlmProviderError('gemini-native', 'ungültige oder leere Provider-Antwort')
     return parsed
