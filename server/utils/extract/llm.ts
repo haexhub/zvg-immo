@@ -115,6 +115,14 @@ export interface ExtractionRequest {
   parts: ContentPart[]
 }
 
+/** Token counts pulled off a provider response for cost accounting
+ *  (llm-usage.ts). Either field is null when the provider didn't report it —
+ *  never guessed at. */
+export interface LlmUsage {
+  inputTokens: number | null
+  outputTokens: number | null
+}
+
 /** Narrow seam between prompt/schema building (provider-agnostic) and the
  *  wire format a specific backend expects. Swapping or adding a provider
  *  means writing a new implementation of this interface, not touching
@@ -124,11 +132,14 @@ export interface ExtractionRequest {
  *  onRequestError` fires only for an actual request failure (network/HTTP
  *  error), never for an empty/unparseable response — reprocess.ts uses it to
  *  tell "the provider errored" apart from "the provider returned nothing",
- *  which extractByLlm's null return can't distinguish on its own. */
+ *  which extractByLlm's null return can't distinguish on its own. `opts.
+ *  onUsage` fires once a response was actually received — including when it
+ *  turns out unparseable, since tokens were spent either way — but never on
+ *  a request failure (no response came back to read usage off). */
 export interface ExtractionProvider {
   extract(
     req: ExtractionRequest,
-    opts?: { onRequestError?: (err: unknown) => void },
+    opts?: { onRequestError?: (err: unknown) => void; onUsage?: (usage: LlmUsage) => void },
   ): Promise<Record<string, unknown> | null>
 }
 
@@ -347,14 +358,18 @@ export function resolveLlmConfig(
 export async function extractByLlm(
   input: LlmInput,
   config: LlmConfig,
-  opts: { onProviderAttempt?: () => void; onProviderError?: (err: unknown) => void } = {},
+  opts: {
+    onProviderAttempt?: () => void
+    onProviderError?: (err: unknown) => void
+    onUsage?: (usage: LlmUsage) => void
+  } = {},
 ): Promise<ClampedExtraction | null> {
   const parts = buildParts(input)
   if (parts.length === 0) return null
   opts.onProviderAttempt?.()
   const raw = await getProvider(config).extract(
     { systemPrompt: SYSTEM_PROMPT, schema: UNIVERSAL_AUCTION_SCHEMA, parts },
-    { onRequestError: opts.onProviderError },
+    { onRequestError: opts.onProviderError, onUsage: opts.onUsage },
   )
   return raw ? clampExtraction(raw) : null
 }

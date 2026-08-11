@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ExtractionRequest } from '../llm'
-import { OpenAiCompatibleProvider, parseOpenAiExtractionResponse, toOpenAiContent } from './openai-compatible'
+import { OpenAiCompatibleProvider, parseOpenAiExtractionResponse, parseOpenAiUsage, toOpenAiContent } from './openai-compatible'
 
 describe('toOpenAiContent', () => {
   it('translates text and image parts, dropping document parts', () => {
@@ -33,6 +33,19 @@ describe('parseOpenAiExtractionResponse', () => {
     expect(parseOpenAiExtractionResponse({ choices: [] })).toBeNull()
     expect(parseOpenAiExtractionResponse({ choices: [{ message: { content: 'not json' } }] })).toBeNull()
     expect(parseOpenAiExtractionResponse({ choices: [{ message: { content: '"just a string"' } }] })).toBeNull()
+  })
+})
+
+describe('parseOpenAiUsage', () => {
+  it('reads prompt/completion tokens', () => {
+    expect(parseOpenAiUsage({ usage: { prompt_tokens: 120, completion_tokens: 45 } })).toEqual({
+      inputTokens: 120,
+      outputTokens: 45,
+    })
+  })
+
+  it('returns nulls when usage is missing', () => {
+    expect(parseOpenAiUsage({})).toEqual({ inputTokens: null, outputTokens: null })
   })
 })
 
@@ -149,5 +162,28 @@ describe('OpenAiCompatibleProvider.extract', () => {
     const provider = new OpenAiCompatibleProvider({ ...config, model: 'gpt:batch' })
     await provider.extract(req)
     expect(fetchMock.mock.calls[0]![1].body.model).toBe('gpt:batch')
+  })
+
+  it('calls onUsage with the token counts once a response is received, even if unparseable', async () => {
+    const okResponse = { choices: [{ message: { content: '{"propertyType":"haus"}' } }], usage: { prompt_tokens: 10, completion_tokens: 3 } }
+    vi.stubGlobal('$fetch', vi.fn().mockResolvedValue(okResponse))
+    const provider = new OpenAiCompatibleProvider(config)
+    const onUsage = vi.fn()
+    await provider.extract(req, { onUsage })
+    expect(onUsage).toHaveBeenCalledWith({ inputTokens: 10, outputTokens: 3 })
+
+    const unparseable = { choices: [{ message: { content: 'not json' } }], usage: { prompt_tokens: 5, completion_tokens: 0 } }
+    vi.stubGlobal('$fetch', vi.fn().mockResolvedValue(unparseable))
+    const onUsageForFailedParse = vi.fn()
+    await provider.extract(req, { onUsage: onUsageForFailedParse }).catch(() => {})
+    expect(onUsageForFailedParse).toHaveBeenCalledWith({ inputTokens: 5, outputTokens: 0 })
+  })
+
+  it('never calls onUsage on a request failure (no response to read usage off)', async () => {
+    vi.stubGlobal('$fetch', vi.fn().mockRejectedValue(error(401)))
+    const provider = new OpenAiCompatibleProvider(config)
+    const onUsage = vi.fn()
+    await provider.extract(req, { onUsage }).catch(() => {})
+    expect(onUsage).not.toHaveBeenCalled()
   })
 })

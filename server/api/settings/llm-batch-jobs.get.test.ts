@@ -64,6 +64,9 @@ describe('/api/settings/llm-batch-jobs', () => {
         checkedAt: null,
         updatedAt: '2026-07-26T18:00:00.000Z',
         errorMessage: null,
+        provider: null,
+        model: null,
+        profileId: null,
       },
     ] as const
     vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([...pendingJobs])
@@ -79,6 +82,9 @@ describe('/api/settings/llm-batch-jobs', () => {
         checkedAt: '2026-07-25T19:00:00.000Z',
         updatedAt: '2026-07-25T19:00:00.000Z',
         errorMessage: null,
+        provider: null,
+        model: null,
+        profileId: null,
       },
     ])
     vi.mocked(getAllLlmBatchCapabilities).mockResolvedValue({
@@ -195,6 +201,9 @@ describe('/api/settings/llm-batch-jobs', () => {
       checkedAt: null,
       updatedAt: '2026-08-08T18:00:00.000Z',
       errorMessage: null,
+      provider: null,
+      model: null,
+      profileId: null,
     } as const
     vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job])
     vi.mocked(listRecentLlmBatchJobs).mockResolvedValue([job])

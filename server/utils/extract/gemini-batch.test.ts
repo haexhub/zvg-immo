@@ -99,6 +99,9 @@ describe('submitGeminiBatch', () => {
       source: 'enrich',
       itemCount: 1,
       customIdMap: { '0': 'zvg-portal:1' },
+      provider: 'gemini-native',
+      model: 'gemini-flash-latest',
+      profileId: undefined,
     })
     const submitCall = vi.mocked($fetch).mock.calls.find(([url]) => (url as string).includes(':batchGenerateContent'))
     expect((submitCall?.[1] as { body: unknown })?.body).toEqual({
@@ -467,7 +470,8 @@ describe('fetchGeminiBatchResults', () => {
     expect(results[0]!.key).toBe('zvg-portal:1')
     expect(results[0]!.extraction?.propertyType).toBe('einfamilienhaus')
     expect(results[0]!.extraction?.landAreaSqm).toBe(500)
-    expect(results[1]).toEqual({ key: 'zvg-portal:2', extraction: null, error: 'internal error' })
+    expect(results[0]!.usage).toEqual({ inputTokens: null, outputTokens: null })
+    expect(results[1]).toEqual({ key: 'zvg-portal:2', extraction: null, usage: null, error: 'internal error' })
   })
 
   it('skips malformed lines instead of throwing', async () => {
@@ -477,7 +481,12 @@ describe('fetchGeminiBatchResults', () => {
 
     const results = await fetchGeminiBatchResults('files/results', config)
 
-    expect(results).toEqual([{ key: 'zvg-portal:1', extraction: null, error: 'Keine gültige Extraktion in der Batch-Antwort' }])
+    expect(results).toEqual([{
+      key: 'zvg-portal:1',
+      extraction: null,
+      usage: { inputTokens: null, outputTokens: null },
+      error: 'Keine gültige Extraktion in der Batch-Antwort',
+    }])
   })
 
   it('falls back to metadata.key and input-order customIdMap for result lines', async () => {
@@ -499,6 +508,7 @@ describe('fetchGeminiBatchResults', () => {
     expect(results[1]).toEqual({
       key: 'zvg-portal:2',
       extraction: expect.objectContaining({ landAreaSqm: 600 }),
+      usage: { inputTokens: null, outputTokens: null },
       error: null,
     })
   })

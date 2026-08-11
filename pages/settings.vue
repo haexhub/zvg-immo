@@ -131,6 +131,7 @@ onMounted(probeSession)
           <SettingsLlmProfilesCard />
           <SettingsLlmAssignmentsCard />
           <SettingsLlmBatchCard />
+          <SettingsLlmCostCard />
         </section>
 
         <section class="space-y-4">

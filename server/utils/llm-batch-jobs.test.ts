@@ -16,6 +16,9 @@ function makeFakePool() {
     checked_at: string | null
     updated_at: string
     error_message: string | null
+    provider: string | null
+    model: string | null
+    profile_id: string | null
   }> = []
   const query = vi.fn(async (queryArg: unknown, params: unknown[] = []) => {
     const text = queryText(queryArg)
@@ -31,10 +34,13 @@ function makeFakePool() {
         checked_at: null,
         updated_at: '2026-07-26T18:00:00.000Z',
         error_message: null,
+        provider: (params[4] as string | null | undefined) ?? null,
+        model: (params[5] as string | null | undefined) ?? null,
+        profile_id: (params[6] as string | null | undefined) ?? null,
       })
       return { rows: [], rowCount: 1 }
     }
-    if (n.startsWith('select "job_name", "source", "status", "item_count", "custom_id_map", "submitted_at", "checked_at", "updated_at"')) {
+    if (n.startsWith('select "job_name", "source", "status", "item_count", "custom_id_map", "submitted_at", "checked_at", "updated_at", "error_message", "provider", "model", "profile_id"')) {
       const status = n.includes('where "llm_batch_jobs"."status" =') ? params[0] as string : undefined
       const limit = typeof params.at(-1) === 'number' ? params.at(-1) as number : undefined
       const selected = status ? rows.filter((r) => r.status === status) : [...rows]
@@ -52,6 +58,9 @@ function makeFakePool() {
           r.checked_at,
           r.updated_at,
           r.error_message,
+          r.provider,
+          r.model,
+          r.profile_id,
         ]),
         rowCount: limited.length,
       }
@@ -185,7 +194,34 @@ describe('llm-batch-jobs', () => {
         checkedAt: null,
         updatedAt: '2026-07-26T18:00:00.000Z',
         errorMessage: null,
+        provider: null,
+        model: null,
+        profileId: null,
       },
+    ])
+  })
+
+  it('persists and returns the submit-time provider/model/profile snapshot', async () => {
+    const { getDb } = await import('./db')
+    const pool = makeFakePool()
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
+    const { insertLlmBatchJob, listPendingLlmBatchJobs } = await import('./llm-batch-jobs')
+
+    await insertLlmBatchJob({
+      jobName: 'batches/abc',
+      source: 'reprocess',
+      itemCount: 3,
+      provider: 'gemini-native',
+      model: 'gemini-flash-latest',
+      profileId: 'profile-a',
+    })
+
+    await expect(listPendingLlmBatchJobs()).resolves.toEqual([
+      expect.objectContaining({
+        provider: 'gemini-native',
+        model: 'gemini-flash-latest',
+        profileId: 'profile-a',
+      }),
     ])
   })
 
@@ -213,6 +249,9 @@ describe('llm-batch-jobs', () => {
         checkedAt: null,
         updatedAt: '2026-07-26T18:00:00.000Z',
         errorMessage: null,
+        provider: null,
+        model: null,
+        profileId: null,
       },
     ])
   })

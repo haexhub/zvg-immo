@@ -76,6 +76,9 @@ describe('submitAnthropicBatch', () => {
       source: 'enrich',
       itemCount: 1,
       customIdMap: { [body.requests[0]!.custom_id]: 'zvg-portal:7265' },
+      provider: 'claude-proxy',
+      model: 'claude-haiku-4-5',
+      profileId: undefined,
     })
     expect(recordLlmBatchCapability).toHaveBeenCalledWith('claude-proxy', { ok: true, message: null, source: 'enrich' })
   })
@@ -234,7 +237,28 @@ describe('fetchAnthropicBatchResults', () => {
     expect(results[0]!.key).toBe('zvg-portal:7265')
     expect(results[0]!.extraction?.propertyType).toBe('einfamilienhaus')
     expect(results[0]!.extraction?.landAreaSqm).toBe(500)
-    expect(results[1]).toEqual({ key: 'zvg-portal:9999', extraction: null, error: 'Batch-Ergebnis: errored' })
+    expect(results[1]).toEqual({ key: 'zvg-portal:9999', extraction: null, usage: null, error: 'Batch-Ergebnis: errored' })
+  })
+
+  it('reads token usage off a succeeded result', async () => {
+    const lines = [
+      JSON.stringify({
+        custom_id: 'zvg_0_hash',
+        result: {
+          type: 'succeeded',
+          message: {
+            content: [{ type: 'tool_use', name: 'final_result', input: { propertyType: 'haus', photos: [] } }],
+            usage: { input_tokens: 300, output_tokens: 80 },
+          },
+        },
+      }),
+    ]
+    stubOfetch([{ match: '/msgbatch_abc/results', data: lines.join('\n') }])
+    const { fetchAnthropicBatchResults } = await import('./anthropic-batch')
+
+    const results = await fetchAnthropicBatchResults('msgbatch_abc', config, { zvg_0_hash: 'zvg-portal:7265' })
+
+    expect(results[0]!.usage).toEqual({ inputTokens: 300, outputTokens: 80 })
   })
 
   it('lets transport errors propagate to the poller retry path', async () => {

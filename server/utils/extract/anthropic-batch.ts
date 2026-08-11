@@ -8,15 +8,15 @@ import {
   parseExtractionResponse,
   SYSTEM_PROMPT,
   UNIVERSAL_AUCTION_SCHEMA,
-  type ClampedExtraction,
   type ContentPart,
   type LlmConfig,
   type LlmInput,
 } from './llm'
+import { parseClaudeUsage } from './providers/claude-proxy'
 import { apiBase, customIdForKey, extractOfetchErrorMessage, isTransientBatchError } from './batch-shared'
 import { insertLlmBatchJob, recordLlmBatchCapability } from '../llm-batch-jobs'
 import type { PollResult } from './gemini-batch'
-import type { LlmBatchSubmitResult } from './llm-batch'
+import type { LlmBatchResultItem, LlmBatchSubmitResult } from './llm-batch'
 
 type AnthropicContentBlock =
   | { type: 'text'; text: string }
@@ -104,6 +104,9 @@ async function submitAnthropicRequestChunk(
     source,
     itemCount: requests.length,
     customIdMap,
+    provider: 'claude-proxy',
+    model: config.model,
+    profileId: config.profileId,
   })
   if (!recorded) {
     console.warn(`[anthropic-batch] failed to record job ${batch.id} — treating submission as failed`)
@@ -214,7 +217,7 @@ export async function fetchAnthropicBatchResults(
   jobName: string,
   config: LlmConfig,
   customIdMap: Record<string, string>,
-): Promise<{ key: string; extraction: ClampedExtraction | null; error?: string | null }[]> {
+): Promise<LlmBatchResultItem[]> {
   const text = await $fetch<string>(`${apiBase(config)}/v1/messages/batches/${jobName}/results`, {
     headers: {
       'anthropic-version': '2023-06-01',
@@ -223,7 +226,7 @@ export async function fetchAnthropicBatchResults(
     signal: AbortSignal.timeout(120_000),
     responseType: 'text',
   })
-  const out: { key: string; extraction: ClampedExtraction | null; error?: string | null }[] = []
+  const out: LlmBatchResultItem[] = []
   for (const line of text.split('\n')) {
     const trimmed = line.trim()
     if (!trimmed) continue
@@ -236,14 +239,17 @@ export async function fetchAnthropicBatchResults(
     }
     if (typeof parsed.custom_id !== 'string') continue
     const key = customIdMap[parsed.custom_id] ?? parsed.custom_id
-    const resultType = typeof parsed.result?.type === 'string' ? parsed.result.type : undefined
-    const raw = resultType === 'succeeded' ? parseExtractionResponse(parsed.result!.message) : null
+    const succeeded = parsed.result?.type === 'succeeded'
+    const raw = succeeded ? parseExtractionResponse(parsed.result!.message) : null
+    const usage = succeeded ? parseClaudeUsage(parsed.result!.message) : null
     const extraction = raw ? clampExtraction(raw) : null
     const error = extraction
       ? null
       : (typeof parsed.result?.error?.message === 'string' ? parsed.result.error.message : undefined) ??
-        (resultType && resultType !== 'succeeded' ? `Batch-Ergebnis: ${resultType}` : 'Keine gültige Extraktion in der Batch-Antwort')
-    out.push({ key, extraction, error })
+        (typeof parsed.result?.type === 'string' && !succeeded
+          ? `Batch-Ergebnis: ${parsed.result.type}`
+          : 'Keine gültige Extraktion in der Batch-Antwort')
+    out.push({ key, extraction, usage, error })
   }
   return out
 }

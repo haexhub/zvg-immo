@@ -461,6 +461,31 @@
         "reprocess": "Reprocess"
       }
     },
+    "llmCost": {
+      "title": "LLM costs",
+      "description": "Estimated cost from actual token usage, grouped by task, model and profile. A model without a stored price counts as \"unpriced\", never as 0.",
+      "refresh": "Refresh",
+      "loadError": "Could not load the cost overview.",
+      "empty": "No LLM calls recorded yet.",
+      "statCost30d": "Cost (30 days)",
+      "statCostToday": "Cost (today)",
+      "statTokens": "Tokens (30 days)",
+      "statUnpriced": "Unpriced calls",
+      "trendHeading": "Daily trend",
+      "breakdownHeading": "Breakdown",
+      "colTask": "Task",
+      "colModel": "Model",
+      "colProfile": "Profile",
+      "colCalls": "Calls",
+      "colTokens": "Tokens",
+      "colCost": "Cost",
+      "unpricedCount": "{count}× unpriced",
+      "task": {
+        "extraction": "Extraction",
+        "translation": "Translation",
+        "place-name-translation": "Place name translation"
+      }
+    },
     "llmStatus": {
       "title": "LLM status",
       "description": "Per country: how many listings were successfully extracted by the LLM, how many are still waiting, and which ones hit the failure limit. Click a segment to see the affected listings.",

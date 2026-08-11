@@ -20,9 +20,23 @@ import {
   pollOpenRouterBatch,
   submitOpenRouterBatch,
 } from './openrouter-batch'
-import type { ClampedExtraction, LlmConfig, LlmInput } from './llm'
+import type { ClampedExtraction, LlmConfig, LlmInput, LlmUsage } from './llm'
 import { isOpenAiBatchBaseUrl } from '../llm-provider-capabilities'
 import { getLlmBatchCapability } from '../llm-batch-jobs'
+
+/** One resolved batch-job item — the batch-mode counterpart of
+ *  extractByLlm's single-request return value plus the token usage each
+ *  provider's result payload carries, for cost accounting (see
+ *  server/utils/llm-usage.ts). `usage` is null when the provider's batch
+ *  result line didn't carry a usage block for that item (best-effort: never
+ *  blocks the merge). */
+export interface LlmBatchResultItem {
+  key: string
+  extraction: ClampedExtraction | null
+  usage: LlmUsage | null
+  /** Provider detail for an item that completed without a valid extraction. */
+  error?: string | null
+}
 
 // A submitted-but-not-yet-polled item is marked with `llmBatchJob` in
 // auction_fetch_state so enrich.ts/reprocess.ts don't re-submit it
@@ -129,7 +143,7 @@ export async function fetchLlmBatchResults(
   resultFileName: string | undefined,
   config: LlmConfig,
   customIdMap: Record<string, string>,
-): Promise<{ key: string; extraction: ClampedExtraction | null; error?: string | null }[]> {
+): Promise<LlmBatchResultItem[]> {
   if (jobName.startsWith('openrouter_')) return fetchOpenRouterBatchResults(jobName, config, customIdMap)
   if (jobName.startsWith('msgbatch_')) return fetchAnthropicBatchResults(jobName, config, customIdMap)
   if (jobName.startsWith('batch_')) {

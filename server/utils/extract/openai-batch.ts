@@ -4,15 +4,14 @@ import {
   SYSTEM_PROMPT,
   UNIVERSAL_AUCTION_SCHEMA,
   UNIVERSAL_AUCTION_SCHEMA_NAME,
-  type ClampedExtraction,
   type LlmConfig,
   type LlmInput,
 } from './llm'
-import { parseOpenAiExtractionResponse, toOpenAiContent } from './providers/openai-compatible'
+import { parseOpenAiExtractionResponse, parseOpenAiUsage, toOpenAiContent } from './providers/openai-compatible'
 import { apiBase, customIdForKey, extractBatchItemErrorMessage, extractOfetchErrorMessage, isTransientBatchError } from './batch-shared'
 import { insertLlmBatchJob, recordLlmBatchCapability } from '../llm-batch-jobs'
 import type { PollResult } from './gemini-batch'
-import type { LlmBatchSubmitResult } from './llm-batch'
+import type { LlmBatchResultItem, LlmBatchSubmitResult } from './llm-batch'
 
 const MAX_OPENAI_BATCH_REQUESTS = 50_000
 const MAX_OPENAI_BATCH_FILE_BYTES = 200 * 1024 * 1024
@@ -111,6 +110,9 @@ async function submitOpenAiRequestChunk(
     source,
     itemCount: lines.length,
     customIdMap,
+    provider: config.provider ?? 'openai-compatible',
+    model: config.model,
+    profileId: config.profileId,
   })
   if (!recorded) {
     console.warn(`[openai-batch] failed to record job ${batch.id} — treating submission as failed`)
@@ -238,13 +240,13 @@ export async function fetchOpenAiBatchResults(
   outputFileId: string,
   config: LlmConfig,
   customIdMap: Record<string, string>,
-): Promise<{ key: string; extraction: ClampedExtraction | null; error?: string | null }[]> {
+): Promise<LlmBatchResultItem[]> {
   const text = await $fetch<string>(`${apiBase(config)}/files/${outputFileId}/content`, {
     headers: authHeaders(config),
     signal: AbortSignal.timeout(120_000),
     responseType: 'text',
   })
-  const out: { key: string; extraction: ClampedExtraction | null; error?: string | null }[] = []
+  const out: LlmBatchResultItem[] = []
   for (const line of text.split('\n')) {
     const trimmed = line.trim()
     if (!trimmed) continue
@@ -261,14 +263,14 @@ export async function fetchOpenAiBatchResults(
     }
     if (typeof parsed.custom_id !== 'string') continue
     const key = customIdMap[parsed.custom_id] ?? parsed.custom_id
-    const raw =
-      parsed.error || parsed.response?.status_code !== 200
-        ? null
-        : parseOpenAiExtractionResponse(parsed.response.body)
+    const ok = !parsed.error && parsed.response?.status_code === 200
+    const raw = ok ? parseOpenAiExtractionResponse(parsed.response!.body) : null
+    const usage = ok ? parseOpenAiUsage(parsed.response!.body) : null
     const extraction = raw ? clampExtraction(raw) : null
     out.push({
       key,
       extraction,
+      usage,
       error: extraction ? null : (extractBatchItemErrorMessage(parsed.error, parsed.response) ?? 'Keine gültige Extraktion in der Batch-Antwort'),
     })
   }

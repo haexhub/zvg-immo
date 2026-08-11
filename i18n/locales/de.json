@@ -461,6 +461,31 @@
         "reprocess": "Reprocess"
       }
     },
+    "llmCost": {
+      "title": "LLM-Kosten",
+      "description": "Geschätzte Kosten aus tatsächlichem Token-Verbrauch, gruppiert nach Aufgabe, Modell und Profil. Modelle ohne hinterlegten Preis zählen als „unbepreist“ statt als 0.",
+      "refresh": "Aktualisieren",
+      "loadError": "Kostenübersicht konnte nicht geladen werden.",
+      "empty": "Noch keine erfassten LLM-Aufrufe.",
+      "statCost30d": "Kosten (30 Tage)",
+      "statCostToday": "Kosten (heute)",
+      "statTokens": "Tokens (30 Tage)",
+      "statUnpriced": "Unbepreiste Aufrufe",
+      "trendHeading": "Tagesverlauf",
+      "breakdownHeading": "Aufschlüsselung",
+      "colTask": "Aufgabe",
+      "colModel": "Modell",
+      "colProfile": "Profil",
+      "colCalls": "Aufrufe",
+      "colTokens": "Tokens",
+      "colCost": "Kosten",
+      "unpricedCount": "{count}× unbepreist",
+      "task": {
+        "extraction": "Extraktion",
+        "translation": "Übersetzung",
+        "place-name-translation": "Ortsnamen-Übersetzung"
+      }
+    },
     "llmStatus": {
       "title": "LLM-Status",
       "description": "Pro Land: wie viele Anzeigen sind erfolgreich per LLM extrahiert, welche warten noch und bei welchen ist das Fehlerlimit erreicht. Auf ein Segment klicken zeigt die betroffenen Anzeigen.",
