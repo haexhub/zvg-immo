@@ -73,9 +73,9 @@ export default defineEventHandler(async (event): Promise<{ countries: OsmImportC
           const requestedAt = requests[code] ?? null
           const auction = auctionsByCode.get(code) ?? { total: 0, attached: 0 }
           const remaining = Math.max(0, auction.total - auction.attached)
-          // A pending import is open work rather than an error. Without an
-          // import (or a request for one), remaining auctions are blocked.
-          const openAuctions = rowCount > 0 || requestedAt ? remaining : 0
+          // Auctions remain blocked until raw OSM data is available. A
+          // requested reimport alone does not make enrichment possible.
+          const openAuctions = rowCount > 0 ? remaining : 0
           return {
             code,
             rowCount,
