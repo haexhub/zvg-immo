@@ -1,4 +1,6 @@
 <script setup lang="ts">
+useSeoMeta({ robots: 'noindex, nofollow' })
+
 const route = useRoute()
 const router = useRouter()
 const { signUp } = useAuth()

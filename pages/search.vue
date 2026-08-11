@@ -8,11 +8,29 @@ import { apiErrorMessage } from '~/lib/api-error'
 import { AUCTION_SEARCH_STATE_KEY } from '~/composables/useAuctionSearchState'
 import { AUCTION_SEARCH_RESULT_KEY } from '~/composables/useAuctionSearchResult'
 import { useAuctionWatchlist } from '~/composables/useAuctionWatchlist'
+import { activeAuctionSearchFilterCount, parseAuctionSearchFilters } from '~/lib/auction-search-filter-contract'
 
 definePageMeta({ layout: 'search' })
 
 const { user } = useAuth()
 const { t } = useI18n()
+
+const route = useRoute()
+// Filtered result pages are near-duplicates of the base search experience —
+// keep link equity flowing without letting every filter combination get indexed.
+const hasActiveFilters = computed(() => activeAuctionSearchFilterCount(parseAuctionSearchFilters(route.query)) > 0)
+const canonicalUrl = `${useRequestURL().origin}/search`
+useSeoMeta({
+  title: () => t('site.searchTitle'),
+  description: () => t('site.searchDescription'),
+  ogTitle: () => t('site.searchTitle'),
+  ogDescription: () => t('site.searchDescription'),
+  ogType: 'website',
+  ogUrl: canonicalUrl,
+  twitterCard: 'summary',
+  robots: () => (hasActiveFilters.value ? 'noindex, follow' : 'index, follow'),
+})
+useHead({ link: [{ rel: 'canonical', href: canonicalUrl }] })
 
 // Desktop shows list + map side by side; below this breakpoint they collapse
 // into the two SearchTabs panes (see template) — matches the search bar's own

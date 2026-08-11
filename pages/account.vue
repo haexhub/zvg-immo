@@ -7,6 +7,8 @@ import type { ApiKeySummary } from '~/server/api/api-keys/index.get'
 import type { CreatedApiKey } from '~/server/api/api-keys/index.post'
 import { Trash2 } from 'lucide-vue-next'
 
+useSeoMeta({ robots: 'noindex, nofollow' })
+
 const router = useRouter()
 const { user } = useAuth()
 const { t, te } = useI18n()
