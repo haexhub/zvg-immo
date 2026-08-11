@@ -2,7 +2,8 @@ import type { Auction, AuctionExtraction } from '~/types/auction'
 import { batchSupportsMultimodal, isLlmBatchPending, isLlmBatchProviderBroken, submitLlmBatch, supportsLlmBatch, supportsNativeBatchDocuments } from '~/server/utils/extract/llm-batch'
 import { readLlmExecutionMode } from '~/server/utils/app-settings'
 import { LLM_FAILURE_RETRY_COOLDOWN_HOURS, MAX_LLM_FAILURES, readExtractionChainStrategy, readExtractionLlmConfigChain } from '~/server/utils/extract/llm-task-config'
-import { type LlmConfig, type LlmInput, isLlmProviderError, isRateLimitError } from '~/server/utils/extract/llm'
+import { type LlmConfig, type LlmInput, type LlmUsage, isLlmProviderError, isRateLimitError } from '~/server/utils/extract/llm'
+import { recordLlmUsage } from '~/server/utils/llm-usage'
 import { applyAuctionExtraction } from '~/server/utils/auction-extraction'
 import { readAuctionRecordMap, type AuctionRecord } from '~/server/utils/auction-record'
 import { upsertCurrentAuctions } from '~/server/utils/current-auctions'
@@ -149,6 +150,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
     llmAttempted: boolean,
     llmConfigUsed: LlmConfig | null = null,
     llmDurationMs: number | null = null,
+    llmUsage: LlmUsage | null = null,
   ): Promise<void> {
     // record.auction is reconstructed from auctions LEFT JOIN LATERAL
     // auction_details (see auction-record.ts) — when no auction_details row
@@ -174,6 +176,19 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       runTrigger: opts.trigger ?? 'cron',
       llmDurationMs,
     })
+    if (llmConfigUsed && llmUsage) {
+      await recordLlmUsage({
+        task: 'extraction',
+        executionMode: 'sync',
+        source: 'reprocess',
+        provider: llmConfigUsed.provider ?? 'openai-compatible',
+        model: llmConfigUsed.model,
+        profileId: llmConfigUsed.profileId ?? null,
+        platform: record.auction.platform,
+        externalId: record.auction.externalId,
+        usage: llmUsage,
+      })
+    }
     await upsertCurrentAuctions([updated], at)
     await writeAuctionLlmPipelineState(record.auction.platform, record.auction.externalId, {
       llmBatchJob: null,
@@ -355,7 +370,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       // Persist each result immediately so a long run survives a deployment.
       await persistEntry(
         record, result.entry, result.artifactVersionId, result.llmFailures, result.auction, result.llmCalled,
-        result.llmConfigUsed, result.llmDurationMs,
+        result.llmConfigUsed, result.llmDurationMs, result.llmUsage,
       ).catch((persistErr) => { throw markPersistFailure(persistErr) })
     } catch (err) {
       // Also where a rate limit/quota error (see llm.ts's isRateLimitError())

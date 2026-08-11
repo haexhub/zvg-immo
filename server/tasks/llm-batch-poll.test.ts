@@ -12,6 +12,7 @@ import {
   markLlmBatchJobResolved,
   type LlmBatchJob,
 } from '../utils/llm-batch-jobs'
+import { recordLlmUsage } from '../utils/llm-usage'
 
 vi.mock('../utils/extract/llm-batch', () => ({ pollLlmBatch: vi.fn(), fetchLlmBatchResults: vi.fn() }))
 vi.mock('../utils/extract/llm-task-config', () => ({ readExtractionLlmConfig: vi.fn() }))
@@ -27,6 +28,7 @@ vi.mock('../utils/llm-batch-jobs', () => ({
   markLlmBatchJobChecked: vi.fn(),
   markLlmBatchJobResolved: vi.fn(),
 }))
+vi.mock('../utils/llm-usage', () => ({ recordLlmUsage: vi.fn() }))
 vi.stubGlobal('defineTask', (definition: unknown) => definition)
 
 const { runLlmBatchPoll } = await import('./llm-batch-poll')
@@ -84,6 +86,9 @@ function job(overrides: Partial<LlmBatchJob> = {}): LlmBatchJob {
     checkedAt: null,
     updatedAt: '2026-08-02T10:00:00.000Z',
     errorMessage: null,
+    provider: null,
+    model: null,
+    profileId: null,
     ...overrides,
   }
 }
@@ -196,14 +201,14 @@ describe('runLlmBatchPoll', () => {
     vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job()])
     vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/result' })
     vi.mocked(fetchLlmBatchResults).mockResolvedValue([
-      { key: 'zvg-portal:7265', extraction: llmResult },
+      { key: 'zvg-portal:7265', extraction: llmResult, usage: null },
     ])
 
     await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 1, merged: 1 })
     expect(writeAuctionDetails).toHaveBeenCalledWith(
       expect.objectContaining({ extraction: expect.objectContaining({ condition: 'gepflegt', yearBuilt: 1998 }) }),
       expect.objectContaining({ condition: 'gepflegt', yearBuilt: 1998 }),
-      { artifactVersionId: 22 },
+      { artifactVersionId: 22, llmProvider: null, llmModel: null, llmProfileId: null, runTrigger: 'cron' },
     )
     expect(upsertCurrentAuctions).toHaveBeenCalledTimes(1)
     expect(vi.mocked(writeAuctionDetails).mock.invocationCallOrder[0])
@@ -214,13 +219,43 @@ describe('runLlmBatchPoll', () => {
       llmFailures: 0,
     })
     expect(markLlmBatchJobResolved).toHaveBeenCalledWith('batches/abc', 'succeeded', expect.any(String))
+    expect(recordLlmUsage).not.toHaveBeenCalled()
+  })
+
+  it('records token usage against the job\'s submit-time provider/model, not the poll-time config', async () => {
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([
+      job({ provider: 'gemini-native', model: 'gemini-flash-latest', profileId: 'profile-a' }),
+    ])
+    vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/result' })
+    vi.mocked(fetchLlmBatchResults).mockResolvedValue([
+      { key: 'zvg-portal:7265', extraction: llmResult, usage: { inputTokens: 900, outputTokens: 200 } },
+    ])
+
+    await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 1, merged: 1 })
+
+    expect(writeAuctionDetails).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ llmProvider: 'gemini-native', llmModel: 'gemini-flash-latest', llmProfileId: 'profile-a' }),
+    )
+    expect(recordLlmUsage).toHaveBeenCalledWith({
+      task: 'extraction',
+      executionMode: 'batch',
+      source: 'reprocess',
+      provider: 'gemini-native',
+      model: 'gemini-flash-latest',
+      profileId: 'profile-a',
+      platform: 'zvg-portal',
+      externalId: '7265',
+      usage: { inputTokens: 900, outputTokens: 200 },
+    })
   })
 
   it('keeps a succeeded job pending when writing structured details fails', async () => {
     vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job()])
     vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/result' })
     vi.mocked(fetchLlmBatchResults).mockResolvedValue([
-      { key: 'zvg-portal:7265', extraction: llmResult },
+      { key: 'zvg-portal:7265', extraction: llmResult, usage: null },
     ])
     vi.mocked(writeAuctionDetails).mockRejectedValue(new Error('database unavailable'))
 
@@ -234,7 +269,7 @@ describe('runLlmBatchPoll', () => {
     vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job()])
     vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/result' })
     vi.mocked(fetchLlmBatchResults).mockResolvedValue([
-      { key: 'zvg-portal:7265', extraction: null },
+      { key: 'zvg-portal:7265', extraction: null, usage: null },
     ])
 
     await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 1, merged: 1 })

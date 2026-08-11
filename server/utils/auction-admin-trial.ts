@@ -18,6 +18,7 @@ import { reprocessAuction } from '../tasks/reprocess'
 import { resolveLlmConfigForProfile } from './extract/llm-task-config'
 import { getLlmKillSwitch } from './app-settings'
 import { recordTaskRunError } from './task-run-errors'
+import { recordLlmUsage } from './llm-usage'
 import type { Auction } from '~/types/auction'
 
 export type AdminTrialReprocessOutcome =
@@ -80,6 +81,19 @@ export async function runAdminTrialReprocess(platform: string, externalId: strin
       llmDurationMs: result.llmDurationMs,
       trial: true,
     })
+    if (result.llmConfigUsed && result.llmUsage) {
+      await recordLlmUsage({
+        task: 'extraction',
+        executionMode: 'sync',
+        source: 'admin-trial',
+        provider: result.llmConfigUsed.provider ?? 'openai-compatible',
+        model: result.llmConfigUsed.model,
+        profileId: result.llmConfigUsed.profileId ?? null,
+        platform,
+        externalId,
+        usage: result.llmUsage,
+      })
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     console.warn(`[auction-admin-trial] failed for ${platform}:${externalId}: ${message}`)

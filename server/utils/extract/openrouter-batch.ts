@@ -33,15 +33,14 @@ import {
   SYSTEM_PROMPT,
   UNIVERSAL_AUCTION_SCHEMA,
   UNIVERSAL_AUCTION_SCHEMA_NAME,
-  type ClampedExtraction,
   type LlmConfig,
   type LlmInput,
 } from './llm'
-import { parseOpenAiExtractionResponse, toOpenAiContent } from './providers/openai-compatible'
+import { parseOpenAiExtractionResponse, parseOpenAiUsage, toOpenAiContent } from './providers/openai-compatible'
 import { apiBase, customIdForKey, extractOfetchErrorMessage, isTransientBatchError } from './batch-shared'
 import { insertLlmBatchJob, recordLlmBatchCapability } from '../llm-batch-jobs'
 import type { PollResult } from './gemini-batch'
-import type { LlmBatchSubmitResult } from './llm-batch'
+import type { LlmBatchResultItem, LlmBatchSubmitResult } from './llm-batch'
 
 const JOB_NAME_PREFIX = 'openrouter_'
 
@@ -127,7 +126,15 @@ export async function submitOpenRouterBatch(
     // this account/model, independent of whether our own bookkeeping below does.
     await recordLlmBatchCapability('openrouter', { ok: true, message: null, source })
     const jobName = `${JOB_NAME_PREFIX}${batch.id}`
-    const recorded = await insertLlmBatchJob({ jobName, source, itemCount: requests.length, customIdMap })
+    const recorded = await insertLlmBatchJob({
+      jobName,
+      source,
+      itemCount: requests.length,
+      customIdMap,
+      provider: 'openrouter',
+      model: config.model,
+      profileId: config.profileId,
+    })
     if (!recorded) {
       console.warn(`[openrouter-batch] failed to record job ${jobName} — treating submission as failed`)
       return null
@@ -174,7 +181,7 @@ export async function fetchOpenRouterBatchResults(
   jobName: string,
   config: LlmConfig,
   customIdMap: Record<string, string>,
-): Promise<{ key: string; extraction: ClampedExtraction | null }[]> {
+): Promise<LlmBatchResultItem[]> {
   const id = jobName.slice(JOB_NAME_PREFIX.length)
   try {
     const resp = await $fetch<{
@@ -187,15 +194,14 @@ export async function fetchOpenRouterBatchResults(
       headers: authHeaders(config),
       signal: AbortSignal.timeout(30_000),
     })
-    const out: { key: string; extraction: ClampedExtraction | null }[] = []
+    const out: LlmBatchResultItem[] = []
     for (const result of resp.results ?? []) {
       if (typeof result.custom_id !== 'string') continue
       const key = customIdMap[result.custom_id] ?? result.custom_id
-      const raw =
-        result.error || result.response?.status_code !== 200
-          ? null
-          : parseOpenAiExtractionResponse(result.response.body)
-      out.push({ key, extraction: raw ? clampExtraction(raw) : null })
+      const ok = !result.error && result.response?.status_code === 200
+      const raw = ok ? parseOpenAiExtractionResponse(result.response!.body) : null
+      const usage = ok ? parseOpenAiUsage(result.response!.body) : null
+      out.push({ key, extraction: raw ? clampExtraction(raw) : null, usage })
     }
     return out
   } catch (err) {

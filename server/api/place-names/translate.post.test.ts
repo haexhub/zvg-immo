@@ -12,6 +12,9 @@ vi.mock('~/server/utils/translation-llm-chain', () => ({
 vi.mock('~/server/utils/extract/text-llm', () => ({
   callPlaceNameTranslationLlm: vi.fn(),
 }))
+vi.mock('~/server/utils/llm-usage', () => ({
+  recordLlmUsage: vi.fn(),
+}))
 
 const CONFIG = { provider: 'openai-compatible' as const, baseUrl: 'https://api.example', model: 'gpt' }
 
@@ -75,10 +78,36 @@ describe('/api/place-names/translate', () => {
 
     await expect(handler({ node: { req: { socket: { remoteAddress: '127.0.0.1' } } } }))
       .resolves.toEqual({ translations: { 'Бургас': 'Burgas', 'с. Равна': 'Ravna' } })
-    expect(callPlaceNameTranslationLlm).toHaveBeenCalledWith(['с. Равна'], 'English', CONFIG)
+    expect(callPlaceNameTranslationLlm).toHaveBeenCalledWith(['с. Равна'], 'English', CONFIG, expect.any(Function))
     expect(writePlaceNameTranslations).toHaveBeenCalledWith(
       expect.anything(), 'en', [{ name: 'с. Равна', translated: 'Ravna' }],
     )
+  })
+
+  it('records token usage against no auction identity when the provider reports it', async () => {
+    const handler = await loadHandler({ names: ['с. Равна'], lang: 'en' })
+    const { readPlaceNameTranslations } = await import('~/server/utils/place-name-translation')
+    const { callPlaceNameTranslationLlm } = await import('~/server/utils/extract/text-llm')
+    const { recordLlmUsage } = await import('~/server/utils/llm-usage')
+    vi.mocked(readPlaceNameTranslations).mockResolvedValue(new Map())
+    vi.mocked(callPlaceNameTranslationLlm).mockImplementation(async (_names, _lang, _config, onUsage) => {
+      onUsage?.({ inputTokens: 40, outputTokens: 10 })
+      return ['Ravna']
+    })
+
+    await handler({ node: { req: { socket: { remoteAddress: '127.0.0.1' } } } })
+
+    expect(recordLlmUsage).toHaveBeenCalledWith({
+      task: 'place-name-translation',
+      executionMode: 'sync',
+      source: null,
+      provider: 'openai-compatible',
+      model: 'gpt',
+      profileId: null,
+      platform: null,
+      externalId: null,
+      usage: { inputTokens: 40, outputTokens: 10 },
+    })
   })
 
   it('degrades to cached-only results when the LLM is unavailable, without throwing', async () => {

@@ -20,6 +20,7 @@ import {
   type LlmBatchJob,
 } from '../utils/llm-batch-jobs'
 import { runExclusiveTask, throwIfTaskAborted } from '../utils/exclusive-task'
+import { recordLlmUsage } from '../utils/llm-usage'
 
 const DEFAULT_GEMINI_FREE_BATCH_POLL_INTERVAL_HOURS = 6
 
@@ -111,7 +112,7 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
 
       const results = await fetchLlmBatchResults(job.jobName, poll.resultFileName, llmConfig, job.customIdMap)
       throwIfTaskAborted(signal)
-      for (const { key, extraction } of results) {
+      for (const { key, extraction, usage } of results) {
         throwIfTaskAborted(signal)
         const identity = splitKey(key)
         if (!identity) continue
@@ -135,9 +136,30 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
         )
         const updated = { ...record.auction, extraction: mergedEntry }
         applyAuctionExtraction(updated, mergedEntry)
+        // provider/model/profileId come from the job's own submit-time
+        // snapshot, not the poll-time llmConfig above — a batch can take up
+        // to 48h to complete, long enough for the assigned model to have
+        // changed in between (see llm-batch-jobs.ts).
         await writeAuctionDetails(updated, mergedEntry, {
           artifactVersionId,
+          llmProvider: job.provider,
+          llmModel: job.model,
+          llmProfileId: job.profileId,
+          runTrigger: 'cron',
         })
+        if (job.provider && job.model && usage) {
+          await recordLlmUsage({
+            task: 'extraction',
+            executionMode: 'batch',
+            source: job.source,
+            provider: job.provider,
+            model: job.model,
+            profileId: job.profileId,
+            platform: identity.platform,
+            externalId: identity.externalId,
+            usage,
+          })
+        }
         await upsertCurrentAuctions([updated], at)
         await writeAuctionLlmPipelineState(identity.platform, identity.externalId, {
           llmBatchJob: null,

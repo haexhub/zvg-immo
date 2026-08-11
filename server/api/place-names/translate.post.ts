@@ -13,6 +13,7 @@ import { isLlmProviderUnavailable } from '~/server/utils/extract/llm'
 import { callPlaceNameTranslationLlm } from '~/server/utils/extract/text-llm'
 import { resolveActiveLlmConfigChain } from '~/server/utils/translation-llm-chain'
 import { readPlaceNameTranslations, writePlaceNameTranslations } from '~/server/utils/place-name-translation'
+import { recordLlmUsage } from '~/server/utils/llm-usage'
 import type { ContentTargetLang } from '~/lib/content-language'
 import {
   checkInMemoryRateLimit,
@@ -38,7 +39,19 @@ async function translateMissing(db: Pool, names: string[], lang: ContentTargetLa
   const languageName = LANGUAGE_DISPLAY_NAMES.of(lang) ?? lang
   for (const config of configs) {
     try {
-      const translated = await callPlaceNameTranslationLlm(names, languageName, config)
+      const translated = await callPlaceNameTranslationLlm(names, languageName, config, (usage) => {
+        void recordLlmUsage({
+          task: 'place-name-translation',
+          executionMode: 'sync',
+          source: null,
+          provider: config.provider ?? 'openai-compatible',
+          model: config.model,
+          profileId: config.profileId ?? null,
+          platform: null,
+          externalId: null,
+          usage,
+        })
+      })
       if (!translated) continue
       const entries = names.map((name, i) => ({ name, translated: translated[i]! }))
       await writePlaceNameTranslations(db, lang, entries)

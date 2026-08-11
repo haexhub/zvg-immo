@@ -4,7 +4,7 @@
 // until the Claude path is retired in favor of OpenAiCompatibleProvider/
 // GeminiNativeProvider.
 
-import type { ContentPart, ExtractionProvider, ExtractionRequest, LlmConfig } from '../llm'
+import type { ContentPart, ExtractionProvider, ExtractionRequest, LlmConfig, LlmUsage } from '../llm'
 import {
   isRateLimitError,
   isTransientRequestError,
@@ -32,12 +32,20 @@ function toClaudeContent(parts: ContentPart[]): ClaudeContentBlock[] {
   return blocks
 }
 
+/** Reads the Anthropic Messages API's `usage.{input_tokens,output_tokens}`. */
+export function parseClaudeUsage(resp: unknown): LlmUsage {
+  const usage = (resp as { usage?: unknown })?.usage as { input_tokens?: unknown; output_tokens?: unknown } | undefined
+  const inputTokens = typeof usage?.input_tokens === 'number' ? usage.input_tokens : null
+  const outputTokens = typeof usage?.output_tokens === 'number' ? usage.output_tokens : null
+  return { inputTokens, outputTokens }
+}
+
 export class ClaudeProxyProvider implements ExtractionProvider {
   constructor(private config: LlmConfig) {}
 
   async extract(
     req: ExtractionRequest,
-    opts?: { onRequestError?: (err: unknown) => void },
+    opts?: { onRequestError?: (err: unknown) => void; onUsage?: (usage: LlmUsage) => void },
   ): Promise<Record<string, unknown> | null> {
     const body = {
       model: this.config.model,
@@ -101,6 +109,7 @@ export class ClaudeProxyProvider implements ExtractionProvider {
         return null
       }
     }
+    opts?.onUsage?.(parseClaudeUsage(resp))
     const parsed = parseExtractionResponse(resp)
     if (!parsed) throw new LlmProviderError('claude-proxy', 'ungültige oder leere Provider-Antwort')
     return parsed

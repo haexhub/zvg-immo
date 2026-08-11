@@ -4,6 +4,7 @@
 // roles) — the backend connects as table owner and bypasses RLS regardless.
 import {
   bigserial,
+  doublePrecision,
   foreignKey,
   index,
   integer,
@@ -62,7 +63,41 @@ export const llmBatchJobs = pgTable('llm_batch_jobs', {
   // Reason a job resolved as 'failed'/'expired' (poll-time, from the
   // provider's own error field).
   errorMessage: text('error_message'),
+  // Snapshot of the LlmConfig actually used at *submit* time — nullable
+  // because rows written before this column existed don't have it. Read back
+  // at poll/merge time (llm-batch-poll.ts) instead of the poll-time config,
+  // which can point at a different model by the time a batch (up to 48h)
+  // completes.
+  provider: text('provider'),
+  model: text('model'),
+  profileId: text('profile_id'),
 }).enableRLS()
+
+// Append-only log of actually-answered LLM calls (sync or one batch-job
+// item each), for cost/token accounting — distinct from llmBatchJobs above,
+// which only tracks job lifecycle. No FK to auctions: this must survive an
+// auction later being pruned from the serving table (see
+// server/utils/auction-current.ts), unlike locationEnrichment's cascade.
+export const llmUsageEvents = pgTable('llm_usage_events', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+  task: text('task').notNull(),
+  executionMode: text('execution_mode').notNull(),
+  source: text('source'),
+  provider: text('provider').notNull(),
+  model: text('model').notNull(),
+  profileId: text('profile_id'),
+  platform: text('platform'),
+  externalId: text('external_id'),
+  inputTokens: integer('input_tokens'),
+  outputTokens: integer('output_tokens'),
+  // Estimated from a static pricing table at write time — null when the
+  // model isn't in it, never guessed/rounded to 0 (see llm-pricing.ts).
+  costUsd: doublePrecision('cost_usd'),
+}, (table) => [
+  index('idx_llm_usage_events_occurred_at').on(table.occurredAt.desc()),
+  index('idx_llm_usage_events_task_occurred').on(table.task, table.occurredAt.desc()),
+]).enableRLS()
 
 // Generic key/value store for admin-configurable dashboard settings without
 // a redeploy (server/utils/app-settings.ts).

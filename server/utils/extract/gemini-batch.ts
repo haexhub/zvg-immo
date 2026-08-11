@@ -347,7 +347,15 @@ async function submitGeminiBatchLocked(
       items: selection.selected.length,
       estimatedTokens: selection.estimatedTokens,
     })
-    const recorded = await insertLlmBatchJob({ jobName, source, itemCount: lines.length, customIdMap })
+    const recorded = await insertLlmBatchJob({
+      jobName,
+      source,
+      itemCount: lines.length,
+      customIdMap,
+      provider: 'gemini-native',
+      model,
+      profileId: config.profileId,
+    })
     if (!recorded) {
       console.warn(`[gemini-batch] failed to record job ${jobName} — treating submission as failed`)
       return null

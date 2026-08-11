@@ -1,6 +1,8 @@
-import { clampExtraction, type ClampedExtraction, type LlmConfig } from './llm'
-import { parseGeminiExtractionResponse } from './providers/gemini-native'
+import type { LlmConfig } from './llm'
+import { clampExtraction } from './llm'
+import { parseGeminiExtractionResponse, parseGeminiUsage } from './providers/gemini-native'
 import { apiBase } from './batch-shared'
+import type { LlmBatchResultItem } from './llm-batch'
 
 export interface PollResult { state: 'pending' | 'succeeded' | 'failed' | 'expired'; resultFileName?: string; errorMessage?: string }
 const SUCCEEDED_STATES = new Set(['JOB_STATE_SUCCEEDED', 'BATCH_STATE_SUCCEEDED', 'SUCCEEDED'])
@@ -47,10 +49,10 @@ export async function pollGeminiBatch(jobName: string, config: LlmConfig): Promi
     return { state: 'pending' }
   } catch (err) { console.warn(`[gemini-batch] poll failed for ${jobName}: ${(err as Error).message}`); return { state: 'pending' } }
 }
-export async function fetchGeminiBatchResults(resultFileName: string, config: LlmConfig, customIdMap: Record<string, string> = {}): Promise<{ key: string; extraction: ClampedExtraction | null }[]> {
+export async function fetchGeminiBatchResults(resultFileName: string, config: LlmConfig, customIdMap: Record<string, string> = {}): Promise<LlmBatchResultItem[]> {
   try {
     const text = await $fetch<string>(`${apiBase(config)}/download/v1beta/${resultFileName}:download`, { query: { alt: 'media' }, headers: { 'x-goog-api-key': config.apiKey ?? '' }, signal: AbortSignal.timeout(120_000), responseType: 'text' })
-    const out: { key: string; extraction: ClampedExtraction | null }[] = []; let lineIndex = 0
+    const out: LlmBatchResultItem[] = []; let lineIndex = 0
     for (const line of text.split('\n')) {
       const trimmed = line.trim(); if (!trimmed) continue; const indexKey = String(lineIndex++)
       let parsed: { key?: unknown; metadata?: unknown; response?: unknown; error?: unknown; candidates?: unknown }
@@ -60,7 +62,8 @@ export async function fetchGeminiBatchResults(resultFileName: string, config: Ll
       if (typeof key !== 'string') continue
       const response = parsed.response ?? (Array.isArray(parsed.candidates) ? parsed : null)
       const raw = parsed.error ? null : parseGeminiExtractionResponse(response)
-      out.push({ key, extraction: raw ? clampExtraction(raw) : null })
+      const usage = parsed.error ? null : parseGeminiUsage(response)
+      out.push({ key, extraction: raw ? clampExtraction(raw) : null, usage })
     }
     return out
   } catch (err) { console.warn(`[gemini-batch] fetch results failed: ${(err as Error).message}`); return [] }

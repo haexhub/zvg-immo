@@ -3,7 +3,7 @@
 // compat layer, ...). This is the default extraction path: switching backend
 // is a baseUrl/apiKey/model config change, never a new class.
 
-import type { ContentPart, ExtractionProvider, ExtractionRequest, LlmConfig } from '../llm'
+import type { ContentPart, ExtractionProvider, ExtractionRequest, LlmConfig, LlmUsage } from '../llm'
 import {
   isRateLimitError,
   isTransientRequestError,
@@ -29,6 +29,16 @@ export function toOpenAiContent(parts: ContentPart[]): OpenAiContentPart[] {
     }
   }
   return content
+}
+
+/** Reads the OpenAI-compatible `usage.{prompt_tokens,completion_tokens}`
+ *  block. Every field is optional/absent on some backends, so each is read
+ *  independently rather than requiring the whole object. */
+export function parseOpenAiUsage(resp: unknown): LlmUsage {
+  const usage = (resp as { usage?: unknown })?.usage as { prompt_tokens?: unknown; completion_tokens?: unknown } | undefined
+  const inputTokens = typeof usage?.prompt_tokens === 'number' ? usage.prompt_tokens : null
+  const outputTokens = typeof usage?.completion_tokens === 'number' ? usage.completion_tokens : null
+  return { inputTokens, outputTokens }
 }
 
 /** Pull the structured object out of the first choice's message content,
@@ -81,7 +91,7 @@ export class OpenAiCompatibleProvider implements ExtractionProvider {
 
   async extract(
     req: ExtractionRequest,
-    opts?: { onRequestError?: (err: unknown) => void },
+    opts?: { onRequestError?: (err: unknown) => void; onUsage?: (usage: LlmUsage) => void },
   ): Promise<Record<string, unknown> | null> {
     const body = {
       model: this.syncModel,
@@ -138,6 +148,7 @@ export class OpenAiCompatibleProvider implements ExtractionProvider {
         return null
       }
     }
+    opts?.onUsage?.(parseOpenAiUsage(resp))
     const parsed = parseOpenAiExtractionResponse(resp)
     if (!parsed) throw new LlmProviderError(this.providerLabel, 'ungültige oder leere Provider-Antwort')
     return parsed
