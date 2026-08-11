@@ -77,4 +77,16 @@ describe('classifyLlmStatus', () => {
   it('is "done" once successfully extracted with every field present', () => {
     expect(classifyLlmStatus(record({ extraction: extraction() }))).toBe('done')
   })
+
+  it('is "done" once llmAnalyzedAt is set, even if llmFailures later reached MAX_LLM_FAILURES', () => {
+    expect(
+      classifyLlmStatus(record({ extraction: extraction({ llmAnalyzedAt: '2026-08-01T10:00:00.000Z' }), llmFailures: 3 })),
+    ).toBe('done')
+  })
+
+  it('is "done" once llmAnalyzedAt is set, even if an optional LLM-only field is still missing', () => {
+    expect(
+      classifyLlmStatus(record({ extraction: extraction({ llmAnalyzedAt: '2026-08-01T10:00:00.000Z', condition: undefined }) })),
+    ).toBe('done')
+  })
 })
