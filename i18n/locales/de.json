@@ -686,6 +686,14 @@
   "currencySwitcher": {
     "label": "Währung"
   },
+  "themeSwitcher": {
+    "label": "Design",
+    "options": {
+      "system": "System",
+      "light": "Hell",
+      "dark": "Dunkel"
+    }
+  },
   "country": {
     "de": "Deutschland",
     "at": "Österreich",
