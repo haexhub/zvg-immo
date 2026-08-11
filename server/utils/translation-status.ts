@@ -123,7 +123,7 @@ export async function readTranslationStatusList(
     const filterClause = filter
       ? ` AND concat_ws(' ', a.platform, a.external_id, a.title, a.region, a.case_number, t.lang, t.error_message) ILIKE $${params.push(`%${filter}%`)}`
       : ''
-    const order = `${orderBy[sort ?? 'platform']} ${direction === 'desc' ? 'DESC' : 'ASC'}, a.platform ASC, a.external_id ASC`
+    const order = `${orderBy[sort || 'platform']} ${direction === 'desc' ? 'DESC' : 'ASC'}, a.platform ASC, a.external_id ASC`
     const pageParams = [...params, limit, offset]
     const [{ rows }, { rows: countRows }] = await Promise.all([
       db.query<{

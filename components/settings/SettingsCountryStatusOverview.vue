@@ -7,6 +7,7 @@ import SettingsStatusPie from './SettingsStatusPie.client.vue'
 import SettingsAutomationControlsCard from './SettingsAutomationControlsCard.vue'
 import { useSettingsError } from '~/composables/settings/useSettingsError'
 import { useSettingsTaskOverview } from '~/composables/settings/useSettingsTaskOverview'
+import { usePollWhileActive } from '~/composables/settings/usePollWhileActive'
 
 type StatusKind = 'crawl' | 'llm' | 'translation'
 type TableSort = 'platform' | 'title' | 'region' | 'error' | 'lang' | 'failures' | 'startedAt'
@@ -35,7 +36,17 @@ const tableOffset = ref(0)
 const tableSearch = ref('')
 const tableSort = ref<TableSort>('platform')
 const tableDirection = ref<'asc' | 'desc'>('asc')
-const tableAccordion = ref('')
+// Derived from `selected` instead of its own ref: the Accordion can close
+// itself (clicking an open trigger) without going through selectSegment(),
+// which left `selected` and this out of sync — the pie stayed highlighted
+// with the table closed, and the next click on that segment only cleared
+// the highlight instead of reopening the table.
+const tableAccordion = computed<string>({
+  get: () => (selected.value ? 'status-table' : ''),
+  set: (value) => {
+    if (!value) selected.value = null
+  },
+})
 let filterTimer: ReturnType<typeof setTimeout> | undefined
 
 const countryCodes = computed(() => {
@@ -102,6 +113,18 @@ async function load(): Promise<void> {
   }
 }
 
+// The reimport itself does not run in this app: [country].post.ts only
+// records the request, and the host-level daily job clears it once it
+// starts honoring it. `requestedAt` therefore stays set for hours, so this
+// must not poll open-endedly — bounded to a short window right after a
+// manual request, the only moment the row count can plausibly move while an
+// admin is watching (see SettingsOsmImportCard.vue, which this replaces).
+const { start: startOsmPolling } = usePollWhileActive(
+  () => Object.values(osmByCountry.value).some((country) => !!country.requestedAt),
+  load,
+  { intervalMs: 30_000, maxAttempts: 20 },
+)
+
 function selectedBucket(country: string, kind: StatusKind): StatusBucket | null {
   return selected.value?.country === country && selected.value.kind === kind ? selected.value.bucket : null
 }
@@ -133,13 +156,11 @@ function selectSegment(country: string, kind: StatusKind, bucket: string): void 
   const statusBucket = bucket as StatusBucket
   if (selected.value?.country === country && selected.value.kind === kind && selected.value.bucket === statusBucket) {
     selected.value = null
-    tableAccordion.value = ''
     return
   }
   selected.value = { country, kind, bucket: statusBucket }
   tableOffset.value = 0
   tableSearch.value = ''
-  tableAccordion.value = 'status-table'
   void loadList()
 }
 
@@ -194,6 +215,7 @@ async function requestOsmImport(country: string): Promise<void> {
   try {
     await $fetch(`/api/settings/osm-import/${country}`, { method: 'POST' })
     await load()
+    startOsmPolling()
   } catch (err) {
     actionError.value = normalizeSettingsError(err, t('settings.osmImport.requestError'))
   } finally {

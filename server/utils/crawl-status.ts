@@ -124,7 +124,7 @@ export async function readCrawlStatusList(
     const filterClause = filter
       ? ` AND concat_ws(' ', platform, external_id, title, region, case_number, last_error_message) ILIKE $${params.push(`%${filter}%`)}`
       : ''
-    const order = `${orderBy[sort ?? 'platform']} ${direction === 'desc' ? 'DESC' : 'ASC'}, platform ASC, external_id ASC`
+    const order = `${orderBy[sort || 'platform']} ${direction === 'desc' ? 'DESC' : 'ASC'}, platform ASC, external_id ASC`
     const pageParams = [...params, limit, offset]
     const [{ rows }, { rows: countRows }] = await Promise.all([
       db.query<{
