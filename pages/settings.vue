@@ -6,6 +6,7 @@ import { useSettingsTaskOverview } from '~/composables/settings/useSettingsTaskO
 const { t } = useI18n()
 
 useHead({ title: t('settings.title') })
+useSeoMeta({ robots: 'noindex, nofollow' })
 
 const authed = ref(false)
 const passwordInput = ref('')

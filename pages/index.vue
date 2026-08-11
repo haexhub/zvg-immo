@@ -5,6 +5,20 @@ import type { LandingRailsResponse } from '~/server/api/landing/rails.get'
 // with its filter state.
 definePageMeta({ layout: 'landing' })
 
+const { t } = useI18n()
+
+// app.vue already sets the reactive title/description from these same
+// site.* keys; this adds the Open Graph/canonical tags it doesn't cover.
+const canonicalUrl = useRequestURL().origin
+useSeoMeta({
+  ogTitle: () => t('site.title'),
+  ogDescription: () => t('site.description'),
+  ogType: 'website',
+  ogUrl: canonicalUrl,
+  twitterCard: 'summary',
+})
+useHead({ link: [{ rel: 'canonical', href: canonicalUrl }] })
+
 const { data: rails } = await useFetch<LandingRailsResponse | null>('/api/landing/rails', {
   cache: 'no-store',
   default: () => null,
@@ -69,7 +83,7 @@ const geoRails = computed(() => {
     <!-- Footer -->
     <footer class="mt-6 flex flex-col items-center justify-between gap-4 border-t px-6 py-8 text-sm text-muted-foreground sm:flex-row">
       <span class="flex items-center gap-2 font-semibold text-foreground">
-        <SitePropHammerLogo class="h-6 w-6 text-amber-500" />
+        <SiteImmoHammerLogo class="h-6 w-6 text-amber-500" />
         {{ $t('nav.brand') }}
       </span>
       <span>{{ $t('landing.footer.tagline') }}</span>

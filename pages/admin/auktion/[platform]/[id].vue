@@ -12,6 +12,7 @@ import { usePollWhileActive } from '~/composables/settings/usePollWhileActive'
 import type { AuctionTechnicalOverview } from '~/server/utils/auction-technical'
 import type { LlmExecutionMode, LlmProvider } from '~/server/utils/app-settings'
 import { DIFF_FIELDS, displayValue, formatBytes, formatDate as formatDateValue, humanizeFieldKey, type VersionDetail } from '~/lib/auction-technical-helpers'
+
 interface LlmProfilesResponse {
   profiles: Array<{ id: string; name: string; provider: LlmProvider; baseUrl: string; model: string; executionMode: LlmExecutionMode }>
 }
@@ -21,6 +22,7 @@ const id = String(route.params.id)
 const { t, locale } = useI18n()
 const formatDate = (value: string | null): string => formatDateValue(value, locale.value)
 useHead({ title: t('settings.auctionTechnical.title', { platform, id }) })
+useSeoMeta({ robots: 'noindex, nofollow' })
 const authed = ref(false)
 const passwordInput = ref('')
 const authError = ref<string | null>(null)

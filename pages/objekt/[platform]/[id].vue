@@ -87,10 +87,62 @@ function onBackClick(event: MouseEvent, navigate: (event?: MouseEvent) => void):
   else navigate()
 }
 
+const requestOrigin = useRequestURL().origin
+const canonicalUrl = computed(() => `${requestOrigin}${route.path}`)
+const metaDescription = computed(() => {
+  const text = combinedDescription.value.trim()
+  if (!text) return t('site.description')
+  return text.length > 300 ? `${text.slice(0, 297)}…` : text
+})
+const ogImageUrl = computed(() => (photoUrls.value[0] ? `${requestOrigin}${photoUrls.value[0]}` : null))
+
+function auctionJsonLd(auction: AuctionDetail): Record<string, unknown> {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'RealEstateListing',
+    name: displayTitle.value || auction.authority,
+    description: metaDescription.value,
+    url: canonicalUrl.value,
+    ...(ogImageUrl.value ? { image: ogImageUrl.value } : {}),
+    ...(displayAddress.value ? {
+      address: { '@type': 'PostalAddress', streetAddress: displayAddress.value, addressCountry: auction.country.toUpperCase() },
+    } : {}),
+    ...(auction.lat != null && auction.lng != null ? {
+      geo: { '@type': 'GeoCoordinates', latitude: auction.lat, longitude: auction.lng },
+    } : {}),
+    ...(auction.marketValueEur != null ? {
+      offers: {
+        '@type': 'Offer',
+        price: auction.marketValueEur,
+        priceCurrency: 'EUR',
+        availability: auction.cancelled ? 'https://schema.org/Discontinued' : 'https://schema.org/InStock',
+      },
+    } : {}),
+  }
+}
+
 useHead(() => ({
   title: displayTitle.value
     ? `${displayTitle.value} · ${a.value?.authority}`
     : t('objektDetail.untitled'),
+  meta: [
+    { name: 'description', content: metaDescription.value },
+    { property: 'og:title', content: displayTitle.value || t('objektDetail.untitled') },
+    { property: 'og:description', content: metaDescription.value },
+    { property: 'og:url', content: canonicalUrl.value },
+    { property: 'og:type', content: 'website' },
+    ...(ogImageUrl.value ? [{ property: 'og:image', content: ogImageUrl.value }] : []),
+    { name: 'twitter:card', content: ogImageUrl.value ? 'summary_large_image' : 'summary' },
+  ],
+  link: [{ rel: 'canonical', href: canonicalUrl.value }],
+  script: a.value
+    ? [{
+        type: 'application/ld+json',
+        // `<` escaped so a crawled title/address can't smuggle a literal
+        // script-closing tag out of this block — JSON.stringify alone doesn't escape it.
+        innerHTML: JSON.stringify(auctionJsonLd(a.value)).replace(/</g, '\\u003c'),
+      }]
+    : [],
 }))
 </script>
 

@@ -1,10 +1,12 @@
 {
   "site": {
-    "title": "PropHammer — Zwangsversteigerungen europaweit",
-    "description": "PropHammer durchsucht rund um die Uhr Amts- und Gerichtsportale in vielen europäischen Ländern und zeigt jede Zwangsversteigerung auf einer Karte."
+    "title": "ImmoHammer — Zwangsversteigerungen europaweit",
+    "description": "ImmoHammer durchsucht rund um die Uhr Amts- und Gerichtsportale in vielen europäischen Ländern und zeigt jede Zwangsversteigerung auf einer Karte.",
+    "searchTitle": "Zwangsversteigerungen suchen — ImmoHammer",
+    "searchDescription": "Durchsuche aktuelle Zwangsversteigerungen europaweit nach Ort, Preis, Objektart und Umgebung."
   },
   "nav": {
-    "brand": "PropHammer",
+    "brand": "ImmoHammer",
     "menu": "Menü"
   },
   "map": {
@@ -48,7 +50,7 @@
     },
     "footer": {
       "tagline": "Zwangsversteigerungen europaweit — auf einer Karte.",
-      "legal": "© 2026 PropHammer"
+      "legal": "© 2026 ImmoHammer"
     }
   },
   "search": {
@@ -1045,7 +1047,7 @@
     "filesTitle": "Dateien",
     "openFilesMenu": "Dateien",
     "sourcesDisclaimerTitle": "Quellen & Haftungsausschluss",
-    "sourcesDisclaimerText": "Alle gemachten Angaben ohne Gewähr. PropHammer übernimmt keine Haftung für die Richtigkeit und Vollständigkeit der dargestellten Informationen.",
+    "sourcesDisclaimerText": "Alle gemachten Angaben ohne Gewähr. ImmoHammer übernimmt keine Haftung für die Richtigkeit und Vollständigkeit der dargestellten Informationen.",
     "safetyNoticeTitle": "Sicherheitsleistung",
     "safetyNoticeText": "Gemäß §§ 67–70 ZVG kann im Versteigerungstermin für ein Gebot Sicherheit verlangt werden. Die Sicherheit beträgt in der Regel 10 % des Verkehrswertes und ist sofort zu leisten. Barzahlung ist ausgeschlossen; Bietvollmachten müssen öffentlich beglaubigt sein.",
     "neighborhoodCharacter": "Lage",

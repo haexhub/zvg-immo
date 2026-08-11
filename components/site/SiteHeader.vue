@@ -52,7 +52,7 @@ onBeforeUnmount(() => {
       :class="compact ? 'h-14' : 'h-16'"
     >
       <NuxtLink to="/" class="flex items-center gap-2 font-bold tracking-tight shrink-0">
-        <SitePropHammerLogo
+        <SiteImmoHammerLogo
           class="text-amber-500 transition-all duration-200"
           :class="compact ? 'h-7 w-7' : 'h-8 w-8'"
         />

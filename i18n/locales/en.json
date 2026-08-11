@@ -1,10 +1,12 @@
 {
   "site": {
-    "title": "PropHammer — Foreclosure auctions across Europe",
-    "description": "PropHammer continuously crawls court and official portals across many European countries and shows every foreclosure auction on a map."
+    "title": "ImmoHammer — Foreclosure auctions across Europe",
+    "description": "ImmoHammer continuously crawls court and official portals across many European countries and shows every foreclosure auction on a map.",
+    "searchTitle": "Search foreclosure auctions — ImmoHammer",
+    "searchDescription": "Search current foreclosure auctions across Europe by location, price, property type and surroundings."
   },
   "nav": {
-    "brand": "PropHammer",
+    "brand": "ImmoHammer",
     "menu": "Menu"
   },
   "map": {
@@ -48,7 +50,7 @@
     },
     "footer": {
       "tagline": "Foreclosure auctions across Europe — on one map.",
-      "legal": "© 2026 PropHammer"
+      "legal": "© 2026 ImmoHammer"
     }
   },
   "search": {
@@ -1045,7 +1047,7 @@
     "filesTitle": "Files",
     "openFilesMenu": "Files",
     "sourcesDisclaimerTitle": "Sources & disclaimer",
-    "sourcesDisclaimerText": "All information provided without guarantee. PropHammer accepts no liability for the accuracy or completeness of the information shown.",
+    "sourcesDisclaimerText": "All information provided without guarantee. ImmoHammer accepts no liability for the accuracy or completeness of the information shown.",
     "safetyNoticeTitle": "Security deposit",
     "safetyNoticeText": "Under German law (§§ 67–70 ZVG), bidders may be required to provide security at the auction hearing, usually 10% of the market value, payable immediately. Cash payment is not accepted; bidding proxies must be publicly certified.",
     "neighborhoodCharacter": "Neighborhood",
