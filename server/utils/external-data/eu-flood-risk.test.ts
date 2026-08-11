@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -8,10 +8,17 @@ import {
   createEuFloodRiskFileAdapter,
   distanceToPolygonMeters,
   type GeoJsonPolygonCoordinates,
-  importEuFloodRiskGeoJsonCache,
   loadFloodRiskGeoJson,
   pointInPolygon,
 } from './eu-flood-risk'
+// The import path lives in its own module (see eu-flood-risk-import.ts); its
+// tests stay here with the rest of the flood-risk cluster.
+import {
+  EU_FLOOD_RISK_POLYGON_LAYER_URL,
+  importEuFloodRiskGeoJsonCache,
+} from './eu-flood-risk-import'
+import { polygonsBounds } from './eu-flood-risk-assessment'
+import { clearCachedFileCollections } from './cached-file-collection'
 
 let tmp: string | null = null
 
@@ -188,7 +195,13 @@ describe('buildFloodHazardAssessment', () => {
     const collection = {
       sourceVersion: 'fixture-v1',
       generatedAt: checkedAt,
-      zones: [{ id: 'zone-1', polygons: [polygon], severity: 'high' as const, properties: {} }],
+      zones: [{
+        id: 'zone-1',
+        polygons: [polygon],
+        severity: 'high' as const,
+        properties: {},
+        bounds: polygonsBounds([polygon]),
+      }],
     }
     const distance = distanceToPolygonMeters({ lat: point.lat!, lng: point.lng! }, polygon)
 
@@ -245,7 +258,116 @@ describe('buildFloodHazardAssessment', () => {
   })
 })
 
+describe('createEuFloodRiskFileAdapter caching', () => {
+  it('reuses the parsed cache while the file is unchanged', async () => {
+    // external-enrichment builds this adapter once per auction; on production
+    // 45 of those ran concurrently and each full parse of the hazard caches
+    // pushed the container into an OOM crash.
+    clearCachedFileCollections()
+    tmp = await mkdtemp(join(tmpdir(), 'zvg-eu-flood-'))
+    const cachePath = join(tmp, 'eu-flood-risk.geojson')
+    const stamp = new Date('2026-08-01T00:00:00.000Z')
+    await writeFile(cachePath, await readFile(fixturePath, 'utf8'))
+    await utimes(cachePath, stamp, stamp)
+    const { size } = await stat(cachePath)
+
+    const first = await createEuFloodRiskFileAdapter({ geoJsonPath: cachePath, checkedAt })
+    // Same byte length and the same mtime: only a reparse would pick the
+    // replacement up.
+    const replacement = JSON.stringify({ type: 'FeatureCollection', features: [] }).padEnd(size, ' ')
+    await writeFile(cachePath, replacement)
+    await utimes(cachePath, stamp, stamp)
+    const second = await createEuFloodRiskFileAdapter({ geoJsonPath: cachePath, checkedAt })
+
+    const [firstResult] = await first.assess(auction({ lat: 52.52, lng: 13.4 }))
+    const [secondResult] = await second.assess(auction({ lat: 52.52, lng: 13.4 }))
+    expect(secondResult).toEqual(firstResult)
+    expect(secondResult?.status).not.toBe('unknown')
+  })
+})
+
+describe('zone matching', () => {
+  /** Square of ~0.02° per side, offset from Berlin by `steps` grid cells. */
+  function squareZone(index: number, lngOffset: number, latOffset: number) {
+    const polygon: GeoJsonPolygonCoordinates = [[
+      [13.39 + lngOffset, 52.51 + latOffset],
+      [13.41 + lngOffset, 52.51 + latOffset],
+      [13.41 + lngOffset, 52.53 + latOffset],
+      [13.39 + lngOffset, 52.53 + latOffset],
+      [13.39 + lngOffset, 52.51 + latOffset],
+    ]]
+    return {
+      id: `zone-${index}`,
+      polygons: [polygon],
+      severity: 'medium' as const,
+      properties: {},
+      bounds: polygonsBounds([polygon]),
+    }
+  }
+
+  it('finds the same nearest zone as an unfiltered scan would', () => {
+    // The bounding-box prefilter stops measuring outlines once no remaining
+    // zone can be closer, so it must not change which zone wins.
+    const zones = Array.from({ length: 40 }, (_, index) => squareZone(index, index * 0.05, index * 0.03))
+    const collection = { sourceVersion: 'fixture-v1', generatedAt: checkedAt, zones }
+    const nearestByBruteForce = zones
+      .map((zone) => ({
+        zone,
+        distance: distanceToPolygonMeters({ lat: 52.6, lng: 13.9 }, zone.polygons[0]!),
+      }))
+      .sort((a, b) => a.distance - b.distance)[0]!
+
+    const assessment = buildFloodHazardAssessment(
+      auction({ lat: 52.6, lng: 13.9 }),
+      collection,
+      { checkedAt, nearbyDistanceMeters: 1_000 },
+    )
+
+    expect(assessment?.distanceMeters).toBe(Math.round(nearestByBruteForce.distance))
+  })
+
+  it('still reports a containing zone when a different zone box is closer', () => {
+    // The point sits inside zone 0 while zone 1's box starts nearby — the
+    // prefilter must not let box ordering hide the containing zone.
+    const inside = squareZone(0, 0, 0)
+    const neighbour = squareZone(1, 0.0201, 0)
+    const collection = {
+      sourceVersion: 'fixture-v1',
+      generatedAt: checkedAt,
+      zones: [neighbour, inside],
+    }
+
+    expect(buildFloodHazardAssessment(
+      auction({ lat: 52.52, lng: 13.4 }),
+      collection,
+      { checkedAt },
+    )).toMatchObject({ status: 'inside', severity: 'medium', distanceMeters: 0 })
+  })
+
+  it('measures zones without usable bounds instead of skipping them', () => {
+    const zone = squareZone(0, 0, 0)
+    const collection = {
+      sourceVersion: 'fixture-v1',
+      generatedAt: checkedAt,
+      zones: [{ ...zone, bounds: null }],
+    }
+
+    expect(buildFloodHazardAssessment(
+      auction({ lat: 52.52, lng: 13.4 }),
+      collection,
+      { checkedAt },
+    )).toMatchObject({ status: 'inside' })
+  })
+})
+
 describe('importEuFloodRiskGeoJsonCache', () => {
+  it('defaults to a reporting cycle that covers the crawled countries', () => {
+    // The 2024 cycle holds nine countries and neither DE nor BG (verified live
+    // 2026-08-11), so importing it left German auctions with a bogus
+    // "outside" verdict instead of no flood data at all.
+    expect(EU_FLOOD_RISK_POLYGON_LAYER_URL).toContain('Floods2019_RiskZone_WM')
+  })
+
   it('paginates ArcGIS REST GeoJSON into a local metadata-rich cache', async () => {
     tmp = await mkdtemp(join(tmpdir(), 'zvg-eu-flood-'))
     const cachePath = join(tmp, 'eu-flood-risk.geojson')
@@ -300,6 +422,11 @@ describe('importEuFloodRiskGeoJsonCache', () => {
     expect(firstUrl.searchParams.get('f')).toBe('geojson')
     expect(firstUrl.searchParams.get('where')).toBe("countryCode IN ('DE')")
     expect(firstUrl.searchParams.get('outSR')).toBe('4326')
+    // Server-side generalization is what keeps this import inside the
+    // container's heap: full-resolution polygons measured 542 MB / ~2.5 GB
+    // peak RSS, the same selection at ~55 m tolerance is 4.9 MB.
+    expect(firstUrl.searchParams.get('maxAllowableOffset')).toBe('0.0005')
+    expect(firstUrl.searchParams.get('geometryPrecision')).toBe('5')
 
     const cached = loadFloodRiskGeoJson(await readFile(cachePath, 'utf8'), {})
     expect(cached).toMatchObject({

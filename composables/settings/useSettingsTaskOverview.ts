@@ -75,6 +75,7 @@ export interface LlmBatchJobsOverview {
   externalEnrichmentStatus: TaskRunStatus
   offloadImagesStatus?: TaskRunStatus
   copernicusEffisImportStatus?: TaskRunStatus
+  euFloodRiskImportStatus?: TaskRunStatus
 }
 
 let progressPollTimer: ReturnType<typeof setInterval> | null = null
@@ -106,7 +107,8 @@ export function useSettingsTaskOverview() {
       overview.reprocessStatus.status === 'running' ||
       overview.externalEnrichmentStatus.status === 'running' ||
       overview.offloadImagesStatus?.status === 'running' ||
-      overview.copernicusEffisImportStatus?.status === 'running'
+      overview.copernicusEffisImportStatus?.status === 'running' ||
+      overview.euFloodRiskImportStatus?.status === 'running'
   }
 
   const llmBatchBacklog = computed(() => llmBatchJobs.value?.backlog ?? {

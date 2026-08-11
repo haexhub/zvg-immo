@@ -33,6 +33,7 @@ import * as cheerio from 'cheerio'
 import type { Auction, HazardAssessment } from '~/types/auction'
 import type { HazardAssessmentAdapter } from '~/server/tasks/external-enrichment'
 import { writeJsonCache } from '../json-cache'
+import { readCachedFileCollection } from './cached-file-collection'
 import {
   distanceToPolygonMeters,
   pointInPolygon,
@@ -250,7 +251,14 @@ export function buildWildfireHazardAssessment(
 export async function createCopernicusEffisBurntAreaFileAdapter(
   options: BurntAreaFileAdapterOptions,
 ): Promise<HazardAssessmentAdapter> {
-  const collection = await readBurntAreaCache(options.cachePath, options.sourceVersion)
+  // Cached by mtime — see cached-file-collection.ts: this 182 MB cache parses
+  // to ~600 MB of heap, and external-enrichment used to do that once per
+  // auction, concurrently.
+  const collection = await readCachedFileCollection(
+    options.cachePath,
+    (path) => readBurntAreaCache(path, options.sourceVersion),
+    `${options.cachePath} ${options.sourceVersion ?? ''}`,
+  )
   return {
     id: 'copernicus-effis-burnt-area-file-cache',
     sourceVersion: options.sourceVersion ?? collection.sourceVersion,

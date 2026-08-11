@@ -6,11 +6,11 @@ import { useSettingsTaskOverview } from '~/composables/settings/useSettingsTaskO
 interface CacheImportSourceConfig {
   endpoint: string
   requiresCsvPath?: boolean
-  // Copernicus EFFIS's WFS dataset is two orders of magnitude bigger than the
-  // other two (100k+ features, ~100 paginated requests) — its import runs
-  // detached (POST returns {started:true} immediately) instead of
-  // sync/awaited, same "detached" contract as e.g. reprocess/geo-metrics.
-  // Progress/result surface via llmBatchJobs.copernicusEffisImportStatus.
+  // The two polygon-layer imports take minutes of paginated requests (EFFIS:
+  // 100k+ features; EU flood risk: 542 MB measured against the unfiltered
+  // layer), so they run detached (POST returns {started:true} immediately)
+  // instead of sync/awaited, same "detached" contract as e.g. reprocess/
+  // geo-metrics. Progress/result surface via llmBatchJobs.*ImportStatus.
   detached?: boolean
 }
 
@@ -22,7 +22,7 @@ interface CacheImportSourceConfig {
 // download). See docs/plans/2026-07-26-eu-market-risk-data-sources-plan.md
 // for the incident this gap already caused once.
 const CACHE_IMPORT_SOURCES: Record<string, CacheImportSourceConfig> = {
-  'eu-flood-risk-areas': { endpoint: '/api/settings/external-data/eu-flood-risk-cache' },
+  'eu-flood-risk-areas': { endpoint: '/api/settings/external-data/eu-flood-risk-cache', detached: true },
   'copernicus-effis': { endpoint: '/api/settings/external-data/copernicus-effis-cache', detached: true },
   'fr-dvf-geolocated': { endpoint: '/api/settings/external-data/fr-dvf-cache', requiresCsvPath: true },
 }
@@ -95,6 +95,7 @@ const enrichmentProgress = computed(() => {
 })
 
 const copernicusEffisImportStatus = computed(() => llmBatchJobs.value?.copernicusEffisImportStatus ?? null)
+const euFloodRiskImportStatus = computed(() => llmBatchJobs.value?.euFloodRiskImportStatus ?? null)
 
 async function loadCoverage(): Promise<void> {
   try {
@@ -385,6 +386,23 @@ onMounted(async () => {
           </p>
           <p v-if="copernicusEffisImportStatus.lastError" class="text-destructive">
             {{ $t('settings.sources.copernicusEffisStatusLastError', { message: copernicusEffisImportStatus.lastError }) }}
+          </p>
+        </div>
+
+        <div v-if="source.id === 'eu-flood-risk-areas' && euFloodRiskImportStatus" class="text-xs space-y-1">
+          <p v-if="euFloodRiskImportStatus.status === 'running'" class="text-muted-foreground">
+            {{ $t('settings.sources.euFloodRiskStatusRunning', { at: formatBatchDate(euFloodRiskImportStatus.startedAt) }) }}
+          </p>
+          <p v-else-if="euFloodRiskImportStatus.finishedAt" class="text-muted-foreground">
+            {{ $t('settings.sources.euFloodRiskStatusLastRun', {
+              at: formatBatchDate(euFloodRiskImportStatus.finishedAt),
+              normalized: euFloodRiskImportStatus.lastResult?.normalized ?? 0,
+              fetched: euFloodRiskImportStatus.lastResult?.fetched ?? 0,
+              pages: euFloodRiskImportStatus.lastResult?.pages ?? 0,
+            }) }}
+          </p>
+          <p v-if="euFloodRiskImportStatus.lastError" class="text-destructive">
+            {{ $t('settings.sources.euFloodRiskStatusLastError', { message: euFloodRiskImportStatus.lastError }) }}
           </p>
         </div>
       </div>

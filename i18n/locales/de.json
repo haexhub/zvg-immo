@@ -345,7 +345,10 @@
       "offloadStatusLastError": "Foto-Auslagerung zuletzt fehlgeschlagen: {message}",
       "copernicusEffisStatusRunning": "Import läuft seit {at} — kann mehrere Minuten dauern …",
       "copernicusEffisStatusLastRun": "Letzter Import: {at} — {normalized} von {fetched} Brandflächen übernommen ({pages} Seiten).",
-      "copernicusEffisStatusLastError": "Import zuletzt fehlgeschlagen: {message}"
+      "copernicusEffisStatusLastError": "Import zuletzt fehlgeschlagen: {message}",
+      "euFloodRiskStatusRunning": "Import läuft seit {at} — kann mehrere Minuten dauern …",
+      "euFloodRiskStatusLastRun": "Letzter Import: {at} — {normalized} von {fetched} Hochwasserzonen übernommen ({pages} Seiten).",
+      "euFloodRiskStatusLastError": "Import zuletzt fehlgeschlagen: {message}"
     },
     "crawlStatus": {
       "title": "Crawling-Status",

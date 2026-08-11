@@ -8,7 +8,13 @@
 
 import { getPool } from './db'
 
-export type TrackedTask = 'enrich' | 'reprocess' | 'external-enrichment' | 'offload-images' | 'import-copernicus-effis-cache'
+export type TrackedTask =
+  | 'enrich'
+  | 'reprocess'
+  | 'external-enrichment'
+  | 'offload-images'
+  | 'import-copernicus-effis-cache'
+  | 'import-eu-flood-risk-cache'
 
 // enrich.ts (crawl/archive) and reprocess.ts (extraction) report differently
 // shaped, purely-numeric result summaries — kept generic here rather than a

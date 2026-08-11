@@ -345,7 +345,10 @@
       "offloadStatusLastError": "Photo offload last failed: {message}",
       "copernicusEffisStatusRunning": "Import running since {at} — can take several minutes …",
       "copernicusEffisStatusLastRun": "Last import: {at} — {normalized} of {fetched} burnt areas kept ({pages} pages).",
-      "copernicusEffisStatusLastError": "Import last failed: {message}"
+      "copernicusEffisStatusLastError": "Import last failed: {message}",
+      "euFloodRiskStatusRunning": "Import running since {at} — can take several minutes …",
+      "euFloodRiskStatusLastRun": "Last import: {at} — {normalized} of {fetched} flood risk zones kept ({pages} pages).",
+      "euFloodRiskStatusLastError": "Import last failed: {message}"
     },
     "crawlStatus": {
       "title": "Crawling status",

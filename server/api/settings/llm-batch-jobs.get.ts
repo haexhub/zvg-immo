@@ -75,6 +75,8 @@ export interface LlmBatchJobsOverview {
   // detached (its WFS dataset is too big to fetch within a request) so this
   // is the only place to see whether an "Import" click actually did anything.
   copernicusEffisImportStatus: TaskRunStatus
+  // Same for the EU flood risk polygon cache import.
+  euFloodRiskImportStatus: TaskRunStatus
 }
 
 const MAX_KEYS_PER_GROUP = 200
@@ -99,6 +101,7 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
     externalEnrichmentStatus,
     offloadImagesStatus,
     copernicusEffisImportStatus,
+    euFloodRiskImportStatus,
   ] = await Promise.all([
     listPendingLlmBatchJobs(),
     listRecentLlmBatchJobs(20),
@@ -108,6 +111,7 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
     getTaskRunStatus('external-enrichment'),
     getTaskRunStatus('offload-images'),
     getTaskRunStatus('import-copernicus-effis-cache'),
+    getTaskRunStatus('import-eu-flood-risk-cache'),
   ])
   // supportsLlmBatch() gates gemini-native on isGeminiBatchTierPaid() (see
   // llm-batch.ts), so on the free tier a real batch submit never happens and
@@ -229,5 +233,6 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
     externalEnrichmentStatus,
     offloadImagesStatus,
     copernicusEffisImportStatus,
+    euFloodRiskImportStatus,
   }
 })
