@@ -28,6 +28,7 @@ import {
   type VerkehrswertCache,
 } from '../utils/verkehrswert-cache'
 import { runExclusiveTask, throwIfTaskAborted } from '../utils/exclusive-task'
+import { isAutomaticCrawlingEnabled } from '../utils/automatic-task-gate'
 
 // Matches recordGeocodeAttempts' own chunk size, so a flush is exactly one
 // UPDATE statement.
@@ -42,6 +43,10 @@ export default defineTask({
     description: 'Crawl all registered regions and geocode addresses missing from the cache.',
   },
   async run() {
+    if (!await isAutomaticCrawlingEnabled()) {
+      console.log('[geocode] automatic crawling disabled — skipping scheduled/boot run')
+      return {}
+    }
     return await runExclusiveTask('geocode', runGeocode)
   },
 })

@@ -30,11 +30,11 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: `${registered.name} ist deaktiviert.` })
   }
 
-  const outcome = (await runTask('enrich', { payload: { country, force: true, writeListCache: true } })) as Awaited<ReturnType<typeof runEnrich>>
+  const outcome = (await runTask('enrich', { payload: { country, force: true, writeListCache: true, trigger: 'manual' } })) as Awaited<ReturnType<typeof runEnrich>>
   // Detached on purpose — see the file header. A rejection here is still
   // recorded as the task's lastError by its own defineTask wrapper; the catch
   // only keeps the trigger itself from becoming an unhandled rejection.
-  void runTask('reprocess', { payload: { country, force: forceExtraction } }).catch((err: unknown) => {
+  void runTask('reprocess', { payload: { country, force: forceExtraction, trigger: 'manual' } }).catch((err: unknown) => {
     console.error('[settings/enrich] reprocess trigger failed:', (err as Error).message)
   })
   void runTask('external-enrichment', { payload: { country } }).catch((err: unknown) => {

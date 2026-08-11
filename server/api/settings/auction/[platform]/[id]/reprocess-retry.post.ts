@@ -26,7 +26,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, statusMessage: 'auction not found' })
   }
 
-  void runTask('reprocess', { payload: { platform, externalId: id, force: true } }).catch((err: unknown) => {
+  void runTask('reprocess', { payload: { platform, externalId: id, force: true, trigger: 'manual' } }).catch((err: unknown) => {
     console.error('[settings/auction/reprocess-retry] trigger failed:', (err as Error).message)
   })
   return { started: true }

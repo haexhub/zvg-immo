@@ -17,6 +17,7 @@ import { writeAuctionCrawlFetchState } from '../utils/auction-fetch-state'
 import { regionListCacheAgeMs, writeListCache } from '../utils/list-cache'
 import { drainOutbox } from '../utils/storage-uploader'
 import { runExclusiveTask, throwIfTaskAborted } from '../utils/exclusive-task'
+import { isAutomaticCrawlingEnabled } from '../utils/automatic-task-gate'
 
 export default defineTask({
   meta: {
@@ -24,6 +25,10 @@ export default defineTask({
     description: 'Crawl all registered regions and persist results to the list cache.',
   },
   async run() {
+    if (!await isAutomaticCrawlingEnabled()) {
+      console.log('[refresh] automatic crawling disabled — skipping scheduled/boot run')
+      return {}
+    }
     return await runExclusiveTask('refresh', runRefresh)
   },
 })

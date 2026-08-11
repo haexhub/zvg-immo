@@ -35,6 +35,16 @@ export interface TranslationStatusList {
   total: number
 }
 
+export type TranslationStatusSort = 'platform' | 'title' | 'region' | 'error' | 'lang' | 'startedAt'
+
+export interface TranslationStatusListOptions {
+  limit?: number
+  offset?: number
+  search?: string
+  sort?: TranslationStatusSort
+  direction?: 'asc' | 'desc'
+}
+
 const BUCKET_BY_STATUS: Record<string, TranslationStatusBucket> = {
   completed: 'done',
   failed: 'error',
@@ -98,12 +108,48 @@ export async function readTranslationStatusIdentities(
 export async function readTranslationStatusList(
   country: string,
   bucket: TranslationStatusBucket,
-  { limit = 50, offset = 0 }: { limit?: number; offset?: number } = {},
+  { limit = 50, offset = 0, search = '', sort, direction = 'asc' }: TranslationStatusListOptions = {},
 ): Promise<TranslationStatusList> {
   const db = getPool()
   if (!db) return { items: [], total: 0 }
   const status = Object.entries(BUCKET_BY_STATUS).find(([, b]) => b === bucket)?.[0]
   if (!status) return { items: [], total: 0 }
+  const filter = search.trim()
+  if (filter || sort) {
+    const orderBy: Record<TranslationStatusSort, string> = {
+      platform: 'a.platform', title: 'a.title', region: 'a.region', error: 't.error_message', lang: 't.lang', startedAt: 't.started_at',
+    }
+    const params: (string | number)[] = [country, status]
+    const filterClause = filter
+      ? ` AND concat_ws(' ', a.platform, a.external_id, a.title, a.region, a.case_number, t.lang, t.error_message) ILIKE $${params.push(`%${filter}%`)}`
+      : ''
+    const order = `${orderBy[sort ?? 'platform']} ${direction === 'desc' ? 'DESC' : 'ASC'}, a.platform ASC, a.external_id ASC`
+    const pageParams = [...params, limit, offset]
+    const [{ rows }, { rows: countRows }] = await Promise.all([
+      db.query<{
+        platform: string; external_id: string; title: string | null; region: string; case_number: string
+        lang: string; error_message: string | null; started_at: Date | string
+      }>(
+        `SELECT a.platform, a.external_id, a.title, a.region, a.case_number, t.lang, t.error_message, t.started_at
+         FROM auction_translations t JOIN auctions a ON a.platform = t.platform AND a.external_id = t.external_id
+         WHERE a.country = $1 AND t.status = $2${filterClause}
+         ORDER BY ${order} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+        pageParams,
+      ),
+      db.query<{ count: string }>(
+        `SELECT count(*) AS count FROM auction_translations t JOIN auctions a ON a.platform = t.platform AND a.external_id = t.external_id
+         WHERE a.country = $1 AND t.status = $2${filterClause}`,
+        params,
+      ),
+    ])
+    return {
+      items: rows.map((row) => ({
+        platform: row.platform, externalId: row.external_id, title: row.title, region: row.region,
+        caseNumber: row.case_number, lang: row.lang, lastErrorMessage: row.error_message, startedAt: isoOrNull(row.started_at)!,
+      })),
+      total: Number(countRows[0]?.count ?? 0),
+    }
+  }
   const [{ rows }, { rows: countRows }] = await Promise.all([
     db.query<{
       platform: string

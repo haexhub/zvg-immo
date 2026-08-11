@@ -54,7 +54,7 @@ describe('/api/settings/auction/[platform]/[id]/enrich-retry', () => {
 
     await expect(handler(event('zvg-portal', '7265'))).resolves.toEqual({ started: true })
     expect(runTask).toHaveBeenCalledWith('enrich', {
-      payload: { country: 'de', identities: [{ platform: 'zvg-portal', externalId: '7265' }] },
+      payload: { country: 'de', identities: [{ platform: 'zvg-portal', externalId: '7265' }], trigger: 'manual' },
     })
   })
 

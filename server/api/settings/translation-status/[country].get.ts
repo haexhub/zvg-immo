@@ -16,5 +16,16 @@ export default defineEventHandler(async (event): Promise<TranslationStatusList> 
   }
   const limit = Math.min(MAX_LIMIT, Math.max(1, Number(query.limit) || DEFAULT_LIMIT))
   const offset = Math.max(0, Number(query.offset) || 0)
-  return readTranslationStatusList(country, bucket, { limit, offset })
+  const search = String(query.search ?? '').trim()
+  const sort = String(query.sort ?? '')
+  const direction = String(query.direction ?? 'asc')
+  if (sort && !['platform', 'title', 'region', 'error', 'lang', 'startedAt'].includes(sort)) {
+    throw createError({ statusCode: 400, statusMessage: 'sort ist ungültig.' })
+  }
+  if (!['asc', 'desc'].includes(direction)) {
+    throw createError({ statusCode: 400, statusMessage: 'direction muss asc oder desc sein.' })
+  }
+  return readTranslationStatusList(country, bucket, search || sort
+    ? { limit, offset, search, sort: sort as 'platform' | 'title' | 'region' | 'error' | 'lang' | 'startedAt' | undefined, direction: direction as 'asc' | 'desc' }
+    : { limit, offset })
 })
