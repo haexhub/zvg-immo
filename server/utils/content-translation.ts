@@ -24,7 +24,8 @@ export interface ContentTranslationRow {
 // A crashed/redeployed instance can leave a `pending` row behind. Without a
 // lease that row would 409 every later request forever, so another request may
 // take the claim over once it is this old.
-const CLAIM_LEASE = '10 minutes'
+/** Keep status-driven retries aligned with the atomic takeover gate below. */
+export const AUCTION_TRANSLATION_CLAIM_LEASE = '10 minutes'
 // A failed attempt is remembered and served as the error for this long, then a
 // retry is allowed. A provider rate limit or outage must not lock an auction
 // out of ever getting a translation — the same lockout that PR #200 had to undo
@@ -74,7 +75,7 @@ export async function readAuctionTranslation(
        coalesce(completed_at, started_at) < now() - $6::interval AS "retryDue"
      FROM auction_translations
      WHERE platform = $1 AND external_id = $2 AND version = $3 AND lang = $4`,
-    [platform, externalId, version, lang, CLAIM_LEASE, RETRY_AFTER],
+    [platform, externalId, version, lang, AUCTION_TRANSLATION_CLAIM_LEASE, RETRY_AFTER],
   )
   return rows[0] ?? null
 }
@@ -121,7 +122,7 @@ export async function claimAuctionTranslation(
         OR (auction_translations.status = 'completed'
             AND auction_translations.content_hash <> excluded.content_hash)
      RETURNING started_at AS "startedAt"`,
-    [platform, externalId, version, lang, contentHash, CLAIM_LEASE],
+    [platform, externalId, version, lang, contentHash, AUCTION_TRANSLATION_CLAIM_LEASE],
   )
   return rows[0] ?? null
 }

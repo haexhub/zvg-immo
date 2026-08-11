@@ -77,4 +77,17 @@ describe('readTranslationStatusIdentities', () => {
     vi.mocked(getPool).mockReturnValue(null)
     await expect(readTranslationStatusIdentities('se', 'error')).resolves.toEqual([])
   })
+
+  it('returns only expired pending claims for the open bulk retry', async () => {
+    const query = vi.fn().mockResolvedValue({
+      rows: [{ platform: 'se-kronofogden', external_id: '101738', lang: 'de' }],
+    })
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+
+    await expect(readTranslationStatusIdentities('se', 'open')).resolves.toEqual([
+      { platform: 'se-kronofogden', externalId: '101738', lang: 'de' },
+    ])
+    expect(query.mock.calls[0]?.[0]).toContain('t.started_at < now() - $3::interval')
+    expect(query.mock.calls[0]?.[1]).toEqual(['se', 'pending', '10 minutes'])
+  })
 })
