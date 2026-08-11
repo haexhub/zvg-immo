@@ -195,14 +195,33 @@ describe('runLlmBatchPoll', () => {
     expect(markLlmBatchJobResolved).not.toHaveBeenCalled()
   })
 
-  it('resolves a failed job without changing auction data', async () => {
-    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job()])
+  it('resolves a failed job without changing auction data and logs each item as failed', async () => {
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job({
+      provider: 'openrouter',
+      model: 'google/gemini-3.5-flash-lite:batch',
+      profileId: 'profile-a',
+      customIdMap: { c1: 'zvg-portal:7265' },
+    })])
     vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'failed', errorMessage: 'provider failed' })
     await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 1, merged: 0 })
     expect(markLlmBatchJobResolved).toHaveBeenCalledWith(
       'batches/abc', 'failed', expect.any(String), 'provider failed',
     )
     expect(writeAuctionDetails).not.toHaveBeenCalled()
+    expect(recordLlmUsage).toHaveBeenCalledWith({
+      task: 'extraction',
+      executionMode: 'batch',
+      source: 'reprocess',
+      provider: 'openrouter',
+      model: 'google/gemini-3.5-flash-lite:batch',
+      profileId: 'profile-a',
+      platform: 'zvg-portal',
+      externalId: '7265',
+      usage: null,
+      status: 'failed',
+      errorMessage: 'provider failed',
+      batchJobName: 'batches/abc',
+    })
   })
 
   it('writes a successful result to details and clears its fetch-state marker', async () => {
@@ -259,6 +278,8 @@ describe('runLlmBatchPoll', () => {
       platform: 'zvg-portal',
       externalId: '7265',
       usage: { inputTokens: 900, outputTokens: 200 },
+      status: 'succeeded',
+      errorMessage: null,
       batchJobName: 'batches/abc',
     })
   })

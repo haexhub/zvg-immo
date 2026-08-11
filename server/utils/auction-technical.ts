@@ -80,11 +80,28 @@ export interface AuctionTranslationStatusRow {
   completedAt: string | null
 }
 
+/** Individual provider invocations, unlike extractionHistory which contains
+ * only versions that made it into auction_details. */
+export interface AuctionLlmCallRow {
+  id: number
+  occurredAt: string
+  provider: string
+  model: string
+  executionMode: string
+  status: 'succeeded' | 'failed'
+  inputTokens: number | null
+  outputTokens: number | null
+  costUsd: number | null
+  durationMs: number | null
+  errorMessage: string | null
+}
+
 export interface AuctionTechnicalOverview {
   identity: AuctionIdentity
   fetchState: AuctionFetchState | null
   documents: ArchiveDocumentRow[]
   extractionHistory: AuctionDetailsVersionRow[]
+  llmCalls: AuctionLlmCallRow[]
   llmBatchJobs: LlmBatchJob[]
   errors: TaskRunError[]
   externalData: {
@@ -186,6 +203,45 @@ async function readExtractionHistory(db: Pool, platform: string, externalId: str
     llmProfileId: row.llm_profile_id,
     runTrigger: row.run_trigger,
     llmDurationMs: row.llm_duration_ms,
+  }))
+}
+
+interface LlmCallQueryRow {
+  id: string | number
+  occurred_at: Date | string
+  provider: string
+  model: string
+  execution_mode: string
+  status: string
+  input_tokens: number | null
+  output_tokens: number | null
+  cost_usd: number | null
+  duration_ms: number | null
+  error_message: string | null
+}
+
+async function readLlmCalls(db: Pool, platform: string, externalId: string): Promise<AuctionLlmCallRow[]> {
+  const { rows } = await db.query<LlmCallQueryRow>(
+    `SELECT id, occurred_at, provider, model, execution_mode, status,
+            input_tokens, output_tokens, cost_usd, duration_ms, error_message
+     FROM llm_usage_events
+     WHERE platform = $1 AND external_id = $2
+     ORDER BY occurred_at DESC, id DESC
+     LIMIT 100`,
+    [platform, externalId],
+  )
+  return rows.map((row) => ({
+    id: Number(row.id),
+    occurredAt: iso(row.occurred_at)!,
+    provider: row.provider,
+    model: row.model,
+    executionMode: row.execution_mode,
+    status: row.status === 'failed' ? 'failed' : 'succeeded',
+    inputTokens: row.input_tokens,
+    outputTokens: row.output_tokens,
+    costUsd: row.cost_usd,
+    durationMs: row.duration_ms,
+    errorMessage: row.error_message,
   }))
 }
 
@@ -291,10 +347,11 @@ export async function readAuctionTechnicalOverview(platform: string, externalId:
   if (!identity) return null
 
   const identityKey = `${platform}:${externalId}`
-  const [fetchState, documents, extractionHistory, errors, recentBatchJobs, coverage, geo, translations] = await Promise.all([
+  const [fetchState, documents, extractionHistory, llmCalls, errors, recentBatchJobs, coverage, geo, translations] = await Promise.all([
     readAuctionFetchState(platform, externalId),
     readArchiveDocuments(db, platform, externalId),
     readExtractionHistory(db, platform, externalId),
+    readLlmCalls(db, platform, externalId),
     listTaskRunErrorsForIdentity(platform, externalId, 100),
     listRecentLlmBatchJobs(50),
     computeAuctionExternalDataCoverage(db, platform, externalId),
@@ -307,6 +364,7 @@ export async function readAuctionTechnicalOverview(platform: string, externalId:
     fetchState,
     documents,
     extractionHistory,
+    llmCalls,
     llmBatchJobs: recentBatchJobs.filter((job) => Object.values(job.customIdMap).includes(identityKey)),
     errors,
     externalData: { coverage, geoMetrics: geo.geoMetrics, climateCell: geo.climateCell },

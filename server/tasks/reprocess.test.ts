@@ -280,6 +280,28 @@ describe('reprocessAuction structured provenance', () => {
 })
 
 describe('runReprocess structured persistence', () => {
+  it('does not re-run a successful extraction merely because optional LLM fields are absent', async () => {
+    const prior = extraction({
+      llmAnalyzedAt: '2026-08-02T10:00:00.000Z',
+      // Deliberately no condition/features/insights/etc.: these are valid
+      // optional omissions in a model response, not unfinished work.
+    })
+    vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map([['zvg-portal:7265', {
+      auction: { ...auction(), extraction: prior },
+      detailsId: 7,
+      detailsVersion: 2,
+      artifactVersionId: null,
+    }]]))
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+      baseUrl: 'https://api.example.test', apiKey: 'secret', model: 'vision-model', provider: 'gemini-native',
+    }])
+
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 0, skipped: 1, llmCalls: 0 })
+
+    expect(extractByLlm).not.toHaveBeenCalled()
+    expect(writeAuctionDetails).not.toHaveBeenCalled()
+  })
+
   it('persists a synchronous rules result before updating the current projection', async () => {
     await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 1, skipped: 0 })
 
@@ -432,10 +454,13 @@ describe('runReprocess structured persistence', () => {
       platform: 'zvg-portal',
       externalId: '7265',
       usage: { inputTokens: 800, outputTokens: 120 },
+      status: 'failed',
+      errorMessage: 'Keine gültige Extraktion in der Provider-Antwort',
+      durationMs: expect.any(Number),
     })
   })
 
-  it('does not record usage when the provider never reported token counts', async () => {
+  it('records a failed call even when the provider did not report token counts', async () => {
     vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
       baseUrl: 'https://api.example.test', apiKey: 'secret', model: 'vision-model', provider: 'gemini-native', profileId: 'profile-a',
     }])
@@ -446,7 +471,11 @@ describe('runReprocess structured persistence', () => {
 
     await expect(runReprocess({ country: 'de', trigger: 'manual' })).resolves.toMatchObject({ processed: 1 })
 
-    expect(recordLlmUsage).not.toHaveBeenCalled()
+    expect(recordLlmUsage).toHaveBeenCalledWith(expect.objectContaining({
+      usage: null,
+      status: 'failed',
+      errorMessage: 'Keine gültige Extraktion in der Provider-Antwort',
+    }))
   })
 })
 

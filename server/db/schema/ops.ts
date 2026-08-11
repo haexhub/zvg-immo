@@ -96,6 +96,12 @@ export const llmUsageEvents = pgTable('llm_usage_events', {
   // Estimated from a static pricing table at write time — null when the
   // model isn't in it, never guessed/rounded to 0 (see llm-pricing.ts).
   costUsd: doublePrecision('cost_usd'),
+  // A call is logged even when the provider rejects it or returns an
+  // unusable answer.  This makes cost reporting auditable instead of hiding
+  // the failed calls which are often the reason a retry loop is expensive.
+  status: text('status').notNull().default('succeeded'),
+  errorMessage: text('error_message'),
+  durationMs: integer('duration_ms'),
   // Set only for a batch-job item (see llm-batch-poll.ts), null for sync
   // calls. Together with platform/externalId this is that item's stable
   // result identity — the unique index below lets recordLlmUsage no-op a

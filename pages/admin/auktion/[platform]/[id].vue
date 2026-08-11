@@ -5,6 +5,7 @@
 // routing decision) but calls the same /api/settings/* endpoints, which is
 // what server/middleware/settings-auth.ts actually guards.
 import { ArrowLeft } from 'lucide-vue-next'
+import AdminAuctionLlmCallsCard from '~/components/admin/auction/LlmCallsCard.vue'
 import { useSettingsError } from '~/composables/settings/useSettingsError'
 import { useLlmProfileOptions } from '~/composables/settings/useLlmProfileOptions'
 import { usePollWhileActive } from '~/composables/settings/usePollWhileActive'
@@ -30,7 +31,6 @@ const overviewError = ref<string | null>(null)
 function clearAuthState(): void {
   authed.value = false
 }
-
 const { normalizeSettingsError } = useSettingsError()
 const { llmProfileOptions, setLlmProfileOptions } = useLlmProfileOptions()
 
@@ -385,6 +385,8 @@ onMounted(probeSession)
               </div>
             </CardContent>
           </Card>
+
+          <AdminAuctionLlmCallsCard :calls="overview.llmCalls" :format-date="formatDate" />
 
           <Card>
             <CardHeader><CardTitle>{{ $t('settings.auctionTechnical.sections.translations') }}</CardTitle></CardHeader>

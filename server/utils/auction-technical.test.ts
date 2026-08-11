@@ -77,10 +77,25 @@ const TRANSLATION_ROW = {
   completed_at: null,
 }
 
+const LLM_CALL_ROW = {
+  id: '42',
+  occurred_at: '2026-08-02T10:00:00.000Z',
+  provider: 'openrouter',
+  model: 'deepseek/deepseek-v4-pro',
+  execution_mode: 'sync',
+  status: 'succeeded',
+  input_tokens: 1200,
+  output_tokens: 400,
+  cost_usd: 0.012,
+  duration_ms: 4200,
+  error_message: null,
+}
+
 function mockQuery() {
   return vi.fn(async (sql: string) => {
     if (sql.includes('FROM auctions')) return { rows: [IDENTITY_ROW] }
     if (sql.includes('FROM auction_details')) return { rows: [DETAILS_ROW] }
+    if (sql.includes('FROM llm_usage_events')) return { rows: [LLM_CALL_ROW] }
     if (sql.includes('FROM auction_geo_metrics')) return { rows: [GEO_ROW] }
     if (sql.includes('FROM auction_translations')) return { rows: [TRANSLATION_ROW] }
     throw new Error(`unexpected query: ${sql}`)
@@ -141,6 +156,19 @@ describe('readAuctionTechnicalOverview', () => {
       llmProfileId: 'profile-1',
       runTrigger: 'cron',
       llmDurationMs: 4200,
+    }])
+    expect(overview?.llmCalls).toEqual([{
+      id: 42,
+      occurredAt: '2026-08-02T10:00:00.000Z',
+      provider: 'openrouter',
+      model: 'deepseek/deepseek-v4-pro',
+      executionMode: 'sync',
+      status: 'succeeded',
+      inputTokens: 1200,
+      outputTokens: 400,
+      costUsd: 0.012,
+      durationMs: 4200,
+      errorMessage: null,
     }])
     expect(overview?.externalData.geoMetrics).toEqual({
       distSeaM: 12000,

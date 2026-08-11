@@ -2,7 +2,7 @@ import type { Auction, AuctionExtraction } from '~/types/auction'
 import { batchSupportsMultimodal, isLlmBatchPending, isLlmBatchProviderBroken, submitLlmBatch, supportsLlmBatch, supportsNativeBatchDocuments } from '~/server/utils/extract/llm-batch'
 import { readLlmExecutionMode } from '~/server/utils/app-settings'
 import { LLM_FAILURE_RETRY_COOLDOWN_HOURS, MAX_LLM_FAILURES, readExtractionChainStrategy, readExtractionLlmConfigChain } from '~/server/utils/extract/llm-task-config'
-import { type LlmConfig, type LlmInput, type LlmUsage, isLlmProviderError, isRateLimitError } from '~/server/utils/extract/llm'
+import { type LlmConfig, type LlmInput, isLlmProviderError, isRateLimitError } from '~/server/utils/extract/llm'
 import { recordLlmUsage } from '~/server/utils/llm-usage'
 import { applyAuctionExtraction } from '~/server/utils/auction-extraction'
 import { readAuctionRecordMap, type AuctionRecord } from '~/server/utils/auction-record'
@@ -150,7 +150,6 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
     llmAttempted: boolean,
     llmConfigUsed: LlmConfig | null = null,
     llmDurationMs: number | null = null,
-    llmUsage: LlmUsage | null = null,
   ): Promise<void> {
     // record.auction is reconstructed from auctions LEFT JOIN LATERAL
     // auction_details (see auction-record.ts) — when no auction_details row
@@ -176,19 +175,6 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       runTrigger: opts.trigger ?? 'cron',
       llmDurationMs,
     })
-    if (llmConfigUsed && llmUsage) {
-      await recordLlmUsage({
-        task: 'extraction',
-        executionMode: 'sync',
-        source: 'reprocess',
-        provider: llmConfigUsed.provider ?? 'openai-compatible',
-        model: llmConfigUsed.model,
-        profileId: llmConfigUsed.profileId ?? null,
-        platform: record.auction.platform,
-        externalId: record.auction.externalId,
-        usage: llmUsage,
-      })
-    }
     await upsertCurrentAuctions([updated], at)
     await writeAuctionLlmPipelineState(record.auction.platform, record.auction.externalId, {
       llmBatchJob: null,
@@ -222,29 +208,19 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       const priorEntry = storedPriorEntry
       priorLlmFailures = priorState?.llmFailures ?? 0
       const artifactState = await readArtifactProcessingState(platform, externalId)
-      const hasMissingLlmOnlyField = priorEntry
-        ? priorEntry.condition === undefined ||
-          priorEntry.features === undefined ||
-          priorEntry.bedrooms === undefined ||
-          priorEntry.bathrooms === undefined ||
-          priorEntry.floor === undefined ||
-          priorEntry.bathroomHasTub === undefined ||
-          priorEntry.bathroomHasShower === undefined ||
-          priorEntry.heating === undefined ||
-          priorEntry.yearBuilt === undefined ||
-          priorEntry.lastRenovationYear === undefined ||
-          priorEntry.renovationNotes === undefined ||
-          priorEntry.insights === undefined ||
-          priorEntry.planningNotes === undefined ||
-          priorEntry.documentSummary === undefined ||
-          priorEntry.marketValueEur === undefined
-        : false
+      // `undefined` means an optional field was absent from an otherwise
+      // valid model response, not that the whole auction is unprocessed.
+      // Treating each optional field as a retry criterion caused the cron to
+      // send successful auctions to the LLM again every hour.  A completed
+      // LLM extraction is explicitly marked by llmAnalyzedAt; changed source
+      // documents still make it eligible through hasNewArchivedDocuments.
+      const hasSuccessfulLlmExtraction = priorEntry?.llmAnalyzedAt != null
       const eligible =
         (!opts.failedOnly || priorLlmFailures >= MAX_LLM_FAILURES) &&
         (opts.force ||
           ((!priorEntry ||
             (priorEntry.source === 'rules' && priorEntry.confidence === 'low') ||
-            (llmConfig != null && hasMissingLlmOnlyField) ||
+            (llmConfig != null && !hasSuccessfulLlmExtraction) ||
             hasNewArchivedDocuments(artifactState)) &&
             (priorLlmFailures < MAX_LLM_FAILURES || cooldownElapsed(priorState?.llmLastAttemptedAt) || opts.ignoreCooldown) &&
             !isLlmBatchPending(priorState?.llmBatchJob
@@ -355,6 +331,22 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
           const message = err instanceof Error ? err.message : String(err)
           lastLlmError = `${platform}:${externalId}: ${message}`
         },
+        onLlmCall: async ({ config, durationMs, usage, status, errorMessage }) => {
+          await recordLlmUsage({
+            task: 'extraction',
+            executionMode: 'sync',
+            source: 'reprocess',
+            provider: config.provider ?? 'openai-compatible',
+            model: config.model,
+            profileId: config.profileId ?? null,
+            platform,
+            externalId,
+            usage,
+            status,
+            errorMessage,
+            durationMs,
+          })
+        },
       })
       if (!result) {
         skipped++
@@ -370,7 +362,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       // Persist each result immediately so a long run survives a deployment.
       await persistEntry(
         record, result.entry, result.artifactVersionId, result.llmFailures, result.auction, result.llmCalled,
-        result.llmConfigUsed, result.llmDurationMs, result.llmUsage,
+        result.llmConfigUsed, result.llmDurationMs,
       ).catch((persistErr) => { throw markPersistFailure(persistErr) })
     } catch (err) {
       // Also where a rate limit/quota error (see llm.ts's isRateLimitError())
