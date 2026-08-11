@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { Pool } from 'pg'
 import {
   DEFAULT_ENABLED_COUNTRIES,
+  DEFAULT_AUTOMATIC_CRAWLING_ENABLED,
+  DEFAULT_AUTOMATIC_LLM_ENABLED,
   DEFAULT_HIDE_RULES_ONLY_AUCTIONS,
   DEFAULT_LLM_EXECUTION_MODE,
   DEFAULT_LLM_KILL_SWITCH,
@@ -10,6 +12,8 @@ import {
   deleteLlmProviderProfile,
   getAllLlmMaxTokens,
   getEnabledCountries,
+  getAutomaticCrawlingEnabled,
+  getAutomaticLlmEnabled,
   getHideRulesOnlyAuctions,
   getLlmKillSwitch,
   getLlmMaxTokens,
@@ -17,6 +21,8 @@ import {
   getLlmProviderOverride,
   getLlmProviderOverrideChain,
   setEnabledCountries,
+  setAutomaticCrawlingEnabled,
+  setAutomaticLlmEnabled,
   setHideRulesOnlyAuctions,
   setLlmKillSwitch,
   setLlmMaxTokens,
@@ -932,5 +938,24 @@ describe('getLlmKillSwitch', () => {
     const db = makeFakePool() as unknown as Pool
     await setLlmKillSwitch(db, true)
     expect(await getLlmKillSwitch(db)).toBe(true)
+  })
+})
+
+describe('automatic processing preferences', () => {
+  it('defaults both automatic pipelines to enabled', async () => {
+    const db = makeFakePool() as unknown as Pool
+    await expect(getAutomaticCrawlingEnabled(db)).resolves.toBe(DEFAULT_AUTOMATIC_CRAWLING_ENABLED)
+    await expect(getAutomaticLlmEnabled(db)).resolves.toBe(DEFAULT_AUTOMATIC_LLM_ENABLED)
+  })
+
+  it('persists crawler and LLM automation independently', async () => {
+    const db = makeFakePool() as unknown as Pool
+    await setAutomaticCrawlingEnabled(db, false)
+    await expect(getAutomaticCrawlingEnabled(db)).resolves.toBe(false)
+    await expect(getAutomaticLlmEnabled(db)).resolves.toBe(true)
+
+    await setAutomaticLlmEnabled(db, false)
+    await expect(getAutomaticLlmEnabled(db)).resolves.toBe(false)
+    await expect(getAutomaticCrawlingEnabled(db)).resolves.toBe(false)
   })
 })

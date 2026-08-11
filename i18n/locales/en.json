@@ -205,6 +205,18 @@
       "saveError": "Save failed.",
       "retry": "Retry"
     },
+    "automation": {
+      "title": "Automatic processing",
+      "description": "Pauses background and startup runs only. Runs that are already active are not interrupted; the setting applies before the next automatic run.",
+      "crawlersLabel": "Automatic crawlers enabled",
+      "crawlersHelp": "Hourly refreshes plus automatic enrich and geocoding runs.",
+      "llmLabel": "Automatic LLM processing enabled",
+      "llmHelp": "Scheduled and startup-triggered LLM processing.",
+      "manualHint": "Manual country and single-item actions deliberately remain available, so they can run without competition from background jobs.",
+      "loadError": "Could not load automation status.",
+      "saveError": "Could not save automation status.",
+      "retry": "Retry"
+    },
     "llm": {
       "title": "LLM configuration",
       "description": "Max output tokens limit per use case — takes effect on the next LLM call, no redeploy needed.",
@@ -521,6 +533,16 @@
       "pageInfo": "{from}–{to} of {total}",
       "prevPage": "Previous",
       "nextPage": "Next"
+    },
+    "countryOverview": {
+      "description": "All processing states and OSM location data are grouped by country. Click a chart segment to open its related table.",
+      "osmAvailable": "Data available",
+      "osmRequested": "Import requested",
+      "osmMissing": "No data",
+      "tableTitle": "Listings: {status}",
+      "filterPlaceholder": "Filter table …",
+      "filterHint": "Filters platform, listing, and region",
+      "retryRow": "Retry this entry"
     },
     "archive": {
       "title": "Raw archive",

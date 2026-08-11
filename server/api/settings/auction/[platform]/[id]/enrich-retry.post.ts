@@ -25,7 +25,7 @@ export default defineEventHandler(async (event) => {
   }
 
   void runTask('enrich', {
-    payload: { country: record.auction.country, identities: [{ platform, externalId: id }] },
+    payload: { country: record.auction.country, identities: [{ platform, externalId: id }], trigger: 'manual' },
   }).catch((err: unknown) => {
     console.error('[settings/auction/enrich-retry] trigger failed:', (err as Error).message)
   })

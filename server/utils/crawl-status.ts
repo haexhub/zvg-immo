@@ -32,6 +32,17 @@ export interface CrawlStatusList {
   total: number
 }
 
+export const CRAWL_STATUS_SORTS = ['platform', 'title', 'region', 'error'] as const
+export type CrawlStatusSort = typeof CRAWL_STATUS_SORTS[number]
+
+export interface CrawlStatusListOptions {
+  limit?: number
+  offset?: number
+  search?: string
+  sort?: CrawlStatusSort
+  direction?: 'asc' | 'desc'
+}
+
 // Shared by both queries below so the bucket definition can't drift between
 // the per-country aggregate and the drill-down list.
 const STATUS_CTE = `
@@ -98,10 +109,47 @@ export async function readCrawlStatusIdentities(
 export async function readCrawlStatusList(
   country: string,
   bucket: CrawlStatusBucket,
-  { limit = 50, offset = 0 }: { limit?: number; offset?: number } = {},
+  { limit = 50, offset = 0, search = '', sort, direction = 'asc' }: CrawlStatusListOptions = {},
 ): Promise<CrawlStatusList> {
   const db = getPool()
   if (!db) return { items: [], total: 0 }
+  const filter = search.trim()
+  if (filter || sort) {
+    const orderBy: Record<CrawlStatusSort, string> = {
+      platform: 'platform',
+      title: 'title',
+      region: 'region',
+      error: 'last_error_message',
+    }
+    const params: (string | number)[] = [country, bucket]
+    const filterClause = filter
+      ? ` AND concat_ws(' ', platform, external_id, title, region, case_number, last_error_message) ILIKE $${params.push(`%${filter}%`)}`
+      : ''
+    const order = `${orderBy[sort || 'platform']} ${direction === 'desc' ? 'DESC' : 'ASC'}, platform ASC, external_id ASC`
+    const pageParams = [...params, limit, offset]
+    const [{ rows }, { rows: countRows }] = await Promise.all([
+      db.query<{
+        platform: string; external_id: string; title: string | null; region: string; case_number: string
+        auction_date_iso: Date | string | null; last_error_message: string | null
+      }>(
+        `${STATUS_CTE} SELECT platform, external_id, title, region, case_number, auction_date_iso, last_error_message
+         FROM crawl_status WHERE country = $1 AND bucket = $2${filterClause}
+         ORDER BY ${order} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+        pageParams,
+      ),
+      db.query<{ count: string }>(
+        `${STATUS_CTE} SELECT count(*) AS count FROM crawl_status WHERE country = $1 AND bucket = $2${filterClause}`,
+        params,
+      ),
+    ])
+    return {
+      items: rows.map((row) => ({
+        platform: row.platform, externalId: row.external_id, title: row.title, region: row.region,
+        caseNumber: row.case_number, auctionDateIso: isoOrNull(row.auction_date_iso), lastErrorMessage: row.last_error_message,
+      })),
+      total: Number(countRows[0]?.count ?? 0),
+    }
+  }
   const [{ rows }, { rows: countRows }] = await Promise.all([
     db.query<{
       platform: string

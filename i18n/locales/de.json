@@ -205,6 +205,18 @@
       "saveError": "Speichern fehlgeschlagen.",
       "retry": "Erneut versuchen"
     },
+    "automation": {
+      "title": "Automatische Verarbeitung",
+      "description": "Pausiert nur Hintergrund- und Startläufe. Bereits laufende Prozesse werden nicht abgebrochen; die Einstellung wirkt vor dem nächsten automatischen Lauf.",
+      "crawlersLabel": "Automatische Crawler aktiv",
+      "crawlersHelp": "Stündliche Aktualisierung sowie automatische Enrich- und Geocode-Läufe.",
+      "llmLabel": "Automatische LLM-Verarbeitung aktiv",
+      "llmHelp": "Geplante und beim Serverstart ausgelöste LLM-Verarbeitung.",
+      "manualHint": "Manuelle Länder- und Einzelaktionen bleiben bewusst verfügbar, damit sie ohne Konkurrenz durch Hintergrundläufe ausgeführt werden können.",
+      "loadError": "Automatisierungsstatus konnte nicht geladen werden.",
+      "saveError": "Automatisierungsstatus konnte nicht gespeichert werden.",
+      "retry": "Erneut versuchen"
+    },
     "llm": {
       "title": "LLM-Konfiguration",
       "description": "Max-Output-Tokens-Grenze pro Anwendungsfall — wirkt sofort für den nächsten LLM-Call, kein Redeploy nötig.",
@@ -521,6 +533,16 @@
       "pageInfo": "{from}–{to} von {total}",
       "prevPage": "Zurück",
       "nextPage": "Weiter"
+    },
+    "countryOverview": {
+      "description": "Alle Verarbeitungsstände und OSM-Standortdaten sind pro Land zusammengefasst. Ein Klick auf ein Diagrammsegment öffnet die zugehörige Tabelle.",
+      "osmAvailable": "Daten vorhanden",
+      "osmRequested": "Import angefordert",
+      "osmMissing": "Keine Daten",
+      "tableTitle": "Anzeigen: {status}",
+      "filterPlaceholder": "Tabelle filtern …",
+      "filterHint": "Filtert Plattform, Anzeige und Region",
+      "retryRow": "Diesen Eintrag erneut starten"
     },
     "archive": {
       "title": "Roh-Archiv",

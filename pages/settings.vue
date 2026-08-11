@@ -108,17 +108,11 @@ onMounted(probeSession)
       </Card>
 
       <template v-else>
-        <section class="space-y-4">
-          <h2 class="text-lg font-semibold text-muted-foreground">{{ $t('settings.sections.status') }}</h2>
-          <SettingsCrawlStatusCard />
-          <SettingsLlmStatusCard />
-          <SettingsTranslationStatusCard />
-        </section>
+        <SettingsCountryStatusOverview />
 
         <section class="space-y-4">
           <h2 class="text-lg font-semibold text-muted-foreground">{{ $t('settings.sections.pipeline') }}</h2>
           <SettingsCountrySourcesCard />
-          <SettingsOsmImportCard />
           <SettingsGeoMetricsCard />
           <SettingsExternalDataCard />
           <SettingsReprocessCard />

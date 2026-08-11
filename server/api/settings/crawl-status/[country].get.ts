@@ -1,4 +1,4 @@
-import { readCrawlStatusList, type CrawlStatusBucket, type CrawlStatusList } from '~/server/utils/crawl-status'
+import { CRAWL_STATUS_SORTS, readCrawlStatusList, type CrawlStatusBucket, type CrawlStatusList, type CrawlStatusSort } from '~/server/utils/crawl-status'
 
 const BUCKETS: CrawlStatusBucket[] = ['done', 'error', 'open']
 const DEFAULT_LIMIT = 50
@@ -21,5 +21,16 @@ export default defineEventHandler(async (event): Promise<CrawlStatusList> => {
   }
   const limit = Math.min(MAX_LIMIT, Math.max(1, requestedLimit))
   const offset = Math.max(0, requestedOffset)
-  return readCrawlStatusList(country, bucket, { limit, offset })
+  const search = String(query.search ?? '').trim()
+  const sort = String(query.sort ?? '')
+  const direction = String(query.direction ?? 'asc')
+  if (sort && !CRAWL_STATUS_SORTS.includes(sort as CrawlStatusSort)) {
+    throw createError({ statusCode: 400, statusMessage: 'sort ist ungültig.' })
+  }
+  if (!['asc', 'desc'].includes(direction)) {
+    throw createError({ statusCode: 400, statusMessage: 'direction muss asc oder desc sein.' })
+  }
+  return readCrawlStatusList(country, bucket, search || sort
+    ? { limit, offset, search, sort: (sort || undefined) as CrawlStatusSort | undefined, direction: direction as 'asc' | 'desc' }
+    : { limit, offset })
 })

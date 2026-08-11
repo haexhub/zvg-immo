@@ -22,6 +22,10 @@ export interface LlmStatusList {
 const BUCKETS: LlmStatusBucket[] = ['done', 'error', 'open']
 const DEFAULT_LIMIT = 50
 const MAX_LIMIT = 200
+// `error` is intentionally unsupported: last error messages are resolved only
+// for the visible page below, so the full set cannot be ordered by that column.
+const SORT_FIELDS = ['platform', 'title', 'region', 'failures'] as const
+type LlmStatusSort = typeof SORT_FIELDS[number]
 
 /** Only looked up for the page actually being rendered — task_run_errors
  *  isn't scoped to a country, so scanning it for every candidate in a large
@@ -55,9 +59,41 @@ export default defineEventHandler(async (event): Promise<LlmStatusList> => {
   }
   const limit = Math.min(MAX_LIMIT, Math.max(1, Number(query.limit) || DEFAULT_LIMIT))
   const offset = Math.max(0, Number(query.offset) || 0)
+  const search = String(query.search ?? '').trim().toLocaleLowerCase()
+  const sort = String(query.sort ?? '')
+  const direction = String(query.direction ?? 'asc')
+  if (sort && !SORT_FIELDS.includes(sort as LlmStatusSort)) {
+    throw createError({ statusCode: 400, statusMessage: 'sort ist ungültig.' })
+  }
+  if (!['asc', 'desc'].includes(direction)) {
+    throw createError({ statusCode: 400, statusMessage: 'direction muss asc oder desc sein.' })
+  }
 
   const records = await readAuctionRecords(country, { includePhotos: false })
-  const matching = records.filter((record) => classifyLlmStatus(record) === bucket)
+  const matching = records
+    .filter((record) => classifyLlmStatus(record) === bucket)
+    .filter((record) => !search || [
+      record.auction.platform,
+      record.auction.externalId,
+      record.auction.title,
+      record.auction.region,
+      record.auction.caseNumber,
+    ].some((value) => value?.toLocaleLowerCase().includes(search)))
+    .sort((left, right) => {
+      const field = (sort || 'platform') as LlmStatusSort
+      const value = (record: typeof left): string | number => {
+        if (field === 'title') return record.auction.title ?? ''
+        if (field === 'region') return record.auction.region
+        if (field === 'failures') return record.auction.processing?.llmFailures ?? 0
+        // Error messages are only resolved for the visible error page below;
+        // platform remains the stable, inexpensive order for that column.
+        return record.auction.platform
+      }
+      const a = value(left)
+      const b = value(right)
+      const compared = typeof a === 'number' && typeof b === 'number' ? a - b : String(a).localeCompare(String(b))
+      return direction === 'desc' ? -compared : compared
+    })
   const page = matching.slice(offset, offset + limit)
   const errors = bucket === 'error'
     ? await lastErrorMessages(page.map((r) => ({ platform: r.auction.platform, externalId: r.auction.externalId })))

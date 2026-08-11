@@ -25,7 +25,7 @@ export default defineEventHandler(async (event) => {
   // Detached on purpose — see the file header. A rejection here is still
   // recorded as the task's lastError by its own defineTask wrapper; the catch
   // only keeps the trigger itself from becoming an unhandled rejection.
-  void runTask('enrich', { payload: { country, identities } }).catch((err: unknown) => {
+  void runTask('enrich', { payload: { country, identities, trigger: 'manual' } }).catch((err: unknown) => {
     console.error('[settings/enrich-backlog] trigger failed:', (err as Error).message)
   })
   return { started: true }

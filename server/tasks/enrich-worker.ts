@@ -47,7 +47,6 @@ const ENRICH_CONCURRENCY = 8
 // of this limit — this only bounds the inline summary's length.
 const WARNING_PREVIEW_LIMIT = 50
 const CONTENT_HASH_IMAGE_FILE_RE = /^([0-9a-f]{8,32})\.(?:jpe?g|png|webp)$/i
-
 function imageContentHashFromFilename(name: string): string | null {
   return CONTENT_HASH_IMAGE_FILE_RE.exec(name)?.[1] ?? null
 }
@@ -56,6 +55,8 @@ function imageContentHashFromFilename(name: string): string | null {
 // fires. Two concurrent runs would double-fetch details and race on the
 // snapshot write.
 export interface EnrichOptions {
+  /** Distinguishes explicit admin requests from scheduled/boot work. */
+  trigger?: 'cron' | 'manual'
   /** ISO-3166-1 alpha-2, lowercase. Omit to crawl every enabled country. */
   country?: string
   /** Revisit every crawled listing in scope, regardless of existing cache markers. */
@@ -72,7 +73,6 @@ export interface EnrichOptions {
    *  persists everything these identities need. */
   identities?: { platform: string; externalId: string }[]
 }
-
 export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) {
     const startedAt = Date.now()
     const capturedAt = new Date(startedAt).toISOString()
