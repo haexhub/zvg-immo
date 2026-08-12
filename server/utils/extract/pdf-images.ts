@@ -18,6 +18,20 @@ import { imageContentHash } from './image-bytes'
 
 const exec = promisify(execFile)
 
+// A malformed PDF can make poppler's CLI tools repeat one stderr line per
+// corrupt object (seen: a single file producing >1MB of "Unknown compression
+// method in flate stream" lines) — execFile's rejection captures that stderr
+// verbatim into err.message, which would otherwise ride along unbounded into
+// task_run_errors / the /settings status overview on every enrich failure.
+const MAX_EXEC_ERROR_MESSAGE_LENGTH = 1000
+
+export function execErrorMessage(err: unknown): string {
+  const message = (err as Error).message
+  if (message.length <= MAX_EXEC_ERROR_MESSAGE_LENGTH) return message
+  const suffix = `… (${message.length} chars total, truncated)`
+  return message.slice(0, MAX_EXEC_ERROR_MESSAGE_LENGTH - suffix.length) + suffix
+}
+
 export const DEFAULT_FILTER = {
   minWidth: 400,
   minHeight: 300,
@@ -349,7 +363,7 @@ async function renderImageCluster(
     )
     return await readFile(outputPath)
   } catch (err) {
-    throw new Error(`PDF image cluster render failed: ${(err as Error).message}`)
+    throw new Error(`PDF image cluster render failed: ${execErrorMessage(err)}`)
   }
 }
 
@@ -383,7 +397,7 @@ export async function extractPdfPhotos(
       })
       listOut = stdout
     } catch (err) {
-      throw new Error(`pdfimages -list failed: ${(err as Error).message}`)
+      throw new Error(`pdfimages -list failed: ${execErrorMessage(err)}`)
     }
     const imageList = parseImageList(listOut)
     const wanted = filterImages(imageList)
@@ -404,7 +418,7 @@ export async function extractPdfPhotos(
           maxBuffer: 50 * 1024 * 1024,
         })
       } catch (err) {
-        throw new Error(`pdfimages extraction failed: ${(err as Error).message}`)
+        throw new Error(`pdfimages extraction failed: ${execErrorMessage(err)}`)
       }
     }
 
