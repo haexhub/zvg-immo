@@ -22,11 +22,9 @@ import {
   Layers3,
   Mountain,
   ParkingSquare,
-  ShieldAlert,
   ShowerHead,
   TreePine,
   Warehouse,
-  Waves,
 } from 'lucide-vue-next'
 
 const props = defineProps<{
@@ -45,7 +43,13 @@ const props = defineProps<{
 const MARKET_COMPARISON_MIN_SAMPLES = 5
 
 const { t } = useI18n()
-const intlLocale = useIntlLocale()
+const {
+  hazardDetailLine,
+  hazardIcon,
+  hazardLabel,
+  hazardStatusClass,
+  hazardStatusLabel,
+} = useHazardDisplay()
 const attachmentKindLabelFn = useAttachmentKindLabel()
 const conditionLabel = useConditionLabel()
 const featureLabel = useFeatureLabel()
@@ -193,31 +197,6 @@ function marketVerdictLabel(verdict: string): string {
   return t(`objektDetail.marketVerdict.${verdict}`)
 }
 
-function hazardIcon(hazard: string): Component {
-  if (hazard === 'flood') return Waves
-  if (hazard === 'wildfire') return Flame
-  if (hazard === 'avalanche') return Mountain
-  return ShieldAlert
-}
-
-function hazardLabel(hazard: string): string {
-  return t(`objektDetail.hazard.${hazard}`)
-}
-
-function hazardStatusLabel(status: string): string {
-  return t(`objektDetail.hazardStatus.${status}`)
-}
-
-function hazardSeverityLabel(severity: string): string {
-  return t(`objektDetail.hazardSeverity.${severity}`)
-}
-
-function hazardStatusClass(status: string): string {
-  if (status === 'inside') return 'text-destructive'
-  if (status === 'nearby') return 'text-amber-700'
-  if (status === 'outside') return 'text-emerald-700'
-  return 'text-muted-foreground'
-}
 </script>
 
 <template>
@@ -449,11 +428,8 @@ function hazardStatusClass(status: string): string {
               {{ hazardStatusLabel(hazard.status) }}
             </p>
           </div>
-          <p class="mt-1 text-xs text-muted-foreground">
-            {{ $t('objektDetail.hazardSeverityLabel') }} {{ hazardSeverityLabel(hazard.severity) }}
-            <span v-if="hazard.distanceMeters != null">
-              · {{ $t('objektDetail.hazardDistance', { meters: hazard.distanceMeters.toLocaleString(intlLocale, { maximumFractionDigits: 0 }) }) }}
-            </span>
+          <p v-if="hazardDetailLine(hazard)" class="mt-1 text-xs text-muted-foreground">
+            {{ hazardDetailLine(hazard) }}
           </p>
           <p class="mt-1 text-xs text-muted-foreground">
             {{ $t('objektDetail.sourceChecked', { source: hazard.sourceLabel, date: formatShortDate(hazard.checkedAt) }) }}

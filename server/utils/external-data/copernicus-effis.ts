@@ -33,6 +33,8 @@ import * as cheerio from 'cheerio'
 import type { Auction, HazardAssessment } from '~/types/auction'
 import type { HazardAssessmentAdapter } from '~/server/tasks/external-enrichment'
 import { writeJsonCache } from '../json-cache'
+import { readCachedFileCollection } from './cached-file-collection'
+import { simplifyPolygon } from './polygon-simplify'
 import {
   distanceToPolygonMeters,
   pointInPolygon,
@@ -119,6 +121,16 @@ const MEDIUM_FIRE_HA = 50
 // dropped rather than kept on the assumption it might qualify.
 const MAX_BURNT_AREA_AGE_YEARS = 8
 const MIN_BURNT_AREA_HA = 10
+// These outlines are derived from MODIS's 250 m raster, so they arrive as
+// cell-corner staircases: 8.25M vertices over 31,192 zones, 182 MB on disk and
+// 602 MB parsed (measured 2026-08-11 against the production cache). Since the
+// adapter is now cached process-wide (cached-file-collection.ts) that whole
+// footprint would sit resident inside a 2.09 GB heap. WFS has no server-side
+// generalization like the ArcGIS layer's maxAllowableOffset, so this happens
+// on import: at ~111 m — well below the source's own 250 m cell size, and the
+// point where the measured curve flattens (0.002° saves nothing further) — the
+// same cache is 330k vertices and 10.4 MB.
+const SIMPLIFY_TOLERANCE_DEGREES = 0.001
 
 export async function readBurntAreaCache(path: string, sourceVersion?: string): Promise<BurntAreaCollection> {
   const parsed = JSON.parse(await readFile(path, 'utf8')) as Partial<BurntAreaCollection> | null
@@ -186,7 +198,9 @@ export async function importCopernicusEffisBurntAreaCache(
     pages++
     const pageZones = parseBurntAreaGml(gml)
     fetched += pageZones.length
-    zones.push(...pageZones.filter((zone) => isRelevantZone(zone, generatedAt)))
+    zones.push(...pageZones
+      .filter((zone) => isRelevantZone(zone, generatedAt))
+      .map((zone) => ({ ...zone, polygon: simplifyPolygon(zone.polygon, SIMPLIFY_TOLERANCE_DEGREES) })))
     if (pageZones.length < pageSize) break
   }
 
@@ -250,7 +264,14 @@ export function buildWildfireHazardAssessment(
 export async function createCopernicusEffisBurntAreaFileAdapter(
   options: BurntAreaFileAdapterOptions,
 ): Promise<HazardAssessmentAdapter> {
-  const collection = await readBurntAreaCache(options.cachePath, options.sourceVersion)
+  // Cached by mtime — see cached-file-collection.ts: this 182 MB cache parses
+  // to ~600 MB of heap, and external-enrichment used to do that once per
+  // auction, concurrently.
+  const collection = await readCachedFileCollection(
+    options.cachePath,
+    (path) => readBurntAreaCache(path, options.sourceVersion),
+    options.sourceVersion ?? '',
+  )
   return {
     id: 'copernicus-effis-burnt-area-file-cache',
     sourceVersion: options.sourceVersion ?? collection.sourceVersion,

@@ -2,6 +2,44 @@ import { minOf } from '~/lib/array-math'
 import { distanceMeters, type Point } from './geo'
 import type { GeoJsonLinearRing, GeoJsonPolygonCoordinates } from './eu-flood-risk'
 
+export interface GeoBounds {
+  minLat: number
+  maxLat: number
+  minLng: number
+  maxLng: number
+}
+
+/** Bounding box over every ring of every polygon of one zone, computed once
+ *  when the cache is parsed so the per-auction scan can skip zones without
+ *  walking their outlines. */
+export function polygonsBounds(polygons: GeoJsonPolygonCoordinates[]): GeoBounds | null {
+  let minLat = Infinity; let maxLat = -Infinity; let minLng = Infinity; let maxLng = -Infinity
+  for (const polygon of polygons) {
+    for (const ring of polygon) {
+      for (const [lng, lat] of ring) {
+        if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue
+        if (lat < minLat) minLat = lat
+        if (lat > maxLat) maxLat = lat
+        if (lng < minLng) minLng = lng
+        if (lng > maxLng) maxLng = lng
+      }
+    }
+  }
+  return Number.isFinite(minLat) && Number.isFinite(minLng) ? { minLat, maxLat, minLng, maxLng } : null
+}
+
+/** Distance to the closest point of the box, which is a lower bound for the
+ *  distance to anything inside it — the polygon included. Zones whose box is
+ *  already farther than the best exact distance found so far cannot win, so
+ *  the caller can stop measuring outlines at that point. */
+export function boundsDistanceMeters(point: Point, bounds: GeoBounds): number {
+  const nearest = {
+    lat: Math.min(Math.max(point.lat, bounds.minLat), bounds.maxLat),
+    lng: Math.min(Math.max(point.lng, bounds.minLng), bounds.maxLng),
+  }
+  return distanceMeters(point, nearest)
+}
+
 /** Pure geometry helpers kept separate from the cache/import adapter. */
 export function pointInPolygon(point: Point, polygon: GeoJsonPolygonCoordinates): boolean {
   if (!ringContainsPoint(point, polygon[0] ?? [])) return false

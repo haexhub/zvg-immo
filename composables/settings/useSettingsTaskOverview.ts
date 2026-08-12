@@ -75,9 +75,19 @@ export interface LlmBatchJobsOverview {
   externalEnrichmentStatus: TaskRunStatus
   offloadImagesStatus?: TaskRunStatus
   copernicusEffisImportStatus?: TaskRunStatus
+  euFloodRiskImportStatus?: TaskRunStatus
 }
 
 let progressPollTimer: ReturnType<typeof setInterval> | null = null
+// A freshly-triggered detached task can take a moment (config lookup, the
+// exclusive-task guard) before it records "running" — if that hasn't landed
+// yet on the first tick, anyTrackedTaskRunning() still reads the old idle
+// status and would stop polling before the run was ever observed. Polling
+// keeps going, up to this grace period, until running has been seen at
+// least once; after that it stops on the next idle tick same as before.
+const PROGRESS_POLL_GRACE_MS = 30_000
+let progressPollObservedRunning = false
+let progressPollStartedAt = 0
 // Module-scope, not useState: several settings cards call loadLlmBatchJobs()
 // from their own onMounted, all firing in the same tick — without this,
 // every /settings page load fired the same expensive endpoint 4x in
@@ -106,7 +116,8 @@ export function useSettingsTaskOverview() {
       overview.reprocessStatus.status === 'running' ||
       overview.externalEnrichmentStatus.status === 'running' ||
       overview.offloadImagesStatus?.status === 'running' ||
-      overview.copernicusEffisImportStatus?.status === 'running'
+      overview.copernicusEffisImportStatus?.status === 'running' ||
+      overview.euFloodRiskImportStatus?.status === 'running'
   }
 
   const llmBatchBacklog = computed(() => llmBatchJobs.value?.backlog ?? {
@@ -174,9 +185,16 @@ export function useSettingsTaskOverview() {
 
   function startProgressPolling(): void {
     if (progressPollTimer) return
+    progressPollObservedRunning = anyTrackedTaskRunning()
+    progressPollStartedAt = Date.now()
     progressPollTimer = setInterval(async () => {
       await loadLlmBatchJobs()
-      if (!anyTrackedTaskRunning()) stopProgressPolling()
+      if (anyTrackedTaskRunning()) {
+        progressPollObservedRunning = true
+        return
+      }
+      if (!progressPollObservedRunning && Date.now() - progressPollStartedAt < PROGRESS_POLL_GRACE_MS) return
+      stopProgressPolling()
     }, 3000)
   }
 
@@ -185,6 +203,7 @@ export function useSettingsTaskOverview() {
       clearInterval(progressPollTimer)
       progressPollTimer = null
     }
+    progressPollObservedRunning = false
   }
 
   return {

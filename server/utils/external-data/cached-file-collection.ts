@@ -1,0 +1,86 @@
+import { stat } from 'node:fs/promises'
+
+interface CacheEntry {
+  mtimeMs: number
+  size: number
+  discriminator: string
+  value: unknown
+}
+
+/** One parsed collection per path — the hazard caches are hundreds of MB
+ *  parsed (copernicus-effis.json measured at 602 MB heap for 31k zones), so
+ *  the whole point is that at most one copy of each is ever resident. Keyed
+ *  by path alone, not path+discriminator: a discriminator change (e.g. an
+ *  admin-configured source version) replaces this same entry instead of
+ *  adding a second one that never gets reclaimed. */
+const entries = new Map<string, CacheEntry>()
+/** Keyed by path+discriminator+mtime+size so concurrent first-time callers
+ *  share one parse instead of each starting their own. Without this the
+ *  dedup would only start working after the first load finished — which is
+ *  exactly the window in which every per-auction enrichment trigger piles
+ *  up. */
+const inflight = new Map<string, Promise<unknown>>()
+
+/**
+ * Reads a parsed file collection, reusing the previous parse while the file's
+ * mtime, size and discriminator are unchanged.
+ *
+ * Hazard adapters are rebuilt on every `runExternalEnrichment` call, and
+ * `triggerLocationEnrichment` fires one unawaited call per auction whose
+ * coordinates changed — 45 of them ran concurrently on production on
+ * 2026-08-11, each parsing the 182 MB EFFIS cache, and the container died on
+ * `JavaScript heap out of memory` (17 such crashes in three days, one per
+ * six-hourly geocode tick). Reads go through here so those 45 callers share a
+ * single parsed collection.
+ *
+ * A rewritten cache (the monthly importers use writeJsonCache's
+ * write-tmp-then-rename) changes mtime/size, so the next read reloads it —
+ * no manual invalidation anywhere. `discriminator` covers the same file path
+ * meaning something else (e.g. a source-version switch); a mismatch forces a
+ * reload too, and replaces the previous discriminator's entry instead of
+ * keeping both resident.
+ */
+export async function readCachedFileCollection<T>(
+  path: string,
+  load: (path: string) => Promise<T>,
+  discriminator = '',
+): Promise<T> {
+  // stat before the cache lookup so a deleted cache surfaces as ENOENT the
+  // same way the plain readFile did, instead of serving a stale collection
+  // from before the deletion.
+  const stats = await stat(path)
+  const cached = entries.get(path)
+  if (
+    cached
+    && cached.mtimeMs === stats.mtimeMs
+    && cached.size === stats.size
+    && cached.discriminator === discriminator
+  ) {
+    return cached.value as T
+  }
+
+  // \0-separated: path and discriminator are caller-supplied strings (e.g. a
+  // filesystem path, which can contain spaces) and must not be able to
+  // collide with each other or with the numeric fields that follow.
+  const versionKey = `${path}\0${discriminator}\0${stats.mtimeMs}\0${stats.size}`
+  const pending = inflight.get(versionKey)
+  if (pending) return await pending as T
+
+  const promise = load(path).then((value) => {
+    entries.set(path, { mtimeMs: stats.mtimeMs, size: stats.size, discriminator, value })
+    return value
+  })
+  inflight.set(versionKey, promise)
+  try {
+    return await promise
+  } finally {
+    inflight.delete(versionKey)
+  }
+}
+
+/** Test seam — production code never needs to drop the cache, since mtime and
+ *  size already invalidate it. */
+export function clearCachedFileCollections(): void {
+  entries.clear()
+  inflight.clear()
+}
