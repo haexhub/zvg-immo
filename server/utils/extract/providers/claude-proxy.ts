@@ -70,9 +70,11 @@ export class ClaudeProxyProvider implements ExtractionProvider {
         // Bound the request: the proxy spawns a `claude` subprocess per call, so a
         // stuck spawn (or upstream stall) would keep this promise pending forever
         // and — because the enrich task awaits every worker via Promise.all — block
-        // the whole run. 120s (not 60s): observed in prod, the subprocess itself
-        // can take 80s+ to exit even on success, so 60s aborted a call that would
-        // otherwise have succeeded moments later.
+        // the whole run. Raised 120s → 240s: prod logs (2026-08-12) showed the
+        // subprocess now routinely taking 127-138s to exit even on success — the
+        // same failure mode as the original 60s→120s bump, just recurred at the
+        // next ceiling as the model/schema grew. Every single sync extraction
+        // call was timing out and burning both retries for nothing.
         resp = await $fetch(`${this.config.baseUrl.replace(/\/$/, '')}/v1/messages`, {
           method: 'POST',
           headers: {
@@ -81,7 +83,7 @@ export class ClaudeProxyProvider implements ExtractionProvider {
             ...(this.config.apiKey ? { 'x-api-key': this.config.apiKey } : {}),
           },
           body,
-          signal: AbortSignal.timeout(120_000),
+          signal: AbortSignal.timeout(240_000),
         })
         break
       } catch (err) {
