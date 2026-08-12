@@ -352,11 +352,9 @@
     },
     "crawlStatus": {
       "title": "Crawling-Status",
-      "description": "Pro Land: wie viele Anzeigen sind vollständig gecrawlt, welche sind noch offen und bei welchen ist der letzte Versuch fehlgeschlagen. Auf ein Segment klicken zeigt die betroffenen Anzeigen.",
       "refresh": "Status aktualisieren",
       "retryOpen": "Offene crawlen",
       "retryFailed": "Fehlerhafte erneut crawlen",
-      "retryRow": "Diese Anzeige erneut crawlen",
       "empty": "Keine Länder aktiv."
     },
     "osmImport": {
@@ -509,23 +507,14 @@
     },
     "llmStatus": {
       "title": "LLM-Status",
-      "description": "Pro Land: wie viele Anzeigen sind erfolgreich per LLM extrahiert, welche warten noch und bei welchen ist das Fehlerlimit erreicht. Auf ein Segment klicken zeigt die betroffenen Anzeigen.",
-      "refresh": "Status aktualisieren",
       "retryOpen": "Offene starten",
       "retryFailed": "Fehlerhafte erneut starten",
-      "retryRow": "Diese Anzeige erneut verarbeiten",
-      "empty": "Keine Länder aktiv.",
       "colFailures": "Fehlversuche"
     },
     "translationStatus": {
-      "title": "Übersetzungs-Status",
       "titleForLang": "Übersetzungs-Status ({lang})",
-      "description": "Pro Land und Zielsprache: alle verfügbaren Übersetzungen, fehlgeschlagene Versuche und der noch offene LLM-Übersetzungs-Backlog. Anzeigen in ihrer Quellsprache werden nicht gezählt.",
-      "refresh": "Status aktualisieren",
       "retryOpen": "Offene starten",
       "retryFailed": "Fehlerhafte erneut starten",
-      "retryRow": "Diese Übersetzung erneut starten",
-      "empty": "Noch keine Übersetzungsversuche.",
       "colLang": "Sprache"
     },
     "statusOverview": {

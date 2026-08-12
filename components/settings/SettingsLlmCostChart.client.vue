@@ -2,7 +2,7 @@
 // Daily LLM spend trend for the /settings cost card. Single series (cost per
 // day) — no legend needed, the card title already names it (dataviz-skill:
 // a lone series skips the legend box). .client.vue like the other two chart
-// components in this app (SettingsStatusDonut, ClimateNormalsChart) so
+// components in this app (SettingsStatusPie, ClimateNormalsChart) so
 // Chart.js's canvas never has to survive SSR/hydration.
 import {
   BarController,
