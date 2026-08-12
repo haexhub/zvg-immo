@@ -6,6 +6,7 @@
 // identity (task='enrich') is still unresolved, i.e. no successful
 // detail_fetched_at exists yet.
 
+import { ENRICH_CLAIM_LEASE_MS } from './auction-fetch-state'
 import { getPool } from './db'
 
 export type CrawlStatusBucket = 'done' | 'error' | 'open' | 'pending'
@@ -59,11 +60,10 @@ crawl_status AS (
     a.auction_date_iso, le.message AS last_error_message,
     CASE
       WHEN fs.detail_fetched_at IS NOT NULL THEN 'done'
-      -- Interval literal kept in sync by hand with ENRICH_CLAIM_LEASE_MS in
-      -- auction-fetch-state.ts — a fresh claim means a worker is actively
-      -- crawling this identity right now, checked before 'error' so a retry
-      -- of a previously failed item shows as in-progress, not still failed.
-      WHEN fs.enrich_claimed_at IS NOT NULL AND fs.enrich_claimed_at > now() - interval '15 minutes' THEN 'pending'
+      -- A fresh claim means a worker is actively crawling this identity right
+      -- now, checked before 'error' so a retry of a previously failed item
+      -- shows as in-progress, not still failed.
+      WHEN fs.enrich_claimed_at IS NOT NULL AND fs.enrich_claimed_at > now() - interval '${ENRICH_CLAIM_LEASE_MS} milliseconds' THEN 'pending'
       WHEN le.external_id IS NOT NULL THEN 'error'
       ELSE 'open'
     END AS bucket

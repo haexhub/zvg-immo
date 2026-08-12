@@ -447,10 +447,16 @@ describe('runReprocess structured persistence', () => {
     await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 1 })
 
     expect(writeAuctionLlmClaim).toHaveBeenCalledWith('zvg-portal', '7265', expect.any(String))
-    // writeAuctionLlmPipelineState (mocked separately) is what actually clears
-    // llm_claimed_at in the real writer — this only proves the claim was set
-    // pre-call, not left dangling for the rest of the run.
     expect(vi.mocked(writeAuctionLlmClaim).mock.calls).toHaveLength(1)
+    // writeAuctionLlmPipelineState is the real writer's unconditional
+    // llm_claimed_at = NULL — asserting this call actually happened is what
+    // proves the claim was cleared, not just that it was set beforehand.
+    expect(writeAuctionLlmPipelineState).toHaveBeenCalledWith('zvg-portal', '7265', {
+      llmBatchJob: null,
+      llmArtifactVersionId: null,
+      llmFailures: 1,
+      llmAttempted: true,
+    })
   })
 
   it('does not claim a candidate that never reaches a real LLM call (rules-only, no config)', async () => {
