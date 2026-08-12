@@ -4,7 +4,7 @@
 // bootstrap.ts) so a job that finished while the server was down/restarting
 // gets merged promptly instead of waiting for the next tick.
 
-import { fetchLlmBatchResults, pollLlmBatch } from '../utils/extract/llm-batch'
+import { fetchLlmBatchResults, LLM_BATCH_JOB_EXPIRY_MS, pollLlmBatch } from '../utils/extract/llm-batch'
 import { readExtractionLlmConfig, resolveLlmConfigForProfile } from '../utils/extract/llm-task-config'
 import type { LlmConfig } from '../utils/extract/llm'
 import { mergeLlmResult } from '../utils/extract/merge-llm-result'
@@ -113,7 +113,28 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
     checked++
     try {
       const jobConfig = await resolveJobLlmConfig(job, llmConfig)
-      const poll = await pollLlmBatch(job.jobName, jobConfig)
+      let poll: Awaited<ReturnType<typeof pollLlmBatch>>
+      try {
+        poll = await pollLlmBatch(job.jobName, jobConfig)
+      } catch (pollErr) {
+        await markLlmBatchJobChecked(job.jobName, at)
+        // A job whose poll request itself keeps throwing (deleted profile,
+        // revoked key, malformed job id — never a provider-reported state)
+        // would otherwise stay 'pending' forever: never retried into a
+        // resolution, and permanently inflating both this task's per-run work
+        // and /settings' llm-batch-jobs overview. Give up at the same 48h
+        // line isLlmBatchPending already uses to forgive an orphaned
+        // per-item marker, so the two sides stay consistent. Scoped to just
+        // the poll call — a later fetch/persist failure (job resolved fine,
+        // our own write failed) must keep retrying, not expire a job whose
+        // results are actually sitting there waiting.
+        const submittedAtMs = Date.parse(job.submittedAt)
+        if (Number.isFinite(submittedAtMs) && now - submittedAtMs >= LLM_BATCH_JOB_EXPIRY_MS) {
+          await markLlmBatchJobResolved(job.jobName, 'expired', at, (pollErr as Error).message)
+        }
+        console.warn(`[llm-batch-poll] failed for job ${job.jobName}: ${(pollErr as Error).message}`)
+        continue
+      }
       throwIfTaskAborted(signal)
       await markLlmBatchJobChecked(job.jobName, at)
       if (poll.state === 'pending') continue

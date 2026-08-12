@@ -80,6 +80,22 @@ export interface LlmBatchJobsOverview {
 }
 
 const MAX_KEYS_PER_GROUP = 200
+// Bounds the detailed per-job payload (each entry carries a deduped
+// requestKeys array) independently of totalJobs/totalRequests below, which
+// stay computed from the full list — a pending-job backlog (e.g. many jobs
+// stuck on a broken provider) must not balloon the response just because
+// /settings polls this endpoint every few seconds while a task is running.
+const MAX_PENDING_JOBS_DISPLAYED = 50
+
+// useSettingsTaskOverview.ts polls this endpoint every 3s for as long as any
+// tracked task is running, which can be tens of minutes for a slow sync LLM
+// backlog — recomputing the full cross-country auction scan below on every
+// tick was measured at several MB per response. A short cache lets bursts of
+// near-simultaneous polls (multiple open /settings tabs, or the client's own
+// mount-time + interval calls) share one computation; staleness of a few
+// seconds is invisible on a progress counter.
+const OVERVIEW_CACHE_TTL_MS = 4000
+let cachedOverview: { data: LlmBatchJobsOverview; expiresAt: number } | null = null
 
 function providerForJob(jobName: string): LlmBatchJobOverviewItem['provider'] {
   // Checked first — OpenRouter's own batch ids also start with "batch_" (see
@@ -92,6 +108,8 @@ function providerForJob(jobName: string): LlmBatchJobOverviewItem['provider'] {
 }
 
 export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
+  if (cachedOverview && cachedOverview.expiresAt > Date.now()) return cachedOverview.data
+
   const [
     jobs,
     recentJobs,
@@ -209,11 +227,15 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
     }
   }
 
-  const overviewJobs = jobs.map(mapJob)
+  // jobs is already status:'pending' (see listPendingLlmBatchJobs), so every
+  // item counts toward totalRequests — using itemCount directly instead of
+  // mapJob's deduped requestKeys avoids building that array for jobs beyond
+  // the display cap just to total them.
+  const overviewJobs = jobs.slice(0, MAX_PENDING_JOBS_DISPLAYED).map(mapJob)
 
-  return {
-    totalJobs: overviewJobs.length,
-    totalRequests: overviewJobs.reduce((sum, job) => sum + job.pendingCount, 0),
+  const result: LlmBatchJobsOverview = {
+    totalJobs: jobs.length,
+    totalRequests: jobs.reduce((sum, job) => sum + job.itemCount, 0),
     backlog: {
       readyRequests,
       neverExtracted,
@@ -235,4 +257,6 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
     copernicusEffisImportStatus,
     euFloodRiskImportStatus,
   }
+  cachedOverview = { data: result, expiresAt: Date.now() + OVERVIEW_CACHE_TTL_MS }
+  return result
 })

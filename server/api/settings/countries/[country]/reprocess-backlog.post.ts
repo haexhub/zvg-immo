@@ -27,9 +27,14 @@ export default defineEventHandler(async (event) => {
   // only keeps the trigger itself from becoming an unhandled rejection.
   // ignoreBatchPending: an admin explicitly asking to retry the open backlog
   // now shouldn't stay blocked by a stuck/failed batch job's leftover marker
-  // (see LLM_BATCH_JOB_EXPIRY_MS) — force stays false, so this still only
-  // ever touches genuinely open candidates, never 'done' or locked-out ones.
-  void runTask('reprocess', { payload: { country, force: false, ignoreBatchPending: true, trigger: 'manual' } }).catch((err: unknown) => {
+  // (see LLM_BATCH_JOB_EXPIRY_MS). openOnly: without it, the default
+  // eligibility also lets a locked-out candidate back in once its 24h
+  // cooldown has elapsed (see cooldownElapsed in reprocess-run.ts) — correct
+  // for the unattended cron, but a "Retry open" click asks for exactly the
+  // open bucket and nothing else. force stays false, so this still only ever
+  // touches genuinely open candidates, never 'done' or (even cooled-down)
+  // locked-out ones.
+  void runTask('reprocess', { payload: { country, force: false, ignoreBatchPending: true, openOnly: true, trigger: 'manual' } }).catch((err: unknown) => {
     console.error('[settings/reprocess-backlog] trigger failed:', (err as Error).message)
   })
   return { started: true }

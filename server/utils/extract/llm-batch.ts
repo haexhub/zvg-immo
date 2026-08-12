@@ -44,7 +44,7 @@ export interface LlmBatchResultItem {
 // idempotent. Batch jobs expire after 48h if never completed, so a marker
 // older than that is orphaned and the item becomes eligible again rather than
 // stuck forever.
-const LLM_BATCH_JOB_EXPIRY_MS = 48 * 60 * 60 * 1000
+export const LLM_BATCH_JOB_EXPIRY_MS = 48 * 60 * 60 * 1000
 
 export function isLlmBatchPending(
   entry: { llmBatchJob?: string; at: string } | undefined,
