@@ -27,9 +27,9 @@ const MAX_EXEC_ERROR_MESSAGE_LENGTH = 1000
 
 export function execErrorMessage(err: unknown): string {
   const message = (err as Error).message
-  return message.length > MAX_EXEC_ERROR_MESSAGE_LENGTH
-    ? `${message.slice(0, MAX_EXEC_ERROR_MESSAGE_LENGTH)}… (${message.length} chars total, truncated)`
-    : message
+  if (message.length <= MAX_EXEC_ERROR_MESSAGE_LENGTH) return message
+  const suffix = `… (${message.length} chars total, truncated)`
+  return message.slice(0, MAX_EXEC_ERROR_MESSAGE_LENGTH - suffix.length) + suffix
 }
 
 export const DEFAULT_FILTER = {
