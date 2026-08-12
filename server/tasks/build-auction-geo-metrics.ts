@@ -20,7 +20,13 @@ import { GEO_METRIC_CATEGORIES, type GeoMetricCategory } from '../utils/geo-metr
 import { isSystemicDatabaseError } from './build-geo-features'
 
 const BUILD_POOL_MAX_CONNECTIONS = 2
-const BUILD_STATEMENT_TIMEOUT_MS = 60 * 1000
+// A KNN scan against a sparsely-populated kind/epoch combination can
+// legitimately take longer than a typical candidate's few milliseconds.
+// Generous headroom over that now that a single slow candidate is skipped
+// rather than aborting the whole run (see the statement_timeout handling
+// below) — still far short of build-geo-features.ts's 20 minutes, which
+// covers a fundamentally heavier bulk workload.
+const BUILD_STATEMENT_TIMEOUT_MS = 3 * 60 * 1000
 
 // Density, not distance — measures whether an area has tourist
 // infrastructure at all (schema/geo.ts's tourismDensityCount comment).
