@@ -595,8 +595,6 @@
         "identity": "Identity & geocoding",
         "fetchState": "Crawl/fetch state",
         "extractionHistory": "Extraction history",
-        "llmCalls": "LLM calls",
-        "errors": "Errors",
         "translations": "Translations",
         "externalData": "External data",
         "llmBatchJobs": "LLM batch jobs",
@@ -604,15 +602,17 @@
       },
       "badges": {
         "live": "Live",
-        "trial": "Trial"
+        "trial": "Trial",
+        "pending": "Running …",
+        "failed": "Failed",
+        "success": "Succeeded"
       },
       "trial": {
         "profilePlaceholder": "Choose an LLM profile",
         "start": "Start trial run",
         "running": "Trial running …",
-        "success": "Trial finished — new trial version below.",
-        "failed": "Trial failed — see errors below.",
-        "triggerError": "Trial run could not be started."
+        "triggerError": "Trial run could not be started.",
+        "timeout": "The trial run did not report back within three minutes. Reload the page to check the result."
       },
       "diff": {
         "compare": "Compare",
@@ -651,7 +651,6 @@
         "provider": "Provider/model",
         "runTrigger": "Trigger",
         "duration": "Duration",
-        "executionMode": "Mode",
         "tokens": "Tokens (in/out)",
         "cost": "Cost",
         "confidence": "Confidence",

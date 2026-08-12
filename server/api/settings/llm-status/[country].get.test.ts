@@ -93,7 +93,7 @@ describe('/api/settings/llm-status/[country]', () => {
     vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
     const { readAuctionRecords } = await import('~/server/utils/auction-record')
     const { getPool } = await import('~/server/utils/db')
-    const query = vi.fn(async (_sql: string, _params?: unknown[]) => ({ rows: [{ platform: 'zvg-portal', external_id: '1', message: 'quota exceeded' }] }))
+    const query = vi.fn(async (_sql: string, _params?: unknown[]) => ({ rows: [{ platform: 'zvg-portal', external_id: '1', error_message: 'quota exceeded' }] }))
     vi.mocked(getPool).mockReturnValue({ query } as never)
     vi.mocked(readAuctionRecords).mockResolvedValue([record('1', { llmFailures: 3 })])
 
@@ -101,6 +101,8 @@ describe('/api/settings/llm-status/[country]', () => {
     const result = await handler({}) as { items: { lastErrorMessage: string | null }[] }
 
     expect(result.items[0]?.lastErrorMessage).toBe('quota exceeded')
-    expect(query.mock.calls[0]?.[0]).toContain("task = 'reprocess'")
+    expect(query.mock.calls[0]?.[0]).toContain("task = 'extraction'")
+    expect(query.mock.calls[0]?.[0]).toContain("status = 'failed'")
+    expect(query.mock.calls[0]?.[0]).toContain("admin-trial")
   })
 })

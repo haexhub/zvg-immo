@@ -121,6 +121,8 @@ export interface WriteAuctionDetailsOptions {
   runTrigger?: 'cron' | 'manual' | null
   llmDurationMs?: number | null
   llmCostUsd?: number | null
+  llmInputTokens?: number | null
+  llmOutputTokens?: number | null
 }
 
 /**
@@ -213,6 +215,7 @@ export async function writeAuctionDetails(
     const columnNames = [
       'platform', 'external_id', 'extracted_at', 'llm_analyzed_at', 'is_latest', 'is_trial',
       'llm_provider', 'llm_model', 'llm_profile_id', 'run_trigger', 'llm_duration_ms', 'llm_cost_usd',
+      'llm_input_tokens', 'llm_output_tokens',
       ...valueColumnNames,
     ]
     const insertValues = sql.join(
@@ -221,6 +224,7 @@ export async function writeAuctionDetails(
         sql`${!options.trial}`, sql`${options.trial ?? false}`,
         sql`${options.llmProvider ?? null}`, sql`${options.llmModel ?? null}`, sql`${options.llmProfileId ?? null}`,
         sql`${options.runTrigger ?? null}`, sql`${options.llmDurationMs ?? null}`, sql`${options.llmCostUsd ?? null}`,
+        sql`${options.llmInputTokens ?? null}`, sql`${options.llmOutputTokens ?? null}`,
         castValueTuple(),
       ],
       sql`, `,

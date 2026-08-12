@@ -1,16 +1,16 @@
 // Aggregate read for the admin technical overview of one auction identity
 // (docs/plans/2026-08-08-admin-auktions-technikseite.md, WP-2). Pulls
 // together crawl/fetch state, the raw document archive, the full extraction
-// version history, LLM batch jobs, logged errors, external-data coverage and
-// translation status — everything needed to answer "how did this auction's
-// pipeline run" without re-deriving any of it. Every section reads from a
-// table that already exists; nothing here is written anywhere else.
+// run history (successful versions merged with failed provider attempts),
+// LLM batch jobs, external-data coverage and translation status — everything
+// needed to answer "how did this auction's pipeline run" without re-deriving
+// any of it. Every section reads from a table that already exists; nothing
+// here is written anywhere else.
 
 import type { Pool } from 'pg'
 import { getPool } from './db'
 import { readAuctionFetchState, type AuctionFetchState } from './auction-fetch-state'
 import { readArchiveDocuments, type ArchiveDocumentRow } from './archive-documents'
-import { listTaskRunErrorsForIdentity, type TaskRunError } from './task-run-errors'
 import { listRecentLlmBatchJobs, type LlmBatchJob } from './llm-batch-jobs'
 import { computeAuctionExternalDataCoverage, type AuctionExternalDataCoverage } from './external-data/auction-coverage'
 
@@ -31,22 +31,35 @@ export interface AuctionIdentity {
   updatedAt: string
 }
 
-export interface AuctionDetailsVersionRow {
-  version: number
+/** One row per extraction attempt for this identity — either a persisted
+ *  auction_details version (status 'success', from readExtractionHistory) or
+ *  a provider call that never became one (status 'failed', from
+ *  readFailedExtractionAttempts), merged and time-ordered by
+ *  mergeExtractionRuns. Only a 'success' row has a real `version` — that's
+ *  what the admin page's select/promote/diff actions operate on; a 'failed'
+ *  row is informational only. */
+export interface AuctionExtractionRunRow {
+  /** Stable key for the frontend to render/key on — a real version's own
+   *  version number, or the backing llm_usage_events id for a failed
+   *  attempt. The two id spaces never collide (see the `f`/`v` prefixes). */
+  id: string
+  version: number | null
   createdAt: string
-  extractedAt: string
+  status: 'success' | 'failed'
   isLatest: boolean
   isTrial: boolean
   artifactVersionId: number | null
   extractionSource: string | null
   extractionConfidence: string | null
-  llmAnalyzedAt: string | null
   llmProvider: string | null
   llmModel: string | null
   llmProfileId: string | null
   runTrigger: string | null
   llmDurationMs: number | null
   llmCostUsd: number | null
+  llmInputTokens: number | null
+  llmOutputTokens: number | null
+  errorMessage: string | null
 }
 
 export interface AuctionGeoMetricsRow {
@@ -81,30 +94,12 @@ export interface AuctionTranslationStatusRow {
   completedAt: string | null
 }
 
-/** Individual provider invocations, unlike extractionHistory which contains
- * only versions that made it into auction_details. */
-export interface AuctionLlmCallRow {
-  id: number
-  occurredAt: string
-  provider: string
-  model: string
-  executionMode: string
-  status: 'succeeded' | 'failed'
-  inputTokens: number | null
-  outputTokens: number | null
-  costUsd: number | null
-  durationMs: number | null
-  errorMessage: string | null
-}
-
 export interface AuctionTechnicalOverview {
   identity: AuctionIdentity
   fetchState: AuctionFetchState | null
   documents: ArchiveDocumentRow[]
-  extractionHistory: AuctionDetailsVersionRow[]
-  llmCalls: AuctionLlmCallRow[]
+  extractionHistory: AuctionExtractionRunRow[]
   llmBatchJobs: LlmBatchJob[]
-  errors: TaskRunError[]
   externalData: {
     coverage: AuctionExternalDataCoverage | null
     geoMetrics: AuctionGeoMetricsRow | null
@@ -167,85 +162,107 @@ async function readIdentity(db: Pool, platform: string, externalId: string): Pro
 interface DetailsVersionQueryRow {
   version: number
   created_at: Date | string
-  extracted_at: Date | string
   is_latest: boolean
   is_trial: boolean
   artifact_version_id: string | number | null
   extraction_source: string | null
   extraction_confidence: string | null
-  llm_analyzed_at: Date | string | null
   llm_provider: string | null
   llm_model: string | null
   llm_profile_id: string | null
   run_trigger: string | null
   llm_duration_ms: number | null
   llm_cost_usd: number | null
+  llm_input_tokens: number | null
+  llm_output_tokens: number | null
 }
 
-async function readExtractionHistory(db: Pool, platform: string, externalId: string): Promise<AuctionDetailsVersionRow[]> {
+async function readExtractionHistory(db: Pool, platform: string, externalId: string): Promise<AuctionExtractionRunRow[]> {
   const { rows } = await db.query<DetailsVersionQueryRow>(
-    `SELECT version, created_at, extracted_at, is_latest, is_trial, artifact_version_id,
-            extraction_source, extraction_confidence, llm_analyzed_at,
-            llm_provider, llm_model, llm_profile_id, run_trigger, llm_duration_ms, llm_cost_usd
+    `SELECT version, created_at, is_latest, is_trial, artifact_version_id,
+            extraction_source, extraction_confidence,
+            llm_provider, llm_model, llm_profile_id, run_trigger, llm_duration_ms, llm_cost_usd,
+            llm_input_tokens, llm_output_tokens
      FROM auction_details WHERE platform = $1 AND external_id = $2 ORDER BY version DESC`,
     [platform, externalId],
   )
   return rows.map((row) => ({
+    id: `v${row.version}`,
     version: row.version,
     createdAt: iso(row.created_at),
-    extractedAt: iso(row.extracted_at),
+    status: 'success' as const,
     isLatest: row.is_latest,
     isTrial: row.is_trial,
     artifactVersionId: row.artifact_version_id == null ? null : Number(row.artifact_version_id),
     extractionSource: row.extraction_source,
     extractionConfidence: row.extraction_confidence,
-    llmAnalyzedAt: iso(row.llm_analyzed_at),
     llmProvider: row.llm_provider,
     llmModel: row.llm_model,
     llmProfileId: row.llm_profile_id,
     runTrigger: row.run_trigger,
     llmDurationMs: row.llm_duration_ms,
     llmCostUsd: row.llm_cost_usd,
+    llmInputTokens: row.llm_input_tokens,
+    llmOutputTokens: row.llm_output_tokens,
+    errorMessage: null,
   }))
 }
 
-interface LlmCallQueryRow {
+interface FailedAttemptQueryRow {
   id: string | number
   occurred_at: Date | string
   provider: string
   model: string
-  execution_mode: string
-  status: string
+  profile_id: string | null
+  source: string | null
+  duration_ms: number | null
   input_tokens: number | null
   output_tokens: number | null
-  cost_usd: number | null
-  duration_ms: number | null
   error_message: string | null
 }
 
-async function readLlmCalls(db: Pool, platform: string, externalId: string): Promise<AuctionLlmCallRow[]> {
-  const { rows } = await db.query<LlmCallQueryRow>(
-    `SELECT id, occurred_at, provider, model, execution_mode, status,
-            input_tokens, output_tokens, cost_usd, duration_ms, error_message
+/** Provider calls that never became an auction_details version — the
+ *  extraction-run counterpart to a "Live"/"Trial" row above. task='extraction'
+ *  keeps translation/place-name-translation calls (which have their own
+ *  section) out of this table. */
+async function readFailedExtractionAttempts(db: Pool, platform: string, externalId: string): Promise<AuctionExtractionRunRow[]> {
+  const { rows } = await db.query<FailedAttemptQueryRow>(
+    `SELECT id, occurred_at, provider, model, profile_id, source,
+            duration_ms, input_tokens, output_tokens, error_message
      FROM llm_usage_events
-     WHERE platform = $1 AND external_id = $2
+     WHERE platform = $1 AND external_id = $2 AND task = 'extraction' AND status = 'failed'
      ORDER BY occurred_at DESC, id DESC
      LIMIT 100`,
     [platform, externalId],
   )
   return rows.map((row) => ({
-    id: Number(row.id),
-    occurredAt: iso(row.occurred_at)!,
-    provider: row.provider,
-    model: row.model,
-    executionMode: row.execution_mode,
-    status: row.status === 'failed' ? 'failed' : 'succeeded',
-    inputTokens: row.input_tokens,
-    outputTokens: row.output_tokens,
-    costUsd: row.cost_usd,
-    durationMs: row.duration_ms,
+    id: `f${row.id}`,
+    version: null,
+    createdAt: iso(row.occurred_at)!,
+    status: 'failed' as const,
+    isLatest: false,
+    isTrial: row.source === 'admin-trial',
+    artifactVersionId: null,
+    extractionSource: null,
+    extractionConfidence: null,
+    llmProvider: row.provider,
+    llmModel: row.model,
+    llmProfileId: row.profile_id,
+    // llm_usage_events has no run_trigger; only 'admin-trial' maps onto one
+    // ('manual', the same value the trial version is written with). Anything
+    // else keeps its own source rather than claiming a trigger it never had —
+    // a reprocess call is just as likely manual as scheduled.
+    runTrigger: row.source === 'admin-trial' ? 'manual' : row.source,
+    llmDurationMs: row.duration_ms,
+    llmCostUsd: null,
+    llmInputTokens: row.input_tokens,
+    llmOutputTokens: row.output_tokens,
     errorMessage: row.error_message,
   }))
+}
+
+function mergeExtractionRuns(versions: AuctionExtractionRunRow[], failedAttempts: AuctionExtractionRunRow[]): AuctionExtractionRunRow[] {
+  return [...versions, ...failedAttempts].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 }
 
 interface GeoMetricsQueryRow {
@@ -350,12 +367,11 @@ export async function readAuctionTechnicalOverview(platform: string, externalId:
   if (!identity) return null
 
   const identityKey = `${platform}:${externalId}`
-  const [fetchState, documents, extractionHistory, llmCalls, errors, recentBatchJobs, coverage, geo, translations] = await Promise.all([
+  const [fetchState, documents, extractionVersions, failedAttempts, recentBatchJobs, coverage, geo, translations] = await Promise.all([
     readAuctionFetchState(platform, externalId),
     readArchiveDocuments(db, platform, externalId),
     readExtractionHistory(db, platform, externalId),
-    readLlmCalls(db, platform, externalId),
-    listTaskRunErrorsForIdentity(platform, externalId, 100),
+    readFailedExtractionAttempts(db, platform, externalId),
     listRecentLlmBatchJobs(50),
     computeAuctionExternalDataCoverage(db, platform, externalId),
     readGeoMetrics(db, platform, externalId),
@@ -366,10 +382,8 @@ export async function readAuctionTechnicalOverview(platform: string, externalId:
     identity,
     fetchState,
     documents,
-    extractionHistory,
-    llmCalls,
+    extractionHistory: mergeExtractionRuns(extractionVersions, failedAttempts),
     llmBatchJobs: recentBatchJobs.filter((job) => Object.values(job.customIdMap).includes(identityKey)),
-    errors,
     externalData: { coverage, geoMetrics: geo.geoMetrics, climateCell: geo.climateCell },
     translations,
   }

@@ -42,10 +42,13 @@ beforeEach(() => {
   vi.mocked(readAuctionRecord).mockResolvedValue({
     auction: auction(), detailsId: 7, detailsVersion: 3, artifactVersionId: 11,
   })
-  vi.mocked(reprocessAuction).mockResolvedValue({
-    entry: extraction(), llmCalled: true, llmFailures: 0, artifactVersionId: 11,
-    auction: auction(), llmConfigUsed: CONFIG, llmDurationMs: 1234,
-    llmUsage: { inputTokens: 500, outputTokens: 150 },
+  vi.mocked(reprocessAuction).mockImplementation(async (_platform, _externalId, _prior, config, _at, opts) => {
+    const usage = { inputTokens: 500, outputTokens: 150 }
+    await opts?.onLlmCall?.({ config: config!, durationMs: 1234, usage, status: 'succeeded', errorMessage: null })
+    return {
+      entry: extraction(), llmCalled: true, llmFailures: 0, artifactVersionId: 11,
+      auction: auction(), llmConfigUsed: config, llmDurationMs: 1234, llmUsage: usage,
+    }
   })
   vi.mocked(writeAuctionDetails).mockResolvedValue({ version: 4, changed: true })
 })
@@ -94,6 +97,8 @@ describe('runAdminTrialReprocess', () => {
       runTrigger: 'manual',
       llmDurationMs: 1234,
       llmCostUsd: null,
+      llmInputTokens: 500,
+      llmOutputTokens: 150,
       trial: true,
     })
     expect(recordLlmUsage).toHaveBeenCalledWith({
@@ -106,21 +111,70 @@ describe('runAdminTrialReprocess', () => {
       platform: 'zvg-portal',
       externalId: '7265',
       usage: { inputTokens: 500, outputTokens: 150 },
+      status: 'succeeded',
+      errorMessage: null,
+      durationMs: 1234,
     })
     expect(recordTaskRunError).not.toHaveBeenCalled()
   })
 
   it('resolves llmCostUsd from the provider-reported amount when present', async () => {
-    vi.mocked(reprocessAuction).mockResolvedValue({
-      entry: extraction(), llmCalled: true, llmFailures: 0, artifactVersionId: 11,
-      auction: auction(), llmConfigUsed: CONFIG, llmDurationMs: 1234,
-      llmUsage: { inputTokens: 500, outputTokens: 150, costUsd: 0.0042 },
+    const usage = { inputTokens: 500, outputTokens: 150, costUsd: 0.0042 }
+    vi.mocked(reprocessAuction).mockImplementation(async (_platform, _externalId, _prior, config, _at, opts) => {
+      await opts?.onLlmCall?.({ config: config!, durationMs: 1234, usage, status: 'succeeded', errorMessage: null })
+      return {
+        entry: extraction(), llmCalled: true, llmFailures: 0, artifactVersionId: 11,
+        auction: auction(), llmConfigUsed: config, llmDurationMs: 1234, llmUsage: usage,
+      }
     })
 
     await runAdminTrialReprocess('zvg-portal', '7265', 'profile-1')
 
     const [, , optionsArg] = vi.mocked(writeAuctionDetails).mock.calls[0]!
-    expect(optionsArg).toMatchObject({ llmCostUsd: 0.0042 })
+    expect(optionsArg).toMatchObject({ llmCostUsd: 0.0042, llmInputTokens: 500, llmOutputTokens: 150 })
+  })
+
+  it('records a failed attempt via recordLlmUsage when the provider call fails', async () => {
+    vi.mocked(reprocessAuction).mockImplementation(async (_platform, _externalId, _prior, config, _at, opts) => {
+      await opts?.onLlmCall?.({ config: config!, durationMs: 800, usage: null, status: 'failed', errorMessage: 'boom' })
+      throw new Error('boom')
+    })
+
+    await runAdminTrialReprocess('zvg-portal', '7265', 'profile-1')
+
+    expect(recordLlmUsage).toHaveBeenCalledWith({
+      task: 'extraction',
+      executionMode: 'sync',
+      source: 'admin-trial',
+      provider: 'openrouter',
+      model: 'deepseek/deepseek-v4-pro',
+      profileId: 'profile-1',
+      platform: 'zvg-portal',
+      externalId: '7265',
+      usage: null,
+      status: 'failed',
+      errorMessage: 'boom',
+      durationMs: 800,
+    })
+    expect(writeAuctionDetails).not.toHaveBeenCalled()
+    expect(recordTaskRunError).toHaveBeenCalledWith('reprocess', { platform: 'zvg-portal', externalId: '7265', category: 'admin_trial', message: 'boom' })
+  })
+
+  it('writes no trial version when the provider call failed but reprocessAuction returned normally', async () => {
+    vi.mocked(reprocessAuction).mockImplementation(async (_platform, _externalId, _prior, config, _at, opts) => {
+      // extractByLlm returned null: onLlmCall reports 'failed', the run still
+      // yields a rules-only entry instead of throwing.
+      await opts?.onLlmCall?.({ config: config!, durationMs: 800, usage: null, status: 'failed', errorMessage: 'Keine gültige Extraktion in der Provider-Antwort' })
+      return {
+        entry: extraction({ source: 'rules' }), llmCalled: true, llmFailures: 1, artifactVersionId: 11,
+        auction: auction(), llmConfigUsed: config, llmDurationMs: 800, llmUsage: null,
+      }
+    })
+
+    await runAdminTrialReprocess('zvg-portal', '7265', 'profile-1')
+
+    expect(writeAuctionDetails).not.toHaveBeenCalled()
+    expect(recordLlmUsage).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed', errorMessage: 'Keine gültige Extraktion in der Provider-Antwort' }))
   })
 
   it('records an error and skips the write when the profile is unknown', async () => {

@@ -317,6 +317,8 @@ describe('runReprocess structured persistence', () => {
         runTrigger: 'cron',
         llmDurationMs: null,
         llmCostUsd: null,
+        llmInputTokens: null,
+        llmOutputTokens: null,
       },
     )
     expect(writeAuctionLlmPipelineState).toHaveBeenCalledWith('zvg-portal', '7265', {
@@ -373,6 +375,8 @@ describe('runReprocess structured persistence', () => {
         runTrigger: 'cron',
         llmDurationMs: null,
         llmCostUsd: null,
+        llmInputTokens: null,
+        llmOutputTokens: null,
       },
     )
     expect(writeAuctionLlmPipelineState).toHaveBeenLastCalledWith('zvg-portal', '7265', {
@@ -746,6 +750,8 @@ describe('runReprocess crawl-owned field recovery (WP-3 SE root cause)', () => {
         runTrigger: 'cron',
         llmDurationMs: null,
         llmCostUsd: null,
+        llmInputTokens: null,
+        llmOutputTokens: null,
       },
     )
   })

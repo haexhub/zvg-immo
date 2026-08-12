@@ -273,6 +273,9 @@ export const auctionDetails = pgTable('auction_details', {
   // static price table), so the admin technical page can show per-version
   // cost without a fragile runtime join against that separate log.
   llmCostUsd: doublePrecision('llm_cost_usd'),
+  // Same provenance rationale as llmCostUsd above.
+  llmInputTokens: integer('llm_input_tokens'),
+  llmOutputTokens: integer('llm_output_tokens'),
 }, (table) => [
   unique('auction_details_platform_external_id_version_key').on(table.platform, table.externalId, table.version),
   index('idx_auction_details_identity_version').on(table.platform, table.externalId, table.version.desc()),

@@ -595,8 +595,6 @@
         "identity": "Identität & Geocoding",
         "fetchState": "Crawl-/Fetch-Zustand",
         "extractionHistory": "Extraktionshistorie",
-        "llmCalls": "LLM-Aufrufe",
-        "errors": "Fehler",
         "translations": "Übersetzungen",
         "externalData": "Externe Daten",
         "llmBatchJobs": "LLM-Batch-Jobs",
@@ -604,15 +602,17 @@
       },
       "badges": {
         "live": "Live",
-        "trial": "Trial"
+        "trial": "Trial",
+        "pending": "Läuft …",
+        "failed": "Fehlgeschlagen",
+        "success": "Erfolgreich"
       },
       "trial": {
         "profilePlaceholder": "LLM-Profil wählen",
         "start": "Testlauf starten",
         "running": "Testlauf läuft …",
-        "success": "Testlauf abgeschlossen — neue Trial-Version unten.",
-        "failed": "Testlauf fehlgeschlagen — siehe Fehler unten.",
-        "triggerError": "Testlauf konnte nicht gestartet werden."
+        "triggerError": "Testlauf konnte nicht gestartet werden.",
+        "timeout": "Der Testlauf hat sich in drei Minuten nicht gemeldet. Die Seite neu laden, um das Ergebnis zu prüfen."
       },
       "diff": {
         "compare": "Vergleichen",
@@ -651,7 +651,6 @@
         "provider": "Provider/Modell",
         "runTrigger": "Auslöser",
         "duration": "Dauer",
-        "executionMode": "Modus",
         "tokens": "Token (Ein/Aus)",
         "cost": "Kosten",
         "confidence": "Konfidenz",
