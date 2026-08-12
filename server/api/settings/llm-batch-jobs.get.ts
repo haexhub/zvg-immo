@@ -79,12 +79,16 @@ export interface LlmBatchJobsOverview {
   euFloodRiskImportStatus: TaskRunStatus
 }
 
+// Also caps each job's own requestKeys array below (a real Batch API
+// submission's customIdMap can hold thousands of entries) — without that
+// cap, MAX_PENDING_JOBS_DISPLAYED alone still let a handful of large/orphaned
+// pending jobs balloon the response into multiple MB on every poll.
 const MAX_KEYS_PER_GROUP = 200
-// Bounds the detailed per-job payload (each entry carries a deduped
-// requestKeys array) independently of totalJobs/totalRequests below, which
-// stay computed from the full list — a pending-job backlog (e.g. many jobs
-// stuck on a broken provider) must not balloon the response just because
-// /settings polls this endpoint every few seconds while a task is running.
+// Bounds the detailed per-job payload independently of totalJobs/
+// totalRequests below, which stay computed from the full list — a
+// pending-job backlog (e.g. many jobs stuck on a broken provider) must not
+// balloon the response just because /settings polls this endpoint every few
+// seconds while a task is running.
 const MAX_PENDING_JOBS_DISPLAYED = 50
 
 // useSettingsTaskOverview.ts polls this endpoint every 3s for as long as any
@@ -208,7 +212,7 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
   }
 
   const mapJob = (job: (typeof recentJobs)[number]): LlmBatchJobOverviewItem => {
-    const requestKeys = [...new Set([
+    const allRequestKeys = [...new Set([
       ...(keysByJob.get(job.jobName) ?? []),
       ...Object.values(job.customIdMap),
     ])].sort()
@@ -218,8 +222,8 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
       status: job.status,
       provider: providerForJob(job.jobName),
       itemCount: job.itemCount,
-      pendingCount: job.status === 'pending' ? requestKeys.length || job.itemCount : 0,
-      requestKeys,
+      pendingCount: job.status === 'pending' ? allRequestKeys.length || job.itemCount : 0,
+      requestKeys: allRequestKeys.slice(0, MAX_KEYS_PER_GROUP),
       submittedAt: job.submittedAt,
       checkedAt: job.checkedAt,
       updatedAt: job.updatedAt,
