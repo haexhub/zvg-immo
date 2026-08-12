@@ -254,6 +254,47 @@ describeDb('buildAuctionGeoMetrics (real Postgres)', () => {
     }
   })
 
+  it('skips a candidate that hits a statement timeout instead of aborting the whole run', async () => {
+    const client = await pool.connect()
+    try {
+      // A second candidate that stays fast, so the run has work left after
+      // the slow one.
+      await pool.query(
+        `INSERT INTO auctions (platform, external_id, country, region, authority, case_number, cancelled, lat, lng)
+         VALUES ($1, 'zz-2', $2, 'Test', 'Testbehörde', '1 K 2/26', false, $3, $4)`,
+        [PLATFORM, TEST_COUNTRY, AUCTION_LAT, AUCTION_LNG],
+      )
+      // Stands in for a pathologically slow KNN scan on one candidate (e.g.
+      // against the real 700k-row `lake` kind): only this auction's upsert
+      // hangs past a short statement_timeout, so a genuine 57014 fires for
+      // exactly one candidate while the other stays fast.
+      await pool.query(`
+        CREATE FUNCTION zz_slow_candidate() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF NEW.external_id = '${EXTERNAL_ID}' THEN PERFORM pg_sleep(2); END IF;
+          RETURN NEW;
+        END $$;
+        CREATE TRIGGER zz_slow_candidate BEFORE INSERT ON auction_geo_metrics
+          FOR EACH ROW EXECUTE FUNCTION zz_slow_candidate();
+      `)
+      await client.query("SET statement_timeout = '200'")
+      try {
+        const result = await buildAuctionGeoMetrics(drizzle(client), new AbortController().signal)
+        expect(result).toMatchObject({ candidates: 2, computed: 1, skipped: 1 })
+      } finally {
+        await client.query('RESET statement_timeout')
+        await pool.query('DROP TRIGGER zz_slow_candidate ON auction_geo_metrics; DROP FUNCTION zz_slow_candidate();')
+      }
+
+      // The slow candidate has no row at all (its INSERT was cancelled) —
+      // the fast one was written normally.
+      const { rows } = await pool.query('SELECT external_id FROM auction_geo_metrics WHERE platform = $1', [PLATFORM])
+      expect(rows.map((r) => r.external_id)).toEqual(['zz-2'])
+    } finally {
+      client.release()
+    }
+  })
+
   it('stops instead of persisting NULLs when a rebuild supersedes the epoch mid-run', async () => {
     const client = await pool.connect()
     try {

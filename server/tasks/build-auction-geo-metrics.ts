@@ -14,7 +14,7 @@
 import { Pool } from 'pg'
 import { sql } from 'drizzle-orm'
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { pgErrorMessage, readDatabaseUrl } from '../utils/db'
+import { isStatementTimeoutError, pgErrorMessage, readDatabaseUrl } from '../utils/db'
 import { runExclusiveTask, throwIfTaskAborted } from '../utils/exclusive-task'
 import { GEO_METRIC_CATEGORIES, type GeoMetricCategory } from '../utils/geo-metric-categories'
 import { isSystemicDatabaseError } from './build-geo-features'
@@ -155,7 +155,15 @@ export async function buildAuctionGeoMetrics(
         }
         computed++
       } catch (err) {
-        if (isSystemicDatabaseError(err)) throw err
+        // Unlike build-geo-features.ts's bulk-insert-with-per-row-fallback —
+        // where a 57xxx there could mean the whole bulk statement failed, not
+        // just one geometry — every candidate here is already its own
+        // isolated UPSERT. A statement_timeout just means this one
+        // candidate's KNN scan (e.g. against the 700k-row `lake` kind) took
+        // too long; it says nothing about the rest, so skip it and keep
+        // going instead of aborting the entire run and leaving every other
+        // candidate — including ones stale for days — unrecomputed.
+        if (isSystemicDatabaseError(err) && !isStatementTimeoutError(err)) throw err
         skipped++
         console.warn(
           `[build-auction-geo-metrics] skipped ${candidate.platform}/${candidate.external_id}: ${pgErrorMessage(err)}`,
