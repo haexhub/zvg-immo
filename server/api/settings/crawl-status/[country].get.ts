@@ -1,6 +1,6 @@
 import { CRAWL_STATUS_SORTS, readCrawlStatusList, type CrawlStatusBucket, type CrawlStatusList, type CrawlStatusSort } from '~/server/utils/crawl-status'
 
-const BUCKETS: CrawlStatusBucket[] = ['done', 'error', 'open']
+const BUCKETS: CrawlStatusBucket[] = ['done', 'error', 'open', 'pending']
 const DEFAULT_LIMIT = 50
 const MAX_LIMIT = 200
 
@@ -12,7 +12,7 @@ export default defineEventHandler(async (event): Promise<CrawlStatusList> => {
   const query = getQuery(event)
   const bucket = String(query.bucket ?? '') as CrawlStatusBucket
   if (!BUCKETS.includes(bucket)) {
-    throw createError({ statusCode: 400, statusMessage: `bucket muss done, error oder open sein.` })
+    throw createError({ statusCode: 400, statusMessage: `bucket muss done, error, open oder pending sein.` })
   }
   const requestedLimit = Number(query.limit ?? DEFAULT_LIMIT)
   const requestedOffset = Number(query.offset ?? 0)

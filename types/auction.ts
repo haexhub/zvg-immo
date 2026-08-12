@@ -406,6 +406,9 @@ export interface Auction {
   processing?: {
     llmBatchJob: string | null
     llmFailures: number
+    /** Fresh (within LLM_CLAIM_LEASE_MS) means a sync LLM call is currently
+     *  in flight for this auction — see writeAuctionLlmClaim. */
+    llmClaimedAt: string | null
     photosCheckedAt: string | null
     photoFailures: number
     photoPipelineVersion: number | null

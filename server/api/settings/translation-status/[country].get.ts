@@ -1,7 +1,7 @@
 import { readTranslationStatusList, TRANSLATION_STATUS_SORTS, type TranslationStatusBucket, type TranslationStatusList, type TranslationStatusSort } from '~/server/utils/translation-status'
 import { parseTargetLang } from '~/server/utils/target-lang'
 
-const BUCKETS: TranslationStatusBucket[] = ['done', 'error', 'open']
+const BUCKETS: TranslationStatusBucket[] = ['done', 'error', 'open', 'pending']
 const DEFAULT_LIMIT = 50
 const MAX_LIMIT = 200
 
@@ -13,7 +13,7 @@ export default defineEventHandler(async (event): Promise<TranslationStatusList> 
   const query = getQuery(event)
   const bucket = String(query.bucket ?? '') as TranslationStatusBucket
   if (!BUCKETS.includes(bucket)) {
-    throw createError({ statusCode: 400, statusMessage: 'bucket muss done, error oder open sein.' })
+    throw createError({ statusCode: 400, statusMessage: 'bucket muss done, error, open oder pending sein.' })
   }
   const limit = Math.min(MAX_LIMIT, Math.max(1, Number(query.limit) || DEFAULT_LIMIT))
   const offset = Math.max(0, Number(query.offset) || 0)

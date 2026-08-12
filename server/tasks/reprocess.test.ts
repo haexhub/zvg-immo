@@ -3,7 +3,7 @@ import type { Auction, AuctionExtraction } from '~/types/auction'
 import { downloadBlob, findLatestCapture } from '../utils/storage-download'
 import { getPool } from '../utils/db'
 import { readAuctionRecordMap } from '../utils/auction-record'
-import { readAuctionFetchStates, writeAuctionLlmPipelineState } from '../utils/auction-fetch-state'
+import { readAuctionFetchStates, writeAuctionLlmClaim, writeAuctionLlmPipelineState } from '../utils/auction-fetch-state'
 import { readArtifactProcessingState } from '../utils/artifact-version-state'
 import { readExtractionChainStrategy, readExtractionLlmConfigChain } from '../utils/extract/llm-task-config'
 import { readLlmExecutionMode } from '../utils/app-settings'
@@ -24,6 +24,7 @@ vi.mock('../utils/db', () => ({ getPool: vi.fn() }))
 vi.mock('../utils/auction-record', () => ({ readAuctionRecordMap: vi.fn() }))
 vi.mock('../utils/auction-fetch-state', () => ({
   readAuctionFetchStates: vi.fn(),
+  writeAuctionLlmClaim: vi.fn(),
   writeAuctionLlmPipelineState: vi.fn(),
 }))
 vi.mock('../utils/artifact-version-state', () => ({
@@ -339,8 +340,8 @@ describe('runReprocess structured persistence', () => {
     vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([['zvg-portal:7265', {
       platform: 'zvg-portal', externalId: '7265', pdfUrl: null, pdfUrlUpstream: null,
       detailUrl: null, detailUrlUpstream: null, attachments: [], photoUrls: null,
-      sourceUpdatedIso: null, detailFetchedAt: null, llmBatchJob: null,
-      llmArtifactVersionId: null, llmFailures: 2, llmLastAttemptedAt: null, photosCheckedAt: null,
+      sourceUpdatedIso: null, detailFetchedAt: null, enrichClaimedAt: null, llmBatchJob: null,
+      llmArtifactVersionId: null, llmFailures: 2, llmLastAttemptedAt: null, llmClaimedAt: null, photosCheckedAt: null,
       photoFailures: 0, photoLastAttemptedAt: null, photoPipelineVersion: null,
       updatedAt: '2026-08-02T10:00:00.000Z',
     }]]))
@@ -434,6 +435,35 @@ describe('runReprocess structured persistence', () => {
     )
   })
 
+  it('claims the item before the sync LLM call and clears the claim once it resolves', async () => {
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+      baseUrl: 'https://api.example.test', apiKey: 'secret', model: 'vision-model', provider: 'gemini-native',
+    }])
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+      opts?.onProviderAttempt?.()
+      return null
+    })
+
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 1 })
+
+    expect(writeAuctionLlmClaim).toHaveBeenCalledWith('zvg-portal', '7265', expect.any(String))
+    expect(vi.mocked(writeAuctionLlmClaim).mock.calls).toHaveLength(1)
+    // writeAuctionLlmPipelineState is the real writer's unconditional
+    // llm_claimed_at = NULL — asserting this call actually happened is what
+    // proves the claim was cleared, not just that it was set beforehand.
+    expect(writeAuctionLlmPipelineState).toHaveBeenCalledWith('zvg-portal', '7265', {
+      llmBatchJob: null,
+      llmArtifactVersionId: null,
+      llmFailures: 1,
+      llmAttempted: true,
+    })
+  })
+
+  it('does not claim a candidate that never reaches a real LLM call (rules-only, no config)', async () => {
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 1 })
+    expect(writeAuctionLlmClaim).not.toHaveBeenCalled()
+  })
+
   it('records token usage/cost for the winning model when the provider reports it', async () => {
     vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
       baseUrl: 'https://api.example.test', apiKey: 'secret', model: 'vision-model', provider: 'gemini-native', profileId: 'profile-a',
@@ -505,8 +535,8 @@ describe('runReprocess llm_failures cooldown', () => {
     return new Map([['zvg-portal:7265', {
       platform: 'zvg-portal', externalId: '7265', pdfUrl: null, pdfUrlUpstream: null,
       detailUrl: null, detailUrlUpstream: null, attachments: [], photoUrls: null,
-      sourceUpdatedIso: null, detailFetchedAt: null, llmBatchJob: null,
-      llmArtifactVersionId: null, llmFailures: 3, llmLastAttemptedAt, photosCheckedAt: null,
+      sourceUpdatedIso: null, detailFetchedAt: null, enrichClaimedAt: null, llmBatchJob: null,
+      llmArtifactVersionId: null, llmFailures: 3, llmLastAttemptedAt, llmClaimedAt: null, photosCheckedAt: null,
       photoFailures: 0, photoLastAttemptedAt: null, photoPipelineVersion: null,
       updatedAt: '2026-08-02T10:00:00.000Z',
     }]])
@@ -519,6 +549,7 @@ describe('runReprocess llm_failures cooldown', () => {
 
     await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 0, skipped: 1 })
     expect(writeAuctionLlmPipelineState).not.toHaveBeenCalled()
+    expect(writeAuctionLlmClaim).not.toHaveBeenCalled()
   })
 
   it('ignoreCooldown bypasses the lockout immediately, without waiting for the 24h window', async () => {
@@ -569,6 +600,9 @@ describe('runReprocess llm_failures cooldown', () => {
       llmFailures: 3,
       llmAttempted: true,
     })
+    // A throw past onLlmAttempt still has to clear the claim explicitly — it
+    // never reaches persistEntry's writeAuctionLlmPipelineState call.
+    expect(writeAuctionLlmClaim).toHaveBeenLastCalledWith('zvg-portal', '7265', null)
     expect(recordTaskRunError).toHaveBeenCalledWith('reprocess', {
       platform: 'zvg-portal',
       externalId: '7265',

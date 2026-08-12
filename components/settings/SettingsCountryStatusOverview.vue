@@ -16,8 +16,8 @@ type StatusKind = ProcessingStatusKind | 'osm'
 type TableSort = 'platform' | 'title' | 'region' | 'error' | 'lang' | 'failures' | 'startedAt'
 
 const PAGE_SIZE = 25
-const EMPTY_COUNTS: StatusCounts = { done: 0, open: 0, error: 0, total: 0 }
-const STATUS_COLORS = { done: '#0ca30c', open: '#fab219', error: '#d03b3b' } as const
+const EMPTY_COUNTS: StatusCounts = { done: 0, open: 0, error: 0, pending: 0, total: 0 }
+const STATUS_COLORS = { done: '#0ca30c', pending: '#3b82f6', open: '#fab219', error: '#d03b3b' } as const // blue: outside the fixed status palette, distinct from the other three
 
 const { t } = useI18n()
 const countryLabel = useCountryLabel()
@@ -93,9 +93,8 @@ watch(countryCodes, (codes) => {
 }, { immediate: true })
 
 const bucketLabels = computed<Record<StatusBucket, string>>(() => ({
-  done: t('settings.statusOverview.bucketDone'),
-  open: t('settings.statusOverview.bucketOpen'),
-  error: t('settings.statusOverview.bucketError'),
+  done: t('settings.statusOverview.bucketDone'), pending: t('settings.statusOverview.bucketPending'),
+  open: t('settings.statusOverview.bucketOpen'), error: t('settings.statusOverview.bucketError'),
 }))
 
 const selectedStatusLabel = computed(() => {
@@ -107,7 +106,7 @@ const selectedStatusLabel = computed(() => {
 
 function statusSegments(kind: ProcessingStatusKind, country: string): StatusPieSegment[] {
   const row = counts.value[kind][country] ?? EMPTY_COUNTS
-  return (['done', 'open', 'error'] as const).map((bucket) => ({
+  return (['done', 'pending', 'open', 'error'] as const).map((bucket) => ({
     key: bucket,
     label: bucketLabels.value[bucket],
     color: STATUS_COLORS[bucket],
@@ -121,7 +120,7 @@ function translationTargetLanguages(country: string): ContentTargetLang[] {
 
 function translationSegments(country: string, lang: ContentTargetLang): StatusPieSegment[] {
   const row = translationByCountry.value[country]?.[lang] ?? EMPTY_COUNTS
-  return (['done', 'open', 'error'] as const).map((bucket) => ({
+  return (['done', 'pending', 'open', 'error'] as const).map((bucket) => ({
     key: bucket,
     label: bucketLabels.value[bucket],
     color: STATUS_COLORS[bucket],
@@ -479,7 +478,7 @@ onBeforeUnmount(() => clearTimeout(filterTimer))
                             <TableCell v-if="selected?.kind === 'translation'" class="font-mono text-xs uppercase">{{ item.lang }}</TableCell>
                             <TableCell v-if="selected?.kind === 'llm' && selected.bucket === 'error'" class="text-xs tabular-nums">{{ item.llmFailures }}</TableCell>
                             <TableCell v-if="selected?.bucket === 'error'" class="max-w-md whitespace-normal break-words text-xs text-destructive">{{ item.lastErrorMessage }}</TableCell>
-                            <TableCell class="text-right"><Button v-if="selected?.kind !== 'osm' || selected.bucket === 'open'" type="button" variant="ghost" size="icon-sm" :disabled="actionPending !== null" :title="$t('settings.countryOverview.retryRow')" @click="retryItem(item)"><Loader2 v-if="actionPending === `item:${item.platform}:${item.externalId}:${item.lang ?? ''}`" class="h-4 w-4 animate-spin" /><RefreshCw v-else class="h-4 w-4" /></Button></TableCell>
+                            <TableCell class="text-right"><Button v-if="selected?.bucket !== 'pending' && (selected?.kind !== 'osm' || selected.bucket === 'open')" type="button" variant="ghost" size="icon-sm" :disabled="actionPending !== null" :title="$t('settings.countryOverview.retryRow')" @click="retryItem(item)"><Loader2 v-if="actionPending === `item:${item.platform}:${item.externalId}:${item.lang ?? ''}`" class="h-4 w-4 animate-spin" /><RefreshCw v-else class="h-4 w-4" /></Button></TableCell>
                           </TableRow>
                         </TableBody>
                       </Table>

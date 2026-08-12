@@ -6,14 +6,16 @@
 // identity (task='enrich') is still unresolved, i.e. no successful
 // detail_fetched_at exists yet.
 
+import { ENRICH_CLAIM_LEASE_MS } from './auction-fetch-state'
 import { getPool } from './db'
 
-export type CrawlStatusBucket = 'done' | 'error' | 'open'
+export type CrawlStatusBucket = 'done' | 'error' | 'open' | 'pending'
 
 export interface CrawlStatusCounts {
   done: number
   error: number
   open: number
+  pending: number
   total: number
 }
 
@@ -58,6 +60,10 @@ crawl_status AS (
     a.auction_date_iso, le.message AS last_error_message,
     CASE
       WHEN fs.detail_fetched_at IS NOT NULL THEN 'done'
+      -- A fresh claim means a worker is actively crawling this identity right
+      -- now, checked before 'error' so a retry of a previously failed item
+      -- shows as in-progress, not still failed.
+      WHEN fs.enrich_claimed_at IS NOT NULL AND fs.enrich_claimed_at > now() - interval '${ENRICH_CLAIM_LEASE_MS} milliseconds' THEN 'pending'
       WHEN le.external_id IS NOT NULL THEN 'error'
       ELSE 'open'
     END AS bucket
@@ -80,7 +86,7 @@ export async function readCrawlStatusByCountry(): Promise<Record<string, CrawlSt
   )
   const out: Record<string, CrawlStatusCounts> = {}
   for (const row of rows) {
-    const counts = out[row.country] ?? (out[row.country] = { done: 0, error: 0, open: 0, total: 0 })
+    const counts = out[row.country] ?? (out[row.country] = { done: 0, error: 0, open: 0, pending: 0, total: 0 })
     const n = Number(row.count)
     counts[row.bucket] += n
     counts.total += n

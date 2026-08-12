@@ -352,11 +352,9 @@
     },
     "crawlStatus": {
       "title": "Crawling status",
-      "description": "Per country: how many listings are fully crawled, how many are still open, and which ones' last attempt failed. Click a segment to see the affected listings.",
       "refresh": "Refresh status",
       "retryOpen": "Crawl open",
       "retryFailed": "Retry failed",
-      "retryRow": "Retry crawling this listing",
       "empty": "No countries enabled."
     },
     "osmImport": {
@@ -509,23 +507,14 @@
     },
     "llmStatus": {
       "title": "LLM status",
-      "description": "Per country: how many listings were successfully extracted by the LLM, how many are still waiting, and which ones hit the failure limit. Click a segment to see the affected listings.",
-      "refresh": "Refresh status",
       "retryOpen": "Start open",
       "retryFailed": "Retry failed",
-      "retryRow": "Retry processing this listing",
-      "empty": "No countries enabled.",
       "colFailures": "Failures"
     },
     "translationStatus": {
-      "title": "Translation status",
       "titleForLang": "Translation status ({lang})",
-      "description": "Per country and target language: available translations, failed attempts, and the remaining LLM translation backlog. Listings in their source language are not counted.",
-      "refresh": "Refresh status",
       "retryOpen": "Start open translations",
       "retryFailed": "Retry failed",
-      "retryRow": "Retry this translation",
-      "empty": "No translation attempts yet.",
       "colLang": "Language"
     },
     "statusOverview": {
@@ -535,6 +524,7 @@
       "noData": "No data",
       "retryError": "Retry could not be started.",
       "bucketDone": "Done",
+      "bucketPending": "In progress",
       "bucketOpen": "Open",
       "bucketError": "Failed",
       "colPlatform": "Platform",

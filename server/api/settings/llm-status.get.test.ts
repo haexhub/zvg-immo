@@ -32,8 +32,8 @@ describe('/api/settings/llm-status', () => {
     const handler = (await import('./llm-status.get')).default as (event: unknown) => Promise<unknown>
 
     await expect(handler({})).resolves.toEqual({
-      de: { done: 1, open: 1, error: 0, total: 2 },
-      se: { done: 0, open: 1, error: 0, total: 1 },
+      de: { done: 1, open: 1, error: 0, pending: 0, total: 2 },
+      se: { done: 0, open: 1, error: 0, pending: 0, total: 1 },
     })
     expect(readAuctionRecords).toHaveBeenCalledWith(undefined, { includePhotos: false })
   })

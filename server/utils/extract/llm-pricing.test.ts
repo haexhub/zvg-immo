@@ -6,6 +6,10 @@ describe('lookupModelPricing', () => {
     expect(lookupModelPricing('claude-haiku-4-5')).toEqual({ inputPerMillion: 1, outputPerMillion: 5 })
   })
 
+  it('finds the claude-proxy default model', () => {
+    expect(lookupModelPricing('claude-sonnet-5')).toEqual({ inputPerMillion: 3, outputPerMillion: 15 })
+  })
+
   it('strips a :batch suffix before lookup', () => {
     expect(lookupModelPricing('gemini-flash-latest:batch')).toEqual({ inputPerMillion: 0.3, outputPerMillion: 2.5 })
   })

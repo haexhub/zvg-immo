@@ -134,6 +134,13 @@
       "when": 1786456854350,
       "tag": "0018_messy_fixer",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1786518721656,
+      "tag": "0019_tiny_cobalt_man",
+      "breakpoints": true
     }
   ]
 }
