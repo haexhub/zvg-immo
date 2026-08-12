@@ -388,7 +388,7 @@
     },
     "externalData": {
       "title": "Externe Datenquellen",
-      "description": "POI/ÖPNV, Lärm, Hochwasser und Marktvergleich auf der Detailseite kommen aus diesen Diensten. Ein leeres Feld übernimmt den per Deployment (Env-Var) gesetzten Wert, sofern vorhanden — sonst bleibt die Quelle inaktiv.",
+      "description": "POI/ÖPNV, Lärm, Hochwasser und Marktvergleich auf der Detailseite kommen aus diesen Diensten. Ein leeres Feld übernimmt den per Deployment (Env-Var) gesetzten Wert, sofern vorhanden — sonst bleibt die Quelle inaktiv. „Alle Auktionen neu anreichern“ oben schreibt diese Daten für jede Auktion neu; „Cache jetzt importieren“ bei einer Quelle aktualisiert dagegen nur deren Rohdaten und lässt bestehende Auktionsdaten unverändert.",
       "configured": "Aktiv",
       "notConfigured": "Nicht konfiguriert",
       "loadError": "Datenquellen konnten nicht geladen werden.",
@@ -396,8 +396,8 @@
       "saved": "Gespeichert.",
       "saving": "Speichere …",
       "save": "Speichern",
-      "refreshNow": "Jetzt aktualisieren",
-      "refreshing": "Wird angestoßen …",
+      "refreshNow": "Alle Auktionen neu anreichern",
+      "refreshing": "Anreicherung wird gestartet …",
       "triggerError": "Anstoßen fehlgeschlagen.",
       "usageHints": {
         "fr-dvf-geolocated": "Marktvergleich auf der Detailseite (nur Frankreich).",

@@ -388,7 +388,7 @@
     },
     "externalData": {
       "title": "External data sources",
-      "description": "POI/transit, noise, flood risk and market comparison on the detail page come from these services. An empty field falls back to the deployment-configured (env var) value, if set — otherwise the source stays inactive.",
+      "description": "POI/transit, noise, flood risk and market comparison on the detail page come from these services. An empty field falls back to the deployment-configured (env var) value, if set — otherwise the source stays inactive. \"Re-enrich all auctions\" above rewrites this data for every auction; a source's own \"Import cache now\" only refreshes its raw data and leaves existing auction data untouched.",
       "configured": "Active",
       "notConfigured": "Not configured",
       "loadError": "Could not load data sources.",
@@ -396,8 +396,8 @@
       "saved": "Saved.",
       "saving": "Saving …",
       "save": "Save",
-      "refreshNow": "Refresh now",
-      "refreshing": "Starting …",
+      "refreshNow": "Re-enrich all auctions",
+      "refreshing": "Starting enrichment …",
       "triggerError": "Failed to start.",
       "usageHints": {
         "fr-dvf-geolocated": "Market comparison on the detail page (France only).",
