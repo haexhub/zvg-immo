@@ -59,6 +59,16 @@ export interface ReprocessOptions {
    *  candidates would also be picked up and burn LLM budget the action
    *  never asked to spend. */
   failedOnly?: boolean
+  /** Bypasses only the isLlmBatchPending gate (see reprocess-run.ts), unlike
+   *  `force` which also bypasses the "does this candidate actually need an
+   *  attempt" check. A candidate still carrying an unresolved llmBatchJob
+   *  marker from an earlier submitted-but-failed/stuck batch would otherwise
+   *  stay blocked for up to 48h (see LLM_BATCH_JOB_EXPIRY_MS) even though the
+   *  admin explicitly asked to retry it now. Set by /settings' "Retry open"
+   *  and "Retry failed" actions — each already scoped to its own bucket via
+   *  failedOnly, so this never lets one bucket's retry reach into the
+   *  other's candidates. */
+  ignoreBatchPending?: boolean
 }
 
 export interface ReprocessResult {

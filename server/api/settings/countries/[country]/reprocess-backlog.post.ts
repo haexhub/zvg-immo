@@ -25,7 +25,11 @@ export default defineEventHandler(async (event) => {
   // Detached on purpose — see the file header. A rejection here is still
   // recorded as the task's lastError by its own defineTask wrapper; the catch
   // only keeps the trigger itself from becoming an unhandled rejection.
-  void runTask('reprocess', { payload: { country, force: false, trigger: 'manual' } }).catch((err: unknown) => {
+  // ignoreBatchPending: an admin explicitly asking to retry the open backlog
+  // now shouldn't stay blocked by a stuck/failed batch job's leftover marker
+  // (see LLM_BATCH_JOB_EXPIRY_MS) — force stays false, so this still only
+  // ever touches genuinely open candidates, never 'done' or locked-out ones.
+  void runTask('reprocess', { payload: { country, force: false, ignoreBatchPending: true, trigger: 'manual' } }).catch((err: unknown) => {
     console.error('[settings/reprocess-backlog] trigger failed:', (err as Error).message)
   })
   return { started: true }

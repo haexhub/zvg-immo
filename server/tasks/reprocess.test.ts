@@ -7,7 +7,7 @@ import { readAuctionFetchStates, writeAuctionLlmClaim, writeAuctionLlmPipelineSt
 import { readArtifactProcessingState } from '../utils/artifact-version-state'
 import { readExtractionChainStrategy, readExtractionLlmConfigChain } from '../utils/extract/llm-task-config'
 import { readLlmExecutionMode } from '../utils/app-settings'
-import { submitLlmBatch } from '../utils/extract/llm-batch'
+import { isLlmBatchPending, submitLlmBatch } from '../utils/extract/llm-batch'
 import { extractByLlm, isLlmProviderUnavailable } from '../utils/extract/llm'
 import { prepareArchivedLlmDocuments } from '../utils/extract/llm-documents'
 import { writeAuctionDetails } from '../utils/auction-details'
@@ -627,6 +627,37 @@ describe('runReprocess llm_failures cooldown', () => {
 
     await expect(runReprocess({ country: 'de', failedOnly: true, ignoreCooldown: true }))
       .resolves.toMatchObject({ processed: 1, skipped: 0 })
+  })
+})
+
+describe('runReprocess isLlmBatchPending gate', () => {
+  function batchPendingFetchState() {
+    return new Map([['zvg-portal:7265', {
+      platform: 'zvg-portal', externalId: '7265', pdfUrl: null, pdfUrlUpstream: null,
+      detailUrl: null, detailUrlUpstream: null, attachments: [], photoUrls: null,
+      sourceUpdatedIso: null, detailFetchedAt: null, enrichClaimedAt: null,
+      llmBatchJob: 'openrouter_batch-stuck', llmArtifactVersionId: null, llmFailures: 0,
+      llmLastAttemptedAt: null, llmClaimedAt: null, photosCheckedAt: null,
+      photoFailures: 0, photoLastAttemptedAt: null, photoPipelineVersion: null,
+      updatedAt: '2026-08-02T10:00:00.000Z',
+    }]])
+  }
+
+  it('skips a candidate still carrying an unresolved batch-job marker', async () => {
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(batchPendingFetchState())
+    vi.mocked(isLlmBatchPending).mockReturnValueOnce(true)
+
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 0, skipped: 1 })
+  })
+
+  it('ignoreBatchPending bypasses a stuck/failed batch marker so the open backlog can retry immediately', async () => {
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(batchPendingFetchState())
+
+    await expect(runReprocess({ country: 'de', ignoreBatchPending: true }))
+      .resolves.toMatchObject({ processed: 1, skipped: 0 })
+    // Short-circuited by opts.ignoreBatchPending — never even asks whether
+    // the marker is actually still pending.
+    expect(isLlmBatchPending).not.toHaveBeenCalled()
   })
 })
 
