@@ -95,6 +95,8 @@ export interface BuildAuctionGeoMetricsResult {
   skipped: number
   /** A newer complete epoch landed mid-run; the rest was left for next time. */
   epochSuperseded: boolean
+  /** Rows removed because their auction no longer has a lat/lng — see deleteOrphanedMetrics. */
+  orphaned: number
   durationMs: number
 }
 
@@ -120,6 +122,11 @@ export async function buildAuctionGeoMetrics(
   const startedAt = Date.now()
   await acquireLock(db)
   try {
+    const orphaned = await deleteOrphanedMetrics(db)
+    if (orphaned > 0) {
+      console.log(`[build-auction-geo-metrics] removed ${orphaned} metrics row(s) for auctions that lost their geocode`)
+    }
+
     const epoch = await latestCompleteEpoch(db)
     if (epoch == null) {
       const reason = 'no complete geo_features epoch yet (geo_features_epochs is empty)'
@@ -164,7 +171,7 @@ export async function buildAuctionGeoMetrics(
       )
     }
     console.log(`[build-auction-geo-metrics] done in ${(durationMs / 1000).toFixed(1)}s, computed=${computed} skipped=${skipped}`)
-    return { epoch, candidates: candidates.length, computed, skipped, epochSuperseded, durationMs }
+    return { epoch, candidates: candidates.length, computed, skipped, epochSuperseded, orphaned, durationMs }
   } finally {
     await releaseLock(db)
   }
@@ -195,6 +202,25 @@ async function releaseLock(db: NodePgDatabase): Promise<void> {
 async function latestCompleteEpoch(db: NodePgDatabase): Promise<number | null> {
   const { rows } = await db.execute<{ epoch: number | null }>(sql`SELECT MAX(epoch) AS epoch FROM geo_features_epochs`)
   return rows[0]?.epoch ?? null
+}
+
+// findCandidates below only ever (re)computes a row for an auction that
+// currently has a lat/lng — an auction that loses its geocode (re-crawl reset,
+// invalidated Nominatim/LocationIQ result) drops out of that query entirely,
+// so without this its metrics row would sit forever with whatever distances
+// its old, now-gone position happened to produce and keep matching proximity
+// filters (nearSea, nearMountain, …) against a location the auction no longer
+// claims to be at.
+async function deleteOrphanedMetrics(db: NodePgDatabase): Promise<number> {
+  const { rowCount } = await db.execute(sql`
+    DELETE FROM auction_geo_metrics m
+    WHERE NOT EXISTS (
+      SELECT 1 FROM auctions a
+      WHERE a.platform = m.platform AND a.external_id = m.external_id
+        AND a.lat IS NOT NULL AND a.lng IS NOT NULL
+    )
+  `)
+  return rowCount ?? 0
 }
 
 async function findCandidates(db: NodePgDatabase, epoch: number): Promise<Candidate[]> {

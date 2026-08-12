@@ -222,6 +222,22 @@ describeDb('buildAuctionGeoMetrics (real Postgres)', () => {
     }
   })
 
+  it('deletes the metrics row once the auction loses its geocode', async () => {
+    const client = await pool.connect()
+    try {
+      await buildAuctionGeoMetrics(drizzle(client), new AbortController().signal)
+      expect(await readMetrics(pool)).toBeDefined()
+
+      await client.query('UPDATE auctions SET lat = NULL, lng = NULL WHERE platform = $1', [PLATFORM])
+      const second = await buildAuctionGeoMetrics(drizzle(client), new AbortController().signal)
+      expect(second).toMatchObject({ orphaned: 1, candidates: 0, computed: 0 })
+
+      expect(await readMetrics(pool)).toBeUndefined()
+    } finally {
+      client.release()
+    }
+  })
+
   it('recomputes once geo_features_epochs advances, even with an unchanged position', async () => {
     const client = await pool.connect()
     try {
