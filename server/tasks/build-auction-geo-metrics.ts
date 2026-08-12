@@ -14,13 +14,19 @@
 import { Pool } from 'pg'
 import { sql } from 'drizzle-orm'
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { pgErrorMessage, readDatabaseUrl } from '../utils/db'
+import { isStatementTimeoutError, pgErrorMessage, readDatabaseUrl } from '../utils/db'
 import { runExclusiveTask, throwIfTaskAborted } from '../utils/exclusive-task'
 import { GEO_METRIC_CATEGORIES, type GeoMetricCategory } from '../utils/geo-metric-categories'
 import { isSystemicDatabaseError } from './build-geo-features'
 
 const BUILD_POOL_MAX_CONNECTIONS = 2
-const BUILD_STATEMENT_TIMEOUT_MS = 60 * 1000
+// A KNN scan against a sparsely-populated kind/epoch combination can
+// legitimately take longer than a typical candidate's few milliseconds.
+// Generous headroom over that now that a single slow candidate is skipped
+// rather than aborting the whole run (see the statement_timeout handling
+// below) — still far short of build-geo-features.ts's 20 minutes, which
+// covers a fundamentally heavier bulk workload.
+const BUILD_STATEMENT_TIMEOUT_MS = 3 * 60 * 1000
 
 // Density, not distance — measures whether an area has tourist
 // infrastructure at all (schema/geo.ts's tourismDensityCount comment).
@@ -155,7 +161,15 @@ export async function buildAuctionGeoMetrics(
         }
         computed++
       } catch (err) {
-        if (isSystemicDatabaseError(err)) throw err
+        // Unlike build-geo-features.ts's bulk-insert-with-per-row-fallback —
+        // where a 57xxx there could mean the whole bulk statement failed, not
+        // just one geometry — every candidate here is already its own
+        // isolated UPSERT. A statement_timeout just means this one
+        // candidate's KNN scan (e.g. against the 700k-row `lake` kind) took
+        // too long; it says nothing about the rest, so skip it and keep
+        // going instead of aborting the entire run and leaving every other
+        // candidate — including ones stale for days — unrecomputed.
+        if (isSystemicDatabaseError(err) && !isStatementTimeoutError(err)) throw err
         skipped++
         console.warn(
           `[build-auction-geo-metrics] skipped ${candidate.platform}/${candidate.external_id}: ${pgErrorMessage(err)}`,
