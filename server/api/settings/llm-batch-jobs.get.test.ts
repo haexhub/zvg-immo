@@ -374,4 +374,47 @@ describe('/api/settings/llm-batch-jobs', () => {
     expect(result.totalRequests).toBe(60)
     expect(result.jobs).toHaveLength(50)
   })
+
+  it('caps a single job\'s requestKeys without undercounting its pendingCount', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
+      await import('~/server/utils/llm-batch-jobs')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { isGeminiBatchTierPaid } = await import('~/server/utils/extract/gemini-batch')
+    const { getTaskRunStatus } = await import('~/server/utils/task-runs')
+    const customIdMap = Object.fromEntries(
+      Array.from({ length: 500 }, (_, i) => [`request_${i}`, `zvg-portal:${i}`]),
+    )
+    const job = {
+      jobName: 'msgbatch_huge',
+      source: 'reprocess' as const,
+      status: 'pending' as const,
+      itemCount: 500,
+      customIdMap,
+      submittedAt: '2026-08-08T18:00:00.000Z',
+      checkedAt: null,
+      updatedAt: '2026-08-08T18:00:00.000Z',
+      errorMessage: null,
+      provider: null,
+      model: null,
+      profileId: null,
+    }
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job])
+    vi.mocked(listRecentLlmBatchJobs).mockResolvedValue([job])
+    vi.mocked(getAllLlmBatchCapabilities).mockResolvedValue({})
+    vi.mocked(readAuctionRecords).mockResolvedValue([])
+    vi.mocked(isGeminiBatchTierPaid).mockReturnValue(true)
+    vi.mocked(getTaskRunStatus).mockResolvedValue(IDLE_REPROCESS_STATUS)
+
+    const handler = (await import('./llm-batch-jobs.get')).default as () => Promise<unknown>
+    const result = (await handler()) as {
+      jobs: Array<{ pendingCount: number; requestKeys: string[] }>
+      recentJobs: Array<{ pendingCount: number; requestKeys: string[] }>
+    }
+
+    expect(result.jobs[0]?.pendingCount).toBe(500)
+    expect(result.jobs[0]?.requestKeys).toHaveLength(200)
+    expect(result.recentJobs[0]?.pendingCount).toBe(500)
+    expect(result.recentJobs[0]?.requestKeys).toHaveLength(200)
+  })
 })
