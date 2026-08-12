@@ -60,12 +60,16 @@ export async function runAdminTrialReprocess(platform: string, externalId: strin
 
     const at = new Date().toISOString()
     const priorEntry = record.auction.extraction ?? undefined
+    // Held in an object because reprocessAuction reports the outcome through a
+    // callback, and a failed provider call does not necessarily throw.
+    const lastLlmCall: { status: 'succeeded' | 'failed' | null } = { status: null }
     const result = await reprocessAuction(platform, externalId, priorEntry, config, at, {
       // Mirrors reprocess-run.ts's onLlmCall: without this, a failed attempt
       // (the case a trial is most often run to check) never reaches
       // llm_usage_events, and the technical page has nothing but the generic
       // task_run_errors entry below to show for it.
       onLlmCall: async ({ config: usedConfig, durationMs, usage, status, errorMessage }) => {
+        lastLlmCall.status = status
         await recordLlmUsage({
           task: 'extraction',
           executionMode: 'sync',
@@ -83,6 +87,16 @@ export async function runAdminTrialReprocess(platform: string, externalId: strin
       },
     })
     if (!result) throw new Error('Kein archiviertes Capture für diese Auktion gefunden.')
+
+    // A provider answer without a usable extraction does not throw —
+    // reprocessAuction still returns a (rules-only) entry. Persisting that as a
+    // trial version would show the same failed attempt twice on the technical
+    // page: once as the failed llm_usage_events row, once as a version claiming
+    // this model produced it. The failed row is the honest record; stop here.
+    if (lastLlmCall.status === 'failed') {
+      console.warn(`[auction-admin-trial] provider call failed for ${platform}:${externalId}, no trial version written`)
+      return
+    }
 
     // Mirrors persistEntry's (server/tasks/reprocess.ts) base-auction
     // construction: an identity with no auction_details row yet has every

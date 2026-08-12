@@ -160,6 +160,23 @@ describe('runAdminTrialReprocess', () => {
     expect(recordTaskRunError).toHaveBeenCalledWith('reprocess', { platform: 'zvg-portal', externalId: '7265', category: 'admin_trial', message: 'boom' })
   })
 
+  it('writes no trial version when the provider call failed but reprocessAuction returned normally', async () => {
+    vi.mocked(reprocessAuction).mockImplementation(async (_platform, _externalId, _prior, config, _at, opts) => {
+      // extractByLlm returned null: onLlmCall reports 'failed', the run still
+      // yields a rules-only entry instead of throwing.
+      await opts?.onLlmCall?.({ config: config!, durationMs: 800, usage: null, status: 'failed', errorMessage: 'Keine gültige Extraktion in der Provider-Antwort' })
+      return {
+        entry: extraction({ source: 'rules' }), llmCalled: true, llmFailures: 1, artifactVersionId: 11,
+        auction: auction(), llmConfigUsed: config, llmDurationMs: 800, llmUsage: null,
+      }
+    })
+
+    await runAdminTrialReprocess('zvg-portal', '7265', 'profile-1')
+
+    expect(writeAuctionDetails).not.toHaveBeenCalled()
+    expect(recordLlmUsage).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed', errorMessage: 'Keine gültige Extraktion in der Provider-Antwort' }))
+  })
+
   it('records an error and skips the write when the profile is unknown', async () => {
     vi.mocked(resolveLlmConfigForProfile).mockResolvedValue(null)
 

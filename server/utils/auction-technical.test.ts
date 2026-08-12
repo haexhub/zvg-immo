@@ -213,6 +213,23 @@ describe('readAuctionTechnicalOverview', () => {
     }])
   })
 
+  it('keeps a failed attempt on its own source instead of claiming a run trigger', async () => {
+    vi.mocked(getPool).mockReturnValue({
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('FROM auctions')) return { rows: [IDENTITY_ROW] }
+        if (sql.includes('FROM auction_details')) return { rows: [] }
+        if (sql.includes('FROM llm_usage_events')) return { rows: [{ ...FAILED_ATTEMPT_ROW, source: 'reprocess' }] }
+        if (sql.includes('FROM auction_geo_metrics')) return { rows: [] }
+        if (sql.includes('FROM auction_translations')) return { rows: [] }
+        throw new Error(`unexpected query: ${sql}`)
+      }),
+    } as never)
+
+    const overview = await readAuctionTechnicalOverview('zvg-portal', '7265')
+
+    expect(overview?.extractionHistory).toMatchObject([{ id: 'f42', isTrial: false, runTrigger: 'reprocess' }])
+  })
+
   it('keeps only LLM batch jobs whose custom_id_map references this identity', async () => {
     vi.mocked(listRecentLlmBatchJobs).mockResolvedValue([
       {

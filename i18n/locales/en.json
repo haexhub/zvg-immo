@@ -604,13 +604,15 @@
         "live": "Live",
         "trial": "Trial",
         "pending": "Running …",
-        "failed": "Failed"
+        "failed": "Failed",
+        "success": "Succeeded"
       },
       "trial": {
         "profilePlaceholder": "Choose an LLM profile",
         "start": "Start trial run",
         "running": "Trial running …",
-        "triggerError": "Trial run could not be started."
+        "triggerError": "Trial run could not be started.",
+        "timeout": "The trial run did not report back within three minutes. Reload the page to check the result."
       },
       "diff": {
         "compare": "Compare",

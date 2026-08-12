@@ -54,6 +54,9 @@ const formatTokens = (input: number | null, output: number | null): string =>
         <TableCell class="space-x-1">
           <Badge v-if="row.status === 'pending'" variant="secondary">{{ $t('settings.auctionTechnical.badges.pending') }}</Badge>
           <Badge v-if="row.status === 'failed'" variant="destructive">{{ $t('settings.auctionTechnical.badges.failed') }}</Badge>
+          <!-- "Live" already implies a successful run; every other successful
+               row would otherwise show an empty cell next to explicit "Fehlgeschlagen". -->
+          <Badge v-if="row.status === 'success' && !row.isLatest" variant="outline">{{ $t('settings.auctionTechnical.badges.success') }}</Badge>
           <Badge v-if="row.isLatest" variant="default">{{ $t('settings.auctionTechnical.badges.live') }}</Badge>
           <Badge v-if="row.isTrial" variant="secondary">{{ $t('settings.auctionTechnical.badges.trial') }}</Badge>
         </TableCell>

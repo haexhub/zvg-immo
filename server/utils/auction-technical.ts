@@ -248,7 +248,11 @@ async function readFailedExtractionAttempts(db: Pool, platform: string, external
     llmProvider: row.provider,
     llmModel: row.model,
     llmProfileId: row.profile_id,
-    runTrigger: row.source === 'admin-trial' ? 'manual' : 'cron',
+    // llm_usage_events has no run_trigger; only 'admin-trial' maps onto one
+    // ('manual', the same value the trial version is written with). Anything
+    // else keeps its own source rather than claiming a trigger it never had —
+    // a reprocess call is just as likely manual as scheduled.
+    runTrigger: row.source === 'admin-trial' ? 'manual' : row.source,
     llmDurationMs: row.duration_ms,
     llmCostUsd: null,
     llmInputTokens: row.input_tokens,

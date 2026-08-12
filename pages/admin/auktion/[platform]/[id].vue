@@ -139,7 +139,17 @@ const { start: startTrialPolling } = usePollWhileActive(
     const newRun = overview.value?.extractionHistory.find((row) => row.isTrial && !trialBaselineIds.has(row.id))
     if (newRun) trialRunning.value = false
   },
-  { intervalMs: 3000, maxAttempts: 60 },
+  {
+    intervalMs: 3000,
+    maxAttempts: 60,
+    // Three minutes without either a version or a failed-attempt row: give the
+    // controls back instead of leaving the pending row and the disabled button
+    // in place forever. The run may still land — loadOverview picks it up.
+    onExhausted: () => {
+      trialRunning.value = false
+      trialTriggerError.value = t('settings.auctionTechnical.trial.timeout')
+    },
+  },
 )
 
 async function startTrial(): Promise<void> {

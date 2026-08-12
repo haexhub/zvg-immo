@@ -9,7 +9,15 @@
 export function usePollWhileActive(
   isActive: () => boolean,
   refresh: () => void | Promise<void>,
-  options: { intervalMs?: number; maxAttempts?: number } = {},
+  options: {
+    intervalMs?: number
+    maxAttempts?: number
+    /** Fires when maxAttempts ran out while isActive() was still true. Without
+     *  it the caller's "still running" state would stay set forever, since
+     *  polling stopping is otherwise indistinguishable from it never having
+     *  started. */
+    onExhausted?: () => void
+  } = {},
 ) {
   const intervalMs = options.intervalMs ?? 3000
   const maxAttempts = options.maxAttempts ?? null
@@ -42,8 +50,14 @@ export function usePollWhileActive(
       // not be undone by re-arming the timer below.
       if (!running || cycle !== generation) return
       attempts++
-      if (!isActive() || (maxAttempts != null && attempts >= maxAttempts)) stop()
-      else schedule(cycle)
+      if (!isActive()) {
+        stop()
+      } else if (maxAttempts != null && attempts >= maxAttempts) {
+        stop()
+        options.onExhausted?.()
+      } else {
+        schedule(cycle)
+      }
     }, intervalMs)
   }
 

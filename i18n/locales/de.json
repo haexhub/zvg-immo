@@ -604,13 +604,15 @@
         "live": "Live",
         "trial": "Trial",
         "pending": "Läuft …",
-        "failed": "Fehlgeschlagen"
+        "failed": "Fehlgeschlagen",
+        "success": "Erfolgreich"
       },
       "trial": {
         "profilePlaceholder": "LLM-Profil wählen",
         "start": "Testlauf starten",
         "running": "Testlauf läuft …",
-        "triggerError": "Testlauf konnte nicht gestartet werden."
+        "triggerError": "Testlauf konnte nicht gestartet werden.",
+        "timeout": "Der Testlauf hat sich in drei Minuten nicht gemeldet. Die Seite neu laden, um das Ergebnis zu prüfen."
       },
       "diff": {
         "compare": "Vergleichen",
