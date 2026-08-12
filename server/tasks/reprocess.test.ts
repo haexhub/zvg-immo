@@ -568,6 +568,21 @@ describe('runReprocess llm_failures cooldown', () => {
     await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 1, skipped: 0 })
   })
 
+  it('openOnly keeps a cooled-down locked-out candidate excluded — "Retry open" must never silently retry a past failure', async () => {
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(
+      lockedOutFetchState(new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString()), // 25h ago — past cooldown
+    )
+
+    await expect(runReprocess({ country: 'de', openOnly: true })).resolves.toMatchObject({ processed: 0, skipped: 1 })
+  })
+
+  it('openOnly still processes a genuinely open (never-attempted) candidate', async () => {
+    // Default beforeEach state: no fetch state at all — llm_failures=0, the
+    // country's ordinary open/never-attempted bucket. openOnly must not be
+    // stricter than plain eligibility for the case it's actually meant for.
+    await expect(runReprocess({ country: 'de', openOnly: true })).resolves.toMatchObject({ processed: 1, skipped: 0 })
+  })
+
   it('treats a never-attempted timestamp as elapsed (rows predating this column)', async () => {
     vi.mocked(readAuctionFetchStates).mockResolvedValue(lockedOutFetchState(null))
 

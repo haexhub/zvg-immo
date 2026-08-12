@@ -59,6 +59,15 @@ export interface ReprocessOptions {
    *  candidates would also be picked up and burn LLM budget the action
    *  never asked to spend. */
   failedOnly?: boolean
+  /** Excludes any candidate at or past MAX_LLM_FAILURES outright, even one
+   *  whose LLM_FAILURE_RETRY_COOLDOWN_HOURS window has elapsed. Without this,
+   *  the default cron/backlog eligibility deliberately lets a cooled-down
+   *  locked-out candidate back in (see cooldownElapsed) so the scheduled task
+   *  self-heals old lockouts — desired for the cron, but not for /settings'
+   *  "Retry open" action: an admin asking for the country's open backlog
+   *  specifically must not also silently re-spend LLM budget on auctions
+   *  that already failed MAX_LLM_FAILURES times, however long ago. */
+  openOnly?: boolean
   /** Bypasses only the isLlmBatchPending gate (see reprocess-run.ts), unlike
    *  `force` which also bypasses the "does this candidate actually need an
    *  attempt" check. A candidate still carrying an unresolved llmBatchJob
