@@ -535,6 +535,7 @@
       "noData": "No data",
       "retryError": "Retry could not be started.",
       "bucketDone": "Done",
+      "bucketPending": "In progress",
       "bucketOpen": "Open",
       "bucketError": "Failed",
       "colPlatform": "Platform",

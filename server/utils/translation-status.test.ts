@@ -20,8 +20,8 @@ describe('readTranslationStatusByCountry', () => {
     vi.mocked(getPool).mockReturnValue({ query } as never)
 
     await expect(readTranslationStatusByCountry()).resolves.toEqual({
-      de: { done: 0, open: 1, error: 0, total: 1 },
-      se: { done: 1, open: 0, error: 1, total: 2 },
+      de: { done: 0, open: 1, error: 0, pending: 0, total: 1 },
+      se: { done: 1, open: 0, error: 1, pending: 0, total: 2 },
     })
   })
 
@@ -41,8 +41,8 @@ describe('readTranslationStatusByCountry', () => {
 
     await expect(readTranslationStatusByCountryAndLanguage()).resolves.toEqual({
       se: {
-        de: { done: 1, open: 0, error: 0, total: 1 },
-        en: { done: 0, open: 1, error: 0, total: 1 },
+        de: { done: 1, open: 0, error: 0, pending: 0, total: 1 },
+        en: { done: 0, open: 1, error: 0, pending: 0, total: 1 },
       },
     })
   })
@@ -113,7 +113,7 @@ describe('readTranslationStatusList', () => {
     })).resolves.toMatchObject({ total: 3, items: [{ externalId: 'older' }] })
   })
 
-  it('omits active pending claims from the open list and country totals', async () => {
+  it('counts an active pending claim under its own bucket, not open', async () => {
     const query = vi.fn().mockResolvedValue({
       rows: [
         { country: 'se', platform: 'se-kronofogden', external_id: 'active', title: 'Active', region: 'A', case_number: 'F-1', lang: 'de', status: 'pending', error_message: null, started_at: new Date() },
@@ -123,9 +123,22 @@ describe('readTranslationStatusList', () => {
     vi.mocked(getPool).mockReturnValue({ query } as never)
 
     await expect(readTranslationStatusList('se', 'open')).resolves.toMatchObject({ total: 1, items: [{ externalId: 'open' }] })
+    await expect(readTranslationStatusList('se', 'pending')).resolves.toMatchObject({ total: 1, items: [{ externalId: 'active' }] })
     await expect(readTranslationStatusByCountryAndLanguage()).resolves.toEqual({
-      se: { de: { done: 0, error: 0, open: 1, total: 1 } },
+      se: { de: { done: 0, error: 0, open: 1, pending: 1, total: 2 } },
     })
+  })
+
+  it('falls a claim whose lease expired back to the open bucket', async () => {
+    const query = vi.fn().mockResolvedValue({
+      rows: [
+        { country: 'se', platform: 'se-kronofogden', external_id: 'stale', title: 'Stale', region: 'A', case_number: 'F-1', lang: 'de', status: 'pending', error_message: null, started_at: new Date(Date.now() - 11 * 60 * 1000) },
+      ],
+    })
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+
+    await expect(readTranslationStatusList('se', 'open')).resolves.toMatchObject({ total: 1, items: [{ externalId: 'stale' }] })
+    await expect(readTranslationStatusList('se', 'pending')).resolves.toMatchObject({ total: 0 })
   })
 })
 

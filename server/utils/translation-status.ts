@@ -8,12 +8,13 @@ import { CONTENT_TARGET_LANGS, isPassthroughLanguage, type ContentTargetLang } f
 import { AUCTION_TRANSLATION_CLAIM_LEASE_MS } from './content-translation'
 import { getPool } from './db'
 
-export type TranslationStatusBucket = 'done' | 'error' | 'open'
+export type TranslationStatusBucket = 'done' | 'error' | 'open' | 'pending'
 
 export interface TranslationStatusCounts {
   done: number
   error: number
   open: number
+  pending: number
   total: number
 }
 
@@ -69,16 +70,11 @@ interface TranslationCandidateFilters {
 const BUCKET_BY_STATUS: Record<string, TranslationStatusBucket> = {
   completed: 'done',
   failed: 'error',
-  pending: 'open',
 }
 
 function isoOrNull(value: Date | string | null): string | null {
   if (value == null) return null
   return value instanceof Date ? value.toISOString() : value
-}
-
-function bucketOf(candidate: TranslationCandidate): TranslationStatusBucket {
-  return candidate.status == null ? 'open' : (BUCKET_BY_STATUS[candidate.status] ?? 'open')
 }
 
 function isStalePending(candidate: TranslationCandidate): boolean {
@@ -87,9 +83,19 @@ function isStalePending(candidate: TranslationCandidate): boolean {
   return Number.isFinite(startedAt) && startedAt < Date.now() - AUCTION_TRANSLATION_CLAIM_LEASE_MS
 }
 
+/** A live (non-stale) pending claim gets its own bucket instead of being
+ *  folded into 'open' — see readTranslationStatusByCountryAndLanguage, which
+ *  used to drop these rows entirely rather than count them anywhere. A
+ *  claim past its lease is treated as abandoned and falls back to 'open' so
+ *  it stays retryable. */
+function bucketOf(candidate: TranslationCandidate): TranslationStatusBucket {
+  if (candidate.status == null) return 'open'
+  if (candidate.status === 'pending') return isStalePending(candidate) ? 'open' : 'pending'
+  return BUCKET_BY_STATUS[candidate.status] ?? 'open'
+}
+
 function isInBucket(candidate: TranslationCandidate, bucket: TranslationStatusBucket): boolean {
-  if (bucketOf(candidate) !== bucket) return false
-  return bucket !== 'open' || candidate.status == null || isStalePending(candidate)
+  return bucketOf(candidate) === bucket
 }
 
 /**
@@ -149,12 +155,13 @@ export async function readTranslationStatusByCountry(): Promise<Record<string, T
   const byLanguage = await readTranslationStatusByCountryAndLanguage()
   const out: Record<string, TranslationStatusCounts> = {}
   for (const [country, languages] of Object.entries(byLanguage)) {
-    const counts = out[country] = { done: 0, error: 0, open: 0, total: 0 }
+    const counts = out[country] = { done: 0, error: 0, open: 0, pending: 0, total: 0 }
     for (const languageCounts of Object.values(languages)) {
       if (!languageCounts) continue
       counts.done += languageCounts.done
       counts.error += languageCounts.error
       counts.open += languageCounts.open
+      counts.pending += languageCounts.pending
       counts.total += languageCounts.total
     }
   }
@@ -167,9 +174,8 @@ export async function readTranslationStatusByCountryAndLanguage(): Promise<Recor
   const candidates = await readTranslationCandidates()
   const out: Record<string, TranslationStatusByLanguage> = {}
   for (const candidate of candidates) {
-    if (candidate.status === 'pending' && !isStalePending(candidate)) continue
     const languages = out[candidate.country] ?? (out[candidate.country] = {})
-    const counts = languages[candidate.lang] ?? (languages[candidate.lang] = { done: 0, error: 0, open: 0, total: 0 })
+    const counts = languages[candidate.lang] ?? (languages[candidate.lang] = { done: 0, error: 0, open: 0, pending: 0, total: 0 })
     counts[bucketOf(candidate)]++
     counts.total++
   }

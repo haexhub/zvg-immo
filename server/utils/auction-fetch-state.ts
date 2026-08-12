@@ -14,10 +14,12 @@ export interface AuctionFetchState {
   photoUrls: string[] | null
   sourceUpdatedIso: string | null
   detailFetchedAt: string | null
+  enrichClaimedAt: string | null
   llmBatchJob: string | null
   llmArtifactVersionId: number | null
   llmFailures: number
   llmLastAttemptedAt: string | null
+  llmClaimedAt: string | null
   photosCheckedAt: string | null
   photoFailures: number
   photoLastAttemptedAt: string | null
@@ -36,10 +38,12 @@ interface AuctionFetchStateRow {
   photo_urls: string[] | null
   source_updated_iso: Date | string | null
   detail_fetched_at: Date | string | null
+  enrich_claimed_at: Date | string | null
   llm_batch_job: string | null
   llm_artifact_version_id: string | number | null
   llm_failures: number
   llm_last_attempted_at: Date | string | null
+  llm_claimed_at: Date | string | null
   photos_checked_at: Date | string | null
   photo_failures: number
   photo_last_attempted_at: Date | string | null
@@ -64,10 +68,12 @@ function fromRow(row: AuctionFetchStateRow): AuctionFetchState {
     photoUrls: row.photo_urls,
     sourceUpdatedIso: iso(row.source_updated_iso),
     detailFetchedAt: iso(row.detail_fetched_at),
+    enrichClaimedAt: iso(row.enrich_claimed_at),
     llmBatchJob: row.llm_batch_job,
     llmArtifactVersionId: row.llm_artifact_version_id == null ? null : Number(row.llm_artifact_version_id),
     llmFailures: row.llm_failures,
     llmLastAttemptedAt: iso(row.llm_last_attempted_at),
+    llmClaimedAt: iso(row.llm_claimed_at),
     photosCheckedAt: iso(row.photos_checked_at),
     photoFailures: row.photo_failures,
     photoLastAttemptedAt: iso(row.photo_last_attempted_at),
@@ -159,6 +165,30 @@ export async function writeAuctionCrawlFetchState(auctions: Auction[]): Promise<
   }
 }
 
+/** How long an enrich claim is trusted before crawl-status.ts's read-side
+ *  falls it back to 'open'/'error' — a crashed worker (no per-item try/catch
+ *  around enrich-worker.ts's loop body) leaves the claim stuck otherwise.
+ *  Kept in sync by hand with the hardcoded interval literal in
+ *  crawl-status.ts's STATUS_CTE. */
+export const ENRICH_CLAIM_LEASE_MS = 15 * 60 * 1000
+
+/** Marks/clears a single identity as currently being (re-)crawled, independent
+ *  of the crawl/photo/LLM column groups above. Called once per identity right
+ *  as an enrich-worker.ts worker picks it up, and cleared at the end of that
+ *  same iteration. */
+export async function writeAuctionEnrichClaim(platform: string, externalId: string, claimedAt: string | null): Promise<void> {
+  const db = getPool()
+  if (!db) return
+  await db.query(
+    `INSERT INTO auction_fetch_state (platform, external_id, enrich_claimed_at)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (platform, external_id) DO UPDATE SET
+       enrich_claimed_at = EXCLUDED.enrich_claimed_at,
+       updated_at = now()`,
+    [platform, externalId, claimedAt],
+  )
+}
+
 export interface PhotoPipelineState {
   photosCheckedAt?: string | null
   photoFailures?: number
@@ -214,7 +244,9 @@ export interface LlmPipelineState {
   llmAttempted?: boolean
 }
 
-/** Updates only LLM-pipeline columns, preserving concurrent crawler/photo writes. */
+/** Updates only LLM-pipeline columns, preserving concurrent crawler/photo writes.
+ *  Always clears llm_claimed_at: every call site represents this item's LLM
+ *  attempt having just resolved (success or failure), see writeAuctionLlmClaim. */
 export async function writeAuctionLlmPipelineState(
   platform: string,
   externalId: string,
@@ -224,13 +256,14 @@ export async function writeAuctionLlmPipelineState(
   if (!db) return
   await db.query(
     `INSERT INTO auction_fetch_state
-       (platform, external_id, llm_batch_job, llm_artifact_version_id, llm_failures, llm_last_attempted_at)
-     VALUES ($1, $2, $3, $4, $5, CASE WHEN $6 THEN now() ELSE NULL END)
+       (platform, external_id, llm_batch_job, llm_artifact_version_id, llm_failures, llm_last_attempted_at, llm_claimed_at)
+     VALUES ($1, $2, $3, $4, $5, CASE WHEN $6 THEN now() ELSE NULL END, NULL)
      ON CONFLICT (platform, external_id) DO UPDATE SET
        llm_batch_job = EXCLUDED.llm_batch_job,
        llm_artifact_version_id = EXCLUDED.llm_artifact_version_id,
        llm_failures = EXCLUDED.llm_failures,
        llm_last_attempted_at = CASE WHEN $6 THEN now() ELSE auction_fetch_state.llm_last_attempted_at END,
+       llm_claimed_at = NULL,
        updated_at = now()`,
     [
       platform,
@@ -240,6 +273,32 @@ export async function writeAuctionLlmPipelineState(
       state.llmFailures,
       state.llmAttempted ?? false,
     ],
+  )
+}
+
+/** How long a sync LLM claim is trusted before llm-status.ts's read-side falls
+ *  it back to 'error'/'open' — claude-proxy.ts's own request timeout is 120s
+ *  plus a handful of transient retries, so a real in-flight call never
+ *  approaches this; it only matters for a run that died mid-item. */
+export const LLM_CLAIM_LEASE_MS = 10 * 60 * 1000
+
+/** Marks a single identity as currently undergoing a synchronous LLM call —
+ *  set right before reprocess-run.ts's sync reprocessAuction() call, cleared
+ *  by the writeAuctionLlmPipelineState() write that already follows it
+ *  (success or failure). Deliberately its own narrow writer rather than a
+ *  field on LlmPipelineState: the caller doesn't know llmFailures/llmBatchJob
+ *  yet at claim time. Not used for the batch-submission path — a
+ *  provider-batch job already has its own lifecycle via llm_batch_job. */
+export async function writeAuctionLlmClaim(platform: string, externalId: string, claimedAt: string | null): Promise<void> {
+  const db = getPool()
+  if (!db) return
+  await db.query(
+    `INSERT INTO auction_fetch_state (platform, external_id, llm_claimed_at)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (platform, external_id) DO UPDATE SET
+       llm_claimed_at = EXCLUDED.llm_claimed_at,
+       updated_at = now()`,
+    [platform, externalId, claimedAt],
   )
 }
 
@@ -257,6 +316,7 @@ export function applyAuctionFetchState(auction: Auction, state: AuctionFetchStat
   auction.processing = {
     llmBatchJob: state.llmBatchJob,
     llmFailures: state.llmFailures,
+    llmClaimedAt: state.llmClaimedAt,
     photosCheckedAt: state.photosCheckedAt,
     photoFailures: state.photoFailures,
     photoPipelineVersion: state.photoPipelineVersion,

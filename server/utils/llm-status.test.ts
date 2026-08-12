@@ -32,7 +32,7 @@ function extraction(overrides: Partial<AuctionExtraction> = {}): AuctionExtracti
   }
 }
 
-function record(overrides: { extraction?: AuctionExtraction; llmFailures?: number } = {}): AuctionRecord {
+function record(overrides: { extraction?: AuctionExtraction; llmFailures?: number; llmClaimedAt?: string | null } = {}): AuctionRecord {
   return {
     detailsId: 1,
     detailsVersion: 1,
@@ -42,7 +42,14 @@ function record(overrides: { extraction?: AuctionExtraction; llmFailures?: numbe
       externalId: '1',
       country: 'de',
       extraction: overrides.extraction,
-      processing: { llmFailures: overrides.llmFailures ?? 0, photoFailures: 0, llmBatchJob: null, photosCheckedAt: null, photoPipelineVersion: null },
+      processing: {
+        llmFailures: overrides.llmFailures ?? 0,
+        llmClaimedAt: overrides.llmClaimedAt ?? null,
+        photoFailures: 0,
+        llmBatchJob: null,
+        photosCheckedAt: null,
+        photoPipelineVersion: null,
+      },
     } as never,
   }
 }
@@ -87,6 +94,28 @@ describe('classifyLlmStatus', () => {
   it('is "done" once llmAnalyzedAt is set, even if an optional LLM-only field is still missing', () => {
     expect(
       classifyLlmStatus(record({ extraction: extraction({ llmAnalyzedAt: '2026-08-01T10:00:00.000Z', condition: undefined }) })),
+    ).toBe('done')
+  })
+
+  it('is "pending" when a fresh LLM claim overrides a previous failure lockout', () => {
+    expect(
+      classifyLlmStatus(record({ llmFailures: 3, llmClaimedAt: new Date().toISOString() })),
+    ).toBe('pending')
+  })
+
+  it('is "pending" when a fresh LLM claim overrides the open/unextracted state', () => {
+    expect(classifyLlmStatus(record({ llmClaimedAt: new Date().toISOString() }))).toBe('pending')
+  })
+
+  it('falls back to error/open once a claim is older than the lease', () => {
+    const stale = new Date(Date.now() - 11 * 60 * 1000).toISOString()
+    expect(classifyLlmStatus(record({ llmFailures: 3, llmClaimedAt: stale }))).toBe('error')
+    expect(classifyLlmStatus(record({ llmClaimedAt: stale }))).toBe('open')
+  })
+
+  it('stays "done" once llmAnalyzedAt is set even with a fresh claim (e.g. a forced re-run)', () => {
+    expect(
+      classifyLlmStatus(record({ extraction: extraction({ llmAnalyzedAt: '2026-08-01T10:00:00.000Z' }), llmClaimedAt: new Date().toISOString() })),
     ).toBe('done')
   })
 })

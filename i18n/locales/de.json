@@ -535,6 +535,7 @@
       "noData": "Keine Daten",
       "retryError": "Erneuter Versuch fehlgeschlagen.",
       "bucketDone": "Erledigt",
+      "bucketPending": "In Bearbeitung",
       "bucketOpen": "Offen",
       "bucketError": "Fehlerhaft",
       "colPlatform": "Plattform",

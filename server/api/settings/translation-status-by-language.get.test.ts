@@ -13,13 +13,13 @@ describe('/api/settings/translation-status-by-language', () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     const { readTranslationStatusByCountryAndLanguage } = await import('~/server/utils/translation-status')
     vi.mocked(readTranslationStatusByCountryAndLanguage).mockResolvedValue({
-      se: { de: { done: 3, open: 1, error: 0, total: 4 }, en: { done: 2, open: 0, error: 1, total: 3 } },
+      se: { de: { done: 3, open: 1, error: 0, pending: 0, total: 4 }, en: { done: 2, open: 0, error: 1, pending: 0, total: 3 } },
     })
 
     const handler = (await import('./translation-status-by-language.get')).default as (event: unknown) => Promise<unknown>
 
     await expect(handler({})).resolves.toEqual({
-      se: { de: { done: 3, open: 1, error: 0, total: 4 }, en: { done: 2, open: 0, error: 1, total: 3 } },
+      se: { de: { done: 3, open: 1, error: 0, pending: 0, total: 4 }, en: { done: 2, open: 0, error: 1, pending: 0, total: 3 } },
     })
   })
 })

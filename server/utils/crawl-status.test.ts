@@ -14,14 +14,15 @@ describe('readCrawlStatusByCountry', () => {
         { country: 'de', bucket: 'done', count: '5' },
         { country: 'de', bucket: 'open', count: '2' },
         { country: 'de', bucket: 'error', count: '1' },
+        { country: 'de', bucket: 'pending', count: '4' },
         { country: 'se', bucket: 'open', count: '3' },
       ],
     }))
     vi.mocked(getPool).mockReturnValue({ query } as never)
 
     await expect(readCrawlStatusByCountry()).resolves.toEqual({
-      de: { done: 5, open: 2, error: 1, total: 8 },
-      se: { done: 0, open: 3, error: 0, total: 3 },
+      de: { done: 5, open: 2, error: 1, pending: 4, total: 12 },
+      se: { done: 0, open: 3, error: 0, pending: 0, total: 3 },
     })
   })
 

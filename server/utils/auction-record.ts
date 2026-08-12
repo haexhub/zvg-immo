@@ -85,6 +85,7 @@ interface AuctionRecordRow {
   detail_fetched_at: Date | string | null
   llm_batch_job: string | null
   llm_failures: number | null
+  llm_claimed_at: Date | string | null
   photos_checked_at: Date | string | null
   photo_failures: number | null
   photo_pipeline_version: number | null
@@ -121,7 +122,7 @@ const SELECT_SQL = `SELECT
   d.source_rooms,
   fs.pdf_url, fs.pdf_url_upstream, fs.detail_url, fs.detail_url_upstream,
   fs.attachments, fs.photo_urls, fs.source_updated_iso, fs.detail_fetched_at,
-  fs.llm_batch_job, fs.llm_failures, fs.photos_checked_at,
+  fs.llm_batch_job, fs.llm_failures, fs.llm_claimed_at, fs.photos_checked_at,
   fs.photo_failures, fs.photo_pipeline_version
 FROM auctions a
 LEFT JOIN LATERAL (
@@ -223,6 +224,7 @@ function fromRow(row: AuctionRecordRow, photos: CuratedPhoto[]): AuctionRecord {
       processing: {
         llmBatchJob: row.llm_batch_job,
         llmFailures: row.llm_failures ?? 0,
+        llmClaimedAt: isoOrNull(row.llm_claimed_at),
         photosCheckedAt: isoOrNull(row.photos_checked_at),
         photoFailures: row.photo_failures ?? 0,
         photoPipelineVersion: row.photo_pipeline_version,

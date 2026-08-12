@@ -1,11 +1,12 @@
 import { useSettingsAction } from './useSettingsAction'
 
-export type StatusBucket = 'done' | 'error' | 'open'
+export type StatusBucket = 'done' | 'error' | 'open' | 'pending'
 
 export interface StatusCounts {
   done: number
   error: number
   open: number
+  pending: number
   total: number
 }
 

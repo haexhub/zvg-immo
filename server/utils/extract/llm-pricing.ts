@@ -23,6 +23,8 @@ export interface ModelPricing {
 const MODEL_PRICING: Record<string, ModelPricing> = {
   // Anthropic (claude-proxy) — https://www.anthropic.com/pricing
   'claude-haiku-4-5': { inputPerMillion: 1, outputPerMillion: 5 },
+  // SettingsLlmProfilesCard.vue's claude-proxy default template.
+  'claude-sonnet-5': { inputPerMillion: 3, outputPerMillion: 15 },
   // Gemini (gemini-native) — https://ai.google.dev/gemini-api/docs/pricing
   'gemini-flash-latest': { inputPerMillion: 0.3, outputPerMillion: 2.5 },
 }

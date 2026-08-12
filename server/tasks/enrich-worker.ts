@@ -9,11 +9,7 @@ import { readAuctionRecordMap, type AuctionRecord } from '~/server/utils/auction
 import { applyAuctionExtraction } from '~/server/utils/auction-extraction'
 import { mergeStoredAuction } from '~/server/utils/auction-merge'
 import { readLatestArtifactVersions } from '~/server/utils/artifact-version-state'
-import {
-  readAuctionFetchStates,
-  writeAuctionCrawlFetchState,
-  writeAuctionPhotoPipelineState,
-} from '~/server/utils/auction-fetch-state'
+import { readAuctionFetchStates, writeAuctionCrawlFetchState, writeAuctionEnrichClaim, writeAuctionPhotoPipelineState } from '~/server/utils/auction-fetch-state'
 import { deriveMarketValueEur, getRates } from '~/server/utils/exchange-rate'
 import { matchAlerts } from '~/server/utils/alert-matching'
 import { downloadNativeImages } from '~/server/utils/extract/native-images'
@@ -215,6 +211,8 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
         throwIfTaskAborted(signal)
         const a = todo[cursor++]
         if (!a) continue
+        // Fresh timestamp, not the shared `at` below (fixed at run start).
+        await writeAuctionEnrichClaim(a.platform, a.externalId, new Date().toISOString())
         const crawler = byPlatform.get(a.platform)
         const key = cacheKey(a.platform, a.externalId)
         const priorRecord = records.get(key)
@@ -421,6 +419,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
           photoPipelineVersion,
           photoAttempted,
         })
+        await writeAuctionEnrichClaim(a.platform, a.externalId, null)
         archived++
         archivedByCountry.set(a.country, (archivedByCountry.get(a.country) ?? 0) + 1)
         // Make this auction visible right away instead of waiting for the

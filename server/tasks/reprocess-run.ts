@@ -10,7 +10,7 @@ import { readAuctionRecordMap, type AuctionRecord } from '~/server/utils/auction
 import { upsertCurrentAuctions } from '~/server/utils/current-auctions'
 import { writeAuctionDetails } from '~/server/utils/auction-details'
 import { readArtifactProcessingState } from '~/server/utils/artifact-version-state'
-import { readAuctionFetchStates, writeAuctionLlmPipelineState } from '~/server/utils/auction-fetch-state'
+import { readAuctionFetchStates, writeAuctionLlmClaim, writeAuctionLlmPipelineState } from '~/server/utils/auction-fetch-state'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 import { interleaveByPlatform } from '~/server/utils/interleave-by-platform'
 import { recordTaskRunError } from '~/server/utils/task-run-errors'
@@ -199,6 +199,9 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
     // reaches persistEntry.
     let syncLlmAttempted = false
     let priorLlmFailures = 0
+    // Hoisted like syncLlmAttempted: whether writeAuctionLlmClaim ran, since
+    // syncConfigs itself is scoped inside the try block below.
+    let llmClaimed = false
     try {
       const key = cacheKey(platform, externalId)
       const record = records.get(key)
@@ -308,6 +311,15 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       }
 
       let platformLlmCallsSoFar = platformLlmCalls
+      // Claimed only for a real sync LLM call (not the rules-only fallback
+      // below); cleared below, in the catch block, or by persistEntry's
+      // writeAuctionLlmPipelineState. A fresh timestamp, not the shared `at`
+      // above — that one is fixed at run start and would look stale already
+      // for a candidate reached late in a long run.
+      if (syncConfigs.length > 0) {
+        llmClaimed = true
+        await writeAuctionLlmClaim(platform, externalId, new Date().toISOString())
+      }
       const result = await reprocessAuction(platform, externalId, priorEntry, syncConfigs[0] ?? null, at, {
         artifactState,
         priorLlmFailures,
@@ -352,6 +364,8 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
         },
       })
       if (!result) {
+        // buildReprocessInput bailed before persistEntry could clear the claim.
+        if (llmClaimed) await writeAuctionLlmClaim(platform, externalId, null)
         skipped++
         continue
       }
@@ -376,6 +390,9 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       // rules-only once the limit is hit, long after the outage clears.
       console.warn(`[reprocess] failed for ${platform}:${externalId}: ${(err as Error).message}`)
       skipped++
+      // Unconditional (unlike the llmAttempted-gated write below): a throw
+      // before onLlmAttempt fired would otherwise leave the claim stuck.
+      if (llmClaimed) await writeAuctionLlmClaim(platform, externalId, null)
       void recordTaskRunError('reprocess', {
         platform,
         externalId,

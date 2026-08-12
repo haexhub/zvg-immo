@@ -33,6 +33,7 @@ const BUCKETS: { key: StatusBucket; color: string; icon: typeof CheckCircle2 }[]
 
 const bucketLabel = computed<Record<StatusBucket, string>>(() => ({
   done: t('settings.statusOverview.bucketDone'),
+  pending: t('settings.statusOverview.bucketPending'),
   open: t('settings.statusOverview.bucketOpen'),
   error: t('settings.statusOverview.bucketError'),
 }))

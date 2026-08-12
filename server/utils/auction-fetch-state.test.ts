@@ -7,6 +7,8 @@ vi.mock('./db', () => ({ getPool: vi.fn() }))
 const {
   applyAuctionFetchState,
   writeAuctionCrawlFetchState,
+  writeAuctionEnrichClaim,
+  writeAuctionLlmClaim,
   writeAuctionLlmPipelineState,
   writeAuctionPhotoPipelineState,
 } = await import('./auction-fetch-state')
@@ -73,8 +75,27 @@ describe('auction fetch state writers', () => {
 
     const llmSql = String(calls[2]?.[0])
     expect(llmSql).toContain('llm_batch_job = EXCLUDED.llm_batch_job')
+    expect(llmSql).toContain('llm_claimed_at = NULL')
     expect(llmSql).not.toContain('photo_failures = EXCLUDED')
     expect(llmSql).not.toContain('attachments = EXCLUDED')
+  })
+
+  it('claims and clears enrich/LLM state through their own narrow columns', async () => {
+    const query = vi.fn(async () => ({ rows: [] }))
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+
+    await writeAuctionEnrichClaim('test', '1', '2026-08-12T10:00:00.000Z')
+    await writeAuctionLlmClaim('test', '1', '2026-08-12T10:00:00.000Z')
+    const calls = query.mock.calls as unknown as Array<[string, unknown[]?]>
+
+    const enrichSql = String(calls[0]?.[0])
+    expect(enrichSql).toContain('enrich_claimed_at = EXCLUDED.enrich_claimed_at')
+    expect(enrichSql).not.toContain('llm_claimed_at')
+    expect(calls[0]?.[1]).toEqual(['test', '1', '2026-08-12T10:00:00.000Z'])
+
+    const llmClaimSql = String(calls[1]?.[0])
+    expect(llmClaimSql).toContain('llm_claimed_at = EXCLUDED.llm_claimed_at')
+    expect(llmClaimSql).not.toContain('enrich_claimed_at')
   })
 
   it('applies mutable state without replacing immutable extraction facts', () => {
@@ -101,10 +122,12 @@ describe('auction fetch state writers', () => {
       photoUrls: ['https://example.test/photo.jpg'],
       sourceUpdatedIso: null,
       detailFetchedAt: '2026-08-02T10:00:00.000Z',
+      enrichClaimedAt: null,
       llmBatchJob: 'batch-1',
       llmArtifactVersionId: 12,
       llmFailures: 2,
       llmLastAttemptedAt: null,
+      llmClaimedAt: null,
       photosCheckedAt: '2026-08-02T11:00:00.000Z',
       photoFailures: 1,
       photoLastAttemptedAt: null,
@@ -126,6 +149,7 @@ describe('auction fetch state writers', () => {
     expect(value.processing).toEqual({
       llmBatchJob: 'batch-1',
       llmFailures: 2,
+      llmClaimedAt: null,
       photosCheckedAt: '2026-08-02T11:00:00.000Z',
       photoFailures: 1,
       photoPipelineVersion: 3,

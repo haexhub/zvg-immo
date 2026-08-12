@@ -9,6 +9,7 @@ import { readLatestArtifactVersions } from '../utils/artifact-version-state'
 import {
   readAuctionFetchStates,
   writeAuctionCrawlFetchState,
+  writeAuctionEnrichClaim,
   writeAuctionPhotoPipelineState,
 } from '../utils/auction-fetch-state'
 import { downloadNativeImages } from '../utils/extract/native-images'
@@ -31,6 +32,7 @@ vi.mock('../utils/artifact-version-state', () => ({ readLatestArtifactVersions: 
 vi.mock('../utils/auction-fetch-state', () => ({
   readAuctionFetchStates: vi.fn(),
   writeAuctionCrawlFetchState: vi.fn(),
+  writeAuctionEnrichClaim: vi.fn(),
   writeAuctionPhotoPipelineState: vi.fn(),
 }))
 vi.mock('../utils/exchange-rate', () => ({ getRates: vi.fn(async () => ({})), deriveMarketValueEur: vi.fn() }))
@@ -110,10 +112,12 @@ function fetchState(overrides: Partial<AuctionFetchState> = {}): AuctionFetchSta
     photoUrls: ['https://example.test/front.jpg'],
     sourceUpdatedIso: null,
     detailFetchedAt: '2026-08-01T10:00:00.000Z',
+    enrichClaimedAt: null,
     llmBatchJob: null,
     llmArtifactVersionId: null,
     llmFailures: 0,
     llmLastAttemptedAt: null,
+    llmClaimedAt: null,
     photosCheckedAt: null,
     photoFailures: 0,
     photoLastAttemptedAt: null,
@@ -181,6 +185,22 @@ describe('runEnrich structured persistence', () => {
       expect.objectContaining({ source: 'rules', confidence: 'low' }),
       { artifactVersionId: null },
     )
+  })
+
+  it('claims an identity before working on it and clears the claim once the iteration finishes', async () => {
+    const listing = auction()
+    vi.mocked(crawlAll).mockResolvedValue(crawlResult([listing]))
+
+    await runEnrich({ country: 'de' })
+
+    expect(writeAuctionEnrichClaim).toHaveBeenNthCalledWith(1, 'test-platform', '42', expect.any(String))
+    expect(writeAuctionEnrichClaim).toHaveBeenNthCalledWith(2, 'test-platform', '42', null)
+    // writeAuctionPhotoPipelineState is per-item-only (unlike
+    // writeAuctionCrawlFetchState, which is also called once up front for the
+    // raw region-crawl result before this worker loop even starts) — a solid
+    // anchor for "the claim was set before this iteration's work began".
+    expect(vi.mocked(writeAuctionEnrichClaim).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(writeAuctionPhotoPipelineState).mock.invocationCallOrder[0]!)
   })
 
   it('checks native photos on the first pass and writes details only once', async () => {

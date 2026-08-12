@@ -19,7 +19,7 @@ export interface LlmStatusList {
   total: number
 }
 
-const BUCKETS: LlmStatusBucket[] = ['done', 'error', 'open']
+const BUCKETS: LlmStatusBucket[] = ['done', 'error', 'open', 'pending']
 const DEFAULT_LIMIT = 50
 const MAX_LIMIT = 200
 // `error` is intentionally unsupported: last error messages are resolved only
@@ -55,7 +55,7 @@ export default defineEventHandler(async (event): Promise<LlmStatusList> => {
   const query = getQuery(event)
   const bucket = String(query.bucket ?? '') as LlmStatusBucket
   if (!BUCKETS.includes(bucket)) {
-    throw createError({ statusCode: 400, statusMessage: 'bucket muss done, error oder open sein.' })
+    throw createError({ statusCode: 400, statusMessage: 'bucket muss done, error, open oder pending sein.' })
   }
   const limit = Math.min(MAX_LIMIT, Math.max(1, Number(query.limit) || DEFAULT_LIMIT))
   const offset = Math.max(0, Number(query.offset) || 0)
