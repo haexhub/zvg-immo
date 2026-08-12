@@ -27,20 +27,30 @@ const MAX_LIMIT = 200
 const SORT_FIELDS = ['platform', 'title', 'region', 'failures'] as const
 type LlmStatusSort = typeof SORT_FIELDS[number]
 
-/** Only looked up for the page actually being rendered — task_run_errors
+/** Only looked up for the page actually being rendered — llm_usage_events
  *  isn't scoped to a country, so scanning it for every candidate in a large
- *  country would cost far more than the handful of rows a page shows. */
+ *  country would cost far more than the handful of rows a page shows.
+ *  Sources from llm_usage_events rather than task_run_errors so this matches
+ *  the per-run failures shown on the auction technical page (same table,
+ *  same "last failed extraction call" concept) instead of drifting from it —
+ *  admin-triggered trial runs are excluded since they never affect llmFailures
+ *  or this bucket's classification in the first place. */
 async function lastErrorMessages(identities: { platform: string; externalId: string }[]): Promise<Map<string, string>> {
   const db = getPool()
   if (!db || identities.length === 0) return new Map()
-  const { rows } = await db.query<{ platform: string; external_id: string; message: string }>(
-    `SELECT DISTINCT ON (platform, external_id) platform, external_id, message
-     FROM task_run_errors
-     WHERE task = 'reprocess' AND (platform, external_id) IN (SELECT * FROM unnest($1::text[], $2::text[]))
-     ORDER BY platform, external_id, created_at DESC`,
+  const { rows } = await db.query<{ platform: string; external_id: string; error_message: string | null }>(
+    `SELECT DISTINCT ON (platform, external_id) platform, external_id, error_message
+     FROM llm_usage_events
+     WHERE task = 'extraction' AND status = 'failed' AND source IS DISTINCT FROM 'admin-trial'
+       AND (platform, external_id) IN (SELECT * FROM unnest($1::text[], $2::text[]))
+     ORDER BY platform, external_id, occurred_at DESC`,
     [identities.map((i) => i.platform), identities.map((i) => i.externalId)],
   )
-  return new Map(rows.map((row) => [`${row.platform}:${row.external_id}`, row.message]))
+  return new Map(
+    rows
+      .filter((row): row is typeof row & { error_message: string } => row.error_message != null)
+      .map((row) => [`${row.platform}:${row.external_id}`, row.error_message]),
+  )
 }
 
 export default defineEventHandler(async (event): Promise<LlmStatusList> => {
