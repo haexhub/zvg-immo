@@ -229,9 +229,9 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
             (llmConfig != null && !hasSuccessfulLlmExtraction) ||
             hasNewArchivedDocuments(artifactState)) &&
             (priorLlmFailures < MAX_LLM_FAILURES || cooldownElapsed(priorState?.llmLastAttemptedAt) || opts.ignoreCooldown) &&
-            !isLlmBatchPending(priorState?.llmBatchJob
+            (opts.ignoreBatchPending || !isLlmBatchPending(priorState?.llmBatchJob
               ? { llmBatchJob: priorState.llmBatchJob, at: priorState.updatedAt }
-              : undefined)))
+              : undefined))))
       if (!eligible) {
         skipped++
         continue
