@@ -66,7 +66,14 @@ export default defineTask({
     // explicit cachePath still runs, so the cache can be pre-populated before
     // configuring the source.
     if (!payload.cachePath?.trim() && !(await configuredCachePath())) {
-      return { result: { skipped: `${COPERNICUS_EFFIS_SOURCE_ID} has no configured cache path` } }
+      const skipped = `${COPERNICUS_EFFIS_SOURCE_ID} has no configured cache path`
+      // Recorded even for a no-op: without this, a /settings trigger on an
+      // unconfigured source left copernicusEffisImportStatus untouched, so
+      // the card's "Import gestartet" message never got contradicted by
+      // anything — same bug and fix as import-eu-flood-risk-cache.ts.
+      await recordTaskRunStart('import-copernicus-effis-cache')
+      await recordTaskRunEnd('import-copernicus-effis-cache', { error: skipped })
+      return { result: { skipped } }
     }
     return await runExclusiveTask('import-copernicus-effis-cache', async (signal) => {
       // Recorded (unlike eu-flood-risk/fr-dvf's cache imports) because
