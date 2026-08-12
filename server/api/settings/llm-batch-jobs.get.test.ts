@@ -290,4 +290,88 @@ describe('/api/settings/llm-batch-jobs', () => {
 
     expect(result.reprocessStatus).toEqual(runningStatus)
   })
+
+  it('caches the computed overview so rapid repeat polls skip the underlying scan', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
+      await import('~/server/utils/llm-batch-jobs')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { isGeminiBatchTierPaid } = await import('~/server/utils/extract/gemini-batch')
+    const { getTaskRunStatus } = await import('~/server/utils/task-runs')
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([])
+    vi.mocked(listRecentLlmBatchJobs).mockResolvedValue([])
+    vi.mocked(getAllLlmBatchCapabilities).mockResolvedValue({})
+    vi.mocked(readAuctionRecords).mockResolvedValue([])
+    vi.mocked(isGeminiBatchTierPaid).mockReturnValue(true)
+    vi.mocked(getTaskRunStatus).mockResolvedValue(IDLE_REPROCESS_STATUS)
+
+    const handler = (await import('./llm-batch-jobs.get')).default as () => Promise<unknown>
+    await handler()
+    await handler()
+
+    expect(readAuctionRecords).toHaveBeenCalledTimes(1)
+  })
+
+  it('recomputes once the cache TTL has elapsed', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+      const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
+        await import('~/server/utils/llm-batch-jobs')
+      const { readAuctionRecords } = await import('~/server/utils/auction-record')
+      const { isGeminiBatchTierPaid } = await import('~/server/utils/extract/gemini-batch')
+      const { getTaskRunStatus } = await import('~/server/utils/task-runs')
+      vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([])
+      vi.mocked(listRecentLlmBatchJobs).mockResolvedValue([])
+      vi.mocked(getAllLlmBatchCapabilities).mockResolvedValue({})
+      vi.mocked(readAuctionRecords).mockResolvedValue([])
+      vi.mocked(isGeminiBatchTierPaid).mockReturnValue(true)
+      vi.mocked(getTaskRunStatus).mockResolvedValue(IDLE_REPROCESS_STATUS)
+
+      const handler = (await import('./llm-batch-jobs.get')).default as () => Promise<unknown>
+      await handler()
+      vi.advanceTimersByTime(5000)
+      await handler()
+
+      expect(readAuctionRecords).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('caps the detailed jobs list without undercounting totalJobs/totalRequests', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
+      await import('~/server/utils/llm-batch-jobs')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { isGeminiBatchTierPaid } = await import('~/server/utils/extract/gemini-batch')
+    const { getTaskRunStatus } = await import('~/server/utils/task-runs')
+    const manyPendingJobs = Array.from({ length: 60 }, (_, i) => ({
+      jobName: `openrouter_batch_${i}`,
+      source: 'reprocess' as const,
+      status: 'pending' as const,
+      itemCount: 1,
+      customIdMap: {},
+      submittedAt: '2026-08-08T18:00:00.000Z',
+      checkedAt: null,
+      updatedAt: '2026-08-08T18:00:00.000Z',
+      errorMessage: null,
+      provider: null,
+      model: null,
+      profileId: null,
+    }))
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue(manyPendingJobs)
+    vi.mocked(listRecentLlmBatchJobs).mockResolvedValue([])
+    vi.mocked(getAllLlmBatchCapabilities).mockResolvedValue({})
+    vi.mocked(readAuctionRecords).mockResolvedValue([])
+    vi.mocked(isGeminiBatchTierPaid).mockReturnValue(true)
+    vi.mocked(getTaskRunStatus).mockResolvedValue(IDLE_REPROCESS_STATUS)
+
+    const handler = (await import('./llm-batch-jobs.get')).default as () => Promise<unknown>
+    const result = (await handler()) as { totalJobs: number; totalRequests: number; jobs: unknown[] }
+
+    expect(result.totalJobs).toBe(60)
+    expect(result.totalRequests).toBe(60)
+    expect(result.jobs).toHaveLength(50)
+  })
 })

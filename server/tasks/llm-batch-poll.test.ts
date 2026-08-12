@@ -16,7 +16,11 @@ import { recordLlmUsage } from '../utils/llm-usage'
 import { getPool } from '../utils/db'
 import { recordTaskRunError } from '../utils/task-run-errors'
 
-vi.mock('../utils/extract/llm-batch', () => ({ pollLlmBatch: vi.fn(), fetchLlmBatchResults: vi.fn() }))
+vi.mock('../utils/extract/llm-batch', () => ({
+  pollLlmBatch: vi.fn(),
+  fetchLlmBatchResults: vi.fn(),
+  LLM_BATCH_JOB_EXPIRY_MS: 48 * 60 * 60 * 1000,
+}))
 vi.mock('../utils/extract/llm-task-config', () => ({
   readExtractionLlmConfig: vi.fn(),
   resolveLlmConfigForProfile: vi.fn(),
@@ -375,5 +379,26 @@ describe('runLlmBatchPoll', () => {
 
     await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 2, merged: 0 })
     expect(markLlmBatchJobResolved).toHaveBeenCalledWith('batches/good', 'expired', expect.any(String), null)
+  })
+
+  it('gives up a job whose poll request keeps failing past the 48h grace window', async () => {
+    // job()'s default submittedAt (2026-08-02) is far more than 48h before
+    // any test run — a job stuck failing to even poll (deleted profile,
+    // revoked key, ...) must eventually stop being retried forever.
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job()])
+    vi.mocked(pollLlmBatch).mockRejectedValue(new Error('unauthorized'))
+
+    await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 1, merged: 0 })
+    expect(markLlmBatchJobResolved).toHaveBeenCalledWith('batches/abc', 'expired', expect.any(String), 'unauthorized')
+  })
+
+  it('keeps retrying a job whose poll request fails within the 48h grace window', async () => {
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([
+      job({ submittedAt: new Date().toISOString() }),
+    ])
+    vi.mocked(pollLlmBatch).mockRejectedValue(new Error('network blip'))
+
+    await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 1, merged: 0 })
+    expect(markLlmBatchJobResolved).not.toHaveBeenCalled()
   })
 })
