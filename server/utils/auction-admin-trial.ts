@@ -45,9 +45,10 @@ export async function validateAdminTrialReprocess(
 }
 
 /** The actual run — called fire-and-forget by the endpoint after validation.
- *  Any failure lands in task_run_errors under this identity (WP-7) instead of
- *  disappearing with the promise; that's what the admin page polls for
- *  "trial failed" instead of a dedicated status table. */
+ *  A failed provider call lands in llm_usage_events via onLlmCall below, which
+ *  is what the admin page's extraction-runs table polls for instead of a
+ *  dedicated status table; recordTaskRunError below is a second, coarser log
+ *  kept for the country-wide LLM status view (server/api/settings/llm-status). */
 export async function runAdminTrialReprocess(platform: string, externalId: string, profileId: string): Promise<void> {
   const db = getPool()
   if (!db) return
@@ -59,7 +60,28 @@ export async function runAdminTrialReprocess(platform: string, externalId: strin
 
     const at = new Date().toISOString()
     const priorEntry = record.auction.extraction ?? undefined
-    const result = await reprocessAuction(platform, externalId, priorEntry, config, at, {})
+    const result = await reprocessAuction(platform, externalId, priorEntry, config, at, {
+      // Mirrors reprocess-run.ts's onLlmCall: without this, a failed attempt
+      // (the case a trial is most often run to check) never reaches
+      // llm_usage_events, and the technical page has nothing but the generic
+      // task_run_errors entry below to show for it.
+      onLlmCall: async ({ config: usedConfig, durationMs, usage, status, errorMessage }) => {
+        await recordLlmUsage({
+          task: 'extraction',
+          executionMode: 'sync',
+          source: 'admin-trial',
+          provider: usedConfig.provider ?? 'openai-compatible',
+          model: usedConfig.model,
+          profileId: usedConfig.profileId ?? null,
+          platform,
+          externalId,
+          usage,
+          status,
+          errorMessage,
+          durationMs,
+        })
+      },
+    })
     if (!result) throw new Error('Kein archiviertes Capture für diese Auktion gefunden.')
 
     // Mirrors persistEntry's (server/tasks/reprocess.ts) base-auction
@@ -81,21 +103,10 @@ export async function runAdminTrialReprocess(platform: string, externalId: strin
       runTrigger: 'manual',
       llmDurationMs: result.llmDurationMs,
       llmCostUsd: result.llmConfigUsed ? resolveCostUsd(result.llmConfigUsed.model, result.llmUsage) : null,
+      llmInputTokens: result.llmUsage?.inputTokens ?? null,
+      llmOutputTokens: result.llmUsage?.outputTokens ?? null,
       trial: true,
     })
-    if (result.llmConfigUsed && result.llmUsage) {
-      await recordLlmUsage({
-        task: 'extraction',
-        executionMode: 'sync',
-        source: 'admin-trial',
-        provider: result.llmConfigUsed.provider ?? 'openai-compatible',
-        model: result.llmConfigUsed.model,
-        profileId: result.llmConfigUsed.profileId ?? null,
-        platform,
-        externalId,
-        usage: result.llmUsage,
-      })
-    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     console.warn(`[auction-admin-trial] failed for ${platform}:${externalId}: ${message}`)

@@ -172,11 +172,11 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
     await writeAuctionDetails(updated, entry, {
       artifactVersionId,
       llmProvider: llmConfigUsed ? (llmConfigUsed.provider ?? 'openai-compatible') : null,
-      llmModel: llmConfigUsed?.model ?? null,
-      llmProfileId: llmConfigUsed?.profileId ?? null,
+      llmModel: llmConfigUsed?.model ?? null, llmProfileId: llmConfigUsed?.profileId ?? null,
       runTrigger: opts.trigger ?? 'cron',
       llmDurationMs,
       llmCostUsd: llmConfigUsed ? resolveCostUsd(llmConfigUsed.model, llmUsage) : null,
+      llmInputTokens: llmUsage?.inputTokens ?? null, llmOutputTokens: llmUsage?.outputTokens ?? null,
     })
     await upsertCurrentAuctions([updated], at)
     await writeAuctionLlmPipelineState(record.auction.platform, record.auction.externalId, {

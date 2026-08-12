@@ -141,6 +141,13 @@
       "when": 1786518721656,
       "tag": "0019_tiny_cobalt_man",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1786538947863,
+      "tag": "0020_dusty_archangel",
+      "breakpoints": true
     }
   ]
 }

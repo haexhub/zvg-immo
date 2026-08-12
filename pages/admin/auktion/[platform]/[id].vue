@@ -5,7 +5,7 @@
 // routing decision) but calls the same /api/settings/* endpoints, which is
 // what server/middleware/settings-auth.ts actually guards.
 import { ArrowLeft } from 'lucide-vue-next'
-import AdminAuctionLlmCallsCard from '~/components/admin/auction/LlmCallsCard.vue'
+import type { DisplayRunRow } from '~/components/admin/auction/ExtractionVersionsTable.vue'
 import { useSettingsError } from '~/composables/settings/useSettingsError'
 import { useLlmProfileOptions } from '~/composables/settings/useLlmProfileOptions'
 import { usePollWhileActive } from '~/composables/settings/usePollWhileActive'
@@ -91,29 +91,53 @@ async function loadOverview(): Promise<void> {
 }
 
 // Einzellauf mit Profilauswahl (WP-4): kein dedizierter Status-Endpoint, die
-// Seite pollt stattdessen die Technik-Übersicht und erkennt Erfolg/Fehlschlag
-// an einer neuen Trial-Version bzw. einem neuen Fehler dieser Auktion (WP-7).
+// Seite pollt stattdessen die Technik-Übersicht und erkennt Abschluss (Erfolg
+// oder Fehlschlag) an einer neuen, mit diesem Testlauf markierten Zeile
+// (isTrial) in extractionHistory — die Zeile selbst trägt dann Status/Fehler/
+// Kosten, eine gesonderte Erfolg/Fehler-Anzeige neben dem Button ist nicht
+// mehr nötig (WP-7).
 const trialProfileId = ref<string>('')
 const trialRunning = ref(false)
-const trialResult = ref<'success' | 'failed' | null>(null)
+const trialStartedAt = ref<string | null>(null)
 const trialTriggerError = ref<string | null>(null)
-let trialBaselineVersions = new Set<number>()
-let trialBaselineErrorIds = new Set<number>()
+let trialBaselineIds = new Set<string>()
+
+const pendingTrialRow = computed<DisplayRunRow | null>(() => {
+  if (!trialRunning.value || !trialStartedAt.value) return null
+  const profile = llmProfileOptions.value.find((p) => p.id === trialProfileId.value)
+  return {
+    id: 'pending-trial',
+    version: null,
+    createdAt: trialStartedAt.value,
+    status: 'pending',
+    isLatest: false,
+    isTrial: true,
+    artifactVersionId: null,
+    extractionSource: null,
+    extractionConfidence: null,
+    llmProvider: profile?.provider ?? null,
+    llmModel: profile?.model ?? null,
+    llmProfileId: trialProfileId.value,
+    runTrigger: 'manual',
+    llmDurationMs: null,
+    llmCostUsd: null,
+    llmInputTokens: null,
+    llmOutputTokens: null,
+    errorMessage: null,
+  }
+})
+
+const extractionRunRows = computed<DisplayRunRow[]>(() => {
+  const rows = overview.value?.extractionHistory ?? []
+  return pendingTrialRow.value ? [pendingTrialRow.value, ...rows] : rows
+})
 
 const { start: startTrialPolling } = usePollWhileActive(
   () => trialRunning.value,
   async () => {
     await loadOverview()
-    if (!overview.value) return
-    const newTrial = overview.value.extractionHistory.find((v) => v.isTrial && !trialBaselineVersions.has(v.version))
-    const newError = overview.value.errors.find((e) => !trialBaselineErrorIds.has(e.id))
-    if (newTrial) {
-      trialRunning.value = false
-      trialResult.value = 'success'
-    } else if (newError) {
-      trialRunning.value = false
-      trialResult.value = 'failed'
-    }
+    const newRun = overview.value?.extractionHistory.find((row) => row.isTrial && !trialBaselineIds.has(row.id))
+    if (newRun) trialRunning.value = false
   },
   { intervalMs: 3000, maxAttempts: 60 },
 )
@@ -121,14 +145,13 @@ const { start: startTrialPolling } = usePollWhileActive(
 async function startTrial(): Promise<void> {
   if (!trialProfileId.value || !overview.value) return
   trialTriggerError.value = null
-  trialResult.value = null
-  trialBaselineVersions = new Set(overview.value.extractionHistory.map((v) => v.version))
-  trialBaselineErrorIds = new Set(overview.value.errors.map((e) => e.id))
+  trialBaselineIds = new Set(overview.value.extractionHistory.map((row) => row.id))
   try {
     await $fetch(`/api/settings/auction/${encodeURIComponent(platform)}/${encodeURIComponent(id)}/reprocess`, {
       method: 'POST',
       body: { profileId: trialProfileId.value },
     })
+    trialStartedAt.value = new Date().toISOString()
     trialRunning.value = true
     startTrialPolling()
   } catch (err) {
@@ -281,8 +304,6 @@ onMounted(probeSession)
                 <Button type="button" size="sm" :disabled="!trialProfileId || trialRunning" @click="startTrial">
                   {{ trialRunning ? $t('settings.auctionTechnical.trial.running') : $t('settings.auctionTechnical.trial.start') }}
                 </Button>
-                <span v-if="trialResult === 'success'" class="text-sm text-emerald-600">{{ $t('settings.auctionTechnical.trial.success') }}</span>
-                <span v-if="trialResult === 'failed'" class="text-sm text-destructive">{{ $t('settings.auctionTechnical.trial.failed') }}</span>
                 <p v-if="trialTriggerError" class="w-full text-sm text-destructive">{{ trialTriggerError }}</p>
               </div>
 
@@ -327,7 +348,7 @@ onMounted(probeSession)
               </div>
 
               <AdminAuctionExtractionVersionsTable
-                :rows="overview.extractionHistory"
+                :rows="extractionRunRows"
                 :selected-versions="selectedVersions"
                 :promote-pending="promotePending"
                 :format-date="formatDate"
@@ -336,21 +357,6 @@ onMounted(probeSession)
               />
             </CardContent>
           </Card>
-
-          <Card>
-            <CardHeader><CardTitle>{{ $t('settings.auctionTechnical.sections.errors') }}</CardTitle></CardHeader>
-            <CardContent class="space-y-2">
-              <p v-if="!overview.errors.length" class="text-sm text-muted-foreground">{{ $t('settings.auctionTechnical.noData') }}</p>
-              <div v-for="err in overview.errors" :key="err.id" class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm">
-                <div class="flex items-center gap-2 text-xs text-muted-foreground">
-                  <span>{{ err.task }}</span> · <span>{{ err.category }}</span> · <span>{{ formatDate(err.createdAt) }}</span>
-                </div>
-                <div class="text-destructive">{{ err.message }}</div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <AdminAuctionLlmCallsCard :calls="overview.llmCalls" :format-date="formatDate" />
 
           <Card>
             <CardHeader><CardTitle>{{ $t('settings.auctionTechnical.sections.translations') }}</CardTitle></CardHeader>
