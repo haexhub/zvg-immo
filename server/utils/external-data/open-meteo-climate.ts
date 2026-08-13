@@ -13,7 +13,7 @@
 // Climate normals don't go stale (WP-7 doc: "einmal geholt, nie wieder"), so
 // a cell is fetched at most once, ever, keyed by its rounded coordinates.
 
-import type { Pool } from 'pg'
+import type { Pool, PoolClient } from 'pg'
 import { sql } from 'drizzle-orm'
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type {
@@ -27,8 +27,8 @@ import { EXTERNAL_DATA_SOURCES } from './sources'
 import { fetchOpenMeteo } from './open-meteo-rate-limit'
 
 /** `readCachedCell`/`writeCachedCell` run both outside any lock (against the
- *  pool directly) and inside `withCellLock`'s transaction (against `tx`) — this
- *  is the common surface both a `NodePgDatabase` and its transaction share. */
+ *  pool directly) and inside `withCellLock`'s locked client, wrapped in its
+ *  own `drizzle()` instance — this is the common surface both share. */
 type Queryable = Pick<NodePgDatabase, 'execute'>
 
 export interface OpenMeteoClimateOptions {
@@ -92,31 +92,45 @@ export async function readClimateNormals(
   if (cached) return toLocationClimateNormals(cached, options.checkedAt)
 
   // Cold cell: two concurrent requests can both observe the miss above
-  // before either has written the row. A per-cell advisory lock (held for
-  // the transaction, scoped to the checked-out client) serializes them, and
-  // the re-read after acquiring it lets the loser of the race serve the
-  // winner's freshly-cached row instead of hitting Open-Meteo again.
-  return withCellLock(db, cell, async (tx) => {
-    const recached = await readCachedCell(tx, cell)
+  // before either has written the row. A per-cell *session* advisory lock
+  // (pg_advisory_lock/unlock on a dedicated checked-out client, not
+  // pg_advisory_xact_lock inside a BEGIN/COMMIT) serializes them without
+  // pinning that connection inside an open transaction for the whole
+  // archive fetch below — doing that previously left the fetch racing its
+  // own abort timeout against everything else contending for the
+  // connection pool, so cold cells routinely lost that race and never got
+  // cached at all (observed in prod: DE, with by far the most distinct
+  // cells to fetch, stuck at ~18% cached vs. 97-100% for every other,
+  // smaller country). The re-read after acquiring the lock lets the loser
+  // of the race serve the winner's freshly-cached row instead of hitting
+  // Open-Meteo again.
+  return withCellLock(options.db, cell, async (client) => {
+    const clientDb = drizzle(client)
+    const recached = await readCachedCell(clientDb, cell)
     if (recached) return toLocationClimateNormals(recached, options.checkedAt)
 
     const daily = await fetchDailySeries(cell, options)
     if (!daily) return null
     const data = aggregate(daily)
-    await writeCachedCell(tx, cell, data)
+    await writeCachedCell(clientDb, cell, data)
     return toLocationClimateNormals(data, options.checkedAt)
   })
 }
 
 async function withCellLock<T>(
-  db: NodePgDatabase,
+  pool: Pool,
   cell: { lat: number; lon: number },
-  fn: (tx: Queryable) => Promise<T>,
+  fn: (client: PoolClient) => Promise<T>,
 ): Promise<T> {
-  return db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${cellLockKey(cell)})::bigint)`)
-    return fn(tx)
-  })
+  const client = await pool.connect()
+  const key = cellLockKey(cell)
+  try {
+    await client.query('SELECT pg_advisory_lock(hashtext($1)::bigint)', [key])
+    return await fn(client)
+  } finally {
+    await client.query('SELECT pg_advisory_unlock(hashtext($1)::bigint)', [key]).catch(() => {})
+    client.release()
+  }
 }
 
 function cellLockKey(cell: { lat: number; lon: number }): string {

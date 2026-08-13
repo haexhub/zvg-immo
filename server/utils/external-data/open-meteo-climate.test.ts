@@ -133,10 +133,10 @@ describe('aggregate', () => {
 })
 
 describe('createOpenMeteoClimateNormalsEnhancer / readClimateNormals', () => {
-  // Models the same-cell serialization a real pg_advisory_xact_lock gives: a
+  // Models the same-cell serialization a real pg_advisory_lock gives: a
   // second lock request for a key already held waits for the holder's
-  // COMMIT/ROLLBACK before it proceeds. A successful write updates `row` so
-  // the loser's re-read (inside the lock) sees the winner's cached result.
+  // pg_advisory_unlock before it proceeds. A successful write updates `row`
+  // so the loser's re-read (inside the lock) sees the winner's cached result.
   function fakePool(existingRow: Record<string, unknown> | null = null) {
     const inserted: unknown[][] = []
     let row = existingRow
@@ -154,13 +154,12 @@ describe('createOpenMeteoClimateNormalsEnhancer / readClimateNormals', () => {
       return vi.fn(async (queryArg: unknown, params: unknown[] = []) => {
         const text = typeof queryArg === 'string' ? queryArg : (queryArg as { text: string }).text
         const n = text.replace(/\s+/g, ' ').trim().toLowerCase()
-        if (n === 'begin') return { rows: [], rowCount: 0 }
-        if (n === 'commit' || n === 'rollback') {
+        if (n.includes('pg_advisory_unlock')) {
           releaseLock?.()
           releaseLock = null
           return { rows: [], rowCount: 0 }
         }
-        if (n.includes('pg_advisory_xact_lock')) {
+        if (n.includes('pg_advisory_lock')) {
           releaseLock = await acquireLock(String(params[0]))
           return { rows: [], rowCount: 0 }
         }
@@ -184,16 +183,13 @@ describe('createOpenMeteoClimateNormalsEnhancer / readClimateNormals', () => {
       })
     }
 
-    // drizzle's transaction() (withCellLock) only checks out its own
-    // connection when the object it wraps looks like a `pg.Pool` — it tests
-    // `instanceof Pool` or a constructor name containing "Pool" — so this
-    // needs a named constructor to take that branch and give each concurrent
-    // lock attempt its own `makeQuery()` closure, matching a real per-session
+    // withCellLock calls pool.connect() itself (no drizzle transaction
+    // dispatch involved), so each concurrent lock attempt just needs its own
+    // `makeQuery()` closure from `connect`, matching a real per-session
     // connection.
-    function MockPool() {}
     const query = makeQuery()
     const connect = vi.fn(async () => ({ query: makeQuery(), release: vi.fn() }))
-    const pool = Object.assign(new (MockPool as unknown as new () => object)(), { query, connect, inserted })
+    const pool = { query, connect, inserted }
     return pool as unknown as Pool & { inserted: unknown[][] }
   }
 
