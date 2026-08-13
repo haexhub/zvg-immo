@@ -118,9 +118,10 @@ export function useAuctionSearchState(options: {
   })
 
   const headerLabel = computed(() => {
-    return selectedRegionLabel.value
-      ? `${selectedRegionLabel.value}, ${selectedCountryLabel.value}`
-      : selectedCountryLabel.value
+    if (selectedRegionLabel.value) return `${selectedRegionLabel.value}, ${selectedCountryLabel.value}`
+    const trimmedSearch = search.value.trim()
+    if (selectedCountries.value.length === 0 && trimmedSearch) return trimmedSearch
+    return selectedCountryLabel.value
   })
 
   function currentFilters(searchValue = search.value): AuctionSearchFilters {
