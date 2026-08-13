@@ -61,14 +61,15 @@ export function parseAuctionsHtml(html: string, landAbk: string, platformId: str
     // Upstream is inconsistent — e.g. BW renders as "Baden-Wuerttemberg" without
     // umlaut. landAbk is what we asked for and DE_REGION_NAMES is canonical.
     const regionName = DE_REGION_NAMES[landAbk] || landAbk
-    // Capture only the first <b>…</b> after the Amtsgericht marker, with no
-    // nested tags ([^<]+). A previous greedy variant matched across the entire
-    // chunk and bled into later <b> blocks (Verkehrswert/Termin) when their
-    // text contained " in " (e.g. "Sicherheitsleistung in Höhe …").
-    // The captured text has the form "<court> in <bundesland>"; courts can
-    // themselves contain " in " (e.g. "Landau in der Pfalz"), so split on the
-    // LAST occurrence.
-    const amtMatch = chunk.match(/<!--Amtsgericht--->[\s\S]*?<b>\s*([^<]+?)\s*<\/b>/i)
+    // Capture only the first bold-ish tag (<b> or <strong> — upstream switched
+    // from one to the other at some point, and both still show up) after the
+    // Amtsgericht marker, with no nested tags ([^<]+). A previous greedy
+    // variant matched across the entire chunk and bled into later bold blocks
+    // (Verkehrswert/Termin) when their text contained " in " (e.g.
+    // "Sicherheitsleistung in Höhe …"). The captured text has the form
+    // "<court> in <bundesland>"; courts can themselves contain " in " (e.g.
+    // "Landau in der Pfalz"), so split on the LAST occurrence.
+    const amtMatch = chunk.match(/<!--Amtsgericht--->[\s\S]*?<(?:b|strong)>\s*([^<]+?)\s*<\/(?:b|strong)>/i)
     if (amtMatch?.[1]) {
       const inner = clean(amtMatch[1])
       const sep = inner.lastIndexOf(' in ')
@@ -77,7 +78,7 @@ export function parseAuctionsHtml(html: string, landAbk: string, platformId: str
 
     let title: string | null = null
     let address: string | null = null
-    const lageMatch = chunk.match(/<b>([^<]+?)<!--Lage--->\s*:?\s*<\/b>\s*([^<\n]+)/)
+    const lageMatch = chunk.match(/<(?:b|strong)>([^<]+?)<!--Lage--->\s*:?\s*<\/(?:b|strong)>\s*([^<\n]+)/)
     if (lageMatch?.[1] && lageMatch[2]) {
       title = clean(lageMatch[1])
       address = clean(lageMatch[2])
@@ -85,7 +86,7 @@ export function parseAuctionsHtml(html: string, landAbk: string, platformId: str
 
     let marketValueEur: number | null = null
     let marketValueText: string | null = null
-    const vwMatch = chunk.match(/Verkehrswert in[\s\S]*?<b>([\s\S]*?)<\/b>/)
+    const vwMatch = chunk.match(/Verkehrswert in[\s\S]*?<(?:b|strong)>([\s\S]*?)<\/(?:b|strong)>/)
     if (vwMatch?.[1]) {
       const inner = vwMatch[1].replace(/<[^>]+>/g, ' ')
       marketValueText = clean(inner) || null
