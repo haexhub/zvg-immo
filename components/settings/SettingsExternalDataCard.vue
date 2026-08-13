@@ -54,6 +54,7 @@ interface ExternalDataSourceCoverage {
   total: number
   covered: number
   byCountry: ExternalDataCoverageCountryRow[]
+  lastSuccessAt: string | null
 }
 
 const { t, te } = useI18n()
@@ -307,6 +308,9 @@ onMounted(async () => {
             </span>
           </div>
           <Progress :model-value="percentOf(coverageFor(source.id)!.covered, coverageFor(source.id)!.total)" />
+          <p v-if="coverageFor(source.id)!.lastSuccessAt" class="text-xs text-muted-foreground">
+            {{ $t('settings.externalData.coverage.lastSuccessAt', { at: formatBatchDate(coverageFor(source.id)!.lastSuccessAt) }) }}
+          </p>
           <p v-if="coverageFor(source.id)!.byCountry.length === 0" class="text-xs text-muted-foreground">
             {{ $t('settings.externalData.coverage.empty') }}
           </p>

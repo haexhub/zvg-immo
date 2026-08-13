@@ -410,6 +410,7 @@
       "coverage": {
         "title": "Datenabdeckung",
         "summary": "{covered} von {total} geocodierten Auktionen ({percent} %)",
+        "lastSuccessAt": "Zuletzt erfolgreich aktualisiert: {at}",
         "empty": "Noch keine geocodierten Auktionen für diese Quelle.",
         "loadError": "Datenabdeckung konnte nicht geladen werden."
       },

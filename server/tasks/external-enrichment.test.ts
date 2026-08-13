@@ -530,7 +530,7 @@ describe('runExternalEnrichment', () => {
       platform: 'se-kronofogden',
       country: 'se',
       externalId: '1',
-    }))
+    }), null)
     expect(writeLocationEnrichmentCache).toHaveBeenCalledWith({
       'se-kronofogden:1': expect.objectContaining({
         locationContext,
@@ -696,5 +696,88 @@ describe('withLocationContextEnhancers', () => {
     expect(summary.providerFailures).toBe(1)
     expect(summary.errors).toHaveLength(1)
     expect(summary.errors[0]).toContain('second')
+  })
+
+  it('restores air quality, climate normals and noise from the previous run when this run cannot refresh them', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { withLocationContextEnhancers } = await import('./external-enrichment')
+    const summary = {
+      processed: 0,
+      written: 0,
+      skippedMissingCoordinates: 0,
+      marketComparisons: 0,
+      landValueBaselines: 0,
+      hazards: 0,
+      locationContexts: 0,
+      staleResults: 0,
+      providerFailures: 0,
+      errors: [] as string[],
+      durationMs: 0,
+    }
+    const previousContext: LocationContext = {
+      ...locationContext,
+      environment: {
+        ...locationContext.environment,
+        airQuality: {
+          index: 30,
+          level: 'fair',
+          particulateMatter10: 12,
+          particulateMatter25: 8,
+          nitrogenDioxide: 15,
+          ozone: 40,
+          observedAt: '2026-08-01T00:00:00.000Z',
+          sourceLabel: 'CAMS',
+          sourceUrl: 'https://example.test/cams',
+          checkedAt: '2026-08-01T00:00:00.000Z',
+        },
+        climateNormals: {
+          periodStartYear: 1991,
+          periodEndYear: 2020,
+          months: [],
+          sourceLabel: 'Open-Meteo',
+          sourceUrl: 'https://example.test/climate',
+          checkedAt: '2026-07-01T00:00:00.000Z',
+        },
+        reportedNoise: [{
+          source: 'road',
+          indicator: 'lden',
+          level: 'medium',
+          bandLabel: '60-64 dB Lden',
+          minDb: 60,
+          maxDb: 64,
+          value: 2,
+          sourceLayerName: null,
+          sourceLabel: 'EEA',
+          sourceUrl: 'https://example.test/eea',
+          checkedAt: '2026-06-01T00:00:00.000Z',
+        }],
+      },
+    }
+    // This run's OSM rebuild has none of the previous run's enhancer fields yet.
+    const freshContext: LocationContext = {
+      ...locationContext,
+      environment: { ...locationContext.environment, airQuality: null, climateNormals: null, reportedNoise: undefined },
+    }
+    const baseAdapter = {
+      id: 'base',
+      sourceVersion: 'v1',
+      supports: () => true,
+      context: vi.fn(async () => freshContext),
+    }
+    const failingEnhancer = {
+      id: 'cams-air-quality',
+      sourceVersion: 'v1',
+      supports: () => true,
+      enhance: vi.fn(async () => {
+        throw new Error('rate limited')
+      }),
+    }
+
+    const adapter = withLocationContextEnhancers(baseAdapter, [failingEnhancer], summary)
+    const result = await adapter.context(auction(), previousContext)
+
+    expect(result?.environment.airQuality).toEqual(previousContext.environment.airQuality)
+    expect(result?.environment.climateNormals).toEqual(previousContext.environment.climateNormals)
+    expect(result?.environment.reportedNoise).toEqual(previousContext.environment.reportedNoise)
   })
 })
