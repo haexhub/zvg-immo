@@ -27,12 +27,22 @@ export interface ExternalDataSourceCoverage {
   total: number
   covered: number
   byCountry: ExternalDataCoverageCountryRow[]
+  /** Most recent `checkedAt` this source actually succeeded at, across every
+   *  auction — null when never tracked or never succeeded. A transient
+   *  fetch failure keeps the previous run's value (external-enrichment.ts's
+   *  mergeLocationContextWithPrevious), so unlike `covered` this only stalls
+   *  when the source has stopped succeeding for every auction, surfacing a
+   *  dead provider that a stable coverage percentage would otherwise hide. */
+  lastSuccessAt: string | null
 }
 
 // One row per country, geocoded_total plus one covered-count column per
 // source in COVERAGE_SOURCE_IDS (column name = source id with '-' -> '_').
 // A single query grouped by country avoids six-way N+1 scans over
-// location_enrichment.
+// location_enrichment. lastSuccessAt columns are only meaningful for the
+// three sources subject to that transient-failure merge above — hazards and
+// market comparison already fall back to their previous whole value on
+// failure (external-enrichment.ts), so they're never tracked here.
 const COVERAGE_QUERY = `
   SELECT
     a.country,
@@ -41,14 +51,20 @@ const COVERAGE_QUERY = `
       WHERE a.lat IS NOT NULL AND a.lng IS NOT NULL
         AND nullif(le.enrichment->'locationContext'->'environment'->'airQuality', 'null'::jsonb) IS NOT NULL
     ) AS cams_air_quality,
+    max(le.enrichment->'locationContext'->'environment'->'airQuality'->>'checkedAt') AS cams_air_quality_last_success_at,
     count(*) FILTER (
       WHERE a.lat IS NOT NULL AND a.lng IS NOT NULL
         AND le.enrichment->'locationContext'->'environment'->'climateNormals' IS NOT NULL
     ) AS open_meteo_climate_normals,
+    max(le.enrichment->'locationContext'->'environment'->'climateNormals'->>'checkedAt') AS open_meteo_climate_normals_last_success_at,
     count(*) FILTER (
       WHERE a.lat IS NOT NULL AND a.lng IS NOT NULL
         AND jsonb_array_length(coalesce(le.enrichment->'locationContext'->'environment'->'reportedNoise', '[]'::jsonb)) > 0
     ) AS eea_environmental_noise_directive,
+    max((
+      SELECT max(n->>'checkedAt')
+      FROM jsonb_array_elements(coalesce(le.enrichment->'locationContext'->'environment'->'reportedNoise', '[]'::jsonb)) n
+    )) AS eea_environmental_noise_directive_last_success_at,
     count(*) FILTER (
       WHERE a.lat IS NOT NULL AND a.lng IS NOT NULL
         AND EXISTS (
@@ -84,13 +100,19 @@ const COVERAGE_COLUMN_BY_SOURCE_ID: Record<CoverageSourceId, string> = {
   'fr-dvf-geolocated': 'fr_dvf_geolocated',
 }
 
-type CoverageRow = { country: string; geocoded_total: string } & Record<string, string>
+const LAST_SUCCESS_COLUMN_BY_SOURCE_ID: Partial<Record<CoverageSourceId, string>> = {
+  'cams-air-quality': 'cams_air_quality_last_success_at',
+  'open-meteo-climate-normals': 'open_meteo_climate_normals_last_success_at',
+  'eea-environmental-noise-directive': 'eea_environmental_noise_directive_last_success_at',
+}
+
+type CoverageRow = { country: string; geocoded_total: string } & Record<string, string | null>
 
 export async function computeExternalDataCoverage(db: Pool): Promise<ExternalDataSourceCoverage[]> {
   const { rows } = await db.query<CoverageRow>(COVERAGE_QUERY)
 
   const bySource = new Map<CoverageSourceId, ExternalDataSourceCoverage>(
-    COVERAGE_SOURCE_IDS.map((id) => [id, { id, total: 0, covered: 0, byCountry: [] }]),
+    COVERAGE_SOURCE_IDS.map((id) => [id, { id, total: 0, covered: 0, byCountry: [], lastSuccessAt: null }]),
   )
 
   for (const row of rows) {
@@ -103,6 +125,11 @@ export async function computeExternalDataCoverage(db: Pool): Promise<ExternalDat
       entry.total += total
       entry.covered += covered
       entry.byCountry.push({ country: row.country, total, covered })
+      const lastSuccessColumn = LAST_SUCCESS_COLUMN_BY_SOURCE_ID[id]
+      const rowLastSuccessAt = lastSuccessColumn ? row[lastSuccessColumn] : null
+      if (rowLastSuccessAt && (!entry.lastSuccessAt || rowLastSuccessAt > entry.lastSuccessAt)) {
+        entry.lastSuccessAt = rowLastSuccessAt
+      }
     }
   }
 

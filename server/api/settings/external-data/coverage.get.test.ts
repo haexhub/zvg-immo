@@ -88,4 +88,57 @@ describe('GET /api/settings/external-data/coverage', () => {
       { country: 'fr', total: 50, covered: 45 },
     ])
   })
+
+  it('takes the most recent lastSuccessAt across countries, only for the three sources it tracks', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+
+    const { getPool } = await import('~/server/utils/db')
+    vi.mocked(getPool).mockReturnValue({
+      query: async () => ({
+        rows: [
+          {
+            country: 'de',
+            geocoded_total: '10',
+            cams_air_quality: '5',
+            cams_air_quality_last_success_at: '2026-08-01T00:00:00.000Z',
+            open_meteo_climate_normals: '5',
+            open_meteo_climate_normals_last_success_at: '2026-07-15T00:00:00.000Z',
+            eea_environmental_noise_directive: '5',
+            eea_environmental_noise_directive_last_success_at: null,
+            eu_flood_risk_areas: '5',
+            copernicus_effis: '5',
+            fr_dvf_geolocated: '5',
+          },
+          {
+            country: 'fr',
+            geocoded_total: '10',
+            cams_air_quality: '5',
+            cams_air_quality_last_success_at: '2026-08-10T00:00:00.000Z',
+            open_meteo_climate_normals: '5',
+            open_meteo_climate_normals_last_success_at: '2026-06-01T00:00:00.000Z',
+            eea_environmental_noise_directive: '5',
+            eea_environmental_noise_directive_last_success_at: '2026-08-05T00:00:00.000Z',
+            eu_flood_risk_areas: '5',
+            copernicus_effis: '5',
+            fr_dvf_geolocated: '5',
+          },
+        ],
+      }),
+    } as never)
+
+    const handler = (await import('./coverage.get')).default as unknown as () => Promise<{
+      sources: Array<{ id: string; lastSuccessAt: string | null }>
+    }>
+    const { sources } = await handler()
+    const bySourceId = Object.fromEntries(sources.map((source) => [source.id, source.lastSuccessAt]))
+
+    expect(bySourceId['cams-air-quality']).toBe('2026-08-10T00:00:00.000Z')
+    expect(bySourceId['open-meteo-climate-normals']).toBe('2026-07-15T00:00:00.000Z')
+    expect(bySourceId['eea-environmental-noise-directive']).toBe('2026-08-05T00:00:00.000Z')
+    // Hazards/market already fall back to their previous value on failure, so
+    // their freshness isn't tracked here.
+    expect(bySourceId['eu-flood-risk-areas']).toBeNull()
+    expect(bySourceId['copernicus-effis']).toBeNull()
+    expect(bySourceId['fr-dvf-geolocated']).toBeNull()
+  })
 })

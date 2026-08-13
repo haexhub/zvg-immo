@@ -14,6 +14,7 @@ import { createEeaEnvironmentalNoiseEnhancer } from '~/server/utils/external-dat
 import { createCamsAirQualityEnhancer } from '~/server/utils/external-data/cams-air-quality'
 import { createOpenMeteoClimateNormalsEnhancer } from '~/server/utils/external-data/open-meteo-climate'
 import { createLocalOsmLocationContextAdapter } from '~/server/utils/external-data/osm-location-context'
+import { mergeLocationContextWithPrevious } from '~/server/utils/external-data/location-context-merge'
 import {
   getStoredExternalDataSourceConfig,
   getConfigurableExternalDataSource,
@@ -49,7 +50,7 @@ export interface LocationContextAdapter {
   id: string
   sourceVersion: string
   supports(auction: Auction): boolean
-  context(auction: Auction): Promise<LocationContext | null>
+  context(auction: Auction, previous?: LocationContext | null): Promise<LocationContext | null>
 }
 
 export interface LocationContextEnhancer {
@@ -175,7 +176,7 @@ export async function runExternalEnrichment(
       throwIfTaskAborted(signal)
       const hazards = await allHazards(auction, hazardAdapters, summary)
       throwIfTaskAborted(signal)
-      const locationContext = await firstLocationContext(auction, locationContextAdapters, summary)
+      const locationContext = await firstLocationContext(auction, locationContextAdapters, summary, previous?.locationContext ?? null)
       throwIfTaskAborted(signal)
 
       if (marketComparison) summary.marketComparisons++
@@ -315,11 +316,12 @@ async function firstLocationContext(
   auction: Auction,
   adapters: LocationContextAdapter[],
   summary: ExternalEnrichmentSummary,
+  previous: LocationContext | null,
 ): Promise<LocationContext | null> {
   for (const adapter of adapters) {
     if (!adapter.supports(auction)) continue
     try {
-      const result = await adapter.context(auction)
+      const result = await adapter.context(auction, previous)
       if (result) return result
     } catch (err) {
       recordProviderFailure(summary, adapter.id, 'location context', auction, err)
@@ -477,8 +479,8 @@ export function withLocationContextEnhancers(
     id: [adapter.id, ...enhancers.map((enhancer) => enhancer.id)].join('+'),
     sourceVersion: [adapter.sourceVersion, ...enhancers.map((enhancer) => enhancer.sourceVersion)].join(','),
     supports: (auction) => adapter.supports(auction),
-    async context(auction) {
-      let context = await adapter.context(auction)
+    async context(auction, previous) {
+      let context = await adapter.context(auction, previous)
       if (!context) return null
       for (const enhancer of enhancers) {
         if (!enhancer.supports(auction, context)) continue
@@ -492,7 +494,7 @@ export function withLocationContextEnhancers(
           recordProviderFailure(summary, enhancer.id, 'location context enhancer', auction, err)
         }
       }
-      return context
+      return previous ? mergeLocationContextWithPrevious(context, previous) : context
     },
   }
 }
