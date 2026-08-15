@@ -313,6 +313,28 @@ describeDb('writeAuctionDetails (real Postgres)', () => {
     ])
   })
 
+  it('appends a version when only the appeal score changed', async () => {
+    await writeAuctionDetails(
+      makeAuction({ photoCount: 1 }),
+      makeExtraction({ photos: [{ file: 'front.jpg', category: 'aussen', caption: null, isPropertyPhoto: true, appealScore: 84 }] }),
+    )
+    const changed = await writeAuctionDetails(
+      makeAuction({ photoCount: 1 }),
+      makeExtraction({ photos: [{ file: 'front.jpg', category: 'aussen', caption: null, isPropertyPhoto: true, appealScore: 91 }] }),
+    )
+
+    expect(changed).toEqual({ version: 2, changed: true })
+    const { rows } = await pool.query(
+      `SELECT d.version, p.appeal_score
+       FROM auction_details d JOIN auction_photos p ON p.auction_details_id = d.id
+       ORDER BY d.version`,
+    )
+    expect(rows).toEqual([
+      { version: 1, appeal_score: 84 },
+      { version: 2, appeal_score: 91 },
+    ])
+  })
+
   it('honors explicit parsed-manifest provenance for a rules-only placeholder', async () => {
     await pool.query(
       `INSERT INTO artifact_versions
