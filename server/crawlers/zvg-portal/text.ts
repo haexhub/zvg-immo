@@ -24,26 +24,45 @@ export function parseGermanTimestamp(text: string): string | null {
 }
 
 export function parseEuro(text: string): number | null {
-  // A Verkehrswert cell can enumerate several lots and finish with the
-  // Gesamtwert. Keep word boundaries intact: removing whitespace made a
-  // Grundbuchblatt number immediately before an amount part of that amount.
-  // The highest stated amount is the aggregate we want to display.
-  const s = text.replace(/&euro;|&#128;/gi, '€').replace(/&nbsp;/gi, ' ')
-  const currencyAmounts = [
-    ...s.matchAll(/(?:^|[^\d.,])(\d{1,3}(?:\.\d{3})*(?:,\d+)?|\d+(?:,\d+)?)(?:\s*)(?:€|EUR\b|Euro\b)/gi),
-  ].map((match) => match[1])
-  // The portal normally puts the euro symbol in the column heading rather
-  // than beside every line, so accept its usual German decimal notation too.
-  const bareAmounts = [
-    ...s.matchAll(/\b(\d{1,3}(?:\.\d{3})+,\d{2}|\d+,\d{2})\b/g),
-  ].map((match) => match[1])
-  const amounts = [...currencyAmounts, ...bareAmounts]
+  // Preserve portal block boundaries: they separate the individual lots from
+  // an optional Gesamtwert. Removing whitespace here previously joined a
+  // Grundbuchblatt number to the following amount.
+  const lines = text
+    .replace(/<\s*br\s*\/?\s*>|<\/(?:p|div|li|tr|td)\s*>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&euro;|&#128;/gi, '€')
+    .replace(/&nbsp;/gi, ' ')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
 
-  const values = amounts
-    .filter((amount): amount is string => amount != null)
-    .map((amount) => parseFloat(amount.replace(/\./g, '').replace(',', '.')))
-    .filter(Number.isFinite)
-  return values.length > 0 ? Math.max(...values) : null
+  const valuesIn = (line: string): number[] => {
+    const currencyAmount = /(?:^|[^\d.,])(\d{1,3}(?:\.\d{3})*(?:,\d+)?|\d+(?:,\d+)?)(?:\s*)(?:€|EUR\b|Euro\b)/gi
+    const marked = [...line.matchAll(currencyAmount)].map((match) => match[1])
+    // A euro marker is often present only in the table heading. Remove marked
+    // amounts before parsing bare German-formatted values to avoid counting a
+    // single amount twice.
+    const unmarked = line.replace(currencyAmount, ' ')
+    const bare = [...unmarked.matchAll(/\b(\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d+,\d{2})\b/g)]
+      .map((match) => match[1])
+    return [...marked, ...bare]
+      .filter((amount): amount is string => amount != null)
+      .map((amount) => parseFloat(amount.replace(/\./g, '').replace(',', '.')))
+      .filter(Number.isFinite)
+  }
+
+  const explicitTotal = lines
+    .filter((line) => /\b(?:gesamt(?:verkehrs)?wert|gesamtbetrag|gesamtsumme|verkehrswert\s+(?:gesamt|insgesamt))\b/i.test(line))
+    .flatMap(valuesIn)
+  if (explicitTotal.length > 0) return Math.max(...explicitTotal)
+
+  // Some listings phrase the aggregate as "X €, wobei auf die einzelnen
+  // Parzellen entfallen …" instead of labelling it as a Gesamtwert.
+  const proseTotal = lines.find((line) => /\bwobei\b.*\b(?:entfallen|aufgeteilt)\b/i.test(line))
+  if (proseTotal) return valuesIn(proseTotal)[0] ?? null
+
+  const parts = lines.flatMap(valuesIn)
+  return parts.length > 0 ? parts.reduce((sum, value) => sum + value, 0) : null
 }
 
 export function parseFileSize(text: string): number | null {
