@@ -20,7 +20,7 @@ export interface AuctionDetailsRow {
   source_land_area_sqm: number | null; source_rooms: number | null; market_value_text: string | null; is_latest: boolean; is_trial: boolean
   llm_provider: string | null; llm_model: string | null; llm_profile_id: string | null; run_trigger: string | null; llm_duration_ms: number | null
 }
-export interface AuctionPhotoRow { ordinal: number; file: string; category: PhotoCategory; caption: string | null; is_property_photo: boolean }
+export interface AuctionPhotoRow { ordinal: number; file: string; category: PhotoCategory; caption: string | null; is_property_photo: boolean; appeal_score: number | null }
 export type Raw<T> = T & Record<string, unknown>
 
 export const VALUE_COLUMNS = [
@@ -60,13 +60,13 @@ export const normalizedPhotos = (extraction: AuctionExtraction | null): CuratedP
 export function photoRowsEqual(rows: AuctionPhotoRow[], photos: CuratedPhoto[]): boolean {
   return rows.length === photos.length && rows.every((row, index) => {
     const photo = photos[index]
-    return !!photo && row.ordinal === index && row.file === photo.file && row.category === photo.category && row.caption === photo.caption && row.is_property_photo === photo.isPropertyPhoto
+    return !!photo && row.ordinal === index && row.file === photo.file && row.category === photo.category && row.caption === photo.caption && row.is_property_photo === photo.isPropertyPhoto && row.appeal_score === (photo.appealScore ?? null)
   })
 }
 export async function readAuctionPhotos(auctionDetailsId: number): Promise<CuratedPhoto[]> {
   const db = getDb(); if (!db) return []
-  const { rows } = await db.execute<Raw<AuctionPhotoRow>>(sql`SELECT ordinal, file, category, caption, is_property_photo FROM auction_photos WHERE auction_details_id = ${auctionDetailsId} ORDER BY ordinal`)
-  return rows.map((row) => ({ file: row.file, category: row.category, caption: row.caption, isPropertyPhoto: row.is_property_photo }))
+  const { rows } = await db.execute<Raw<AuctionPhotoRow>>(sql`SELECT ordinal, file, category, caption, is_property_photo, appeal_score FROM auction_photos WHERE auction_details_id = ${auctionDetailsId} ORDER BY ordinal`)
+  return rows.map((row) => ({ file: row.file, category: row.category, caption: row.caption, isPropertyPhoto: row.is_property_photo, ...(row.appeal_score == null ? {} : { appealScore: row.appeal_score }) }))
 }
 const latestCache = new Map<string, AuctionDetailsRow | null>()
 export const invalidateAuctionDetailsCache = () => latestCache.clear()

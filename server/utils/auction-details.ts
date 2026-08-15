@@ -186,7 +186,7 @@ export async function writeAuctionDetails(
     if (!options.trial) {
       const previousPhotos = previousRow
         ? await tx.execute<Raw<AuctionPhotoRow>>(sql`
-            SELECT ordinal, file, category, caption, is_property_photo
+            SELECT ordinal, file, category, caption, is_property_photo, appeal_score
             FROM auction_photos WHERE auction_details_id = ${previousRow.id} ORDER BY ordinal
           `)
         : { rows: [] as AuctionPhotoRow[] }
@@ -240,12 +240,12 @@ export async function writeAuctionDetails(
 
     if (photos.length > 0) {
       const photoTuples = sql.join(
-        photos.map((photo, ordinal) => sql`(${row.id}, ${ordinal}, ${photo.file}, ${photo.category}, ${photo.caption}, ${photo.isPropertyPhoto})`),
+        photos.map((photo, ordinal) => sql`(${row.id}, ${ordinal}, ${photo.file}, ${photo.category}, ${photo.caption}, ${photo.isPropertyPhoto}, ${photo.appealScore ?? null})`),
         sql`, `,
       )
       await tx.execute(sql`
         INSERT INTO auction_photos
-          (auction_details_id, ordinal, file, category, caption, is_property_photo)
+          (auction_details_id, ordinal, file, category, caption, is_property_photo, appeal_score)
         VALUES ${photoTuples}
       `)
     }

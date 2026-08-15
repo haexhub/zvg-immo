@@ -68,6 +68,14 @@ describe('sortCuratedPhotos', () => {
     ])
   })
 
+  it('prefers the most representative property photo over a less appealing exterior', () => {
+    const shed = photo('shed.jpg', { category: 'aussen', appealScore: 18 })
+    const house = photo('house.jpg', { category: 'aussen', appealScore: 94 })
+    const map = photo('map.jpg', { category: 'lageplan', isPropertyPhoto: false, appealScore: 100 })
+
+    expect(sortCuratedPhotos([shed, map, house])).toEqual([house, shed, map])
+  })
+
   it('is a stable sort: equal-rank photos (including uncurated ones) keep their original order', () => {
     const a = photo('a.jpg')
     const b = photo('b.jpg')

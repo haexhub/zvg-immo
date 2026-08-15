@@ -21,6 +21,7 @@ describe('readAuctionRecord', () => {
             category: 'aussen',
             caption: 'Straßenansicht',
             is_property_photo: true,
+            appeal_score: 93,
           }],
         }
       }
@@ -111,7 +112,7 @@ describe('readAuctionRecord', () => {
         pdfUrl: '/api/pdf',
         extraction: {
           propertyType: 'einfamilienhaus',
-          photos: [{ file: 'front.jpg', category: 'aussen', caption: 'Straßenansicht', isPropertyPhoto: true }],
+          photos: [{ file: 'front.jpg', category: 'aussen', caption: 'Straßenansicht', isPropertyPhoto: true, appealScore: 93 }],
         },
       },
     })

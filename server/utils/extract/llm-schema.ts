@@ -94,7 +94,10 @@ export const SYSTEM_PROMPT =
   'kuratiere jedes Bild im photos-Array: photoIndex (der Index aus dem Label), category ' +
   '(aussen/innen/grundriss/lageplan/sonstiges), caption (kurze Bildunterschrift oder null) ' +
   'und isPropertyPhoto (true nur bei einem echten Objektfoto, also Außen-/Innenansicht der ' +
-  'Immobilie; false bei Lageplan, Grundriss, Wappen, Deckblatt oder Textseite). Wurden keine ' +
+  'Immobilie; false bei Lageplan, Grundriss, Wappen, Deckblatt oder Textseite). Bewerte außerdem ' +
+  'appealScore von 0 bis 100 als Eignung für das erste Bild der Auktion: hohe Werte nur für klare, ' +
+  'repräsentative Ansichten von Haus, Wohnung oder relevantem Grundstück; niedrige Werte für ' +
+  'Schuppen, Details, unscharfe Bilder, Karten und Dokumente. Wurden keine ' +
   'Bilder mitgesendet, gib ein leeres photos-Array zurück.'
 
 export const UNIVERSAL_AUCTION_SCHEMA = {
@@ -268,8 +271,14 @@ export const UNIVERSAL_AUCTION_SCHEMA = {
             description:
               'true bei echtem Objektfoto (Außen-/Innenansicht), false bei Lageplan/Grundriss/Wappen/Deckblatt/Textseite.',
           },
+          appealScore: {
+            type: 'integer',
+            minimum: 0,
+            maximum: 100,
+            description: 'Eignung als erstes Bild der Auktion von 0 (ungeeignet) bis 100 (beste repräsentative Ansicht).',
+          },
         },
-        required: ['photoIndex', 'category', 'caption', 'isPropertyPhoto'],
+        required: ['photoIndex', 'category', 'caption', 'isPropertyPhoto', 'appealScore'],
       },
     },
   },

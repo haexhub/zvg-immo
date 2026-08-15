@@ -430,15 +430,15 @@ describe('clampExtraction', () => {
   it('clamps photo curation entries: keeps valid ones, trims caption, falls back category/isPropertyPhoto', () => {
     const r = clampExtraction({
       photos: [
-        { photoIndex: 0, category: 'aussen', caption: '  Frontansicht  ', isPropertyPhoto: true },
-        { photoIndex: 1, category: 'lageplan', caption: null, isPropertyPhoto: false },
-        { photoIndex: 2, category: 'unknown-category', caption: 'x'.repeat(300), isPropertyPhoto: 'yes' },
+        { photoIndex: 0, category: 'aussen', caption: '  Frontansicht  ', isPropertyPhoto: true, appealScore: 92 },
+        { photoIndex: 1, category: 'lageplan', caption: null, isPropertyPhoto: false, appealScore: 4 },
+        { photoIndex: 2, category: 'unknown-category', caption: 'x'.repeat(300), isPropertyPhoto: 'yes', appealScore: 150 },
       ],
     })
     expect(r.photoCuration).toEqual([
-      { photoIndex: 0, category: 'aussen', caption: 'Frontansicht', isPropertyPhoto: true },
-      { photoIndex: 1, category: 'lageplan', caption: null, isPropertyPhoto: false },
-      { photoIndex: 2, category: 'sonstiges', caption: 'x'.repeat(200), isPropertyPhoto: false },
+      { photoIndex: 0, category: 'aussen', caption: 'Frontansicht', isPropertyPhoto: true, appealScore: 92 },
+      { photoIndex: 1, category: 'lageplan', caption: null, isPropertyPhoto: false, appealScore: 4 },
+      { photoIndex: 2, category: 'sonstiges', caption: 'x'.repeat(200), isPropertyPhoto: false, appealScore: 100 },
     ])
   })
 
@@ -461,7 +461,7 @@ describe('clampExtraction', () => {
         { photoIndex: 0, category: 'innen', caption: 'second', isPropertyPhoto: false },
       ],
     })
-    expect(r.photoCuration).toEqual([{ photoIndex: 0, category: 'aussen', caption: 'first', isPropertyPhoto: true }])
+    expect(r.photoCuration).toEqual([{ photoIndex: 0, category: 'aussen', caption: 'first', isPropertyPhoto: true, appealScore: 0 }])
   })
 
   it('caps photo curation at 60 entries', () => {

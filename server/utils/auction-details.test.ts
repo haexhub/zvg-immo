@@ -294,22 +294,44 @@ describeDb('writeAuctionDetails (real Postgres)', () => {
   it('appends a version when only the curated photos changed', async () => {
     await writeAuctionDetails(
       makeAuction({ photoCount: 1 }),
-      makeExtraction({ photos: [{ file: 'front.jpg', category: 'aussen', caption: null, isPropertyPhoto: true }] }),
+      makeExtraction({ photos: [{ file: 'front.jpg', category: 'aussen', caption: null, isPropertyPhoto: true, appealScore: 84 }] }),
     )
     const changed = await writeAuctionDetails(
       makeAuction({ photoCount: 1 }),
-      makeExtraction({ photos: [{ file: 'front.jpg', category: 'innen', caption: 'Wohnzimmer', isPropertyPhoto: true }] }),
+      makeExtraction({ photos: [{ file: 'front.jpg', category: 'innen', caption: 'Wohnzimmer', isPropertyPhoto: true, appealScore: 91 }] }),
     )
 
     expect(changed).toEqual({ version: 2, changed: true })
     const { rows } = await pool.query(
-      `SELECT d.version, p.category, p.caption
+      `SELECT d.version, p.category, p.caption, p.appeal_score
        FROM auction_details d JOIN auction_photos p ON p.auction_details_id = d.id
        ORDER BY d.version`,
     )
     expect(rows).toEqual([
-      { version: 1, category: 'aussen', caption: null },
-      { version: 2, category: 'innen', caption: 'Wohnzimmer' },
+      { version: 1, category: 'aussen', caption: null, appeal_score: 84 },
+      { version: 2, category: 'innen', caption: 'Wohnzimmer', appeal_score: 91 },
+    ])
+  })
+
+  it('appends a version when only the appeal score changed', async () => {
+    await writeAuctionDetails(
+      makeAuction({ photoCount: 1 }),
+      makeExtraction({ photos: [{ file: 'front.jpg', category: 'aussen', caption: null, isPropertyPhoto: true, appealScore: 84 }] }),
+    )
+    const changed = await writeAuctionDetails(
+      makeAuction({ photoCount: 1 }),
+      makeExtraction({ photos: [{ file: 'front.jpg', category: 'aussen', caption: null, isPropertyPhoto: true, appealScore: 91 }] }),
+    )
+
+    expect(changed).toEqual({ version: 2, changed: true })
+    const { rows } = await pool.query(
+      `SELECT d.version, p.appeal_score
+       FROM auction_details d JOIN auction_photos p ON p.auction_details_id = d.id
+       ORDER BY d.version`,
+    )
+    expect(rows).toEqual([
+      { version: 1, appeal_score: 84 },
+      { version: 2, appeal_score: 91 },
     ])
   })
 

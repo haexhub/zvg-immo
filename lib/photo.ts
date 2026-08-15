@@ -18,25 +18,31 @@ export function normalizePhoto(p: string | CuratedPhoto): CuratedPhoto {
   if (typeof p === 'string') {
     return { file: p, category: 'sonstiges', caption: null, isPropertyPhoto: true }
   }
+  const appealScore = typeof p.appealScore === 'number' && Number.isFinite(p.appealScore)
+    ? Math.max(0, Math.min(100, Math.round(p.appealScore)))
+    : undefined
   return {
     file: p.file,
     category: VALID_CATEGORIES.has(p.category) ? p.category : 'sonstiges',
     caption: p.caption ?? null,
     isPropertyPhoto: p.isPropertyPhoto ?? true,
+    ...(appealScore === undefined ? {} : { appealScore }),
   }
 }
 
-/** Orders photos so the LLM's own curation (isPropertyPhoto, then
- *  PHOTO_CATEGORIES priority — aussen/innen before grundriss/lageplan/
- *  sonstiges) decides what shows first, instead of whatever order the
- *  crawler/pdfimages pipeline happened to produce. This is the only signal
- *  that can tell a real photo of the house from an embedded Energieausweis
- *  or a picture of the meadow out front — filenames carry no such
- *  information across crawlers. Stable, so photos the LLM never classified
- *  (isPropertyPhoto defaults to true via normalizePhoto) keep their
- *  original relative order instead of being shuffled. */
+/** Orders photos so a strong, representative property image becomes the
+ * cover. The LLM first separates actual property photos from documents, then
+ * ranks photos of the same kind by their visual appeal/title-image suitability.
+ * The coarse category is the deterministic fallback for older images that
+ * have not received an appeal score yet. */
 export function sortCuratedPhotos(photos: readonly CuratedPhoto[]): CuratedPhoto[] {
-  const rank = (p: CuratedPhoto): number =>
-    (p.isPropertyPhoto ? 0 : PHOTO_CATEGORIES.length) + PHOTO_CATEGORIES.indexOf(p.category)
-  return [...photos].sort((a, b) => rank(a) - rank(b))
+  const categoryRank = (p: CuratedPhoto): number => PHOTO_CATEGORIES.indexOf(p.category)
+  const propertyRank = (p: CuratedPhoto): number => p.isPropertyPhoto ? 0 : 1
+  return [...photos].sort((a, b) => {
+    const propertyDifference = propertyRank(a) - propertyRank(b)
+    if (propertyDifference !== 0) return propertyDifference
+    const appealDifference = (b.appealScore ?? -1) - (a.appealScore ?? -1)
+    if (appealDifference !== 0) return appealDifference
+    return categoryRank(a) - categoryRank(b)
+  })
 }

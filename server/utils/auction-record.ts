@@ -98,6 +98,7 @@ interface AuctionPhotoRow {
   category: PhotoCategory
   caption: string | null
   is_property_photo: boolean
+  appeal_score: number | null
 }
 
 const SELECT_SQL = `SELECT
@@ -240,7 +241,7 @@ async function attachPhotos(rows: AuctionRecordRow[]): Promise<AuctionRecord[]> 
   const photosByDetails = new Map<string, CuratedPhoto[]>()
   if (detailIds.length > 0) {
     const result = await db.query<AuctionPhotoRow>(
-      `SELECT auction_details_id, ordinal, file, category, caption, is_property_photo
+      `SELECT auction_details_id, ordinal, file, category, caption, is_property_photo, appeal_score
        FROM auction_photos WHERE auction_details_id = ANY($1::bigint[])
        ORDER BY auction_details_id, ordinal`,
       [detailIds],
@@ -253,6 +254,7 @@ async function attachPhotos(rows: AuctionRecordRow[]): Promise<AuctionRecord[]> 
         category: photo.category,
         caption: photo.caption,
         isPropertyPhoto: photo.is_property_photo,
+        ...(photo.appeal_score == null ? {} : { appealScore: photo.appeal_score }),
       })
       photosByDetails.set(key, list)
     }

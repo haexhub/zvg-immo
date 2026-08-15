@@ -430,6 +430,9 @@ export interface CuratedPhoto {
    *  Metadata only — all curated photos are kept regardless; this drives
    *  frontend sorting/grouping, it does not filter. */
   isPropertyPhoto: boolean
+  /** Eignung als erstes Bild der Auktion von 0 bis 100. Fehlend bei älteren,
+   * noch nicht visuell kuratierten Bildern. */
+  appealScore?: number
 }
 
 /** Richer LLM-only assessment pulled from the Gutachten/Exposé — the "why is

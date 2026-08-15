@@ -27,7 +27,7 @@ describe('applyAuctionExtraction', () => {
     applyAuctionExtraction(value, extraction({
       photos: [
         { file: 'plan.jpg', category: 'grundriss', caption: null, isPropertyPhoto: false },
-        { file: 'house.jpg', category: 'aussen', caption: null, isPropertyPhoto: true },
+        { file: 'house.jpg', category: 'aussen', caption: null, isPropertyPhoto: true, appealScore: 90 },
         { file: 'house.jpg', category: 'aussen', caption: null, isPropertyPhoto: true },
       ],
     }))
