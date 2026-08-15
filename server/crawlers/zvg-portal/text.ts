@@ -1,3 +1,5 @@
+import { aggregateMarketValue } from '~/server/utils/market-value-aggregation'
+
 const MONTH_DE: Record<string, string> = {
   Januar: '01', Februar: '02', März: '03', Maerz: '03', April: '04', Mai: '05',
   Juni: '06', Juli: '07', August: '08', September: '09', Oktober: '10',
@@ -54,15 +56,14 @@ export function parseEuro(text: string): number | null {
   const explicitTotal = lines
     .filter((line) => /\b(?:gesamt(?:verkehrs)?wert|gesamtbetrag|gesamtsumme|verkehrswert\s+(?:gesamt|insgesamt))\b/i.test(line))
     .flatMap(valuesIn)
-  if (explicitTotal.length > 0) return Math.max(...explicitTotal)
+  if (explicitTotal.length > 0) return aggregateMarketValue([], Math.max(...explicitTotal))
 
   // Some listings phrase the aggregate as "X €, wobei auf die einzelnen
   // Parzellen entfallen …" instead of labelling it as a Gesamtwert.
   const proseTotal = lines.find((line) => /\bwobei\b.*\b(?:entfallen|aufgeteilt)\b/i.test(line))
-  if (proseTotal) return valuesIn(proseTotal)[0] ?? null
+  if (proseTotal) return aggregateMarketValue([], valuesIn(proseTotal)[0])
 
-  const parts = lines.flatMap(valuesIn)
-  return parts.length > 0 ? parts.reduce((sum, value) => sum + value, 0) : null
+  return aggregateMarketValue(lines.flatMap(valuesIn))
 }
 
 export function parseFileSize(text: string): number | null {

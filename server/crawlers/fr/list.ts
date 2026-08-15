@@ -1,6 +1,7 @@
 import { load } from 'cheerio'
 import type { Attachment, Auction } from '~/types/auction'
 import { archiveDetailCapture } from '~/server/utils/fetch-archive'
+import { aggregateMarketValue } from '~/server/utils/market-value-aggregation'
 import { FR_BASE, FR_LIST_REGIONS, UA, COUNTRY, DISALLOWED_DATA_PATHS } from './constants'
 
 const DETAIL_CONCURRENCY = 4
@@ -163,14 +164,15 @@ function parseDetailPage(html: string, href: string): DetailInfo {
   })
 
   const priceTexts: string[] = []
-  let marketValueEur: number | null = null
+  const lotValues: number[] = []
   $('.AddressBlock .Lot h3').each((_i, el) => {
     const text = clean($(el).text())
     if (!text) return
     priceTexts.push(text)
     const amount = parseEurAmount(text)
-    if (amount != null) marketValueEur = (marketValueEur ?? 0) + amount
+    if (amount != null) lotValues.push(amount)
   })
+  const marketValueEur = aggregateMarketValue(lotValues)
 
   const visits = clean($('.AddressBlock .Visits').first().text()) || null
   const description = [...lotTexts, visits].filter(Boolean).join('\n') || null
