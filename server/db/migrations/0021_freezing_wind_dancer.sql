@@ -1,0 +1,1 @@
+ALTER TABLE "auction_photos" ADD COLUMN "appeal_score" integer;

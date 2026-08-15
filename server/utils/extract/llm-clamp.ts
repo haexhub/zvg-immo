@@ -62,6 +62,7 @@ export interface PhotoCuration {
   category: PhotoCategory
   caption: string | null
   isPropertyPhoto: boolean
+  appealScore: number
 }
 
 const VALID_TYPES = new Set<string>(PROPERTY_TYPES)
@@ -186,6 +187,9 @@ function clampPhotoCuration(raw: unknown): PhotoCuration[] {
       category,
       caption: trimmedString(r.caption, 200),
       isPropertyPhoto: typeof r.isPropertyPhoto === 'boolean' ? r.isPropertyPhoto : false,
+      appealScore: typeof r.appealScore === 'number' && Number.isFinite(r.appealScore)
+        ? Math.max(0, Math.min(100, Math.round(r.appealScore)))
+        : 0,
     })
     if (out.length >= 60) break
   }

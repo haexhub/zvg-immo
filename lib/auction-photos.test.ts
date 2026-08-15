@@ -44,16 +44,16 @@ describe('auctionPhotoUrls', () => {
             source: 'rules',
             confidence: 'low',
             photos: [
-              { file: 'page 1.jpg', category: 'aussen', caption: null, isPropertyPhoto: true },
-              { file: '2222222222222222.jpg', category: 'innen', caption: null, isPropertyPhoto: true },
+              { file: 'page 1.jpg', category: 'aussen', caption: null, isPropertyPhoto: true, appealScore: 30 },
+              { file: '2222222222222222.jpg', category: 'innen', caption: null, isPropertyPhoto: true, appealScore: 90 },
             ],
             at: '2026-07-25T00:00:00.000Z',
           },
         }),
       ),
     ).toEqual([
-      '/api/auction-image/mv-zvgcom/210678/page%201.jpg',
       '/api/auction-image/mv-zvgcom/210678/2222222222222222.jpg',
+      '/api/auction-image/mv-zvgcom/210678/page%201.jpg',
     ])
   })
 

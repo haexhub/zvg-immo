@@ -220,7 +220,13 @@ export function applyPhotoCuration(base: CuratedPhoto[], curation: PhotoCuration
   for (const c of curation) {
     const prior = out[c.photoIndex]
     if (!prior) continue
-    out[c.photoIndex] = { file: prior.file, category: c.category, caption: c.caption, isPropertyPhoto: c.isPropertyPhoto }
+    out[c.photoIndex] = {
+      file: prior.file,
+      category: c.category,
+      caption: c.caption,
+      isPropertyPhoto: c.isPropertyPhoto,
+      appealScore: c.appealScore,
+    }
   }
   return out
 }

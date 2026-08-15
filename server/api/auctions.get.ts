@@ -102,7 +102,8 @@ export const SUMMARY_FROM_SQL = `FROM auctions a
       'file', ap.file,
       'category', ap.category,
       'caption', ap.caption,
-      'isPropertyPhoto', ap.is_property_photo
+      'isPropertyPhoto', ap.is_property_photo,
+      'appealScore', ap.appeal_score
     ) ORDER BY ap.ordinal) AS items
     FROM auction_photos ap
     WHERE ap.auction_details_id = d.id

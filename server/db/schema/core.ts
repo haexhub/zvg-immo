@@ -317,6 +317,7 @@ export const auctionPhotos = pgTable('auction_photos', {
   category: text('category').notNull(),
   caption: text('caption'),
   isPropertyPhoto: boolean('is_property_photo').notNull(),
+  appealScore: integer('appeal_score'),
 }, (table) => [
   unique('auction_photos_auction_details_id_ordinal_key').on(table.auctionDetailsId, table.ordinal),
   index('idx_auction_photos_details').on(table.auctionDetailsId, table.ordinal),
