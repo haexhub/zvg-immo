@@ -24,17 +24,25 @@ export function parseGermanTimestamp(text: string): string | null {
 }
 
 export function parseEuro(text: string): number | null {
-  // "214.000,00 Euro" or "800.000,00" or "16.100,00&nbsp;" — and amounts
-  // without decimals ("74.800 €, wobei auf die einzelnen Parzellen entfallen:
-  // lfd. Nr. 1: 500 €"). Prefer the first currency-anchored amount (the total
-  // precedes any per-parcel sub-amounts); fall back to the bare "1.234,56"
-  // form for values rendered without a currency marker.
-  const s = text.replace(/&euro;|&#128;/g, '€').replace(/\s|&nbsp;/g, '')
-  const m = s.match(/([\d.]+(?:,\d+)?)(?:€|EUR|Euro)/i) ?? s.match(/([\d.]+,\d{2})/)
-  if (!m?.[1]) return null
-  const n = m[1].replace(/\./g, '').replace(',', '.')
-  const num = parseFloat(n)
-  return Number.isFinite(num) ? num : null
+  // A Verkehrswert cell can enumerate several lots and finish with the
+  // Gesamtwert. Keep word boundaries intact: removing whitespace made a
+  // Grundbuchblatt number immediately before an amount part of that amount.
+  // The highest stated amount is the aggregate we want to display.
+  const s = text.replace(/&euro;|&#128;/gi, '€').replace(/&nbsp;/gi, ' ')
+  const currencyAmounts = [
+    ...s.matchAll(/(?:^|[^\d.,])(\d{1,3}(?:\.\d{3})*(?:,\d+)?|\d+(?:,\d+)?)(?:\s*)(?:€|EUR\b|Euro\b)/gi),
+  ].map((match) => match[1])
+  // The portal normally puts the euro symbol in the column heading rather
+  // than beside every line, so accept its usual German decimal notation too.
+  const amounts = currencyAmounts.length > 0
+    ? currencyAmounts
+    : [...s.matchAll(/\b(\d{1,3}(?:\.\d{3})+,\d{2}|\d+,\d{2})\b/g)].map((match) => match[1])
+
+  const values = amounts
+    .filter((amount): amount is string => amount != null)
+    .map((amount) => parseFloat(amount.replace(/\./g, '').replace(',', '.')))
+    .filter(Number.isFinite)
+  return values.length > 0 ? Math.max(...values) : null
 }
 
 export function parseFileSize(text: string): number | null {

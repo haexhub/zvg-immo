@@ -34,6 +34,14 @@ describe('parseEuro', () => {
     expect(parseEuro('800.000,00')).toBe(800000)
   })
 
+  it('uses the highest value when the portal lists several lots and a total', () => {
+    expect(parseEuro(
+      '1. WE 46 Blatt 15090&nbsp; 59.000,00\n' +
+      '2. Flst. 1402/10, 1/192 Miteigentumsanteil 400,00\n' +
+      'Einbauküche: 3.000,00\nGesamtwert: 62.400,00',
+    )).toBe(62400)
+  })
+
   it('decodes &euro; entities before matching', () => {
     expect(parseEuro('16.100,00&nbsp;&euro;')).toBe(16100)
   })
