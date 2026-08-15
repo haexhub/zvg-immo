@@ -57,6 +57,15 @@ function detailHtmlWithShowingAddress(id: string): string {
   `
 }
 
+function withdrawnDetailHtml(id: string): string {
+  return `
+    <h3 id="h-Status">Status</h3><p class="normal">Utgår</p>
+    <h3 id="h-Adress">Adress</h3><p class="normal">Testgatan ${id}</p>
+    <h3 id="h-Kommun">Kommun</h3><p class="normal">Test kommun</p>
+    <div id="datumet">2026-08-27</div>
+  `
+}
+
 function detailHtmlWithFarmArea(id: string): string {
   return `
     <h3 id="h-Adress">Adress</h3><p class="normal">Åse 360, Trångsviken</p>
@@ -467,6 +476,20 @@ describe('fetchListingById', () => {
     expect(auction?.externalId).toBe('101743')
     expect(auction?.address).toBe('Kvarnbyn 76, 937 94 Burträsk')
     expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('marks a listing withdrawn when Kronofogden reports the status Utgår', async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      if (String(url) === `${BASE}/101867.html`) {
+        return new Response(withdrawnDetailHtml('101867'), { status: 200 })
+      }
+      return new Response('not found', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const auction = await fetchListingById('101867', 'se-kronofogden')
+
+    expect(auction?.cancelled).toBe(true)
   })
 
   it('rejects non-numeric ids before fetching', async () => {

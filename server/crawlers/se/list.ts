@@ -185,6 +185,7 @@ async function fetchSearchIds(path: string): Promise<string[]> {
 }
 
 function mapDetail(id: string, html: string, platformId: string): Auction | null {
+  const status = extractFact(html, 'Status')
   const address = extractFact(html, 'Adress')
   const showingAddress = extractShowingAddress(html)
   const kommun = extractFact(html, 'Kommun')
@@ -280,7 +281,11 @@ function mapDetail(id: string, html: string, platformId: string): Auction | null
     marketValueText: marknadsvardRaw ? `${marknadsvardRaw} SEK` : null,
     auctionDateIso,
     auctionDateText: auctionDateIso,
-    cancelled: false,
+    // Kronofogden marks a withdrawn sale as "Utgår" (or, on the detail
+    // page, "Objektet utgår från försäljning"). Keep it in the data so a
+    // direct link can explain why documents or the original announcement may
+    // no longer be available, while normal search results can hide it.
+    cancelled: /^utg[åa]r\b/i.test(status ?? ''),
     sourceUpdatedIso: null,
     pdfUrl,
     detailUrl: `${SE_BASE}/${id}.html`,
