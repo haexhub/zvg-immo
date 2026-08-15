@@ -42,6 +42,10 @@ describe('parseEuro', () => {
     )).toBe(62400)
   })
 
+  it('does not ignore an unmarked Gesamtwert when a lot has a euro marker', () => {
+    expect(parseEuro('Wohnung: 59.000,00 €; Gesamtwert: 62.400,00')).toBe(62400)
+  })
+
   it('decodes &euro; entities before matching', () => {
     expect(parseEuro('16.100,00&nbsp;&euro;')).toBe(16100)
   })

@@ -34,9 +34,10 @@ export function parseEuro(text: string): number | null {
   ].map((match) => match[1])
   // The portal normally puts the euro symbol in the column heading rather
   // than beside every line, so accept its usual German decimal notation too.
-  const amounts = currencyAmounts.length > 0
-    ? currencyAmounts
-    : [...s.matchAll(/\b(\d{1,3}(?:\.\d{3})+,\d{2}|\d+,\d{2})\b/g)].map((match) => match[1])
+  const bareAmounts = [
+    ...s.matchAll(/\b(\d{1,3}(?:\.\d{3})+,\d{2}|\d+,\d{2})\b/g),
+  ].map((match) => match[1])
+  const amounts = [...currencyAmounts, ...bareAmounts]
 
   const values = amounts
     .filter((amount): amount is string => amount != null)
