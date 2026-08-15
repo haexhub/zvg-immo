@@ -1,6 +1,7 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { join, dirname } from 'node:path'
 import type { Auction } from '~/types/auction'
+import { applyMarketValueTextAggregation } from './market-value-aggregation'
 
 const CACHE_PATH = join(process.cwd(), '.cache_zvg', 'exchange-rates.json')
 const ECB_URL = 'https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml'
@@ -90,6 +91,7 @@ export function toEur(amount: number, currency: string, rates: Record<string, nu
  * `marketValue`/`currency` from that so both models agree.
  */
 export function deriveMarketValueEur(auction: Auction, rates: Record<string, number>): void {
+  applyMarketValueTextAggregation(auction)
   if (auction.currency == null) {
     if (auction.marketValueEur != null) {
       auction.currency = 'EUR'

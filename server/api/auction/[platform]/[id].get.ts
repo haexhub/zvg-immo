@@ -113,6 +113,7 @@ export default defineEventHandler(async (event): Promise<AuctionDetail> => {
   const lat = sourcePoint?.lat ?? point?.lat ?? null
   const lng = sourcePoint?.lng ?? point?.lng ?? null
   applyDescriptionMarketValue(auction)
+  deriveMarketValueEur(auction, await getRates())
   const [locationEnrichment, relatedAuctions] = await Promise.all([
     readLocationEnrichment(platform, id),
     readAuctionRelationships(platform, id),

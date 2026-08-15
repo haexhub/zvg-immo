@@ -62,6 +62,17 @@ describe('deriveMarketValueEur', () => {
     expect(a.marketValueEur).toBe(250_000)
   })
 
+  it('aggregates multi-part values for every crawler before converting currency', () => {
+    const a = auction({
+      marketValue: 0,
+      marketValueText: 'Lot A: 45,000.00 GBP; Lot B: 55,000.00 GBP',
+      currency: 'GBP',
+    })
+    deriveMarketValueEur(a, RATES)
+    expect(a.marketValue).toBe(100_000)
+    expect(a.marketValueEur).toBe(Math.round(100_000 / 0.85))
+  })
+
   it('backfills marketValue/currency for an EUR-native auction (currency unset)', () => {
     const a = auction({ marketValueEur: 250_000 })
     deriveMarketValueEur(a, RATES)
