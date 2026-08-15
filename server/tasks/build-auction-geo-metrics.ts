@@ -35,6 +35,23 @@ const BUILD_STATEMENT_TIMEOUT_MS = 3 * 60 * 1000
 const TOURISM_DENSITY_KIND = 'tourism_supply'
 const TOURISM_DENSITY_RADIUS_METERS = 10_000
 
+// Sights rather than lodging/leisure supply (schema/geo.ts's
+// attractionDensityCount comment) — WP-8's own example uses a wider radius
+// here (30km) than tourism_supply's 10km, since a sight is worth visiting
+// from farther away than a hotel is worth staying at.
+const ATTRACTION_DENSITY_KIND = 'attraction'
+const ATTRACTION_DENSITY_RADIUS_METERS = 30_000
+
+// Distance, not density, unlike the two counts above — WP-8's example shows
+// this as "Wanderwegnetz angrenzend", i.e. a proximity fact, not a count.
+// Deliberately kept out of GEO_METRIC_CATEGORIES/geo-metric-categories.ts:
+// that list is the shared writer/reader contract for search-filter sliders
+// (auction-search-filters.ts iterates it to build `?near*=` params), and this
+// column has no such filter — it's WP-8 detail-page-only, computed here as
+// its own one-off nearest-feature query instead.
+const HIKING_KIND = 'hiking_route'
+const HIKING_CUTOFF_METERS = 20_000
+
 // Unlike the live osm-proximity.ts queries this replaces, this does not
 // constrain the geo_features row to the auction's own country. That
 // constraint existed there mainly to let a country-prefixed index narrow an
@@ -267,25 +284,34 @@ async function findCandidates(db: NodePgDatabase, epoch: number): Promise<Candid
  * remaining candidate.
  */
 async function upsertMetrics(db: NodePgDatabase, candidate: Candidate, epoch: number): Promise<boolean> {
-  const distanceColumns = GEO_METRIC_CATEGORIES.map((c) => c.column)
+  const distanceColumns = [...GEO_METRIC_CATEGORIES.map((c) => c.column), 'dist_hiking_m']
+  const hikingSelectSql = categorySelectSql(
+    { param: 'hiking', column: 'dist_hiking_m', kind: HIKING_KIND, cutoffMeters: HIKING_CUTOFF_METERS },
+    epoch,
+  )
   const query = sql`
     WITH point AS (
       SELECT ST_Transform(ST_SetSRID(ST_MakePoint(${candidate.lng}, ${candidate.lat}), 4326), 3035) AS geom
     )
     INSERT INTO auction_geo_metrics (
-      platform, external_id, ${sql.raw(distanceColumns.join(', '))}, tourism_density_count, point_hash, features_epoch, computed_at
+      platform, external_id, ${sql.raw(distanceColumns.join(', '))}, tourism_density_count, attraction_density_count, point_hash, features_epoch, computed_at
     )
     SELECT ${candidate.platform}, ${candidate.external_id},
       ${sql.raw(GEO_METRIC_CATEGORIES.map((c) => categorySelectSql(c, epoch)).join(',\n      '))},
+      ${sql.raw(hikingSelectSql)},
       (SELECT count(*)::int FROM geo_features f, point
         WHERE f.kind = ${TOURISM_DENSITY_KIND} AND f.features_epoch = ${epoch}
           AND ST_DWithin(f.geom_3035, point.geom, ${TOURISM_DENSITY_RADIUS_METERS})),
+      (SELECT count(*)::int FROM geo_features f, point
+        WHERE f.kind = ${ATTRACTION_DENSITY_KIND} AND f.features_epoch = ${epoch}
+          AND ST_DWithin(f.geom_3035, point.geom, ${ATTRACTION_DENSITY_RADIUS_METERS})),
       ${candidate.point_hash}, ${epoch}, now()
     FROM point
     WHERE (SELECT MAX(epoch) FROM geo_features_epochs) = ${epoch}
     ON CONFLICT (platform, external_id) DO UPDATE SET
       ${sql.raw(distanceColumns.map((c) => `${c} = EXCLUDED.${c}`).join(',\n      '))},
       tourism_density_count = EXCLUDED.tourism_density_count,
+      attraction_density_count = EXCLUDED.attraction_density_count,
       point_hash = EXCLUDED.point_hash,
       features_epoch = EXCLUDED.features_epoch,
       computed_at = EXCLUDED.computed_at

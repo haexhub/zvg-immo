@@ -192,10 +192,16 @@ export const auctionGeoMetrics = pgTable('auction_geo_metrics', {
   distMountainM: integer('dist_mountain_m'),
   distAirportM: integer('dist_airport_m'),
   distSkiM: integer('dist_ski_m'),
+  distHikingM: integer('dist_hiking_m'),
   // Count within a fixed radius, not a distance — density is the more
   // meaningful tourism signal (does the area have tourist infrastructure at
   // all), per the architecture doc's "touristische Erschließung" note.
   tourismDensityCount: integer('tourism_density_count'),
+  // Same rationale, but for sights rather than lodging/leisure supply — WP-8
+  // (docs/plans/2026-08-04-gis-wp8-lagebeschreibung.md) reads both counts
+  // separately since they answer different questions ("is there somewhere to
+  // stay" vs. "is there something to see").
+  attractionDensityCount: integer('attraction_density_count'),
   climateCellId: bigint('climate_cell_id', { mode: 'number' }).references(() => climateCells.id, { onDelete: 'set null' }),
   // Hash of the auctions.lat/lng this row was computed from — an auction's
   // coordinates changing (re-geocoding) invalidates the row without needing

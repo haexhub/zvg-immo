@@ -12,6 +12,7 @@ vi.mock('../../../utils/geocode', () => ({ geocodeAddress: vi.fn() }))
 vi.mock('../../../utils/auction-record', () => ({ readAuctionRecord: vi.fn() }))
 vi.mock('../../../utils/auction-relationships', () => ({ readAuctionRelationships: vi.fn() }))
 vi.mock('../../../utils/external-data/location-enrichment', () => ({ readLocationEnrichment: vi.fn() }))
+vi.mock('../../../utils/auction-geo-metrics-read', () => ({ readAuctionGeoMetrics: vi.fn() }))
 vi.mock('../../../utils/list-cache', () => ({ readMergedListCache: vi.fn() }))
 vi.mock('../../../utils/verkehrswert-cache', () => ({
   cacheKey: (platform: string, id: string) => `${platform}:${id}`,
@@ -66,6 +67,7 @@ async function loadHandler() {
   const { readAuctionRecord } = await import('../../../utils/auction-record')
   const { readAuctionRelationships } = await import('../../../utils/auction-relationships')
   const { readLocationEnrichment } = await import('../../../utils/external-data/location-enrichment')
+  const { readAuctionGeoMetrics } = await import('../../../utils/auction-geo-metrics-read')
   const { readMergedListCache } = await import('../../../utils/list-cache')
   const { getRates } = await import('../../../utils/exchange-rate')
 
@@ -73,6 +75,7 @@ async function loadHandler() {
   vi.mocked(readAuctionRelationships).mockResolvedValue([])
   vi.mocked(geocodeAddress).mockResolvedValue(null)
   vi.mocked(readLocationEnrichment).mockResolvedValue(null)
+  vi.mocked(readAuctionGeoMetrics).mockResolvedValue(null)
   vi.mocked(readMergedListCache).mockResolvedValue(null)
   vi.mocked(getRates).mockResolvedValue({ EUR: 1 })
 
