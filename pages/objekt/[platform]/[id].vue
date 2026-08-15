@@ -184,6 +184,10 @@ useHead(() => ({
           <span v-if="titleTranslated" class="text-xs text-muted-foreground">({{ $t('objektDetail.autoTranslatedHint') }})</span>
         </div>
         <p v-if="displayAddress" class="text-muted-foreground">{{ displayAddress }}</p>
+        <div v-if="a.cancelled" class="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-foreground">
+          <p class="font-semibold text-destructive">{{ $t('objektDetail.cancelledNoticeTitle') }}</p>
+          <p class="mt-1">{{ $t('objektDetail.cancelledNoticeText') }}</p>
+        </div>
       </header>
 
       <AuctionPhotoGallery :photos="photoUrls" :alt-base="displayTitle || $t('objektDetail.fallbackTitle')" />
