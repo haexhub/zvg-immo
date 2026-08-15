@@ -1,3 +1,5 @@
+import { aggregateMarketValue } from '~/server/utils/market-value-aggregation'
+
 const MONTH_DE: Record<string, string> = {
   Januar: '01', Februar: '02', März: '03', Maerz: '03', April: '04', Mai: '05',
   Juni: '06', Juli: '07', August: '08', September: '09', Oktober: '10',
@@ -24,17 +26,44 @@ export function parseGermanTimestamp(text: string): string | null {
 }
 
 export function parseEuro(text: string): number | null {
-  // "214.000,00 Euro" or "800.000,00" or "16.100,00&nbsp;" — and amounts
-  // without decimals ("74.800 €, wobei auf die einzelnen Parzellen entfallen:
-  // lfd. Nr. 1: 500 €"). Prefer the first currency-anchored amount (the total
-  // precedes any per-parcel sub-amounts); fall back to the bare "1.234,56"
-  // form for values rendered without a currency marker.
-  const s = text.replace(/&euro;|&#128;/g, '€').replace(/\s|&nbsp;/g, '')
-  const m = s.match(/([\d.]+(?:,\d+)?)(?:€|EUR|Euro)/i) ?? s.match(/([\d.]+,\d{2})/)
-  if (!m?.[1]) return null
-  const n = m[1].replace(/\./g, '').replace(',', '.')
-  const num = parseFloat(n)
-  return Number.isFinite(num) ? num : null
+  // Preserve portal block boundaries: they separate the individual lots from
+  // an optional Gesamtwert. Removing whitespace here previously joined a
+  // Grundbuchblatt number to the following amount.
+  const lines = text
+    .replace(/<\s*br\s*\/?\s*>|<\/(?:p|div|li|tr|td)\s*>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&euro;|&#128;/gi, '€')
+    .replace(/&nbsp;/gi, ' ')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  const valuesIn = (line: string): number[] => {
+    const currencyAmount = /(?:^|[^\d.,])(\d{1,3}(?:\.\d{3})*(?:,\d+)?|\d+(?:,\d+)?)(?:\s*)(?:€|EUR\b|Euro\b)/gi
+    const marked = [...line.matchAll(currencyAmount)].map((match) => match[1])
+    // A euro marker is often present only in the table heading. Remove marked
+    // amounts before parsing bare German-formatted values to avoid counting a
+    // single amount twice.
+    const unmarked = line.replace(currencyAmount, ' ')
+    const bare = [...unmarked.matchAll(/\b(\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d+,\d{2})\b/g)]
+      .map((match) => match[1])
+    return [...marked, ...bare]
+      .filter((amount): amount is string => amount != null)
+      .map((amount) => parseFloat(amount.replace(/\./g, '').replace(',', '.')))
+      .filter(Number.isFinite)
+  }
+
+  const explicitTotal = lines
+    .filter((line) => /\b(?:gesamt(?:verkehrs)?wert|gesamtbetrag|gesamtsumme|verkehrswert\s+(?:gesamt|insgesamt))\b/i.test(line))
+    .flatMap(valuesIn)
+  if (explicitTotal.length > 0) return aggregateMarketValue([], Math.max(...explicitTotal))
+
+  // Some listings phrase the aggregate as "X €, wobei auf die einzelnen
+  // Parzellen entfallen …" instead of labelling it as a Gesamtwert.
+  const proseTotal = lines.find((line) => /\bwobei\b.*\b(?:entfallen|aufgeteilt)\b/i.test(line))
+  if (proseTotal) return aggregateMarketValue([], valuesIn(proseTotal)[0])
+
+  return aggregateMarketValue(lines.flatMap(valuesIn))
 }
 
 export function parseFileSize(text: string): number | null {

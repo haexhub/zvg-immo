@@ -1,4 +1,5 @@
 import type { Auction } from '~/types/auction'
+import { aggregateMarketValue } from './market-value-aggregation'
 
 /**
  * Extracts an explicitly labelled EUR Verkehrswert from source prose.
@@ -11,11 +12,12 @@ export function extractDescriptionMarketValue(
   text: string,
 ): { eur: number; text: string } | null {
   const total = text.match(
-    /(?:Gesamtverkehrswert|Verkehrswert\s+(?:insgesamt|gesamt))\s*:?\s*([\d.]+(?:,\d+)?)\s*€/i,
+    /(?:Gesamtverkehrswert|Gesamtwert|Gesamtbetrag|Verkehrswert\s+(?:insgesamt|gesamt))\s*:?\s*([\d.]+(?:,\d+)?)\s*€/i,
   )
   if (total?.[1]) {
     const eur = parseGermanEuro(total[1])
-    return eur == null ? null : { eur, text: `${total[1]} €` }
+    const aggregate = aggregateMarketValue([], eur)
+    return aggregate == null ? null : { eur: aggregate, text: `${total[1]} €` }
   }
 
   const rawMatches = [...text.matchAll(/\bVerkehrswert(?:e)?\s*:?\s*([\d.]+(?:,\d+)?)\s*€/gi)]
@@ -50,8 +52,8 @@ export function extractDescriptionMarketValue(
   const values = sectionValues.length >= 2
     ? sectionValues
     : [...new Set(parsed.map((m) => m.value))]
-  const eur = values.reduce((sum, value) => sum + value, 0)
-  if (!Number.isFinite(eur) || eur <= 0) return null
+  const eur = aggregateMarketValue(values)
+  if (eur == null) return null
 
   if (values.length === 1) return { eur, text: `${parsed[0]!.raw} €` }
   return {
