@@ -15,9 +15,13 @@
 //   confident-looking judgement built from nothing.
 //
 // Thresholds are named constants below, per the doc's step 3 ("Schwellenwerte
-// sind Produktentscheidungen, keine technischen") — the ski band is the
-// doc's own worked example; water/hiking/density bands are a first proposal,
-// not yet calibrated against real auction data (doc's Verifikation step 3).
+// sind Produktentscheidungen, keine technischen"). Calibrated 2026-08-15
+// against real prod data (read-only, 40-80 random geocoded auctions plus
+// full-table percentiles where the column already existed) — see comments on
+// each constant. Ski is the doc's own worked example and held up against the
+// real distribution; water/density/attraction needed real numbers because a
+// blind first guess was off by roughly one to two orders of magnitude (see
+// build-geo-features.ts's attraction-kind comment for the worst case).
 
 export type CriterionBand = 'sehr_gut' | 'gut' | 'maessig' | 'gering'
 export type ProfileLabel = CriterionBand | 'keine_angaben'
@@ -30,7 +34,7 @@ export interface LeisureTourismCriterion {
 
 export interface LeisureTourismCriteria {
   ski: LeisureTourismCriterion
-  wasser: LeisureTourismCriterion & { source: 'sea' | 'lake' | null }
+  wasser: LeisureTourismCriterion & { source: 'sea' | 'swimming' | null }
   wandern: LeisureTourismCriterion
   tourismusDichte: LeisureTourismCriterion
   sehenswuerdigkeiten: LeisureTourismCriterion
@@ -49,25 +53,43 @@ export interface LeisureTourismProfiles {
 export interface LeisureTourismMetricsInput {
   distSkiM: number | null
   distSeaM: number | null
-  distLakeM: number | null
+  distSwimmingM: number | null
   distHikingM: number | null
   tourismDensityCount: number | null
   attractionDensityCount: number | null
 }
 
 // Doc's own worked example (step 3): "Skigebiet: < 15 km sehr gut, < 40 km
-// gut, < 80 km mäßig".
+// gut, < 80 km mäßig". Held up against real data: 3173 geocoded auctions all
+// had a ski_area within the 200km cutoff (p10/p50/p90 = 2.2/9.7/23.4 km) —
+// the doc's own bands split that spread sensibly, left as-is.
 const SKI_BANDS_KM = { sehrGut: 15, gut: 40, maessig: 80 }
-// Doc's example puts a 1.8km lake at "sehr gut" — walking/short-bike
-// distance to swim vs. a short drive vs. still-reachable day trip.
-const WASSER_BANDS_KM = { sehrGut: 3, gut: 15, maessig: 40 }
-// Doc's example: "Wanderwegnetz angrenzend" for the sehr-gut case.
+// Deliberately built from distSwimmingM (geo_features kind `swimming`:
+// leisure=swimming_area/natural=beach/amenity=public_bath|spa), not the
+// generic `lake` kind used by the nearLake search filter — verified live
+// that "nearest of any natural=water polygon" (which includes garden ponds)
+// has a median distance of just 481m across 3173 auctions, making every
+// single one "sehr gut" and the gut/mäßig bands dead code. `swimming` gives
+// an actually-discriminating spread (60-sample: p10/p50/p90 = 630/1751/5063m).
+const WASSER_BANDS_KM = { sehrGut: 1, gut: 2.5, maessig: 5 }
+// Doc's example: "Wanderwegnetz angrenzend" for the sehr-gut case. Held up
+// against real data: only 16/80 sampled auctions had any hiking_route
+// relation within the 20km cutoff at all (route relations cluster on
+// waymarked long-distance networks, not every forest path) — but when one
+// exists it is almost always very close (median 165m, max 2074m in that
+// same 16), so these bands still split the "has one" case sensibly.
 const WANDERN_BANDS_KM = { sehrGut: 2, gut: 8, maessig: 20 }
 // tourism_density_count, 10km radius (build-auction-geo-metrics.ts).
-const TOURISMUS_DICHTE_BANDS = { sehrGut: 20, gut: 8, maessig: 2 }
-// attraction_density_count, 30km radius — doc's example: "12 Sehenswürdig-
-// keiten im Umkreis 30 km" landed in a "sehr gut" overall verdict.
-const SEHENSWUERDIGKEITEN_BANDS = { sehrGut: 12, gut: 5, maessig: 1 }
+// Recalibrated against real data: among 3165 auctions with any count at all,
+// p10/p50/p75/p90 = 27/86/140/221, max 715 — the original 20/8/2 guess would
+// have put almost every auction with any tourism activity at "sehr gut".
+const TOURISMUS_DICHTE_BANDS = { sehrGut: 150, gut: 60, maessig: 20 }
+// attraction_density_count, 30km radius, build-geo-features.ts's narrowed
+// `attraction` kind (historic=memorial/archaeological_site excluded — see
+// that file's comment on why the raw kind was unusable). Recalibrated
+// against the narrowed real distribution: p10/p50/p90 = 39/105/252 across 40
+// sampled auctions, none at zero.
+const SEHENSWUERDIGKEITEN_BANDS = { sehrGut: 200, gut: 100, maessig: 30 }
 
 function distanceBand(meters: number | null, bandsKm: { sehrGut: number, gut: number, maessig: number }): CriterionBand {
   if (meters == null) return 'gering'
@@ -87,16 +109,16 @@ function densityBand(count: number | null, bands: { sehrGut: number, gut: number
 }
 
 function buildCriteria(metrics: LeisureTourismMetricsInput): LeisureTourismCriteria {
-  // Sea and lake are two different auction_geo_metrics columns with
-  // different cutoffs (200km / 50km) — the better (nearer) of the two present
-  // values wins, keeping the source so the UI can say "Meer" or "Badesee"
+  // Sea and swimming-spot are two different auction_geo_metrics columns with
+  // different cutoffs (200km / 20km) — the better (nearer) of the two present
+  // values wins, keeping the source so the UI can say "Meer" or "Badestelle"
   // rather than a generic "Wasser".
   let wasserMeters: number | null = null
-  let wasserSource: 'sea' | 'lake' | null = null
+  let wasserSource: 'sea' | 'swimming' | null = null
   if (metrics.distSeaM != null) { wasserMeters = metrics.distSeaM; wasserSource = 'sea' }
-  if (metrics.distLakeM != null && (wasserMeters == null || metrics.distLakeM < wasserMeters)) {
-    wasserMeters = metrics.distLakeM
-    wasserSource = 'lake'
+  if (metrics.distSwimmingM != null && (wasserMeters == null || metrics.distSwimmingM < wasserMeters)) {
+    wasserMeters = metrics.distSwimmingM
+    wasserSource = 'swimming'
   }
 
   return {

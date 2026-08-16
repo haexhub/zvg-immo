@@ -39,8 +39,8 @@ const criteriaRows = computed<CriterionRow[]>(() => {
   if (!c) return []
   const waterLabelKey = c.wasser.source === 'sea'
     ? 'leisureTourismSea'
-    : c.wasser.source === 'lake'
-      ? 'leisureTourismLake'
+    : c.wasser.source === 'swimming'
+      ? 'leisureTourismSwimming'
       : 'leisureTourismWater'
   return [
     { key: 'ski', label: t('objektDetail.leisureTourismSki'), criterion: c.ski, isCount: false },

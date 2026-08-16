@@ -193,6 +193,14 @@ export const auctionGeoMetrics = pgTable('auction_geo_metrics', {
   distAirportM: integer('dist_airport_m'),
   distSkiM: integer('dist_ski_m'),
   distHikingM: integer('dist_hiking_m'),
+  // Deliberately distinct from distLakeM (the existing nearSea/nearLake
+  // search-filter category, which matches *any* natural=water polygon down
+  // to a garden pond — verified live that its effective distance is almost
+  // always under a km, useless for discriminating a WP-8 "Badestelle"
+  // criterion). This one is scoped to genuinely bathing-suitable geo_features
+  // (leisure=swimming_area/natural=beach/amenity=public_bath, WP-4's
+  // `swimming` kind) — WP-8 detail-page-only, same rationale as distHikingM.
+  distSwimmingM: integer('dist_swimming_m'),
   // Count within a fixed radius, not a distance — density is the more
   // meaningful tourism signal (does the area have tourist infrastructure at
   // all), per the architecture doc's "touristische Erschließung" note.

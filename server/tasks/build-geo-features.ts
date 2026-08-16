@@ -168,11 +168,18 @@ const KIND_MAPPINGS: KindMapping[] = [
       OR o.tags ->> 'fishing' = 'yes')`,
   },
   {
-    // Not importable yet (WP-6): tourism/historic tags beyond what's used by
-    // `swimming`/`sea` above aren't in osm_local_elements today.
+    // `historic=memorial`/`archaeological_site` deliberately excluded: verified
+    // live against prod (2026-08-15, WP-8 calibration) that they make up ~55%
+    // of all matches (93.8k/196.7k memorial alone — a war memorial in nearly
+    // every village) and turn the per-auction density count bimodal — 75% of
+    // a random sample had zero attractions within 30km, the rest jumped
+    // straight to the thousands, with almost nothing in between. Dropping
+    // just these two tags produces a smooth, usable distribution (median 105,
+    // p90 ~252 in the same sample) without losing genuinely visit-worthy
+    // sights (museum/viewpoint/zoo/theme_park/castle/monument all kept).
     kind: 'attraction',
     where: `(o.tags ->> 'tourism' IN ('attraction', 'museum', 'viewpoint', 'theme_park', 'zoo')
-      OR o.tags ->> 'historic' IN ('castle', 'monument', 'memorial', 'archaeological_site', 'fort'))`,
+      OR o.tags ->> 'historic' IN ('castle', 'monument', 'fort'))`,
   },
   {
     // Not importable yet (WP-6).

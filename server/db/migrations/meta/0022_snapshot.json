@@ -1,5 +1,5 @@
 {
-  "id": "11c25009-c16e-42cd-9bdf-1cd6bf9106dc",
+  "id": "2a298049-14c3-4dfd-a2fb-3286efe1c5bf",
   "prevId": "2968f602-6390-42bb-883e-26b45f71832b",
   "version": "7",
   "dialect": "postgresql",
@@ -3486,6 +3486,12 @@
         },
         "dist_hiking_m": {
           "name": "dist_hiking_m",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "dist_swimming_m": {
+          "name": "dist_swimming_m",
           "type": "integer",
           "primaryKey": false,
           "notNull": false

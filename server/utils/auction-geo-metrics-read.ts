@@ -10,7 +10,7 @@ import type { LeisureTourismMetricsInput } from './leisure-tourism-profile'
 interface GeoMetricsRow {
   dist_ski_m: number | null
   dist_sea_m: number | null
-  dist_lake_m: number | null
+  dist_swimming_m: number | null
   dist_hiking_m: number | null
   tourism_density_count: number | null
   attraction_density_count: number | null
@@ -20,7 +20,7 @@ export async function readAuctionGeoMetrics(platform: string, externalId: string
   const db = getPool()
   if (!db) return null
   const { rows } = await db.query<GeoMetricsRow>(
-    `SELECT dist_ski_m, dist_sea_m, dist_lake_m, dist_hiking_m, tourism_density_count, attraction_density_count
+    `SELECT dist_ski_m, dist_sea_m, dist_swimming_m, dist_hiking_m, tourism_density_count, attraction_density_count
      FROM auction_geo_metrics WHERE platform = $1 AND external_id = $2`,
     [platform, externalId],
   )
@@ -29,7 +29,7 @@ export async function readAuctionGeoMetrics(platform: string, externalId: string
   return {
     distSkiM: row.dist_ski_m,
     distSeaM: row.dist_sea_m,
-    distLakeM: row.dist_lake_m,
+    distSwimmingM: row.dist_swimming_m,
     distHikingM: row.dist_hiking_m,
     tourismDensityCount: row.tourism_density_count,
     attractionDensityCount: row.attraction_density_count,

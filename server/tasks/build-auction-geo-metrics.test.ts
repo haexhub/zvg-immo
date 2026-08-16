@@ -77,6 +77,8 @@ async function seedFixture(client: PoolClient): Promise<void> {
   await seedGeoFeature(client, 'tourism_supply', AUCTION_LNG + 1, AUCTION_LAT)
   // Within the 20km hiking cutoff.
   await seedGeoFeature(client, 'hiking_route', AUCTION_LNG, AUCTION_LAT - 0.05)
+  // Within the 20km swimming cutoff.
+  await seedGeoFeature(client, 'swimming', AUCTION_LNG - 0.05, AUCTION_LAT)
   // attraction_density_count: two within the 30km radius, one well outside it.
   await seedGeoFeature(client, 'attraction', AUCTION_LNG + 0.2, AUCTION_LAT)
   await seedGeoFeature(client, 'attraction', AUCTION_LNG - 0.2, AUCTION_LAT)
@@ -91,6 +93,7 @@ interface MetricsRow {
   dist_airport_m: number | null
   dist_ski_m: number | null
   dist_hiking_m: number | null
+  dist_swimming_m: number | null
   tourism_density_count: number | null
   attraction_density_count: number | null
   point_hash: string | null
@@ -181,6 +184,7 @@ describeDb('buildAuctionGeoMetrics (real Postgres)', () => {
       expect(row!.tourism_density_count).toBe(2)
       expect(row!.attraction_density_count).toBe(2)
       expect(row!.dist_hiking_m).toBeGreaterThan(0)
+      expect(row!.dist_swimming_m).toBeGreaterThan(0)
       expect(row!.features_epoch).toBe(1)
 
       const { rows: hashRef } = await pool.query<{ hash: string }>(
