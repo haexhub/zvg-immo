@@ -12,6 +12,7 @@ vi.mock('../../../utils/geocode', () => ({ geocodeAddress: vi.fn() }))
 vi.mock('../../../utils/auction-record', () => ({ readAuctionRecord: vi.fn() }))
 vi.mock('../../../utils/auction-relationships', () => ({ readAuctionRelationships: vi.fn() }))
 vi.mock('../../../utils/external-data/location-enrichment', () => ({ readLocationEnrichment: vi.fn() }))
+vi.mock('../../../utils/auction-geo-metrics-read', () => ({ readAuctionGeoMetrics: vi.fn() }))
 vi.mock('../../../utils/list-cache', () => ({ readMergedListCache: vi.fn() }))
 vi.mock('../../../utils/verkehrswert-cache', () => ({
   cacheKey: (platform: string, id: string) => `${platform}:${id}`,
@@ -66,6 +67,7 @@ async function loadHandler() {
   const { readAuctionRecord } = await import('../../../utils/auction-record')
   const { readAuctionRelationships } = await import('../../../utils/auction-relationships')
   const { readLocationEnrichment } = await import('../../../utils/external-data/location-enrichment')
+  const { readAuctionGeoMetrics } = await import('../../../utils/auction-geo-metrics-read')
   const { readMergedListCache } = await import('../../../utils/list-cache')
   const { getRates } = await import('../../../utils/exchange-rate')
 
@@ -73,6 +75,7 @@ async function loadHandler() {
   vi.mocked(readAuctionRelationships).mockResolvedValue([])
   vi.mocked(geocodeAddress).mockResolvedValue(null)
   vi.mocked(readLocationEnrichment).mockResolvedValue(null)
+  vi.mocked(readAuctionGeoMetrics).mockResolvedValue(null)
   vi.mocked(readMergedListCache).mockResolvedValue(null)
   vi.mocked(getRates).mockResolvedValue({ EUR: 1 })
 
@@ -166,6 +169,28 @@ describe('/api/auction/:platform/:id location enrichment overlay', () => {
     })
     expect(readLocationEnrichment).toHaveBeenCalledWith('zvg-portal', '7265')
     expect(readAuctionRelationships).toHaveBeenCalledWith('zvg-portal', '7265')
+  })
+
+  it('still returns the auction when the optional geo-metrics read fails', async () => {
+    const { readAuctionRecord } = await import('../../../utils/auction-record')
+    const { readAuctionGeoMetrics } = await import('../../../utils/auction-geo-metrics-read')
+    const handler = await loadHandler()
+
+    vi.mocked(readAuctionRecord).mockResolvedValue({
+      auction: auction({ lat: 48.1, lng: 11.5 }),
+      detailsId: 1,
+      detailsVersion: 1,
+      artifactVersionId: null,
+    })
+    vi.mocked(readAuctionGeoMetrics).mockRejectedValueOnce(new Error('database unavailable'))
+
+    await expect(handler({ context: { params: { platform: 'zvg-portal', id: '7265' } } })).resolves.toMatchObject({
+      platform: 'zvg-portal',
+      leisureTourism: {
+        eigennutzung: { label: 'keine_angaben', criteria: null },
+        wirtschaftlich: { label: 'keine_angaben', criteria: null },
+      },
+    })
   })
 
   it('treats a findOne miss as definitive and skips the region crawl', async () => {

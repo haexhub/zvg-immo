@@ -1157,6 +1157,27 @@
     "climateTempMin": "Mittlere Nachttemperatur",
     "climatePrecipitation": "Niederschlag",
     "climateNormalsHint": "Klimanormalwerte ({start}–{end}), je Kalendermonat gemittelt aus dem Open-Meteo-Archiv (ERA5-Land-Reanalyse, ca. 9-11 km Raster) — ein Normalwert, keine Vorhersage, und beschreibt die Umgebung, nicht das Grundstück selbst.",
+    "leisureTourismTitle": "Freizeit & Tourismus",
+    "leisureTourismProfile": {
+      "eigennutzung": "Eigennutzung",
+      "wirtschaftlich": "Wirtschaftliche Nutzung"
+    },
+    "leisureTourismBand": {
+      "sehr_gut": "sehr gut",
+      "gut": "gut",
+      "maessig": "mäßig",
+      "gering": "gering",
+      "keine_angaben": "keine Angaben"
+    },
+    "leisureTourismSki": "Skigebiet",
+    "leisureTourismSea": "Meer",
+    "leisureTourismSwimming": "Badestelle",
+    "leisureTourismWater": "Gewässer",
+    "leisureTourismHiking": "Wanderwege",
+    "leisureTourismDensity": "Touristische Betriebe (10 km)",
+    "leisureTourismAttractions": "Sehenswürdigkeiten (30 km)",
+    "leisureTourismUnavailable": "Für dieses Objekt liegen noch keine Freizeit- und Tourismus-Kennzahlen vor.",
+    "leisureTourismDisclaimer": "Automatisch aus OpenStreetMap-Daten im Umkreis berechnet — kein Ersatz für eine eigene Vor-Ort-Prüfung.",
     "demographicSignalLevel": {
       "low": "schwach",
       "medium": "mittel",

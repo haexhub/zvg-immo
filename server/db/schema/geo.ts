@@ -192,10 +192,24 @@ export const auctionGeoMetrics = pgTable('auction_geo_metrics', {
   distMountainM: integer('dist_mountain_m'),
   distAirportM: integer('dist_airport_m'),
   distSkiM: integer('dist_ski_m'),
+  distHikingM: integer('dist_hiking_m'),
+  // Deliberately distinct from distLakeM (the existing nearSea/nearLake
+  // search-filter category, which matches *any* natural=water polygon down
+  // to a garden pond — verified live that its effective distance is almost
+  // always under a km, useless for discriminating a WP-8 "Badestelle"
+  // criterion). This one is scoped to genuinely bathing-suitable geo_features
+  // (leisure=swimming_area/natural=beach/amenity=public_bath, WP-4's
+  // `swimming` kind) — WP-8 detail-page-only, same rationale as distHikingM.
+  distSwimmingM: integer('dist_swimming_m'),
   // Count within a fixed radius, not a distance — density is the more
   // meaningful tourism signal (does the area have tourist infrastructure at
   // all), per the architecture doc's "touristische Erschließung" note.
   tourismDensityCount: integer('tourism_density_count'),
+  // Same rationale, but for sights rather than lodging/leisure supply — WP-8
+  // (docs/plans/2026-08-04-gis-wp8-lagebeschreibung.md) reads both counts
+  // separately since they answer different questions ("is there somewhere to
+  // stay" vs. "is there something to see").
+  attractionDensityCount: integer('attraction_density_count'),
   climateCellId: bigint('climate_cell_id', { mode: 'number' }).references(() => climateCells.id, { onDelete: 'set null' }),
   // Hash of the auctions.lat/lng this row was computed from — an auction's
   // coordinates changing (re-geocoding) invalidates the row without needing

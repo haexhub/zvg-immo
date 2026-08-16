@@ -81,6 +81,8 @@ const IDS = {
   smallAirfield: { osm_type: 'way', osm_id: 900_011 }, // aerodrome, no international marker — must not surface as 'airport'
   iataAirfield: { osm_type: 'way', osm_id: 900_012 }, // aerodrome with iata but not international — must not surface as 'airport'
   lakeBay: { osm_type: 'way', osm_id: 900_013 }, // natural=bay on an inland lake — must not surface as 'sea'
+  tourismMemorial: { osm_type: 'node', osm_id: 900_014 }, // allowed tourism tag must not override historic=memorial
+  tourismArchaeologicalSite: { osm_type: 'node', osm_id: 900_015 }, // nor historic=archaeological_site
 } as const
 
 async function seedFixture(client: PoolClient): Promise<void> {
@@ -177,6 +179,21 @@ async function seedFixture(client: PoolClient): Promise<void> {
      VALUES ($1, $2, ST_GeomFromText('POLYGON((13.2 52,13.21 52,13.21 52.01,13.2 52.01,13.2 52))', 4326),
        '{"natural": "bay", "name": "Testbucht am See"}'::jsonb, $3)`,
     [IDS.lakeBay.osm_type, IDS.lakeBay.osm_id, TEST_COUNTRY],
+  )
+
+  // These deliberately combine otherwise accepted tourism tags with the two
+  // excluded historic values. The exclusion must cover the whole predicate,
+  // not just the historic branch, or both would pollute attraction density.
+  await client.query(
+    `INSERT INTO osm_local_elements (osm_type, osm_id, geom, tags, country)
+     VALUES
+       ($1, $2, ST_SetSRID(ST_MakePoint(12, 52), 4326), '{"tourism": "attraction", "historic": "memorial"}'::jsonb, $3),
+       ($4, $5, ST_SetSRID(ST_MakePoint(12.1, 52), 4326), '{"tourism": "museum", "historic": "archaeological_site"}'::jsonb, $3)`,
+    [
+      IDS.tourismMemorial.osm_type, IDS.tourismMemorial.osm_id,
+      TEST_COUNTRY,
+      IDS.tourismArchaeologicalSite.osm_type, IDS.tourismArchaeologicalSite.osm_id,
+    ],
   )
 
   // A hole entirely outside the shell — GEOS reports it invalid, and
@@ -297,6 +314,10 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
       expect(afterFirst.some((r) => Number(r.osm_id) === IDS.lakeBay.osm_id)).toBe(false)
       // natural=water + water=river must not surface as lake nor as river.
       expect(afterFirst.some((r) => Number(r.osm_id) === IDS.riverWaterPolygon.osm_id)).toBe(false)
+      // An otherwise accepted tourism tag must not override either excluded
+      // historic tag — both combinations must stay out of `attraction`.
+      expect(afterFirst.some((r) => Number(r.osm_id) === IDS.tourismMemorial.osm_id)).toBe(false)
+      expect(afterFirst.some((r) => Number(r.osm_id) === IDS.tourismArchaeologicalSite.osm_id)).toBe(false)
       // building is never mapped to any kind.
       expect(afterFirst.some((r) => Number(r.osm_id) === IDS.building.osm_id)).toBe(false)
 

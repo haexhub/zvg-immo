@@ -1157,6 +1157,27 @@
     "climateTempMin": "Average low (night)",
     "climatePrecipitation": "Precipitation",
     "climateNormalsHint": "Climate normals ({start}–{end}), averaged per calendar month from the Open-Meteo historical archive (ERA5-Land reanalysis, ~9-11 km grid) — a normal, not a forecast, and it describes the surrounding area rather than the parcel.",
+    "leisureTourismTitle": "Leisure & Tourism",
+    "leisureTourismProfile": {
+      "eigennutzung": "Personal use",
+      "wirtschaftlich": "Commercial use"
+    },
+    "leisureTourismBand": {
+      "sehr_gut": "very good",
+      "gut": "good",
+      "maessig": "moderate",
+      "gering": "low",
+      "keine_angaben": "no data"
+    },
+    "leisureTourismSki": "Ski area",
+    "leisureTourismSea": "Sea",
+    "leisureTourismSwimming": "Swimming spot",
+    "leisureTourismWater": "Body of water",
+    "leisureTourismHiking": "Hiking trails",
+    "leisureTourismDensity": "Tourist businesses (10 km)",
+    "leisureTourismAttractions": "Sights (30 km)",
+    "leisureTourismUnavailable": "Leisure and tourism metrics are not yet available for this property.",
+    "leisureTourismDisclaimer": "Computed automatically from OpenStreetMap data in the surrounding area — not a substitute for an on-site inspection.",
     "demographicSignalLevel": {
       "low": "weak",
       "medium": "medium",

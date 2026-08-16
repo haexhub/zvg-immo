@@ -75,6 +75,14 @@ async function seedFixture(client: PoolClient): Promise<void> {
   await seedGeoFeature(client, 'tourism_supply', AUCTION_LNG + 0.02, AUCTION_LAT)
   await seedGeoFeature(client, 'tourism_supply', AUCTION_LNG - 0.02, AUCTION_LAT)
   await seedGeoFeature(client, 'tourism_supply', AUCTION_LNG + 1, AUCTION_LAT)
+  // Within the 20km hiking cutoff.
+  await seedGeoFeature(client, 'hiking_route', AUCTION_LNG, AUCTION_LAT - 0.05)
+  // Within the 20km swimming cutoff.
+  await seedGeoFeature(client, 'swimming', AUCTION_LNG - 0.05, AUCTION_LAT)
+  // attraction_density_count: two within the 30km radius, one well outside it.
+  await seedGeoFeature(client, 'attraction', AUCTION_LNG + 0.2, AUCTION_LAT)
+  await seedGeoFeature(client, 'attraction', AUCTION_LNG - 0.2, AUCTION_LAT)
+  await seedGeoFeature(client, 'attraction', AUCTION_LNG + 1, AUCTION_LAT)
 }
 
 interface MetricsRow {
@@ -84,7 +92,10 @@ interface MetricsRow {
   dist_mountain_m: number | null
   dist_airport_m: number | null
   dist_ski_m: number | null
+  dist_hiking_m: number | null
+  dist_swimming_m: number | null
   tourism_density_count: number | null
+  attraction_density_count: number | null
   point_hash: string | null
   features_epoch: number
   computed_at: Date | null
@@ -171,6 +182,9 @@ describeDb('buildAuctionGeoMetrics (real Postgres)', () => {
       expect(row!.dist_ski_m).toBeNull()
 
       expect(row!.tourism_density_count).toBe(2)
+      expect(row!.attraction_density_count).toBe(2)
+      expect(row!.dist_hiking_m).toBeGreaterThan(0)
+      expect(row!.dist_swimming_m).toBeGreaterThan(0)
       expect(row!.features_epoch).toBe(1)
 
       const { rows: hashRef } = await pool.query<{ hash: string }>(
@@ -194,6 +208,23 @@ describeDb('buildAuctionGeoMetrics (real Postgres)', () => {
       expect(second).toMatchObject({ candidates: 0, computed: 0 })
       const secondComputedAt = (await readMetrics(pool))!.computed_at
       expect(secondComputedAt).toEqual(firstComputedAt)
+    } finally {
+      client.release()
+    }
+  })
+
+  it('recomputes an incomplete metrics row even when its epoch and point hash are current', async () => {
+    const client = await pool.connect()
+    try {
+      await buildAuctionGeoMetrics(drizzle(client), new AbortController().signal)
+      await client.query(
+        'UPDATE auction_geo_metrics SET computed_at = NULL WHERE platform = $1 AND external_id = $2',
+        [PLATFORM, EXTERNAL_ID],
+      )
+
+      const result = await buildAuctionGeoMetrics(drizzle(client), new AbortController().signal)
+      expect(result).toMatchObject({ candidates: 1, computed: 1, skipped: 0 })
+      expect((await readMetrics(pool))!.computed_at).not.toBeNull()
     } finally {
       client.release()
     }

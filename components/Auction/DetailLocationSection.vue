@@ -62,6 +62,7 @@ const heavyIndustrySites = computed(() => locationEnvironment.value?.heavyIndust
 const reportedNoise = computed(() => locationEnvironment.value?.reportedNoise ?? [])
 const airQuality = computed(() => locationEnvironment.value?.airQuality ?? null)
 const climateNormals = computed(() => locationEnvironment.value?.climateNormals ?? null)
+const leisureTourismAvailable = computed(() => props.auction.leisureTourism.eigennutzung.label !== 'keine_angaben')
 const locationDemographics = computed(() => locationContext.value?.demographics ?? null)
 const neighborhoodContext = computed(() => locationContext.value?.neighborhood ?? null)
 const neighborhoodNotes = computed(() => neighborhoodContext.value?.notes ?? [])
@@ -427,7 +428,10 @@ const {
         </DetailSectionCard>
       </div>
     </template>
-    <DetailSectionCard v-else :title="$t('objektDetail.nearbyPlaces')">
+    <DetailSectionCard v-if="leisureTourismAvailable" :title="$t('objektDetail.leisureTourismTitle')">
+      <AuctionLeisureTourismProfiles :profiles="props.auction.leisureTourism" />
+    </DetailSectionCard>
+    <DetailSectionCard v-if="auction.lat == null || auction.lng == null" :title="$t('objektDetail.nearbyPlaces')">
       <p class="text-sm text-muted-foreground">{{ $t('objektDetail.noExternalLocationContext') }}</p>
     </DetailSectionCard>
   </section>

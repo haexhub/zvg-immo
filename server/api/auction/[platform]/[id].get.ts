@@ -12,6 +12,8 @@ import { readMergedListCache } from '../../../utils/list-cache'
 import { readLocationEnrichment } from '../../../utils/external-data/location-enrichment'
 import { readAuctionRecord } from '../../../utils/auction-record'
 import { readAuctionRelationships, type RelatedAuction } from '../../../utils/auction-relationships'
+import { readAuctionGeoMetrics } from '../../../utils/auction-geo-metrics-read'
+import { buildLeisureTourismProfiles, type LeisureTourismProfiles } from '../../../utils/leisure-tourism-profile'
 
 const LIVE_MISS_TTL_MS = 60_000
 const liveMissCache = new Map<string, number>()
@@ -21,6 +23,7 @@ export interface AuctionDetail extends Auction {
   lng: number | null
   locationEnrichment: LocationEnrichment | null
   relatedAuctions: RelatedAuction[]
+  leisureTourism: LeisureTourismProfiles
 }
 
 function cloneAuction(a: Auction): Auction {
@@ -113,9 +116,14 @@ export default defineEventHandler(async (event): Promise<AuctionDetail> => {
   const lat = sourcePoint?.lat ?? point?.lat ?? null
   const lng = sourcePoint?.lng ?? point?.lng ?? null
   applyDescriptionMarketValue(auction)
-  const [locationEnrichment, relatedAuctions] = await Promise.all([
+  const [locationEnrichment, relatedAuctions, geoMetrics] = await Promise.all([
     readLocationEnrichment(platform, id),
     readAuctionRelationships(platform, id),
+    readAuctionGeoMetrics(platform, id).catch((err) => {
+      console.warn(`[api/auction] geo metrics read ${platform}/${id}: ${(err as Error).message}`)
+      return null
+    }),
   ])
-  return { ...auction, lat, lng, locationEnrichment, relatedAuctions }
+  const leisureTourism = buildLeisureTourismProfiles(geoMetrics)
+  return { ...auction, lat, lng, locationEnrichment, relatedAuctions, leisureTourism }
 })
