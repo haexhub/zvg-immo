@@ -178,8 +178,9 @@ const KIND_MAPPINGS: KindMapping[] = [
     // p90 ~252 in the same sample) without losing genuinely visit-worthy
     // sights (museum/viewpoint/zoo/theme_park/castle/monument all kept).
     kind: 'attraction',
-    where: `(o.tags ->> 'tourism' IN ('attraction', 'museum', 'viewpoint', 'theme_park', 'zoo')
-      OR o.tags ->> 'historic' IN ('castle', 'monument', 'fort'))`,
+    where: `(COALESCE(o.tags ->> 'historic', '') NOT IN ('memorial', 'archaeological_site')
+      AND (o.tags ->> 'tourism' IN ('attraction', 'museum', 'viewpoint', 'theme_park', 'zoo')
+        OR o.tags ->> 'historic' IN ('castle', 'monument', 'fort')))`,
   },
   {
     // Not importable yet (WP-6).

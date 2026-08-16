@@ -213,6 +213,23 @@ describeDb('buildAuctionGeoMetrics (real Postgres)', () => {
     }
   })
 
+  it('recomputes an incomplete metrics row even when its epoch and point hash are current', async () => {
+    const client = await pool.connect()
+    try {
+      await buildAuctionGeoMetrics(drizzle(client), new AbortController().signal)
+      await client.query(
+        'UPDATE auction_geo_metrics SET computed_at = NULL WHERE platform = $1 AND external_id = $2',
+        [PLATFORM, EXTERNAL_ID],
+      )
+
+      const result = await buildAuctionGeoMetrics(drizzle(client), new AbortController().signal)
+      expect(result).toMatchObject({ candidates: 1, computed: 1, skipped: 0 })
+      expect((await readMetrics(pool))!.computed_at).not.toBeNull()
+    } finally {
+      client.release()
+    }
+  })
+
   it('recomputes once the auction is re-geocoded (point_hash changes)', async () => {
     const client = await pool.connect()
     try {

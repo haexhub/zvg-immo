@@ -268,6 +268,7 @@ async function findCandidates(db: NodePgDatabase, epoch: number): Promise<Candid
     WHERE a.lat IS NOT NULL AND a.lng IS NOT NULL
       AND (
         m.platform IS NULL
+        OR m.computed_at IS NULL
         OR m.features_epoch IS DISTINCT FROM ${epoch}
         OR m.point_hash IS DISTINCT FROM md5(a.lat::text || ',' || a.lng::text)
       )

@@ -326,10 +326,6 @@ const {
             <AuctionClimateNormalsChart :normals="climateNormals" />
           </DetailSectionCard>
 
-          <DetailSectionCard v-if="leisureTourismAvailable" :title="$t('objektDetail.leisureTourismTitle')">
-            <AuctionLeisureTourismProfiles :profiles="props.auction.leisureTourism" />
-          </DetailSectionCard>
-
           <DetailSectionCard v-if="locationDemographics" :title="$t('objektDetail.demographicsTitle')">
             <div class="space-y-3">
               <dl class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
@@ -432,7 +428,10 @@ const {
         </DetailSectionCard>
       </div>
     </template>
-    <DetailSectionCard v-else :title="$t('objektDetail.nearbyPlaces')">
+    <DetailSectionCard v-if="leisureTourismAvailable" :title="$t('objektDetail.leisureTourismTitle')">
+      <AuctionLeisureTourismProfiles :profiles="props.auction.leisureTourism" />
+    </DetailSectionCard>
+    <DetailSectionCard v-if="auction.lat == null || auction.lng == null" :title="$t('objektDetail.nearbyPlaces')">
       <p class="text-sm text-muted-foreground">{{ $t('objektDetail.noExternalLocationContext') }}</p>
     </DetailSectionCard>
   </section>

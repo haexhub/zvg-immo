@@ -16,6 +16,21 @@ const PROFILE_KEYS = ['eigennutzung', 'wirtschaftlich'] as const
 const activeProfile = ref<(typeof PROFILE_KEYS)[number]>('eigennutzung')
 const current = computed(() => props.profiles[activeProfile.value])
 
+function selectProfile(key: (typeof PROFILE_KEYS)[number]): void {
+  activeProfile.value = key
+}
+
+function onTabKeydown(event: KeyboardEvent, key: (typeof PROFILE_KEYS)[number]): void {
+  const direction = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0
+  if (direction === 0) return
+
+  event.preventDefault()
+  const nextIndex = (PROFILE_KEYS.indexOf(key) + direction + PROFILE_KEYS.length) % PROFILE_KEYS.length
+  const nextKey = PROFILE_KEYS[nextIndex]!
+  selectProfile(nextKey)
+  requestAnimationFrame(() => document.getElementById(`leisure-tourism-tab-${nextKey}`)?.focus())
+}
+
 function bandLabel(band: ProfileLabel): string {
   return t(`objektDetail.leisureTourismBand.${band}`)
 }
@@ -62,35 +77,45 @@ function formatCriterionValue(row: CriterionRow): string {
     <div class="flex flex-wrap gap-2" role="tablist">
       <button
         v-for="key in PROFILE_KEYS"
+        :id="`leisure-tourism-tab-${key}`"
         :key="key"
         type="button"
         role="tab"
         :aria-selected="activeProfile === key"
+        :aria-controls="`leisure-tourism-panel-${key}`"
+        :tabindex="activeProfile === key ? 0 : -1"
         class="rounded-full px-3 py-1 text-sm font-medium transition-colors"
         :class="activeProfile === key
           ? 'bg-primary text-primary-foreground'
           : 'bg-muted text-muted-foreground hover:bg-muted/70'"
-        @click="activeProfile = key"
+        @click="selectProfile(key)"
+        @keydown="onTabKeydown($event, key)"
       >
         {{ t(`objektDetail.leisureTourismProfile.${key}`) }}
       </button>
     </div>
 
-    <p v-if="current.label === 'keine_angaben'" class="text-sm text-muted-foreground">
-      {{ t('objektDetail.leisureTourismUnavailable') }}
-    </p>
-    <div v-else class="space-y-3">
-      <Badge variant="outline" :class="bandClass(current.label)">{{ bandLabel(current.label) }}</Badge>
-      <dl class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-3">
-        <div v-for="row in criteriaRows" :key="row.key">
-          <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ row.label }}</dt>
-          <dd class="flex flex-wrap items-center gap-2 font-medium">
-            <span>{{ formatCriterionValue(row) }}</span>
-            <Badge variant="outline" class="text-xs" :class="bandClass(row.criterion.band)">{{ bandLabel(row.criterion.band) }}</Badge>
-          </dd>
-        </div>
-      </dl>
-      <p class="text-xs text-muted-foreground">{{ t('objektDetail.leisureTourismDisclaimer') }}</p>
+    <div
+      :id="`leisure-tourism-panel-${activeProfile}`"
+      role="tabpanel"
+      :aria-labelledby="`leisure-tourism-tab-${activeProfile}`"
+    >
+      <p v-if="current.label === 'keine_angaben'" class="text-sm text-muted-foreground">
+        {{ t('objektDetail.leisureTourismUnavailable') }}
+      </p>
+      <div v-else class="space-y-3">
+        <Badge variant="outline" :class="bandClass(current.label)">{{ bandLabel(current.label) }}</Badge>
+        <dl class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-3">
+          <div v-for="row in criteriaRows" :key="row.key">
+            <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ row.label }}</dt>
+            <dd class="flex flex-wrap items-center gap-2 font-medium">
+              <span>{{ formatCriterionValue(row) }}</span>
+              <Badge variant="outline" class="text-xs" :class="bandClass(row.criterion.band)">{{ bandLabel(row.criterion.band) }}</Badge>
+            </dd>
+          </div>
+        </dl>
+        <p class="text-xs text-muted-foreground">{{ t('objektDetail.leisureTourismDisclaimer') }}</p>
+      </div>
     </div>
   </div>
 </template>

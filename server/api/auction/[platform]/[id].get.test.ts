@@ -171,6 +171,28 @@ describe('/api/auction/:platform/:id location enrichment overlay', () => {
     expect(readAuctionRelationships).toHaveBeenCalledWith('zvg-portal', '7265')
   })
 
+  it('still returns the auction when the optional geo-metrics read fails', async () => {
+    const { readAuctionRecord } = await import('../../../utils/auction-record')
+    const { readAuctionGeoMetrics } = await import('../../../utils/auction-geo-metrics-read')
+    const handler = await loadHandler()
+
+    vi.mocked(readAuctionRecord).mockResolvedValue({
+      auction: auction({ lat: 48.1, lng: 11.5 }),
+      detailsId: 1,
+      detailsVersion: 1,
+      artifactVersionId: null,
+    })
+    vi.mocked(readAuctionGeoMetrics).mockRejectedValueOnce(new Error('database unavailable'))
+
+    await expect(handler({ context: { params: { platform: 'zvg-portal', id: '7265' } } })).resolves.toMatchObject({
+      platform: 'zvg-portal',
+      leisureTourism: {
+        eigennutzung: { label: 'keine_angaben', criteria: null },
+        wirtschaftlich: { label: 'keine_angaben', criteria: null },
+      },
+    })
+  })
+
   it('treats a findOne miss as definitive and skips the region crawl', async () => {
     const findOne = vi.fn().mockResolvedValue(null)
     const crawl = vi.fn().mockResolvedValue({
