@@ -176,6 +176,13 @@ export async function effectiveCandidateCountries(opts: ReprocessOptions): Promi
   return getEnabledCountryCodes()
 }
 
+/** Whether this run addresses one specific auction rather than scanning a
+ *  country's backlog — the case where an admin's explicit request outranks the
+ *  default eligibility gates. */
+function targetsSingleAuction(opts: ReprocessOptions): boolean {
+  return Boolean(opts.externalId || opts.caseNumber)
+}
+
 export async function findCandidates(opts: ReprocessOptions, countries: readonly string[]): Promise<Candidate[]> {
   if (countries.length === 0) return []
   const db = getPool()
@@ -190,6 +197,14 @@ export async function findCandidates(opts: ReprocessOptions, countries: readonly
   if (opts.platform) conditions.push(`rc.platform = $${params.push(opts.platform)}`)
   if (opts.externalId) conditions.push(`rc.external_id = $${params.push(opts.externalId)}`)
   if (opts.caseNumber) conditions.push(`a.case_number = $${params.push(opts.caseNumber)}`)
+  // Cancelled/sold listings are hidden from search by default
+  // (auction-search-filters.ts: `a.cancelled = false`), so extracting them
+  // spends LLM budget on rows nobody sees. Sources differ in how much dead
+  // inventory they carry — an agency catalog that keeps every listing it ever
+  // had is ~40% sold — and none of it ever becomes visible again. An
+  // explicitly addressed auction still goes through: /settings' single-auction
+  // action targets one row by id and must not silently do nothing.
+  if (!targetsSingleAuction(opts)) conditions.push('a.cancelled = false')
   const limitClause = opts.limit ? ` LIMIT $${params.push(opts.limit)}` : ''
   const { rows } = await db.query<{ platform: string; external_id: string; country: string }>(
     `SELECT DISTINCT rc.platform, rc.external_id, a.country
