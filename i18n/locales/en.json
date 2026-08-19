@@ -1013,6 +1013,7 @@
     "constructionShort": "Construction",
     "authority": "Court",
     "caseNumber": "Case number",
+    "source": "Source",
     "technicalLink": "Technical",
     "biddingNotes": "Note on the bidding process: {note}",
     "renovationNotes": "Renovation note: {note}",
