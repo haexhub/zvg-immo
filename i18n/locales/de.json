@@ -1013,6 +1013,7 @@
     "constructionShort": "Bauweise",
     "authority": "Gericht",
     "caseNumber": "Aktenzeichen",
+    "source": "Quelle",
     "technicalLink": "Technik",
     "biddingNotes": "Hinweis zum Bietverfahren: {note}",
     "renovationNotes": "Sanierungshinweis: {note}",

@@ -36,6 +36,8 @@ import { eauction24Crawler } from './gr'
 import { auctionHouseCrawler } from './gb'
 import { bid4assetsCrawler } from './us'
 import { zaporiCrawler } from './bg'
+import { dgaAgCrawler } from './dga-ag'
+import { kipCrawler } from './kip'
 import { bimaCrawler } from './bima'
 
 /**
@@ -74,6 +76,8 @@ export const platforms: readonly PlatformCrawler[] = [
   auctionHouseCrawler,
   bid4assetsCrawler,
   zaporiCrawler,
+  dgaAgCrawler,
+  kipCrawler,
   bimaCrawler,
 ] as const
 

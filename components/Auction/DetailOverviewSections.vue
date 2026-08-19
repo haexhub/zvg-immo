@@ -236,6 +236,14 @@ function marketVerdictLabel(verdict: string): string {
         <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.caseNumber') }}</dt>
         <dd class="text-sm font-mono">{{ auction.caseNumber }}</dd>
       </div>
+      <div v-if="auction.sourcePlatform">
+        <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.source') }}</dt>
+        <dd class="text-sm font-medium">
+          <a :href="safeHref(auction.sourcePlatform.url)" target="_blank" rel="noopener" class="underline underline-offset-2 hover:text-foreground">
+            {{ auction.sourcePlatform.name }}
+          </a>
+        </dd>
+      </div>
     </dl>
     <p v-if="displayExtraction?.biddingNotes" class="mt-4 text-xs text-muted-foreground">
       {{ $t('objektDetail.biddingNotes', { note: displayExtraction.biddingNotes }) }}
