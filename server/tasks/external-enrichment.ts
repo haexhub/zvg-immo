@@ -244,15 +244,6 @@ function progressSnapshot(summary: ExternalEnrichmentSummary, total: number): Ta
   }
 }
 
-function scopeLabel(options: ExternalEnrichmentOptions): string {
-  const parts = [
-    options.country ? `country=${options.country}` : null,
-    options.platform ? `platform=${options.platform}` : null,
-    options.externalId ? `externalId=${options.externalId}` : null,
-  ].filter((part): part is string => !!part)
-  return parts.length > 0 ? parts.join(',') : 'full run'
-}
-
 async function resolvePoint(auction: Auction): Promise<{ lat: number; lng: number } | null> {
   if (auction.lat != null && auction.lng != null) {
     return { lat: auction.lat, lng: auction.lng }
