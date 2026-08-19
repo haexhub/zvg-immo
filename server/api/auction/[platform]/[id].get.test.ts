@@ -223,6 +223,46 @@ describe('/api/auction/:platform/:id location enrichment overlay', () => {
     expect(crawl).not.toHaveBeenCalled()
   })
 
+  it('resolves the human-readable source platform from the registry', async () => {
+    const { readAuctionRecord } = await import('../../../utils/auction-record')
+    registryMock.platforms.push({
+      id: 'zvg-portal',
+      name: 'ZVG-Portal',
+      baseUrl: 'https://www.zvg-portal.de',
+      country: 'de',
+      regions: [{ code: 'all', name: 'All' }],
+      crawl: vi.fn(),
+    })
+    const handler = await loadHandler()
+
+    vi.mocked(readAuctionRecord).mockResolvedValue({
+      auction: auction(),
+      detailsId: 1,
+      detailsVersion: 1,
+      artifactVersionId: null,
+    })
+
+    await expect(handler({ context: { params: { platform: 'zvg-portal', id: '7265' } } })).resolves.toMatchObject({
+      sourcePlatform: { name: 'ZVG-Portal', url: 'https://www.zvg-portal.de' },
+    })
+  })
+
+  it('leaves the source platform null when the registry has no matching entry', async () => {
+    const { readAuctionRecord } = await import('../../../utils/auction-record')
+    const handler = await loadHandler()
+
+    vi.mocked(readAuctionRecord).mockResolvedValue({
+      auction: auction(),
+      detailsId: 1,
+      detailsVersion: 1,
+      artifactVersionId: null,
+    })
+
+    await expect(handler({ context: { params: { platform: 'zvg-portal', id: '7265' } } })).resolves.toMatchObject({
+      sourcePlatform: null,
+    })
+  })
+
   it('caches live lookup misses briefly', async () => {
     const crawl = vi.fn().mockResolvedValue({
       platform: 'test-platform',
