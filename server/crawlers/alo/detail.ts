@@ -1,9 +1,7 @@
 import { load } from 'cheerio'
 import type { Auction } from '~/types/auction'
-import { UA } from './constants'
+import { fetchAloPage } from './fetch'
 import { absoluteUrl, cleanMultiline, extractLatLng } from './text'
-
-const FETCH_TIMEOUT_MS = 20_000
 
 function extractDescription($: ReturnType<typeof load>): string | null {
   const box = $('.more-info .word-break-all').first().clone()
@@ -33,14 +31,16 @@ function extractPhotoUrls($: ReturnType<typeof load>): string[] {
 export async function enrichOne(auction: Auction): Promise<void> {
   const url = auction.detailUrlUpstream ?? auction.detailUrl
   if (!url) return
-  const res = await fetch(url, {
-    headers: { Accept: 'text/html', 'Accept-Language': 'bg,en;q=0.8', 'User-Agent': UA },
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-  })
+  const res = await fetchAloPage(url)
   if (!res.ok) throw new Error(`alo.bg detail ${auction.externalId}: HTTP ${res.status}`)
   const $ = load(await res.text())
 
-  auction.description = extractDescription($)
+  // Only ever overwrite when a value was actually found (same convention as
+  // kip/text.ts): if alo.bg renames the description box, a blind assignment
+  // would wipe the description already stored for this auction and starve LLM
+  // extraction of its input.
+  const description = extractDescription($)
+  if (description) auction.description = description
 
   const mapsHref = $('a[href*="maps.google.com"]').first().attr('href')
   const { lat, lng } = extractLatLng(mapsHref)

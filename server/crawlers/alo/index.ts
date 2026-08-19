@@ -5,8 +5,8 @@ import { fetchAllListings } from './list'
 import { enrichOne } from './detail'
 
 // opts is ignored: this crawler exposes a single nationwide 'all' scope (see
-// constants.ts), so there is nothing to branch on — same convention as
-// bcpea/index.ts.
+// constants.ts), so there is nothing to branch on — unlike kip/index.ts, which
+// filters its regions by opts.region because it registers real sub-regions.
 async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
   const auctions = await fetchAllListings()
 

@@ -7,7 +7,10 @@ const SOFIA = ALO_OBLASTI[0]!
 // Trimmed live markup (verified 2026-08-19) for one apartment card (VIP tier,
 // agency publisher, full field set) and one house card (VIP tier, no
 // publisher name — a private seller with no agency logo, verified live to be
-// a common case on this otherwise-agency-heavy first page).
+// a common case on this otherwise-agency-heavy first page). The third card is
+// synthetic, covering the variants the live sample happened not to contain:
+// an agency with a name but no uploaded logo, a protocol-relative image host,
+// a leva-denominated price and an unparseable Квадратура.
 const LIST_HTML = `
 <html><body><div id="content_container">
 <div onclick="window.location = '/prodajba-tristaen-apartament-levski-v-10303435'" class="listvip-item  noselect mb20" id="adrows_10303435" title="продажба тристаен апартамент Левски В">
@@ -48,13 +51,28 @@ const LIST_HTML = `
   <p class="listvip-desc">СОБСТВЕНИК: Продавам Първи етаж..</p>
     </div>
   </div>
+</div><div onclick="window.location = '/prodajba-kashta-plovdiv-10490999'" class="listvip-item  noselect mb20" id="adrows_10490999" title="Продажба къща Пловдив">
+  <div <div class="listvip-publisher" data-nosnippet><span class="hidden-xs hidden-sm">Имоти Пловдив ЕООД</span><br  class="hidden-xs hidden-sm"><span>днешна обява</span></div>
+  <div class="listvip-image landscape ">
+    <a href="/prodajba-kashta-plovdiv-10490999"><img class="listvip-image-img" loading="lazy" src="//cdn.alo.bg/user_files/i/imoti/10490999_1_medium.jpg" alt="Продажба къща Пловдив"></a>
+  </div>
+  <div class="listvip-params">
+    <div class="listvip-item-header">
+      <a href="/prodajba-kashta-plovdiv-10490999"><h3 class="listvip-item-title">Продажба къща Пловдив</h3></a>
+      <div class="listvip-item-address" ><i>Пловдив</i></div>
+    </div>
+    <div class="listvip-item-content"><span class="ads-params-multi first_pclass_vip"  title="Цена" ><span class="ads-param-name">Цена</span>: <span class="price_nowrap">410 000 лв.</span></span>
+<span class="ads-params-multi"  title="Квадратура" >по договаряне</span>
+<span class="ads-params-multi"  title="РЗП" >180 кв.м РЗП</span>
+    </div>
+  </div>
 </div>
 </div></body></html>
 `
 
 describe('parseListPage', () => {
-  it('extracts both cards despite the site\'s own malformed "<div <div" publisher markup', () => {
-    expect(parseListPage(LIST_HTML)).toHaveLength(2)
+  it('extracts every card despite the site\'s own malformed "<div <div" publisher markup', () => {
+    expect(parseListPage(LIST_HTML)).toHaveLength(3)
   })
 
   it('parses id, title, address, facts, publisher name and thumbnail for the apartment card', () => {
@@ -71,12 +89,22 @@ describe('parseListPage', () => {
     expect(item?.facts.get('Квадратура')).toBe('120 кв.м')
   })
 
-  it('leaves authority null for a card with no publisher name (private seller)', () => {
+  it('leaves authority null for a card with no publisher name at all (private seller)', () => {
     const [, item] = parseListPage(LIST_HTML)
     expect(item?.externalId).toBe('10490236')
     expect(item?.authority).toBeNull()
     expect(item?.facts.get('РЗП')).toBe('63 кв.м РЗП')
     expect(item?.facts.get('Вид на имота')).toBeUndefined()
+  })
+
+  it('reads the publisher name span when the agency uploaded no logo, ignoring the posting-age span', () => {
+    const [, , item] = parseListPage(LIST_HTML)
+    expect(item?.authority).toBe('Имоти Пловдив ЕООД')
+  })
+
+  it('keeps protocol-relative thumbnail URLs on their own host', () => {
+    const [, , item] = parseListPage(LIST_HTML)
+    expect(item?.thumbnailUrl).toBe('https://cdn.alo.bg/user_files/i/imoti/10490999_1_medium.jpg')
   })
 })
 
@@ -110,5 +138,15 @@ describe('mapItem', () => {
     expect(auction.marketValueEur).toBe(110000)
     expect(auction.sourceLivingAreaSqm).toBe(63)
     expect(auction.sourceRooms).toBeNull()
+  })
+
+  it('drops a non-euro price rather than booking leva as euros, and falls back to РЗП past an unparseable Квадратура', () => {
+    const [, , item] = parseListPage(LIST_HTML)
+    const auction = mapItem(item!, SOFIA)
+
+    expect(auction.marketValueEur).toBeNull()
+    expect(auction.marketValueText).toBeNull()
+    // 'по договаряне' is present but unparseable — must not suppress РЗП.
+    expect(auction.sourceLivingAreaSqm).toBe(180)
   })
 })

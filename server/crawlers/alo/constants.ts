@@ -5,6 +5,10 @@ export const COUNTRY = 'bg'
 export const BASE_URL = 'https://www.alo.bg'
 export const UA = 'Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101 Firefox/130.0'
 
+/** Minimum gap between two requests to alo.bg, enforced across list pagination
+ *  and detail enrichment alike (see fetch.ts). Same 1s pacing kip.net gets. */
+export const CRAWL_DELAY_MS = 1_000
+
 /**
  * alo.bg is Bulgaria's largest private classifieds marketplace — no court
  * reference, same "no case number to publish" shape as kip.net. Verified
@@ -19,21 +23,18 @@ export const UA = 'Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101 Firefox/130.0'
  * pages per full crawl cycle.
  *
  * Exposes a single nationwide 'all' scope rather than registering 'sofia'/
- * 'plovdiv' as selectable sub-regions — bg/zapori (and sales.bcpea.org) are
- * already registered under 'all' for this country, and registry.test.ts
+ * 'plovdiv' as selectable sub-regions — bg/zapori is already registered under
+ * 'all' for this country, and registry.test.ts
  * enforces that a country's platforms never mix ALL_SCOPE with real
  * sub-region codes (a per-region refresh pass over the 'all' entry would
  * otherwise re-crawl this same PoC scope on top of its own dedicated
  * 'sofia'/'plovdiv' passes). Each auction still carries its real oblast name
- * in `Auction.region` — see OBLASTI below — same "coarse crawler scope, fine
- * per-auction region" split bcpea uses for its court districts.
+ * in `Auction.region` — see ALO_OBLASTI below — a "coarse crawler scope, fine
+ * per-auction region" split.
  */
 export const ALO_REGIONS: readonly RegionInfo[] = [{ code: 'all', name: 'Bulgarien' }] as const
 
 export interface AloOblast {
-  /** Internal code, never exposed as a CrawlOptions region scope (see
-   *  ALO_REGIONS above) — only used to key OBLASTI itself. */
-  code: string
   /** Human-readable oblast name, written into each Auction's `region`. */
   name: string
   /** alo.bg's own numeric region id — global to the site (shared across
@@ -43,24 +44,19 @@ export interface AloOblast {
 
 /** The two PoC-scoped oblasti (see the module doc comment above). */
 export const ALO_OBLASTI: readonly AloOblast[] = [
-  { code: 'sofia', name: 'София', regionId: '22' },
-  { code: 'plovdiv', name: 'Пловдив', regionId: '16' },
+  { name: 'София', regionId: '22' },
+  { name: 'Пловдив', regionId: '16' },
 ] as const
 
-export interface AloCategory {
-  /** URL path segment under /obiavi/imoti-prodajbi/. */
-  slug: string
-}
+/** URL path segments under /obiavi/imoti-prodajbi/. */
+export const ALO_CATEGORIES: readonly string[] = ['apartamenti-stai', 'kashti-vili'] as const
 
-export const ALO_CATEGORIES: readonly AloCategory[] = [
-  { slug: 'apartamenti-stai' },
-  { slug: 'kashti-vili' },
-] as const
-
-/** Plovdiv apartments alone runs ~630 pages at 30 listings/page (verified
- *  live) — comfortably above that even as the catalog grows.
- *  fetchAllListings (list.ts) stops as soon as a page 404s or comes back
- *  empty rather than relying on this cap in the normal case. */
+/** Runaway-pagination bound, not the normal stop condition: fetchCategoryListings
+ *  (list.ts) ends a walk as soon as a page 404s or parses empty. Sized above the
+ *  largest category observed live (Plovdiv apartments, ~630 pages at 30
+ *  listings/page). Hitting it means the walk was truncated and listings were
+ *  silently dropped, so fetchCategoryListings logs a warning when it does —
+ *  raise the cap when that warning appears. */
 export const MAX_PAGES = 700
 
 /** "Тристаен апартамент..." room-count adjectives prefixing the "Вид на

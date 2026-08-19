@@ -82,13 +82,24 @@ describe('enrichOne', () => {
     expect(a.photoCount).toBe(2)
   })
 
-  it('leaves description/coordinates/photos untouched when the expected boxes are missing', async () => {
+  it('keeps an already-stored description/coordinates/photos when the expected boxes are missing', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<html><body>gone</body></html>')))
-    const a = makeAuction()
+    const a = makeAuction({ description: 'вече запазено описание' })
     await enrichOne(a)
-    expect(a.description).toBeNull()
+    // A blind assignment here would wipe the stored description on any markup
+    // change and starve LLM extraction of its input.
+    expect(a.description).toBe('вече запазено описание')
     expect(a.lat).toBeUndefined()
     expect(a.photoCount).toBe(1)
+  })
+
+  it('ignores an unset map pin (q=0,0) instead of dropping the marker on Null Island', async () => {
+    const html = '<html><body><a href="https://maps.google.com/?q=0,0&z=18">Виж на картата</a></body></html>'
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(html)))
+    const a = makeAuction()
+    await enrichOne(a)
+    expect(a.lat).toBeUndefined()
+    expect(a.lng).toBeUndefined()
   })
 
   it('throws on upstream errors so the enrich task retries', async () => {

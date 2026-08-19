@@ -8,41 +8,22 @@ import {
   FALLBACK_AUTHORITY,
   MAX_PAGES,
   PLATFORM_ID,
-  UA,
-  type AloCategory,
   type AloOblast,
 } from './constants'
+import { fetchAloPage } from './fetch'
 import { absoluteUrl, buildAddress, clean, formatPrice, parseAreaSqm, parsePrice, parseRoomCount } from './text'
 
-const FETCH_TIMEOUT_MS = 20_000
-const FETCH_RETRIES = 2
-
-/** Same retry-on-5xx/network-error convention as bcpea/list.ts, except a 404
- *  is not an error here: alo.bg 404s any page number past the last one
- *  (verified live), which is how fetchAllListings learns it has reached the
- *  end of a region/category's results. A 404 on page 1 is a real config
- *  problem (unknown region_id/category slug) and still throws. */
-async function fetchListPage(category: AloCategory, regionId: string, page: number): Promise<string | null> {
-  const url = `${BASE_URL}/obiavi/imoti-prodajbi/${category.slug}/?region_id=${regionId}&page=${page}`
-  for (let attempt = 0; ; attempt++) {
-    let res: Response | undefined
-    try {
-      res = await fetch(url, {
-        headers: { Accept: 'text/html', 'Accept-Language': 'bg,en;q=0.8', 'User-Agent': UA },
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      })
-      if (res.ok) return await res.text()
-      if (res.status === 404 && page > 1) return null
-    } catch (err) {
-      if (attempt >= FETCH_RETRIES) throw err
-    }
-    if (res && !res.ok && !(res.status === 404 && page > 1)) {
-      if (res.status < 500) throw new Error(`alo.bg list HTTP ${res.status}`)
-      if (attempt >= FETCH_RETRIES) throw new Error(`alo.bg list HTTP ${res.status}`)
-      await res.arrayBuffer().catch(() => {})
-    }
-    await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** attempt))
-  }
+/** Retries (including on 429) and the site-wide crawl delay live in
+ *  fetch.ts. A 404 is not an error here: alo.bg 404s any page number past the
+ *  last one (verified live), which is how fetchCategoryListings learns it has
+ *  reached the end of an oblast/category's results. A 404 on page 1 is a real
+ *  config problem (unknown region_id/category slug) and still throws. */
+export async function fetchListPage(categorySlug: string, regionId: string, page: number): Promise<string | null> {
+  const url = `${BASE_URL}/obiavi/imoti-prodajbi/${categorySlug}/?region_id=${regionId}&page=${page}`
+  const res = await fetchAloPage(url)
+  if (res.ok) return await res.text()
+  if (res.status === 404 && page > 1) return null
+  throw new Error(`alo.bg list ${url}: HTTP ${res.status}`)
 }
 
 export interface ListItem {
@@ -90,13 +71,21 @@ export function parseListPage(html: string): ListItem[] {
     })
 
     const imgSrc = $el.find('[class$="-image-img"]').first().attr('src')
-    const authority = $el.find('[class$="-publisher"] img[title]').first().attr('title')
+    // Branded ads carry the agency name twice — in the logo's `title` and in a
+    // `.hidden-xs` name span — but agencies that never uploaded a logo have
+    // only the span, and reading the logo alone would file those under the
+    // private-seller fallback. The block's other span ("днешна обява", the
+    // posting age) is not `.hidden-xs` and must not be picked up.
+    const $publisher = $el.find('[class$="-publisher"]').first()
+    const authority =
+      clean($publisher.find('img[title]').first().attr('title')) ??
+      clean($publisher.find('span.hidden-xs').first().text())
 
     items.push({
       externalId,
       title: clean($el.find('h3').first().text()),
       address: clean($el.find('[class$="-item-address"]').first().text()),
-      authority: clean(authority) ?? null,
+      authority,
       thumbnailUrl: imgSrc ? absoluteUrl(imgSrc) : null,
       detailUrl: absoluteUrl(href),
       facts,
@@ -108,7 +97,9 @@ export function parseListPage(html: string): ListItem[] {
 
 export function mapItem(item: ListItem, oblast: AloOblast): Auction {
   const price = parsePrice(item.facts.get('Цена'))
-  const livingAreaSqm = parseAreaSqm(item.facts.get('Квадратура') ?? item.facts.get('РЗП'))
+  // Parse-then-fallback, not string-then-parse: a present-but-unparseable
+  // Квадратура ("по договаряне") must not suppress a usable РЗП.
+  const livingAreaSqm = parseAreaSqm(item.facts.get('Квадратура')) ?? parseAreaSqm(item.facts.get('РЗП'))
   const landAreaSqm = parseAreaSqm(item.facts.get('Двор'))
 
   return {
@@ -142,10 +133,11 @@ export function mapItem(item: ListItem, oblast: AloOblast): Auction {
   }
 }
 
-async function fetchCategoryListings(category: AloCategory, oblast: AloOblast): Promise<Auction[]> {
+export async function fetchCategoryListings(categorySlug: string, oblast: AloOblast): Promise<Auction[]> {
   const byId = new Map<string, Auction>()
-  for (let page = 1; page <= MAX_PAGES; page++) {
-    const html = await fetchListPage(category, oblast.regionId, page)
+  let page = 1
+  for (; page <= MAX_PAGES; page++) {
+    const html = await fetchListPage(categorySlug, oblast.regionId, page)
     if (html == null) break
     const items = parseListPage(html)
     if (items.length === 0) break
@@ -154,14 +146,21 @@ async function fetchCategoryListings(category: AloCategory, oblast: AloOblast): 
       byId.set(item.externalId, mapItem(item, oblast))
     }
   }
+  // Only reachable when the walk never hit a 404/empty page, i.e. the cap cut
+  // it short — otherwise indistinguishable from a complete crawl. See MAX_PAGES.
+  if (page > MAX_PAGES) {
+    console.warn(
+      `[alo] ${oblast.name}/${categorySlug}: MAX_PAGES (${MAX_PAGES}) reached, later listings were dropped — raise the cap`,
+    )
+  }
   return [...byId.values()]
 }
 
 export async function fetchAllListings(): Promise<Auction[]> {
   const auctions: Auction[] = []
   for (const oblast of ALO_OBLASTI) {
-    for (const category of ALO_CATEGORIES) {
-      auctions.push(...(await fetchCategoryListings(category, oblast)))
+    for (const categorySlug of ALO_CATEGORIES) {
+      auctions.push(...(await fetchCategoryListings(categorySlug, oblast)))
     }
   }
   return auctions

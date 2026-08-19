@@ -57,6 +57,10 @@ describe('absoluteUrl', () => {
   it('resolves a leading-slash path without doubling the slash', () => {
     expect(absoluteUrl('/template/images/icons/vip.svg')).toBe('https://www.alo.bg/template/images/icons/vip.svg')
   })
+
+  it('keeps a protocol-relative URL on its own host instead of nesting it under BASE_URL', () => {
+    expect(absoluteUrl('//cdn.alo.bg/user_files/x.jpg')).toBe('https://cdn.alo.bg/user_files/x.jpg')
+  })
 })
 
 describe('parsePrice', () => {
@@ -68,6 +72,17 @@ describe('parsePrice', () => {
     expect(parsePrice('0 €')).toBeNull()
     expect(parsePrice(null)).toBeNull()
     expect(parsePrice(undefined)).toBeNull()
+  })
+
+  it('rejects a leva price rather than booking it as euros', () => {
+    expect(parsePrice('410 000 лв.')).toBeNull()
+    expect(parsePrice('410 000 BGN')).toBeNull()
+  })
+
+  it('rejects unrecognised number formats rather than letting parseFloat truncate them', () => {
+    // Would silently become 1.25 under a plain parseFloat.
+    expect(parsePrice('1.250.000 €')).toBeNull()
+    expect(parsePrice('по договаряне')).toBeNull()
   })
 })
 
@@ -138,5 +153,11 @@ describe('extractLatLng', () => {
   it('returns nulls when the href is missing or has no q= param', () => {
     expect(extractLatLng(null)).toEqual({ lat: null, lng: null })
     expect(extractLatLng('https://maps.google.com/?z=18')).toEqual({ lat: null, lng: null })
+  })
+
+  it('rejects the unset-pin 0,0 default and anything else outside Bulgaria', () => {
+    expect(extractLatLng('https://maps.google.com/?q=0,0&z=18')).toEqual({ lat: null, lng: null })
+    // Lat/lng swapped — plausible individually, impossible together.
+    expect(extractLatLng('https://maps.google.com/?q=23.32,42.69')).toEqual({ lat: null, lng: null })
   })
 })

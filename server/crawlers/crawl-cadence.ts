@@ -13,6 +13,10 @@ const SENSITIVE_INTERVAL_MS: Record<string, number> = {
   boe: 6 * 60 * 60 * 1000, // ES: BOE captcha cooldowns
   agi: 6 * 60 * 60 * 1000, // IT: agi returns HTTP 429 under frequent polling
   'fr-licitor': 6 * 60 * 60 * 1000, // FR: robots.txt blocks non-browser crawlers
+  // BG: ~1,140 list pages per full walk at kip's 1s crawl delay (~20 min of
+  // continuous requests) — an hourly re-crawl would keep the site under
+  // near-permanent load from us, and classifieds turnover does not need it.
+  'bg-alo': 24 * 60 * 60 * 1000,
 }
 
 /**
