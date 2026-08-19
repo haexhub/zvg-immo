@@ -713,6 +713,65 @@ describe('runExternalEnrichment', () => {
       null,
     )
   })
+
+  it('does not scan past the limit even when leading auctions lack coordinates', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { geocodeAddress } = await import('~/server/utils/geocode')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(
+      auction({ externalId: 'uncoded-1', lat: undefined, lng: undefined }),
+      auction({ externalId: 'uncoded-2', lat: undefined, lng: undefined }),
+      auction({ externalId: 'coded' }),
+    ))
+    vi.mocked(geocodeAddress).mockResolvedValue(null)
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+
+    const marketAdapter = {
+      id: 'working',
+      sourceVersion: 'v1',
+      supports: () => true,
+      compare: vi.fn(async () => marketComparison),
+    }
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    const summary = await runExternalEnrichment({ limit: 1, marketAdapters: [marketAdapter] })
+
+    expect(summary.skippedMissingCoordinates).toBe(1)
+    expect(summary.processed).toBe(0)
+    expect(marketAdapter.compare).not.toHaveBeenCalled()
+  })
+
+  it('persists checkedAt when every adapter finds nothing, so the auction does not stay first forever', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(auction()))
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    const summary = await runExternalEnrichment({
+      now: new Date('2026-07-26T00:00:00.000Z'),
+      marketAdapters: [],
+      landValueAdapters: [],
+      hazardAdapters: [],
+      locationContextAdapters: [],
+    })
+
+    expect(summary.processed).toBe(1)
+    expect(summary.written).toBe(1)
+    expect(writeLocationEnrichmentCache).toHaveBeenCalledWith({
+      'test:42': expect.objectContaining({
+        marketComparison: null,
+        landValueBaseline: null,
+        hazards: null,
+        locationContext: null,
+        checkedAt: '2026-07-26T00:00:00.000Z',
+      }),
+    })
+  })
 })
 
 describe('withLocationContextEnhancers', () => {

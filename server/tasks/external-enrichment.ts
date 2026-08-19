@@ -159,11 +159,15 @@ export async function runExternalEnrichment(
     inScope(auction, options)
     && (!options.onlyMissingLocationContext || existing[cacheKey(auction.platform, auction.externalId)]?.locationContext?.source.id !== 'openstreetmap-overpass'),
   )
-  const scope = orderByStaleness(inScopeAuctions, existing)
   const effectiveLimit = options.limit ?? DEFAULT_BATCH_LIMIT
-  const total = Math.min(scope.length, effectiveLimit)
+  // Sliced to the limit up front: resolvePoint below skips (not counts)
+  // auctions without coordinates, so looping the unsliced scope and relying
+  // only on the processed>=effectiveLimit break could still scan arbitrarily
+  // far past the intended batch size.
+  const batch = orderByStaleness(inScopeAuctions, existing).slice(0, effectiveLimit)
+  const total = batch.length
 
-  for (const rawAuction of scope) {
+  for (const rawAuction of batch) {
     throwIfTaskAborted(signal)
     if (summary.processed >= effectiveLimit) break
     try {
@@ -192,7 +196,10 @@ export async function runExternalEnrichment(
       if (locationContext) summary.locationContexts++
       summary.staleResults += hazards.filter((hazard) => hazard.stale).length
 
-      if (!marketComparison && !landValueBaseline && hazards.length === 0 && !locationContext) continue
+      // No early-exit when every adapter came back empty: that's the common,
+      // correct outcome for rural/small-town ZVG objects, not an error, and
+      // skipping the write would skip checkedAt too — leaving the auction
+      // stuck at the front of orderByStaleness forever, starving others.
 
       // Written immediately, per auction, instead of batched into one write
       // after the whole scope finishes: a full sweep can run for a long time
