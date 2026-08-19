@@ -1,6 +1,7 @@
 import { load } from 'cheerio'
 import type { Auction } from '~/types/auction'
 import { BASE_URL, COUNTRY, LIST_PATH, MAX_PAGES, PAGE_SIZE, UA } from './constants'
+import { throttledFetch } from './fetch'
 import {
   buildAddress,
   clean,
@@ -21,13 +22,14 @@ function absoluteUrl(path: string): string {
 }
 
 /** Same retry-on-5xx/network-error convention as dga-ag/list.ts — 4xx
- *  responses are not retried since a second attempt won't succeed. */
+ *  responses are not retried since a second attempt won't succeed. Goes
+ *  through fetch.ts's shared queue, same as detail.ts's enrichOne. */
 async function fetchListPage(page: number): Promise<string> {
   const url = `${BASE_URL}${LIST_PATH}?perpage=${PAGE_SIZE}&p=${page}`
   for (let attempt = 0; ; attempt++) {
     let res: Response | undefined
     try {
-      res = await fetch(url, {
+      res = await throttledFetch(url, {
         headers: { Accept: 'text/html', 'Accept-Language': 'bg,en;q=0.8', 'User-Agent': UA },
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       })

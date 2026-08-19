@@ -7,6 +7,15 @@ export const LIST_PATH = '/properties'
 
 export const UA = 'Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101 Firefox/130.0'
 
+/** sales.bcpea.org's robots.txt (verified live) carries no Crawl-delay
+ *  directive, only a path Disallow — this is a polite default for what reads
+ *  as a small chamber-run PHP site, the same value kip.net's own explicit
+ *  "Crawl-delay: 1" resolves to. Enforced for every request — list
+ *  pagination and detail enrichment alike — by the shared queue in fetch.ts,
+ *  since the enrich task calls enrichOne with concurrency across several
+ *  auctions at once. */
+export const CRAWL_DELAY_MS = 1_000
+
 /** The Chamber of Private Enforcement Agents' portal exposes 28 district-court
  *  filters (`?court=<id>`), but a single nationwide page loop already covers
  *  every listing (verified live: ~1173 properties over 12 pages at

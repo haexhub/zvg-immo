@@ -4,6 +4,7 @@ import type { Attachment, Auction } from '~/types/auction'
 import { archiveDetailCapture } from '~/server/utils/fetch-archive'
 import type { DocumentIdentity } from '~/server/utils/raw-archive'
 import { BASE_URL, UA } from './constants'
+import { throttledFetch } from './fetch'
 import { clean, cleanMultiline } from './text'
 
 const FETCH_TIMEOUT_MS = 20_000
@@ -78,7 +79,7 @@ function extractPhotoUrls($: CheerioAPI, expanded: Cheerio<AnyNode>): string[] {
 export async function enrichOne(auction: Auction): Promise<void> {
   const url = auction.detailUrlUpstream ?? auction.detailUrl
   if (!url) return
-  const res = await fetch(url, {
+  const res = await throttledFetch(url, {
     headers: { Accept: 'text/html', 'Accept-Language': 'bg,en;q=0.8', 'User-Agent': UA },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   })
