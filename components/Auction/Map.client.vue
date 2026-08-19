@@ -246,6 +246,15 @@ function refreshMarkers(): void {
       selectedKey.value = null
       popupPosition.value = undefined
     }
+    // A cluster picker stays open by key list, not by feature reference — drop
+    // the removed auction from it too, closing the picker once none are left.
+    if (clusterKeys.value?.includes(key)) {
+      clusterKeys.value = clusterKeys.value.filter((k) => k !== key)
+      if (!clusterKeys.value.length) {
+        clusterKeys.value = null
+        popupPosition.value = undefined
+      }
+    }
   }
   if (staleFeatures.length) source.removeFeatures(staleFeatures)
 
