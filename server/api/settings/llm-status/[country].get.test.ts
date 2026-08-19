@@ -14,7 +14,7 @@ const COMPLETE_LLM_FIELDS = {
   documentSummary: null, marketValueEur: null,
 }
 
-function record(externalId: string, opts: { extraction?: Record<string, unknown>; llmFailures?: number } = {}) {
+function record(externalId: string, opts: { extraction?: Record<string, unknown>; llmFailures?: number; cancelled?: boolean } = {}) {
   return {
     detailsId: 1,
     detailsVersion: 1,
@@ -28,6 +28,7 @@ function record(externalId: string, opts: { extraction?: Record<string, unknown>
       title: `Haus ${externalId}`,
       auctionDateIso: null,
       extraction: opts.extraction,
+      cancelled: opts.cancelled ?? false,
       processing: { llmFailures: opts.llmFailures ?? 0 },
     },
   } as never
@@ -84,6 +85,27 @@ describe('/api/settings/llm-status/[country]', () => {
     expect(result.items).toHaveLength(1)
     expect(query).not.toHaveBeenCalled()
     expect(readAuctionRecords).toHaveBeenCalledWith('de', { includePhotos: false })
+  })
+
+  it('excludes a cancelled auction from the bucket count and list — the extraction task never picks it up', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    vi.stubGlobal('getRouterParam', () => 'de')
+    vi.stubGlobal('getQuery', () => ({ bucket: 'open' }))
+    vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { getPool } = await import('~/server/utils/db')
+    const query = vi.fn()
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+    vi.mocked(readAuctionRecords).mockResolvedValue([
+      record('1'), // open
+      record('2', { cancelled: true }), // open otherwise, but cancelled — must be excluded
+    ])
+
+    const handler = (await import('./[country].get')).default as (event: unknown) => Promise<unknown>
+    const result = await handler({}) as { items: { externalId: string }[]; total: number }
+
+    expect(result.total).toBe(1)
+    expect(result.items.map((item) => item.externalId)).toEqual(['1'])
   })
 
   it('looks up the last error message for the error bucket, scoped to the current page', async () => {
