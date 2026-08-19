@@ -47,7 +47,7 @@ function gallery(urls: string[]): string {
   return `<div class="slider">${links}</div><ul class="gallery">${links}</ul>`
 }
 
-function detailHtml(opts: { status: 'available' | 'sold'; extraFeatures?: string }): string {
+function detailHtml(opts: { status: 'available' | 'sold' | 'reserved'; extraFeatures?: string }): string {
   return `
 <html><body>
 <div id="wrapper" itemtype="http://schema.org/Offer" itemscope>
@@ -130,6 +130,23 @@ describe('enrichOne', () => {
     // Would be non-null (garbage) if propertyFeatures() fell back to a
     // page-wide `.features` selector instead of the heading-scoped one.
     expect(auction.sourceLivingAreaSqm).toBe(120)
+  })
+
+  it('keeps a RESERVED listing available, like the card-side badge check does', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(htmlResponse(detailHtml({ status: 'reserved' }))))
+    const auction = makeAuction({ cancelled: true })
+    await enrichOne(auction)
+    expect(auction.cancelled).toBe(false)
+  })
+
+  it('keeps the card\'s cancelled flag when the detail page states no status at all', async () => {
+    // A renamed heading (or any markup change that hides the status item) must
+    // not read as "available" and un-cancel what the SOLD card badge flagged.
+    const html = detailHtml({ status: 'sold' }).replace('Property Features', 'Features')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(htmlResponse(html)))
+    const auction = makeAuction({ cancelled: true })
+    await enrichOne(auction)
+    expect(auction.cancelled).toBe(true)
   })
 
   it('does nothing when the auction has no detail URL', async () => {

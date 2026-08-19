@@ -1,44 +1,20 @@
 import { load } from 'cheerio'
 import type { Auction } from '~/types/auction'
-import { BASE_URL, COUNTRY, CRAWL_DELAY_MS, FALLBACK_AUTHORITY, PLATFORM_ID, UA } from './constants'
+import { BASE_URL, COUNTRY, FALLBACK_AUTHORITY, PLATFORM_ID } from './constants'
+import { fetchPageHtml } from './fetch'
 import { absoluteUrl, clean, parseNumber } from './text'
 
-const FETCH_TIMEOUT_MS = 20_000
-const FETCH_RETRIES = 2
-/** Safety cap, not an expected size: the live catalog sits around 50-60 pages
- *  (~700-900 active listings) at 14 items/page. A page beyond the real last
- *  one renders HTTP 200 with zero cards (verified live up to page 999), which
- *  is the actual loop-termination signal below — this cap only guards
- *  against a template change turning that into an infinite loop. */
+/** Safety cap, not an expected size: the live catalog sits around 50 pages
+ *  (~715 active listings) at 14 items/page. A page beyond the real last one
+ *  renders HTTP 200 with zero cards (verified live up to page 999), which is
+ *  the actual loop-termination signal below — this cap only guards against a
+ *  template change turning that into an infinite loop, and reaching it is
+ *  reported as a failure rather than as a (silently truncated) catalog, same
+ *  as pt/list.ts. */
 const MAX_PAGES = 300
 
 function listPageUrl(page: number): string {
   return `${BASE_URL}/properties/${page}.page?sort=date_desc`
-}
-
-/** Same retry-on-5xx/network-error convention as dga-ag/list.ts and
- *  gb/list.ts — 4xx responses are not retried since a second attempt won't
- *  succeed. */
-async function fetchListPage(page: number): Promise<string> {
-  const url = listPageUrl(page)
-  for (let attempt = 0; ; attempt++) {
-    let res: Response | undefined
-    try {
-      res = await fetch(url, {
-        headers: { Accept: 'text/html', 'Accept-Language': 'en', 'User-Agent': UA },
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      })
-      if (res.ok) return await res.text()
-    } catch (err) {
-      if (attempt >= FETCH_RETRIES) throw err
-    }
-    if (res && !res.ok) {
-      if (res.status < 500) throw new Error(`bulgarianhouse.com list HTTP ${res.status} for ${url}`)
-      if (attempt >= FETCH_RETRIES) throw new Error(`bulgarianhouse.com list HTTP ${res.status} for ${url}`)
-      await res.arrayBuffer().catch(() => {})
-    }
-    await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** attempt))
-  }
 }
 
 export interface ListItem {
@@ -136,11 +112,11 @@ export function mapItem(item: ListItem): Auction {
 export async function fetchAllListings(): Promise<Auction[]> {
   const auctions: Auction[] = []
   for (let page = 1; page <= MAX_PAGES; page++) {
-    const html = await fetchListPage(page)
-    const items = parseListPage(html)
-    if (items.length === 0) break
+    const items = parseListPage(await fetchPageHtml(listPageUrl(page), 'list'))
+    if (items.length === 0) return auctions
     auctions.push(...items.map(mapItem))
-    if (page < MAX_PAGES) await new Promise((resolve) => setTimeout(resolve, CRAWL_DELAY_MS))
   }
-  return auctions
+  throw new Error(
+    `bulgarianhouse.com list: hit MAX_PAGES (${MAX_PAGES}) without reaching an empty page — pagination or the card markup changed`,
+  )
 }

@@ -14,7 +14,9 @@ export const FALLBACK_AUTHORITY = 'Bulgarian House Ltd'
 
 /** robots.txt (verified live) carries only a Sitemap: line, no Crawl-delay —
  *  this is a polite default for what reads as a small, independently-run PHP
- *  site, the same value kip.net's own explicit "Crawl-delay: 1" resolves to. */
+ *  site, the same value kip.net's own explicit "Crawl-delay: 1" resolves to.
+ *  Enforced for every request — list pagination and detail enrichment alike —
+ *  by the shared queue in fetch.ts. */
 export const CRAWL_DELAY_MS = 1_000
 
 /** Nationwide only: the combined `/properties/<n>.page?sort=date_desc` feed

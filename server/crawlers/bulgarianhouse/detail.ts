@@ -1,18 +1,7 @@
 import { load, type CheerioAPI } from 'cheerio'
 import type { Auction } from '~/types/auction'
-import { UA } from './constants'
+import { fetchPageHtml } from './fetch'
 import { absoluteUrl, clean, parseLocation, parseNumber } from './text'
-
-const FETCH_TIMEOUT_MS = 20_000
-
-async function fetchDetailHtml(url: string): Promise<string> {
-  const res = await fetch(url, {
-    headers: { Accept: 'text/html', 'Accept-Language': 'en', 'User-Agent': UA },
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-  })
-  if (!res.ok) throw new Error(`bulgarianhouse.com detail HTTP ${res.status} for ${url}`)
-  return await res.text()
-}
 
 /**
  * The "Property Features" quick-facts list ("Location: ...", "Area : ...",
@@ -23,27 +12,36 @@ async function fetchDetailHtml(url: string): Promise<string> {
  * heading-keyed info boxes, after bcpea.org's detail page taught this project
  * that a page-wide selector silently mixes in an unrelated block.
  */
-function propertyFeatures($: CheerioAPI): Map<string, string> {
+function featuresList($: CheerioAPI) {
   const heading = $('h2')
     .filter((_i, el) => $(el).text().trim() === 'Property Features')
     .first()
-  const list = heading.length ? heading.nextAll('ul.features').first() : $()
+  return heading.length ? heading.nextAll('ul.features').first() : $()
+}
 
+function propertyFeatures($: CheerioAPI): Map<string, string> {
   const facts = new Map<string, string>()
-  list.find('> li').each((_i, el) => {
-    const text = clean($(el).text())
-    const match = text.match(/^([^:]+):\s*(.*)$/)
-    if (match) facts.set(match[1]!.trim(), match[2]!.trim())
-  })
+  featuresList($)
+    .find('> li')
+    .each((_i, el) => {
+      const text = clean($(el).text())
+      const match = text.match(/^([^:]+):\s*(.*)$/)
+      if (match) facts.set(match[1]!.trim(), match[2]!.trim())
+    })
   return facts
 }
 
-function isSold($: CheerioAPI): boolean {
-  const heading = $('h2')
-    .filter((_i, el) => $(el).text().trim() === 'Property Features')
-    .first()
-  const list = heading.length ? heading.nextAll('ul.features').first() : $()
-  return list.find('> li.sold').length > 0
+/** The features list opens with the listing's own status badge — AVAILABLE,
+ *  SOLD or RESERVED (all three verified live). Returns null when no status
+ *  item is there at all, so that a markup change cannot silently un-cancel
+ *  the SOLD listings list.ts already flagged from the card badge: "status not
+ *  found" must not read as "available". RESERVED (deposit paid, sale not
+ *  closed) counts as still available, matching the card-side `.sold`-only
+ *  check in list.ts. */
+function soldFromDetail($: CheerioAPI): boolean | null {
+  const status = featuresList($).find('> li.sold, > li.available, > li.reserved').first()
+  if (!status.length) return null
+  return status.hasClass('sold')
 }
 
 /** Reads the EUR price from its own `itemprop="price"` span, identified via
@@ -86,15 +84,15 @@ function extractPhotoUrls($: CheerioAPI): string[] {
 export async function enrichOne(auction: Auction): Promise<void> {
   const url = auction.detailUrlUpstream ?? auction.detailUrl
   if (!url) return
-  const html = await fetchDetailHtml(url)
-  const $ = load(html)
+  const $ = load(await fetchPageHtml(url, 'detail'))
 
   if (!auction.title) {
     const h1 = clean($('h1[itemprop="name"]').first().text())
     if (h1) auction.title = h1
   }
 
-  auction.cancelled = isSold($)
+  const sold = soldFromDetail($)
+  if (sold != null) auction.cancelled = sold
 
   const facts = propertyFeatures($)
   const location = facts.get('Location')
