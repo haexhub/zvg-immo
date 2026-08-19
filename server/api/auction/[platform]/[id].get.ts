@@ -24,6 +24,7 @@ export interface AuctionDetail extends Auction {
   locationEnrichment: LocationEnrichment | null
   relatedAuctions: RelatedAuction[]
   leisureTourism: LeisureTourismProfiles
+  sourcePlatform: { name: string; url: string } | null
 }
 
 function cloneAuction(a: Auction): Auction {
@@ -105,6 +106,8 @@ export default defineEventHandler(async (event): Promise<AuctionDetail> => {
     throw createError({ statusCode: 404, statusMessage: 'auction not found' })
   }
   const auction = cloneAuction(hit)
+  const platformInfo = platforms.find((p) => p.id === auction.platform)
+  const sourcePlatform = platformInfo ? { name: platformInfo.name, url: platformInfo.baseUrl } : null
   // Cache-only lookup: the geocode task fills coordinates ahead of time, so
   // serving a detail page never blocks on Nominatim.
   const point = await geocodeAddress(auction.address, auction.country, { fetchMissing: false })
@@ -125,5 +128,5 @@ export default defineEventHandler(async (event): Promise<AuctionDetail> => {
     }),
   ])
   const leisureTourism = buildLeisureTourismProfiles(geoMetrics)
-  return { ...auction, lat, lng, locationEnrichment, relatedAuctions, leisureTourism }
+  return { ...auction, lat, lng, locationEnrichment, relatedAuctions, leisureTourism, sourcePlatform }
 })
