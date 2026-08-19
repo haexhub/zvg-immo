@@ -25,6 +25,10 @@ export interface ListItem {
    *  "<Town> (<Oblast>)" override). */
   oblast: string | null
   priceEur: number | null
+  /** Only set when a real price was published: sold listings carry a "€0"
+   *  placeholder instead of a figure (verified live), and Auction/Card.vue
+   *  falls back to marketValueText whenever marketValueEur is null — so
+   *  carrying that placeholder through would print "€0" as the price. */
   priceText: string | null
   livingAreaSqm: number | null
   landAreaSqm: number | null
@@ -55,14 +59,15 @@ export function parseListPage(html: string): ListItem[] {
     if (!externalId) return
 
     const priceText = clean($a.find('.price').first().text()) || null
+    const priceEur = parseNumber(priceText)
     const thumbSrc = $a.find('img').first().attr('src')
 
     items.push({
       externalId,
       title: clean($a.find('p.description').first().text()) || null,
       oblast: clean($a.find('h3').first().text()) || null,
-      priceEur: parseNumber(priceText),
-      priceText,
+      priceEur,
+      priceText: priceEur == null ? null : priceText,
       livingAreaSqm: parseNumber($a.find('.listing-info-area').first().text()),
       landAreaSqm: parseNumber($a.find('.listing-info-garden').first().text()),
       sold: $a.find('.sold').length > 0,
@@ -113,7 +118,21 @@ export async function fetchAllListings(): Promise<Auction[]> {
   const auctions: Auction[] = []
   for (let page = 1; page <= MAX_PAGES; page++) {
     const items = parseListPage(await fetchPageHtml(listPageUrl(page), 'list'))
-    if (items.length === 0) return auctions
+    if (items.length === 0) {
+      // Page 1 is never legitimately empty (the catalog holds ~715 listings),
+      // so zero cards there means the card markup changed, not that the
+      // catalog ran out. Returning an empty list would report a successful
+      // crawl of nothing, and because no downstream step deletes rows for
+      // absence the platform's data would simply freeze at its last good
+      // state with nothing flagging it — same reasoning as the MAX_PAGES
+      // guard below.
+      if (page === 1) {
+        throw new Error(
+          'bulgarianhouse.com list: page 1 returned zero cards — the card markup changed',
+        )
+      }
+      return auctions
+    }
     auctions.push(...items.map(mapItem))
   }
   throw new Error(

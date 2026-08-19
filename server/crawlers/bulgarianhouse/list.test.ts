@@ -1,5 +1,8 @@
-import { describe, expect, it } from 'vitest'
-import { mapItem, parseListPage } from './list'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { fetchAllListings, mapItem, parseListPage } from './list'
+import { fetchPageHtml } from './fetch'
+
+vi.mock('./fetch', () => ({ fetchPageHtml: vi.fn() }))
 
 const LIST_HTML = `
 <html><body>
@@ -40,6 +43,22 @@ const LIST_HTML = `
 
 const EMPTY_PAGE_HTML = `<html><body><ul class="listing"></ul></body></html>`
 
+/** Sold listings drop their figure and publish "€0" instead (verified live). */
+const ZERO_PRICE_HTML = `
+<html><body>
+<ul class="listing">
+  <li class="one_half ">
+    <a rel="bookmark" href="/property/plot-of-land-with-an-old-house-and-a-barn-for-renovation-konak-14537/">
+      <h3>Targovishte</h3>
+      <span class="sold sold-en">SOLD</span>
+      <span class="price">&euro;0</span>
+      <p class="description">Plot of land with an old house and a barn for renovation Konak </p>
+    </a>
+  </li>
+</ul>
+</body></html>
+`
+
 describe('parseListPage', () => {
   it('extracts both cards', () => {
     expect(parseListPage(LIST_HTML)).toHaveLength(2)
@@ -76,6 +95,12 @@ describe('parseListPage', () => {
   it('returns an empty array for a page with zero cards', () => {
     expect(parseListPage(EMPTY_PAGE_HTML)).toEqual([])
   })
+
+  it('drops the "€0" placeholder instead of passing it on as the price text', () => {
+    const [item] = parseListPage(ZERO_PRICE_HTML)
+    expect(item?.priceEur).toBeNull()
+    expect(item?.priceText).toBeNull()
+  })
 })
 
 describe('mapItem', () => {
@@ -103,5 +128,26 @@ describe('mapItem', () => {
     const auction = mapItem(item!)
     expect(auction.cancelled).toBe(true)
     expect(auction.marketValueEur).toBe(38500)
+  })
+})
+
+describe('fetchAllListings', () => {
+  beforeEach(() => {
+    vi.mocked(fetchPageHtml).mockReset()
+  })
+
+  it('stops at the first empty page after collecting the earlier ones', async () => {
+    vi.mocked(fetchPageHtml)
+      .mockResolvedValueOnce(LIST_HTML)
+      .mockResolvedValueOnce(EMPTY_PAGE_HTML)
+
+    await expect(fetchAllListings()).resolves.toHaveLength(2)
+    expect(fetchPageHtml).toHaveBeenCalledTimes(2)
+  })
+
+  it('fails instead of reporting an empty catalog when page 1 has no cards', async () => {
+    vi.mocked(fetchPageHtml).mockResolvedValue(EMPTY_PAGE_HTML)
+
+    await expect(fetchAllListings()).rejects.toThrow(/page 1 returned zero cards/)
   })
 })
