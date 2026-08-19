@@ -16,6 +16,7 @@ import type { Auction, CrawlResult } from '~/types/auction'
 import { filterAuctions, type AuctionFilters } from '~/lib/auction-filters'
 import { parseAuctionSearchFilters, unsupportedAlertFilterKeys } from '~/lib/auction-search-filter-contract'
 import { listCountries } from '../crawlers/registry'
+import { isNationwideOnlyCountry } from './region-picker'
 import { getServiceClient } from './supabase'
 import { enqueueAlertDelivery } from './outbound-delivery'
 
@@ -37,8 +38,15 @@ export function toAuctionFilters(stored: Record<string, unknown>): AuctionFilter
       if (sep < 0) continue
       const countryCode = key.slice(0, sep)
       const regionCode = key.slice(sep + 1)
-      const region = byCountry.get(countryCode)?.regions.find((r) => r.code === regionCode)
+      const country = byCountry.get(countryCode)
+      const region = country?.regions.find((r) => r.code === regionCode)
       if (region) set.add(`${countryCode}:${region.name}`)
+      // A nationwide-only country has no real sub-region code to look up: its
+      // picker options come from the stored auctions and carry the region name
+      // as their own code (see region-picker.ts), so the key resolves to
+      // itself. Countries with genuine sub-region codes keep dropping a key
+      // that no longer resolves, rather than reading a stale code as a name.
+      else if (country && isNationwideOnlyCountry(country)) set.add(`${countryCode}:${regionCode}`)
     }
     regionNameKeys = set
   }
