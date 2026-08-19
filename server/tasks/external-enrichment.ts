@@ -24,6 +24,7 @@ import {
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 import { runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-task'
 import { recordTaskRunEnd, recordTaskRunProgress, recordTaskRunStart, type TaskRunSummary } from '~/server/utils/task-runs'
+import { inScope, orderByStaleness } from './external-enrichment-scope'
 
 export interface MarketComparisonAdapter {
   id: string
@@ -120,6 +121,10 @@ export default defineTask({
   },
 })
 
+// Caps every invocation (cron or manual trigger) to a batch instead of a
+// full sweep, which measured ~16h — long enough that the next colliding
+// runExclusiveTask abort costs a whole day's progress, not a batch's.
+const DEFAULT_BATCH_LIMIT = 40
 export async function runExternalEnrichment(
   options: ExternalEnrichmentOptions = {},
   signal?: AbortSignal,
@@ -150,15 +155,17 @@ export async function runExternalEnrichment(
   const locationContextAdapters = options.locationContextAdapters ?? await defaultLocationContextAdapters(db, checkedAt, summary)
   throwIfTaskAborted(signal)
 
-  const scope = records.map((record) => record.auction).filter((auction) =>
+  const inScopeAuctions = records.map((record) => record.auction).filter((auction) =>
     inScope(auction, options)
     && (!options.onlyMissingLocationContext || existing[cacheKey(auction.platform, auction.externalId)]?.locationContext?.source.id !== 'openstreetmap-overpass'),
   )
-  const total = options.limit != null ? Math.min(scope.length, options.limit) : scope.length
+  const scope = orderByStaleness(inScopeAuctions, existing)
+  const effectiveLimit = options.limit ?? DEFAULT_BATCH_LIMIT
+  const total = Math.min(scope.length, effectiveLimit)
 
   for (const rawAuction of scope) {
     throwIfTaskAborted(signal)
-    if (options.limit != null && summary.processed >= options.limit) break
+    if (summary.processed >= effectiveLimit) break
     try {
       const point = await resolvePoint(rawAuction)
       if (!point) {
@@ -235,13 +242,6 @@ function progressSnapshot(summary: ExternalEnrichmentSummary, total: number): Ta
     skippedMissingCoordinates: summary.skippedMissingCoordinates,
     providerFailures: summary.providerFailures,
   }
-}
-
-function inScope(auction: Auction, options: ExternalEnrichmentOptions): boolean {
-  if (options.country && auction.country.toLowerCase() !== options.country.trim().toLowerCase()) return false
-  if (options.platform && auction.platform !== options.platform) return false
-  if (options.externalId && auction.externalId !== options.externalId) return false
-  return true
 }
 
 function scopeLabel(options: ExternalEnrichmentOptions): string {

@@ -648,6 +648,71 @@ describe('runExternalEnrichment', () => {
     expect(summary.processed).toBe(1)
     expect(summary.written).toBe(1)
   })
+
+  it('defaults to a bounded batch instead of an unscoped sweep when no limit is given', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(
+      ...Array.from({ length: 41 }, (_, i) => auction({ externalId: String(i) })),
+    ))
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    const summary = await runExternalEnrichment({
+      marketAdapters: [{
+        id: 'working',
+        sourceVersion: 'v1',
+        supports: () => true,
+        compare: vi.fn(async () => marketComparison),
+      }],
+    })
+
+    expect(summary.processed).toBe(40)
+  })
+
+  it('processes a never-checked auction ahead of an already-checked one when capped by limit', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(
+      auction({ externalId: 'checked-yesterday' }),
+      auction({ externalId: 'never-checked' }),
+    ))
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({
+      'test:checked-yesterday': {
+        platform: 'test',
+        externalId: 'checked-yesterday',
+        lat: 48.8566,
+        lng: 2.3522,
+        checkedAt: '2026-08-01T00:00:00.000Z',
+        sourceVersion: 'v1',
+      },
+    })
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+
+    const contextAdapter = {
+      id: 'osm-fixture',
+      sourceVersion: 'v1',
+      supports: () => true,
+      context: vi.fn(async () => locationContext),
+    }
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    await runExternalEnrichment({
+      limit: 1,
+      marketAdapters: [],
+      landValueAdapters: [],
+      hazardAdapters: [],
+      locationContextAdapters: [contextAdapter],
+    })
+
+    expect(contextAdapter.context).toHaveBeenCalledWith(
+      expect.objectContaining({ externalId: 'never-checked' }),
+      null,
+    )
+  })
 })
 
 describe('withLocationContextEnhancers', () => {

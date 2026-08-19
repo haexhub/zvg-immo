@@ -276,13 +276,16 @@ export default defineNuxtConfig({
       // completed results — jobs often finish well under the 24h SLA, so a
       // shorter tick than enrich's own 6h cadence gets results merged sooner.
       '*/30 * * * *': ['llm-batch-poll'],
-      // Daily: refresh cached external market/risk/location overlays. Location
-      // context (server/utils/external-data/osm-location-context.ts) reads a
-      // local Postgres table loaded out-of-band by a standalone osm2pgsql job,
-      // not a live external endpoint, so this stays a fast local-DB pass; the
-      // remaining externalData adapters (market/hazard) are a cheap no-op
-      // until configured.
-      '15 3 * * *': ['external-enrichment'],
+      // Every 15 minutes: refresh cached external market/risk/location
+      // overlays, one small batch (DEFAULT_BATCH_LIMIT in external-enrichment.
+      // ts) at a time — a full unscoped sweep measured ~16h against
+      // osm_local_elements' 25 queries/auction plus several HTTP adapters, far
+      // longer than the 24h until the next run and than a manual Settings
+      // trigger takes to collide with it via the shared runExclusiveTask
+      // lock. Batches process the longest-stale auctions first, so newly
+      // crawled or previously-superseded auctions are never stuck behind a
+      // fixed scan order.
+      '*/15 * * * *': ['external-enrichment'],
       // Daily: update only missing or re-geocoded auction_geo_metrics rows
       // against the current, complete geo_features epoch.  The task's
       // candidate query is incremental; keeping the epoch stable means a
