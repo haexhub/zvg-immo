@@ -5,6 +5,21 @@ import { API_BASE, AUTHORITY, CATEGORY, COMMERCIALIZATION_TYPE, COUNTRY, PAGE_SI
 const FETCH_TIMEOUT_MS = 20_000
 const FETCH_RETRIES = 2
 
+/**
+ * BImA fills `buy_price` with a nominal 1 € whenever the sale runs as a
+ * best-offer procedure instead of at a fixed price, and says so in the
+ * listing's own text ("Bitte beachten Sie, dass 1,00 € als Platzhalter für
+ * die Kaufpreiseingabe eingefügt wurde!", "Die oben beim Kaufpreis
+ * angegebenen 1,- € dienen lediglich als Platzhalter." — both live, 2 of the
+ * 20 current living/BUY offers). Carrying that through as a real
+ * marketValueEur would put a 1 € house at the top of every price sort and
+ * skew the price-per-m²/market-comparison aggregates, so it is treated the
+ * same as a missing price. Genuine auction starting bids sit an order of
+ * magnitude above it and are kept (e.g. a 10 € "Auktionslimit (Mindestgebot)"
+ * on a scrap parcel, live).
+ */
+const PLACEHOLDER_BUY_PRICE_EUR = 1
+
 interface JsonApiRef {
   id: string
   type: string
@@ -192,7 +207,7 @@ export function mapOffer(offer: OfferJson, byKey: Map<string, IncludedJson>, pla
   for (const dl of downloads) attachments.push(mapIncludedDocument(dl))
 
   const detailUrl = `${WEB_BASE}/details?id=${offer.id}`
-  const marketValueEur = a.buy_price != null && a.buy_price > 0 ? a.buy_price : null
+  const marketValueEur = a.buy_price != null && a.buy_price > PLACEHOLDER_BUY_PRICE_EUR ? a.buy_price : null
 
   return {
     platform: platformId,

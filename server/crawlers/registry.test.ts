@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Auction } from '~/types/auction'
 import { DEFAULT_ENABLED_COUNTRIES } from '~/server/utils/app-settings'
+import { ALL_SCOPE } from '~/lib/auction-constants'
 import {
   completenessScore,
   configureEnabledCountries,
@@ -9,6 +10,7 @@ import {
   isCountryEnabled,
   listCountries,
   listRegisteredCountries,
+  platforms,
 } from './registry'
 
 afterEach(() => {
@@ -135,5 +137,29 @@ describe('enabled countries', () => {
   it('ignores country codes without a registered crawler', () => {
     expect(configureEnabledCountries(['se', 'xx'])).toEqual(['se'])
     expect(isCountryEnabled('xx')).toBe(false)
+  })
+})
+
+describe('registered region codes', () => {
+  // getCrawlersForRegion() reads ALL_SCOPE as "every platform of this
+  // country", so a country must not mix that literal code with real
+  // sub-region codes: the scheduler's pass over the "all" entry would
+  // re-crawl every sibling portal in full on top of their own per-region
+  // passes. Countries where every platform is nationwide-only (fr, gb, bg,
+  // us) are fine — there "all" is the country's only region entry, so it is
+  // crawled exactly once.
+  it('never mixes the ALL scope with real sub-region codes inside one country', () => {
+    const codesPerCountry = new Map<string, Set<string>>()
+    for (const platform of platforms) {
+      const codes = codesPerCountry.get(platform.country) ?? new Set<string>()
+      for (const region of platform.regions) codes.add(region.code)
+      codesPerCountry.set(platform.country, codes)
+    }
+
+    const mixed = [...codesPerCountry.entries()]
+      .filter(([, codes]) => codes.has(ALL_SCOPE) && codes.size > 1)
+      .map(([country]) => country)
+
+    expect(mixed).toEqual([])
   })
 })

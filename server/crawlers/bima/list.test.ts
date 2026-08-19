@@ -148,6 +148,17 @@ describe('mapOffer', () => {
     expect(b.marketValueEur).toBeNull()
   })
 
+  it('treats BImA\'s 1 € best-offer placeholder as unknown, but keeps a real auction limit', () => {
+    const byKey = indexIncluded(INCLUDED)
+    const placeholder = mapOffer(makeOffer({ buy_price: 1 }), byKey, 'bima')
+    expect(placeholder.marketValueEur).toBeNull()
+    expect(placeholder.marketValueText).toBeNull()
+
+    const auctionLimit = mapOffer(makeOffer({ buy_price: 10 }), byKey, 'bima')
+    expect(auctionLimit.marketValueEur).toBe(10)
+    expect(auctionLimit.marketValueText).toBe('10 €')
+  })
+
   it('falls back to empty caseNumber, no photos/attachments/description when nothing is present', () => {
     const bare: OfferJson = {
       ...makeOffer({}, '1'),

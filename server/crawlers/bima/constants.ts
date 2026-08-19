@@ -26,8 +26,15 @@ export const API_BASE = 'https://apis.bundesimmobilien.de/immo/real_estate_offer
  * API itself paginates the whole nationwide result set, so one crawl call
  * covers the country regardless of how many Bundesländer the ~20-ish BUY
  * listings currently span.
+ *
+ * The code must NOT be ALL_SCOPE ('all'): registry.getCrawlersForRegion()
+ * treats that value as "every platform of this country", so registering it
+ * would make the scheduler's de/all pass re-crawl zvg-portal, zvbawü and
+ * mv-zvgcom in full on every refresh cycle on top of their own per-state
+ * passes. gb/bg get away with 'all' only because they are their country's
+ * sole platform; Germany already has several.
  */
-export const BIMA_REGIONS: readonly RegionInfo[] = [{ code: 'all', name: 'Bundesweit' }] as const
+export const BIMA_REGIONS: readonly RegionInfo[] = [{ code: 'bund', name: 'Bundesweit' }] as const
 
 /**
  * Scope of this first adapter: residential ("Wohnimmobilien") for-sale
