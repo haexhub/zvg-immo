@@ -53,6 +53,17 @@ describe('createMarkerClusterer', () => {
     expect(clusterer.getLeafKeys(clusterId).sort()).toEqual(['a', 'b'])
   })
 
+  it('keeps points at the exact same coordinate clustered even past MAX_ZOOM, up to ol/View\'s default max zoom of 28 (<ol-view> sets no max-zoom, so users can scroll/pinch past 18)', () => {
+    const clusterer = createMarkerClusterer()
+    clusterer.load([
+      { key: 'a', lng: 13.4, lat: 52.5 },
+      { key: 'b', lng: 13.4, lat: 52.5 },
+    ])
+    const result = clusterer.getClusters(WORLD_BBOX, 28)
+    expect(result).toHaveLength(1)
+    expect(result[0]).toMatchObject({ isCluster: true, count: 2 })
+  })
+
   it('getLeafKeys returns every leaf, not just the default limit of 10', () => {
     const clusterer = createMarkerClusterer()
     const points = Array.from({ length: 25 }, (_, i) => ({ key: `p${i}`, lng: 13.4, lat: 52.5 }))
