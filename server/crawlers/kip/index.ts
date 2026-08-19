@@ -20,7 +20,11 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
     countries: [COUNTRY],
     regions: regions.map((r) => r.name),
     fetchedAt: new Date().toISOString(),
-    totalReported: auctions.length,
+    // No upstream-reported total exists: this crawls three category pages per
+    // state and concatenates them, so the only number available is the count
+    // of what was parsed. CrawlResult.totalReported is contractually null when
+    // unknown or aggregated.
+    totalReported: null,
     auctions,
   }
 }

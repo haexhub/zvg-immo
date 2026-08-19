@@ -128,6 +128,27 @@ describe('enrichOne', () => {
     )
   })
 
+  it('decodes character references in the address instead of storing them raw', async () => {
+    const html = `<html><body>${exposeBox('Objektadresse', 'Muster &amp; Söhne Weg 3 <br/> 28205 Bremen')}</body></html>`
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(htmlResponse(html)))
+    const auction = makeAuction()
+    await enrichOne(auction)
+
+    expect(auction.address).toBe('Muster & Söhne Weg 3, 28205 Bremen')
+  })
+
+  it('still recognises the undisclosed-address disclaimer when it carries a non-breaking space', async () => {
+    const html = `<html><body>${exposeBox(
+      'Objektadresse',
+      'Die genaue Adresse des Objekts ist vom Anbieter nicht&nbsp;freigegeben.',
+    )}</body></html>`
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(htmlResponse(html)))
+    const auction = makeAuction()
+    await enrichOne(auction)
+
+    expect(auction.address).toBe('28277 Bremen')
+  })
+
   it('does nothing when the auction has no detail URL', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)

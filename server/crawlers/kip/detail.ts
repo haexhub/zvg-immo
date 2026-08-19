@@ -36,20 +36,27 @@ function sectionText($: CheerioAPI, heading: string): string | null {
   return clean(content.text()) || null
 }
 
-/** The disclosed form is "<Straße Hausnr.><br/><PLZ> <Stadt>" — split on the
- *  <br/> to keep the street and city on separate, comma-joined parts (rather
- *  than collapsing straight to text, which would run them together with no
- *  separator). Returns null both when the section is missing and when it's
- *  the "nicht freigegeben" disclaimer — callers keep the postal-code-only
- *  address list.ts already set in that case. */
+/** The disclosed form is "<Straße Hausnr.><br/><PLZ> <Stadt>" — replace the
+ *  <br/> with a newline on a clone (so the page's own DOM stays intact) and
+ *  read .text(), which keeps street and city as separate, comma-joined parts
+ *  while letting Cheerio decode character references for us. Serialising the
+ *  box with .html() instead would re-encode them, storing an address that
+ *  literally reads "Muster &amp; Söhne 3". Returns null both when the section
+ *  is missing and when it's the "nicht freigegeben" disclaimer — callers keep
+ *  the postal-code-only address list.ts already set in that case. */
 function extractAddressOverride($: CheerioAPI): string | null {
   const box = sectionBox($, 'Objektadresse')
   if (!box) return null
-  const html = box.children('div').eq(1).html() ?? ''
-  if (html.includes(ADDRESS_UNDISCLOSED_MARKER)) return null
-  const lines = html
-    .split(/<br\s*\/?>/i)
-    .map((line) => clean(line.replace(/<[^>]+>/g, '')))
+  const content = box.children('div').eq(1).clone()
+  content.find('br').replaceWith('\n')
+  const text = content.text()
+  // clean() first: the disclaimer arrives with a non-breaking space between
+  // "nicht" and "freigegeben" on some listings, which a raw substring check
+  // would miss.
+  if (clean(text).includes(ADDRESS_UNDISCLOSED_MARKER)) return null
+  const lines = text
+    .split('\n')
+    .map((line) => clean(line))
     .filter(Boolean)
   return lines.length > 0 ? lines.join(', ') : null
 }
