@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { BIMA_REGIONS } from './constants'
 import {
   fetchAllListings,
   indexIncluded,
@@ -31,6 +32,7 @@ function makeOffer(overrides: Partial<OfferJson['attributes']> = {}, id = '19454
       furnishing_note: null,
       other_note: null,
       updated_at: '2026-08-14T10:32:17.924Z',
+      federal_state: 'nordrhein_westfalen',
       ...overrides,
     },
     relationships: {
@@ -81,7 +83,7 @@ describe('mapOffer', () => {
 
     expect(a.platform).toBe('bima')
     expect(a.country).toBe('de')
-    expect(a.region).toBe('')
+    expect(a.region).toBe('Nordrhein-Westfalen')
     expect(a.externalId).toBe('19454')
     expect(a.caseNumber).toBe('DOVK.VK-147327/0009-01.2005.KH')
     expect(a.authority).toBe('Bundesanstalt für Immobilienaufgaben (BImA)')
@@ -181,6 +183,7 @@ describe('mapOffer', () => {
         furnishing_note: null,
         other_note: null,
         updated_at: null,
+        federal_state: null,
       },
       relationships: {},
     }
@@ -198,6 +201,25 @@ describe('mapOffer', () => {
     expect(a.sourceRooms).toBeNull()
     expect(a.lat).toBeNull()
     expect(a.lng).toBeNull()
+    expect(a.region).toBe('')
+  })
+
+  it('maps every federal_state BImA uses onto a registered region name', () => {
+    const byKey = indexIncluded(INCLUDED)
+    // The 16 slugs read off the complete live catalog (391 offers, all
+    // categories) — a new or renamed one must not silently become "no region".
+    const slugs = [
+      'baden_wuerttemberg', 'bayern', 'berlin', 'brandenburg', 'bremen', 'hamburg',
+      'hessen', 'mecklenburg_vorpommern', 'niedersachsen', 'nordrhein_westfalen',
+      'rheinland_pfalz', 'saarland', 'sachsen', 'sachsen_anhalt',
+      'schleswig_holstein', 'thueringen',
+    ]
+    const unmapped = slugs.filter((slug) => !mapOffer(makeOffer({ federal_state: slug }), byKey, 'bima').region)
+    expect(unmapped).toEqual([])
+    expect(BIMA_REGIONS.map((r) => r.code)).toHaveLength(slugs.length)
+    expect(mapOffer(makeOffer({ federal_state: 'sachsen_anhalt' }), byKey, 'bima').region).toBe('Sachsen-Anhalt')
+    // An unknown slug degrades to "no region" rather than inventing one.
+    expect(mapOffer(makeOffer({ federal_state: 'atlantis' }), byKey, 'bima').region).toBe('')
   })
 })
 
@@ -239,6 +261,23 @@ describe('fetchAllListings', () => {
     expect(secondUrl).toContain('offset=1')
     expect(secondUrl).toContain('filters%5Bcategory%5D=living')
     expect(secondUrl).toContain('filters%5Bcommercialization_type%5D=BUY')
+  })
+
+  it('scopes the query to one Bundesland when a federal_state is given', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(searchPage([makeOffer({}, '1')], 1, 0)))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await fetchAllListings('bima', 'brandenburg')
+    const url = fetchMock.mock.calls[0]![0] as string
+    expect(url).toContain('filters%5Bfederal_state%5D=brandenburg')
+  })
+
+  it('omits the federal_state filter when crawling the whole country', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(searchPage([makeOffer({}, '1')], 1, 0)))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await fetchAllListings('bima')
+    expect(fetchMock.mock.calls[0]![0] as string).not.toContain('federal_state')
   })
 
   it('stops when the API returns an empty page even though meta.total says more', async () => {

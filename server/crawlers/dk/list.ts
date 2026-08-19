@@ -185,7 +185,11 @@ function mapItem(item: ListItem, detail: DetailInfo, platformId: string): Auctio
   return {
     platform: platformId,
     country: COUNTRY,
-    region: 'all',
+    // Empty, not the 'all' scope literal: Auction.region is a human-readable
+    // region name (rendered as a badge on the detail page and in the map
+    // popover), so a nationwide-only source leaves it blank the way every
+    // other one does — otherwise the UI shows a region called "all".
+    region: '',
     externalId: id,
     caseNumber: detail.caseNumber ?? '',
     authority: detail.authority ?? 'Tvangsauktioner.dk',

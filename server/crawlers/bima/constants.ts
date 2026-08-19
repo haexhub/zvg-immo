@@ -20,21 +20,49 @@ export const WEB_BASE = 'https://immobilienportal.bundesimmobilien.de'
 export const API_BASE = 'https://apis.bundesimmobilien.de/immo/real_estate_offers'
 
 /**
- * BImA exposes no user-facing sub-region filter of its own on the results
- * page (only a free-text place/postcode search and a radius) — same
- * "collapse to one region" precedent as gb/auctionhouse and bg/zapori. The
- * API itself paginates the whole nationwide result set, so one crawl call
- * covers the country regardless of how many Bundesländer the ~20-ish BUY
- * listings currently span.
+ * Every offer carries a `federal_state` and the search API filters on it
+ * server-side (`filters[federal_state]=<slug>`), so this adapter registers
+ * the real Bundesländer instead of one nationwide pseudo-region: BImA objects
+ * then show up under the same region filter as the court portals' listings,
+ * and Germany's region list stays free of an entry that could match nothing.
  *
- * The code must NOT be ALL_SCOPE ('all'): registry.getCrawlersForRegion()
- * treats that value as "every platform of this country", so registering it
- * would make the scheduler's de/all pass re-crawl zvg-portal, zvbawü and
- * mv-zvgcom in full on every refresh cycle on top of their own per-state
- * passes. gb/bg get away with 'all' only because they are their country's
- * sole platform; Germany already has several.
+ * Codes are the project's existing German ones (zvg-portal/mv-zvgcom/dga-ag
+ * already share them), so a region entry merges with theirs rather than
+ * duplicating a state. The slugs are BImA's own enum values, read off the
+ * complete live catalog (all 391 offers across every category, 2026-08-19) —
+ * exactly these 16, no nulls and nothing outside them.
  */
-export const BIMA_REGIONS: readonly RegionInfo[] = [{ code: 'bund', name: 'Bundesweit' }] as const
+const BIMA_STATES: readonly (readonly [code: string, name: string, federalState: string])[] = [
+  ['bw', 'Baden-Württemberg', 'baden_wuerttemberg'],
+  ['by', 'Bayern', 'bayern'],
+  ['be', 'Berlin', 'berlin'],
+  ['br', 'Brandenburg', 'brandenburg'],
+  ['hb', 'Bremen', 'bremen'],
+  ['hh', 'Hamburg', 'hamburg'],
+  ['he', 'Hessen', 'hessen'],
+  ['mv', 'Mecklenburg-Vorpommern', 'mecklenburg_vorpommern'],
+  ['ni', 'Niedersachsen', 'niedersachsen'],
+  ['nw', 'Nordrhein-Westfalen', 'nordrhein_westfalen'],
+  ['rp', 'Rheinland-Pfalz', 'rheinland_pfalz'],
+  ['sl', 'Saarland', 'saarland'],
+  ['sn', 'Sachsen', 'sachsen'],
+  ['st', 'Sachsen-Anhalt', 'sachsen_anhalt'],
+  ['sh', 'Schleswig-Holstein', 'schleswig_holstein'],
+  ['th', 'Thüringen', 'thueringen'],
+] as const
+
+export const BIMA_REGIONS: readonly RegionInfo[] = BIMA_STATES.map(([code, name]) => ({ code, name }))
+
+/** Region code → the `filters[federal_state]` value to scope a crawl with. */
+export const FEDERAL_STATE_BY_REGION_CODE: Record<string, string> = Object.fromEntries(
+  BIMA_STATES.map(([code, , federalState]) => [code, federalState]),
+)
+
+/** `federal_state` → German region name, so a mapped offer carries the same
+ *  Auction.region string the other German crawlers write. */
+export const REGION_NAME_BY_FEDERAL_STATE: Record<string, string> = Object.fromEntries(
+  BIMA_STATES.map(([, name, federalState]) => [federalState, name]),
+)
 
 /**
  * Scope of this first adapter: residential ("Wohnimmobilien") for-sale

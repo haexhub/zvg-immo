@@ -151,7 +151,9 @@ export function mapDetail(id: string, data: ApiResponse, platformId: string): Au
   return {
     platform: platformId,
     country: COUNTRY,
-    region: 'all',
+    // Empty, not the 'all' scope literal — see dk/list.ts: Auction.region is a
+    // display name, and "all" would be rendered as one.
+    region: '',
     externalId: id,
     caseNumber: '',
     authority: seller.displayName ?? 'Ulosottolaitos',
