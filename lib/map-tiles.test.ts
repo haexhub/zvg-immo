@@ -3,7 +3,7 @@ import { localizeVectorStyleLanguage, mapTilerSatelliteStyleUrl, mapTilerStreets
 
 describe('mapTilerStreetsStyleUrl / mapTilerSatelliteStyleUrl', () => {
   it('builds a style.json URL with the default style id when none is configured', () => {
-    expect(mapTilerStreetsStyleUrl('key123')).toBe('https://api.maptiler.com/maps/streets-v2/style.json?key=key123')
+    expect(mapTilerStreetsStyleUrl('key123')).toBe('https://api.maptiler.com/maps/basic-v2/style.json?key=key123')
     expect(mapTilerSatelliteStyleUrl('key123')).toBe('https://api.maptiler.com/maps/hybrid/style.json?key=key123')
   })
 
@@ -12,7 +12,7 @@ describe('mapTilerStreetsStyleUrl / mapTilerSatelliteStyleUrl', () => {
   })
 
   it('falls back to the default for a blank configured style id', () => {
-    expect(mapTilerStreetsStyleUrl('key123', '  ')).toBe('https://api.maptiler.com/maps/streets-v2/style.json?key=key123')
+    expect(mapTilerStreetsStyleUrl('key123', '  ')).toBe('https://api.maptiler.com/maps/basic-v2/style.json?key=key123')
   })
 })
 

@@ -1,6 +1,12 @@
 export const OSM_ATTRIBUTION = '&copy; OpenStreetMap contributors'
 
-const DEFAULT_MAPTILER_STREETS_STYLE_ID = 'streets-v2'
+// 'basic-v2' instead of the richer 'streets-v2': the latter's 90 style layers
+// (33 of them symbol/label layers) cost 200-350ms of main-thread Canvas2D
+// drawing per zoom step once real auction data is loaded — see
+// search-map-freeze-cluster-investigation memory. 'basic-v2' has a third as
+// many layers (30, 7 symbol) and stays on the same vector/apply() pipeline,
+// so per-locale label rewriting (localizeVectorStyleLanguage) still works.
+const DEFAULT_MAPTILER_STREETS_STYLE_ID = 'basic-v2'
 const DEFAULT_MAPTILER_SATELLITE_STYLE_ID = 'hybrid'
 
 function configuredStyleId(value: string | undefined, defaultId: string): string {
