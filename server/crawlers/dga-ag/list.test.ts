@@ -70,6 +70,34 @@ const LIST_HTML = `
 </body></html>
 `
 
+const LIST_HTML_AMPERSAND = `
+<html><body>
+<div class="tx_goauktion_block" data-jplist-item>
+  <div class="des-block">
+    <div class="auktion-heading">
+      <div class="h-col katalogpos">
+        <a href="/immobilie-ersteigern/immobilie-suchen-und-finden/objekt/I26-17-001.html">
+          <div class="bgTag event-colors-I"><label>Nr.</label><p class="I26-17 I">I26-17-001</p></div>
+        </a>
+      </div>
+    </div>
+    <div class="auktion-details">
+      <div class="d-col objekt">
+        <label>Objekt</label>
+        <p class="addr-list">
+          <a href="/immobilie-ersteigern/immobilie-suchen-und-finden/objekt/I26-17-001.html">
+            Grundstück für 33 Garagen &amp; 5 Stellplätze<br/>
+            Entwässerungsgraben &amp; Schutzfläche<br/>
+            04931&nbsp;Mühlberg/Elbe
+          </a>
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+</body></html>
+`
+
 describe('parseListPage', () => {
   it('extracts both objects', () => {
     const items = parseListPage(LIST_HTML)
@@ -102,6 +130,16 @@ describe('parseListPage', () => {
     expect(item?.titleHint).toBeNull()
     expect(item?.street).toBe('Nebenstraße 2')
     expect(item?.cityLine).toBe('99999 Irgendwo')
+  })
+
+  it('decodes character references in title, street and city instead of keeping them raw', () => {
+    // Live: 7 of 268 objects carry an "&" in the title or street, one of them
+    // in the address that later goes into geocoding.
+    const [item] = parseListPage(LIST_HTML_AMPERSAND)
+    expect(item?.titleHint).toBe('Grundstück für 33 Garagen & 5 Stellplätze')
+    expect(item?.street).toBe('Entwässerungsgraben & Schutzfläche')
+    expect(item?.cityLine).toBe('04931 Mühlberg/Elbe')
+    expect(mapItem(item!).address).toBe('Entwässerungsgraben & Schutzfläche, 04931 Mühlberg/Elbe')
   })
 })
 

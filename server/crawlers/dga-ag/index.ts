@@ -6,7 +6,7 @@ import { fetchAllListings } from './list'
 import { enrichOne } from './detail'
 
 async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
-  const { auctions, total } = await fetchAllListings()
+  const auctions = await fetchAllListings()
   const all = isAllScope(opts.region)
   const regionName = DGA_REGION_NAMES[opts.region]
   const scoped = all ? auctions : auctions.filter((a) => a.region === regionName)
@@ -17,7 +17,12 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
     countries: [COUNTRY],
     regions: all ? DGA_REGIONS.map((r) => r.name) : [regionName ?? opts.region],
     fetchedAt: new Date().toISOString(),
-    totalReported: all ? total : scoped.length,
+    // dga-ag.de publishes no result count of its own; the page just renders
+    // every object. The only number available is what was parsed (and, for a
+    // scoped crawl, what survived the Bundesland filter), which is not what
+    // CrawlResult.totalReported means — it is contractually null when the
+    // upstream total is unknown.
+    totalReported: null,
     auctions: scoped,
   }
 }

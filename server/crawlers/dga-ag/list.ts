@@ -74,10 +74,18 @@ export function parseListPage(html: string): ListItem[] {
     if (!detailHref) return
     const detailUrl = absoluteUrl(detailHref)
 
-    const addrAnchor = $el.find('.d-col.objekt .addr-list a').first()
-    const lines = (addrAnchor.html() ?? '')
-      .split(/<br\s*\/?>/i)
-      .map((line) => clean(line.replace(/<[^>]+>/g, '')))
+    // Read the <br>-separated title/street/city lines as text, not serialized
+    // HTML: `.html()` re-encodes character references, so a title or street
+    // containing "&" would be stored as "&amp;" (live: 7 of 268 objects, one
+    // of them in the address itself, which then goes into geocoding).
+    // Replacing the <br> elements on a clone keeps the line split intact
+    // while letting Cheerio decode the references.
+    const addrAnchor = $el.find('.d-col.objekt .addr-list a').first().clone()
+    addrAnchor.find('br').replaceWith('\n')
+    const lines = addrAnchor
+      .text()
+      .split('\n')
+      .map((line) => clean(line))
       .filter(Boolean)
     const cityLine = lines.find((line) => /^\d{5}\b/.test(line)) ?? lines.at(-1) ?? null
     const cityIdx = cityLine ? lines.indexOf(cityLine) : -1
@@ -187,7 +195,6 @@ async function loadAllAuctions(): Promise<Auction[]> {
   }
 }
 
-export async function fetchAllListings(): Promise<{ auctions: Auction[]; total: number }> {
-  const auctions = await loadAllAuctions()
-  return { auctions, total: auctions.length }
+export async function fetchAllListings(): Promise<Auction[]> {
+  return await loadAllAuctions()
 }
