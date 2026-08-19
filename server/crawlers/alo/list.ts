@@ -40,9 +40,15 @@ export interface ListItem {
  * Both promoted tiers ("листтоп"/TOP and "листвип"/VIP — verified live to be
  * the only two card templates in use, VIP being the de-facto standard tier
  * rather than a rare upsell) share one `id="adrows_<id>"` container, so
- * matching on that id rather than either tier's own class name covers both
- * uniformly. Facts (Цена/Квадратура/РЗП/Двор/Вид на имота/...) sit in
- * `.ads-params-multi[title]` spans shared identically by both templates.
+ * matching on that id rather than either tier's own class name covers title,
+ * address, publisher and thumbnail uniformly.
+ *
+ * Their facts (Цена/Квадратура/РЗП/Двор/Вид на имота/...) do NOT share one
+ * markup, though: `listvip-item` puts each fact in a `.ads-params-multi` span
+ * carrying the label in its `title` attribute, while `listtop-item` renders a
+ * label/value table where the same label sits in a sibling `.ads-param-title`
+ * div (with a trailing colon) and the value in `.ads-params-cell`. Both are
+ * read below into one label -> value map, so mapItem stays template-agnostic.
  */
 export function parseListPage(html: string): ListItem[] {
   const $ = load(html)
@@ -67,6 +73,19 @@ export function parseListPage(html: string): ListItem[] {
       // `title` attribute, so only this one needs the nested price span.
       const priceSpan = $span.find('.price_nowrap').first()
       const value = label === 'Цена' && priceSpan.length > 0 ? clean(priceSpan.text()) : clean($span.text())
+      if (value) facts.set(label, value)
+    })
+    // TOP-tier table layout (see the doc comment above). Its label lives
+    // outside the value cell, so unlike the VIP spans no price special case is
+    // needed. TOP placements are concentrated on a category's first page —
+    // verified live: all 30 cards on Plovdiv's first page (both categories),
+    // 13 of 30 on Sofia's, none on any deeper page — so reading only the VIP
+    // markup left those cards with no price, area or room count at all.
+    $el.find('.ads-params-row').each((_j, row) => {
+      const $row = $(row)
+      const label = clean($row.find('.ads-param-title').first().text())?.replace(/\s*:\s*$/, '')
+      if (!label || facts.has(label)) return
+      const value = clean($row.find('.ads-params-cell').first().text())
       if (value) facts.set(label, value)
     })
 
@@ -136,15 +155,30 @@ export function mapItem(item: ListItem, oblast: AloOblast): Auction {
 export async function fetchCategoryListings(categorySlug: string, oblast: AloOblast): Promise<Auction[]> {
   const byId = new Map<string, Auction>()
   let page = 1
-  for (; page <= MAX_PAGES; page++) {
-    const html = await fetchListPage(categorySlug, oblast.regionId, page)
-    if (html == null) break
-    const items = parseListPage(html)
-    if (items.length === 0) break
-    for (const item of items) {
-      if (byId.has(item.externalId)) continue
-      byId.set(item.externalId, mapItem(item, oblast))
+  try {
+    for (; page <= MAX_PAGES; page++) {
+      const html = await fetchListPage(categorySlug, oblast.regionId, page)
+      if (html == null) break
+      const items = parseListPage(html)
+      if (items.length === 0) break
+      for (const item of items) {
+        if (byId.has(item.externalId)) continue
+        byId.set(item.externalId, mapItem(item, oblast))
+      }
     }
+  } catch (err) {
+    // A full cycle is ~1,140 sequential page fetches, so one page that still
+    // fails after fetch.ts's retries is likely enough that it must not discard
+    // the pages already walked: search serves from the `auctions` table, which
+    // this walk's surviving listings still reach, and the rest is picked up
+    // next cycle. A walk that yielded nothing at all is a different story —
+    // an unknown region_id/category slug or an outright block — and stays a
+    // hard failure rather than a silent zero-listing "success".
+    if (byId.size === 0) throw err
+    console.warn(
+      `[alo] ${oblast.name}/${categorySlug}: page ${page} failed, keeping the ${byId.size} listings walked so far — ${(err as Error).message}`,
+    )
+    return [...byId.values()]
   }
   // Only reachable when the walk never hit a 404/empty page, i.e. the cap cut
   // it short — otherwise indistinguishable from a complete crawl. See MAX_PAGES.

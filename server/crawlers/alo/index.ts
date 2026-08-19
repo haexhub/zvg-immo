@@ -15,10 +15,10 @@ async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
     source: BASE_URL,
     country: COUNTRY,
     regions: ALO_REGIONS,
-    // No upstream-reported total exists: this crawls two category pages per
-    // oblast and concatenates them, so the only number available is the
-    // count of what was parsed. CrawlResult.totalReported is contractually
-    // null when unknown or aggregated.
+    // Each list page does report its own category/oblast total ("10325
+    // обяви"), but this crawl concatenates four of those scopes, so no single
+    // upstream number describes the result. CrawlResult.totalReported is
+    // contractually null when unknown or aggregated.
     totalReported: null,
     auctions,
   })

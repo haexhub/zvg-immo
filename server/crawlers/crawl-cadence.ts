@@ -16,6 +16,11 @@ const SENSITIVE_INTERVAL_MS: Record<string, number> = {
   // BG: ~1,140 list pages per full walk at kip's 1s crawl delay (~20 min of
   // continuous requests) — an hourly re-crawl would keep the site under
   // near-permanent load from us, and classifieds turnover does not need it.
+  // Note the knock-on effect of the "longest interval wins" rule below: bg-alo
+  // and bg/zapori both register the ALL scope, so they share one region entry
+  // and zapori's court auctions are re-crawled daily too, not hourly. Accepted
+  // because judicial sale dates are published weeks ahead; undoing it would
+  // take a per-platform (rather than per-region) freshness check in refresh.ts.
   'bg-alo': 24 * 60 * 60 * 1000,
 }
 

@@ -71,6 +71,24 @@ describe('fetchCategoryListings', () => {
     expect(mockFetch).toHaveBeenCalledTimes(2)
   })
 
+  it('keeps the pages already walked when a later page stays broken', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    mockFetch
+      .mockResolvedValueOnce(listPage('1', '2'))
+      .mockResolvedValueOnce(new Response('', { status: 403 }))
+
+    const auctions = await fetchCategoryListings('apartamenti-stai', SOFIA)
+
+    expect(auctions.map((a) => a.externalId)).toEqual(['1', '2'])
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('HTTP 403'))
+  })
+
+  it('still fails hard when the walk yielded nothing at all, rather than reporting zero listings', async () => {
+    mockFetch.mockResolvedValue(new Response('', { status: 403 }))
+
+    await expect(fetchCategoryListings('apartamenti-stai', SOFIA)).rejects.toThrow('HTTP 403')
+  })
+
   it('warns instead of silently truncating when the page cap cuts the walk short', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     let page = 0

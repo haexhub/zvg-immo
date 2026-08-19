@@ -150,3 +150,65 @@ describe('mapItem', () => {
     expect(auction.sourceLivingAreaSqm).toBe(180)
   })
 })
+
+// Trimmed live markup (verified 2026-08-20) of a TOP-tier card, whose facts sit
+// in a label/value table instead of the VIP tier's `.ads-params-multi[title]`
+// spans. These placements fill a category's whole first page on Plovdiv and
+// about half of Sofia's, so the tier is not a rare edge case. The site's own
+// HTML comments between the cells (kept here) must not leak into the values.
+const LIST_TOP_HTML = `
+<html><body><div id="content_container">
+<div onclick="window.location='/sobstvenik-prodava-2-staen-apartament-11054526'" class="listtop-item noselect mb20" id="adrows_11054526" title="Собственик продава 2-стаен апартамент">
+  <div class="hidden-xs hidden-sm listtop-publisher" data-nosnippet><span>вчера</span></div>
+  <div class="listtop-image landscape ">
+    <a href="/sobstvenik-prodava-2-staen-apartament-11054526"><img class="listtop-image-img" loading="lazy" src="user_files/a/alexn/11054526_145539091_medium.jpg" alt="x"></a>
+  </div>
+  <div class="listtop-params">
+    <div class="listtop-item-header">
+      <a href="/sobstvenik-prodava-2-staen-apartament-11054526"><h3 class="listtop-item-title">Собственик продава 2-стаен апартамент</h3></a>
+      <div class="listtop-item-address" ><i>Гоце Делчев, София</i></div>
+    </div>
+    <div class="listtop-item-params"><div class="ads-params ads-params-table ads-params-table-inline"><div class="ads-params-row"><!--
+      --><div class="ads-param-title theme-color1 hidden-mobile  first_pclass">Цена:</div><!--
+      --><div class="ads-params-cell  animation-element bounce-up in-view first_pclass"><!--
+        --><span class="ads-params-single"><span class="price_nowrap">207 000 €</span></span><!--
+      --></div><!--
+    --></div> <div class="ads-params-row"><!--
+      --><div class="ads-param-title theme-color1 hidden-mobile ">за кв.м:</div><!--
+      --><div class="ads-params-cell"><span class="ads-params-single"><span class="price_nowrap">3338.71 €/кв.м</span></span></div><!--
+    --></div> <div class="ads-params-row"><!--
+      --><div class="ads-param-title theme-color1 hidden-mobile ">Вид на имота:</div><!--
+      --><div class="ads-params-cell"><span class="ads-params-single">Двустаен апартамент в София</span></div><!--
+    --></div> <div class="ads-params-row"><!--
+      --><div class="ads-param-title theme-color1 hidden-mobile ">Квадратура:</div><!--
+      --><div class="ads-params-cell"><span class="ads-params-single">62 кв.м</span></div><!--
+    --></div> </div></div>
+  </div>
+</div>
+</div></body></html>
+`
+
+describe('parseListPage for the TOP tier', () => {
+  it('reads the label/value table the VIP `.ads-params-multi` selector does not cover', () => {
+    const [item] = parseListPage(LIST_TOP_HTML)
+
+    expect(item?.externalId).toBe('11054526')
+    // The label's trailing colon belongs to the markup, not to the field name —
+    // it has to be stripped so mapItem's VIP-shaped lookups keep matching.
+    expect(item?.facts.get('Цена')).toBe('207 000 €')
+    expect(item?.facts.get('Квадратура')).toBe('62 кв.м')
+    expect(item?.facts.get('Вид на имота')).toBe('Двустаен апартамент в София')
+  })
+
+  it('maps price, living area and room count for a TOP card', () => {
+    const auction = mapItem(parseListPage(LIST_TOP_HTML)[0]!, SOFIA)
+
+    expect(auction.marketValueEur).toBe(207000)
+    expect(auction.sourceLivingAreaSqm).toBe(62)
+    expect(auction.sourceRooms).toBe(2)
+    // The rest of the card is template-independent and must keep working.
+    expect(auction.address).toBe('Гоце Делчев, София, Bulgarien')
+    expect(auction.authority).toBe('Частно лице (alo.bg)')
+    expect(auction.thumbnailUrl).toBe('https://www.alo.bg/user_files/a/alexn/11054526_145539091_medium.jpg')
+  })
+})
