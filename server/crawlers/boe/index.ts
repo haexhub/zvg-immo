@@ -132,6 +132,7 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
 
   return {
     platform: PLATFORM_ID,
+    platformsSucceeded: [PLATFORM_ID],
     source: BOE_BASE,
     countries: [COUNTRY],
     regions: [ES_REGION_NAMES[provincia] || provincia],

@@ -13,7 +13,7 @@ vi.mock('../../../utils/auction-record', () => ({ readAuctionRecord: vi.fn() }))
 vi.mock('../../../utils/auction-relationships', () => ({ readAuctionRelationships: vi.fn() }))
 vi.mock('../../../utils/external-data/location-enrichment', () => ({ readLocationEnrichment: vi.fn() }))
 vi.mock('../../../utils/auction-geo-metrics-read', () => ({ readAuctionGeoMetrics: vi.fn() }))
-vi.mock('../../../utils/list-cache', () => ({ readMergedListCache: vi.fn() }))
+vi.mock('../../../utils/history', () => ({ readLatestObservedAuction: vi.fn() }))
 vi.mock('../../../utils/verkehrswert-cache', () => ({
   cacheKey: (platform: string, id: string) => `${platform}:${id}`,
 }))
@@ -68,7 +68,7 @@ async function loadHandler() {
   const { readAuctionRelationships } = await import('../../../utils/auction-relationships')
   const { readLocationEnrichment } = await import('../../../utils/external-data/location-enrichment')
   const { readAuctionGeoMetrics } = await import('../../../utils/auction-geo-metrics-read')
-  const { readMergedListCache } = await import('../../../utils/list-cache')
+  const { readLatestObservedAuction } = await import('../../../utils/history')
   const { getRates } = await import('../../../utils/exchange-rate')
 
   vi.mocked(readAuctionRecord).mockResolvedValue(null)
@@ -76,7 +76,7 @@ async function loadHandler() {
   vi.mocked(geocodeAddress).mockResolvedValue(null)
   vi.mocked(readLocationEnrichment).mockResolvedValue(null)
   vi.mocked(readAuctionGeoMetrics).mockResolvedValue(null)
-  vi.mocked(readMergedListCache).mockResolvedValue(null)
+  vi.mocked(readLatestObservedAuction).mockResolvedValue(null)
   vi.mocked(getRates).mockResolvedValue({ EUR: 1 })
 
   return (await import('./[id].get')).default as unknown as (event: {
@@ -93,34 +93,26 @@ afterEach(() => {
 })
 
 describe('/api/auction/:platform/:id location enrichment overlay', () => {
-  it('uses the list cache during the brief gap before a structured record exists', async () => {
-    const { readMergedListCache } = await import('../../../utils/list-cache')
+  it('falls back to the newest observation during the gap before a structured record exists', async () => {
+    const { readLatestObservedAuction } = await import('../../../utils/history')
     const handler = await loadHandler()
 
-    vi.mocked(readMergedListCache).mockResolvedValue({
-      platform: 'multi',
-      source: '',
-      countries: ['se'],
-      regions: ['all'],
-      fetchedAt: '2026-07-28T00:00:00.000Z',
-      totalReported: 1,
-      auctions: [
-        auction({
-          platform: 'se-kronofogden',
-          country: 'se',
-          externalId: '101762',
-          photoCount: 5,
-          thumbnailUrl: 'https://example.test/1.jpg',
-          photoUrls: [
-            'https://example.test/1.jpg',
-            'https://example.test/2.jpg',
-            'https://example.test/3.jpg',
-            'https://example.test/4.jpg',
-            'https://example.test/5.jpg',
-          ],
-        }),
-      ],
-    })
+    vi.mocked(readLatestObservedAuction).mockResolvedValue(
+      auction({
+        platform: 'se-kronofogden',
+        country: 'se',
+        externalId: '101762',
+        photoCount: 5,
+        thumbnailUrl: 'https://example.test/1.jpg',
+        photoUrls: [
+          'https://example.test/1.jpg',
+          'https://example.test/2.jpg',
+          'https://example.test/3.jpg',
+          'https://example.test/4.jpg',
+          'https://example.test/5.jpg',
+        ],
+      }),
+    )
 
     await expect(handler({ context: { params: { platform: 'se-kronofogden', id: '101762' } } })).resolves.toMatchObject({
       platform: 'se-kronofogden',

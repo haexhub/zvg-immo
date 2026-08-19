@@ -24,6 +24,25 @@ describe('buildAuctionSearchFilter', () => {
     expect(values[0]).toEqual(['de', 'at'])
   })
 
+  it('hides auctions the last completed crawl of their scope no longer returned', async () => {
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+    const { predicate } = await buildAuctionSearchFilter(db, { llmOnly: '0' })
+
+    // Dateless platforms (kip, bima, gb, ...) have no other expiry signal.
+    expect(predicate).toContain('NOT EXISTS')
+    expect(predicate).toContain('FROM crawl_state cs')
+    expect(predicate).toContain('cs.region = a.crawl_region')
+    expect(predicate).toContain('cs.platform = a.platform')
+    expect(predicate).toContain('a.last_seen_at < cs.last_success_at')
+  })
+
+  it('keeps the date filter alongside the staleness filter', async () => {
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+    const { predicate } = await buildAuctionSearchFilter(db, { llmOnly: '0' })
+
+    expect(predicate).toContain('a.auction_date_iso IS NULL OR a.auction_date_iso >= now()')
+  })
+
   it('drops a requested country that the admin paused', async () => {
     const { buildAuctionSearchFilter } = await import('./auction-search-filters')
     const { values } = await buildAuctionSearchFilter(db, { country: 'de,se', llmOnly: '0' })

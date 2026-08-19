@@ -102,3 +102,36 @@ async function insertChunk(db: Pool, rows: ObservationRow[]): Promise<void> {
   const sql = `INSERT INTO auction_observations (${COLUMNS.join(', ')}) VALUES ${tuples.join(', ')}`
   await db.query(sql, values)
 }
+
+/**
+ * The most recent observed source record for one auction, or null when it was
+ * never observed. Replaces the whole-country list_cache blob scan the detail
+ * permalink used as its fallback: `payload` holds the same complete parsed
+ * Auction, and idx_obs_platform_zvgid_time makes this a single indexed row
+ * lookup instead of parsing every country's cached CrawlResult.
+ *
+ * Only a fallback — readAuctionRecord (the structured tables) is authoritative
+ * and answers first. This covers the window where a crawl created the identity
+ * but no enrich run has written auction_details yet, so the structured read
+ * would return a row with no address or price.
+ */
+export async function readLatestObservedAuction(
+  platform: string,
+  externalId: string,
+): Promise<Auction | null> {
+  const db = getPool()
+  if (!db) return null
+  try {
+    const { rows } = await db.query<{ payload: Auction | null }>(
+      `SELECT payload FROM auction_observations
+        WHERE platform = $1 AND external_id = $2
+        ORDER BY captured_at DESC
+        LIMIT 1`,
+      [platform, externalId],
+    )
+    return rows[0]?.payload ?? null
+  } catch (err) {
+    console.warn(`[history] latest observation ${platform}/${externalId}: ${(err as Error).message}`)
+    return null
+  }
+}

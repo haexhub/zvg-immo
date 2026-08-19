@@ -33,6 +33,10 @@ export async function loadScopedRetryResult(
     records,
     result: {
       platform: MULTI_PLATFORM, source: '', countries: [...new Set(auctions.map((a) => a.country))],
+      // Replayed from stored records, not crawled — no platform may be marked
+      // as freshly crawled here, or every auction outside this scoped retry
+      // would read as disappeared.
+      platformsSucceeded: [],
       regions: [], fetchedAt: capturedAt, totalReported: null, auctions, errors: [],
     },
   }

@@ -16,6 +16,7 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
 
   return {
     platform: PLATFORM_ID,
+    platformsSucceeded: [PLATFORM_ID],
     source: BASE_URL,
     countries: [COUNTRY],
     regions: regions.map((r) => r.name),
