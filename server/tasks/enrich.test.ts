@@ -16,7 +16,7 @@ import { downloadNativeImages } from '../utils/extract/native-images'
 import { extractDocumentPhotos } from '../utils/extract/document-images'
 import { archiveAuction } from '../utils/raw-archive'
 import { recordObservations } from '../utils/history'
-import { writeListCache } from '../utils/list-cache'
+import { recordCrawlScope } from '../utils/crawl-state'
 
 vi.mock('../crawlers/registry', () => ({
   crawlAll: vi.fn(),
@@ -62,7 +62,7 @@ vi.mock('../utils/verkehrswert-cache', () => ({
   readVerkehrswertCache: vi.fn(async () => ({})),
 }))
 vi.mock('../utils/history', () => ({ recordObservations: vi.fn() }))
-vi.mock('../utils/list-cache', () => ({ writeListCache: vi.fn() }))
+vi.mock('../utils/crawl-state', () => ({ recordCrawlScope: vi.fn() }))
 vi.mock('../utils/task-runs', () => ({
   recordTaskRunStart: vi.fn(),
   recordTaskRunEnd: vi.fn(),
@@ -130,6 +130,7 @@ function fetchState(overrides: Partial<AuctionFetchState> = {}): AuctionFetchSta
 function crawlResult(auctions: Auction[]): CrawlResult & { errors: [] } {
   return {
     platform: 'all',
+    platformsSucceeded: ['zvg-portal'],
     source: 'all',
     countries: ['de'],
     regions: ['Berlin'],
@@ -173,9 +174,9 @@ describe('runEnrich structured persistence', () => {
       return result
     })
 
-    await runEnrich({ country: 'de', writeListCache: true })
+    await runEnrich({ country: 'de', recordCrawlScope: true })
 
-    expect(writeListCache).toHaveBeenCalledWith('de', 'Berlin', result)
+    expect(recordCrawlScope).toHaveBeenCalledWith('de', 'Berlin', result, expect.any(String))
     expect(ensureAuctionIdentity).toHaveBeenCalledWith([listing])
     expect(archiveAuction).toHaveBeenCalledWith(listing, expect.any(String))
     expect(vi.mocked(ensureAuctionIdentity).mock.invocationCallOrder[0])

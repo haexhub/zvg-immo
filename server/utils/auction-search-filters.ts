@@ -52,12 +52,31 @@ export async function buildAuctionSearchFilter(
   where.push(`a.country = ANY(${add(countries)}::text[])`)
 
   // `auctions` is upserted row-by-row (current-auctions.ts) and never pruned,
-  // so an auction whose date has passed keeps its row indefinitely once the
-  // crawl stops returning it — unlike list_cache, which replaced the whole
-  // region blob per crawl and so dropped concluded auctions for free. Filter
-  // it here instead, the same way the enabled-country scope above is applied
-  // at read time rather than by deleting rows.
+  // so an auction whose date has passed keeps its row indefinitely. Filter it
+  // here, the same way the enabled-country scope above is applied at read time
+  // rather than by deleting rows.
   where.push(`(a.auction_date_iso IS NULL OR a.auction_date_iso >= now())`)
+
+  // Expiry, part two. The date filter above only reaches auctions that have a
+  // date, and eight platforms (agi, bima, dga-ag, gb, kip, lt, pt, us) never
+  // publish one — as does every classifieds-style source added since. No
+  // portal publishes a "sold"/"withdrawn" flag either. The
+  // one remaining signal is that a crawl which DID complete stopped returning
+  // the listing — recorded as auctions.last_seen_at vs crawl_state.last_success_at
+  // (server/utils/crawl-state.ts).
+  //
+  // Written as NOT EXISTS so every uncertainty resolves to "keep showing it":
+  // no crawl_state row for the scope (never crawled, or crawl_region still
+  // NULL from before this column existed) means no row to compare against, so
+  // nothing is hidden. A broken crawler therefore goes stale rather than
+  // silently emptying its source out of the search results.
+  where.push(`NOT EXISTS (
+    SELECT 1 FROM crawl_state cs
+     WHERE cs.country = a.country
+       AND cs.region = a.crawl_region
+       AND cs.platform = a.platform
+       AND a.last_seen_at < cs.last_success_at
+  )`)
 
   const regionNames = commaList(query.regionNames)
   if (regionNames.length) where.push(`(a.country || ':' || a.region) = ANY(${add(regionNames)}::text[])`)

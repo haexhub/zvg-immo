@@ -12,7 +12,7 @@ const state = vi.hoisted(() => ({
     clientQuery: ReturnType<typeof vi.fn>
   } | null,
   crawlSingle: vi.fn(),
-  writeListCache: vi.fn(),
+  recordCrawlScope: vi.fn(),
   recordObservations: vi.fn(),
   matchAlerts: vi.fn(),
   archiveAuction: vi.fn(),
@@ -43,7 +43,7 @@ vi.mock('../crawlers/registry', () => ({
 }))
 
 vi.mock('./db', () => ({ getDb: vi.fn(() => state.db) }))
-vi.mock('./list-cache', () => ({ writeListCache: state.writeListCache }))
+vi.mock('./crawl-state', () => ({ recordCrawlScope: state.recordCrawlScope }))
 vi.mock('./history', () => ({ recordObservations: state.recordObservations }))
 vi.mock('./alert-matching', () => ({ matchAlerts: state.matchAlerts }))
 vi.mock('./raw-archive', () => ({ archiveAuction: state.archiveAuction }))
@@ -60,7 +60,7 @@ vi.mock('./external-data/location-enrichment', () => ({
 // "<table>"` text Drizzle generates — lets each DELETE report a distinct,
 // recognizable count without hand-writing the exact SQL Drizzle produces.
 const ROW_COUNTS: Record<string, number> = {
-  '"list_cache"': 1,
+  '"crawl_state"': 1,
   '"auction_observations"': 2,
   '"auctions"': 3,
   '"auction_details"': 4,
@@ -97,6 +97,7 @@ function makePool(failOnTable?: string) {
 
 const seResult: CrawlResult = {
   platform: 'se-kronofogden',
+  platformsSucceeded: ['se-kronofogden'],
   source: 'https://auktionstorget.kronofogden.se',
   countries: ['se'],
   regions: ['Schweden'],
@@ -135,7 +136,7 @@ beforeEach(() => {
   state.pool = makePool()
   state.db = drizzle(state.pool.pool as never)
   state.crawlSingle.mockReset().mockResolvedValue(seResult)
-  state.writeListCache.mockReset().mockResolvedValue(undefined)
+  state.recordCrawlScope.mockReset().mockResolvedValue(undefined)
   state.recordObservations.mockReset().mockResolvedValue(undefined)
   state.matchAlerts.mockReset().mockResolvedValue(undefined)
   state.archiveAuction.mockReset().mockResolvedValue(null)
@@ -154,7 +155,7 @@ describe('rebuildCountry', () => {
     const result = await rebuildCountry('SE')
 
     expect(result.deleted).toEqual({
-      listCache: 1,
+      crawlState: 1,
       observations: 2,
       auctions: 3,
       auctionDetails: 4,
@@ -181,7 +182,7 @@ describe('rebuildCountry', () => {
       immobilienOnly: true,
       enrichDetails: false,
     })
-    expect(state.writeListCache).toHaveBeenCalledWith('se', 'all', seResult)
+    expect(state.recordCrawlScope).toHaveBeenCalledWith('se', 'all', seResult, expect.any(String))
     expect(state.recordObservations).toHaveBeenCalledWith(seResult, expect.any(String))
     expect(state.matchAlerts).toHaveBeenCalledWith('se', 'all', seResult)
     expect(state.archiveAuction).toHaveBeenCalledWith(seResult.auctions[0], expect.any(String))

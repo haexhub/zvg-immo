@@ -1,5 +1,5 @@
 // Manually refreshes one country from /settings: force-crawl the source once,
-// write list_cache + raw auction captures, run the full enrich archive/document
+// record the crawl scope + raw auction captures, run the full enrich archive/document
 // pipeline, then fire reprocess (rules + LLM) against the raw archive.
 //
 // Every long-running phase goes through its task wrapper so /settings can poll
@@ -33,7 +33,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: `${registered.name} ist deaktiviert.` })
   }
 
-  const outcome = (await runTask('enrich', { payload: { country, force: true, writeListCache: true, trigger: 'manual' } })) as Awaited<ReturnType<typeof runEnrich>>
+  const outcome = (await runTask('enrich', { payload: { country, force: true, recordCrawlScope: true, trigger: 'manual' } })) as Awaited<ReturnType<typeof runEnrich>>
   // Detached on purpose — see the file header. A rejection here is still
   // recorded as the task's lastError by its own defineTask wrapper; the catch
   // only keeps the trigger itself from becoming an unhandled rejection.

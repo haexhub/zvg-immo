@@ -5,7 +5,7 @@
 // "cannot be converted to text") for any row containing one, even in an
 // unrelated field. Confirmed in prod 2026-07-31: one DE/BW listing with a
 // stray NUL (crawler/encoding artifact, never meaningful content) aborted
-// list_cache upserts that batched dozens of otherwise-good rows together.
+// bulk upserts that batched dozens of otherwise-good rows together.
 //
 // Stripping the NUL via a replacer (before JSON.stringify escapes anything)
 // rather than pattern-matching the already-stringified text: the replacer

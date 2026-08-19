@@ -13,6 +13,7 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
 
   return {
     platform: PLATFORM_ID,
+    platformsSucceeded: [PLATFORM_ID],
     source: BASE_URL,
     countries: [COUNTRY],
     regions: all ? DGA_REGIONS.map((r) => r.name) : [regionName ?? opts.region],
