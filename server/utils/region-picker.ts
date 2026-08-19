@@ -23,10 +23,11 @@ export function isNationwideOnlyCountry(country: { regions: Array<{ code: string
 
 /**
  * The distinct, non-empty `Auction.region` values these countries currently
- * serve. Cancelled rows are excluded so a region that only exists on withdrawn
- * listings doesn't become another dead option — the search itself defaults to
- * `cancelled = false` (see auction-search-filters.ts). Returns an empty map
- * without Postgres, which is exactly the post-#439 payload: no region block.
+ * serve. Cancelled rows and auctions whose date has passed are excluded so a
+ * region that only exists on withdrawn or concluded listings doesn't become
+ * another dead option — the search itself always applies both conditions
+ * (see auction-search-filters.ts). Returns an empty map without Postgres,
+ * which is exactly the post-#439 payload: no region block.
  */
 export async function readStoredRegionNames(countryCodes: string[]): Promise<Map<string, string[]>> {
   const byCountry = new Map<string, string[]>()
@@ -40,6 +41,7 @@ export async function readStoredRegionNames(countryCodes: string[]): Promise<Map
     // hit this (is writes the auction venue's town verbatim).
     `SELECT country, region FROM auctions
       WHERE country = ANY($1) AND region <> '' AND region NOT LIKE '%,%' AND cancelled = false
+        AND (auction_date_iso IS NULL OR auction_date_iso >= now())
       GROUP BY country, region
       ORDER BY country, region`,
     [countryCodes],

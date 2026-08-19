@@ -79,10 +79,22 @@ describe('readStoredRegionNames', () => {
       ]),
     )
     expect(query.mock.calls[0]?.[1]).toEqual([['bg', 'pl']])
+    // A region only reachable through an expired auction can't ever appear in
+    // the actual search results either (auction-search-filters.ts always
+    // hides those) — the query must exclude them the same way it excludes
+    // cancelled rows, or the picker offers another dead option.
+    expect(query.mock.calls[0]?.[0]).toMatch(/auction_date_iso IS NULL OR auction_date_iso >= now\(\)/)
   })
 
   it('stays empty without Postgres, which keeps the payload as it was', async () => {
     expect(await readStoredRegionNames(['bg'])).toEqual(new Map())
+  })
+
+  it('propagates a query failure instead of swallowing it — the caller (regions.get.ts) is the one that degrades to no region block', async () => {
+    const query = vi.fn(async () => { throw new Error('connection terminated') })
+    vi.mocked(getPool).mockReturnValueOnce({ query } as never)
+
+    await expect(readStoredRegionNames(['bg'])).rejects.toThrow('connection terminated')
   })
 
   it('does not query at all when every country has real sub-regions', async () => {
