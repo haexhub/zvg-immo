@@ -10,8 +10,13 @@ async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
 
   const seen = new Set<string>()
   const auctions = []
+  // One failed endpoint means its category's listings are entirely missing
+  // from this run — that must not read as "crawled to completion", or a later
+  // successful run would see them as newly gone rather than never fetched.
+  let anyEndpointFailed = false
   for (const r of settled) {
     if (r.status === 'rejected') {
+      anyEndpointFailed = true
       console.warn(`[${PLATFORM_ID}] endpoint failed: ${(r.reason as Error).message}`)
       continue
     }
@@ -25,7 +30,7 @@ async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
 
   return {
     platform: PLATFORM_ID,
-    platformsSucceeded: [PLATFORM_ID],
+    platformsSucceeded: anyEndpointFailed ? [] : [PLATFORM_ID],
     source: CZ_BASE,
     countries: [COUNTRY],
     regions: [],

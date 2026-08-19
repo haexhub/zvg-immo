@@ -114,6 +114,65 @@ describe('recordCrawlScope', () => {
     const scopeValues = query.mock.calls[1]![1]
     expect(scopeValues).toEqual(['de', 'bw', AT, 'zvg-portal', 2, 'zvbawu', 1])
   })
+
+  it('guards both writes against an older run overwriting newer state', async () => {
+    // refresh/enrich/country-rebuild share no lock, so a slower run that
+    // started earlier can finish after a faster, later one covering the same
+    // scope — its older `at` must not win.
+    const { recordCrawlScope } = await import('./crawl-state')
+    await recordCrawlScope('de', 'be', result(), AT)
+
+    const [auctionSql] = query.mock.calls[0]!
+    expect(auctionSql).toContain('AND (last_seen_at IS NULL OR last_seen_at < $1)')
+
+    const [scopeSql] = query.mock.calls[1]!
+    expect(scopeSql).toContain('WHERE EXCLUDED.last_success_at > crawl_state.last_success_at')
+  })
+})
+
+describe('allScopesFreshWithin', () => {
+  const scopes = [
+    { country: 'de', region: 'be', platform: 'zvg-portal' },
+    { country: 'de', region: 'bw', platform: 'zvbawu' },
+  ]
+
+  it('returns false without querying when there are no scopes to check', async () => {
+    const { allScopesFreshWithin } = await import('./crawl-state')
+    expect(await allScopesFreshWithin([], 60_000)).toBe(false)
+    expect(query).not.toHaveBeenCalled()
+  })
+
+  it('is true only when every scope has a fresh row — one missing or stale scope fails the whole check', async () => {
+    const { allScopesFreshWithin } = await import('./crawl-state')
+
+    query.mockResolvedValueOnce({ rows: [{ stale: '0' }] })
+    expect(await allScopesFreshWithin(scopes, 60_000)).toBe(true)
+
+    query.mockResolvedValueOnce({ rows: [{ stale: '1' }] })
+    expect(await allScopesFreshWithin(scopes, 60_000)).toBe(false)
+  })
+
+  it('checks every registered scope against the same cutoff, not just the newest one', async () => {
+    const { allScopesFreshWithin } = await import('./crawl-state')
+    query.mockResolvedValueOnce({ rows: [{ stale: '0' }] })
+    await allScopesFreshWithin(scopes, 60_000)
+
+    const [sql, values] = query.mock.calls[0]!
+    expect(sql).toContain('LEFT JOIN crawl_state cs')
+    expect(values).toEqual([
+      expect.any(String),
+      'de', 'be', 'zvg-portal',
+      'de', 'bw', 'zvbawu',
+    ])
+  })
+
+  it('returns false rather than throwing when the query fails', async () => {
+    const { allScopesFreshWithin } = await import('./crawl-state')
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    failNextQuery = true
+
+    expect(await allScopesFreshWithin(scopes, 60_000)).toBe(false)
+  })
 })
 
 describe('regionCrawlAgeMs', () => {

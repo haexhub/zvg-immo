@@ -114,6 +114,11 @@ async function insertChunk(db: Pool, rows: ObservationRow[]): Promise<void> {
  * and answers first. This covers the window where a crawl created the identity
  * but no enrich run has written auction_details yet, so the structured read
  * would return a row with no address or price.
+ *
+ * A query failure is thrown rather than swallowed to null: the caller treats
+ * null as "genuinely never observed" and falls through to a live upstream
+ * crawl, which would turn a database hiccup into a burst of external requests
+ * on every affected detail page.
  */
 export async function readLatestObservedAuction(
   platform: string,
@@ -121,17 +126,12 @@ export async function readLatestObservedAuction(
 ): Promise<Auction | null> {
   const db = getPool()
   if (!db) return null
-  try {
-    const { rows } = await db.query<{ payload: Auction | null }>(
-      `SELECT payload FROM auction_observations
-        WHERE platform = $1 AND external_id = $2
-        ORDER BY captured_at DESC
-        LIMIT 1`,
-      [platform, externalId],
-    )
-    return rows[0]?.payload ?? null
-  } catch (err) {
-    console.warn(`[history] latest observation ${platform}/${externalId}: ${(err as Error).message}`)
-    return null
-  }
+  const { rows } = await db.query<{ payload: Auction | null }>(
+    `SELECT payload FROM auction_observations
+      WHERE platform = $1 AND external_id = $2
+      ORDER BY captured_at DESC
+      LIMIT 1`,
+    [platform, externalId],
+  )
+  return rows[0]?.payload ?? null
 }

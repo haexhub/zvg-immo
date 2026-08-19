@@ -51,12 +51,17 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
 
   let totalReported = 0
   const auctions = []
+  // A failed court is missing from `auctions` entirely, not just short a few
+  // listings — recording the platform as succeeded anyway would let its whole
+  // catalog read as "gone" once a later, complete crawl runs.
+  let anyCourtFailed = false
   for (const [i, r] of courtResults.entries()) {
     if (r.status === 'fulfilled') {
       totalReported += r.value.totalReported
       auctions.push(...r.value.auctions)
       continue
     }
+    anyCourtFailed = true
     // Silent drops here have masked coverage regressions before (a single
     // court's parser breaking quietly hid 10–20% of BW from the map).
     const court = BW_COURTS_FALLBACK[i]
@@ -75,7 +80,7 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
 
   return {
     platform: PLATFORM_ID,
-    platformsSucceeded: [PLATFORM_ID],
+    platformsSucceeded: anyCourtFailed ? [] : [PLATFORM_ID],
     source: ZVBAWU_BASE,
     countries: [COUNTRY],
     regions: [REGION_NAME],

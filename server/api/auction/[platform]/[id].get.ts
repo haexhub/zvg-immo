@@ -97,10 +97,21 @@ export default defineEventHandler(async (event): Promise<AuctionDetail> => {
     throw createError({ statusCode: 400, statusMessage: 'invalid platform/id' })
   }
   const stored = await readAuctionRecord(platform, id)
-  const hit =
-    stored?.auction ??
-    (await findObservedAuction(platform, id)) ??
-    (await findLiveAuction(platform, id))
+  let observed: Auction | null = null
+  if (!stored) {
+    try {
+      observed = await findObservedAuction(platform, id)
+    } catch (err) {
+      // A failed observation lookup is a database problem, not a miss — must
+      // not fall through to findLiveAuction, or a database hiccup would
+      // trigger a live upstream crawl on every affected detail page.
+      throw createError({
+        statusCode: 503,
+        statusMessage: `Beobachtungsverlauf nicht erreichbar: ${(err as Error).message}`,
+      })
+    }
+  }
+  const hit = stored?.auction ?? observed ?? (await findLiveAuction(platform, id))
   if (!hit) {
     throw createError({ statusCode: 404, statusMessage: 'auction not found' })
   }

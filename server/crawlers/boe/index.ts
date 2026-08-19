@@ -130,9 +130,15 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
     }
   }
 
+  // A pagination cutoff (captcha/5xx mid-run, expired token, missing token)
+  // still returns the pages fetched so far — but that partial list must not
+  // be recorded as a successful crawl, or the listings it didn't reach would
+  // read as "gone" once a later, complete crawl runs.
+  const complete = totalReported == null || auctions.length >= totalReported
+
   return {
     platform: PLATFORM_ID,
-    platformsSucceeded: [PLATFORM_ID],
+    platformsSucceeded: complete ? [PLATFORM_ID] : [],
     source: BOE_BASE,
     countries: [COUNTRY],
     regions: [ES_REGION_NAMES[provincia] || provincia],

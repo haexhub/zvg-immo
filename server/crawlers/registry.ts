@@ -304,8 +304,11 @@ export async function crawlSingle(
   for (const [i, s] of settled.entries()) {
     if (s.status === 'fulfilled') {
       results.push(s.value)
-      const id = crawlers[i]?.id
-      if (id) succeeded.push(id)
+      // Trust the crawler's own verdict, not just "it didn't throw" — a
+      // crawler can return normally after an incomplete run (pagination cut
+      // short, one of several required endpoints failed) and reports that by
+      // leaving itself out of its own platformsSucceeded.
+      succeeded.push(...s.value.platformsSucceeded)
     } else {
       console.warn(
         `[crawlSingle] ${opts.country}/${opts.region} via ${crawlers[i]?.id}: ${(s.reason as Error).message}`,
@@ -383,9 +386,10 @@ export async function crawlSingle(
     countries: [opts.country],
     regions: [...new Set(results.flatMap((r) => r.regions))],
     fetchedAt: new Date().toISOString(),
-    // Only the platforms that actually returned. A platform that threw must
-    // not be recorded as successfully crawled, or crawl-state.ts would read
-    // its entire catalog as disappeared and hide it from search.
+    // Only the platforms that actually returned AND ran to completion. One
+    // that threw, or that returned an incomplete run, must not be recorded as
+    // successfully crawled, or crawl-state.ts would read its entire catalog
+    // as disappeared and hide it from search.
     platformsSucceeded: succeeded,
     totalReported: results.reduce<number | null>(
       (sum, r) => (r.totalReported == null ? sum : (sum ?? 0) + r.totalReported),

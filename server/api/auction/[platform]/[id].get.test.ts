@@ -255,6 +255,26 @@ describe('/api/auction/:platform/:id location enrichment overlay', () => {
     })
   })
 
+  it('surfaces a 503 instead of falling through to a live crawl when the observation lookup fails', async () => {
+    const { readLatestObservedAuction } = await import('../../../utils/history')
+    const crawl = vi.fn()
+    registryMock.platforms.push({
+      id: 'zvg-portal',
+      name: 'ZVG-Portal',
+      baseUrl: 'https://www.zvg-portal.de',
+      country: 'de',
+      regions: [{ code: 'all', name: 'All' }],
+      crawl,
+    })
+    const handler = await loadHandler()
+    vi.mocked(readLatestObservedAuction).mockRejectedValue(new Error('connection lost'))
+
+    await expect(handler({ context: { params: { platform: 'zvg-portal', id: '7265' } } })).rejects.toMatchObject({
+      statusCode: 503,
+    })
+    expect(crawl).not.toHaveBeenCalled()
+  })
+
   it('caches live lookup misses briefly', async () => {
     const crawl = vi.fn().mockResolvedValue({
       platform: 'test-platform',

@@ -27,6 +27,13 @@ const CHUNK_SIZE = 500
  * is hidden — the reverse order would briefly mark every auction in the scope
  * as disappeared. For the same reason this only ever writes on success; a
  * failed crawl leaves both sides untouched.
+ *
+ * Both writes are also monotonic in `at`. refresh/enrich/country-rebuild carry
+ * no shared lock and can cover the same scope concurrently, so a slower run
+ * that started earlier can finish after a faster, later run. Without the
+ * guard its older `at` would win the race, regressing crawl_state.last_success_at
+ * backwards — which would un-expire listings the newer run had already
+ * correctly dropped.
  */
 export async function recordCrawlScope(
   country: string,
@@ -51,7 +58,8 @@ export async function recordCrawlScope(
       })
       await db.query(
         `UPDATE auctions SET last_seen_at = $1, crawl_region = $2
-          WHERE (platform, external_id) IN (${tuples.join(', ')})`,
+          WHERE (platform, external_id) IN (${tuples.join(', ')})
+            AND (last_seen_at IS NULL OR last_seen_at < $1)`,
         values,
       )
     }
@@ -69,7 +77,8 @@ export async function recordCrawlScope(
       `INSERT INTO crawl_state (country, region, platform, last_success_at, auction_count)
        VALUES ${rows.join(', ')}
        ON CONFLICT (country, region, platform)
-       DO UPDATE SET last_success_at = EXCLUDED.last_success_at, auction_count = EXCLUDED.auction_count`,
+       DO UPDATE SET last_success_at = EXCLUDED.last_success_at, auction_count = EXCLUDED.auction_count
+       WHERE EXCLUDED.last_success_at > crawl_state.last_success_at`,
       values,
     )
   } catch (err) {
@@ -111,21 +120,41 @@ export async function regionCrawlAgeMs(
 }
 
 /**
- * Age (ms) of the most recently crawled scope overall, or null when nothing
- * has been crawled yet. The boot-time refresh/enrich plugins use this to skip
- * a full re-crawl when a restart lands on already-warm data.
+ * True when every one of the given (country, region, platform) scopes has a
+ * crawl_state row no older than `maxAgeMs`. The boot-time refresh/enrich
+ * plugins use this to skip a full re-crawl when a restart lands on
+ * already-warm data.
+ *
+ * Checks the full registered scope list rather than a single global MAX(): a
+ * partial run only advances the platforms that actually succeeded (see
+ * crawlSingle), so one successful platform must not make a sibling that is
+ * still missing or stale look covered too.
  */
-export async function crawlStateAgeMs(): Promise<number | null> {
+export async function allScopesFreshWithin(
+  scopes: readonly { country: string; region: string; platform: string }[],
+  maxAgeMs: number,
+): Promise<boolean> {
   const db = getPool()
-  if (!db) return null
+  if (!db || scopes.length === 0) return false
   try {
-    const { rows } = await db.query<{ newest: string | null }>(
-      'SELECT MAX(last_success_at) AS newest FROM crawl_state',
+    const cutoff = new Date(Date.now() - maxAgeMs).toISOString()
+    const values: unknown[] = [cutoff]
+    const tuples = scopes.map(({ country, region, platform }) => {
+      values.push(country, region, platform)
+      const i = values.length
+      return `($${i - 2}, $${i - 1}, $${i})`
+    })
+    const { rows } = await db.query<{ stale: string }>(
+      `SELECT COUNT(*) AS stale
+         FROM (VALUES ${tuples.join(', ')}) AS want(country, region, platform)
+         LEFT JOIN crawl_state cs
+           ON cs.country = want.country AND cs.region = want.region AND cs.platform = want.platform
+        WHERE cs.last_success_at IS NULL OR cs.last_success_at < $1`,
+      values,
     )
-    const newest = rows[0]?.newest
-    return newest ? Date.now() - new Date(newest).getTime() : null
+    return Number(rows[0]?.stale ?? '1') === 0
   } catch (err) {
-    console.warn(`[crawl-state] age check: ${(err as Error).message}`)
-    return null
+    console.warn(`[crawl-state] scope coverage check: ${(err as Error).message}`)
+    return false
   }
 }

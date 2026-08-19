@@ -122,4 +122,13 @@ describe('readLatestObservedAuction', () => {
   it('returns null for an auction that was never observed', async () => {
     expect(await readLatestObservedAuction('zvg-portal', 'unknown')).toBeNull()
   })
+
+  it('propagates a query failure instead of masking it as a miss', async () => {
+    query.mockRejectedValueOnce(new Error('connection lost'))
+
+    // The caller must be able to tell "database unavailable" apart from
+    // "genuinely never observed" — collapsing both to null would make it fall
+    // through to a live upstream crawl on every affected request.
+    await expect(readLatestObservedAuction('zvg-portal', '42')).rejects.toThrow('connection lost')
+  })
 })
