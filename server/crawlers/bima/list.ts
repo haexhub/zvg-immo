@@ -1,6 +1,6 @@
 import type { Attachment, Auction } from '~/types/auction'
 import { classifyAttachment } from '~/server/utils/classify-attachment'
-import { API_BASE, AUTHORITY, CATEGORY, COMMERCIALIZATION_TYPE, COUNTRY, PAGE_SIZE, UA, WEB_BASE } from './constants'
+import { API_BASE, AUTHORITY, CATEGORY, COMMERCIALIZATION_TYPE, COUNTRY, PAGE_SIZE, REGION_NAME_BY_FEDERAL_STATE, UA, WEB_BASE } from './constants'
 
 const FETCH_TIMEOUT_MS = 20_000
 const FETCH_RETRIES = 2
@@ -58,6 +58,9 @@ export interface OfferAttributes {
   furnishing_note: string | null
   other_note: string | null
   updated_at: string | null
+  /** BImA's own Bundesland enum ('nordrhein_westfalen', ...). Drives both
+   *  Auction.region and the server-side crawl scoping (see buildSearchUrl). */
+  federal_state: string | null
 }
 
 export interface OfferJson {
@@ -97,7 +100,11 @@ export interface SingleOfferResponse {
   included?: IncludedJson[]
 }
 
-function buildSearchUrl(offset: number): string {
+/** `federalState` scopes the query to one Bundesland the way the portal's own
+ *  results page does; null asks for the whole country (used by an "all"-scope
+ *  crawl). Verified live: filters[federal_state]=brandenburg returns exactly
+ *  the 9 Brandenburg offers of the unfiltered 20. */
+function buildSearchUrl(offset: number, federalState: string | null): string {
   const params = new URLSearchParams({
     q: '*',
     'filters[category]': CATEGORY,
@@ -107,6 +114,7 @@ function buildSearchUrl(offset: number): string {
     offset: String(offset),
     page_size: String(PAGE_SIZE),
   })
+  if (federalState) params.set('filters[federal_state]', federalState)
   return `${API_BASE}/search?${params.toString()}`
 }
 
@@ -212,11 +220,11 @@ export function mapOffer(offer: OfferJson, byKey: Map<string, IncludedJson>, pla
   return {
     platform: platformId,
     country: COUNTRY,
-    // BImA exposes no sub-region filter of its own (see constants.ts's
-    // BIMA_REGIONS) — same "no sub-region a user would filter by" precedent
-    // as gb/auctionhouse and bg/zapori, even though individual objects do
-    // carry a federal_state attribute.
-    region: '',
+    // Read from the offer itself rather than from the crawl scope, so a
+    // permalink fetched via findOne() (which has no region scope) and an
+    // "all"-scope crawl both land on the right Bundesland. An unknown slug
+    // degrades to "no region" instead of inventing one.
+    region: a.federal_state ? REGION_NAME_BY_FEDERAL_STATE[a.federal_state] ?? '' : '',
     externalId: offer.id,
     // The site's own "Angebotsnummer" (verified live on the detail page) —
     // a stable public reference number, not a court case number.
@@ -250,16 +258,20 @@ export function mapOffer(offer: OfferJson, byKey: Map<string, IncludedJson>, pla
 }
 
 /**
- * Pages through the whole living/BUY result set via offset/page_size until
- * meta.total is exhausted — unlike dga-ag's single unpaginated page, this
- * API genuinely paginates server-side.
+ * Pages through one Bundesland's (or, with federalState null, the whole
+ * country's) living/BUY result set via offset/page_size until meta.total is
+ * exhausted — unlike dga-ag's single unpaginated page, this API genuinely
+ * paginates server-side.
  */
-export async function fetchAllListings(platformId: string): Promise<{ auctions: Auction[]; total: number }> {
+export async function fetchAllListings(
+  platformId: string,
+  federalState: string | null = null,
+): Promise<{ auctions: Auction[]; total: number }> {
   const auctions: Auction[] = []
   let offset = 0
   let total = 0
   for (;;) {
-    const page = await apiFetch<SearchResponse>(buildSearchUrl(offset))
+    const page = await apiFetch<SearchResponse>(buildSearchUrl(offset, federalState))
     total = page.meta.total
     const byKey = indexIncluded(page.included ?? [])
     for (const offer of page.data) auctions.push(mapOffer(offer, byKey, platformId))

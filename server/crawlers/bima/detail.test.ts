@@ -28,6 +28,7 @@ const OFFER: OfferJson = {
     furnishing_note: null,
     other_note: null,
     updated_at: '2026-08-14T10:32:17.924Z',
+    federal_state: 'nordrhein_westfalen',
   },
   relationships: {},
 }
