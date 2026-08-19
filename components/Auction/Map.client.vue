@@ -231,17 +231,32 @@ function refreshMarkers(): void {
     feature.set('auction', a)
   }
   if (newFeatures.length) source.addFeatures(newFeatures)
-  // Remove features whose auctions dropped out; close an open popup pointing
-  // at a removed feature.
+  // Remove features whose auctions dropped out (e.g. narrowing from "all
+  // countries" to one region drops thousands at once); close an open popup
+  // pointing at a removed feature. Batched via removeFeatures() for the same
+  // reason as addFeatures() above — removeFeature() fires one 'change' event
+  // per call, forcing a full re-cluster of the remaining set for every single
+  // removal.
+  const staleFeatures: Feature<Point>[] = []
   for (const [key, feature] of featuresByKey) {
     if (seen.has(key)) continue
-    source.removeFeature(feature)
+    staleFeatures.push(feature)
     featuresByKey.delete(key)
     if (selectedKey.value === key) {
       selectedKey.value = null
       popupPosition.value = undefined
     }
+    // A cluster picker stays open by key list, not by feature reference — drop
+    // the removed auction from it too, closing the picker once none are left.
+    if (clusterKeys.value?.includes(key)) {
+      clusterKeys.value = clusterKeys.value.filter((k) => k !== key)
+      if (!clusterKeys.value.length) {
+        clusterKeys.value = null
+        popupPosition.value = undefined
+      }
+    }
   }
+  if (staleFeatures.length) source.removeFeatures(staleFeatures)
 
   const currentFitKey = props.fitKey ?? ''
   const canUpgradeFallbackFit = fallbackFitKey === currentFitKey && hasPoints
