@@ -39,6 +39,7 @@ import { zaporiCrawler } from './bg'
 import { dgaAgCrawler } from './dga-ag'
 import { kipCrawler } from './kip'
 import { bimaCrawler } from './bima'
+import { bulgarianHouseCrawler } from './bulgarianhouse'
 
 /**
  * All registered platform crawlers. Adding a new platform is purely additive:
@@ -79,6 +80,7 @@ export const platforms: readonly PlatformCrawler[] = [
   dgaAgCrawler,
   kipCrawler,
   bimaCrawler,
+  bulgarianHouseCrawler,
 ] as const
 
 export interface RegionEntry extends RegionInfo {
