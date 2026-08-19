@@ -36,6 +36,7 @@ import { eauction24Crawler } from './gr'
 import { auctionHouseCrawler } from './gb'
 import { bid4assetsCrawler } from './us'
 import { zaporiCrawler } from './bg'
+import { bimaCrawler } from './bima'
 
 /**
  * All registered platform crawlers. Adding a new platform is purely additive:
@@ -73,6 +74,7 @@ export const platforms: readonly PlatformCrawler[] = [
   auctionHouseCrawler,
   bid4assetsCrawler,
   zaporiCrawler,
+  bimaCrawler,
 ] as const
 
 export interface RegionEntry extends RegionInfo {
