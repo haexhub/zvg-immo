@@ -82,9 +82,10 @@ bereits vorhandene zvg-immo-Secrets:
   },
   ```
   gelesen über `useRuntimeConfig().dgaAg` — analog zu `extractLlm`. Der
-  Crawler darf ohne konfigurierte Zugangsdaten nicht crashen: fehlt
-  `username`/`password`, fällt er auf den bisherigen, rein öffentlichen Pfad
-  zurück (Katalog-PDF weiterhin `excludeFromDocumentMining: true`).
+  Crawler darf ohne konfigurierte Zugangsdaten nicht crashen: sind
+  `username` oder `password` nach `.trim()` leer, fällt er auf den
+  bisherigen, rein öffentlichen Pfad zurück (Katalog-PDF weiterhin
+  `excludeFromDocumentMining: true`).
 
 Dieser Ansible-Teil (secrets.example + Templates) ist ein Änderung im
 separaten `ansible`-Repo, nicht in diesem Workspace — eigener Worktree dort.
@@ -95,12 +96,17 @@ separaten `ansible`-Repo, nicht in diesem Workspace — eigener Worktree dort.
 `chrome`-Channel (`/opt/google/chrome/chrome`), der hier nicht installierbar
 ist (braucht `sudo`, kein Terminal für das Passwort verfügbar). Fix bereits
 angewendet: `npx playwright install chromium` (kein sudo nötig, lädt nur
-Playwright-eigenes Chromium-Bundle in `~/.cache/ms-playwright/chromium-1234`)
-plus `~/.claude.json` `args` um `--executable-path
-/home/haex/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome
---headless --no-sandbox` ergänzt. **Erfordert einen Neustart/Reconnect der
-Claude-Code-Session**, um zu greifen — der MCP-Serverprozess der laufenden
-Session hält noch die alte Konfiguration.
+Playwright-eigenes Chromium-Bundle nach `~/.cache/ms-playwright/`) plus
+`~/.claude.json` `args` um `--executable-path <Pfad>` ergänzt. Der Pfad
+enthält eine Versions-Revision (`chromium-XXXX/chrome-linux64/chrome`), die
+sich mit jedem `playwright install` ändert — kein fest eingetragener Pfad,
+sondern nach jeder Installation neu per `ls ~/.cache/ms-playwright/`
+ermitteln. `--no-sandbox` bewusst weggelassen: nur ergänzen, falls der
+Start ohne scheitert, und dann nur, solange der MCP-Prozess als
+nicht-privilegierter Nutzer in einer isolierten Umgebung läuft.
+**Erfordert einen Neustart/Reconnect der Claude-Code-Session**, um zu
+greifen — der MCP-Serverprozess der laufenden Session hält noch die alte
+Konfiguration.
 
 ## Nächste Schritte (nächste Session)
 
@@ -115,26 +121,67 @@ Session hält noch die alte Konfiguration.
    Session-Cookie für alle Folge-Requests dieses Crawl-Laufs merken.
 3. `detail.ts` erweitern: mit Session die authentifizierte Objektseite lesen,
    objektEIGENE Fotos/Dokumente extrahieren statt (oder zusätzlich zu) dem
-   öffentlichen `.bs-overlay`-Ausschnitt. Falls die eingeloggte Seite ein
-   objektspezifisches PDF verlinkt (statt des Katalogs), dieses als
-   Attachment OHNE `excludeFromDocumentMining` führen — dann greifen Foto-
-   und LLM-Mining wieder normal und liefern erstmals korrekte Zusatzfakten
-   (Wohnfläche, Energieausweis, Baujahr, ...).
+   öffentlichen `.bs-overlay`-Ausschnitt. Zeigt die eingeloggte Seite einen
+   PDF-Link, der sich vom öffentlichen Katalog-Link unterscheidet: erst
+   verifizieren, dass dieses PDF tatsächlich nur das eine Objekt abdeckt
+   (z.B. Seitenzahl, URL-/Dateinamensmuster, stichprobenartiger
+   Inhaltsabgleich gegen ein zweites Objekt derselben Auktion), bevor
+   `excludeFromDocumentMining` entfernt wird — sonst reproduziert sich der
+   Bug aus PR #450 nur unter neuem Pfad. Bleibt die Zuordnung unklar oder
+   ist das PDF weiterhin geteilt, `excludeFromDocumentMining: true`
+   beibehalten und einen Test ergänzen, der diesen Ausschluss absichert.
+   Erst bei eindeutigem Einzelobjektbezug greifen Foto- und LLM-Mining
+   normal und liefern korrekte Zusatzfakten (Wohnfläche, Energieausweis,
+   Baujahr, ...).
 4. `nuxt.config.ts`: `runtimeConfig.dgaAg.{username,password}` ergänzen,
    `.env.example` dokumentieren (Platzhalter, kein echter Wert).
 5. Fallback ohne Credentials: Crawler muss weiterhin funktionieren (aktueller
-   öffentlicher Pfad + `excludeFromDocumentMining`), falls `dgaAg.username`
-   leer ist — kein Hard-Requirement einführen.
+   öffentlicher Pfad + `excludeFromDocumentMining`), sobald `dgaAg.username`
+   oder `dgaAg.password` (jeweils getrimmt) leer ist — kein
+   Hard-Requirement einführen.
 6. Ansible-Repo (separater Worktree): `secrets.example/haex.cloud.yml` um
    `dga_ag_username`/`dga_ag_password`-Platzhalter ergänzen, `.env.j2` +
    `quadlet/zvg-immo.container.j2` um die zwei `Environment=`-Zeilen.
-7. Nach Deploy: bestehende dga-ag-Auktionen sind noch mit den kontaminierten
-   Katalog-Fotos/(ggf.) LLM-Fakten aus der Zeit vor PR #450 markiert. Sobald
-   der authentifizierte Pfad live ist, `photoPipelineVersion` für `dga-ag` in
-   `server/tasks/enrich-work-selection.ts` nochmal erhöhen (aktuell 6) und
-   einen `force`-Reprocess mit `platform=dga-ag` über die bestehende
-   `/settings`-Aktion (SettingsReprocessCard) anstoßen, damit alle Objekte
-   mit den jetzt korrekten, objekteigenen Daten neu aufgebaut werden.
+7. Nach Deploy (einmalige Datenmigration, kein normaler Reprocess-Zyklus):
+   bestehende dga-ag-Auktionen sind noch mit den kontaminierten
+   Katalog-Fotos/(ggf.) LLM-Fakten aus der Zeit vor PR #450 markiert. Zwei
+   getrennte, nacheinander abzuschließende Schritte:
+   a. Erst einen auf `platform=dga-ag` begrenzten Enrich-/Archivierungslauf
+      über den neuen authentifizierten Pfad anstoßen, der für JEDE
+      bestehende dga-ag-Auktion Fotos/Dokumente neu holt — bis vollständig
+      durchgelaufen abwarten, nicht nur angestoßen.
+   b. Erst danach einen vollständigen LLM-Lauf für `platform=dga-ag`, der
+      die zuvor gespeicherten (potenziell kontaminierten) LLM-Fakten
+      EXPLIZIT invalidiert/zurücksetzt, bevor neu extrahiert wird.
+   `photoPipelineVersion`-Bump allein reicht nicht (triggert nur die
+   Foto-Seite, keine garantierte Neuextraktion bereits erfolgreicher
+   LLM-Datensätze) und der bestehende `SettingsReprocessCard`/`force`-Knopf
+   mit `maxLlmPerRun`-Deckel ist nicht dafür ausgelegt, garantiert ALLE
+   betroffenen Objekte statt nur eines Batches abzudecken — für diese
+   Migration braucht es einen expliziten, auf `dga-ag` gescopten
+   Vollständigkeits-Check (alle vorgesehenen Objekte geprüft und
+   verarbeitet, keins stillschweigend übersprungen).
+
+## Nutzungsrichtlinien für authentifizierte Abfragen
+
+Bis die tatsächlichen Account-Limits bekannt sind (siehe offene Frage
+unten), gilt für den Crawl-Lauf ein konservativer Default:
+
+- Max. Parallelität 1 (sequenziell, kein paralleler Objekt-Fetch), min. 1s
+  Abstand zwischen authentifizierten Detail-Abfragen.
+- Timeout pro Request analog zu den bestehenden dga-ag-Requests in
+  `list.ts`/`detail.ts`.
+- Der Login-`POST` wird bei Fehlschlag NICHT blind wiederholt: ein
+  gescheiterter Login bricht den Lauf für diesen Crawl ab und fällt auf den
+  öffentlichen Pfad zurück, statt in einer Retry-Schleife ggf. eine
+  Account-Sperre auszulösen.
+- Bei einer Rate-Limit-Antwort (HTTP 429 oder eine erkennbare Block-Seite):
+  Lauf abbrechen, bereits gesammelte Objekte behalten, kein Retry
+  innerhalb derselben Session — erst der nächste geplante Crawl-Lauf
+  versucht es erneut.
+
+Sobald der Nutzer die echten Limits kennt, diese Defaults entsprechend
+verschärfen oder lockern.
 
 ## Offene Fragen für den Nutzer
 
