@@ -807,7 +807,7 @@
       "renovationYearMin": "Renovated from",
       "renovationYearMax": "Renovated to",
       "category": "Property type",
-      "condition": "Minimum condition",
+      "condition": "Condition",
       "features": "Features",
       "photos": "Only with photos",
       "cancelled": "incl. cancelled",

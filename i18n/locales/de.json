@@ -807,7 +807,7 @@
       "renovationYearMin": "Saniert ab",
       "renovationYearMax": "Saniert bis",
       "category": "Objektart",
-      "condition": "Mindestzustand",
+      "condition": "Zustand",
       "features": "Ausstattung",
       "photos": "Nur mit Fotos",
       "cancelled": "inkl. aufgehobene",
