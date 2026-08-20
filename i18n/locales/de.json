@@ -140,6 +140,8 @@
       "starting": "Starte …",
       "startLogin": "Login starten",
       "connected": "✓ Bereits angemeldet",
+      "accountLabel": "Angemeldet als:",
+      "accountUnknown": "Angemeldeter Account konnte nicht ermittelt werden.",
       "reconnect": "Neu verknüpfen",
       "openingLogin": "Öffne Anthropic-Login …",
       "step1": "1. Öffne die Anthropic-Login-Seite und autorisiere den Zugriff:",
