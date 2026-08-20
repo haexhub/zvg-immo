@@ -223,7 +223,7 @@ describe('filterAuctions', () => {
     expect(result.map((a) => a.externalId)).toEqual(['2'])
   })
 
-  it('filters by minimum condition, excluding auctions without a known condition once set', () => {
+  it('filters by the selected set of conditions, excluding auctions without a known condition once set', () => {
     const items = [
       makeAuction({ externalId: '1', extraction: { propertyType: null, landAreaSqm: null, livingAreaSqm: null, rooms: null, units: null, source: 'llm', confidence: 'low', condition: 'neuwertig', features: [], at: '' } }),
       makeAuction({ externalId: '2', extraction: { propertyType: null, landAreaSqm: null, livingAreaSqm: null, rooms: null, units: null, source: 'llm', confidence: 'low', condition: 'gepflegt', features: [], at: '' } }),
@@ -231,8 +231,8 @@ describe('filterAuctions', () => {
       makeAuction({ externalId: '4', extraction: { propertyType: null, landAreaSqm: null, livingAreaSqm: null, rooms: null, units: null, source: 'llm', confidence: 'low', condition: null, features: [], at: '' } }),
       makeAuction({ externalId: '5', extraction: null }),
     ]
-    const result = filterAuctions(items, { ...BASE_FILTERS, condition: 'gepflegt' })
-    expect(result.map((a) => a.externalId)).toEqual(['1', '2'])
+    const result = filterAuctions(items, { ...BASE_FILTERS, condition: ['gepflegt', 'baufaellig'] })
+    expect(result.map((a) => a.externalId)).toEqual(['2', '3'])
   })
 
   it('filters by features with OR semantics', () => {

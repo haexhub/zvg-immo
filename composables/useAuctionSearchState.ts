@@ -56,12 +56,14 @@ export function useAuctionSearchState(options: {
   const nearMountain = ref<number | null>(initialFilters.nearMountain)
   const nearAirport = ref<number | null>(initialFilters.nearAirport)
   const nearSki = ref<number | null>(initialFilters.nearSki)
+  const nearSkiDownhill = ref<number | null>(initialFilters.nearSkiDownhill)
+  const nearSkiNordic = ref<number | null>(initialFilters.nearSkiNordic)
   const urbanRural = ref<string>(initialFilters.urbanRural)
   const nearLat = ref<number | null>(initialFilters.nearLat)
   const nearLng = ref<number | null>(initialFilters.nearLng)
   const nearRadius = ref<number | null>(initialFilters.nearRadius)
   const categoryFilter = ref<string>(initialFilters.category)
-  const conditionFilter = ref<string>(initialFilters.condition)
+  const conditionFilter = ref<string[]>(initialFilters.condition)
   const featuresFilter = ref<string[]>(initialFilters.features)
   const onlyWithPhotos = ref(initialFilters.onlyWithPhotos)
   const hideRulesOnly = ref(initialFilters.hideRulesOnly)
@@ -133,6 +135,7 @@ export function useAuctionSearchState(options: {
       renovationYearMin: renovationYearMin.value, renovationYearMax: renovationYearMax.value,
       nearSea: nearSea.value, nearLake: nearLake.value, nearRiver: nearRiver.value,
       nearMountain: nearMountain.value, nearAirport: nearAirport.value, nearSki: nearSki.value,
+      nearSkiDownhill: nearSkiDownhill.value, nearSkiNordic: nearSkiNordic.value,
       urbanRural: urbanRural.value, nearLat: nearLat.value, nearLng: nearLng.value, nearRadius: nearRadius.value,
       category: categoryFilter.value, condition: conditionFilter.value, features: featuresFilter.value,
       onlyWithPhotos: onlyWithPhotos.value, includeCancelled: includeCancelled.value,
@@ -148,6 +151,7 @@ export function useAuctionSearchState(options: {
     renovationYearMin.value = filters.renovationYearMin; renovationYearMax.value = filters.renovationYearMax
     nearSea.value = filters.nearSea; nearLake.value = filters.nearLake; nearRiver.value = filters.nearRiver
     nearMountain.value = filters.nearMountain; nearAirport.value = filters.nearAirport; nearSki.value = filters.nearSki
+    nearSkiDownhill.value = filters.nearSkiDownhill; nearSkiNordic.value = filters.nearSkiNordic
     urbanRural.value = filters.urbanRural; nearLat.value = filters.nearLat; nearLng.value = filters.nearLng; nearRadius.value = filters.nearRadius
     categoryFilter.value = filters.category; conditionFilter.value = filters.condition; featuresFilter.value = filters.features
     onlyWithPhotos.value = filters.onlyWithPhotos; includeCancelled.value = filters.includeCancelled
@@ -226,7 +230,7 @@ export function useAuctionSearchState(options: {
   })
 
   watch(
-    [selectedCountries, selectedRegionKeys, debouncedSearch, authorityFilter, priceMin, priceMax, landAreaMin, landAreaMax, livingAreaMin, livingAreaMax, yearBuiltMin, yearBuiltMax, renovationYearMin, renovationYearMax, nearSea, nearLake, nearRiver, nearMountain, nearAirport, nearSki, urbanRural, nearLat, nearLng, nearRadius, categoryFilter, conditionFilter, featuresFilter, onlyWithPhotos, includeCancelled, hideRulesOnly, sortBy, view],
+    [selectedCountries, selectedRegionKeys, debouncedSearch, authorityFilter, priceMin, priceMax, landAreaMin, landAreaMax, livingAreaMin, livingAreaMax, yearBuiltMin, yearBuiltMax, renovationYearMin, renovationYearMax, nearSea, nearLake, nearRiver, nearMountain, nearAirport, nearSki, nearSkiDownhill, nearSkiNordic, urbanRural, nearLat, nearLng, nearRadius, categoryFilter, conditionFilter, featuresFilter, onlyWithPhotos, includeCancelled, hideRulesOnly, sortBy, view],
     () => {
       const query = serializeAuctionSearchFilters(currentFilters(debouncedSearch.value), options.hideRulesOnlyServerDefault.value)
       if (view.value === 'map' && !mapViewImpliedByCountryQuery.value) query.view = 'map'
@@ -282,6 +286,8 @@ export function useAuctionSearchState(options: {
     nearMountain,
     nearAirport,
     nearSki,
+    nearSkiDownhill,
+    nearSkiNordic,
     urbanRural,
     nearLat,
     nearLng,

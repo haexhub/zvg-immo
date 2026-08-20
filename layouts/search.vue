@@ -65,7 +65,7 @@ const {
   yearBuiltMin, yearBuiltMax, renovationYearMin, renovationYearMax,
   authorityFilter, categoryFilter, conditionFilter, featuresFilter,
   onlyWithPhotos, includeCancelled, hideRulesOnly,
-  nearSea, nearLake, nearRiver, nearMountain, nearAirport, urbanRural,
+  nearSea, nearLake, nearRiver, nearMountain, nearAirport, nearSkiDownhill, nearSkiNordic, urbanRural,
   nearLat, nearLng, nearRadius, sortBy,
   toggleCountry, toggleRegion, initializeMountedState,
 } = state
@@ -118,6 +118,8 @@ onMounted(() => {
             v-model:near-river="nearRiver"
             v-model:near-mountain="nearMountain"
             v-model:near-airport="nearAirport"
+            v-model:near-ski-downhill="nearSkiDownhill"
+            v-model:near-ski-nordic="nearSkiNordic"
             v-model:urban-rural="urbanRural"
             :location-summary="headerLabel"
             :countries="countries ?? []"

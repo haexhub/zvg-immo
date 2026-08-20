@@ -14,8 +14,9 @@ describe('auction search filter contract', () => {
       priceMin: '100000', priceMax: '200000', landMin: '100', landMax: '500', livMin: '80', livMax: '150',
       yearBuiltMin: '1900', yearBuiltMax: '2020', renovationYearMin: '2000', renovationYearMax: '2025',
       nearSea: '5', nearLake: '6', nearRiver: '7', nearMountain: '8', nearAirport: '9', nearSki: '10',
+      nearSkiDownhill: '11', nearSkiNordic: '12',
       urbanRural: 'rural', nearLat: '52.5', nearLng: '13.4', nearRadius: '25', category: 'haus',
-      condition: 'gepflegt', features: 'balkon,garage', photos: '1', cancelled: '1', llmOnly: '0', sort: 'priceAsc',
+      condition: 'gepflegt,neuwertig', features: 'balkon,garage', photos: '1', cancelled: '1', llmOnly: '0', sort: 'priceAsc',
     }
     expect(serializeAuctionSearchFilters(parseAuctionSearchFilters(query, true), true)).toEqual(query)
   })

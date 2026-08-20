@@ -30,12 +30,14 @@ export interface AuctionSearchFilters {
   nearMountain: number | null
   nearAirport: number | null
   nearSki: number | null
+  nearSkiDownhill: number | null
+  nearSkiNordic: number | null
   urbanRural: string
   nearLat: number | null
   nearLng: number | null
   nearRadius: number | null
   category: string
-  condition: string
+  condition: string[]
   features: string[]
   onlyWithPhotos: boolean
   includeCancelled: boolean
@@ -49,19 +51,20 @@ export const AUCTION_SEARCH_FILTER_URL_KEYS = [
   'country', 'region', 'q', 'authority', 'priceMin', 'priceMax', 'landMin', 'landMax',
   'livMin', 'livMax', 'yearBuiltMin', 'yearBuiltMax', 'renovationYearMin',
   'renovationYearMax', 'nearSea', 'nearLake', 'nearRiver', 'nearMountain',
-  'nearAirport', 'nearSki', 'urbanRural', 'nearLat', 'nearLng', 'nearRadius',
+  'nearAirport', 'nearSki', 'nearSkiDownhill', 'nearSkiNordic', 'urbanRural', 'nearLat', 'nearLng', 'nearRadius',
   'category', 'condition', 'features', 'photos', 'cancelled', 'llmOnly', 'sort',
 ] as const
 
 const NUMBER_KEYS = [
   'priceMin', 'priceMax', 'landMin', 'landMax', 'livMin', 'livMax', 'yearBuiltMin',
   'yearBuiltMax', 'renovationYearMin', 'renovationYearMax', 'nearSea', 'nearLake',
-  'nearRiver', 'nearMountain', 'nearAirport', 'nearSki', 'nearLat', 'nearLng',
-  'nearRadius',
+  'nearRiver', 'nearMountain', 'nearAirport', 'nearSki', 'nearSkiDownhill', 'nearSkiNordic',
+  'nearLat', 'nearLng', 'nearRadius',
 ] as const
 
 export const ALERT_UNSUPPORTED_FILTER_KEYS = [
-  'nearSea', 'nearLake', 'nearRiver', 'nearMountain', 'nearAirport', 'nearSki', 'urbanRural',
+  'nearSea', 'nearLake', 'nearRiver', 'nearMountain', 'nearAirport', 'nearSki',
+  'nearSkiDownhill', 'nearSkiNordic', 'urbanRural',
 ] as const
 
 function first(value: unknown): string {
@@ -87,8 +90,9 @@ export function defaultAuctionSearchFilters(hideRulesOnly = false): AuctionSearc
     priceMin: null, priceMax: null, landMin: null, landMax: null, livMin: null, livMax: null,
     yearBuiltMin: null, yearBuiltMax: null, renovationYearMin: null, renovationYearMax: null,
     nearSea: null, nearLake: null, nearRiver: null, nearMountain: null, nearAirport: null, nearSki: null,
+    nearSkiDownhill: null, nearSkiNordic: null,
     urbanRural: ALL_SCOPE, nearLat: null, nearLng: null, nearRadius: null,
-    category: ALL_SCOPE, condition: ALL_SCOPE, features: [], onlyWithPhotos: false,
+    category: ALL_SCOPE, condition: [], features: [], onlyWithPhotos: false,
     includeCancelled: false, hideRulesOnly, sortBy: 'default',
   }
 }
@@ -100,7 +104,7 @@ export function parseAuctionSearchFilters(query: SearchFilterQuery, hideRulesOnl
     authority: first(query.authority) || defaults.authority,
     urbanRural: first(query.urbanRural) || defaults.urbanRural,
     category: first(query.category) || defaults.category,
-    condition: first(query.condition) || defaults.condition,
+    condition: commaList(query.condition),
     features: commaList(query.features),
     onlyWithPhotos: first(query.photos) === '1', includeCancelled: first(query.cancelled) === '1',
     hideRulesOnly: first(query.llmOnly) === '1' ? true : first(query.llmOnly) === '0' ? false : hideRulesOnlyDefault,
@@ -145,7 +149,7 @@ export function serializeAuctionSearchFilters(
     query.nearRadius = '25'
   }
   if (filters.category !== ALL_SCOPE) query.category = filters.category
-  if (filters.condition !== ALL_SCOPE) query.condition = filters.condition
+  if (filters.condition.length) query.condition = filters.condition.join(',')
   if (filters.features.length) query.features = filters.features.join(',')
   if (filters.onlyWithPhotos) query.photos = '1'
   if (filters.includeCancelled) query.cancelled = '1'

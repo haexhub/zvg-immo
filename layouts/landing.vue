@@ -48,7 +48,7 @@ const renovationYearMin = ref<number | null>(null)
 const renovationYearMax = ref<number | null>(null)
 const authorityFilter = ref(ALL_SCOPE)
 const categoryFilter = ref(ALL_SCOPE)
-const conditionFilter = ref(ALL_SCOPE)
+const conditionFilter = ref<string[]>([])
 const featuresFilter = ref<string[]>([])
 const onlyWithPhotos = ref(false)
 const includeCancelled = ref(false)
@@ -59,6 +59,8 @@ const nearLake = ref<number | null>(null)
 const nearRiver = ref<number | null>(null)
 const nearMountain = ref<number | null>(null)
 const nearAirport = ref<number | null>(null)
+const nearSkiDownhill = ref<number | null>(null)
+const nearSkiNordic = ref<number | null>(null)
 const urbanRural = ref(ALL_SCOPE)
 const nearLat = ref<number | null>(null)
 const nearLng = ref<number | null>(null)
@@ -125,6 +127,8 @@ function submitSearch(): void {
   if (nearRiver.value != null) query.nearRiver = String(nearRiver.value)
   if (nearMountain.value != null) query.nearMountain = String(nearMountain.value)
   if (nearAirport.value != null) query.nearAirport = String(nearAirport.value)
+  if (nearSkiDownhill.value != null) query.nearSkiDownhill = String(nearSkiDownhill.value)
+  if (nearSkiNordic.value != null) query.nearSkiNordic = String(nearSkiNordic.value)
   if (!isAllScope(urbanRural.value)) query.urbanRural = urbanRural.value
   if (nearLat.value != null && nearLng.value != null) {
     query.nearLat = String(nearLat.value)
@@ -132,7 +136,7 @@ function submitSearch(): void {
     query.nearRadius = String(nearRadius.value ?? 25)
   }
   if (!isAllScope(categoryFilter.value)) query.category = categoryFilter.value
-  if (!isAllScope(conditionFilter.value)) query.condition = conditionFilter.value
+  if (conditionFilter.value.length) query.condition = conditionFilter.value.join(',')
   if (featuresFilter.value.length) query.features = featuresFilter.value.join(',')
   if (onlyWithPhotos.value) query.photos = '1'
   if (includeCancelled.value) query.cancelled = '1'
@@ -178,6 +182,8 @@ function pickRecent(query: Record<string, string>): void {
             v-model:near-river="nearRiver"
             v-model:near-mountain="nearMountain"
             v-model:near-airport="nearAirport"
+            v-model:near-ski-downhill="nearSkiDownhill"
+            v-model:near-ski-nordic="nearSkiNordic"
             v-model:urban-rural="urbanRural"
             :location-summary="locationSummary"
             :countries="countries ?? []"

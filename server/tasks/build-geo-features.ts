@@ -125,12 +125,30 @@ const KIND_MAPPINGS: KindMapping[] = [
         OR o.tags ->> 'aerodrome:type' = 'international'))`,
   },
   {
-    // Not importable yet (WP-6): landuse=winter_sports / piste:type /
-    // aerialway aren't in osm_local_elements today.
+    // Feeds the WP-8 leisure-tourism profile's "any ski area nearby"
+    // criterion (leisure-tourism-profile.ts), which deliberately doesn't
+    // care which piste type — see ski_downhill/ski_nordic below for the
+    // search filter's more specific split.
     kind: 'ski_area',
     where: `(o.tags ->> 'landuse' = 'winter_sports'
       OR o.tags ? 'piste:type'
       OR o.tags ->> 'aerialway' IN ('gondola', 'chair_lift', 'cable_car', 'drag_lift'))`,
+  },
+  {
+    // "Bergabfahrt" — OSM's own piste:type=downhill covers marked ski runs;
+    // lifts are included too since they overwhelmingly serve downhill
+    // resorts (nordic/Langlauf trails have none). landuse=winter_sports is
+    // deliberately excluded: it marks a resort's general area without
+    // saying which piste type it offers, so it can't be attributed to
+    // either split kind without guessing.
+    kind: 'ski_downhill',
+    where: `(o.tags ->> 'piste:type' = 'downhill'
+      OR o.tags ->> 'aerialway' IN ('gondola', 'chair_lift', 'cable_car', 'drag_lift'))`,
+  },
+  {
+    // "Langlauf" — OSM's piste:type=nordic is the cross-country-specific tag.
+    kind: 'ski_nordic',
+    where: `(o.tags ->> 'piste:type' = 'nordic')`,
   },
   {
     kind: 'swimming',
