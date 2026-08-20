@@ -69,7 +69,9 @@ export async function enrichOne(auction: Auction): Promise<void> {
   // The linked PDF is the shared multi-lot auction catalog (deep-linked to
   // this object's page via #page=N), not a per-object Gutachten or
   // Bekanntmachung — classifyAttachment's label/filename heuristics don't
-  // cover that case, so the kind is set directly.
+  // cover that case, so the kind is set directly. Its images cover every lot
+  // in the catalog, not just this one, so it must not feed photo extraction
+  // — the object's own gallery already comes from extractPhotoUrls above.
   auction.attachments = [
     {
       kind: 'brochure',
@@ -78,6 +80,7 @@ export async function enrichOne(auction: Auction): Promise<void> {
       sizeBytes: null,
       fileId: auction.externalId,
       proxyUrl: pdfUrl,
+      excludeFromPhotoMining: true,
     },
   ]
 }

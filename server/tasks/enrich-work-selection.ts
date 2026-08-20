@@ -13,6 +13,10 @@ const MAX_PHOTO_FAILURES = 3
 const PHOTO_FAILURE_RETRY_COOLDOWN_HOURS = 24
 const PHOTO_PIPELINE_VERSION = 4
 const KRONOFOGDEN_GALLERY_PHOTO_PIPELINE_VERSION = 5
+/** Forces a one-time rebuild of dga-ag photo sets after fixing the shared
+ *  multi-lot catalog PDF bleeding every other lot's images into each
+ *  auction's gallery (see excludeFromPhotoMining). */
+const DGA_AG_PHOTO_PIPELINE_VERSION = 6
 
 /** Builds a crawlAll()-shaped result for exactly the requested identities,
  *  loaded from the same records map the rest of a scoped retry run needs
@@ -104,7 +108,9 @@ export async function prepareEnrichWork({
   const targetPhotoPipelineVersion = (a: Auction): number =>
     a.platform === 'se-kronofogden' && (a.photoUrls?.length ?? 0) > 0
       ? KRONOFOGDEN_GALLERY_PHOTO_PIPELINE_VERSION
-      : PHOTO_PIPELINE_VERSION
+      : a.platform === 'dga-ag'
+        ? DGA_AG_PHOTO_PIPELINE_VERSION
+        : PHOTO_PIPELINE_VERSION
   // Whether a locked-out listing (photoFailures >= MAX_PHOTO_FAILURES) is
   // past its cooldown and can retry again — see
   // PHOTO_FAILURE_RETRY_COOLDOWN_HOURS. A never-attempted timestamp (older
