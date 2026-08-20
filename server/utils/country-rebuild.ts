@@ -10,7 +10,7 @@ import {
   auctionObservations,
   auctions,
   auctionTranslations,
-  listCache,
+  crawlState,
   locationEnrichment,
 } from '../db/schema'
 import { matchAlerts } from './alert-matching'
@@ -20,13 +20,13 @@ import { recordObservations } from './history'
 import { getDb } from './db'
 import { ensureAuctionIdentity } from './current-auctions'
 import { writeAuctionCrawlFetchState } from './auction-fetch-state'
-import { writeListCache } from './list-cache'
+import { recordCrawlScope } from './crawl-state'
 import { invalidateLocationEnrichmentCache } from './external-data/location-enrichment'
 
 export interface CountryRebuildResult {
   country: string
   deleted: {
-    listCache: number
+    crawlState: number
     observations: number
     auctions: number
     auctionDetails: number
@@ -80,11 +80,11 @@ export async function deleteCountryCurrentData<TSchema extends Record<string, un
     const locationEnrichmentResult = await tx.delete(locationEnrichment)
       .where(belongsToCountry(locationEnrichment.platform, locationEnrichment.externalId))
     const observationsResult = await tx.delete(auctionObservations).where(eq(auctionObservations.country, country))
-    const listCacheResult = await tx.delete(listCache).where(eq(listCache.country, country))
+    const crawlStateResult = await tx.delete(crawlState).where(eq(crawlState.country, country))
     const auctionsResult = await tx.delete(auctions).where(eq(auctions.country, country))
 
     return {
-      listCache: listCacheResult.rowCount ?? 0,
+      crawlState: crawlStateResult.rowCount ?? 0,
       observations: observationsResult.rowCount ?? 0,
       auctions: auctionsResult.rowCount ?? 0,
       auctionDetails: auctionDetailsResult.rowCount ?? 0,
@@ -139,8 +139,8 @@ export async function rebuildCountry(countryInput: string): Promise<CountryRebui
           immobilienOnly: true,
           enrichDetails: false,
         })
-        await writeListCache(country, region.code, result)
         await ensureAuctionIdentity(result.auctions)
+        await recordCrawlScope(country, region.code, result, capturedAt)
         await writeAuctionCrawlFetchState(result.auctions)
         await recordObservations(result, capturedAt)
         await matchAlerts(country, region.code, result)

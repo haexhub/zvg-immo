@@ -14,7 +14,7 @@ import { recordObservations } from '../utils/history'
 import { archiveAuction } from '../utils/raw-archive'
 import { ensureAuctionIdentity } from '../utils/current-auctions'
 import { writeAuctionCrawlFetchState } from '../utils/auction-fetch-state'
-import { regionListCacheAgeMs, writeListCache } from '../utils/list-cache'
+import { recordCrawlScope, regionCrawlAgeMs } from '../utils/crawl-state'
 import { drainOutbox } from '../utils/storage-uploader'
 import { runExclusiveTask, throwIfTaskAborted } from '../utils/exclusive-task'
 import { isAutomaticCrawlingEnabled } from '../utils/automatic-task-gate'
@@ -56,7 +56,7 @@ async function runRefresh(signal: AbortSignal) {
       // its portal's interval (rate-limit / IP-ban protection). A cold region
       // (age === null) or one past its interval is crawled. The hourly cron
       // thus keeps robust portals current while sparing sensitive ones.
-      const age = await regionListCacheAgeMs(r.country, r.code)
+      const age = await regionCrawlAgeMs(r.country, r.code, r.platforms.map((p) => p.id))
       if (age !== null && age < regionRefreshIntervalMs(r.platforms.map((p) => p.id))) {
         skipped++
         continue
@@ -69,11 +69,12 @@ async function runRefresh(signal: AbortSignal) {
           enrichDetails: false,
         })
         throwIfTaskAborted(signal)
-        await writeListCache(r.country, r.code, result)
         // Must precede archiveAuction below: artifact_captures/artifact_versions
         // carry an FK on (platform, external_id) -> auctions, so the identity
         // has to exist before the first archive write for this auction.
         await ensureAuctionIdentity(result.auctions)
+        // Only after the identities exist can they be stamped as still-offered.
+        await recordCrawlScope(r.country, r.code, result, capturedAt)
         await writeAuctionCrawlFetchState(result.auctions)
         // History and raw-archive writes are part of a successful crawl: their
         // failures propagate into this region's visible failure result.

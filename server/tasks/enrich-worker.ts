@@ -25,7 +25,7 @@ import {
 } from '~/server/utils/raw-archive'
 import { cacheKey, readVerkehrswertCache } from '~/server/utils/verkehrswert-cache'
 import { recordObservations } from '~/server/utils/history'
-import { writeListCache } from '~/server/utils/list-cache'
+import { recordCrawlScope } from '~/server/utils/crawl-state'
 import { applyDescriptionMarketValue } from '~/server/utils/description-market-value'
 import { normalizeAuctionDescription, normalizeAuctionDescriptions } from '~/server/utils/description-normalization'
 import { recordTaskRunEnd, recordTaskRunProgress, recordTaskRunStart, type TaskRunSummary } from '~/server/utils/task-runs'
@@ -58,7 +58,7 @@ export interface EnrichOptions {
   /** Revisit every crawled listing in scope, regardless of existing cache markers. */
   force?: boolean
   /** Persist each regional crawl into the serving list cache while archiving. */
-  writeListCache?: boolean
+  recordCrawlScope?: boolean
   /** Skip the live region crawl and (re)archive exactly these already-known
    *  auctions instead — the crawl-status card's single-auction and
    *  open/failed bulk retry triggers. Every listed identity is always
@@ -134,13 +134,13 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
         enrichDetails: false,
         country: opts.country,
         signal,
-        onRegionResult: opts.writeListCache
+        onRegionResult: opts.recordCrawlScope
           ? async (country, region, regionResult) => {
-            await writeListCache(country, region, regionResult)
             await matchAlerts(country, region, regionResult)
             // Identity must exist before any archive write — archiveAuction's
             // artifact_captures row has an FK on (platform, external_id).
             await ensureAuctionIdentity(regionResult.auctions)
+            await recordCrawlScope(country, region, regionResult, capturedAt)
             await writeAuctionCrawlFetchState(regionResult.auctions)
             for (const auction of regionResult.auctions) {
               throwIfTaskAborted(signal)

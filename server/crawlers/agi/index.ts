@@ -27,6 +27,7 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
   if (mapEntries.length === 0) {
     return {
       platform: PLATFORM_ID,
+      platformsSucceeded: [PLATFORM_ID],
       source: AGI_BASE,
       countries: [COUNTRY],
       regions: [regionName],
@@ -51,6 +52,7 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
 
   return {
     platform: PLATFORM_ID,
+    platformsSucceeded: [PLATFORM_ID],
     source: AGI_BASE,
     countries: [COUNTRY],
     regions: [regionName],

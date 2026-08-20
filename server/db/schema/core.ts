@@ -61,10 +61,25 @@ export const auctions = pgTable('auctions', {
   geocodeResult: text('geocode_result'), // 'geocoded' | 'unresolvable' | 'pending'
   geocodeProvider: text('geocode_provider'), // 'nominatim' | 'locationiq'
   firstSeenAt: timestamp('first_seen_at', { withTimezone: true }).notNull().defaultNow(),
+  // Last crawl that still returned this auction, and the crawl scope it was
+  // returned under. Together with crawl_state (ops.ts) these are what lets an
+  // auction expire: a listing that stops appearing has no other signal — the
+  // portals publish no "sold"/"withdrawn" flag, and roughly a quarter of the
+  // registered platforms (agi, bima, dga-ag, gb, kip, lt, pt, us) never carry
+  // an auction date to expire against either.
+  //
+  // crawlRegion is the platform's region CODE ('sn'), not the display name in
+  // `region` above ('Sachsen') — only the code identifies a crawl scope. It
+  // stays NULL until this auction's next crawl, which makes the staleness
+  // filter a no-op for not-yet-recrawled rows rather than hiding them.
+  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
+  crawlRegion: text('crawl_region'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   primaryKey({ columns: [table.platform, table.externalId] }),
   index('idx_auctions_country_region').on(table.country, table.region),
+  // Covers the staleness join in buildAuctionSearchFilter / data-api-auction.
+  index('idx_auctions_crawl_scope').on(table.country, table.crawlRegion, table.platform),
 ]).enableRLS()
 
 // A directed, canonical (left < right) edge between two independently stored

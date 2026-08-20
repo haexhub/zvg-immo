@@ -8,7 +8,7 @@ import { cacheKey } from '../../../utils/verkehrswert-cache'
 import { applyDescriptionMarketValue } from '../../../utils/description-market-value'
 import { deriveMarketValueEur, getRates } from '../../../utils/exchange-rate'
 import { ensureEnabledCountriesLoaded, isCountryEnabled, platforms } from '../../../crawlers/registry'
-import { readMergedListCache } from '../../../utils/list-cache'
+import { readLatestObservedAuction } from '../../../utils/history'
 import { readLocationEnrichment } from '../../../utils/external-data/location-enrichment'
 import { readAuctionRecord } from '../../../utils/auction-record'
 import { readAuctionRelationships, type RelatedAuction } from '../../../utils/auction-relationships'
@@ -36,9 +36,8 @@ function cloneAuction(a: Auction): Auction {
   }
 }
 
-async function findCachedListAuction(platform: string, id: string, country?: string): Promise<Auction | null> {
-  const result = await readMergedListCache(country)
-  const hit = result?.auctions.find((a) => a.platform === platform && a.externalId === id)
+async function findObservedAuction(platform: string, id: string): Promise<Auction | null> {
+  const hit = await readLatestObservedAuction(platform, id)
   return hit ? cloneAuction(hit) : null
 }
 
@@ -98,10 +97,21 @@ export default defineEventHandler(async (event): Promise<AuctionDetail> => {
     throw createError({ statusCode: 400, statusMessage: 'invalid platform/id' })
   }
   const stored = await readAuctionRecord(platform, id)
-  const hit =
-    stored?.auction ??
-    (await findCachedListAuction(platform, id)) ??
-    (await findLiveAuction(platform, id))
+  let observed: Auction | null = null
+  if (!stored) {
+    try {
+      observed = await findObservedAuction(platform, id)
+    } catch (err) {
+      // A failed observation lookup is a database problem, not a miss — must
+      // not fall through to findLiveAuction, or a database hiccup would
+      // trigger a live upstream crawl on every affected detail page.
+      throw createError({
+        statusCode: 503,
+        statusMessage: `Beobachtungsverlauf nicht erreichbar: ${(err as Error).message}`,
+      })
+    }
+  }
+  const hit = stored?.auction ?? observed ?? (await findLiveAuction(platform, id))
   if (!hit) {
     throw createError({ statusCode: 404, statusMessage: 'auction not found' })
   }

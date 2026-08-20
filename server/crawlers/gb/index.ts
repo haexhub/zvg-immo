@@ -8,6 +8,7 @@ async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
   const { auctions, total } = await fetchAllListings(PLATFORM_ID)
   return {
     platform: PLATFORM_ID,
+    platformsSucceeded: [PLATFORM_ID],
     source: GB_BASE,
     countries: [COUNTRY],
     regions: [REGION_NAME],

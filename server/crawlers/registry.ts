@@ -40,6 +40,7 @@ import { dgaAgCrawler } from './dga-ag'
 import { kipCrawler } from './kip'
 import { bimaCrawler } from './bima'
 import { aloCrawler } from './alo'
+import { bcpeaCrawler } from './bcpea'
 
 /**
  * All registered platform crawlers. Adding a new platform is purely additive:
@@ -81,6 +82,7 @@ export const platforms: readonly PlatformCrawler[] = [
   kipCrawler,
   bimaCrawler,
   aloCrawler,
+  bcpeaCrawler,
 ] as const
 
 export interface RegionEntry extends RegionInfo {
@@ -102,7 +104,7 @@ export interface CountryEntry {
  * Countries actively crawled/shown. The default is used without Postgres and
  * on fresh installs; the admin UI persists overrides in app_settings. Paused
  * countries keep their raw data, crawl history, watchlists and permalinks, but
- * stop being scheduled, served from list_cache or surfaced in discovery.
+ * stop being scheduled, served or surfaced in discovery.
  */
 let enabledCountries = new Set<string>(DEFAULT_ENABLED_COUNTRIES)
 let enabledCountriesLoaded = false
@@ -302,9 +304,15 @@ export async function crawlSingle(
   }
   const settled = await Promise.allSettled(crawlers.map((c) => c.crawl(opts)))
   const results: CrawlResult[] = []
+  const succeeded: string[] = []
   for (const [i, s] of settled.entries()) {
     if (s.status === 'fulfilled') {
       results.push(s.value)
+      // Trust the crawler's own verdict, not just "it didn't throw" — a
+      // crawler can return normally after an incomplete run (pagination cut
+      // short, one of several required endpoints failed) and reports that by
+      // leaving itself out of its own platformsSucceeded.
+      succeeded.push(...s.value.platformsSucceeded)
     } else {
       console.warn(
         `[crawlSingle] ${opts.country}/${opts.region} via ${crawlers[i]?.id}: ${(s.reason as Error).message}`,
@@ -382,6 +390,11 @@ export async function crawlSingle(
     countries: [opts.country],
     regions: [...new Set(results.flatMap((r) => r.regions))],
     fetchedAt: new Date().toISOString(),
+    // Only the platforms that actually returned AND ran to completion. One
+    // that threw, or that returned an incomplete run, must not be recorded as
+    // successfully crawled, or crawl-state.ts would read its entire catalog
+    // as disappeared and hide it from search.
+    platformsSucceeded: succeeded,
     totalReported: results.reduce<number | null>(
       (sum, r) => (r.totalReported == null ? sum : (sum ?? 0) + r.totalReported),
       null,
@@ -467,6 +480,11 @@ export async function crawlAll(
 
   return {
     platform: MULTI_PLATFORM,
+    // The union of what actually delivered across every region. Unlike
+    // `countries`/`regions` below this is deliberately NOT the requested
+    // scope: it feeds expiry, where claiming a failed platform succeeded
+    // would hide its whole catalog (see server/utils/crawl-state.ts).
+    platformsSucceeded: [...new Set(results.flatMap((r) => r.platformsSucceeded))],
     source: [...new Set(results.map((r) => r.source))].join(', '),
     // Reflect the requested scope, not just the successful subset — failed
     // regions still belong to the run and reappear in `errors`.
