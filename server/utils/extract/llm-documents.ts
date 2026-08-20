@@ -1,4 +1,6 @@
 import type { Attachment, Auction } from '~/types/auction'
+import { BASE_URL as DGA_AG_BASE_URL } from '~/server/crawlers/dga-ag/constants'
+import { getDgaAgSessionCookie } from '~/server/crawlers/dga-ag/session'
 import { UA, ZVG_BASE } from '~/server/crawlers/zvg-portal/constants'
 import {
   archiveDocumentBlob,
@@ -102,7 +104,10 @@ function acceptForHint(format: LlmAttachmentFormat): string {
   }
 }
 
-function resolveAttachmentSource(proxyUrl: string, accept: string): { url: string; headers: Record<string, string> } {
+async function resolveAttachmentSource(
+  proxyUrl: string,
+  accept: string,
+): Promise<{ url: string; headers: Record<string, string> }> {
   if (proxyUrl.startsWith('/api/zvg-proxy')) {
     const q = new URLSearchParams(proxyUrl.split('?')[1] ?? '')
     const url = `${ZVG_BASE}/index.php?button=showAnhang&land_abk=${q.get('land_abk')}&file_id=${q.get('file_id')}&zvg_id=${q.get('zvg_id')}`
@@ -114,6 +119,12 @@ function resolveAttachmentSource(proxyUrl: string, accept: string): { url: strin
       headers: { 'User-Agent': UA, Accept: accept, Referer: `${ZVG_BASE}/index.php?button=Suchen` },
     }
   }
+  // Same authenticated-download requirement as pdf-text.ts's resolveSource —
+  // see its comment on the dga-ag.de branch.
+  if (proxyUrl.startsWith(`${DGA_AG_BASE_URL}/securedl/`)) {
+    const cookie = await getDgaAgSessionCookie()
+    return { url: proxyUrl, headers: { 'User-Agent': UA, Accept: accept, ...(cookie ? { Cookie: cookie } : {}) } }
+  }
   return { url: proxyUrl, headers: { 'User-Agent': UA, Accept: accept } }
 }
 
@@ -123,7 +134,7 @@ interface FetchedAttachment {
 }
 
 async function fetchAttachmentBytes(att: Attachment): Promise<FetchedAttachment> {
-  const { url, headers } = resolveAttachmentSource(att.proxyUrl, acceptForHint(formatHint(att)))
+  const { url, headers } = await resolveAttachmentSource(att.proxyUrl, acceptForHint(formatHint(att)))
   try {
     const res = await fetch(url, { headers, signal: AbortSignal.timeout(30_000) })
     if (!res.ok) return { bytes: null, error: `HTTP ${res.status}` }

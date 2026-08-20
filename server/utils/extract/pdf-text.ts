@@ -14,6 +14,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import type { Attachment } from '~/types/auction'
+import { BASE_URL as DGA_AG_BASE_URL } from '~/server/crawlers/dga-ag/constants'
+import { getDgaAgSessionCookie } from '~/server/crawlers/dga-ag/session'
 import { UA, ZVG_BASE } from '~/server/crawlers/zvg-portal/constants'
 import { archiveDocument, archiveDocumentText, type DocumentIdentity } from '../raw-archive'
 
@@ -80,7 +82,7 @@ export function pickAllPdfs(attachments: Attachment[]): Attachment[] {
   return out
 }
 
-function resolveSource(proxyUrl: string): { url: string; headers: Record<string, string> } {
+async function resolveSource(proxyUrl: string): Promise<{ url: string; headers: Record<string, string> }> {
   if (proxyUrl.startsWith('/api/zvg-proxy')) {
     const q = new URLSearchParams(proxyUrl.split('?')[1] ?? '')
     const url = `${ZVG_BASE}/index.php?button=showAnhang&land_abk=${q.get('land_abk')}&file_id=${q.get('file_id')}&zvg_id=${q.get('zvg_id')}`
@@ -92,6 +94,17 @@ function resolveSource(proxyUrl: string): { url: string; headers: Record<string,
       headers: { 'User-Agent': UA, Accept: 'application/pdf,*/*', Referer: `${ZVG_BASE}/index.php?button=Suchen` },
     }
   }
+  // dga-ag.de's per-object "Objektunterlagen" PDF (detail.ts) sits behind the
+  // same felogin session that unlocked it on the detail page — the signed
+  // URL's own JWT alone is not enough (verified live: it 302s to /login.html
+  // without this cookie).
+  if (proxyUrl.startsWith(`${DGA_AG_BASE_URL}/securedl/`)) {
+    const cookie = await getDgaAgSessionCookie()
+    return {
+      url: proxyUrl,
+      headers: { 'User-Agent': UA, Accept: 'application/pdf,*/*', ...(cookie ? { Cookie: cookie } : {}) },
+    }
+  }
   return { url: proxyUrl, headers: { 'User-Agent': UA, Accept: 'application/pdf,*/*' } }
 }
 
@@ -100,7 +113,7 @@ function resolveSource(proxyUrl: string): { url: string; headers: Record<string,
  * (network error, non-200, non-PDF response).
  */
 export async function fetchPdfBuffer(proxyUrl: string): Promise<Buffer | null> {
-  const { url, headers } = resolveSource(proxyUrl)
+  const { url, headers } = await resolveSource(proxyUrl)
   let buf: Buffer
   try {
     // Bound the fetch: a slow upstream would otherwise hang both text and
