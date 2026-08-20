@@ -1,6 +1,6 @@
 import type { Attachment, Auction } from '~/types/auction'
 import { BASE_URL as DGA_AG_BASE_URL } from '~/server/crawlers/dga-ag/constants'
-import { getDgaAgSessionCookie } from '~/server/crawlers/dga-ag/session'
+import { getDgaAgSessionCookie, isDgaAgLoginRedirect } from '~/server/crawlers/dga-ag/session'
 import { UA, ZVG_BASE } from '~/server/crawlers/zvg-portal/constants'
 import {
   archiveDocumentBlob,
@@ -132,15 +132,6 @@ async function resolveAttachmentSource(
 interface FetchedAttachment {
   bytes: Buffer | null
   error?: string
-}
-
-/** True when dga-ag's felogin session expired between resolveAttachmentSource's
- *  cookie read and this fetch — the secured URL redirects to /login.html
- *  instead of erroring, so the login page would otherwise get processed as if
- *  it were the attachment itself (see inferFormat's 'html' branch below). */
-function isDgaAgLoginRedirect(proxyUrl: string, finalUrl: string | null): boolean {
-  if (!finalUrl || !proxyUrl.startsWith(`${DGA_AG_BASE_URL}/securedl/`)) return false
-  return new URL(finalUrl).pathname.startsWith('/login.html')
 }
 
 async function fetchAttachmentBytesOnce(

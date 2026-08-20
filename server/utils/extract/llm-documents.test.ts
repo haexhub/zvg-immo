@@ -24,7 +24,10 @@ vi.mock('./pdf-render', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./pdf-render')>()
   return { ...actual, renderPdfPagesJpeg: vi.fn(async () => []) }
 })
-vi.mock('~/server/crawlers/dga-ag/session', () => ({ getDgaAgSessionCookie: vi.fn(async () => 'fe_typo_user=session1') }))
+vi.mock('~/server/crawlers/dga-ag/session', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/server/crawlers/dga-ag/session')>()
+  return { ...actual, getDgaAgSessionCookie: vi.fn(async () => 'fe_typo_user=session1') }
+})
 
 const { htmlToText, pickAllLlmDocumentAttachments, prepareArchivedLlmDocuments, prepareLiveLlmDocuments } = await import('./llm-documents')
 const { getDgaAgSessionCookie } = await import('~/server/crawlers/dga-ag/session')

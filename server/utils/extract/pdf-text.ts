@@ -15,7 +15,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import type { Attachment } from '~/types/auction'
 import { BASE_URL as DGA_AG_BASE_URL } from '~/server/crawlers/dga-ag/constants'
-import { getDgaAgSessionCookie } from '~/server/crawlers/dga-ag/session'
+import { getDgaAgSessionCookie, isDgaAgLoginRedirect } from '~/server/crawlers/dga-ag/session'
 import { UA, ZVG_BASE } from '~/server/crawlers/zvg-portal/constants'
 import { archiveDocument, archiveDocumentText, type DocumentIdentity } from '../raw-archive'
 
@@ -150,15 +150,6 @@ async function fetchPdfBufferAttempt(
   }
   if (!buf.subarray(0, 5).toString('ascii').startsWith('%PDF-')) return { buf: null, finalUrl }
   return { buf, finalUrl }
-}
-
-/** True when dga-ag's felogin session expired between resolveSource's cookie
- *  read and this fetch — the secured URL redirects to /login.html instead of
- *  erroring (see resolveSource's dga-ag branch above), so it can't be told
- *  apart from a real failure by status code alone. */
-function isDgaAgLoginRedirect(proxyUrl: string, finalUrl: string | null): boolean {
-  if (!finalUrl || !proxyUrl.startsWith(`${DGA_AG_BASE_URL}/securedl/`)) return false
-  return new URL(finalUrl).pathname.startsWith('/login.html')
 }
 
 /**

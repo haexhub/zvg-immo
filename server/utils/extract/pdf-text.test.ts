@@ -8,7 +8,10 @@ import { getDb } from '../db'
 import { queryText } from '~/test-support/drizzle-query'
 
 vi.mock('../db', () => ({ getDb: vi.fn() }))
-vi.mock('~/server/crawlers/dga-ag/session', () => ({ getDgaAgSessionCookie: vi.fn(async () => 'fe_typo_user=session1') }))
+vi.mock('~/server/crawlers/dga-ag/session', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/server/crawlers/dga-ag/session')>()
+  return { ...actual, getDgaAgSessionCookie: vi.fn(async () => 'fe_typo_user=session1') }
+})
 
 // Imported after the mocks so the module under test picks up the mocked getDb/session.
 const { fetchPdfBuffer, pdfHasTrustworthyEncoding, pdfToText, pickAllPdfs, pickRelevantPdfs } =

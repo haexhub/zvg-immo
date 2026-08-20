@@ -15,6 +15,17 @@ interface DgaAgCredentials {
   password: string
 }
 
+/** True when a proxyUrl is one of dga-ag's signed per-object download links
+ *  (Objektunterlagen PDF, detail.ts's extractObjectDocumentUrl) and the given
+ *  fetch's final URL landed on /login.html instead — the session cookie sent
+ *  with the request was stale. Shared by pdf-text.ts and llm-documents.ts,
+ *  whose secured-download branches both need to detect this and retry once
+ *  with a forced-fresh session instead of processing the login page itself. */
+export function isDgaAgLoginRedirect(proxyUrl: string, finalUrl: string | null): boolean {
+  if (!finalUrl || !proxyUrl.startsWith(`${BASE_URL}/securedl/`)) return false
+  return new URL(finalUrl).pathname.startsWith('/login.html')
+}
+
 function getCredentials(): DgaAgCredentials | null {
   const config = useRuntimeConfig().dgaAg as { username?: string; password?: string } | undefined
   const username = config?.username?.trim()
