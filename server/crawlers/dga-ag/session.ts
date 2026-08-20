@@ -92,9 +92,9 @@ let inFlight: Promise<string> | null = null
 export async function getDgaAgSessionCookie(opts: { forceRefresh?: boolean } = {}): Promise<string | null> {
   const creds = getCredentials()
   if (!creds) return null
-  if (!opts.forceRefresh) {
-    if (cached && Date.now() - cached.at < SESSION_MAX_AGE_MS) return cached.cookie
-    if (inFlight) return inFlight
+  if (inFlight) return inFlight
+  if (!opts.forceRefresh && cached && Date.now() - cached.at < SESSION_MAX_AGE_MS) {
+    return cached.cookie
   }
   const promise = (async () => {
     const cookie = await login(creds)

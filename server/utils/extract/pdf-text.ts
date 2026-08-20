@@ -108,27 +108,27 @@ async function resolveSource(proxyUrl: string): Promise<{ url: string; headers: 
   return { url: proxyUrl, headers: { 'User-Agent': UA, Accept: 'application/pdf,*/*' } }
 }
 
-/**
- * Fetch the PDF at `proxyUrl` and return its bytes, or null on any failure
- * (network error, non-200, non-PDF response).
- */
-export async function fetchPdfBuffer(proxyUrl: string): Promise<Buffer | null> {
-  const { url, headers } = await resolveSource(proxyUrl)
+async function fetchPdfBufferAttempt(
+  url: string,
+  headers: Record<string, string>,
+): Promise<{ buf: Buffer | null; finalUrl: string | null }> {
   let buf: Buffer
+  let finalUrl: string | null = null
   try {
     // Bound the fetch: a slow upstream would otherwise hang both text and
     // photo extraction (the enrich task uses Promise.all across workers, so
     // one stuck request stalls the whole run).
     const res = await fetch(url, { headers, signal: AbortSignal.timeout(30_000) })
-    if (!res.ok) return null
+    finalUrl = res.url || null
+    if (!res.ok) return { buf: null, finalUrl }
     const contentLength = Number(res.headers.get('content-length') ?? '')
     if (Number.isFinite(contentLength) && contentLength > MAX_PDF_BYTES) {
       await res.body?.cancel().catch(() => undefined)
-      return null
+      return { buf: null, finalUrl }
     }
     if (!res.body) {
       buf = Buffer.from(await res.arrayBuffer())
-      if (buf.length > MAX_PDF_BYTES) return null
+      if (buf.length > MAX_PDF_BYTES) return { buf: null, finalUrl }
     } else {
       const reader = res.body.getReader()
       const chunks: Uint8Array[] = []
@@ -139,17 +139,40 @@ export async function fetchPdfBuffer(proxyUrl: string): Promise<Buffer | null> {
         total += value.byteLength
         if (total > MAX_PDF_BYTES) {
           await reader.cancel().catch(() => undefined)
-          return null
+          return { buf: null, finalUrl }
         }
         chunks.push(value)
       }
       buf = Buffer.concat(chunks, total)
     }
   } catch {
-    return null
+    return { buf: null, finalUrl }
   }
-  if (!buf.subarray(0, 5).toString('ascii').startsWith('%PDF-')) return null
-  return buf
+  if (!buf.subarray(0, 5).toString('ascii').startsWith('%PDF-')) return { buf: null, finalUrl }
+  return { buf, finalUrl }
+}
+
+/** True when dga-ag's felogin session expired between resolveSource's cookie
+ *  read and this fetch — the secured URL redirects to /login.html instead of
+ *  erroring (see resolveSource's dga-ag branch above), so it can't be told
+ *  apart from a real failure by status code alone. */
+function isDgaAgLoginRedirect(proxyUrl: string, finalUrl: string | null): boolean {
+  if (!finalUrl || !proxyUrl.startsWith(`${DGA_AG_BASE_URL}/securedl/`)) return false
+  return new URL(finalUrl).pathname.startsWith('/login.html')
+}
+
+/**
+ * Fetch the PDF at `proxyUrl` and return its bytes, or null on any failure
+ * (network error, non-200, non-PDF response). Retries once with a freshly
+ * forced dga-ag session if the first attempt lands on the login page.
+ */
+export async function fetchPdfBuffer(proxyUrl: string): Promise<Buffer | null> {
+  const { url, headers } = await resolveSource(proxyUrl)
+  const first = await fetchPdfBufferAttempt(url, headers)
+  if (first.buf || !isDgaAgLoginRedirect(proxyUrl, first.finalUrl)) return first.buf
+  await getDgaAgSessionCookie({ forceRefresh: true })
+  const retry = await resolveSource(proxyUrl)
+  return (await fetchPdfBufferAttempt(retry.url, retry.headers)).buf
 }
 
 /**

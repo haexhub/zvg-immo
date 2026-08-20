@@ -24,8 +24,10 @@ vi.mock('./pdf-render', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./pdf-render')>()
   return { ...actual, renderPdfPagesJpeg: vi.fn(async () => []) }
 })
+vi.mock('~/server/crawlers/dga-ag/session', () => ({ getDgaAgSessionCookie: vi.fn(async () => 'fe_typo_user=session1') }))
 
 const { htmlToText, pickAllLlmDocumentAttachments, prepareArchivedLlmDocuments, prepareLiveLlmDocuments } = await import('./llm-documents')
+const { getDgaAgSessionCookie } = await import('~/server/crawlers/dga-ag/session')
 
 function att(overrides: Partial<Attachment>): Attachment {
   return {
@@ -254,6 +256,48 @@ describe('prepareLiveLlmDocuments', () => {
 
     const result = await prepareLiveLlmDocuments(attachments, identity, '2026-07-31T08:27:35.000Z')
 
+    expect(result.documentSetComplete).toBe(true)
+    expect(result.errors).toBeUndefined()
+
+    vi.unstubAllGlobals()
+  })
+
+  it('retries a dga-ag securedl attachment once with a fresh session after landing on the login page', async () => {
+    function fakeResponse(url: string, body: string): Response {
+      const bytes = new TextEncoder().encode(body)
+      let read = false
+      return {
+        ok: true,
+        url,
+        headers: new Headers(),
+        body: {
+          getReader: () => ({
+            read: async () => {
+              if (read) return { done: true, value: undefined }
+              read = true
+              return { done: false, value: bytes }
+            },
+            cancel: async () => undefined,
+          }),
+        },
+      } as unknown as Response
+    }
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(fakeResponse('https://www.dga-ag.de/login.html?redirect=1', '<html>Bitte einloggen</html>'))
+      .mockResolvedValueOnce(fakeResponse('https://www.dga-ag.de/securedl/sec/abc/Unterlagen.pdf', '%PDF-1.4 real content'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const dgaAgIdentity = { platform: 'dga-ag', country: 'de', region: 'Sachsen', externalId: 'S26-03-011', caseNumber: null, authority: 'DGA AG' }
+    const attachments: Attachment[] = [
+      att({ kind: 'appraisal', label: 'Objektunterlagen', filename: 'Unterlagen.pdf', proxyUrl: 'https://www.dga-ag.de/securedl/sec/abc/Unterlagen.pdf' }),
+    ]
+
+    const result = await prepareLiveLlmDocuments(attachments, dgaAgIdentity, '2026-08-20T08:27:35.000Z')
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(getDgaAgSessionCookie)).toHaveBeenCalledWith({ forceRefresh: true })
     expect(result.documentSetComplete).toBe(true)
     expect(result.errors).toBeUndefined()
 

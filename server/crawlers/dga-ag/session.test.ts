@@ -93,6 +93,23 @@ describe('getDgaAgSessionCookie', () => {
     expect(fetchMock).toHaveBeenCalledTimes(4)
   })
 
+  it('coalesces concurrent forceRefresh calls into a single login', async () => {
+    vi.stubGlobal('useRuntimeConfig', () => ({ dgaAg: { username: 'user@test.de', password: 'secret' } }))
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(withSetCookie(LOGIN_HTML, ['__Secure-typo3nonce_x=nonce1; path=/']))
+      .mockResolvedValueOnce(withSetCookie('ok', ['fe_typo_user=session1; path=/']))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const [first, second] = await Promise.all([
+      getDgaAgSessionCookie({ forceRefresh: true }),
+      getDgaAgSessionCookie({ forceRefresh: true }),
+    ])
+    expect(first).toBe('fe_typo_user=session1')
+    expect(second).toBe('fe_typo_user=session1')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
   it('throws when the login response carries no fe_typo_user cookie (wrong credentials)', async () => {
     vi.stubGlobal('useRuntimeConfig', () => ({ dgaAg: { username: 'user@test.de', password: 'wrong' } }))
     const fetchMock = vi
