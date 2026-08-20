@@ -27,7 +27,7 @@ const { t } = useI18n()
 const { currency, eurToDisplay, nativeToDisplay } = useCurrencyDisplay()
 const { formatArea } = useAuctionDetailFormatters()
 const conditionLabel = useConditionLabel()
-const featureLabel = useFeatureLabel()
+const propertyTypeLabel = usePropertyTypeLabel()
 
 function cardAltBase(a: AuctionSummary): string {
   return a.title || a.address || t('search.unknownPropertyType')
@@ -154,13 +154,10 @@ const isGallery = useMediaQuery('(min-width: 640px)')
     <NuxtLink :to="detailPath(props.auction)" class="mt-3 flex-1 flex flex-col gap-1 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
       <p class="text-sm font-semibold leading-tight">{{ props.auction.address || props.auction.title || $t('search.unknownPropertyType') }}</p>
       <span v-if="sizeLine(props.auction)" class="text-xs text-muted-foreground">{{ sizeLine(props.auction) }}</span>
-      <div v-if="props.auction.extraction?.features?.length" class="flex flex-wrap gap-1">
-        <span
-          v-for="f in props.auction.extraction.features.slice(0, 3)"
-          :key="f"
-          class="rounded-full bg-muted/60 text-muted-foreground px-2 py-0.5 text-xs"
-        >{{ featureLabel(f) }}</span>
-      </div>
+      <span
+        v-if="props.auction.extraction?.propertyType"
+        class="w-fit rounded-full bg-muted/60 text-muted-foreground px-2 py-0.5 text-xs"
+      >{{ propertyTypeLabel(props.auction.extraction.propertyType) }}</span>
       <p class="mt-auto pt-1 font-semibold tabular-nums">
         {{ eurToDisplay(props.auction.marketValueEur) != null ? formatPrice(props.auction.marketValueEur) : (props.auction.marketValueText ?? '–') }}
         <span v-if="showOriginalPrice(props.auction)" class="block text-xs font-normal text-muted-foreground">
