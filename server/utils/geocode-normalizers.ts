@@ -285,6 +285,13 @@ export function normalizeBgAddress(address: string): string[] {
   if (settlement && municipality) out.push(`${settlement}, ${municipality}`)
   if (settlement && province) out.push(`${settlement}, ${province}`)
   if (settlement) out.push(settlement)
+  // Nothing settlement-level matched, so every candidate below is an
+  // administrative unit whose centre can sit tens of km from the property.
+  // Sources other than zapori write settlements without a гр./с. marker
+  // (alo.bg: "Банкя, област София"), where only BG_PROVINCE_RE hits and the
+  // pin would land in Sofia. Nominatim resolves the raw line for those, and
+  // the coarse units still follow as the fallback.
+  if (!settlement && !locality && !street) out.push(address)
   if (municipality) out.push(municipality)
   if (province) out.push(province)
   return out.length > 0 ? [...new Set(out)] : [address]

@@ -229,6 +229,15 @@ describe('normalizeBgAddress', () => {
   it('falls back to the raw address when it has no recognisable structure', () => {
     expect(normalizeBgAddress('Bulgarien')).toEqual(['Bulgarien'])
   })
+
+  it('tries the raw line before the province centre when no гр./с. settlement marker is present', () => {
+    // alo.bg writes settlements without a marker; matching only "област София"
+    // would pin Банкя (~17 km out) on the centre of Sofia.
+    expect(normalizeBgAddress('Банкя, област София, Bulgarien')).toEqual([
+      'Банкя, област София, Bulgarien',
+      'София',
+    ])
+  })
 })
 
 // The geocoder backend is chosen at module load from process.env, so these

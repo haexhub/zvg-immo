@@ -39,6 +39,7 @@ import { zaporiCrawler } from './bg'
 import { dgaAgCrawler } from './dga-ag'
 import { kipCrawler } from './kip'
 import { bimaCrawler } from './bima'
+import { aloCrawler } from './alo'
 import { bcpeaCrawler } from './bcpea'
 
 /**
@@ -80,6 +81,7 @@ export const platforms: readonly PlatformCrawler[] = [
   dgaAgCrawler,
   kipCrawler,
   bimaCrawler,
+  aloCrawler,
   bcpeaCrawler,
 ] as const
 

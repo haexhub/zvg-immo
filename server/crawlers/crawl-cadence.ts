@@ -13,6 +13,15 @@ const SENSITIVE_INTERVAL_MS: Record<string, number> = {
   boe: 6 * 60 * 60 * 1000, // ES: BOE captcha cooldowns
   agi: 6 * 60 * 60 * 1000, // IT: agi returns HTTP 429 under frequent polling
   'fr-licitor': 6 * 60 * 60 * 1000, // FR: robots.txt blocks non-browser crawlers
+  // BG: ~1,140 list pages per full walk at kip's 1s crawl delay (~20 min of
+  // continuous requests) — an hourly re-crawl would keep the site under
+  // near-permanent load from us, and classifieds turnover does not need it.
+  // Note the knock-on effect of the "longest interval wins" rule below: bg-alo
+  // and bg/zapori both register the ALL scope, so they share one region entry
+  // and zapori's court auctions are re-crawled daily too, not hourly. Accepted
+  // because judicial sale dates are published weeks ahead; undoing it would
+  // take a per-platform (rather than per-region) freshness check in refresh.ts.
+  'bg-alo': 24 * 60 * 60 * 1000,
 }
 
 /**
