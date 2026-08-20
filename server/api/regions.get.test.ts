@@ -40,7 +40,7 @@ describe('/api/regions region projection', () => {
     expect(regions?.map((r) => r.code)).toEqual(['Burgas', 'Pleven'])
     expect(regions?.every((r) => r.country === 'bg')).toBe(true)
     // The platforms serving the whole country serve each of its regions.
-    expect(regions?.[0]?.platforms.map((p) => p.id)).toEqual(['bg-zapori'])
+    expect(regions?.[0]?.platforms.map((p) => p.id)).toEqual(['bg-zapori', 'bg-bulgarianhouse', 'bg-alo', 'bg-bcpea'])
   })
 
   it('leaves a country with real sub-regions untouched by stored names', () => {
