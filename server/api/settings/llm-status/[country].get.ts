@@ -1,6 +1,6 @@
 import { getPool } from '~/server/utils/db'
 import { readAuctionRecords } from '~/server/utils/auction-record'
-import { classifyLlmStatus, type LlmStatusBucket } from '~/server/utils/llm-status'
+import { classifyLlmStatus, isLlmExtractionInScope, type LlmStatusBucket } from '~/server/utils/llm-status'
 import { ensureEnabledCountriesLoaded, listRegisteredCountries } from '~/server/crawlers/registry'
 
 export interface LlmStatusItem {
@@ -81,6 +81,7 @@ export default defineEventHandler(async (event): Promise<LlmStatusList> => {
 
   const records = await readAuctionRecords(country, { includePhotos: false })
   const matching = records
+    .filter(isLlmExtractionInScope)
     .filter((record) => classifyLlmStatus(record) === bucket)
     .filter((record) => !search || [
       record.auction.platform,

@@ -14,7 +14,7 @@ import {
 } from '~/server/utils/llm-batch-jobs'
 import { readAuctionRecords } from '~/server/utils/auction-record'
 import { readAuctionFetchStates } from '~/server/utils/auction-fetch-state'
-import { hasMissingLlmFields } from '~/server/utils/llm-status'
+import { hasMissingLlmFields, isLlmExtractionInScope } from '~/server/utils/llm-status'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 import { isGeminiBatchTierPaid } from '~/server/utils/extract/gemini-batch'
 import { getTaskRunStatus, type TaskRunStatus } from '~/server/utils/task-runs'
@@ -174,7 +174,11 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
     return bucket
   }
 
-  for (const { auction } of records) {
+  for (const record of records) {
+    // Out of the extraction task's scope entirely — counting it would inflate
+    // a backlog no run will ever work off (see isLlmExtractionInScope).
+    if (!isLlmExtractionInScope(record)) continue
+    const { auction } = record
     const entry = auction.extraction
     const key = cacheKey(auction.platform, auction.externalId)
     const state = fetchStates.get(key)

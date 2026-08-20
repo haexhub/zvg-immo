@@ -30,6 +30,16 @@ export function hasMissingLlmFields(entry: AuctionExtraction): boolean {
 
 export type LlmStatusBucket = 'done' | 'error' | 'open' | 'pending'
 
+/** Whether the extraction task would ever pick this auction up. Mirrors
+ *  findCandidates' `a.cancelled = false` gate (reprocess-input.ts): a
+ *  cancelled/sold listing is hidden from search and never extracted, so
+ *  counting it as 'open' would show a backlog no cron run can ever clear —
+ *  the counters here have to mean "still to be worked on", not "not done".
+ *  Kept beside classifyLlmStatus so the two definitions can't drift. */
+export function isLlmExtractionInScope(record: AuctionRecord): boolean {
+  return !record.auction.cancelled
+}
+
 function hasFreshLlmClaim(record: AuctionRecord): boolean {
   const claimedAt = record.auction.processing?.llmClaimedAt
   if (!claimedAt) return false

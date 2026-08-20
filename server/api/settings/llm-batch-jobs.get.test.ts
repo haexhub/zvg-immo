@@ -22,7 +22,7 @@ const IDLE_REPROCESS_STATUS = {
   progressByCountry: null,
 }
 
-function record(key: string, extraction: Record<string, unknown> | undefined, country = 'de') {
+function record(key: string, extraction: Record<string, unknown> | undefined, country = 'de', cancelled = false) {
   const separator = key.indexOf(':')
   return {
     detailsId: 1,
@@ -32,6 +32,7 @@ function record(key: string, extraction: Record<string, unknown> | undefined, co
       externalId: key.slice(separator + 1),
       country,
       extraction,
+      cancelled,
     },
   } as never
 }
@@ -184,6 +185,37 @@ describe('/api/settings/llm-batch-jobs', () => {
     expect(getTaskRunStatus).toHaveBeenCalledWith('offload-images')
     expect(getTaskRunStatus).toHaveBeenCalledWith('import-copernicus-effis-cache')
     expect(getTaskRunStatus).toHaveBeenCalledWith('import-eu-flood-risk-cache')
+  })
+
+  it('excludes a cancelled auction from the backlog counts entirely', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
+      await import('~/server/utils/llm-batch-jobs')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { readAuctionFetchStates } = await import('~/server/utils/auction-fetch-state')
+    const { isGeminiBatchTierPaid } = await import('~/server/utils/extract/gemini-batch')
+    const { getTaskRunStatus } = await import('~/server/utils/task-runs')
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([])
+    vi.mocked(listRecentLlmBatchJobs).mockResolvedValue([])
+    vi.mocked(getAllLlmBatchCapabilities).mockResolvedValue({})
+    vi.mocked(isGeminiBatchTierPaid).mockReturnValue(true)
+    vi.mocked(getTaskRunStatus).mockResolvedValue(IDLE_REPROCESS_STATUS)
+    vi.mocked(readAuctionRecords).mockResolvedValue([
+      record('zvg-portal:1', undefined, 'de'), // never extracted, in scope
+      record('zvg-portal:2', undefined, 'de', true), // cancelled — must not inflate the backlog
+    ])
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map())
+
+    const handler = (await import('./llm-batch-jobs.get')).default as () => Promise<unknown>
+    const result = (await handler()) as {
+      backlog: { readyRequests: number; neverExtracted: number; sampleRequestKeys: string[] }
+      backlogByCountry: Record<string, { readyRequests: number }>
+    }
+
+    expect(result.backlog.readyRequests).toBe(1)
+    expect(result.backlog.neverExtracted).toBe(1)
+    expect(result.backlog.sampleRequestKeys).toEqual(['zvg-portal:1'])
+    expect(result.backlogByCountry.de).toEqual({ readyRequests: 1, failedLimit: 0 })
   })
 
   it('maps an "openrouter_"-wrapped jobName to the openrouter provider, not openai', async () => {

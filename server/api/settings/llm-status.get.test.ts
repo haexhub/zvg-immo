@@ -9,8 +9,8 @@ const COMPLETE_LLM_FIELDS = {
   documentSummary: null, marketValueEur: null,
 }
 
-function record(country: string, extraction?: Record<string, unknown>) {
-  return { detailsId: 1, detailsVersion: 1, artifactVersionId: null, auction: { country, extraction, processing: { llmFailures: 0 } } } as never
+function record(country: string, extraction?: Record<string, unknown>, cancelled = false) {
+  return { detailsId: 1, detailsVersion: 1, artifactVersionId: null, auction: { country, extraction, cancelled, processing: { llmFailures: 0 } } } as never
 }
 
 afterEach(() => {
@@ -36,5 +36,21 @@ describe('/api/settings/llm-status', () => {
       se: { done: 0, open: 1, error: 0, pending: 0, total: 1 },
     })
     expect(readAuctionRecords).toHaveBeenCalledWith(undefined, { includePhotos: false })
+  })
+
+  it('leaves cancelled auctions out entirely — the extraction task never picks them up', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    vi.mocked(readAuctionRecords).mockResolvedValue([
+      record('bg', undefined),
+      record('bg', undefined, true),
+      record('bg', undefined, true),
+    ] as never)
+
+    const handler = (await import('./llm-status.get')).default as (event: unknown) => Promise<unknown>
+
+    await expect(handler({})).resolves.toEqual({
+      bg: { done: 0, open: 1, error: 0, pending: 0, total: 1 },
+    })
   })
 })
