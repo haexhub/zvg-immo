@@ -1,10 +1,35 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Auction } from '~/types/auction'
-import { enrichOne } from './detail'
+import type { enrichOne as EnrichOne } from './detail'
+
+let enrichOne: typeof EnrichOne
+
+// The session module caches its login across calls at module scope
+// (session.ts); resetting modules per test keeps that cache from leaking
+// between tests that configure different credentials/mock responses.
+beforeEach(async () => {
+  vi.resetModules()
+  ;({ enrichOne } = await import('./detail'))
+})
 
 function htmlResponse(body: string): Response {
   return new Response(body, { status: 200, headers: { 'Content-Type': 'text/html' } })
 }
+
+function withSetCookie(body: string, cookies: string[]): Response {
+  const headers = new Headers({ 'Content-Type': 'text/html' })
+  for (const c of cookies) headers.append('set-cookie', c)
+  return new Response(body, { status: 200, headers })
+}
+
+const LOGIN_HTML = `
+<html><body>
+<form action="/login.html?tx_felogin_login%5Baction%5D=login&tx_felogin_login%5Bcontroller%5D=Login&cHash=abc123" method="post">
+<input type="hidden" name="__RequestToken" value="token-xyz" >
+<input type="submit" value="" name="submit" />
+</form>
+</body></html>
+`
 
 function makeAuction(overrides: Partial<Auction> = {}): Auction {
   return {
@@ -66,12 +91,22 @@ const DETAIL_HTML_MINIMAL = `
 </head><body></body></html>
 `
 
+const DETAIL_HTML_AUTHENTICATED = `
+<html><head>
+<meta property="og:title" content="Sonniges Reihenhaus">
+</head><body>
+<a href="/fileadmin/user_upload/api/kataloge/sga/S26-01.pdf#page=3">Im Katalog öffnen</a>
+<a href="/securedl/sdl-eyJhbGciOiJIUzI1NiJ9.token/S26_01_001.pdf" target="_blank">Objektunterlagen</a>
+</body></html>
+`
+
 describe('enrichOne', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
   })
 
   it('fills title, description, photos and the catalog attachment', async () => {
+    vi.stubGlobal('useRuntimeConfig', () => ({ dgaAg: { username: '', password: '' } }))
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(htmlResponse(DETAIL_HTML_FULL)))
     const auction = makeAuction()
     await enrichOne(auction)
@@ -98,6 +133,7 @@ describe('enrichOne', () => {
   })
 
   it('leaves description null and keeps the existing thumbnail when the detail page has no extra content', async () => {
+    vi.stubGlobal('useRuntimeConfig', () => ({ dgaAg: { username: '', password: '' } }))
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(htmlResponse(DETAIL_HTML_MINIMAL)))
     const auction = makeAuction()
     await enrichOne(auction)
@@ -117,5 +153,46 @@ describe('enrichOne', () => {
     const auction = makeAuction({ detailUrl: null, detailUrlUpstream: null })
     await enrichOne(auction)
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('logs in and adds the per-object Objektunterlagen attachment when credentials are configured', async () => {
+    vi.stubGlobal('useRuntimeConfig', () => ({ dgaAg: { username: 'user@test.de', password: 'secret' } }))
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes('/login.html') && init?.method === 'POST') {
+        return withSetCookie('<html>Herzlich Willkommen</html>', ['fe_typo_user=session456; path=/'])
+      }
+      if (url.includes('/login.html')) {
+        return withSetCookie(LOGIN_HTML, ['__Secure-typo3nonce_x=nonce123; path=/'])
+      }
+      return htmlResponse(DETAIL_HTML_AUTHENTICATED)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const auction = makeAuction()
+    await enrichOne(auction)
+
+    expect(auction.attachments).toEqual([
+      {
+        kind: 'brochure',
+        label: 'Katalog',
+        filename: 'S26-01.pdf',
+        sizeBytes: null,
+        fileId: 'S26-01-001',
+        proxyUrl: 'https://www.dga-ag.de/fileadmin/user_upload/api/kataloge/sga/S26-01.pdf#page=3',
+        excludeFromDocumentMining: true,
+      },
+      {
+        kind: 'appraisal',
+        label: 'Objektunterlagen',
+        filename: 'S26_01_001.pdf',
+        sizeBytes: null,
+        fileId: 'S26-01-001-unterlagen',
+        proxyUrl: 'https://www.dga-ag.de/securedl/sdl-eyJhbGciOiJIUzI1NiJ9.token/S26_01_001.pdf',
+      },
+    ])
+    // GET login.html, POST login.html, GET detail page — the detail fetch
+    // carries the session cookie so the securedl link is actually present.
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    const detailCall = fetchMock.mock.calls[2]!
+    expect((detailCall[1]?.headers as Record<string, string>).Cookie).toBe('fe_typo_user=session456')
   })
 })

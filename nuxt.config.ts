@@ -116,6 +116,17 @@ export default defineNuxtConfig({
       geminiFreeBatchPollIntervalHours: 6,
       geminiPaidBatchMaxItems: 300,
     },
+    // Optional dga-ag.de account (server/crawlers/dga-ag/session.ts). Logged
+    // in, the object detail page swaps its "Objektunterlagen" login-prompt
+    // for a real per-object PDF (Energieausweis/Grundriss/Flurkarte) — the
+    // public path only ever exposes the shared multi-lot auction catalog.
+    // Empty → the crawler stays on that public-only path, unchanged.
+    //   NUXT_DGA_AG_USERNAME=...
+    //   NUXT_DGA_AG_PASSWORD=...
+    dgaAg: {
+      username: '',
+      password: '',
+    },
     // Sibling haex-claude-proxy container's own address — always deployed
     // regardless of which provider extractLlm.baseUrl currently points at
     // (e.g. gemini-native). Used only for the /settings OAuth setup flow

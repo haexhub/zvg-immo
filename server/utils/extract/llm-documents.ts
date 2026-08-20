@@ -1,4 +1,6 @@
 import type { Attachment, Auction } from '~/types/auction'
+import { BASE_URL as DGA_AG_BASE_URL } from '~/server/crawlers/dga-ag/constants'
+import { getDgaAgSessionCookie, isDgaAgLoginRedirect } from '~/server/crawlers/dga-ag/session'
 import { UA, ZVG_BASE } from '~/server/crawlers/zvg-portal/constants'
 import {
   archiveDocumentBlob,
@@ -103,7 +105,10 @@ function acceptForHint(format: LlmAttachmentFormat): string {
   }
 }
 
-function resolveAttachmentSource(proxyUrl: string, accept: string): { url: string; headers: Record<string, string> } {
+async function resolveAttachmentSource(
+  proxyUrl: string,
+  accept: string,
+): Promise<{ url: string; headers: Record<string, string> }> {
   if (proxyUrl.startsWith('/api/zvg-proxy')) {
     const q = new URLSearchParams(proxyUrl.split('?')[1] ?? '')
     const url = `${ZVG_BASE}/index.php?button=showAnhang&land_abk=${q.get('land_abk')}&file_id=${q.get('file_id')}&zvg_id=${q.get('zvg_id')}`
@@ -115,6 +120,12 @@ function resolveAttachmentSource(proxyUrl: string, accept: string): { url: strin
       headers: { 'User-Agent': UA, Accept: accept, Referer: `${ZVG_BASE}/index.php?button=Suchen` },
     }
   }
+  // Same authenticated-download requirement as pdf-text.ts's resolveSource —
+  // see its comment on the dga-ag.de branch.
+  if (proxyUrl.startsWith(`${DGA_AG_BASE_URL}/securedl/`)) {
+    const cookie = await getDgaAgSessionCookie()
+    return { url: proxyUrl, headers: { 'User-Agent': UA, Accept: accept, ...(cookie ? { Cookie: cookie } : {}) } }
+  }
   return { url: proxyUrl, headers: { 'User-Agent': UA, Accept: accept } }
 }
 
@@ -123,17 +134,21 @@ interface FetchedAttachment {
   error?: string
 }
 
-async function fetchAttachmentBytes(att: Attachment): Promise<FetchedAttachment> {
-  const { url, headers } = resolveAttachmentSource(att.proxyUrl, acceptForHint(formatHint(att)))
+async function fetchAttachmentBytesOnce(
+  url: string,
+  headers: Record<string, string>,
+): Promise<FetchedAttachment & { finalUrl: string | null }> {
+  let finalUrl: string | null = null
   try {
     const res = await fetch(url, { headers, signal: AbortSignal.timeout(30_000) })
-    if (!res.ok) return { bytes: null, error: `HTTP ${res.status}` }
+    finalUrl = res.url || null
+    if (!res.ok) return { bytes: null, error: `HTTP ${res.status}`, finalUrl }
     const contentLength = Number(res.headers.get('content-length') ?? '')
     if (Number.isFinite(contentLength) && contentLength > MAX_ATTACHMENT_BYTES) {
       await res.body?.cancel().catch(() => undefined)
-      return { bytes: null, error: `attachment too large (${contentLength} bytes)` }
+      return { bytes: null, error: `attachment too large (${contentLength} bytes)`, finalUrl }
     }
-    if (!res.body) return { bytes: null, error: 'empty response body' }
+    if (!res.body) return { bytes: null, error: 'empty response body', finalUrl }
     const reader = res.body.getReader()
     const chunks: Buffer[] = []
     let total = 0
@@ -144,14 +159,24 @@ async function fetchAttachmentBytes(att: Attachment): Promise<FetchedAttachment>
       total += value.byteLength
       if (total > MAX_ATTACHMENT_BYTES) {
         await reader.cancel().catch(() => undefined)
-        return { bytes: null, error: `attachment too large (>${MAX_ATTACHMENT_BYTES} bytes)` }
+        return { bytes: null, error: `attachment too large (>${MAX_ATTACHMENT_BYTES} bytes)`, finalUrl }
       }
       chunks.push(Buffer.from(value))
     }
-    return { bytes: Buffer.concat(chunks, total) }
+    return { bytes: Buffer.concat(chunks, total), finalUrl }
   } catch (err) {
-    return { bytes: null, error: (err as Error).message }
+    return { bytes: null, error: (err as Error).message, finalUrl }
   }
+}
+
+async function fetchAttachmentBytes(att: Attachment): Promise<FetchedAttachment> {
+  const accept = acceptForHint(formatHint(att))
+  const first = await resolveAttachmentSource(att.proxyUrl, accept)
+  const firstResult = await fetchAttachmentBytesOnce(first.url, first.headers)
+  if (!isDgaAgLoginRedirect(att.proxyUrl, firstResult.finalUrl)) return firstResult
+  await getDgaAgSessionCookie({ forceRefresh: true })
+  const retry = await resolveAttachmentSource(att.proxyUrl, accept)
+  return await fetchAttachmentBytesOnce(retry.url, retry.headers)
 }
 
 function looksTextual(buf: Buffer): boolean {

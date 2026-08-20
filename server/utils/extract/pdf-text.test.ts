@@ -8,10 +8,15 @@ import { getDb } from '../db'
 import { queryText } from '~/test-support/drizzle-query'
 
 vi.mock('../db', () => ({ getDb: vi.fn() }))
+vi.mock('~/server/crawlers/dga-ag/session', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/server/crawlers/dga-ag/session')>()
+  return { ...actual, getDgaAgSessionCookie: vi.fn(async () => 'fe_typo_user=session1') }
+})
 
-// Imported after the mock so the module under test picks up the mocked getDb.
+// Imported after the mocks so the module under test picks up the mocked getDb/session.
 const { fetchPdfBuffer, pdfHasTrustworthyEncoding, pdfToText, pickAllPdfs, pickRelevantPdfs } =
   await import('./pdf-text')
+const { getDgaAgSessionCookie } = await import('~/server/crawlers/dga-ag/session')
 
 const CACHE_DIR = join(process.cwd(), '.cache_zvg', 'pdftext')
 const FAKE_PDF = Buffer.from('%PDF-1.4\n%%EOF')
@@ -144,6 +149,40 @@ describe('fetchPdfBuffer resource bounds', () => {
 
     await expect(fetchPdfBuffer('https://example.test/oversized.pdf')).resolves.toBeNull()
     expect(cancel).toHaveBeenCalledOnce()
+  })
+
+  it('retries a dga-ag securedl PDF once with a fresh session after landing on the login page', async () => {
+    function fakeResponse(url: string, body: string) {
+      const bytes = new TextEncoder().encode(body)
+      let read = false
+      return {
+        ok: true,
+        url,
+        headers: new Headers(),
+        body: {
+          getReader: () => ({
+            read: async () => {
+              if (read) return { done: true, value: undefined }
+              read = true
+              return { done: false, value: bytes }
+            },
+            cancel: async () => undefined,
+          }),
+        },
+      }
+    }
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(fakeResponse('https://www.dga-ag.de/login.html?redirect=1', '<html>Bitte einloggen</html>'))
+      .mockResolvedValueOnce(fakeResponse('https://www.dga-ag.de/securedl/sec/abc/Unterlagen.pdf', '%PDF-1.4 real content'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const buf = await fetchPdfBuffer('https://www.dga-ag.de/securedl/sec/abc/Unterlagen.pdf')
+
+    expect(buf?.toString('ascii')).toBe('%PDF-1.4 real content')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(getDgaAgSessionCookie)).toHaveBeenCalledWith({ forceRefresh: true })
   })
 })
 

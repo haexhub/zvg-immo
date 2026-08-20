@@ -1,6 +1,7 @@
 import { load } from 'cheerio'
-import type { Auction } from '~/types/auction'
+import type { Attachment, Auction } from '~/types/auction'
 import { BASE_URL, UA } from './constants'
+import { getDgaAgSessionCookie } from './session'
 
 const FETCH_TIMEOUT_MS = 20_000
 
@@ -12,13 +13,36 @@ function absoluteUrl(path: string): string {
   return path.startsWith('http') ? path : `${BASE_URL}${path.startsWith('/') ? '' : '/'}${path}`
 }
 
-async function fetchDetailHtml(url: string): Promise<string> {
+async function fetchDetailHtml(url: string, cookie: string | null): Promise<{ html: string; finalUrl: string }> {
   const res = await fetch(url, {
-    headers: { Accept: 'text/html', 'Accept-Language': 'de-DE,de;q=0.9', 'User-Agent': UA },
+    headers: {
+      Accept: 'text/html',
+      'Accept-Language': 'de-DE,de;q=0.9',
+      'User-Agent': UA,
+      ...(cookie ? { Cookie: cookie } : {}),
+    },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   })
   if (!res.ok) throw new Error(`dga-ag.de detail HTTP ${res.status} for ${url}`)
-  return await res.text()
+  return { html: await res.text(), finalUrl: res.url }
+}
+
+/**
+ * Logged in, the page additionally renders a real "Objektunterlagen" link
+ * (per-object PDF); anonymously it's just a login-prompt with no href. A
+ * felogin session that expired since it was cached redirects this page back
+ * to /login.html instead of erroring — detected via the final response URL
+ * (not a thrown error), so one re-login and retry recovers instead of
+ * silently falling back to the public view for the rest of the crawl run.
+ */
+async function fetchAuthenticatedDetailHtml(url: string): Promise<string> {
+  const cookie = await getDgaAgSessionCookie()
+  if (!cookie) return (await fetchDetailHtml(url, null)).html
+  const first = await fetchDetailHtml(url, cookie)
+  if (!first.finalUrl.includes('/login.html')) return first.html
+  const fresh = await getDgaAgSessionCookie({ forceRefresh: true })
+  if (!fresh) return first.html
+  return (await fetchDetailHtml(url, fresh)).html
 }
 
 /** The free-text "Lage und Umfeld dieser Immobilie" paragraph isn't filled in
@@ -44,10 +68,22 @@ function extractPhotoUrls($: ReturnType<typeof load>): string[] {
   return [...new Set(srcs)]
 }
 
+/** Only rendered when logged in — anonymously "Objektunterlagen" is a
+ *  login-prompt div with no href. Genuinely scoped to this one object
+ *  (verified live: a 40-page Energieausweis/Grundriss/Flurkarte dossier for
+ *  S26-03-011 with zero mentions of any other object number), unlike the
+ *  shared multi-lot catalog below. The signed URL's JWT is valid ~25h from
+ *  this fetch; enrich-worker.ts downloads/archives attachments in the same
+ *  run right after enrichOne, well inside that window. */
+function extractObjectDocumentUrl($: ReturnType<typeof load>): string | null {
+  const href = $('a[href*="/securedl/"]').first().attr('href')
+  return href ? absoluteUrl(href) : null
+}
+
 export async function enrichOne(auction: Auction): Promise<void> {
   const url = auction.detailUrlUpstream ?? auction.detailUrl
   if (!url) return
-  const html = await fetchDetailHtml(url)
+  const html = await fetchAuthenticatedDetailHtml(url)
   const $ = load(html)
 
   const title = clean($('meta[property="og:title"]').attr('content') ?? '')
@@ -61,22 +97,24 @@ export async function enrichOne(auction: Auction): Promise<void> {
     auction.thumbnailUrl = auction.thumbnailUrl ?? photoUrls[0] ?? null
   }
 
-  const pdfHref = $('a[href*=".pdf"]').first().attr('href')
-  if (!pdfHref) return
-  const pdfUrl = absoluteUrl(pdfHref)
-  auction.pdfUrl = pdfUrl
-  auction.pdfUrlUpstream = pdfUrl
-  // The linked PDF is the shared multi-lot auction catalog (deep-linked to
-  // this object's page via #page=N), not a per-object Gutachten or
-  // Bekanntmachung — classifyAttachment's label/filename heuristics don't
-  // cover that case, so the kind is set directly. It covers every lot in the
-  // catalog, not just this one — pdftotext/pdfimages have no notion of "this
-  // object's pages" within it, so neither photo extraction nor LLM document
-  // analysis (which would otherwise read the ~90-lot catalog's text/images
-  // wholesale and risk reporting a different lot's facts) may use it. The
-  // object's own gallery/description already come from the detail page above.
-  auction.attachments = [
-    {
+  const attachments: Attachment[] = []
+
+  const pdfHref = $('a[href*="user_upload/api/kataloge"]').first().attr('href')
+  if (pdfHref) {
+    const pdfUrl = absoluteUrl(pdfHref)
+    auction.pdfUrl = pdfUrl
+    auction.pdfUrlUpstream = pdfUrl
+    // The linked PDF is the shared multi-lot auction catalog (deep-linked to
+    // this object's page via #page=N), not a per-object Gutachten or
+    // Bekanntmachung — classifyAttachment's label/filename heuristics don't
+    // cover that case, so the kind is set directly. It covers every lot in the
+    // catalog, not just this one — pdftotext/pdfimages have no notion of "this
+    // object's pages" within it, so neither photo extraction nor LLM document
+    // analysis (which would otherwise read the ~90-lot catalog's text/images
+    // wholesale and risk reporting a different lot's facts) may use it. The
+    // object's own gallery/description already come from the detail page
+    // above; the per-object Objektunterlagen PDF below is the real document.
+    attachments.push({
       kind: 'brochure',
       label: 'Katalog',
       filename: pdfUrl.split('/').pop()?.split('#')[0] || 'katalog.pdf',
@@ -84,6 +122,20 @@ export async function enrichOne(auction: Auction): Promise<void> {
       fileId: auction.externalId,
       proxyUrl: pdfUrl,
       excludeFromDocumentMining: true,
-    },
-  ]
+    })
+  }
+
+  const objectDocumentUrl = extractObjectDocumentUrl($)
+  if (objectDocumentUrl) {
+    attachments.push({
+      kind: 'appraisal',
+      label: 'Objektunterlagen',
+      filename: objectDocumentUrl.split('/').pop()?.split(/[?#]/)[0] || `${auction.externalId}.pdf`,
+      sizeBytes: null,
+      fileId: `${auction.externalId}-unterlagen`,
+      proxyUrl: objectDocumentUrl,
+    })
+  }
+
+  if (attachments.length > 0) auction.attachments = attachments
 }

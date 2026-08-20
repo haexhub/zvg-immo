@@ -14,6 +14,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import type { Attachment } from '~/types/auction'
+import { BASE_URL as DGA_AG_BASE_URL } from '~/server/crawlers/dga-ag/constants'
+import { getDgaAgSessionCookie, isDgaAgLoginRedirect } from '~/server/crawlers/dga-ag/session'
 import { UA, ZVG_BASE } from '~/server/crawlers/zvg-portal/constants'
 import { archiveDocument, archiveDocumentText, type DocumentIdentity } from '../raw-archive'
 
@@ -80,7 +82,7 @@ export function pickAllPdfs(attachments: Attachment[]): Attachment[] {
   return out
 }
 
-function resolveSource(proxyUrl: string): { url: string; headers: Record<string, string> } {
+async function resolveSource(proxyUrl: string): Promise<{ url: string; headers: Record<string, string> }> {
   if (proxyUrl.startsWith('/api/zvg-proxy')) {
     const q = new URLSearchParams(proxyUrl.split('?')[1] ?? '')
     const url = `${ZVG_BASE}/index.php?button=showAnhang&land_abk=${q.get('land_abk')}&file_id=${q.get('file_id')}&zvg_id=${q.get('zvg_id')}`
@@ -92,30 +94,41 @@ function resolveSource(proxyUrl: string): { url: string; headers: Record<string,
       headers: { 'User-Agent': UA, Accept: 'application/pdf,*/*', Referer: `${ZVG_BASE}/index.php?button=Suchen` },
     }
   }
+  // dga-ag.de's per-object "Objektunterlagen" PDF (detail.ts) sits behind the
+  // same felogin session that unlocked it on the detail page — the signed
+  // URL's own JWT alone is not enough (verified live: it 302s to /login.html
+  // without this cookie).
+  if (proxyUrl.startsWith(`${DGA_AG_BASE_URL}/securedl/`)) {
+    const cookie = await getDgaAgSessionCookie()
+    return {
+      url: proxyUrl,
+      headers: { 'User-Agent': UA, Accept: 'application/pdf,*/*', ...(cookie ? { Cookie: cookie } : {}) },
+    }
+  }
   return { url: proxyUrl, headers: { 'User-Agent': UA, Accept: 'application/pdf,*/*' } }
 }
 
-/**
- * Fetch the PDF at `proxyUrl` and return its bytes, or null on any failure
- * (network error, non-200, non-PDF response).
- */
-export async function fetchPdfBuffer(proxyUrl: string): Promise<Buffer | null> {
-  const { url, headers } = resolveSource(proxyUrl)
+async function fetchPdfBufferAttempt(
+  url: string,
+  headers: Record<string, string>,
+): Promise<{ buf: Buffer | null; finalUrl: string | null }> {
   let buf: Buffer
+  let finalUrl: string | null = null
   try {
     // Bound the fetch: a slow upstream would otherwise hang both text and
     // photo extraction (the enrich task uses Promise.all across workers, so
     // one stuck request stalls the whole run).
     const res = await fetch(url, { headers, signal: AbortSignal.timeout(30_000) })
-    if (!res.ok) return null
+    finalUrl = res.url || null
+    if (!res.ok) return { buf: null, finalUrl }
     const contentLength = Number(res.headers.get('content-length') ?? '')
     if (Number.isFinite(contentLength) && contentLength > MAX_PDF_BYTES) {
       await res.body?.cancel().catch(() => undefined)
-      return null
+      return { buf: null, finalUrl }
     }
     if (!res.body) {
       buf = Buffer.from(await res.arrayBuffer())
-      if (buf.length > MAX_PDF_BYTES) return null
+      if (buf.length > MAX_PDF_BYTES) return { buf: null, finalUrl }
     } else {
       const reader = res.body.getReader()
       const chunks: Uint8Array[] = []
@@ -126,17 +139,31 @@ export async function fetchPdfBuffer(proxyUrl: string): Promise<Buffer | null> {
         total += value.byteLength
         if (total > MAX_PDF_BYTES) {
           await reader.cancel().catch(() => undefined)
-          return null
+          return { buf: null, finalUrl }
         }
         chunks.push(value)
       }
       buf = Buffer.concat(chunks, total)
     }
   } catch {
-    return null
+    return { buf: null, finalUrl }
   }
-  if (!buf.subarray(0, 5).toString('ascii').startsWith('%PDF-')) return null
-  return buf
+  if (!buf.subarray(0, 5).toString('ascii').startsWith('%PDF-')) return { buf: null, finalUrl }
+  return { buf, finalUrl }
+}
+
+/**
+ * Fetch the PDF at `proxyUrl` and return its bytes, or null on any failure
+ * (network error, non-200, non-PDF response). Retries once with a freshly
+ * forced dga-ag session if the first attempt lands on the login page.
+ */
+export async function fetchPdfBuffer(proxyUrl: string): Promise<Buffer | null> {
+  const { url, headers } = await resolveSource(proxyUrl)
+  const first = await fetchPdfBufferAttempt(url, headers)
+  if (first.buf || !isDgaAgLoginRedirect(proxyUrl, first.finalUrl)) return first.buf
+  await getDgaAgSessionCookie({ forceRefresh: true })
+  const retry = await resolveSource(proxyUrl)
+  return (await fetchPdfBufferAttempt(retry.url, retry.headers)).buf
 }
 
 /**
