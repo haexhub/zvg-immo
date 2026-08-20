@@ -9,7 +9,12 @@ definePageMeta({ layout: 'landing' })
 
 const { t } = useI18n()
 const { user } = useAuth()
-const { watchlistIds, toggleWatchlist } = useAuctionWatchlist()
+const watchlistError = ref<string | null>(null)
+const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
+  onError: (message) => {
+    watchlistError.value = message
+  },
+})
 
 // app.vue already sets the reactive title/description from these same
 // site.* keys; this adds the Open Graph/canonical tags it doesn't cover.
@@ -49,6 +54,8 @@ const geoRails = computed(() => {
   <main>
     <!-- Category rails -->
     <div class="w-full px-3">
+      <p v-if="watchlistError" class="text-sm text-destructive">{{ watchlistError }}</p>
+
       <LandingCategoryRail
         v-for="rail in rails?.countryRails"
         :key="rail.code"
