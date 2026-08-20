@@ -1,11 +1,28 @@
 <script setup lang="ts">
 import type { LandingRailsResponse } from '~/server/api/landing/rails.get'
+import { useAuctionWatchlist, type WatchlistableAuction } from '~/composables/useAuctionWatchlist'
+import { auctionKey } from '~/lib/auction-key'
 
 // The search bar lives in the header, which layouts/landing.vue owns together
 // with its filter state.
 definePageMeta({ layout: 'landing' })
 
 const { t } = useI18n()
+const { user } = useAuth()
+const watchlistError = ref<string | null>(null)
+const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
+  onError: (message) => {
+    watchlistError.value = message
+  },
+})
+watch(user, () => {
+  watchlistError.value = null
+})
+
+function handleToggleWatchlist(a: WatchlistableAuction) {
+  watchlistError.value = null
+  toggleWatchlist(a)
+}
 
 // app.vue already sets the reactive title/description from these same
 // site.* keys; this adds the Open Graph/canonical tags it doesn't cover.
@@ -45,6 +62,8 @@ const geoRails = computed(() => {
   <main>
     <!-- Category rails -->
     <div class="w-full px-3">
+      <p v-if="watchlistError" role="alert" class="text-sm text-destructive">{{ watchlistError }}</p>
+
       <LandingCategoryRail
         v-for="rail in rails?.countryRails"
         :key="rail.code"
@@ -52,7 +71,13 @@ const geoRails = computed(() => {
         :to="{ path: '/search', query: { country: rail.code } }"
       >
         <div v-for="a in rail.auctions" :key="`${a.platform}:${a.externalId}`" class="w-[calc(50%-0.5rem)] shrink-0 snap-start sm:w-72">
-          <AuctionCard :auction="a" class="h-full" />
+          <AuctionCard
+            :auction="a"
+            class="h-full"
+            :logged-in="!!user"
+            :in-watchlist="watchlistIds.has(auctionKey(a))"
+            @toggle-watchlist="handleToggleWatchlist(a)"
+          />
         </div>
       </LandingCategoryRail>
 
@@ -63,7 +88,13 @@ const geoRails = computed(() => {
         :to="{ path: '/search', query: { condition: 'neuwertig,gepflegt' } }"
       >
         <div v-for="a in rails.bestCondition" :key="`${a.platform}:${a.externalId}`" class="w-[calc(50%-0.5rem)] shrink-0 snap-start sm:w-72">
-          <AuctionCard :auction="a" class="h-full" />
+          <AuctionCard
+            :auction="a"
+            class="h-full"
+            :logged-in="!!user"
+            :in-watchlist="watchlistIds.has(auctionKey(a))"
+            @toggle-watchlist="handleToggleWatchlist(a)"
+          />
         </div>
       </LandingCategoryRail>
 
@@ -75,7 +106,13 @@ const geoRails = computed(() => {
         :to="{ path: '/search', query: geo.query }"
       >
         <div v-for="a in geo.items" :key="`${a.platform}:${a.externalId}`" class="w-[calc(50%-0.5rem)] shrink-0 snap-start sm:w-72">
-          <AuctionCard :auction="a" class="h-full" />
+          <AuctionCard
+            :auction="a"
+            class="h-full"
+            :logged-in="!!user"
+            :in-watchlist="watchlistIds.has(auctionKey(a))"
+            @toggle-watchlist="handleToggleWatchlist(a)"
+          />
         </div>
       </LandingCategoryRail>
     </div>
