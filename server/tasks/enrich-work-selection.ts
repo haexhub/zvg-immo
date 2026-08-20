@@ -128,7 +128,25 @@ export async function prepareEnrichWork({
   // MAX_PHOTO_FAILURES so a listing whose PDF/URLs genuinely cannot be
   // mined doesn't retry forever — unless the cooldown since the last
   // attempt has elapsed (see cooldownElapsed above).
-  const needsPhotoBackfill = (a: Auction): boolean => {
+  // This function runs twice per candidate: once here at the 'eligibility'
+  // phase (pre-enrichOne, to decide whether the auction enters `todo` at
+  // all) and again from enrich-worker.ts's per-auction loop at the default
+  // 'extraction' phase, right after enrichOne mutated `a` (to decide whether
+  // to actually spend a fetch). `a.attachments`/nativePhotoUrls(a) are a
+  // meaningful "is there still a source" signal for platforms whose crawl()
+  // step already embeds them — but dga-ag's list.ts always returns
+  // `attachments: []` and no photoUrls; the object's own gallery/catalog
+  // link only exist behind the detail page enrichOne fetches. At the
+  // 'eligibility' phase that would therefore always read as "no source" and
+  // permanently block a photoPipelineVersion bump from ever rebuilding an
+  // already-photographed dga-ag auction without an explicit force (lived
+  // bug, fixed 2026-08-20 for S26-03-009 et al. via a one-off DB reset — this
+  // bypass makes that unnecessary for future version bumps). The bypass must
+  // NOT extend to the 'extraction' phase: if enrichOne itself throws (e.g. a
+  // transient detail-fetch failure), `a.attachments` stays empty there too,
+  // and treating that as "source present" would let the pipeline mark
+  // itself done with zero photos — wiping a previously good photo set.
+  const needsPhotoBackfill = (a: Auction, phase: 'eligibility' | 'extraction' = 'extraction'): boolean => {
     const key = cacheKey(a.platform, a.externalId)
     const hit = records.get(key)?.auction.extraction
     const state = fetchStates.get(key)
@@ -139,24 +157,9 @@ export async function prepareEnrichWork({
       (state.photoPipelineVersion ?? 1) < targetVersion
     const belowFailureCap =
       (state?.photoFailures ?? 0) < MAX_PHOTO_FAILURES || cooldownElapsed(state?.photoLastAttemptedAt)
-    // This function runs twice per candidate: here (pre-enrichOne, to decide
-    // eligibility) and again in enrich-worker.ts's per-auction loop right
-    // after enrichOne mutated `a` (to decide whether to actually spend a
-    // fetch). `a.attachments`/nativePhotoUrls(a) are a meaningful "is there
-    // still a source" signal for platforms whose crawl() step already
-    // embeds them — but dga-ag's list.ts always returns `attachments: []`
-    // and no photoUrls; the object's own gallery/catalog link only exist
-    // behind the detail page enrichOne fetches. For dga-ag this first
-    // (pre-enrichOne) call would therefore always read as "no source" and
-    // permanently block a photoPipelineVersion bump from ever rebuilding an
-    // already-photographed auction without an explicit force (lived bug,
-    // fixed 2026-08-20 for S26-03-009 et al. via a one-off DB reset — this
-    // bypass makes that unnecessary for future version bumps). The bypass is
-    // a no-op on the second, post-enrichOne call: by then dga-ag's
-    // attachments are already populated, so the presence check would have
-    // been true anyway.
+    const dgaAgPreEnrichBypass = phase === 'eligibility' && a.platform === 'dga-ag'
     const hasPlausiblePhotoSource =
-      photos === 0 || nativePhotoUrls(a).length > 0 || a.attachments.length > 0 || a.platform === 'dga-ag'
+      photos === 0 || nativePhotoUrls(a).length > 0 || a.attachments.length > 0 || dgaAgPreEnrichBypass
     if (scopedForce) {
       return hasPlausiblePhotoSource && belowFailureCap
     }
@@ -168,7 +171,7 @@ export async function prepareEnrichWork({
       !records.get(cacheKey(a.platform, a.externalId))?.auction.extraction ||
       needsEnrich(a) ||
       needsDocumentSetCheck(a) ||
-      needsPhotoBackfill(a),
+      needsPhotoBackfill(a, 'eligibility'),
   )
   const todo = interleaveByPlatform(eligible)
 

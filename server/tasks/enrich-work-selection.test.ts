@@ -112,7 +112,7 @@ describe('prepareEnrichWork needsPhotoBackfill — dga-ag stale-version backfill
       records: new Map([[key, recordWithPhotos(a, Array.from({ length: 56 }, (_, i) => `${i}.jpg`))]]),
     })
 
-    expect(needsPhotoBackfill(a)).toBe(true)
+    expect(needsPhotoBackfill(a, 'eligibility')).toBe(true)
     expect(todo).toContain(a)
   })
 
@@ -127,7 +127,7 @@ describe('prepareEnrichWork needsPhotoBackfill — dga-ag stale-version backfill
       records: new Map([[key, recordWithPhotos(a, ['0.jpg'])]]),
     })
 
-    expect(needsPhotoBackfill(a)).toBe(false)
+    expect(needsPhotoBackfill(a, 'eligibility')).toBe(false)
     expect(todo).not.toContain(a)
   })
 
@@ -142,7 +142,30 @@ describe('prepareEnrichWork needsPhotoBackfill — dga-ag stale-version backfill
       records: new Map([[key, recordWithPhotos(a, ['0.jpg'])]]),
     })
 
-    expect(needsPhotoBackfill(a)).toBe(false)
+    expect(needsPhotoBackfill(a, 'eligibility')).toBe(false)
     expect(todo).not.toContain(a)
+  })
+
+  it('does NOT bypass the source check at the extraction phase — a dga-ag auction enrichOne left without any source must not be treated as having one', async () => {
+    // Simulates enrichOne throwing (e.g. a transient detail-fetch failure):
+    // `a` stays exactly as the fresh crawl left it — no attachments, no
+    // photoUrls — even though this is the stale-version backfill scenario
+    // that made the auction eligible in the first place. enrich-worker.ts
+    // calls needsPhotoBackfill(a) with no second argument here (the
+    // 'extraction' default) to decide whether to actually run photo
+    // extraction; treating "dga-ag" alone as a source at this point would
+    // let the pipeline mark itself done with zero photos, wiping whatever
+    // was previously stored.
+    const a = auction()
+    const key = 'dga-ag:S26-03-009'
+    const { needsPhotoBackfill } = await prepareEnrichWork({
+      opts: {},
+      auctions: [a],
+      fetchStates: new Map([[key, fetchState({ photoPipelineVersion: 4 })]]),
+      artifactVersions: new Map(),
+      records: new Map([[key, recordWithPhotos(a, Array.from({ length: 56 }, (_, i) => `${i}.jpg`))]]),
+    })
+
+    expect(needsPhotoBackfill(a)).toBe(false)
   })
 })
