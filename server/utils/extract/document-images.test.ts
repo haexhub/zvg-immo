@@ -141,6 +141,15 @@ describe('pickDocumentImageCandidates', () => {
 
     expect(candidates.map((a) => a.filename)).toEqual(['Foto.pdf', 'notice.docx', 'page.html'])
   })
+
+  it('skips attachments flagged as covering multiple auction lots', () => {
+    const candidates = pickDocumentImageCandidates([
+      attachment({ kind: 'brochure', filename: 'katalog.pdf', excludeFromDocumentMining: true }),
+      attachment({ kind: 'appraisal', filename: 'gutachten.pdf' }),
+    ])
+
+    expect(candidates.map((a) => a.filename)).toEqual(['gutachten.pdf'])
+  })
 })
 
 describe('extractHtmlImageUrls', () => {
