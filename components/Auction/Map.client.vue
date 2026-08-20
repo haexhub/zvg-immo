@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Feature } from 'ol'
+import { boundingExtent } from 'ol/extent'
 import Point from 'ol/geom/Point'
 import type OlMap from 'ol/Map'
 import { fromLonLat, transformExtent } from 'ol/proj'
@@ -11,6 +12,7 @@ import { auctionKey } from '~/lib/auction-key'
 import { boundsForCountries } from '~/lib/country-bounds'
 import type { ContentTargetLang } from '~/lib/content-language'
 import { OSM_ATTRIBUTION, mapTilerSatelliteStyleUrl, mapTilerStreetsStyleUrl } from '~/lib/map-tiles'
+import { createMarkerClusterer, type ClusterPoint } from '~/lib/marker-clusterer'
 import { mapPinDataUri, MAP_PIN_ANCHOR } from '~/lib/mapPinIcon'
 import { useMapTilerVectorBaseLayer } from '~/composables/useMapTilerVectorBaseLayer'
 
@@ -32,26 +34,26 @@ function pinStyle(active: boolean): Style {
   return active ? pinStyleActive : pinStyleDefault
 }
 
-// ol/source/Cluster wraps every feature (even singletons) in a "cluster
-// feature" whose `features` property holds the real children — so this
-// single style function covers both individual pins and cluster badges.
-// OL calls this for every visible feature on every render pass (pan/zoom/
-// refresh), so cluster badge styles are cached like the singleton pin
-// styles above instead of rebuilt each time.
+// renderView() below builds one OL feature per cluster/point returned by the
+// clusterer for the current viewport, tagging each with 'isCluster' (+
+// 'count' for clusters) — so this single style function covers both
+// individual pins and cluster badges. OL calls this for every visible
+// feature on every render pass (pan/zoom/refresh), so cluster badge styles
+// are cached like the singleton pin styles above instead of rebuilt each time.
 const clusterStyleCache = new Map<string, Style>()
 function clusterStyle(feature: any): Style {
-  const children = (feature.get('features') ?? [feature]) as Feature<Point>[]
-  if (children.length === 1) {
-    return pinStyle(children[0]!.get('active') === true)
+  if (!feature.get('isCluster')) {
+    return pinStyle(feature.get('active') === true)
   }
-  const active = children.some((f) => f.get('active') === true)
-  const cacheKey = `${children.length}:${active}`
+  const count = feature.get('count') as number
+  const active = feature.get('active') === true
+  const cacheKey = `${count}:${active}`
   let style = clusterStyleCache.get(cacheKey)
   if (!style) {
     const color = active ? PIN_COLOR_ACTIVE : PIN_COLOR
     style = new Style({
       image: new CircleStyle({ radius: 18, fill: new Fill({ color }), stroke: new Stroke({ color: '#fff', width: 2 }) }),
-      text: new Text({ text: String(children.length), fill: new Fill({ color: '#fff' }), font: 'bold 12px sans-serif' }),
+      text: new Text({ text: String(count), fill: new Fill({ color: '#fff' }), font: 'bold 12px sans-serif' }),
     })
     clusterStyleCache.set(cacheKey, style)
   }
@@ -118,16 +120,24 @@ const mapInstance = shallowRef<OlMap | null>(null)
 watch(() => mapRef.value?.map, (m) => { mapInstance.value = m ?? null }, { immediate: true })
 useMapTilerVectorBaseLayer({ map: mapInstance, styleUrl: vectorStyleUrl, lang: locale })
 const vectorSourceRef = ref<any>(null)
-const clusterSourceRef = ref<any>(null)
 const vectorLayerRef = ref<any>(null)
 
 const MAX_ZOOM = 18
+
+// Supercluster instead of ol/source/Cluster: the latter recomputes its
+// entire feature set from scratch on every 'change' event (see the old
+// addFeatures()/removeFeatures() batching comments this replaced), which
+// cost ~5s of blocked main thread for a few thousand markers — see
+// search-map-freeze-cluster-investigation memory. Supercluster indexes once
+// per data change (a few ms even at MAX_MARKERS) and answers per-viewport
+// queries in well under a millisecond.
+const clusterer = createMarkerClusterer(60)
 
 const selectedKey = ref<string | null>(null)
 const popupPosition = ref<number[] | undefined>(undefined)
 const selectedAuction = computed<GeoAuction | undefined>(() => {
   if (!selectedKey.value) return undefined
-  return featuresByKey.get(selectedKey.value)?.get('auction') as GeoAuction | undefined
+  return auctionsByKey.get(selectedKey.value)
 })
 const selectedSummary = computed<AuctionSummary | null>(() => {
   if (!selectedKey.value) return null
@@ -141,7 +151,7 @@ const clusterKeys = ref<string[] | null>(null)
 const clusterAuctions = computed<GeoAuction[]>(() => {
   if (!clusterKeys.value) return []
   return clusterKeys.value
-    .map((key) => featuresByKey.get(key)?.get('auction') as GeoAuction | undefined)
+    .map((key) => auctionsByKey.get(key))
     .filter((a): a is GeoAuction => a != null)
 })
 
@@ -151,25 +161,11 @@ const clusterAuctions = computed<GeoAuction[]>(() => {
 let shouldFitNext = true
 let fallbackFitKey: string | null = null
 
-// Features keyed by `platform:externalId` so refreshMarkers can diff instead
-// of rebuilding — existing features (and an open popup) survive poll updates.
-const featuresByKey = new Map<string, Feature<Point>>()
-let lastActiveKey: string | null = null
-
-function updateMarkerHighlight(): void {
-  const changedKeys = new Set([lastActiveKey, props.activeAuctionKey].filter((key): key is string => key != null))
-  for (const key of changedKeys) {
-    const feature = featuresByKey.get(key)
-    if (!feature) continue
-    feature.set('active', key === props.activeAuctionKey)
-  }
-  lastActiveKey = props.activeAuctionKey ?? null
-  // layer.changed() repaints with the current style function (which reads
-  // the 'active' flag just set above) without clusterSource.refresh()'s
-  // clear-and-reload of the wrapped vector source — that would force a full
-  // re-cluster for what's only ever a hover-driven style change.
-  if (changedKeys.size) vectorLayerRef.value?.vectorLayer?.changed()
-}
+// Full auction data keyed by `platform:externalId` — renderView() below only
+// ever builds features for the clusters/points visible in the current
+// viewport, so this (not the map's vector source) is the lookup the popup/
+// cluster-picker/computeds above read from.
+const auctionsByKey = new Map<string, GeoAuction>()
 
 function emitBounds(): void {
   const map = mapRef.value?.map
@@ -196,80 +192,99 @@ function fitFallbackView(): void {
   }
 }
 
-function refreshMarkers(): void {
+function fitToAuctions(map: OlMap, points: ClusterPoint[]): void {
+  const coords = points.map((p) => fromLonLat([p.lng, p.lat]))
+  map.getView().fit(boundingExtent(coords), { padding: [40, 40, 40, 40], maxZoom: 12 })
+}
+
+// Rebuilds the vector source from whatever the clusterer returns for the
+// current viewport + zoom — called after refreshMarkers() re-indexes the
+// data, and again on every moveend/activeAuctionKey change so pan/zoom and
+// hover highlighting stay in sync without re-indexing. clear()+addFeatures()
+// fires one 'change' event for the whole batch, same reasoning as the
+// addFeatures()/removeFeatures() batching this replaced.
+function renderView(): void {
   const source = vectorSourceRef.value?.source
   const map = mapRef.value?.map
-  if (!source || !map) return
+  const size = map?.getSize()
+  if (!source || !map || !size) return
 
-  const seen = new Set<string>()
-  let hasPoints = false
-  // Collected instead of calling source.addFeature() per marker: the cluster
-  // source re-clusters its entire feature set on every 'change' event from
-  // the wrapped source, and addFeature() fires one such event per call —
-  // O(n) reclusters for n new markers. addFeatures() below fires the event
-  // once for the whole batch, which is the only way an unfiltered "all
-  // countries" load (up to 5000 markers, see MAX_MARKERS) doesn't lock up
-  // the tab on every navigation to /search.
-  const newFeatures: Feature<Point>[] = []
+  const extent = map.getView().calculateExtent(size)
+  const bbox = transformExtent(extent, 'EPSG:3857', 'EPSG:4326') as [number, number, number, number]
+  const zoom = map.getView().getZoom() ?? initialZoom
+  const activeKey = props.activeAuctionKey ?? null
+
+  const features = clusterer.getClusters(bbox, zoom).map((c) => {
+    const feature = new Feature({ geometry: new Point(fromLonLat([c.lng, c.lat])) })
+    if (c.isCluster) {
+      feature.setId(`cluster:${c.clusterId}`)
+      feature.set('isCluster', true)
+      feature.set('clusterId', c.clusterId)
+      feature.set('count', c.count)
+      // A cluster reads as "active" if the hovered/selected auction happens
+      // to be one of its (currently uncollapsed) children — getLeafKeys()
+      // only runs for the handful of clusters actually on screen, and only
+      // once activeKey is set at all, so this stays cheap.
+      feature.set('active', activeKey != null && clusterer.getLeafKeys(c.clusterId).includes(activeKey))
+    } else {
+      feature.setId(c.key)
+      feature.set('isCluster', false)
+      feature.set('key', c.key)
+      feature.set('active', c.key === activeKey)
+    }
+    return feature
+  })
+  source.clear()
+  source.addFeatures(features)
+}
+
+function refreshMarkers(): void {
+  const map = mapRef.value?.map
+  if (!vectorSourceRef.value?.source || !map) return
+
+  auctionsByKey.clear()
+  const points: ClusterPoint[] = []
   for (const a of props.auctions) {
     if (a.lat == null || a.lng == null) continue
     const key = auctionKey(a)
-    seen.add(key)
-    hasPoints = true
-    let feature = featuresByKey.get(key)
-    if (!feature) {
-      feature = new Feature({ geometry: new Point(fromLonLat([a.lng, a.lat])) })
-      feature.setId(key)
-      feature.set('active', key === props.activeAuctionKey)
-      if (key === props.activeAuctionKey) lastActiveKey = key
-      featuresByKey.set(key, feature)
-      newFeatures.push(feature)
-    }
-    // Refreshed on every pass (not just on creation) so a popup opened after
-    // a later poll shows live data instead of the auction as it was when the
-    // marker was first created.
-    feature.set('auction', a)
+    auctionsByKey.set(key, a)
+    points.push({ key, lng: a.lng, lat: a.lat })
   }
-  if (newFeatures.length) source.addFeatures(newFeatures)
-  // Remove features whose auctions dropped out (e.g. narrowing from "all
-  // countries" to one region drops thousands at once); close an open popup
-  // pointing at a removed feature. Batched via removeFeatures() for the same
-  // reason as addFeatures() above — removeFeature() fires one 'change' event
-  // per call, forcing a full re-cluster of the remaining set for every single
-  // removal.
-  const staleFeatures: Feature<Point>[] = []
-  for (const [key, feature] of featuresByKey) {
-    if (seen.has(key)) continue
-    staleFeatures.push(feature)
-    featuresByKey.delete(key)
-    if (selectedKey.value === key) {
-      selectedKey.value = null
-      popupPosition.value = undefined
-    }
-    // A cluster picker stays open by key list, not by feature reference — drop
-    // the removed auction from it too, closing the picker once none are left.
-    if (clusterKeys.value?.includes(key)) {
-      clusterKeys.value = clusterKeys.value.filter((k) => k !== key)
-      if (!clusterKeys.value.length) {
-        clusterKeys.value = null
-        popupPosition.value = undefined
-      }
+  clusterer.load(points)
+
+  // Close an open popup/picker pointing at an auction that dropped out (e.g.
+  // narrowing from "all countries" to one region drops thousands at once).
+  if (selectedKey.value && !auctionsByKey.has(selectedKey.value)) {
+    selectedKey.value = null
+    popupPosition.value = undefined
+  }
+  if (clusterKeys.value) {
+    const remaining = clusterKeys.value.filter((k) => auctionsByKey.has(k))
+    if (remaining.length !== clusterKeys.value.length) {
+      clusterKeys.value = remaining.length ? remaining : null
+      if (!remaining.length) popupPosition.value = undefined
     }
   }
-  if (staleFeatures.length) source.removeFeatures(staleFeatures)
 
   const currentFitKey = props.fitKey ?? ''
-  const canUpgradeFallbackFit = fallbackFitKey === currentFitKey && hasPoints
-  if (!shouldFitNext && !canUpgradeFallbackFit) return
-  if (hasPoints) {
+  const canUpgradeFallbackFit = fallbackFitKey === currentFitKey && points.length > 0
+  if (shouldFitNext || canUpgradeFallbackFit) {
     shouldFitNext = false
-    fallbackFitKey = null
-    map.getView().fit(source.getExtent(), { padding: [40, 40, 40, 40], maxZoom: 12 })
-  } else {
-    shouldFitNext = false
-    fallbackFitKey = currentFitKey
-    fitFallbackView()
+    if (points.length) {
+      fallbackFitKey = null
+      fitToAuctions(map, points)
+    } else {
+      fallbackFitKey = currentFitKey
+      fitFallbackView()
+    }
   }
+
+  renderView()
+}
+
+function onMoveEnd(): void {
+  emitBounds()
+  renderView()
 }
 
 // vue3-openlayers creates the underlying ol/source/Vector asynchronously
@@ -294,15 +309,15 @@ watch(() => props.fitKey, () => {
 })
 
 watch(() => props.auctions, refreshMarkers, { deep: false })
-watch(() => props.activeAuctionKey, updateMarkerHighlight)
+watch(() => props.activeAuctionKey, renderView)
 
 // Without this, forEachFeatureAtPixel below also hits the MapTiler vector
 // base layer's own features (road/landcover/water polygons cover almost
 // every pixel) once useMapTilerVectorBaseLayer is active — clicking empty
-// map area then finds one of those instead of nothing, and
-// `clusterFeature.get('features')` on a foreign feature is undefined,
-// throwing inside onMapClick/onPointerMove before the popup-closing reset
-// runs. Only the raster OSM/Esri fallback (no vector features) hid this.
+// map area then finds one of those instead of nothing, and a foreign
+// feature has neither 'isCluster' nor 'key' set, which would otherwise
+// select `undefined` instead of running the popup-closing reset below. Only
+// the raster OSM/Esri fallback (no vector features) hid this.
 function isMarkerLayer(layer: any): boolean {
   return layer === vectorLayerRef.value?.vectorLayer
 }
@@ -310,41 +325,42 @@ function isMarkerLayer(layer: any): boolean {
 function onMapClick(evt: any): void {
   const map = mapRef.value?.map
   if (!map) return
-  const clusterFeature = map.forEachFeatureAtPixel(evt.pixel, (f: any) => f, { layerFilter: isMarkerLayer })
-  if (!clusterFeature) {
+  const feature = map.forEachFeatureAtPixel(evt.pixel, (f: any) => f, { layerFilter: isMarkerLayer })
+  if (!feature) {
     selectedKey.value = null
     clusterKeys.value = null
     popupPosition.value = undefined
     return
   }
-  const children = clusterFeature.get('features') as Feature<Point>[]
-  if (children.length > 1) {
+  if (feature.get('isCluster')) {
+    const clusterId = feature.get('clusterId') as number
     const view = map.getView()
-    const extent = clusterFeature.getGeometry().getExtent() as [number, number, number, number]
-    // Every child projects to the exact same pixel, so no amount of zooming
-    // will ever push them past the cluster distance (60px) — e.g. several
+    // Supercluster reports the zoom at which this specific cluster actually
+    // splits — a value beyond MAX_ZOOM means it never will (e.g. several
     // auctions unresolvable to an exact address and parked at the same
-    // country-centroid fallback. Same once the view is already at max zoom:
-    // further "zoom in" would be a no-op animation, leaving the cluster
-    // permanently unclickable. Offer a picker instead of spinning forever.
-    const isSinglePoint = extent[0] === extent[2] && extent[1] === extent[3]
+    // country-centroid fallback: every child sits at the exact same
+    // coordinate, see marker-clusterer.test.ts). Same once the view is
+    // already at max zoom: further "zoom in" would be a no-op animation,
+    // leaving the cluster permanently unclickable. Offer a picker instead of
+    // spinning forever.
+    const expansionZoom = clusterer.getExpansionZoom(clusterId)
     const atMaxZoom = (view.getZoom() ?? initialZoom) >= MAX_ZOOM
-    if (isSinglePoint || atMaxZoom) {
+    if (expansionZoom > MAX_ZOOM || atMaxZoom) {
       selectedKey.value = null
-      clusterKeys.value = children.map((f) => f.getId() as string)
-      popupPosition.value = clusterFeature.getGeometry().getCoordinates()
+      clusterKeys.value = clusterer.getLeafKeys(clusterId)
+      popupPosition.value = feature.getGeometry().getCoordinates()
       return
     }
     // Cluster of more than one, still spatially separable — zoom in instead
     // of opening a popup, same as the implicit cluster-click-to-expand
     // behaviour of the Leaflet version.
-    view.animate({ center: clusterFeature.getGeometry().getCoordinates(), zoom: Math.min((view.getZoom() ?? initialZoom) + 2, MAX_ZOOM) })
+    view.animate({ center: feature.getGeometry().getCoordinates(), zoom: Math.min(expansionZoom, MAX_ZOOM) })
     return
   }
   clusterKeys.value = null
-  const key = children[0]!.getId() as string
+  const key = feature.get('key') as string
   selectedKey.value = key
-  popupPosition.value = clusterFeature.getGeometry().getCoordinates()
+  popupPosition.value = feature.getGeometry().getCoordinates()
   emit('auction-select', key)
 }
 
@@ -359,9 +375,8 @@ let lastHoverKey: string | null = null
 function onPointerMove(evt: any): void {
   const map = mapRef.value?.map
   if (!map) return
-  const clusterFeature = map.forEachFeatureAtPixel(evt.pixel, (f: any) => f, { layerFilter: isMarkerLayer })
-  const children = clusterFeature?.get('features') as Feature<Point>[] | undefined
-  const key = children && children.length === 1 ? (children[0]!.getId() as string) : null
+  const feature = map.forEachFeatureAtPixel(evt.pixel, (f: any) => f, { layerFilter: isMarkerLayer })
+  const key = feature && !feature.get('isCluster') ? (feature.get('key') as string) : null
   if (key === lastHoverKey) return
   lastHoverKey = key
   emit('auction-hover', key)
@@ -376,7 +391,7 @@ function onPointerMove(evt: any): void {
          onMapClick then never runs, and an open popup can't be dismissed by
          clicking elsewhere. 8px keeps that dismiss-click reliable without
          interfering with genuine drags. -->
-    <ol-map ref="mapRef" class="h-full w-full" :move-tolerance="8" @click="onMapClick" @pointermove="onPointerMove" @moveend="emitBounds">
+    <ol-map ref="mapRef" class="h-full w-full" :move-tolerance="8" @click="onMapClick" @pointermove="onPointerMove" @moveend="onMoveEnd">
       <ol-view :center="initialCenter" :zoom="initialZoom" projection="EPSG:3857" />
       <!-- MapTiler vector base layer (useMapTilerVectorBaseLayer) is inserted
            imperatively at the bottom of the layer stack once a key is
@@ -395,9 +410,7 @@ function onPointerMove(evt: any): void {
         </template>
       </template>
       <ol-vector-layer ref="vectorLayerRef" :style="clusterStyle">
-        <ol-source-cluster ref="clusterSourceRef" :distance="60">
-          <ol-source-vector ref="vectorSourceRef" />
-        </ol-source-cluster>
+        <ol-source-vector ref="vectorSourceRef" />
       </ol-vector-layer>
       <ol-overlay
         v-if="selectedKey && popupPosition"
