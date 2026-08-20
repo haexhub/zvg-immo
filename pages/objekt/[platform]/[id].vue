@@ -4,7 +4,9 @@ import type { AuctionDetail } from '~/server/api/auction/[platform]/[id].get'
 import { auctionPhotoUrls } from '~/lib/auction-photos'
 import { safeHref } from '~/lib/utils'
 import { useAuctionDetailTranslation } from '~/composables/useAuctionDetailTranslation'
-import { ArrowLeft } from 'lucide-vue-next'
+import { useAuctionWatchlist } from '~/composables/useAuctionWatchlist'
+import { auctionKey } from '~/lib/auction-key'
+import { ArrowLeft, Heart } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
@@ -16,6 +18,10 @@ const { data: a, error, pending } = await useFetch<AuctionDetail | null>(
   `/api/auction/${platform}/${id}`,
   { default: () => null },
 )
+
+const { user } = useAuth()
+const { watchlistIds, toggleWatchlist } = useAuctionWatchlist()
+const inWatchlist = computed(() => watchlistIds.value.has(auctionKey({ platform, externalId: id })))
 
 const {
   translationPending,
@@ -182,6 +188,16 @@ useHead(() => ({
           <h1 class="text-2xl font-bold leading-tight">{{ displayTitle || $t('objektDetail.untitled') }}</h1>
           <TranslationPendingBadge v-if="translationPending" />
           <span v-if="titleTranslated" class="text-xs text-muted-foreground">({{ $t('objektDetail.autoTranslatedHint') }})</span>
+          <button
+            v-if="user"
+            type="button"
+            class="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted"
+            :class="{ 'text-red-500': inWatchlist }"
+            :title="inWatchlist ? $t('search.removeFromWatchlist') : $t('search.addToWatchlist')"
+            @click="toggleWatchlist(a)"
+          >
+            <Heart class="h-4 w-4" :class="{ 'fill-current': inWatchlist }" />
+          </button>
         </div>
         <p v-if="displayAddress" class="text-muted-foreground">{{ displayAddress }}</p>
         <div v-if="a.cancelled" class="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-foreground">

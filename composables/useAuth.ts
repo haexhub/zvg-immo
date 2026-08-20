@@ -28,7 +28,20 @@ export function useAuth() {
   async function signUp(email: string, password: string) {
     const client = getSupabaseClient()
     if (!client) return { error: new Error('Supabase ist nicht konfiguriert.') }
-    const { error } = await client.auth.signUp({ email, password })
+    const { error } = await client.auth.signUp({
+      email,
+      password,
+      options: { emailRedirectTo: `${window.location.origin}/account` },
+    })
+    return { error }
+  }
+
+  // Re-sends the signup confirmation mail, e.g. after a login attempt fails
+  // with error.code === 'email_not_confirmed'.
+  async function resendConfirmation(email: string) {
+    const client = getSupabaseClient()
+    if (!client) return { error: new Error('Supabase ist nicht konfiguriert.') }
+    const { error } = await client.auth.resend({ type: 'signup', email })
     return { error }
   }
 
@@ -48,5 +61,5 @@ export function useAuth() {
 
   init()
 
-  return { user, signUp, signIn, signOut }
+  return { user, signUp, signIn, signOut, resendConfirmation }
 }
