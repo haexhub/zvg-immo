@@ -21,6 +21,13 @@ vi.mock('../crawlers/registry', () => ({
       name: 'Deutschland',
       regions: [{ code: 'sn', name: 'Sachsen', platforms: [] }],
     },
+    // A nationwide-only country: its only registered region is the ALL_SCOPE
+    // pseudo-entry, so picker keys carry the region name as their code.
+    {
+      code: 'bg',
+      name: 'Bulgarien',
+      regions: [{ code: 'all', name: 'Bulgarien', platforms: [] }],
+    },
   ],
 }))
 
@@ -115,6 +122,13 @@ describe('toAuctionFilters', () => {
   it('drops region keys that no longer resolve against the current registry', () => {
     const filters = toAuctionFilters({ region: 'de:unknown-region' })
     expect(filters.regionNameKeys).toEqual(new Set())
+  })
+
+  it('reads a nationwide-only country\'s key as the region name itself', () => {
+    // Those options come from the stored auctions, not the registry (see
+    // region-picker.ts) — resolving them against the registry would drop them
+    // and silently widen the alert to the whole country.
+    expect(toAuctionFilters({ region: 'bg:Burgas' }).regionNameKeys).toEqual(new Set(['bg:Burgas']))
   })
 
   it('shares nearby-distance semantics with the in-memory alert evaluator', () => {

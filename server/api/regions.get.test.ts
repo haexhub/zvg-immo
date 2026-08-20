@@ -1,37 +1,53 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { ALL_SCOPE } from '~/lib/auction-constants'
 import { listCountries, listRegisteredCountries } from '../crawlers/registry'
 
-/** Mirrors regions.get.ts. Kept as a data assertion rather than a handler
- *  invocation so it needs no h3 event: the endpoint is a thin wrapper around
- *  listCountries() plus this projection. */
-function withoutWholeCountryRegions<T extends { regions: Array<{ code: string }> }>(countries: T[]): T[] {
-  return countries.map((country) => ({
-    ...country,
-    regions: country.regions.filter((region) => region.code !== ALL_SCOPE),
-  }))
+vi.mock('../utils/db', () => ({ getPool: vi.fn(() => null) }))
+
+const { applyPickerRegions, readStoredRegionNames } = await import('../utils/region-picker')
+const { getPool } = await import('../utils/db')
+
+/** The endpoint is a thin wrapper around listCountries() plus this projection;
+ *  it is tested through the projection because importing the route itself
+ *  would need Nitro's auto-imported defineEventHandler. */
+function served(stored: Map<string, string[]> = new Map()) {
+  return applyPickerRegions(listRegisteredCountries(), stored)
 }
 
 describe('/api/regions region projection', () => {
   it('drops the whole-country pseudo-region a nationwide-only platform registers', () => {
-    const served = withoutWholeCountryRegions(listRegisteredCountries())
-
-    expect(served.flatMap((c) => c.regions).some((r) => r.code === ALL_SCOPE)).toBe(false)
+    expect(served().flatMap((c) => c.regions).some((r) => r.code === ALL_SCOPE)).toBe(false)
     // Bulgaria's sole region entry is exactly such a pseudo-region — it stays
     // selectable as a country, it just no longer offers a region that could
-    // never match a row (its auctions carry an empty Auction.region).
-    const bg = served.find((c) => c.code === 'bg')
-    expect(bg?.regions).toEqual([])
+    // never match a row.
+    expect(served().find((c) => c.code === 'bg')?.regions).toEqual([])
   })
 
   it('keeps real sub-regions, including a country covered by a single real one', () => {
-    const served = withoutWholeCountryRegions(listRegisteredCountries())
-
     // Canada is served for Ontario only, but 'on' is a genuine province code
     // that the crawler also writes to Auction.region, so it must survive.
-    expect(served.find((c) => c.code === 'ca')?.regions.map((r) => r.name)).toEqual(['Ontario'])
-    expect(served.find((c) => c.code === 'de')?.regions.map((r) => r.name)).toContain('Sachsen')
-    expect(served.find((c) => c.code === 'se')?.regions.map((r) => r.name)).toContain('Stockholm')
+    expect(served().find((c) => c.code === 'ca')?.regions.map((r) => r.name)).toEqual(['Ontario'])
+    expect(served().find((c) => c.code === 'de')?.regions.map((r) => r.name)).toContain('Sachsen')
+    expect(served().find((c) => c.code === 'se')?.regions.map((r) => r.name)).toContain('Stockholm')
+  })
+
+  it('offers a nationwide-only country the region names its auctions actually carry', () => {
+    const regions = served(new Map([['bg', ['Burgas', 'Pleven']]])).find((c) => c.code === 'bg')?.regions
+
+    expect(regions?.map((r) => r.name)).toEqual(['Burgas', 'Pleven'])
+    // The name is the key: useAuctionSearchState resolves `country:code` to
+    // `country:name` before the SQL filter compares it against a.region.
+    expect(regions?.map((r) => r.code)).toEqual(['Burgas', 'Pleven'])
+    expect(regions?.every((r) => r.country === 'bg')).toBe(true)
+    // The platforms serving the whole country serve each of its regions.
+    expect(regions?.[0]?.platforms.map((p) => p.id)).toEqual(['bg-zapori'])
+  })
+
+  it('leaves a country with real sub-regions untouched by stored names', () => {
+    const regions = served(new Map([['de', ['Made Up']]])).find((c) => c.code === 'de')?.regions
+
+    expect(regions?.map((r) => r.name)).not.toContain('Made Up')
+    expect(regions?.map((r) => r.name)).toContain('Sachsen')
   })
 
   it('leaves the registry itself untouched — the projection is API-only', () => {
@@ -42,5 +58,50 @@ describe('/api/regions region projection', () => {
     // Germany has no such entry to begin with: every platform serving it,
     // BImA included, registers real Bundesländer.
     expect(listCountries().find((c) => c.code === 'de')?.regions.some((r) => r.code === ALL_SCOPE)).toBe(false)
+  })
+})
+
+describe('readStoredRegionNames', () => {
+  it('groups the distinct region names per country', async () => {
+    const query = vi.fn(async (_sql: string, _params: unknown[]) => ({
+      rows: [
+        { country: 'bg', region: 'Burgas' },
+        { country: 'bg', region: 'Pleven' },
+        { country: 'pl', region: 'Mazowieckie' },
+      ],
+    }))
+    vi.mocked(getPool).mockReturnValueOnce({ query } as never)
+
+    expect(await readStoredRegionNames(['bg', 'pl'])).toEqual(
+      new Map([
+        ['bg', ['Burgas', 'Pleven']],
+        ['pl', ['Mazowieckie']],
+      ]),
+    )
+    expect(query.mock.calls[0]?.[1]).toEqual([['bg', 'pl']])
+    // A region only reachable through an expired auction can't ever appear in
+    // the actual search results either (auction-search-filters.ts always
+    // hides those) — the query must exclude them the same way it excludes
+    // cancelled rows, or the picker offers another dead option.
+    expect(query.mock.calls[0]?.[0]).toMatch(/auction_date_iso IS NULL OR auction_date_iso >= now\(\)/)
+  })
+
+  it('stays empty without Postgres, which keeps the payload as it was', async () => {
+    expect(await readStoredRegionNames(['bg'])).toEqual(new Map())
+  })
+
+  it('propagates a query failure instead of swallowing it — the caller (regions.get.ts) is the one that degrades to no region block', async () => {
+    const query = vi.fn(async () => { throw new Error('connection terminated') })
+    vi.mocked(getPool).mockReturnValueOnce({ query } as never)
+
+    await expect(readStoredRegionNames(['bg'])).rejects.toThrow('connection terminated')
+  })
+
+  it('does not query at all when every country has real sub-regions', async () => {
+    const query = vi.fn()
+    vi.mocked(getPool).mockReturnValueOnce({ query } as never)
+
+    expect(await readStoredRegionNames([])).toEqual(new Map())
+    expect(query).not.toHaveBeenCalled()
   })
 })
