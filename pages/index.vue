@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import type { LandingRailsResponse } from '~/server/api/landing/rails.get'
+import { useAuctionWatchlist } from '~/composables/useAuctionWatchlist'
+import { auctionKey } from '~/lib/auction-key'
 
 // The search bar lives in the header, which layouts/landing.vue owns together
 // with its filter state.
 definePageMeta({ layout: 'landing' })
 
 const { t } = useI18n()
+const { user } = useAuth()
+const { watchlistIds, toggleWatchlist } = useAuctionWatchlist()
 
 // app.vue already sets the reactive title/description from these same
 // site.* keys; this adds the Open Graph/canonical tags it doesn't cover.
@@ -52,7 +56,13 @@ const geoRails = computed(() => {
         :to="{ path: '/search', query: { country: rail.code } }"
       >
         <div v-for="a in rail.auctions" :key="`${a.platform}:${a.externalId}`" class="w-[calc(50%-0.5rem)] shrink-0 snap-start sm:w-72">
-          <AuctionCard :auction="a" class="h-full" />
+          <AuctionCard
+            :auction="a"
+            class="h-full"
+            :logged-in="!!user"
+            :in-watchlist="watchlistIds.has(auctionKey(a))"
+            @toggle-watchlist="toggleWatchlist(a)"
+          />
         </div>
       </LandingCategoryRail>
 
@@ -63,7 +73,13 @@ const geoRails = computed(() => {
         :to="{ path: '/search', query: { condition: 'neuwertig,gepflegt' } }"
       >
         <div v-for="a in rails.bestCondition" :key="`${a.platform}:${a.externalId}`" class="w-[calc(50%-0.5rem)] shrink-0 snap-start sm:w-72">
-          <AuctionCard :auction="a" class="h-full" />
+          <AuctionCard
+            :auction="a"
+            class="h-full"
+            :logged-in="!!user"
+            :in-watchlist="watchlistIds.has(auctionKey(a))"
+            @toggle-watchlist="toggleWatchlist(a)"
+          />
         </div>
       </LandingCategoryRail>
 
@@ -75,7 +91,13 @@ const geoRails = computed(() => {
         :to="{ path: '/search', query: geo.query }"
       >
         <div v-for="a in geo.items" :key="`${a.platform}:${a.externalId}`" class="w-[calc(50%-0.5rem)] shrink-0 snap-start sm:w-72">
-          <AuctionCard :auction="a" class="h-full" />
+          <AuctionCard
+            :auction="a"
+            class="h-full"
+            :logged-in="!!user"
+            :in-watchlist="watchlistIds.has(auctionKey(a))"
+            @toggle-watchlist="toggleWatchlist(a)"
+          />
         </div>
       </LandingCategoryRail>
     </div>
