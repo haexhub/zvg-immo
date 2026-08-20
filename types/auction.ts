@@ -302,6 +302,11 @@ export interface Attachment {
    *  whose upstream requires a specific Referer) or the
    *  direct upstream URL when the file is publicly fetchable without one. */
   proxyUrl: string
+  /** True when this document covers multiple auction lots (e.g. a shared
+   *  multi-object sale catalog) — any photo or fact mined from it can't be
+   *  attributed to this one auction, so both photo extraction and LLM
+   *  document analysis must skip it. */
+  excludeFromDocumentMining?: boolean
 }
 
 export interface Auction {

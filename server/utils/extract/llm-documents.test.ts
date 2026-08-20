@@ -155,6 +155,15 @@ describe('pickAllLlmDocumentAttachments', () => {
       'terms.txt',
     ])
   })
+
+  it('skips attachments flagged as covering multiple auction lots', () => {
+    const picked = pickAllLlmDocumentAttachments([
+      att({ kind: 'brochure', filename: 'katalog.pdf', proxyUrl: 'https://example.test/katalog.pdf', excludeFromDocumentMining: true }),
+      att({ kind: 'other', filename: 'terms.txt', proxyUrl: 'https://example.test/terms.txt' }),
+    ])
+
+    expect(picked.map((item) => item.filename)).toEqual(['terms.txt'])
+  })
 })
 
 describe('htmlToText', () => {
