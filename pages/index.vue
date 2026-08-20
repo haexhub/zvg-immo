@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { LandingRailsResponse } from '~/server/api/landing/rails.get'
-import { useAuctionWatchlist } from '~/composables/useAuctionWatchlist'
+import { useAuctionWatchlist, type WatchlistableAuction } from '~/composables/useAuctionWatchlist'
 import { auctionKey } from '~/lib/auction-key'
 
 // The search bar lives in the header, which layouts/landing.vue owns together
@@ -15,6 +15,14 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
     watchlistError.value = message
   },
 })
+watch(user, () => {
+  watchlistError.value = null
+})
+
+function handleToggleWatchlist(a: WatchlistableAuction) {
+  watchlistError.value = null
+  toggleWatchlist(a)
+}
 
 // app.vue already sets the reactive title/description from these same
 // site.* keys; this adds the Open Graph/canonical tags it doesn't cover.
@@ -54,7 +62,7 @@ const geoRails = computed(() => {
   <main>
     <!-- Category rails -->
     <div class="w-full px-3">
-      <p v-if="watchlistError" class="text-sm text-destructive">{{ watchlistError }}</p>
+      <p v-if="watchlistError" role="alert" class="text-sm text-destructive">{{ watchlistError }}</p>
 
       <LandingCategoryRail
         v-for="rail in rails?.countryRails"
@@ -68,7 +76,7 @@ const geoRails = computed(() => {
             class="h-full"
             :logged-in="!!user"
             :in-watchlist="watchlistIds.has(auctionKey(a))"
-            @toggle-watchlist="toggleWatchlist(a)"
+            @toggle-watchlist="handleToggleWatchlist(a)"
           />
         </div>
       </LandingCategoryRail>
@@ -85,7 +93,7 @@ const geoRails = computed(() => {
             class="h-full"
             :logged-in="!!user"
             :in-watchlist="watchlistIds.has(auctionKey(a))"
-            @toggle-watchlist="toggleWatchlist(a)"
+            @toggle-watchlist="handleToggleWatchlist(a)"
           />
         </div>
       </LandingCategoryRail>
@@ -103,7 +111,7 @@ const geoRails = computed(() => {
             class="h-full"
             :logged-in="!!user"
             :in-watchlist="watchlistIds.has(auctionKey(a))"
-            @toggle-watchlist="toggleWatchlist(a)"
+            @toggle-watchlist="handleToggleWatchlist(a)"
           />
         </div>
       </LandingCategoryRail>
