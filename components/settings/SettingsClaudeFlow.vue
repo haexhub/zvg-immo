@@ -121,6 +121,10 @@ onMounted(refreshStatus)
 
       <div v-else-if="status.state === 'idle' && status.credentialsExist" class="space-y-3">
         <p class="text-sm text-emerald-600 dark:text-emerald-500">{{ $t('settings.claude.connected') }}</p>
+        <p v-if="status.accountInfo?.emailAddress" class="text-sm text-muted-foreground">
+          {{ $t('settings.claude.accountLabel') }} <span class="font-medium">{{ status.accountInfo.emailAddress }}</span>
+        </p>
+        <p v-else class="text-sm text-muted-foreground">{{ $t('settings.claude.accountUnknown') }}</p>
         <div class="flex flex-wrap gap-2">
           <Button type="button" variant="outline" :disabled="actionPending" @click="startLogin">{{ $t('settings.claude.reconnect') }}</Button>
         </div>

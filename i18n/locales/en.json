@@ -140,6 +140,8 @@
       "starting": "Starting …",
       "startLogin": "Start login",
       "connected": "✓ Already connected",
+      "accountLabel": "Signed in as:",
+      "accountUnknown": "Could not determine the connected account.",
       "reconnect": "Reconnect",
       "openingLogin": "Opening Anthropic login …",
       "step1": "1. Open the Anthropic login page and authorize access:",
