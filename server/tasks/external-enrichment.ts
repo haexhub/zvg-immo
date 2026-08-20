@@ -24,6 +24,7 @@ import {
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 import { runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-task'
 import { recordTaskRunEnd, recordTaskRunProgress, recordTaskRunStart, type TaskRunSummary } from '~/server/utils/task-runs'
+import { inScope, orderByStaleness } from './external-enrichment-scope'
 
 export interface MarketComparisonAdapter {
   id: string
@@ -120,6 +121,10 @@ export default defineTask({
   },
 })
 
+// Caps every invocation (cron or manual trigger) to a batch instead of a
+// full sweep, which measured ~16h — long enough that the next colliding
+// runExclusiveTask abort costs a whole day's progress, not a batch's.
+const DEFAULT_BATCH_LIMIT = 40
 export async function runExternalEnrichment(
   options: ExternalEnrichmentOptions = {},
   signal?: AbortSignal,
@@ -150,15 +155,21 @@ export async function runExternalEnrichment(
   const locationContextAdapters = options.locationContextAdapters ?? await defaultLocationContextAdapters(db, checkedAt, summary)
   throwIfTaskAborted(signal)
 
-  const scope = records.map((record) => record.auction).filter((auction) =>
+  const inScopeAuctions = records.map((record) => record.auction).filter((auction) =>
     inScope(auction, options)
     && (!options.onlyMissingLocationContext || existing[cacheKey(auction.platform, auction.externalId)]?.locationContext?.source.id !== 'openstreetmap-overpass'),
   )
-  const total = options.limit != null ? Math.min(scope.length, options.limit) : scope.length
+  const effectiveLimit = options.limit ?? DEFAULT_BATCH_LIMIT
+  // Sliced to the limit up front: resolvePoint below skips (not counts)
+  // auctions without coordinates, so looping the unsliced scope and relying
+  // only on the processed>=effectiveLimit break could still scan arbitrarily
+  // far past the intended batch size.
+  const batch = orderByStaleness(inScopeAuctions, existing).slice(0, effectiveLimit)
+  const total = batch.length
 
-  for (const rawAuction of scope) {
+  for (const rawAuction of batch) {
     throwIfTaskAborted(signal)
-    if (options.limit != null && summary.processed >= options.limit) break
+    if (summary.processed >= effectiveLimit) break
     try {
       const point = await resolvePoint(rawAuction)
       if (!point) {
@@ -185,7 +196,10 @@ export async function runExternalEnrichment(
       if (locationContext) summary.locationContexts++
       summary.staleResults += hazards.filter((hazard) => hazard.stale).length
 
-      if (!marketComparison && !landValueBaseline && hazards.length === 0 && !locationContext) continue
+      // No early-exit when every adapter came back empty: that's the common,
+      // correct outcome for rural/small-town ZVG objects, not an error, and
+      // skipping the write would skip checkedAt too — leaving the auction
+      // stuck at the front of orderByStaleness forever, starving others.
 
       // Written immediately, per auction, instead of batched into one write
       // after the whole scope finishes: a full sweep can run for a long time
@@ -235,22 +249,6 @@ function progressSnapshot(summary: ExternalEnrichmentSummary, total: number): Ta
     skippedMissingCoordinates: summary.skippedMissingCoordinates,
     providerFailures: summary.providerFailures,
   }
-}
-
-function inScope(auction: Auction, options: ExternalEnrichmentOptions): boolean {
-  if (options.country && auction.country.toLowerCase() !== options.country.trim().toLowerCase()) return false
-  if (options.platform && auction.platform !== options.platform) return false
-  if (options.externalId && auction.externalId !== options.externalId) return false
-  return true
-}
-
-function scopeLabel(options: ExternalEnrichmentOptions): string {
-  const parts = [
-    options.country ? `country=${options.country}` : null,
-    options.platform ? `platform=${options.platform}` : null,
-    options.externalId ? `externalId=${options.externalId}` : null,
-  ].filter((part): part is string => !!part)
-  return parts.length > 0 ? parts.join(',') : 'full run'
 }
 
 async function resolvePoint(auction: Auction): Promise<{ lat: number; lng: number } | null> {
