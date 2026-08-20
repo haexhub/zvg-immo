@@ -88,8 +88,8 @@
     "cardLivingArea": "Living area {value}",
     "cardLandArea": "Plot {value}",
     "detailsLink": "Details →",
-    "removeFromWatchlist": "Remove from watchlist",
-    "addToWatchlist": "Add to watchlist",
+    "removeFromWatchlist": "Remove from favorites",
+    "addToWatchlist": "Add to favorites",
     "loadMoreShown": "{shown} of {total} shown",
     "loadMore": "Load more",
     "priceBucket100k": "≤ 100k",
@@ -872,13 +872,16 @@
       "submit": "Log in",
       "submitting": "Logging in …",
       "noAccount": "No account yet?",
-      "signupLink": "Sign up"
+      "signupLink": "Sign up",
+      "emailNotConfirmed": "This email address hasn't been confirmed yet.",
+      "resendConfirmation": "Resend confirmation email",
+      "resendSent": "Email sent again."
     },
     "signup": {
       "title": "Sign up",
       "submit": "Sign up",
       "submitting": "Signing up …",
-      "done": "Account created.",
+      "done": "Account created — please confirm your email address via the link we just sent you.",
       "hasAccount": "Already registered?",
       "loginLink": "Log in"
     }
@@ -886,50 +889,11 @@
   "account": {
     "title": "My account",
     "loading": "Loading …",
-    "savedSearches": {
-      "title": "Saved searches",
-      "empty": "No saved searches yet.",
-      "allAuctions": "All auctions",
-      "delete": "Delete"
-    },
     "watchlist": {
-      "title": "Watchlist",
+      "title": "Favorites",
       "empty": "No favorites yet.",
       "added": "Added {date}",
       "remove": "Remove"
-    },
-    "lawyerInquiries": {
-      "title": "My lawyer inquiries",
-      "empty": "No inquiries sent yet.",
-      "viewAuction": "View auction",
-      "commissionStatus": "Commission status: {status}",
-      "status": {
-        "pending": "Pending",
-        "invoiced": "Invoiced",
-        "paid": "Paid",
-        "waived": "Waived"
-      }
-    },
-    "apiKeys": {
-      "title": "API keys",
-      "intro": "Programmatic read access (snapshot + history) at {path}, authenticated via {header}:",
-      "listAuctions": "current listings, filterable and paginated",
-      "getAuction": "a single auction",
-      "observations": "time series per auction (odds/price trends)",
-      "example": "Example:",
-      "labelPlaceholder": "Label, e.g. \"analysis script\"",
-      "create": "Create key",
-      "newKeyNotice": "New key \"{label}\" — shown only now, cannot be retrieved afterwards:",
-      "copy": "Copy",
-      "copied": "Copied!",
-      "saveNowNotice": "Save it now — for security reasons this key will never be shown again.",
-      "empty": "No API keys yet.",
-      "revoked": "(revoked)",
-      "created": "created {date}",
-      "lastUsed": "last used {date}",
-      "neverUsed": "never",
-      "revoke": "Revoke",
-      "revokeConfirm": "Do you really want to revoke this API key? It cannot be used afterwards."
     }
   },
   "objektDetail": {

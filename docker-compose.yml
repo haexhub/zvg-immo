@@ -135,16 +135,13 @@ services:
       GOTRUE_JWT_SECRET: ${SUPABASE_JWT_SECRET}
       GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
       GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
-      # Autoconfirm skips the confirmation-mail step entirely so signup works
-      # end-to-end without it — stays "true" even now that SMTP is wired
-      # (Phase 3): no real anti-abuse gain for a solo-operator app, and it
-      # spares a friction step at signup.
-      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      # New accounts must click the confirmation link GoTrue mails them
+      # before they can sign in — requires GOTRUE_SMTP_* below to actually
+      # be configured, or GoTrue can't send the confirmation mail at all.
+      GOTRUE_MAILER_AUTOCONFIRM: "false"
       # GoTrue's own SMTP (separate from the app mailer's NUXT_SMTP_URL
-      # above) — for GoTrue's own transactional mail, e.g. a future
-      # "Passwort vergessen" flow. Not exercised while
-      # GOTRUE_MAILER_AUTOCONFIRM stays "true"; wired now because Phase 3
-      # makes SMTP a real dependency either way.
+      # above) — for GoTrue's own transactional mail: signup confirmation
+      # now, a future "Passwort vergessen" flow later.
       GOTRUE_SMTP_HOST: ${GOTRUE_SMTP_HOST:-}
       GOTRUE_SMTP_PORT: ${GOTRUE_SMTP_PORT:-587}
       GOTRUE_SMTP_USER: ${GOTRUE_SMTP_USER:-}

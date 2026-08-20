@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useMediaQuery } from '@vueuse/core'
-import { Star } from 'lucide-vue-next'
+import { Heart } from 'lucide-vue-next'
 import { Swiper, SwiperSlide } from 'swiper/vue'
 import { Keyboard, Navigation } from 'swiper/modules'
 import 'swiper/css'
@@ -143,11 +143,11 @@ const isGallery = useMediaQuery('(min-width: 640px)')
         v-if="props.loggedIn"
         type="button"
         class="absolute z-10 right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-background/90 backdrop-blur-sm transition-colors hover:bg-background"
-        :class="{ 'text-amber-500': props.inWatchlist }"
+        :class="{ 'text-red-500': props.inWatchlist }"
         :title="props.inWatchlist ? $t('search.removeFromWatchlist') : $t('search.addToWatchlist')"
         @click="emit('toggle-watchlist')"
       >
-        <Star class="h-4 w-4" :class="{ 'fill-current': props.inWatchlist }" />
+        <Heart class="h-4 w-4" :class="{ 'fill-current': props.inWatchlist }" />
       </button>
     </div>
 

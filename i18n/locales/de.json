@@ -88,8 +88,8 @@
     "cardLivingArea": "Wohnfläche {value}",
     "cardLandArea": "Grundstück {value}",
     "detailsLink": "Details →",
-    "removeFromWatchlist": "Von Watchlist entfernen",
-    "addToWatchlist": "Zur Watchlist hinzufügen",
+    "removeFromWatchlist": "Aus Favoriten entfernen",
+    "addToWatchlist": "Zu Favoriten hinzufügen",
     "loadMoreShown": "{shown} von {total} angezeigt",
     "loadMore": "Mehr laden",
     "priceBucket100k": "≤ 100k",
@@ -872,13 +872,16 @@
       "submit": "Anmelden",
       "submitting": "Anmelden …",
       "noAccount": "Noch kein Konto?",
-      "signupLink": "Registrieren"
+      "signupLink": "Registrieren",
+      "emailNotConfirmed": "Diese E-Mail-Adresse ist noch nicht bestätigt.",
+      "resendConfirmation": "Bestätigungs-E-Mail erneut senden",
+      "resendSent": "E-Mail wurde erneut gesendet."
     },
     "signup": {
       "title": "Registrieren",
       "submit": "Registrieren",
       "submitting": "Registrieren …",
-      "done": "Konto erstellt.",
+      "done": "Konto erstellt — bitte bestätige deine E-Mail-Adresse über den Link, den wir dir gerade gesendet haben.",
       "hasAccount": "Bereits registriert?",
       "loginLink": "Anmelden"
     }
@@ -886,50 +889,11 @@
   "account": {
     "title": "Mein Konto",
     "loading": "Lädt …",
-    "savedSearches": {
-      "title": "Gespeicherte Suchen",
-      "empty": "Noch keine gespeicherten Suchen.",
-      "allAuctions": "Alle Auktionen",
-      "delete": "Löschen"
-    },
     "watchlist": {
-      "title": "Watchlist",
+      "title": "Favoriten",
       "empty": "Noch keine Favoriten.",
       "added": "Hinzugefügt {date}",
       "remove": "Entfernen"
-    },
-    "lawyerInquiries": {
-      "title": "Meine Anwalts-Anfragen",
-      "empty": "Noch keine Anfragen gesendet.",
-      "viewAuction": "Auktion ansehen",
-      "commissionStatus": "Provisionsstatus: {status}",
-      "status": {
-        "pending": "Ausstehend",
-        "invoiced": "In Rechnung gestellt",
-        "paid": "Bezahlt",
-        "waived": "Erlassen"
-      }
-    },
-    "apiKeys": {
-      "title": "API-Keys",
-      "intro": "Programmatischer Lesezugriff (Snapshot + Historie) unter {path}, authentifiziert per {header}:",
-      "listAuctions": "aktueller Bestand, filter- und paginierbar",
-      "getAuction": "einzelne Auktion",
-      "observations": "Zeitreihe je Auktion (Quoten-/Preistrends)",
-      "example": "Beispiel:",
-      "labelPlaceholder": "Label, z. B. „Analyse-Skript“",
-      "create": "Key erzeugen",
-      "newKeyNotice": "Neuer Key „{label}“ — wird nur jetzt angezeigt, danach nicht mehr abrufbar:",
-      "copy": "Kopieren",
-      "copied": "Kopiert!",
-      "saveNowNotice": "Jetzt sichern — dieser Key wird aus Sicherheitsgründen nie wieder angezeigt.",
-      "empty": "Noch keine API-Keys.",
-      "revoked": "(widerrufen)",
-      "created": "erzeugt {date}",
-      "lastUsed": "zuletzt genutzt {date}",
-      "neverUsed": "nie",
-      "revoke": "Widerrufen",
-      "revokeConfirm": "Möchten Sie diesen API-Key wirklich widerrufen? Er kann danach nicht mehr verwendet werden."
     }
   },
   "objektDetail": {

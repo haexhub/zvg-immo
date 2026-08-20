@@ -1,7 +1,13 @@
-import type { AuctionSummary } from '~/server/api/auctions.get'
 import type { WatchlistItem } from '~/server/api/watchlist/index.get'
 import { apiErrorMessage } from '~/lib/api-error'
 import { auctionKey } from '~/lib/auction-key'
+
+export interface WatchlistableAuction {
+  platform: string
+  externalId: string
+  authority: string
+  caseNumber: string
+}
 
 export function useAuctionWatchlist(options: {
   onError?: (message: string) => void
@@ -23,7 +29,7 @@ export function useAuctionWatchlist(options: {
     }
   }
 
-  async function toggleWatchlist(auction: AuctionSummary): Promise<void> {
+  async function toggleWatchlist(auction: WatchlistableAuction): Promise<void> {
     if (!user.value) return
     const key = auctionKey(auction)
     if (pendingKeys.has(key)) return

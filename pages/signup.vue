@@ -2,7 +2,6 @@
 useSeoMeta({ robots: 'noindex, nofollow' })
 
 const route = useRoute()
-const router = useRouter()
 const { signUp } = useAuth()
 
 const email = ref('')
@@ -26,16 +25,20 @@ async function onSubmit(): Promise<void> {
     error.value = signUpError.message
     return
   }
-  // Signup logs the user in immediately (GOTRUE_MAILER_AUTOCONFIRM=true in
-  // Phase 1, no confirmation e-mail step — see docker-compose.yml).
+  // No session yet — GOTRUE_MAILER_AUTOCONFIRM=false means the account only
+  // activates once the confirmation link is clicked (see docker-compose.yml).
   done.value = true
-  router.push(redirectTarget())
 }
 </script>
 
 <template>
   <main class="min-h-[calc(100vh-4rem)] flex items-center justify-center px-4">
-    <form class="w-full max-w-sm space-y-4" @submit.prevent="onSubmit">
+    <div v-if="done" class="w-full max-w-sm space-y-4 text-center">
+      <h1 class="text-2xl font-bold tracking-tight">{{ $t('auth.signup.title') }}</h1>
+      <p class="text-sm text-emerald-600 dark:text-emerald-500">{{ $t('auth.signup.done') }}</p>
+      <NuxtLink to="/login" class="text-sm text-primary hover:underline">{{ $t('auth.signup.loginLink') }}</NuxtLink>
+    </div>
+    <form v-else class="w-full max-w-sm space-y-4" @submit.prevent="onSubmit">
       <h1 class="text-2xl font-bold tracking-tight">{{ $t('auth.signup.title') }}</h1>
       <div class="space-y-1">
         <Label for="email">{{ $t('auth.email') }}</Label>
@@ -59,7 +62,6 @@ async function onSubmit(): Promise<void> {
         />
       </div>
       <p v-if="error" class="text-sm text-destructive">{{ error }}</p>
-      <p v-if="done" class="text-sm text-emerald-600 dark:text-emerald-500">{{ $t('auth.signup.done') }}</p>
       <Button type="submit" :disabled="pending" class="w-full">
         {{ pending ? $t('auth.signup.submitting') : $t('auth.signup.submit') }}
       </Button>
