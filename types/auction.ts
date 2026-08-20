@@ -584,10 +584,12 @@ export interface CrawlResult {
   /** Region names covered by this result. Empty array means "alle". */
   regions: string[]
   fetchedAt: string
-  /** Optional per-country serving-cache version. Used to invalidate cached
-   * list results when a crawler's mapped fields change without touching the
-   * upstream source timestamp. */
-  listCacheVersion?: number
+  /** Platform ids that actually delivered this result. Normally just
+   *  `[platform]`; crawlSingle merges every platform covering a region and
+   *  drops the ones that threw, so this is the only way to tell a platform
+   *  that legitimately returned nothing from one that failed. Auction expiry
+   *  depends on that distinction — see server/utils/crawl-state.ts. */
+  platformsSucceeded: string[]
   /** Total reported by the upstream platform; null when unknown or aggregated. */
   totalReported: number | null
   auctions: Auction[]

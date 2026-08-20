@@ -18,6 +18,7 @@ export function createCrawlResult(input: CrawlResultInput): CrawlResult {
     countries: [input.country],
     regions: input.regions.map((r) => r.name),
     fetchedAt: new Date().toISOString(),
+    platformsSucceeded: [input.platform],
     totalReported: input.totalReported,
     auctions: input.auctions,
   }

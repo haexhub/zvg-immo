@@ -18,16 +18,29 @@ import {
 } from 'drizzle-orm/pg-core'
 import { auctions } from './core'
 
-// Replaces the former per-region JSON cache files
-// (.cache_zvg/list/<country>-<region>.json) as the serving store — one blob
-// per region, written by refresh.ts on its existing per-portal cadence.
-export const listCache = pgTable('list_cache', {
+// When each crawl scope last completed successfully. Replaces list_cache,
+// which stored an entire CrawlResult as one JSONB blob per region even though
+// only its `fetched_at` was still read (the structured auctions /
+// auction_details / auction_fetch_state tables took over serving in WP-0).
+//
+// Keyed per platform, not just per region: crawlSingle merges every platform
+// covering a region and returns the survivors when some of them fail
+// (Promise.allSettled, server/crawlers/registry.ts). A region-level timestamp
+// would therefore claim success for a platform that never delivered, and the
+// staleness filter below would read that platform's whole catalog as
+// "disappeared" and hide it from search.
+//
+// `region` is the platform's region CODE ('sn'), matching auctions.crawl_region
+// — deliberately not auctions.region, which holds the display NAME
+// ('Sachsen') and cannot be joined against a crawl scope.
+export const crawlState = pgTable('crawl_state', {
   country: text('country').notNull(),
   region: text('region').notNull(),
-  result: jsonb('result').notNull(),
-  fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull(),
+  platform: text('platform').notNull(),
+  lastSuccessAt: timestamp('last_success_at', { withTimezone: true }).notNull(),
+  auctionCount: integer('auction_count').notNull().default(0),
 }, (table) => [
-  primaryKey({ columns: [table.country, table.region] }),
+  primaryKey({ columns: [table.country, table.region, table.platform] }),
 ]).enableRLS()
 
 // External market/hazard enrichment, stored separately from the LLM

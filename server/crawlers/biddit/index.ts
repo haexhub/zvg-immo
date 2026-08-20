@@ -98,6 +98,7 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
 
   return {
     platform: PLATFORM_ID,
+    platformsSucceeded: [PLATFORM_ID],
     source: BIDDIT_BASE,
     countries: [COUNTRY],
     regions: [REGION_NAME],

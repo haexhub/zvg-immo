@@ -86,6 +86,16 @@ function buildWhere(query: PublicAuctionQuery): { where: string; values: unknown
     // Align the Daten-API's documented current-auction collection with public
     // discovery. Detail lookups stay historical/permalink-safe by design.
     '(a.auction_date_iso IS NULL OR a.auction_date_iso >= now())',
+    // Same staleness rule as buildAuctionSearchFilter: a listing the last
+    // completed crawl of its scope no longer returned is no longer offered.
+    // Dateless platforms (kip, bima, gb, ...) have no other expiry signal.
+    `NOT EXISTS (
+      SELECT 1 FROM crawl_state cs
+       WHERE cs.country = a.country
+         AND cs.region = a.crawl_region
+         AND cs.platform = a.platform
+         AND a.last_seen_at < cs.last_success_at
+    )`,
   ]
   // Use the shared URL parser for country spelling/normalization. The v1
   // endpoint intentionally keeps its existing single-country semantics.
