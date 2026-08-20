@@ -144,7 +144,7 @@ describe('pickDocumentImageCandidates', () => {
 
   it('skips attachments flagged as covering multiple auction lots', () => {
     const candidates = pickDocumentImageCandidates([
-      attachment({ kind: 'brochure', filename: 'katalog.pdf', excludeFromPhotoMining: true }),
+      attachment({ kind: 'brochure', filename: 'katalog.pdf', excludeFromDocumentMining: true }),
       attachment({ kind: 'appraisal', filename: 'gutachten.pdf' }),
     ])
 

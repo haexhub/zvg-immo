@@ -56,7 +56,7 @@ export function pickDocumentImageCandidates(attachments: readonly Attachment[]):
   for (const format of DOCUMENT_FORMAT_PRIORITY) {
     for (const kind of DOCUMENT_KIND_PRIORITY) {
       for (const att of attachments) {
-        if (att.excludeFromPhotoMining || att.kind !== kind || formatOf(att) !== format || seen.has(att.proxyUrl)) continue
+        if (att.excludeFromDocumentMining || att.kind !== kind || formatOf(att) !== format || seen.has(att.proxyUrl)) continue
         seen.add(att.proxyUrl)
         out.push(att)
       }

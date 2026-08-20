@@ -15,7 +15,7 @@ const PHOTO_PIPELINE_VERSION = 4
 const KRONOFOGDEN_GALLERY_PHOTO_PIPELINE_VERSION = 5
 /** Forces a one-time rebuild of dga-ag photo sets after fixing the shared
  *  multi-lot catalog PDF bleeding every other lot's images into each
- *  auction's gallery (see excludeFromPhotoMining). */
+ *  auction's gallery (see excludeFromDocumentMining). */
 const DGA_AG_PHOTO_PIPELINE_VERSION = 6
 
 /** Builds a crawlAll()-shaped result for exactly the requested identities,

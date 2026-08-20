@@ -68,16 +68,17 @@ function formatHint(att: Attachment): LlmAttachmentFormat {
 }
 
 export function pickAllLlmDocumentAttachments(attachments: readonly Attachment[]): Attachment[] {
+  const eligible = attachments.filter((attachment) => !attachment.excludeFromDocumentMining)
   const seen = new Set<string>()
   const out: Attachment[] = []
   for (const kind of DOCUMENT_KIND_PRIORITY) {
-    for (const attachment of attachments) {
+    for (const attachment of eligible) {
       if (attachment.kind !== kind || seen.has(attachment.proxyUrl)) continue
       seen.add(attachment.proxyUrl)
       out.push(attachment)
     }
   }
-  for (const attachment of attachments) {
+  for (const attachment of eligible) {
     if (seen.has(attachment.proxyUrl)) continue
     seen.add(attachment.proxyUrl)
     out.push(attachment)

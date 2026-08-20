@@ -92,7 +92,7 @@ describe('enrichOne', () => {
         sizeBytes: null,
         fileId: 'S26-01-001',
         proxyUrl: 'https://www.dga-ag.de/fileadmin/user_upload/api/kataloge/sga/S26-01.pdf#page=3',
-        excludeFromPhotoMining: true,
+        excludeFromDocumentMining: true,
       },
     ])
   })
