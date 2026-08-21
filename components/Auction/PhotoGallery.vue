@@ -47,17 +47,21 @@ function photoIsBroken(url: string): boolean {
   return brokenPhotoUrls.has(url)
 }
 
-function photoSrc(url: string): string {
-  if (brokenPhotoUrls.has(url)) return '/images/no-photo.svg'
-  if (!photoRetried.has(url)) return url
-  // Some thumbnail fallbacks (e.g. zvg-portal's /api/zvg-thumb) already carry
-  // a query string, so a bare `?retry=` would corrupt their last param; a
-  // fragment has to stay at the very end or the server never sees the param.
+// Some thumbnail fallbacks (e.g. zvg-portal's /api/zvg-thumb) already carry a
+// query string, so a bare `?retry=` would corrupt their last param; a
+// fragment has to stay at the very end or the server never sees the param.
+function retryPhotoSrc(url: string): string {
   const hashIndex = url.indexOf('#')
   const base = hashIndex === -1 ? url : url.slice(0, hashIndex)
   const fragment = hashIndex === -1 ? '' : url.slice(hashIndex)
   const separator = base.includes('?') ? '&' : '?'
   return `${base}${separator}retry=1${fragment}`
+}
+
+function photoSrc(url: string): string {
+  if (brokenPhotoUrls.has(url)) return '/images/no-photo.svg'
+  if (!photoRetried.has(url)) return url
+  return retryPhotoSrc(url)
 }
 
 function handlePhotoError(url: string, event: Event) {
@@ -66,8 +70,12 @@ function handlePhotoError(url: string, event: Event) {
   // <img> itself, instead of blindly bumping shared retry state, keeps two
   // concurrent failures of the original request idempotent instead of
   // fast-forwarding straight to "broken" without the retry ever happening.
+  // Comparing exact resolved URLs (not `includes('retry=1')`) avoids treating
+  // an original URL that happens to already contain that substring as if it
+  // were the retry request.
   const failedSrc = (event.target as HTMLImageElement).src
-  if (failedSrc.includes('retry=1')) {
+  const retrySrc = new URL(retryPhotoSrc(url), document.baseURI).href
+  if (failedSrc === retrySrc) {
     brokenPhotoUrls.add(url)
   } else {
     photoRetried.add(url)
