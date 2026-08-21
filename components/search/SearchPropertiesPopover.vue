@@ -1,23 +1,17 @@
 <script setup lang="ts">
 // Properties tab of the Airbnb-style search bar (see SearchBar.vue) —
 // the property-attribute filters that used to live in the Sheet sidebar
-// (SearchFilters.vue). Fields are staged in a local draft (useFilterDraft)
-// and only written back to the real, URL-synced refs on "Anwenden" — typing
-// a price used to fire a full re-search per keystroke (see
-// composables/useAuctionSearchState.ts's query-sync watcher).
+// (SearchFilters.vue). Every field writes straight to the real, URL-synced
+// refs — select/checkbox/slider changes take effect immediately, and number
+// inputs use `.lazy` so a re-search fires on blur rather than per keystroke
+// (see composables/useAuctionSearchState.ts's query-sync watcher).
 import { ALL_SCOPE } from '~/lib/auction-constants'
 import { CONDITIONS } from '~/lib/condition'
 import { FEATURES } from '~/lib/features'
-import { useFilterDraft } from '~/composables/useFilterDraft'
 
-const props = defineProps<{
-  open: boolean
+defineProps<{
   categories: Array<{ id: string; label: string; count: number }>
   currency: string
-}>()
-
-const emit = defineEmits<{
-  (e: 'update:open', value: boolean): void
 }>()
 
 const priceMin = defineModel<number | null>('priceMin', { required: true })
@@ -30,9 +24,8 @@ const yearBuiltMin = defineModel<number | null>('yearBuiltMin', { required: true
 const yearBuiltMax = defineModel<number | null>('yearBuiltMax', { required: true })
 const renovationYearMin = defineModel<number | null>('renovationYearMin', { required: true })
 const renovationYearMax = defineModel<number | null>('renovationYearMax', { required: true })
-const authorityFilter = defineModel<string>('authorityFilter', { required: true })
 const categoryFilter = defineModel<string>('categoryFilter', { required: true })
-const conditionFilter = defineModel<string>('conditionFilter', { required: true })
+const conditionFilter = defineModel<string[]>('conditionFilter', { required: true })
 const featuresFilter = defineModel<string[]>('featuresFilter', { required: true })
 const onlyWithPhotos = defineModel<boolean>('onlyWithPhotos', { required: true })
 const includeCancelled = defineModel<boolean>('includeCancelled', { required: true })
@@ -43,34 +36,13 @@ const conditionLabel = useConditionLabel()
 const featureLabel = useFeatureLabel()
 const { eurToDisplay, displayToEur } = useCurrencyDisplay()
 
-const isOpen = toRef(props, 'open')
-const { draft, commit } = useFilterDraft({
-  priceMin,
-  priceMax,
-  landAreaMin,
-  landAreaMax,
-  livingAreaMin,
-  livingAreaMax,
-  yearBuiltMin,
-  yearBuiltMax,
-  renovationYearMin,
-  renovationYearMax,
-  authorityFilter,
-  categoryFilter,
-  conditionFilter,
-  featuresFilter,
-  onlyWithPhotos,
-  includeCancelled,
-  hideRulesOnly,
-}, isOpen)
-
 const priceMinDisplay = computed<number | null>({
-  get: () => { const d = eurToDisplay(draft.priceMin); return d != null ? Math.round(d) : null },
-  set: (v) => { const e = displayToEur(v); draft.priceMin = e != null ? Math.round(e) : null },
+  get: () => { const d = eurToDisplay(priceMin.value); return d != null ? Math.round(d) : null },
+  set: (v) => { const e = displayToEur(v); priceMin.value = e != null ? Math.round(e) : null },
 })
 const priceMaxDisplay = computed<number | null>({
-  get: () => { const d = eurToDisplay(draft.priceMax); return d != null ? Math.round(d) : null },
-  set: (v) => { const e = displayToEur(v); draft.priceMax = e != null ? Math.round(e) : null },
+  get: () => { const d = eurToDisplay(priceMax.value); return d != null ? Math.round(d) : null },
+  set: (v) => { const e = displayToEur(v); priceMax.value = e != null ? Math.round(e) : null },
 })
 
 const priceBuckets = computed(() => [
@@ -80,65 +52,12 @@ const priceBuckets = computed(() => [
   { label: t('search.priceBucket600k'), min: 600_000, max: null },
 ])
 function setPriceBucket(min: number | null, max: number | null): void {
-  draft.priceMin = min
-  draft.priceMax = max
+  priceMin.value = min
+  priceMax.value = max
 }
 
-function toggleFeature(id: string): void {
-  const set = new Set(draft.featuresFilter)
-  if (set.has(id)) set.delete(id)
-  else set.add(id)
-  draft.featuresFilter = [...set]
-}
-
-const activeDraftCount = computed(() => {
-  let n = 0
-  if (!isAllScope(draft.authorityFilter)) n++
-  if (draft.priceMin != null) n++
-  if (draft.priceMax != null) n++
-  if (draft.landAreaMin != null) n++
-  if (draft.landAreaMax != null) n++
-  if (draft.livingAreaMin != null) n++
-  if (draft.livingAreaMax != null) n++
-  if (draft.yearBuiltMin != null) n++
-  if (draft.yearBuiltMax != null) n++
-  if (draft.renovationYearMin != null) n++
-  if (draft.renovationYearMax != null) n++
-  if (!isAllScope(draft.categoryFilter)) n++
-  if (!isAllScope(draft.conditionFilter)) n++
-  if (draft.featuresFilter.length) n++
-  if (draft.onlyWithPhotos) n++
-  if (draft.includeCancelled) n++
-  return n
-})
-
-function isAllScope(value: string): boolean {
-  return value === ALL_SCOPE
-}
-
-function reset(): void {
-  draft.priceMin = null
-  draft.priceMax = null
-  draft.landAreaMin = null
-  draft.landAreaMax = null
-  draft.livingAreaMin = null
-  draft.livingAreaMax = null
-  draft.yearBuiltMin = null
-  draft.yearBuiltMax = null
-  draft.renovationYearMin = null
-  draft.renovationYearMax = null
-  draft.authorityFilter = ALL_SCOPE
-  draft.categoryFilter = ALL_SCOPE
-  draft.conditionFilter = ALL_SCOPE
-  draft.featuresFilter = []
-  draft.onlyWithPhotos = false
-  draft.includeCancelled = false
-}
-
-function apply(): void {
-  commit()
-  emit('update:open', false)
-}
+const conditionOptions = computed(() => CONDITIONS.map((c) => ({ value: c, label: conditionLabel(c) })))
+const featureOptions = computed(() => FEATURES.map((f) => ({ value: f, label: featureLabel(f) })))
 </script>
 
 <template>
@@ -147,9 +66,9 @@ function apply(): void {
       <div class="space-y-2">
         <Label>{{ $t('filters.marketValue') }} ({{ currency }})</Label>
         <div class="flex items-center gap-2">
-          <Input v-model.number="priceMinDisplay" type="number" min="0" step="10000" :placeholder="$t('filters.from')" class="flex-1 min-w-0" />
+          <Input v-model.lazy.number="priceMinDisplay" type="number" min="0" step="10000" :placeholder="$t('filters.from')" class="flex-1 min-w-0" />
           <span class="text-muted-foreground">–</span>
-          <Input v-model.number="priceMaxDisplay" type="number" min="0" step="10000" :placeholder="$t('filters.to')" class="flex-1 min-w-0" />
+          <Input v-model.lazy.number="priceMaxDisplay" type="number" min="0" step="10000" :placeholder="$t('filters.to')" class="flex-1 min-w-0" />
         </div>
         <div class="flex flex-wrap gap-1 pt-1">
           <button
@@ -165,42 +84,42 @@ function apply(): void {
       <div class="space-y-2">
         <Label>{{ $t('filters.landArea') }}</Label>
         <div class="flex items-center gap-2">
-          <Input v-model.number="draft.landAreaMin" type="number" min="0" step="50" :placeholder="$t('filters.from')" class="flex-1 min-w-0" />
+          <Input v-model.lazy.number="landAreaMin" type="number" min="0" step="50" :placeholder="$t('filters.from')" class="flex-1 min-w-0" />
           <span class="text-muted-foreground">–</span>
-          <Input v-model.number="draft.landAreaMax" type="number" min="0" step="50" :placeholder="$t('filters.to')" class="flex-1 min-w-0" />
+          <Input v-model.lazy.number="landAreaMax" type="number" min="0" step="50" :placeholder="$t('filters.to')" class="flex-1 min-w-0" />
         </div>
       </div>
 
       <div class="space-y-2">
         <Label>{{ $t('filters.livingArea') }}</Label>
         <div class="flex items-center gap-2">
-          <Input v-model.number="draft.livingAreaMin" type="number" min="0" step="10" :placeholder="$t('filters.from')" class="flex-1 min-w-0" />
+          <Input v-model.lazy.number="livingAreaMin" type="number" min="0" step="10" :placeholder="$t('filters.from')" class="flex-1 min-w-0" />
           <span class="text-muted-foreground">–</span>
-          <Input v-model.number="draft.livingAreaMax" type="number" min="0" step="10" :placeholder="$t('filters.to')" class="flex-1 min-w-0" />
+          <Input v-model.lazy.number="livingAreaMax" type="number" min="0" step="10" :placeholder="$t('filters.to')" class="flex-1 min-w-0" />
         </div>
       </div>
 
       <div class="space-y-2">
         <Label>{{ $t('filters.yearBuilt') }}</Label>
         <div class="flex items-center gap-2">
-          <Input v-model.number="draft.yearBuiltMin" type="number" min="1800" step="1" :placeholder="$t('filters.from')" class="flex-1 min-w-0" />
+          <Input v-model.lazy.number="yearBuiltMin" type="number" min="1800" step="1" :placeholder="$t('filters.from')" class="flex-1 min-w-0" />
           <span class="text-muted-foreground">–</span>
-          <Input v-model.number="draft.yearBuiltMax" type="number" min="1800" step="1" :placeholder="$t('filters.to')" class="flex-1 min-w-0" />
+          <Input v-model.lazy.number="yearBuiltMax" type="number" min="1800" step="1" :placeholder="$t('filters.to')" class="flex-1 min-w-0" />
         </div>
       </div>
 
       <div class="space-y-2">
         <Label>{{ $t('filters.renovationYear') }}</Label>
         <div class="flex items-center gap-2">
-          <Input v-model.number="draft.renovationYearMin" type="number" min="1800" step="1" :placeholder="$t('filters.from')" class="flex-1 min-w-0" />
+          <Input v-model.lazy.number="renovationYearMin" type="number" min="1800" step="1" :placeholder="$t('filters.from')" class="flex-1 min-w-0" />
           <span class="text-muted-foreground">–</span>
-          <Input v-model.number="draft.renovationYearMax" type="number" min="1800" step="1" :placeholder="$t('filters.to')" class="flex-1 min-w-0" />
+          <Input v-model.lazy.number="renovationYearMax" type="number" min="1800" step="1" :placeholder="$t('filters.to')" class="flex-1 min-w-0" />
         </div>
       </div>
 
       <div v-if="categories.length" class="space-y-2">
         <Label>{{ $t('filters.propertyType') }}</Label>
-        <Select v-model="draft.categoryFilter">
+        <Select v-model="categoryFilter">
           <SelectTrigger class="w-full">
             <SelectValue :placeholder="$t('filters.propertyTypePlaceholder')" />
           </SelectTrigger>
@@ -215,58 +134,25 @@ function apply(): void {
 
       <div class="space-y-2">
         <Label>{{ $t('filters.condition') }}</Label>
-        <Select v-model="draft.conditionFilter">
-          <SelectTrigger class="w-full">
-            <SelectValue :placeholder="$t('filters.conditionPlaceholder')" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem :value="ALL_SCOPE">{{ $t('filters.allConditions') }}</SelectItem>
-            <SelectItem v-for="c in CONDITIONS" :key="c" :value="c">
-              {{ conditionLabel(c) }}
-            </SelectItem>
-          </SelectContent>
-        </Select>
+        <SearchFilterMultiSelect v-model="conditionFilter" :options="conditionOptions" :placeholder="$t('filters.allConditions')" />
       </div>
 
       <div class="space-y-2">
         <Label>{{ $t('filters.features') }}</Label>
-        <div class="grid grid-cols-2 gap-x-2 gap-y-1">
-          <label v-for="f in FEATURES" :key="f" class="flex items-center gap-2 cursor-pointer text-sm">
-            <Checkbox
-              :model-value="draft.featuresFilter.includes(f)"
-              @update:model-value="toggleFeature(f)"
-            />
-            {{ featureLabel(f) }}
-          </label>
-        </div>
+        <SearchFilterMultiSelect v-model="featuresFilter" :options="featureOptions" :placeholder="$t('filters.allFeatures')" />
       </div>
 
       <div class="space-y-2 pt-3 border-t">
         <Label class="cursor-pointer">
-          <Checkbox v-model="draft.onlyWithPhotos" /> {{ $t('filters.onlyWithPhotos') }}
+          <Checkbox v-model="onlyWithPhotos" /> {{ $t('filters.onlyWithPhotos') }}
         </Label>
         <Label class="cursor-pointer">
-          <Checkbox v-model="draft.includeCancelled" /> {{ $t('filters.includeCancelled') }}
+          <Checkbox v-model="includeCancelled" /> {{ $t('filters.includeCancelled') }}
         </Label>
         <Label class="cursor-pointer">
-          <Checkbox v-model="draft.hideRulesOnly" /> {{ $t('filters.hideRulesOnly') }}
+          <Checkbox v-model="hideRulesOnly" /> {{ $t('filters.hideRulesOnly') }}
         </Label>
       </div>
-    </div>
-
-    <div class="flex gap-3 border-t pt-4">
-      <Button
-        type="button"
-        variant="outline"
-        class="flex-1 border-destructive text-destructive hover:bg-destructive hover:text-white"
-        :disabled="activeDraftCount === 0"
-        @click="reset"
-      >
-        {{ $t('filters.reset', { count: activeDraftCount }) }}
-      </Button>
-      <Button type="button" class="flex-1" @click="apply">
-        {{ $t('searchBar.apply') }}
-      </Button>
     </div>
   </div>
 </template>

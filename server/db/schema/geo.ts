@@ -192,6 +192,13 @@ export const auctionGeoMetrics = pgTable('auction_geo_metrics', {
   distMountainM: integer('dist_mountain_m'),
   distAirportM: integer('dist_airport_m'),
   distSkiM: integer('dist_ski_m'),
+  // Split from distSkiM/kind 'ski_area' for the search filter's separate
+  // "Bergabfahrt"/"Langlauf" sliders (piste:type=downhill/nordic) —
+  // distSkiM itself stays untouched since the WP-8 leisure-tourism profile
+  // (leisure-tourism-profile.ts) genuinely wants "any ski area nearby"
+  // regardless of piste type.
+  distSkiDownhillM: integer('dist_ski_downhill_m'),
+  distSkiNordicM: integer('dist_ski_nordic_m'),
   distHikingM: integer('dist_hiking_m'),
   // Deliberately distinct from distLakeM (the existing nearSea/nearLake
   // search-filter category, which matches *any* natural=water polygon down

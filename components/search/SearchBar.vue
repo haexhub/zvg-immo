@@ -40,7 +40,7 @@ const renovationYearMin = defineModel<number | null>('renovationYearMin', { requ
 const renovationYearMax = defineModel<number | null>('renovationYearMax', { required: true })
 const authorityFilter = defineModel<string>('authorityFilter', { required: true })
 const categoryFilter = defineModel<string>('categoryFilter', { required: true })
-const conditionFilter = defineModel<string>('conditionFilter', { required: true })
+const conditionFilter = defineModel<string[]>('conditionFilter', { required: true })
 const featuresFilter = defineModel<string[]>('featuresFilter', { required: true })
 const onlyWithPhotos = defineModel<boolean>('onlyWithPhotos', { required: true })
 const includeCancelled = defineModel<boolean>('includeCancelled', { required: true })
@@ -51,6 +51,8 @@ const nearLake = defineModel<number | null>('nearLake', { required: true })
 const nearRiver = defineModel<number | null>('nearRiver', { required: true })
 const nearMountain = defineModel<number | null>('nearMountain', { required: true })
 const nearAirport = defineModel<number | null>('nearAirport', { required: true })
+const nearSkiDownhill = defineModel<number | null>('nearSkiDownhill', { required: true })
+const nearSkiNordic = defineModel<number | null>('nearSkiNordic', { required: true })
 const urbanRural = defineModel<string>('urbanRural', { required: true })
 
 // Shrinks to three plain buttons once SiteHeader collapses on scroll.
@@ -91,7 +93,7 @@ const propertiesSummary = computed(() => {
   if (renovationYearMin.value != null) n++
   if (renovationYearMax.value != null) n++
   if (categoryFilter.value !== ALL_SCOPE) n++
-  if (conditionFilter.value !== ALL_SCOPE) n++
+  if (conditionFilter.value.length) n++
   if (featuresFilter.value.length) n++
   if (onlyWithPhotos.value) n++
   if (includeCancelled.value) n++
@@ -104,6 +106,8 @@ const environmentSummary = computed(() => {
   if (nearRiver.value != null) n++
   if (nearMountain.value != null) n++
   if (nearAirport.value != null) n++
+  if (nearSkiDownhill.value != null) n++
+  if (nearSkiNordic.value != null) n++
   if (urbanRural.value !== ALL_SCOPE) n++
   return n
 })
@@ -146,6 +150,7 @@ const environmentSummary = computed(() => {
       :compact="compact"
       :has-value="propertiesSummary > 0"
       align="start"
+      content-class="w-2xl p-5"
     >
       <SearchPropertiesPopover
         v-model:price-min="priceMin"
@@ -158,14 +163,12 @@ const environmentSummary = computed(() => {
         v-model:year-built-max="yearBuiltMax"
         v-model:renovation-year-min="renovationYearMin"
         v-model:renovation-year-max="renovationYearMax"
-        v-model:authority-filter="authorityFilter"
         v-model:category-filter="categoryFilter"
         v-model:condition-filter="conditionFilter"
         v-model:features-filter="featuresFilter"
         v-model:only-with-photos="onlyWithPhotos"
         v-model:include-cancelled="includeCancelled"
         v-model:hide-rules-only="hideRulesOnly"
-        v-model:open="propertiesOpen"
         :categories="categories"
         :currency="currency"
       />
@@ -187,8 +190,9 @@ const environmentSummary = computed(() => {
         v-model:near-river="nearRiver"
         v-model:near-mountain="nearMountain"
         v-model:near-airport="nearAirport"
+        v-model:near-ski-downhill="nearSkiDownhill"
+        v-model:near-ski-nordic="nearSkiNordic"
         v-model:urban-rural="urbanRural"
-        v-model:open="environmentOpen"
       />
     </SearchBarSegment>
   </div>

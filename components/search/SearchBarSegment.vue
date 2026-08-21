@@ -16,6 +16,9 @@ const props = defineProps<{
   // Whether `summary` holds a real selection or just its placeholder — the
   // compact button has no room for a placeholder and falls back to `label`.
   hasValue?: boolean
+  // Popover width (Tailwind width class) — Properties needs more room than
+  // Location/Environment for its two-column number ranges and multi-selects.
+  contentClass?: string
 }>()
 
 const open = defineModel<boolean>('open', { required: true })
@@ -47,7 +50,7 @@ const compactText = computed(() => (props.hasValue ? props.summary : props.label
         </template>
       </button>
     </PopoverTrigger>
-    <PopoverContent class="w-md p-5" :align="align ?? 'start'">
+    <PopoverContent :class="contentClass ?? 'w-lg p-5'" :align="align ?? 'start'">
       <slot />
     </PopoverContent>
   </Popover>

@@ -333,8 +333,11 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
       expect(first.perKind.lake?.skipped).toBeGreaterThanOrEqual(1)
       expect(first.perKind.lake?.inserted).toBeGreaterThanOrEqual(1)
 
-      // WP-6-only kinds stay empty today (tags not imported yet).
-      for (const emptyKind of ['ski_area', 'hiking_route', 'mtb_route', 'paddling', 'attraction', 'tourism_supply']) {
+      // This fixture seeds no piste/winter_sports/aerialway elements at all,
+      // so all three ski kinds stay empty here regardless of real-world tag
+      // import status; the other kinds below are WP-6-only (tags not
+      // imported yet).
+      for (const emptyKind of ['ski_area', 'ski_downhill', 'ski_nordic', 'hiking_route', 'mtb_route', 'paddling', 'attraction', 'tourism_supply']) {
         expect(first.perKind[emptyKind]).toEqual({ inserted: 0, skipped: 0 })
       }
 

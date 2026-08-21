@@ -29,8 +29,10 @@ export const GEO_METRIC_CATEGORIES: GeoMetricCategory[] = [
   // "within a regional airport's usual catchment", documented rather than
   // guessed silently.
   { param: 'nearAirport', column: 'dist_airport_m', kind: 'airport', cutoffMeters: 100_000 },
-  // ski_area is still empty pending WP-6's OSM tag import (same "define the
-  // mapping now, stays empty until then" pattern as geo_features' own kind
-  // table) — matches nothing today, not a bug.
+  // Generic "any ski area" — kept for whatever still reads it (currently
+  // nothing in the search UI; see nearSkiDownhill/nearSkiNordic below for
+  // the search filter's split sliders).
   { param: 'nearSki', column: 'dist_ski_m', kind: 'ski_area', cutoffMeters: 200_000 },
+  { param: 'nearSkiDownhill', column: 'dist_ski_downhill_m', kind: 'ski_downhill', cutoffMeters: 200_000 },
+  { param: 'nearSkiNordic', column: 'dist_ski_nordic_m', kind: 'ski_nordic', cutoffMeters: 200_000 },
 ]

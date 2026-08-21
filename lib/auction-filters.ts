@@ -6,7 +6,6 @@
 
 import type { Auction, AuctionExtraction } from '~/types/auction'
 import { ALL_PROPERTY_TYPE_CATEGORIES, classifyPropertyType, type PropertyTypeCategory } from '~/lib/property-type'
-import { CONDITIONS } from '~/lib/condition'
 import type { AuctionSearchFilters } from '~/lib/auction-search-filter-contract'
 
 export interface AuctionFilters extends AuctionSearchFilters {
@@ -47,8 +46,6 @@ export function auctionCategory(a: Auction): PropertyTypeCategory {
   return classifyPropertyType(a.title)
 }
 
-const CONDITION_RANK = new Map<string, number>(CONDITIONS.map((c, i) => [c, i]))
-
 export function hasCompletedLlmAnalysis(e: AuctionExtraction | null | undefined): boolean {
   if (!e) return false
   return !!e.llmAnalyzedAt ||
@@ -72,14 +69,13 @@ export function hasCompletedLlmAnalysis(e: AuctionExtraction | null | undefined)
 
 export function filterAuctions<T extends Auction>(items: T[], filters: AuctionFilters): T[] {
   const q = filters.search.trim().toLowerCase()
-  const minConditionRank = filters.condition !== 'all' ? CONDITION_RANK.get(filters.condition) : undefined
   return scopeByCountryRegion(items, filters.countries, filters.regionNameKeys).filter((a) => {
     if (!filters.includeCancelled && a.cancelled) return false
     if (filters.authority !== 'all' && a.authority !== filters.authority) return false
     if (filters.category !== 'all' && auctionCategory(a).id !== filters.category) return false
-    if (minConditionRank != null) {
-      const rank = a.extraction?.condition != null ? CONDITION_RANK.get(a.extraction.condition) : undefined
-      if (rank == null || rank > minConditionRank) return false
+    if (filters.condition.length > 0) {
+      const c = a.extraction?.condition
+      if (c == null || !filters.condition.includes(c)) return false
     }
     if (filters.features.length > 0) {
       const have: string[] = a.extraction?.features ?? []
