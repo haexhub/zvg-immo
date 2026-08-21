@@ -31,31 +31,47 @@ const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), [tabindex]:not([tab
 // the file is fine server-side, which previously left a permanently blank
 // slide with no way to recover. One cache-busted retry before giving up and
 // showing the no-photo placeholder.
-const MAX_PHOTO_RETRIES = 1
-const photoRetries = reactive(new Map<string, number>())
+const photoRetried = reactive(new Set<string>())
+const brokenPhotoUrls = reactive(new Set<string>())
 
 // This component instance is reused across auction detail pages (no :key
 // tied to the route, keepalive'd <NuxtPage>) — without this, a photo marked
 // broken on one auction would wrongly stay broken forever, even for an
 // unrelated later auction or a revisit of the same one.
-watch(() => props.photos, () => photoRetries.clear())
+watch(() => props.photos, () => {
+  photoRetried.clear()
+  brokenPhotoUrls.clear()
+})
 
 function photoIsBroken(url: string): boolean {
-  return (photoRetries.get(url) ?? 0) > MAX_PHOTO_RETRIES
+  return brokenPhotoUrls.has(url)
 }
 
 function photoSrc(url: string): string {
-  const retries = photoRetries.get(url) ?? 0
-  if (retries > MAX_PHOTO_RETRIES) return '/images/no-photo.svg'
-  if (retries === 0) return url
+  if (brokenPhotoUrls.has(url)) return '/images/no-photo.svg'
+  if (!photoRetried.has(url)) return url
   // Some thumbnail fallbacks (e.g. zvg-portal's /api/zvg-thumb) already carry
-  // a query string, so a bare `?retry=` would corrupt their last param.
-  const separator = url.includes('?') ? '&' : '?'
-  return `${url}${separator}retry=${retries}`
+  // a query string, so a bare `?retry=` would corrupt their last param; a
+  // fragment has to stay at the very end or the server never sees the param.
+  const hashIndex = url.indexOf('#')
+  const base = hashIndex === -1 ? url : url.slice(0, hashIndex)
+  const fragment = hashIndex === -1 ? '' : url.slice(hashIndex)
+  const separator = base.includes('?') ? '&' : '?'
+  return `${base}${separator}retry=1${fragment}`
 }
 
-function handlePhotoError(url: string) {
-  photoRetries.set(url, (photoRetries.get(url) ?? 0) + 1)
+function handlePhotoError(url: string, event: Event) {
+  // The same url can be on screen twice at once (gallery thumbnail + lightbox
+  // slide) and fail independently. Reading what actually failed off the
+  // <img> itself, instead of blindly bumping shared retry state, keeps two
+  // concurrent failures of the original request idempotent instead of
+  // fast-forwarding straight to "broken" without the retry ever happening.
+  const failedSrc = (event.target as HTMLImageElement).src
+  if (failedSrc.includes('retry=1')) {
+    brokenPhotoUrls.add(url)
+  } else {
+    photoRetried.add(url)
+  }
 }
 
 function openLightbox(index: number, event: MouseEvent) {
@@ -142,7 +158,7 @@ const swiperModules = [Navigation, Pagination, Keyboard]
             referrerpolicy="no-referrer"
             :loading="i === 0 ? 'eager' : 'lazy'"
             :class="photoIsBroken(url) ? 'h-full w-full object-contain p-6 opacity-60' : 'h-full w-full object-cover'"
-            @error="handlePhotoError(url)"
+            @error="handlePhotoError(url, $event)"
           >
         </button>
       </SwiperSlide>
@@ -193,7 +209,7 @@ const swiperModules = [Navigation, Pagination, Keyboard]
               loading="lazy"
               class="max-h-full max-w-full object-contain"
               :class="{ 'opacity-60 p-12': photoIsBroken(url) }"
-              @error="handlePhotoError(url)"
+              @error="handlePhotoError(url, $event)"
             >
           </SwiperSlide>
         </Swiper>
