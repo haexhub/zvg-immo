@@ -30,24 +30,26 @@ const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), [tabindex]:not([tab
 // Photo requests occasionally fail on flaky mobile connections even though
 // the file is fine server-side, which previously left a permanently blank
 // slide with no way to recover. One cache-busted retry before giving up and
-// showing the shared no-photo placeholder.
+// showing the no-photo placeholder.
 const MAX_PHOTO_RETRIES = 1
 const photoRetries = reactive(new Map<string, number>())
-const brokenPhotoUrls = reactive(new Set<string>())
+
+function photoIsBroken(url: string): boolean {
+  return (photoRetries.get(url) ?? 0) > MAX_PHOTO_RETRIES
+}
 
 function photoSrc(url: string): string {
-  if (brokenPhotoUrls.has(url)) return '/images/no-photo.svg'
   const retries = photoRetries.get(url) ?? 0
-  return retries > 0 ? `${url}?retry=${retries}` : url
+  if (retries > MAX_PHOTO_RETRIES) return '/images/no-photo.svg'
+  if (retries === 0) return url
+  // Some thumbnail fallbacks (e.g. zvg-portal's /api/zvg-thumb) already carry
+  // a query string, so a bare `?retry=` would corrupt their last param.
+  const separator = url.includes('?') ? '&' : '?'
+  return `${url}${separator}retry=${retries}`
 }
 
 function handlePhotoError(url: string) {
-  const retries = photoRetries.get(url) ?? 0
-  if (retries >= MAX_PHOTO_RETRIES) {
-    brokenPhotoUrls.add(url)
-    return
-  }
-  photoRetries.set(url, retries + 1)
+  photoRetries.set(url, (photoRetries.get(url) ?? 0) + 1)
 }
 
 function openLightbox(index: number, event: MouseEvent) {
@@ -133,7 +135,7 @@ const swiperModules = [Navigation, Pagination, Keyboard]
             :alt="t('objektDetail.photoAlt', { n: i + 1, total: photos.length, title: altBase })"
             referrerpolicy="no-referrer"
             :loading="i === 0 ? 'eager' : 'lazy'"
-            :class="brokenPhotoUrls.has(url) ? 'h-full w-full object-contain p-6 opacity-60' : 'h-full w-full object-cover'"
+            :class="photoIsBroken(url) ? 'h-full w-full object-contain p-6 opacity-60' : 'h-full w-full object-cover'"
             @error="handlePhotoError(url)"
           >
         </button>
@@ -147,13 +149,13 @@ const swiperModules = [Navigation, Pagination, Keyboard]
         role="dialog"
         aria-modal="true"
         :aria-label="altBase"
-        class="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-0 sm:p-4"
+        class="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-black/90 p-0 sm:p-4"
         @click.self="lightboxOpen = false"
       >
         <button
           ref="closeButtonRef"
           type="button"
-          class="absolute top-4 right-4 rounded-full bg-white/10 p-2 text-white hover:bg-white/20"
+          class="absolute top-4 right-4 rounded-full bg-black/40 p-2 text-white backdrop-blur-sm hover:bg-black/60"
           :aria-label="t('objektDetail.gallery.close')"
           @click="lightboxOpen = false"
         >
@@ -168,14 +170,19 @@ const swiperModules = [Navigation, Pagination, Keyboard]
           :initial-slide="activeIndex"
           class="auction-gallery-lightbox h-full w-full max-w-[1100px]"
         >
-          <SwiperSlide v-for="(url, i) in photos" :key="url" class="flex items-center justify-center">
+          <SwiperSlide
+            v-for="(url, i) in photos"
+            :key="url"
+            class="flex items-center justify-center"
+            @click.self="lightboxOpen = false"
+          >
             <img
               :src="photoSrc(url)"
               :alt="t('objektDetail.photoAlt', { n: i + 1, total: photos.length, title: altBase })"
               referrerpolicy="no-referrer"
               loading="lazy"
               class="max-h-full max-w-full object-contain"
-              :class="{ 'opacity-60 p-12': brokenPhotoUrls.has(url) }"
+              :class="{ 'opacity-60 p-12': photoIsBroken(url) }"
               @error="handlePhotoError(url)"
             >
           </SwiperSlide>
