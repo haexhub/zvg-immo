@@ -1,12 +1,18 @@
 <script setup lang="ts">
 import { Menu } from 'lucide-vue-next'
 
+const props = withDefaults(defineProps<{
+  // /search keeps header and search bar at full size on scroll — see layouts/search.vue.
+  collapsible?: boolean
+}>(), { collapsible: true })
+
 const mobileOpen = ref(false)
 
 // Airbnb-style collapsing header: brand row plus a search row that hosts the
 // large SearchBar (filled via the #search slot by layouts/landing.vue and
 // layouts/search.vue). Scrolling down shrinks both rows, and the bar itself
-// drops to its compact 3-button form — see useHeaderCompact.
+// drops to its compact 3-button form — see useHeaderCompact. Unless
+// `collapsible` is false, in which case the header never leaves its large form.
 const compact = useHeaderCompact()
 const headerRef = ref<HTMLElement>()
 
@@ -32,6 +38,12 @@ function handleScroll(event: Event): void {
 }
 
 onMounted(() => {
+  // Shared state, so a scrolled-down landing page must not leak its collapsed
+  // header into the next surface that mounts a non-collapsing one.
+  if (!props.collapsible) {
+    compact.value = false
+    return
+  }
   // Covers a back-navigation into an already scrolled page.
   compact.value = window.scrollY > COMPACT_FROM
   document.addEventListener('scroll', handleScroll, { capture: true, passive: true })

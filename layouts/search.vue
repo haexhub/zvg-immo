@@ -14,9 +14,6 @@ import { AUCTION_SEARCH_RESULT_KEY } from '~/composables/useAuctionSearchResult'
 const { eurToDisplay, displayToEur, currency } = useCurrencyDisplay()
 const propertyTypeLabel = usePropertyTypeLabel()
 const { locale } = useI18n()
-// Set by SiteHeader once the results pane is scrolled — shrinks the bar and
-// the sort button along with the header itself.
-const compact = useHeaderCompact()
 
 // Admin-configured default for the hideRulesOnly filter (/settings'
 // "Dashboard-Anzeige" — see server/utils/app-settings.ts's
@@ -88,12 +85,9 @@ onMounted(() => {
 
 <template>
   <div class="h-screen overflow-hidden flex flex-col">
-    <SiteHeader>
+    <SiteHeader :collapsible="false">
       <template #search>
-        <div
-          class="mx-auto flex w-full items-center gap-2 transition-all duration-200"
-          :class="compact ? 'max-w-full justify-center' : 'max-w-3xl'"
-        >
+        <div class="mx-auto flex w-full max-w-3xl items-center gap-2">
           <SearchBar
             v-model:search="search"
             v-model:price-min="priceMin"
@@ -136,10 +130,9 @@ onMounted(() => {
           />
           <Select v-model="sortBy">
             <!-- SelectTrigger's own `data-[size=default]:h-9` outranks a plain
-                 `h-14`, so the large state answers in the same variant. -->
+                 `h-14`, so the height answers in the same variant. -->
             <SelectTrigger
-              class="shrink-0 justify-center rounded-full p-0 transition-all duration-200 [&>svg]:hidden"
-              :class="compact ? 'size-9' : 'w-14 data-[size=default]:h-14'"
+              class="w-14 shrink-0 justify-center rounded-full p-0 data-[size=default]:h-14 [&>svg]:hidden"
               :title="$t('search.sortLabel')"
               :aria-label="$t('search.sortLabel')"
             >
