@@ -27,6 +27,29 @@ let previousBodyOverflow: string | null = null
 
 const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
+// Photo requests occasionally fail on flaky mobile connections even though
+// the file is fine server-side, which previously left a permanently blank
+// slide with no way to recover. One cache-busted retry before giving up and
+// showing the shared no-photo placeholder.
+const MAX_PHOTO_RETRIES = 1
+const photoRetries = reactive(new Map<string, number>())
+const brokenPhotoUrls = reactive(new Set<string>())
+
+function photoSrc(url: string): string {
+  if (brokenPhotoUrls.has(url)) return '/images/no-photo.svg'
+  const retries = photoRetries.get(url) ?? 0
+  return retries > 0 ? `${url}?retry=${retries}` : url
+}
+
+function handlePhotoError(url: string) {
+  const retries = photoRetries.get(url) ?? 0
+  if (retries >= MAX_PHOTO_RETRIES) {
+    brokenPhotoUrls.add(url)
+    return
+  }
+  photoRetries.set(url, retries + 1)
+}
+
 function openLightbox(index: number, event: MouseEvent) {
   // Not document.activeElement — a click doesn't reliably focus its target
   // first, so that can point at whatever was focused before instead of the
@@ -106,11 +129,12 @@ const swiperModules = [Navigation, Pagination, Keyboard]
           @click="openLightbox(i, $event)"
         >
           <img
-            :src="url"
+            :src="photoSrc(url)"
             :alt="t('objektDetail.photoAlt', { n: i + 1, total: photos.length, title: altBase })"
             referrerpolicy="no-referrer"
             :loading="i === 0 ? 'eager' : 'lazy'"
-            class="h-full w-full object-cover"
+            :class="brokenPhotoUrls.has(url) ? 'h-full w-full object-contain p-6 opacity-60' : 'h-full w-full object-cover'"
+            @error="handlePhotoError(url)"
           >
         </button>
       </SwiperSlide>
@@ -123,7 +147,7 @@ const swiperModules = [Navigation, Pagination, Keyboard]
         role="dialog"
         aria-modal="true"
         :aria-label="altBase"
-        class="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-0 sm:p-4"
         @click.self="lightboxOpen = false"
       >
         <button
@@ -142,15 +166,17 @@ const swiperModules = [Navigation, Pagination, Keyboard]
           :keyboard="{ enabled: true }"
           :loop="photos.length > 1"
           :initial-slide="activeIndex"
-          class="auction-gallery-lightbox w-full max-w-[1100px]"
+          class="auction-gallery-lightbox h-full w-full max-w-[1100px]"
         >
           <SwiperSlide v-for="(url, i) in photos" :key="url" class="flex items-center justify-center">
             <img
-              :src="url"
+              :src="photoSrc(url)"
               :alt="t('objektDetail.photoAlt', { n: i + 1, total: photos.length, title: altBase })"
               referrerpolicy="no-referrer"
               loading="lazy"
-              class="max-h-[85vh] max-w-full object-contain"
+              class="max-h-full max-w-full object-contain"
+              :class="{ 'opacity-60 p-12': brokenPhotoUrls.has(url) }"
+              @error="handlePhotoError(url)"
             >
           </SwiperSlide>
         </Swiper>
@@ -191,5 +217,14 @@ const swiperModules = [Navigation, Pagination, Keyboard]
 .auction-gallery-lightbox :deep(.swiper-pagination-bullet) {
   background: rgba(255, 255, 255, 0.85);
   opacity: 1;
+}
+/* Swiper's own stylesheet sets .swiper-slide { display: block }, which beats
+   the slide's `flex items-center justify-center` utility classes on cascade
+   order alone — without this, a photo shorter than the lightbox never gets
+   vertically centered, it just sticks to the top. */
+.auction-gallery-lightbox :deep(.swiper-slide) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 </style>
