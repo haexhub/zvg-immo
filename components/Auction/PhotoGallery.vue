@@ -34,6 +34,12 @@ const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), [tabindex]:not([tab
 const MAX_PHOTO_RETRIES = 1
 const photoRetries = reactive(new Map<string, number>())
 
+// This component instance is reused across auction detail pages (no :key
+// tied to the route, keepalive'd <NuxtPage>) — without this, a photo marked
+// broken on one auction would wrongly stay broken forever, even for an
+// unrelated later auction or a revisit of the same one.
+watch(() => props.photos, () => photoRetries.clear())
+
 function photoIsBroken(url: string): boolean {
   return (photoRetries.get(url) ?? 0) > MAX_PHOTO_RETRIES
 }
@@ -152,10 +158,14 @@ const swiperModules = [Navigation, Pagination, Keyboard]
         class="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-black/90 p-0 sm:p-4"
         @click.self="lightboxOpen = false"
       >
+        <!-- z-20: the lightbox Swiper below is `h-full` and Swiper's own
+        stylesheet gives `.swiper` `position: relative; z-index: 1`, which
+        otherwise wins over this `position: absolute` button (z-index auto)
+        and swallows the click on mobile viewports. -->
         <button
           ref="closeButtonRef"
           type="button"
-          class="absolute top-4 right-4 rounded-full bg-black/40 p-2 text-white backdrop-blur-sm hover:bg-black/60"
+          class="absolute top-4 right-4 z-20 rounded-full bg-black/40 p-2 text-white backdrop-blur-sm hover:bg-black/60"
           :aria-label="t('objektDetail.gallery.close')"
           @click="lightboxOpen = false"
         >
