@@ -14,6 +14,17 @@ describe('classifyPropertyType — German (existing behavior)', () => {
   it('returns unbekannt for null', () => {
     expect(classifyPropertyType(null).id).toBe('unbekannt')
   })
+  it('classifies a bare "N-Zimmerwohnung" title as Eigentumswohnung', () => {
+    expect(classifyPropertyType('2-Zimmerwohnung Nr. 7, Zum Wiegele 20, 74865 Neckarzimmern').id).toBe(
+      'eigentumswohnung',
+    )
+  })
+  it('classifies "N,N-Zimmer-Wohnung" with half-room notation', () => {
+    expect(classifyPropertyType('3,5-Zimmer-Wohnung im Dachgeschoss').id).toBe('eigentumswohnung')
+  })
+  it('does not let a place name like "Neckarzimmern" trigger a false match', () => {
+    expect(classifyPropertyType('Grundstück in Neckarzimmern').id).toBe('sonstiges')
+  })
 })
 
 describe('classifyPropertyType — Spanish', () => {

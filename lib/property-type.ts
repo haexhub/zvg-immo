@@ -89,7 +89,12 @@ const RULES: PropertyTypeRule[] = [
   {
     id: 'eigentumswohnung',
     label: 'Eigentumswohnung',
-    test: /eigentumswohnung|sonstiges teileigentum|wohnung und anteil|\bpiso\b|apartamento|appartamento|appartement|mieszkanie|\blakás\b|\bbutas\b|dzīvoklis|\bkorter\b|lägenhet|bostadsrätt|asunto-osake|huoneisto|ejerlejlighed|lejlighed|\bíbúð\b|\bstan\b|stanovanje|διαμερισμα/i,
+    // German ZVG titles routinely name the unit by room count instead of
+    // "Eigentumswohnung" ("2-Zimmerwohnung Nr. 7, ..."). Without this, such a
+    // title falls through to the combined title+description text, where a
+    // "Mehrfamilienhaus" mention describing the surrounding building (not the
+    // auctioned unit) outranks it — the mehrfamilienhaus rule runs first.
+    test: /eigentumswohnung|\d[\d,.]*\s*-?\s*zimmer\s*-?\s*wohnung|sonstiges teileigentum|wohnung und anteil|\bpiso\b|apartamento|appartamento|appartement|mieszkanie|\blakás\b|\bbutas\b|dzīvoklis|\bkorter\b|lägenhet|bostadsrätt|asunto-osake|huoneisto|ejerlejlighed|lejlighed|\bíbúð\b|\bstan\b|stanovanje|διαμερισμα/i,
   },
   {
     id: 'gewerbe',
