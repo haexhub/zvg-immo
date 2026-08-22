@@ -183,6 +183,13 @@
       "when": 1787253882587,
       "tag": "0025_add_ski_downhill_nordic_metrics",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1787402627150,
+      "tag": "0026_romantic_slipstream",
+      "breakpoints": true
     }
   ]
 }

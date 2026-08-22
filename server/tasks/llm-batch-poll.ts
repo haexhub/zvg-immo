@@ -7,7 +7,7 @@
 import { fetchLlmBatchResults, LLM_BATCH_JOB_EXPIRY_MS, pollLlmBatch } from '../utils/extract/llm-batch'
 import { readExtractionLlmConfig, resolveLlmConfigForProfile } from '../utils/extract/llm-task-config'
 import type { LlmConfig } from '../utils/extract/llm'
-import { mergeLlmResult } from '../utils/extract/merge-llm-result'
+import { falsifiedRuleFields, mergeLlmResult, ruleChecksMatchingHint } from '../utils/extract/merge-llm-result'
 import { buildReprocessFields } from '../utils/extract/reprocess-fields'
 import { applyAuctionExtraction } from '../utils/auction-extraction'
 import { readAuctionRecordMap } from '../utils/auction-record'
@@ -175,6 +175,7 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
 
       const results = await fetchLlmBatchResults(job.jobName, poll.resultFileName, jobConfig, job.customIdMap)
       throwIfTaskAborted(signal)
+      let rulesFalsified = 0
       for (const { key, extraction, usage, error } of results) {
         throwIfTaskAborted(signal)
         const identity = splitKey(key)
@@ -211,16 +212,35 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
         const storedPriorEntry = record.auction.extraction ?? undefined
         const priorState = fetchStates.get(key)
         if (!storedPriorEntry) continue
+        // The item's LLM state belongs to whichever job claimed it last. An
+        // older job whose provider only now recovered (its per-item marker
+        // was already forgiven after LLM_BATCH_JOB_EXPIRY_MS and the item
+        // re-submitted elsewhere) would otherwise merge against the newer
+        // job's snapshot and clear its still-pending marker.
+        if (priorState?.llmBatchJob !== job.jobName) {
+          console.warn(`[llm-batch-poll] ${identity.platform}:${identity.externalId} no longer belongs to ${job.jobName} — skipping its result`)
+          continue
+        }
         const artifactVersionId = priorState?.llmArtifactVersionId ?? record.artifactVersionId
         const fields = buildReprocessFields(
           record.auction,
           storedPriorEntry,
           artifactVersionId !== record.artifactVersionId,
         )
+        // The verdicts were formed against the rules values as they stood at
+        // submit time; `fields` above is re-derived now, up to 48h later.
+        // Only honour a verdict whose value survived that gap unchanged.
+        const verified = extraction &&
+          { ...extraction, ruleCheck: ruleChecksMatchingHint(extraction.ruleCheck, priorState.llmRulesHint, fields) }
+        const falsified = falsifiedRuleFields(fields, verified)
+        if (falsified.length) {
+          rulesFalsified += falsified.length
+          console.warn(`[llm-batch-poll] llm overruled rules value(s) for ${identity.platform}:${identity.externalId}: ${falsified.join(',')}`)
+        }
         const mergedEntry = mergeLlmResult(
           storedPriorEntry,
           fields,
-          extraction,
+          verified,
           at,
           storedPriorEntry.photos,
         )
@@ -241,6 +261,7 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
         await writeAuctionLlmPipelineState(identity.platform, identity.externalId, {
           llmBatchJob: null,
           llmArtifactVersionId: null,
+          llmRulesHint: null,
           llmFailures: extraction === null ? (priorState?.llmFailures ?? 0) + 1 : 0,
         })
         record.auction = updated
@@ -249,7 +270,7 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
       }
 
       await markLlmBatchJobResolved(job.jobName, 'succeeded', at)
-      console.log(`[llm-batch-poll] job ${job.jobName} succeeded — merged ${results.length} items`)
+      console.log(`[llm-batch-poll] job ${job.jobName} succeeded — merged ${results.length} items, rulesFalsified=${rulesFalsified}`)
     } catch (err) {
       await markLlmBatchJobChecked(job.jobName, at)
       console.warn(`[llm-batch-poll] failed for job ${job.jobName}: ${(err as Error).message}`)

@@ -1,6 +1,6 @@
 import type { Auction, AuctionExtraction, CuratedPhoto } from '~/types/auction'
 import { extractByLlm, isDailyQuotaError, isLlmProviderUnavailable, type LlmConfig, type LlmUsage, type PhotoCuration } from '~/server/utils/extract/llm'
-import { mergeLlmResult } from '~/server/utils/extract/merge-llm-result'
+import { falsifiedRuleFields, mergeLlmResult, ruleChecksMatchingHint, type RuleCheckedField } from '~/server/utils/extract/merge-llm-result'
 import { readArtifactProcessingState, type ArtifactProcessingState } from '~/server/utils/artifact-version-state'
 import { normalizePhoto } from '~/lib/photo'
 import { applyPhotoCuration, buildReprocessInput, buildRulesOnlyEntry, type ReprocessInput } from './reprocess-input'
@@ -44,6 +44,9 @@ export async function reprocessAuction(
   } = {},
 ): Promise<{
   entry: AuctionExtraction
+  /** Rules values this call's LLM result explicitly refuted and replaced —
+   *  runReprocess counts them into ReprocessResult.rulesFalsified. */
+  rulesFalsified: RuleCheckedField[]
   llmCalled: boolean
   llmFailures: number
   artifactVersionId: number | null
@@ -69,6 +72,7 @@ export async function reprocessAuction(
   if (!llmConfig) {
     return {
       entry: buildRulesOnlyEntry(base.fields, priorEntry, at),
+      rulesFalsified: [],
       llmCalled: false,
       llmFailures: opts.priorLlmFailures ?? 0,
       artifactVersionId: artifactState.parsedArtifactVersionId,
@@ -162,9 +166,22 @@ export async function reprocessAuction(
   }
   const effectivePriorEntry = base.documentSetChanged ? undefined : priorEntry
   const parsedCurrentSet = llm != null && base.documentSetComplete
-  const entry = mergeLlmResult(effectivePriorEntry, base.fields, llm, at, curatedPhotos)
+  // Same filter the batch path applies: base.fields still carries the
+  // platform-reported rooms/securityDeposit that buildReprocessInput
+  // deliberately kept out of the hint, so an unsolicited `false` for one of
+  // them must not reach the merge.
+  const verified = llm && {
+    ...llm,
+    ruleCheck: ruleChecksMatchingHint(llm.ruleCheck, base.input?.rulesHint ?? null, base.fields),
+  }
+  const entry = mergeLlmResult(effectivePriorEntry, base.fields, verified, at, curatedPhotos)
+  const rulesFalsified = falsifiedRuleFields(base.fields, verified)
+  if (rulesFalsified.length) {
+    console.warn(`[reprocess] llm overruled rules value(s) for ${platform}:${externalId}: ${rulesFalsified.join(',')}`)
+  }
   return {
     entry,
+    rulesFalsified,
     llmCalled: true,
     llmFailures: llm === null ? (opts.priorLlmFailures ?? 0) + 1 : 0,
     artifactVersionId: parsedCurrentSet

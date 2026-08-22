@@ -1,0 +1,1 @@
+ALTER TABLE "auction_fetch_state" ADD COLUMN "llm_rules_hint" jsonb;

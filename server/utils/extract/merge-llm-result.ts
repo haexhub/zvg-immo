@@ -1,10 +1,13 @@
 // Shared merge step between rules-derived fields and an LLM extraction
-// attempt — factored out because enrich.ts, reprocess.ts and (with the
-// LLM Batch API) llm-batch-poll.ts all need the exact same precedence
-// rules: structured/rules values win when present, the LLM fills gaps
-// (propertyType/source only change when rules weren't already confident),
-// while condition/features/yearBuilt/lastRenovationYear/
-// renovationNotes/insights/marketValueEur/marketValueText are LLM-only and
+// attempt — factored out because reprocess.ts's sync path and its LLM Batch
+// API poll path (llm-batch-poll.ts) both need the exact same precedence
+// rules: for propertyType/rooms/units/securityDeposit, a rules value wins
+// unless rules found nothing (LLM fills the gap) or the LLM explicitly
+// falsified it via ruleCheck — see llm-schema.ts, which shows the LLM the
+// rules value and asks it to verify or falsify rather than guess blind, so a
+// plain independent LLM guess never silently overrides a value rules already
+// resolved. condition/features/yearBuilt/lastRenovationYear/renovationNotes/
+// insights/marketValueEur/marketValueText/biddingNotes are LLM-only and
 // always take the latest call's result. Pure function, no I/O — easy to
 // unit-test independently of any provider or cache.
 
@@ -12,7 +15,7 @@ import type { PropertyType } from '~/lib/property-type'
 import type { Condition } from '~/lib/condition'
 import type { Feature } from '~/lib/features'
 import type { AuctionExtraction, AuctionInsights, CuratedPhoto, PlanningNotes } from '~/types/auction'
-import type { ClampedExtraction } from './llm'
+import type { ClampedExtraction, RuleCheckResult, RulesHint } from './llm-clamp'
 
 /** Rules/structured fields plus the LLM-only fields carried forward from a
  *  prior cache entry (undefined when never checked) — the state going into
@@ -30,6 +33,7 @@ export interface MergeInputFields {
   heating?: string | null
   units: number | null
   securityDeposit: number | null
+  biddingNotes?: string | null
   condition?: Condition | null
   features?: Feature[]
   yearBuilt?: number | null
@@ -40,12 +44,6 @@ export interface MergeInputFields {
   documentSummary?: string | null
   marketValueEur?: number | null
   marketValueText?: string | null
-  /** `rules.confident || (propertyType set (not 'sonstiges') && an area is
-   *  set)` — computed by the caller (needs `rules.confident`, which this
-   *  function doesn't otherwise need to know about). Gates whether the LLM
-   *  is allowed to contribute propertyType/sizes/securityDeposit, or only
-   *  the LLM-only fields. */
-  confident: boolean
 }
 
 export function deriveLandAreaSqmFromPlanningNotes(planningNotes: PlanningNotes | null | undefined): number | null {
@@ -77,6 +75,80 @@ export function withDerivedExtractionFields(entry: AuctionExtraction): AuctionEx
   }
 }
 
+/** The four fields the LLM is asked to confirm or refute (llm-schema.ts's
+ *  ruleCheck). propertyType's rules value is only "real" when it isn't
+ *  'sonstiges' — the same nuance mergeLlmResult and buildReprocessInput
+ *  apply. */
+export const RULE_CHECKED_FIELDS = ['propertyType', 'rooms', 'units', 'securityDeposit'] as const
+export type RuleCheckedField = (typeof RULE_CHECKED_FIELDS)[number]
+
+function ruleValueOf(fields: MergeInputFields, field: RuleCheckedField): string | number | null {
+  if (field !== 'propertyType') return fields[field]
+  return fields.propertyType != null && fields.propertyType !== 'sonstiges' ? fields.propertyType : null
+}
+
+/**
+ * Keeps only the verdicts that provably refer to today's rules value, by
+ * matching each one against the hint the model was actually shown. Two ways a
+ * verdict fails that test, both of which would otherwise let it overwrite a
+ * value it never judged:
+ *  - the field was never hinted (buildReprocessInput withholds a
+ *    platform-reported source* value, and 'sonstiges'), so a `false` for it is
+ *    unsolicited — the model refuted something it was never given;
+ *  - the value changed since the hint was sent. The LLM Batch API path shows
+ *    the rules value at submit time but re-derives the merge base up to 48h
+ *    later at poll time (llm-batch-poll.ts); a re-crawl in between moves the
+ *    value out from under the verdict.
+ * Without a hint at all (rows written before the snapshot existed) nothing can
+ * be attributed, so every verdict goes.
+ */
+export function ruleChecksMatchingHint(
+  ruleCheck: RuleCheckResult | null,
+  hint: RulesHint | null,
+  fields: MergeInputFields,
+): RuleCheckResult | null {
+  if (!ruleCheck) return null
+  if (!hint) return null
+  const kept = { propertyType: null, rooms: null, units: null, securityDeposit: null } as RuleCheckResult
+  let hasVerdict = false
+  for (const field of RULE_CHECKED_FIELDS) {
+    if (ruleCheck[field] == null || hint[field] !== ruleValueOf(fields, field)) continue
+    kept[field] = ruleCheck[field]
+    hasVerdict = true
+  }
+  return hasVerdict ? kept : null
+}
+
+/** Which rules values this LLM result actually overruled — the observable
+ *  half of resolveVerifiedField, kept as its own function so callers can
+ *  count and log the override without the merge doing I/O. */
+export function falsifiedRuleFields(
+  fields: MergeInputFields,
+  llm: ClampedExtraction | null,
+): RuleCheckedField[] {
+  if (!llm?.ruleCheck) return []
+  return RULE_CHECKED_FIELDS.filter(
+    (field) => ruleValueOf(fields, field) != null && llm.ruleCheck![field] === false,
+  )
+}
+
+/** Resolves one rules/LLM field pair for propertyType/rooms/units/
+ *  securityDeposit: a null rules value takes the LLM's own guess (a genuine
+ *  gap, nothing to override); a non-null rules value stays unless `verified`
+ *  is explicitly `false` (the LLM was shown the rules value via
+ *  LlmInput.rulesHint and falsified it — see llm-schema.ts's ruleCheck).
+ *  `verified` being `true` or `null` (agrees, or no hint was sent for this
+ *  field) both keep the rules value. */
+function resolveVerifiedField<T>(
+  ruleValue: T | null,
+  llmValue: T | null,
+  verified: boolean | null | undefined,
+): { value: T | null; usedLlm: boolean } {
+  if (ruleValue == null) return { value: llmValue, usedLlm: llmValue != null }
+  if (verified === false) return { value: llmValue, usedLlm: true }
+  return { value: ruleValue, usedLlm: false }
+}
+
 /**
  * Merges `fields` with an LLM extraction attempt into a persistable
  * `AuctionExtraction`. `llm` is `null` when an LLM call was actually made and
@@ -93,7 +165,7 @@ export function mergeLlmResult(
   at: string,
   photos: CuratedPhoto[] | undefined,
 ): AuctionExtraction {
-  const { confident: mergedConfident, ...base } = fields
+  const base = fields
 
   let source: 'rules' | 'llm' = 'rules'
   let propertyType = base.propertyType
@@ -108,7 +180,7 @@ export function mergeLlmResult(
   let heating = base.heating
   let units = base.units
   let securityDeposit = base.securityDeposit
-  let biddingNotes: string | null | undefined
+  let biddingNotes = base.biddingNotes
   let condition = base.condition
   let features = base.features
   let yearBuilt = base.yearBuilt
@@ -121,18 +193,32 @@ export function mergeLlmResult(
   let marketValueText = base.marketValueText
 
   if (llm) {
-    // Only let the LLM change propertyType/source when rules didn't already
-    // resolve a confident base entry. Missing area gaps are still filled below:
-    // a single rules area (e.g. living area) can make the base confident even
-    // though the complementary land area is present in the documents.
-    if (!mergedConfident) {
-      source = 'llm'
-      propertyType = propertyType != null && propertyType !== 'sonstiges' ? propertyType : llm.propertyType
-      rooms = rooms ?? llm.rooms
-      units = units ?? llm.units
-      securityDeposit = securityDeposit ?? llm.securityDeposit
-      biddingNotes = llm.biddingNotes
+    // propertyType keeps the 'sonstiges' == "nothing real found" nuance the
+    // other three fields don't have.
+    const ruleHasType = propertyType != null && propertyType !== 'sonstiges'
+    let usedLlmForCoreFields = false
+    if (!ruleHasType) {
+      propertyType = llm.propertyType
+      if (llm.propertyType != null) usedLlmForCoreFields = true
+    } else if (llm.ruleCheck?.propertyType === false) {
+      propertyType = llm.propertyType
+      usedLlmForCoreFields = true
     }
+
+    const roomsResolved = resolveVerifiedField(rooms, llm.rooms, llm.ruleCheck?.rooms)
+    rooms = roomsResolved.value
+    if (roomsResolved.usedLlm) usedLlmForCoreFields = true
+
+    const unitsResolved = resolveVerifiedField(units, llm.units, llm.ruleCheck?.units)
+    units = unitsResolved.value
+    if (unitsResolved.usedLlm) usedLlmForCoreFields = true
+
+    const securityDepositResolved = resolveVerifiedField(securityDeposit, llm.securityDeposit, llm.ruleCheck?.securityDeposit)
+    securityDeposit = securityDepositResolved.value
+    if (securityDepositResolved.usedLlm) usedLlmForCoreFields = true
+
+    if (usedLlmForCoreFields) source = 'llm'
+
     landAreaSqm = landAreaSqm ?? llm.landAreaSqm
     livingAreaSqm = livingAreaSqm ?? llm.livingAreaSqm
     bedrooms = llm.bedrooms
@@ -141,6 +227,7 @@ export function mergeLlmResult(
     bathroomHasTub = llm.bathroomHasTub
     bathroomHasShower = llm.bathroomHasShower
     heating = llm.heating
+    biddingNotes = llm.biddingNotes
     condition = llm.condition
     features = llm.features
     yearBuilt = llm.yearBuilt

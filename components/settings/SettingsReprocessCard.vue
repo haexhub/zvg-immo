@@ -8,6 +8,7 @@ interface ReprocessResult {
   skipped: number
   llmCalls: number
   llmErrors: number
+  rulesFalsified: number
   durationMs: number
   warning?: string
   lastLlmError?: string
@@ -23,6 +24,10 @@ const reprocessBatch = ref(false)
 const reprocessPending = ref(false)
 const reprocessError = ref<string | null>(null)
 const reprocessResult = ref<ReprocessResult | null>(null)
+// Whether the shown result came from a batch submission — remembered at send
+// time rather than read off the live checkbox, which the user can flip while
+// the result is still on screen.
+const reprocessResultWasBatch = ref(false)
 
 function parseReprocessLimit(raw: string): number | null {
   const value = Number(raw)
@@ -38,15 +43,17 @@ async function runReprocessTest(): Promise<void> {
   reprocessPending.value = true
   reprocessError.value = null
   reprocessResult.value = null
+  const batch = reprocessBatch.value
   try {
     reprocessResult.value = await $fetch<ReprocessResult>('/api/settings/reprocess', {
       method: 'POST',
       body: {
         limit,
         country: reprocessCountry.value.trim() || undefined,
-        batch: reprocessBatch.value || undefined,
+        batch: batch || undefined,
       },
     })
+    reprocessResultWasBatch.value = batch
     await loadLlmBatchJobs()
   } catch (err) {
     reprocessError.value = normalizeSettingsError(err, t('settings.reprocess.runError'))
@@ -99,6 +106,10 @@ async function runReprocessTest(): Promise<void> {
         <dd>{{ reprocessResult.llmCalls }}</dd>
         <dt class="text-muted-foreground">{{ $t('settings.reprocess.llmErrors') }}</dt>
         <dd>{{ reprocessResult.llmErrors }}</dd>
+        <template v-if="!reprocessResultWasBatch">
+          <dt class="text-muted-foreground">{{ $t('settings.reprocess.rulesFalsified') }}</dt>
+          <dd>{{ reprocessResult.rulesFalsified }}</dd>
+        </template>
       </dl>
       <SettingsMessageDetails
         v-if="reprocessResult?.warning"

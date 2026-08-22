@@ -324,6 +324,7 @@ describe('runReprocess structured persistence', () => {
     expect(writeAuctionLlmPipelineState).toHaveBeenCalledWith('zvg-portal', '7265', {
       llmBatchJob: null,
       llmArtifactVersionId: null,
+      llmRulesHint: null,
       llmFailures: 0,
       llmAttempted: false,
     })
@@ -343,7 +344,7 @@ describe('runReprocess structured persistence', () => {
       platform: 'zvg-portal', externalId: '7265', pdfUrl: null, pdfUrlUpstream: null,
       detailUrl: null, detailUrlUpstream: null, attachments: [], photoUrls: null,
       sourceUpdatedIso: null, detailFetchedAt: null, enrichClaimedAt: null, llmBatchJob: null,
-      llmArtifactVersionId: null, llmFailures: 2, llmLastAttemptedAt: null, llmClaimedAt: null, photosCheckedAt: null,
+      llmArtifactVersionId: null, llmRulesHint: null, llmFailures: 2, llmLastAttemptedAt: null, llmClaimedAt: null, photosCheckedAt: null,
       photoFailures: 0, photoLastAttemptedAt: null, photoPipelineVersion: null,
       updatedAt: '2026-08-02T10:00:00.000Z',
     }]]))
@@ -379,9 +380,12 @@ describe('runReprocess structured persistence', () => {
         llmOutputTokens: null,
       },
     )
+    // The rules values shown to the model are snapshotted with the submitted
+    // item, so llm-batch-poll can tell a stale verdict from a current one.
     expect(writeAuctionLlmPipelineState).toHaveBeenLastCalledWith('zvg-portal', '7265', {
       llmBatchJob: 'batch-22',
       llmArtifactVersionId: 22,
+      llmRulesHint: { propertyType: 'einfamilienhaus', rooms: null, units: null, securityDeposit: null },
       llmFailures: 2,
       llmAttempted: true,
     })
@@ -458,6 +462,7 @@ describe('runReprocess structured persistence', () => {
     expect(writeAuctionLlmPipelineState).toHaveBeenCalledWith('zvg-portal', '7265', {
       llmBatchJob: null,
       llmArtifactVersionId: null,
+      llmRulesHint: null,
       llmFailures: 1,
       llmAttempted: true,
     })
@@ -540,7 +545,7 @@ describe('runReprocess llm_failures cooldown', () => {
       platform: 'zvg-portal', externalId: '7265', pdfUrl: null, pdfUrlUpstream: null,
       detailUrl: null, detailUrlUpstream: null, attachments: [], photoUrls: null,
       sourceUpdatedIso: null, detailFetchedAt: null, enrichClaimedAt: null, llmBatchJob: null,
-      llmArtifactVersionId: null, llmFailures: 3, llmLastAttemptedAt, llmClaimedAt: null, photosCheckedAt: null,
+      llmArtifactVersionId: null, llmRulesHint: null, llmFailures: 3, llmLastAttemptedAt, llmClaimedAt: null, photosCheckedAt: null,
       photoFailures: 0, photoLastAttemptedAt: null, photoPipelineVersion: null,
       updatedAt: '2026-08-02T10:00:00.000Z',
     }]])
@@ -616,6 +621,7 @@ describe('runReprocess llm_failures cooldown', () => {
     expect(writeAuctionLlmPipelineState).toHaveBeenCalledWith('zvg-portal', '7265', {
       llmBatchJob: null,
       llmArtifactVersionId: null,
+      llmRulesHint: null,
       llmFailures: 3,
       llmAttempted: true,
     })
@@ -655,7 +661,7 @@ describe('runReprocess isLlmBatchPending gate', () => {
       platform: 'zvg-portal', externalId: '7265', pdfUrl: null, pdfUrlUpstream: null,
       detailUrl: null, detailUrlUpstream: null, attachments: [], photoUrls: null,
       sourceUpdatedIso: null, detailFetchedAt: null, enrichClaimedAt: null,
-      llmBatchJob: 'openrouter_batch-stuck', llmArtifactVersionId: null, llmFailures: 0,
+      llmBatchJob: 'openrouter_batch-stuck', llmArtifactVersionId: null, llmRulesHint: null, llmFailures: 0,
       llmLastAttemptedAt: null, llmClaimedAt: null, photosCheckedAt: null,
       photoFailures: 0, photoLastAttemptedAt: null, photoPipelineVersion: null,
       updatedAt: '2026-08-02T10:00:00.000Z',

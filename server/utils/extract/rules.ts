@@ -7,8 +7,8 @@ import { findLandAreaSqm, findLivingAreaSqm, findRooms, findUnits, parseAreaValu
 // House types (einfamilienhaus, zweifamilienhaus, doppelhaushaelfte,
 // reihenhaus) are deliberately excluded too: the bare figure in a house
 // listing's short title ("Einfamilienhaus, 850 m²") is at least as often the
-// plot size as the living area, and a wrong bucket here would be cached as
-// confident and never corrected by the LLM.
+// plot size as the living area, and a wrong bucket here would be cached and
+// never corrected by the LLM (areas are outside ruleCheck's remit).
 const LIVING_AREA_TYPES = new Set<PropertyType>([
   'eigentumswohnung',
   'mehrfamilienhaus',
@@ -48,9 +48,6 @@ export interface RulesExtraction {
   /** Explicit security-deposit amount, only when the announcement states an
    *  absolute figure next to the label (see findSecurityDepositEur). */
   securityDeposit: number | null
-  /** True when a real type AND at least one area were found — i.e. good enough
-   *  to skip the LLM fallback. */
-  confident: boolean
 }
 
 // German ZVG announcements almost never restate a Sicherheitsleistung amount:
@@ -69,9 +66,10 @@ export function findSecurityDepositEur(text: string): number | null {
 
 /**
  * Deterministic first pass: classify the property type from the existing
- * property-type taxonomy and parse sizes from the combined listing text. Returns
- * `confident: false` for thin/ambiguous input so the caller can fall back to
- * the LLM.
+ * property-type taxonomy and parse sizes from the combined listing text.
+ * Whatever it leaves null the LLM fills in; what it does find, the LLM is asked
+ * to confirm or refute rather than silently overrule (see llm-schema.ts's
+ * ruleCheck).
  */
 export function extractByRules(input: ExtractionInput): RulesExtraction {
   const text = [input.title, input.description].filter(Boolean).join('\n')
@@ -105,8 +103,6 @@ export function extractByRules(input: ExtractionInput): RulesExtraction {
     }
   }
 
-  const hasArea = livingAreaSqm != null || landAreaSqm != null
-  const hasRealType = propertyType != null && propertyType !== 'sonstiges'
   const securityDeposit = findSecurityDepositEur(text)
 
   return {
@@ -116,6 +112,5 @@ export function extractByRules(input: ExtractionInput): RulesExtraction {
     rooms,
     units,
     securityDeposit,
-    confident: hasRealType && hasArea,
   }
 }

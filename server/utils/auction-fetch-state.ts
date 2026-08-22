@@ -1,6 +1,7 @@
 import type { Attachment, Auction } from '~/types/auction'
 import { getPool } from './db'
 import { jsonbStringify } from './jsonb'
+import { coerceRulesHint, type RulesHint } from './extract/llm-clamp'
 import { cacheKey } from './verkehrswert-cache'
 
 export interface AuctionFetchState {
@@ -17,6 +18,7 @@ export interface AuctionFetchState {
   enrichClaimedAt: string | null
   llmBatchJob: string | null
   llmArtifactVersionId: number | null
+  llmRulesHint: RulesHint | null
   llmFailures: number
   llmLastAttemptedAt: string | null
   llmClaimedAt: string | null
@@ -41,6 +43,7 @@ interface AuctionFetchStateRow {
   enrich_claimed_at: Date | string | null
   llm_batch_job: string | null
   llm_artifact_version_id: string | number | null
+  llm_rules_hint: unknown
   llm_failures: number
   llm_last_attempted_at: Date | string | null
   llm_claimed_at: Date | string | null
@@ -71,6 +74,7 @@ function fromRow(row: AuctionFetchStateRow): AuctionFetchState {
     enrichClaimedAt: iso(row.enrich_claimed_at),
     llmBatchJob: row.llm_batch_job,
     llmArtifactVersionId: row.llm_artifact_version_id == null ? null : Number(row.llm_artifact_version_id),
+    llmRulesHint: coerceRulesHint(row.llm_rules_hint),
     llmFailures: row.llm_failures,
     llmLastAttemptedAt: iso(row.llm_last_attempted_at),
     llmClaimedAt: iso(row.llm_claimed_at),
@@ -234,6 +238,11 @@ export async function writeAuctionPhotoPipelineState(
 export interface LlmPipelineState {
   llmBatchJob: string | null
   llmArtifactVersionId: number | null
+  /** Only set alongside llmBatchJob when a batch item is submitted — the
+   *  rules values the LLM was asked to verify, so llm-batch-poll can tell
+   *  whether a returned verdict still refers to today's value. Cleared with
+   *  the rest of the batch marker on merge. */
+  llmRulesHint: RulesHint | null
   llmFailures: number
   /** Set only when an actual LLM request was made this write (whether it
    *  succeeded or failed) — as opposed to a rules-only entry persisted with
@@ -256,13 +265,14 @@ export async function writeAuctionLlmPipelineState(
   if (!db) return
   await db.query(
     `INSERT INTO auction_fetch_state
-       (platform, external_id, llm_batch_job, llm_artifact_version_id, llm_failures, llm_last_attempted_at, llm_claimed_at)
-     VALUES ($1, $2, $3, $4, $5, CASE WHEN $6 THEN now() ELSE NULL END, NULL)
+       (platform, external_id, llm_batch_job, llm_artifact_version_id, llm_rules_hint, llm_failures, llm_last_attempted_at, llm_claimed_at)
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6, CASE WHEN $7 THEN now() ELSE NULL END, NULL)
      ON CONFLICT (platform, external_id) DO UPDATE SET
        llm_batch_job = EXCLUDED.llm_batch_job,
        llm_artifact_version_id = EXCLUDED.llm_artifact_version_id,
+       llm_rules_hint = EXCLUDED.llm_rules_hint,
        llm_failures = EXCLUDED.llm_failures,
-       llm_last_attempted_at = CASE WHEN $6 THEN now() ELSE auction_fetch_state.llm_last_attempted_at END,
+       llm_last_attempted_at = CASE WHEN $7 THEN now() ELSE auction_fetch_state.llm_last_attempted_at END,
        llm_claimed_at = NULL,
        updated_at = now()`,
     [
@@ -270,6 +280,7 @@ export async function writeAuctionLlmPipelineState(
       externalId,
       state.llmBatchJob,
       state.llmArtifactVersionId,
+      state.llmRulesHint == null ? null : jsonbStringify(state.llmRulesHint),
       state.llmFailures,
       state.llmAttempted ?? false,
     ],

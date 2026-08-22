@@ -3,7 +3,7 @@ import type { Auction, AuctionExtraction } from '~/types/auction'
 import { fetchLlmBatchResults, pollLlmBatch } from '../utils/extract/llm-batch'
 import { readExtractionLlmConfig, resolveLlmConfigForProfile } from '../utils/extract/llm-task-config'
 import { readAuctionRecordMap } from '../utils/auction-record'
-import { readAuctionFetchStates, writeAuctionLlmPipelineState } from '../utils/auction-fetch-state'
+import { readAuctionFetchStates, writeAuctionLlmPipelineState, type AuctionFetchState } from '../utils/auction-fetch-state'
 import { upsertCurrentAuctions } from '../utils/current-auctions'
 import { writeAuctionDetails } from '../utils/auction-details'
 import {
@@ -86,6 +86,34 @@ function auction(extraction: AuctionExtraction = entry()): Auction {
   }
 }
 
+function fetchState(overrides: Partial<AuctionFetchState> = {}): AuctionFetchState {
+  return {
+    platform: 'zvg-portal',
+    externalId: '7265',
+    pdfUrl: null,
+    pdfUrlUpstream: null,
+    detailUrl: null,
+    detailUrlUpstream: null,
+    attachments: [],
+    photoUrls: null,
+    sourceUpdatedIso: null,
+    detailFetchedAt: null,
+    enrichClaimedAt: null,
+    llmBatchJob: 'batches/abc',
+    llmArtifactVersionId: 22,
+    llmRulesHint: null,
+    llmFailures: 2,
+    llmLastAttemptedAt: null,
+    llmClaimedAt: null,
+    photosCheckedAt: null,
+    photoFailures: 0,
+    photoLastAttemptedAt: null,
+    photoPipelineVersion: null,
+    updatedAt: '2026-08-02T10:00:00.000Z',
+    ...overrides,
+  }
+}
+
 function job(overrides: Partial<LlmBatchJob> = {}): LlmBatchJob {
   return {
     jobName: 'batches/abc',
@@ -117,6 +145,7 @@ const llmResult = {
   heating: 'Gas',
   units: null,
   securityDeposit: null,
+  ruleCheck: null,
   biddingNotes: null,
   condition: 'gepflegt' as const,
   features: [],
@@ -148,29 +177,7 @@ beforeEach(() => {
     detailsVersion: 2,
     artifactVersionId: 11,
   }]]))
-  vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([['zvg-portal:7265', {
-    platform: 'zvg-portal',
-    externalId: '7265',
-    pdfUrl: null,
-    pdfUrlUpstream: null,
-    detailUrl: null,
-    detailUrlUpstream: null,
-    attachments: [],
-    photoUrls: null,
-    sourceUpdatedIso: null,
-    detailFetchedAt: null,
-    enrichClaimedAt: null,
-    llmBatchJob: 'batches/abc',
-    llmArtifactVersionId: 22,
-    llmFailures: 2,
-    llmLastAttemptedAt: null,
-    llmClaimedAt: null,
-    photosCheckedAt: null,
-    photoFailures: 0,
-    photoLastAttemptedAt: null,
-    photoPipelineVersion: null,
-    updatedAt: '2026-08-02T10:00:00.000Z',
-  }]]))
+  vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([['zvg-portal:7265', fetchState()]]))
   vi.mocked(writeAuctionDetails).mockResolvedValue({ version: 3, changed: true })
 })
 
@@ -249,10 +256,83 @@ describe('runLlmBatchPoll', () => {
     expect(writeAuctionLlmPipelineState).toHaveBeenCalledWith('zvg-portal', '7265', {
       llmBatchJob: null,
       llmArtifactVersionId: null,
+      llmRulesHint: null,
       llmFailures: 0,
     })
     expect(markLlmBatchJobResolved).toHaveBeenCalledWith('batches/abc', 'succeeded', expect.any(String))
     expect(recordLlmUsage).not.toHaveBeenCalled()
+  })
+
+  it('honours a ruleCheck verdict whose hinted value still matches at merge time', async () => {
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([['zvg-portal:7265', fetchState({
+      llmRulesHint: { propertyType: 'einfamilienhaus', rooms: null, units: null, securityDeposit: null },
+    })]]))
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job()])
+    vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/result' })
+    vi.mocked(fetchLlmBatchResults).mockResolvedValue([
+      {
+        key: 'zvg-portal:7265',
+        extraction: {
+          ...llmResult,
+          propertyType: 'eigentumswohnung',
+          ruleCheck: { propertyType: false, rooms: null, units: null, securityDeposit: null },
+        },
+        usage: null,
+      },
+    ])
+
+    await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 1, merged: 1 })
+    expect(writeAuctionDetails).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ propertyType: 'eigentumswohnung' }),
+      expect.anything(),
+    )
+  })
+
+  it('ignores a ruleCheck verdict about a value that changed since the batch was submitted', async () => {
+    // A re-crawl between submit and poll: the model refuted 'mehrfamilienhaus',
+    // but the rules pass now reads 'einfamilienhaus' off the current title.
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([['zvg-portal:7265', fetchState({
+      llmRulesHint: { propertyType: 'mehrfamilienhaus', rooms: null, units: null, securityDeposit: null },
+    })]]))
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job()])
+    vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/result' })
+    vi.mocked(fetchLlmBatchResults).mockResolvedValue([
+      {
+        key: 'zvg-portal:7265',
+        extraction: {
+          ...llmResult,
+          propertyType: 'eigentumswohnung',
+          ruleCheck: { propertyType: false, rooms: null, units: null, securityDeposit: null },
+        },
+        usage: null,
+      },
+    ])
+
+    await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 1, merged: 1 })
+    expect(writeAuctionDetails).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ propertyType: 'einfamilienhaus', source: 'rules' }),
+      expect.anything(),
+    )
+  })
+
+  it('skips a result whose item has meanwhile been re-submitted into another job', async () => {
+    // Job 'batches/abc' only now recovered; the item's 48h marker was already
+    // forgiven and it sits in a newer batch. Merging here would validate
+    // against the newer job's snapshot and clear its pending marker.
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([['zvg-portal:7265', fetchState({
+      llmBatchJob: 'batches/newer',
+    })]]))
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job()])
+    vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/result' })
+    vi.mocked(fetchLlmBatchResults).mockResolvedValue([
+      { key: 'zvg-portal:7265', extraction: llmResult, usage: null },
+    ])
+
+    await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 1, merged: 0 })
+    expect(writeAuctionDetails).not.toHaveBeenCalled()
+    expect(writeAuctionLlmPipelineState).not.toHaveBeenCalled()
   })
 
   it('records token usage against the job\'s submit-time provider/model, not the poll-time config', async () => {
@@ -357,6 +437,7 @@ describe('runLlmBatchPoll', () => {
     expect(writeAuctionLlmPipelineState).toHaveBeenCalledWith('zvg-portal', '7265', {
       llmBatchJob: null,
       llmArtifactVersionId: null,
+      llmRulesHint: null,
       llmFailures: 3,
     })
     expect(recordTaskRunError).toHaveBeenCalledWith('reprocess', {

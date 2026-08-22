@@ -20,6 +20,7 @@ export function buildReprocessFields(
     rooms: auction.sourceRooms ?? rules.rooms,
     units: rules.units,
     securityDeposit: auction.sourceSecurityDeposit ?? rules.securityDeposit,
+    biddingNotes: effectivePriorEntry?.biddingNotes,
     condition: effectivePriorEntry?.condition,
     features: effectivePriorEntry?.features,
     bedrooms: effectivePriorEntry?.bedrooms,
@@ -36,8 +37,5 @@ export function buildReprocessFields(
     documentSummary: effectivePriorEntry?.documentSummary,
     marketValueEur: effectivePriorEntry?.marketValueEur,
     marketValueText: effectivePriorEntry?.marketValueText,
-    confident:
-      rules.confident ||
-      (propertyType != null && propertyType !== 'sonstiges' && (landAreaSqm != null || livingAreaSqm != null)),
   }
 }

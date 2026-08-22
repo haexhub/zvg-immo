@@ -58,6 +58,7 @@ function fetchState(overrides: Partial<AuctionFetchState> = {}): AuctionFetchSta
     enrichClaimedAt: null,
     llmBatchJob: null,
     llmArtifactVersionId: null,
+    llmRulesHint: null,
     llmFailures: 0,
     llmLastAttemptedAt: null,
     llmClaimedAt: null,

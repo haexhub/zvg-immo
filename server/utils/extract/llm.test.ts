@@ -13,6 +13,7 @@ import {
   UNIVERSAL_AUCTION_SCHEMA_NAME,
   UNIVERSAL_AUCTION_SCHEMA_VERSION,
 } from './llm'
+import { coerceRulesHint } from './llm-clamp'
 
 describe('isRateLimitError', () => {
   it('recognizes an HTTP 429 $fetch error', () => {
@@ -103,7 +104,9 @@ describe('extractByLlm', () => {
 
 describe('universal auction extraction schema', () => {
   it('exposes the canonical schema identity and required fields', () => {
-    expect(UNIVERSAL_AUCTION_SCHEMA_VERSION).toBe(2)
+    expect(UNIVERSAL_AUCTION_SCHEMA_VERSION).toBe(3)
+    // The provider-facing name carries the version, so the two can't drift.
+    expect(UNIVERSAL_AUCTION_SCHEMA_NAME).toBe(`universal_auction_extraction_v${UNIVERSAL_AUCTION_SCHEMA_VERSION}`)
     expect(UNIVERSAL_AUCTION_SCHEMA_ID).toContain(UNIVERSAL_AUCTION_SCHEMA_NAME)
     expect(UNIVERSAL_AUCTION_SCHEMA).toMatchObject({
       type: 'object',
@@ -112,6 +115,18 @@ describe('universal auction extraction schema', () => {
     expect(UNIVERSAL_AUCTION_SCHEMA.required).toContain('propertyType')
     expect(UNIVERSAL_AUCTION_SCHEMA.required).toContain('documentSummary')
     expect(UNIVERSAL_AUCTION_SCHEMA.required).toContain('bathroomHasShower')
+    expect(UNIVERSAL_AUCTION_SCHEMA.required).toContain('ruleCheck')
+    expect(UNIVERSAL_AUCTION_SCHEMA.properties.ruleCheck.required).toEqual([
+      'propertyType',
+      'rooms',
+      'units',
+      'securityDeposit',
+    ])
+  })
+
+  it('instructs the LLM to verify rules-provided values via ruleCheck', () => {
+    expect(SYSTEM_PROMPT).toContain('ruleCheck')
+    expect(SYSTEM_PROMPT).toContain('Automatisch (regelbasiert) vorermittelte')
   })
 
   it('instructs the LLM to normalize country-specific text into the universal JSON format', () => {
@@ -177,6 +192,7 @@ describe('clampExtraction', () => {
       heating: 'Gaszentralheizung',
       units: 1,
       securityDeposit: 5000,
+      ruleCheck: null,
       biddingNotes: 'Abweichende Sicherheitsleistung von 5.000 EUR gefordert.',
       condition: 'gepflegt',
       features: ['balkon', 'garage'],
@@ -217,6 +233,7 @@ describe('clampExtraction', () => {
       heating: null,
       units: null,
       securityDeposit: null,
+      ruleCheck: null,
       biddingNotes: null,
       condition: null,
       features: [],
@@ -282,6 +299,50 @@ describe('clampExtraction', () => {
 
   it('keeps a plausible securityDeposit', () => {
     expect(clampExtraction({ securityDeposit: 3000 }).securityDeposit).toBe(3000)
+  })
+
+  it('keeps a ruleCheck verdict with at least one non-null field', () => {
+    expect(clampExtraction({ ruleCheck: { propertyType: false, rooms: null, units: null, securityDeposit: null } }).ruleCheck).toEqual({
+      propertyType: false,
+      rooms: null,
+      units: null,
+      securityDeposit: null,
+    })
+  })
+
+  it('nulls a ruleCheck object with no boolean fields at all', () => {
+    expect(clampExtraction({ ruleCheck: { propertyType: null, rooms: null, units: null, securityDeposit: null } }).ruleCheck).toBeNull()
+    expect(clampExtraction({ ruleCheck: {} }).ruleCheck).toBeNull()
+  })
+
+  it('keeps a rules hint with at least one usable value', () => {
+    expect(coerceRulesHint({ propertyType: 'eigentumswohnung', rooms: 2, units: null, securityDeposit: null })).toEqual({
+      propertyType: 'eigentumswohnung',
+      rooms: 2,
+      units: null,
+      securityDeposit: null,
+    })
+  })
+
+  it('coerces a rules hint field by field instead of discarding the whole snapshot', () => {
+    expect(coerceRulesHint({ propertyType: 7, rooms: '2', units: 3, securityDeposit: Number.NaN })).toEqual({
+      propertyType: null,
+      rooms: null,
+      units: 3,
+      securityDeposit: null,
+    })
+  })
+
+  it('nulls an empty or non-object rules hint', () => {
+    expect(coerceRulesHint({ propertyType: null, rooms: null, units: null, securityDeposit: null })).toBeNull()
+    expect(coerceRulesHint(null)).toBeNull()
+    expect(coerceRulesHint('eigentumswohnung')).toBeNull()
+    expect(coerceRulesHint([])).toBeNull()
+  })
+
+  it('nulls junk ruleCheck input', () => {
+    expect(clampExtraction({ ruleCheck: 'yes' as unknown as object }).ruleCheck).toBeNull()
+    expect(clampExtraction({ ruleCheck: { propertyType: 'true' as unknown as boolean } }).ruleCheck).toBeNull()
   })
 
   it('rejects a non-positive or absurd marketValueEur', () => {
@@ -492,6 +553,33 @@ describe('buildParts', () => {
 
   it('returns no parts for empty input', () => {
     expect(buildParts({ title: null, description: null })).toEqual([])
+  })
+
+  it('renders rulesHint as a labeled block for whichever fields are non-null', () => {
+    const parts = buildParts({
+      title: '2-Zimmerwohnung Nr. 7',
+      description: null,
+      rulesHint: { propertyType: 'mehrfamilienhaus', rooms: null, units: null, securityDeposit: 500 },
+    })
+    expect(parts).toEqual([
+      {
+        type: 'text',
+        text:
+          'Objektbezeichnung: 2-Zimmerwohnung Nr. 7\n\n' +
+          'Automatisch (regelbasiert) vorermittelte Werte zur Prüfung — können falsch sein, z. B. wenn ein ' +
+          'Begriff im Text das umgebende Gebäude statt das tatsächliche Versteigerungsobjekt meint:\n' +
+          'Objektart: mehrfamilienhaus\nSicherheitsleistung: 500',
+      },
+    ])
+  })
+
+  it('omits the rulesHint block entirely when every hinted field is null', () => {
+    const parts = buildParts({
+      title: 'Haus',
+      description: null,
+      rulesHint: { propertyType: null, rooms: null, units: null, securityDeposit: null },
+    })
+    expect(parts).toEqual([{ type: 'text', text: 'Objektbezeichnung: Haus' }])
   })
 
   it('appends one image part per page in pdfPageImages, in order', () => {

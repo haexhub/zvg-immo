@@ -57,6 +57,9 @@ onMounted(loadLlmBatchJobs)
         <p v-if="llmBatchJobs.reprocessStatus.lastResult?.llmErrors" class="text-destructive">
           {{ $t('settings.llmBatch.reprocessLlmErrors', { count: llmBatchJobs.reprocessStatus.lastResult.llmErrors }) }}
         </p>
+        <p v-if="llmBatchJobs.reprocessStatus.lastResult?.rulesFalsified" class="text-muted-foreground">
+          {{ $t('settings.llmBatch.reprocessRulesFalsified', { count: llmBatchJobs.reprocessStatus.lastResult.rulesFalsified }) }}
+        </p>
         <SettingsMessageDetails
           v-if="llmBatchJobs.reprocessStatus.lastLlmError"
           :text="$t('settings.llmBatch.reprocessLastLlmError', { message: llmBatchJobs.reprocessStatus.lastLlmError })"
