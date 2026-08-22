@@ -8,6 +8,7 @@ defineProps<{
   selectedCountries: string[]
   activeAuctionKey?: string | null
   fitKey: string
+  initialView?: { lat: number; lng: number; zoom: number } | null
   geoPending: boolean
   hasGeoData: boolean
   geoError?: { statusMessage?: string; message?: string } | null
@@ -15,6 +16,7 @@ defineProps<{
 
 const emit = defineEmits<{
   (e: 'bounds-change', bounds: { north: number; south: number; east: number; west: number }): void
+  (e: 'view-change', view: { lat: number; lng: number; zoom: number }): void
   (e: 'auction-hover', key: string | null): void
   (e: 'auction-select', key: string): void
 }>()
@@ -34,7 +36,9 @@ const emit = defineEmits<{
         :selected-countries="selectedCountries"
         :active-auction-key="activeAuctionKey"
         :fit-key="fitKey"
+        :initial-view="initialView"
         @bounds-change="emit('bounds-change', $event)"
+        @view-change="emit('view-change', $event)"
         @auction-hover="emit('auction-hover', $event)"
         @auction-select="emit('auction-select', $event)"
       />

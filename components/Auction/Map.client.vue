@@ -3,7 +3,7 @@ import { Feature } from 'ol'
 import { boundingExtent } from 'ol/extent'
 import Point from 'ol/geom/Point'
 import type OlMap from 'ol/Map'
-import { fromLonLat, transformExtent } from 'ol/proj'
+import { fromLonLat, toLonLat, transformExtent } from 'ol/proj'
 import { Circle as CircleStyle, Fill, Icon, Stroke, Style, Text } from 'ol/style'
 import type { GeoAuction } from '~/server/api/auctions-geo.get'
 import type { AuctionSummary } from '~/server/api/auctions.get'
@@ -72,6 +72,9 @@ const props = defineProps<{
    *  by the parent so country/region changes recenter the map, while polling
    *  updates leave the user's current zoom/pan alone. */
   fitKey?: string
+  /** Restores a previously shared/URL-synced viewport instead of the default
+   *  auto-fit-to-auctions on first mount. */
+  initialView?: { lat: number; lng: number; zoom: number } | null
 }>()
 
 const emit = defineEmits<{
@@ -79,6 +82,9 @@ const emit = defineEmits<{
    *  fit). The parent uses it to restrict the result list to the map area
    *  when the "Kartenbereich" filter is on. */
   (e: 'bounds-change', bounds: { north: number; south: number; east: number; west: number }): void
+  /** Same trigger points as bounds-change — lets the parent mirror center/zoom
+   *  into the URL so a shared link/back-navigation reproduces this viewport. */
+  (e: 'view-change', view: { lat: number; lng: number; zoom: number }): void
   (e: 'auction-hover', key: string | null): void
   (e: 'auction-select', key: string): void
 }>()
@@ -95,8 +101,10 @@ function resolveContentLang(loc: string): ContentTargetLang | null {
 const contentLang = computed(() => resolveContentLang(locale.value))
 
 const baseLayer = ref<'streets' | 'satellite'>('streets')
-const initialCenter = fromLonLat(EUROPE_CENTER_LONLAT)
-const initialZoom = 4
+const initialCenter = props.initialView
+  ? fromLonLat([props.initialView.lng, props.initialView.lat])
+  : fromLonLat(EUROPE_CENTER_LONLAT)
+const initialZoom = props.initialView?.zoom ?? 4
 
 // The MapTiler base layer renders as vector tiles (see
 // useMapTilerVectorBaseLayer) with labels re-localized to the UI locale — one
@@ -155,10 +163,10 @@ const clusterAuctions = computed<GeoAuction[]>(() => {
     .filter((a): a is GeoAuction => a != null)
 })
 
-// True at mount and whenever the parent bumps `fitKey` (filter change). The
-// next refreshMarkers call consumes it, so polling-driven updates never reset
-// the user's zoom/pan.
-let shouldFitNext = true
+// True at mount (unless a restored initialView takes precedence) and whenever
+// the parent bumps `fitKey` (filter change). The next refreshMarkers call
+// consumes it, so polling-driven updates never reset the user's zoom/pan.
+let shouldFitNext = !props.initialView
 let fallbackFitKey: string | null = null
 
 // Full auction data keyed by `platform:externalId` — renderView() below only
@@ -175,6 +183,15 @@ function emitBounds(): void {
   const extent = map.getView().calculateExtent(size)
   const [west, south, east, north] = transformExtent(extent, 'EPSG:3857', 'EPSG:4326') as [number, number, number, number]
   emit('bounds-change', { north, south, east, west })
+}
+
+function emitViewState(): void {
+  const view = mapRef.value?.map?.getView()
+  const center = view?.getCenter()
+  const zoom = view?.getZoom()
+  if (!center || zoom == null) return
+  const [lng, lat] = toLonLat(center) as [number, number]
+  emit('view-change', { lat, lng, zoom })
 }
 
 function fitFallbackView(): void {
@@ -284,6 +301,7 @@ function refreshMarkers(): void {
 
 function onMoveEnd(): void {
   emitBounds()
+  emitViewState()
   renderView()
 }
 
@@ -298,6 +316,7 @@ watch(
     if (!source) return
     refreshMarkers()
     emitBounds()
+    emitViewState()
   },
   { immediate: true },
 )

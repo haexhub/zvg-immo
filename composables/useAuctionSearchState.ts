@@ -5,6 +5,7 @@ import { toggleInArray } from '~/lib/toggle-array'
 import {
   activeAuctionSearchFilterCount,
   defaultAuctionSearchFilters,
+  finiteNumber,
   parseAuctionSearchFilters,
   serializeAuctionSearchFilters,
   type AuctionSearchFilters,
@@ -72,6 +73,13 @@ export function useAuctionSearchState(options: {
   const mapViewImpliedByCountryQuery = ref(false)
   let applyingImplicitMapView = false
 
+  // The map's own viewport (center/zoom), not a filter — round-tripped through
+  // the URL alongside the filters below so a shared link or a back-navigation
+  // from an auction detail page reproduces the exact pan/zoom the user left.
+  const mapLat = ref<number | null>(finiteNumber(route.query.mapLat))
+  const mapLng = ref<number | null>(finiteNumber(route.query.mapLng))
+  const mapZoom = ref<number | null>(finiteNumber(route.query.mapZoom))
+
   const availableRegions = computed(() => {
     if (selectedCountries.value.length === 0) return []
     return (options.countries.value ?? [])
@@ -79,19 +87,25 @@ export function useAuctionSearchState(options: {
       .flatMap((c) => c.regions.map((r) => ({ ...r, key: `${c.code}:${r.code}`, countryName: countryLabel(c.code, c.name) })))
   })
 
-  const queryParams = computed(() => ({
-    ...route.query,
-    country: selectedCountries.value.length ? selectedCountries.value.join(',') : undefined,
-    regionNames: selectedRegionKeys.value
-      .map((key) => {
-        const region = availableRegions.value.find((entry) => entry.key === key)
-        return region ? `${region.country}:${region.name}` : null
-      })
-      .filter((value): value is string => value != null)
-      .join(',') || undefined,
-    page: 1,
-    pageSize: 30,
-  }))
+  const queryParams = computed(() => {
+    // mapLat/mapLng/mapZoom track the map viewport, not a search filter — left
+    // in route.query they'd churn on every pan/zoom and re-trigger fetches
+    // that only care about the filters below.
+    const { mapLat: _mapLat, mapLng: _mapLng, mapZoom: _mapZoom, ...filterQuery } = route.query
+    return {
+      ...filterQuery,
+      country: selectedCountries.value.length ? selectedCountries.value.join(',') : undefined,
+      regionNames: selectedRegionKeys.value
+        .map((key) => {
+          const region = availableRegions.value.find((entry) => entry.key === key)
+          return region ? `${region.country}:${region.name}` : null
+        })
+        .filter((value): value is string => value != null)
+        .join(',') || undefined,
+      page: 1,
+      pageSize: 30,
+    }
+  })
 
   const priceMinDisplay = computed<number | null>({
     get: () => toDisplayOrNull(priceMin.value),
@@ -185,6 +199,15 @@ export function useAuctionSearchState(options: {
     priceMax.value = max
   }
 
+  // Rounded to a fixed precision so a value written to the URL and read back
+  // parses to the exact same number — otherwise the round-trip below would
+  // re-fire this same watcher on every navigation.
+  function updateMapView(lat: number, lng: number, zoom: number): void {
+    mapLat.value = Math.round(lat * 1e5) / 1e5
+    mapLng.value = Math.round(lng * 1e5) / 1e5
+    mapZoom.value = Math.round(zoom * 100) / 100
+  }
+
   function clearAllFilters(): void {
     applyFilters(defaultAuctionSearchFilters(options.hideRulesOnlyServerDefault.value))
   }
@@ -230,10 +253,15 @@ export function useAuctionSearchState(options: {
   })
 
   watch(
-    [selectedCountries, selectedRegionKeys, debouncedSearch, authorityFilter, priceMin, priceMax, landAreaMin, landAreaMax, livingAreaMin, livingAreaMax, yearBuiltMin, yearBuiltMax, renovationYearMin, renovationYearMax, nearSea, nearLake, nearRiver, nearMountain, nearAirport, nearSki, nearSkiDownhill, nearSkiNordic, urbanRural, nearLat, nearLng, nearRadius, categoryFilter, conditionFilter, featuresFilter, onlyWithPhotos, includeCancelled, hideRulesOnly, sortBy, view],
+    [selectedCountries, selectedRegionKeys, debouncedSearch, authorityFilter, priceMin, priceMax, landAreaMin, landAreaMax, livingAreaMin, livingAreaMax, yearBuiltMin, yearBuiltMax, renovationYearMin, renovationYearMax, nearSea, nearLake, nearRiver, nearMountain, nearAirport, nearSki, nearSkiDownhill, nearSkiNordic, urbanRural, nearLat, nearLng, nearRadius, categoryFilter, conditionFilter, featuresFilter, onlyWithPhotos, includeCancelled, hideRulesOnly, sortBy, view, mapLat, mapLng, mapZoom],
     () => {
       const query = serializeAuctionSearchFilters(currentFilters(debouncedSearch.value), options.hideRulesOnlyServerDefault.value)
       if (view.value === 'map' && !mapViewImpliedByCountryQuery.value) query.view = 'map'
+      if (mapLat.value != null && mapLng.value != null && mapZoom.value != null) {
+        query.mapLat = String(mapLat.value)
+        query.mapLng = String(mapLng.value)
+        query.mapZoom = String(mapZoom.value)
+      }
       router.replace({ query })
     },
   )
@@ -241,6 +269,9 @@ export function useAuctionSearchState(options: {
   watch(() => route.query, (q) => {
     const hadCountrySelection = selectedCountries.value.length > 0
     applyFilters(parseAuctionSearchFilters(q, options.hideRulesOnlyServerDefault.value))
+    mapLat.value = finiteNumber(q.mapLat)
+    mapLng.value = finiteNumber(q.mapLng)
+    mapZoom.value = finiteNumber(q.mapZoom)
     const isMapView = q.view === 'map'
     const isCountryMapView = !isMapView &&
       q.view === undefined &&
@@ -298,12 +329,16 @@ export function useAuctionSearchState(options: {
     onlyWithPhotos,
     hideRulesOnly,
     sortBy,
+    mapLat,
+    mapLng,
+    mapZoom,
     headerLabel,
     activeFilterCount,
     numOrNull,
     toggleCountry,
     toggleRegion,
     setPriceBucket,
+    updateMapView,
     clearAllFilters,
     initializeMountedState,
   }
