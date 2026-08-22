@@ -3,7 +3,7 @@ import { FEATURES } from '~/lib/features'
 import { PHOTO_CATEGORIES } from '~/lib/photo'
 import { PROPERTY_TYPES } from '~/lib/property-type'
 
-export const UNIVERSAL_AUCTION_SCHEMA_VERSION = 2
+export const UNIVERSAL_AUCTION_SCHEMA_VERSION = 3
 export const UNIVERSAL_AUCTION_SCHEMA_NAME = 'universal_auction_extraction_v2'
 export const UNIVERSAL_AUCTION_SCHEMA_ID = `https://zvg-immo.local/schemas/${UNIVERSAL_AUCTION_SCHEMA_NAME}.json`
 
@@ -22,6 +22,18 @@ export const SYSTEM_PROMPT =
   'zurück und Flächen in Quadratmetern (Hektar in m² umrechnen: 1 ha = 10000 m²). ' +
   'Wohnfläche und Grundstücksfläche strikt getrennt halten. Wenn ein Wert nicht ' +
   'eindeutig im Text steht, gib null zurück — niemals raten. ' +
+  'Enthält der Eingabetext einen Abschnitt "Automatisch (regelbasiert) vorermittelte ' +
+  'Werte zur Prüfung", wurden diese Werte durch eine separate, fehleranfällige ' +
+  'Texterkennung ermittelt (z. B. kann ein im Beschreibungstext genanntes Gebäude wie ' +
+  '"Mehrfamilienhaus" fälschlich als Objektart übernommen worden sein, obwohl tatsächlich ' +
+  'nur eine einzelne Wohnung darin versteigert wird). Prüfe jeden dort genannten Wert ' +
+  'eigenständig anhand des Textes und trage das Ergebnis je Feld in ruleCheck ein: true ' +
+  'wenn der vorgegebene Wert für das tatsächlich versteigerte Objekt korrekt ist, false ' +
+  'wenn er falsch ist, null wenn zu diesem Feld kein Wert vorgegeben wurde. Gib davon ' +
+  'unabhängig in den Feldern propertyType/rooms/units/securityDeposit immer deine eigene, ' +
+  'aus dem Text abgeleitete Einschätzung zurück statt einfach den vorgegebenen Wert zu ' +
+  'übernehmen. Wurden im Eingabetext gar keine Werte zur Prüfung vorgegeben, gib ruleCheck ' +
+  'insgesamt als null zurück. ' +
   'Extrahiere Schlafzimmer, Badezimmer, Etage/Geschosslage, Badewanne, Dusche und ' +
   'Heizungsart nur, wenn sie ausdrücklich genannt werden. Bei Etage/Geschosslage ' +
   'kurze Angaben wie "EG", "1. OG", "Dachgeschoss" verwenden. Badewanne/Dusche ' +
@@ -140,6 +152,31 @@ export const UNIVERSAL_AUCTION_SCHEMA = {
     securityDeposit: {
       type: ['number', 'null'],
       description: 'Explizit genannte Sicherheitsleistung in der Landeswährung der Anzeige, oder null.',
+    },
+    ruleCheck: {
+      type: ['object', 'null'],
+      additionalProperties: false,
+      description:
+        'Prüfergebnis zu den im Eingabetext vorgegebenen, regelbasiert vorermittelten Werten (siehe Systemprompt) — nur für Felder, zu denen ein Wert vorgegeben wurde. null wenn im Eingabetext keine Werte zur Prüfung vorgegeben wurden.',
+      properties: {
+        propertyType: {
+          type: ['boolean', 'null'],
+          description: 'true wenn der vorgegebene propertyType-Wert korrekt ist, false wenn falsch, null wenn keiner vorgegeben wurde.',
+        },
+        rooms: {
+          type: ['boolean', 'null'],
+          description: 'true wenn die vorgegebene Zimmeranzahl korrekt ist, false wenn falsch, null wenn keine vorgegeben wurde.',
+        },
+        units: {
+          type: ['boolean', 'null'],
+          description: 'true wenn die vorgegebene Anzahl Wohneinheiten korrekt ist, false wenn falsch, null wenn keine vorgegeben wurde.',
+        },
+        securityDeposit: {
+          type: ['boolean', 'null'],
+          description: 'true wenn die vorgegebene Sicherheitsleistung korrekt ist, false wenn falsch, null wenn keine vorgegeben wurde.',
+        },
+      },
+      required: ['propertyType', 'rooms', 'units', 'securityDeposit'],
     },
     marketValueEur: {
       type: ['number', 'null'],
@@ -295,6 +332,7 @@ export const UNIVERSAL_AUCTION_SCHEMA = {
     'heating',
     'units',
     'securityDeposit',
+    'ruleCheck',
     'marketValueEur',
     'marketValueText',
     'biddingNotes',

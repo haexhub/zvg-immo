@@ -36,8 +36,5 @@ export function buildReprocessFields(
     documentSummary: effectivePriorEntry?.documentSummary,
     marketValueEur: effectivePriorEntry?.marketValueEur,
     marketValueText: effectivePriorEntry?.marketValueText,
-    confident:
-      rules.confident ||
-      (propertyType != null && propertyType !== 'sonstiges' && (landAreaSqm != null || livingAreaSqm != null)),
   }
 }

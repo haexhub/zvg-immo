@@ -117,6 +117,7 @@ const llmResult = {
   heating: 'Gas',
   units: null,
   securityDeposit: null,
+  ruleCheck: null,
   biddingNotes: null,
   condition: 'gepflegt' as const,
   features: [],

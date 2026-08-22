@@ -13,7 +13,6 @@ function baseFields(overrides: Partial<MergeInputFields> = {}): MergeInputFields
     rooms: null,
     units: null,
     securityDeposit: null,
-    confident: false,
     ...overrides,
   }
 }
@@ -32,6 +31,7 @@ function llmResult(overrides: Partial<ClampedExtraction> = {}): ClampedExtractio
     heating: 'Gaszentralheizung',
     units: 1,
     securityDeposit: null,
+    ruleCheck: null,
     biddingNotes: null,
     condition: 'neuwertig',
     features: ['balkon'],
@@ -49,8 +49,8 @@ function llmResult(overrides: Partial<ClampedExtraction> = {}): ClampedExtractio
 }
 
 describe('mergeLlmResult', () => {
-  it('lets the LLM fill propertyType/sizes when rules were not confident', () => {
-    const entry = mergeLlmResult(undefined, baseFields({ confident: false }), llmResult(), AT, undefined)
+  it('lets the LLM fill propertyType/sizes when rules found nothing', () => {
+    const entry = mergeLlmResult(undefined, baseFields(), llmResult(), AT, undefined)
 
     expect(entry.source).toBe('llm')
     expect(entry.propertyType).toBe('einfamilienhaus')
@@ -58,18 +58,25 @@ describe('mergeLlmResult', () => {
     expect(entry.confidence).toBe('high')
   })
 
-  it('keeps source rules and does not overwrite propertyType/sizes when rules were already confident', () => {
-    const fields = baseFields({ confident: true, propertyType: 'eigentumswohnung', landAreaSqm: 80 })
+  it('keeps source rules and does not overwrite propertyType/sizes when the LLM does not falsify them', () => {
+    const fields = baseFields({ propertyType: 'eigentumswohnung', landAreaSqm: 80, rooms: 2, units: 1 })
     const entry = mergeLlmResult(undefined, fields, llmResult({ propertyType: 'einfamilienhaus', landAreaSqm: 999 }), AT, undefined)
 
     expect(entry.source).toBe('rules')
     expect(entry.propertyType).toBe('eigentumswohnung')
     expect(entry.landAreaSqm).toBe(80)
-    expect(entry.biddingNotes).toBeUndefined()
   })
 
-  it('lets the LLM fill missing area gaps even when rules were already confident', () => {
-    const fields = baseFields({ confident: true, propertyType: 'einfamilienhaus', livingAreaSqm: 180 })
+  it('always applies biddingNotes from the LLM, even when propertyType/sizes stay on rules values', () => {
+    const fields = baseFields({ propertyType: 'eigentumswohnung', landAreaSqm: 80, rooms: 2, units: 1 })
+    const entry = mergeLlmResult(undefined, fields, llmResult({ biddingNotes: 'Abweichende Zahlungsfrist' }), AT, undefined)
+
+    expect(entry.source).toBe('rules')
+    expect(entry.biddingNotes).toBe('Abweichende Zahlungsfrist')
+  })
+
+  it('lets the LLM fill missing area gaps even when the type is already resolved', () => {
+    const fields = baseFields({ propertyType: 'einfamilienhaus', livingAreaSqm: 180, rooms: 5, units: 1 })
     const entry = mergeLlmResult(undefined, fields, llmResult({ landAreaSqm: 1316 }), AT, undefined)
 
     expect(entry.source).toBe('rules')
@@ -78,7 +85,7 @@ describe('mergeLlmResult', () => {
   })
 
   it('derives missing land area from complete parcel areas across sources', () => {
-    const fields = baseFields({ confident: true, propertyType: 'einfamilienhaus', livingAreaSqm: 180 })
+    const fields = baseFields({ propertyType: 'einfamilienhaus', livingAreaSqm: 180 })
     const entry = mergeLlmResult(
       undefined,
       fields,
@@ -106,7 +113,7 @@ describe('mergeLlmResult', () => {
   })
 
   it('does not derive land area from incomplete parcel lists', () => {
-    const fields = baseFields({ confident: true, propertyType: 'einfamilienhaus', livingAreaSqm: 180 })
+    const fields = baseFields({ propertyType: 'einfamilienhaus', livingAreaSqm: 180 })
     const entry = mergeLlmResult(
       undefined,
       fields,
@@ -134,7 +141,7 @@ describe('mergeLlmResult', () => {
   })
 
   it('lets a complete parcel sum correct a smaller extracted land area', () => {
-    const fields = baseFields({ confident: true, propertyType: 'einfamilienhaus', landAreaSqm: 563, livingAreaSqm: 142 })
+    const fields = baseFields({ propertyType: 'einfamilienhaus', landAreaSqm: 563, livingAreaSqm: 142 })
     const entry = mergeLlmResult(
       undefined,
       fields,
@@ -161,8 +168,8 @@ describe('mergeLlmResult', () => {
     expect(entry.landAreaSqm).toBe(30607)
   })
 
-  it('always applies LLM-only fields (condition/features/yearBuilt/...) regardless of confidence', () => {
-    const fields = baseFields({ confident: true, propertyType: 'eigentumswohnung', landAreaSqm: 80 })
+  it('always applies LLM-only fields (condition/features/yearBuilt/...)', () => {
+    const fields = baseFields({ propertyType: 'eigentumswohnung', landAreaSqm: 80 })
     const entry = mergeLlmResult(undefined, fields, llmResult({ condition: 'sanierungsbeduerftig' }), AT, undefined)
 
     expect(entry.condition).toBe('sanierungsbeduerftig')
@@ -177,14 +184,14 @@ describe('mergeLlmResult', () => {
   })
 
   it('does not fill an already-set field from the LLM (rules/source values win)', () => {
-    const fields = baseFields({ confident: false, rooms: 3 })
+    const fields = baseFields({ rooms: 3 })
     const entry = mergeLlmResult(undefined, fields, llmResult({ rooms: 7 }), AT, undefined)
 
     expect(entry.rooms).toBe(3)
   })
 
   it('stamps llmAnalyzedAt on successful LLM calls, even when source stays rules', () => {
-    const fields = baseFields({ confident: true, propertyType: 'eigentumswohnung', landAreaSqm: 80 })
+    const fields = baseFields({ propertyType: 'eigentumswohnung', landAreaSqm: 80, rooms: 2, units: 1 })
     const entry = mergeLlmResult(undefined, fields, llmResult(), AT, undefined)
 
     expect(entry.source).toBe('rules')
@@ -213,4 +220,65 @@ describe('mergeLlmResult', () => {
     expect(entry.at).toBe(AT)
   })
 
+  describe('ruleCheck verification', () => {
+    it('lets the LLM override propertyType when ruleCheck falsifies it', () => {
+      // The zvbawu/1328571 shape: rules picked "mehrfamilienhaus" off a
+      // "... in einem Mehrfamilienhaus" mention describing the surrounding
+      // building, not the auctioned unit.
+      const fields = baseFields({ propertyType: 'mehrfamilienhaus' })
+      const entry = mergeLlmResult(
+        undefined,
+        fields,
+        llmResult({ propertyType: 'eigentumswohnung', ruleCheck: { propertyType: false, rooms: null, units: null, securityDeposit: null } }),
+        AT,
+        undefined,
+      )
+
+      expect(entry.propertyType).toBe('eigentumswohnung')
+      expect(entry.source).toBe('llm')
+    })
+
+    it('keeps the rules propertyType when ruleCheck confirms it, even if the LLM guessed differently', () => {
+      const fields = baseFields({ propertyType: 'eigentumswohnung', rooms: 2, units: 1 })
+      const entry = mergeLlmResult(
+        undefined,
+        fields,
+        llmResult({ propertyType: 'mehrfamilienhaus', ruleCheck: { propertyType: true, rooms: null, units: null, securityDeposit: null } }),
+        AT,
+        undefined,
+      )
+
+      expect(entry.propertyType).toBe('eigentumswohnung')
+      expect(entry.source).toBe('rules')
+    })
+
+    it('keeps the rules propertyType when no ruleCheck hint was given at all', () => {
+      const fields = baseFields({ propertyType: 'eigentumswohnung', rooms: 2, units: 1 })
+      const entry = mergeLlmResult(undefined, fields, llmResult({ propertyType: 'mehrfamilienhaus', ruleCheck: null }), AT, undefined)
+
+      expect(entry.propertyType).toBe('eigentumswohnung')
+      expect(entry.source).toBe('rules')
+    })
+
+    it('lets the LLM override rooms/units/securityDeposit when ruleCheck falsifies them', () => {
+      const fields = baseFields({ propertyType: 'eigentumswohnung', rooms: 2, units: 5, securityDeposit: 1000 })
+      const entry = mergeLlmResult(
+        undefined,
+        fields,
+        llmResult({
+          rooms: 3,
+          units: 1,
+          securityDeposit: 2500,
+          ruleCheck: { propertyType: null, rooms: false, units: false, securityDeposit: false },
+        }),
+        AT,
+        undefined,
+      )
+
+      expect(entry.rooms).toBe(3)
+      expect(entry.units).toBe(1)
+      expect(entry.securityDeposit).toBe(2500)
+      expect(entry.source).toBe('llm')
+    })
+  })
 })

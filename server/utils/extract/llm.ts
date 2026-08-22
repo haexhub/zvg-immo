@@ -62,6 +62,18 @@ export interface LlmInput {
    *  (`photoIndex`) in the extraction response rather than by filename,
    *  since a filename echoed back by the model is unreliable. */
   candidateImages?: { label: string; mimeType: string; data: string }[]
+  /** The deterministic rules pass's already-found values for propertyType/
+   *  rooms/units/securityDeposit (null for whatever it didn't find). Passed
+   *  along so the LLM can specifically verify or falsify each one instead of
+   *  guessing blind — see `ruleCheck` in the response schema and
+   *  mergeLlmResult, which only lets the LLM override a rules value that it
+   *  explicitly falsified. */
+  rulesHint?: {
+    propertyType: string | null
+    rooms: number | null
+    units: number | null
+    securityDeposit: number | null
+  } | null
 }
 
 export interface LlmConfig {
@@ -255,6 +267,19 @@ export function buildParts(input: LlmInput): ContentPart[] {
   const text: string[] = []
   if (input.title) text.push(`Objektbezeichnung: ${input.title}`)
   if (input.description) text.push(`Beschreibung:\n${input.description}`)
+  const hint = input.rulesHint
+  const hintLines: string[] = []
+  if (hint?.propertyType != null) hintLines.push(`Objektart: ${hint.propertyType}`)
+  if (hint?.rooms != null) hintLines.push(`Zimmeranzahl: ${hint.rooms}`)
+  if (hint?.units != null) hintLines.push(`Anzahl Wohneinheiten: ${hint.units}`)
+  if (hint?.securityDeposit != null) hintLines.push(`Sicherheitsleistung: ${hint.securityDeposit}`)
+  if (hintLines.length) {
+    text.push(
+      'Automatisch (regelbasiert) vorermittelte Werte zur Prüfung — können falsch sein, z. B. wenn ein ' +
+        'Begriff im Text das umgebende Gebäude statt das tatsächliche Versteigerungsobjekt meint:\n' +
+        hintLines.join('\n'),
+    )
+  }
   if (input.documentText) {
     text.push(`Weitere Dokumenttexte/HTML-Anhänge:\n${input.documentText.slice(0, MAX_DOCUMENT_TEXT_CHARS)}`)
   }

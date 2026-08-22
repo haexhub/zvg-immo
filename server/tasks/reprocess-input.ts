@@ -362,6 +362,12 @@ export async function buildReprocessInput(
       description: auction.description,
       ...documentParts.input,
       candidateImages: candidates?.images,
+      rulesHint: {
+        propertyType: fields.propertyType,
+        rooms: fields.rooms,
+        units: fields.units,
+        securityDeposit: fields.securityDeposit,
+      },
     }
   }
 
