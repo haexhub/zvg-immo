@@ -41,6 +41,9 @@ export function useTourismVisitorLayer() {
   const layerRef = ref<any>(null)
   const loading = ref(false)
   const breaks = ref<number[]>([])
+  // null = not checked yet (a transient network failure also leaves this
+  // null rather than false, so it isn't mistaken for a confirmed "no data").
+  const available = ref<boolean | null>(null)
 
   let cachedFeatures: Feature[] | null = null
   let loadPromise: Promise<void> | null = null
@@ -71,6 +74,7 @@ export function useTourismVisitorLayer() {
     loadPromise = (async () => {
       try {
         const response = await $fetch<TourismVisitorDensityResponse>('/api/tourism-visitor-density')
+        available.value = response.available
         if (!response.available) {
           cachedFeatures = []
           return
@@ -104,11 +108,21 @@ export function useTourismVisitorLayer() {
       return
     }
     await load()
+    // Re-check after the await: the user may have deactivated the layer (or
+    // the source may have been torn down/replaced) while load() was still
+    // in flight — without this, a slow first activation that gets toggled
+    // off before it resolves would still add features after the fact.
+    if (!active.value || source !== sourceRef.value?.source) return
     source.clear()
     if (cachedFeatures?.length) source.addFeatures(cachedFeatures)
   }
 
   watch([active, () => sourceRef.value?.source], () => sync(), { immediate: true })
 
-  return { active, sourceRef, layerRef, loading, breaks }
+  // Checked eagerly (not gated on `active`) so the toggle can be hidden
+  // before a user ever tries an unconfigured/never-imported layer, rather
+  // than only after a click that visibly does nothing.
+  void load()
+
+  return { active, sourceRef, layerRef, loading, breaks, available }
 }

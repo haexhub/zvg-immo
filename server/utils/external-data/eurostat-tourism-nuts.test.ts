@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -212,5 +212,31 @@ describe('importEurostatTourismNutsCache', () => {
     })).rejects.toThrow(/GISCO NUTS2 response/)
 
     await expect(readFile(cachePath, 'utf8')).rejects.toThrow()
+  })
+
+  it('throws instead of overwriting the cache when GISCO returns zero regions', async () => {
+    // isGiscoNutsFeatureCollection() passes an empty features array
+    // vacuously (Array.prototype.every on []) — this guards the case a
+    // truncated/empty GISCO response would otherwise silently blank out an
+    // existing good cache file.
+    tmp = await mkdtemp(join(tmpdir(), 'eurostat-tourism-nuts-'))
+    const cachePath = join(tmp, 'eurostat-tourism-nuts.json')
+    const existing: TourismNutsCollection = {
+      generatedAt: '2026-01-01T00:00:00.000Z',
+      sourceVersion: 'previous-good-run',
+      unit: 'P_KM2',
+      breaks: [1],
+      regions: [{ nutsId: 'AT11', name: 'Wien', countryCode: 'AT', value: 5, dataYear: '2024', bin: 0, geometry: { type: 'Polygon', coordinates: [] } }],
+    }
+    await writeFile(cachePath, JSON.stringify(existing))
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ type: 'FeatureCollection', features: [] }), { status: 200 }))
+
+    await expect(importEurostatTourismNutsCache({
+      cachePath,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    })).rejects.toThrow(/no regions/)
+
+    const untouched = JSON.parse(await readFile(cachePath, 'utf8')) as TourismNutsCollection
+    expect(untouched).toEqual(existing)
   })
 })

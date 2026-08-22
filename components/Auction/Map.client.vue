@@ -108,6 +108,7 @@ const {
   sourceRef: tourismVisitorSourceRef,
   layerRef: tourismVisitorLayerRef,
   breaks: tourismVisitorBreaks,
+  available: tourismVisitorAvailable,
 } = useTourismVisitorLayer()
 // Mutually exclusive on the map, not because the palettes technically clash
 // (this layer is a single sequential hue, not one of the grid's 5
@@ -475,6 +476,10 @@ function onPointerMove(evt: any): void {
     </ol-map>
     <AuctionMapBaseLayerToggle v-model="baseLayer" />
     <AuctionTourismLegend v-model:category="tourismCategory" :categories="tourismCategories" />
-    <AuctionTourismVisitorLegend v-model:active="tourismVisitorActive" :breaks="tourismVisitorBreaks" />
+    <AuctionTourismVisitorLegend
+      v-if="tourismVisitorAvailable !== false"
+      v-model:active="tourismVisitorActive"
+      :breaks="tourismVisitorBreaks"
+    />
   </div>
 </template>

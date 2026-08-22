@@ -35,6 +35,17 @@ const REPORT_LAG_YEARS = 3
 
 const NUM_BINS = 6
 
+// The caller signal (options.signal) only covers task supersession — a
+// stalled connection to either service would otherwise leave
+// runExclusiveTask's lock held indefinitely. Combined the same way
+// eu-flood-risk-import.ts's requestSignal() already does.
+const REQUEST_TIMEOUT_MS = 60_000
+
+function requestSignal(signal: AbortSignal | undefined): AbortSignal {
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+  return signal ? AbortSignal.any([signal, timeout]) : timeout
+}
+
 export interface ImportEurostatTourismNutsCacheOptions {
   cachePath: string
   giscoUrl?: string
@@ -91,10 +102,16 @@ async function fetchGiscoNuts2Regions(
   url: string,
   signal: AbortSignal | undefined,
 ): Promise<GiscoNutsFeatureCollection> {
-  const response = await fetchImpl(url, { signal })
+  const response = await fetchImpl(url, { signal: requestSignal(signal) })
   if (!response.ok) throw new Error(`GISCO NUTS2 request failed: ${response.status} ${response.statusText}`)
   const body = await response.json() as unknown
   if (!isGiscoNutsFeatureCollection(body)) throw new Error('GISCO NUTS2 response was not the expected FeatureCollection shape')
+  // isGiscoNutsFeatureCollection() passes an empty `features` array
+  // vacuously (Array.prototype.every on []) — without this check, a
+  // truncated/empty GISCO response would make it all the way to
+  // writeJsonCache() and atomically overwrite the previous good cache with
+  // an empty one, silently blanking the map layer until the next run.
+  if (body.features.length === 0) throw new Error('GISCO NUTS2 response contained no regions')
   return body
 }
 
@@ -103,7 +120,7 @@ async function fetchJsonStat(
   url: string,
   signal: AbortSignal | undefined,
 ) {
-  const response = await fetchImpl(url, { signal })
+  const response = await fetchImpl(url, { signal: requestSignal(signal) })
   if (!response.ok) throw new Error(`Eurostat tour_occ_nin2 request failed: ${response.status} ${response.statusText}`)
   const body = await response.json() as unknown
   if (!isJsonStatResponse(body)) throw new Error('Eurostat tour_occ_nin2 response was not the expected JSON-stat shape')
