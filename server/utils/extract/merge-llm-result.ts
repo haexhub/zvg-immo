@@ -33,6 +33,7 @@ export interface MergeInputFields {
   heating?: string | null
   units: number | null
   securityDeposit: number | null
+  biddingNotes?: string | null
   condition?: Condition | null
   features?: Feature[]
   yearBuilt?: number | null
@@ -122,7 +123,7 @@ export function mergeLlmResult(
   let heating = base.heating
   let units = base.units
   let securityDeposit = base.securityDeposit
-  let biddingNotes: string | null | undefined
+  let biddingNotes = base.biddingNotes
   let condition = base.condition
   let features = base.features
   let yearBuilt = base.yearBuilt

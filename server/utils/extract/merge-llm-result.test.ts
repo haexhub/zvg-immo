@@ -204,6 +204,12 @@ describe('mergeLlmResult', () => {
     expect(entry.llmAnalyzedAt).toBeUndefined()
   })
 
+  it('keeps a prior biddingNotes when the LLM call failed', () => {
+    const entry = mergeLlmResult(undefined, baseFields({ biddingNotes: 'Abweichende Zahlungsfrist' }), null, AT, undefined)
+
+    expect(entry.biddingNotes).toBe('Abweichende Zahlungsfrist')
+  })
+
   it('reports low confidence when neither type nor area could be resolved', () => {
     const entry = mergeLlmResult(undefined, baseFields(), llmResult({ propertyType: null, landAreaSqm: null, livingAreaSqm: null }), AT, undefined)
     expect(entry.confidence).toBe('low')

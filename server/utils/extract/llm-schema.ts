@@ -29,7 +29,9 @@ export const SYSTEM_PROMPT =
   'nur eine einzelne Wohnung darin versteigert wird). Prüfe jeden dort genannten Wert ' +
   'eigenständig anhand des Textes und trage das Ergebnis je Feld in ruleCheck ein: true ' +
   'wenn der vorgegebene Wert für das tatsächlich versteigerte Objekt korrekt ist, false ' +
-  'wenn er falsch ist, null wenn zu diesem Feld kein Wert vorgegeben wurde. Gib davon ' +
+  'wenn er falsch ist, null wenn zu diesem Feld kein Wert vorgegeben wurde oder du ihn ' +
+  'anhand des Textes nicht sicher beurteilen kannst — setze false nur, wenn der Text den ' +
+  'vorgegebenen Wert eindeutig widerlegt. Gib davon ' +
   'unabhängig in den Feldern propertyType/rooms/units/securityDeposit immer deine eigene, ' +
   'aus dem Text abgeleitete Einschätzung zurück statt einfach den vorgegebenen Wert zu ' +
   'übernehmen. Wurden im Eingabetext gar keine Werte zur Prüfung vorgegeben, gib ruleCheck ' +

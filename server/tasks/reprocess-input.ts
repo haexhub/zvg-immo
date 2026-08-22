@@ -363,7 +363,11 @@ export async function buildReprocessInput(
       ...documentParts.input,
       candidateImages: candidates?.images,
       rulesHint: {
-        propertyType: fields.propertyType,
+        // 'sonstiges' is the rules pass's "found nothing usable" marker, and
+        // mergeLlmResult lets the LLM's own type win outright there — hinting
+        // it would only anchor the model to it in the one case where the LLM
+        // is the sole source of an answer.
+        propertyType: fields.propertyType === 'sonstiges' ? null : fields.propertyType,
         rooms: fields.rooms,
         units: fields.units,
         securityDeposit: fields.securityDeposit,
