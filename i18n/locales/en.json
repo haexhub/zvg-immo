@@ -15,7 +15,16 @@
     "baseLayerSatellite": "Satellite",
     "legend": "Legend",
     "legendSubject": "Auction property",
-    "clusterPickerHint": "{count} auctions at this location"
+    "clusterPickerHint": "{count} auctions at this location",
+    "tourismLayerToggle": "Tourism",
+    "tourismLayerOff": "Off",
+    "tourismCategory": {
+      "ski": "Ski",
+      "hiking": "Hiking & cycling",
+      "swimming": "Swimming",
+      "attraction": "Sights",
+      "lodging": "Lodging"
+    }
   },
   "landing": {
     "hero": {

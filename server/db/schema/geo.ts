@@ -232,3 +232,33 @@ export const auctionGeoMetrics = pgTable('auction_geo_metrics', {
     foreignColumns: [auctions.platform, auctions.externalId],
   }).onDelete('cascade'),
 ]).enableRLS()
+
+// Search-map "Tourismus-Layer": a coarse square grid (CELL_SIZE_M in
+// build-tourism-grid.ts, currently 10km) over EPSG:3035, one row per
+// (cell, category) with a distinct-feature count aggregated from
+// geo_features. Purely a derived cache of geo_features — unlike that table
+// this one is cheap to fully recompute (it aggregates ~a few hundred
+// thousand already-normalized rows, not osm_local_elements' 44.5M), so the
+// build job deletes and repopulates it inside one transaction instead of
+// needing geo_features' epoch/swap machinery.
+// cellX/cellY are floor(ST_X/Y(centroid) / CELL_SIZE_M), not a geometry
+// column: the API endpoint reconstructs each cell's polygon from the grid
+// indices on read, which is cheaper than storing and GIST-indexing a
+// polygon per cell for a fixed, known grid.
+export const tourismGridCells = pgTable('tourism_grid_cells', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  cellX: integer('cell_x').notNull(),
+  cellY: integer('cell_y').notNull(),
+  category: text('category').notNull(),
+  // Distinct (osm_type, osm_id, country) feature count in this cell — not a
+  // raw row count, since a single large polygon (e.g. one big ski resort or
+  // nature reserve) is stored in geo_features as several ST_Subdivide
+  // fragments and would otherwise inflate its own cell's intensity.
+  count: integer('count').notNull(),
+  computedAt: timestamp('computed_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique('tourism_grid_cells_cell_category_key').on(table.cellX, table.cellY, table.category),
+  // Serves the API endpoint's per-category bbox range scan (category = $1
+  // AND cell_x BETWEEN ... AND cell_y BETWEEN ...).
+  index('idx_tourism_grid_cells_category_cell').on(table.category, table.cellX, table.cellY),
+]).enableRLS()
