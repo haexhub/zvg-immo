@@ -46,6 +46,15 @@ describe('extractByRules', () => {
     expect(r.propertyType).toBe('eigentumswohnung')
   })
 
+  it('classifies a room-count title over a "Mehrfamilienhaus" mention in the description', () => {
+    const r = extractByRules({
+      title: '2-Zimmerwohnung Nr. 7, Zum Wiegele 20, 74865 Neckarzimmern',
+      description:
+        'Sondereigentum an der Wohnung im Dachgeschoss links, Wohnfläche ca. 68 m², in einem Mehrfamilienhaus.',
+    })
+    expect(r.propertyType).toBe('eigentumswohnung')
+  })
+
   it('classifies "Wohn- und Geschäftshaus"', () => {
     const r = extractByRules({ title: 'Wohn- und Geschäftshaus', description: null })
     expect(r.propertyType).toBe('wohn-geschaefts')
