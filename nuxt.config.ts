@@ -306,6 +306,13 @@ export default defineNuxtConfig({
       // the explicit /settings geo-metrics rebuild chain only after an OSM
       // import has actually changed the source data.
       '0 5 * * *': ['build-auction-geo-metrics'],
+      // Daily, offset 30 min from build-auction-geo-metrics: rebuild the
+      // search-map tourism-intensity grid (server/tasks/build-tourism-grid.ts)
+      // from geo_features. Cheap enough to run unconditionally every day
+      // (aggregates a few hundred thousand already-normalized rows, not a
+      // full OSM scan) — no incremental logic needed, unlike the metrics job
+      // above.
+      '30 5 * * *': ['build-tourism-grid'],
       // Monthly: refresh the local EU Flood Risk Areas polygon cache (see
       // server/tasks/import-eu-flood-risk-cache.ts) from the EEA's published
       // service, into whatever path the eu-flood-risk-areas source resolves to

@@ -15,6 +15,7 @@ import { OSM_ATTRIBUTION, mapTilerSatelliteStyleUrl, mapTilerStreetsStyleUrl } f
 import { createMarkerClusterer, type ClusterPoint } from '~/lib/marker-clusterer'
 import { mapPinDataUri, MAP_PIN_ANCHOR } from '~/lib/mapPinIcon'
 import { useMapTilerVectorBaseLayer } from '~/composables/useMapTilerVectorBaseLayer'
+import { useTourismGridLayer } from '~/composables/useTourismGridLayer'
 
 const ESRI_IMAGERY_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
 const ESRI_LABELS_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'
@@ -129,6 +130,13 @@ watch(() => mapRef.value?.map, (m) => { mapInstance.value = m ?? null }, { immed
 useMapTilerVectorBaseLayer({ map: mapInstance, styleUrl: vectorStyleUrl, lang: locale })
 const vectorSourceRef = ref<any>(null)
 const vectorLayerRef = ref<any>(null)
+
+const {
+  category: tourismCategory,
+  categories: tourismCategories,
+  sourceRef: tourismSourceRef,
+  style: tourismLayerStyle,
+} = useTourismGridLayer({ map: mapInstance })
 
 const MAX_ZOOM = 18
 
@@ -428,6 +436,11 @@ function onPointerMove(evt: any): void {
           </ol-tile-layer>
         </template>
       </template>
+      <!-- Tourism-intensity choropleth, below the marker layer so pins/
+           clusters stay clickable and legible on top of it. -->
+      <ol-vector-layer :style="tourismLayerStyle">
+        <ol-source-vector ref="tourismSourceRef" />
+      </ol-vector-layer>
       <ol-vector-layer ref="vectorLayerRef" :style="clusterStyle">
         <ol-source-vector ref="vectorSourceRef" />
       </ol-vector-layer>
@@ -473,23 +486,7 @@ function onPointerMove(evt: any): void {
         </div>
       </ol-overlay>
     </ol-map>
-    <div class="absolute top-2 right-2 z-10 flex overflow-hidden rounded-md border border-slate-900/15 bg-white shadow-sm">
-      <button
-        type="button"
-        class="cursor-pointer px-2.5 py-1 text-xs font-semibold"
-        :class="baseLayer === 'streets' ? 'bg-blue-600 text-white' : 'bg-transparent text-gray-800'"
-        @click="baseLayer = 'streets'"
-      >
-        {{ t('map.baseLayerStreets') }}
-      </button>
-      <button
-        type="button"
-        class="cursor-pointer px-2.5 py-1 text-xs font-semibold"
-        :class="baseLayer === 'satellite' ? 'bg-blue-600 text-white' : 'bg-transparent text-gray-800'"
-        @click="baseLayer = 'satellite'"
-      >
-        {{ t('map.baseLayerSatellite') }}
-      </button>
-    </div>
+    <AuctionMapBaseLayerToggle v-model="baseLayer" />
+    <AuctionTourismLegend v-model:category="tourismCategory" :categories="tourismCategories" />
   </div>
 </template>
