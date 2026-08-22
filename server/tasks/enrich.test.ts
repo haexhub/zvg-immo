@@ -307,6 +307,45 @@ describe('runEnrich scoped identity retry', () => {
     expect(outcome.result).toMatchObject({ crawled: 1, archived: 1 })
   })
 
+  it('replaces a stale cached photo set instead of merging into it on a forced single-auction retry', async () => {
+    const listing = { ...auction(), attachments: [{
+      kind: 'photo' as const,
+      label: 'Foto',
+      filename: 'foto.pdf',
+      sizeBytes: null,
+      fileId: 'foto',
+      proxyUrl: 'https://example.test/foto.pdf',
+    }] }
+    const staleExtraction = {
+      propertyType: null,
+      landAreaSqm: null,
+      livingAreaSqm: null,
+      rooms: null,
+      units: null,
+      source: 'rules' as const,
+      confidence: 'low' as const,
+      at: '2026-08-01T10:00:00.000Z',
+      photos: [{ file: 'stale-wrong-auction.jpg', category: 'sonstiges' as const, caption: null, isPropertyPhoto: true }],
+    }
+    vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map([
+      ['test-platform:42', { auction: { ...listing, extraction: staleExtraction }, detailsId: 1, detailsVersion: 1, artifactVersionId: 5 }],
+    ]))
+    // photoPipelineVersion already at the current target — without scopedForce
+    // taken into account, rebuildingPhotoSet would stay false here.
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([
+      ['test-platform:42', fetchState({ detailFetchedAt: '2026-08-01T10:00:00.000Z', photosCheckedAt: '2026-08-01T10:00:00.000Z', photoPipelineVersion: 4 })],
+    ]))
+    vi.mocked(extractDocumentPhotos).mockResolvedValue(['freshly-correct.jpg'])
+
+    await runEnrich({ identities: [{ platform: 'test-platform', externalId: '42' }] })
+
+    expect(writeAuctionDetails).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ photos: [expect.objectContaining({ file: 'freshly-correct.jpg' })] }),
+      expect.anything(),
+    )
+  })
+
   it('drops identities that no longer exist in the records map instead of throwing', async () => {
     vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map())
 

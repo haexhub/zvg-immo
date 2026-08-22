@@ -181,7 +181,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
     const {
       byPlatform,
       rates,
-      vwCache: initialVwCache,
+      vwCache: initialVwCache, scopedForce,
       needsDocumentSetCheck,
       nativePhotoUrls,
       targetPhotoPipelineVersion,
@@ -310,7 +310,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
             const destDir = join(IMAGES_DIR, a.platform, a.externalId)
             const priorPhotos = priorEntry?.photos?.map(normalizePhoto) ?? []
             const targetVersion = targetPhotoPipelineVersion(a)
-            const rebuildingPhotoSet = (priorFetchState?.photoPipelineVersion ?? 1) < targetVersion
+            const rebuildingPhotoSet = scopedForce || (priorFetchState?.photoPipelineVersion ?? 1) < targetVersion
             let photos = rebuildingPhotoSet ? [] : priorPhotos.map((photo) => photo.file)
             let newlyDownloadedPhotos: string[] = []
             const nativeFotoUrls = nativePhotoUrls(a)
