@@ -8,9 +8,11 @@ import type { TourismVisitorDensityResponse } from '~/server/api/tourism-visitor
 // NUTS2 polygons are vastly larger than the POI-density grid's 10km cells —
 // a fully opaque fill would blank out the basemap over large parts of a
 // country, so this stays translucent regardless of bin (the hue/lightness
-// step is what carries the magnitude signal here, not the alpha).
-const FILL_ALPHA = 0.55
-const STROKE_ALPHA = 0.75
+// step is what carries the magnitude signal here, not the alpha). Calibrated
+// against the real imported dataset on both the OSM street and Esri
+// satellite basemaps.
+const FILL_ALPHA = 0.75
+const STROKE_ALPHA = 0.9
 
 const geoJsonFormat = new GeoJSON()
 // Keyed by bin (0..TOURISM_NUTS_NUM_BINS-1, or 'null' for no-data) — at most
@@ -28,6 +30,15 @@ const styleCache = new Map<string, Style>()
 export function useTourismVisitorLayer() {
   const active = ref(false)
   const sourceRef = ref<any>(null)
+  // vue3-openlayers' reactive `:style` prop on <ol-vector-layer> does not
+  // reach the OL layer's actual style — it lands in the layer's generic
+  // property bag via BaseObject.set('style', ...) (see useLayer.js's
+  // updateLayers()), never through the layer's own setStyle() method, which
+  // is the only thing ol/layer/BaseVector's renderer reads. The style must
+  // be applied imperatively once this ref resolves — verified live against
+  // the real imported dataset (a `:style` binding rendered nothing at any
+  // alpha up to 1.0; layer.setStyle() via this ref rendered correctly).
+  const layerRef = ref<any>(null)
   const loading = ref(false)
   const breaks = ref<number[]>([])
 
@@ -48,6 +59,10 @@ export function useTourismVisitorLayer() {
     }
     return cached
   }
+
+  watch(layerRef, (layerComponent) => {
+    layerComponent?.vectorLayer?.setStyle(style)
+  }, { immediate: true })
 
   async function load(): Promise<void> {
     if (cachedFeatures) return
@@ -95,5 +110,5 @@ export function useTourismVisitorLayer() {
 
   watch([active, () => sourceRef.value?.source], () => sync(), { immediate: true })
 
-  return { active, sourceRef, style, loading, breaks }
+  return { active, sourceRef, layerRef, loading, breaks }
 }

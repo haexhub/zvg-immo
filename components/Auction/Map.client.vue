@@ -106,7 +106,7 @@ const {
 const {
   active: tourismVisitorActive,
   sourceRef: tourismVisitorSourceRef,
-  style: tourismVisitorLayerStyle,
+  layerRef: tourismVisitorLayerRef,
   breaks: tourismVisitorBreaks,
 } = useTourismVisitorLayer()
 // Mutually exclusive on the map, not because the palettes technically clash
@@ -425,7 +425,7 @@ function onPointerMove(evt: any): void {
       <!-- Visitor-density NUTS2 choropleth — mutually exclusive with the
            layer above (see the watch pair), so layer order between the two
            doesn't matter. -->
-      <ol-vector-layer :style="tourismVisitorLayerStyle">
+      <ol-vector-layer ref="tourismVisitorLayerRef">
         <ol-source-vector ref="tourismVisitorSourceRef" />
       </ol-vector-layer>
       <ol-vector-layer ref="vectorLayerRef" :style="clusterStyle">
