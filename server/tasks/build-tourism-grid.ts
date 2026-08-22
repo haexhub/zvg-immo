@@ -2,7 +2,7 @@
 // (WP-4). Unlike build-geo-features.ts this aggregates an already-normalized,
 // already-indexed table (a few hundred thousand rows across the tourism-
 // relevant kinds, not osm_local_elements' 44.5M raw rows), so a plain
-// truncate-and-replace inside one transaction is enough — no epoch/swap
+// delete-and-replace inside one transaction is enough — no epoch/swap
 // machinery needed, since there is no long-running window where half the
 // categories are rebuilt and half are stale.
 import { Pool } from 'pg'
@@ -68,7 +68,10 @@ export async function buildTourismGrid(db: NodePgDatabase, signal: AbortSignal):
   const perCategory: Record<string, number> = {}
 
   await db.transaction(async (tx) => {
-    await tx.execute(sql`TRUNCATE tourism_grid_cells`)
+    // DELETE, not TRUNCATE: TRUNCATE takes an ACCESS EXCLUSIVE lock that
+    // blocks /api/tourism-grid reads for the whole rebuild, whereas DELETE
+    // lets concurrent SELECTs keep seeing the previously committed snapshot.
+    await tx.execute(sql`DELETE FROM tourism_grid_cells`)
     for (const { category, kinds } of TOURISM_GRID_CATEGORIES) {
       throwIfTaskAborted(signal)
       // Drizzle's sql template spreads a plain JS array into one placeholder

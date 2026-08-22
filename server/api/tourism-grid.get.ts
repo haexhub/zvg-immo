@@ -45,22 +45,35 @@ export default defineEventHandler(async (event): Promise<TourismGridResponse> =>
   const south = finiteNumber(query.south)
   const east = finiteNumber(query.east)
   const west = finiteNumber(query.west)
-  if (north == null || south == null || east == null || west == null) {
-    throw createError({ statusCode: 400, statusMessage: 'Kartenausschnitt (north/south/east/west) fehlt' })
+  if (
+    north == null || south == null || east == null || west == null
+    || Math.abs(north) > 90 || Math.abs(south) > 90
+    || Math.abs(east) > 180 || Math.abs(west) > 180
+    || south > north || west > east
+  ) {
+    throw createError({ statusCode: 400, statusMessage: 'Ungültiger oder fehlender Kartenausschnitt (north/south/east/west)' })
   }
 
   // Bbox corners don't transform to an exact rectangle in EPSG:3035, so this
   // envelope is a conservative pre-filter (used only to pick a cellX/cellY
   // range for the indexed range scan below) — the cells actually returned
   // are reprojected individually further down, which is what the client
-  // renders.
+  // renders. ST_Segmentize densifies the edges before the transform: without
+  // it, ST_Transform only maps the four corners, and a large viewport's
+  // projected edges can bulge past the corner-only envelope in EPSG:3035,
+  // silently dropping valid cells near the edge.
   const { rows: envelope } = await db.execute<{ min_x: number; max_x: number; min_y: number; max_y: number }>(sql`
     SELECT
       floor(ST_XMin(bbox.geom) / ${TOURISM_GRID_CELL_SIZE_M})::int AS min_x,
       floor(ST_XMax(bbox.geom) / ${TOURISM_GRID_CELL_SIZE_M})::int AS max_x,
       floor(ST_YMin(bbox.geom) / ${TOURISM_GRID_CELL_SIZE_M})::int AS min_y,
       floor(ST_YMax(bbox.geom) / ${TOURISM_GRID_CELL_SIZE_M})::int AS max_y
-    FROM (SELECT ST_Transform(ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326), 3035) AS geom) bbox
+    FROM (
+      SELECT ST_Transform(
+        ST_Segmentize(ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326), 0.5),
+        3035
+      ) AS geom
+    ) bbox
   `)
   const bounds = envelope[0]
   if (!bounds) {

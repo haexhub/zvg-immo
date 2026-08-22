@@ -93,6 +93,10 @@ async function readGrid(pool: Pool): Promise<GridRow[]> {
 
 describeDb('buildTourismGrid (real Postgres)', () => {
   let pool: Pool
+  // Vitest still runs afterAll when beforeAll throws — only run the
+  // destructive cleanup once the emptiness guard below has actually passed,
+  // so a guard failure never truncates a database this suite doesn't own.
+  let ownsTourismGrid = false
 
   beforeAll(async () => {
     const { Pool } = await import('pg')
@@ -105,11 +109,14 @@ describeDb('buildTourismGrid (real Postgres)', () => {
         + 'at a disposable database.',
       )
     }
+    ownsTourismGrid = true
   })
 
   afterAll(async () => {
-    await pool.query('DELETE FROM geo_features WHERE country = $1', [TEST_COUNTRY])
-    await pool.query('TRUNCATE tourism_grid_cells')
+    if (ownsTourismGrid) {
+      await pool.query('DELETE FROM geo_features WHERE country = $1', [TEST_COUNTRY])
+      await pool.query('TRUNCATE tourism_grid_cells')
+    }
     await pool.end()
   })
 

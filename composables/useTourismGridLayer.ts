@@ -57,7 +57,12 @@ export function useTourismGridLayer(options: { map: Ref<OlMap | null> }) {
   }
 
   let requestId = 0
+  let loadedCategory: TourismCategory | null = null
   async function refresh(): Promise<void> {
+    // Bump before every early return too — otherwise a request still in
+    // flight when the layer gets deactivated/zoomed-out can later land and
+    // restore cells the user just asked to clear.
+    const id = ++requestId
     const source = sourceRef.value?.source
     if (!source) return
 
@@ -66,15 +71,19 @@ export function useTourismGridLayer(options: { map: Ref<OlMap | null> }) {
     const zoom = m?.getView().getZoom() ?? 0
     if (!m || !cat || zoom < MIN_ZOOM_TO_FETCH) {
       source.clear()
+      loadedCategory = null
+      loading.value = false
       return
     }
 
     const size = m.getSize()
     if (!size) return
+
+    if (loadedCategory !== cat) source.clear()
+
     const extent = m.getView().calculateExtent(size)
     const [west, south, east, north] = transformExtent(extent, 'EPSG:3857', 'EPSG:4326') as [number, number, number, number]
 
-    const id = ++requestId
     loading.value = true
     try {
       const response = await $fetch<TourismGridResponse>('/api/tourism-grid', {
@@ -92,9 +101,13 @@ export function useTourismGridLayer(options: { map: Ref<OlMap | null> }) {
       const features = geoJsonFormat.readFeatures(collection, { dataProjection: 'EPSG:4326', featureProjection: 'EPSG:3857' })
       source.clear()
       source.addFeatures(features)
+      loadedCategory = cat
     } catch {
       // Network hiccup — leave whatever previously rendered in place rather
-      // than blanking the layer on a transient failure.
+      // than blanking the layer, but only when it's still showing the same
+      // category; a failed refresh right after a category switch must not
+      // leave the old category's cells under the new category's color.
+      if (loadedCategory !== cat) source.clear()
     } finally {
       if (id === requestId) loading.value = false
     }

@@ -239,7 +239,7 @@ export const auctionGeoMetrics = pgTable('auction_geo_metrics', {
 // geo_features. Purely a derived cache of geo_features — unlike that table
 // this one is cheap to fully recompute (it aggregates ~a few hundred
 // thousand already-normalized rows, not osm_local_elements' 44.5M), so the
-// build job truncates and repopulates it inside one transaction instead of
+// build job deletes and repopulates it inside one transaction instead of
 // needing geo_features' epoch/swap machinery.
 // cellX/cellY are floor(ST_X/Y(centroid) / CELL_SIZE_M), not a geometry
 // column: the API endpoint reconstructs each cell's polygon from the grid
