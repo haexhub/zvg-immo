@@ -53,6 +53,7 @@ const {
 const attachmentKindLabelFn = useAttachmentKindLabel()
 const conditionLabel = useConditionLabel()
 const featureLabel = useFeatureLabel()
+const propertyTypeLabel = usePropertyTypeLabel()
 const {
   currency,
   formatPrice,
@@ -89,7 +90,7 @@ const FEATURE_ICONS: Partial<Record<Feature, Component>> = {
 const hasPropertyData = computed(() => {
   const e = props.displayExtraction
   if (!e) return false
-  return e.landAreaSqm != null || e.livingAreaSqm != null || e.yearBuilt != null
+  return !!e.propertyType || e.landAreaSqm != null || e.livingAreaSqm != null || e.yearBuilt != null
     || e.lastRenovationYear != null || e.rooms != null || (e.units != null && e.units > 1)
     || e.bedrooms != null || e.bathrooms != null || e.floor != null || pricePerSqm.value != null
     || !!e.condition || !!e.renovationNotes
@@ -300,6 +301,10 @@ function marketVerdictLabel(verdict: string): string {
       <TranslationPendingBadge />
     </template>
     <dl class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-4">
+      <div v-if="displayExtraction?.propertyType">
+        <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.propertyType') }}</dt>
+        <dd class="text-sm font-medium">{{ propertyTypeLabel(displayExtraction.propertyType) }}</dd>
+      </div>
       <div v-if="displayExtraction?.landAreaSqm != null">
         <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.landArea') }}</dt>
         <dd class="text-sm font-medium tabular-nums">{{ formatArea(displayExtraction.landAreaSqm) }}</dd>

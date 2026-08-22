@@ -911,6 +911,7 @@
     "startingBid": "Startgebot",
     "currentBid": "Aktuelles Gebot",
     "securityDeposit": "Sicherheitsleistung",
+    "propertyType": "Objektart",
     "landArea": "Grundstücksfläche",
     "livingArea": "Wohnfläche",
     "yearBuilt": "Baujahr",

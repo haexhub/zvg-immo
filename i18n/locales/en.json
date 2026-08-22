@@ -911,6 +911,7 @@
     "startingBid": "Starting bid",
     "currentBid": "Current bid",
     "securityDeposit": "Security deposit",
+    "propertyType": "Property type",
     "landArea": "Land area",
     "livingArea": "Living area",
     "yearBuilt": "Year built",
