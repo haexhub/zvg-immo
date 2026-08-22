@@ -77,6 +77,11 @@ export interface LlmBatchJobsOverview {
   copernicusEffisImportStatus: TaskRunStatus
   // Same for the EU flood risk polygon cache import.
   euFloodRiskImportStatus: TaskRunStatus
+  // The Eurostat regional tourism nights (NUTS2) + GISCO boundary cache
+  // import backing the search map's visitor-intensity overlay — a plain
+  // fetch, but still detached (see the trigger route) so failures land here
+  // instead of vanishing with the promise.
+  eurostatTourismNutsImportStatus: TaskRunStatus
 }
 
 // Also caps each job's own requestKeys array below (a real Batch API
@@ -124,6 +129,7 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
     offloadImagesStatus,
     copernicusEffisImportStatus,
     euFloodRiskImportStatus,
+    eurostatTourismNutsImportStatus,
   ] = await Promise.all([
     listPendingLlmBatchJobs(),
     listRecentLlmBatchJobs(20),
@@ -134,6 +140,7 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
     getTaskRunStatus('offload-images'),
     getTaskRunStatus('import-copernicus-effis-cache'),
     getTaskRunStatus('import-eu-flood-risk-cache'),
+    getTaskRunStatus('import-eurostat-tourism-nuts-cache'),
   ])
   // supportsLlmBatch() gates gemini-native on isGeminiBatchTierPaid() (see
   // llm-batch.ts), so on the free tier a real batch submit never happens and
@@ -264,6 +271,7 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
     offloadImagesStatus,
     copernicusEffisImportStatus,
     euFloodRiskImportStatus,
+    eurostatTourismNutsImportStatus,
   }
   cachedOverview = { data: result, expiresAt: Date.now() + OVERVIEW_CACHE_TTL_MS }
   return result

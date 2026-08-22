@@ -76,6 +76,7 @@ export interface LlmBatchJobsOverview {
   offloadImagesStatus?: TaskRunStatus
   copernicusEffisImportStatus?: TaskRunStatus
   euFloodRiskImportStatus?: TaskRunStatus
+  eurostatTourismNutsImportStatus?: TaskRunStatus
 }
 
 let progressPollTimer: ReturnType<typeof setInterval> | null = null
@@ -117,7 +118,8 @@ export function useSettingsTaskOverview() {
       overview.externalEnrichmentStatus.status === 'running' ||
       overview.offloadImagesStatus?.status === 'running' ||
       overview.copernicusEffisImportStatus?.status === 'running' ||
-      overview.euFloodRiskImportStatus?.status === 'running'
+      overview.euFloodRiskImportStatus?.status === 'running' ||
+      overview.eurostatTourismNutsImportStatus?.status === 'running'
   }
 
   const llmBatchBacklog = computed(() => llmBatchJobs.value?.backlog ?? {

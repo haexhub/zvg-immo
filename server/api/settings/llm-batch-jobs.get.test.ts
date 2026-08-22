@@ -178,6 +178,7 @@ describe('/api/settings/llm-batch-jobs', () => {
       offloadImagesStatus: IDLE_REPROCESS_STATUS,
       copernicusEffisImportStatus: IDLE_REPROCESS_STATUS,
       euFloodRiskImportStatus: IDLE_REPROCESS_STATUS,
+      eurostatTourismNutsImportStatus: IDLE_REPROCESS_STATUS,
     })
     expect(getTaskRunStatus).toHaveBeenCalledWith('reprocess')
     expect(getTaskRunStatus).toHaveBeenCalledWith('enrich')
@@ -185,6 +186,7 @@ describe('/api/settings/llm-batch-jobs', () => {
     expect(getTaskRunStatus).toHaveBeenCalledWith('offload-images')
     expect(getTaskRunStatus).toHaveBeenCalledWith('import-copernicus-effis-cache')
     expect(getTaskRunStatus).toHaveBeenCalledWith('import-eu-flood-risk-cache')
+    expect(getTaskRunStatus).toHaveBeenCalledWith('import-eurostat-tourism-nuts-cache')
   })
 
   it('excludes a cancelled auction from the backlog counts entirely', async () => {

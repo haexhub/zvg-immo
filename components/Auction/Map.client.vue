@@ -4,18 +4,18 @@ import { boundingExtent } from 'ol/extent'
 import Point from 'ol/geom/Point'
 import type OlMap from 'ol/Map'
 import { fromLonLat, toLonLat, transformExtent } from 'ol/proj'
-import { Circle as CircleStyle, Fill, Icon, Stroke, Style, Text } from 'ol/style'
 import type { GeoAuction } from '~/server/api/auctions-geo.get'
 import type { AuctionSummary } from '~/server/api/auctions.get'
 import LotPopover from '~/components/LotPopover.vue'
 import { auctionKey } from '~/lib/auction-key'
+import { clusterStyle } from '~/lib/auction-map-marker-style'
 import { boundsForCountries } from '~/lib/country-bounds'
 import type { ContentTargetLang } from '~/lib/content-language'
 import { OSM_ATTRIBUTION, mapTilerSatelliteStyleUrl, mapTilerStreetsStyleUrl } from '~/lib/map-tiles'
 import { createMarkerClusterer, type ClusterPoint } from '~/lib/marker-clusterer'
-import { mapPinDataUri, MAP_PIN_ANCHOR } from '~/lib/mapPinIcon'
 import { useMapTilerVectorBaseLayer } from '~/composables/useMapTilerVectorBaseLayer'
 import { useTourismGridLayer } from '~/composables/useTourismGridLayer'
+import { useTourismVisitorLayer } from '~/composables/useTourismVisitorLayer'
 
 const ESRI_IMAGERY_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
 const ESRI_LABELS_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'
@@ -25,41 +25,6 @@ const ESRI_LABELS_ATTRIBUTION = 'Tiles &copy; Esri'
 // once either is available, refreshMarkers()/fitFallbackView() below take
 // over with a real fit (auction extent, or the selected country's bounds).
 const EUROPE_CENTER_LONLAT: [number, number] = [15, 50]
-
-const PIN_COLOR = '#2563eb'
-const PIN_COLOR_ACTIVE = '#dc2626'
-const pinStyleDefault = new Style({ image: new Icon({ src: mapPinDataUri(PIN_COLOR), anchor: MAP_PIN_ANCHOR }) })
-const pinStyleActive = new Style({ image: new Icon({ src: mapPinDataUri(PIN_COLOR_ACTIVE), anchor: MAP_PIN_ANCHOR }) })
-
-function pinStyle(active: boolean): Style {
-  return active ? pinStyleActive : pinStyleDefault
-}
-
-// renderView() below builds one OL feature per cluster/point returned by the
-// clusterer for the current viewport, tagging each with 'isCluster' (+
-// 'count' for clusters) — so this single style function covers both
-// individual pins and cluster badges. OL calls this for every visible
-// feature on every render pass (pan/zoom/refresh), so cluster badge styles
-// are cached like the singleton pin styles above instead of rebuilt each time.
-const clusterStyleCache = new Map<string, Style>()
-function clusterStyle(feature: any): Style {
-  if (!feature.get('isCluster')) {
-    return pinStyle(feature.get('active') === true)
-  }
-  const count = feature.get('count') as number
-  const active = feature.get('active') === true
-  const cacheKey = `${count}:${active}`
-  let style = clusterStyleCache.get(cacheKey)
-  if (!style) {
-    const color = active ? PIN_COLOR_ACTIVE : PIN_COLOR
-    style = new Style({
-      image: new CircleStyle({ radius: 18, fill: new Fill({ color }), stroke: new Stroke({ color: '#fff', width: 2 }) }),
-      text: new Text({ text: String(count), fill: new Fill({ color: '#fff' }), font: 'bold 12px sans-serif' }),
-    })
-    clusterStyleCache.set(cacheKey, style)
-  }
-  return style
-}
 
 const props = defineProps<{
   auctions: GeoAuction[]
@@ -137,6 +102,22 @@ const {
   sourceRef: tourismSourceRef,
   style: tourismLayerStyle,
 } = useTourismGridLayer({ map: mapInstance })
+
+const {
+  active: tourismVisitorActive,
+  sourceRef: tourismVisitorSourceRef,
+  style: tourismVisitorLayerStyle,
+  breaks: tourismVisitorBreaks,
+} = useTourismVisitorLayer()
+// Mutually exclusive on the map, not because the palettes technically clash
+// (this layer is a single sequential hue, not one of the grid's 5
+// categorical ones — see lib/tourism-grid-categories.ts's comment on why
+// *that* constraint is palette-specific), but because two independently
+// colored choropleths of very different granularity stacked on one map are
+// hard to read at a glance, and there's no dual-legend layout to place them
+// side by side yet.
+watch(tourismCategory, (v) => { if (v != null) tourismVisitorActive.value = false })
+watch(tourismVisitorActive, (v) => { if (v) tourismCategory.value = null })
 
 const MAX_ZOOM = 18
 
@@ -441,6 +422,12 @@ function onPointerMove(evt: any): void {
       <ol-vector-layer :style="tourismLayerStyle">
         <ol-source-vector ref="tourismSourceRef" />
       </ol-vector-layer>
+      <!-- Visitor-density NUTS2 choropleth — mutually exclusive with the
+           layer above (see the watch pair), so layer order between the two
+           doesn't matter. -->
+      <ol-vector-layer :style="tourismVisitorLayerStyle">
+        <ol-source-vector ref="tourismVisitorSourceRef" />
+      </ol-vector-layer>
       <ol-vector-layer ref="vectorLayerRef" :style="clusterStyle">
         <ol-source-vector ref="vectorSourceRef" />
       </ol-vector-layer>
@@ -488,5 +475,6 @@ function onPointerMove(evt: any): void {
     </ol-map>
     <AuctionMapBaseLayerToggle v-model="baseLayer" />
     <AuctionTourismLegend v-model:category="tourismCategory" :categories="tourismCategories" />
+    <AuctionTourismVisitorLegend v-model:active="tourismVisitorActive" :breaks="tourismVisitorBreaks" />
   </div>
 </template>

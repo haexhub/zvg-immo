@@ -15,6 +15,7 @@ export type TrackedTask =
   | 'offload-images'
   | 'import-copernicus-effis-cache'
   | 'import-eu-flood-risk-cache'
+  | 'import-eurostat-tourism-nuts-cache'
 
 // enrich.ts (crawl/archive) and reprocess.ts (extraction) report differently
 // shaped, purely-numeric result summaries — kept generic here rather than a
