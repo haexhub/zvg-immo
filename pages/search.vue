@@ -56,6 +56,10 @@ const {
   debouncedSearch,
   authorityFilter,
   categoryFilter,
+  mapLat,
+  mapLng,
+  mapZoom,
+  updateMapView,
 } = injectedSearchState
 const isDesktop = computed(() => mounted.value && mediaIsDesktop.value)
 
@@ -364,6 +368,19 @@ watch(visibleAuctions, () => {
 // and region selections still recentre too.
 const geoFitKey = computed(() => `${selectedCountries.value.join(',')}:${selectedRegionKeys.value.join(',')}:${debouncedSearch.value}`)
 
+// URL-restored map viewport (shared link or back-navigation from an auction
+// detail page). Read once by the map on mount — see Map.client.vue's
+// initialView prop — not kept in sync afterwards, so the user's own pan/zoom
+// takes over immediately.
+const initialMapView = computed(() => (
+  mapLat.value != null && mapLng.value != null && mapZoom.value != null
+    ? { lat: mapLat.value, lng: mapLng.value, zoom: mapZoom.value }
+    : null
+))
+function handleMapViewChange(mapView: { lat: number; lng: number; zoom: number }): void {
+  updateMapView(mapView.lat, mapView.lng, mapView.zoom)
+}
+
 // Validate URL-restored authorityFilter / categoryFilter once data has loaded.
 // Invalid values produce silent 0-result filtering otherwise.
 watch(data, () => {
@@ -392,11 +409,13 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
           :auction-summaries="auctionSummaries"
           :selected-countries="selectedCountries"
           :fit-key="geoFitKey"
+          :initial-view="initialMapView"
           :geo-pending="geoPending"
           :has-geo-data="!!geoData"
           :geo-error="geoError ?? geoBackgroundError"
           :active-auction-key="activeAuctionKey"
           @bounds-change="mapBounds = $event"
+          @view-change="handleMapViewChange"
           @auction-hover="handleMapAuctionHover"
           @auction-select="handleMapAuctionSelect"
         />
@@ -429,12 +448,14 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
         :geo-auctions="filteredGeo"
         :selected-countries="selectedCountries"
         :geo-fit-key="geoFitKey"
+        :initial-map-view="initialMapView"
         :geo-pending="geoPending"
         :geo-data="geoData"
         :geo-error="geoError ?? geoBackgroundError"
         @toggle-watchlist="toggleWatchlist"
         @load-more="loadMore"
         @bounds-change="mapBounds = $event"
+        @view-change="handleMapViewChange"
         @auction-hover="handleMapAuctionHover"
         @auction-select="handleMapAuctionSelect"
       />
