@@ -441,7 +441,7 @@
       "skipped": "Skipped",
       "llmCalls": "LLM calls",
       "llmErrors": "LLM request errors",
-      "rulesFalsified": "Rules values corrected by the LLM",
+      "rulesFalsified": "Rule values corrected by the LLM",
       "warning": "Notice: {message}",
       "lastLlmError": "Last LLM error: {message}",
       "batchLabel": "Submit via Batch API (checks whether batch currently works for this provider)"
@@ -454,7 +454,7 @@
       "reprocessLastError": "Last run failed: {message}",
       "reprocessLastWarning": "Last run notice: {message}",
       "reprocessLlmErrors": "{count} LLM request failure(s) in the last run",
-      "reprocessRulesFalsified": "{count} rules value(s) corrected by the LLM in the last run",
+      "reprocessRulesFalsified": "{count} rule value(s) corrected by the LLM in the last run",
       "reprocessLastLlmError": "Last LLM error: {message}",
       "refresh": "Refresh",
       "loadError": "Could not load the batch pipeline.",

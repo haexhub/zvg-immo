@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AuctionExtraction } from '~/types/auction'
 import type { ClampedExtraction } from './llm'
-import { dropStaleRuleChecks, falsifiedRuleFields, mergeLlmResult, type MergeInputFields } from './merge-llm-result'
+import { falsifiedRuleFields, mergeLlmResult, ruleChecksMatchingHint, type MergeInputFields } from './merge-llm-result'
 
 const AT = '2026-07-23T00:00:00.000Z'
 
@@ -332,14 +332,14 @@ describe('falsifiedRuleFields', () => {
   })
 })
 
-describe('dropStaleRuleChecks', () => {
+describe('ruleChecksMatchingHint', () => {
   const HINT = { propertyType: 'mehrfamilienhaus', rooms: 2, units: null, securityDeposit: null }
   const RULE_CHECK = { propertyType: false, rooms: false, units: null, securityDeposit: null }
 
   it('keeps verdicts whose value is unchanged since the hint was sent', () => {
     const fields = baseFields({ propertyType: 'mehrfamilienhaus', rooms: 2 })
 
-    expect(dropStaleRuleChecks(RULE_CHECK, HINT, fields)).toEqual(RULE_CHECK)
+    expect(ruleChecksMatchingHint(RULE_CHECK, HINT, fields)).toEqual(RULE_CHECK)
   })
 
   it('drops the verdict for a field whose rules value changed in the meantime', () => {
@@ -347,7 +347,7 @@ describe('dropStaleRuleChecks', () => {
     // "3-Zimmerwohnung": the "rooms is wrong" verdict was about the old 2.
     const fields = baseFields({ propertyType: 'mehrfamilienhaus', rooms: 3 })
 
-    expect(dropStaleRuleChecks(RULE_CHECK, HINT, fields)).toEqual({
+    expect(ruleChecksMatchingHint(RULE_CHECK, HINT, fields)).toEqual({
       propertyType: false,
       rooms: null,
       units: null,
@@ -358,18 +358,40 @@ describe('dropStaleRuleChecks', () => {
   it('drops every verdict when no hint was recorded', () => {
     const fields = baseFields({ propertyType: 'mehrfamilienhaus', rooms: 2 })
 
-    expect(dropStaleRuleChecks(RULE_CHECK, null, fields)).toBeNull()
+    expect(ruleChecksMatchingHint(RULE_CHECK, null, fields)).toBeNull()
   })
 
   it("treats a rules value that decayed to 'sonstiges' as changed", () => {
     const fields = baseFields({ propertyType: 'sonstiges', rooms: 2 })
 
-    expect(dropStaleRuleChecks(RULE_CHECK, HINT, fields)?.propertyType).toBeNull()
+    expect(ruleChecksMatchingHint(RULE_CHECK, HINT, fields)?.propertyType).toBeNull()
   })
 
   it('returns null once nothing survives', () => {
     const fields = baseFields({ propertyType: 'einfamilienhaus', rooms: 9 })
 
-    expect(dropStaleRuleChecks(RULE_CHECK, HINT, fields)).toBeNull()
+    expect(ruleChecksMatchingHint(RULE_CHECK, HINT, fields)).toBeNull()
+  })
+
+  it('drops an unsolicited verdict about a field that was never hinted', () => {
+    // buildReprocessInput withholds a platform-reported rooms value, so the
+    // hint carries null for it — a `false` the model volunteered anyway must
+    // not reach the merge and wipe the portal's own number.
+    const fields = baseFields({ propertyType: 'mehrfamilienhaus', rooms: 4 })
+    const hint = { propertyType: 'mehrfamilienhaus', rooms: null, units: null, securityDeposit: null }
+
+    expect(ruleChecksMatchingHint(RULE_CHECK, hint, fields)?.rooms).toBeNull()
+  })
+
+  it('keeps the protected value through the merge, not just in the filter', () => {
+    const fields = baseFields({ propertyType: 'eigentumswohnung', rooms: 4 })
+    const hint = { propertyType: 'eigentumswohnung', rooms: null, units: null, securityDeposit: null }
+    const llm = llmResult({ rooms: null, ruleCheck: { propertyType: null, rooms: false, units: null, securityDeposit: null } })
+    const verified = { ...llm, ruleCheck: ruleChecksMatchingHint(llm.ruleCheck, hint, fields) }
+
+    expect(mergeLlmResult(undefined, fields, verified, AT, undefined).rooms).toBe(4)
+    expect(falsifiedRuleFields(fields, verified)).toEqual([])
+    // ... and without the filter it would have been wiped:
+    expect(mergeLlmResult(undefined, fields, llm, AT, undefined).rooms).toBeNull()
   })
 })

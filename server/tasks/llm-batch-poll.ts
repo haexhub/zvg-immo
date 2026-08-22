@@ -7,7 +7,7 @@
 import { fetchLlmBatchResults, LLM_BATCH_JOB_EXPIRY_MS, pollLlmBatch } from '../utils/extract/llm-batch'
 import { readExtractionLlmConfig, resolveLlmConfigForProfile } from '../utils/extract/llm-task-config'
 import type { LlmConfig } from '../utils/extract/llm'
-import { dropStaleRuleChecks, falsifiedRuleFields, mergeLlmResult } from '../utils/extract/merge-llm-result'
+import { falsifiedRuleFields, mergeLlmResult, ruleChecksMatchingHint } from '../utils/extract/merge-llm-result'
 import { buildReprocessFields } from '../utils/extract/reprocess-fields'
 import { applyAuctionExtraction } from '../utils/auction-extraction'
 import { readAuctionRecordMap } from '../utils/auction-record'
@@ -212,6 +212,15 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
         const storedPriorEntry = record.auction.extraction ?? undefined
         const priorState = fetchStates.get(key)
         if (!storedPriorEntry) continue
+        // The item's LLM state belongs to whichever job claimed it last. An
+        // older job whose provider only now recovered (its per-item marker
+        // was already forgiven after LLM_BATCH_JOB_EXPIRY_MS and the item
+        // re-submitted elsewhere) would otherwise merge against the newer
+        // job's snapshot and clear its still-pending marker.
+        if (priorState?.llmBatchJob !== job.jobName) {
+          console.warn(`[llm-batch-poll] ${identity.platform}:${identity.externalId} no longer belongs to ${job.jobName} — skipping its result`)
+          continue
+        }
         const artifactVersionId = priorState?.llmArtifactVersionId ?? record.artifactVersionId
         const fields = buildReprocessFields(
           record.auction,
@@ -222,7 +231,7 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
         // submit time; `fields` above is re-derived now, up to 48h later.
         // Only honour a verdict whose value survived that gap unchanged.
         const verified = extraction &&
-          { ...extraction, ruleCheck: dropStaleRuleChecks(extraction.ruleCheck, priorState?.llmRulesHint ?? null, fields) }
+          { ...extraction, ruleCheck: ruleChecksMatchingHint(extraction.ruleCheck, priorState.llmRulesHint, fields) }
         const falsified = falsifiedRuleFields(fields, verified)
         if (falsified.length) {
           rulesFalsified += falsified.length

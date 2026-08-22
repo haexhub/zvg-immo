@@ -88,15 +88,21 @@ function ruleValueOf(fields: MergeInputFields, field: RuleCheckedField): string 
 }
 
 /**
- * Drops verdicts that no longer refer to the value they were about. The LLM
- * Batch API path shows the model a rules value at submit time but re-derives
- * the merge base up to 48h later at poll time (llm-batch-poll.ts) — a
- * re-crawl in between can move the value out from under the verdict, and
- * applying a stale `false` would overwrite a fresh, possibly correct rules
- * value. Without a snapshot at all (rows written before it was recorded) no
- * verdict can be attributed, so all of them go.
+ * Keeps only the verdicts that provably refer to today's rules value, by
+ * matching each one against the hint the model was actually shown. Two ways a
+ * verdict fails that test, both of which would otherwise let it overwrite a
+ * value it never judged:
+ *  - the field was never hinted (buildReprocessInput withholds a
+ *    platform-reported source* value, and 'sonstiges'), so a `false` for it is
+ *    unsolicited — the model refuted something it was never given;
+ *  - the value changed since the hint was sent. The LLM Batch API path shows
+ *    the rules value at submit time but re-derives the merge base up to 48h
+ *    later at poll time (llm-batch-poll.ts); a re-crawl in between moves the
+ *    value out from under the verdict.
+ * Without a hint at all (rows written before the snapshot existed) nothing can
+ * be attributed, so every verdict goes.
  */
-export function dropStaleRuleChecks(
+export function ruleChecksMatchingHint(
   ruleCheck: RuleCheckResult | null,
   hint: RulesHint | null,
   fields: MergeInputFields,
