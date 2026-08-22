@@ -361,6 +361,13 @@ export const auctionFetchState = pgTable('auction_fetch_state', {
   enrichClaimedAt: timestamp('enrich_claimed_at', { withTimezone: true }),
   llmBatchJob: text('llm_batch_job'),
   llmArtifactVersionId: bigint('llm_artifact_version_id', { mode: 'number' }),
+  // Snapshot of the rules values shown to the LLM for verification when a
+  // batch item was *submitted* (see LlmInput.rulesHint). Read back at merge
+  // time so a ruleCheck verdict is only honoured for a value that hasn't
+  // changed in the meantime — a batch can take up to 48h, long enough for a
+  // re-crawl to move the ground under the verdict. Nullable: rows written
+  // before this column existed, and every non-batch write, leave it empty.
+  llmRulesHint: jsonb('llm_rules_hint'),
   llmFailures: integer('llm_failures').notNull().default(0),
   llmLastAttemptedAt: timestamp('llm_last_attempted_at', { withTimezone: true }),
   llmClaimedAt: timestamp('llm_claimed_at', { withTimezone: true }),

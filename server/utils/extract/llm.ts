@@ -13,7 +13,7 @@
 import { ClaudeProxyProvider } from './providers/claude-proxy'
 import { OpenAiCompatibleProvider } from './providers/openai-compatible'
 import { GeminiNativeProvider } from './providers/gemini-native'
-import { clampExtraction, type ClampedExtraction } from './llm-clamp'
+import { clampExtraction, type ClampedExtraction, type RulesHint } from './llm-clamp'
 import {
   SYSTEM_PROMPT,
   UNIVERSAL_AUCTION_SCHEMA,
@@ -30,7 +30,7 @@ export {
   UNIVERSAL_AUCTION_SCHEMA_NAME,
   UNIVERSAL_AUCTION_SCHEMA_VERSION,
 }
-export type { ClampedExtraction, PhotoCuration } from './llm-clamp'
+export type { ClampedExtraction, PhotoCuration, RulesHint } from './llm-clamp'
 
 export interface LlmInput {
   title: string | null
@@ -68,12 +68,7 @@ export interface LlmInput {
    *  guessing blind — see `ruleCheck` in the response schema and
    *  mergeLlmResult, which only lets the LLM override a rules value that it
    *  explicitly falsified. */
-  rulesHint?: {
-    propertyType: string | null
-    rooms: number | null
-    units: number | null
-    securityDeposit: number | null
-  } | null
+  rulesHint?: RulesHint | null
 }
 
 export interface LlmConfig {

@@ -69,6 +69,17 @@ export interface RuleCheckResult {
   securityDeposit: boolean | null
 }
 
+/** The rules-derived values put in front of the LLM for verification (see
+ *  LlmInput.rulesHint). Null per field means "nothing shown for this one" —
+ *  either the rules found nothing, or the value came from a source the LLM
+ *  can't fairly judge (see buildReprocessInput). */
+export interface RulesHint {
+  propertyType: string | null
+  rooms: number | null
+  units: number | null
+  securityDeposit: number | null
+}
+
 /** One LLM-curated candidate image, referenced by its position in the
  *  `candidateImages` list that was sent. */
 export interface PhotoCuration {
@@ -193,6 +204,24 @@ function clampRuleCheck(raw: unknown): RuleCheckResult | null {
   const hasData =
     result.propertyType != null || result.rooms != null || result.units != null || result.securityDeposit != null
   return hasData ? result : null
+}
+
+/** Reads a RulesHint back out of untyped JSONB (auction_fetch_state's
+ *  llm_rules_hint snapshot). Coerces per field rather than all-or-nothing, so
+ *  one malformed entry doesn't discard the verdicts for the other three. */
+export function coerceRulesHint(raw: unknown): RulesHint | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const r = raw as Record<string, unknown>
+  const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+  const hint: RulesHint = {
+    propertyType: typeof r.propertyType === 'string' ? r.propertyType : null,
+    rooms: num(r.rooms),
+    units: num(r.units),
+    securityDeposit: num(r.securityDeposit),
+  }
+  const hasData =
+    hint.propertyType != null || hint.rooms != null || hint.units != null || hint.securityDeposit != null
+  return hasData ? hint : null
 }
 
 function clampPhotoCuration(raw: unknown): PhotoCuration[] {

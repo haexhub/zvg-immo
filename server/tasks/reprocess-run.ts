@@ -1,8 +1,8 @@
 import type { Auction, AuctionExtraction } from '~/types/auction'
-import { batchSupportsMultimodal, isLlmBatchPending, isLlmBatchProviderBroken, submitLlmBatch, supportsLlmBatch, supportsNativeBatchDocuments } from '~/server/utils/extract/llm-batch'
+import { batchSupportsMultimodal, isLlmBatchPending, isLlmBatchProviderBroken, supportsLlmBatch, supportsNativeBatchDocuments } from '~/server/utils/extract/llm-batch'
 import { readLlmExecutionMode } from '~/server/utils/app-settings'
 import { LLM_FAILURE_RETRY_COOLDOWN_HOURS, MAX_LLM_FAILURES, readExtractionChainStrategy, readExtractionLlmConfigChain } from '~/server/utils/extract/llm-task-config'
-import { type LlmConfig, type LlmInput, type LlmUsage, isLlmProviderError, isRateLimitError } from '~/server/utils/extract/llm'
+import { type LlmConfig, type LlmInput, type LlmUsage, type RulesHint, isLlmProviderError, isRateLimitError } from '~/server/utils/extract/llm'
 import { recordLlmUsage } from '~/server/utils/llm-usage'
 import { resolveCostUsd } from '~/server/utils/extract/llm-pricing'
 import { applyAuctionExtraction } from '~/server/utils/auction-extraction'
@@ -18,6 +18,7 @@ import { recordTaskRunProgress, type TaskRunSummary } from '~/server/utils/task-
 import { throwIfTaskAborted } from '~/server/utils/exclusive-task'
 import { buildLlmRateLimitWarning, buildReprocessInput, buildRulesOnlyEntry, effectiveCandidateCountries, findCandidates, hasNewArchivedDocuments, inputNeedsMultimodal, readMaxLlmPerRun, type ReprocessInput, type ReprocessOptions, type ReprocessResult } from './reprocess-input'
 import { reprocessAuction } from './reprocess-single'
+import { submitReprocessBatch } from './reprocess-batch-submit'
 
 export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSignal): Promise<ReprocessResult> {
   const startedAt = Date.now()
@@ -33,7 +34,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
   if (candidates.length === 0) {
     const durationMs = Date.now() - startedAt
     console.log(`[reprocess] candidates=0 processed=0 skipped=0 llmCalls=0 in ${(durationMs / 1000).toFixed(0)}s`)
-    return { candidates: 0, processed: 0, skipped: 0, llmCalls: 0, llmErrors: 0, durationMs }
+    return { candidates: 0, processed: 0, skipped: 0, llmCalls: 0, llmErrors: 0, rulesFalsified: 0, durationMs }
   }
   const records = await readAuctionRecordMap(opts.country)
   const fetchStates = await readAuctionFetchStates()
@@ -125,10 +126,12 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
   let skipped = 0
   let llmCalls = 0
   let llmErrors = 0
+  let rulesFalsified = 0
   let lastLlmError: string | undefined
   let warning: string | undefined
   const batchItems: { key: string; input: LlmInput }[] = []
   const batchArtifactVersions = new Map<string, number | null>()
+  const batchRulesHints = new Map<string, RulesHint | null>()
 
   // Distinguishes a persistEntry (DB write) failure from an LLM-call failure
   // in the catch block below — both land there, but they need different
@@ -182,6 +185,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
     await writeAuctionLlmPipelineState(record.auction.platform, record.auction.externalId, {
       llmBatchJob: null,
       llmArtifactVersionId: null,
+      llmRulesHint: null,
       llmFailures,
       llmAttempted,
     })
@@ -276,6 +280,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
           llmCallsByPlatform.set(platform, platformLlmCalls + 1)
           batchItems.push({ key, input: base.input })
           batchArtifactVersions.set(key, base.artifactVersionId)
+          batchRulesHints.set(key, base.input.rulesHint ?? null)
           // Keep the currently visible extraction intact while the replacement
           // is pending. The poller rebuilds a fresh merge base for changed sets.
           const entry = base.documentSetChanged && priorEntry
@@ -374,6 +379,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
         llmCalls++
         llmCallsByPlatform.set(platform, platformLlmCallsSoFar + 1)
       }
+      rulesFalsified += result.rulesFalsified.length
 
       processed++
 
@@ -413,6 +419,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
         await writeAuctionLlmPipelineState(platform, externalId, {
           llmBatchJob: null,
           llmArtifactVersionId: null,
+          llmRulesHint: null,
           llmFailures: priorLlmFailures,
           llmAttempted: true,
         })
@@ -438,7 +445,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       })
       void recordTaskRunProgress(
         'reprocess',
-        { candidatesTotal: candidates.length, processed, skipped, llmCalls, llmErrors },
+        { candidatesTotal: candidates.length, processed, skipped, llmCalls, llmErrors, rulesFalsified },
         { lastLlmError, progressByCountry: Object.fromEntries(progressByCountry) },
       )
     }
@@ -448,44 +455,19 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
   // in-loop reports above are routinely swallowed by it.
   await recordTaskRunProgress(
     'reprocess',
-    { candidatesTotal: candidates.length, processed, skipped, llmCalls, llmErrors },
+    { candidatesTotal: candidates.length, processed, skipped, llmCalls, llmErrors, rulesFalsified },
     { lastLlmError, progressByCountry: Object.fromEntries(progressByCountry), flush: true },
   )
 
-  if (batchItems.length > 0 && llmConfig) {
-    const submission = await submitLlmBatch(batchItems, llmConfig, 'reprocess')
-    if (submission) {
-      // Same rationale enrich.ts used to apply: mark every submitted item so
-      // a second runReprocess({ batch: true }) call doesn't re-submit it to a
-      // new job while this one is still in flight (job submission isn't
-      // idempotent).
-      for (const item of submission.submitted) {
-        const separator = item.key.indexOf(':')
-        if (separator > 0) {
-          await writeAuctionLlmPipelineState(
-            item.key.slice(0, separator),
-            item.key.slice(separator + 1),
-            {
-              llmBatchJob: item.jobName,
-              llmArtifactVersionId: batchArtifactVersions.get(item.key) ?? null,
-              llmFailures: fetchStates.get(item.key)?.llmFailures ?? 0,
-              llmAttempted: true,
-            },
-          )
-        }
-      }
-      console.log(`[reprocess] submitted LLM batch ${submission.jobName} with ${submission.submitted.length} items`)
-      if (submission.retryItems.length > 0) {
-        console.warn(`[reprocess] ${submission.retryItems.length} LLM batch item(s) were not submitted`)
-      }
-    } else {
-      console.warn(`[reprocess] LLM batch submission failed for ${batchItems.length} items`)
-    }
-  }
+  await submitReprocessBatch(batchItems, llmConfig, {
+    artifactVersions: batchArtifactVersions,
+    rulesHints: batchRulesHints,
+    fetchStates,
+  })
 
   const durationMs = Date.now() - startedAt
   console.log(
-    `[reprocess] candidates=${candidates.length} processed=${processed} skipped=${skipped} llmCalls=${llmCalls} llmErrors=${llmErrors} in ${(durationMs / 1000).toFixed(0)}s`,
+    `[reprocess] candidates=${candidates.length} processed=${processed} skipped=${skipped} llmCalls=${llmCalls} llmErrors=${llmErrors} rulesFalsified=${rulesFalsified} in ${(durationMs / 1000).toFixed(0)}s`,
   )
   return {
     candidates: candidates.length,
@@ -493,6 +475,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
     skipped,
     llmCalls,
     llmErrors,
+    rulesFalsified,
     durationMs,
     ...(warning ? { warning } : {}),
     ...(lastLlmError ? { lastLlmError } : {}),

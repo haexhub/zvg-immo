@@ -15,7 +15,7 @@ import type { PropertyType } from '~/lib/property-type'
 import type { Condition } from '~/lib/condition'
 import type { Feature } from '~/lib/features'
 import type { AuctionExtraction, AuctionInsights, CuratedPhoto, PlanningNotes } from '~/types/auction'
-import type { ClampedExtraction } from './llm'
+import type { ClampedExtraction, RuleCheckResult, RulesHint } from './llm-clamp'
 
 /** Rules/structured fields plus the LLM-only fields carried forward from a
  *  prior cache entry (undefined when never checked) — the state going into
@@ -73,6 +73,57 @@ export function withDerivedExtractionFields(entry: AuctionExtraction): AuctionEx
     landAreaSqm: derivedLandAreaSqm,
     confidence: hasType && hasArea ? 'high' : entry.confidence,
   }
+}
+
+/** The four fields the LLM is asked to confirm or refute (llm-schema.ts's
+ *  ruleCheck). propertyType's rules value is only "real" when it isn't
+ *  'sonstiges' — the same nuance mergeLlmResult and buildReprocessInput
+ *  apply. */
+export const RULE_CHECKED_FIELDS = ['propertyType', 'rooms', 'units', 'securityDeposit'] as const
+export type RuleCheckedField = (typeof RULE_CHECKED_FIELDS)[number]
+
+function ruleValueOf(fields: MergeInputFields, field: RuleCheckedField): string | number | null {
+  if (field !== 'propertyType') return fields[field]
+  return fields.propertyType != null && fields.propertyType !== 'sonstiges' ? fields.propertyType : null
+}
+
+/**
+ * Drops verdicts that no longer refer to the value they were about. The LLM
+ * Batch API path shows the model a rules value at submit time but re-derives
+ * the merge base up to 48h later at poll time (llm-batch-poll.ts) — a
+ * re-crawl in between can move the value out from under the verdict, and
+ * applying a stale `false` would overwrite a fresh, possibly correct rules
+ * value. Without a snapshot at all (rows written before it was recorded) no
+ * verdict can be attributed, so all of them go.
+ */
+export function dropStaleRuleChecks(
+  ruleCheck: RuleCheckResult | null,
+  hint: RulesHint | null,
+  fields: MergeInputFields,
+): RuleCheckResult | null {
+  if (!ruleCheck) return null
+  if (!hint) return null
+  const kept = { propertyType: null, rooms: null, units: null, securityDeposit: null } as RuleCheckResult
+  let hasVerdict = false
+  for (const field of RULE_CHECKED_FIELDS) {
+    if (ruleCheck[field] == null || hint[field] !== ruleValueOf(fields, field)) continue
+    kept[field] = ruleCheck[field]
+    hasVerdict = true
+  }
+  return hasVerdict ? kept : null
+}
+
+/** Which rules values this LLM result actually overruled — the observable
+ *  half of resolveVerifiedField, kept as its own function so callers can
+ *  count and log the override without the merge doing I/O. */
+export function falsifiedRuleFields(
+  fields: MergeInputFields,
+  llm: ClampedExtraction | null,
+): RuleCheckedField[] {
+  if (!llm?.ruleCheck) return []
+  return RULE_CHECKED_FIELDS.filter(
+    (field) => ruleValueOf(fields, field) != null && llm.ruleCheck![field] === false,
+  )
 }
 
 /** Resolves one rules/LLM field pair for propertyType/rooms/units/

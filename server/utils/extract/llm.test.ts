@@ -13,6 +13,7 @@ import {
   UNIVERSAL_AUCTION_SCHEMA_NAME,
   UNIVERSAL_AUCTION_SCHEMA_VERSION,
 } from './llm'
+import { coerceRulesHint } from './llm-clamp'
 
 describe('isRateLimitError', () => {
   it('recognizes an HTTP 429 $fetch error', () => {
@@ -104,6 +105,8 @@ describe('extractByLlm', () => {
 describe('universal auction extraction schema', () => {
   it('exposes the canonical schema identity and required fields', () => {
     expect(UNIVERSAL_AUCTION_SCHEMA_VERSION).toBe(3)
+    // The provider-facing name carries the version, so the two can't drift.
+    expect(UNIVERSAL_AUCTION_SCHEMA_NAME).toBe(`universal_auction_extraction_v${UNIVERSAL_AUCTION_SCHEMA_VERSION}`)
     expect(UNIVERSAL_AUCTION_SCHEMA_ID).toContain(UNIVERSAL_AUCTION_SCHEMA_NAME)
     expect(UNIVERSAL_AUCTION_SCHEMA).toMatchObject({
       type: 'object',
@@ -310,6 +313,31 @@ describe('clampExtraction', () => {
   it('nulls a ruleCheck object with no boolean fields at all', () => {
     expect(clampExtraction({ ruleCheck: { propertyType: null, rooms: null, units: null, securityDeposit: null } }).ruleCheck).toBeNull()
     expect(clampExtraction({ ruleCheck: {} }).ruleCheck).toBeNull()
+  })
+
+  it('keeps a rules hint with at least one usable value', () => {
+    expect(coerceRulesHint({ propertyType: 'eigentumswohnung', rooms: 2, units: null, securityDeposit: null })).toEqual({
+      propertyType: 'eigentumswohnung',
+      rooms: 2,
+      units: null,
+      securityDeposit: null,
+    })
+  })
+
+  it('coerces a rules hint field by field instead of discarding the whole snapshot', () => {
+    expect(coerceRulesHint({ propertyType: 7, rooms: '2', units: 3, securityDeposit: Number.NaN })).toEqual({
+      propertyType: null,
+      rooms: null,
+      units: 3,
+      securityDeposit: null,
+    })
+  })
+
+  it('nulls an empty or non-object rules hint', () => {
+    expect(coerceRulesHint({ propertyType: null, rooms: null, units: null, securityDeposit: null })).toBeNull()
+    expect(coerceRulesHint(null)).toBeNull()
+    expect(coerceRulesHint('eigentumswohnung')).toBeNull()
+    expect(coerceRulesHint([])).toBeNull()
   })
 
   it('nulls junk ruleCheck input', () => {

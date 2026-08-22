@@ -4,7 +4,10 @@ import { PHOTO_CATEGORIES } from '~/lib/photo'
 import { PROPERTY_TYPES } from '~/lib/property-type'
 
 export const UNIVERSAL_AUCTION_SCHEMA_VERSION = 3
-export const UNIVERSAL_AUCTION_SCHEMA_NAME = 'universal_auction_extraction_v2'
+// Derived, so the provider-facing schema name can't drift away from the
+// version again the way it did when ruleCheck bumped v2 -> v3. Only a label
+// to the providers (json_schema.name), not part of any stored contract.
+export const UNIVERSAL_AUCTION_SCHEMA_NAME = `universal_auction_extraction_v${UNIVERSAL_AUCTION_SCHEMA_VERSION}`
 export const UNIVERSAL_AUCTION_SCHEMA_ID = `https://zvg-immo.local/schemas/${UNIVERSAL_AUCTION_SCHEMA_NAME}.json`
 
 export const SYSTEM_PROMPT =

@@ -8,6 +8,7 @@ interface ReprocessResult {
   skipped: number
   llmCalls: number
   llmErrors: number
+  rulesFalsified: number
   durationMs: number
   warning?: string
   lastLlmError?: string
@@ -99,6 +100,8 @@ async function runReprocessTest(): Promise<void> {
         <dd>{{ reprocessResult.llmCalls }}</dd>
         <dt class="text-muted-foreground">{{ $t('settings.reprocess.llmErrors') }}</dt>
         <dd>{{ reprocessResult.llmErrors }}</dd>
+        <dt class="text-muted-foreground">{{ $t('settings.reprocess.rulesFalsified') }}</dt>
+        <dd>{{ reprocessResult.rulesFalsified }}</dd>
       </dl>
       <SettingsMessageDetails
         v-if="reprocessResult?.warning"

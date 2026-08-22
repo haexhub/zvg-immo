@@ -46,7 +46,7 @@ beforeEach(() => {
     const usage = { inputTokens: 500, outputTokens: 150 }
     await opts?.onLlmCall?.({ config: config!, durationMs: 1234, usage, status: 'succeeded', errorMessage: null })
     return {
-      entry: extraction(), llmCalled: true, llmFailures: 0, artifactVersionId: 11,
+      entry: extraction(), rulesFalsified: [], llmCalled: true, llmFailures: 0, artifactVersionId: 11,
       auction: auction(), llmConfigUsed: config, llmDurationMs: 1234, llmUsage: usage,
     }
   })
@@ -123,7 +123,7 @@ describe('runAdminTrialReprocess', () => {
     vi.mocked(reprocessAuction).mockImplementation(async (_platform, _externalId, _prior, config, _at, opts) => {
       await opts?.onLlmCall?.({ config: config!, durationMs: 1234, usage, status: 'succeeded', errorMessage: null })
       return {
-        entry: extraction(), llmCalled: true, llmFailures: 0, artifactVersionId: 11,
+        entry: extraction(), rulesFalsified: [], llmCalled: true, llmFailures: 0, artifactVersionId: 11,
         auction: auction(), llmConfigUsed: config, llmDurationMs: 1234, llmUsage: usage,
       }
     })
@@ -166,7 +166,7 @@ describe('runAdminTrialReprocess', () => {
       // yields a rules-only entry instead of throwing.
       await opts?.onLlmCall?.({ config: config!, durationMs: 800, usage: null, status: 'failed', errorMessage: 'Keine gültige Extraktion in der Provider-Antwort' })
       return {
-        entry: extraction({ source: 'rules' }), llmCalled: true, llmFailures: 1, artifactVersionId: 11,
+        entry: extraction({ source: 'rules' }), rulesFalsified: [], llmCalled: true, llmFailures: 1, artifactVersionId: 11,
         auction: auction(), llmConfigUsed: config, llmDurationMs: 800, llmUsage: null,
       }
     })

@@ -90,6 +90,13 @@ export interface ReprocessResult {
    *  a call that succeeded but returned an empty/unparseable result. See
    *  ExtractionProvider.extract()'s onRequestError in llm.ts. */
   llmErrors: number
+  /** How many rules-derived values the LLM explicitly refuted and replaced
+   *  this run (see falsifiedRuleFields). The whole point of showing the rules
+   *  values to the model is that it may overrule them — this is the only
+   *  number that says whether that ever happens, and how often. Synchronous
+   *  path only: a batch run merges nothing itself, llm-batch-poll counts and
+   *  logs its own overrides when the results come back. */
+  rulesFalsified: number
   durationMs: number
   warning?: string
   /** Message from the most recent llmErrors failure this run, so a run that
@@ -362,15 +369,23 @@ export async function buildReprocessInput(
       description: auction.description,
       ...documentParts.input,
       candidateImages: candidates?.images,
+      // Only values the LLM can fairly judge from the text it is shown. A
+      // platform-reported source* value is deliberately withheld: it often
+      // never appears in the prose at all (bima's number_of_rooms, si/bg's
+      // deposit come straight from JSON), and "not mentioned" is too easily
+      // read as "refuted" — which would replace a correct structured value
+      // with the null the model is told to return when unsure. Withholding it
+      // leaves the field unhinted, so mergeLlmResult keeps it (see
+      // resolveVerifiedField's `verified == null` branch).
       rulesHint: {
         // 'sonstiges' is the rules pass's "found nothing usable" marker, and
         // mergeLlmResult lets the LLM's own type win outright there — hinting
         // it would only anchor the model to it in the one case where the LLM
         // is the sole source of an answer.
         propertyType: fields.propertyType === 'sonstiges' ? null : fields.propertyType,
-        rooms: fields.rooms,
+        rooms: auction.sourceRooms != null ? null : fields.rooms,
         units: fields.units,
-        securityDeposit: fields.securityDeposit,
+        securityDeposit: auction.sourceSecurityDeposit != null ? null : fields.securityDeposit,
       },
     }
   }

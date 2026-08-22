@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AuctionExtraction } from '~/types/auction'
 import type { ClampedExtraction } from './llm'
-import { mergeLlmResult, type MergeInputFields } from './merge-llm-result'
+import { dropStaleRuleChecks, falsifiedRuleFields, mergeLlmResult, type MergeInputFields } from './merge-llm-result'
 
 const AT = '2026-07-23T00:00:00.000Z'
 
@@ -286,5 +286,90 @@ describe('mergeLlmResult', () => {
       expect(entry.securityDeposit).toBe(2500)
       expect(entry.source).toBe('llm')
     })
+  })
+})
+
+describe('falsifiedRuleFields', () => {
+  it('lists only fields where a real rules value was refuted', () => {
+    const fields = baseFields({ propertyType: 'mehrfamilienhaus', rooms: 2, units: null })
+    const llm = llmResult({ ruleCheck: { propertyType: false, rooms: true, units: false, securityDeposit: false } })
+
+    // units/securityDeposit had no rules value to refute in the first place.
+    expect(falsifiedRuleFields(fields, llm)).toEqual(['propertyType'])
+  })
+
+  it("ignores a refuted 'sonstiges', which the LLM overrides anyway", () => {
+    const fields = baseFields({ propertyType: 'sonstiges' })
+    const llm = llmResult({ ruleCheck: { propertyType: false, rooms: null, units: null, securityDeposit: null } })
+
+    expect(falsifiedRuleFields(fields, llm)).toEqual([])
+  })
+
+  it('is empty without a ruleCheck or a result at all', () => {
+    const fields = baseFields({ propertyType: 'mehrfamilienhaus', rooms: 2 })
+    expect(falsifiedRuleFields(fields, llmResult({ ruleCheck: null }))).toEqual([])
+    expect(falsifiedRuleFields(fields, null)).toEqual([])
+  })
+
+  it('agrees with what mergeLlmResult actually did', () => {
+    const fields = baseFields({ propertyType: 'mehrfamilienhaus', rooms: 2, units: 5, securityDeposit: 1000 })
+    const llm = llmResult({
+      propertyType: 'eigentumswohnung',
+      rooms: 3,
+      units: 1,
+      securityDeposit: 2500,
+      ruleCheck: { propertyType: false, rooms: true, units: false, securityDeposit: null },
+    })
+    const entry = mergeLlmResult(undefined, fields, llm, AT, undefined)
+
+    // Every reported field must carry the LLM's value, every unreported one
+    // the rules value — otherwise the counter and the merge have drifted.
+    expect(falsifiedRuleFields(fields, llm)).toEqual(['propertyType', 'units'])
+    expect(entry.propertyType).toBe('eigentumswohnung')
+    expect(entry.units).toBe(1)
+    expect(entry.rooms).toBe(2)
+    expect(entry.securityDeposit).toBe(1000)
+  })
+})
+
+describe('dropStaleRuleChecks', () => {
+  const HINT = { propertyType: 'mehrfamilienhaus', rooms: 2, units: null, securityDeposit: null }
+  const RULE_CHECK = { propertyType: false, rooms: false, units: null, securityDeposit: null }
+
+  it('keeps verdicts whose value is unchanged since the hint was sent', () => {
+    const fields = baseFields({ propertyType: 'mehrfamilienhaus', rooms: 2 })
+
+    expect(dropStaleRuleChecks(RULE_CHECK, HINT, fields)).toEqual(RULE_CHECK)
+  })
+
+  it('drops the verdict for a field whose rules value changed in the meantime', () => {
+    // A re-crawl between batch submit and poll turned the title into a
+    // "3-Zimmerwohnung": the "rooms is wrong" verdict was about the old 2.
+    const fields = baseFields({ propertyType: 'mehrfamilienhaus', rooms: 3 })
+
+    expect(dropStaleRuleChecks(RULE_CHECK, HINT, fields)).toEqual({
+      propertyType: false,
+      rooms: null,
+      units: null,
+      securityDeposit: null,
+    })
+  })
+
+  it('drops every verdict when no hint was recorded', () => {
+    const fields = baseFields({ propertyType: 'mehrfamilienhaus', rooms: 2 })
+
+    expect(dropStaleRuleChecks(RULE_CHECK, null, fields)).toBeNull()
+  })
+
+  it("treats a rules value that decayed to 'sonstiges' as changed", () => {
+    const fields = baseFields({ propertyType: 'sonstiges', rooms: 2 })
+
+    expect(dropStaleRuleChecks(RULE_CHECK, HINT, fields)?.propertyType).toBeNull()
+  })
+
+  it('returns null once nothing survives', () => {
+    const fields = baseFields({ propertyType: 'einfamilienhaus', rooms: 9 })
+
+    expect(dropStaleRuleChecks(RULE_CHECK, HINT, fields)).toBeNull()
   })
 })

@@ -57,6 +57,7 @@ describe('auction fetch state writers', () => {
     await writeAuctionLlmPipelineState('test', '1', {
       llmBatchJob: 'batch-1',
       llmArtifactVersionId: 12,
+      llmRulesHint: { propertyType: 'eigentumswohnung', rooms: 2, units: null, securityDeposit: null },
       llmFailures: 1,
     })
     const calls = query.mock.calls as unknown as Array<[string, unknown[]?]>
@@ -78,6 +79,9 @@ describe('auction fetch state writers', () => {
     expect(llmSql).toContain('llm_claimed_at = NULL')
     expect(llmSql).not.toContain('photo_failures = EXCLUDED')
     expect(llmSql).not.toContain('attachments = EXCLUDED')
+    expect(llmSql).toContain('llm_rules_hint = EXCLUDED.llm_rules_hint')
+    const llmParams = calls[2]?.[1] as unknown[]
+    expect(llmParams?.[4]).toBe('{"propertyType":"eigentumswohnung","rooms":2,"units":null,"securityDeposit":null}')
   })
 
   it('claims and clears enrich/LLM state through their own narrow columns', async () => {
@@ -125,6 +129,7 @@ describe('auction fetch state writers', () => {
       enrichClaimedAt: null,
       llmBatchJob: 'batch-1',
       llmArtifactVersionId: 12,
+      llmRulesHint: null,
       llmFailures: 2,
       llmLastAttemptedAt: null,
       llmClaimedAt: null,
