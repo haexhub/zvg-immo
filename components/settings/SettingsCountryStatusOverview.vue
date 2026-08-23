@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ArrowDown, ArrowUp, ArrowUpDown, Loader2, RefreshCw, Search } from 'lucide-vue-next'
-import type { OsmImportCountryStatus } from '~/server/utils/osm-status'
 import type { DailyStatusSnapshot, StatusBucket, StatusCounts, StatusList, StatusListItem } from '~/composables/settings/useSettingsStatusOverview'
+import { fetchCountryStatusOverview } from '~/composables/settings/fetchCountryStatusOverview'
+import type { OsmImportCountryStatus } from '~/server/utils/osm-status'
 import type { StatusPieSegment } from './SettingsStatusPie.client.vue'
 import SettingsStatusPie from './SettingsStatusPie.client.vue'
 import SettingsAutomationControlsCard from './SettingsAutomationControlsCard.vue'
@@ -142,17 +143,11 @@ async function load(): Promise<void> {
   pending.value = true
   loadError.value = null
   try {
-    const [crawl, llm, translation, osm, snapshots] = await Promise.all([
-      $fetch<Record<string, StatusCounts>>('/api/settings/crawl-status'),
-      $fetch<Record<string, StatusCounts>>('/api/settings/llm-status'),
-      $fetch<Record<string, Partial<Record<ContentTargetLang, StatusCounts>>>>('/api/settings/translation-status-by-language'),
-      $fetch<{ countries: OsmImportCountryStatus[] }>('/api/settings/osm-import'),
-      $fetch<{ snapshots: DailyStatusSnapshot[] }>('/api/settings/status-snapshots', { query: { days: 90 } }),
-    ])
-    counts.value = { crawl, llm, translation: {} }
-    translationByCountry.value = translation
-    osmByCountry.value = Object.fromEntries(osm.countries.map((country) => [country.code, country]))
-    dailySnapshots.value = snapshots.snapshots
+    const data = await fetchCountryStatusOverview()
+    counts.value = { crawl: data.crawl, llm: data.llm, translation: {} }
+    translationByCountry.value = data.translation
+    osmByCountry.value = Object.fromEntries(data.osm.map((country) => [country.code, country]))
+    dailySnapshots.value = data.snapshots
   } catch (err) {
     loadError.value = normalizeSettingsError(err, t('settings.statusOverview.loadError'))
   } finally {

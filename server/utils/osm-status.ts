@@ -17,13 +17,19 @@ export interface OsmImportCountryStatus {
 }
 
 const STATUS_STATEMENT_TIMEOUT_MS = 60_000
+const STATUS_CONNECTION_TIMEOUT_MS = 10_000
 
 export async function readOsmStatusByCountry(): Promise<OsmImportCountryStatus[]> {
   await ensureEnabledCountriesLoaded()
   const url = readDatabaseUrl()
   if (!url) return []
   const codes = listRegisteredCountries().map((country) => country.code)
-  const pool = new Pool({ connectionString: url, max: 1, statement_timeout: STATUS_STATEMENT_TIMEOUT_MS })
+  const pool = new Pool({
+    connectionString: url,
+    max: 1,
+    connectionTimeoutMillis: STATUS_CONNECTION_TIMEOUT_MS,
+    statement_timeout: STATUS_STATEMENT_TIMEOUT_MS,
+  })
   try {
     const [{ rows }, { rows: auctionRows }, requests] = await Promise.all([
       pool.query<{ country: string; count: string }>(
