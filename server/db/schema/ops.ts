@@ -5,6 +5,7 @@
 import { sql } from 'drizzle-orm'
 import {
   bigserial,
+  date,
   doublePrecision,
   foreignKey,
   index,
@@ -151,4 +152,22 @@ export const taskRunErrors = pgTable('task_run_errors', {
 }, (table) => [
   index('idx_task_run_errors_task_created').on(table.task, table.createdAt.desc()),
   index('idx_task_run_errors_platform_external_created').on(table.platform, table.externalId, table.createdAt.desc()),
+]).enableRLS()
+
+// One durable reading of each country-status card per day. An empty target
+// language denotes the non-translation cards, allowing a compact primary key.
+export const statusDailySnapshots = pgTable('status_daily_snapshots', {
+  snapshotDate: date('snapshot_date').notNull(),
+  country: text('country').notNull(),
+  kind: text('kind').notNull(),
+  targetLang: text('target_lang').notNull().default(''),
+  done: integer('done').notNull().default(0),
+  pending: integer('pending').notNull().default(0),
+  open: integer('open').notNull().default(0),
+  error: integer('error').notNull().default(0),
+  total: integer('total').notNull().default(0),
+  capturedAt: timestamp('captured_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  primaryKey({ columns: [table.snapshotDate, table.country, table.kind, table.targetLang] }),
+  index('idx_status_daily_snapshots_country_date').on(table.country, table.snapshotDate.desc()),
 ]).enableRLS()

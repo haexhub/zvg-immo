@@ -347,6 +347,9 @@ export default defineNuxtConfig({
       // and it only ever grows — every past auction keeps its photos forever.
       // Inert until NUXT_IMAGES_BUCKET is configured.
       '45 4 * * *': ['offload-images'],
+      // Daily after the busy pipeline windows: persist the exact country-card
+      // counts so Settings can compare today's work with prior days.
+      '50 23 * * *': ['status-snapshot'],
     },
     routeRules: {
       // /api/auctions and /api/auctions-geo query Postgres per request and send

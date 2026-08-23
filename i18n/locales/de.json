@@ -557,6 +557,21 @@
       "prevPage": "Zurück",
       "nextPage": "Weiter"
     },
+    "dailySnapshots": {
+      "title": "Täglicher Statusvergleich",
+      "description": "Snapshot vom {latest}; Veränderung gegenüber {previous} in Klammern.",
+      "first": "Erster Snapshot vom {latest}; der Vergleich erscheint ab dem nächsten Tag.",
+      "empty": "Der erste tägliche Snapshot wird nach dem nächsten geplanten Lauf angezeigt.",
+      "pipeline": "Bereich",
+      "crawl": "Crawling",
+      "llm": "LLM-Extraktion",
+      "translation": "Übersetzung ({lang})",
+      "osm": "OSM-Standortdaten",
+      "allStatuses": "Alle Status",
+      "days": "{count} Tage",
+      "chartEmpty": "Für diesen Filter liegen noch keine Snapshots vor.",
+      "legend": "Grün = bessere Entwicklung, Rot = schlechtere Entwicklung. Bei offen, fehlerhaft und in Bearbeitung ist weniger besser."
+    },
     "countryOverview": {
       "description": "Alle Verarbeitungsstände und OSM-Standortdaten sind pro Land zusammengefasst. Ein Klick auf ein Verarbeitungsdiagramm öffnet die zugehörige Tabelle.",
       "forceCrawl": "Crawler erzwingen",
