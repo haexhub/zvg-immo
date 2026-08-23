@@ -33,4 +33,12 @@ describe('AuctionMap template', () => {
       expect(code, `<${tag}> must compile to resolveComponent("${tag}")`).toContain(`_resolveComponent("${tag}")`)
     }
   })
+
+  it('sets the marker style through VectorLayer#setStyle', () => {
+    const source = readFileSync(componentPath, 'utf-8')
+
+    expect(source).toContain('layer?.setStyle(clusterStyle)')
+    expect(source).toContain('<ol-vector-layer ref="vectorLayerRef">')
+    expect(source).not.toContain('<ol-vector-layer ref="vectorLayerRef" :style="clusterStyle">')
+  })
 })
