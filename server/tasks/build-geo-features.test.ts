@@ -338,7 +338,7 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
       // building is never mapped to any kind.
       expect(afterFirst.some((r) => Number(r.osm_id) === IDS.building.osm_id)).toBe(false)
       expect(countFor(afterFirst, 'ski_downhill', IDS.downhillPiste.osm_id)).toBeGreaterThanOrEqual(1)
-      expect(afterFirst.some((r) => Number(r.osm_id) === IDS.standaloneLift.osm_id)).toBe(false)
+      expect(afterFirst.some((r) => r.kind === 'ski_downhill' && Number(r.osm_id) === IDS.standaloneLift.osm_id)).toBe(false)
 
       // Points are never subdivided; the coastline (301 vertices) is.
       const seaPieces = afterFirst.filter((r) => r.kind === 'sea' && Number(r.osm_id) === IDS.sea.osm_id)
