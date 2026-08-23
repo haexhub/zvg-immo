@@ -100,7 +100,7 @@ const {
   category: tourismCategory,
   categories: tourismCategories,
   sourceRef: tourismSourceRef,
-  style: tourismLayerStyle,
+  layerRef: tourismLayerRef,
 } = useTourismGridLayer({ map: mapInstance })
 
 const {
@@ -420,7 +420,7 @@ function onPointerMove(evt: any): void {
       </template>
       <!-- Tourism-intensity choropleth, below the marker layer so pins/
            clusters stay clickable and legible on top of it. -->
-      <ol-vector-layer :style="tourismLayerStyle">
+      <ol-vector-layer ref="tourismLayerRef">
         <ol-source-vector ref="tourismSourceRef" />
       </ol-vector-layer>
       <!-- Visitor-density NUTS2 choropleth — mutually exclusive with the

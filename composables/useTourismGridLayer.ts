@@ -37,6 +37,14 @@ export function useTourismGridLayer(options: { map: Ref<OlMap | null> }) {
   const { map } = options
   const category = ref<TourismCategory | null>(null)
   const sourceRef = ref<any>(null)
+  // vue3-openlayers' reactive `:style` prop on <ol-vector-layer> does not
+  // reach the OL layer's actual style — see
+  // useTourismVisitorLayer.ts's layerRef comment for the full root cause.
+  // The style must be applied imperatively once this ref resolves; the
+  // style function itself still reads `category`/`feature` fresh on every
+  // call, so a single setStyle() here is enough — no need to re-apply it
+  // when the category changes.
+  const layerRef = ref<any>(null)
   const loading = ref(false)
 
   function style(feature: any): Style {
@@ -55,6 +63,10 @@ export function useTourismGridLayer(options: { map: Ref<OlMap | null> }) {
     }
     return cached
   }
+
+  watch(layerRef, (layerComponent) => {
+    layerComponent?.vectorLayer?.setStyle(style)
+  }, { immediate: true })
 
   let requestId = 0
   let loadedCategory: TourismCategory | null = null
@@ -130,5 +142,5 @@ export function useTourismGridLayer(options: { map: Ref<OlMap | null> }) {
   // rapid-fire pan/zoom moveend events above.
   watch([category, () => sourceRef.value?.source], () => refresh(), { immediate: true })
 
-  return { category, categories: TOURISM_GRID_CATEGORIES, sourceRef, style, loading }
+  return { category, categories: TOURISM_GRID_CATEGORIES, sourceRef, layerRef, loading }
 }
