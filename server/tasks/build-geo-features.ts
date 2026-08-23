@@ -135,15 +135,15 @@ const KIND_MAPPINGS: KindMapping[] = [
       OR o.tags ->> 'aerialway' IN ('gondola', 'chair_lift', 'cable_car', 'drag_lift'))`,
   },
   {
-    // "Bergabfahrt" — OSM's own piste:type=downhill covers marked ski runs;
-    // lifts are included too since they overwhelmingly serve downhill
-    // resorts (nordic/Langlauf trails have none). landuse=winter_sports is
-    // deliberately excluded: it marks a resort's general area without
-    // saying which piste type it offers, so it can't be attributed to
-    // either split kind without guessing.
+    // "Bergabfahrt" means an explicitly mapped alpine ski run, not merely a
+    // lift. Aerialway tags also cover sightseeing and local transport, and a
+    // lift without a connected downhill piste is not evidence of a ski area.
+    // Keeping that distinction is intentionally conservative: a missing
+    // result is preferable to claiming that a flat city is near a downhill
+    // ski resort. landuse=winter_sports remains deliberately excluded because
+    // it says nothing about the piste type.
     kind: 'ski_downhill',
-    where: `(o.tags ->> 'piste:type' = 'downhill'
-      OR o.tags ->> 'aerialway' IN ('gondola', 'chair_lift', 'cable_car', 'drag_lift'))`,
+    where: `(o.tags ->> 'piste:type' = 'downhill')`,
   },
   {
     // "Langlauf" — OSM's piste:type=nordic is the cross-country-specific tag.
