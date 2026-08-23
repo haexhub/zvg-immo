@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ArrowDown, ArrowUp, ArrowUpDown, Loader2, RefreshCw, Search } from 'lucide-vue-next'
-import type { OsmImportCountryStatus } from '~/server/api/settings/osm-import.get'
-import type { StatusBucket, StatusCounts, StatusList, StatusListItem } from '~/composables/settings/useSettingsStatusOverview'
+import type { DailyStatusSnapshot, StatusBucket, StatusCounts, StatusList, StatusListItem } from '~/composables/settings/useSettingsStatusOverview'
+import { fetchCountryStatusOverview } from '~/composables/settings/fetchCountryStatusOverview'
+import type { OsmImportCountryStatus } from '~/server/utils/osm-status'
 import type { StatusPieSegment } from './SettingsStatusPie.client.vue'
 import SettingsStatusPie from './SettingsStatusPie.client.vue'
 import SettingsAutomationControlsCard from './SettingsAutomationControlsCard.vue'
@@ -37,6 +38,7 @@ const { start: startTranslationRetryPolling } = usePollWhileActive(
 const counts = ref<Record<ProcessingStatusKind, Record<string, StatusCounts>>>({ crawl: {}, llm: {}, translation: {} })
 const translationByCountry = ref<Record<string, Partial<Record<ContentTargetLang, StatusCounts>>>>({})
 const osmByCountry = ref<Record<string, OsmImportCountryStatus>>({})
+const dailySnapshots = ref<DailyStatusSnapshot[]>([])
 const pending = ref(false)
 const loadError = ref<string | null>(null)
 const actionPending = ref<string | null>(null)
@@ -141,15 +143,11 @@ async function load(): Promise<void> {
   pending.value = true
   loadError.value = null
   try {
-    const [crawl, llm, translation, osm] = await Promise.all([
-      $fetch<Record<string, StatusCounts>>('/api/settings/crawl-status'),
-      $fetch<Record<string, StatusCounts>>('/api/settings/llm-status'),
-      $fetch<Record<string, Partial<Record<ContentTargetLang, StatusCounts>>>>('/api/settings/translation-status-by-language'),
-      $fetch<{ countries: OsmImportCountryStatus[] }>('/api/settings/osm-import'),
-    ])
-    counts.value = { crawl, llm, translation: {} }
-    translationByCountry.value = translation
-    osmByCountry.value = Object.fromEntries(osm.countries.map((country) => [country.code, country]))
+    const data = await fetchCountryStatusOverview()
+    counts.value = { crawl: data.crawl, llm: data.llm, translation: {} }
+    translationByCountry.value = data.translation
+    osmByCountry.value = Object.fromEntries(data.osm.map((country) => [country.code, country]))
+    dailySnapshots.value = data.snapshots
   } catch (err) {
     loadError.value = normalizeSettingsError(err, t('settings.statusOverview.loadError'))
   } finally {
@@ -367,6 +365,7 @@ onBeforeUnmount(() => clearTimeout(filterTimer))
       </TabsList>
 
       <TabsContent v-for="country in countryCodes" :key="country" :value="country">
+        <SettingsDailyStatusSnapshot :country="country" :snapshots="dailySnapshots" class="mb-4" />
         <Card class="overflow-visible">
           <CardContent class="space-y-5">
             <div class="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">

@@ -557,6 +557,21 @@
       "prevPage": "Previous",
       "nextPage": "Next"
     },
+    "dailySnapshots": {
+      "title": "Daily status comparison",
+      "description": "Snapshot from {latest}; change from {previous} in parentheses.",
+      "first": "First snapshot from {latest}; comparison will appear on the next day.",
+      "empty": "The first daily snapshot will appear after the next scheduled run.",
+      "pipeline": "Area",
+      "crawl": "Crawling",
+      "llm": "LLM extraction",
+      "translation": "Translation ({lang})",
+      "osm": "OSM location data",
+      "allStatuses": "All statuses",
+      "days": "{count} days",
+      "chartEmpty": "No snapshots are available for this filter yet.",
+      "legend": "Green indicates improvement; red indicates deterioration. For open, failed and in-progress items, lower is better."
+    },
     "countryOverview": {
       "description": "All processing states and OSM location data are grouped by country. Click a processing chart segment to open its related table.",
       "forceCrawl": "Force crawler",

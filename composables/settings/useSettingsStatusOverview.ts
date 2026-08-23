@@ -28,3 +28,16 @@ export interface StatusList {
   items: StatusListItem[]
   total: number
 }
+
+export interface DailyStatusSnapshot {
+  snapshotDate: string
+  country: string
+  kind: 'crawl' | 'llm' | 'translation' | 'osm'
+  targetLang: string | null
+  done: number
+  pending: number
+  open: number
+  error: number
+  total: number
+  capturedAt: string
+}
