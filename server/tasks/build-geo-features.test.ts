@@ -83,6 +83,8 @@ const IDS = {
   lakeBay: { osm_type: 'way', osm_id: 900_013 }, // natural=bay on an inland lake — must not surface as 'sea'
   tourismMemorial: { osm_type: 'node', osm_id: 900_014 }, // allowed tourism tag must not override historic=memorial
   tourismArchaeologicalSite: { osm_type: 'node', osm_id: 900_015 }, // nor historic=archaeological_site
+  downhillPiste: { osm_type: 'way', osm_id: 900_016 },
+  standaloneLift: { osm_type: 'way', osm_id: 900_017 }, // must not masquerade as a downhill ski area
 } as const
 
 async function seedFixture(client: PoolClient): Promise<void> {
@@ -217,6 +219,21 @@ async function seedFixture(client: PoolClient): Promise<void> {
     [IDS.building.osm_type, IDS.building.osm_id, TEST_COUNTRY],
   )
 
+  // An actual marked alpine run must produce the downhill kind. Conversely,
+  // a lift by itself is too ambiguous: aerialway also models urban and
+  // sightseeing transport, so it must not make the downhill search return
+  // flat cities as if they had a ski resort.
+  await client.query(
+    `INSERT INTO osm_local_elements (osm_type, osm_id, geom, tags, country)
+     VALUES
+       ($1, $2, ST_GeomFromText('LINESTRING(11 47,11.01 46.99)', 4326), '{"piste:type": "downhill"}'::jsonb, $3),
+       ($4, $5, ST_GeomFromText('LINESTRING(13 53,13.01 53.01)', 4326), '{"aerialway": "chair_lift"}'::jsonb, $3)`,
+    [
+      IDS.downhillPiste.osm_type, IDS.downhillPiste.osm_id, TEST_COUNTRY,
+      IDS.standaloneLift.osm_type, IDS.standaloneLift.osm_id,
+    ],
+  )
+
   // Same osm_type/osm_id, once per country — the PK is (osm_type, osm_id,
   // country), so both rows coexist. Tagged natural=water so it shares the
   // 'lake' kind with invalidLake above, which forces buildKindPerRow's
@@ -320,6 +337,8 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
       expect(afterFirst.some((r) => Number(r.osm_id) === IDS.tourismArchaeologicalSite.osm_id)).toBe(false)
       // building is never mapped to any kind.
       expect(afterFirst.some((r) => Number(r.osm_id) === IDS.building.osm_id)).toBe(false)
+      expect(countFor(afterFirst, 'ski_downhill', IDS.downhillPiste.osm_id)).toBeGreaterThanOrEqual(1)
+      expect(afterFirst.some((r) => Number(r.osm_id) === IDS.standaloneLift.osm_id)).toBe(false)
 
       // Points are never subdivided; the coastline (301 vertices) is.
       const seaPieces = afterFirst.filter((r) => r.kind === 'sea' && Number(r.osm_id) === IDS.sea.osm_id)
@@ -333,13 +352,13 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
       expect(first.perKind.lake?.skipped).toBeGreaterThanOrEqual(1)
       expect(first.perKind.lake?.inserted).toBeGreaterThanOrEqual(1)
 
-      // This fixture seeds no piste/winter_sports/aerialway elements at all,
-      // so all three ski kinds stay empty here regardless of real-world tag
-      // import status; the other kinds below are WP-6-only (tags not
-      // imported yet).
-      for (const emptyKind of ['ski_area', 'ski_downhill', 'ski_nordic', 'hiking_route', 'mtb_route', 'paddling', 'attraction', 'tourism_supply']) {
+      // Only the explicitly mapped downhill piste above produces ski data;
+      // the other kinds below are WP-6-only (tags not imported yet).
+      for (const emptyKind of ['ski_nordic', 'hiking_route', 'mtb_route', 'paddling', 'attraction', 'tourism_supply']) {
         expect(first.perKind[emptyKind]).toEqual({ inserted: 0, skipped: 0 })
       }
+      expect(first.perKind.ski_area?.inserted).toBeGreaterThanOrEqual(1)
+      expect(first.perKind.ski_downhill?.inserted).toBeGreaterThanOrEqual(1)
 
       expect(afterFirst.every((r) => r.features_epoch === first.epoch)).toBe(true)
 
