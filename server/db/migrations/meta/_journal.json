@@ -204,6 +204,13 @@
       "when": 1787460838678,
       "tag": "0028_fix_ski_downhill_false_positives",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1787516400000,
+      "tag": "0029_restrict_downhill_ski_to_mountains",
+      "breakpoints": true
     }
   ]
 }

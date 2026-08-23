@@ -33,6 +33,11 @@ const BUILD_POOL_MAX_CONNECTIONS = 2
 // connection (and a lock on the destination rows) forever.
 const BUILD_STATEMENT_TIMEOUT_MS = 20 * 60 * 1000
 
+// A marked piste alone does not distinguish a mountain resort from a ski
+// hall or an artificial slope in flat country. This uses the same 300m peak
+// definition as the `peak` kind below, so both filters share one terrain rule.
+const SKI_DOWNHILL_MOUNTAIN_CONTEXT_METERS = 25_000
+
 interface KindMapping {
   kind: string
   /** SQL boolean expression over `osm_local_elements o`, ANDed/ORed as documented. */
@@ -135,15 +140,24 @@ const KIND_MAPPINGS: KindMapping[] = [
       OR o.tags ->> 'aerialway' IN ('gondola', 'chair_lift', 'cable_car', 'drag_lift'))`,
   },
   {
-    // "Bergabfahrt" means an explicitly mapped alpine ski run, not merely a
-    // lift. Aerialway tags also cover sightseeing and local transport, and a
-    // lift without a connected downhill piste is not evidence of a ski area.
-    // Keeping that distinction is intentionally conservative: a missing
-    // result is preferable to claiming that a flat city is near a downhill
-    // ski resort. landuse=winter_sports remains deliberately excluded because
+    // "Bergabfahrt" means an outdoor piste in mountain terrain — not merely
+    // a lift, and not an indoor ski hall or an artificial slope in flat
+    // country. `piste:type=downhill` by itself includes SnowWorld Bispingen
+    // and the Alpincenter Wittenburg, both within 100km of Hamburg. A nearby
+    // qualified peak is the same conservative terrain proxy used by `peak`
+    // above; 25km covers a resort's valley-to-summit extent while excluding
+    // these flatland facilities. landuse=winter_sports stays excluded because
     // it says nothing about the piste type.
     kind: 'ski_downhill',
-    where: `(o.tags ->> 'piste:type' = 'downhill')`,
+    where: `(o.tags ->> 'piste:type' = 'downhill'
+      AND COALESCE(o.tags ->> 'indoor', '') NOT IN ('yes', 'true', '1')
+      AND EXISTS (
+        SELECT 1 FROM osm_local_elements AS p
+        WHERE p.tags ->> 'natural' = 'peak'
+          AND p.tags ->> 'ele' ~ '^-?[0-9]+(\\.[0-9]+)?$'
+          AND (p.tags ->> 'ele')::numeric >= 300
+          AND ST_DWithin(p.geom::geography, o.geom::geography, ${SKI_DOWNHILL_MOUNTAIN_CONTEXT_METERS})
+      ))`,
   },
   {
     // "Langlauf" — OSM's piste:type=nordic is the cross-country-specific tag.
