@@ -5,7 +5,7 @@
 // picked to compare, not preloaded for every version on every page load.
 
 import { isSafePathSegment } from '~/server/utils/path-segment'
-import { readAuctionDetailsAtVersion } from '~/server/utils/auction-details'
+import { readAuctionDetailsAtVersion } from '~/server/utils/auction-details-read'
 
 export default defineEventHandler(async (event) => {
   const platform = String(getRouterParam(event, 'platform') ?? '')

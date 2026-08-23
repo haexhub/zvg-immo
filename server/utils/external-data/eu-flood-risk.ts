@@ -12,7 +12,6 @@ import {
   polygonsBounds,
   type GeoBounds,
 } from './eu-flood-risk-assessment'
-export { distanceToPolygonMeters, pointInPolygon } from './eu-flood-risk-assessment'
 
 export type GeoJsonPosition = [number, number] | [number, number, number]
 export type GeoJsonLinearRing = GeoJsonPosition[]

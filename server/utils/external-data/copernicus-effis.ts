@@ -38,9 +38,8 @@ import { simplifyPolygon } from './polygon-simplify'
 import {
   distanceToPolygonMeters,
   pointInPolygon,
-  type GeoJsonLinearRing,
-  type GeoJsonPolygonCoordinates,
-} from './eu-flood-risk'
+} from './eu-flood-risk-assessment'
+import type { GeoJsonLinearRing, GeoJsonPolygonCoordinates } from './eu-flood-risk'
 import { EXTERNAL_DATA_SOURCES } from './sources'
 
 export interface BurntAreaZone {

@@ -7,14 +7,16 @@ vi.mock('./db', () => ({ getDb: vi.fn(), getPool: vi.fn() }))
 vi.mock('~/server/tasks/external-enrichment', () => ({ runExternalEnrichment: vi.fn(async () => ({})) }))
 
 const {
-  auctionDetailsValues,
   deleteAuctionDetailsVersion,
-  invalidateAuctionDetailsCache,
   promoteAuctionDetailsVersion,
-  readAuctionDetailsAtVersion,
-  readLatestAuctionDetails,
   writeAuctionDetails,
 } = await import('./auction-details')
+const {
+  auctionDetailsValues,
+  invalidateAuctionDetailsCache,
+  readAuctionDetailsAtVersion,
+  readLatestAuctionDetails,
+} = await import('./auction-details-read')
 
 function makeAuction(overrides: Partial<Auction> = {}): Auction {
   return {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('~/server/utils/auction-details', () => ({ readAuctionDetailsAtVersion: vi.fn() }))
+vi.mock('~/server/utils/auction-details-read', () => ({ readAuctionDetailsAtVersion: vi.fn() }))
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -23,7 +23,7 @@ describe('GET /api/settings/auction/[platform]/[id]/versions/[version]', () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     vi.stubGlobal('getRouterParam', (_e: unknown, name: string) => ({ platform: 'zvg-portal', id: '7265', version: '2' })[name])
     vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
-    const { readAuctionDetailsAtVersion } = await import('~/server/utils/auction-details')
+    const { readAuctionDetailsAtVersion } = await import('~/server/utils/auction-details-read')
     vi.mocked(readAuctionDetailsAtVersion).mockResolvedValue(null)
 
     const handler = (await import('./[version].get')).default as (event: unknown) => Promise<unknown>
@@ -35,7 +35,7 @@ describe('GET /api/settings/auction/[platform]/[id]/versions/[version]', () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     vi.stubGlobal('getRouterParam', (_e: unknown, name: string) => ({ platform: 'zvg-portal', id: '7265', version: '2' })[name])
     vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
-    const { readAuctionDetailsAtVersion } = await import('~/server/utils/auction-details')
+    const { readAuctionDetailsAtVersion } = await import('~/server/utils/auction-details-read')
     vi.mocked(readAuctionDetailsAtVersion).mockResolvedValue({
       id: 5, platform: 'zvg-portal', external_id: '7265', version: 2, artifact_version_id: 11,
       created_at: '2026-08-08T10:00:00.000Z', extracted_at: '2026-08-08T10:00:00.000Z',
