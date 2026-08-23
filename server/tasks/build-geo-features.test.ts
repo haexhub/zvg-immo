@@ -83,8 +83,10 @@ const IDS = {
   lakeBay: { osm_type: 'way', osm_id: 900_013 }, // natural=bay on an inland lake — must not surface as 'sea'
   tourismMemorial: { osm_type: 'node', osm_id: 900_014 }, // allowed tourism tag must not override historic=memorial
   tourismArchaeologicalSite: { osm_type: 'node', osm_id: 900_015 }, // nor historic=archaeological_site
-  downhillPiste: { osm_type: 'way', osm_id: 900_016 },
+  downhillPiste: { osm_type: 'way', osm_id: 900_016 }, // outdoor piste beside the qualified Testberg
   standaloneLift: { osm_type: 'way', osm_id: 900_017 }, // must not masquerade as a downhill ski area
+  indoorDownhillPiste: { osm_type: 'way', osm_id: 900_018 }, // SnowWorld-style ski hall must not surface as a mountain ski area
+  flatlandDownhillPiste: { osm_type: 'way', osm_id: 900_019 }, // an outdoor artificial slope, also not mountain terrain
 } as const
 
 async function seedFixture(client: PoolClient): Promise<void> {
@@ -219,10 +221,10 @@ async function seedFixture(client: PoolClient): Promise<void> {
     [IDS.building.osm_type, IDS.building.osm_id, TEST_COUNTRY],
   )
 
-  // An actual marked alpine run must produce the downhill kind. Conversely,
-  // a lift by itself is too ambiguous: aerialway also models urban and
-  // sightseeing transport, so it must not make the downhill search return
-  // flat cities as if they had a ski resort.
+  // An actual marked alpine run beside Testberg must produce the downhill
+  // kind. Conversely, a lift, an indoor piste, and an outdoor artificial
+  // slope in flat country must not make the downhill search return Hamburg-
+  // style locations as if they had a mountain ski resort.
   await client.query(
     `INSERT INTO osm_local_elements (osm_type, osm_id, geom, tags, country)
      VALUES
@@ -231,6 +233,16 @@ async function seedFixture(client: PoolClient): Promise<void> {
     [
       IDS.downhillPiste.osm_type, IDS.downhillPiste.osm_id, TEST_COUNTRY,
       IDS.standaloneLift.osm_type, IDS.standaloneLift.osm_id,
+    ],
+  )
+  await client.query(
+    `INSERT INTO osm_local_elements (osm_type, osm_id, geom, tags, country)
+     VALUES
+       ($1, $2, ST_GeomFromText('LINESTRING(9.98 53.10,9.99 53.10)', 4326), '{"piste:type": "downhill", "indoor": "yes", "name": "Test-Skihalle"}'::jsonb, $3),
+       ($4, $5, ST_GeomFromText('LINESTRING(13 53,13.01 53.01)', 4326), '{"piste:type": "downhill", "name": "Test-Kunstpiste"}'::jsonb, $3)`,
+    [
+      IDS.indoorDownhillPiste.osm_type, IDS.indoorDownhillPiste.osm_id, TEST_COUNTRY,
+      IDS.flatlandDownhillPiste.osm_type, IDS.flatlandDownhillPiste.osm_id, TEST_COUNTRY,
     ],
   )
 
@@ -339,6 +351,8 @@ describeDb('buildGeoFeatures (real Postgres)', () => {
       expect(afterFirst.some((r) => Number(r.osm_id) === IDS.building.osm_id)).toBe(false)
       expect(countFor(afterFirst, 'ski_downhill', IDS.downhillPiste.osm_id)).toBeGreaterThanOrEqual(1)
       expect(afterFirst.some((r) => r.kind === 'ski_downhill' && Number(r.osm_id) === IDS.standaloneLift.osm_id)).toBe(false)
+      expect(afterFirst.some((r) => r.kind === 'ski_downhill' && Number(r.osm_id) === IDS.indoorDownhillPiste.osm_id)).toBe(false)
+      expect(afterFirst.some((r) => r.kind === 'ski_downhill' && Number(r.osm_id) === IDS.flatlandDownhillPiste.osm_id)).toBe(false)
 
       // Points are never subdivided; the coastline (301 vertices) is.
       const seaPieces = afterFirst.filter((r) => r.kind === 'sea' && Number(r.osm_id) === IDS.sea.osm_id)
