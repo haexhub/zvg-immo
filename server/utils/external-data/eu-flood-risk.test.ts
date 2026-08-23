@@ -6,10 +6,8 @@ import type { Auction } from '~/types/auction'
 import {
   buildFloodHazardAssessment,
   createEuFloodRiskFileAdapter,
-  distanceToPolygonMeters,
   type GeoJsonPolygonCoordinates,
   loadFloodRiskGeoJson,
-  pointInPolygon,
 } from './eu-flood-risk'
 // The import path lives in its own module (see eu-flood-risk-import.ts); its
 // tests stay here with the rest of the flood-risk cluster.
@@ -17,7 +15,7 @@ import {
   EU_FLOOD_RISK_POLYGON_LAYER_URL,
   importEuFloodRiskGeoJsonCache,
 } from './eu-flood-risk-import'
-import { polygonsBounds } from './eu-flood-risk-assessment'
+import { distanceToPolygonMeters, pointInPolygon, polygonsBounds } from './eu-flood-risk-assessment'
 import { clearCachedFileCollections } from './cached-file-collection'
 
 let tmp: string | null = null

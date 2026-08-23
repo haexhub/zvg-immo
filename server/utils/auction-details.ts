@@ -16,10 +16,6 @@ import {
   normalizedPhotos, pgTextArrayLiteral, photoRowsEqual, VALUE_COLUMNS,
   type AuctionDetailsRow, type AuctionPhotoRow, type Raw,
 } from './auction-details-read'
-export {
-  auctionDetailsValues, invalidateAuctionDetailsCache, readAuctionDetailsAtVersion,
-  readLatestAuctionDetails, readAuctionPhotos,
-} from './auction-details-read'
 
 /**
  * Admin promote (docs/plans/2026-08-08-admin-auktions-technikseite.md, WP-5):
