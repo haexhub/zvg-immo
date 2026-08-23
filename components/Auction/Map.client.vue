@@ -96,6 +96,16 @@ useMapTilerVectorBaseLayer({ map: mapInstance, styleUrl: vectorStyleUrl, lang: l
 const vectorSourceRef = ref<any>(null)
 const vectorLayerRef = ref<any>(null)
 
+// vue3-openlayers forwards a `:style` binding to the layer's generic OL
+// property bag instead of calling VectorLayer#setStyle(). The renderer then
+// silently falls back to OpenLayers' default blue-circle point style. Apply
+// the auction style through the real layer API once the component ref exists.
+watch(
+  () => vectorLayerRef.value?.vectorLayer,
+  (layer) => { layer?.setStyle(clusterStyle) },
+  { immediate: true },
+)
+
 const {
   category: tourismCategory,
   categories: tourismCategories,
@@ -429,7 +439,7 @@ function onPointerMove(evt: any): void {
       <ol-vector-layer ref="tourismVisitorLayerRef">
         <ol-source-vector ref="tourismVisitorSourceRef" />
       </ol-vector-layer>
-      <ol-vector-layer ref="vectorLayerRef" :style="clusterStyle">
+      <ol-vector-layer ref="vectorLayerRef">
         <ol-source-vector ref="vectorSourceRef" />
       </ol-vector-layer>
       <ol-overlay
