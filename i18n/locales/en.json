@@ -24,7 +24,11 @@
       "swimming": "Swimming",
       "attraction": "Sights",
       "lodging": "Lodging"
-    }
+    },
+    "tourismVisitorToggle": "Visitors",
+    "tourismVisitorUnit": "Nights per km²",
+    "tourismVisitorNoData": "No data",
+    "tourismVisitorAttribution": "Data: Eurostat (tour_occ_nin2) · Boundaries: © EuroGeographics / Eurostat-GISCO"
   },
   "landing": {
     "hero": {
@@ -359,7 +363,10 @@
       "copernicusEffisStatusLastError": "Import last failed: {message}",
       "euFloodRiskStatusRunning": "Import running since {at} — can take several minutes …",
       "euFloodRiskStatusLastRun": "Last import: {at} — {normalized} of {fetched} flood risk zones kept ({pages} pages).",
-      "euFloodRiskStatusLastError": "Import last failed: {message}"
+      "euFloodRiskStatusLastError": "Import last failed: {message}",
+      "eurostatTourismNutsStatusRunning": "Import running since {at} …",
+      "eurostatTourismNutsStatusLastRun": "Last import: {at} — {regionsWithData} of {regionCount} regions have data.",
+      "eurostatTourismNutsStatusLastError": "Import last failed: {message}"
     },
     "crawlStatus": {
       "title": "Crawling status",
@@ -416,7 +423,8 @@
         "eea-environmental-noise-directive": "Noise exposure (road/rail/airport) on the detail page.",
         "cams-air-quality": "Air quality readings on the detail page.",
         "open-meteo-climate-normals": "Climate chart on the detail page.",
-        "copernicus-effis": "Wildfire risk note on the detail page."
+        "copernicus-effis": "Wildfire risk note on the detail page.",
+        "eurostat-regional-tourism-nights": "Visitor-intensity layer on the search map (not the detail page)."
       },
       "coverage": {
         "title": "Data coverage",

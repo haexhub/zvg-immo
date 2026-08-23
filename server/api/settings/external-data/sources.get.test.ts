@@ -25,6 +25,7 @@ describe('GET /api/settings/external-data/sources', () => {
       'copernicus-effis',
       'eea-environmental-noise-directive',
       'eu-flood-risk-areas',
+      'eurostat-regional-tourism-nights',
       'fr-dvf-geolocated',
       'open-meteo-climate-normals',
     ])

@@ -25,6 +25,7 @@ const CACHE_IMPORT_SOURCES: Record<string, CacheImportSourceConfig> = {
   'eu-flood-risk-areas': { endpoint: '/api/settings/external-data/eu-flood-risk-cache', detached: true },
   'copernicus-effis': { endpoint: '/api/settings/external-data/copernicus-effis-cache', detached: true },
   'fr-dvf-geolocated': { endpoint: '/api/settings/external-data/fr-dvf-cache', requiresCsvPath: true },
+  'eurostat-regional-tourism-nights': { endpoint: '/api/settings/external-data/eurostat-tourism-nuts-cache', detached: true },
 }
 
 interface ExternalDataSourceField {
@@ -97,6 +98,7 @@ const enrichmentProgress = computed(() => {
 
 const copernicusEffisImportStatus = computed(() => llmBatchJobs.value?.copernicusEffisImportStatus ?? null)
 const euFloodRiskImportStatus = computed(() => llmBatchJobs.value?.euFloodRiskImportStatus ?? null)
+const eurostatTourismNutsImportStatus = computed(() => llmBatchJobs.value?.eurostatTourismNutsImportStatus ?? null)
 
 async function loadCoverage(): Promise<void> {
   try {
@@ -408,6 +410,22 @@ onMounted(async () => {
           </p>
           <p v-if="euFloodRiskImportStatus.lastError" class="text-destructive">
             {{ $t('settings.sources.euFloodRiskStatusLastError', { message: euFloodRiskImportStatus.lastError }) }}
+          </p>
+        </div>
+
+        <div v-if="source.id === 'eurostat-regional-tourism-nights' && eurostatTourismNutsImportStatus" class="text-xs space-y-1">
+          <p v-if="eurostatTourismNutsImportStatus.status === 'running'" class="text-muted-foreground">
+            {{ $t('settings.sources.eurostatTourismNutsStatusRunning', { at: formatBatchDate(eurostatTourismNutsImportStatus.startedAt) }) }}
+          </p>
+          <p v-else-if="eurostatTourismNutsImportStatus.finishedAt" class="text-muted-foreground">
+            {{ $t('settings.sources.eurostatTourismNutsStatusLastRun', {
+              at: formatBatchDate(eurostatTourismNutsImportStatus.finishedAt),
+              regionCount: eurostatTourismNutsImportStatus.lastResult?.regionCount ?? 0,
+              regionsWithData: eurostatTourismNutsImportStatus.lastResult?.regionsWithData ?? 0,
+            }) }}
+          </p>
+          <p v-if="eurostatTourismNutsImportStatus.lastError" class="text-destructive">
+            {{ $t('settings.sources.eurostatTourismNutsStatusLastError', { message: eurostatTourismNutsImportStatus.lastError }) }}
           </p>
         </div>
       </div>

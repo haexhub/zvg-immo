@@ -24,7 +24,11 @@
       "swimming": "Baden",
       "attraction": "Sehenswürdigkeiten",
       "lodging": "Unterkünfte"
-    }
+    },
+    "tourismVisitorToggle": "Besucherzahlen",
+    "tourismVisitorUnit": "Übernachtungen pro km²",
+    "tourismVisitorNoData": "Keine Daten",
+    "tourismVisitorAttribution": "Daten: Eurostat (tour_occ_nin2) · Grenzen: © EuroGeographics / Eurostat-GISCO"
   },
   "landing": {
     "hero": {
@@ -359,7 +363,10 @@
       "copernicusEffisStatusLastError": "Import zuletzt fehlgeschlagen: {message}",
       "euFloodRiskStatusRunning": "Import läuft seit {at} — kann mehrere Minuten dauern …",
       "euFloodRiskStatusLastRun": "Letzter Import: {at} — {normalized} von {fetched} Hochwasserzonen übernommen ({pages} Seiten).",
-      "euFloodRiskStatusLastError": "Import zuletzt fehlgeschlagen: {message}"
+      "euFloodRiskStatusLastError": "Import zuletzt fehlgeschlagen: {message}",
+      "eurostatTourismNutsStatusRunning": "Import läuft seit {at} …",
+      "eurostatTourismNutsStatusLastRun": "Letzter Import: {at} — {regionsWithData} von {regionCount} Regionen mit Daten.",
+      "eurostatTourismNutsStatusLastError": "Import zuletzt fehlgeschlagen: {message}"
     },
     "crawlStatus": {
       "title": "Crawling-Status",
@@ -416,7 +423,8 @@
         "eea-environmental-noise-directive": "Lärmbelastung (Straße/Schiene/Flughafen) auf der Detailseite.",
         "cams-air-quality": "Luftqualitäts-Werte auf der Detailseite.",
         "open-meteo-climate-normals": "Klimadiagramm auf der Detailseite.",
-        "copernicus-effis": "Waldbrand-Hinweis auf der Detailseite."
+        "copernicus-effis": "Waldbrand-Hinweis auf der Detailseite.",
+        "eurostat-regional-tourism-nights": "Besucherintensitäts-Ebene auf der Suchkarte (nicht die Detailseite)."
       },
       "coverage": {
         "title": "Datenabdeckung",

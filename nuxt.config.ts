@@ -175,6 +175,8 @@ export default defineNuxtConfig({
     //   NUXT_EXTERNAL_DATA_COPERNICUS_EFFIS_MAX_CACHE_AGE_DAYS=400
     //   NUXT_EXTERNAL_DATA_OPEN_METEO_CLIMATE_SERVICE_URL=https://archive-api.open-meteo.com/v1/archive
     //   NUXT_EXTERNAL_DATA_OPEN_METEO_CLIMATE_TIMEOUT_MS=30000
+    //   NUXT_EXTERNAL_DATA_EUROSTAT_TOURISM_NUTS_CACHE_PATH=/app/.cache_zvg/external/eurostat-tourism-nuts.json
+    //   NUXT_EXTERNAL_DATA_EUROSTAT_TOURISM_NUTS_MAX_CACHE_AGE_DAYS=400
     externalData: {
       frDvfCachePath: '',
       euFloodRiskGeoJsonPath: '',
@@ -190,6 +192,8 @@ export default defineNuxtConfig({
       // Same public/unauthenticated shape as camsAirQualityServiceUrl above.
       openMeteoClimateServiceUrl: 'https://archive-api.open-meteo.com/v1/archive',
       openMeteoClimateTimeoutMs: 30_000,
+      eurostatTourismNutsCachePath: '',
+      eurostatTourismNutsMaxCacheAgeDays: 400,
     },
     // G1 Roh-Archiv (WP-3): Supabase Storage bucket for archived crawl
     // snapshots (server/utils/raw-archive.ts, storage-uploader.ts). Empty →
@@ -328,6 +332,15 @@ export default defineNuxtConfig({
       // New fire seasons land in the source roughly annually, so monthly is
       // a courtesy re-pull, not a rate-limit concern.
       '0 5 1 * *': ['import-copernicus-effis-cache'],
+      // Monthly, offset from the two importers above: refresh the Eurostat
+      // regional tourism nights (NUTS2) + GISCO boundary cache backing the
+      // search map's visitor-intensity overlay (see server/tasks/import-
+      // eurostat-tourism-nuts-cache.ts) — stays inert while unconfigured,
+      // same contract. Eurostat updates the underlying statistic at most a
+      // couple of times a year, so monthly is a courtesy re-pull, not a
+      // rate-limit concern; unlike the two importers above, this is a plain
+      // unpaginated fetch, not a multi-minute crawl.
+      '30 5 1 * *': ['import-eurostat-tourism-nuts-cache'],
       // Daily at a quiet hour: move ended auctions' cached photos into the
       // images bucket and drop the local copies (server/tasks/offload-images.ts).
       // The local image cache is by far the largest thing on the server volume,

@@ -224,6 +224,43 @@ export const EXTERNAL_DATA_SOURCES: readonly ExternalDataSource[] = [
     adapter: 'eurostatRegionalLabourMarketAdapter',
   },
   {
+    id: 'eurostat-regional-tourism-nights',
+    label: 'Eurostat Nights Spent at Tourist Accommodation (NUTS 2)',
+    countries: ['eu'],
+    // Not a per-auction adapter — see server/tasks/external-enrichment.ts,
+    // which wires sources by hardcoded id rather than iterating this array,
+    // and computeExternalDataCoverage()'s fixed COVERAGE_SOURCE_IDS list.
+    // This entry exists only to get the generic /settings config UI + cache
+    // import trigger for free; it powers the search map's visitor-intensity
+    // overlay (composables/useTourismVisitorLayer.ts), not auction records.
+    capabilities: [],
+    sourceUrl: 'https://ec.europa.eu/eurostat/databrowser/view/tour_occ_nin2/default/table',
+    licenseNote: 'Official Eurostat statistics (tour_occ_nin2) joined with GISCO NUTS2 boundaries (Nuts2json, EUPL 1.2). Attribute both in the UI.',
+    refreshCadence: 'annual (Eurostat) / monthly courtesy re-pull',
+    resolution: 'NUTS 2 region, nights per km² (P_KM2)',
+    adapter: 'eurostatRegionalTourismNightsAdapter',
+    configFields: [
+      {
+        key: 'cachePath',
+        type: 'path',
+        runtimeConfigKey: 'eurostatTourismNutsCachePath',
+        envVar: 'NUXT_EXTERNAL_DATA_EUROSTAT_TOURISM_NUTS_CACHE_PATH',
+        defaultValue: '',
+        required: true,
+      },
+      {
+        key: 'maxCacheAgeDays',
+        type: 'number',
+        runtimeConfigKey: 'eurostatTourismNutsMaxCacheAgeDays',
+        envVar: 'NUXT_EXTERNAL_DATA_EUROSTAT_TOURISM_NUTS_MAX_CACHE_AGE_DAYS',
+        // Eurostat updates the underlying statistic at most a couple of
+        // times a year; this only flags a long-broken importer, same
+        // rationale as eu-flood-risk-areas's maxCacheAgeDays default.
+        defaultValue: 400,
+      },
+    ],
+  },
+  {
     id: 'eea-environmental-noise-directive',
     label: 'EEA Environmental Noise Directive data',
     countries: ['eu'],
