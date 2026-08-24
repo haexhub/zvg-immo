@@ -8,6 +8,7 @@
 // /api/data/v2/* instead of mutating v1.
 
 import type { Auction } from '~/types/auction'
+import { redactAffectedPersonNames } from './public-auction-redaction'
 
 export interface PublicAuction {
   /** Crawler/platform id, e.g. 'de-by', 'es-boe', 'agi'. */
@@ -54,8 +55,8 @@ export function toPublicAuction(a: Auction): PublicAuction {
     id: a.externalId,
     court: a.authority,
     caseNumber: a.caseNumber,
-    title: a.title,
-    address: a.address,
+    title: redactAffectedPersonNames(a.title) ?? null,
+    address: redactAffectedPersonNames(a.address) ?? null,
     marketValueEur: a.marketValueEur,
     marketValue: a.marketValue ?? null,
     currency: a.currency ?? null,
@@ -111,7 +112,7 @@ export function toPublicObservation(row: Record<string, unknown>): PublicObserva
     id: row.external_id as string,
     court: row.authority as string,
     caseNumber: row.case_number as string,
-    title: (row.title as string | null) ?? null,
+    title: redactAffectedPersonNames((row.title as string | null) ?? null) ?? null,
     propertyType: (row.property_type as string | null) ?? null,
     landAreaSqm: num(row.land_area_sqm),
     livingAreaSqm: num(row.living_area_sqm),

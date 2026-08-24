@@ -35,6 +35,7 @@ import {
 } from '~/server/utils/in-memory-rate-limit'
 import { requestClientIp } from '~/server/utils/request-client-ip'
 import type { Auction } from '~/types/auction'
+import { redactAuctionForPublication } from '~/server/utils/public-auction-redaction'
 
 // Exported (unchanged otherwise) so the /settings per-auction retry trigger
 // (translation-retry.post.ts) can reuse the exact same prompt/fallback logic
@@ -137,7 +138,10 @@ export default defineEventHandler(async (event) => {
   if (!record) {
     throw createError({ statusCode: 404, statusMessage: 'auction not found' })
   }
-  const auction = record.auction
+  // Translate only the public-safe projection. This also gives old cached
+  // translations a new content hash, so they cannot be served after a source
+  // text was found to contain an affected person's name.
+  const auction = redactAuctionForPublication(record.auction).auction
 
   const { title, address, description } = auction
   const documentSummary = auction.extraction?.documentSummary ?? null

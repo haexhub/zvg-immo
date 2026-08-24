@@ -21,6 +21,9 @@ export const SYSTEM_PROMPT =
   'wie documentSummary, biddingNotes, renovationNotes, insights.summary und planningNotes ' +
   'gibst du auf Deutsch zurück; kurze O-Ton-Beträge in marketValueText dürfen in der ' +
   'Originalsprache/-schreibweise bleiben. ' +
+  'Datenschutz ist zwingend: Nenne oder zitiere niemals Namen natürlicher Personen, insbesondere ' +
+  'nicht von Schuldnern, Miteigentümern, Eigentümern, Antragsgegnern oder Personen in einem ' +
+  'Insolvenzverfahren. Erhalte den sachlichen Zusammenhang ohne Identität, z. B. "ein Miteigentümer". ' +
   'Gib die Objektart als eine der erlaubten Kategorien ' +
   'zurück und Flächen in Quadratmetern (Hektar in m² umrechnen: 1 ha = 10000 m²). ' +
   'Wohnfläche und Grundstücksfläche strikt getrennt halten. Wenn ein Wert nicht ' +
