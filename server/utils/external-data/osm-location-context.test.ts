@@ -202,7 +202,11 @@ interface LocalOsmRow {
  *  looked up by `tagKey` + `values` (the same params queryCategory sends),
  *  not by parsing SQL, since the query text itself isn't under test here —
  *  that's exercised implicitly by getting the right rows back. */
-function fakeOsmPool(options: { covered?: boolean; rowsByTag?: Record<string, LocalOsmRow[]> } = {}) {
+function fakeOsmPool(options: {
+  covered?: boolean
+  rowsByTag?: Record<string, LocalOsmRow[]>
+  longDistanceRouteStationRows?: LocalOsmRow[]
+} = {}) {
   const calls: Array<{ sql: string; params: unknown[] }> = []
   const covered = options.covered ?? true
   const rowsByTag = options.rowsByTag ?? {}
@@ -212,6 +216,9 @@ function fakeOsmPool(options: { covered?: boolean; rowsByTag?: Record<string, Lo
     const tagKey = params[4] as string
     const values = params[5] as string[] | undefined
     const key = `${tagKey}:${values ? JSON.stringify(values) : ''}`
+    if (sql.includes("immo:long_distance_train_route") && options.longDistanceRouteStationRows) {
+      return { rows: options.longDistanceRouteStationRows }
+    }
     return { rows: rowsByTag[key] ?? [] }
   }
   return { pool: { query } as unknown as Pool, calls }
@@ -272,6 +279,30 @@ describe('createLocalOsmLocationContextAdapter', () => {
     const context = await adapter.context(auction())
 
     expect(context?.neighborhood.notes).toContainEqual({ code: 'building_count_500m', params: { count: 1 } })
+  })
+
+  it('maps an explicitly tagged long-distance train route to its nearby station', async () => {
+    const station: LocalOsmRow = {
+      osm_type: 'node',
+      osm_id: '42',
+      lat: 52.01,
+      lon: 13,
+      // Simulates the station tags after queryCategory found a nearby
+      // type=route + route=train + service=high_speed relation.
+      tags: { railway: 'station', name: 'Fernbahnhof', 'immo:long_distance_train_route': 'yes' },
+    }
+    const { pool, calls } = fakeOsmPool({ longDistanceRouteStationRows: [station] })
+    const adapter = createLocalOsmLocationContextAdapter({ db: pool, checkedAt: '2026-07-26T00:00:00.000Z' })
+
+    const context = await adapter.context(auction())
+
+    expect(context?.mobility.regionalRailConnection).toBe('available')
+    expect(context?.mobility.nationalRailConnection).toBe('available')
+    expect(context?.mobility.nationalRailStationName).toBe('Fernbahnhof')
+    const railCall = calls.find((call) => call.params[4] === 'railway')
+    expect(railCall?.sql).toContain("train_route.tags ->> 'type' = 'route'")
+    expect(railCall?.sql).toContain("train_route.tags ->> 'route' = 'train'")
+    expect(railCall?.sql).toContain("train_route.tags ->> 'service' IN ('long_distance', 'high_speed', 'national', 'international')")
   })
 
   it('returns null for a country with no imported data instead of an empty context', async () => {

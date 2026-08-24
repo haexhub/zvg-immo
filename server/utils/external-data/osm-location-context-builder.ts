@@ -192,7 +192,7 @@ function nearestLocated(elements: LocatedElement[], maxDistanceMeters: number): 
  */
 function hasLongDistanceService(element: LocatedElement): boolean {
   const tags = element.tags ?? {}
-  if (tags.long_distance === 'yes' || tags.high_speed === 'yes') return true
+  if (tags['immo:long_distance_train_route'] === 'yes' || tags.long_distance === 'yes' || tags.high_speed === 'yes') return true
   if (['long_distance', 'high_speed', 'national', 'international'].includes(tags.service ?? '')) return true
   return /(?:^|[;|, ]+)(?:DB Fernverkehr|ICE|IC|EC|TGV|Railjet|EuroCity|InterCity)(?:$|[;|, ]+)/i
     .test([tags.network, tags.operator, tags.ref].filter(Boolean).join(' '))
