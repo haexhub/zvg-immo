@@ -22,7 +22,14 @@ function auction(overrides: Partial<Auction> = {}): Auction {
     detailUrl: 'https://local.test/detail',
     pdfUrlUpstream: 'https://source.test/bekanntmachung.pdf',
     detailUrlUpstream: 'https://source.test/detail',
-    attachments: [{ kind: 'appraisal', label: 'Gutachten', proxyUrl: 'https://local.test/gutachten.pdf' }],
+    attachments: [{
+      kind: 'appraisal',
+      label: 'Gutachten – Schuldner: Erika Musterfrau',
+      filename: 'gutachten.pdf',
+      sizeBytes: 1_024,
+      fileId: 'gutachten-1',
+      proxyUrl: 'https://local.test/gutachten.pdf',
+    }],
     description: null,
     photoCount: 0,
     thumbnailUrl: null,
@@ -42,6 +49,13 @@ describe('redactAffectedPersonNames', () => {
     expect(redactAffectedPersonNames('Schuldnerin: Erika Musterfrau\nTermin: 10:00 Uhr')).toBe(
       'Schuldnerin: [anonymisiert]\nTermin: 10:00 Uhr',
     )
+  })
+
+  it.each([
+    'Schuldner: M. Mustermann',
+    'Schuldner: Dr. Musterfrau',
+  ])('redacts abbreviated and titled debtor names (%s)', (value) => {
+    expect(redactAffectedPersonNames(value)).toBe('Schuldner: [anonymisiert]')
   })
 
   it('does not alter ordinary property or place names', () => {
@@ -79,6 +93,8 @@ describe('redactAuctionForPublication', () => {
     expect(result.auction.extraction?.documentSummary).not.toContain('Max Mustermann')
     expect(result.auction.extraction?.insights?.encumbrances[0]).toBe('Schuldner: [anonymisiert]')
     expect(result.auction.attachments).toHaveLength(1)
+    expect(result.auction.attachments[0]?.label).toBe('Gutachten – Schuldner: [anonymisiert]')
+    expect(result.auction.attachments[0]?.proxyUrl).toBe('https://local.test/gutachten.pdf')
     expect(result.auction.pdfUrl).toBe('https://local.test/bekanntmachung.pdf')
     expect(result.auction.pdfUrlUpstream).toBe('https://source.test/bekanntmachung.pdf')
     expect(result.auction.detailUrl).toBe('https://local.test/detail')

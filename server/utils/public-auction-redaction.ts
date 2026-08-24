@@ -27,10 +27,12 @@ const AFFECTED_PERSON_ROLE = [
   'owner(?:s)?',
 ].join('|')
 
-// A full name, optionally with common salutations/titles. Requiring either a
-// surname or an initial+surname avoids treating a normal capitalised German
-// word following a role as a name.
-const PERSON_NAME = String.raw`(?:(?:Herrn?|Frau|Mr\.?|Mrs\.?|Ms\.?)[ \t]+)?(?:(?:Dr\.?|Prof\.?)[ \t]+)?(?:[A-ZÀ-ÖØ-Þ]\.[ \t]+)?[A-ZÀ-ÖØ-Þ][\p{Ll}À-ÖØ-öø-ÿ'’-]+(?:[ \t]+(?:(?:von|van|de|der|den|ten)[ \t]+)?[A-ZÀ-ÖØ-Þ][\p{Ll}À-ÖØ-öø-ÿ'’-]+){1,3}`
+// A full name, initial plus surname, or titled surname. Requiring a surname
+// (rather than accepting a single capitalised word) avoids treating ordinary
+// German prose following a role as a person's name.
+const NAME_WORD = String.raw`[A-ZÀ-ÖØ-Þ][\p{Ll}À-ÖØ-öø-ÿ'’-]+`
+const NAME_PART = String.raw`(?:(?:von|van|de|der|den|ten)[ \t]+)?${NAME_WORD}`
+const PERSON_NAME = String.raw`(?:(?:Herrn?|Frau|Mr\.?|Mrs\.?|Ms\.?)[ \t]+)?(?:[A-ZÀ-ÖØ-Þ]\.[ \t]+${NAME_WORD}|(?:Dr\.?|Prof\.?)[ \t]+${NAME_WORD}|${NAME_WORD}(?:[ \t]+${NAME_PART}){1,3})`
 
 const roleThenName = new RegExp(String.raw`\b(${AFFECTED_PERSON_ROLE})[ \t]+${PERSON_NAME}`, 'gu')
 const labelledRoleThenName = new RegExp(String.raw`\b(${AFFECTED_PERSON_ROLE})[ \t]*:[ \t]*${PERSON_NAME}`, 'gu')
@@ -96,7 +98,10 @@ export function redactAuctionForPublication(auction: Auction): PublicAuctionReda
     address: text(auction.address),
     description: text(auction.description),
     marketValueText: text(auction.marketValueText),
-    attachments: [...auction.attachments],
+    attachments: auction.attachments.map((attachment) => ({
+      ...attachment,
+      label: text(attachment.label),
+    })),
     photoUrls: auction.photoUrls ? [...auction.photoUrls] : undefined,
     extraction,
   }
