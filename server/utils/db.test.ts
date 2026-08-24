@@ -4,12 +4,13 @@ import { callQueryText as queryText } from '~/test-support/drizzle-query'
 const mocks = vi.hoisted(() => ({
   poolQuery: vi.fn(),
   connect: vi.fn(),
+  end: vi.fn(),
   migrate: vi.fn(),
 }))
 
 vi.mock('pg', () => ({
   Pool: vi.fn(function MockPool() {
-    return { query: mocks.poolQuery, connect: mocks.connect }
+    return { query: mocks.poolQuery, connect: mocks.connect, end: mocks.end }
   }),
 }))
 vi.mock('drizzle-orm/node-postgres/migrator', () => ({ migrate: mocks.migrate }))
@@ -43,6 +44,7 @@ describe('runMigrations', () => {
       expect.objectContaining({ migrationsFolder: expect.stringContaining('server/db/migrations') }),
     )
     expect(client.release).toHaveBeenCalledOnce()
+    expect(mocks.end).toHaveBeenCalledOnce()
   })
 
   it('retries the lock instead of migrating while another instance holds it', async () => {
@@ -86,6 +88,24 @@ describe('runMigrations', () => {
       `SELECT pg_advisory_unlock(hashtext('zvg-immo:schema-migrations'))`,
     )
     expect(client.release).toHaveBeenCalledOnce()
+    expect(mocks.end).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the migration error when releasing its lock also fails', async () => {
+    vi.stubGlobal('useRuntimeConfig', () => ({ databaseUrl: 'postgres://test' }))
+    mocks.migrate.mockRejectedValue(new Error('migration failed'))
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [{ locked: true }] })
+        .mockRejectedValueOnce(new Error('unlock failed')),
+      release: vi.fn(),
+    }
+    mocks.connect.mockResolvedValue(client)
+    const { runMigrations } = await import('./db')
+
+    await expect(runMigrations()).rejects.toThrow('migration failed')
+    expect(client.release).toHaveBeenCalledOnce()
+    expect(mocks.end).toHaveBeenCalledOnce()
   })
 })
 

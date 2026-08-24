@@ -18,6 +18,10 @@ let db: NodePgDatabase<typeof schema> | null | undefined
 // ~60s of patience for a concurrently migrating instance to finish.
 const MIGRATION_LOCK_ATTEMPTS = 60
 const MIGRATION_LOCK_RETRY_MS = 1_000
+// Schema migrations can contain intentional, one-off data repairs over the
+// complete production dataset. They must not inherit the short request-query
+// timeout that keeps public/API work responsive.
+const MIGRATION_QUERY_TIMEOUT_MS = 30 * 60 * 1_000
 
 // Exported for server/tasks/build-geo-features.ts, which needs the same
 // config but connects through its own dedicated Pool (see that file) instead
@@ -139,9 +143,13 @@ export async function withStatementTimeout<T>(
 }
 
 export async function runMigrations(): Promise<void> {
-  const pool = getPool()
-  if (!pool) return
-  const client = await pool.connect()
+  const url = readDatabaseUrl()
+  if (!url) return
+  // Do not use getPool() here: its 15s timeout is for normal application
+  // queries. A migration needs enough time for a deliberate backfill while
+  // still having a finite upper bound should a database operation stall.
+  const migrationPool = new Pool({ connectionString: url, query_timeout: MIGRATION_QUERY_TIMEOUT_MS })
+  const client = await migrationPool.connect()
   const tx = drizzle(client)
   let locked = false
   try {
@@ -169,10 +177,17 @@ export async function runMigrations(): Promise<void> {
   } finally {
     try {
       if (locked) {
-        await tx.execute(sql`SELECT pg_advisory_unlock(hashtext('zvg-immo:schema-migrations'))`)
+        // A timed-out/cancelled query can leave the connection unusable. The
+        // session is closed immediately below in that case, which releases
+        // the advisory lock; do not hide the original migration failure with
+        // a secondary unlock error.
+        await tx.execute(sql`SELECT pg_advisory_unlock(hashtext('zvg-immo:schema-migrations'))`).catch((err: unknown) => {
+          console.error('[db] failed to release schema migration lock:', pgErrorMessage(err))
+        })
       }
     } finally {
       client.release()
+      await migrationPool.end()
     }
   }
 }
