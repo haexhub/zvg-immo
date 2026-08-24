@@ -125,11 +125,42 @@
     "logoutAdminError": "Sign out failed.",
     "sections": {
       "status": "Status",
+      "operations": "Operations & errors",
       "pipeline": "Crawling & enrichment",
       "llm": "AI / LLM",
       "admin": "Administration"
     },
     "sessionExpired": "Session expired.",
+    "operations": {
+      "title": "Operational status",
+      "description": "Application startup and migration status, plus the independent host reporter.",
+      "refresh": "Refresh status",
+      "loadError": "Could not load operational status.",
+      "app": "Application",
+      "migration": "Database migration",
+      "host": "Host / containers",
+      "database": "PostgreSQL",
+      "startedAt": "Last start",
+      "restarts15m": "Starts in the last 15 minutes",
+      "migrationUpdated": "Last change",
+      "hostReportedAt": "Last host report",
+      "serviceState": "Service state",
+      "restartCount": "Systemd restarts",
+      "exitCode": "Last exit code",
+      "sharedMemory": "Shared memory (/dev/shm)",
+      "recentFailures": "Recent failure hints",
+      "noFailures": "No recent failure hints.",
+      "unavailable": "Not available yet — the host reporter is not installed or has not written a report.",
+      "stale": "The host report is more than five minutes old.",
+      "status": {
+        "pending": "Pending",
+        "running": "Running",
+        "ready": "Successful",
+        "failed": "Failed",
+        "healthy": "Healthy",
+        "attention": "Needs attention"
+      }
+    },
     "messageDetails": {
       "show": "Show {count} entries",
       "hide": "Hide entries"

@@ -112,6 +112,11 @@ onMounted(probeSession)
         <SettingsCountryStatusOverview />
 
         <section class="space-y-4">
+          <h2 class="text-lg font-semibold text-muted-foreground">{{ $t('settings.sections.operations') }}</h2>
+          <SettingsOperationsCard />
+        </section>
+
+        <section class="space-y-4">
           <h2 class="text-lg font-semibold text-muted-foreground">{{ $t('settings.sections.pipeline') }}</h2>
           <SettingsGeoMetricsCard />
           <SettingsExternalDataCard />
