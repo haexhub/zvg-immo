@@ -141,7 +141,7 @@
       "host": "Host / Container",
       "database": "PostgreSQL",
       "startedAt": "Letzter Start",
-      "restarts15m": "Starts in 15 Minuten",
+      "restarts15m": "Starts in den letzten 15 Minuten",
       "migrationUpdated": "Letzte Änderung",
       "hostReportedAt": "Letzter Host-Report",
       "serviceState": "Service-Zustand",

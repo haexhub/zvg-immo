@@ -57,6 +57,8 @@ function isHostHealthy(): boolean {
 }
 
 async function load(): Promise<void> {
+  if (pending.value) return
+
   pending.value = true
   loadError.value = null
   try {
@@ -143,7 +145,7 @@ onUnmounted(() => {
                 <dt class="text-muted-foreground">{{ $t('settings.operations.database') }}</dt>
                 <dd>{{ status.host.database?.activeState ?? '—' }}<template v-if="status.host.database?.subState"> / {{ status.host.database.subState }}</template></dd>
                 <dt class="text-muted-foreground">{{ $t('settings.operations.sharedMemory') }}</dt>
-                <dd>{{ status.host.database?.sharedMemoryBytes ? `${Math.round(status.host.database.sharedMemoryBytes / 1024 / 1024)} MiB` : '—' }}</dd>
+                <dd>{{ status.host.database?.sharedMemoryBytes != null ? `${Math.round(status.host.database.sharedMemoryBytes / 1024 / 1024)} MiB` : '—' }}</dd>
               </dl>
             </template>
           </section>
