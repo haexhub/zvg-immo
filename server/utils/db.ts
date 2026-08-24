@@ -169,6 +169,11 @@ export async function runMigrations(): Promise<void> {
       locked = rows[0]?.locked === true
     }
     if (!locked) throw new Error('schema migration lock is still held by another instance')
+    // Production's Postgres role deliberately has a five-minute
+    // statement_timeout for interactive work. Historical data migrations can
+    // validly exceed it, while the dedicated pool's 30-minute client timeout
+    // above is still a final safety boundary for this startup-only session.
+    await tx.execute(sql`SET statement_timeout = 0`)
     // Same Dockerfile fallstrick as the old schema.sql read: Nitro's bundler
     // can't see this fs access (readMigrationFiles() reads it dynamically at
     // runtime), so server/db/migrations/ must be copied into the runner image

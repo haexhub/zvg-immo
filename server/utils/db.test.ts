@@ -36,6 +36,7 @@ describe('runMigrations', () => {
 
     expect(client.query.mock.calls.map(queryText)).toEqual([
       `SELECT pg_try_advisory_lock(hashtext('zvg-immo:schema-migrations')) AS locked`,
+      'SET statement_timeout = 0',
       `SELECT pg_advisory_unlock(hashtext('zvg-immo:schema-migrations'))`,
     ])
     expect(mocks.migrate).toHaveBeenCalledOnce()
@@ -66,6 +67,7 @@ describe('runMigrations', () => {
     expect(client.query.mock.calls.map(queryText)).toEqual([
       tryLock,
       tryLock,
+      'SET statement_timeout = 0',
       `SELECT pg_advisory_unlock(hashtext('zvg-immo:schema-migrations'))`,
     ])
     expect(mocks.migrate).toHaveBeenCalledOnce()
@@ -77,6 +79,7 @@ describe('runMigrations', () => {
     const client = {
       query: vi.fn()
         .mockResolvedValueOnce({ rows: [{ locked: true }] })
+        .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] }),
       release: vi.fn(),
     }
@@ -97,6 +100,7 @@ describe('runMigrations', () => {
     const client = {
       query: vi.fn()
         .mockResolvedValueOnce({ rows: [{ locked: true }] })
+        .mockResolvedValueOnce({ rows: [] })
         .mockRejectedValueOnce(new Error('unlock failed')),
       release: vi.fn(),
     }
