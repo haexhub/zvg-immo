@@ -5,6 +5,7 @@ import type { Feature } from '~/lib/features'
 import { getPool, isStatementTimeoutError, SEARCH_STATEMENT_TIMEOUT_MS, withStatementTimeout } from '~/server/utils/db'
 import { buildAuctionSearchFilter, finiteNumber } from '~/server/utils/auction-search-filters'
 import { curatedAuctionPhotoUrls } from '~/lib/auction-photos'
+import { redactAffectedPersonNames } from '~/server/utils/public-auction-redaction'
 
 export interface AuctionSummary {
   platform: string
@@ -164,12 +165,12 @@ export function summary(row: SearchRow): AuctionSummary {
     externalId: row.external_id,
     caseNumber: row.case_number,
     authority: row.authority,
-    title: row.title,
-    address: row.address,
+    title: redactAffectedPersonNames(row.title) ?? null,
+    address: redactAffectedPersonNames(row.address) ?? null,
     marketValue: finiteNumber(row.market_value),
     currency: row.currency,
     marketValueEur: finiteNumber(row.market_value_eur),
-    marketValueText: row.market_value_text,
+    marketValueText: redactAffectedPersonNames(row.market_value_text) ?? null,
     startingBid: finiteNumber(row.starting_bid),
     currentBid: finiteNumber(row.current_bid),
     auctionDateIso: row.auction_date_iso,

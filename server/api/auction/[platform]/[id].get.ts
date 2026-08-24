@@ -14,6 +14,7 @@ import { readAuctionRecord } from '../../../utils/auction-record'
 import { readAuctionRelationships, type RelatedAuction } from '../../../utils/auction-relationships'
 import { readAuctionGeoMetrics } from '../../../utils/auction-geo-metrics-read'
 import { buildLeisureTourismProfiles, type LeisureTourismProfiles } from '../../../utils/leisure-tourism-profile'
+import { redactAuctionForPublication } from '../../../utils/public-auction-redaction'
 
 const LIVE_MISS_TTL_MS = 60_000
 const liveMissCache = new Map<string, number>()
@@ -138,5 +139,6 @@ export default defineEventHandler(async (event): Promise<AuctionDetail> => {
     }),
   ])
   const leisureTourism = buildLeisureTourismProfiles(geoMetrics)
-  return { ...auction, lat, lng, locationEnrichment, relatedAuctions, leisureTourism, sourcePlatform }
+  const publication = redactAuctionForPublication(auction)
+  return { ...publication.auction, lat, lng, locationEnrichment, relatedAuctions, leisureTourism, sourcePlatform }
 })

@@ -5,6 +5,7 @@
 import { parseAuctionSearchFilters } from '~/lib/auction-search-filter-contract'
 import { type PublicAuction } from './data-api-shape'
 import { getPool } from './db'
+import { redactAffectedPersonNames } from './public-auction-redaction'
 
 export interface PublicAuctionQuery {
   country?: string
@@ -58,8 +59,8 @@ function toPublicAuction(row: PublicAuctionRow): PublicAuction {
     id: row.external_id,
     court: row.authority,
     caseNumber: row.case_number,
-    title: row.title,
-    address: row.address,
+    title: redactAffectedPersonNames(row.title) ?? null,
+    address: redactAffectedPersonNames(row.address) ?? null,
     marketValueEur: numberOrNull(row.market_value_eur),
     marketValue: numberOrNull(row.market_value),
     currency: row.currency,
