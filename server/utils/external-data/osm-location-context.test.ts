@@ -38,7 +38,7 @@ describe('buildLocationContext', () => {
     const context = buildLocationContext({ lat: 52, lng: 13 }, [
       { type: 'node', id: 1, lat: 52.01, lon: 13.01, tags: { place: 'town', name: 'Musterstadt', population: '25000' } },
       { type: 'node', id: 2, lat: 52.001, lon: 13.001, tags: { highway: 'bus_stop', name: 'Am Markt' } },
-      { type: 'node', id: 3, lat: 52.002, lon: 13.002, tags: { railway: 'station', name: 'Musterstadt Bahnhof' } },
+      { type: 'node', id: 3, lat: 52.002, lon: 13.002, tags: { railway: 'station', name: 'Musterstadt Bahnhof', network: 'DB Fernverkehr', ref: 'ICE 42' } },
       { type: 'way', id: 4, center: { lat: 52.003, lon: 13.003 }, tags: { highway: 'primary', name: 'B 1' } },
       { type: 'way', id: 5, center: { lat: 52.0005, lon: 13.0005 }, tags: { building: 'house' } },
       { type: 'node', id: 6, lat: 52.0006, lon: 13.0006, tags: { amenity: 'school' } },
@@ -64,6 +64,10 @@ describe('buildLocationContext', () => {
       population: 25_000,
     })
     expect(context.mobility.publicTransportLevel).toBe('excellent')
+    expect(context.mobility.regionalRailConnection).toBe('available')
+    expect(context.mobility.regionalRailStationName).toBe('Musterstadt Bahnhof')
+    expect(context.mobility.nationalRailConnection).toBe('available')
+    expect(context.mobility.nationalRailStationName).toBe('Musterstadt Bahnhof')
     expect(context.mobility.roadAccessLevel).toBe('major')
     expect(context.amenities.find((item) => item.kind === 'groceries')).toMatchObject({
       countWithin1000m: 1,
@@ -170,6 +174,18 @@ describe('buildLocationContext', () => {
     ], '2026-07-26T00:00:00.000Z')
 
     expect(context.mobility.roadAccessLevel).toBe('local')
+  })
+
+  it('does not treat a tram stop or an untagged railway station as confirmed long-distance service', () => {
+    const context = buildLocationContext({ lat: 52, lng: 13 }, [
+      { type: 'node', id: 1, lat: 52.002, lon: 13, tags: { railway: 'tram_stop', name: 'Markt' } },
+      { type: 'node', id: 2, lat: 52.01, lon: 13, tags: { railway: 'station', name: 'Regionalbahnhof' } },
+    ], '2026-07-26T00:00:00.000Z')
+
+    expect(context.mobility.regionalRailConnection).toBe('available')
+    expect(context.mobility.regionalRailStationName).toBe('Regionalbahnhof')
+    expect(context.mobility.nationalRailConnection).toBe('not_detected')
+    expect(context.mobility.nationalRailStationName).toBeNull()
   })
 })
 

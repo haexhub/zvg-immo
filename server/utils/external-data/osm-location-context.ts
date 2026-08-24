@@ -40,7 +40,10 @@ const CATEGORIES: OsmCategory[] = [
   { radiusMeters: PLACE_RADIUS_METERS, tagKey: 'place', values: ['city', 'town', 'suburb', 'village', 'hamlet', 'island', 'municipality'], nodeOnly: true },
   { radiusMeters: 3000, tagKey: 'public_transport', values: ['platform', 'stop_position', 'station'] },
   { radiusMeters: 3000, tagKey: 'highway', values: ['bus_stop'], nodeOnly: true },
-  { radiusMeters: 3000, tagKey: 'railway', values: ['station', 'halt', 'tram_stop'] },
+  // A station up to 15 km away describes the rail connection of the
+  // surrounding town/city, whereas the context builder still scores the
+  // property's immediate PT access at 1–3 km.
+  { radiusMeters: 15000, tagKey: 'railway', values: ['station', 'halt', 'tram_stop'] },
   { radiusMeters: FERRY_RADIUS_METERS, tagKey: 'amenity', values: ['ferry_terminal'] },
   { radiusMeters: FERRY_RADIUS_METERS, tagKey: 'route', values: ['ferry'] },
   { radiusMeters: 15000, tagKey: 'aeroway', values: ['aerodrome', 'runway', 'helipad', 'heliport'] },
@@ -134,7 +137,7 @@ export function createLocalOsmLocationContextAdapter(options: LocalOsmLocationCo
 
   return {
     id: 'osm-location-context-local',
-    sourceVersion: 'osm-local-v1',
+    sourceVersion: 'osm-local-v2',
     supports: (auction) => isFinitePoint(auction),
     async context(auction) {
       const country = auction.country.toLowerCase()

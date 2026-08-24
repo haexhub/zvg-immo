@@ -45,11 +45,16 @@ import {
   type OsmElement,
 } from './osm-location-shared'
 
+const CITY_RAIL_CATCHMENT_METERS = 15_000
+
 export function buildLocationContext(point: Point, elements: OsmElement[], checkedAt: string): LocationContext {
   const located = elements.map((element) => locateElement(point, element)).filter((element): element is LocatedElement => !!element)
   const places = nearbyPlaces(located)
   const stopElements = located.filter(isTransitStop)
   const railElements = located.filter(isRailStation)
+  const trainStations = located.filter(isTrainStation)
+  const regionalTrainStation = nearestLocated(trainStations, CITY_RAIL_CATCHMENT_METERS)
+  const nationalTrainStation = nearestLocated(trainStations.filter(hasLongDistanceService), CITY_RAIL_CATCHMENT_METERS)
   // Clipped: hasFerryRouteNearby and ferryAccessLikely() only ask whether one
   // exists, so without this the bbox corners would report ferry access for a
   // terminal 14 km out.
@@ -82,6 +87,10 @@ export function buildLocationContext(point: Point, elements: OsmElement[], check
     stopCountWithin1000m: stopElements.filter((element) => element.distanceMeters <= 1000).length,
     stopCountWithin3000m: stopElements.filter((element) => element.distanceMeters <= 3000).length,
     nearestRailStationDistanceMeters: nearestDistance(railElements),
+    regionalRailConnection: regionalTrainStation ? 'available' : 'not_detected',
+    regionalRailStationName: regionalTrainStation ? nameOf(regionalTrainStation) || null : null,
+    nationalRailConnection: nationalTrainStation ? 'available' : 'not_detected',
+    nationalRailStationName: nationalTrainStation ? nameOf(nationalTrainStation) || null : null,
     roadAccessLevel: roadAccessLevel(majorRoadElements),
     nearestMajorRoadDistanceMeters: nearestDistance(majorRoadElements),
     majorRoadKinds: [...new Set(majorRoadElements.map((element) => element.tags?.highway).filter((value): value is string => !!value))].sort(),
@@ -162,6 +171,31 @@ function isTransitStop(element: LocatedElement): boolean {
 
 function isRailStation(element: LocatedElement): boolean {
   return ['station', 'halt', 'tram_stop'].includes(element.tags?.railway ?? '')
+}
+
+/** A railway station/halt for regular trains — not a tram, metro or light rail stop. */
+function isTrainStation(element: LocatedElement): boolean {
+  if (!['station', 'halt'].includes(element.tags?.railway ?? '')) return false
+  return !['tram', 'subway', 'light_rail', 'monorail', 'funicular'].includes(element.tags?.station ?? '')
+}
+
+function nearestLocated(elements: LocatedElement[], maxDistanceMeters: number): LocatedElement | null {
+  return elements
+    .filter((element) => element.distanceMeters <= maxDistanceMeters)
+    .sort((a, b) => a.distanceMeters - b.distanceMeters)[0] ?? null
+}
+
+/**
+ * OSM service tagging is incomplete, therefore this intentionally recognises
+ * only explicit Fernverkehr signals. A missing signal means “not detected”,
+ * not “there is no long-distance train”.
+ */
+function hasLongDistanceService(element: LocatedElement): boolean {
+  const tags = element.tags ?? {}
+  if (tags.long_distance === 'yes' || tags.high_speed === 'yes') return true
+  if (['long_distance', 'high_speed', 'national', 'international'].includes(tags.service ?? '')) return true
+  return /(?:^|[;|, ]+)(?:DB Fernverkehr|ICE|IC|EC|TGV|Railjet|EuroCity|InterCity)(?:$|[;|, ]+)/i
+    .test([tags.network, tags.operator, tags.ref].filter(Boolean).join(' '))
 }
 
 function amenityContext(elements: LocatedElement[]): LocationAmenitySummary[] {
