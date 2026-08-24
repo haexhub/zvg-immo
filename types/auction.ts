@@ -79,6 +79,21 @@ export interface LocationMobilityContext {
   stopCountWithin1000m: number
   stopCountWithin3000m: number
   nearestRailStationDistanceMeters: number | null
+  /**
+   * Passenger-rail access in the town/city catchment (15 km).  This is kept
+   * separate from `nearestRailStationDistanceMeters`, which also includes
+   * tram stops directly near the property.
+   */
+  regionalRailConnection?: 'available' | 'not_detected'
+  regionalRailStationName?: string | null
+  /**
+   * An explicitly tagged long-distance service (for example ICE/IC/EC) at a
+   * station in the town/city catchment.  OSM does not consistently carry
+   * service information, so `not_detected` is deliberately not a claim that
+   * no nationwide connection exists.
+   */
+  nationalRailConnection?: 'available' | 'not_detected'
+  nationalRailStationName?: string | null
   roadAccessLevel: 'remote' | 'local' | 'regional' | 'major' | 'unknown'
   nearestMajorRoadDistanceMeters: number | null
   majorRoadKinds: string[]

@@ -27,6 +27,13 @@ interface OsmCategory {
    *  carry a `place`/`highway` tag, e.g. a city's boundary polygon reporting
    *  itself as a "nearby place" a few metres away. */
   nodeOnly?: boolean
+  /**
+   * Marks stations reached by an explicitly tagged long-distance
+   * `type=route`/`route=train` relation. Route members are not retained by
+   * the local osm2pgsql table, so the relation geometry is used to associate
+   * the route with its station instead.
+   */
+  attachLongDistanceTrainRoute?: boolean
 }
 
 // Mirrors the old buildQuery()'s Overpass QL sub-clauses one-for-one — same
@@ -40,7 +47,10 @@ const CATEGORIES: OsmCategory[] = [
   { radiusMeters: PLACE_RADIUS_METERS, tagKey: 'place', values: ['city', 'town', 'suburb', 'village', 'hamlet', 'island', 'municipality'], nodeOnly: true },
   { radiusMeters: 3000, tagKey: 'public_transport', values: ['platform', 'stop_position', 'station'] },
   { radiusMeters: 3000, tagKey: 'highway', values: ['bus_stop'], nodeOnly: true },
-  { radiusMeters: 3000, tagKey: 'railway', values: ['station', 'halt', 'tram_stop'] },
+  // A station up to 15 km away describes the rail connection of the
+  // surrounding town/city, whereas the context builder still scores the
+  // property's immediate PT access at 1–3 km.
+  { radiusMeters: 15000, tagKey: 'railway', values: ['station', 'halt', 'tram_stop'], attachLongDistanceTrainRoute: true },
   { radiusMeters: FERRY_RADIUS_METERS, tagKey: 'amenity', values: ['ferry_terminal'] },
   { radiusMeters: FERRY_RADIUS_METERS, tagKey: 'route', values: ['ferry'] },
   { radiusMeters: 15000, tagKey: 'aeroway', values: ['aerodrome', 'runway', 'helipad', 'heliport'] },
@@ -73,18 +83,39 @@ interface LocalOsmRow {
 }
 
 async function queryCategory(db: Pool, country: string, point: Point, category: OsmCategory): Promise<OsmElement[]> {
-  const tagCondition = category.values ? `tags ->> $5 = ANY($6::text[])` : `tags ? $5`
+  const tagCondition = category.values ? `osm.tags ->> $5 = ANY($6::text[])` : `osm.tags ? $5`
   const params: unknown[] = [country, point.lng, point.lat, category.radiusMeters, category.tagKey]
   if (category.values) params.push(category.values)
+  const tags = category.attachLongDistanceTrainRoute
+    ? `
+      CASE WHEN EXISTS (
+        SELECT 1
+        FROM osm_local_elements AS train_route
+        WHERE train_route.country = osm.country
+          AND train_route.osm_type = 'relation'
+          AND train_route.tags ->> 'type' = 'route'
+          AND train_route.tags ->> 'route' = 'train'
+          AND (
+            train_route.tags ->> 'long_distance' = 'yes'
+            OR train_route.tags ->> 'high_speed' = 'yes'
+            OR train_route.tags ->> 'service' IN ('long_distance', 'high_speed', 'national', 'international')
+            OR COALESCE(train_route.tags ->> 'network', '') ~* '(DB Fernverkehr|ICE|IC|EC|TGV|Railjet|EuroCity|InterCity)'
+            OR COALESCE(train_route.tags ->> 'operator', '') ~* '(DB Fernverkehr|ICE|IC|EC|TGV|Railjet|EuroCity|InterCity)'
+            OR COALESCE(train_route.tags ->> 'ref', '') ~* '(ICE|IC|EC|TGV|Railjet|EuroCity|InterCity)'
+          )
+          AND ST_DWithin(train_route.geom::geography, osm.geom::geography, 250)
+      ) THEN osm.tags || jsonb_build_object('immo:long_distance_train_route', 'yes')
+      ELSE osm.tags END`
+    : 'osm.tags'
   const { rows } = await db.query<LocalOsmRow>(
     `
-    SELECT osm_type, osm_id::text AS osm_id, tags,
-           ST_Y(ST_PointOnSurface(geom)) AS lat, ST_X(ST_PointOnSurface(geom)) AS lon
-    FROM osm_local_elements
-    WHERE country = $1
-      AND ST_DWithin(geom::geography, ST_MakePoint($2, $3)::geography, $4)
+    SELECT osm.osm_type, osm.osm_id::text AS osm_id, ${tags} AS tags,
+           ST_Y(ST_PointOnSurface(osm.geom)) AS lat, ST_X(ST_PointOnSurface(osm.geom)) AS lon
+    FROM osm_local_elements AS osm
+    WHERE osm.country = $1
+      AND ST_DWithin(osm.geom::geography, ST_MakePoint($2, $3)::geography, $4)
       AND ${tagCondition}
-      ${category.nodeOnly ? "AND osm_type = 'node'" : ''}
+      ${category.nodeOnly ? "AND osm.osm_type = 'node'" : ''}
     `,
     params,
   )
@@ -134,7 +165,7 @@ export function createLocalOsmLocationContextAdapter(options: LocalOsmLocationCo
 
   return {
     id: 'osm-location-context-local',
-    sourceVersion: 'osm-local-v1',
+    sourceVersion: 'osm-local-v3',
     supports: (auction) => isFinitePoint(auction),
     async context(auction) {
       const country = auction.country.toLowerCase()

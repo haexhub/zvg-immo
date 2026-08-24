@@ -188,6 +188,16 @@ const {
                     <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.nearestRail') }}</dt>
                     <dd class="font-medium tabular-nums">{{ formatDistance(locationMobility.nearestRailStationDistanceMeters) }}</dd>
                   </div>
+                  <div v-if="locationMobility.regionalRailConnection != null">
+                    <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.regionalRailConnection') }}</dt>
+                    <dd class="font-medium">{{ locationMobility.regionalRailConnection === 'available' ? $t('objektDetail.railConnectionAvailable') : $t('objektDetail.railConnectionNotDetected') }}</dd>
+                    <dd v-if="locationMobility.regionalRailStationName" class="text-xs text-muted-foreground">{{ placeDisplayName(locationMobility.regionalRailStationName) }}</dd>
+                  </div>
+                  <div v-if="locationMobility.nationalRailConnection != null">
+                    <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.nationalRailConnection') }}</dt>
+                    <dd class="font-medium">{{ locationMobility.nationalRailConnection === 'available' ? $t('objektDetail.railConnectionAvailable') : $t('objektDetail.railConnectionNotDetected') }}</dd>
+                    <dd v-if="locationMobility.nationalRailStationName" class="text-xs text-muted-foreground">{{ placeDisplayName(locationMobility.nationalRailStationName) }}</dd>
+                  </div>
                   <div v-if="locationMobility.ferryAccessLikely">
                     <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.ferryAccess') }}</dt>
                     <dd class="font-medium">

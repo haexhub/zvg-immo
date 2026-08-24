@@ -38,7 +38,7 @@ describe('buildLocationContext', () => {
     const context = buildLocationContext({ lat: 52, lng: 13 }, [
       { type: 'node', id: 1, lat: 52.01, lon: 13.01, tags: { place: 'town', name: 'Musterstadt', population: '25000' } },
       { type: 'node', id: 2, lat: 52.001, lon: 13.001, tags: { highway: 'bus_stop', name: 'Am Markt' } },
-      { type: 'node', id: 3, lat: 52.002, lon: 13.002, tags: { railway: 'station', name: 'Musterstadt Bahnhof' } },
+      { type: 'node', id: 3, lat: 52.002, lon: 13.002, tags: { railway: 'station', name: 'Musterstadt Bahnhof', network: 'DB Fernverkehr', ref: 'ICE 42' } },
       { type: 'way', id: 4, center: { lat: 52.003, lon: 13.003 }, tags: { highway: 'primary', name: 'B 1' } },
       { type: 'way', id: 5, center: { lat: 52.0005, lon: 13.0005 }, tags: { building: 'house' } },
       { type: 'node', id: 6, lat: 52.0006, lon: 13.0006, tags: { amenity: 'school' } },
@@ -64,6 +64,10 @@ describe('buildLocationContext', () => {
       population: 25_000,
     })
     expect(context.mobility.publicTransportLevel).toBe('excellent')
+    expect(context.mobility.regionalRailConnection).toBe('available')
+    expect(context.mobility.regionalRailStationName).toBe('Musterstadt Bahnhof')
+    expect(context.mobility.nationalRailConnection).toBe('available')
+    expect(context.mobility.nationalRailStationName).toBe('Musterstadt Bahnhof')
     expect(context.mobility.roadAccessLevel).toBe('major')
     expect(context.amenities.find((item) => item.kind === 'groceries')).toMatchObject({
       countWithin1000m: 1,
@@ -171,6 +175,18 @@ describe('buildLocationContext', () => {
 
     expect(context.mobility.roadAccessLevel).toBe('local')
   })
+
+  it('does not treat a tram stop or an untagged railway station as confirmed long-distance service', () => {
+    const context = buildLocationContext({ lat: 52, lng: 13 }, [
+      { type: 'node', id: 1, lat: 52.002, lon: 13, tags: { railway: 'tram_stop', name: 'Markt' } },
+      { type: 'node', id: 2, lat: 52.01, lon: 13, tags: { railway: 'station', name: 'Regionalbahnhof' } },
+    ], '2026-07-26T00:00:00.000Z')
+
+    expect(context.mobility.regionalRailConnection).toBe('available')
+    expect(context.mobility.regionalRailStationName).toBe('Regionalbahnhof')
+    expect(context.mobility.nationalRailConnection).toBe('not_detected')
+    expect(context.mobility.nationalRailStationName).toBeNull()
+  })
 })
 
 interface LocalOsmRow {
@@ -186,7 +202,11 @@ interface LocalOsmRow {
  *  looked up by `tagKey` + `values` (the same params queryCategory sends),
  *  not by parsing SQL, since the query text itself isn't under test here —
  *  that's exercised implicitly by getting the right rows back. */
-function fakeOsmPool(options: { covered?: boolean; rowsByTag?: Record<string, LocalOsmRow[]> } = {}) {
+function fakeOsmPool(options: {
+  covered?: boolean
+  rowsByTag?: Record<string, LocalOsmRow[]>
+  longDistanceRouteStationRows?: LocalOsmRow[]
+} = {}) {
   const calls: Array<{ sql: string; params: unknown[] }> = []
   const covered = options.covered ?? true
   const rowsByTag = options.rowsByTag ?? {}
@@ -196,6 +216,9 @@ function fakeOsmPool(options: { covered?: boolean; rowsByTag?: Record<string, Lo
     const tagKey = params[4] as string
     const values = params[5] as string[] | undefined
     const key = `${tagKey}:${values ? JSON.stringify(values) : ''}`
+    if (sql.includes("immo:long_distance_train_route") && options.longDistanceRouteStationRows) {
+      return { rows: options.longDistanceRouteStationRows }
+    }
     return { rows: rowsByTag[key] ?? [] }
   }
   return { pool: { query } as unknown as Pool, calls }
@@ -256,6 +279,30 @@ describe('createLocalOsmLocationContextAdapter', () => {
     const context = await adapter.context(auction())
 
     expect(context?.neighborhood.notes).toContainEqual({ code: 'building_count_500m', params: { count: 1 } })
+  })
+
+  it('maps an explicitly tagged long-distance train route to its nearby station', async () => {
+    const station: LocalOsmRow = {
+      osm_type: 'node',
+      osm_id: '42',
+      lat: 52.01,
+      lon: 13,
+      // Simulates the station tags after queryCategory found a nearby
+      // type=route + route=train + service=high_speed relation.
+      tags: { railway: 'station', name: 'Fernbahnhof', 'immo:long_distance_train_route': 'yes' },
+    }
+    const { pool, calls } = fakeOsmPool({ longDistanceRouteStationRows: [station] })
+    const adapter = createLocalOsmLocationContextAdapter({ db: pool, checkedAt: '2026-07-26T00:00:00.000Z' })
+
+    const context = await adapter.context(auction())
+
+    expect(context?.mobility.regionalRailConnection).toBe('available')
+    expect(context?.mobility.nationalRailConnection).toBe('available')
+    expect(context?.mobility.nationalRailStationName).toBe('Fernbahnhof')
+    const railCall = calls.find((call) => call.params[4] === 'railway')
+    expect(railCall?.sql).toContain("train_route.tags ->> 'type' = 'route'")
+    expect(railCall?.sql).toContain("train_route.tags ->> 'route' = 'train'")
+    expect(railCall?.sql).toContain("train_route.tags ->> 'service' IN ('long_distance', 'high_speed', 'national', 'international')")
   })
 
   it('returns null for a country with no imported data instead of an empty context', async () => {
