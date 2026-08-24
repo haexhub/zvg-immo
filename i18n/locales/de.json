@@ -125,11 +125,42 @@
     "logoutAdminError": "Abmelden fehlgeschlagen.",
     "sections": {
       "status": "Status",
+      "operations": "Betrieb & Fehler",
       "pipeline": "Crawling & Anreicherung",
       "llm": "KI / LLM",
       "admin": "Verwaltung"
     },
     "sessionExpired": "Sitzung abgelaufen.",
+    "operations": {
+      "title": "Betriebszustand",
+      "description": "Start- und Migrationsstatus der Anwendung sowie der unabhängige Host-Reporter.",
+      "refresh": "Status aktualisieren",
+      "loadError": "Betriebsstatus konnte nicht geladen werden.",
+      "app": "Anwendung",
+      "migration": "Datenbank-Migration",
+      "host": "Host / Container",
+      "database": "PostgreSQL",
+      "startedAt": "Letzter Start",
+      "restarts15m": "Starts in 15 Minuten",
+      "migrationUpdated": "Letzte Änderung",
+      "hostReportedAt": "Letzter Host-Report",
+      "serviceState": "Service-Zustand",
+      "restartCount": "Systemd-Neustarts",
+      "exitCode": "Letzter Exit-Code",
+      "sharedMemory": "Gemeinsamer Speicher (/dev/shm)",
+      "recentFailures": "Aktuelle Fehlerhinweise",
+      "noFailures": "Keine aktuellen Fehlerhinweise.",
+      "unavailable": "Noch nicht verfügbar — der Host-Reporter ist nicht installiert oder hat noch keinen Bericht geschrieben.",
+      "stale": "Der Host-Report ist älter als fünf Minuten.",
+      "status": {
+        "pending": "Ausstehend",
+        "running": "Läuft",
+        "ready": "Erfolgreich",
+        "failed": "Fehlgeschlagen",
+        "healthy": "In Ordnung",
+        "attention": "Prüfen"
+      }
+    },
     "messageDetails": {
       "show": "{count} Einträge anzeigen",
       "hide": "Einträge ausblenden"
