@@ -9,8 +9,9 @@ import { ALL_SCOPE } from '~/lib/auction-constants'
 import { CONDITIONS } from '~/lib/condition'
 import { FEATURES } from '~/lib/features'
 
-defineProps<{
+const props = defineProps<{
   categories: Array<{ id: string; label: string; count: number }>
+  platforms: Array<{ id: string; name: string }>
   currency: string
 }>()
 
@@ -25,6 +26,7 @@ const yearBuiltMax = defineModel<number | null>('yearBuiltMax', { required: true
 const renovationYearMin = defineModel<number | null>('renovationYearMin', { required: true })
 const renovationYearMax = defineModel<number | null>('renovationYearMax', { required: true })
 const categoryFilter = defineModel<string>('categoryFilter', { required: true })
+const platformFilter = defineModel<string[]>('platformFilter', { required: true })
 const conditionFilter = defineModel<string[]>('conditionFilter', { required: true })
 const featuresFilter = defineModel<string[]>('featuresFilter', { required: true })
 const onlyWithPhotos = defineModel<boolean>('onlyWithPhotos', { required: true })
@@ -58,6 +60,7 @@ function setPriceBucket(min: number | null, max: number | null): void {
 
 const conditionOptions = computed(() => CONDITIONS.map((c) => ({ value: c, label: conditionLabel(c) })))
 const featureOptions = computed(() => FEATURES.map((f) => ({ value: f, label: featureLabel(f) })))
+const platformOptions = computed(() => props.platforms.map((p) => ({ value: p.id, label: p.name })))
 </script>
 
 <template>
@@ -130,6 +133,11 @@ const featureOptions = computed(() => FEATURES.map((f) => ({ value: f, label: fe
             </SelectItem>
           </SelectContent>
         </Select>
+      </div>
+
+      <div v-if="platforms.length" class="space-y-2">
+        <Label>{{ $t('filters.platform') }}</Label>
+        <SearchFilterMultiSelect v-model="platformFilter" :options="platformOptions" :placeholder="$t('filters.allPlatforms')" />
       </div>
 
       <div class="space-y-2">

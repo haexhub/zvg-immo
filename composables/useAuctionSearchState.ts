@@ -64,6 +64,7 @@ export function useAuctionSearchState(options: {
   const nearLng = ref<number | null>(initialFilters.nearLng)
   const nearRadius = ref<number | null>(initialFilters.nearRadius)
   const categoryFilter = ref<string>(initialFilters.category)
+  const platformFilter = ref<string[]>(initialFilters.platform)
   const conditionFilter = ref<string[]>(initialFilters.condition)
   const featuresFilter = ref<string[]>(initialFilters.features)
   const onlyWithPhotos = ref(initialFilters.onlyWithPhotos)
@@ -151,7 +152,7 @@ export function useAuctionSearchState(options: {
       nearMountain: nearMountain.value, nearAirport: nearAirport.value, nearSki: nearSki.value,
       nearSkiDownhill: nearSkiDownhill.value, nearSkiNordic: nearSkiNordic.value,
       urbanRural: urbanRural.value, nearLat: nearLat.value, nearLng: nearLng.value, nearRadius: nearRadius.value,
-      category: categoryFilter.value, condition: conditionFilter.value, features: featuresFilter.value,
+      category: categoryFilter.value, platform: platformFilter.value, condition: conditionFilter.value, features: featuresFilter.value,
       onlyWithPhotos: onlyWithPhotos.value, includeCancelled: includeCancelled.value,
       hideRulesOnly: hideRulesOnly.value, sortBy: sortBy.value,
     }
@@ -167,7 +168,7 @@ export function useAuctionSearchState(options: {
     nearMountain.value = filters.nearMountain; nearAirport.value = filters.nearAirport; nearSki.value = filters.nearSki
     nearSkiDownhill.value = filters.nearSkiDownhill; nearSkiNordic.value = filters.nearSkiNordic
     urbanRural.value = filters.urbanRural; nearLat.value = filters.nearLat; nearLng.value = filters.nearLng; nearRadius.value = filters.nearRadius
-    categoryFilter.value = filters.category; conditionFilter.value = filters.condition; featuresFilter.value = filters.features
+    categoryFilter.value = filters.category; platformFilter.value = filters.platform; conditionFilter.value = filters.condition; featuresFilter.value = filters.features
     onlyWithPhotos.value = filters.onlyWithPhotos; includeCancelled.value = filters.includeCancelled
     hideRulesOnly.value = filters.hideRulesOnly; sortBy.value = filters.sortBy
   }
@@ -244,6 +245,7 @@ export function useAuctionSearchState(options: {
       if (sameCountries && sameRegions) return
       authorityFilter.value = ALL_SCOPE
       categoryFilter.value = ALL_SCOPE
+      platformFilter.value = []
     },
   )
 
@@ -253,7 +255,7 @@ export function useAuctionSearchState(options: {
   })
 
   watch(
-    [selectedCountries, selectedRegionKeys, debouncedSearch, authorityFilter, priceMin, priceMax, landAreaMin, landAreaMax, livingAreaMin, livingAreaMax, yearBuiltMin, yearBuiltMax, renovationYearMin, renovationYearMax, nearSea, nearLake, nearRiver, nearMountain, nearAirport, nearSki, nearSkiDownhill, nearSkiNordic, urbanRural, nearLat, nearLng, nearRadius, categoryFilter, conditionFilter, featuresFilter, onlyWithPhotos, includeCancelled, hideRulesOnly, sortBy, view, mapLat, mapLng, mapZoom],
+    [selectedCountries, selectedRegionKeys, debouncedSearch, authorityFilter, priceMin, priceMax, landAreaMin, landAreaMax, livingAreaMin, livingAreaMax, yearBuiltMin, yearBuiltMax, renovationYearMin, renovationYearMax, nearSea, nearLake, nearRiver, nearMountain, nearAirport, nearSki, nearSkiDownhill, nearSkiNordic, urbanRural, nearLat, nearLng, nearRadius, categoryFilter, platformFilter, conditionFilter, featuresFilter, onlyWithPhotos, includeCancelled, hideRulesOnly, sortBy, view, mapLat, mapLng, mapZoom],
     () => {
       const query = serializeAuctionSearchFilters(currentFilters(debouncedSearch.value), options.hideRulesOnlyServerDefault.value)
       if (view.value === 'map' && !mapViewImpliedByCountryQuery.value) query.view = 'map'
@@ -324,6 +326,7 @@ export function useAuctionSearchState(options: {
     nearLng,
     nearRadius,
     categoryFilter,
+    platformFilter,
     conditionFilter,
     featuresFilter,
     onlyWithPhotos,

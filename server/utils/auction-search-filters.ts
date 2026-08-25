@@ -89,6 +89,7 @@ export async function buildAuctionSearchFilter(
   if (authority && authority !== 'all') where.push(`a.authority = ${add(authority)}`)
   const category = filters.category
   if (category && category !== 'all') where.push(`d.property_type = ${add(category)}`)
+  if (filters.platform.length) where.push(`a.platform = ANY(${add(filters.platform)}::text[])`)
   // Comma-list (not a single exact match) so the landing page's "best
   // maintained" rail can ask for multiple condition tiers at once
   // (neuwertig,gepflegt) — pages/search.vue's single-select UI still works

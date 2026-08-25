@@ -60,7 +60,7 @@ const {
   search, selectedCountries, selectedRegionKeys, availableRegions, headerLabel,
   priceMin, priceMax, landAreaMin, landAreaMax, livingAreaMin, livingAreaMax,
   yearBuiltMin, yearBuiltMax, renovationYearMin, renovationYearMax,
-  authorityFilter, categoryFilter, conditionFilter, featuresFilter,
+  authorityFilter, categoryFilter, platformFilter, conditionFilter, featuresFilter,
   onlyWithPhotos, includeCancelled, hideRulesOnly,
   nearSea, nearLake, nearRiver, nearMountain, nearAirport, nearSkiDownhill, nearSkiNordic, urbanRural,
   nearLat, nearLng, nearRadius, sortBy,
@@ -102,6 +102,7 @@ onMounted(() => {
             v-model:renovation-year-max="renovationYearMax"
             v-model:authority-filter="authorityFilter"
             v-model:category-filter="categoryFilter"
+            v-model:platform-filter="platformFilter"
             v-model:condition-filter="conditionFilter"
             v-model:features-filter="featuresFilter"
             v-model:only-with-photos="onlyWithPhotos"

@@ -74,6 +74,21 @@ describe('buildAuctionSearchFilter', () => {
     expect(predicate).not.toContain(`d.extraction_source = 'llm'`)
   })
 
+  it('adds a platform equality clause for a set Herkunft filter', async () => {
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+    const { predicate, values } = await buildAuctionSearchFilter(db, { platform: 'zvg-portal,dga-ag', llmOnly: '0' })
+
+    expect(predicate).toContain('a.platform = ANY(')
+    expect(values).toContainEqual(['zvg-portal', 'dga-ag'])
+  })
+
+  it('omits the platform clause when no origin is selected', async () => {
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+    const { predicate } = await buildAuctionSearchFilter(db, { llmOnly: '0' })
+
+    expect(predicate).not.toContain('a.platform = ANY(')
+  })
+
   it('treats an empty numeric parameter as unset instead of 0', async () => {
     const { buildAuctionSearchFilter } = await import('./auction-search-filters')
     const { predicate } = await buildAuctionSearchFilter(db, { priceMin: '', llmOnly: '0' })

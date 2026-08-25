@@ -73,6 +73,7 @@ export function filterAuctions<T extends Auction>(items: T[], filters: AuctionFi
     if (!filters.includeCancelled && a.cancelled) return false
     if (filters.authority !== 'all' && a.authority !== filters.authority) return false
     if (filters.category !== 'all' && auctionCategory(a).id !== filters.category) return false
+    if (filters.platform.length > 0 && !filters.platform.includes(a.platform)) return false
     if (filters.condition.length > 0) {
       const c = a.extraction?.condition
       if (c == null || !filters.condition.includes(c)) return false

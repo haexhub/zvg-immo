@@ -846,6 +846,8 @@
     "propertyType": "Property type",
     "propertyTypePlaceholder": "Choose property type",
     "allPropertyTypes": "All property types",
+    "platform": "Origin",
+    "allPlatforms": "All platforms",
     "condition": "Condition",
     "allConditions": "All conditions",
     "features": "Features",
