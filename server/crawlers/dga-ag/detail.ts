@@ -80,6 +80,18 @@ function extractObjectDocumentUrl($: ReturnType<typeof load>): string | null {
   return href ? absoluteUrl(href) : null
 }
 
+/**
+ * Re-fetches the object detail page live and returns a freshly-signed
+ * Objektunterlagen URL — the one stored on the auction at crawl time expires
+ * ~25h later, long before most visitors click the link (see
+ * extractObjectDocumentUrl's comment). Used by the /api/dga-ag-document
+ * redirect endpoint so the link the UI shows never goes stale.
+ */
+export async function fetchFreshObjectDocumentUrl(detailUrl: string): Promise<string | null> {
+  const html = await fetchAuthenticatedDetailHtml(detailUrl)
+  return extractObjectDocumentUrl(load(html))
+}
+
 export async function enrichOne(auction: Auction): Promise<void> {
   const url = auction.detailUrlUpstream ?? auction.detailUrl
   if (!url) return

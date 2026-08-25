@@ -1,15 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Auction } from '~/types/auction'
-import type { enrichOne as EnrichOne } from './detail'
+import type { enrichOne as EnrichOne, fetchFreshObjectDocumentUrl as FetchFreshObjectDocumentUrl } from './detail'
 
 let enrichOne: typeof EnrichOne
+let fetchFreshObjectDocumentUrl: typeof FetchFreshObjectDocumentUrl
 
 // The session module caches its login across calls at module scope
 // (session.ts); resetting modules per test keeps that cache from leaking
 // between tests that configure different credentials/mock responses.
 beforeEach(async () => {
   vi.resetModules()
-  ;({ enrichOne } = await import('./detail'))
+  ;({ enrichOne, fetchFreshObjectDocumentUrl } = await import('./detail'))
 })
 
 function htmlResponse(body: string): Response {
@@ -194,5 +195,37 @@ describe('enrichOne', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3)
     const detailCall = fetchMock.mock.calls[2]!
     expect((detailCall[1]?.headers as Record<string, string>).Cookie).toBe('fe_typo_user=session456')
+  })
+})
+
+describe('fetchFreshObjectDocumentUrl', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('returns the freshly-signed securedl href from a live re-fetch', async () => {
+    vi.stubGlobal('useRuntimeConfig', () => ({ dgaAg: { username: 'user@test.de', password: 'secret' } }))
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes('/login.html') && init?.method === 'POST') {
+        return withSetCookie('<html>Herzlich Willkommen</html>', ['fe_typo_user=session456; path=/'])
+      }
+      if (url.includes('/login.html')) {
+        return withSetCookie(LOGIN_HTML, ['__Secure-typo3nonce_x=nonce123; path=/'])
+      }
+      return htmlResponse(DETAIL_HTML_AUTHENTICATED)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const url = await fetchFreshObjectDocumentUrl(
+      'https://www.dga-ag.de/immobilie-ersteigern/immobilie-suchen-und-finden/objekt/S26-01-001.html',
+    )
+    expect(url).toBe('https://www.dga-ag.de/securedl/sdl-eyJhbGciOiJIUzI1NiJ9.token/S26_01_001.pdf')
+  })
+
+  it('returns null when no credentials are configured', async () => {
+    vi.stubGlobal('useRuntimeConfig', () => ({ dgaAg: { username: '', password: '' } }))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(htmlResponse(DETAIL_HTML_FULL)))
+    const url = await fetchFreshObjectDocumentUrl('https://www.dga-ag.de/objekt/S26-01-001.html')
+    expect(url).toBeNull()
   })
 })

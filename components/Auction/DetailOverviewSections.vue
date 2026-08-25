@@ -185,6 +185,9 @@ function attachmentHref(att: Attachment): string | undefined {
   if (props.auction.platform === 'bg-zapori') {
     return `/api/bg-zapori-document/${encodeURIComponent(props.auction.externalId)}/${encodeURIComponent(att.fileId)}`
   }
+  if (props.auction.platform === 'dga-ag' && att.kind === 'appraisal') {
+    return `/api/dga-ag-document/${encodeURIComponent(props.auction.externalId)}`
+  }
   return safeHref(att.proxyUrl)
 }
 
