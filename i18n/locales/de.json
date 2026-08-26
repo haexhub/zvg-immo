@@ -19,7 +19,8 @@
     "tourismLayerToggle": "Tourismus",
     "tourismLayerOff": "Aus",
     "tourismCategory": {
-      "ski": "Ski",
+      "ski_downhill": "Ski Alpin",
+      "ski_nordic": "Langlauf",
       "hiking": "Wandern & Rad",
       "swimming": "Baden",
       "attraction": "Sehenswürdigkeiten",

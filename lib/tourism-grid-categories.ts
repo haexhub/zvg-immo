@@ -4,25 +4,30 @@
 // writer, reader and frontend, so the category list and the grid's cell size
 // can never drift between them.
 
-export type TourismCategory = 'ski' | 'hiking' | 'swimming' | 'attraction' | 'lodging'
+export type TourismCategory = 'ski_downhill' | 'ski_nordic' | 'hiking' | 'swimming' | 'attraction' | 'lodging'
 
 export interface TourismGridCategoryDef {
   category: TourismCategory
   /** geo_features.kind values aggregated into this category. */
   kinds: string[]
-  // dataviz skill's categorical slots 1-5 (blue/orange/aqua/yellow/magenta),
+  // dataviz skill's categorical slots (blue/violet/orange/aqua/yellow/magenta),
   // fixed order from the validated default palette — do not reorder or
   // cherry-pick by "thematic fit", the order itself is the colorblind-safety
-  // mechanism. Validated (adjacent-pairs, this exact 5-slot subset) at
-  // ΔE 9.1 CVD / 19.6 normal-vision, both above target. All-pairs (i.e. two of
-  // these rendered on the map at once) FAILS the normal-vision floor
-  // (worst pair ΔE 12.9, magenta vs orange) — see Map.client.vue, which
-  // deliberately renders only one category's grid at a time for this reason.
+  // mechanism. ski_downhill/ski_nordic split the former single 'ski' slot;
+  // violet was inserted right after blue (not appended at slot 6/green) so
+  // the two ski entries stay adjacent in the legend list, then re-validated
+  // in that exact order — adjacent-pairs, light mode (the only mode this app
+  // renders; dark mode has no wiring here) — at ΔE 9.1 CVD / 16.3
+  // normal-vision, both above target. All-pairs (i.e. two of these rendered
+  // on the map at once) FAILS the normal-vision floor — see Map.client.vue,
+  // which deliberately renders only one category's grid at a time for this
+  // reason.
   color: string
 }
 
 export const TOURISM_GRID_CATEGORIES: TourismGridCategoryDef[] = [
-  { category: 'ski', kinds: ['ski_area'], color: '#2a78d6' },
+  { category: 'ski_downhill', kinds: ['ski_downhill'], color: '#2a78d6' },
+  { category: 'ski_nordic', kinds: ['ski_nordic'], color: '#4a3aa7' },
   { category: 'hiking', kinds: ['hiking_route', 'mtb_route'], color: '#eb6834' },
   { category: 'swimming', kinds: ['swimming'], color: '#1baf7a' },
   { category: 'attraction', kinds: ['attraction'], color: '#eda100' },

@@ -3,18 +3,21 @@ import type { TourismCategory, TourismGridCategoryDef } from '~/lib/tourism-grid
 
 // Single-select on purpose, not a checkbox-per-category toggle: the
 // palette's colorblind-safety validation (see lib/tourism-grid-categories.ts)
-// only passes for this 5-hue set when at most one is ever rendered on the
+// only passes for this hue set when at most one is ever rendered on the
 // map at once, and overlapping semi-transparent choropleth fills of
 // different hues also just blend into visual mud — so picking a category
 // here replaces whichever was showing, it never adds to it.
 const category = defineModel<TourismCategory | null>('category', { required: true })
+// Owned by Map.client.vue so it can keep this panel and the visitor-density
+// legend's panel mutually exclusive — both are wide enough to overlap (or
+// get clipped by the map's overflow-hidden root) if both were open at once.
+const open = defineModel<boolean>('open', { default: false })
 
 defineProps<{
   categories: TourismGridCategoryDef[]
 }>()
 
 const { t } = useI18n()
-const open = ref(false)
 
 function select(next: TourismCategory): void {
   category.value = category.value === next ? null : next
@@ -22,7 +25,7 @@ function select(next: TourismCategory): void {
 </script>
 
 <template>
-  <div class="absolute bottom-2 left-2 z-10 flex flex-col items-start gap-1">
+  <div class="flex flex-col items-start gap-1">
     <button
       type="button"
       class="cursor-pointer rounded-md border border-slate-900/15 bg-white/95 px-2.5 py-1 text-xs font-semibold text-gray-900 shadow-sm"

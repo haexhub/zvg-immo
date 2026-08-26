@@ -121,7 +121,7 @@ const {
   available: tourismVisitorAvailable,
 } = useTourismVisitorLayer()
 // Mutually exclusive on the map, not because the palettes technically clash
-// (this layer is a single sequential hue, not one of the grid's 5
+// (this layer is a single sequential hue, not one of the grid's
 // categorical ones — see lib/tourism-grid-categories.ts's comment on why
 // *that* constraint is palette-specific), but because two independently
 // colored choropleths of very different granularity stacked on one map are
@@ -129,6 +129,8 @@ const {
 // side by side yet.
 watch(tourismCategory, (v) => { if (v != null) tourismVisitorActive.value = false })
 watch(tourismVisitorActive, (v) => { if (v) tourismCategory.value = null })
+
+const { tourismGridPanelOpen, tourismVisitorPanelOpen } = useTourismLegendPanels()
 
 const MAX_ZOOM = 18
 
@@ -485,11 +487,14 @@ function onPointerMove(evt: any): void {
       </ol-overlay>
     </ol-map>
     <AuctionMapBaseLayerToggle v-model="baseLayer" />
-    <AuctionTourismLegend v-model:category="tourismCategory" :categories="tourismCategories" />
-    <AuctionTourismVisitorLegend
-      v-if="tourismVisitorAvailable !== false"
-      v-model:active="tourismVisitorActive"
-      :breaks="tourismVisitorBreaks"
-    />
+    <div class="absolute bottom-2 left-2 z-10 flex items-start gap-1">
+      <AuctionTourismLegend v-model:category="tourismCategory" v-model:open="tourismGridPanelOpen" :categories="tourismCategories" />
+      <AuctionTourismVisitorLegend
+        v-if="tourismVisitorAvailable !== false"
+        v-model:active="tourismVisitorActive"
+        v-model:open="tourismVisitorPanelOpen"
+        :breaks="tourismVisitorBreaks"
+      />
+    </div>
   </div>
 </template>
