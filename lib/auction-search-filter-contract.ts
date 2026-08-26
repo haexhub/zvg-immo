@@ -37,6 +37,8 @@ export interface AuctionSearchFilters {
   nearLng: number | null
   nearRadius: number | null
   category: string
+  /** Source platform ids (e.g. `zvg-portal`, `dga-ag`, `kronofogden`). */
+  platform: string[]
   condition: string[]
   features: string[]
   onlyWithPhotos: boolean
@@ -52,7 +54,7 @@ export const AUCTION_SEARCH_FILTER_URL_KEYS = [
   'livMin', 'livMax', 'yearBuiltMin', 'yearBuiltMax', 'renovationYearMin',
   'renovationYearMax', 'nearSea', 'nearLake', 'nearRiver', 'nearMountain',
   'nearAirport', 'nearSki', 'nearSkiDownhill', 'nearSkiNordic', 'urbanRural', 'nearLat', 'nearLng', 'nearRadius',
-  'category', 'condition', 'features', 'photos', 'cancelled', 'llmOnly', 'sort',
+  'category', 'platform', 'condition', 'features', 'photos', 'cancelled', 'llmOnly', 'sort',
 ] as const
 
 const NUMBER_KEYS = [
@@ -92,7 +94,7 @@ export function defaultAuctionSearchFilters(hideRulesOnly = false): AuctionSearc
     nearSea: null, nearLake: null, nearRiver: null, nearMountain: null, nearAirport: null, nearSki: null,
     nearSkiDownhill: null, nearSkiNordic: null,
     urbanRural: ALL_SCOPE, nearLat: null, nearLng: null, nearRadius: null,
-    category: ALL_SCOPE, condition: [], features: [], onlyWithPhotos: false,
+    category: ALL_SCOPE, platform: [], condition: [], features: [], onlyWithPhotos: false,
     includeCancelled: false, hideRulesOnly, sortBy: 'default',
   }
 }
@@ -104,6 +106,7 @@ export function parseAuctionSearchFilters(query: SearchFilterQuery, hideRulesOnl
     authority: first(query.authority) || defaults.authority,
     urbanRural: first(query.urbanRural) || defaults.urbanRural,
     category: first(query.category) || defaults.category,
+    platform: commaList(query.platform),
     condition: commaList(query.condition),
     features: commaList(query.features),
     onlyWithPhotos: first(query.photos) === '1', includeCancelled: first(query.cancelled) === '1',
@@ -149,6 +152,7 @@ export function serializeAuctionSearchFilters(
     query.nearRadius = '25'
   }
   if (filters.category !== ALL_SCOPE) query.category = filters.category
+  if (filters.platform.length) query.platform = filters.platform.join(',')
   if (filters.condition.length) query.condition = filters.condition.join(',')
   if (filters.features.length) query.features = filters.features.join(',')
   if (filters.onlyWithPhotos) query.photos = '1'

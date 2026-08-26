@@ -48,6 +48,7 @@ const renovationYearMin = ref<number | null>(null)
 const renovationYearMax = ref<number | null>(null)
 const authorityFilter = ref(ALL_SCOPE)
 const categoryFilter = ref(ALL_SCOPE)
+const platformFilter = ref<string[]>([])
 const conditionFilter = ref<string[]>([])
 const featuresFilter = ref<string[]>([])
 const onlyWithPhotos = ref(false)
@@ -89,9 +90,11 @@ const locationSummary = computed(() => {
 
 function toggleCountry(code: string): void {
   selectedCountries.value = toggleInArray(selectedCountries.value, code)
+  platformFilter.value = []
 }
 function toggleRegion(key: string): void {
   selectedRegionKeys.value = toggleInArray(selectedRegionKeys.value, key)
+  platformFilter.value = []
 }
 function setNearby(lat: number, lng: number): void {
   nearLat.value = lat
@@ -136,6 +139,7 @@ function submitSearch(): void {
     query.nearRadius = String(nearRadius.value ?? 25)
   }
   if (!isAllScope(categoryFilter.value)) query.category = categoryFilter.value
+  if (platformFilter.value.length) query.platform = platformFilter.value.join(',')
   if (conditionFilter.value.length) query.condition = conditionFilter.value.join(',')
   if (featuresFilter.value.length) query.features = featuresFilter.value.join(',')
   if (onlyWithPhotos.value) query.photos = '1'
@@ -172,6 +176,7 @@ function pickRecent(query: Record<string, string>): void {
             v-model:renovation-year-max="renovationYearMax"
             v-model:authority-filter="authorityFilter"
             v-model:category-filter="categoryFilter"
+            v-model:platform-filter="platformFilter"
             v-model:condition-filter="conditionFilter"
             v-model:features-filter="featuresFilter"
             v-model:only-with-photos="onlyWithPhotos"

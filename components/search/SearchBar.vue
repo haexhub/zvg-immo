@@ -40,6 +40,7 @@ const renovationYearMin = defineModel<number | null>('renovationYearMin', { requ
 const renovationYearMax = defineModel<number | null>('renovationYearMax', { required: true })
 const authorityFilter = defineModel<string>('authorityFilter', { required: true })
 const categoryFilter = defineModel<string>('categoryFilter', { required: true })
+const platformFilter = defineModel<string[]>('platformFilter', { required: true })
 const conditionFilter = defineModel<string[]>('conditionFilter', { required: true })
 const featuresFilter = defineModel<string[]>('featuresFilter', { required: true })
 const onlyWithPhotos = defineModel<boolean>('onlyWithPhotos', { required: true })
@@ -79,9 +80,25 @@ function handleSetNearby(lat: number, lng: number): void {
 // selection, for the compact button. It tracks the same two inputs this reads.
 const locationHasValue = computed(() => props.selectedCountries.length > 0 || search.value.trim().length > 0)
 
+// Every registered platform, deduped by id — the same registry data already
+// reaches this component for the region picker, so the origin filter needs
+// no extra fetch of its own.
+const platformOptions = computed(() => {
+  const byId = new Map<string, string>()
+  for (const country of props.countries) {
+    for (const region of country.regions) {
+      for (const platform of region.platforms) byId.set(platform.id, platform.name)
+    }
+  }
+  return [...byId.entries()]
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+})
+
 const propertiesSummary = computed(() => {
   let n = 0
   if (authorityFilter.value !== ALL_SCOPE) n++
+  if (platformFilter.value.length) n++
   if (priceMin.value != null) n++
   if (priceMax.value != null) n++
   if (landAreaMin.value != null) n++
@@ -164,12 +181,14 @@ const environmentSummary = computed(() => {
         v-model:renovation-year-min="renovationYearMin"
         v-model:renovation-year-max="renovationYearMax"
         v-model:category-filter="categoryFilter"
+        v-model:platform-filter="platformFilter"
         v-model:condition-filter="conditionFilter"
         v-model:features-filter="featuresFilter"
         v-model:only-with-photos="onlyWithPhotos"
         v-model:include-cancelled="includeCancelled"
         v-model:hide-rules-only="hideRulesOnly"
         :categories="categories"
+        :platforms="platformOptions"
         :currency="currency"
       />
     </SearchBarSegment>

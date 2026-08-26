@@ -16,6 +16,7 @@ describe('auction search filter contract', () => {
       nearSea: '5', nearLake: '6', nearRiver: '7', nearMountain: '8', nearAirport: '9', nearSki: '10',
       nearSkiDownhill: '11', nearSkiNordic: '12',
       urbanRural: 'rural', nearLat: '52.5', nearLng: '13.4', nearRadius: '25', category: 'haus',
+      platform: 'zvg-portal,dga-ag',
       condition: 'gepflegt,neuwertig', features: 'balkon,garage', photos: '1', cancelled: '1', llmOnly: '0', sort: 'priceAsc',
     }
     expect(serializeAuctionSearchFilters(parseAuctionSearchFilters(query, true), true)).toEqual(query)

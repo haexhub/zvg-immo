@@ -846,6 +846,8 @@
     "propertyType": "Objektart",
     "propertyTypePlaceholder": "Objektart wählen",
     "allPropertyTypes": "Alle Objektarten",
+    "platform": "Herkunft",
+    "allPlatforms": "Alle Plattformen",
     "condition": "Zustand",
     "allConditions": "Alle Zustände",
     "features": "Ausstattung",

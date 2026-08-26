@@ -125,6 +125,16 @@ describe('filterAuctions', () => {
     expect(result.map((a) => a.externalId)).toEqual(['2'])
   })
 
+  it('filters by the selected set of source platforms', () => {
+    const items = [
+      makeAuction({ externalId: '1', platform: 'zvg-portal' }),
+      makeAuction({ externalId: '2', platform: 'dga-ag' }),
+      makeAuction({ externalId: '3', platform: 'kronofogden' }),
+    ]
+    const result = filterAuctions(items, { ...BASE_FILTERS, platform: ['zvg-portal', 'dga-ag'] })
+    expect(result.map((a) => a.externalId)).toEqual(['1', '2'])
+  })
+
   it('filters onlyWithPhotos', () => {
     const items = [
       makeAuction({ externalId: '1', photoCount: 0 }),
