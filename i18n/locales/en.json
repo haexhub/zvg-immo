@@ -19,7 +19,8 @@
     "tourismLayerToggle": "Tourism",
     "tourismLayerOff": "Off",
     "tourismCategory": {
-      "ski": "Ski",
+      "ski_downhill": "Downhill skiing",
+      "ski_nordic": "Cross-country skiing",
       "hiking": "Hiking & cycling",
       "swimming": "Swimming",
       "attraction": "Sights",

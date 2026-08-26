@@ -53,19 +53,19 @@ async function seedGeoFeature(
 }
 
 async function seedFixture(client: PoolClient): Promise<void> {
-  // One large ski_area polygon (osm_id below), stored as three
+  // One large ski_downhill polygon (osm_id below), stored as three
   // ST_Subdivide-style fragments: two centroids inside Cell A, one inside
   // Cell B — proves both halves of the dedup requirement at once: multiple
   // fragments of the SAME feature within one cell must count once, and a
   // feature spanning two cells must still light up both.
   const bigSkiAreaId = freshOsmId()
-  await seedGeoFeature(client, 'ski_area', bigSkiAreaId, 101_000, 201_000) // Cell A
-  await seedGeoFeature(client, 'ski_area', bigSkiAreaId, 102_000, 202_000) // Cell A (same feature)
-  await seedGeoFeature(client, 'ski_area', bigSkiAreaId, 501_000, 501_000) // Cell B (same feature)
+  await seedGeoFeature(client, 'ski_downhill', bigSkiAreaId, 101_000, 201_000) // Cell A
+  await seedGeoFeature(client, 'ski_downhill', bigSkiAreaId, 102_000, 202_000) // Cell A (same feature)
+  await seedGeoFeature(client, 'ski_downhill', bigSkiAreaId, 501_000, 501_000) // Cell B (same feature)
 
-  // A second, distinct ski_area feature also in Cell A — must be counted
+  // A second, distinct ski_downhill feature also in Cell A — must be counted
   // separately from the big polygon above, not collapsed into it.
-  await seedGeoFeature(client, 'ski_area', freshOsmId(), 105_000, 205_000) // Cell A
+  await seedGeoFeature(client, 'ski_downhill', freshOsmId(), 105_000, 205_000) // Cell A
 
   // hiking_route in Cell A — proves category isolation: must not leak into
   // ski's count for the same cell.
@@ -135,18 +135,18 @@ describeDb('buildTourismGrid (real Postgres)', () => {
     const client = await pool.connect()
     try {
       const result = await buildTourismGrid(drizzle(client), new AbortController().signal)
-      expect(result.perCategory.ski).toBeGreaterThanOrEqual(2) // at least our Cell A + Cell B rows
+      expect(result.perCategory.ski_downhill).toBeGreaterThanOrEqual(2) // at least our Cell A + Cell B rows
       expect(result.perCategory.hiking).toBeGreaterThanOrEqual(1)
 
       const rows = await readGrid(pool)
       const cellA = (category: string) => rows.find((r) => r.cell_x === 10 && r.cell_y === 20 && r.category === category)
       const cellB = (category: string) => rows.find((r) => r.cell_x === 50 && r.cell_y === 50 && r.category === category)
 
-      // Two distinct ski_area features in Cell A (the big polygon's two
+      // Two distinct ski_downhill features in Cell A (the big polygon's two
       // fragments count once, plus the separate one) — not three or four.
-      expect(cellA('ski')?.count).toBe(2)
+      expect(cellA('ski_downhill')?.count).toBe(2)
       // The big polygon's third fragment, alone in Cell B.
-      expect(cellB('ski')?.count).toBe(1)
+      expect(cellB('ski_downhill')?.count).toBe(1)
       // hiking_route counted under its own category, unaffected by ski's count.
       expect(cellA('hiking')?.count).toBe(1)
       // 'sea' maps to no category — must not surface anywhere.

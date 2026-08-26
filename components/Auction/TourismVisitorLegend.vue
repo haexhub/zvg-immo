@@ -7,6 +7,10 @@ import { TOURISM_NUTS_BIN_COLORS, TOURISM_NUTS_NO_DATA_COLOR } from '~/lib/touri
 // TourismLegend's model) — see Map.client.vue's watch pair for why the two
 // layers are exclusive on the map despite living in separate components.
 const active = defineModel<boolean>('active', { required: true })
+// Owned by Map.client.vue so it can keep this panel and the tourism-grid
+// legend's panel mutually exclusive — see TourismLegend.vue's `open` model
+// for why.
+const open = defineModel<boolean>('open', { default: false })
 
 const props = defineProps<{
   breaks: number[]
@@ -14,7 +18,21 @@ const props = defineProps<{
 
 const { t } = useI18n()
 const intlLocale = useIntlLocale()
-const open = ref(false)
+
+// This legend has exactly one metric — unlike the category picker next to
+// it, there's nothing to choose once opened, so opening it is the same
+// action as turning the layer on. Without this, opening the panel alone
+// (its most obvious first click) left the layer off and the map unchanged.
+function toggleOpen(): void {
+  // Read once into a local before writing: `open` is a defineModel ref bound
+  // to a parent computed (for panel-exclusivity), and re-reading `open.value`
+  // immediately after assigning it can still observe the pre-update value
+  // until the parent's computed round-trips — the local capture avoids
+  // depending on that timing.
+  const next = !open.value
+  open.value = next
+  if (next) active.value = true
+}
 
 function formatValue(n: number): string {
   return n.toLocaleString(intlLocale.value, { maximumFractionDigits: 0 })
@@ -38,13 +56,13 @@ const bins = computed(() => TOURISM_NUTS_BIN_COLORS.map((color, index) => {
 </script>
 
 <template>
-  <div class="absolute bottom-2 left-32 z-10 flex flex-col items-start gap-1">
+  <div class="flex flex-col items-start gap-1">
     <button
       type="button"
       class="cursor-pointer rounded-md border border-slate-900/15 bg-white/95 px-2.5 py-1 text-xs font-semibold text-gray-900 shadow-sm"
       :aria-expanded="open"
       aria-controls="tourism-visitor-legend-panel"
-      @click="open = !open"
+      @click="toggleOpen"
     >
       {{ t('map.tourismVisitorToggle') }}
     </button>
