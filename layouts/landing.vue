@@ -90,9 +90,11 @@ const locationSummary = computed(() => {
 
 function toggleCountry(code: string): void {
   selectedCountries.value = toggleInArray(selectedCountries.value, code)
+  platformFilter.value = []
 }
 function toggleRegion(key: string): void {
   selectedRegionKeys.value = toggleInArray(selectedRegionKeys.value, key)
+  platformFilter.value = []
 }
 function setNearby(lat: number, lng: number): void {
   nearLat.value = lat

@@ -73,6 +73,7 @@ export function useAuctionSearchState(options: {
   const view = ref<'list' | 'map'>('list')
   const mapViewImpliedByCountryQuery = ref(false)
   let applyingImplicitMapView = false
+  let applyingRouteFilters = false
 
   // The map's own viewport (center/zoom), not a filter — round-tripped through
   // the URL alongside the filters below so a shared link or a back-navigation
@@ -243,6 +244,7 @@ export function useAuctionSearchState(options: {
       const sameCountries = countries.join(',') === (prevCountries ?? []).join(',')
       const sameRegions = regions.join(',') === (prevRegions ?? []).join(',')
       if (sameCountries && sameRegions) return
+      if (applyingRouteFilters) return
       authorityFilter.value = ALL_SCOPE
       categoryFilter.value = ALL_SCOPE
       platformFilter.value = []
@@ -270,7 +272,11 @@ export function useAuctionSearchState(options: {
 
   watch(() => route.query, (q) => {
     const hadCountrySelection = selectedCountries.value.length > 0
+    applyingRouteFilters = true
     applyFilters(parseAuctionSearchFilters(q, options.hideRulesOnlyServerDefault.value))
+    void nextTick(() => {
+      applyingRouteFilters = false
+    })
     mapLat.value = finiteNumber(q.mapLat)
     mapLng.value = finiteNumber(q.mapLng)
     mapZoom.value = finiteNumber(q.mapZoom)
