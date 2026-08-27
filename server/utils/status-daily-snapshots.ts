@@ -94,7 +94,7 @@ export async function readDailyStatusSnapshots(days = 14): Promise<DailyStatusSn
   const db = getPool()
   if (!db) return []
   const { rows } = await db.query<{
-    snapshot_date: string; country: string; kind: DailySnapshotKind; target_lang: string
+    snapshot_date: Date | string; country: string; kind: DailySnapshotKind; target_lang: string
     done: number; pending: number; open: number; error: number; total: number; captured_at: Date | string
   }>(
     `SELECT snapshot_date, country, kind, target_lang, done, pending, open, error, total, captured_at
@@ -104,7 +104,11 @@ export async function readDailyStatusSnapshots(days = 14): Promise<DailyStatusSn
     [days],
   )
   return rows.map((row) => ({
-    snapshotDate: row.snapshot_date,
+    // node-postgres parses `date` columns into a JS Date (UTC midnight), not the
+    // 'YYYY-MM-DD' string the type below promises — left as a Date, JSON
+    // serializes it to a full ISO timestamp, and the frontend's `${day}T12:00:00Z`
+    // parsing then throws RangeError: Invalid time value on the doubled suffix.
+    snapshotDate: row.snapshot_date instanceof Date ? row.snapshot_date.toISOString().slice(0, 10) : row.snapshot_date,
     country: row.country,
     kind: row.kind,
     targetLang: row.target_lang || null,
