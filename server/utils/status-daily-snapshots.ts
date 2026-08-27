@@ -35,6 +35,16 @@ function berlinDay(now = new Date()): string {
   return `${part('year')}-${part('month')}-${part('day')}`
 }
 
+// node-postgres builds a `date` column's Date from local (not UTC) fields —
+// read it back with the matching local getters so the calendar day survives
+// regardless of the process's own timezone.
+function formatLocalDate(date: Date): string {
+  const year = String(date.getFullYear()).padStart(4, '0')
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 function llmCounts(records: Awaited<ReturnType<typeof readAuctionRecords>>): Record<string, Counts> {
   const out: Record<string, Counts> = {}
   for (const record of records) {
@@ -94,7 +104,7 @@ export async function readDailyStatusSnapshots(days = 14): Promise<DailyStatusSn
   const db = getPool()
   if (!db) return []
   const { rows } = await db.query<{
-    snapshot_date: string; country: string; kind: DailySnapshotKind; target_lang: string
+    snapshot_date: Date | string; country: string; kind: DailySnapshotKind; target_lang: string
     done: number; pending: number; open: number; error: number; total: number; captured_at: Date | string
   }>(
     `SELECT snapshot_date, country, kind, target_lang, done, pending, open, error, total, captured_at
@@ -104,7 +114,12 @@ export async function readDailyStatusSnapshots(days = 14): Promise<DailyStatusSn
     [days],
   )
   return rows.map((row) => ({
-    snapshotDate: row.snapshot_date,
+    // node-postgres parses `date` columns into a JS Date built from LOCAL
+    // date fields (see postgres-date's getDate()), not the 'YYYY-MM-DD'
+    // string the type below promises. Reading it back with UTC getters (or
+    // toISOString()) shifts the day whenever the process runs in a positive
+    // UTC offset; local getters reverse the exact same construction.
+    snapshotDate: row.snapshot_date instanceof Date ? formatLocalDate(row.snapshot_date) : row.snapshot_date,
     country: row.country,
     kind: row.kind,
     targetLang: row.target_lang || null,
