@@ -107,7 +107,7 @@ async function loadHandler(query: Record<string, string> = { lang: 'de' }) {
     trustForwardedFor: '0',
     extractLlm: { provider: 'openai-compatible', baseUrl: 'https://api.example', model: 'gpt' },
   }))
-  vi.stubGlobal('createError', (input: { statusCode: number, statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
+  vi.stubGlobal('createError', (input: { statusCode: number, statusMessage?: string, message?: string }) => Object.assign(new Error(input.message ?? input.statusMessage), input))
 
   const { readAuctionRecord } = await import('~/server/utils/auction-record')
   const { getPool } = await import('~/server/utils/db')
@@ -341,7 +341,7 @@ describe('/api/auction/:platform/:id/translation', () => {
       node: { req: { socket: { remoteAddress: '127.0.0.1' } } },
     }).catch((cause: unknown) => cause)
 
-    expect(error).toMatchObject({ statusCode: 502, statusMessage: 'Übersetzung fehlgeschlagen.' })
+    expect(error).toMatchObject({ statusCode: 502, message: 'Übersetzung fehlgeschlagen.' })
     expect(JSON.stringify(error)).not.toContain('Provider nicht erreichbar')
 
     expect(claimAuctionTranslation).not.toHaveBeenCalled()
@@ -374,7 +374,7 @@ describe('/api/auction/:platform/:id/translation', () => {
       node: { req: { socket: { remoteAddress: '127.0.0.1' } } },
     }).catch((cause: unknown) => cause)
 
-    expect(error).toMatchObject({ statusCode: 502, statusMessage: 'Übersetzung fehlgeschlagen.' })
+    expect(error).toMatchObject({ statusCode: 502, message: 'Übersetzung fehlgeschlagen.' })
     expect(JSON.stringify(error)).not.toContain('Provider nicht erreichbar')
 
     expect(claimAuctionTranslation).not.toHaveBeenCalled()
