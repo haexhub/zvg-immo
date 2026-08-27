@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
@@ -187,7 +188,12 @@ async function readHostRestartState(): Promise<HostRestartState> {
 async function writeHostRestartState(state: HostRestartState): Promise<void> {
   try {
     await mkdir(dirname(HOST_RESTART_STATE_PATH), { recursive: true })
-    const temporaryPath = `${HOST_RESTART_STATE_PATH}.${process.pid}.tmp`
+    // Unlike app-runtime.json (written rarely, on boot/migration events),
+    // this is written on every /api/settings/operations poll — a pid-only
+    // temp suffix can collide between two concurrent requests in the same
+    // process (e.g. two open admin tabs), so this also mixes in a random
+    // component per write.
+    const temporaryPath = `${HOST_RESTART_STATE_PATH}.${process.pid}.${randomUUID()}.tmp`
     await writeFile(temporaryPath, `${JSON.stringify(state)}\n`, { mode: 0o600 })
     await rename(temporaryPath, HOST_RESTART_STATE_PATH)
   } catch (err) {

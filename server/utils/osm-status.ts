@@ -40,7 +40,7 @@ export async function readOsmStatusByCountry(): Promise<OsmImportCountryStatus[]
          LEFT JOIN location_enrichment le ON le.platform = a.platform AND le.external_id = a.external_id
         WHERE a.country = ANY($1) GROUP BY a.country`, [codes],
     )),
-    getOsmImportRequests(pool),
+    withStatementTimeout(pool, STATUS_STATEMENT_TIMEOUT_MS, (client) => getOsmImportRequests(client)),
   ])
   const counts = new Map(rows.map((row) => [row.country, Number(row.count)]))
   const auctions = new Map(auctionRows.map((row) => [row.country, { total: Number(row.total), attached: Number(row.attached) }]))

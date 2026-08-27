@@ -139,7 +139,7 @@ onUnmounted(() => {
                 <dt class="text-muted-foreground">{{ $t('settings.operations.serviceState') }}</dt>
                 <dd>{{ status.host.app?.activeState ?? '—' }}<template v-if="status.host.app?.subState"> / {{ status.host.app.subState }}</template></dd>
                 <dt class="text-muted-foreground">{{ $t('settings.operations.restartCount') }}</dt>
-                <dd :class="(status.host.app?.recentRestartCount ?? 0) >= 3 ? 'font-medium text-destructive' : ''">{{ status.host.app?.restartCount ?? '—' }}</dd>
+                <dd :class="(status.host.app?.recentRestartCount ?? 0) >= 3 ? 'font-medium text-destructive' : ''">{{ status.host.app?.recentRestartCount ?? '—' }}</dd>
                 <dt class="text-muted-foreground">{{ $t('settings.operations.exitCode') }}</dt>
                 <dd>{{ status.host.app?.exitCode ?? '—' }}</dd>
                 <dt class="text-muted-foreground">{{ $t('settings.operations.database') }}</dt>
