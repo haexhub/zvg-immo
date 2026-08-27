@@ -35,6 +35,16 @@ function berlinDay(now = new Date()): string {
   return `${part('year')}-${part('month')}-${part('day')}`
 }
 
+// node-postgres builds a `date` column's Date from local (not UTC) fields —
+// read it back with the matching local getters so the calendar day survives
+// regardless of the process's own timezone.
+function formatLocalDate(date: Date): string {
+  const year = String(date.getFullYear()).padStart(4, '0')
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 function llmCounts(records: Awaited<ReturnType<typeof readAuctionRecords>>): Record<string, Counts> {
   const out: Record<string, Counts> = {}
   for (const record of records) {
@@ -104,11 +114,12 @@ export async function readDailyStatusSnapshots(days = 14): Promise<DailyStatusSn
     [days],
   )
   return rows.map((row) => ({
-    // node-postgres parses `date` columns into a JS Date (UTC midnight), not the
-    // 'YYYY-MM-DD' string the type below promises — left as a Date, JSON
-    // serializes it to a full ISO timestamp, and the frontend's `${day}T12:00:00Z`
-    // parsing then throws RangeError: Invalid time value on the doubled suffix.
-    snapshotDate: row.snapshot_date instanceof Date ? row.snapshot_date.toISOString().slice(0, 10) : row.snapshot_date,
+    // node-postgres parses `date` columns into a JS Date built from LOCAL
+    // date fields (see postgres-date's getDate()), not the 'YYYY-MM-DD'
+    // string the type below promises. Reading it back with UTC getters (or
+    // toISOString()) shifts the day whenever the process runs in a positive
+    // UTC offset; local getters reverse the exact same construction.
+    snapshotDate: row.snapshot_date instanceof Date ? formatLocalDate(row.snapshot_date) : row.snapshot_date,
     country: row.country,
     kind: row.kind,
     targetLang: row.target_lang || null,
