@@ -23,7 +23,7 @@ describe('/api/lawyers GET', () => {
   it('does not expose a Supabase failure to public clients', async () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     vi.stubGlobal('getQuery', () => ({ country: 'de' }))
-    vi.stubGlobal('createError', (input: { statusCode: number, statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
+    vi.stubGlobal('createError', (input: { statusCode: number, message: string }) => Object.assign(new Error(input.message), input))
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
 
     const { getServiceClient } = await import('../utils/supabase')
@@ -34,7 +34,7 @@ describe('/api/lawyers GET', () => {
     const handler = (await import('./lawyers.get')).default as unknown as () => Promise<unknown>
     const error = await handler().catch((cause: unknown) => cause)
 
-    expect(error).toMatchObject({ statusCode: 500, statusMessage: 'Anwälte konnten nicht geladen werden.' })
+    expect(error).toMatchObject({ statusCode: 500, message: 'Anwälte konnten nicht geladen werden.' })
     expect(JSON.stringify(error)).not.toContain('database connection password=secret')
   })
 })

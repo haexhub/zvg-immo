@@ -22,7 +22,7 @@ describe('/api/watchlist POST', () => {
   it('does not expose a database failure to the authenticated client', async () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     vi.stubGlobal('readBody', async () => ({ platform: 'se-kronofogden', externalId: '101738' }))
-    vi.stubGlobal('createError', (input: { statusCode: number, statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
+    vi.stubGlobal('createError', (input: { statusCode: number, message: string }) => Object.assign(new Error(input.message), input))
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
 
     const { getServiceClient } = await import('../../utils/supabase')
@@ -33,7 +33,7 @@ describe('/api/watchlist POST', () => {
     const handler = (await import('./index.post')).default as unknown as (event: { context: { user: { id: string } } }) => Promise<unknown>
     const error = await handler({ context: { user: { id: 'user-1' } } }).catch((cause: unknown) => cause)
 
-    expect(error).toMatchObject({ statusCode: 500, statusMessage: 'Speichern fehlgeschlagen.' })
+    expect(error).toMatchObject({ statusCode: 500, message: 'Speichern fehlgeschlagen.' })
     expect(JSON.stringify(error)).not.toContain('internal-id-42')
   })
 })

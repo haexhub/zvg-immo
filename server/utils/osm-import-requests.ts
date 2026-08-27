@@ -11,7 +11,7 @@
 // one row per country requested, cleared by import.sh once it starts
 // honoring the request.
 
-import type { Pool } from 'pg'
+import type { Pool, PoolClient } from 'pg'
 
 const OSM_IMPORT_REQUESTS_KEY = 'osm_import_requests'
 const COUNTRY_CODE_RE = /^[a-z]{2}$/
@@ -25,7 +25,9 @@ function coerceOsmImportRequests(value: unknown): Record<string, string> {
   )
 }
 
-export async function getOsmImportRequests(db: Pool): Promise<Record<string, string>> {
+/** Accepts a checked-out client too — see readOsmStatusByCountry(), which
+ * runs this inside withStatementTimeout() alongside its other queries. */
+export async function getOsmImportRequests(db: Pool | PoolClient): Promise<Record<string, string>> {
   const { rows } = await db.query<{ value: unknown }>(
     'SELECT value FROM app_settings WHERE key = $1',
     [OSM_IMPORT_REQUESTS_KEY],
