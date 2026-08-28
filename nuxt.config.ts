@@ -86,12 +86,11 @@ export default defineNuxtConfig({
       baseUrl: '',
       apiKey: '',
       model: 'claude-haiku-4-5',
-      // Overrides enrich.ts's MAX_LLM_PER_RUN default (300). Meant to be
-      // bumped temporarily while only one country is being crawled (see
-      // server/crawlers/registry.ts's ENABLED_COUNTRIES) to clear its backlog
-      // in a handful of runs instead of trickling in over weeks, then lowered
-      // again once more countries are re-enabled and share the budget.
-      //   NUXT_EXTRACT_LLM_MAX_PER_RUN=2000
+      // Overrides reprocess's safe default of one LLM call per run. Raise
+      // only after measuring the subscription budget: scheduled runs are
+      // hourly, so a large cap can consume an entire weekly allowance in a
+      // single day.
+      //   NUXT_EXTRACT_LLM_MAX_PER_RUN=5
       maxPerRun: '',
       // Gemini Batch safety rail. The Gemini API doesn't expose a reliable
       // "am I Free/Paid Tier?" endpoint to API-key callers; AI Studio remains

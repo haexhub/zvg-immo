@@ -77,14 +77,16 @@ describe('ClaudeProxyProvider.extract', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
-  it('calls onRequestError once retries are exhausted for a non-429 failure, but not for a 429 (which rethrows instead)', async () => {
+  it('reports and rejects the first request failure when reprocess supplies onRequestError, avoiding costly duplicate prompts', async () => {
     vi.stubGlobal('$fetch', vi.fn().mockRejectedValue(error(500)))
     const provider = new ClaudeProxyProvider(config)
     const onRequestError = vi.fn()
     const promise = provider.extract(req, { onRequestError })
+    promise.catch(() => {})
     await vi.runAllTimersAsync()
-    await promise
+    await expect(promise).rejects.toMatchObject({ name: 'LlmProviderError' })
     expect(onRequestError).toHaveBeenCalledTimes(1)
+    expect(vi.mocked($fetch)).toHaveBeenCalledTimes(1)
 
     vi.stubGlobal('$fetch', vi.fn().mockRejectedValue(error(429)))
     const rateLimitedOnRequestError = vi.fn()

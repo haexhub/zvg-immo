@@ -80,15 +80,13 @@ export const SYSTEM_PROMPT =
   'Gib das Baujahr zurück, falls im Text eindeutig genannt, sonst null. Gib das Jahr der ' +
   'letzten Sanierung/Modernisierung zurück, falls eindeutig genannt, sonst null, und in ' +
   'renovationNotes einen kurzen Freitext-Hinweis dazu, sonst null. ' +
-  'Erstelle außerdem in documentSummary eine ausführliche, sachliche Zusammenfassung ' +
-  'aus ALLEN bereitgestellten objektbezogenen Dokumenten und der Anzeige. Führe die ' +
-  'wesentlichen Angaben zu Objekt und Nutzung, Lage, Flächen, Bauweise und Zustand, ' +
-  'Modernisierungen, Mängeln, rechtlichen oder planerischen Besonderheiten sowie ' +
-  'Wertermittlung in gut lesbaren Absätzen zusammen. Widersprüche zwischen Dokumenten ' +
-  'kenntlich machen und keine Tatsachen ergänzen. Allgemeine, nicht objektspezifische ' +
-  'Biet- oder Gerichtshinweise nicht wiederholen. Ziel sind etwa 5 bis 10 kompakte ' +
-  'Absätze; null nur, wenn außer dem bereits gelieferten Anzeigentext keine verwertbaren ' +
-  'Objektinformationen vorhanden sind. ' +
+  'Erstelle außerdem in documentSummary eine kompakte, sachliche Zusammenfassung ' +
+  'aus den bereitgestellten objektbezogenen Dokumenten und der Anzeige. Nenne nur die ' +
+  'wesentlichen Angaben zu Objekt, Flächen, Zustand, Modernisierungen, Besonderheiten ' +
+  'und Wertermittlung; Widersprüche knapp kenntlich machen und keine Tatsachen ergänzen. ' +
+  'Allgemeine Biet- oder Gerichtshinweise nicht wiederholen. Höchstens zwei kurze Absätze ' +
+  'bzw. 1.200 Zeichen; null nur, wenn außer dem bereits gelieferten Anzeigentext keine ' +
+  'verwertbaren Objektinformationen vorhanden sind. ' +
   'Extrahiere zusätzlich, sofern im Gutachten enthalten, eine reichhaltigere Einschätzung ' +
   '(insights): defects (Mängel/Schäden/Sanierungsstau), encumbrances (Belastungen wie ' +
   'Wohnrecht/Nießbrauch/Dienstbarkeiten), landValueEurPerSqm (Bodenrichtwert in EUR/m²), ' +
@@ -207,6 +205,7 @@ export const UNIVERSAL_AUCTION_SCHEMA = {
     features: {
       type: 'array',
       items: { type: 'string', enum: FEATURES },
+      maxItems: 20,
       description: 'Erkannte Ausstattungsmerkmale, leer wenn keine eindeutig genannt.',
     },
     yearBuilt: { type: ['integer', 'null'], description: 'Baujahr, oder null wenn unklar.' },
@@ -226,11 +225,13 @@ export const UNIVERSAL_AUCTION_SCHEMA = {
         defects: {
           type: 'array',
           items: { type: 'string' },
+          maxItems: 8,
           description: 'Mängel/Schäden/Sanierungsstau, leer wenn keine genannt.',
         },
         encumbrances: {
           type: 'array',
           items: { type: 'string' },
+          maxItems: 8,
           description: 'Belastungen (Wohnrecht, Nießbrauch, Dienstbarkeiten, ...), leer wenn keine genannt.',
         },
         landValueEurPerSqm: {
@@ -239,7 +240,7 @@ export const UNIVERSAL_AUCTION_SCHEMA = {
         },
         construction: { type: ['string', 'null'], description: 'Bauweise/Konstruktion, oder null.' },
         locationCharacter: { type: ['string', 'null'], description: 'Lagecharakter, oder null.' },
-        summary: { type: ['string', 'null'], description: 'Kurze Gesamteinschätzung (2-4 Sätze), oder null.' },
+        summary: { type: ['string', 'null'], maxLength: 500, description: 'Kurze Gesamteinschätzung (2-4 Sätze), oder null.' },
       },
       required: [
         'defects',
@@ -267,6 +268,7 @@ export const UNIVERSAL_AUCTION_SCHEMA = {
         conservationArea: { type: ['string', 'null'], description: 'Erhaltungsgebiet, oder null.' },
         landParcels: {
           type: 'array',
+          maxItems: 12,
           description: 'Aufteilung des Grundstücks in Teilflächen/Flurstücke, leer wenn keine genannt.',
           items: {
             type: 'object',
@@ -293,11 +295,13 @@ export const UNIVERSAL_AUCTION_SCHEMA = {
     },
     documentSummary: {
       type: ['string', 'null'],
+      maxLength: 1200,
       description:
-        'Ausführliche sachliche Zusammenfassung aller bereitgestellten objektbezogenen Dokumente in etwa 5 bis 10 kompakten Absätzen, oder null.',
+        'Kompakte sachliche Zusammenfassung der bereitgestellten objektbezogenen Dokumente in höchstens zwei kurzen Absätzen, oder null.',
     },
     photos: {
       type: 'array',
+      maxItems: 8,
       description:
         'Kuratierung der mitgesendeten Kandidatenbilder ("Bild N:"-Label), höchstens ein Eintrag pro Bild; leeres Array wenn keine Bilder mitgesendet wurden.',
       items: {
