@@ -235,8 +235,20 @@ export function isTransientRequestError(err: unknown): boolean {
   return status === 404 || status === 408 || status >= 500
 }
 
-const MAX_PDF_CHARS = 60_000
-const MAX_DOCUMENT_TEXT_CHARS = 80_000
+// The old 60–80k-character caps routinely sent entire appraisals alongside
+// eight gallery photos. That is disproportionate to the structured facts we
+// need and exhausts an OAuth subscription long before the backlog moves.
+// Keep both the beginning (object/master data) and end (valuation/conclusion)
+// of a document, where those facts conventionally live.
+const MAX_PDF_CHARS = 24_000
+const MAX_DOCUMENT_TEXT_CHARS = 24_000
+
+function compactDocumentText(text: string, limit: number): string {
+  if (text.length <= limit) return text
+  const firstPart = Math.floor(limit * 0.7)
+  const lastPart = limit - firstPart
+  return `${text.slice(0, firstPart)}\n\n[... Dokumentmitte aus Budgetgründen ausgelassen ...]\n\n${text.slice(-lastPart)}`
+}
 
 /** Pull the structured object out of the proxy's `final_result` tool_use block. */
 export function parseExtractionResponse(resp: unknown): Record<string, unknown> | null {
@@ -276,7 +288,7 @@ export function buildParts(input: LlmInput): ContentPart[] {
     )
   }
   if (input.documentText) {
-    text.push(`Weitere Dokumenttexte/HTML-Anhänge:\n${input.documentText.slice(0, MAX_DOCUMENT_TEXT_CHARS)}`)
+    text.push(`Weitere Dokumenttexte/HTML-Anhänge:\n${compactDocumentText(input.documentText, MAX_DOCUMENT_TEXT_CHARS)}`)
   }
   const nativeDocuments = input.pdfDocuments?.length
     ? input.pdfDocuments
@@ -285,7 +297,7 @@ export function buildParts(input: LlmInput): ContentPart[] {
       : []
   const usingDocumentPart = nativeDocuments.length > 0
   if (input.pdfText && !usingDocumentPart) {
-    text.push(`Auszug aus Gutachten/Exposé (PDF):\n${input.pdfText.slice(0, MAX_PDF_CHARS)}`)
+    text.push(`Auszug aus Gutachten/Exposé (PDF):\n${compactDocumentText(input.pdfText, MAX_PDF_CHARS)}`)
   }
   if (input.pdfPageImages?.length && !usingDocumentPart) {
     text.push(

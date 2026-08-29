@@ -122,6 +122,7 @@ describe('universal auction extraction schema', () => {
       'units',
       'securityDeposit',
     ])
+    expect(UNIVERSAL_AUCTION_SCHEMA.properties.documentSummary.maxLength).toBe(1200)
   })
 
   it('instructs the LLM to verify rules-provided values via ruleCheck', () => {
@@ -549,6 +550,19 @@ describe('buildParts', () => {
         text: 'Objektbezeichnung: Einfamilienhaus\n\nBeschreibung:\nSchöne Lage.\n\nAuszug aus Gutachten/Exposé (PDF):\nWohnfläche: 140 m²',
       },
     ])
+  })
+
+  it('keeps both the beginning and end of oversized document text within the extraction budget', () => {
+    const parts = buildParts({
+      title: null,
+      description: null,
+      pdfText: `BEGIN-${'a'.repeat(30_000)}-END`,
+    })
+    const text = (parts[0] as { text: string }).text
+    expect(text).toContain('BEGIN-')
+    expect(text).toContain('-END')
+    expect(text).toContain('[... Dokumentmitte aus Budgetgründen ausgelassen ...]')
+    expect(text.length).toBeLessThan(24_200)
   })
 
   it('returns no parts for empty input', () => {

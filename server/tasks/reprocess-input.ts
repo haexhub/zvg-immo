@@ -14,7 +14,12 @@ import { normalizePhoto } from '~/lib/photo'
 import { ensureEnabledCountriesLoaded, getEnabledCountryCodes, isCountryEnabled } from '~/server/crawlers/registry'
 
 const IMAGES_DIR = join(process.cwd(), '.cache_zvg', 'images')
-const DEFAULT_MAX_LLM_PER_RUN = 300
+// Claude OAuth subscriptions have a shared, finite weekly allowance. One
+// bounded call per scheduled/manual run is deliberately conservative: an
+// operator can raise it through NUXT_EXTRACT_LLM_MAX_PER_RUN after measuring
+// real usage, but an unset setting must never drain a week's allowance in an
+// hourly sweep.
+const DEFAULT_MAX_LLM_PER_RUN = 1
 // Cap on candidate photos sent to the LLM for curation per call — a Gutachten
 // with dozens of embedded rasters would otherwise blow the token budget.
 const MAX_CANDIDATE_PHOTOS = 8
@@ -310,7 +315,14 @@ export async function buildReprocessInput(
   externalId: string,
   priorEntry: AuctionExtraction | undefined,
   llmConfig: LlmConfig | null,
-  opts: { nativeDocuments?: boolean; artifactState?: ArtifactProcessingState } = {},
+  opts: {
+    nativeDocuments?: boolean
+    artifactState?: ArtifactProcessingState
+    /** Gallery-photo curation is optional presentation work, not required
+     * for extracting auction facts. It is off for normal processing because
+     * several full-size photos dominate the Claude subscription budget. */
+    includeCandidateImages?: boolean
+  } = {},
 ): Promise<
   {
     fields: MergeInputFields
@@ -356,7 +368,9 @@ export async function buildReprocessInput(
     // PDFs. DOCX/HTML/text/image attachments are still normalized by
     // prepareArchivedLlmDocuments so every archived attachment can contribute.
     const usingNativeDoc = opts.nativeDocuments ?? llmConfig.provider === 'gemini-native'
-    const candidates = await buildCandidateImages(platform, externalId, priorEntry?.photos?.map(normalizePhoto))
+    const candidates = opts.includeCandidateImages
+      ? await buildCandidateImages(platform, externalId, priorEntry?.photos?.map(normalizePhoto))
+      : undefined
     photoSourceIndices = candidates?.sourceIndices
     const documentParts = await prepareArchivedLlmDocuments(auction, {
       nativeDocuments: usingNativeDoc,

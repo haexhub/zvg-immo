@@ -95,20 +95,26 @@ export class ClaudeProxyProvider implements ExtractionProvider {
         // the same model before giving up — see TRANSIENT_RETRY_DELAYS_MS. A
         // 400/401/403 will fail identically every time, so skip straight to
         // giving up instead of paying the retry delay for nothing.
-        if (isTransientRequestError(err) && attempt < TRANSIENT_RETRY_DELAYS_MS.length) {
+        // A reprocess call passes onRequestError.  Its prompts can include
+        // multiple rendered document pages and are consequently expensive on
+        // the Claude subscription. Retrying a proxy 5xx/timeout immediately
+        // has repeatedly spent the same input budget three times without a
+        // usable result. Surface that first failure to reprocess instead: it
+        // aborts the run (or tries a configured fallback) without increasing
+        // every auction's llm_failures counter. Lightweight callers that do
+        // not pass the callback retain the short transient retry behaviour.
+        if (!opts?.onRequestError && isTransientRequestError(err) && attempt < TRANSIENT_RETRY_DELAYS_MS.length) {
           console.warn(
             `[extract/llm] request failed, retry ${attempt + 1}/${TRANSIENT_RETRY_DELAYS_MS.length}: ${(err as Error).message}`,
           )
           await new Promise((resolve) => setTimeout(resolve, TRANSIENT_RETRY_DELAYS_MS[attempt]))
           continue
         }
-        // A caller that passes onRequestError (extractByLlm) wants to keep
-        // batching past a single failed candidate; one that doesn't (e.g.
-        // callSummaryLlm/callTranslationLlm) wants the failure to reject.
-        if (!opts?.onRequestError) throw new LlmProviderError('claude-proxy', (err as Error).message, { cause: err })
-        console.warn(`[extract/llm] request failed: ${(err as Error).message}`)
-        opts.onRequestError(err)
-        return null
+        // `onRequestError` is observability, not permission to turn a
+        // provider outage into a per-auction extraction failure.  Always
+        // reject after reporting it so reprocess can stop safely.
+        opts?.onRequestError?.(err)
+        throw new LlmProviderError('claude-proxy', (err as Error).message, { cause: err })
       }
     }
     opts?.onUsage?.(parseClaudeUsage(resp))
