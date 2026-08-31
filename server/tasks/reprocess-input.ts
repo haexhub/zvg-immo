@@ -2,7 +2,8 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Auction, AuctionExtraction, CuratedPhoto } from '~/types/auction'
 import type { LlmConfig, LlmInput, PhotoCuration } from '~/server/utils/extract/llm'
-import { prepareArchivedLlmDocuments } from '~/server/utils/extract/llm-documents'
+import { prepareArchivedLlmDocuments, type PreparedAttachmentDocument } from '~/server/utils/extract/llm-documents'
+import type { DocumentSummaryInput } from '~/server/utils/extract/pdf-documents'
 import { withDerivedExtractionFields, type MergeInputFields } from '~/server/utils/extract/merge-llm-result'
 import { buildReprocessFields } from '~/server/utils/extract/reprocess-fields'
 import { getPool } from '~/server/utils/db'
@@ -322,11 +323,22 @@ export async function buildReprocessInput(
      * for extracting auction facts. It is off for normal processing because
      * several full-size photos dominate the Claude subscription budget. */
     includeCandidateImages?: boolean
+    /** Opt-in to the per-document map-reduce path for auctions with more
+     *  than pdf-documents.ts's MAP_REDUCE_DOCUMENT_THRESHOLD PDFs — see
+     *  server/tasks/reprocess-map-reduce.ts. Only reprocessAuction's sync
+     *  call sites set this; the batch-submission call site in
+     *  reprocess-run.ts never does, so it keeps getting the combined
+     *  pdfText/pdfPageImages/pdfBytes input unconditionally. */
+    allowMapReduce?: boolean
   } = {},
 ): Promise<
   {
     fields: MergeInputFields
     input: LlmInput | null
+    /** Set instead of input.pdfText/pdfPageImages/pdfBytes/pdfDocuments when
+     *  map-reduce triggered — see buildReprocessInput's allowMapReduce opt.
+     *  Undefined otherwise. */
+    documentSummaryInputs?: Array<DocumentSummaryInput<PreparedAttachmentDocument>>
     documentSetChanged: boolean
     /** Whether the archived document set this LLM input was built from was
      *  read in full — false when a document blob couldn't be downloaded, in
@@ -359,6 +371,7 @@ export async function buildReprocessInput(
   const fields = buildReprocessFields(auction, priorEntry, documentSetChanged)
 
   let input: LlmInput | null = null
+  let documentSummaryInputs: Array<DocumentSummaryInput<PreparedAttachmentDocument>> | undefined
   let documentSetComplete = true
   let artifactVersionId = artifactState.parsedArtifactVersionId
   let photoSourceIndices: number[] | undefined
@@ -375,13 +388,18 @@ export async function buildReprocessInput(
     const documentParts = await prepareArchivedLlmDocuments(auction, {
       nativeDocuments: usingNativeDoc,
       artifactVersionId: artifactState.latest?.id ?? null,
+      allowMapReduce: opts.allowMapReduce,
     })
     documentSetComplete = documentParts.documentSetComplete
     artifactVersionId = documentParts.artifactVersionId
+    // documentSummaryInputs never reaches LlmInput/buildParts — it's
+    // map-reduce orchestration data, not part of the provider-facing shape.
+    const { documentSummaryInputs: mapReduceDocs, ...documentInputFields } = documentParts.input
+    documentSummaryInputs = mapReduceDocs
     input = {
       title: auction.title,
       description: auction.description,
-      ...documentParts.input,
+      ...documentInputFields,
       candidateImages: candidates?.images,
       // Only values the LLM can fairly judge from the text it is shown. A
       // platform-reported source* value is deliberately withheld: it often
@@ -404,7 +422,7 @@ export async function buildReprocessInput(
     }
   }
 
-  return { fields, input, documentSetChanged, documentSetComplete, artifactVersionId, photoSourceIndices, auction }
+  return { fields, input, documentSummaryInputs, documentSetChanged, documentSetComplete, artifactVersionId, photoSourceIndices, auction }
 }
 
 /** One auction's built reprocess input — named so it can be handed from

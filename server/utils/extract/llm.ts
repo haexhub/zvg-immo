@@ -15,6 +15,9 @@ import { OpenAiCompatibleProvider } from './providers/openai-compatible'
 import { GeminiNativeProvider } from './providers/gemini-native'
 import { clampExtraction, type ClampedExtraction, type RulesHint } from './llm-clamp'
 import {
+  DOCUMENT_SUMMARY_SCHEMA,
+  DOCUMENT_SUMMARY_SCHEMA_NAME,
+  DOCUMENT_SUMMARY_SYSTEM_PROMPT,
   SYSTEM_PROMPT,
   UNIVERSAL_AUCTION_SCHEMA,
   UNIVERSAL_AUCTION_SCHEMA_ID,
@@ -24,6 +27,9 @@ import {
 
 export {
   clampExtraction,
+  DOCUMENT_SUMMARY_SCHEMA,
+  DOCUMENT_SUMMARY_SCHEMA_NAME,
+  DOCUMENT_SUMMARY_SYSTEM_PROMPT,
   SYSTEM_PROMPT,
   UNIVERSAL_AUCTION_SCHEMA,
   UNIVERSAL_AUCTION_SCHEMA_ID,
@@ -119,6 +125,13 @@ export type ContentPart =
 export interface ExtractionRequest {
   systemPrompt: string
   schema: Record<string, unknown>
+  /** Tool/response-schema name sent to providers that require one
+   *  (OpenAiCompatibleProvider's `response_format.json_schema.name`).
+   *  Defaults to UNIVERSAL_AUCTION_SCHEMA_NAME — callers passing a
+   *  different schema (see extractByLlm's opts.schema) must also pass a
+   *  matching name, or every response gets mislabeled as the universal
+   *  auction schema regardless of its actual shape. */
+  name?: string
   parts: ContentPart[]
 }
 
@@ -397,13 +410,27 @@ export async function extractByLlm(
     onProviderAttempt?: () => void
     onProviderError?: (err: unknown) => void
     onUsage?: (usage: LlmUsage) => void
+    /** Overrides the default universal-auction schema/prompt/name — used by
+     *  the per-document map-reduce path (reprocess-map-reduce.ts) to request
+     *  a smaller per-document schema instead. clampExtraction still applies
+     *  to whatever comes back, so callers passing a schema with fewer
+     *  properties than UNIVERSAL_AUCTION_SCHEMA get a ClampedExtraction with
+     *  the omitted fields simply absent/null. */
+    schema?: Record<string, unknown>
+    systemPrompt?: string
+    name?: string
   } = {},
 ): Promise<ClampedExtraction | null> {
   const parts = buildParts(input)
   if (parts.length === 0) return null
   opts.onProviderAttempt?.()
   const raw = await getProvider(config).extract(
-    { systemPrompt: SYSTEM_PROMPT, schema: UNIVERSAL_AUCTION_SCHEMA, parts },
+    {
+      systemPrompt: opts.systemPrompt ?? SYSTEM_PROMPT,
+      schema: opts.schema ?? UNIVERSAL_AUCTION_SCHEMA,
+      name: opts.name ?? UNIVERSAL_AUCTION_SCHEMA_NAME,
+      parts,
+    },
     { onRequestError: opts.onProviderError, onUsage: opts.onUsage },
   )
   return raw ? clampExtraction(raw) : null

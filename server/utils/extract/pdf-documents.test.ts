@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { buildDocumentLlmParts } from './pdf-documents'
+import { buildDocumentLlmParts, buildDocumentSummaryInputs, MAX_MAP_REDUCE_DOCUMENTS } from './pdf-documents'
 
 describe('buildDocumentLlmParts', () => {
   it('labels and combines text from multiple documents', async () => {
@@ -69,6 +69,59 @@ describe('buildDocumentLlmParts', () => {
     expect(result.pdfDocuments).toEqual([
       { label: 'Teil 1', data: 'base64-a' },
       { label: 'Teil 2', data: 'base64-b' },
+    ])
+  })
+})
+
+describe('buildDocumentSummaryInputs', () => {
+  it('returns one group per document when at or under the cap', async () => {
+    const docs = Array.from({ length: MAX_MAP_REDUCE_DOCUMENTS }, (_, i) => ({
+      source: `doc-${i}`,
+      label: `Dokument ${i}`,
+      text: `Inhalt ${i} `.repeat(20),
+    }))
+    const result = await buildDocumentSummaryInputs(docs, { native: false })
+
+    expect(result).toHaveLength(MAX_MAP_REDUCE_DOCUMENTS)
+    result.forEach((group, i) => {
+      expect(group.label).toBe(`Dokument ${i}`)
+      expect(group.parts.pdfText).toContain(`=== Dokument ${i} ===`)
+    })
+  })
+
+  it('folds documents beyond the cap into one overflow group', async () => {
+    const docs = Array.from({ length: MAX_MAP_REDUCE_DOCUMENTS + 3 }, (_, i) => ({
+      source: `doc-${i}`,
+      label: `Dokument ${i}`,
+      text: `Inhalt ${i} `.repeat(20),
+    }))
+    const result = await buildDocumentSummaryInputs(docs, { native: false })
+
+    // MAX_MAP_REDUCE_DOCUMENTS - 1 individual groups + 1 overflow group,
+    // never more than MAX_MAP_REDUCE_DOCUMENTS calls regardless of input size.
+    expect(result).toHaveLength(MAX_MAP_REDUCE_DOCUMENTS)
+    const individual = result.slice(0, MAX_MAP_REDUCE_DOCUMENTS - 1)
+    individual.forEach((group, i) => expect(group.label).toBe(`Dokument ${i}`))
+    const overflow = result[MAX_MAP_REDUCE_DOCUMENTS - 1]!
+    expect(overflow.label).toBe('4 weitere Dokumente')
+    for (let i = MAX_MAP_REDUCE_DOCUMENTS - 1; i < docs.length; i++) {
+      expect(overflow.parts.pdfText).toContain(`=== Dokument ${i} ===`)
+    }
+  })
+
+  it('returns an empty array for no documents', async () => {
+    expect(await buildDocumentSummaryInputs([], { native: false })).toEqual([])
+  })
+
+  it('threads native mode through to each group', async () => {
+    const docs = [
+      { source: 'a', label: 'Teil 1', data: 'base64-a' },
+      { source: 'b', label: 'Teil 2', data: 'base64-b' },
+    ]
+    const result = await buildDocumentSummaryInputs(docs, { native: true })
+    expect(result).toEqual([
+      { label: 'Teil 1', parts: { pdfText: null, pdfPageImages: null, pdfBytes: 'base64-a', pdfDocuments: undefined } },
+      { label: 'Teil 2', parts: { pdfText: null, pdfPageImages: null, pdfBytes: 'base64-b', pdfDocuments: undefined } },
     ])
   })
 })

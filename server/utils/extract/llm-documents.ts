@@ -1,7 +1,4 @@
 import type { Attachment, Auction } from '~/types/auction'
-import { BASE_URL as DGA_AG_BASE_URL } from '~/server/crawlers/dga-ag/constants'
-import { getDgaAgSessionCookie, isDgaAgLoginRedirect } from '~/server/crawlers/dga-ag/session'
-import { UA, ZVG_BASE } from '~/server/crawlers/zvg-portal/constants'
 import {
   archiveDocumentBlob,
   archiveDocumentText,
@@ -12,14 +9,14 @@ import {
 import { downloadBlob, findLatestCapture, readDocumentSet } from '../storage-download'
 import { detectImageExt, type ImageExt } from './image-bytes'
 import { docxBufferToText } from './docx-text'
-import { buildDocumentLlmParts } from './pdf-documents'
+import { buildDocumentLlmParts, buildDocumentSummaryInputs, MAP_REDUCE_DOCUMENT_THRESHOLD, type DocumentSummaryInput } from './pdf-documents'
 import { extractPdfTextFromBuffer, pdfHasTrustworthyEncoding } from './pdf-text'
 import { renderPdfPagesJpeg } from './pdf-render'
 import type { LlmInput } from './llm'
 
 type LlmAttachmentFormat = 'pdf' | 'docx' | 'html' | 'text' | 'image' | 'unsupported'
 
-interface PreparedAttachmentDocument {
+export interface PreparedAttachmentDocument {
   attachment: Attachment
   ordinal: number
   label: string
@@ -31,26 +28,25 @@ interface PreparedAttachmentDocument {
 }
 
 export interface PreparedLlmDocuments {
-  input: Pick<LlmInput, 'documentText' | 'documentImages' | 'pdfText' | 'pdfPageImages' | 'pdfBytes' | 'pdfDocuments'>
+  input: Pick<LlmInput, 'documentText' | 'documentImages' | 'pdfText' | 'pdfPageImages' | 'pdfBytes' | 'pdfDocuments'> & {
+    /** Set instead of pdfText/pdfPageImages/pdfBytes/pdfDocuments when
+     *  map-reduce triggered (more than MAP_REDUCE_DOCUMENT_THRESHOLD PDFs,
+     *  and the caller opted in via allowMapReduce — see
+     *  server/tasks/reprocess-map-reduce.ts). Undefined otherwise, including
+     *  always for the batch-submission call site, which never opts in and
+     *  keeps getting today's combined fields unconditionally. */
+    documentSummaryInputs?: Array<DocumentSummaryInput<PreparedAttachmentDocument>>
+  }
   documentSetItems: ArchivedDocumentSetItem[]
   documentSetComplete: boolean
   artifactVersionId: number | null
 }
 
-export interface ArchivedLiveDocuments {
-  documentSetItems: ArchivedDocumentSetItem[]
-  documentSetComplete: boolean
-  /** One entry per candidate whose fetch didn't yield bytes — the reason
-   *  fetchAttachmentBytes used to swallow silently. Undefined when complete. */
-  errors?: string[]
-}
-
-const MAX_ATTACHMENT_BYTES = 30 * 1024 * 1024
 const MAX_TEXT_CHARS_PER_ATTACHMENT = 40_000
 const MAX_COMBINED_DOCUMENT_TEXT_CHARS = 80_000
 const DOCUMENT_KIND_PRIORITY = ['appraisal', 'brochure', 'announcement', 'photo', 'other'] as const
 
-function attachmentLabel(att: Attachment): string {
+export function attachmentLabel(att: Attachment): string {
   return att.label || att.filename || att.fileId || att.proxyUrl
 }
 
@@ -58,7 +54,7 @@ function extensionHaystack(att: Attachment): string {
   return `${att.filename} ${att.proxyUrl} ${att.fileId}`.toLowerCase()
 }
 
-function formatHint(att: Attachment): LlmAttachmentFormat {
+export function formatHint(att: Attachment): LlmAttachmentFormat {
   const haystack = extensionHaystack(att)
   if (/\.(?:pdf)(?:[\s?#]|$)/.test(haystack) || /(?:^|[/.?=&_-])pdf(?:[\s?#&._=-]|$)/.test(haystack)) return 'pdf'
   if (/\.(?:docx)(?:[\s?#]|$)/.test(haystack) || /(?:^|[/.?=&_-])docx(?:[\s?#&._=-]|$)/.test(haystack)) return 'docx'
@@ -86,97 +82,6 @@ export function pickAllLlmDocumentAttachments(attachments: readonly Attachment[]
     out.push(attachment)
   }
   return out
-}
-
-function acceptForHint(format: LlmAttachmentFormat): string {
-  switch (format) {
-    case 'pdf':
-      return 'application/pdf,*/*'
-    case 'docx':
-      return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document,*/*'
-    case 'html':
-      return 'text/html,application/xhtml+xml,*/*'
-    case 'text':
-      return 'text/plain,text/rtf,*/*'
-    case 'image':
-      return 'image/jpeg,image/png,image/webp,*/*'
-    default:
-      return '*/*'
-  }
-}
-
-async function resolveAttachmentSource(
-  proxyUrl: string,
-  accept: string,
-): Promise<{ url: string; headers: Record<string, string> }> {
-  if (proxyUrl.startsWith('/api/zvg-proxy')) {
-    const q = new URLSearchParams(proxyUrl.split('?')[1] ?? '')
-    const url = `${ZVG_BASE}/index.php?button=showAnhang&land_abk=${q.get('land_abk')}&file_id=${q.get('file_id')}&zvg_id=${q.get('zvg_id')}`
-    return { url, headers: { 'User-Agent': UA, Accept: accept, Referer: `${ZVG_BASE}/index.php?button=Suchen` } }
-  }
-  if (proxyUrl.startsWith(`${ZVG_BASE}/`)) {
-    return {
-      url: proxyUrl,
-      headers: { 'User-Agent': UA, Accept: accept, Referer: `${ZVG_BASE}/index.php?button=Suchen` },
-    }
-  }
-  // Same authenticated-download requirement as pdf-text.ts's resolveSource —
-  // see its comment on the dga-ag.de branch.
-  if (proxyUrl.startsWith(`${DGA_AG_BASE_URL}/securedl/`)) {
-    const cookie = await getDgaAgSessionCookie()
-    return { url: proxyUrl, headers: { 'User-Agent': UA, Accept: accept, ...(cookie ? { Cookie: cookie } : {}) } }
-  }
-  return { url: proxyUrl, headers: { 'User-Agent': UA, Accept: accept } }
-}
-
-interface FetchedAttachment {
-  bytes: Buffer | null
-  error?: string
-}
-
-async function fetchAttachmentBytesOnce(
-  url: string,
-  headers: Record<string, string>,
-): Promise<FetchedAttachment & { finalUrl: string | null }> {
-  let finalUrl: string | null = null
-  try {
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(30_000) })
-    finalUrl = res.url || null
-    if (!res.ok) return { bytes: null, error: `HTTP ${res.status}`, finalUrl }
-    const contentLength = Number(res.headers.get('content-length') ?? '')
-    if (Number.isFinite(contentLength) && contentLength > MAX_ATTACHMENT_BYTES) {
-      await res.body?.cancel().catch(() => undefined)
-      return { bytes: null, error: `attachment too large (${contentLength} bytes)`, finalUrl }
-    }
-    if (!res.body) return { bytes: null, error: 'empty response body', finalUrl }
-    const reader = res.body.getReader()
-    const chunks: Buffer[] = []
-    let total = 0
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      if (!value) continue
-      total += value.byteLength
-      if (total > MAX_ATTACHMENT_BYTES) {
-        await reader.cancel().catch(() => undefined)
-        return { bytes: null, error: `attachment too large (>${MAX_ATTACHMENT_BYTES} bytes)`, finalUrl }
-      }
-      chunks.push(Buffer.from(value))
-    }
-    return { bytes: Buffer.concat(chunks, total), finalUrl }
-  } catch (err) {
-    return { bytes: null, error: (err as Error).message, finalUrl }
-  }
-}
-
-async function fetchAttachmentBytes(att: Attachment): Promise<FetchedAttachment> {
-  const accept = acceptForHint(formatHint(att))
-  const first = await resolveAttachmentSource(att.proxyUrl, accept)
-  const firstResult = await fetchAttachmentBytesOnce(first.url, first.headers)
-  if (!isDgaAgLoginRedirect(att.proxyUrl, firstResult.finalUrl)) return firstResult
-  await getDgaAgSessionCookie({ forceRefresh: true })
-  const retry = await resolveAttachmentSource(att.proxyUrl, accept)
-  return await fetchAttachmentBytesOnce(retry.url, retry.headers)
 }
 
 function looksTextual(buf: Buffer): boolean {
@@ -310,35 +215,53 @@ function combineDocumentText(documents: readonly PreparedAttachmentDocument[], e
 
 async function buildPreparedInput(
   documents: readonly PreparedAttachmentDocument[],
-  opts: { nativeDocuments: boolean; extraText?: string[] } = { nativeDocuments: false },
+  opts: { nativeDocuments: boolean; extraText?: string[]; allowMapReduce?: boolean } = { nativeDocuments: false },
 ): Promise<PreparedLlmDocuments['input']> {
   const pdfs = documents.filter((doc) => doc.format === 'pdf')
-  const pdfParts = await buildDocumentLlmParts(
-    pdfs.map((doc) => ({
-      source: doc,
-      label: doc.label,
-      text: opts.nativeDocuments ? null : doc.text,
-      data: opts.nativeDocuments ? doc.bytes.toString('base64') : undefined,
-    })),
-    {
-      native: opts.nativeDocuments,
-      renderPages: opts.nativeDocuments
-        ? undefined
-        : async (doc, maxPages) => (await renderPdfPagesJpeg(doc.bytes, { maxPages })).map((buf) => buf.toString('base64')),
-    },
-  )
+  const pdfSources = pdfs.map((doc) => ({
+    source: doc,
+    label: doc.label,
+    text: opts.nativeDocuments ? null : doc.text,
+    data: opts.nativeDocuments ? doc.bytes.toString('base64') : undefined,
+  }))
+  const renderOpts = {
+    native: opts.nativeDocuments,
+    renderPages: opts.nativeDocuments
+      ? undefined
+      : async (doc: PreparedAttachmentDocument, maxPages: number) =>
+          (await renderPdfPagesJpeg(doc.bytes, { maxPages })).map((buf) => buf.toString('base64')),
+  }
   const documentImages = documents
     .filter((doc) => doc.format === 'image' && doc.attachment.kind !== 'photo')
     .map((doc) => ({ label: doc.label, mimeType: doc.contentType, data: doc.bytes.toString('base64') }))
   const textDocuments = opts.nativeDocuments ? documents : documents.filter((doc) => doc.format !== 'pdf')
+  const documentText = combineDocumentText(textDocuments, opts.extraText)
+
+  // Skip building the combined pdfText/pdfPageImages/pdfBytes blob entirely
+  // when map-reduce triggers — that blob is exactly what gets silently
+  // truncated for large document sets (see MAP_REDUCE_DOCUMENT_THRESHOLD),
+  // so building it here would just be wasted fetch/render work.
+  if (opts.allowMapReduce && pdfs.length > MAP_REDUCE_DOCUMENT_THRESHOLD) {
+    const documentSummaryInputs = await buildDocumentSummaryInputs(pdfSources, renderOpts)
+    return {
+      pdfText: null,
+      pdfPageImages: null,
+      pdfBytes: null,
+      documentSummaryInputs,
+      documentText,
+      documentImages: documentImages.length > 0 ? documentImages : undefined,
+    }
+  }
+
+  const pdfParts = await buildDocumentLlmParts(pdfSources, renderOpts)
   return {
     ...pdfParts,
-    documentText: combineDocumentText(textDocuments, opts.extraText),
+    documentText,
     documentImages: documentImages.length > 0 ? documentImages : undefined,
   }
 }
 
-async function prepareDocument(
+export async function prepareDocument(
   attachment: Attachment,
   ordinal: number,
   bytes: Buffer,
@@ -376,46 +299,6 @@ async function prepareDocument(
   }
 }
 
-export async function prepareLiveLlmDocuments(
-  attachments: readonly Attachment[],
-  identity: DocumentIdentity,
-  capturedAt: string,
-): Promise<ArchivedLiveDocuments> {
-  const candidates = pickAllLlmDocumentAttachments(attachments)
-  const fetchErrors: string[] = []
-  const prepared = (
-    await Promise.all(candidates.map(async (attachment, ordinal) => {
-      const { bytes, error } = await fetchAttachmentBytes(attachment)
-      if (!bytes) {
-        if (error) fetchErrors.push(`${attachmentLabel(attachment)}: ${error}`)
-        return null
-      }
-      return prepareDocument(attachment, ordinal, bytes, {
-        identity,
-        capturedAt,
-        nativeDocuments: false,
-      })
-    }))
-  ).filter((doc): doc is PreparedAttachmentDocument => doc != null)
-  const documentSetItems = prepared
-    .filter((doc): doc is PreparedAttachmentDocument & { contentHash: string } => !!doc.contentHash)
-    .map((doc) => ({
-      ordinal: doc.ordinal,
-      kind: 'document' as const,
-      label: doc.attachment.label || null,
-      filename: doc.attachment.filename || null,
-      fileId: doc.attachment.fileId || null,
-      sourceUrl: doc.attachment.proxyUrl,
-      contentHash: doc.contentHash,
-      contentType: doc.contentType,
-    }))
-  return {
-    documentSetItems,
-    documentSetComplete: documentSetItems.length === candidates.length,
-    errors: fetchErrors.length > 0 ? fetchErrors : undefined,
-  }
-}
-
 function attachmentFromDocumentSetItem(
   item: ArchivedDocumentSetItem,
   sourceAttachments: readonly Attachment[] = [],
@@ -438,6 +321,7 @@ async function prepareArchivedDocumentSetItems(
     nativeDocuments: boolean
     extraText?: string[]
     sourceAttachments?: readonly Attachment[]
+    allowMapReduce?: boolean
   } = { nativeDocuments: false },
 ): Promise<PreparedLlmDocuments> {
   const prepared = (
@@ -461,7 +345,15 @@ async function prepareArchivedDocumentSetItems(
 
 export async function prepareArchivedLlmDocuments(
   auction: Auction,
-  opts: { nativeDocuments: boolean; artifactVersionId: number | null },
+  opts: {
+    nativeDocuments: boolean
+    artifactVersionId: number | null
+    /** Opt-in only — see buildPreparedInput. Defaults to false/undefined so
+     *  the batch-submission call site (which never sets this) keeps getting
+     *  today's combined pdfText/pdfPageImages/pdfBytes behavior
+     *  unconditionally, regardless of document count. */
+    allowMapReduce?: boolean
+  },
 ): Promise<PreparedLlmDocuments> {
   const extraText: string[] = []
   const detailCapture = await findLatestCapture('detail_html', auction.platform, auction.externalId)
@@ -496,3 +388,9 @@ export async function readArchivedAuction(platform: string, externalId: string):
     return null
   }
 }
+
+// Live crawl-time document preparation (fetches attachments over HTTP, as
+// opposed to everything above which reads already-archived blobs) lives in
+// its own module — this file was pushing the 500-line module-size ceiling.
+// Re-exported here so callers keep importing from this file unchanged.
+export { prepareLiveLlmDocuments, type ArchivedLiveDocuments } from './llm-documents-live'

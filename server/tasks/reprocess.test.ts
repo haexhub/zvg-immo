@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Auction, AuctionExtraction } from '~/types/auction'
+import type { ReprocessInput } from './reprocess-input'
 import { downloadBlob, findLatestCapture } from '../utils/storage-download'
 import { getPool } from '../utils/db'
 import { readAuctionRecordMap } from '../utils/auction-record'
@@ -52,6 +53,9 @@ vi.mock('../utils/extract/llm', () => ({
   isLlmProviderError: vi.fn(() => false),
   isLlmProviderUnavailable: vi.fn(() => false),
   isRateLimitError: vi.fn(() => false),
+  DOCUMENT_SUMMARY_SCHEMA_NAME: 'document_summary_v1',
+  DOCUMENT_SUMMARY_SCHEMA: {},
+  DOCUMENT_SUMMARY_SYSTEM_PROMPT: 'document summary prompt',
 }))
 vi.mock('../utils/extract/llm-documents', () => ({
   prepareArchivedLlmDocuments: vi.fn(async (_auction, opts) => ({
@@ -83,6 +87,7 @@ vi.mock('../utils/llm-usage', () => ({
 vi.stubGlobal('defineTask', (definition: unknown) => definition)
 
 const { reprocessAuction, runReprocess } = await import('./reprocess')
+const { DOCUMENT_SUMMARY_SCHEMA_NAME } = await import('../utils/extract/llm')
 
 const emptyArtifactState = {
   latest: null,
@@ -277,6 +282,103 @@ describe('reprocessAuction structured provenance', () => {
 
     expect(result?.llmConfigUsed).toBeNull()
     expect(result?.llmDurationMs).toBeNull()
+  })
+})
+
+describe('reprocessAuction map-reduce', () => {
+  const config = { baseUrl: 'https://api.example.test', apiKey: 'k', model: 'test-model', provider: 'openai-compatible' as const }
+
+  function clampedExtraction(overrides: Partial<import('../utils/extract/llm-clamp').ClampedExtraction> = {}) {
+    return {
+      propertyType: null, landAreaSqm: null, livingAreaSqm: null, rooms: null,
+      bedrooms: null, bathrooms: null, floor: null, bathroomHasTub: null, bathroomHasShower: null,
+      heating: null, units: null, securityDeposit: null, ruleCheck: null,
+      biddingNotes: null, condition: null, features: [], yearBuilt: null, lastRenovationYear: null,
+      renovationNotes: null, insights: null, planningNotes: null, documentSummary: null,
+      marketValueEur: null, marketValueText: null, photoCuration: [],
+      ...overrides,
+    }
+  }
+
+  function mapReduceBase(overrides: Partial<ReprocessInput> = {}): ReprocessInput {
+    return {
+      fields: { propertyType: null, landAreaSqm: null, livingAreaSqm: null, rooms: null, units: null, securityDeposit: null },
+      input: { title: 'Testauktion', description: 'Beschreibung' },
+      documentSummaryInputs: [
+        { label: 'Gutachten', parts: { pdfText: 'Gutachten Text', pdfPageImages: null, pdfBytes: null } },
+        { label: 'Exposé', parts: { pdfText: 'Exposé Text', pdfPageImages: null, pdfBytes: null } },
+      ],
+      documentSetChanged: false,
+      documentSetComplete: true,
+      artifactVersionId: 5,
+      photoSourceIndices: undefined,
+      auction: auction(),
+      ...overrides,
+    }
+  }
+
+  it('runs every document group plus one reduce call, counted as N+1 real attempts', async () => {
+    vi.mocked(extractByLlm).mockImplementation(async (input, _cfg, opts) => {
+      opts?.onProviderAttempt?.()
+      return opts?.name === DOCUMENT_SUMMARY_SCHEMA_NAME
+        ? clampedExtraction({ documentSummary: `map:${(input as { pdfText?: string }).pdfText}` })
+        : clampedExtraction({ propertyType: 'eigentumswohnung' })
+    })
+    const onLlmAttempt = vi.fn()
+
+    const result = await reprocessAuction(
+      'zvg-portal', '7265', undefined, config, '2026-08-02T11:00:00.000Z',
+      { artifactState: emptyArtifactState, prebuiltBase: mapReduceBase(), onLlmAttempt },
+    )
+
+    expect(result?.llmCalled).toBe(true)
+    expect(result?.llmFailures).toBe(0)
+    expect(result?.entry.propertyType).toBe('eigentumswohnung')
+    expect(extractByLlm).toHaveBeenCalledTimes(3)
+    expect(onLlmAttempt).toHaveBeenCalledTimes(3)
+  })
+
+  it('skips without spending anything when the remaining budget cannot fit a map+reduce sequence', async () => {
+    const result = await reprocessAuction(
+      'zvg-portal', '7265', undefined, config, '2026-08-02T11:00:00.000Z',
+      { artifactState: emptyArtifactState, prebuiltBase: mapReduceBase(), remainingLlmBudget: 1 },
+    )
+
+    expect(result).toBeNull()
+    expect(extractByLlm).not.toHaveBeenCalled()
+  })
+
+  it('slices document groups to fit the remaining budget instead of overspending it', async () => {
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _cfg, opts) => {
+      opts?.onProviderAttempt?.()
+      return clampedExtraction()
+    })
+
+    // 2 document groups available, but only 2 calls of budget — must take
+    // exactly 1 group (+ 1 reduce), never both groups (+ 1 reduce = 3).
+    await reprocessAuction(
+      'zvg-portal', '7265', undefined, config, '2026-08-02T11:00:00.000Z',
+      { artifactState: emptyArtifactState, prebuiltBase: mapReduceBase(), remainingLlmBudget: 2 },
+    )
+
+    expect(extractByLlm).toHaveBeenCalledTimes(2)
+  })
+
+  it('increments llmFailures and reports failure when every map call fails', async () => {
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _cfg, opts) => {
+      opts?.onProviderAttempt?.()
+      return null
+    })
+
+    const result = await reprocessAuction(
+      'zvg-portal', '7265', undefined, config, '2026-08-02T11:00:00.000Z',
+      { artifactState: emptyArtifactState, prebuiltBase: mapReduceBase(), priorLlmFailures: 1 },
+    )
+
+    expect(result?.llmCalled).toBe(true)
+    expect(result?.llmFailures).toBe(2)
+    // Both maps attempted, no reduce call once neither produced anything.
+    expect(extractByLlm).toHaveBeenCalledTimes(2)
   })
 })
 
