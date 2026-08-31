@@ -16,6 +16,8 @@ const SCANNED_PDF_TEXT_THRESHOLD = 200
 const MAX_SCANNED_DOCUMENTS = 3
 const MAX_PAGES_PER_DOCUMENT = 8
 const MAX_RENDERED_PAGES = 20
+/** Must match llm.ts's provider-facing PDF text cap. */
+export const MAX_MAP_REDUCE_DOCUMENT_TEXT_CHARS = 24_000
 
 /** Map-reduce (server/tasks/reprocess-map-reduce.ts): the point past which
  *  the single combined-call path (buildDocumentLlmParts above) already
@@ -37,8 +39,12 @@ export interface DocumentSummaryInput<T> {
   /** Document label(s) this group covers — a single document's own label,
    *  or a synthesized one for the overflow bucket (see
    *  buildDocumentSummaryInputs). Threaded through to the reduce prompt so
-   *  a failed/succeeded map call can be attributed to something readable. */
+  *  a failed/succeeded map call can be attributed to something readable. */
   label: string
+  /** Exact document labels covered by this map call. */
+  documentLabels?: string[]
+  /** Documents not sent because the five-call cap or the run budget was hit. */
+  deferredDocumentLabels?: string[]
   parts: DocumentLlmParts
 }
 
@@ -53,6 +59,7 @@ export async function buildDocumentLlmParts<T>(
   opts: {
     native: boolean
     renderPages?: (source: T, maxPages: number) => Promise<string[] | null>
+    maxTextChars?: number
   },
 ): Promise<DocumentLlmParts> {
   if (opts.native) {
@@ -67,10 +74,13 @@ export async function buildDocumentLlmParts<T>(
     }
   }
 
-  const pdfText = documents
+  const combinedPdfText = documents
     .filter((document): document is DocumentLlmSource<T> & { text: string } => !!document.text?.trim())
     .map((document) => `=== ${document.label} ===\n${document.text}`)
     .join('\n\n') || null
+  const pdfText = combinedPdfText && opts.maxTextChars != null
+    ? compactDocumentText(combinedPdfText, opts.maxTextChars)
+    : combinedPdfText
   const scannedDocuments = documents.filter(
     (document) => !document.text || document.text.trim().length < SCANNED_PDF_TEXT_THRESHOLD,
   )
@@ -91,17 +101,48 @@ export async function buildDocumentLlmParts<T>(
   }
 }
 
+function compactDocumentText(text: string, limit: number): string {
+  if (text.length <= limit) return text
+  const marker = '\n\n[... Dokumentmitte aus Budgetgründen ausgelassen ...]\n\n'
+  const available = Math.max(0, limit - marker.length)
+  const firstPart = Math.floor(available * 0.7)
+  const lastPart = available - firstPart
+  return `${text.slice(0, firstPart)}${marker}${text.slice(-lastPart)}`.slice(0, limit)
+}
+
+function documentTextLength<T>(document: DocumentLlmSource<T>): number {
+  return document.text?.trim() ? `=== ${document.label} ===\n${document.text}`.length : 0
+}
+
+function isScannedDocument<T>(document: DocumentLlmSource<T>): boolean {
+  return !document.text || document.text.trim().length < SCANNED_PDF_TEXT_THRESHOLD
+}
+
+function canAppendToMapGroup<T>(
+  docs: readonly DocumentLlmSource<T>[],
+  document: DocumentLlmSource<T>,
+): boolean {
+  const scannedCount = docs.filter(isScannedDocument).length + (isScannedDocument(document) ? 1 : 0)
+  if (scannedCount > MAX_SCANNED_DOCUMENTS) return false
+
+  const textDocumentCount = docs.filter((doc) => documentTextLength(doc) > 0).length
+  const currentTextLength = docs.reduce((total, doc) => total + documentTextLength(doc), 0) +
+    Math.max(0, textDocumentCount - 1) * 2
+  const nextTextLength = documentTextLength(document)
+  const separatorLength = currentTextLength > 0 && nextTextLength > 0 ? 2 : 0
+  return currentTextLength + separatorLength + nextTextLength <= MAX_MAP_REDUCE_DOCUMENT_TEXT_CHARS
+}
+
 /**
  * Map-reduce's map phase: splits documents into per-document
  * buildDocumentLlmParts() calls instead of one combined call, so each stays
  * small and complete instead of one shared call silently truncating/dropping
  * documents once there are more than a handful. Bounded to at most
- * MAX_MAP_REDUCE_DOCUMENTS groups regardless of input size — the first
- * MAX_MAP_REDUCE_DOCUMENTS - 1 documents each get their own group, anything
- * beyond that is folded into one final overflow group via the existing
- * multi-document combine logic (buildDocumentLlmParts unchanged), so a
- * 50-document auction still produces exactly MAX_MAP_REDUCE_DOCUMENTS map
- * calls, not 50.
+ * MAX_MAP_REDUCE_DOCUMENTS groups regardless of input size. The first
+ * MAX_MAP_REDUCE_DOCUMENTS - 1 documents each get their own group; the
+ * remaining documents are packed into budget-safe groups. Documents that
+ * cannot fit into the five groups are explicitly carried to the reduce
+ * prompt as deferred instead of being silently dropped.
  */
 export async function buildDocumentSummaryInputs<T>(
   documents: Array<DocumentLlmSource<T>>,
@@ -115,13 +156,34 @@ export async function buildDocumentSummaryInputs<T>(
   const groups: Array<{ label: string; docs: Array<DocumentLlmSource<T>> }> =
     documents.slice(0, individualCount).map((doc) => ({ label: doc.label, docs: [doc] }))
   const overflow = documents.slice(individualCount)
-  if (overflow.length > 0) {
-    groups.push({
-      label: overflow.length === 1 ? overflow[0]!.label : `${overflow.length} weitere Dokumente`,
-      docs: overflow,
-    })
+  const overflowGroups: Array<{ label: string; docs: Array<DocumentLlmSource<T>> }> = []
+  for (const document of overflow) {
+    const current = overflowGroups.at(-1)
+    const canAppend = current && current.docs.length > 0 && !opts.native && canAppendToMapGroup(current.docs, document)
+    if (canAppend) {
+      current.docs.push(document)
+      current.label = `${current.docs.length} weitere Dokumente`
+    } else {
+      overflowGroups.push({ label: document.label, docs: [document] })
+    }
   }
-  return Promise.all(
-    groups.map(async (group) => ({ label: group.label, parts: await buildDocumentLlmParts(group.docs, opts) })),
+  groups.push(...overflowGroups)
+  const selectedGroups = groups.slice(0, MAX_MAP_REDUCE_DOCUMENTS)
+  const deferredDocumentLabels = groups
+    .slice(MAX_MAP_REDUCE_DOCUMENTS)
+    .flatMap((group) => group.docs.map((document) => document.label))
+  const result: Array<DocumentSummaryInput<T>> = await Promise.all(
+    selectedGroups.map(async (group) => ({
+      label: group.label,
+      documentLabels: group.docs.map((document) => document.label),
+      parts: await buildDocumentLlmParts(group.docs, {
+        ...opts,
+        maxTextChars: MAX_MAP_REDUCE_DOCUMENT_TEXT_CHARS,
+      }),
+    })),
   )
+  if (deferredDocumentLabels.length > 0 && result.length > 0) {
+    result.at(-1)!.deferredDocumentLabels = deferredDocumentLabels
+  }
+  return result
 }

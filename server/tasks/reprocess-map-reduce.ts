@@ -103,17 +103,26 @@ async function attemptExtraction(
   }
 }
 
-function buildReduceDocumentText(mapResults: readonly MapAttemptResult[]): string {
+function buildReduceDocumentText(
+  mapResults: readonly MapAttemptResult[],
+  deferredDocumentLabels: readonly string[] = [],
+): string {
   const preface =
-    'Es folgen strukturierte Zwischen-Zusammenfassungen mehrerer Dokumente derselben Auktion, jede aus einem ' +
-    'separaten Analyseschritt für genau ein Dokument. Widersprechen sich Dokumente, bevorzuge das gewichtigere ' +
+    'Es folgen strukturierte Zwischen-Zusammenfassungen mehrerer Dokumente derselben Auktion, jeweils aus einem ' +
+    'separaten Analyseschritt für ein einzelnes Dokument oder eine kleine budgetbegrenzte Dokumentgruppe. ' +
+    'Widersprechen sich Dokumente, bevorzuge das gewichtigere ' +
     '(Gutachten vor Exposé/Ankündigung) und vermerke den Widerspruch kurz in documentSummary.'
   const blocks = mapResults.map((r) =>
     r.extraction
       ? `=== ${r.label} ===\n${JSON.stringify(r.extraction)}`
       : `=== ${r.label} (Analyse fehlgeschlagen) ===\nDieses Dokument konnte nicht ausgewertet werden.`,
   )
-  return `${preface}\n\n${blocks.join('\n\n')}`
+  const deferred = deferredDocumentLabels.length > 0
+    ? `\n\n=== Dokumente nicht ausgewertet ===\n` +
+      `Die folgenden Dokumente konnten wegen des Map-Call- oder Run-Budget-Limits nicht ausgewertet werden: ` +
+      deferredDocumentLabels.join(', ') + '.'
+    : ''
+  return `${preface}\n\n${blocks.join('\n\n')}${deferred}`
 }
 
 /**
@@ -148,6 +157,12 @@ export async function runMapReduceExtraction(
 
   if (mapResults.every((r) => r.extraction == null)) return null
 
-  const reduceInput: LlmInput = { ...base, pdfText: buildReduceDocumentText(mapResults) }
+  const deferredDocumentLabels = [...new Set(
+    documentGroups.flatMap((group) => group.deferredDocumentLabels ?? []),
+  )]
+  const reduceInput: LlmInput = {
+    ...base,
+    pdfText: buildReduceDocumentText(mapResults, deferredDocumentLabels),
+  }
   return attemptExtraction(reduceInput, config, {}, callbacks)
 }

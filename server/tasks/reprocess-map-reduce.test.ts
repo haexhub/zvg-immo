@@ -169,4 +169,21 @@ describe('runMapReduceExtraction', () => {
     expect(result?.documentSummary).toBe('ok')
     expect(extractByLlmMock).toHaveBeenCalledTimes(3)
   })
+
+  it('reports deferred documents in the reduce input', async () => {
+    extractByLlmMock.mockImplementation(async (_input: LlmInput, _cfg: LlmConfig, opts: { name?: string; onProviderAttempt?: () => void }) => {
+      opts.onProviderAttempt?.()
+      return extraction({ documentSummary: opts.name === DOCUMENT_SUMMARY_SCHEMA_NAME ? 'map' : 'reduced' })
+    })
+
+    const result = await runMapReduceExtraction([
+      ...groups,
+      { label: 'Nicht gesendet', documentLabels: ['Nicht gesendet'], deferredDocumentLabels: ['Nicht gesendet'], parts: { pdfText: 'nicht gesendet', pdfPageImages: null, pdfBytes: null } },
+    ], base, config, {})
+
+    expect(result?.documentSummary).toBe('reduced')
+    const reduceInput = extractByLlmMock.mock.calls[3]![0] as LlmInput
+    expect(reduceInput.pdfText).toContain('Dokumente nicht ausgewertet')
+    expect(reduceInput.pdfText).toContain('Nicht gesendet')
+  })
 })

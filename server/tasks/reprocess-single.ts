@@ -107,6 +107,22 @@ export async function reprocessAuction(
     const remaining = opts.remainingLlmBudget ?? Infinity
     if (remaining < 2) return null
     const documentsForMapPhase = base.documentSummaryInputs.slice(0, remaining - 1)
+    const budgetDeferredLabels = base.documentSummaryInputs
+      .slice(documentsForMapPhase.length)
+      .flatMap((group) => [
+        ...(group.documentLabels ?? [group.label]),
+        ...(group.deferredDocumentLabels ?? []),
+      ])
+    if (budgetDeferredLabels.length > 0 && documentsForMapPhase.length > 0) {
+      const lastMapGroup = documentsForMapPhase.at(-1)!
+      documentsForMapPhase[documentsForMapPhase.length - 1] = {
+        ...lastMapGroup,
+        deferredDocumentLabels: [
+          ...(lastMapGroup.deferredDocumentLabels ?? []),
+          ...budgetDeferredLabels,
+        ],
+      }
+    }
     console.log(
       `[reprocess] map-reduce for ${platform}:${externalId} — ${documentsForMapPhase.length} document group(s) + 1 reduce call`,
     )
