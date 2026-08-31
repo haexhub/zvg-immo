@@ -2,6 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   buildParts,
   clampExtraction,
+  DOCUMENT_SUMMARY_SCHEMA,
+  DOCUMENT_SUMMARY_SCHEMA_NAME,
+  DOCUMENT_SUMMARY_SYSTEM_PROMPT,
   extractByLlm,
   isDailyQuotaError,
   isRateLimitError,
@@ -100,6 +103,49 @@ describe('extractByLlm', () => {
     expect(result).toBeNull()
     expect(onProviderError).not.toHaveBeenCalled()
   })
+
+  // Map-reduce (reprocess-map-reduce.ts) calls extractByLlm with a smaller
+  // per-document schema/prompt instead of the universal auction one — this
+  // is the override path that makes that possible without a parallel
+  // extract-call implementation.
+  it('sends an overridden schema/systemPrompt/name instead of the universal defaults', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      choices: [{ message: { content: JSON.stringify({ propertyType: 'eigentumswohnung' }) } }],
+    })
+    vi.stubGlobal('$fetch', fetchMock)
+    const customSchema = { type: 'object', properties: { propertyType: { type: 'string' } } }
+    const result = await extractByLlm(
+      { title: 'Titel', description: 'Beschreibung' },
+      { baseUrl: 'https://openai.example', model: 'gpt' },
+      { schema: customSchema, systemPrompt: 'custom prompt', name: 'document_summary' },
+    )
+    expect(result?.propertyType).toBe('eigentumswohnung')
+    const body = fetchMock.mock.calls[0]![1].body as {
+      messages: { role: string; content: unknown }[]
+      response_format: { json_schema: { name: string; schema: unknown } }
+    }
+    expect(body.messages[0]).toEqual({ role: 'system', content: 'custom prompt' })
+    expect(body.response_format.json_schema.name).toBe('document_summary')
+    expect(body.response_format.json_schema.schema).toBe(customSchema)
+  })
+
+  it('falls back to the universal schema/prompt/name when no override is passed', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      choices: [{ message: { content: JSON.stringify({ propertyType: 'eigentumswohnung' }) } }],
+    })
+    vi.stubGlobal('$fetch', fetchMock)
+    await extractByLlm(
+      { title: 'Titel', description: 'Beschreibung' },
+      { baseUrl: 'https://openai.example', model: 'gpt' },
+    )
+    const body = fetchMock.mock.calls[0]![1].body as {
+      messages: { role: string; content: unknown }[]
+      response_format: { json_schema: { name: string; schema: unknown } }
+    }
+    expect(body.messages[0]).toEqual({ role: 'system', content: SYSTEM_PROMPT })
+    expect(body.response_format.json_schema.name).toBe(UNIVERSAL_AUCTION_SCHEMA_NAME)
+    expect(body.response_format.json_schema.schema).toBe(UNIVERSAL_AUCTION_SCHEMA)
+  })
 })
 
 describe('universal auction extraction schema', () => {
@@ -136,6 +182,35 @@ describe('universal auction extraction schema', () => {
     expect(SYSTEM_PROMPT).toContain('spanisch')
     expect(SYSTEM_PROMPT).toContain('Enum-Werte exakt')
     expect(SYSTEM_PROMPT).toContain('gibst du auf Deutsch zurück')
+  })
+})
+
+describe('document summary schema (map-reduce)', () => {
+  // Drift guard: every property/required field must come from
+  // UNIVERSAL_AUCTION_SCHEMA except the two deliberate omissions, so a future
+  // field added to the universal schema either shows up here too or this
+  // test forces a conscious decision about it.
+  it('mirrors the universal schema minus ruleCheck and photos', () => {
+    const universalKeys = Object.keys(UNIVERSAL_AUCTION_SCHEMA.properties)
+    const summaryKeys = Object.keys(DOCUMENT_SUMMARY_SCHEMA.properties)
+    expect(summaryKeys).toEqual(universalKeys.filter((k) => k !== 'ruleCheck' && k !== 'photos'))
+    expect(DOCUMENT_SUMMARY_SCHEMA.required).toEqual(
+      UNIVERSAL_AUCTION_SCHEMA.required.filter((f) => f !== 'ruleCheck' && f !== 'photos'),
+    )
+    expect(DOCUMENT_SUMMARY_SCHEMA).toMatchObject({ type: 'object', additionalProperties: false })
+    expect(DOCUMENT_SUMMARY_SCHEMA_NAME).toBe('document_summary_v1')
+  })
+
+  it('shrinks documentSummary to a per-document length instead of the whole-auction one', () => {
+    expect(DOCUMENT_SUMMARY_SCHEMA.properties.documentSummary.maxLength).toBe(600)
+    expect(DOCUMENT_SUMMARY_SCHEMA.properties.documentSummary.maxLength).toBeLessThan(
+      UNIVERSAL_AUCTION_SCHEMA.properties.documentSummary.maxLength,
+    )
+  })
+
+  it('tells the model this is one of several documents for the same auction', () => {
+    expect(DOCUMENT_SUMMARY_SYSTEM_PROMPT).toContain('eines von mehreren')
+    expect(DOCUMENT_SUMMARY_SYSTEM_PROMPT).not.toContain('ruleCheck')
   })
 })
 

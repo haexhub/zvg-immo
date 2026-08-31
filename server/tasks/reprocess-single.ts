@@ -4,6 +4,7 @@ import { falsifiedRuleFields, mergeLlmResult, ruleChecksMatchingHint, type RuleC
 import { readArtifactProcessingState, type ArtifactProcessingState } from '~/server/utils/artifact-version-state'
 import { normalizePhoto } from '~/lib/photo'
 import { applyPhotoCuration, buildReprocessInput, buildRulesOnlyEntry, type ReprocessInput } from './reprocess-input'
+import { runMapReduceExtraction } from './reprocess-map-reduce'
 
 export async function reprocessAuction(
   platform: string,
@@ -41,6 +42,13 @@ export async function reprocessAuction(
      *  archived blob and re-renders scanned PDF pages, so rebuilding it would
      *  pay for the whole document set twice per auction. */
     prebuiltBase?: ReprocessInput
+    /** Caps how many map-reduce calls (map + reduce) this candidate may make
+     *  this run — see runReprocess's remaining-budget computation. Ignored
+     *  outside the map-reduce path (base.documentSummaryInputs unset). A
+     *  candidate whose document count needs more than this budget allows is
+     *  skipped (returns null) rather than partially processed, and stays
+     *  eligible for a later run with more budget. */
+    remainingLlmBudget?: number
   } = {},
 ): Promise<{
   entry: AuctionExtraction
@@ -66,7 +74,7 @@ export async function reprocessAuction(
 } | null> {
   const artifactState = opts.artifactState ?? await readArtifactProcessingState(platform, externalId)
   let base = opts.prebuiltBase
-    ?? await buildReprocessInput(platform, externalId, priorEntry, llmConfig, { artifactState })
+    ?? await buildReprocessInput(platform, externalId, priorEntry, llmConfig, { artifactState, allowMapReduce: true })
   if (!base) return null
 
   if (!llmConfig) {
@@ -88,66 +96,109 @@ export async function reprocessAuction(
   let llmConfigUsed: LlmConfig | null = null
   let llmDurationMs: number | null = null
   let llmUsage: LlmUsage | null = null
-  for (const [index, config] of configs.entries()) {
-    if (index > 0) {
-      // Rebuild rather than reuse base.input: nativeDocuments (gemini-native's
-      // raw-PDF path vs. every other provider's rasterized images) depends on
-      // which provider is actually being asked, and the fallback's provider
-      // can differ from the one buildReprocessInput was first built for.
-      const rebuilt = await buildReprocessInput(platform, externalId, priorEntry, config, { artifactState })
-      if (!rebuilt) break
-      base = rebuilt
+
+  if (base.documentSummaryInputs?.length) {
+    // Map-reduce: no fallback chain here (unlike the loop below) — running
+    // fallbackConfigs per-document would let a failing chain spend well past
+    // the budget the caller computed (e.g. 5 calls on config A, then 5 more
+    // on config B). A provider-unavailable mid-sequence fails the whole
+    // attempt instead; the normal llmFailures/24h-cooldown safety net picks
+    // it up again next run, same as any other failed candidate.
+    const remaining = opts.remainingLlmBudget ?? Infinity
+    if (remaining < 2) return null
+    const documentsForMapPhase = base.documentSummaryInputs.slice(0, remaining - 1)
+    const budgetDeferredLabels = base.documentSummaryInputs
+      .slice(documentsForMapPhase.length)
+      .flatMap((group) => [
+        ...(group.documentLabels ?? [group.label]),
+        ...(group.deferredDocumentLabels ?? []),
+      ])
+    if (budgetDeferredLabels.length > 0 && documentsForMapPhase.length > 0) {
+      const lastMapGroup = documentsForMapPhase.at(-1)!
+      documentsForMapPhase[documentsForMapPhase.length - 1] = {
+        ...lastMapGroup,
+        deferredDocumentLabels: [
+          ...(lastMapGroup.deferredDocumentLabels ?? []),
+          ...budgetDeferredLabels,
+        ],
+      }
     }
-    let providerAttempted = false
-    let providerError: string | null = null
-    let attemptUsage: LlmUsage | null = null
+    console.log(
+      `[reprocess] map-reduce for ${platform}:${externalId} — ${documentsForMapPhase.length} document group(s) + 1 reduce call`,
+    )
     const attemptStartedAt = Date.now()
-    try {
-      // Provenance hangs off onProviderAttempt, not off "extractByLlm
-      // returned": it bails out with null *before* attempting when the
-      // archived snapshot yields no parts at all (no title, no description,
-      // no documents), and stamping that rules-only version with a model
-      // that was never asked would misreport it on the WP-2 admin page.
-      llm = await extractByLlm(base.input!, config, {
-        onProviderAttempt: () => {
-          providerAttempted = true
-          opts.onLlmAttempt?.()
-        },
-        onProviderError: (err) => {
-          providerError = err instanceof Error ? err.message : String(err)
-          opts.onLlmError?.(err)
-        },
-        onUsage: (usage) => { attemptUsage = usage },
-      })
-      if (providerAttempted) {
-        llmConfigUsed = config
-        llmDurationMs = Date.now() - attemptStartedAt
-        llmUsage = attemptUsage
-        await opts.onLlmCall?.({
-          config,
-          durationMs: llmDurationMs,
-          usage: attemptUsage,
-          status: llm === null ? 'failed' : 'succeeded',
-          errorMessage: llm === null ? providerError ?? 'Keine gültige Extraktion in der Provider-Antwort' : null,
-        })
+    llm = await runMapReduceExtraction(documentsForMapPhase, base.input!, llmConfig, {
+      onLlmAttempt: opts.onLlmAttempt,
+      onLlmError: opts.onLlmError,
+      onLlmCall: opts.onLlmCall,
+    })
+    llmConfigUsed = llmConfig
+    // Wall-clock across every map+reduce call, not one request — the
+    // per-request onLlmCall callback above already recorded each call's own
+    // duration/usage individually via recordLlmUsage (llm_usage_events).
+    llmDurationMs = Date.now() - attemptStartedAt
+  } else {
+    for (const [index, config] of configs.entries()) {
+      if (index > 0) {
+        // Rebuild rather than reuse base.input: nativeDocuments (gemini-native's
+        // raw-PDF path vs. every other provider's rasterized images) depends on
+        // which provider is actually being asked, and the fallback's provider
+        // can differ from the one buildReprocessInput was first built for.
+        const rebuilt = await buildReprocessInput(platform, externalId, priorEntry, config, { artifactState })
+        if (!rebuilt) break
+        base = rebuilt
       }
-      break
-    } catch (err) {
-      if (providerAttempted) {
-        await opts.onLlmCall?.({
-          config,
-          durationMs: Date.now() - attemptStartedAt,
-          usage: attemptUsage,
-          status: 'failed',
-          errorMessage: err instanceof Error ? err.message : String(err),
+      let providerAttempted = false
+      let providerError: string | null = null
+      let attemptUsage: LlmUsage | null = null
+      const attemptStartedAt = Date.now()
+      try {
+        // Provenance hangs off onProviderAttempt, not off "extractByLlm
+        // returned": it bails out with null *before* attempting when the
+        // archived snapshot yields no parts at all (no title, no description,
+        // no documents), and stamping that rules-only version with a model
+        // that was never asked would misreport it on the WP-2 admin page.
+        llm = await extractByLlm(base.input!, config, {
+          onProviderAttempt: () => {
+            providerAttempted = true
+            opts.onLlmAttempt?.()
+          },
+          onProviderError: (err) => {
+            providerError = err instanceof Error ? err.message : String(err)
+            opts.onLlmError?.(err)
+          },
+          onUsage: (usage) => { attemptUsage = usage },
         })
+        if (providerAttempted) {
+          llmConfigUsed = config
+          llmDurationMs = Date.now() - attemptStartedAt
+          llmUsage = attemptUsage
+          await opts.onLlmCall?.({
+            config,
+            durationMs: llmDurationMs,
+            usage: attemptUsage,
+            status: llm === null ? 'failed' : 'succeeded',
+            errorMessage: llm === null ? providerError ?? 'Keine gültige Extraktion in der Provider-Antwort' : null,
+          })
+        }
+        break
+      } catch (err) {
+        if (providerAttempted) {
+          await opts.onLlmCall?.({
+            config,
+            durationMs: Date.now() - attemptStartedAt,
+            usage: attemptUsage,
+            status: 'failed',
+            errorMessage: err instanceof Error ? err.message : String(err),
+          })
+        }
+        if (isDailyQuotaError(err)) opts.onDailyQuotaExhausted?.(config)
+        const isLast = index === configs.length - 1
+        if (isLast || !isLlmProviderUnavailable(err)) throw err
+        console.warn(
+          `[reprocess] ${config.provider ?? 'openai-compatible'}/${config.model} unavailable for ${platform}:${externalId}, trying next configured model: ${(err as Error).message}`,
+        )
       }
-      if (isDailyQuotaError(err)) opts.onDailyQuotaExhausted?.(config)
-      const isLast = index === configs.length - 1
-      if (isLast || !isLlmProviderUnavailable(err)) throw err
-      console.warn(
-        `[reprocess] ${config.provider ?? 'openai-compatible'}/${config.model} unavailable for ${platform}:${externalId}, trying next configured model: ${(err as Error).message}`,
-      )
     }
   }
   let curatedPhotos = priorEntry?.photos?.map(normalizePhoto)

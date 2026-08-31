@@ -116,7 +116,7 @@ export class OpenAiCompatibleProvider implements ExtractionProvider {
       ...(this.config.provider === 'openrouter' ? { usage: { include: true } } : {}),
       response_format: {
         type: 'json_schema',
-        json_schema: { name: UNIVERSAL_AUCTION_SCHEMA_NAME, schema: req.schema, strict: true },
+        json_schema: { name: req.name ?? UNIVERSAL_AUCTION_SCHEMA_NAME, schema: req.schema, strict: true },
       },
     }
     let resp: unknown

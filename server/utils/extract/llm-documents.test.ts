@@ -238,6 +238,79 @@ describe('prepareArchivedLlmDocuments', () => {
 
     expect(prepared.input.documentText?.length).toBeLessThanOrEqual(80_000)
   })
+
+  function fourPdfDocumentSet() {
+    vi.mocked(readDocumentSet).mockResolvedValue({ artifactVersionId: 20, items: [0, 1, 2, 3].map((i) => ({
+      ordinal: i,
+      kind: 'document' as const,
+      label: `Dokument ${i}`,
+      filename: `doc-${i}.pdf`,
+      fileId: `${i}`,
+      sourceUrl: `https://example.test/doc-${i}.pdf`,
+      contentHash: `pdf-${i}`,
+      contentType: 'application/pdf',
+    })) })
+    vi.mocked(downloadBlob).mockImplementation(async (hash) =>
+      typeof hash === 'string' && hash.startsWith('pdf-') ? Buffer.from('%PDF-1.4\n%%EOF') : null,
+    )
+  }
+
+  it('builds per-document summary inputs instead of a combined blob once the PDF count crosses the threshold and allowMapReduce is set', async () => {
+    fourPdfDocumentSet()
+    const prepared = await prepareArchivedLlmDocuments(auction(), {
+      nativeDocuments: false,
+      artifactVersionId: 20,
+      allowMapReduce: true,
+    })
+
+    expect(prepared.input.pdfText).toBeNull()
+    expect(prepared.input.pdfPageImages).toBeNull()
+    expect(prepared.input.pdfBytes).toBeNull()
+    expect(prepared.input.documentSummaryInputs).toHaveLength(4)
+    expect(prepared.input.documentSummaryInputs?.map((g) => g.label)).toEqual([
+      'Dokument 0', 'Dokument 1', 'Dokument 2', 'Dokument 3',
+    ])
+    for (const group of prepared.input.documentSummaryInputs ?? []) {
+      expect(group.parts.pdfText).toContain('PDF Wohnfläche 140 m²')
+    }
+  })
+
+  it('keeps the combined blob and never sets documentSummaryInputs when allowMapReduce is not set (batch-submission safety net)', async () => {
+    fourPdfDocumentSet()
+    const prepared = await prepareArchivedLlmDocuments(auction(), {
+      nativeDocuments: false,
+      artifactVersionId: 20,
+    })
+
+    expect(prepared.input.documentSummaryInputs).toBeUndefined()
+    expect(prepared.input.pdfText).toContain('=== Dokument 0 ===')
+    expect(prepared.input.pdfText).toContain('=== Dokument 3 ===')
+  })
+
+  it('stays on the combined path when allowMapReduce is set but the PDF count is at or under the threshold', async () => {
+    vi.mocked(readDocumentSet).mockResolvedValue({ artifactVersionId: 21, items: [0, 1, 2].map((i) => ({
+      ordinal: i,
+      kind: 'document' as const,
+      label: `Dokument ${i}`,
+      filename: `doc-${i}.pdf`,
+      fileId: `${i}`,
+      sourceUrl: `https://example.test/doc-${i}.pdf`,
+      contentHash: `pdf-${i}`,
+      contentType: 'application/pdf',
+    })) })
+    vi.mocked(downloadBlob).mockImplementation(async (hash) =>
+      typeof hash === 'string' && hash.startsWith('pdf-') ? Buffer.from('%PDF-1.4\n%%EOF') : null,
+    )
+
+    const prepared = await prepareArchivedLlmDocuments(auction(), {
+      nativeDocuments: false,
+      artifactVersionId: 21,
+      allowMapReduce: true,
+    })
+
+    expect(prepared.input.documentSummaryInputs).toBeUndefined()
+    expect(prepared.input.pdfText).toContain('=== Dokument 0 ===')
+  })
 })
 
 describe('prepareLiveLlmDocuments', () => {

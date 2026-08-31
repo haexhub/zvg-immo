@@ -359,3 +359,87 @@ export const UNIVERSAL_AUCTION_SCHEMA = {
     'photos',
   ],
 } as const
+
+// ────────────────────────────────────────────────────────────────────────────
+// Map-reduce (server/tasks/reprocess-map-reduce.ts): a per-document
+// "map" call asks for the same field set as UNIVERSAL_AUCTION_SCHEMA but for
+// exactly ONE document, minus ruleCheck (rules values describe the whole
+// auction, not one document — verification only happens once, at the
+// reduce call) and minus photos (unrelated to PDFs, stays a single
+// whole-auction concern at the reduce call, driven by candidateImages).
+// Derived from UNIVERSAL_AUCTION_SCHEMA rather than hand-duplicated so the
+// two can't silently drift apart when a field is added/changed.
+// ────────────────────────────────────────────────────────────────────────────
+
+const { ruleCheck: _omitRuleCheck, photos: _omitPhotos, ...DOCUMENT_SUMMARY_PROPERTIES } =
+  UNIVERSAL_AUCTION_SCHEMA.properties
+const DOCUMENT_SUMMARY_REQUIRED = UNIVERSAL_AUCTION_SCHEMA.required.filter(
+  (field): field is Exclude<typeof UNIVERSAL_AUCTION_SCHEMA.required[number], 'ruleCheck' | 'photos'> =>
+    field !== 'ruleCheck' && field !== 'photos',
+)
+
+export const DOCUMENT_SUMMARY_SCHEMA_NAME = 'document_summary_v1'
+
+export const DOCUMENT_SUMMARY_SCHEMA = {
+  description:
+    'Zwischenschritt der Map-Reduce-Extraktion: strukturierte Zusammenfassung EINES einzelnen Dokuments einer Auktion, nicht die finale Auktions-Extraktion.',
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    ...DOCUMENT_SUMMARY_PROPERTIES,
+    documentSummary: {
+      type: ['string', 'null'],
+      maxLength: 600,
+      description: 'Kompakte sachliche Zusammenfassung DIESES Dokuments in höchstens einem kurzen Absatz, oder null.',
+    },
+  },
+  required: DOCUMENT_SUMMARY_REQUIRED,
+} as const
+
+export const DOCUMENT_SUMMARY_SYSTEM_PROMPT =
+  'Du übersetzt chaotische, länderspezifische Texte zu einem einzelnen Dokument einer ' +
+  'Immobilienauktion in ein universelles JSON-Format. Dies ist eines von mehreren ' +
+  'Dokumenten derselben Auktion — berichte nur, was DIESES Dokument sagt. Nimm nichts an, ' +
+  'was ein anderes Dokument enthalten könnte, und rate nicht. Die Eingabe kann deutsch, ' +
+  'spanisch, italienisch, französisch, niederländisch, tschechisch, polnisch, bosnisch, ' +
+  'ungarisch, litauisch, lettisch, estnisch, schwedisch, finnisch, dänisch, isländisch ' +
+  'oder eine andere europäische Sprache enthalten. Arbeite semantisch, nicht wortwörtlich: ' +
+  'ordne lokale Auktions-, Gerichts-, Grundstücks- und Immobilienbegriffe den kanonischen ' +
+  'Schemafeldern zu und gib Enum-Werte exakt in den erlaubten normalisierten Codes zurück. ' +
+  'Freitexte wie documentSummary, biddingNotes, renovationNotes, insights.summary und ' +
+  'planningNotes gibst du auf Deutsch zurück; kurze O-Ton-Beträge in marketValueText dürfen ' +
+  'in der Originalsprache/-schreibweise bleiben. ' +
+  'Datenschutz ist zwingend: Nenne oder zitiere niemals Namen natürlicher Personen, ' +
+  'insbesondere nicht von Schuldnern, Miteigentümern, Eigentümern, Antragsgegnern oder ' +
+  'Personen in einem Insolvenzverfahren. Erhalte den sachlichen Zusammenhang ohne Identität, ' +
+  'z. B. "ein Miteigentümer". ' +
+  'Gib die Objektart als eine der erlaubten Kategorien zurück und Flächen in Quadratmetern ' +
+  '(Hektar in m² umrechnen: 1 ha = 10000 m²). Wohnfläche und Grundstücksfläche strikt ' +
+  'getrennt halten. Wenn ein Wert nicht eindeutig im Text steht, gib null zurück — niemals ' +
+  'raten. Gib die Zimmeranzahl nur für tatsächlich vorhandene, bereits errichtete Bebauung ' +
+  'zurück, keine genehmigte/zulässige Kapazität aus Bebauungsplan oder Baugenehmigung. ' +
+  'Gib eine Sicherheitsleistung nur zurück, wenn ein konkreter Geldbetrag in der ' +
+  'Landeswährung der Anzeige im Text genannt wird — niemals aus einem Prozentsatz berechnen ' +
+  'oder in eine andere Währung umrechnen, sonst null. ' +
+  'Gib den im Gutachten genannten Verkehrswert (Gesamtschätzwert der Immobilie) in der ' +
+  'Landeswährung der Anzeige zurück, falls explizit genannt, sonst null — nicht zu ' +
+  'verwechseln mit dem Bodenrichtwert (EUR/m² nur für das Grundstück, siehe insights). ' +
+  'Gib außerdem den Zustand als eine der erlaubten Kategorien zurück, nur wenn er eindeutig ' +
+  'aus dem Text hervorgeht, sonst null. Gib eine Liste erkannter Ausstattungsmerkmale ' +
+  'zurück — nur Merkmale, die explizit im Text genannt werden (Negation beachten), sonst ' +
+  'eine leere Liste. Niemals raten. ' +
+  'Extrahiere zusätzlich, sofern in diesem Dokument enthalten, eine reichhaltigere ' +
+  'Einschätzung (insights): defects, encumbrances, landValueEurPerSqm, construction, ' +
+  'locationCharacter und summary. Gib insights insgesamt als null zurück, wenn dieses ' +
+  'Dokument keine dieser Angaben enthält. Extrahiere außerdem, sofern in diesem Dokument ' +
+  'enthalten, planerische/rechtliche Hinweise (planningNotes): monumentProtection, ' +
+  'contamination, developmentPlan, landConsolidation, developmentCharges, ' +
+  'redevelopmentArea, conservationArea, landParcels. Ein "kein(e) X bekannt/vorhanden"-' +
+  'Hinweis zählt als vorhandene Angabe (kurz wiedergeben), nicht als null — null nur wenn ' +
+  'dieses Dokument das Thema gar nicht erwähnt. Gib planningNotes insgesamt als null ' +
+  'zurück, wenn keines der Felder und keine landParcels-Einträge in diesem Dokument stehen. ' +
+  'Niemals raten. ' +
+  'Erstelle in documentSummary eine kompakte, sachliche Zusammenfassung DIESES Dokuments — ' +
+  'nenne nur die wesentlichen Angaben zu Objekt, Flächen, Zustand, Modernisierungen, ' +
+  'Besonderheiten und Wertermittlung. Höchstens ein kurzer Absatz; null nur, wenn dieses ' +
+  'Dokument keine verwertbaren Objektinformationen enthält.'
