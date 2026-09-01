@@ -1,6 +1,6 @@
 import type { Pool } from 'pg'
 import type { Auction, HazardAssessment, LandValueBaseline, LocationContext, MarketComparison } from '~/types/auction'
-import { readAuctionRecords } from '~/server/utils/auction-record'
+import { readAuctionRecord, readAuctionRecords } from '~/server/utils/auction-record'
 import { geocodeAddress } from '~/server/utils/geocode'
 import { getPool } from '~/server/utils/db'
 import {
@@ -132,7 +132,15 @@ export async function runExternalEnrichment(
   const startedAt = Date.now()
   const now = options.now ?? new Date()
   const checkedAt = now.toISOString()
-  const records = await readAuctionRecords(options.country, { includePhotos: false })
+  // A single-auction trigger (e.g. re-enrichment after coordinates moved,
+  // see current-auctions.ts) only ever needs that one row — reading the full
+  // table just to filter it back down to one auction in inScope() below
+  // meant every such trigger joined and sorted the entire auctions/
+  // auction_details/auction_fetch_state tables, which under concurrent crawl
+  // load queued up on the shared pool and blew its 15s query_timeout.
+  const records = options.platform && options.externalId
+    ? await readAuctionRecord(options.platform, options.externalId).then((record) => record ? [record] : [])
+    : await readAuctionRecords(options.country, { includePhotos: false })
   const existing = await readLocationEnrichmentCache()
   const summary: ExternalEnrichmentSummary = {
     processed: 0,
