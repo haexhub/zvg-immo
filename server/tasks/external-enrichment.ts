@@ -125,6 +125,11 @@ export default defineTask({
 // full sweep, which measured ~16h — long enough that the next colliding
 // runExclusiveTask abort costs a whole day's progress, not a batch's.
 const DEFAULT_BATCH_LIMIT = 40
+
+/**
+ * Refreshes external enrichment for a bounded batch or one explicitly selected
+ * auction when both platform and externalId are provided.
+ */
 export async function runExternalEnrichment(
   options: ExternalEnrichmentOptions = {},
   signal?: AbortSignal,

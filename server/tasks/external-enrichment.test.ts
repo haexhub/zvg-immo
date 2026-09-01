@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { join } from 'node:path'
 import type { Auction, HazardAssessment, LandValueBaseline, LocationContext, MarketComparison } from '~/types/auction'
 
-vi.mock('~/server/utils/auction-record', () => ({ readAuctionRecords: vi.fn() }))
+vi.mock('~/server/utils/auction-record', () => ({
+  readAuctionRecord: vi.fn(),
+  readAuctionRecords: vi.fn(),
+}))
 vi.mock('~/server/utils/geocode', () => ({ geocodeAddress: vi.fn() }))
 vi.mock('~/server/utils/external-data/location-enrichment', () => ({
   readLocationEnrichmentCache: vi.fn(),
@@ -189,6 +192,34 @@ afterEach(async () => {
 })
 
 describe('runExternalEnrichment', () => {
+  it('reads only the requested auction for per-auction runs', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { readAuctionRecord, readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionRecord).mockResolvedValue({
+      auction: auction({ platform: 'zvg-portal', externalId: '123' }),
+      detailsId: null,
+      detailsVersion: null,
+      artifactVersionId: null,
+    })
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    const summary = await runExternalEnrichment({
+      platform: 'zvg-portal',
+      externalId: '123',
+      marketAdapters: [],
+      landValueAdapters: [],
+      hazardAdapters: [],
+      locationContextAdapters: [],
+    })
+
+    expect(readAuctionRecord).toHaveBeenCalledWith('zvg-portal', '123')
+    expect(readAuctionRecords).not.toHaveBeenCalled()
+    expect(summary).toMatchObject({ processed: 1, written: 1 })
+  })
+
   it('writes cached enrichment from market, land-value and hazard adapters', async () => {
     vi.stubGlobal('defineTask', (def: unknown) => def)
     const { readAuctionRecords } = await import('~/server/utils/auction-record')
