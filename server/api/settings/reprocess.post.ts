@@ -6,7 +6,7 @@
 // auctions) without either waiting for the next cron tick or an unbounded
 // country-wide run.
 
-import type { ReprocessOptions, ReprocessResult } from '~/server/tasks/reprocess'
+import { runReprocessTask, type ReprocessOptions, type ReprocessResult } from '~/server/tasks/reprocess'
 
 const MAX_LIMIT = 200
 
@@ -28,6 +28,6 @@ export default defineEventHandler(async (event) => {
     trigger: 'manual',
   }
 
-  const outcome = await runTask('reprocess', { payload: { ...opts } }) as { result: ReprocessResult }
+  const outcome = await runReprocessTask({ ...opts }) as { result: ReprocessResult }
   return outcome.result
 })

@@ -13,6 +13,7 @@
 
 import { isSafePathSegment } from '~/server/utils/path-segment'
 import { readAuctionRecord } from '~/server/utils/auction-record'
+import { runReprocessTask } from '~/server/tasks/reprocess'
 
 export default defineEventHandler(async (event) => {
   const platform = String(getRouterParam(event, 'platform') ?? '')
@@ -26,7 +27,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, statusMessage: 'auction not found' })
   }
 
-  void runTask('reprocess', { payload: { platform, externalId: id, force: true, trigger: 'manual' } }).catch((err: unknown) => {
+  void runReprocessTask({ platform, externalId: id, force: true, trigger: 'manual' }).catch((err: unknown) => {
     console.error('[settings/auction/reprocess-retry] trigger failed:', (err as Error).message)
   })
   return { started: true }

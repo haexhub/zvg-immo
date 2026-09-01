@@ -10,6 +10,7 @@
 // via server/utils/task-runs.ts, which /settings polls and renders next to this
 // button (enrichStatus / reprocessStatus / externalEnrichmentStatus).
 
+import { runReprocessTask } from '~/server/tasks/reprocess'
 import type { runEnrich } from '~/server/tasks/enrich'
 import { ensureEnabledCountriesLoaded, isCountryEnabled, listRegisteredCountries } from '~/server/crawlers/registry'
 
@@ -38,7 +39,7 @@ export default defineEventHandler(async (event) => {
   // recorded as the task's lastError by its own defineTask wrapper; the catch
   // only keeps the trigger itself from becoming an unhandled rejection.
   if (runExtraction) {
-    void runTask('reprocess', { payload: { country, force: forceExtraction, trigger: 'manual' } }).catch((err: unknown) => {
+    void runReprocessTask({ country, force: forceExtraction, trigger: 'manual' }).catch((err: unknown) => {
       console.error('[settings/enrich] reprocess trigger failed:', (err as Error).message)
     })
   }

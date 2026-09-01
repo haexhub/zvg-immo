@@ -3,6 +3,7 @@
 // the generic /settings/reprocess endpoint this is safe for the dashboard and
 // keeps the reverse proxy out of the long-running extraction path.
 import { ensureEnabledCountriesLoaded, isCountryEnabled, listRegisteredCountries } from '~/server/crawlers/registry'
+import { runReprocessTask } from '~/server/tasks/reprocess'
 
 export default defineEventHandler(async (event) => {
   const country = (getRouterParam(event, 'country') ?? '').trim().toLowerCase()
@@ -15,7 +16,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: `${registered.name} ist deaktiviert.` })
   }
 
-  void runTask('reprocess', { payload: { country, force: true, trigger: 'manual' } }).catch((err: unknown) => {
+  void runReprocessTask({ country, force: true, trigger: 'manual' }).catch((err: unknown) => {
     console.error('[settings/reprocess-force] trigger failed:', (err as Error).message)
   })
   return { started: true }

@@ -11,6 +11,7 @@
 // of 'open'.
 
 import { ensureEnabledCountriesLoaded, isCountryEnabled, listRegisteredCountries } from '~/server/crawlers/registry'
+import { runReprocessTask } from '~/server/tasks/reprocess'
 
 export default defineEventHandler(async (event) => {
   const country = (getRouterParam(event, 'country') ?? '').trim().toLowerCase()
@@ -23,7 +24,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: `${registered.name} ist deaktiviert.` })
   }
 
-  void runTask('reprocess', { payload: { country, force: false, ignoreCooldown: true, ignoreBatchPending: true, failedOnly: true, trigger: 'manual' } }).catch((err: unknown) => {
+  void runReprocessTask({ country, force: false, ignoreCooldown: true, ignoreBatchPending: true, failedOnly: true, trigger: 'manual' }).catch((err: unknown) => {
     console.error('[settings/reprocess-retry-failed] trigger failed:', (err as Error).message)
   })
   return { started: true }

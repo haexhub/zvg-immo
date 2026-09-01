@@ -10,6 +10,7 @@
 // llm-batch-jobs.get.ts), already polled by useSettingsTaskOverview.
 
 import { ensureEnabledCountriesLoaded, isCountryEnabled, listRegisteredCountries } from '~/server/crawlers/registry'
+import { runReprocessTask } from '~/server/tasks/reprocess'
 
 export default defineEventHandler(async (event) => {
   const country = (getRouterParam(event, 'country') ?? '').trim().toLowerCase()
@@ -34,7 +35,7 @@ export default defineEventHandler(async (event) => {
   // open bucket and nothing else. force stays false, so this still only ever
   // touches genuinely open candidates, never 'done' or (even cooled-down)
   // locked-out ones.
-  void runTask('reprocess', { payload: { country, force: false, ignoreBatchPending: true, openOnly: true, trigger: 'manual' } }).catch((err: unknown) => {
+  void runReprocessTask({ country, force: false, ignoreBatchPending: true, openOnly: true, trigger: 'manual' }).catch((err: unknown) => {
     console.error('[settings/reprocess-backlog] trigger failed:', (err as Error).message)
   })
   return { started: true }
