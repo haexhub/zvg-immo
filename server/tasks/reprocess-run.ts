@@ -243,7 +243,10 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       }
 
       const platformLlmCalls = llmCallsByPlatform.get(platform) ?? 0
-      const llmReady = !!llmConfig && llmCalls < maxLlmPerRun && platformLlmCalls < llmCapPerPlatform
+      const llmReady = !!llmConfig && (
+        opts.ignoreLlmBudget ||
+        (llmCalls < maxLlmPerRun && platformLlmCalls < llmCapPerPlatform)
+      )
       if (opts.force && llmConfig && !llmReady) {
         skipped++
         continue

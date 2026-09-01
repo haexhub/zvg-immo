@@ -24,7 +24,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: `${registered.name} ist deaktiviert.` })
   }
 
-  void runReprocessTask({ country, force: false, ignoreCooldown: true, ignoreBatchPending: true, failedOnly: true, trigger: 'manual' }).catch((err: unknown) => {
+  void runReprocessTask({ country, force: false, ignoreCooldown: true, ignoreBatchPending: true, failedOnly: true, ignoreLlmBudget: true, trigger: 'manual' }).catch((err: unknown) => {
     console.error('[settings/reprocess-retry-failed] trigger failed:', (err as Error).message)
   })
   return { started: true }

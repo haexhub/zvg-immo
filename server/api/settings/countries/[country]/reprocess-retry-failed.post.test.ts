@@ -33,6 +33,7 @@ describe('/api/settings/countries/[country]/reprocess-retry-failed', () => {
       ignoreCooldown: true,
       ignoreBatchPending: true,
       failedOnly: true,
+      ignoreLlmBudget: true,
       trigger: 'manual',
     })
   })

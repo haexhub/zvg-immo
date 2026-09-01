@@ -65,6 +65,10 @@ export interface ReprocessOptions {
    *  candidates would also be picked up and burn LLM budget the action
    *  never asked to spend. */
   failedOnly?: boolean
+  /** Explicit admin retry of locked-out candidates may process the complete
+   *  selected error bucket. The normal cron and force actions keep the global
+   *  per-run budget (see readMaxLlmPerRun). */
+  ignoreLlmBudget?: boolean
   /** Excludes any candidate at or past MAX_LLM_FAILURES outright, even one
    *  whose LLM_FAILURE_RETRY_COOLDOWN_HOURS window has elapsed. Without this,
    *  the default cron/backlog eligibility deliberately lets a cooled-down
