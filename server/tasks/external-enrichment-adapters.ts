@@ -110,10 +110,13 @@ export async function defaultHazardAdapters(
         checkedAt,
         maxCacheAgeDays: Number(effisValues.maxCacheAgeDays),
       }))
-    } catch (err) {
-      console.warn(
-        `[external-enrichment] copernicus-effis cache unusable at ${String(effisValues.cachePath)}: ${(err as Error).message}`,
-      )
+    } catch (error) {
+      summary.providerFailures++
+      const message = `copernicus-effis cache ${String(effisValues.cachePath)}: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+      if (summary.errors.length < 100) summary.errors.push(message)
+      console.warn(`[external-enrichment] ${message}`)
     }
   }
   return adapters

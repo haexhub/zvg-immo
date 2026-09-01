@@ -473,6 +473,32 @@ describe('runExternalEnrichment', () => {
     })
   })
 
+  it('records a failure when the configured EFFIS cache is missing', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    vi.stubGlobal('useRuntimeConfig', () => ({
+      externalData: {
+        frDvfCachePath: '',
+        copernicusEffisCachePath: join(process.cwd(), 'nonexistent-effis.json'),
+      },
+    }))
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(auction()))
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    const summary = await runExternalEnrichment({
+      marketAdapters: [],
+      landValueAdapters: [],
+      locationContextAdapters: [],
+    })
+
+    expect(summary).toMatchObject({ processed: 1, written: 1, hazards: 0, providerFailures: 1 })
+    expect(summary.errors).toHaveLength(1)
+    expect(summary.errors[0]).toContain('nonexistent-effis.json')
+  })
+
   it('counts stale hazard results separately', async () => {
     vi.stubGlobal('defineTask', (def: unknown) => def)
     const { readAuctionRecords } = await import('~/server/utils/auction-record')
