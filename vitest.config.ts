@@ -11,7 +11,9 @@ export default defineConfig({
   },
   test: {
     include: ['**/*.test.ts'],
-    exclude: [...configDefaults.exclude, '.claude/**'],
+    // Nested agent worktrees contain their own copy of the test suite. They
+    // are not part of this checkout and must not be discovered recursively.
+    exclude: [...configDefaults.exclude, '.claude/**', '.claude-worktrees/**'],
     environment: 'node',
     testTimeout: 15_000,
   },

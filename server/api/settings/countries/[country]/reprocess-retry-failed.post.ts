@@ -24,7 +24,12 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: `${registered.name} ist deaktiviert.` })
   }
 
-  void runReprocessTask({ country, force: false, ignoreCooldown: true, ignoreBatchPending: true, failedOnly: true, ignoreLlmBudget: true, trigger: 'manual' }).catch((err: unknown) => {
+  // An explicit retry must make an actual provider call. In batch mode a
+  // failed submission only leaves the candidates in the same error bucket,
+  // which is indistinguishable from a no-op in this detached UI action.
+  // Batch remains available for scheduled/full reprocess runs; this action
+  // deliberately uses the reliable synchronous path.
+  void runReprocessTask({ country, force: false, batch: false, ignoreCooldown: true, ignoreBatchPending: true, failedOnly: true, ignoreLlmBudget: true, trigger: 'manual' }).catch((err: unknown) => {
     console.error('[settings/reprocess-retry-failed] trigger failed:', (err as Error).message)
   })
   return { started: true }
