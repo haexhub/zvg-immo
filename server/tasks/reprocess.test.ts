@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Auction, AuctionExtraction } from '~/types/auction'
+import type { ClampedExtraction } from '../utils/extract/llm-clamp'
 import type { ReprocessInput } from './reprocess-input'
 import { downloadBlob, findLatestCapture } from '../utils/storage-download'
 import { getPool } from '../utils/db'
@@ -784,6 +785,55 @@ describe('runReprocess llm_failures cooldown', () => {
       country: 'de', failedOnly: true, ignoreCooldown: true, ignoreLlmBudget: true,
     })).resolves.toMatchObject({ processed: 2, llmCalls: 2 })
     expect(extractByLlm).toHaveBeenCalledTimes(2)
+  })
+
+  it('manual failed-only retries give map-reduce candidates an unlimited remaining budget', async () => {
+    const firstState = lockedOutFetchState(new Date(Date.now() - 60 * 60 * 1000).toISOString()).get('zvg-portal:7265')!
+    vi.mocked(getPool).mockReturnValue({
+      query: vi.fn(async () => ({ rows: [
+        { platform: 'zvg-portal', external_id: '7265', country: 'de' },
+        { platform: 'zvg-portal', external_id: '7266', country: 'de' },
+      ] })),
+    } as never)
+    vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map([
+      ['zvg-portal:7265', { auction: auction(), detailsId: 7, detailsVersion: 2, artifactVersionId: null }],
+      ['zvg-portal:7266', { auction: { ...auction(), externalId: '7266' }, detailsId: 8, detailsVersion: 2, artifactVersionId: null }],
+    ]))
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([
+      ['zvg-portal:7265', firstState],
+      ['zvg-portal:7266', { ...firstState, externalId: '7266' }],
+    ]))
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+      baseUrl: 'https://api.example.test', apiKey: 'secret', model: 'test-model', provider: 'openai-compatible',
+    }])
+    vi.mocked(prepareArchivedLlmDocuments).mockResolvedValue({
+      input: {
+        documentSummaryInputs: [{
+          label: 'Gutachten',
+          parts: { pdfText: 'Gutachten Text', pdfPageImages: null, pdfBytes: null },
+        }],
+      },
+      documentSetItems: [],
+      documentSetComplete: true,
+      artifactVersionId: null,
+    } as never)
+    const llmResult: ClampedExtraction = {
+      propertyType: null, landAreaSqm: null, livingAreaSqm: null, rooms: null,
+      bedrooms: null, bathrooms: null, floor: null, bathroomHasTub: null, bathroomHasShower: null,
+      heating: null, units: null, securityDeposit: null, ruleCheck: null,
+      biddingNotes: null, condition: null, features: [], yearBuilt: null, lastRenovationYear: null,
+      renovationNotes: null, insights: null, planningNotes: null, documentSummary: 'summary',
+      marketValueEur: null, marketValueText: null, photoCuration: [],
+    }
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+      opts?.onProviderAttempt?.()
+      return llmResult
+    })
+
+    await expect(runReprocess({
+      country: 'de', failedOnly: true, ignoreCooldown: true, ignoreLlmBudget: true,
+    })).resolves.toMatchObject({ processed: 2, llmCalls: 4 })
+    expect(extractByLlm).toHaveBeenCalledTimes(4)
   })
 })
 

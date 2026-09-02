@@ -336,7 +336,9 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
         // only meaningful to the map-reduce path (see reprocess-single.ts),
         // which needs to know its own hard ceiling before spending anything,
         // not just whether llmReady allowed a first call to start.
-        remainingLlmBudget: Math.min(maxLlmPerRun - llmCalls, llmCapPerPlatform - platformLlmCallsSoFar),
+        remainingLlmBudget: opts.ignoreLlmBudget
+          ? Infinity
+          : Math.min(maxLlmPerRun - llmCalls, llmCapPerPlatform - platformLlmCallsSoFar),
         // Only handed over when the sync path starts on the very config the
         // input above was built for — a rotated or quota-filtered chain head
         // is a different provider and has to build its own.
