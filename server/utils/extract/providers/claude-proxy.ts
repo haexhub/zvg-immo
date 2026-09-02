@@ -17,6 +17,13 @@ type ClaudeContentBlock =
   | { type: 'text'; text: string }
   | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
 
+// The proxy's OAuth/Claude-CLI path allows large multimodal requests up to
+// 10 minutes. Scanned appraisals can legitimately need several minutes: the
+// production proxy completed one after 288s. Keep the client-side deadline
+// above that backstop, otherwise the app aborts first, kills the proxy's CLI
+// process, and every retry is recorded as a provider failure.
+const CLAUDE_PROXY_REQUEST_TIMEOUT_MS = 11 * 60 * 1000
+
 /** This proxy path forwards only text and image blocks: `document` parts are
  *  intentionally dropped here — the transitional proxy doesn't relay native
  *  PDF documents — so callers on this provider rely on the `pdfText`/
@@ -70,11 +77,8 @@ export class ClaudeProxyProvider implements ExtractionProvider {
         // Bound the request: the proxy spawns a `claude` subprocess per call, so a
         // stuck spawn (or upstream stall) would keep this promise pending forever
         // and — because the enrich task awaits every worker via Promise.all — block
-        // the whole run. Raised 120s → 240s: prod logs (2026-08-12) showed the
-        // subprocess now routinely taking 127-138s to exit even on success — the
-        // same failure mode as the original 60s→120s bump, just recurred at the
-        // next ceiling as the model/schema grew. Every single sync extraction
-        // call was timing out and burning both retries for nothing.
+        // the whole run. This is deliberately just above the proxy's 10-minute
+        // subprocess backstop; see CLAUDE_PROXY_REQUEST_TIMEOUT_MS above.
         resp = await $fetch(`${this.config.baseUrl.replace(/\/$/, '')}/v1/messages`, {
           method: 'POST',
           headers: {
@@ -83,7 +87,7 @@ export class ClaudeProxyProvider implements ExtractionProvider {
             ...(this.config.apiKey ? { 'x-api-key': this.config.apiKey } : {}),
           },
           body,
-          signal: AbortSignal.timeout(240_000),
+          signal: AbortSignal.timeout(CLAUDE_PROXY_REQUEST_TIMEOUT_MS),
         })
         break
       } catch (err) {
