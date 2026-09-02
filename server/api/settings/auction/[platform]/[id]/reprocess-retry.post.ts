@@ -27,7 +27,9 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, statusMessage: 'auction not found' })
   }
 
-  void runReprocessTask({ platform, externalId: id, force: true, trigger: 'manual' }).catch((err: unknown) => {
+  // Per-row retry is an explicit recovery action. Keep it on the direct
+  // provider path so a failed batch submission cannot look like a no-op.
+  void runReprocessTask({ platform, externalId: id, force: true, batch: false, trigger: 'manual' }).catch((err: unknown) => {
     console.error('[settings/auction/reprocess-retry] trigger failed:', (err as Error).message)
   })
   return { started: true }

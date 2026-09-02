@@ -11,7 +11,7 @@ async function loadHandler() {
   vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
   vi.stubGlobal('getRouterParam', () => 'de')
   vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
-  return (await import('./reprocess-retry-failed.post')).default as unknown as (event: unknown) => Promise<unknown>
+  return (await import('./reprocess-backlog.post')).default as unknown as (event: unknown) => Promise<unknown>
 }
 
 afterEach(() => {
@@ -20,8 +20,8 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-describe('/api/settings/countries/[country]/reprocess-retry-failed', () => {
-  it('passes the failed-only retry payload to the direct task runner', async () => {
+describe('/api/settings/countries/[country]/reprocess-backlog', () => {
+  it('uses the synchronous path for an explicit backlog retry', async () => {
     const { runReprocessTask } = await import('~/server/tasks/reprocess')
     vi.mocked(runReprocessTask).mockResolvedValue({ result: {} } as never)
     const handler = await loadHandler()
@@ -31,10 +31,8 @@ describe('/api/settings/countries/[country]/reprocess-retry-failed', () => {
       country: 'de',
       force: false,
       batch: false,
-      ignoreCooldown: true,
       ignoreBatchPending: true,
-      failedOnly: true,
-      ignoreLlmBudget: true,
+      openOnly: true,
       trigger: 'manual',
     })
   })

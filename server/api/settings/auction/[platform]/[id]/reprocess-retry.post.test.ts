@@ -55,7 +55,7 @@ describe('/api/settings/auction/[platform]/[id]/reprocess-retry', () => {
 
     await expect(handler(event('zvg-portal', '7265'))).resolves.toEqual({ started: true })
     expect(runReprocessTask).toHaveBeenCalledWith({
-      platform: 'zvg-portal', externalId: '7265', force: true, trigger: 'manual',
+      platform: 'zvg-portal', externalId: '7265', force: true, batch: false, trigger: 'manual',
     })
   })
 

@@ -35,7 +35,11 @@ export default defineEventHandler(async (event) => {
   // open bucket and nothing else. force stays false, so this still only ever
   // touches genuinely open candidates, never 'done' or (even cooled-down)
   // locked-out ones.
-  void runReprocessTask({ country, force: false, ignoreBatchPending: true, openOnly: true, trigger: 'manual' }).catch((err: unknown) => {
+  // The button is an explicit retry, so don't hide a batch-submit failure
+  // behind an unchanged open count. Full scheduled runs can still use batch
+  // mode; this manual path calls the provider synchronously in the detached
+  // task instead.
+  void runReprocessTask({ country, force: false, batch: false, ignoreBatchPending: true, openOnly: true, trigger: 'manual' }).catch((err: unknown) => {
     console.error('[settings/reprocess-backlog] trigger failed:', (err as Error).message)
   })
   return { started: true }
