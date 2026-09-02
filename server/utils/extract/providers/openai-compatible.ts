@@ -31,6 +31,29 @@ export function toOpenAiContent(parts: ContentPart[]): OpenAiContentPart[] {
   return content
 }
 
+/**
+ * OpenRouter forwards `response_format.json_schema` to the selected upstream
+ * provider. Google AI Studio rejects the otherwise valid JSON Schema keyword
+ * `maxItems` with `INVALID_ARGUMENT` (rather than simply ignoring it). The
+ * extraction result is bounded by clampExtraction after the response anyway,
+ * so dropping this provider-facing hint is safe and keeps OpenRouter's Google
+ * models usable for both sync and batch requests.
+ */
+function adaptOpenRouterSchemaValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(adaptOpenRouterSchemaValue)
+  if (!value || typeof value !== 'object') return value
+  const adapted: Record<string, unknown> = {}
+  for (const [key, child] of Object.entries(value)) {
+    if (key === 'maxItems') continue
+    adapted[key] = adaptOpenRouterSchemaValue(child)
+  }
+  return adapted
+}
+
+export function toOpenRouterSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  return adaptOpenRouterSchemaValue(schema) as Record<string, unknown>
+}
+
 /** Reads the OpenAI-compatible `usage.{prompt_tokens,completion_tokens}`
  *  block. Every field is optional/absent on some backends, so each is read
  *  independently rather than requiring the whole object. */
@@ -116,7 +139,11 @@ export class OpenAiCompatibleProvider implements ExtractionProvider {
       ...(this.config.provider === 'openrouter' ? { usage: { include: true } } : {}),
       response_format: {
         type: 'json_schema',
-        json_schema: { name: req.name ?? UNIVERSAL_AUCTION_SCHEMA_NAME, schema: req.schema, strict: true },
+        json_schema: {
+          name: req.name ?? UNIVERSAL_AUCTION_SCHEMA_NAME,
+          schema: this.config.provider === 'openrouter' ? toOpenRouterSchema(req.schema) : req.schema,
+          strict: true,
+        },
       },
     }
     let resp: unknown

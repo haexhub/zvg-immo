@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ExtractionRequest } from '../llm'
-import { OpenAiCompatibleProvider, parseOpenAiExtractionResponse, parseOpenAiUsage, toOpenAiContent } from './openai-compatible'
+import { OpenAiCompatibleProvider, parseOpenAiExtractionResponse, parseOpenAiUsage, toOpenAiContent, toOpenRouterSchema } from './openai-compatible'
 
 describe('toOpenAiContent', () => {
   it('translates text and image parts, dropping document parts', () => {
@@ -18,6 +18,25 @@ describe('toOpenAiContent', () => {
 
   it('returns an empty array for no parts', () => {
     expect(toOpenAiContent([])).toEqual([])
+  })
+})
+
+describe('toOpenRouterSchema', () => {
+  it('removes maxItems recursively while preserving other schema keywords', () => {
+    const schema = {
+      type: 'object',
+      maxItems: 8,
+      properties: {
+        photos: { type: 'array', maxItems: 8, items: { type: 'object', maxItems: 1 } },
+      },
+    }
+    expect(toOpenRouterSchema(schema)).toEqual({
+      type: 'object',
+      properties: {
+        photos: { type: 'array', items: { type: 'object' } },
+      },
+    })
+    expect(schema.properties.photos.maxItems).toBe(8)
   })
 })
 
@@ -161,6 +180,21 @@ describe('OpenAiCompatibleProvider.extract', () => {
     })
     await provider.extract(req)
     expect(fetchMock.mock.calls[0]![1].body.model).toBe('google/gemini-3.5-flash-lite')
+  })
+
+  it('removes OpenRouter-incompatible maxItems schema keywords', async () => {
+    const okResponse = { choices: [{ message: { content: '{}' } }] }
+    const fetchMock = vi.fn().mockResolvedValue(okResponse)
+    vi.stubGlobal('$fetch', fetchMock)
+    const provider = new OpenAiCompatibleProvider({ ...config, provider: 'openrouter' })
+    await provider.extract({
+      ...req,
+      schema: { type: 'object', maxItems: 4, properties: { items: { type: 'array', maxItems: 2 } } },
+    })
+    expect(fetchMock.mock.calls[0]![1].body.response_format.json_schema.schema).toEqual({
+      type: 'object',
+      properties: { items: { type: 'array' } },
+    })
   })
 
   it('leaves a non-OpenRouter model untouched even if it happens to end in ":batch"', async () => {

@@ -36,7 +36,7 @@ import {
   type LlmConfig,
   type LlmInput,
 } from './llm'
-import { parseOpenAiExtractionResponse, parseOpenAiUsage, toOpenAiContent } from './providers/openai-compatible'
+import { parseOpenAiExtractionResponse, parseOpenAiUsage, toOpenAiContent, toOpenRouterSchema } from './providers/openai-compatible'
 import { apiBase, customIdForKey, extractBatchItemErrorMessage, extractOfetchErrorMessage, isTransientBatchError } from './batch-shared'
 import { insertLlmBatchJob, recordLlmBatchCapability } from '../llm-batch-jobs'
 import type { PollResult } from './gemini-batch'
@@ -74,7 +74,11 @@ function buildBatchRequest(customId: string, input: LlmInput, config: LlmConfig)
       ],
       response_format: {
         type: 'json_schema',
-        json_schema: { name: UNIVERSAL_AUCTION_SCHEMA_NAME, schema: UNIVERSAL_AUCTION_SCHEMA, strict: true },
+        json_schema: {
+          name: UNIVERSAL_AUCTION_SCHEMA_NAME,
+          schema: toOpenRouterSchema(UNIVERSAL_AUCTION_SCHEMA),
+          strict: true,
+        },
       },
       // See openai-compatible.ts's matching opt-in — without it, this item's
       // usage block never carries the billed cost.
