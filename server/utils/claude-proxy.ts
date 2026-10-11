@@ -64,7 +64,11 @@ export async function callProxySetup<T>(
     })
     return res as T
   } catch (err) {
-    const status = (err as { statusCode?: number }).statusCode ?? 502
+    // A 401/403 from the proxy means our setup token was rejected — an
+    // upstream misconfiguration, not the admin's session. Forwarding it as-is
+    // would make the settings UI treat it as an expired session and log out.
+    const upstream = (err as { statusCode?: number }).statusCode ?? 502
+    const status = upstream === 401 || upstream === 403 ? 502 : upstream
     throw createError({
       statusCode: status,
       statusMessage: `Claude-Proxy: ${extractProxyMessage(err)}`,
