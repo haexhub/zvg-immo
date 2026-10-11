@@ -41,6 +41,11 @@ describe('estimateCostUsd', () => {
     expect(cost).toBeCloseTo(1, 6)
   })
 
+  it('uses the long-prompt tier for claude-haiku-5-5 above 100K input tokens', () => {
+    expect(estimateCostUsd('claude-haiku-5-5', 100_000, 1_000_000)).toBeCloseTo(0.01 + 0.5, 6)
+    expect(estimateCostUsd('claude-haiku-5-5', 100_001, 1_000_000)).toBeCloseTo(0.0500005 + 2.5, 6)
+  })
+
   it('returns null for an unpriced model', () => {
     expect(estimateCostUsd('some/unlisted-model', 100, 100)).toBeNull()
   })

@@ -18,6 +18,11 @@ export interface ModelPricing {
   inputPerMillion: number
   /** USD per 1,000,000 output/completion tokens. */
   outputPerMillion: number
+  longPrompt?: {
+    thresholdInputTokens: number
+    inputPerMillion: number
+    outputPerMillion: number
+  }
 }
 
 const MODEL_PRICING: Record<string, ModelPricing> = {
@@ -33,8 +38,13 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
   // SettingsLlmProfilesCard.vue's claude-proxy default template.
   'claude-sonnet-5': { inputPerMillion: 2, outputPerMillion: 10 },
   'claude-sonnet-4-6': { inputPerMillion: 3, outputPerMillion: 15 },
-  // Up to 100K prompt tokens; longer prompts bill $0.50 / $2.50.
-  'claude-haiku-5-5': { inputPerMillion: 0.1, outputPerMillion: 0.5 },
+  // claude-haiku-5-5: up to 100K prompt tokens at $0.10 / $0.50;
+  // above 100K at $0.50 / $2.50.
+  'claude-haiku-5-5': {
+    inputPerMillion: 0.1,
+    outputPerMillion: 0.5,
+    longPrompt: { thresholdInputTokens: 100_000, inputPerMillion: 0.5, outputPerMillion: 2.5 },
+  },
   'claude-haiku-4-5': { inputPerMillion: 1, outputPerMillion: 5 },
   'claude-haiku-4-5-20251001': { inputPerMillion: 1, outputPerMillion: 5 },
   // Gemini (gemini-native) — https://ai.google.dev/gemini-api/docs/pricing
@@ -61,8 +71,11 @@ export function estimateCostUsd(
   const pricing = lookupModelPricing(model)
   if (!pricing) return null
   if (inputTokens == null && outputTokens == null) return null
-  const inputCost = ((inputTokens ?? 0) / 1_000_000) * pricing.inputPerMillion
-  const outputCost = ((outputTokens ?? 0) / 1_000_000) * pricing.outputPerMillion
+  const tier = pricing.longPrompt && (inputTokens ?? 0) > pricing.longPrompt.thresholdInputTokens
+    ? pricing.longPrompt
+    : pricing
+  const inputCost = ((inputTokens ?? 0) / 1_000_000) * tier.inputPerMillion
+  const outputCost = ((outputTokens ?? 0) / 1_000_000) * tier.outputPerMillion
   return inputCost + outputCost
 }
 
