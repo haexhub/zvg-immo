@@ -7,7 +7,18 @@ describe('lookupModelPricing', () => {
   })
 
   it('finds the claude-proxy default model', () => {
-    expect(lookupModelPricing('claude-sonnet-5')).toEqual({ inputPerMillion: 3, outputPerMillion: 15 })
+    expect(lookupModelPricing('claude-sonnet-5')).toEqual({ inputPerMillion: 2, outputPerMillion: 10 })
+  })
+
+  it('prices every model the claude-proxy advertises', () => {
+    for (const model of [
+      'claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5',
+      'claude-opus-5', 'claude-opus-4-8', 'claude-fable-5', 'claude-sonnet-5',
+      'claude-sonnet-4-6', 'claude-haiku-4-5-20251001',
+    ]) {
+      expect(lookupModelPricing(model), model).not.toBeNull()
+    }
+    expect(lookupModelPricing('claude-sonnet-5-5')).toEqual({ inputPerMillion: 2, outputPerMillion: 10 })
   })
 
   it('strips a :batch suffix before lookup', () => {

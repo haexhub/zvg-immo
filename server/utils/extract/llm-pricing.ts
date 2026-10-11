@@ -21,10 +21,22 @@ export interface ModelPricing {
 }
 
 const MODEL_PRICING: Record<string, ModelPricing> = {
-  // Anthropic (claude-proxy) — https://www.anthropic.com/pricing
-  'claude-haiku-4-5': { inputPerMillion: 1, outputPerMillion: 5 },
+  // Anthropic (claude-proxy) — https://www.anthropic.com/pricing. Mirrors
+  // haex-claude-proxy's advertised model list (its /v1/models), including
+  // the dated Haiku 4.5 id the proxy serves.
+  'claude-fable-5-1': { inputPerMillion: 10, outputPerMillion: 50 },
+  'claude-fable-5': { inputPerMillion: 10, outputPerMillion: 50 },
+  'claude-opus-5-5': { inputPerMillion: 4, outputPerMillion: 20 },
+  'claude-opus-5': { inputPerMillion: 5, outputPerMillion: 25 },
+  'claude-opus-4-8': { inputPerMillion: 5, outputPerMillion: 25 },
+  'claude-sonnet-5-5': { inputPerMillion: 2, outputPerMillion: 10 },
   // SettingsLlmProfilesCard.vue's claude-proxy default template.
-  'claude-sonnet-5': { inputPerMillion: 3, outputPerMillion: 15 },
+  'claude-sonnet-5': { inputPerMillion: 2, outputPerMillion: 10 },
+  'claude-sonnet-4-6': { inputPerMillion: 3, outputPerMillion: 15 },
+  // Up to 100K prompt tokens; longer prompts bill $0.50 / $2.50.
+  'claude-haiku-5-5': { inputPerMillion: 0.1, outputPerMillion: 0.5 },
+  'claude-haiku-4-5': { inputPerMillion: 1, outputPerMillion: 5 },
+  'claude-haiku-4-5-20251001': { inputPerMillion: 1, outputPerMillion: 5 },
   // Gemini (gemini-native) — https://ai.google.dev/gemini-api/docs/pricing
   'gemini-flash-latest': { inputPerMillion: 0.3, outputPerMillion: 2.5 },
 }
