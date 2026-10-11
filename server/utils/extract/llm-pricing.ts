@@ -18,13 +18,35 @@ export interface ModelPricing {
   inputPerMillion: number
   /** USD per 1,000,000 output/completion tokens. */
   outputPerMillion: number
+  longPrompt?: {
+    thresholdInputTokens: number
+    inputPerMillion: number
+    outputPerMillion: number
+  }
 }
 
 const MODEL_PRICING: Record<string, ModelPricing> = {
-  // Anthropic (claude-proxy) — https://www.anthropic.com/pricing
-  'claude-haiku-4-5': { inputPerMillion: 1, outputPerMillion: 5 },
+  // Anthropic (claude-proxy) — https://www.anthropic.com/pricing. Mirrors
+  // haex-claude-proxy's advertised model list (its /v1/models), including
+  // the dated Haiku 4.5 id the proxy serves.
+  'claude-fable-5-1': { inputPerMillion: 10, outputPerMillion: 50 },
+  'claude-fable-5': { inputPerMillion: 10, outputPerMillion: 50 },
+  'claude-opus-5-5': { inputPerMillion: 4, outputPerMillion: 20 },
+  'claude-opus-5': { inputPerMillion: 5, outputPerMillion: 25 },
+  'claude-opus-4-8': { inputPerMillion: 5, outputPerMillion: 25 },
+  'claude-sonnet-5-5': { inputPerMillion: 2, outputPerMillion: 10 },
   // SettingsLlmProfilesCard.vue's claude-proxy default template.
-  'claude-sonnet-5': { inputPerMillion: 3, outputPerMillion: 15 },
+  'claude-sonnet-5': { inputPerMillion: 2, outputPerMillion: 10 },
+  'claude-sonnet-4-6': { inputPerMillion: 3, outputPerMillion: 15 },
+  // claude-haiku-5-5: up to 100K prompt tokens at $0.10 / $0.50;
+  // above 100K at $0.50 / $2.50.
+  'claude-haiku-5-5': {
+    inputPerMillion: 0.1,
+    outputPerMillion: 0.5,
+    longPrompt: { thresholdInputTokens: 100_000, inputPerMillion: 0.5, outputPerMillion: 2.5 },
+  },
+  'claude-haiku-4-5': { inputPerMillion: 1, outputPerMillion: 5 },
+  'claude-haiku-4-5-20251001': { inputPerMillion: 1, outputPerMillion: 5 },
   // Gemini (gemini-native) — https://ai.google.dev/gemini-api/docs/pricing
   'gemini-flash-latest': { inputPerMillion: 0.3, outputPerMillion: 2.5 },
 }
@@ -49,8 +71,11 @@ export function estimateCostUsd(
   const pricing = lookupModelPricing(model)
   if (!pricing) return null
   if (inputTokens == null && outputTokens == null) return null
-  const inputCost = ((inputTokens ?? 0) / 1_000_000) * pricing.inputPerMillion
-  const outputCost = ((outputTokens ?? 0) / 1_000_000) * pricing.outputPerMillion
+  const tier = pricing.longPrompt && (inputTokens ?? 0) > pricing.longPrompt.thresholdInputTokens
+    ? pricing.longPrompt
+    : pricing
+  const inputCost = ((inputTokens ?? 0) / 1_000_000) * tier.inputPerMillion
+  const outputCost = ((outputTokens ?? 0) / 1_000_000) * tier.outputPerMillion
   return inputCost + outputCost
 }
 

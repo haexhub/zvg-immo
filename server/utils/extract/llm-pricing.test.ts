@@ -7,7 +7,18 @@ describe('lookupModelPricing', () => {
   })
 
   it('finds the claude-proxy default model', () => {
-    expect(lookupModelPricing('claude-sonnet-5')).toEqual({ inputPerMillion: 3, outputPerMillion: 15 })
+    expect(lookupModelPricing('claude-sonnet-5')).toEqual({ inputPerMillion: 2, outputPerMillion: 10 })
+  })
+
+  it('prices every model the claude-proxy advertises', () => {
+    for (const model of [
+      'claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5',
+      'claude-opus-5', 'claude-opus-4-8', 'claude-fable-5', 'claude-sonnet-5',
+      'claude-sonnet-4-6', 'claude-haiku-4-5-20251001',
+    ]) {
+      expect(lookupModelPricing(model), model).not.toBeNull()
+    }
+    expect(lookupModelPricing('claude-sonnet-5-5')).toEqual({ inputPerMillion: 2, outputPerMillion: 10 })
   })
 
   it('strips a :batch suffix before lookup', () => {
@@ -28,6 +39,11 @@ describe('estimateCostUsd', () => {
   it('treats a null token count as zero, not as unknown', () => {
     const cost = estimateCostUsd('claude-haiku-4-5', 1_000_000, null)
     expect(cost).toBeCloseTo(1, 6)
+  })
+
+  it('uses the long-prompt tier for claude-haiku-5-5 above 100K input tokens', () => {
+    expect(estimateCostUsd('claude-haiku-5-5', 100_000, 1_000_000)).toBeCloseTo(0.01 + 0.5, 6)
+    expect(estimateCostUsd('claude-haiku-5-5', 100_001, 1_000_000)).toBeCloseTo(0.0500005 + 2.5, 6)
   })
 
   it('returns null for an unpriced model', () => {
