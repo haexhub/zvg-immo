@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+/** Stub the proxy's Nuxt globals so every fetch rejects with the supplied error. */
 function stubProxy(fetchError: unknown) {
   vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
   vi.stubGlobal('useRuntimeConfig', () => ({ claudeProxyUrl: 'http://proxy:8080', proxySetupToken: 'token' }))
