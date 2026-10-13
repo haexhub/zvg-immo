@@ -32,16 +32,24 @@ function formatDate(iso: string): string {
   return new Date(iso).toLocaleString(intlLocale.value)
 }
 
+// Drilldown clicks and goBack() don't wait for an in-flight load, so only the
+// latest request may apply its result — a slower earlier response would
+// otherwise show region A's cases under region B's breadcrumb, or jump back
+// to the document list after the user already navigated away.
+let loadRequestId = 0
+
 async function withLoading<T>(fn: () => Promise<T>): Promise<T | undefined> {
+  const requestId = ++loadRequestId
   pending.value = true
   error.value = null
   try {
-    return await fn()
+    const result = await fn()
+    return requestId === loadRequestId ? result : undefined
   } catch (err) {
-    error.value = normalizeSettingsError(err, t('settings.archive.loadError'))
+    if (requestId === loadRequestId) error.value = normalizeSettingsError(err, t('settings.archive.loadError'))
     return undefined
   } finally {
-    pending.value = false
+    if (requestId === loadRequestId) pending.value = false
   }
 }
 
@@ -116,6 +124,8 @@ async function openCase(row: ArchiveCaseRow): Promise<void> {
 }
 
 function goBack(): void {
+  loadRequestId++
+  pending.value = false
   error.value = null
   if (level.value === 'document') level.value = 'case'
   else if (level.value === 'case') level.value = 'region'
