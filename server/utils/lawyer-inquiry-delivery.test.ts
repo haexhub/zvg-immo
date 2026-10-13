@@ -71,3 +71,44 @@ describe('lawyer inquiry idempotency and rate limit', () => {
     await expect(findLawyerInquiryReplay({ ...input, message: 'Changed' })).rejects.toBeInstanceOf(LawyerInquiryIdempotencyConflictError)
   })
 })
+
+describe('lawyer inquiry persistence', () => {
+  function freshInquiryPool(outboxInsert: () => Promise<{ rows: Record<string, unknown>[] }> = async () => ({ rows: [] })) {
+    return poolWith(async (sql) => {
+      if (sql.includes('count(*)')) return { rows: [{ count: '0' }] }
+      if (sql.includes('INSERT INTO lawyer_inquiries')) return { rows: [row] }
+      if (sql.includes('INSERT INTO outbound_deliveries')) return outboxInsert()
+      return { rows: [] }
+    })
+  }
+
+  it('stores the inquiry and exactly one outbox row inside one transaction', async () => {
+    const pool = freshInquiryPool()
+    getPool.mockReturnValue(pool)
+
+    await expect(createLawyerInquiryWithDelivery(input)).resolves.toMatchObject({ id: 'inquiry-1' })
+
+    const statements = pool.client.query.mock.calls.map(([sql]) => sql)
+    const begin = statements.indexOf('BEGIN')
+    const inquiryInsert = statements.findIndex((sql) => sql.includes('INSERT INTO lawyer_inquiries'))
+    const outboxInserts = statements.flatMap((sql, i) => (sql.includes('INSERT INTO outbound_deliveries') ? [i] : []))
+    const commit = statements.indexOf('COMMIT')
+    expect(outboxInserts).toHaveLength(1)
+    expect(begin).toBeLessThan(inquiryInsert)
+    expect(inquiryInsert).toBeLessThan(outboxInserts[0]!)
+    expect(outboxInserts[0]).toBeLessThan(commit)
+    const outboxCall = pool.client.query.mock.calls[outboxInserts[0]!] as unknown as [string, unknown[]]
+    expect(outboxCall[1]).toEqual(['lawyer-inquiry:inquiry-1', JSON.stringify({ ...input.mail, inquiryId: 'inquiry-1' })])
+    expect(pool.client.release).toHaveBeenCalledOnce()
+  })
+
+  it('rolls the inquiry back when its outbox row cannot be written', async () => {
+    const pool = freshInquiryPool(async () => { throw new Error('outbox insert failed') })
+    getPool.mockReturnValue(pool)
+
+    await expect(createLawyerInquiryWithDelivery(input)).rejects.toThrow('outbox insert failed')
+    expect(pool.client.query).toHaveBeenCalledWith('ROLLBACK')
+    expect(pool.client.query).not.toHaveBeenCalledWith('COMMIT')
+    expect(pool.client.release).toHaveBeenCalledOnce()
+  })
+})
