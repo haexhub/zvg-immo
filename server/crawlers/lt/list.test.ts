@@ -16,6 +16,14 @@ function listPage(ids: number[]): Response {
 
 const FULL_PAGE = Array.from({ length: 20 }, (_, i) => i + 1)
 
+/** A full page of 20 cards; the first one has an unexpected link and is skipped by the parser. */
+function fullPageWithBrokenCard(): Response {
+  return new Response(
+    `<ul class="bid_list"><li><a href="/other">x</a></li>${Array.from({ length: 19 }, (_, i) => row(i + 1)).join('')}</ul>`,
+    { status: 200 },
+  )
+}
+
 describe('fetchAllListings', () => {
   afterEach(() => mockFetch.mockReset())
 
@@ -25,6 +33,15 @@ describe('fetchAllListings', () => {
     const { auctions, complete } = await fetchAllListings('lt-eaukcionai')
 
     expect(auctions).toHaveLength(21)
+    expect(complete).toBe(true)
+  })
+
+  it('keeps paginating when a full page contains an unparseable card', async () => {
+    mockFetch.mockResolvedValueOnce(fullPageWithBrokenCard()).mockResolvedValueOnce(listPage([100]))
+
+    const { auctions, complete } = await fetchAllListings('lt-eaukcionai')
+
+    expect(auctions).toHaveLength(20)
     expect(complete).toBe(true)
   })
 
