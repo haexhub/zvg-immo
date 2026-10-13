@@ -46,7 +46,7 @@ export function recordProviderFailure(
 // with no configFields, or whose required fields resolve empty everywhere,
 // yields `null` and is left out — same graceful-degrade as before, now
 // driven by the registry instead of one hand-written check per source.
-async function resolvedSourceValues(
+export async function resolvedSourceValues(
   db: Pool | null,
   sourceId: string,
 ): Promise<ExternalDataSourceConfigValues | null> {

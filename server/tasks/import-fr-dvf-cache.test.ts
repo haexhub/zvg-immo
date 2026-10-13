@@ -3,6 +3,8 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('~/server/utils/db', () => ({ getPool: vi.fn(() => null) }))
+
 let tmp: string | null = null
 
 afterEach(async () => {
@@ -49,6 +51,21 @@ describe('runImportFrDvfCache', () => {
       sourceVersion: 'fixture-2025',
       transactions: [{ id: 'm1', communeCode: '75056' }],
     })
+  })
+
+  it('writes to the configured fr-dvf-geolocated cachePath when the payload has none', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    tmp = await mkdtemp(join(tmpdir(), 'zvg-dvf-task-'))
+    const csvPath = join(tmp, 'dvf.csv')
+    const configuredPath = join(tmp, 'configured', 'fr-dvf.json')
+    await writeFile(csvPath, csv())
+    vi.stubGlobal('useRuntimeConfig', () => ({ externalData: { frDvfCachePath: configuredPath } }))
+
+    const { runImportFrDvfCache } = await import('./import-fr-dvf-cache')
+    const summary = await runImportFrDvfCache({ csvPath, generatedAt: '2026-07-26T00:00:00.000Z' })
+
+    expect(summary.cachePath).toBe(configuredPath)
+    expect(JSON.parse(await readFile(configuredPath, 'utf8')).transactions).toHaveLength(1)
   })
 
   it('requires csvPath', async () => {
