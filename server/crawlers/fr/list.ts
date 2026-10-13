@@ -104,12 +104,14 @@ function parseListPage(html: string): ListPage {
  *  once past the last one (it clamps to the last valid page instead), so we
  *  must compute the page count from the `total`/`limit` fields up front
  *  rather than looping until empty. */
-async function discoverListItems(): Promise<Map<string, ListItem>> {
+async function discoverListItems(): Promise<{ byHref: Map<string, ListItem>; complete: boolean }> {
   const byHref = new Map<string, ListItem>()
+  let complete = true
 
   // Isolate failures per region: a transient error on one "grande région"
   // (timeout, HTTP 5xx) must not discard the listings already collected from
-  // the others.
+  // the others — but the run is then partial and must not read as complete,
+  // or crawl_state would hide that region's listings as gone.
   for (const region of FR_LIST_REGIONS) {
     const baseUrl = `${FR_BASE}/ventes-aux-encheres-immobilieres/${region}/prochaines-ventes.html`
     try {
@@ -122,11 +124,12 @@ async function discoverListItems(): Promise<Map<string, ListItem>> {
         for (const item of page_.items) byHref.set(item.href, item)
       }
     } catch (err) {
+      complete = false
       console.error(`licitor.com: failed to fetch region "${region}"`, err)
     }
   }
 
-  return byHref
+  return { byHref, complete }
 }
 
 interface DetailInfo {
@@ -270,10 +273,10 @@ function mapItem(item: ListItem, detail: DetailInfo | null, platformId: string):
 
 export async function fetchAllListings(
   platformId: string,
-): Promise<{ auctions: Auction[]; total: number | null }> {
-  const byHref = await discoverListItems()
+): Promise<{ auctions: Auction[]; total: number | null; complete: boolean }> {
+  const { byHref, complete } = await discoverListItems()
   const entries = [...byHref.entries()]
-  if (entries.length === 0) return { auctions: [], total: 0 }
+  if (entries.length === 0) return { auctions: [], total: 0, complete }
 
   const details: (DetailInfo | null)[] = new Array(entries.length).fill(null)
   let cursor = 0
@@ -288,5 +291,5 @@ export async function fetchAllListings(
   await Promise.all(Array.from({ length: DETAIL_CONCURRENCY }, worker))
 
   const auctions = entries.map(([, item], i) => mapItem(item, details[i] ?? null, platformId))
-  return { auctions, total: auctions.length }
+  return { auctions, total: auctions.length, complete }
 }
