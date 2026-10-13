@@ -33,7 +33,7 @@ export async function readExtractionLlmConfig(options: LlmConfigResolveOptions =
  *  default surfaces as a one-element array, same as before. */
 export async function readExtractionLlmConfigChain(options: LlmConfigResolveOptions = {}): Promise<LlmConfig[]> {
   const db = getPool()
-  if (db && !options.ignoreKillSwitch && (await getLlmKillSwitch(db).catch(() => false))) return []
+  if (db && !options.ignoreKillSwitch && (await getLlmKillSwitch(db))) return []
   const c = useRuntimeConfig().extractLlm as
     | { provider?: string; baseUrl?: string; apiKey?: string; model?: string }
     | undefined
@@ -56,7 +56,7 @@ export async function resolveLlmConfigForProfile(
   profileId: string,
   options: LlmConfigResolveOptions = {},
 ): Promise<LlmConfig | null> {
-  if (!options.ignoreKillSwitch && (await getLlmKillSwitch(db).catch(() => false))) return null
+  if (!options.ignoreKillSwitch && (await getLlmKillSwitch(db))) return null
   const profiles = await getLlmProviderProfiles(db)
   const profile = profiles.find((candidate) => candidate.id === profileId)
   if (!profile) return null

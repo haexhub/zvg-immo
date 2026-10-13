@@ -17,9 +17,22 @@ export async function setHideRulesOnlyAuctions(db: Pool, value: boolean): Promis
 const LLM_KILL_SWITCH_KEY = 'llm_kill_switch'
 export const DEFAULT_LLM_KILL_SWITCH = false
 
-export async function getLlmKillSwitch(db: Pool): Promise<boolean> {
+/** The stored switch; throws on a read error. For the /settings status view,
+ * which must surface that error instead of showing a switch nobody set. */
+export async function readLlmKillSwitch(db: Pool): Promise<boolean> {
   const row = await readSetting(db, LLM_KILL_SWITCH_KEY)
   return typeof row?.value === 'boolean' ? row.value : DEFAULT_LLM_KILL_SWITCH
+}
+
+/** Fails closed: an unreadable switch counts as on, so a transient DB error
+ * can never let paid LLM calls through while an admin has them blocked. */
+export async function getLlmKillSwitch(db: Pool): Promise<boolean> {
+  try {
+    return await readLlmKillSwitch(db)
+  } catch (err) {
+    console.warn('[llm-kill-switch] read failed, treating the switch as on', err)
+    return true
+  }
 }
 
 export async function setLlmKillSwitch(db: Pool, value: boolean): Promise<void> {
