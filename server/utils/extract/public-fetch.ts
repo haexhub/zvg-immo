@@ -64,3 +64,34 @@ export async function fetchPublicUrl(
     current = next
   }
 }
+
+/**
+ * The response body as bytes, or null once it exceeds `maxBytes` — checked
+ * against Content-Length first, then while streaming, so an oversized body is
+ * never buffered whole.
+ */
+export async function readCappedBody(res: Response, maxBytes: number): Promise<Buffer | null> {
+  const contentLength = Number(res.headers.get('content-length') ?? '')
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    await res.body?.cancel().catch(() => undefined)
+    return null
+  }
+  if (!res.body) {
+    const buf = Buffer.from(await res.arrayBuffer())
+    return buf.length > maxBytes ? null : buf
+  }
+  const reader = res.body.getReader()
+  const chunks: Buffer[] = []
+  let total = 0
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined)
+      return null
+    }
+    chunks.push(Buffer.from(value))
+  }
+  return Buffer.concat(chunks, total)
+}

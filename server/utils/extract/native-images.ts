@@ -7,7 +7,9 @@
 import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { detectImageExt, imageContentHash } from './image-bytes'
-import { fetchPublicUrl } from './public-fetch'
+import { fetchPublicUrl, readCappedBody } from './public-fetch'
+
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024
 
 // Network/timeout errors are left to throw (unlike a non-OK HTTP status,
 // which resolves to null below): downloadNativeImages needs to tell "fetch
@@ -32,9 +34,11 @@ async function fetchImageBytes(url: string): Promise<Buffer | null> {
     if (res.status === 408 || res.status === 429 || res.status >= 500) {
       throw new Error(`image fetch failed with HTTP ${res.status}`)
     }
+    await res.body?.cancel().catch(() => undefined)
     return null
   }
-  return Buffer.from(await res.arrayBuffer())
+  // Null (skipped like a non-image) rather than buffering an unbounded body.
+  return await readCappedBody(res, MAX_IMAGE_BYTES)
 }
 
 const DEFAULT_MAX_IMAGES = 12

@@ -6,11 +6,12 @@ import { detectImageExt, imageContentFilename, imageContentHash, imageSize } fro
 import { downloadNativeImages } from './native-images'
 import { extractPdfPhotos } from './pdf-images'
 import { resolveAttachmentSource } from './pdf-text'
-import { fetchPublicUrl, isPublicHost } from './public-fetch'
+import { fetchPublicUrl, isPublicHost, readCappedBody } from './public-fetch'
 
 const MAX_DOCUMENT_BYTES = 30 * 1024 * 1024
 const MAX_INFLATED_BYTES = 30 * 1024 * 1024
 const MIN_IMAGE_BYTES = 512
+const MAX_HTML_IMAGE_URLS = 60
 
 const DOCUMENT_KIND_PRIORITY = ['appraisal', 'brochure', 'announcement', 'photo', 'other'] as const
 const DOCUMENT_FORMAT_PRIORITY = ['pdf', 'docx', 'html'] as const
@@ -71,27 +72,7 @@ async function fetchDocumentBytes(proxyUrl: string, accept: string): Promise<Buf
       await res.body?.cancel().catch(() => undefined)
       return null
     }
-    const contentLength = Number(res.headers.get('content-length') ?? '')
-    if (Number.isFinite(contentLength) && contentLength > MAX_DOCUMENT_BYTES) {
-      await res.body?.cancel().catch(() => undefined)
-      return null
-    }
-    if (!res.body) return null
-    const reader = res.body.getReader()
-    const chunks: Buffer[] = []
-    let total = 0
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      if (!value) continue
-      total += value.byteLength
-      if (total > MAX_DOCUMENT_BYTES) {
-        await reader.cancel().catch(() => undefined)
-        return null
-      }
-      chunks.push(Buffer.from(value))
-    }
-    return Buffer.concat(chunks, total)
+    return await readCappedBody(res, MAX_DOCUMENT_BYTES)
   } catch (err) {
     if (err instanceof Error && /document fetch failed/.test(err.message)) throw err
     throw new Error(`document fetch failed: ${(err as Error).message}`)
@@ -252,7 +233,8 @@ async function publicImageUrls(urls: readonly string[]): Promise<string[]> {
 async function extractHtmlPhotos(proxyUrl: string, opts: ExtractDocumentPhotosOptions): Promise<string[]> {
   const buf = await fetchDocumentBytes(proxyUrl, 'text/html,application/xhtml+xml,*/*')
   if (!buf) return []
-  const urls = extractHtmlImageUrls(buf.toString('utf8'), proxyUrl)
+  // Bounded: every candidate is a sequential download with its own timeout.
+  const urls = extractHtmlImageUrls(buf.toString('utf8'), proxyUrl).slice(0, MAX_HTML_IMAGE_URLS)
   // Pre-filter so an image on a private host is a silent skip, not a fetch
   // error that would make the whole document look transiently failed.
   // downloadNativeImages re-checks every URL and redirect hop at fetch time.
@@ -260,7 +242,9 @@ async function extractHtmlPhotos(proxyUrl: string, opts: ExtractDocumentPhotosOp
   if (publicUrls.length === 0) return []
   const downloaded = await downloadNativeImages(publicUrls, {
     destDir: opts.destDir,
-    maxImages: maxPhotosLimit(opts.maxPhotos),
+    // Unset falls back to downloadNativeImages' own default cap: unlike
+    // embedded PDF/DOCX media, an HTML page can reference any number of images.
+    maxImages: opts.maxPhotos,
   })
   const photos: string[] = []
   for (const name of downloaded) {
