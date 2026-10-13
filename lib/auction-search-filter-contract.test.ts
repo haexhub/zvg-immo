@@ -65,4 +65,13 @@ describe('auction search filter contract', () => {
     const filters = parseAuctionSearchFilters({ nearLat: '52.5', nearLng: '13.4' })
     expect(filters.nearRadius).toBe(25)
   })
+
+  it('drops coordinates outside the WGS84 ranges before they reach PostGIS', () => {
+    expect(parseAuctionSearchFilters({ nearLat: '90.1', nearLng: '13.4', nearRadius: '25' })).toMatchObject({
+      nearLat: null, nearLng: 13.4, nearRadius: 25,
+    })
+    expect(parseAuctionSearchFilters({ nearLat: '52.5', nearLng: '180.1', nearRadius: '25' })).toMatchObject({
+      nearLat: 52.5, nearLng: null, nearRadius: 25,
+    })
+  })
 })

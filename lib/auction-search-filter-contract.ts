@@ -127,6 +127,11 @@ export function parseAuctionSearchFilters(query: SearchFilterQuery, hideRulesOnl
     hideRulesOnly: first(query.llmOnly) === '1' ? true : first(query.llmOnly) === '0' ? false : hideRulesOnlyDefault,
   }
   for (const key of NUMBER_KEYS) parsed[key] = finiteNumber(query[key])
+  // PostGIS rejects coordinates outside the legal WGS84 ranges. Treat them
+  // like any other invalid numeric filter so a crafted public URL cannot
+  // turn a nearby-search request into a database error.
+  if (parsed.nearLat != null && (parsed.nearLat < -90 || parsed.nearLat > 90)) parsed.nearLat = null
+  if (parsed.nearLng != null && (parsed.nearLng < -180 || parsed.nearLng > 180)) parsed.nearLng = null
   // A coordinate pair without a radius is not "unbounded" — it must still be
   // an executable nearby filter for filterAuctions/SQL/alert matching, all of
   // which skip distance filtering entirely when nearRadius is null.
