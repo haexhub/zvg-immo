@@ -94,10 +94,14 @@ async function loadLocationEnrichmentCache(): Promise<LocationEnrichmentCache> {
 export async function writeLocationEnrichmentCache(
   entries: LocationEnrichmentCache,
 ): Promise<boolean> {
+  // Memory follows the database, never leads it: a failed upsert must leave
+  // the old checkedAt in place so orderByStaleness retries the auction, and
+  // detail reads must not serve data Postgres never stored.
+  if (!(await writeLocationEnrichmentCacheToDb(entries))) return false
   const cache = await readLocationEnrichmentCache()
   Object.assign(cache, entries)
   for (const [key, entry] of Object.entries(entries)) cacheDetail(key, entry)
-  return writeLocationEnrichmentCacheToDb(entries)
+  return true
 }
 
 const CHUNK_SIZE = 1000
