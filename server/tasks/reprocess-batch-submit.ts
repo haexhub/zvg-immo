@@ -18,16 +18,18 @@ export interface BatchSubmitState {
   fetchStates: Map<string, AuctionFetchState>
 }
 
+/** Returns a user-facing warning when items did not go out, so the run's
+ *  status does not report success for LLM calls that never happened. */
 export async function submitReprocessBatch(
   items: { key: string; input: LlmInput }[],
   llmConfig: LlmConfig | null,
   state: BatchSubmitState,
-): Promise<void> {
-  if (items.length === 0 || !llmConfig) return
+): Promise<string | undefined> {
+  if (items.length === 0 || !llmConfig) return undefined
   const submission = await submitLlmBatch(items, llmConfig, 'reprocess')
   if (!submission) {
     console.warn(`[reprocess] LLM batch submission failed for ${items.length} items`)
-    return
+    return `LLM-Batch-Einreichung für ${items.length} Einträge fehlgeschlagen.`
   }
   // Same rationale enrich.ts used to apply: mark every submitted item so a
   // second runReprocess({ batch: true }) call doesn't re-submit it to a new
@@ -46,5 +48,7 @@ export async function submitReprocessBatch(
   console.log(`[reprocess] submitted LLM batch ${submission.jobName} with ${submission.submitted.length} items`)
   if (submission.retryItems.length > 0) {
     console.warn(`[reprocess] ${submission.retryItems.length} LLM batch item(s) were not submitted`)
+    return `${submission.retryItems.length} LLM-Batch-Einträge wurden nicht eingereicht.`
   }
+  return undefined
 }

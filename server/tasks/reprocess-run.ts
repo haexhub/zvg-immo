@@ -286,7 +286,10 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
           batchRulesHints.set(key, base.input.rulesHint ?? null)
           // Keep the currently visible extraction intact while the replacement
           // is pending. The poller rebuilds a fresh merge base for changed sets.
-          const entry = base.documentSetChanged && priorEntry
+          // A prior LLM result is kept too: a rules-only entry would replace its
+          // structured values, and if the submission below fails or the run is
+          // aborted first, nothing would ever restore them.
+          const entry = priorEntry && (base.documentSetChanged || priorEntry.source === 'llm')
             ? priorEntry
             : buildRulesOnlyEntry(base.fields, priorEntry, at)
           processed++
@@ -469,11 +472,12 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
     { lastLlmError, progressByCountry: Object.fromEntries(progressByCountry), flush: true },
   )
 
-  await submitReprocessBatch(batchItems, llmConfig, {
+  const batchWarning = await submitReprocessBatch(batchItems, llmConfig, {
     artifactVersions: batchArtifactVersions,
     rulesHints: batchRulesHints,
     fetchStates,
   })
+  if (batchWarning) warning = warning ? `${warning} ${batchWarning}` : batchWarning
 
   const durationMs = Date.now() - startedAt
   console.log(

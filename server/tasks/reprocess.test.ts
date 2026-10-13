@@ -496,6 +496,29 @@ describe('runReprocess structured persistence', () => {
     })
   })
 
+  it('keeps a prior LLM extraction visible and warns when a forced batch submission fails', async () => {
+    const prior = extraction({ llmAnalyzedAt: '2026-08-01T10:00:00.000Z' })
+    vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map([['zvg-portal:7265', {
+      auction: { ...auction(), extraction: prior },
+      detailsId: 7,
+      detailsVersion: 2,
+      artifactVersionId: 11,
+    }]]))
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+      baseUrl: 'https://api.example.test', apiKey: 'secret', model: 'batch-model', provider: 'openai-compatible',
+    }])
+    vi.mocked(submitLlmBatch).mockResolvedValue(null)
+
+    const result = await runReprocess({ country: 'de', batch: true, force: true })
+
+    expect(result.warning).toContain('LLM-Batch-Einreichung')
+    expect(writeAuctionDetails).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ source: 'llm', livingAreaSqm: 120, landAreaSqm: 500, llmAnalyzedAt: prior.llmAnalyzedAt }),
+      expect.any(Object),
+    )
+  })
+
   it('routes a candidate needing multimodal content to the synchronous path when the configured batch provider is OpenRouter (text-only)', async () => {
     vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
       baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'sk-or-test', model: 'google/gemini-3.5-flash-lite', provider: 'openrouter',
