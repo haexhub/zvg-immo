@@ -4,9 +4,11 @@ const mocks = vi.hoisted(() => ({
   runMigrations: vi.fn(),
   recordAppStart: vi.fn(),
   recordMigrationStatus: vi.fn(),
+  resetInterruptedTaskRuns: vi.fn(),
 }))
 
 vi.mock('../utils/db', () => ({ runMigrations: mocks.runMigrations }))
+vi.mock('../utils/task-runs', () => ({ resetInterruptedTaskRuns: mocks.resetInterruptedTaskRuns }))
 vi.mock('../utils/operations-status', () => ({
   recordAppStart: mocks.recordAppStart,
   recordMigrationStatus: mocks.recordMigrationStatus,
@@ -39,6 +41,7 @@ describe('db bootstrap diagnostics', () => {
     await vi.waitFor(() => expect(mocks.recordMigrationStatus).toHaveBeenLastCalledWith('ready'))
     await expect(requestHandler({ path: '/api/settings/operations' })).resolves.toBeUndefined()
     expect(mocks.runMigrations).toHaveBeenCalledOnce()
+    await vi.waitFor(() => expect(mocks.resetInterruptedTaskRuns).toHaveBeenCalledOnce())
   })
 
   it('records migration failure while normal requests continue to receive 503', async () => {

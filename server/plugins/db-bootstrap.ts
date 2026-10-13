@@ -6,6 +6,7 @@
 import { runMigrations } from '../utils/db'
 import { holdTasksUntilMigrated } from '../utils/exclusive-task'
 import { recordAppStart, recordMigrationStatus } from '../utils/operations-status'
+import { resetInterruptedTaskRuns } from '../utils/task-runs'
 
 export default defineNitroPlugin((nitroApp) => {
   // Nitro does not await plugin functions, so `await runMigrations()` here
@@ -20,6 +21,7 @@ export default defineNitroPlugin((nitroApp) => {
       await recordMigrationStatus('running')
       await runMigrations()
       await recordMigrationStatus('ready')
+      await resetInterruptedTaskRuns()
     })
   holdTasksUntilMigrated(migrations)
   migrations.catch((err: unknown) => {

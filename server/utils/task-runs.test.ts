@@ -245,6 +245,24 @@ describe('task-runs', () => {
     expect(status.lastResult).toEqual(SUMMARY)
   })
 
+  it('marks a run that a restart interrupted as idle, keeping its start time', async () => {
+    const { getPool } = await import('./db')
+    const pool = makeFakePool()
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { getTaskRunStatus, recordTaskRunStart, recordTaskRunEnd, resetInterruptedTaskRuns } = await import('./task-runs')
+    await recordTaskRunStart('import-eu-flood-risk-cache')
+    await recordTaskRunStart('enrich')
+    await recordTaskRunEnd('enrich', { result: SUMMARY })
+    const interrupted = await getTaskRunStatus('import-eu-flood-risk-cache')
+
+    await resetInterruptedTaskRuns()
+
+    const status = await getTaskRunStatus('import-eu-flood-risk-cache')
+    expect(status).toMatchObject({ status: 'idle', startedAt: interrupted.startedAt, progress: null })
+    expect(status.lastError).toContain('Neustart')
+    expect((await getTaskRunStatus('enrich')).lastError).toBeNull()
+  })
+
   it('never throws when a query fails', async () => {
     const { getPool } = await import('./db')
     vi.mocked(getPool).mockReturnValue({ query: vi.fn().mockRejectedValue(new Error('connection reset')) } as never)
