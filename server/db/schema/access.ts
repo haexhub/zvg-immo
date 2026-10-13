@@ -2,6 +2,13 @@
 // self-service Daten-API keys. All are owned by a `auth.users` row (GoTrue,
 // migrated by the `auth` service in docker-compose.yml — Drizzle must never
 // create or alter that schema, see the note on userId below).
+//
+// The `own_rows` policies are read-only on purpose: Kong exposes /rest/v1 to
+// any anon-key holder, and a signed-in user's JWT would otherwise let them
+// INSERT/UPDATE these rows directly, skipping the Nuxt routes' validation
+// (filter contract, size limits, alert-filter checks, inquiry rate limits).
+// Every write goes through the service-role client (server/utils/supabase.ts),
+// which bypasses RLS; without a write policy RLS denies writes for everyone else.
 import { sql } from 'drizzle-orm'
 import {
   bigint,
@@ -36,9 +43,8 @@ export const savedSearches = pgTable('saved_searches', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   pgPolicy('own_rows', {
-    for: 'all',
+    for: 'select',
     using: sql`${table.userId} = auth.uid()`,
-    withCheck: sql`${table.userId} = auth.uid()`,
   }),
 ]).enableRLS()
 
@@ -53,9 +59,8 @@ export const watchlistItems = pgTable('watchlist_items', {
 }, (table) => [
   unique('watchlist_items_user_id_platform_external_id_key').on(table.userId, table.platform, table.externalId),
   pgPolicy('own_rows', {
-    for: 'all',
+    for: 'select',
     using: sql`${table.userId} = auth.uid()`,
-    withCheck: sql`${table.userId} = auth.uid()`,
   }),
 ]).enableRLS()
 
@@ -68,9 +73,8 @@ export const alertSubscriptions = pgTable('alert_subscriptions', {
 }, (table) => [
   unique('alert_subscriptions_saved_search_id_key').on(table.savedSearchId),
   pgPolicy('own_rows', {
-    for: 'all',
+    for: 'select',
     using: sql`${table.userId} = auth.uid()`,
-    withCheck: sql`${table.userId} = auth.uid()`,
   }),
 ]).enableRLS()
 
@@ -109,9 +113,8 @@ export const apiKeys = pgTable('api_keys', {
   lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
 }, (table) => [
   pgPolicy('own_rows', {
-    for: 'all',
+    for: 'select',
     using: sql`${table.userId} = auth.uid()`,
-    withCheck: sql`${table.userId} = auth.uid()`,
   }),
 ]).enableRLS()
 

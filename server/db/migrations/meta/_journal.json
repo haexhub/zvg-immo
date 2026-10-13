@@ -218,6 +218,13 @@
       "when": 1787513793417,
       "tag": "0030_closed_the_initiative",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1791921841792,
+      "tag": "0031_restrict_own_rows_policies_to_select",
+      "breakpoints": true
     }
   ]
 }

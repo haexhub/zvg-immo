@@ -55,9 +55,9 @@ export const lawyerInquiries = pgTable('lawyer_inquiries', {
   index('idx_inquiries_lawyer_time').on(table.lawyerId, table.createdAt.desc()),
   index('idx_inquiries_user_time').on(table.userId, table.createdAt.desc()),
   unique('lawyer_inquiries_user_id_idempotency_key').on(table.userId, table.idempotencyKey),
+  // Read-only for PostgREST roles, see the `own_rows` note in ./access.ts.
   pgPolicy('own_rows', {
-    for: 'all',
+    for: 'select',
     using: sql`${table.userId} = auth.uid()`,
-    withCheck: sql`${table.userId} = auth.uid()`,
   }),
 ]).enableRLS()

@@ -8,6 +8,9 @@ import { publicError } from '../../utils/public-error'
 import type { WatchlistItem } from './index.get'
 
 const UNIQUE_VIOLATION = '23505'
+// Generous upper bound for crawler ids, court names and case numbers; only
+// guards the table against oversized client input.
+const MAX_FIELD_LENGTH = 300
 
 export default defineEventHandler(async (event): Promise<WatchlistItem> => {
   const body = await readBody<{
@@ -23,6 +26,9 @@ export default defineEventHandler(async (event): Promise<WatchlistItem> => {
   }
   const authority = typeof body.authority === 'string' ? body.authority : null
   const caseNumber = typeof body.caseNumber === 'string' ? body.caseNumber : null
+  if ([platform, externalId, authority, caseNumber].some((value) => (value?.length ?? 0) > MAX_FIELD_LENGTH)) {
+    throw createError({ statusCode: 400, statusMessage: `Felder sind länger als ${MAX_FIELD_LENGTH} Zeichen.` })
+  }
 
   const supabase = getServiceClient()
   if (!supabase) {
