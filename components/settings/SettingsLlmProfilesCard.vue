@@ -42,7 +42,7 @@ interface LlmProfilesResponse {
 const { t } = useI18n()
 const { normalizeSettingsError } = useSettingsError()
 const { llmBatchJobs, loadLlmBatchJobs } = useSettingsTaskOverview()
-const { setLlmProfileOptions } = useLlmProfileOptions()
+const { llmProfileOptions, setLlmProfileOptions } = useLlmProfileOptions()
 
 const LLM_PROVIDER_PRESETS: Record<LlmProvider, { baseUrl: string; model: string }> = {
   'claude-proxy': { baseUrl: 'http://haex-claude-proxy:8080', model: 'claude-sonnet-5' },
@@ -177,11 +177,18 @@ async function deleteLlmProfile(profile: LlmProviderProfileForm): Promise<void> 
     llmProfiles.value = llmProfiles.value.filter((candidate) => candidate.id !== profile.id)
     return
   }
+  // Irreversible: the server drops the stored API key and strips the profile
+  // from every assignment chain.
+  if (!window.confirm(t('settings.llmProvider.deleteConfirm', { name: profile.name }))) return
   llmProfilesPending.value = true
   llmProfilesError.value = null
   try {
     await $fetch(`/api/settings/llm-profiles/${profile.id}`, { method: 'DELETE' })
-    await loadLlmProfiles()
+    // Remove just this profile locally instead of reloading the list, which
+    // would discard unsaved new profiles and typed API keys of the others.
+    llmProfiles.value = llmProfiles.value.filter((candidate) => candidate.id !== profile.id)
+    setLlmProfileOptions(llmProfileOptions.value.filter((option) => option.id !== profile.id))
+    persistedLlmProfileIds.value.delete(profile.id)
   } catch (err) {
     llmProfilesError.value = normalizeSettingsError(err, t('settings.llmProvider.deleteError'))
   } finally {
