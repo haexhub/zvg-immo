@@ -21,6 +21,11 @@ vi.mock('node:fs', async (importOriginal) => {
   return { ...actual, createReadStream: vi.fn(actual.createReadStream) }
 })
 
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, readFile: vi.fn(actual.readFile) }
+})
+
 let tmp: string | null = null
 
 afterEach(async () => {
@@ -210,5 +215,28 @@ describe('DvfTransactionCache', () => {
     expect(comparison?.samples).toBe(11)
     expect(comparison?.medianPricePerSqm).toBe(5000)
     expect(comparison?.verdict).toBe('cheaper')
+  })
+
+  it('shares one parsed cache between concurrently built adapters', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'zvg-dvf-'))
+    const cachePath = join(tmp, 'dvf-cache.json')
+    await writeFile(cachePath, JSON.stringify(buildDvfTransactionCache(loadDvfCsv(csv()).transactions, {
+      sourceVersion: 'fixture-2025',
+    })))
+    vi.mocked(readFile).mockClear()
+
+    const adapters = await Promise.all([1, 2, 3].map(() => createDvfFileMarketAdapter({ cachePath })))
+
+    expect(vi.mocked(readFile).mock.calls.filter(([path]) => path === cachePath)).toHaveLength(1)
+    for (const adapter of adapters) expect((await adapter.compare(auction()))?.samples).toBe(11)
+  })
+
+  it('treats a cache that was not imported yet as empty', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'zvg-dvf-'))
+
+    const adapter = await createDvfFileMarketAdapter({ cachePath: join(tmp, 'missing.json') })
+
+    expect(adapter.sourceVersion).toBe('missing')
+    expect((await adapter.compare(auction()))?.verdict).toBe('insufficient_data')
   })
 })

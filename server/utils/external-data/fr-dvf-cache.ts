@@ -9,6 +9,7 @@ import {
   type DvfTransaction,
   type RawDvfRow,
 } from './fr-dvf'
+import { readCachedFileCollection } from './cached-file-collection'
 import { encodeGeohash, geohashesWithinRadius } from './geohash'
 import type { MarketComparisonAdapter } from '~/server/tasks/external-enrichment'
 
@@ -154,7 +155,16 @@ export function candidateDvfTransactionsForAuction(
 export async function createDvfFileMarketAdapter(
   options: DvfFileMarketAdapterOptions,
 ): Promise<MarketComparisonAdapter> {
-  const cache = await readDvfTransactionCache(options.cachePath)
+  // Shared parse: adapters are rebuilt per enrichment run and per-auction
+  // triggers run concurrently, so a direct read put one copy of the whole
+  // cache on the heap per caller (the EFFIS OOM pattern). The cached reader
+  // only rejects when stat fails; fall back to the plain read, which turns a
+  // missing (not yet imported) or unreadable cache into an empty one.
+  const cache = await readCachedFileCollection(
+    options.cachePath,
+    readDvfTransactionCache,
+    options.sourceVersion ?? '',
+  ).catch(() => readDvfTransactionCache(options.cachePath))
   return {
     id: 'fr-dvf-file-cache',
     sourceVersion: options.sourceVersion ?? cache.sourceVersion,
