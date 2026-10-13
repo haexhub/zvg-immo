@@ -253,7 +253,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
             try {
               normalizeAuctionDescription(a)
               applyDescriptionMarketValue(a)
-              deriveMarketValueEur(a, rates)
+              deriveMarketValueEur(a, rates, priorRecord?.auction)
               a.detailFetchedAt = at
               // Re-archive now that detail data (description/attachments/
               // source*) is on the auction — a new content hash whenever

@@ -35,7 +35,7 @@ vi.mock('../utils/auction-fetch-state', () => ({
   writeAuctionEnrichClaim: vi.fn(),
   writeAuctionPhotoPipelineState: vi.fn(),
 }))
-vi.mock('../utils/exchange-rate', () => ({ getRates: vi.fn(async () => ({})), deriveMarketValueEur: vi.fn() }))
+vi.mock('../utils/exchange-rate', () => ({ loadRatesOrPegged: vi.fn(async () => ({})), deriveMarketValueEur: vi.fn() }))
 vi.mock('../utils/alert-matching', () => ({ matchAlerts: vi.fn() }))
 vi.mock('../utils/extract/native-images', () => ({ downloadNativeImages: vi.fn() }))
 vi.mock('../utils/extract/document-images', () => ({ extractDocumentPhotos: vi.fn() }))

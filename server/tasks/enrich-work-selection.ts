@@ -3,7 +3,7 @@ import { MULTI_PLATFORM } from '~/lib/auction-constants'
 import { platforms } from '~/server/crawlers/registry'
 import { readAuctionRecordMap, type AuctionRecord } from '~/server/utils/auction-record'
 import { cacheKey, readVerkehrswertCache } from '~/server/utils/verkehrswert-cache'
-import { getRates } from '~/server/utils/exchange-rate'
+import { loadRatesOrPegged } from '~/server/utils/exchange-rate'
 import { interleaveByPlatform } from '~/server/utils/interleave-by-platform'
 import type { readAuctionFetchStates } from '~/server/utils/auction-fetch-state'
 import type { readLatestArtifactVersions } from '~/server/utils/artifact-version-state'
@@ -65,7 +65,8 @@ export async function prepareEnrichWork({
   // manual "retry this one" / "retry failed" click always re-archives what
   // was asked for, regardless of whether it currently looks done.
   const scopedForce = opts.force || (opts.identities?.length ?? 0) > 0
-  const rates = await getRates()
+  // Unconditional: enrichOne can still reveal a non-EUR value (HU, PL).
+  const rates = await loadRatesOrPegged()
   // Re-read below, right before the tail loop: geocode runs 30 min before
   // enrich (see nuxt.config.ts) but can still be writing this cache while
   // enrich's own crawl+worker phase is in flight, so a stale snapshot taken

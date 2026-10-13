@@ -5,7 +5,7 @@ import type { AuctionFetchState } from '../utils/auction-fetch-state'
 import type { AuctionRecord } from '../utils/auction-record'
 
 vi.mock('../crawlers/registry', () => ({ platforms: [] }))
-vi.mock('../utils/exchange-rate', () => ({ getRates: vi.fn(async () => ({})) }))
+vi.mock('../utils/exchange-rate', () => ({ loadRatesOrPegged: vi.fn(async () => ({})) }))
 vi.mock('../utils/verkehrswert-cache', () => ({
   cacheKey: (platform: string, externalId: string) => `${platform}:${externalId}`,
   readVerkehrswertCache: vi.fn(async () => ({})),

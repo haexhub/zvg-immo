@@ -70,4 +70,11 @@ describe('mergeStoredAuction', () => {
     expect(merged.address).toBe('28277 Bremen')
     expect([merged.lat, merged.lng]).toEqual([53.03, 8.86])
   })
+  it('keeps the stored EUR conversion when the same foreign amount could not be converted', () => {
+    const previous = auction({ marketValue: 1_000_000, currency: 'SEK', marketValueEur: 87_000 })
+    const unconverted = () => auction({ marketValue: 1_000_000, currency: 'SEK', marketValueEur: null })
+
+    expect(mergeStoredAuction(unconverted(), previous).marketValueEur).toBe(87_000)
+    expect(mergeStoredAuction(auction({ marketValue: 2_000_000, currency: 'SEK' }), previous).marketValueEur).toBeNull()
+  })
 })

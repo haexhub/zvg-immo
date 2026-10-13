@@ -1,6 +1,6 @@
 import type { Auction, CrawlResult } from '~/types/auction'
 import { MULTI_PLATFORM, isAllScope } from '~/lib/auction-constants'
-import { deriveMarketValueEur, getRates } from '../utils/exchange-rate'
+import { deriveMarketValuesEur } from '../utils/exchange-rate'
 import { COUNTRY_NAMES } from '../utils/countries'
 import { getPool } from '../utils/db'
 import { normalizeAuctionDescriptions } from '../utils/description-normalization'
@@ -284,8 +284,7 @@ export async function crawlSingle(
     throw firstReject ? (firstReject as PromiseRejectedResult).reason : new Error('all crawlers failed')
   }
   const auctions = dedupeRegionAuctions(results.flatMap((r) => r.auctions))
-  const rates = await getRates()
-  for (const a of auctions) deriveMarketValueEur(a, rates)
+  await deriveMarketValuesEur(auctions)
   normalizeAuctionDescriptions(auctions)
   return {
     platform: results.length === 1 ? (results[0] as CrawlResult).platform : MULTI_PLATFORM,

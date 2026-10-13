@@ -1,5 +1,6 @@
 import type { Auction } from '~/types/auction'
 import { normalizeAuctionDescription } from './description-normalization'
+import { storedEurConversion } from './exchange-rate'
 
 /**
  * Keeps detail-only values when a cheap list crawl returns a partial auction.
@@ -41,6 +42,8 @@ export function mergeStoredAuction(next: Auction, previous: Auction): Auction {
     next.marketValueText = previous.marketValueText
     next.marketValue = previous.marketValue ?? null
     next.currency = previous.currency ?? null
+  } else if (next.marketValueEur == null && next.marketValue != null) {
+    next.marketValueEur = storedEurConversion(next, previous)
   }
   if (next.detailFetchedAt == null && previous.detailFetchedAt != null) next.detailFetchedAt = previous.detailFetchedAt
   if (next.sourceLivingAreaSqm == null && previous.sourceLivingAreaSqm != null) next.sourceLivingAreaSqm = previous.sourceLivingAreaSqm
