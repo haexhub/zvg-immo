@@ -50,6 +50,12 @@ services:
       # (public-read, server/utils/image-storage.ts). Empty → /api/auction-image
       # serves only from the local cache (.cache_zvg/images).
       NUXT_IMAGES_BUCKET: ${IMAGES_BUCKET:-}
+      # Documented in .env.example; compose only substitutes .env into this
+      # file, so every app-level key has to be passed through explicitly.
+      NUXT_TRUST_FORWARDED_FOR: ${NUXT_TRUST_FORWARDED_FOR:-}
+      NUXT_PUBLIC_MAPTILER_API_KEY: ${NUXT_PUBLIC_MAPTILER_API_KEY:-}
+      NUXT_PUBLIC_MAPTILER_STREETS_MAP_ID: ${NUXT_PUBLIC_MAPTILER_STREETS_MAP_ID:-}
+      NUXT_PUBLIC_MAPTILER_SATELLITE_MAP_ID: ${NUXT_PUBLIC_MAPTILER_SATELLITE_MAP_ID:-}
     depends_on:
       haex-claude-proxy:
         condition: service_started
