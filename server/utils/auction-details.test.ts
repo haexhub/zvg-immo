@@ -13,7 +13,6 @@ const {
 } = await import('./auction-details')
 const {
   auctionDetailsValues,
-  invalidateAuctionDetailsCache,
   readAuctionDetailsAtVersion,
   readLatestAuctionDetails,
 } = await import('./auction-details-read')
@@ -137,7 +136,6 @@ describeDb('writeAuctionDetails (real Postgres)', () => {
     // readAuctionRecord/upsertCurrentAuctions (used by promoteAuctionDetailsVersion)
     // go through getPool()'s plain pg.Pool API, not getDb()'s drizzle wrapper.
     vi.mocked(getPool).mockReturnValue(pool)
-    invalidateAuctionDetailsCache()
     await pool.query('DELETE FROM auction_details')
     await pool.query('DELETE FROM artifact_versions')
     await pool.query('DELETE FROM auction_fetch_state')

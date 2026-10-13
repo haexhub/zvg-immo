@@ -120,6 +120,19 @@ describe('readLocationEnrichmentCache', () => {
     expect(pool.query).toHaveBeenCalledWith(expect.stringContaining('WHERE platform = $1 AND external_id = $2'), ['zvg-portal', 'missing'])
   })
 
+  it('rejects a failed read instead of returning an empty cache, and retries on the next call', async () => {
+    const { getPool } = await import('../db')
+    const pool = makeFakePool([{ platform: 'zvg-portal', external_id: '7265', enrichment, checked_at: enrichment.checkedAt }])
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { readLocationEnrichmentCache, readLocationEnrichment } = await import('./location-enrichment')
+    pool.query.mockRejectedValueOnce(new Error('query_timeout'))
+    pool.query.mockRejectedValueOnce(new Error('query_timeout'))
+
+    await expect(readLocationEnrichmentCache()).rejects.toThrow('query_timeout')
+    await expect(readLocationEnrichment('zvg-portal', '7265')).rejects.toThrow('query_timeout')
+    expect((await readLocationEnrichmentCache())['zvg-portal:7265']).toEqual(enrichment)
+  })
+
   it('serves subsequent calls from memory without re-querying Postgres', async () => {
     const { getPool } = await import('../db')
     const pool = makeFakePool([{ platform: 'zvg-portal', external_id: '7265', enrichment, checked_at: enrichment.checkedAt }])
@@ -165,7 +178,7 @@ describe('writeLocationEnrichmentCache', () => {
     }])
   })
 
-  it('makes a just-written detail record visible without reading the full table again', async () => {
+  it('makes a just-written detail record visible without reading the table', async () => {
     const { getPool } = await import('../db')
     const pool = makeFakePool()
     vi.mocked(getPool).mockReturnValue(pool as never)
@@ -173,14 +186,22 @@ describe('writeLocationEnrichmentCache', () => {
 
     await writeLocationEnrichmentCache({ 'zvg-portal:7265': enrichment })
     await expect(readLocationEnrichment('zvg-portal', '7265')).resolves.toEqual(enrichment)
-    expect(pool.query.mock.calls.filter(([sql]) => (sql as string).includes('FROM location_enrichment'))).toHaveLength(1)
+    expect(pool.query.mock.calls.filter(([sql]) => (sql as string).includes('FROM location_enrichment'))).toHaveLength(0)
   })
 
-  it('returns false when the upsert fails', async () => {
+  it('returns false and leaves both memory caches untouched when the upsert fails', async () => {
     const { getPool } = await import('../db')
-    vi.mocked(getPool).mockReturnValue({ query: vi.fn().mockRejectedValue(new Error('connection reset')) } as never)
-    const { writeLocationEnrichmentCache } = await import('./location-enrichment')
+    const pool = makeFakePool([{ platform: 'zvg-portal', external_id: '7265', enrichment, checked_at: enrichment.checkedAt }])
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { readLocationEnrichment, readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('./location-enrichment')
+    await readLocationEnrichmentCache()
+    await readLocationEnrichment('zvg-portal', '7265')
+    pool.query.mockRejectedValueOnce(new Error('connection reset'))
 
-    await expect(writeLocationEnrichmentCache({ 'zvg-portal:7265': enrichment })).resolves.toBe(false)
+    const newer = { ...enrichment, checkedAt: '2026-08-01T00:00:00.000Z' }
+    await expect(writeLocationEnrichmentCache({ 'zvg-portal:7265': newer })).resolves.toBe(false)
+
+    expect((await readLocationEnrichmentCache())['zvg-portal:7265']).toEqual(enrichment)
+    await expect(readLocationEnrichment('zvg-portal', '7265')).resolves.toEqual(enrichment)
   })
 })

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { apiErrorMessage } from '~/lib/api-error'
 import { getSupabaseClient } from '~/lib/supabase-client'
 import type { WatchlistItem } from '~/server/api/watchlist/index.get'
 import { Trash2 } from 'lucide-vue-next'
@@ -8,6 +9,7 @@ useSeoMeta({ robots: 'noindex, nofollow' })
 const router = useRouter()
 const { user } = useAuth()
 const intlLocale = useIntlLocale()
+const { t } = useI18n()
 
 // Auth state resolves asynchronously on the client (see composables/useAuth.ts) —
 // do a definitive one-time session check on mount before deciding whether to
@@ -30,14 +32,26 @@ watch(user, (u) => {
 })
 
 const watchlist = ref<WatchlistItem[]>([])
+// A failed load must not read as an empty watchlist.
+const watchlistError = ref<string | null>(null)
 
 async function loadWatchlist(): Promise<void> {
-  watchlist.value = await authFetch<WatchlistItem[]>('/api/watchlist')
+  try {
+    watchlist.value = await authFetch<WatchlistItem[]>('/api/watchlist')
+    watchlistError.value = null
+  } catch (err) {
+    watchlistError.value = apiErrorMessage(err, t('account.watchlist.loadError'))
+  }
 }
 
 async function removeWatchlistItem(id: string): Promise<void> {
-  await authFetch(`/api/watchlist/${id}`, { method: 'DELETE' })
-  watchlist.value = watchlist.value.filter((w) => w.id !== id)
+  try {
+    await authFetch(`/api/watchlist/${encodeURIComponent(id)}`, { method: 'DELETE' })
+    watchlist.value = watchlist.value.filter((w) => w.id !== id)
+    watchlistError.value = null
+  } catch (err) {
+    watchlistError.value = apiErrorMessage(err, t('account.watchlist.updateError'))
+  }
 }
 
 function formatDate(iso: string): string {
@@ -53,10 +67,11 @@ function formatDate(iso: string): string {
       <template v-if="checked">
         <section class="space-y-3">
           <h2 class="text-base font-semibold">{{ $t('account.watchlist.title') }}</h2>
-          <p v-if="watchlist.length === 0" class="text-sm text-muted-foreground">
+          <p v-if="watchlistError" class="text-sm text-destructive" role="alert">{{ watchlistError }}</p>
+          <p v-if="watchlist.length === 0 && !watchlistError" class="text-sm text-muted-foreground">
             {{ $t('account.watchlist.empty') }}
           </p>
-          <ul v-else class="space-y-2">
+          <ul v-else-if="watchlist.length > 0" class="space-y-2">
             <li
               v-for="w in watchlist"
               :key="w.id"

@@ -197,6 +197,15 @@ describe('buildAuctionSearchFilter', () => {
     expect(values).toContain(25_000)
   })
 
+  it('does not send out-of-range coordinates to PostGIS', async () => {
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+    const { predicate } = await buildAuctionSearchFilter(db, {
+      nearLat: '91', nearLng: '13.4', nearRadius: '25', llmOnly: '0',
+    })
+
+    expect(predicate).not.toContain('ST_DWithin')
+  })
+
   it('adds a bounding-box clause on a.lat/a.lng once the map viewport is complete', async () => {
     const { buildAuctionSearchFilter } = await import('./auction-search-filters')
     const { predicate, values } = await buildAuctionSearchFilter(db, {

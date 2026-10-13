@@ -14,9 +14,8 @@ vi.mock('~/server/utils/translation-llm-chain', () => ({
   fingerprintConfigChain: vi.fn(() => 'fingerprint'),
 }))
 vi.mock('~/server/utils/extract/llm', () => ({ isLlmProviderUnavailable: vi.fn(() => false) }))
-vi.mock('~/server/api/auction/[platform]/[id]/translation.post', () => ({
-  SUPPORTED_TARGET_LANGS: new Set(['de', 'en']),
-  auctionTranslationContentHash: vi.fn(() => 'content-hash'),
+vi.mock('~/server/utils/auction-translation', async (importOriginal) => ({
+  ...await importOriginal<typeof import('~/server/utils/auction-translation')>(),
   tryTranslate: vi.fn(),
 }))
 
@@ -31,6 +30,7 @@ function auction(externalId: string, overrides: Record<string, unknown> = {}) {
     address: null,
     description: null,
     extraction: undefined,
+    attachments: [],
     ...overrides,
   } as never
 }
@@ -69,6 +69,48 @@ describe('retryAuctionTranslation', () => {
     const { retryAuctionTranslation } = await import('./translation-retry')
 
     await expect(retryAuctionTranslation({} as Pool, 'se-kronofogden', '1', 'de')).resolves.toBe('started')
+  })
+
+  it('logs instead of leaking an unhandled rejection when recording the failure fails', async () => {
+    const { readAuctionRecord } = await import('~/server/utils/auction-record')
+    const { claimAuctionTranslation, failAuctionTranslation, readContentTranslation } = await import('~/server/utils/content-translation')
+    vi.mocked(readAuctionRecord).mockResolvedValue({ auction: auction('1'), detailsId: 1, detailsVersion: 1, artifactVersionId: null })
+    vi.mocked(claimAuctionTranslation).mockResolvedValue(CLAIM)
+    vi.mocked(readContentTranslation).mockRejectedValue(new Error('db down'))
+    vi.mocked(failAuctionTranslation).mockRejectedValue(new Error('db still down'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { retryAuctionTranslation } = await import('./translation-retry')
+
+    await expect(retryAuctionTranslation({} as Pool, 'se-kronofogden', '1', 'de')).resolves.toBe('started')
+
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledWith(
+      '[translation-retry] background retry failed for se-kronofogden:1/de: db still down',
+    ))
+    warn.mockRestore()
+  })
+})
+
+describe('retry translation source', () => {
+  it('translates and hashes the same redacted projection as the public route', async () => {
+    const { readAuctionRecord } = await import('~/server/utils/auction-record')
+    const { claimAuctionTranslation, readContentTranslation } = await import('~/server/utils/content-translation')
+    const { resolveActiveLlmConfigChain } = await import('~/server/utils/translation-llm-chain')
+    const { auctionTranslationContentHash, translationSourceAuction, tryTranslate } = await import('~/server/utils/auction-translation')
+    const raw = auction('1', { description: 'Schuldnerin Erika Mustermann' })
+    vi.mocked(readAuctionRecord).mockResolvedValue({ auction: raw, detailsId: 1, detailsVersion: 1, artifactVersionId: null })
+    vi.mocked(claimAuctionTranslation).mockResolvedValue(CLAIM)
+    vi.mocked(readContentTranslation).mockResolvedValue(null)
+    vi.mocked(resolveActiveLlmConfigChain).mockResolvedValue([{ provider: 'openai-compatible', baseUrl: 'https://api.example', model: 'gpt', maxTokens: 8192 }])
+    vi.mocked(tryTranslate).mockResolvedValue({ title: 'Hus', address: null, description: 'Gäldenär [anonymisiert]', documentSummary: null, extractionTexts: null })
+    const { retryAuctionTranslation } = await import('./translation-retry')
+
+    await expect(retryAuctionTranslation({} as Pool, 'se-kronofogden', '1', 'de')).resolves.toBe('started')
+
+    const publicHash = auctionTranslationContentHash(translationSourceAuction(raw))
+    expect(publicHash).not.toBe(auctionTranslationContentHash(raw))
+    expect(claimAuctionTranslation).toHaveBeenCalledWith(expect.anything(), 'se-kronofogden', '1', 1, 'de', publicHash)
+    await vi.waitFor(() => expect(tryTranslate).toHaveBeenCalled())
+    expect(vi.mocked(tryTranslate).mock.calls[0]?.[2]).toBe('Schuldnerin [anonymisiert]')
   })
 })
 

@@ -63,8 +63,8 @@ export const GB_LIST_REGIONS: readonly string[] = [
 ] as const
 
 /** robots.txt (www.auctionhouse.co.uk) disallows these path patterns for all
- *  crawlers — enforced defensively when building links, even though none of
- *  our selectors currently point at them. */
+ *  crawlers — enforced defensively via isRobotsDisallowed when building
+ *  links, even though none of our selectors currently point at them. */
 export const DISALLOWED_MAIN_PATHS = [
   '/account/',
   '/print-lot/',
@@ -95,3 +95,20 @@ export const DISALLOWED_ONLINE_PATHS = [
 ] as const
 
 export const ONLINE_CRAWL_DELAY_MS = 5_000
+
+/** True when the robots.txt of the auctionhouse host `url` points at
+ *  disallows its path. Relative URLs resolve against `base`, the page they
+ *  were scraped from; foreign hosts (CDNs) are not covered by either list. */
+export function isRobotsDisallowed(url: string, base: string = GB_BASE): boolean {
+  let parsed: URL
+  try {
+    parsed = new URL(url, base)
+  } catch {
+    return false
+  }
+  const paths: readonly string[] =
+    parsed.origin === GB_BASE ? DISALLOWED_MAIN_PATHS
+      : parsed.origin === GB_ONLINE_BASE ? DISALLOWED_ONLINE_PATHS
+        : []
+  return paths.some((p) => parsed.pathname.startsWith(p))
+}

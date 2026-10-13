@@ -45,7 +45,7 @@ export interface ApiSeller {
 
 export interface ApiResponse {
   entry: ApiEntry
-  seller: ApiSeller
+  seller?: ApiSeller | null
 }
 
 async function htmlFetch(url: string): Promise<string> {
@@ -62,16 +62,17 @@ function extractListingIds(html: string): string[] {
   return [...new Set(raw.map((m) => m.match(/\/kohde\/(\d+)\//)![1]!))]
 }
 
-async function discoverIds(): Promise<string[]> {
+async function discoverIds(): Promise<{ ids: string[]; complete: boolean }> {
   const seen = new Set<string>()
   for (let page = 1; page <= MAX_PAGES; page++) {
     const html = await htmlFetch(`${LIST_URL}?sivu=${page}`)
     const ids = extractListingIds(html)
     const before = seen.size
     for (const id of ids) seen.add(id)
-    if (ids.length === 0 || seen.size === before) break
+    if (ids.length === 0 || seen.size === before) return { ids: [...seen], complete: true }
   }
-  return [...seen]
+  // MAX_PAGES cut the walk short before a page stopped yielding new ids.
+  return { ids: [...seen], complete: false }
 }
 
 function stripHtml(html: string): string | null {
@@ -111,7 +112,11 @@ async function fetchDetail(id: string): Promise<ApiResponse | null> {
   })
   if (res.status === 404) return null
   if (!res.ok) throw new Error(`huutokaupat.com detail ${id}: HTTP ${res.status}`)
-  return (await res.json()) as ApiResponse
+  const data = (await res.json()) as Partial<ApiResponse> | null
+  // The cast alone checks nothing: reject a body without a usable entry here
+  // instead of letting mapDetail crash on it.
+  if (typeof data?.entry?.id !== 'number') throw new Error(`huutokaupat.com detail ${id}: response without entry`)
+  return data as ApiResponse
 }
 
 export function mapDetail(id: string, data: ApiResponse, platformId: string): Auction {
@@ -156,7 +161,7 @@ export function mapDetail(id: string, data: ApiResponse, platformId: string): Au
     region: '',
     externalId: id,
     caseNumber: '',
-    authority: seller.displayName ?? 'Ulosottolaitos',
+    authority: seller?.displayName ?? 'Ulosottolaitos',
     title: entry.categoryName ?? null,
     address: entry.location ?? null,
     marketValueEur: price,
@@ -183,11 +188,12 @@ export function mapDetail(id: string, data: ApiResponse, platformId: string): Au
 
 export async function fetchAllListings(
   platformId: string,
-): Promise<{ auctions: Auction[]; total: number | null }> {
-  const ids = await discoverIds()
-  if (ids.length === 0) return { auctions: [], total: 0 }
+): Promise<{ auctions: Auction[]; total: number | null; complete: boolean }> {
+  const { ids, complete } = await discoverIds()
+  if (ids.length === 0) return { auctions: [], total: 0, complete }
 
   const results: (Auction | null)[] = new Array(ids.length).fill(null)
+  let failedDetails = 0
   let cursor = 0
   async function worker() {
     while (cursor < ids.length) {
@@ -199,13 +205,16 @@ export async function fetchAllListings(
         if (data?.entry?.metadata?.category === REAL_ESTATE_CATEGORY) {
           results[i] = mapDetail(id, data, platformId)
         }
-      } catch {
-        results[i] = null
+      } catch (err) {
+        failedDetails++
+        console.warn(`[huutokaupat] detail ${id} failed: ${(err as Error).message}`)
       }
     }
   }
   await Promise.all(Array.from({ length: DETAIL_CONCURRENCY }, worker))
 
   const auctions = results.filter((a): a is Auction => a !== null)
-  return { auctions, total: auctions.length }
+  // Only the detail API tells whether a listing is real estate, so a failed
+  // detail call may hide one — the run must not read as complete.
+  return { auctions, total: auctions.length, complete: complete && failedDetails === 0 }
 }

@@ -7,7 +7,7 @@ afterEach(() => {
 })
 
 describe('/api/settings/external-data/copernicus-effis-cache', () => {
-  it('triggers the import detached with a valid payload', async () => {
+  it('triggers the import detached with a valid payload without request-chosen paths/URLs', async () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     vi.stubGlobal('readBody', vi.fn(async () => ({
       cachePath: '/cache/copernicus-effis.json',
@@ -27,8 +27,6 @@ describe('/api/settings/external-data/copernicus-effis-cache', () => {
     await expect(handler({})).resolves.toStrictEqual({ started: true })
     expect(runTask).toHaveBeenCalledWith('import-copernicus-effis-cache', {
       payload: {
-        cachePath: '/cache/copernicus-effis.json',
-        serviceUrl: 'https://example.test/effis',
         sourceVersion: 'effis-v1',
         generatedAt: '2026-07-29T00:00:00.000Z',
         bbox: [-10, 35, 30, 55],

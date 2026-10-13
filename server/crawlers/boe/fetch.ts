@@ -27,8 +27,9 @@ const CAPTCHA_COOLDOWN_MS = 24 * 60 * 60 * 1000
 
 // Hard kill switch read from the container env. When BOE has banned the IP
 // for an extended period, set BOE_DISABLED=1 in the deployment env and no
-// `boeFetch` ever leaves the server. The crawler returns 0 auctions per
-// provincia; the rest of the platforms keep working. Unset / `0` / `false`
+// `boeFetch` ever leaves the server. `boeFetch` throws, so each provincia
+// crawl fails into crawlSingle's errors and its stored listings stay
+// untouched; the rest of the platforms keep working. Unset / `0` / `false`
 // keep the crawler enabled.
 function envFlag(name: string): boolean {
   const v = process.env[name]

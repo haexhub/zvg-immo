@@ -270,9 +270,12 @@ export function mapRow(row: RawRow, docs: ChannelDoc[], platformId: string): Auc
   }
 }
 
+/** `complete` is false when any channel failed: its listings are missing from
+ *  this run, so the crawl must not be recorded as a success or they would
+ *  read as gone (see crawl-state.ts recordCrawlScope). */
 export async function fetchAllListings(
   platformId: string,
-): Promise<{ auctions: Auction[]; total: number | null }> {
+): Promise<{ auctions: Auction[]; total: number | null; complete: boolean }> {
   const results: (ChannelResult | null)[] = new Array(US_CHANNELS.length).fill(null)
 
   let cursor = 0
@@ -284,6 +287,10 @@ export async function fetchAllListings(
     }
   }
   await Promise.all(Array.from({ length: CHANNEL_CONCURRENCY }, worker))
+
+  const failed = results.filter((r) => r === null).length
+  if (failed === US_CHANNELS.length) throw new Error(`bid4assets.com: all ${failed} channels failed`)
+  if (failed > 0) console.warn(`[us-bid4assets] ${failed}/${US_CHANNELS.length} channels failed — crawl incomplete`)
 
   const seen = new Set<string>()
   const auctions: Auction[] = []
@@ -297,5 +304,5 @@ export async function fetchAllListings(
     }
   }
 
-  return { auctions, total: auctions.length }
+  return { auctions, total: auctions.length, complete: failed === 0 }
 }

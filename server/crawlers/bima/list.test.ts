@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { BIMA_REGIONS } from './constants'
+import { mergeStoredAuction } from '~/server/utils/auction-merge'
 import {
   fetchAllListings,
   indexIncluded,
@@ -134,10 +135,21 @@ describe('mapOffer', () => {
     expect(a.description).toBe('Objektbeschreibung\nGepflegte Doppelhaushälfte.\n\nLage\nRuhige Wohnlage am Stadtrand.')
   })
 
-  it('hides the address entirely when show_address is false, matching the live detail page', () => {
+  it('hides the address and exact coordinates when show_address is false, matching the live detail page', () => {
     const byKey = indexIncluded(INCLUDED)
     const a = mapOffer(makeOffer({ show_address: false }), byKey, 'bima')
     expect(a.address).toBeNull()
+    expect(a.lat).toBeNull()
+    expect(a.lng).toBeNull()
+  })
+
+  it('keeps withheld coordinates null when merged over a stored record that still has the exact pin', () => {
+    const byKey = indexIncluded(INCLUDED)
+    const stored = mapOffer(makeOffer(), byKey, 'bima')
+    expect(stored.lat).not.toBeNull()
+    const merged = mergeStoredAuction(mapOffer(makeOffer({ show_address: false }), byKey, 'bima'), stored)
+    expect(merged.lat).toBeNull()
+    expect(merged.lng).toBeNull()
   })
 
   it('treats a zero/missing buy_price as unknown rather than free', () => {

@@ -87,6 +87,7 @@
     "loadingData": "Loading data …",
     "loadError": "Error loading data: {msg}",
     "geoError": "Error geocoding: {msg}",
+    "loadMoreError": "More auctions could not be loaded.",
     "loadingLocations": "Loading locations …",
     "initialLoadHint": "The first load can take several minutes (every registered source runs in parallel)",
     "noResults": "No listings match the filters.",
@@ -162,6 +163,17 @@
         "attention": "Needs attention"
       }
     },
+    "outbound": {
+      "title": "Outbound messages",
+      "description": "State of the durable mail outbox; contents and recipients stay hidden.",
+      "refresh": "Refresh",
+      "loadError": "Could not load the outbox state.",
+      "pending": "Pending: {count}",
+      "processing": "Processing: {count}",
+      "failed": "Permanently failed: {count}",
+      "attempt": "Attempt {count}",
+      "unknownError": "unknown"
+    },
     "messageDetails": {
       "show": "Show {count} entries",
       "hide": "Hide entries"
@@ -215,6 +227,7 @@
       "updateError": "Update failed.",
       "hasInquiries": "This lawyer already has inquiries — deactivate instead of deleting.",
       "deleteError": "Delete failed.",
+      "deleteConfirm": "Really delete lawyer \"{name}\"?",
       "saveError": "Save failed.",
       "colName": "Name",
       "colCountries": "Countries",
@@ -285,6 +298,7 @@
       "addProfile": "Add profile",
       "removeProfile": "Remove profile",
       "deleteError": "Delete failed.",
+      "deleteConfirm": "Really delete profile \"{name}\"? Its stored API key is removed and the profile is dropped from every model assignment.",
       "profileNameLabel": "Profile name",
       "newProfileName": "New LLM profile",
       "providerLabel": "Provider",
@@ -409,18 +423,9 @@
     },
     "osmImport": {
       "title": "OSM location data",
-      "description": "Loads sea/lake/river/mountain/airport/ski data per country from OpenStreetMap extracts. A country with no data yet gets loaded automatically on the daily run; a country that already has data is never reloaded automatically again — only a manual reimport here triggers that.",
-      "loadError": "Could not load status.",
-      "requestError": "Could not request reimport.",
-      "refresh": "Refresh status",
-      "rowCount": "{count} features loaded",
       "rawRowCount": "{count} raw OSM features available",
-      "noData": "No data yet",
-      "requestMissing": "Load missing data",
       "loadOpen": "Load open OSM data",
       "retryBlocked": "Reload blocked OSM data",
-      "request": "Request reimport",
-      "requesting": "Requesting …",
       "pending": "Requested at {at} — will be processed on the next daily run."
     },
     "geoMetrics": {
@@ -485,6 +490,8 @@
       "run": "Start test run",
       "running": "Running …",
       "runError": "Test run failed.",
+      "started": "Test run started — runs in the background, the result appears here.",
+      "failed": "Test run failed: {message}",
       "candidates": "Candidates",
       "processed": "Processed",
       "skipped": "Skipped",
@@ -962,7 +969,9 @@
       "title": "Favorites",
       "empty": "No favorites yet.",
       "added": "Added {date}",
-      "remove": "Remove"
+      "remove": "Remove",
+      "loadError": "Favorites could not be loaded.",
+      "updateError": "Favorites could not be updated."
     }
   },
   "objektDetail": {
@@ -1458,6 +1467,7 @@
   },
   "lotPopover": {
     "loadingPhotos": "Loading photos …",
+    "loadError": "Property details could not be loaded.",
     "untitled": "Property",
     "auctionDate": "Auction date",
     "marketValue": "Market value",

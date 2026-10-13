@@ -1,6 +1,7 @@
 import { writeJsonCache } from '../json-cache'
 import { EXTERNAL_DATA_SOURCES } from './sources'
 import {
+  eeaCountryCode,
   isFeature,
   isFeatureCollection,
   normalizeFloodRiskFeatureCollection,
@@ -113,6 +114,10 @@ export async function importEuFloodRiskGeoJsonCache(
     sourceVersion,
     generatedAt,
   })
+  // An empty FeatureCollection passes every shape check (layer swapped, where
+  // clause matching nothing) and would atomically replace the previous good
+  // cache, turning every flood verdict into 'unknown' until the next run.
+  if (normalized.zones.length === 0) throw new Error(`EU flood risk import returned no usable zones from ${serviceUrl}`)
   await writeJsonCache(options.cachePath, collection)
 
   return {
@@ -216,7 +221,7 @@ function hasArcGisError(input: unknown): input is { error: { message: string } }
 
 function countryWhereClause(countryCodes: string[] | undefined): string {
   const normalized = (countryCodes ?? [])
-    .map((country) => country.trim().toUpperCase())
+    .map(eeaCountryCode)
     .filter((country) => /^[A-Z]{2}$/.test(country))
   if (normalized.length === 0) return '1=1'
   return `countryCode IN (${normalized.map((country) => `'${country}'`).join(',')})`

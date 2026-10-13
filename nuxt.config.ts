@@ -9,11 +9,11 @@ export default defineNuxtConfig({
   vite: {
     plugins: [tailwindcss()],
   },
-  // .claude/worktrees holds full checkouts (each with its own node_modules)
-  // that Claude Code creates alongside this repo — without this, Nuxt's
+  // .claude/worktrees and .worktrees hold full checkouts (each with its own
+  // node_modules) created alongside this repo — without this, Nuxt's
   // watcher recurses into every one of them and can exhaust the system's
   // inotify watch limit before the dev server even starts.
-  ignore: ['.claude/'],
+  ignore: ['.claude/', '.worktrees/'],
   shadcn: {
     prefix: '',
     componentDir: '~/components/ui',
@@ -223,12 +223,13 @@ export default defineNuxtConfig({
     supabaseUrl: '',
     //   NUXT_SUPABASE_SERVICE_ROLE_KEY=<from scripts/generate-supabase-keys.mjs>
     supabaseServiceRoleKey: '',
-    // App-level mailer for alert emails (server/utils/mailer.ts, nodemailer
-    // over this connection string), used by server/utils/alert-matching.ts.
+    // App-level mailer for alert and lawyer-inquiry emails
+    // (server/utils/mailer.ts, nodemailer over this connection string), used
+    // by the outbound_deliveries worker (server/utils/outbound-delivery.ts).
     // Distinct from GoTrue's own separate SMTP config (docker-compose.yml's
     // `auth` service, GOTRUE_SMTP_*) for GoTrue's own transactional mail.
-    // Empty → sendMail() logs instead of sending (dev fallback, same
-    // graceful-degrade pattern as extractLlm.baseUrl).
+    // Empty → sendMail() is a no-op in dev only; in production every delivery
+    // fails with `smtp_not_configured` and stays visible in the outbox.
     //   NUXT_SMTP_URL=smtps://user:pass@smtp.example.com:465
     smtpUrl: '',
     public: {
@@ -351,6 +352,22 @@ export default defineNuxtConfig({
       '50 23 * * *': ['status-snapshot'],
     },
     routeRules: {
+      // Baseline hardening for every response; nothing in front of the app is
+      // known to add these. frame-ancestors/X-Frame-Options stop clickjacking
+      // of /settings and the lawyer inquiry form.
+      // ponytail: no script-src/connect-src CSP yet — the app talks to
+      // Supabase, MapTiler/OSM/Esri tiles and inlines Nuxt payload scripts, so
+      // a restrictive policy needs nonce support and an origin allow-list
+      // tested against every map/auth flow before it can be enforced; start it
+      // as Content-Security-Policy-Report-Only.
+      '/**': {
+        headers: {
+          'Content-Security-Policy': "frame-ancestors 'none'",
+          'X-Frame-Options': 'DENY',
+          'X-Content-Type-Options': 'nosniff',
+          'Referrer-Policy': 'strict-origin-when-cross-origin',
+        },
+      },
       // /api/auctions and /api/auctions-geo query Postgres per request and send
       // no-store themselves: their results depend on the full filter/pagination
       // query and, for the geo endpoint, on a geocode cache that grows while the
@@ -361,6 +378,9 @@ export default defineNuxtConfig({
       // WP-7: rate table refreshes at most every 24h anyway (exchange-rate.ts's
       // own TTL); swr avoids re-doing that disk-cache read on every request.
       '/api/exchange-rates': { swr: 86400 },
+      // Every auction URL in one query; search engines re-fetch it far less often
+      // than hourly, and the anonymous route must not hit Postgres per request.
+      '/sitemap.xml': { swr: 3600 },
     },
   },
 })

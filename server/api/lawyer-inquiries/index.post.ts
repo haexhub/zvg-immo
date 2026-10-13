@@ -12,9 +12,13 @@
 
 import { getServiceClient } from '../../utils/supabase'
 import { readAuctionRecord } from '../../utils/auction-record'
+import { publicError } from '../../utils/public-error'
+import { isUuidSegment } from '../../utils/path-segment'
 import {
   canonicalAppOrigin,
   createLawyerInquiryWithDelivery,
+  findLawyerInquiryReplay,
+  LawyerInquiryIdempotencyConflictError,
   LawyerInquiryRateLimitError,
   MAX_LAWYER_INQUIRY_MESSAGE_LENGTH,
   validateIdempotencyKey,
@@ -30,6 +34,16 @@ export interface LawyerInquiry {
   commissionStatus: string
   deliveryStatus: string
   createdAt: string
+}
+
+function inquiryError(err: unknown): never {
+  if (err instanceof LawyerInquiryRateLimitError) {
+    throw createError({ statusCode: 429, statusMessage: err.message })
+  }
+  if (err instanceof LawyerInquiryIdempotencyConflictError) {
+    throw createError({ statusCode: 422, statusMessage: err.message })
+  }
+  throw publicError('POST /api/lawyer-inquiries', 500, 'Anfrage konnte nicht gespeichert werden.', err)
 }
 
 export default defineEventHandler(async (event): Promise<LawyerInquiry> => {
@@ -53,6 +67,13 @@ export default defineEventHandler(async (event): Promise<LawyerInquiry> => {
   if (!validateIdempotencyKey(idempotencyKey)) {
     throw createError({ statusCode: 400, statusMessage: 'Ein gültiger Idempotency-Key ist erforderlich.' })
   }
+  const userId = event.context.user!.id
+  // Replay before the business checks below: the original request may already
+  // be committed (and its mail queued) even if the lawyer was deactivated or
+  // the auction disappeared since, so a retry must still see that result.
+  const replay = await findLawyerInquiryReplay({ userId, idempotencyKey, lawyerId, platform, externalId, message })
+    .catch(inquiryError)
+  if (replay) return replay
 
   const record = await readAuctionRecord(platform, externalId)
   if (!record) {
@@ -65,13 +86,18 @@ export default defineEventHandler(async (event): Promise<LawyerInquiry> => {
     throw createError({ statusCode: 503, statusMessage: 'Supabase ist nicht konfiguriert.' })
   }
 
+  // Lawyer ids are uuids; anything else would only surface as a Postgres
+  // type error, so it is simply an unknown lawyer.
+  if (!isUuidSegment(lawyerId)) {
+    throw createError({ statusCode: 404, statusMessage: 'Anwalt nicht gefunden oder nicht aktiv.' })
+  }
   const { data: lawyer, error: lawyerError } = await supabase
     .from('lawyers')
     .select('id, email, name, active, countries, commission_cents')
     .eq('id', lawyerId)
     .maybeSingle()
   if (lawyerError) {
-    throw createError({ statusCode: 500, statusMessage: lawyerError.message })
+    throw publicError('POST /api/lawyer-inquiries', 500, 'Anwalt konnte nicht geladen werden.', lawyerError)
   }
   if (!lawyer || !lawyer.active) {
     throw createError({ statusCode: 404, statusMessage: 'Anwalt nicht gefunden oder nicht aktiv.' })
@@ -81,7 +107,6 @@ export default defineEventHandler(async (event): Promise<LawyerInquiry> => {
     throw createError({ statusCode: 400, statusMessage: 'Dieser Anwalt deckt das Land der Auktion nicht ab.' })
   }
 
-  const userId = event.context.user!.id
   const userEmail = event.context.user!.email ?? undefined
   // Snapshot the commission now — later tariff changes to lawyers.commission_cents
   // must not rewrite this historical billing record.
@@ -96,7 +121,7 @@ export default defineEventHandler(async (event): Promise<LawyerInquiry> => {
   }
   const auctionLink = `${origin}/objekt/${encodeURIComponent(platform)}/${encodeURIComponent(externalId)}`
   try {
-    const inserted = await createLawyerInquiryWithDelivery({
+    return await createLawyerInquiryWithDelivery({
       userId,
       lawyerId,
       platform,
@@ -120,21 +145,7 @@ export default defineEventHandler(async (event): Promise<LawyerInquiry> => {
       ].filter(Boolean).join('\n'),
       },
     })
-    return {
-      id: inserted.id,
-      lawyerId: inserted.lawyerId,
-      platform: inserted.platform,
-      externalId: inserted.externalId,
-      message: inserted.message,
-      commissionCents: inserted.commissionCents,
-      commissionStatus: inserted.commissionStatus,
-      deliveryStatus: inserted.deliveryStatus,
-      createdAt: inserted.createdAt,
-    }
   } catch (err) {
-    if (err instanceof LawyerInquiryRateLimitError) {
-      throw createError({ statusCode: 429, statusMessage: err.message })
-    }
-    throw createError({ statusCode: 500, statusMessage: `Anfrage konnte nicht gespeichert werden: ${(err as Error).message}` })
+    inquiryError(err)
   }
 })

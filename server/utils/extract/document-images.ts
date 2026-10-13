@@ -1,18 +1,17 @@
-import { lookup } from 'node:dns/promises'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import ipaddr from 'ipaddr.js'
-import { Agent } from 'undici'
 import { fromBufferPromise, validateFileName, type Entry, type ZipFile } from 'yauzl'
 import type { Attachment } from '~/types/auction'
-import { UA, ZVG_BASE } from '~/server/crawlers/zvg-portal/constants'
 import { detectImageExt, imageContentFilename, imageContentHash, imageSize } from './image-bytes'
 import { downloadNativeImages } from './native-images'
 import { extractPdfPhotos } from './pdf-images'
+import { resolveAttachmentSource } from './pdf-text'
+import { fetchPublicUrl, isPublicHost, readCappedBody } from './public-fetch'
 
 const MAX_DOCUMENT_BYTES = 30 * 1024 * 1024
 const MAX_INFLATED_BYTES = 30 * 1024 * 1024
 const MIN_IMAGE_BYTES = 512
+const MAX_HTML_IMAGE_URLS = 60
 
 const DOCUMENT_KIND_PRIORITY = ['appraisal', 'brochure', 'announcement', 'photo', 'other'] as const
 const DOCUMENT_FORMAT_PRIORITY = ['pdf', 'docx', 'html'] as const
@@ -22,11 +21,6 @@ type DocumentImageFormat = 'pdf' | 'docx' | 'html'
 interface ZipEntry {
   name: string
   bytes: Buffer
-}
-
-interface PinnedHost {
-  address: string
-  family: 4 | 6
 }
 
 export interface ExtractDocumentPhotosOptions {
@@ -65,27 +59,12 @@ export function pickDocumentImageCandidates(attachments: readonly Attachment[]):
   return out
 }
 
-function resolveDocumentSource(proxyUrl: string, accept: string): { url: string; headers: Record<string, string> } {
-  if (proxyUrl.startsWith('/api/zvg-proxy')) {
-    const q = new URLSearchParams(proxyUrl.split('?')[1] ?? '')
-    const url = `${ZVG_BASE}/index.php?button=showAnhang&land_abk=${q.get('land_abk')}&file_id=${q.get('file_id')}&zvg_id=${q.get('zvg_id')}`
-    return { url, headers: { 'User-Agent': UA, Accept: accept, Referer: `${ZVG_BASE}/index.php?button=Suchen` } }
-  }
-  if (proxyUrl.startsWith(`${ZVG_BASE}/`)) {
-    return {
-      url: proxyUrl,
-      headers: { 'User-Agent': UA, Accept: accept, Referer: `${ZVG_BASE}/index.php?button=Suchen` },
-    }
-  }
-  return { url: proxyUrl, headers: { 'User-Agent': UA, Accept: accept } }
-}
-
 async function fetchDocumentBytes(proxyUrl: string, accept: string): Promise<Buffer | null> {
-  const { url, headers } = resolveDocumentSource(proxyUrl, accept)
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 30_000)
   try {
-    const res = await fetch(url, { headers, signal: controller.signal })
+    const { url, headers } = await resolveAttachmentSource(proxyUrl, accept)
+    const res = await fetchPublicUrl(url, { headers, signal: controller.signal })
     if (!res.ok) {
       if (res.status === 408 || res.status === 429 || res.status >= 500) {
         throw new Error(`document fetch failed with HTTP ${res.status}`)
@@ -93,27 +72,7 @@ async function fetchDocumentBytes(proxyUrl: string, accept: string): Promise<Buf
       await res.body?.cancel().catch(() => undefined)
       return null
     }
-    const contentLength = Number(res.headers.get('content-length') ?? '')
-    if (Number.isFinite(contentLength) && contentLength > MAX_DOCUMENT_BYTES) {
-      await res.body?.cancel().catch(() => undefined)
-      return null
-    }
-    if (!res.body) return null
-    const reader = res.body.getReader()
-    const chunks: Buffer[] = []
-    let total = 0
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      if (!value) continue
-      total += value.byteLength
-      if (total > MAX_DOCUMENT_BYTES) {
-        await reader.cancel().catch(() => undefined)
-        return null
-      }
-      chunks.push(Buffer.from(value))
-    }
-    return Buffer.concat(chunks, total)
+    return await readCappedBody(res, MAX_DOCUMENT_BYTES)
   } catch (err) {
     if (err instanceof Error && /document fetch failed/.test(err.message)) throw err
     throw new Error(`document fetch failed: ${(err as Error).message}`)
@@ -252,32 +211,8 @@ export function extractHtmlImageUrls(html: string, baseUrl: string): string[] {
   return urls
 }
 
-function isPublicIp(address: string): boolean {
-  if (!ipaddr.isValid(address)) return false
-  const parsed = ipaddr.parse(address)
-  return parsed.range() === 'unicast'
-}
-
-function normalizeHostname(hostname: string): string {
-  return hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname
-}
-
-async function resolvePublicHost(hostname: string): Promise<PinnedHost | null> {
-  const normalized = normalizeHostname(hostname)
-  if (ipaddr.isValid(normalized)) {
-    const parsed = ipaddr.parse(normalized)
-    const family = parsed.kind() === 'ipv4' ? 4 : 6
-    return isPublicIp(normalized) ? { address: normalized, family } : null
-  }
-  const records = await lookup(normalized, { all: true, verbatim: true }).catch(() => [])
-  if (records.length === 0 || records.some((record) => !isPublicIp(record.address))) return null
-  const first = records[0]!
-  if (first.family !== 4 && first.family !== 6) return null
-  return { address: first.address, family: first.family }
-}
-
-async function pinPublicImageUrls(urls: readonly string[]): Promise<{ urls: string[]; dispatcher: Agent | null }> {
-  const pinned = new Map<string, PinnedHost>()
+async function publicImageUrls(urls: readonly string[]): Promise<string[]> {
+  const publicHosts = new Map<string, boolean>()
   const out: string[] = []
   for (const raw of urls) {
     let url: URL
@@ -287,45 +222,30 @@ async function pinPublicImageUrls(urls: readonly string[]): Promise<{ urls: stri
       continue
     }
     if (url.protocol !== 'http:' && url.protocol !== 'https:') continue
-    const key = normalizeHostname(url.hostname).toLowerCase()
-    const resolved = pinned.get(key) ?? await resolvePublicHost(url.hostname)
-    if (!resolved) continue
-    pinned.set(key, resolved)
-    out.push(url.toString())
+    const key = url.hostname.toLowerCase()
+    const isPublic = publicHosts.get(key) ?? await isPublicHost(url.hostname)
+    publicHosts.set(key, isPublic)
+    if (isPublic) out.push(url.toString())
   }
-  if (out.length === 0) return { urls: [], dispatcher: null }
-  const dispatcher = new Agent({
-    connect: {
-      lookup(hostname, _opts, callback) {
-        const resolved = pinned.get(normalizeHostname(hostname).toLowerCase())
-        if (!resolved) {
-          callback(new Error(`unpinned host: ${hostname}`), '', 0)
-          return
-        }
-        callback(null, resolved.address, resolved.family)
-      },
-    },
-  })
-  return { urls: out, dispatcher }
+  return out
 }
 
 async function extractHtmlPhotos(proxyUrl: string, opts: ExtractDocumentPhotosOptions): Promise<string[]> {
   const buf = await fetchDocumentBytes(proxyUrl, 'text/html,application/xhtml+xml,*/*')
   if (!buf) return []
-  const urls = extractHtmlImageUrls(buf.toString('utf8'), proxyUrl)
-  const pinned = await pinPublicImageUrls(urls)
-  if (!pinned.urls.length || !pinned.dispatcher) return []
-  let downloaded: string[]
-  try {
-    downloaded = await downloadNativeImages(pinned.urls, {
-      destDir: opts.destDir,
-      maxImages: maxPhotosLimit(opts.maxPhotos),
-      dispatcher: pinned.dispatcher,
-      redirect: 'manual',
-    })
-  } finally {
-    await pinned.dispatcher.close()
-  }
+  // Bounded: every candidate is a sequential download with its own timeout.
+  const urls = extractHtmlImageUrls(buf.toString('utf8'), proxyUrl).slice(0, MAX_HTML_IMAGE_URLS)
+  // Pre-filter so an image on a private host is a silent skip, not a fetch
+  // error that would make the whole document look transiently failed.
+  // downloadNativeImages re-checks every URL and redirect hop at fetch time.
+  const publicUrls = await publicImageUrls(urls)
+  if (publicUrls.length === 0) return []
+  const downloaded = await downloadNativeImages(publicUrls, {
+    destDir: opts.destDir,
+    // Unset falls back to downloadNativeImages' own default cap: unlike
+    // embedded PDF/DOCX media, an HTML page can reference any number of images.
+    maxImages: opts.maxPhotos,
+  })
   const photos: string[] = []
   for (const name of downloaded) {
     try {

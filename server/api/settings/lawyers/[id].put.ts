@@ -5,6 +5,10 @@ import { getServiceClient } from '../../../utils/supabase'
 import { parseLawyerInput } from '../../../utils/lawyer-input'
 import { toAdminLawyer, type AdminLawyer } from './index.get'
 
+// Postgres invalid_text_representation: the id is not a UUID, so no row can
+// match it.
+const INVALID_TEXT_REPRESENTATION = '22P02'
+
 export default defineEventHandler(async (event): Promise<AdminLawyer> => {
   const id = String(event.context.params?.id ?? '')
   if (!id) {
@@ -33,9 +37,13 @@ export default defineEventHandler(async (event): Promise<AdminLawyer> => {
     })
     .eq('id', id)
     .select('id, name, firm, email, phone, countries, specialization, languages, website, commission_cents, active, created_at')
-    .single()
-  if (error || !data) {
-    throw createError({ statusCode: 404, statusMessage: error?.message ?? 'Anwalt nicht gefunden.' })
+    .maybeSingle()
+  if (error && error.code !== INVALID_TEXT_REPRESENTATION) {
+    console.warn('[settings/lawyers] update failed', error)
+    throw createError({ statusCode: 500, statusMessage: 'Anwalt konnte nicht gespeichert werden.', cause: error })
+  }
+  if (!data) {
+    throw createError({ statusCode: 404, statusMessage: 'Anwalt nicht gefunden.' })
   }
   return toAdminLawyer(data)
 })

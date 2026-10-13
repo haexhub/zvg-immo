@@ -51,8 +51,6 @@ export function parseAuctionsHtml(html: string, landAbk: string, platformId: str
     caseNumber = clean(caseNumber)
     if (!caseNumber && !zvgIdMatch) continue
 
-    const externalId = zvgIdMatch || `az:${caseNumber}`
-
     const updateMatch = chunk.match(/letzte Aktualisierung\s+([\d-]+\s+[\d:]+)/)
     const sourceUpdatedIso = updateMatch?.[1] ? parseGermanTimestamp(updateMatch[1]) : null
 
@@ -75,6 +73,10 @@ export function parseAuctionsHtml(html: string, landAbk: string, platformId: str
       const sep = inner.lastIndexOf(' in ')
       authority = sep >= 0 ? inner.slice(0, sep) : inner
     }
+
+    // Aktenzeichen repeat across courts and Länder while the platform id is
+    // shared by all of them, so the fallback id must carry both.
+    const externalId = zvgIdMatch || `az:${landAbk}:${authority}:${caseNumber}`
 
     let title: string | null = null
     let address: string | null = null

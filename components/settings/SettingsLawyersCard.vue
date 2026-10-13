@@ -118,6 +118,7 @@ async function toggleActive(l: AdminLawyer): Promise<void> {
 }
 
 async function deleteLawyer(l: AdminLawyer): Promise<void> {
+  if (!window.confirm(t('settings.lawyers.deleteConfirm', { name: l.name }))) return
   // The server sets a specific 409 statusMessage when the lawyer still has
   // inquiries ([id].delete.ts) — normalizeSettingsError already surfaces
   // that verbatim, no bespoke status-code branch needed here.

@@ -212,7 +212,35 @@ export function buildTourismNutsCollection(
   return { generatedAt: options.generatedAt, sourceVersion: options.sourceVersion, unit: 'P_KM2', breaks, regions }
 }
 
+/** The path is admin-configurable, so the file is checked rather than cast:
+ *  a file that isn't this cache at all throws a clear error, and a region
+ *  without an id or polygon geometry is dropped instead of reaching the map. */
 export async function readTourismNutsCache(path: string): Promise<TourismNutsCollection> {
-  const raw = await readFile(path, 'utf8')
-  return JSON.parse(raw) as TourismNutsCollection
+  const parsed = JSON.parse(await readFile(path, 'utf8')) as unknown
+  const cache = (parsed && typeof parsed === 'object' ? parsed : {}) as Record<string, unknown>
+  const { breaks, regions } = cache
+  if (!Array.isArray(regions) || !Array.isArray(breaks) || !breaks.every(Number.isFinite)) {
+    throw new Error(`${path} is not a Eurostat tourism NUTS cache (regions/breaks missing)`)
+  }
+  return {
+    generatedAt: typeof cache.generatedAt === 'string' ? cache.generatedAt : '',
+    sourceVersion: typeof cache.sourceVersion === 'string' ? cache.sourceVersion : 'unknown',
+    unit: 'P_KM2',
+    breaks: breaks as number[],
+    regions: regions.filter(isTourismNutsRegion),
+  }
+}
+
+function isTourismNutsRegion(input: unknown): input is TourismNutsRegion {
+  if (!input || typeof input !== 'object') return false
+  const region = input as Partial<Record<keyof TourismNutsRegion, unknown>>
+  const geometry = region.geometry as { type?: unknown; coordinates?: unknown } | undefined
+  return typeof region.nutsId === 'string'
+    && typeof region.name === 'string'
+    && typeof region.countryCode === 'string'
+    && (region.value === null || Number.isFinite(region.value))
+    && (region.dataYear === null || typeof region.dataYear === 'string')
+    && (region.bin === null || Number.isInteger(region.bin))
+    && (geometry?.type === 'Polygon' || geometry?.type === 'MultiPolygon')
+    && Array.isArray(geometry.coordinates)
 }

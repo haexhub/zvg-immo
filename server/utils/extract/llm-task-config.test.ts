@@ -67,6 +67,14 @@ describe('resolveLlmConfigForProfile', () => {
     await expect(resolveLlmConfigForProfile({} as never, 'profile-1')).resolves.toBeNull()
     expect(getLlmProviderProfiles).not.toHaveBeenCalled()
   })
+
+  it('still resolves the profile under the kill switch when polling submitted batch jobs', async () => {
+    vi.mocked(getLlmKillSwitch).mockResolvedValue(true)
+
+    const config = await resolveLlmConfigForProfile({} as never, 'profile-1', { ignoreKillSwitch: true })
+
+    expect(config?.profileId).toBe('profile-1')
+  })
 })
 
 describe('readExtractionLlmConfigChain', () => {
@@ -86,6 +94,17 @@ describe('readExtractionLlmConfigChain', () => {
 
     await expect(readExtractionLlmConfigChain()).resolves.toEqual([])
     expect(getLlmProviderOverrideChain).not.toHaveBeenCalled()
+  })
+
+  it('keeps resolving the chain under the kill switch when polling submitted batch jobs', async () => {
+    vi.mocked(getLlmKillSwitch).mockResolvedValue(true)
+    vi.mocked(getLlmProviderOverrideChain).mockResolvedValue([{
+      provider: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', model: 'deepseek/deepseek-v4-pro', apiKey: 'secret', executionMode: 'sync',
+    }])
+
+    const chain = await readExtractionLlmConfigChain({ ignoreKillSwitch: true })
+
+    expect(chain).toHaveLength(1)
   })
 
   it('resolves normally when no DB is configured (kill switch check is skipped)', async () => {

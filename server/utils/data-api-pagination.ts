@@ -1,8 +1,10 @@
 // Shared page/pageSize parsing for /api/data/v1/* (auctions.get.ts,
-// observations.get.ts). Rejects non-finite/unsafe values (e.g. `page=Infinity`)
-// instead of letting them fall through Math.trunc/`||` into the slice/offset
-// math, falling back to the given defaults exactly like the previous
-// per-route logic did for missing/invalid input.
+// observations.get.ts) and the public search (/api/auctions). Rejects
+// non-finite/unsafe values (e.g. `page=Infinity`, `page=1e300`) instead of
+// letting them fall through Math.trunc/`||` into the slice/offset math, where
+// Postgres would reject the unrepresentable OFFSET with a 500. Falls back to
+// the given defaults exactly like the previous per-route logic did for
+// missing/invalid input.
 
 function parseSafeInt(raw: unknown, fallback: number): number {
   const n = Math.trunc(Number(raw))

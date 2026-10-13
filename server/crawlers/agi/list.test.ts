@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
-import { buildAuctions, type DetailEntry } from './list'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { DETAIL_BATCH_SIZE } from './constants'
+import { buildAuctions, fetchAllDetails, type DetailEntry } from './list'
 
 function detailEntry(idLotto: number): DetailEntry {
   return {
@@ -69,5 +70,25 @@ describe('buildAuctions lat/lng', () => {
     expect(a?.lat).toBeNull()
     expect(b?.lat).toBeNull()
     expect(b?.lng).toBeNull()
+  })
+})
+
+describe('fetchAllDetails', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('counts a rate-limited batch instead of silently dropping its lots', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([detailEntry(1)]), { status: 200 }))
+      .mockResolvedValueOnce(new Response('', { status: 429 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const ids = Array.from({ length: DETAIL_BATCH_SIZE + 1 }, (_, i) => i + 1)
+    const result = await fetchAllDetails(ids, 'cookie')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(result.details.map((d) => d.idLotto)).toEqual([1])
+    expect(result.failedBatches).toBe(1)
   })
 })

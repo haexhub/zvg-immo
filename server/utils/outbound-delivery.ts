@@ -36,6 +36,7 @@ interface ClaimedDelivery {
 }
 
 export class LawyerInquiryRateLimitError extends Error {}
+export class LawyerInquiryIdempotencyConflictError extends Error {}
 
 export function validateIdempotencyKey(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
@@ -49,10 +50,17 @@ export function deliveryRetryAt(attempt: number, now = new Date()): Date {
 /** A short, non-secret operational class. The full SMTP error is never stored. */
 export function classifyDeliveryError(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err)
-  const smtp = /\b([45]\d\d)\b/.exec(message)
-  if (smtp) return `smtp_${smtp[1]}`
+  // Thrown by mailer.ts when a production deploy lacks NUXT_SMTP_URL.
+  if (message === 'smtp_not_configured') return message
+  // nodemailer puts the server's reply code on the error; trust it over text.
+  const responseCode = (err as { responseCode?: unknown } | null)?.responseCode
+  if (typeof responseCode === 'number' && responseCode >= 400 && responseCode < 600) return `smtp_${responseCode}`
+  // Before the text fallback: socket errors embed the target port
+  // (`connect ECONNREFUSED 1.2.3.4:465`), which is not an SMTP code.
   if (/timeout|timed out|etimedout/i.test(message)) return 'timeout'
-  if (/econn|network|socket/i.test(message)) return 'network'
+  if (/econn|ehostunreach|enotfound|network|socket/i.test(message)) return 'network'
+  const smtp = /(?:^|\s)([45]\d\d)(?:[\s-]|$)/.exec(message)
+  if (smtp) return `smtp_${smtp[1]}`
   return 'unknown'
 }
 
@@ -117,20 +125,42 @@ function rowToInquiry(row: Record<string, unknown>): StoredLawyerInquiry {
   }
 }
 
+const SELECT_INQUIRY_BY_IDEMPOTENCY_KEY = `SELECT id, lawyer_id, platform, external_id, message, commission_cents, commission_status, delivery_status, created_at
+  FROM lawyer_inquiries WHERE user_id = $1 AND idempotency_key = $2`
+
+type InquiryReplayInput = Pick<NewLawyerInquiry, 'userId' | 'idempotencyKey' | 'lawyerId' | 'platform' | 'externalId' | 'message'>
+
+/** A key names exactly one inquiry: replaying it with a different payload
+ * would silently answer "sent" for a request that was never stored. */
+function replayInquiry(row: Record<string, unknown>, input: InquiryReplayInput): StoredLawyerInquiry {
+  const inquiry = rowToInquiry(row)
+  if (inquiry.lawyerId !== input.lawyerId || inquiry.platform !== input.platform
+    || inquiry.externalId !== input.externalId || inquiry.message !== input.message) {
+    throw new LawyerInquiryIdempotencyConflictError('Dieser Idempotency-Key gehört zu einer anderen Anfrage.')
+  }
+  return inquiry
+}
+
+/** Looks up an already committed inquiry for this key, so a retry gets its
+ * original result even if auction, lawyer or coverage changed meanwhile. */
+export async function findLawyerInquiryReplay(input: InquiryReplayInput): Promise<StoredLawyerInquiry | null> {
+  const db = getPool()
+  if (!db) return null
+  const { rows } = await db.query(SELECT_INQUIRY_BY_IDEMPOTENCY_KEY, [input.userId, input.idempotencyKey])
+  return rows[0] ? replayInquiry(rows[0], input) : null
+}
+
 export async function createLawyerInquiryWithDelivery(input: NewLawyerInquiry): Promise<StoredLawyerInquiry> {
   const db = getPool()
   if (!db) throw new Error('Datenbank ist nicht konfiguriert.')
   const client = await db.connect()
   try {
     await client.query('BEGIN')
-    const existing = await client.query(
-      `SELECT id, lawyer_id, platform, external_id, message, commission_cents, commission_status, delivery_status, created_at
-       FROM lawyer_inquiries WHERE user_id = $1 AND idempotency_key = $2`,
-      [input.userId, input.idempotencyKey],
-    )
+    const existing = await client.query(SELECT_INQUIRY_BY_IDEMPOTENCY_KEY, [input.userId, input.idempotencyKey])
     if (existing.rows[0]) {
+      const replay = replayInquiry(existing.rows[0], input)
       await client.query('COMMIT')
-      return rowToInquiry(existing.rows[0])
+      return replay
     }
 
     // Serialise a user's requests to one lawyer so the rate-limit count and
@@ -140,14 +170,11 @@ export async function createLawyerInquiryWithDelivery(input: NewLawyerInquiry): 
     // rate-limit lock. Re-check before counting/inserting so concurrent
     // retries converge on the original billable row instead of its unique
     // constraint becoming a 500 response.
-    const concurrentExisting = await client.query(
-      `SELECT id, lawyer_id, platform, external_id, message, commission_cents, commission_status, delivery_status, created_at
-       FROM lawyer_inquiries WHERE user_id = $1 AND idempotency_key = $2`,
-      [input.userId, input.idempotencyKey],
-    )
+    const concurrentExisting = await client.query(SELECT_INQUIRY_BY_IDEMPOTENCY_KEY, [input.userId, input.idempotencyKey])
     if (concurrentExisting.rows[0]) {
+      const replay = replayInquiry(concurrentExisting.rows[0], input)
       await client.query('COMMIT')
-      return rowToInquiry(concurrentExisting.rows[0])
+      return replay
     }
     const recent = await client.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM lawyer_inquiries
@@ -183,12 +210,24 @@ export async function createLawyerInquiryWithDelivery(input: NewLawyerInquiry): 
   }
 }
 
+// A worker that died mid-send leaves its 'processing' lease behind. Reclaiming
+// it counts as an attempt, so once every attempt is used up the row must end
+// 'failed' (with its inquiry) instead of being reclaimed forever.
+const FAIL_EXHAUSTED_LEASES_SQL = `WITH exhausted AS (
+     UPDATE outbound_deliveries
+     SET status = 'failed', locked_at = NULL, last_error_class = 'lease_expired'
+     WHERE status = 'processing' AND locked_at < now() - interval '10 minutes' AND attempts >= $1
+     RETURNING kind, payload
+   )
+   UPDATE lawyer_inquiries SET delivery_status = 'failed'
+   WHERE id::text IN (SELECT payload->>'inquiryId' FROM exhausted WHERE kind = 'lawyer_inquiry')`
+
 async function claimNextDelivery(db: Pool): Promise<ClaimedDelivery | null> {
   const { rows } = await db.query<ClaimedDelivery>(
     `WITH candidate AS (
        SELECT id FROM outbound_deliveries
        WHERE (status = 'pending' AND next_attempt_at <= now())
-          OR (status = 'processing' AND locked_at < now() - interval '10 minutes')
+          OR (status = 'processing' AND locked_at < now() - interval '10 minutes' AND attempts < $1)
        ORDER BY next_attempt_at, created_at
        FOR UPDATE SKIP LOCKED
        LIMIT 1
@@ -198,10 +237,9 @@ async function claimNextDelivery(db: Pool): Promise<ClaimedDelivery | null> {
      FROM candidate
      WHERE d.id = candidate.id
      RETURNING d.id, d.kind, d.payload, d.attempts`,
+    [MAX_DELIVERY_ATTEMPTS],
   )
-  const row = rows[0]
-  if (!row || (row.kind !== 'alert' && row.kind !== 'lawyer_inquiry') || !row.payload) return null
-  return row
+  return rows[0] ?? null
 }
 
 async function markDeliverySent(db: Pool, delivery: ClaimedDelivery): Promise<void> {
@@ -275,9 +313,21 @@ export async function drainOutboundDeliveries(limit = 20): Promise<{ sent: numbe
   if (!db) return { sent: 0, failed: 0 }
   let sent = 0
   let failed = 0
+  await db.query(FAIL_EXHAUSTED_LEASES_SQL, [MAX_DELIVERY_ATTEMPTS])
   for (let i = 0; i < limit; i++) {
     const delivery = await claimNextDelivery(db)
     if (!delivery) break
+    if ((delivery.kind !== 'alert' && delivery.kind !== 'lawyer_inquiry') || !delivery.payload) {
+      // Only a hand-inserted row can look like this; retrying cannot fix it,
+      // and stopping here would let it stall every later due delivery.
+      await db.query(
+        `UPDATE outbound_deliveries SET status = 'failed', locked_at = NULL, last_error_class = 'invalid_payload'
+         WHERE id = $1`,
+        [delivery.id],
+      )
+      failed++
+      continue
+    }
     try {
       const payload = delivery.payload as MailPayload
       await sendMail(payload)

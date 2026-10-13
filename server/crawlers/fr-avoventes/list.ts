@@ -212,20 +212,28 @@ async function fetchDetail(href: string, platformId: string): Promise<DetailInfo
   // The origin check must stay inside the try — thrown outside it, it would
   // reject the calling worker's Promise.all in fetchAllListings and zero out
   // every listing for one malformed href instead of just skipping that row.
+  let url: URL
+  let html: string
   try {
-    const url = new URL(href)
+    url = new URL(href)
     if (url.origin !== AV_ORIGIN) {
       throw new Error(`Unexpected detail URL origin: ${url.origin}`)
     }
-    const html = await htmlFetch(url.toString())
-    // AVOVENTES never publishes a real court case number (see mapItem below)
-    // — caseNumber stays '' here too, matching the auction this capture keys to.
-    await archiveDetailCapture(
-      Buffer.from(html, 'utf8'),
-      { platform: platformId, country: COUNTRY, externalId: idFromHref(href), caseNumber: '', authority: '' },
-      url.toString(),
-      new Date().toISOString(),
-    )
+    html = await htmlFetch(url.toString())
+  } catch {
+    return null
+  }
+  // Outside the try: archive persistence failures must fail the crawl (see
+  // fetch-archive.ts), not silently degrade the listing to list-page data.
+  // AVOVENTES never publishes a real court case number (see mapItem below)
+  // — caseNumber stays '' here too, matching the auction this capture keys to.
+  await archiveDetailCapture(
+    Buffer.from(html, 'utf8'),
+    { platform: platformId, country: COUNTRY, externalId: idFromHref(href), caseNumber: '', authority: '' },
+    url.toString(),
+    new Date().toISOString(),
+  )
+  try {
     return parseDetailPage(html)
   } catch {
     return null

@@ -239,6 +239,16 @@ describe('OpenAiCompatibleProvider.extract', () => {
     expect(onUsageForFailedParse).toHaveBeenCalledWith({ inputTokens: 5, outputTokens: 0 })
   })
 
+  it('resolves a truncated response to null for extraction callers but rejects for the others', async () => {
+    const truncated = { choices: [{ message: { content: '{"propertyType":"ha' }, finish_reason: 'length' }] }
+    vi.stubGlobal('$fetch', vi.fn().mockResolvedValue(truncated))
+    const provider = new OpenAiCompatibleProvider(config)
+    const onRequestError = vi.fn()
+    await expect(provider.extract(req, { onRequestError })).resolves.toBeNull()
+    expect(onRequestError).not.toHaveBeenCalled()
+    await expect(provider.extract(req)).rejects.toThrow('ungültige oder leere Provider-Antwort')
+  })
+
   it('never calls onUsage on a request failure (no response to read usage off)', async () => {
     vi.stubGlobal('$fetch', vi.fn().mockRejectedValue(error(401)))
     const provider = new OpenAiCompatibleProvider(config)

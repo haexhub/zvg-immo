@@ -13,7 +13,7 @@
 // Climate normals don't go stale (WP-7 doc: "einmal geholt, nie wieder"), so
 // a cell is fetched at most once, ever, keyed by its rounded coordinates.
 
-import type { Pool, PoolClient } from 'pg'
+import type { Pool } from 'pg'
 import { sql } from 'drizzle-orm'
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type {
@@ -25,11 +25,6 @@ import type {
 import type { LocationContextEnhancer } from '~/server/tasks/external-enrichment'
 import { EXTERNAL_DATA_SOURCES } from './sources'
 import { fetchOpenMeteo } from './open-meteo-rate-limit'
-
-/** `readCachedCell`/`writeCachedCell` run both outside any lock (against the
- *  pool directly) and inside `withCellLock`'s locked client, wrapped in its
- *  own `drizzle()` instance — this is the common surface both share. */
-type Queryable = Pick<NodePgDatabase, 'execute'>
 
 export interface OpenMeteoClimateOptions {
   db: Pool
@@ -91,49 +86,40 @@ export async function readClimateNormals(
   const cached = await readCachedCell(db, cell)
   if (cached) return toLocationClimateNormals(cached, options.checkedAt)
 
-  // Cold cell: two concurrent requests can both observe the miss above
-  // before either has written the row. A per-cell *session* advisory lock
-  // (pg_advisory_lock/unlock on a dedicated checked-out client, not
-  // pg_advisory_xact_lock inside a BEGIN/COMMIT) serializes them without
-  // pinning that connection inside an open transaction for the whole
-  // archive fetch below — doing that previously left the fetch racing its
-  // own abort timeout against everything else contending for the
-  // connection pool, so cold cells routinely lost that race and never got
-  // cached at all (observed in prod: DE, with by far the most distinct
-  // cells to fetch, stuck at ~18% cached vs. 97-100% for every other,
-  // smaller country). The re-read after acquiring the lock lets the loser
-  // of the race serve the winner's freshly-cached row instead of hitting
-  // Open-Meteo again.
-  return withCellLock(options.db, cell, async (client) => {
-    const clientDb = drizzle(client)
-    const recached = await readCachedCell(clientDb, cell)
-    if (recached) return toLocationClimateNormals(recached, options.checkedAt)
-
-    const daily = await fetchDailySeries(cell, options)
-    if (!daily) return null
-    const data = aggregate(daily)
-    await writeCachedCell(clientDb, cell, data)
-    return toLocationClimateNormals(data, options.checkedAt)
-  })
-}
-
-async function withCellLock<T>(
-  pool: Pool,
-  cell: { lat: number; lon: number },
-  fn: (client: PoolClient) => Promise<T>,
-): Promise<T> {
-  const client = await pool.connect()
-  const key = cellLockKey(cell)
-  try {
-    await client.query('SELECT pg_advisory_lock(hashtext($1)::bigint)', [key])
-    return await fn(client)
-  } finally {
-    await client.query('SELECT pg_advisory_unlock(hashtext($1)::bigint)', [key]).catch(() => {})
-    client.release()
+  // Cold cell: concurrent requests can all observe the miss above before
+  // any has written the row. They share one in-flight fetch per cell instead
+  // of each hitting Open-Meteo. No DB connection is held meanwhile: the
+  // earlier pg_advisory_lock pinned a pooled client for the whole rate-gated
+  // archive fetch (up to timeoutMs), so a crawl batch of new auctions in cold
+  // cells exhausted the pool, and a same-cell waiter ran into query_timeout.
+  // ponytail: deduplicates within this process only; a second app instance
+  // may fetch the same cell once more, which the idempotent upsert absorbs.
+  // A cross-instance claim row is the upgrade path if that ever matters.
+  const key = cellKey(cell)
+  let pending = inflightCells.get(key)
+  if (!pending) {
+    pending = fetchAndCacheCell(db, cell, options).finally(() => inflightCells.delete(key))
+    inflightCells.set(key, pending)
   }
+  const data = await pending
+  return data ? toLocationClimateNormals(data, options.checkedAt) : null
 }
 
-function cellLockKey(cell: { lat: number; lon: number }): string {
+const inflightCells = new Map<string, Promise<ClimateCellData | null>>()
+
+async function fetchAndCacheCell(
+  db: NodePgDatabase,
+  cell: { lat: number; lon: number },
+  options: OpenMeteoClimateOptions,
+): Promise<ClimateCellData | null> {
+  const daily = await fetchDailySeries(cell, options)
+  if (!daily) return null
+  const data = aggregate(daily)
+  await writeCachedCell(db, cell, data)
+  return data
+}
+
+function cellKey(cell: { lat: number; lon: number }): string {
   return `climate-cell:${cell.lat.toFixed(1)}:${cell.lon.toFixed(1)}`
 }
 
@@ -150,7 +136,7 @@ export function gridCell(lat: number, lng: number): { lat: number; lon: number }
   }
 }
 
-async function readCachedCell(db: Queryable, cell: { lat: number; lon: number }): Promise<ClimateCellData | null> {
+async function readCachedCell(db: NodePgDatabase, cell: { lat: number; lon: number }): Promise<ClimateCellData | null> {
   const { rows } = await db.execute<{
     summer_avg_temp_c: string | null
     winter_avg_temp_c: string | null
@@ -181,7 +167,7 @@ async function readCachedCell(db: Queryable, cell: { lat: number; lon: number })
 }
 
 async function writeCachedCell(
-  db: Queryable,
+  db: NodePgDatabase,
   cell: { lat: number; lon: number },
   data: ClimateCellData,
 ): Promise<void> {

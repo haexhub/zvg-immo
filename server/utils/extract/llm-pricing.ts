@@ -79,6 +79,11 @@ export function estimateCostUsd(
   return inputCost + outputCost
 }
 
+// The batch APIs of every priced provider (Anthropic Message Batches, Gemini
+// Batch) bill half the sync list price; without this, batch rows showed about
+// twice their real cost.
+const BATCH_PRICE_FACTOR = 0.5
+
 /** Shared by every writer of a per-call cost (llm-usage.ts's llm_usage_events
  *  log, auction-details.ts's per-version llmCostUsd): prefer the provider's
  *  own billed amount when the request asked for it (see openai-compatible.ts's
@@ -87,6 +92,9 @@ export function estimateCostUsd(
 export function resolveCostUsd(
   model: string,
   usage: { inputTokens: number | null; outputTokens: number | null; costUsd?: number | null } | null,
+  executionMode: 'sync' | 'batch' = 'sync',
 ): number | null {
-  return usage?.costUsd ?? estimateCostUsd(model, usage?.inputTokens ?? null, usage?.outputTokens ?? null)
+  if (usage?.costUsd != null) return usage.costUsd
+  const estimate = estimateCostUsd(model, usage?.inputTokens ?? null, usage?.outputTokens ?? null)
+  return estimate != null && executionMode === 'batch' ? estimate * BATCH_PRICE_FACTOR : estimate
 }

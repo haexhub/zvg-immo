@@ -95,11 +95,15 @@ export function parseListPage(html: string): ListItem[] {
     // The Bundesland marker is a hidden <span> whose class is the German
     // state name itself and carries no text — scan every hidden span in the
     // block (there's also an unrelated one for the sortable price) and keep
-    // whichever class matches a known region name.
+    // whichever class token matches a known region name. Tokens, not the whole
+    // attribute: an extra utility class ("Sachsen d-none") would otherwise drop
+    // the object from every Bundesland crawl. State names contain no spaces.
     let regionCode = ''
     $el.find('span[style*="display:none"]').each((_j, span) => {
-      const code = REGION_CODE_BY_NAME.get(clean($(span).attr('class') ?? ''))
-      if (code) regionCode = code
+      for (const token of ($(span).attr('class') ?? '').split(/\s+/)) {
+        const code = REGION_CODE_BY_NAME.get(token)
+        if (code) regionCode = code
+      }
     })
 
     const mapAnchor = $el.find('.ortIco a').first()
@@ -185,6 +189,11 @@ async function loadAllAuctions(): Promise<Auction[]> {
   inFlight = (async () => {
     const html = await fetchListHtml()
     const auctions = parseListPage(html).map(mapItem)
+    // ponytail: objects without a recognized Bundesland marker fit no scoped
+    // crawl and are only logged, not persisted. Upgrade path: derive the state
+    // from the PLZ in the city line.
+    const unassigned = auctions.filter((a) => !a.region).length
+    if (unassigned > 0) console.warn(`[${PLATFORM_ID}] ${unassigned} object(s) without a Bundesland marker`)
     cache = { at: Date.now(), auctions }
     return auctions
   })()

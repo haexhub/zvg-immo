@@ -6,6 +6,7 @@ import { safeHref } from '~/lib/utils'
 import { useAuctionDetailFormatters } from '~/composables/useAuctionDetailFormatters'
 import { useLocationContextLabels } from '~/composables/useLocationContextLabels'
 import { usePlaceNameTranslations } from '~/composables/usePlaceNameTranslations'
+import { translatablePlaceNames } from '~/lib/content-language'
 import {
   Coffee,
   Fuel,
@@ -67,14 +68,10 @@ const locationDemographics = computed(() => locationContext.value?.demographics 
 const neighborhoodContext = computed(() => locationContext.value?.neighborhood ?? null)
 const neighborhoodNotes = computed(() => neighborhoodContext.value?.notes ?? [])
 
-const translatablePlaceNames = computed(() => [...new Set([
-  ...nearbyPlaces.value.map((place) => place.name),
-  ...heavyIndustrySites.value.map((site) => site.name).filter((name): name is string => name != null),
-  ...(locationEnvironment.value?.nearestAirportName ? [locationEnvironment.value.nearestAirportName] : []),
-])])
 const { displayName: placeDisplayName } = usePlaceNameTranslations({
-  names: translatablePlaceNames,
+  names: computed(() => translatablePlaceNames(locationContext.value)),
   country: computed(() => props.auction.country),
+  auction: computed(() => ({ platform: props.auction.platform, externalId: props.auction.externalId })),
 })
 
 const {

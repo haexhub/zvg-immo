@@ -149,6 +149,14 @@ describe('enrichOne', () => {
     expect(auction.cancelled).toBe(true)
   })
 
+  it('keeps a stored description when the description block is missing', async () => {
+    const html = detailHtml({ status: 'available' }).replace('itemprop="description"', 'class="text"')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(htmlResponse(html)))
+    const auction = makeAuction({ description: 'Stored description' })
+    await enrichOne(auction)
+    expect(auction.description).toBe('Stored description')
+  })
+
   it('does nothing when the auction has no detail URL', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)

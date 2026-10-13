@@ -9,6 +9,7 @@ import { runExternalEnrichment } from '~/server/tasks/external-enrichment'
 import { runExclusiveTask } from '~/server/utils/exclusive-task'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 import { getPool } from './db'
+import { coordinatesMovedSignificantly } from './external-data/geo'
 import type { GeocodeStatus } from './geocode'
 
 const COLUMNS = [
@@ -52,6 +53,12 @@ export function auctionToCurrentRow(a: Auction, updatedAt: string): CurrentAucti
     authority: a.authority,
     case_number: a.caseNumber,
     title: a.title,
+    // ponytail: most crawlers hand over court-local wall-clock times without
+    // an offset (date-only for some), and timestamptz reads them as UTC, so
+    // expiry (`>= now()`) and display are off by the zone offset (1-3 h in
+    // Europe, 4+ h for us). Upgrade: convert to an instant with the
+    // country's (us: channel's) zone at parse time, let date-only values
+    // expire at local end of day, then re-crawl to rewrite stored rows.
     auction_date_iso: a.auctionDateIso,
     auction_date_text: a.auctionDateText,
     cancelled: a.cancelled,
@@ -61,40 +68,11 @@ export function auctionToCurrentRow(a: Auction, updatedAt: string): CurrentAucti
   }
 }
 
-// Geocoders return slightly different coordinates for the same address between
-// runs, so an exact comparison would re-enrich constantly. 100 m is well above
-// that noise and well below the distance at which the location context (nearby
-// amenities, hazard zones, noise bands) would meaningfully differ.
-const COORDINATE_CHANGE_THRESHOLD_METERS = 100
-
 // node-postgres returns `numeric` as a string to avoid float precision loss.
 function numeric(value: number | string | null): number | null {
   if (value == null) return null
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : null
-}
-
-function distanceMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const R = 6_371_000
-  const toRad = (deg: number): number => (deg * Math.PI) / 180
-  const dLat = toRad(lat2 - lat1)
-  const dLng = toRad(lng2 - lng1)
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2
-  return 2 * R * Math.asin(Math.sqrt(a))
-}
-
-/** Exported for tests. */
-export function coordinatesMovedSignificantly(
-  previous: { lat: number | null; lng: number | null } | null,
-  next: { lat: number | null; lng: number | null },
-): boolean {
-  if (next.lat == null || next.lng == null) return false
-  // First coordinates this auction ever had — including a brand new auction,
-  // whose identity row is created before any geocoding has run.
-  if (previous?.lat == null || previous?.lng == null) return true
-  return distanceMeters(previous.lat, previous.lng, next.lat, next.lng) > COORDINATE_CHANGE_THRESHOLD_METERS
 }
 
 /**
@@ -117,12 +95,41 @@ export function coordinatesMovedSignificantly(
  * for the *same* auction, leaving the sweep alone.
  */
 function triggerLocationEnrichment(platform: string, externalId: string): void {
-  void runExclusiveTask(
-    `external-enrichment-single:${cacheKey(platform, externalId)}`,
-    (signal) => runExternalEnrichment({ platform, externalId }, signal),
-  ).catch((err: unknown) => {
-    console.error(`[current-auctions] external enrichment trigger failed for ${platform}/${externalId}: ${(err as Error).message}`)
-  })
+  pendingTriggers.set(cacheKey(platform, externalId), { platform, externalId })
+  drainLocationEnrichmentTriggers()
+}
+
+// The per-auction lock above has no global bound, and a cold geocode run hands
+// thousands of first-time coordinates to one upsertCurrentAuctions call. Each
+// run holds pool connections (Open-Meteo climate cell locks wait on the
+// globally serialised Open-Meteo gate), so an unbounded fan-out starved the
+// 10-connection pool for every other reader. Pending triggers are coalesced
+// per auction and drained a couple at a time.
+// ponytail: in-process queue, lost on restart. Never-enriched auctions are
+// still picked up first by the 15-minute sweep (orderByStaleness); a moved
+// auction waits for its regular staleness turn. Upgrade path: persist the
+// pending keys (e.g. reset location_enrichment.checked_at) if that matters.
+const MAX_CONCURRENT_TRIGGERS = 2
+const pendingTriggers = new Map<string, { platform: string; externalId: string }>()
+let activeTriggers = 0
+
+function drainLocationEnrichmentTriggers(): void {
+  while (activeTriggers < MAX_CONCURRENT_TRIGGERS) {
+    const next = pendingTriggers.entries().next()
+    if (next.done) return
+    const [key, { platform, externalId }] = next.value
+    pendingTriggers.delete(key)
+    activeTriggers++
+    void runExclusiveTask(
+      `external-enrichment-single:${key}`,
+      (signal) => runExternalEnrichment({ platform, externalId }, signal),
+    ).catch((err: unknown) => {
+      console.error(`[current-auctions] external enrichment trigger failed for ${platform}/${externalId}: ${(err as Error).message}`)
+    }).finally(() => {
+      activeTriggers--
+      drainLocationEnrichmentTriggers()
+    })
+  }
 }
 
 const UPDATE_COLUMNS = COLUMNS.filter((column) => column !== 'platform' && column !== 'external_id')

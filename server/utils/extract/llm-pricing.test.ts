@@ -73,4 +73,9 @@ describe('resolveCostUsd', () => {
   it('returns null for null usage', () => {
     expect(resolveCostUsd('claude-haiku-4-5', null)).toBeNull()
   })
+
+  it('applies the batch discount to table estimates but not to provider-billed costs', () => {
+    expect(resolveCostUsd('claude-haiku-4-5', { inputTokens: 1_000_000, outputTokens: 1_000_000 }, 'batch')).toBeCloseTo(3, 6)
+    expect(resolveCostUsd('some/unlisted-model', { inputTokens: 1, outputTokens: 1, costUsd: 0.0042 }, 'batch')).toBe(0.0042)
+  })
 })

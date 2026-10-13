@@ -105,7 +105,9 @@ export function parsePage(html: string, platformId: string): PageResult {
   return { auctions, nextPagePath, totalReported }
 }
 
-export async function fetchAllListings(platformId: string): Promise<{ auctions: Auction[]; total: number | null }> {
+export async function fetchAllListings(
+  platformId: string,
+): Promise<{ auctions: Auction[]; total: number | null; complete: boolean }> {
   const allAuctions: Auction[] = []
   let totalReported: number | null = null
 
@@ -123,7 +125,7 @@ export async function fetchAllListings(platformId: string): Promise<{ auctions: 
     }
     if (cookies) headers['Cookie'] = cookies
 
-    const res = await fetch(nextUrl, { headers })
+    const res = await fetch(nextUrl, { headers, signal: AbortSignal.timeout(20_000) })
     if (!res.ok) throw new Error(`MNV fetch failed: ${res.status} ${nextUrl}`)
 
     // Maintain session cookies for subsequent pagination requests
@@ -152,5 +154,6 @@ export async function fetchAllListings(platformId: string): Promise<{ auctions: 
     nextUrl = result.nextPagePath ? `${HU_BASE}${result.nextPagePath}` : null
   }
 
-  return { auctions: allAuctions, total: totalReported }
+  // A next page still pending here means MAX_PAGES cut the walk short.
+  return { auctions: allAuctions, total: totalReported, complete: nextUrl == null }
 }

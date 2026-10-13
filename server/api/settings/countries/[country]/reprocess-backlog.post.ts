@@ -2,8 +2,8 @@
 // backlog (auctions never successfully parsed by the LLM yet, or with newly
 // archived documents — see llm-batch-jobs.get.ts's backlog counters) instead
 // of waiting for the next cron tick. Unlike /api/settings/reprocess.post.ts
-// (a bounded, synchronous spot check for iterating on prompts), this is
-// detached and unbounded — same shape as the reprocess trigger inside
+// (a bounded, forced spot check for iterating on prompts), this is
+// unbounded — both are detached, same shape as the reprocess trigger inside
 // countries/[country]/enrich.post.ts, just without the crawl/archive phase
 // ahead of it. force stays false, so it only ever touches genuinely open
 // candidates; /settings reads progress via reprocessStatus (see

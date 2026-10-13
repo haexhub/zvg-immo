@@ -2,22 +2,25 @@ import type { Auction, HazardAssessment, LandValueBaseline, LocationContext, Mar
 import { readAuctionRecord, readAuctionRecords } from '~/server/utils/auction-record'
 import { geocodeAddress } from '~/server/utils/geocode'
 import { getPool } from '~/server/utils/db'
+import { coordinatesMovedSignificantly } from '~/server/utils/external-data/geo'
 import {
+  readLocationEnrichment,
   readLocationEnrichmentCache,
   writeLocationEnrichmentCache,
+  type LocationEnrichmentCache,
 } from '~/server/utils/external-data/location-enrichment'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
-import { runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-task'
+import { isTaskActive, runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-task'
 import { recordTaskRunEnd, recordTaskRunProgress, recordTaskRunStart, type TaskRunSummary } from '~/server/utils/task-runs'
-import { inScope, orderByStaleness } from './external-enrichment-scope'
+import { inScope, orderByStaleness } from '../utils/tasks/external-enrichment-scope'
 import {
   defaultHazardAdapters,
   defaultLocationContextAdapters,
   defaultMarketAdapters,
   recordProviderFailure,
-} from './external-enrichment-adapters'
+} from '../utils/tasks/external-enrichment-adapters'
 
-export { withLocationContextEnhancers } from './external-enrichment-adapters'
+export { withLocationContextEnhancers } from '../utils/tasks/external-enrichment-adapters'
 
 export interface MarketComparisonAdapter {
   id: string
@@ -68,6 +71,8 @@ export interface ExternalEnrichmentOptions {
   osmOnly?: boolean
   /** Skip auctions that already have an OpenStreetMap location context. */
   onlyMissingLocationContext?: boolean
+  /** 'manual' for /settings triggers; anything else yields to an active run. */
+  trigger?: 'cron' | 'manual'
 }
 
 export interface ExternalEnrichmentSummary {
@@ -85,32 +90,47 @@ export interface ExternalEnrichmentSummary {
   durationMs: number
 }
 
+/**
+ * Manual triggers call this directly instead of Nitro's `runTask`, which
+ * returns an already-running task for a duplicate name and silently drops the
+ * new payload. A newer manual run supersedes the active one; the 15-minute
+ * cron batch skips while one is active.
+ */
+export async function runExternalEnrichmentTask(
+  options: ExternalEnrichmentOptions = {},
+): Promise<{ result: ExternalEnrichmentSummary } | Record<string, never>> {
+  if (options.trigger !== 'manual' && isTaskActive('external-enrichment')) {
+    console.log('[external-enrichment] a run is already active — skipping scheduled run')
+    return {}
+  }
+  return await runExclusiveTask('external-enrichment', async (signal) => {
+    // Recorded because /settings triggers this detached: without a persisted
+    // status a provider failure would vanish with the promise.
+    await recordTaskRunStart('external-enrichment')
+    try {
+      const result = await runExternalEnrichment(options, signal)
+      const { errors, ...summary } = result
+      await recordTaskRunEnd('external-enrichment', {
+        result: summary,
+        warning: errors.length > 0
+          ? `${errors.length} Fehler: ${errors.slice(0, 20).join('; ')}`
+          : null,
+      })
+      return { result }
+    } catch (err) {
+      await recordTaskRunEnd('external-enrichment', { error: (err as Error).message })
+      throw err
+    }
+  })
+}
+
 export default defineTask({
   meta: {
     name: 'external-enrichment',
     description: 'Refresh cached external market and natural-hazard overlays for auction detail pages.',
   },
   async run(event) {
-    const options = (event?.payload ?? {}) as ExternalEnrichmentOptions
-    return await runExclusiveTask('external-enrichment', async (signal) => {
-      // Recorded because /settings triggers this detached: without a persisted
-      // status a provider failure would vanish with the promise.
-      await recordTaskRunStart('external-enrichment')
-      try {
-        const result = await runExternalEnrichment(options, signal)
-        const { errors, ...summary } = result
-        await recordTaskRunEnd('external-enrichment', {
-          result: summary,
-          warning: errors.length > 0
-            ? `${errors.length} Fehler: ${errors.slice(0, 20).join('; ')}`
-            : null,
-        })
-        return { result }
-      } catch (err) {
-        await recordTaskRunEnd('external-enrichment', { error: (err as Error).message })
-        throw err
-      }
-    })
+    return await runExternalEnrichmentTask((event?.payload ?? {}) as ExternalEnrichmentOptions)
   },
 })
 
@@ -136,10 +156,16 @@ export async function runExternalEnrichment(
   // meant every such trigger joined and sorted the entire auctions/
   // auction_details/auction_fetch_state tables, which under concurrent crawl
   // load queued up on the shared pool and blew its 15s query_timeout.
-  const records = options.platform && options.externalId
-    ? await readAuctionRecord(options.platform, options.externalId).then((record) => record ? [record] : [])
+  const { platform, externalId } = options
+  const records = platform && externalId
+    ? await readAuctionRecord(platform, externalId).then((record) => record ? [record] : [])
     : await readAuctionRecords(options.country, { includePhotos: false })
-  const existing = await readLocationEnrichmentCache()
+  // Both reads throw rather than yield an empty map: with no previous entry
+  // every adapter that comes back empty this run would null out stored data.
+  const existing: LocationEnrichmentCache = platform && externalId
+    ? await readLocationEnrichment(platform, externalId)
+      .then((entry): LocationEnrichmentCache => entry ? { [cacheKey(platform, externalId)]: entry } : {})
+    : await readLocationEnrichmentCache()
   const summary: ExternalEnrichmentSummary = {
     processed: 0,
     written: 0,
@@ -185,7 +211,11 @@ export async function runExternalEnrichment(
       const auction: Auction = { ...rawAuction, lat: point.lat, lng: point.lng }
       summary.processed++
       const key = cacheKey(auction.platform, auction.externalId)
-      const previous = existing[key]
+      // An entry computed before the geocode was corrected describes another
+      // place: its fallbacks below and the enhancer merge (noise bands, air
+      // quality) would otherwise pin the old position's data indefinitely.
+      const stored = existing[key]
+      const previous = stored && !coordinatesMovedSignificantly(stored, point) ? stored : undefined
 
       const marketComparison = await firstMarketComparison(auction, marketAdapters, summary)
       throwIfTaskAborted(signal)

@@ -77,4 +77,25 @@ describe('parseLawyerInput', () => {
     expect(() => parseLawyerInput(body)).toThrow()
     expect(createError).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }))
   })
+
+  it.each([-1, 2_147_483_648])('throws a 400 when commissionCents %i is outside the integer column range', (commissionCents) => {
+    const createError = vi.fn((input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
+    vi.stubGlobal('createError', createError)
+
+    expect(() => parseLawyerInput({ name: 'A', email: 'a@example.com', countries: ['de'], commissionCents })).toThrow()
+    expect(createError).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }))
+  })
+
+  it.each([
+    ['a javascript: website', { website: 'javascript:alert(1)' }],
+    ['a relative website', { website: 'example.com' }],
+    ['several email recipients', { email: 'a@example.com, b@example.com' }],
+    ['a malformed email', { email: 'not-an-address' }],
+  ])('throws a 400 for %s', (_label, override) => {
+    const createError = vi.fn((input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
+    vi.stubGlobal('createError', createError)
+
+    expect(() => parseLawyerInput({ name: 'A', email: 'a@example.com', countries: ['de'], ...override })).toThrow()
+    expect(createError).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }))
+  })
 })

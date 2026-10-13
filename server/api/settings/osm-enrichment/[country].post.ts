@@ -2,6 +2,7 @@
 // The raw OSM import itself remains a host-level job and is requested through
 // osm-import/[country].post.ts.
 import { ensureEnabledCountriesLoaded, listRegisteredCountries } from '~/server/crawlers/registry'
+import { runExternalEnrichmentTask } from '~/server/tasks/external-enrichment'
 
 export default defineEventHandler(async (event): Promise<{ started: true }> => {
   const country = (getRouterParam(event, 'country') ?? '').trim().toLowerCase()
@@ -12,8 +13,13 @@ export default defineEventHandler(async (event): Promise<{ started: true }> => {
   const body = await readBody<{ platform?: unknown, externalId?: unknown }>(event).catch(() => undefined)
   const platform = typeof body?.platform === 'string' ? body.platform.trim() || undefined : undefined
   const externalId = typeof body?.externalId === 'string' ? body.externalId.trim() || undefined : undefined
-  void runTask('external-enrichment', {
-    payload: { country, platform, externalId, osmOnly: true, onlyMissingLocationContext: true },
+  void runExternalEnrichmentTask({
+    country,
+    platform,
+    externalId,
+    osmOnly: true,
+    onlyMissingLocationContext: true,
+    trigger: 'manual',
   }).catch((err: unknown) => {
     console.error('[settings/osm-enrichment] trigger failed:', (err as Error).message)
   })

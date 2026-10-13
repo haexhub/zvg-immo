@@ -8,6 +8,10 @@ interface CrawlResultInput {
   regions: readonly RegionInfo[]
   totalReported: number | null
   auctions: Auction[]
+  /** False when the walk stopped early (failed page, page cap). The platform
+   *  is then left out of platformsSucceeded, because crawl-state.ts reads
+   *  every listing missing from a "successful" run as gone and hides it. */
+  complete?: boolean
 }
 
 export function createCrawlResult(input: CrawlResultInput): CrawlResult {
@@ -18,7 +22,7 @@ export function createCrawlResult(input: CrawlResultInput): CrawlResult {
     countries: [input.country],
     regions: input.regions.map((r) => r.name),
     fetchedAt: new Date().toISOString(),
-    platformsSucceeded: [input.platform],
+    platformsSucceeded: input.complete === false ? [] : [input.platform],
     totalReported: input.totalReported,
     auctions: input.auctions,
   }

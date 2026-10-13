@@ -33,6 +33,12 @@ const emit = defineEmits<{
 
 const open = ref(false)
 const activeIndex = ref(-1)
+// Combobox wiring: focus stays in the input while the arrow keys move
+// activeIndex, so screen readers only learn about the list and the active
+// option through these ids.
+const listboxId = useId()
+const optionId = (i: number) => `${listboxId}-option-${i}`
+const expanded = computed(() => open.value && suggestions.value.length > 0)
 
 function foldDrop(s: string): string {
   return s.toLocaleLowerCase('de').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -100,18 +106,28 @@ function onBlur() {
     :placeholder="placeholder"
     :class="inputClass"
     autocomplete="off"
+    role="combobox"
+    aria-autocomplete="list"
+    :aria-expanded="expanded"
+    :aria-controls="expanded ? listboxId : undefined"
+    :aria-activedescendant="expanded && activeIndex >= 0 ? optionId(activeIndex) : undefined"
     @focus="open = true"
     @input="open = true; activeIndex = -1"
     @keydown="onKeydown"
     @blur="onBlur"
   />
   <ul
-    v-if="open && suggestions.length > 0"
+    v-if="expanded"
+    :id="listboxId"
+    role="listbox"
     class="absolute inset-x-0 top-full z-50 mt-1 max-h-72 overflow-auto rounded-md border bg-popover py-1 text-popover-foreground shadow-md"
   >
     <li
       v-for="(s, i) in suggestions"
+      :id="optionId(i)"
       :key="s.kind === 'country' ? `country-${s.code}` : `${s.name}-${s.region}`"
+      role="option"
+      :aria-selected="i === activeIndex"
       class="flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-sm"
       :class="i === activeIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent hover:text-accent-foreground'"
       @mousedown.prevent="pick(s)"

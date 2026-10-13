@@ -234,6 +234,20 @@ describe('extractDocumentPhotos', () => {
     expect(files.every((file) => /^[0-9a-f]{16}\.png$/.test(file))).toBe(true)
   })
 
+  it('keeps the default image cap for HTML documents when no maxPhotos is given', async () => {
+    const images = Array.from({ length: 14 }, (_, i) => `https://example.test/p${i}.png`)
+    stubFetch({
+      'https://example.test/docs/page.html': images.map((url) => `<img src="${url}">`).join(''),
+      ...Object.fromEntries(images.map((url, i) => [url, png(1200, 800, 20 + i)])),
+    })
+
+    const files = await extractDocumentPhotos([
+      attachment({ kind: 'brochure', filename: 'page.html', proxyUrl: 'https://example.test/docs/page.html' }),
+    ], { destDir })
+
+    expect(files).toHaveLength(12)
+  })
+
   it('skips HTML image URLs that resolve to non-public addresses', async () => {
     stubFetch({
       'https://example.test/docs/page.html': '<img src="https://private.test/secret.png"><img src="/large.png">',

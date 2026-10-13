@@ -7,7 +7,7 @@ afterEach(() => {
 })
 
 describe('/api/settings/external-data/eurostat-tourism-nuts-cache', () => {
-  it('starts the import detached and passes a valid payload to the task helper', async () => {
+  it('starts the import detached and passes a valid payload without request-chosen paths/URLs', async () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     vi.stubGlobal('readBody', vi.fn(async () => ({
       cachePath: '/cache/eurostat-tourism-nuts.json',
@@ -28,7 +28,6 @@ describe('/api/settings/external-data/eurostat-tourism-nuts-cache', () => {
     await expect(handler({})).resolves.toEqual({ started: true })
     expect(runTask).toHaveBeenCalledWith('import-eurostat-tourism-nuts-cache', {
       payload: {
-        cachePath: '/cache/eurostat-tourism-nuts.json',
         generatedAt: '2026-08-22T00:00:00.000Z',
       },
     })

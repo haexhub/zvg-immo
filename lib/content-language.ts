@@ -1,3 +1,5 @@
+import type { LocationContext } from '~/types/auction'
+
 // User-facing target languages supported by the site and translation endpoint.
 // Source languages are inferred separately from auction country codes; adding
 // a country must not imply adding a selectable UI locale here.
@@ -33,4 +35,18 @@ export function countryContentLanguage(country: string): string | null {
  *  deliberately do not pass through; the LLM can detect the source language. */
 export function isPassthroughLanguage(country: string, targetLang: ContentTargetLang): boolean {
   return countryContentLanguage(country) === targetLang
+}
+
+/** OSM-derived place names shown on an auction's detail page that get
+ *  translated (nearby settlements, heavy-industry sites, nearest airport).
+ *  Shared with /api/place-names/translate, which only sends names to the LLM
+ *  that this function yields for the requested auction's own enrichment — the
+ *  route is anonymous and its results land in a cache shared by everyone. */
+export function translatablePlaceNames(context: LocationContext | null | undefined): string[] {
+  const environment = context?.environment
+  return [...new Set([
+    ...(context?.nearbyPlaces ?? []).map((place) => place.name),
+    ...(environment?.heavyIndustrySites ?? []).map((site) => site.name).filter((name): name is string => name != null),
+    ...(environment?.nearestAirportName ? [environment.nearestAirportName] : []),
+  ])]
 }

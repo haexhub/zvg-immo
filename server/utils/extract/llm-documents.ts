@@ -32,7 +32,7 @@ export interface PreparedLlmDocuments {
     /** Set instead of pdfText/pdfPageImages/pdfBytes/pdfDocuments when
      *  map-reduce triggered (more than MAP_REDUCE_DOCUMENT_THRESHOLD PDFs,
      *  and the caller opted in via allowMapReduce — see
-     *  server/tasks/reprocess-map-reduce.ts). Undefined otherwise, including
+     *  server/utils/tasks/reprocess-map-reduce.ts). Undefined otherwise, including
      *  always for the batch-submission call site, which never opts in and
      *  keeps getting today's combined fields unconditionally. */
     documentSummaryInputs?: Array<DocumentSummaryInput<PreparedAttachmentDocument>>
@@ -130,14 +130,14 @@ function decodeHtmlEntities(text: string): string {
     .replace(/&gt;/gi, '>')
     .replace(/&quot;/gi, '"')
     .replace(/&apos;/gi, "'")
-    .replace(/&#(\d+);/g, (_m, n) => {
-      const code = Number(n)
-      return Number.isFinite(code) ? String.fromCodePoint(code) : ''
-    })
-    .replace(/&#x([0-9a-f]+);/gi, (_m, n) => {
-      const code = Number.parseInt(n, 16)
-      return Number.isFinite(code) ? String.fromCodePoint(code) : ''
-    })
+    .replace(/&#(\d+);/g, (_m, n) => codePointText(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_m, n) => codePointText(Number.parseInt(n, 16)))
+}
+
+// Crawled HTML can carry a broken reference like `&#99999999;`; fromCodePoint
+// throws a RangeError above U+10FFFF, which would fail the whole document set.
+function codePointText(code: number): string {
+  return Number.isInteger(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : '\uFFFD'
 }
 
 export function htmlToText(html: string): string {
@@ -261,6 +261,28 @@ async function buildPreparedInput(
   }
 }
 
+// Each PDF holds its bytes and spawns pdftotext + pdffonts; the enrich task
+// already runs 8 auction workers, so an unbounded Promise.all over a large
+// attachment list multiplied downloads and poppler processes. Results keep
+// input order.
+const DOCUMENT_PREP_CONCURRENCY = 3
+
+export async function mapDocumentsBounded<T, R>(
+  items: readonly T[],
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const out = new Array<R>(items.length)
+  let next = 0
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next++
+      out[index] = await fn(items[index]!, index)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(DOCUMENT_PREP_CONCURRENCY, items.length) }, worker))
+  return out
+}
+
 export async function prepareDocument(
   attachment: Attachment,
   ordinal: number,
@@ -325,14 +347,14 @@ async function prepareArchivedDocumentSetItems(
   } = { nativeDocuments: false },
 ): Promise<PreparedLlmDocuments> {
   const prepared = (
-    await Promise.all(items.map(async (item) => {
+    await mapDocumentsBounded(items, async (item) => {
       const bytes = await downloadBlob(item.contentHash)
       if (!bytes) return null
       return prepareDocument(attachmentFromDocumentSetItem(item, opts.sourceAttachments), item.ordinal, bytes, {
         nativeDocuments: opts.nativeDocuments,
         contentHash: item.contentHash,
       })
-    }))
+    })
   ).filter((doc): doc is PreparedAttachmentDocument => doc != null)
 
   return {
@@ -388,9 +410,3 @@ export async function readArchivedAuction(platform: string, externalId: string):
     return null
   }
 }
-
-// Live crawl-time document preparation (fetches attachments over HTTP, as
-// opposed to everything above which reads already-archived blobs) lives in
-// its own module — this file was pushing the 500-line module-size ceiling.
-// Re-exported here so callers keep importing from this file unchanged.
-export { prepareLiveLlmDocuments, type ArchivedLiveDocuments } from './llm-documents-live'

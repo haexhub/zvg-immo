@@ -16,10 +16,16 @@ const SCANNED_PDF_TEXT_THRESHOLD = 200
 const MAX_SCANNED_DOCUMENTS = 3
 const MAX_PAGES_PER_DOCUMENT = 8
 const MAX_RENDERED_PAGES = 20
+// ponytail: one fixed inline budget (base64 chars across all native PDFs of a
+// request), sized below Gemini's ~20 MB inline-request limit — the only
+// provider honoring `document` parts. A request past it fails identically on
+// every run, so PDFs that don't fit are omitted instead. Upgrade path: upload
+// oversized PDFs through the provider's Files API and reference them.
+const MAX_NATIVE_DOCUMENT_BASE64_CHARS = 18_000_000
 /** Must match llm.ts's provider-facing PDF text cap. */
 export const MAX_MAP_REDUCE_DOCUMENT_TEXT_CHARS = 24_000
 
-/** Map-reduce (server/tasks/reprocess-map-reduce.ts): the point past which
+/** Map-reduce (server/utils/tasks/reprocess-map-reduce.ts): the point past which
  *  the single combined-call path (buildDocumentLlmParts above) already
  *  starts silently losing content — MAX_SCANNED_DOCUMENTS scanned docs get
  *  page images at all, everything beyond that is dropped, and the combined
@@ -63,9 +69,21 @@ export async function buildDocumentLlmParts<T>(
   },
 ): Promise<DocumentLlmParts> {
   if (opts.native) {
-    const nativeDocuments = documents
-      .filter((document): document is DocumentLlmSource<T> & { data: string } => !!document.data)
-      .map(({ label, data }) => ({ label, data }))
+    const nativeDocuments: Array<{ label: string; data: string }> = []
+    const omittedLabels: string[] = []
+    let budget = MAX_NATIVE_DOCUMENT_BASE64_CHARS
+    for (const { label, data } of documents) {
+      if (!data) continue
+      if (data.length > budget) {
+        omittedLabels.push(label)
+        continue
+      }
+      budget -= data.length
+      nativeDocuments.push({ label, data })
+    }
+    if (omittedLabels.length > 0) {
+      console.warn(`[extract/documents] native PDF budget exceeded, omitted: ${omittedLabels.join(', ')}`)
+    }
     return {
       pdfText: null,
       pdfPageImages: null,

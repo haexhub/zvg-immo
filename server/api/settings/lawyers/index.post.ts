@@ -30,7 +30,8 @@ export default defineEventHandler(async (event): Promise<AdminLawyer> => {
     .select('id, name, firm, email, phone, countries, specialization, languages, website, commission_cents, active, created_at')
     .single()
   if (error || !data) {
-    throw createError({ statusCode: 500, statusMessage: error?.message ?? 'Anlegen fehlgeschlagen.' })
+    console.warn('[settings/lawyers] create failed', error)
+    throw createError({ statusCode: 500, statusMessage: 'Anwalt konnte nicht angelegt werden.', cause: error })
   }
   return toAdminLawyer(data)
 })

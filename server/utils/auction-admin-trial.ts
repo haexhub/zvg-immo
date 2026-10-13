@@ -36,7 +36,7 @@ export async function validateAdminTrialReprocess(
 ): Promise<AdminTrialReprocessOutcome> {
   const db = getPool()
   if (!db) return { ok: false, reason: 'not_found' }
-  if (await getLlmKillSwitch(db).catch(() => false)) return { ok: false, reason: 'llm_disabled' }
+  if (await getLlmKillSwitch(db)) return { ok: false, reason: 'llm_disabled' }
   const config = await resolveLlmConfigForProfile(db, profileId)
   if (!config) return { ok: false, reason: 'unknown_profile' }
   const record = await readAuctionRecord(platform, externalId)

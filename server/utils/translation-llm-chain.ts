@@ -17,7 +17,7 @@ import { sha256Hex } from '~/server/utils/raw-archive'
  *  it. Empty when the admin kill switch (/settings) is on — same "nothing
  *  configured" contract callers already handle. */
 export async function resolveActiveLlmConfigChain(db: Pool): Promise<LlmConfig[]> {
-  if (await getLlmKillSwitch(db).catch(() => false)) return []
+  if (await getLlmKillSwitch(db)) return []
   const llmCfg = useRuntimeConfig().extractLlm as
     | { provider?: string; baseUrl?: string; apiKey?: string; model?: string }
     | undefined

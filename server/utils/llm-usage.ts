@@ -51,7 +51,7 @@ export async function recordLlmUsage(event: RecordLlmUsageInput): Promise<void> 
       externalId: event.externalId,
       inputTokens: event.usage?.inputTokens ?? null,
       outputTokens: event.usage?.outputTokens ?? null,
-      costUsd: resolveCostUsd(event.model, event.usage),
+      costUsd: resolveCostUsd(event.model, event.usage, event.executionMode),
       status: event.status ?? 'succeeded',
       errorMessage: event.errorMessage ?? null,
       durationMs: event.durationMs ?? null,

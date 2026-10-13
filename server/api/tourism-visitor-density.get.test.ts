@@ -76,4 +76,31 @@ describe('/api/tourism-visitor-density', () => {
     })
     expect(setResponseHeader).toHaveBeenCalledWith({}, 'cache-control', 'public, max-age=3600')
   })
+
+  it('drops malformed regions and rejects a file that is not this cache at all', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'tourism-visitor-density-'))
+    const cachePath = join(tmp, 'eurostat-tourism-nuts.json')
+    const region = {
+      nutsId: 'AT13',
+      name: 'Kärnten',
+      countryCode: 'AT',
+      value: 15,
+      dataYear: '2024',
+      bin: 1,
+      geometry: { type: 'Polygon', coordinates: [[[14, 46], [14.5, 46], [14.5, 46.5], [14, 46]]] },
+    }
+    await writeFile(cachePath, JSON.stringify({
+      generatedAt: '2026-08-22T00:00:00.000Z',
+      breaks: [10, 20],
+      regions: [region, { nutsId: 'AT21', name: 'Steiermark', geometry: null }],
+    }))
+    stubHandlerGlobals({ eurostatTourismNutsCachePath: cachePath })
+    const handler = (await import('./tourism-visitor-density.get')).default as unknown as (event: unknown) => Promise<unknown>
+
+    await expect(handler({})).resolves.toMatchObject({ available: true, regions: [region] })
+
+    await writeFile(cachePath, JSON.stringify({ type: 'FeatureCollection', features: [] }))
+    clearCachedFileCollections()
+    await expect(handler({})).rejects.toThrow('is not a Eurostat tourism NUTS cache')
+  })
 })

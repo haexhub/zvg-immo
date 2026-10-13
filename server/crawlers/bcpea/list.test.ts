@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest'
-import { mapItem, parseListPage } from './list'
+import { describe, expect, it, vi } from 'vitest'
+import { MAX_PAGES } from './constants'
+import { throttledFetch } from './fetch'
+import { fetchAllListings, mapItem, parseListPage } from './list'
+
+vi.mock('./fetch', () => ({ throttledFetch: vi.fn() }))
 
 const LIST_HTML = `
 <html><body>
@@ -155,5 +159,28 @@ describe('mapItem', () => {
     expect(auction.address).toBe('с. Бранище, Bulgarien')
     expect(auction.photoCount).toBe(0)
     expect(auction.thumbnailUrl).toBeNull()
+  })
+})
+
+describe('fetchAllListings', () => {
+  it('reports the walk complete once a page comes back empty', async () => {
+    vi.mocked(throttledFetch).mockReset()
+      .mockResolvedValueOnce(new Response(LIST_HTML))
+      .mockResolvedValueOnce(new Response('<html><body></body></html>'))
+
+    const { auctions, complete } = await fetchAllListings('bcpea')
+
+    expect(auctions.length).toBeGreaterThan(0)
+    expect(complete).toBe(true)
+  })
+
+  it('reports the walk incomplete when MAX_PAGES cuts it short', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.mocked(throttledFetch).mockReset().mockImplementation(async () => new Response(LIST_HTML))
+
+    const { complete } = await fetchAllListings('bcpea')
+
+    expect(complete).toBe(false)
+    expect(throttledFetch).toHaveBeenCalledTimes(MAX_PAGES)
   })
 })

@@ -2,13 +2,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { filterAuctions } from '~/lib/auction-filters'
 import type { Auction } from '~/types/auction'
 
-const { getServiceClient, enqueueAlertDelivery } = vi.hoisted(() => ({
+const { getServiceClient, enqueueAlertDelivery, fillAuctionGeocodes } = vi.hoisted(() => ({
   getServiceClient: vi.fn(),
   enqueueAlertDelivery: vi.fn(),
+  fillAuctionGeocodes: vi.fn(),
 }))
 
 vi.mock('./supabase', () => ({ getServiceClient }))
-vi.mock('./outbound-delivery', () => ({ enqueueAlertDelivery }))
+vi.mock('./outbound-delivery', () => ({ enqueueAlertDelivery, canonicalAppOrigin: () => 'https://app.example.test' }))
+vi.mock('./auction-geocoding', () => ({ fillAuctionGeocodes }))
 
 // toAuctionFilters resolves `${countryCode}:${regionCode}` pairs to
 // `${countryCode}:${regionDisplayName}` via listCountries() — stub the
@@ -38,26 +40,27 @@ const auction = {
   caseNumber: '1 K 2/26', country: 'de', region: 'Sachsen', cancelled: false,
 } as never
 
-function alertSupabase(options: { email?: string, userError?: Error } = {}) {
-  const inserted = vi.fn(async () => ({ error: null }))
+function alertSupabase(options: { email?: string, userError?: Error, filters?: Record<string, unknown> } = {}) {
+  // notified_matches is only read here; outbound-delivery confirms it after a
+  // successful send, so enqueueAlertDelivery is the observable side effect.
   const notifiedSelect = {
     select: vi.fn(() => ({ eq: vi.fn(async () => ({ data: [], error: null })) })),
-    insert: inserted,
   }
   const client = {
     from: vi.fn((table: string) => table === 'alert_subscriptions'
       ? { select: vi.fn(() => ({ eq: vi.fn(async () => ({
-        data: [{ id: 'sub-1', user_id: 'user-1', saved_searches: { filters: {} } }], error: null,
+        data: [{ id: 'sub-1', user_id: 'user-1', saved_searches: { filters: options.filters ?? {} } }], error: null,
       })) })) }
       : notifiedSelect),
     auth: { admin: { getUserById: vi.fn(async () => ({
       data: { user: options.email ? { email: options.email } : null }, error: options.userError ?? null,
     })) } },
   }
-  return { client, inserted }
+  return { client }
 }
 
 afterEach(() => {
+  vi.restoreAllMocks()
   vi.clearAllMocks()
 })
 
@@ -147,25 +150,79 @@ describe('toAuctionFilters', () => {
 })
 
 describe('alert delivery state', () => {
-  it('does not record a match when the recipient lookup fails', async () => {
-    const { client, inserted } = alertSupabase({ userError: new Error('directory unavailable') })
+  it('queues no mail when the recipient lookup fails', async () => {
+    const { client } = alertSupabase({ email: 'person@example.test', userError: new Error('directory unavailable') })
     getServiceClient.mockReturnValue(client)
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
     await matchAlerts('de', 'sn', { auctions: [auction] } as never)
 
-    expect(inserted).not.toHaveBeenCalled()
+    expect(enqueueAlertDelivery).not.toHaveBeenCalled()
   })
 
-  it('does not record a match when durable enqueue fails, so a later crawl can retry', async () => {
-    const { client, inserted } = alertSupabase({ email: 'person@example.test' })
+  it('retries the match on a later crawl when durable enqueue fails', async () => {
+    const { client } = alertSupabase({ email: 'person@example.test' })
     getServiceClient.mockReturnValue(client)
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     enqueueAlertDelivery.mockRejectedValueOnce(new Error('database down')).mockResolvedValueOnce(true)
 
     await matchAlerts('de', 'sn', { auctions: [auction] } as never)
-    expect(inserted).not.toHaveBeenCalled()
+    await matchAlerts('de', 'sn', { auctions: [auction] } as never)
+
+    expect(enqueueAlertDelivery).toHaveBeenCalledTimes(2)
+  })
+
+  it('skips and logs a legacy subscription with an unsupported geo-metric filter instead of loosening it', async () => {
+    const { client } = alertSupabase({ email: 'person@example.test', filters: { nearSea: '5' } })
+    getServiceClient.mockReturnValue(client)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
     await matchAlerts('de', 'sn', { auctions: [auction] } as never)
-    expect(enqueueAlertDelivery).toHaveBeenCalledTimes(2)
-    expect(inserted).not.toHaveBeenCalled()
+
+    expect(enqueueAlertDelivery).not.toHaveBeenCalled()
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('unsupported filters: nearSea'))
+  })
+
+  it('matches a radius alert against cached geocodes without mutating the crawl batch', async () => {
+    const { client } = alertSupabase({
+      email: 'person@example.test', filters: { nearLat: '51.34', nearLng: '12.37', nearRadius: '30' },
+    })
+    getServiceClient.mockReturnValue(client)
+    enqueueAlertDelivery.mockResolvedValue(true)
+    fillAuctionGeocodes.mockImplementation(async (items: Auction[]) => {
+      for (const item of items) Object.assign(item, { lat: 51.3, lng: 12.4 })
+    })
+    const unlocated = { ...(auction as object), address: 'Leipzig' } as Auction
+
+    await matchAlerts('de', 'sn', { auctions: [unlocated] } as never)
+
+    expect(fillAuctionGeocodes).toHaveBeenCalledWith([expect.objectContaining({ externalId: '42' })], { fetchMissing: false })
+    expect(enqueueAlertDelivery).toHaveBeenCalledWith(expect.objectContaining({ externalId: '42' }))
+    expect(unlocated.lat).toBeUndefined()
+  })
+
+  it('redacts affected person names from the queued mail subject', async () => {
+    const { client } = alertSupabase({ email: 'person@example.test' })
+    getServiceClient.mockReturnValue(client)
+    enqueueAlertDelivery.mockResolvedValue(true)
+    const named = { ...(auction as object), title: 'Einfamilienhaus des Schuldners Hans Müller' } as Auction
+
+    await matchAlerts('de', 'sn', { auctions: [named] } as never)
+
+    const [delivery] = enqueueAlertDelivery.mock.calls[0]!
+    expect(delivery.subject).toContain('[anonymisiert]')
+    expect(delivery.subject).not.toContain('Hans Müller')
+  })
+
+  it('links the app detail page from NUXT_APP_ORIGIN even when the source has no detail URL', async () => {
+    const { client } = alertSupabase({ email: 'person@example.test' })
+    getServiceClient.mockReturnValue(client)
+    enqueueAlertDelivery.mockResolvedValue(true)
+
+    await matchAlerts('de', 'sn', { auctions: [{ ...(auction as object), detailUrl: null }] } as never)
+
+    const [delivery] = enqueueAlertDelivery.mock.calls[0]!
+    expect(delivery.text).toContain('Details: https://app.example.test/objekt/portal/42')
+    expect(delivery.text).not.toContain('Quelle:')
   })
 })

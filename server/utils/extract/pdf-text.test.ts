@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -8,6 +8,9 @@ import { getDb } from '../db'
 import { queryText } from '~/test-support/drizzle-query'
 
 vi.mock('../db', () => ({ getDb: vi.fn() }))
+// fetchPublicUrl resolves every upstream host before fetching; answer with a
+// public address so the stubbed fetch is reached without real DNS.
+vi.mock('node:dns/promises', () => ({ lookup: vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]) }))
 vi.mock('~/server/crawlers/dga-ag/session', async (importOriginal) => {
   const actual = await importOriginal<typeof import('~/server/crawlers/dga-ag/session')>()
   return { ...actual, getDgaAgSessionCookie: vi.fn(async () => 'fe_typo_user=session1') }
@@ -296,6 +299,21 @@ describe('pdfToText document archiving', () => {
     expect(textCapture).toMatchObject({ platform: 'de', externalId: '1', sourceUrl: url })
 
     await cleanupTextCache(url)
+  })
+
+  it('still returns the extracted text when the text cache cannot be written', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => new Response(PDF_WITH_TEXT, { status: 200 })))
+    const url = 'https://example.test/appraisal-cache-broken.pdf'
+    const key = createHash('sha1').update(url).digest('hex')
+    // A non-empty directory at the cache path makes the final rename fail.
+    const blocker = join(CACHE_DIR, `${key}.txt`)
+    await mkdir(join(blocker, 'occupied'), { recursive: true })
+    try {
+      expect(await pdfToText(url)).toContain('Hallo Welt')
+      expect((await readdir(CACHE_DIR)).filter((name) => name.startsWith(key) && name.endsWith('.tmp'))).toEqual([])
+    } finally {
+      await rm(blocker, { recursive: true, force: true })
+    }
   })
 
   it('does not archive document_text when pdftotext yields no usable output', async () => {

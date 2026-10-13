@@ -5,7 +5,7 @@ import {
   normalizeLvAddress,
   normalizeSeAddress,
   normalizeBgAddress,
-} from './geocode'
+} from './geocode-normalizers'
 
 // eaukcionai.lt serves addresses as a chain of genitive administrative units
 // plus a street. Nominatim only resolves the reduced "<street>, <city>" form,

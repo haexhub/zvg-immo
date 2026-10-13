@@ -53,9 +53,10 @@ describe('fetchCategoryListings', () => {
       .mockResolvedValueOnce(listPage('2', '3'))
       .mockResolvedValueOnce(new Response('', { status: 404 }))
 
-    const auctions = await fetchCategoryListings('apartamenti-stai', SOFIA)
+    const { auctions, complete } = await fetchCategoryListings('apartamenti-stai', SOFIA)
 
     expect(auctions.map((a) => a.externalId)).toEqual(['1', '2', '3'])
+    expect(complete).toBe(true)
     expect(mockFetch).toHaveBeenCalledTimes(3)
     expect(mockFetch.mock.calls.map((c) => c[0])).toEqual([
       'https://www.alo.bg/obiavi/imoti-prodajbi/apartamenti-stai/?region_id=22&page=1',
@@ -67,19 +68,20 @@ describe('fetchCategoryListings', () => {
   it('stops on the first page that parses to no cards', async () => {
     mockFetch.mockResolvedValueOnce(listPage('1')).mockResolvedValueOnce(listPage())
 
-    expect(await fetchCategoryListings('apartamenti-stai', SOFIA)).toHaveLength(1)
+    expect((await fetchCategoryListings('apartamenti-stai', SOFIA)).auctions).toHaveLength(1)
     expect(mockFetch).toHaveBeenCalledTimes(2)
   })
 
-  it('keeps the pages already walked when a later page stays broken', async () => {
+  it('keeps the pages already walked but reports the run incomplete when a later page stays broken', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     mockFetch
       .mockResolvedValueOnce(listPage('1', '2'))
       .mockResolvedValueOnce(new Response('', { status: 403 }))
 
-    const auctions = await fetchCategoryListings('apartamenti-stai', SOFIA)
+    const { auctions, complete } = await fetchCategoryListings('apartamenti-stai', SOFIA)
 
     expect(auctions.map((a) => a.externalId)).toEqual(['1', '2'])
+    expect(complete).toBe(false)
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('HTTP 403'))
   })
 
@@ -89,14 +91,15 @@ describe('fetchCategoryListings', () => {
     await expect(fetchCategoryListings('apartamenti-stai', SOFIA)).rejects.toThrow('HTTP 403')
   })
 
-  it('warns instead of silently truncating when the page cap cuts the walk short', async () => {
+  it('warns and reports the run incomplete when the page cap cuts the walk short', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     let page = 0
     mockFetch.mockImplementation(async () => listPage(`id-${++page}`))
 
-    const auctions = await fetchCategoryListings('apartamenti-stai', SOFIA)
+    const { auctions, complete } = await fetchCategoryListings('apartamenti-stai', SOFIA)
 
     expect(auctions).toHaveLength(3)
+    expect(complete).toBe(false)
     expect(mockFetch).toHaveBeenCalledTimes(3)
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('MAX_PAGES'))
   })

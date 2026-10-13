@@ -13,6 +13,7 @@ export function useAuctionWatchlist(options: {
   onError?: (message: string) => void
 } = {}) {
   const { user } = useAuth()
+  const { t } = useI18n()
   const watchlistIds = ref<Map<string, string>>(new Map())
   const pendingKeys = new Set<string>()
 
@@ -25,7 +26,7 @@ export function useAuctionWatchlist(options: {
       const items = await authFetch<WatchlistItem[]>('/api/watchlist')
       watchlistIds.value = new Map(items.map((item) => [auctionKey(item), item.id]))
     } catch (err) {
-      options.onError?.(apiErrorMessage(err, 'Die Merkliste konnte nicht geladen werden.'))
+      options.onError?.(apiErrorMessage(err, t('account.watchlist.loadError')))
     }
   }
 
@@ -56,7 +57,7 @@ export function useAuctionWatchlist(options: {
         watchlistIds.value = next
       }
     } catch (err) {
-      options.onError?.(apiErrorMessage(err, 'Die Merkliste konnte nicht geändert werden.'))
+      options.onError?.(apiErrorMessage(err, t('account.watchlist.updateError')))
     } finally {
       pendingKeys.delete(key)
     }

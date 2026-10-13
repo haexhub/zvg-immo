@@ -252,8 +252,10 @@ export function mapOffer(offer: OfferJson, byKey: Map<string, IncludedJson>, pla
     sourceLivingAreaSqm: a.living_space ?? null,
     sourceLandAreaSqm: a.plot_area ?? null,
     sourceRooms: a.number_of_rooms ?? null,
-    lat: a.latitude ?? null,
-    lng: a.longitude ?? null,
+    // An exact pin reverse-geocodes to the address buildAddress withholds.
+    lat: a.show_address ? (a.latitude ?? null) : null,
+    lng: a.show_address ? (a.longitude ?? null) : null,
+    ...(a.show_address ? {} : { coordinatesWithheld: true as const }),
   }
 }
 

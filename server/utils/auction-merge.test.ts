@@ -26,6 +26,11 @@ describe('mergeStoredAuction', () => {
     expect([merged.lat, merged.lng]).toEqual([52.5, 13.4])
   })
 
+  it('keeps an enriched court when the list crawl leaves authority empty', () => {
+    const merged = mergeStoredAuction(auction({ authority: '' }), auction({ authority: 'Sąd Rejonowy w Zgorzelcu' }))
+    expect(merged.authority).toBe('Sąd Rejonowy w Zgorzelcu')
+  })
+
   it('does not restore mutable current bids', () => {
     expect(mergeStoredAuction(auction(), auction({ currentBid: 90_000 })).currentBid).toBeUndefined()
   })
@@ -48,5 +53,47 @@ describe('mergeStoredAuction', () => {
     )
 
     expect(merged.description).toBe('Kurzer Text')
+  })
+
+  it('keeps the fetched detail address and its coordinates over a coarse list address', () => {
+    const previous = auction({
+      address: 'Musterstr. 5, 28277 Bremen', lat: 53.05, lng: 8.83,
+      detailFetchedAt: '2026-08-01T10:00:00.000Z',
+    })
+    const merged = mergeStoredAuction(auction({ address: '28277 Bremen', lat: 53.03, lng: 8.86 }), previous)
+
+    expect(merged.address).toBe('Musterstr. 5, 28277 Bremen')
+    expect([merged.lat, merged.lng]).toEqual([53.05, 8.83])
+  })
+
+  it('restores neither the stored address nor its pin when the source withholds the location', () => {
+    const previous = auction({
+      address: 'Musterstr. 5, 28277 Bremen', lat: 53.05, lng: 8.83,
+      detailFetchedAt: '2026-08-01T10:00:00.000Z',
+    })
+    const merged = mergeStoredAuction(
+      auction({ address: null, lat: null, lng: null, coordinatesWithheld: true }),
+      previous,
+    )
+
+    expect(merged.address).toBeNull()
+    expect([merged.lat, merged.lng]).toEqual([null, null])
+  })
+
+  it('keeps the list address and coordinates before details were fetched', () => {
+    const merged = mergeStoredAuction(
+      auction({ address: '28277 Bremen', lat: 53.03, lng: 8.86 }),
+      auction({ address: 'Alte Adresse', lat: 53.05, lng: 8.83, detailFetchedAt: null }),
+    )
+
+    expect(merged.address).toBe('28277 Bremen')
+    expect([merged.lat, merged.lng]).toEqual([53.03, 8.86])
+  })
+  it('keeps the stored EUR conversion when the same foreign amount could not be converted', () => {
+    const previous = auction({ marketValue: 1_000_000, currency: 'SEK', marketValueEur: 87_000 })
+    const unconverted = () => auction({ marketValue: 1_000_000, currency: 'SEK', marketValueEur: null })
+
+    expect(mergeStoredAuction(unconverted(), previous).marketValueEur).toBe(87_000)
+    expect(mergeStoredAuction(auction({ marketValue: 2_000_000, currency: 'SEK' }), previous).marketValueEur).toBeNull()
   })
 })

@@ -4,12 +4,12 @@ import { PLATFORM_ID, US_BASE, COUNTRY, US_REGIONS } from './constants'
 import { fetchAllListings } from './list'
 
 async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
-  const { auctions, total } = await fetchAllListings(PLATFORM_ID)
+  const { auctions, total, complete } = await fetchAllListings(PLATFORM_ID)
   const regions = [...new Set(auctions.map((a) => a.region).filter(Boolean))].sort()
 
   return {
     platform: PLATFORM_ID,
-    platformsSucceeded: [PLATFORM_ID],
+    platformsSucceeded: complete ? [PLATFORM_ID] : [],
     source: US_BASE,
     countries: [COUNTRY],
     regions,

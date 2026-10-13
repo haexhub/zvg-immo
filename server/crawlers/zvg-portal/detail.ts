@@ -37,15 +37,17 @@ export async function fetchDetailPage(
   } finally {
     clearTimeout(timer)
   }
+  // The portal answers a bare 'error' under load or for a dropped session.
+  // Throw so the enrich task retries later — returning an empty detail would
+  // be stamped as fetched and permanently replace the stored attachments.
   if (html.length < 64 && html.trim() === 'error') {
-    return { attachments: [], description: null }
+    throw new Error(`ZVG detail returned error page for ${zvgId}`)
   }
 
   // Gutachten-PDF is not present on every auction — HTML is archived
   // unconditionally rather than only as a fallback for lots without one.
-  // Archiving is crawl-only: the identity is supplied by enrichInBatches, but
-  // omitted by the user-facing photo endpoint (auction-detail.get.ts), whose
-  // captures the continuous crawl already covers — no writes on that read path.
+  // Archiving is crawl-only: the identity is supplied by enrichInBatches;
+  // callers without one get no writes.
   if (identity) {
     await archiveDetailCapture(Buffer.from(html, 'utf8'), identity, url, new Date().toISOString())
   }

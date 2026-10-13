@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Attachment, Auction } from '~/types/auction'
 import { downloadBlob, findLatestCapture, readDocumentSet } from '../storage-download'
 
+// fetchPublicUrl resolves every upstream host before fetching; answer with a
+// public address so the stubbed fetch is reached without real DNS.
+vi.mock('node:dns/promises', () => ({ lookup: vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]) }))
 vi.mock('../storage-download', () => ({
   downloadBlob: vi.fn(),
   findLatestCapture: vi.fn(),
@@ -29,7 +32,8 @@ vi.mock('~/server/crawlers/dga-ag/session', async (importOriginal) => {
   return { ...actual, getDgaAgSessionCookie: vi.fn(async () => 'fe_typo_user=session1') }
 })
 
-const { htmlToText, pickAllLlmDocumentAttachments, prepareArchivedLlmDocuments, prepareLiveLlmDocuments } = await import('./llm-documents')
+const { htmlToText, mapDocumentsBounded, pickAllLlmDocumentAttachments, prepareArchivedLlmDocuments } = await import('./llm-documents')
+const { prepareLiveLlmDocuments } = await import('./llm-documents-live')
 const { getDgaAgSessionCookie } = await import('~/server/crawlers/dga-ag/session')
 
 function att(overrides: Partial<Attachment>): Attachment {
@@ -169,11 +173,31 @@ describe('pickAllLlmDocumentAttachments', () => {
   })
 })
 
+describe('mapDocumentsBounded', () => {
+  it('keeps input order while never running more than three documents at once', async () => {
+    let running = 0
+    let peak = 0
+    const result = await mapDocumentsBounded([5, 1, 4, 2, 3, 0, 6], async (delay, index) => {
+      running++
+      peak = Math.max(peak, running)
+      await new Promise((resolve) => setTimeout(resolve, delay))
+      running--
+      return index
+    })
+    expect(result).toEqual([0, 1, 2, 3, 4, 5, 6])
+    expect(peak).toBe(3)
+  })
+})
+
 describe('htmlToText', () => {
   it('strips scripts/styles/tags and decodes common entities', () => {
     expect(
       htmlToText('<html><style>.x{}</style><script>alert(1)</script><body><h1>Wohnhaus</h1><p>140&nbsp;m&sup2; &amp; Garage</p></body></html>'),
     ).toContain('Wohnhaus\n140 m&sup2; & Garage')
+  })
+
+  it('replaces out-of-range numeric entities instead of throwing', () => {
+    expect(htmlToText('<p>a&#99999999;b&#x7FFFFFFF;c&#228;</p>')).toBe('a\uFFFDb\uFFFDcä')
   })
 })
 
@@ -313,6 +337,27 @@ describe('prepareArchivedLlmDocuments', () => {
   })
 })
 
+/** Minimal streamed Response whose `url` reflects where a redirect landed. */
+function fakeResponse(url: string, body: string): Response {
+  const bytes = new TextEncoder().encode(body)
+  let read = false
+  return {
+    ok: true,
+    url,
+    headers: new Headers(),
+    body: {
+      getReader: () => ({
+        read: async () => {
+          if (read) return { done: true, value: undefined }
+          read = true
+          return { done: false, value: bytes }
+        },
+        cancel: async () => undefined,
+      }),
+    },
+  } as unknown as Response
+}
+
 describe('prepareLiveLlmDocuments', () => {
   const identity = { platform: 'se-kronofogden', country: 'se', region: 'Schweden', externalId: '101746', caseNumber: null, authority: 'Kronofogden' }
 
@@ -348,26 +393,6 @@ describe('prepareLiveLlmDocuments', () => {
   })
 
   it('retries a dga-ag securedl attachment once with a fresh session after landing on the login page', async () => {
-    function fakeResponse(url: string, body: string): Response {
-      const bytes = new TextEncoder().encode(body)
-      let read = false
-      return {
-        ok: true,
-        url,
-        headers: new Headers(),
-        body: {
-          getReader: () => ({
-            read: async () => {
-              if (read) return { done: true, value: undefined }
-              read = true
-              return { done: false, value: bytes }
-            },
-            cancel: async () => undefined,
-          }),
-        },
-      } as unknown as Response
-    }
-
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(fakeResponse('https://www.dga-ag.de/login.html?redirect=1', '<html>Bitte einloggen</html>'))
@@ -386,6 +411,32 @@ describe('prepareLiveLlmDocuments', () => {
     expect(result.documentSetComplete).toBe(true)
     expect(result.errors).toBeUndefined()
 
+    vi.unstubAllGlobals()
+  })
+
+  it('drops a dga-ag securedl attachment when the forced re-login still lands on the login page', async () => {
+    // A failed re-login backs off and yields no cookie (session.ts), so the
+    // retry runs anonymously and gets the login page again with HTTP 200.
+    vi.mocked(getDgaAgSessionCookie).mockResolvedValue(null)
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(fakeResponse('https://www.dga-ag.de/login.html?redirect=1', '<html>Bitte einloggen</html>'))
+      .mockResolvedValueOnce(fakeResponse('https://www.dga-ag.de/login.html?redirect=1', '<html>Bitte einloggen</html>'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const dgaAgIdentity = { platform: 'dga-ag', country: 'de', region: 'Sachsen', externalId: 'S26-03-011', caseNumber: null, authority: 'DGA AG' }
+    const attachments: Attachment[] = [
+      att({ kind: 'appraisal', label: 'Objektunterlagen', filename: 'Unterlagen.pdf', proxyUrl: 'https://www.dga-ag.de/securedl/sec/abc/Unterlagen.pdf' }),
+    ]
+
+    const result = await prepareLiveLlmDocuments(attachments, dgaAgIdentity, '2026-08-20T08:27:35.000Z')
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(result.documentSetItems).toEqual([])
+    expect(result.documentSetComplete).toBe(false)
+    expect(result.errors).toEqual([expect.stringContaining('dga-ag login required')])
+
+    vi.mocked(getDgaAgSessionCookie).mockResolvedValue('fe_typo_user=session1')
     vi.unstubAllGlobals()
   })
 })

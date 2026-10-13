@@ -8,6 +8,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { inflateRawSync } from 'node:zlib'
 import { archiveDocument, type DocumentIdentity } from '../raw-archive'
+import { fetchPublicUrl } from './public-fetch'
 
 const CACHE_DIR = join(process.cwd(), '.cache_zvg', 'docxtext')
 
@@ -119,7 +120,7 @@ export async function docxToText(
 
   let buf: Buffer
   try {
-    const res = await fetch(url, {
+    const res = await fetchPublicUrl(url, {
       headers: { 'User-Agent': 'zvg-immo/1.0', Accept: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document,*/*' },
       signal: AbortSignal.timeout(30_000),
     })

@@ -38,10 +38,12 @@ export default defineEventHandler(async () => {
   } catch (err) {
     // The whole point of this endpoint is to surface BOE problems, so a
     // failed state-file read shouldn't 500 the diagnostic itself. Surface
-    // the error inline; operators get actionable info instead of a stack trace.
+    // that the read failed; the fs error itself (with absolute container
+    // paths) only goes to the server log because this route is anonymous.
+    console.error('[api/_health/boe] state read failed:', err)
     return {
       ...base,
-      stateReadError: (err as Error).message,
+      stateReadError: 'state file unreadable',
     }
   }
 })

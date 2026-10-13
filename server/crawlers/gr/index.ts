@@ -4,7 +4,7 @@ import { PLATFORM_ID, GR_BASE, COUNTRY, GR_REGIONS } from './constants'
 import { fetchAllListings } from './list'
 
 async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
-  const { auctions, total } = await fetchAllListings(PLATFORM_ID)
+  const { auctions, total, complete } = await fetchAllListings(PLATFORM_ID)
   return createCrawlResult({
     platform: PLATFORM_ID,
     source: GR_BASE,
@@ -12,6 +12,7 @@ async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
     regions: GR_REGIONS,
     totalReported: total,
     auctions,
+    complete,
   })
 }
 

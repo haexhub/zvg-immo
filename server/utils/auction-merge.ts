@@ -1,5 +1,6 @@
 import type { Auction } from '~/types/auction'
 import { normalizeAuctionDescription } from './description-normalization'
+import { storedEurConversion } from './exchange-rate'
 
 /**
  * Keeps detail-only values when a cheap list crawl returns a partial auction.
@@ -22,6 +23,9 @@ export function mergeStoredAuction(next: Auction, previous: Auction): Auction {
     next.description = previousDescription
   }
   if (!next.caseNumber && previous.caseNumber) next.caseNumber = previous.caseNumber
+  // Like caseNumber, some list crawls (pl, pt) leave the court empty
+  // and only enrichOne fills it from the detail page.
+  if (!next.authority && previous.authority) next.authority = previous.authority
   if (next.pdfUrl == null && previous.pdfUrl != null) {
     next.pdfUrl = previous.pdfUrl
     next.pdfUrlUpstream = previous.pdfUrlUpstream
@@ -41,6 +45,8 @@ export function mergeStoredAuction(next: Auction, previous: Auction): Auction {
     next.marketValueText = previous.marketValueText
     next.marketValue = previous.marketValue ?? null
     next.currency = previous.currency ?? null
+  } else if (next.marketValueEur == null && next.marketValue != null) {
+    next.marketValueEur = storedEurConversion(next, previous)
   }
   if (next.detailFetchedAt == null && previous.detailFetchedAt != null) next.detailFetchedAt = previous.detailFetchedAt
   if (next.sourceLivingAreaSqm == null && previous.sourceLivingAreaSqm != null) next.sourceLivingAreaSqm = previous.sourceLivingAreaSqm
@@ -54,7 +60,26 @@ export function mergeStoredAuction(next: Auction, previous: Auction): Auction {
     next.photoUrls = previous.photoUrls
     next.photoCount = Math.max(next.photoCount, previous.photoUrls.length)
   }
-  if (next.lat == null && previous.lat != null && previous.lng != null) {
+  // Several list endpoints only expose a coarse address (KIP: postal code +
+  // city, BOE: "CP Ort, España") that the detail page later replaces with the
+  // full one. Once details were fetched the stored address wins, together
+  // with its coordinates: a list-row point is often just a geocode of that
+  // coarse address and would move the pin to e.g. a postal-code centroid.
+  // A source that withholds the location (coordinatesWithheld) hides the
+  // address too, so neither is restored for it.
+  if (
+    !next.coordinatesWithheld &&
+    previous.detailFetchedAt != null &&
+    previous.address != null &&
+    next.address !== previous.address
+  ) {
+    next.address = previous.address
+    if (previous.lat != null && previous.lng != null) {
+      next.lat = previous.lat
+      next.lng = previous.lng
+    }
+  }
+  if (next.lat == null && !next.coordinatesWithheld && previous.lat != null && previous.lng != null) {
     next.lat = previous.lat
     next.lng = previous.lng
   }

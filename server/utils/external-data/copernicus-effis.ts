@@ -37,6 +37,7 @@ import { readCachedFileCollection } from './cached-file-collection'
 import { simplifyPolygon } from './polygon-simplify'
 import {
   distanceToPolygonMeters,
+  isStale,
   pointInPolygon,
 } from './eu-flood-risk-assessment'
 import type { GeoJsonLinearRing, GeoJsonPolygonCoordinates } from './eu-flood-risk'
@@ -54,6 +55,9 @@ export interface BurntAreaCollection {
   sourceVersion: string
   generatedAt: string
   zones: BurntAreaZone[]
+  /** The bbox the import queried; caches written before it was recorded
+   *  fall back to DEFAULT_BBOX. */
+  bbox?: [number, number, number, number]
 }
 
 export interface BurntAreaEvaluationOptions {
@@ -132,13 +136,42 @@ const MIN_BURNT_AREA_HA = 10
 const SIMPLIFY_TOLERANCE_DEGREES = 0.001
 
 export async function readBurntAreaCache(path: string, sourceVersion?: string): Promise<BurntAreaCollection> {
-  const parsed = JSON.parse(await readFile(path, 'utf8')) as Partial<BurntAreaCollection> | null
-  const zones = Array.isArray(parsed?.zones) ? parsed.zones : []
+  // The path is admin-configurable, so the file may be an older format or not
+  // this cache at all: a zone without a usable polygon would make every
+  // assessment throw, so it is dropped here rather than trusted by a cast.
+  const parsed = JSON.parse(await readFile(path, 'utf8')) as unknown
+  const record = parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {}
+  const zones = Array.isArray(record.zones) ? record.zones.flatMap((zone) => burntAreaZoneOrEmpty(zone)) : []
+  const bbox = record.bbox
   return {
-    sourceVersion: sourceVersion ?? parsed?.sourceVersion ?? 'unknown',
-    generatedAt: parsed?.generatedAt ?? new Date(0).toISOString(),
+    sourceVersion: sourceVersion ?? stringOrNull(record.sourceVersion) ?? 'unknown',
+    generatedAt: stringOrNull(record.generatedAt) ?? new Date(0).toISOString(),
     zones,
+    ...(Array.isArray(bbox) && bbox.length === 4 && bbox.every(Number.isFinite)
+      ? { bbox: bbox as [number, number, number, number] }
+      : {}),
   }
+}
+
+function burntAreaZoneOrEmpty(input: unknown): BurntAreaZone[] {
+  if (!input || typeof input !== 'object') return []
+  const zone = input as Record<string, unknown>
+  const polygon = zone.polygon
+  const isPolygon = Array.isArray(polygon) && polygon.length > 0 && polygon.every((ring) =>
+    Array.isArray(ring) && ring.every((position) =>
+      Array.isArray(position) && Number.isFinite(position[0]) && Number.isFinite(position[1])))
+  if (typeof zone.id !== 'string' || !isPolygon) return []
+  return [{
+    id: zone.id,
+    polygon: polygon as GeoJsonPolygonCoordinates,
+    fireDate: stringOrNull(zone.fireDate),
+    country: stringOrNull(zone.country),
+    areaHa: Number.isFinite(zone.areaHa) ? zone.areaHa as number : null,
+  }]
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === 'string' ? value : null
 }
 
 /** Parses a WFS GetFeature GML3 response for modis.ba.poly into normalized
@@ -146,11 +179,14 @@ export async function readBurntAreaCache(path: string, sourceVersion?: string): 
  *  text (`gml:featureMember`, not `featureMember`), so every selector below
  *  matches on the prefixed name. Only single-ring `gml:Polygon` geometries
  *  are handled — every feature observed in this dataset uses one; a feature
- *  without a parseable posList is skipped rather than guessed at. */
-export function parseBurntAreaGml(xml: string): BurntAreaZone[] {
+ *  without a parseable posList is skipped rather than guessed at.
+ *  `featureCount` counts every featureMember, skipped ones included, so the
+ *  importer can tell a full page from the last one. */
+export function parseBurntAreaGml(xml: string): { zones: BurntAreaZone[]; featureCount: number } {
   const $ = cheerio.load(xml, { xmlMode: true })
   const zones: BurntAreaZone[] = []
-  $('gml\\:featureMember').each((index, el) => {
+  const members = $('gml\\:featureMember')
+  members.each((index, el) => {
     const feature = $(el).children().first()
     const ring = ringFromPosList(feature.find('gml\\:posList').first().text())
     if (!ring) return
@@ -164,7 +200,7 @@ export function parseBurntAreaGml(xml: string): BurntAreaZone[] {
       areaHa: areaHa != null && Number.isFinite(areaHa) ? areaHa : null,
     })
   })
-  return zones
+  return { zones, featureCount: members.length }
 }
 
 /** Keeps only zones recent and large enough to matter for a current risk
@@ -195,15 +231,20 @@ export async function importCopernicusEffisBurntAreaCache(
     if (options.maxPages != null && pages >= options.maxPages) break
     const gml = await fetchBurntAreaGmlPage(fetchImpl, serviceUrl, { bbox, startIndex, pageSize })
     pages++
-    const pageZones = parseBurntAreaGml(gml)
-    fetched += pageZones.length
-    zones.push(...pageZones
+    const page = parseBurntAreaGml(gml)
+    fetched += page.featureCount
+    zones.push(...page.zones
       .filter((zone) => isRelevantZone(zone, generatedAt))
       .map((zone) => ({ ...zone, polygon: simplifyPolygon(zone.polygon, SIMPLIFY_TOLERANCE_DEGREES) })))
-    if (pageZones.length < pageSize) break
+    // A skipped (unparseable) feature must not make a full page look like the
+    // last one and silently truncate the cache.
+    if (page.featureCount < pageSize) break
   }
 
-  const collection: BurntAreaCollection = { sourceVersion, generatedAt, zones }
+  // Same reasoning as the flood import: never replace a good cache with an
+  // empty one just because the WFS answered with an empty FeatureCollection.
+  if (zones.length === 0) throw new Error(`Copernicus EFFIS import returned no relevant burnt areas from ${serviceUrl}`)
+  const collection: BurntAreaCollection = { sourceVersion, generatedAt, zones, bbox }
   await writeJsonCache(options.cachePath, collection)
 
   return {
@@ -235,6 +276,16 @@ export function buildWildfireHazardAssessment(
     return assessment('unknown', 'unknown', null, checkedAt)
   }
 
+  // Outside the queried extent there is no burnt-area record at all, so the
+  // nearest European zone must not turn e.g. a US auction into 'outside'.
+  const [minLng, minLat, maxLng, maxLat] = collection.bbox ?? DEFAULT_BBOX
+  if (point.lng < minLng || point.lng > maxLng || point.lat < minLat || point.lat > maxLat) {
+    return assessment('unknown', 'unknown', null, checkedAt)
+  }
+
+  // ponytail: measures every zone's outline per auction (no bbox pruning like
+  // the flood adapter's nearestZone). Fine for the ~31k burnt areas; if it
+  // gets slow, store per-zone bounds in the cache and skip by lower bound.
   const matches = collection.zones
     .map((zone) => ({
       zone,
@@ -348,13 +399,4 @@ function ringFromPosList(posList: string): GeoJsonLinearRing | null {
 function textOrNull(value: string): string | null {
   const trimmed = value.trim()
   return trimmed || null
-}
-
-function isStale(generatedAt: string, checkedAt: string, maxAgeDays: number | undefined): boolean {
-  if (maxAgeDays == null) return false
-  const generatedTime = Date.parse(generatedAt)
-  const checkedTime = Date.parse(checkedAt)
-  if (!Number.isFinite(generatedTime)) return true
-  if (!Number.isFinite(checkedTime)) return true
-  return checkedTime - generatedTime > maxAgeDays * 24 * 60 * 60 * 1000
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { Pool } from 'pg'
 import {
   DEFAULT_ENABLED_COUNTRIES,
@@ -938,6 +938,16 @@ describe('getLlmKillSwitch', () => {
     const db = makeFakePool() as unknown as Pool
     await setLlmKillSwitch(db, true)
     expect(await getLlmKillSwitch(db)).toBe(true)
+  })
+
+  it('fails closed (reports on) when the setting cannot be read', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const db = Object.assign(makeFakePool(), {
+      query: async () => { throw new Error('query_timeout') },
+    }) as unknown as Pool
+    expect(await getLlmKillSwitch(db)).toBe(true)
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
   })
 })
 

@@ -2,8 +2,9 @@
 // separate auth path from server/middleware/supabase-auth.ts's browser-session
 // guard, which does not cover this prefix. Verifies a Bearer API key
 // (server/utils/api-key.ts), enforces a burst rate limit via the existing
-// in-memory limiter (keyed per api_keys.id, not per IP — a key is the unit of
-// identity here), and counts usage in api_usage for a later billing phase.
+// in-memory limiter (keyed per key owner, not per key or IP — a user can mint
+// any number of keys, so a per-key budget would multiply with them), and
+// counts usage per key in api_usage for a later billing phase.
 
 import { getApiKeyRecord } from '../utils/api-key'
 import {
@@ -38,10 +39,10 @@ export default defineEventHandler(async (event) => {
   }
 
   const now = Date.now()
-  if (!checkInMemoryRateLimit(burstState, record.id, now, BURST_LIMIT)) {
+  if (!checkInMemoryRateLimit(burstState, record.user_id, now, BURST_LIMIT)) {
     throw createError({ statusCode: 429, statusMessage: 'Rate limit überschritten.' })
   }
-  recordInMemoryRateLimitHit(burstState, record.id, now, BURST_LIMIT)
+  recordInMemoryRateLimitHit(burstState, record.user_id, now, BURST_LIMIT)
 
   event.context.apiKey = { id: record.id, userId: record.user_id }
   await recordApiUsage(record.id)

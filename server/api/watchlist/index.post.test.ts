@@ -36,4 +36,16 @@ describe('/api/watchlist POST', () => {
     expect(error).toMatchObject({ statusCode: 500, message: 'Speichern fehlgeschlagen.' })
     expect(JSON.stringify(error)).not.toContain('internal-id-42')
   })
+
+  it('rejects oversized identifiers before writing', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    vi.stubGlobal('readBody', async () => ({ platform: 'zvg-portal', externalId: 'x'.repeat(301) }))
+    vi.stubGlobal('createError', (input: { statusCode: number, statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
+
+    const { getServiceClient } = await import('../../utils/supabase')
+    const handler = (await import('./index.post')).default as unknown as (event: { context: { user: { id: string } } }) => Promise<unknown>
+
+    await expect(handler({ context: { user: { id: 'user-1' } } })).rejects.toMatchObject({ statusCode: 400 })
+    expect(getServiceClient).not.toHaveBeenCalled()
+  })
 })

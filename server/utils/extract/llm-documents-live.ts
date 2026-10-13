@@ -1,23 +1,22 @@
 // Live crawl-time document preparation: fetches attachments over HTTP (with
 // dga-ag/zvg-portal-specific source resolution and retry-on-login-redirect),
 // as opposed to llm-documents.ts's archived-reprocess path, which reads
-// already-archived blobs via storage-download.ts. Split out of
-// llm-documents.ts purely to keep both files under the project's 500-line
-// module-size ceiling — prepareLiveLlmDocuments is re-exported from there so
-// callers (enrich-worker.ts) import from the same place as before.
+// already-archived blobs via storage-download.ts. Depends on llm-documents.ts
+// for the shared per-document preparation, never the other way round.
 
 import type { Attachment } from '~/types/auction'
-import { BASE_URL as DGA_AG_BASE_URL } from '~/server/crawlers/dga-ag/constants'
 import { getDgaAgSessionCookie, isDgaAgLoginRedirect } from '~/server/crawlers/dga-ag/session'
-import { UA, ZVG_BASE } from '~/server/crawlers/zvg-portal/constants'
 import type { ArchivedDocumentSetItem, DocumentIdentity } from '../raw-archive'
 import {
   attachmentLabel,
   formatHint,
+  mapDocumentsBounded,
   pickAllLlmDocumentAttachments,
   prepareDocument,
   type PreparedAttachmentDocument,
 } from './llm-documents'
+import { resolveAttachmentSource } from './pdf-text'
+import { fetchPublicUrl } from './public-fetch'
 
 export interface ArchivedLiveDocuments {
   documentSetItems: ArchivedDocumentSetItem[]
@@ -46,30 +45,6 @@ function acceptForHint(format: ReturnType<typeof formatHint>): string {
   }
 }
 
-async function resolveAttachmentSource(
-  proxyUrl: string,
-  accept: string,
-): Promise<{ url: string; headers: Record<string, string> }> {
-  if (proxyUrl.startsWith('/api/zvg-proxy')) {
-    const q = new URLSearchParams(proxyUrl.split('?')[1] ?? '')
-    const url = `${ZVG_BASE}/index.php?button=showAnhang&land_abk=${q.get('land_abk')}&file_id=${q.get('file_id')}&zvg_id=${q.get('zvg_id')}`
-    return { url, headers: { 'User-Agent': UA, Accept: accept, Referer: `${ZVG_BASE}/index.php?button=Suchen` } }
-  }
-  if (proxyUrl.startsWith(`${ZVG_BASE}/`)) {
-    return {
-      url: proxyUrl,
-      headers: { 'User-Agent': UA, Accept: accept, Referer: `${ZVG_BASE}/index.php?button=Suchen` },
-    }
-  }
-  // Same authenticated-download requirement as pdf-text.ts's resolveSource —
-  // see its comment on the dga-ag.de branch.
-  if (proxyUrl.startsWith(`${DGA_AG_BASE_URL}/securedl/`)) {
-    const cookie = await getDgaAgSessionCookie()
-    return { url: proxyUrl, headers: { 'User-Agent': UA, Accept: accept, ...(cookie ? { Cookie: cookie } : {}) } }
-  }
-  return { url: proxyUrl, headers: { 'User-Agent': UA, Accept: accept } }
-}
-
 interface FetchedAttachment {
   bytes: Buffer | null
   error?: string
@@ -81,7 +56,7 @@ async function fetchAttachmentBytesOnce(
 ): Promise<FetchedAttachment & { finalUrl: string | null }> {
   let finalUrl: string | null = null
   try {
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(30_000) })
+    const res = await fetchPublicUrl(url, { headers, signal: AbortSignal.timeout(30_000) })
     finalUrl = res.url || null
     if (!res.ok) return { bytes: null, error: `HTTP ${res.status}`, finalUrl }
     const contentLength = Number(res.headers.get('content-length') ?? '')
@@ -117,7 +92,12 @@ async function fetchAttachmentBytes(att: Attachment): Promise<FetchedAttachment>
   if (!isDgaAgLoginRedirect(att.proxyUrl, firstResult.finalUrl)) return firstResult
   await getDgaAgSessionCookie({ forceRefresh: true })
   const retry = await resolveAttachmentSource(att.proxyUrl, accept)
-  return await fetchAttachmentBytesOnce(retry.url, retry.headers)
+  const retried = await fetchAttachmentBytesOnce(retry.url, retry.headers)
+  // A failed re-login backs off and yields no cookie instead of throwing
+  // (session.ts), so the anonymous retry can land on the login page again
+  // with HTTP 200 — never archive that page as the attachment.
+  if (isDgaAgLoginRedirect(att.proxyUrl, retried.finalUrl)) return { bytes: null, error: 'dga-ag login required' }
+  return retried
 }
 
 export async function prepareLiveLlmDocuments(
@@ -128,7 +108,7 @@ export async function prepareLiveLlmDocuments(
   const candidates = pickAllLlmDocumentAttachments(attachments)
   const fetchErrors: string[] = []
   const prepared = (
-    await Promise.all(candidates.map(async (attachment, ordinal) => {
+    await mapDocumentsBounded(candidates, async (attachment, ordinal) => {
       const { bytes, error } = await fetchAttachmentBytes(attachment)
       if (!bytes) {
         if (error) fetchErrors.push(`${attachmentLabel(attachment)}: ${error}`)
@@ -139,7 +119,7 @@ export async function prepareLiveLlmDocuments(
         capturedAt,
         nativeDocuments: false,
       })
-    }))
+    })
   ).filter((doc): doc is PreparedAttachmentDocument => doc != null)
   const documentSetItems = prepared
     .filter((doc): doc is PreparedAttachmentDocument & { contentHash: string } => !!doc.contentHash)

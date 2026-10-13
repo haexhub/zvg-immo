@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const { canonicalAppOrigin, readPublicAuctions } = vi.hoisted(() => ({
+const { canonicalAppOrigin, readPublicAuctionLinks } = vi.hoisted(() => ({
   canonicalAppOrigin: vi.fn(),
-  readPublicAuctions: vi.fn(),
+  readPublicAuctionLinks: vi.fn(),
 }))
 vi.mock('../utils/outbound-delivery', () => ({ canonicalAppOrigin }))
-vi.mock('../utils/data-api-auction', () => ({ readPublicAuctions }))
+vi.mock('../utils/data-api-auction', () => ({ readPublicAuctionLinks }))
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -19,10 +19,9 @@ describe('/sitemap.xml', () => {
     const setHeader = vi.fn()
     vi.stubGlobal('setHeader', setHeader)
     canonicalAppOrigin.mockReturnValue('https://zvg.example.test')
-    readPublicAuctions.mockResolvedValueOnce({
-      data: [{ appUrl: '/objekt/zvg-portal/7265', lastUpdated: '2026-08-01T10:00:00.000Z' }],
-      total: 1,
-    })
+    readPublicAuctionLinks.mockResolvedValueOnce([
+      { appUrl: '/objekt/zvg-portal/7265', lastUpdated: '2026-08-01T10:00:00.000Z' },
+    ])
     const handler = (await import('./sitemap.xml.get')).default as unknown as (event: unknown) => Promise<string>
 
     const body = await handler({})
@@ -32,18 +31,9 @@ describe('/sitemap.xml', () => {
     expect(body).toContain('<loc>https://zvg.example.test/search</loc>')
     expect(body).toContain('<loc>https://zvg.example.test/objekt/zvg-portal/7265</loc>')
     expect(body).toContain('<lastmod>2026-08-01</lastmod>')
-    expect(readPublicAuctions).toHaveBeenCalledWith({ includeWithdrawn: false, page: 1, pageSize: 1000 })
-  })
-
-  it('stops once every page has been read instead of looping forever', async () => {
-    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
-    vi.stubGlobal('setHeader', vi.fn())
-    canonicalAppOrigin.mockReturnValue('https://zvg.example.test')
-    readPublicAuctions.mockResolvedValue({ data: [], total: 0 })
-    const handler = (await import('./sitemap.xml.get')).default as unknown as (event: unknown) => Promise<string>
-
-    await handler({})
-
-    expect(readPublicAuctions).toHaveBeenCalledTimes(1)
+    // One bounded read, leaving room for the two static entries under the
+    // 50,000-URL sitemap cap.
+    expect(readPublicAuctionLinks).toHaveBeenCalledOnce()
+    expect(readPublicAuctionLinks).toHaveBeenCalledWith(49_998)
   })
 })

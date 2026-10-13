@@ -22,16 +22,20 @@ export function invalidateLocationEnrichmentCache(): void {
   detailCache.clear()
 }
 
+/** Throws on a failed read: an empty stand-in would make the enrichment run
+ *  treat every auction as new and overwrite its stored results with null. */
 export async function readLocationEnrichmentCache(): Promise<LocationEnrichmentCache> {
   if (!cachePromise) cachePromise = loadLocationEnrichmentCache()
   try {
     return await cachePromise
   } catch (err) {
-    console.warn(`[location-enrichment] read failed: ${(err as Error).message}`)
     cachePromise = null
-    return {}
+    throw new Error(`location_enrichment read failed: ${(err as Error).message}`, { cause: err })
   }
 }
+
+/** Throws on a failed read for the same reason as the full-table read; the
+ *  detail API decides itself whether to degrade to null. */
 
 export async function readLocationEnrichment(
   platform: string,
@@ -45,22 +49,17 @@ export async function readLocationEnrichment(
   }
   const db = getPool()
   if (!db) return null
-  try {
-    const { rows } = await db.query<LocationEnrichmentRow>(
-      `SELECT platform, external_id, enrichment, checked_at
-       FROM location_enrichment
-       WHERE platform = $1 AND external_id = $2`,
-      [platform, externalId],
-    )
-    const row = rows[0]
-    if (!row) return null
-    const enrichment = fromRow(row)
-    cacheDetail(key, enrichment)
-    return enrichment
-  } catch (err) {
-    console.warn(`[location-enrichment] detail read failed: ${(err as Error).message}`)
-    return null
-  }
+  const { rows } = await db.query<LocationEnrichmentRow>(
+    `SELECT platform, external_id, enrichment, checked_at
+     FROM location_enrichment
+     WHERE platform = $1 AND external_id = $2`,
+    [platform, externalId],
+  )
+  const row = rows[0]
+  if (!row) return null
+  const enrichment = fromRow(row)
+  cacheDetail(key, enrichment)
+  return enrichment
 }
 
 interface LocationEnrichmentRow {
@@ -94,10 +93,17 @@ async function loadLocationEnrichmentCache(): Promise<LocationEnrichmentCache> {
 export async function writeLocationEnrichmentCache(
   entries: LocationEnrichmentCache,
 ): Promise<boolean> {
-  const cache = await readLocationEnrichmentCache()
-  Object.assign(cache, entries)
+  // Memory follows the database, never leads it: a failed upsert must leave
+  // the old checkedAt in place so orderByStaleness retries the auction, and
+  // detail reads must not serve data Postgres never stored.
+  if (!(await writeLocationEnrichmentCacheToDb(entries))) return false
+  // Only patch a full-table cache that is loaded or loading; one that isn't
+  // will read this row from Postgres. Without a pool memory is the only store.
+  if (!cachePromise && !getPool()) cachePromise = Promise.resolve({})
+  const cache = await cachePromise?.catch(() => null)
+  if (cache) Object.assign(cache, entries)
   for (const [key, entry] of Object.entries(entries)) cacheDetail(key, entry)
-  return writeLocationEnrichmentCacheToDb(entries)
+  return true
 }
 
 const CHUNK_SIZE = 1000

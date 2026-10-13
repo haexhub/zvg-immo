@@ -4,6 +4,7 @@
 import type { Auction, LocationEnrichment } from '~/types/auction'
 import { geocodeAddress } from '../../../utils/geocode'
 import { isSafePathSegment } from '../../../utils/path-segment'
+import { publicError } from '../../../utils/public-error'
 import { cacheKey } from '../../../utils/verkehrswert-cache'
 import { applyDescriptionMarketValue } from '../../../utils/description-market-value'
 import { deriveMarketValueEur, getRates } from '../../../utils/exchange-rate'
@@ -15,9 +16,26 @@ import { readAuctionRelationships, type RelatedAuction } from '../../../utils/au
 import { readAuctionGeoMetrics } from '../../../utils/auction-geo-metrics-read'
 import { buildLeisureTourismProfiles, type LeisureTourismProfiles } from '../../../utils/leisure-tourism-profile'
 import { redactAuctionForPublication } from '../../../utils/public-auction-redaction'
+import {
+  checkInMemoryRateLimit,
+  createInMemoryRateLimitState,
+  recordInMemoryRateLimitHit,
+} from '../../../utils/in-memory-rate-limit'
+import { requestClientIp } from '../../../utils/request-client-ip'
 
+// Every live lookup costs upstream requests (a region crawl is one full list
+// fetch per region), and this route is anonymous: without these bounds a
+// caller enumerating random ids turns it into an amplifier against the source
+// portals and grows the miss cache forever.
+// ponytail: process-local limits, reset on restart and per container; a shared
+// limiter (DB/Redis) is the upgrade path once the app runs on several replicas.
 const LIVE_MISS_TTL_MS = 60_000
+const MAX_LIVE_MISS_KEYS = 10_000
+const LIVE_LOOKUP_RATE_LIMIT = { max: 10, windowMs: 10 * 60_000, maxKeys: 10_000 }
+const MAX_CONCURRENT_REGION_CRAWLS = 1
 const liveMissCache = new Map<string, number>()
+const liveLookupRateLimit = createInMemoryRateLimitState()
+let activeRegionCrawls = 0
 
 export interface AuctionDetail extends Auction {
   lat: number | null
@@ -51,15 +69,24 @@ function hasFreshLiveMiss(key: string, now = Date.now()): boolean {
 }
 
 function rememberLiveMiss(key: string, now = Date.now()): void {
+  // All entries share one TTL, so Map insertion order evicts the entry that
+  // expires soonest.
+  liveMissCache.delete(key)
   liveMissCache.set(key, now + LIVE_MISS_TTL_MS)
+  if (liveMissCache.size > MAX_LIVE_MISS_KEYS) liveMissCache.delete(liveMissCache.keys().next().value!)
 }
 
-async function findLiveAuction(platform: string, id: string): Promise<Auction | null> {
+async function findLiveAuction(platform: string, id: string, requester: string): Promise<Auction | null> {
   const missKey = cacheKey(platform, id)
   if (hasFreshLiveMiss(missKey)) return null
   await ensureEnabledCountriesLoaded()
   const crawler = platforms.find((p) => p.id === platform)
   if (!crawler || !isCountryEnabled(crawler.country)) return null
+  const now = Date.now()
+  if (!checkInMemoryRateLimit(liveLookupRateLimit, requester, now, LIVE_LOOKUP_RATE_LIMIT)) {
+    throw createError({ statusCode: 429, statusMessage: 'live lookup rate limit exceeded' })
+  }
+  recordInMemoryRateLimitHit(liveLookupRateLimit, requester, now, LIVE_LOOKUP_RATE_LIMIT)
   const rates = await getRates()
   if (crawler.findOne) {
     try {
@@ -75,17 +102,25 @@ async function findLiveAuction(platform: string, id: string): Promise<Auction | 
       console.warn(`[api/auction] live item fallback ${platform}/${id}: ${(err as Error).message}`)
     }
   }
-  for (const region of crawler.regions) {
-    try {
-      const result = await crawler.crawl({ region: region.code, immobilienOnly: true, enrichDetails: false })
-      const hit = result.auctions.find((a) => a.platform === platform && a.externalId === id)
-      if (!hit) continue
-      const auction = cloneAuction(hit)
-      deriveMarketValueEur(auction, rates)
-      return auction
-    } catch (err) {
-      console.warn(`[api/auction] live fallback ${platform}/${region.code}: ${(err as Error).message}`)
+  if (activeRegionCrawls >= MAX_CONCURRENT_REGION_CRAWLS) {
+    throw createError({ statusCode: 503, statusMessage: 'live lookup busy, retry shortly' })
+  }
+  activeRegionCrawls++
+  try {
+    for (const region of crawler.regions) {
+      try {
+        const result = await crawler.crawl({ region: region.code, immobilienOnly: true, enrichDetails: false })
+        const hit = result.auctions.find((a) => a.platform === platform && a.externalId === id)
+        if (!hit) continue
+        const auction = cloneAuction(hit)
+        deriveMarketValueEur(auction, rates)
+        return auction
+      } catch (err) {
+        console.warn(`[api/auction] live fallback ${platform}/${region.code}: ${(err as Error).message}`)
+      }
     }
+  } finally {
+    activeRegionCrawls--
   }
   rememberLiveMiss(missKey)
   return null
@@ -106,13 +141,10 @@ export default defineEventHandler(async (event): Promise<AuctionDetail> => {
       // A failed observation lookup is a database problem, not a miss — must
       // not fall through to findLiveAuction, or a database hiccup would
       // trigger a live upstream crawl on every affected detail page.
-      throw createError({
-        statusCode: 503,
-        statusMessage: `Beobachtungsverlauf nicht erreichbar: ${(err as Error).message}`,
-      })
+      throw publicError('GET /api/auction', 503, 'Beobachtungsverlauf nicht erreichbar.', err)
     }
   }
-  const hit = stored?.auction ?? observed ?? (await findLiveAuction(platform, id))
+  const hit = stored?.auction ?? observed ?? (await findLiveAuction(platform, id, requestClientIp(event)))
   if (!hit) {
     throw createError({ statusCode: 404, statusMessage: 'auction not found' })
   }
@@ -131,7 +163,10 @@ export default defineEventHandler(async (event): Promise<AuctionDetail> => {
   const lng = sourcePoint?.lng ?? point?.lng ?? null
   applyDescriptionMarketValue(auction)
   const [locationEnrichment, relatedAuctions, geoMetrics] = await Promise.all([
-    readLocationEnrichment(platform, id),
+    readLocationEnrichment(platform, id).catch((err) => {
+      console.warn(`[api/auction] location enrichment read ${platform}/${id}: ${(err as Error).message}`)
+      return null
+    }),
     readAuctionRelationships(platform, id),
     readAuctionGeoMetrics(platform, id).catch((err) => {
       console.warn(`[api/auction] geo metrics read ${platform}/${id}: ${(err as Error).message}`)

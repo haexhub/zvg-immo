@@ -127,7 +127,7 @@ describe('llm-batch dispatch avoids the OpenRouter/OpenAI jobName prefix collisi
     vi.stubGlobal('$fetch', fetchFn)
     const config = { provider: 'openrouter' as const, baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'sk-or-test', model: 'x' }
 
-    await expect(fetchLlmBatchResults('openrouter_batch_x', undefined, config, {})).resolves.toEqual([])
+    await expect(fetchLlmBatchResults('openrouter_batch_x', {}, config, {})).resolves.toEqual([])
     expect(fetchFn).toHaveBeenCalledWith('https://openrouter.ai/api/beta/batches/batch_x', expect.anything())
   })
 })

@@ -32,8 +32,10 @@ const overviewPending = ref(false)
 const overviewError = ref<string | null>(null)
 function clearAuthState(): void {
   authed.value = false
+  // Trial polling would otherwise keep firing 401s until its 3-minute cutoff.
+  trialRunning.value = false
 }
-const { normalizeSettingsError } = useSettingsError()
+const { normalizeSettingsError } = useSettingsError(clearAuthState)
 const { llmProfileOptions, setLlmProfileOptions } = useLlmProfileOptions()
 
 async function probeSession(): Promise<void> {
@@ -82,9 +84,9 @@ async function loadOverview(): Promise<void> {
       `/api/settings/auction/${encodeURIComponent(platform)}/${encodeURIComponent(id)}/technical`,
     )
   } catch (err) {
-    overview.value = null
+    // Keep the last good overview: a single failed trial-poll tick must not
+    // hide every card until the next successful refresh.
     overviewError.value = normalizeSettingsError(err, t('settings.auctionTechnical.loadError'))
-    if ((err as { statusCode?: number }).statusCode === 401) clearAuthState()
   } finally {
     overviewPending.value = false
   }

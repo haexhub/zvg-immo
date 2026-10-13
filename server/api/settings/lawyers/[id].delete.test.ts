@@ -73,15 +73,17 @@ describe('/api/settings/lawyers/[id] DELETE', () => {
     })
   })
 
-  it('maps any other database error to a 500', async () => {
+  it('maps any other database error to a generic 500 that keeps the DB error as cause', async () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
-    const del = vi.fn(() => chain({ error: { code: '42601', message: 'syntax error' } }))
+    const dbError = { code: '42601', message: 'syntax error' }
+    const del = vi.fn(() => chain({ error: dbError }))
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
     const from = vi.fn(() => ({ delete: del }))
     const { getServiceClient } = await import('../../../utils/supabase')
     vi.mocked(getServiceClient).mockReturnValue({ from } as never)
 
     const handler = (await import('./[id].delete')).default as unknown as (event: unknown) => Promise<unknown>
-    await expect(handler(makeEvent('1'))).rejects.toMatchObject({ statusCode: 500, message: 'syntax error' })
+    await expect(handler(makeEvent('1'))).rejects.toMatchObject({ statusCode: 500, message: 'Anwalt konnte nicht gelöscht werden.', cause: dbError })
   })
 })

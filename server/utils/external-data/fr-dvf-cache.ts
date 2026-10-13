@@ -1,14 +1,17 @@
-import { readFile } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
 import type { Auction, MarketComparisonPropertyClass } from '~/types/auction'
 import { readJsonCache, writeJsonCache } from '../json-cache'
 import {
   buildDvfMarketComparison,
-  normalizeDvfRow,
+  DEFAULT_DVF_RADIUS_METERS,
+  normalizeDvfMutation,
   type DvfMarketComparisonOptions,
   type DvfTransaction,
   type RawDvfRow,
 } from './fr-dvf'
-import { encodeGeohash } from './geohash'
+import { readCachedFileCollection } from './cached-file-collection'
+import { encodeGeohash, geohashesWithinRadius } from './geohash'
+import { classifyMarketPropertyClass } from './market'
 import type { MarketComparisonAdapter } from '~/server/tasks/external-enrichment'
 
 export interface DvfTransactionGroupIndex {
@@ -24,8 +27,11 @@ export interface DvfTransactionCache {
 }
 
 export interface DvfCsvLoadResult {
+  /** CSV data rows read. */
   rows: number
+  /** Mutations kept as transactions. */
   normalized: number
+  /** Mutations dropped (no price/coordinates, mixed or unclassifiable). */
   dropped: number
   transactions: DvfTransaction[]
 }
@@ -46,8 +52,19 @@ export interface ImportDvfCsvFileOptions {
 
 const DEFAULT_GEOHASH_PREFIX_LENGTH = 4
 
+/**
+ * Streams the CSV: a national DVF export is several hundred MB, and reading it
+ * as one string plus every parsed record (~40 columns each) overflowed V8's
+ * string limit or the container heap inside the Nitro process. Each row is now
+ * normalized as soon as it is parsed, so only DvfTransactions stay resident.
+ * ponytail: the transactions and the cache's JSON string are still held whole
+ * (fine for one national year); a multi-year corpus needs a chunked cache
+ * format and a detached import.
+ */
 export async function loadDvfCsvFile(path: string): Promise<DvfCsvLoadResult> {
-  return loadDvfCsv(await readFile(path, 'utf8'))
+  const loader = createDvfCsvLoader()
+  for await (const chunk of createReadStream(path, { encoding: 'utf8' })) loader.write(chunk as string)
+  return loader.end()
 }
 
 export async function importDvfCsvFileToCache(options: ImportDvfCsvFileOptions): Promise<{
@@ -65,18 +82,9 @@ export async function importDvfCsvFileToCache(options: ImportDvfCsvFileOptions):
 }
 
 export function loadDvfCsv(content: string): DvfCsvLoadResult {
-  const rows = parseDelimitedRows(content)
-  const transactions: DvfTransaction[] = []
-  for (const row of rows) {
-    const normalized = normalizeDvfRow(row)
-    if (normalized) transactions.push(normalized)
-  }
-  return {
-    rows: rows.length,
-    normalized: transactions.length,
-    dropped: rows.length - transactions.length,
-    transactions,
-  }
+  const loader = createDvfCsvLoader()
+  loader.write(content)
+  return loader.end()
 }
 
 export function buildDvfTransactionCache(
@@ -117,35 +125,59 @@ export async function writeDvfTransactionCache(path: string, cache: DvfTransacti
 }
 
 export async function readDvfTransactionCache(path: string): Promise<DvfTransactionCache> {
-  return readJsonCache<DvfTransactionCache>(
-    path,
-    () => ({ sourceVersion: 'missing', generatedAt: new Date(0).toISOString(), transactions: [], groups: {} }),
-    'fr-dvf-cache',
-  )
+  const empty = (): DvfTransactionCache =>
+    ({ sourceVersion: 'missing', generatedAt: new Date(0).toISOString(), transactions: [], groups: {} })
+  const cache = await readJsonCache<object>(path, empty, 'fr-dvf-cache')
+  // readJsonCache only guarantees "some object"; the path is admin-configurable,
+  // and a file without these indexes would make every French lookup throw.
+  if (isDvfTransactionCache(cache)) return cache
+  console.warn(`[fr-dvf-cache] ${path} is not a DVF transaction cache, treating it as empty`)
+  return empty()
+}
+
+function isDvfTransactionCache(input: object): input is DvfTransactionCache {
+  const cache = input as Partial<Record<keyof DvfTransactionCache, unknown>>
+  if (typeof cache.sourceVersion !== 'string' || !Array.isArray(cache.transactions)) return false
+  if (!cache.groups || typeof cache.groups !== 'object') return false
+  return Object.values(cache.groups).every((group: Partial<DvfTransactionGroupIndex> | undefined) =>
+    !!group?.byGeohash && typeof group.byGeohash === 'object'
+    && Object.values(group.byGeohash).every((indexes) => Array.isArray(indexes)))
 }
 
 export function candidateDvfTransactionsForAuction(
   auction: Auction,
   cache: DvfTransactionCache,
-  options: { geohashPrefixLength?: number } = {},
+  options: { geohashPrefixLength?: number; radiusMeters?: number } = {},
 ): DvfTransaction[] {
   if (auction.lat == null || auction.lng == null) return []
-  const propertyClass = marketClassForAuction(auction)
+  const propertyClass = classifyMarketPropertyClass(auction)
   const group = cache.groups[propertyClass]
   if (!group) return []
-  const geohash = encodeGeohash(
+  // The comparison keeps every sale within the radius, so the candidates must
+  // cover all cells the radius reaches, not only the auction's own cell.
+  const geohashes = geohashesWithinRadius(
     auction.lat,
     auction.lng,
+    options.radiusMeters ?? DEFAULT_DVF_RADIUS_METERS,
     options.geohashPrefixLength ?? DEFAULT_GEOHASH_PREFIX_LENGTH,
   )
-  const indexes = group.byGeohash[geohash] ?? []
+  const indexes = geohashes.flatMap((geohash) => group.byGeohash[geohash] ?? [])
   return indexes.map((index) => cache.transactions[index]).filter((tx): tx is DvfTransaction => !!tx)
 }
 
 export async function createDvfFileMarketAdapter(
   options: DvfFileMarketAdapterOptions,
 ): Promise<MarketComparisonAdapter> {
-  const cache = await readDvfTransactionCache(options.cachePath)
+  // Shared parse: adapters are rebuilt per enrichment run and per-auction
+  // triggers run concurrently, so a direct read put one copy of the whole
+  // cache on the heap per caller (the EFFIS OOM pattern). The cached reader
+  // only rejects when stat fails; fall back to the plain read, which turns a
+  // missing (not yet imported) or unreadable cache into an empty one.
+  const cache = await readCachedFileCollection(
+    options.cachePath,
+    readDvfTransactionCache,
+    options.sourceVersion ?? '',
+  ).catch(() => readDvfTransactionCache(options.cachePath))
   return {
     id: 'fr-dvf-file-cache',
     sourceVersion: options.sourceVersion ?? cache.sourceVersion,
@@ -157,36 +189,42 @@ export async function createDvfFileMarketAdapter(
   }
 }
 
-function marketClassForAuction(auction: Auction): MarketComparisonPropertyClass {
-  const propertyType = auction.extraction?.propertyType
-  if (
-    propertyType === 'einfamilienhaus' ||
-    propertyType === 'zweifamilienhaus' ||
-    propertyType === 'mehrfamilienhaus' ||
-    propertyType === 'doppelhaushaelfte' ||
-    propertyType === 'reihenhaus'
-  ) return 'house'
-  if (propertyType === 'eigentumswohnung') return 'apartment'
-  if (propertyType === 'land-forst' || propertyType === 'unbebaut') return 'land'
-  if (propertyType === 'wohn-geschaefts') return 'mixed'
-  return 'unknown'
-}
-
-function parseDelimitedRows(content: string): RawDvfRow[] {
-  const cleaned = content.replace(/^\uFEFF/, '').trim()
-  if (!cleaned) return []
-  const delimiter = detectDelimiter(cleaned)
-  const records = parseRecords(cleaned, delimiter)
-  const header = records[0]?.map((value) => value.trim()) ?? []
-  if (header.length === 0) return []
-
-  return records.slice(1)
-    .filter((record) => record.some((value) => value.trim()))
-    .map((record) => {
-      const row: Record<string, string> = {}
-      for (const [index, key] of header.entries()) row[key] = record[index] ?? ''
-      return row
-    })
+function createDvfCsvLoader(): { write: (chunk: string) => void; end: () => DvfCsvLoadResult } {
+  const transactions: DvfTransaction[] = []
+  let rows = 0
+  let mutations = 0
+  let header: string[] | null = null
+  // DVF exports list a mutation's rows contiguously, so a mutation is complete
+  // as soon as the id changes — only one mutation's rows are ever buffered.
+  // Rows without an id_mutation are each their own mutation.
+  let mutation: RawDvfRow[] = []
+  const flushMutation = () => {
+    if (mutation.length === 0) return
+    mutations++
+    const normalized = normalizeDvfMutation(mutation)
+    if (normalized) transactions.push(normalized)
+    mutation = []
+  }
+  const parser = createCsvRecordParser((record) => {
+    if (!record.some((value) => value.trim())) return
+    if (!header) {
+      header = record.map((value) => value.trim())
+      return
+    }
+    const row: Record<string, string> = {}
+    for (const [index, key] of header.entries()) row[key] = record[index] ?? ''
+    rows++
+    if (!row.id_mutation || row.id_mutation !== mutation[0]?.id_mutation) flushMutation()
+    mutation.push(row)
+  })
+  return {
+    write: parser.write,
+    end() {
+      parser.end()
+      flushMutation()
+      return { rows, normalized: transactions.length, dropped: mutations - transactions.length, transactions }
+    },
+  }
 }
 
 function detectDelimiter(content: string): string {
@@ -197,41 +235,77 @@ function detectDelimiter(content: string): string {
     .sort((a, b) => b.count - a.count)[0]?.delimiter ?? ';'
 }
 
-function parseRecords(content: string, delimiter: string): string[][] {
-  const records: string[][] = []
+/** Incremental CSV record parser: chunks can split a line, a quoted field, a
+ *  `""` escape or a CRLF anywhere, so all parser state survives between
+ *  writes. */
+function createCsvRecordParser(onRecord: (record: string[]) => void): { write: (chunk: string) => void; end: () => void } {
+  let delimiter: string | null = null
+  // Text not consumed yet: everything before the header line is complete (the
+  // delimiter is detected from it), or a trailing `"`/`\r` whose meaning
+  // depends on the next chunk's first character.
+  let pending = ''
   let record: string[] = []
   let field = ''
   let quoted = false
 
-  for (let i = 0; i < content.length; i++) {
-    const char = content[i]
-    const next = content[i + 1]
-    if (char === '"') {
-      if (quoted && next === '"') {
-        field += '"'
-        i++
-      } else {
-        quoted = !quoted
+  function consume(text: string, final: boolean): void {
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i]
+      if (!final && i === text.length - 1 && (char === '"' || char === '\r')) {
+        pending = char
+        return
       }
-      continue
+      const next = text[i + 1]
+      if (char === '"') {
+        if (quoted && next === '"') {
+          field += '"'
+          i++
+        } else {
+          quoted = !quoted
+        }
+        continue
+      }
+      if (!quoted && char === delimiter) {
+        record.push(field)
+        field = ''
+        continue
+      }
+      if (!quoted && (char === '\n' || char === '\r')) {
+        if (char === '\r' && next === '\n') i++
+        record.push(field)
+        onRecord(record)
+        record = []
+        field = ''
+        continue
+      }
+      field += char
     }
-    if (!quoted && char === delimiter) {
-      record.push(field)
-      field = ''
-      continue
-    }
-    if (!quoted && (char === '\n' || char === '\r')) {
-      if (char === '\r' && next === '\n') i++
-      record.push(field)
-      records.push(record)
-      record = []
-      field = ''
-      continue
-    }
-    field += char
   }
 
-  record.push(field)
-  records.push(record)
-  return records
+  function take(chunk: string): string {
+    const text = pending + chunk
+    pending = ''
+    return delimiter == null ? text.replace(/^\uFEFF/, '') : text
+  }
+
+  return {
+    write(chunk) {
+      const text = take(chunk)
+      if (delimiter == null) {
+        if (!/[\r\n]/.test(text)) {
+          pending = text
+          return
+        }
+        delimiter = detectDelimiter(text.trimStart())
+      }
+      consume(text, false)
+    },
+    end() {
+      const text = take('')
+      delimiter ??= detectDelimiter(text.trimStart())
+      consume(text, true)
+      record.push(field)
+      onRecord(record)
+    },
+  }
 }

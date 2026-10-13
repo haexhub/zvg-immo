@@ -14,8 +14,9 @@ import { parseLtDate, parseLtPrice, clean } from './text'
 function parsePage(html: string, platformId: string): { auctions: Auction[]; hasMore: boolean } {
   const $ = load(html)
   const auctions: Auction[] = []
+  const cards = $('ul.bid_list > li')
 
-  $('ul.bid_list > li').each((_, li) => {
+  cards.each((_, li) => {
     const $li = $(li)
 
     const href = $li.find('.top_block h2.no a').attr('href') ?? ''
@@ -69,14 +70,19 @@ function parsePage(html: string, platformId: string): { auctions: Auction[]; has
     })
   })
 
-  return { auctions, hasMore: auctions.length >= 20 }
+  // Count delivered cards, not parsed ones: a single card with an unexpected
+  // link must not end the pagination early.
+  return { auctions, hasMore: cards.length >= 20 }
 }
 
 export async function fetchAllListings(
   platformId: string,
-): Promise<{ auctions: Auction[]; total: number | null }> {
+): Promise<{ auctions: Auction[]; total: number | null; complete: boolean }> {
   const allAuctions: Auction[] = []
   const MAX_PAGES = 100
+  // Only a short last page proves the walk reached the end; a failed page or
+  // the page cap leaves it incomplete (see createCrawlResult's `complete`).
+  let complete = false
 
   for (let page = 0; page < MAX_PAGES; page++) {
     const url = `${LT_BASE}${LIST_PATH}${page}`
@@ -85,16 +91,20 @@ export async function fetchAllListings(
       signal: AbortSignal.timeout(15_000),
     })
     if (!res.ok) {
-      // Treat failure on a probe request (we have data, just checking if there's more)
-      // as end-of-pages rather than discarding all already-collected auctions.
-      if (allAuctions.length > 0) break
-      throw new Error(`eaukcionai.lt fetch failed: ${res.status} ${url}`)
+      if (allAuctions.length === 0) throw new Error(`eaukcionai.lt fetch failed: ${res.status} ${url}`)
+      // Keep the auctions already collected, but a failed follow-up page means
+      // listings may be missing, so the crawl must not count as complete.
+      console.warn(`[lt-eaukcionai] ${url} failed with ${res.status} — crawl incomplete`)
+      return { auctions: allAuctions, total: null, complete: false }
     }
 
     const { auctions, hasMore } = parsePage(await res.text(), platformId)
     allAuctions.push(...auctions)
-    if (!hasMore) break
+    if (!hasMore) {
+      complete = true
+      break
+    }
   }
 
-  return { auctions: allAuctions, total: null }
+  return { auctions: allAuctions, total: null, complete }
 }

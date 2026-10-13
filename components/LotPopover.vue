@@ -9,6 +9,7 @@ import type { AuctionSummary } from '~/server/api/auctions.get'
 import { apiErrorMessage } from '~/lib/api-error'
 import { isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
 import { fetchWithPendingRetry } from '~/lib/pending-retry'
+import { safeHref } from '~/lib/utils'
 
 const props = defineProps<{
   auction: GeoAuction
@@ -27,6 +28,8 @@ const { currency, eurToDisplay } = useCurrencyDisplay()
 const fetchedSummary = ref<AuctionSummary | null>(null)
 const detail = computed<AuctionSummary | null>(() => props.summary ?? fetchedSummary.value)
 const photos = computed<string[]>(() => detail.value?.galleryUrls ?? [])
+// pdfUrl is a crawler-sourced upstream value; never bind it raw into href.
+const pdfHref = computed(() => safeHref(detail.value?.pdfUrl))
 const loading = ref(!props.summary)
 const loadError = ref<string | null>(null)
 const translatedTitle = ref<string | null>(null)
@@ -82,7 +85,7 @@ onMounted(async () => {
       `/api/auction/${encodeURIComponent(props.auction.platform)}/${encodeURIComponent(props.auction.externalId)}/summary`,
     )
   } catch (err) {
-    loadError.value = apiErrorMessage(err, 'Objektdetails konnten nicht geladen werden.')
+    loadError.value = apiErrorMessage(err, t('lotPopover.loadError'))
   } finally {
     loading.value = false
   }
@@ -164,7 +167,7 @@ const swiperModules = [Navigation, Pagination, Keyboard]
 
     <div class="border-t border-gray-200 pt-[0.4rem] text-xs">
       <span v-if="detail" class="text-gray-500">{{ detail.authority }} · {{ detail.caseNumber }}</span><br>
-      <a v-if="detail?.pdfUrl" :href="detail.pdfUrl" target="_blank" rel="noopener">{{ t('lotPopover.announcement') }}</a>
+      <a v-if="pdfHref" :href="pdfHref" target="_blank" rel="noopener">{{ t('lotPopover.announcement') }}</a>
     </div>
   </div>
 </template>

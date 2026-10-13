@@ -8,13 +8,14 @@ interface CacheImportSourceConfig {
   requiresCsvPath?: boolean
   // The two polygon-layer imports take minutes of paginated requests (EFFIS:
   // 100k+ features; EU flood risk: 542 MB measured against the unfiltered
-  // layer), so they run detached (POST returns {started:true} immediately)
-  // instead of sync/awaited, same "detached" contract as e.g. reprocess/
-  // geo-metrics. Progress/result surface via llmBatchJobs.*ImportStatus.
+  // layer), so they and the Eurostat NUTS import run detached (POST returns
+  // {started:true} immediately) instead of sync/awaited, same "detached"
+  // contract as e.g. reprocess/geo-metrics. Progress/result surface via
+  // llmBatchJobs.*ImportStatus.
   detached?: boolean
 }
 
-// Only these three configurable sources are backed by an out-of-band cache
+// Only these four configurable sources are backed by an out-of-band cache
 // file (server/tasks/import-*-cache.ts) instead of a live, on-demand fetch —
 // without this button an admin who fills in the config fields above has no
 // way to actually populate that cache themselves; it only refills via its

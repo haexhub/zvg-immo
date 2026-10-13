@@ -17,10 +17,12 @@ async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
 }
 
 async function enrichOne(auction: Auction): Promise<void> {
-  // caseNumber carries the e-leilões referencia — the key of the per-evento
-  // detail endpoint (/api/Eventos/<referencia>).
-  if (!auction.caseNumber) return
-  const item = await fetchEventoDetail(auction.caseNumber)
+  // The e-leilões referencia keys the per-evento detail endpoint
+  // (/api/Eventos/<referencia>); the list stores it in the detail URL
+  // (/evento/<referencia>) because caseNumber holds the court case number.
+  const referencia = auction.detailUrlUpstream?.split('/evento/')[1]
+  if (!referencia) return
+  const item = await fetchEventoDetail(referencia)
   applyDetail(auction, item)
 }
 

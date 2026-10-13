@@ -1,6 +1,8 @@
 # Gates every PR (and push to main) on lint + typecheck + tests + build, so
-# broken TS/config/templates never reach main silently — build-image.yml
-# only builds after merge and doesn't run on pull requests.
+# broken TS/config/templates never reach main silently. build-image.yml also
+# calls this workflow (workflow_call) and only builds/tags an image once it
+# passed for that exact commit — PR gating alone can't stop a red main (two
+# individually green PRs, a direct push) from being tagged :latest.
 
 name: CI
 
@@ -11,19 +13,39 @@ on:
   push:
     branches:
       - main
+  workflow_call:
+
+# Install and test steps run third-party code (lifecycle scripts, test
+# deps); the token never needs more than read access to the checkout.
+permissions:
+  contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Same image as docker-compose.yml's `db` service: the migrations need its
+    # PostGIS extension and Supabase's auth schema (auth.users, auth.uid()).
+    services:
+      postgres:
+        image: supabase/postgres:17.6.1.136
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -h localhost"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Install poppler-utils (pdftoppm, used by PDF extraction tests)
         run: sudo apt-get update && sudo apt-get install -y poppler-utils
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
           cache: pnpm
@@ -35,7 +57,7 @@ jobs:
         run: pnpm exec nuxi prepare
 
       - name: Production source size gate
-        run: find server components composables pages lib -type f \( -name '*.ts' -o -name '*.vue' -o -name '*.mjs' \) ! -path '*/migrations/*' ! -path '*/vendor/*' ! -name '*.test.*' ! -name '*.spec.*' -print0 | xargs -0 wc -l | awk '$2 != "total" && $1 > 500 { print; bad=1 } END { exit bad }'
+        run: find server components composables pages lib types -type f \( -name '*.ts' -o -name '*.vue' -o -name '*.mjs' \) ! -path '*/migrations/*' ! -path '*/vendor/*' ! -name '*.test.*' ! -name '*.spec.*' -print0 | LC_ALL=C xargs -0 wc -l | awk '$2 != "total" && $1 > 500 { print; bad=1 } END { exit bad }'
 
       - name: Lint
         run: pnpm run lint
@@ -45,6 +67,21 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      # The real-Postgres suites (describeDb, skipped above without
+      # TEST_DATABASE_URL) catch what a mocked query() can't: writes against
+      # columns or FKs a migration changed. They share one database and some
+      # touch table-wide state (geo_features epochs, triggers), so they run
+      # one file at a time.
+      - name: Apply migrations to the test database
+        run: pnpm exec drizzle-kit migrate
+        env:
+          NUXT_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+
+      - name: Real-Postgres tests
+        run: grep -rlZ --include='*.test.ts' TEST_DATABASE_URL server | xargs -0 pnpm exec vitest run --no-file-parallelism
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
 
       - name: Build
         run: pnpm build

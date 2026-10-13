@@ -15,8 +15,15 @@ import { resolveLlmConfig, type LlmConfig } from './llm'
 
 export { LLM_FAILURE_RETRY_COOLDOWN_HOURS, MAX_LLM_FAILURES }
 
-export async function readExtractionLlmConfig(): Promise<LlmConfig | null> {
-  const [primary] = await readExtractionLlmConfigChain()
+/** `ignoreKillSwitch` is only for collecting already-submitted batch jobs
+ *  (llm-batch-poll): their cost is already incurred, and leaving them
+ *  unpolled while the switch is on would let them expire and be re-paid. */
+export interface LlmConfigResolveOptions {
+  ignoreKillSwitch?: boolean
+}
+
+export async function readExtractionLlmConfig(options: LlmConfigResolveOptions = {}): Promise<LlmConfig | null> {
+  const [primary] = await readExtractionLlmConfigChain(options)
   return primary ?? null
 }
 
@@ -24,9 +31,9 @@ export async function readExtractionLlmConfig(): Promise<LlmConfig | null> {
  *  profile assigned to it, in order. Empty when nothing is configured at all
  *  (no DB, no override, no ENV default); a single non-chain override/ENV
  *  default surfaces as a one-element array, same as before. */
-export async function readExtractionLlmConfigChain(): Promise<LlmConfig[]> {
+export async function readExtractionLlmConfigChain(options: LlmConfigResolveOptions = {}): Promise<LlmConfig[]> {
   const db = getPool()
-  if (db && (await getLlmKillSwitch(db).catch(() => false))) return []
+  if (db && !options.ignoreKillSwitch && (await getLlmKillSwitch(db))) return []
   const c = useRuntimeConfig().extractLlm as
     | { provider?: string; baseUrl?: string; apiKey?: string; model?: string }
     | undefined
@@ -44,8 +51,12 @@ export async function readExtractionLlmConfigChain(): Promise<LlmConfig[]> {
  *  auktions-technikseite.md, WP-4's admin single-run) into a single LlmConfig
  *  — no chain, no fallback, so the measurement is of exactly that model. Null
  *  when the id doesn't match a configured profile. */
-export async function resolveLlmConfigForProfile(db: Pool, profileId: string): Promise<LlmConfig | null> {
-  if (await getLlmKillSwitch(db).catch(() => false)) return null
+export async function resolveLlmConfigForProfile(
+  db: Pool,
+  profileId: string,
+  options: LlmConfigResolveOptions = {},
+): Promise<LlmConfig | null> {
+  if (!options.ignoreKillSwitch && (await getLlmKillSwitch(db))) return null
   const profiles = await getLlmProviderProfiles(db)
   const profile = profiles.find((candidate) => candidate.id === profileId)
   if (!profile) return null

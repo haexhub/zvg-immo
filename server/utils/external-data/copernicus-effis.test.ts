@@ -90,7 +90,7 @@ const BERLIN_POS_LIST = '52.51 13.39 52.51 13.41 52.53 13.41 52.53 13.39 52.51 1
 describe('parseBurntAreaGml', () => {
   it('parses features and flips GML lat,lng posList order to lng,lat', () => {
     const gml = sampleGml(sampleFeature('modis.ba.poly.1', BERLIN_POS_LIST, '2022-08-10 00:00:00', 'DE', '600'))
-    const zones = parseBurntAreaGml(gml)
+    const { zones } = parseBurntAreaGml(gml)
 
     expect(zones).toHaveLength(1)
     expect(zones[0]).toMatchObject({
@@ -108,7 +108,7 @@ describe('parseBurntAreaGml', () => {
       '  <gml:featureMember><ms:modis.ba.poly gml:id="modis.ba.poly.2"><ms:COUNTRY>ES</ms:COUNTRY></ms:modis.ba.poly></gml:featureMember>',
     ].join('\n'))
 
-    expect(parseBurntAreaGml(gml)).toHaveLength(1)
+    expect(parseBurntAreaGml(gml)).toMatchObject({ zones: [{ id: 'modis.ba.poly.1' }], featureCount: 2 })
   })
 
   it('treats a missing AREA_HA as null rather than zero', () => {
@@ -119,7 +119,7 @@ describe('parseBurntAreaGml', () => {
       '<ms:COUNTRY>DE</ms:COUNTRY></ms:modis.ba.poly></gml:featureMember>',
     )
 
-    expect(parseBurntAreaGml(gml)[0]).toMatchObject({ areaHa: null })
+    expect(parseBurntAreaGml(gml).zones[0]).toMatchObject({ areaHa: null })
   })
 })
 
@@ -161,6 +161,16 @@ describe('buildWildfireHazardAssessment', () => {
       generatedAt: checkedAt,
       zones: [],
     }, { checkedAt })).toMatchObject({ status: 'unknown', severity: 'unknown', distanceMeters: null })
+  })
+
+  it('reports unknown rather than outside beyond the imported extent', async () => {
+    const collection = await readBurntAreaCache(fixturePath)
+
+    expect(buildWildfireHazardAssessment(
+      auction({ country: 'us', lat: 40.71, lng: -74.01 }),
+      collection,
+      { checkedAt },
+    )).toMatchObject({ status: 'unknown', severity: 'unknown', distanceMeters: null })
   })
 
   it('reports unknown severity when the matched zone has no AREA_HA', () => {
@@ -250,6 +260,34 @@ describe('importCopernicusEffisBurntAreaCache', () => {
     })
   })
 
+  it('keeps paginating past a full page with an unparseable feature', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'zvg-effis-'))
+    const cachePath = join(tmp, 'copernicus-effis.json')
+    const pages = [
+      sampleGml([
+        sampleFeature('page-1', BERLIN_POS_LIST, '2022-08-10 00:00:00', 'DE', '600'),
+        '  <gml:featureMember><ms:modis.ba.poly gml:id="no-geometry"></ms:modis.ba.poly></gml:featureMember>',
+      ].join('\n')),
+      sampleGml(sampleFeature('page-2', BERLIN_POS_LIST, '2022-08-10 00:00:00', 'DE', '600')),
+    ]
+    const fetchImpl = vi.fn(async (url: URL) => {
+      const body = pages[Number(url.searchParams.get('startindex')) / 2] ?? sampleGml('')
+      return new Response(body, { status: 200, headers: { 'content-type': 'text/xml' } })
+    })
+
+    const summary = await importCopernicusEffisBurntAreaCache({
+      cachePath,
+      serviceUrl: 'https://example.test/effis',
+      generatedAt: checkedAt,
+      pageSize: 2,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    })
+
+    expect(summary).toMatchObject({ fetched: 3, normalized: 2, pages: 2 })
+    const cached = await readBurntAreaCache(cachePath)
+    expect(cached.zones.map((zone) => zone.id)).toEqual(['page-1', 'page-2'])
+  })
+
   it('simplifies the raster staircase out of the cached outlines', async () => {
     // MODIS outlines carry every 250 m cell corner: 8.25M vertices / 602 MB
     // parsed in the production cache, which the process-wide adapter cache
@@ -314,6 +352,20 @@ describe('importCopernicusEffisBurntAreaCache', () => {
     expect(cached.zones.map((zone) => zone.id)).toEqual(['recent-large'])
   })
 
+  it('keeps the previous cache when the WFS returns no relevant burnt areas', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'zvg-effis-'))
+    const cachePath = join(tmp, 'copernicus-effis.json')
+    await writeFile(cachePath, '{"previous":true}', 'utf8')
+    const fetchImpl = vi.fn(async () => new Response(sampleGml(''), { status: 200, headers: { 'content-type': 'text/xml' } }))
+
+    await expect(importCopernicusEffisBurntAreaCache({
+      cachePath,
+      serviceUrl: 'https://example.test/effis',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    })).rejects.toThrow('no relevant burnt areas')
+    expect(await readFile(cachePath, 'utf8')).toBe('{"previous":true}')
+  })
+
   it('surfaces request failures instead of writing a cache', async () => {
     tmp = await mkdtemp(join(tmpdir(), 'zvg-effis-'))
     const fetchImpl = vi.fn(async () => new Response('error', { status: 500, statusText: 'Internal Server Error' }))
@@ -338,5 +390,24 @@ describe('readBurntAreaCache', () => {
       status: 'unknown',
       severity: 'unknown',
     })
+  })
+
+  it('drops zones without a usable polygon instead of letting every assessment throw', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'zvg-effis-'))
+    const cachePath = join(tmp, 'copernicus-effis.json')
+    const square = [[[13.39, 52.51], [13.41, 52.51], [13.41, 52.53], [13.39, 52.53], [13.39, 52.51]]]
+    await writeFile(cachePath, JSON.stringify({
+      sourceVersion: 'v1',
+      generatedAt: checkedAt,
+      zones: [
+        { id: 'no-polygon', areaHa: 600 },
+        { id: 'broken-ring', polygon: [[['13.39', 52.51]]], areaHa: 600 },
+        { id: 'ok', polygon: square, fireDate: 2022, areaHa: '600' },
+      ],
+    }), 'utf8')
+
+    const collection = await readBurntAreaCache(cachePath)
+    expect(collection.zones).toEqual([{ id: 'ok', polygon: square, fireDate: null, country: null, areaHa: null }])
+    expect(buildWildfireHazardAssessment(auction(), collection, { checkedAt })).toMatchObject({ status: 'inside' })
   })
 })

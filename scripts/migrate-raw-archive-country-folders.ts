@@ -18,7 +18,7 @@ import { mkdir, rename } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { createClient } from '@supabase/supabase-js'
 import { Pool } from 'pg'
-import { shardedKey, type BlobContentType } from '../server/utils/raw-archive'
+import { EXT, shardedKey, type BlobContentType } from '../server/utils/raw-archive'
 
 const apply = process.argv.includes('--apply')
 
@@ -40,12 +40,24 @@ const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession:
 
 // artifact_blobs.content_type is the POST-compression type ('application/json+gzip'
 // etc, see storedContentType() in raw-archive.ts) — map back to the
-// pre-compression BlobContentType shardedKey() expects.
-function toBlobContentType(stored: string): BlobContentType {
-  if (stored.startsWith('application/json')) return 'application/json'
-  if (stored.startsWith('text/html')) return 'text/html'
-  if (stored === 'application/pdf') return 'application/pdf'
-  return 'application/vnd.docx'
+// pre-compression BlobContentType shardedKey() expects, the same way the
+// archive download route does. An unknown type yields null so the blob is
+// skipped instead of being renamed under a guessed extension.
+function toBlobContentType(stored: string): BlobContentType | null {
+  const type = stored.replace(/\+gzip$/, '')
+  return Object.hasOwn(EXT, type) ? (type as BlobContentType) : null
+}
+
+// Moves the stored object (bucket if uploaded, else the local outbox file).
+async function relocate(blob: BlobRow, from: string, to: string): Promise<void> {
+  if (blob.uploaded_at) {
+    const { error } = await supabase.storage.from(bucket!).move(from, to)
+    if (error) throw new Error(error.message)
+    return
+  }
+  const newPath = join(outboxDir, to)
+  await mkdir(dirname(newPath), { recursive: true })
+  await rename(join(outboxDir, from), newPath)
 }
 
 interface BlobRow {
@@ -70,6 +82,7 @@ async function main() {
   let moved = 0
   let alreadyDone = 0
   let skippedNoCapture = 0
+  let skippedUnknownType = 0
   let failed = 0
 
   for (const blob of blobs) {
@@ -80,7 +93,13 @@ async function main() {
       continue
     }
 
-    const newKey = shardedKey(blob.content_hash, toBlobContentType(blob.content_type), country)
+    const contentType = toBlobContentType(blob.content_type)
+    if (!contentType) {
+      skippedUnknownType++
+      console.warn(`[migrate] unknown content_type ${blob.content_type} for ${blob.content_hash}, skipping`)
+      continue
+    }
+    const newKey = shardedKey(blob.content_hash, contentType, country)
     if (newKey === blob.s3_key) {
       alreadyDone++
       continue
@@ -93,16 +112,20 @@ async function main() {
     }
 
     try {
-      if (blob.uploaded_at) {
-        const { error } = await supabase.storage.from(bucket!).move(blob.s3_key, newKey)
-        if (error) throw new Error(error.message)
-      } else {
-        const oldPath = join(outboxDir, blob.s3_key)
-        const newPath = join(outboxDir, newKey)
-        await mkdir(dirname(newPath), { recursive: true })
-        await rename(oldPath, newPath)
+      await relocate(blob, blob.s3_key, newKey)
+      try {
+        await pool.query('UPDATE artifact_blobs SET s3_key = $1 WHERE content_hash = $2', [newKey, blob.content_hash])
+      } catch (err) {
+        // s3_key still names the old location, so put the object back there;
+        // otherwise every reader (storage-download.ts) and later run would
+        // look for an object that no longer exists.
+        await relocate(blob, newKey, blob.s3_key).catch((rollbackErr: unknown) => {
+          console.error(
+            `[migrate] could not move ${newKey} back to ${blob.s3_key}, fix s3_key by hand: ${(rollbackErr as Error).message}`,
+          )
+        })
+        throw err
       }
-      await pool.query('UPDATE artifact_blobs SET s3_key = $1 WHERE content_hash = $2', [newKey, blob.content_hash])
       moved++
     } catch (err) {
       failed++
@@ -111,7 +134,7 @@ async function main() {
   }
 
   console.log(
-    `${apply ? 'moved' : 'would move'}=${moved} alreadyDone=${alreadyDone} skippedNoCapture=${skippedNoCapture} failed=${failed}`,
+    `${apply ? 'moved' : 'would move'}=${moved} alreadyDone=${alreadyDone} skippedNoCapture=${skippedNoCapture} skippedUnknownType=${skippedUnknownType} failed=${failed}`,
   )
   await pool.end()
 }

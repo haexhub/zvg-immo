@@ -361,7 +361,7 @@ export const UNIVERSAL_AUCTION_SCHEMA = {
 } as const
 
 // ────────────────────────────────────────────────────────────────────────────
-// Map-reduce (server/tasks/reprocess-map-reduce.ts): a per-document
+// Map-reduce (server/utils/tasks/reprocess-map-reduce.ts): a per-document
 // "map" call asks for the same field set as UNIVERSAL_AUCTION_SCHEMA but for
 // exactly ONE document, minus ruleCheck (rules values describe the whole
 // auction, not one document — verification only happens once, at the

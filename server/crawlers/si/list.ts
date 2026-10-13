@@ -126,10 +126,14 @@ export function mapPublication(p: SiPublication, platformId: string): Auction {
   }
 }
 
-export async function fetchAllListings(platformId: string): Promise<{ auctions: Auction[]; total: number | null }> {
+export async function fetchAllListings(
+  platformId: string,
+): Promise<{ auctions: Auction[]; total: number | null; complete: boolean }> {
   const auctions: Auction[] = []
   let offset = 0
   let countAll: number | null = null
+  // Stays false when MAX_PAGES cuts the walk short before countAll.
+  let complete = false
 
   for (let page = 0; page < MAX_PAGES; page++) {
     const res = await fetch(`${SI_API_BASE}${LIST_PATH}`, {
@@ -147,13 +151,25 @@ export async function fetchAllListings(platformId: string): Promise<{ auctions: 
     })
     if (!res.ok) throw new Error(`sodnedrazbe.si list fetch failed: ${res.status}`)
 
-    const data = (await res.json()) as SiListResponse
+    const data = (await res.json()) as Partial<SiListResponse> | null
+    const pageCountAll = data?.pagination?.countAll
+    if (!Array.isArray(data?.list) || typeof pageCountAll !== 'number' || !Number.isInteger(pageCountAll)) {
+      throw new Error('sodnedrazbe.si list: unexpected response shape (list/pagination.countAll)')
+    }
     for (const p of data.list) auctions.push(mapPublication(p, platformId))
-    countAll = data.pagination.countAll
+    countAll = pageCountAll
 
     offset += PAGE_SIZE
-    if (offset >= countAll) break
+    if (offset >= countAll) {
+      complete = true
+      break
+    }
   }
 
-  return { auctions, total: countAll }
+  if (!complete) {
+    // Hitting the page cap leaves publications unfetched: keep what we have,
+    // but the crawl must not count as complete or the rest would read as gone.
+    console.warn(`[si-sodnedrazbe] hit MAX_PAGES (${MAX_PAGES}) with ${(countAll ?? 0) - auctions.length} publications unfetched`)
+  }
+  return { auctions, total: countAll, complete }
 }

@@ -457,24 +457,28 @@ export async function extractPdfPhotos(
       if (aLandscape !== bLandscape) return aLandscape - bLandscape
       return a.page - b.page || a.num - b.num
     })
+    const maxPhotos = opts.maxPhotos ?? Number.POSITIVE_INFINITY
     const withBytes: { file: string; bytes: Buffer; hash: string }[] = []
+    const seenHashes = new Set<string>()
     let clusterIndex = 0
     for (const entry of sorted) {
+      // Stop reading/rendering once enough distinct photos are buffered.
+      if (seenHashes.size >= maxPhotos) break
+      let file = `cluster-${entry.page}-${entry.num}.jpg`
+      let bytes: Buffer
       if (entry.kind === 'cluster') {
-        const bytes = await renderImageCluster(inputPath, workDir, entry.cluster, clusterIndex)
-        clusterIndex += 1
-        const hash = imageContentHash(bytes)
-        withBytes.push({ file: `cluster-${entry.cluster.page}-${entry.cluster.num}.jpg`, bytes, hash })
+        bytes = await renderImageCluster(inputPath, workDir, entry.cluster, clusterIndex++)
       } else {
-        const info = entry.info
-        const file = fileByPageNum.get(`${info.page}:${info.num}`)
-        if (!file) continue
-        const bytes = await readFile(join(workDir, file))
-        const hash = imageContentHash(bytes)
-        withBytes.push({ file, bytes, hash })
+        const extracted = fileByPageNum.get(`${entry.page}:${entry.num}`)
+        if (!extracted) continue
+        file = extracted
+        bytes = await readFile(join(workDir, file))
       }
+      const hash = imageContentHash(bytes)
+      seenHashes.add(hash)
+      withBytes.push({ file, bytes, hash })
     }
-    const deduped = dedupByHash(withBytes).slice(0, opts.maxPhotos ?? Number.POSITIVE_INFINITY)
+    const deduped = dedupByHash(withBytes).slice(0, maxPhotos)
     if (deduped.length === 0) return []
 
     await mkdir(opts.destDir, { recursive: true })

@@ -10,9 +10,12 @@ export default defineEventHandler(async (event): Promise<ImportFrDvfCacheSummary
     throw createError({ statusCode: 400, statusMessage: 'csvPath ist erforderlich.' })
   }
 
+  // cachePath is deliberately not taken from the request, so a request body
+  // cannot pick the file the import overwrites. csvPath stays: the admin
+  // types the server-side CSV location in the card, and the response only
+  // carries row counts, never file contents.
   const payload: ImportFrDvfCachePayload = {
     csvPath: body.csvPath,
-    cachePath: typeof body.cachePath === 'string' && body.cachePath.trim() ? body.cachePath : undefined,
     sourceVersion: typeof body.sourceVersion === 'string' && body.sourceVersion.trim() ? body.sourceVersion : undefined,
     generatedAt: typeof body.generatedAt === 'string' && body.generatedAt.trim() ? body.generatedAt : undefined,
   }

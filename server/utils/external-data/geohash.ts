@@ -40,3 +40,37 @@ export function encodeGeohash(lat: number, lng: number, precision = 5): string {
 
   return geohash
 }
+
+/**
+ * Every cell at `precision` that the bounding box of a circle around the point
+ * touches. A radius lookup keyed by the point's own cell alone misses matches
+ * just across a cell edge, which near the edge can be most of the circle.
+ */
+export function geohashesWithinRadius(lat: number, lng: number, radiusMeters: number, precision = 5): string[] {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return []
+  // Geohash bits alternate starting with longitude, so lng gets the odd bit.
+  const cellLat = 180 / 2 ** Math.floor((5 * precision) / 2)
+  const cellLng = 360 / 2 ** Math.ceil((5 * precision) / 2)
+  const deltaLat = radiusMeters / METERS_PER_DEGREE_LAT
+  const deltaLng = radiusMeters / (METERS_PER_DEGREE_LAT * Math.max(Math.cos((lat * Math.PI) / 180), 0.01))
+  const minLat = Math.max(lat - deltaLat, -90)
+  const maxLat = Math.min(lat + deltaLat, 90)
+  // ponytail: clamps at the antimeridian instead of wrapping; fine for the
+  // European sources using this, wrap lng if a Pacific source ever does.
+  const minLng = Math.max(lng - deltaLng, -180)
+  const maxLng = Math.min(lng + deltaLng, 180)
+
+  const cells = new Set<string>()
+  // Stepping by one cell size and always visiting the far edge hits every
+  // cell the box overlaps.
+  for (let y = minLat; ; y = Math.min(y + cellLat, maxLat)) {
+    for (let x = minLng; ; x = Math.min(x + cellLng, maxLng)) {
+      cells.add(encodeGeohash(y, x, precision))
+      if (x >= maxLng) break
+    }
+    if (y >= maxLat) break
+  }
+  return [...cells]
+}
+
+const METERS_PER_DEGREE_LAT = 111_320

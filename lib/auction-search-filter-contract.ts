@@ -64,9 +64,20 @@ const NUMBER_KEYS = [
   'nearLat', 'nearLng', 'nearRadius',
 ] as const
 
-export const ALERT_UNSUPPORTED_FILTER_KEYS = [
+const ALERT_UNSUPPORTED_GEO_METRIC_KEYS = [
   'nearSea', 'nearLake', 'nearRiver', 'nearMountain', 'nearAirport', 'nearSki',
   'nearSkiDownhill', 'nearSkiNordic', 'urbanRural',
+] as const
+
+// Read from the document extraction / LLM analysis or the detail page, none
+// of which a list crawl carries (zvg-portal lists even report photoCount 0).
+const ALERT_UNSUPPORTED_EXTRACTION_KEYS = [
+  'landMin', 'landMax', 'livMin', 'livMax', 'yearBuiltMin', 'yearBuiltMax',
+  'renovationYearMin', 'renovationYearMax', 'condition', 'features', 'onlyWithPhotos', 'hideRulesOnly',
+] as const
+
+export const ALERT_UNSUPPORTED_FILTER_KEYS = [
+  ...ALERT_UNSUPPORTED_GEO_METRIC_KEYS, ...ALERT_UNSUPPORTED_EXTRACTION_KEYS,
 ] as const
 
 function first(value: unknown): string {
@@ -102,7 +113,10 @@ export function defaultAuctionSearchFilters(hideRulesOnly = false): AuctionSearc
 export function parseAuctionSearchFilters(query: SearchFilterQuery, hideRulesOnlyDefault = false): AuctionSearchFilters {
   const defaults = defaultAuctionSearchFilters(hideRulesOnlyDefault)
   const parsed = { ...defaults,
-    countries: commaList(query.country), regionKeys: commaList(query.region), search: first(query.q),
+    // Crawled auctions carry lowercase ISO codes; normalize once here so the
+    // SQL search and in-memory alert matching read `DE` the same way.
+    countries: [...new Set(commaList(query.country).filter((code) => /^[a-z]{2}$/i.test(code)).map((code) => code.toLowerCase()))],
+    regionKeys: commaList(query.region), search: first(query.q),
     authority: first(query.authority) || defaults.authority,
     urbanRural: first(query.urbanRural) || defaults.urbanRural,
     category: first(query.category) || defaults.category,
@@ -113,6 +127,11 @@ export function parseAuctionSearchFilters(query: SearchFilterQuery, hideRulesOnl
     hideRulesOnly: first(query.llmOnly) === '1' ? true : first(query.llmOnly) === '0' ? false : hideRulesOnlyDefault,
   }
   for (const key of NUMBER_KEYS) parsed[key] = finiteNumber(query[key])
+  // PostGIS rejects coordinates outside the legal WGS84 ranges. Treat them
+  // like any other invalid numeric filter so a crafted public URL cannot
+  // turn a nearby-search request into a database error.
+  if (parsed.nearLat != null && (parsed.nearLat < -90 || parsed.nearLat > 90)) parsed.nearLat = null
+  if (parsed.nearLng != null && (parsed.nearLng < -180 || parsed.nearLng > 180)) parsed.nearLng = null
   // A coordinate pair without a radius is not "unbounded" — it must still be
   // an executable nearby filter for filterAuctions/SQL/alert matching, all of
   // which skip distance filtering entirely when nearRadius is null.
@@ -168,11 +187,17 @@ export function activeAuctionSearchFilterCount(filters: AuctionSearchFilters, hi
   return scalar + (filters.nearLat != null && filters.nearLng != null ? 1 : 0)
 }
 
-/** The fresh alert batch has no geo-metric/OSM context.  These must be
- * rejected when saved rather than silently ignored during notification. */
+/** The fresh alert batch has no geo-metric/OSM context and no extraction, so
+ * filterAuctions() would drop every auction for these.  They must be rejected
+ * when saved rather than silently never matching during notification. */
 export function unsupportedAlertFilterKeys(filters: AuctionSearchFilters): string[] {
   return ALERT_UNSUPPORTED_FILTER_KEYS.filter((key) => {
     const value = filters[key]
-    return typeof value === 'number' ? value > 0 : typeof value === 'string' && value !== ALL_SCOPE
+    if (Array.isArray(value)) return value.length > 0
+    if (typeof value === 'boolean') return value
+    // Geo metrics treat 0 as "off" (as the SQL search does); any extraction
+    // range bound, even 0, excludes auctions without that value.
+    if (typeof value === 'number') return (ALERT_UNSUPPORTED_GEO_METRIC_KEYS as readonly string[]).includes(key) ? value > 0 : true
+    return typeof value === 'string' && value !== ALL_SCOPE
   })
 }

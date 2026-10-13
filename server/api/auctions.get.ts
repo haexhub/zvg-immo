@@ -6,6 +6,7 @@ import { getPool, isStatementTimeoutError, SEARCH_STATEMENT_TIMEOUT_MS, withStat
 import { buildAuctionSearchFilter, finiteNumber } from '~/server/utils/auction-search-filters'
 import { curatedAuctionPhotoUrls } from '~/lib/auction-photos'
 import { redactAffectedPersonNames } from '~/server/utils/public-auction-redaction'
+import { parsePagination } from '~/server/utils/data-api-pagination'
 
 export interface AuctionSummary {
   platform: string
@@ -211,8 +212,7 @@ export default defineEventHandler(async (event): Promise<AuctionSearchResponse> 
 
   const query = getQuery(event)
   const { predicate, values: filterValues } = await buildAuctionSearchFilter(db, query)
-  const pageSize = Math.min(60, Math.max(1, Math.trunc(finiteNumber(query.pageSize) ?? 30)))
-  const page = Math.max(1, Math.trunc(finiteNumber(query.page) ?? 1))
+  const { page, pageSize } = parsePagination(query, 30, 60)
   const offset = (page - 1) * pageSize
   const sort = String(query.sort ?? 'default')
   const orderBy = sort === 'dateAsc'

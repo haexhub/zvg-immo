@@ -11,8 +11,6 @@ import {
   type OsmElement,
 } from './osm-location-shared'
 
-export { buildLocationContext }
-
 const NOISY_ROAD_RADIUS_METERS = 8_000
 const MINOR_ROAD_RADIUS_METERS = 5_000
 const OFFICE_RADIUS_METERS = 1_500

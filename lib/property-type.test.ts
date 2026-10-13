@@ -91,6 +91,10 @@ describe('classifyPropertyType — Swedish, Finnish, Danish, Icelandic', () => {
   it('classifies villa (SE)', () => {
     expect(classifyPropertyType('Villa med stor tomt').id).toBe('einfamilienhaus')
   })
+  it('does not read "villa" inside place names such as Sevilla or Villarreal as a house', () => {
+    expect(classifyPropertyType('PISO EN CALLE BETIS 3, 41010 SEVILLA').id).toBe('eigentumswohnung')
+    expect(classifyPropertyType('LOCAL COMERCIAL, 12540 VILLARREAL').id).toBe('gewerbe')
+  })
   it('classifies Swedish small-house tax units as houses before accessory garages in prose can win', () => {
     expect(classifyPropertyType('Småhusenhet, bebyggd').id).toBe('einfamilienhaus')
   })

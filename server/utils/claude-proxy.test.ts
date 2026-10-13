@@ -29,13 +29,18 @@ describe('callProxySetup', () => {
     await expect(callProxySetup('POST', '/login')).rejects.toMatchObject({ statusCode: 409 })
   })
 
-  it('falls back to 502 when the proxy is unreachable', async () => {
-    stubProxy(new Error('fetch failed'))
+  it('falls back to 502 when the proxy is unreachable, keeping the cause server-side', async () => {
+    const cause = new Error('fetch failed')
+    stubProxy(cause)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const { callProxySetup } = await import('./claude-proxy')
 
     await expect(callProxySetup('GET', '/status')).rejects.toMatchObject({
       statusCode: 502,
       statusMessage: 'Claude-Proxy: Proxy nicht erreichbar.',
+      cause,
     })
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('fetch failed'))
+    warn.mockRestore()
   })
 })

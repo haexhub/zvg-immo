@@ -225,7 +225,7 @@ describe('/api/auction/:platform/:id/translation', () => {
     const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
     const { readAuctionTranslation, claimAuctionTranslation } = await import('~/server/utils/content-translation')
     const handler = await loadHandler()
-    const { auctionTranslationContentHash } = await import('./translation.post')
+    const { auctionTranslationContentHash } = await import('~/server/utils/auction-translation')
     const cached = {
       contentHash: auctionTranslationContentHash(auction()),
       status: 'completed' as const,
@@ -265,7 +265,7 @@ describe('/api/auction/:platform/:id/translation', () => {
       claimAuctionTranslation,
     } = await import('~/server/utils/content-translation')
     const handler = await loadHandler()
-    const { auctionTranslationContentHash } = await import('./translation.post')
+    const { auctionTranslationContentHash } = await import('~/server/utils/auction-translation')
     const expectedContentHash = auctionTranslationContentHash(auction())
     const payload = {
       title: 'Fresh title for changed content',
@@ -581,7 +581,8 @@ describe('/api/auction/:platform/:id/translation', () => {
   it('falls back to the next configured model when the primary is unavailable', async () => {
     const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
     const { getLlmProviderOverrideChain } = await import('~/server/utils/app-settings')
-    const { resolveLlmConfig, LlmProviderError } = await import('~/server/utils/extract/llm')
+    const { resolveLlmConfig } = await import('~/server/utils/extract/llm')
+    const { LlmProviderError } = await import('~/server/utils/extract/llm-errors')
     const { completeAuctionTranslation, failAuctionTranslation } = await import('~/server/utils/content-translation')
     const handler = await loadHandler()
 

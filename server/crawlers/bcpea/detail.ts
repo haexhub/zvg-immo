@@ -104,7 +104,11 @@ export async function enrichOne(auction: Auction): Promise<void> {
   const infoBox = expanded.find('.col--info').first()
   if (infoBox.length === 0) return
 
-  auction.description = extractDescription($, infoBox)
+  // Only overwrite when found (same convention as alo/kip): a scoped retry
+  // passes the stored record in, and a renamed ОПИСАНИЕ group must not wipe
+  // the description LLM extraction relies on.
+  const description = extractDescription($, infoBox)
+  if (description) auction.description = description
 
   const attachments = extractAttachments($, infoBox)
   if (attachments.length > 0) auction.attachments = attachments

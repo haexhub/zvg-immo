@@ -27,6 +27,11 @@ vi.mock('../crawlers/registry', () => ({
   isCountryEnabled: vi.fn(() => state.enabled),
   listRegisteredCountries: vi.fn(() => [
     {
+      code: 'no',
+      name: 'Norwegen',
+      regions: [{ code: 'all', name: 'Norwegen', country: 'no', platforms: [] }],
+    },
+    {
       code: 'se',
       name: 'Schweden',
       regions: [
@@ -210,6 +215,25 @@ describe('rebuildCountry', () => {
     // rows, and no crawl runs after a failed delete either.
     expect(state.invalidateLocationEnrichmentCache).not.toHaveBeenCalled()
     expect(state.crawlSingle).not.toHaveBeenCalled()
+  })
+
+  it('keeps rejecting a second rebuild of a country while another country rebuilds too', async () => {
+    let releaseSe!: () => void
+    const seCrawl = new Promise<CrawlResult>((resolve) => {
+      releaseSe = () => resolve(seResult)
+    })
+    state.crawlSingle.mockImplementation(async ({ country }: { country: string }) =>
+      country === 'se' ? await seCrawl : { ...seResult, auctions: [] })
+    const { rebuildCountry } = await import('./country-rebuild')
+
+    const firstSe = rebuildCountry('se')
+    await vi.waitFor(() => expect(state.crawlSingle).toHaveBeenCalledOnce())
+    await rebuildCountry('no')
+
+    await expect(rebuildCountry('se')).rejects.toMatchObject({ statusCode: 409 })
+    releaseSe()
+    await expect(firstSe).resolves.toMatchObject({ country: 'se' })
+    expect(state.deleteRawArchiveCountry.mock.calls.map(([country]) => country)).toEqual(['se', 'no'])
   })
 
   it('rejects disabled countries before deleting data', async () => {

@@ -3,15 +3,22 @@
 // already verified event.context.user and 401'd otherwise.
 
 import { getServiceClient } from '../../utils/supabase'
+import { publicError } from '../../utils/public-error'
+import { isUuidSegment } from '../../utils/path-segment'
 import { parseAuctionSearchFilters, unsupportedAlertFilterKeys } from '~/lib/auction-search-filter-contract'
 
 export default defineEventHandler(async (event): Promise<{ enabled: boolean }> => {
   const savedSearchId = String(event.context.params?.savedSearchId ?? '')
-  if (!savedSearchId) {
-    throw createError({ statusCode: 400, statusMessage: 'savedSearchId fehlt.' })
+  if (!isUuidSegment(savedSearchId)) {
+    throw createError({ statusCode: 400, statusMessage: 'savedSearchId fehlt oder ist ungültig.' })
   }
   const body = await readBody<{ enabled?: unknown }>(event).catch(() => undefined) ?? ({} as { enabled?: unknown })
-  const enabled = body.enabled !== false
+  // Only an explicit boolean may toggle: a truncated body or `"false"` must
+  // not silently (re-)enable mails the user meant to switch off.
+  if (typeof body.enabled !== 'boolean') {
+    throw createError({ statusCode: 400, statusMessage: 'enabled muss true oder false sein.' })
+  }
+  const enabled = body.enabled
 
   const supabase = getServiceClient()
   if (!supabase) {
@@ -28,7 +35,7 @@ export default defineEventHandler(async (event): Promise<{ enabled: boolean }> =
     .eq('user_id', userId)
     .maybeSingle()
   if (searchError) {
-    throw createError({ statusCode: 500, statusMessage: searchError.message })
+    throw publicError('PUT /api/alerts', 500, 'Gespeicherte Suche konnte nicht geladen werden.', searchError)
   }
   if (!search) {
     throw createError({ statusCode: 404, statusMessage: 'Gespeicherte Suche nicht gefunden.' })
@@ -47,7 +54,7 @@ export default defineEventHandler(async (event): Promise<{ enabled: boolean }> =
     .from('alert_subscriptions')
     .upsert({ user_id: userId, saved_search_id: savedSearchId, enabled }, { onConflict: 'saved_search_id' })
   if (error) {
-    throw createError({ statusCode: 500, statusMessage: error.message })
+    throw publicError('PUT /api/alerts', 500, 'Benachrichtigung konnte nicht gespeichert werden.', error)
   }
   return { enabled }
 })

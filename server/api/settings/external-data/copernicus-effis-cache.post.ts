@@ -13,9 +13,10 @@ const MAX_MAX_PAGES = 10_000
 export default defineEventHandler(async (event): Promise<{ started: true }> => {
   const body = await readBody<Record<string, unknown>>(event).catch(() => undefined) ?? ({} as Record<string, unknown>)
 
+  // cachePath/serviceUrl are deliberately not taken from the request: the
+  // task then uses the source's configured (or default) values, so a request
+  // body cannot pick the file the import overwrites or the host it fetches.
   const payload: ImportCopernicusEffisCachePayload = {
-    cachePath: optionalString(body.cachePath),
-    serviceUrl: optionalString(body.serviceUrl),
     sourceVersion: optionalString(body.sourceVersion),
     generatedAt: optionalString(body.generatedAt),
     bbox: optionalBbox(body.bbox),

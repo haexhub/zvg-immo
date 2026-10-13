@@ -19,6 +19,7 @@ vi.mock('../../../utils/verkehrswert-cache', () => ({
 }))
 vi.mock('../../../utils/exchange-rate', () => ({ deriveMarketValueEur: vi.fn(), getRates: vi.fn() }))
 vi.mock('../../../crawlers/registry', () => registryMock)
+vi.mock('../../../utils/request-client-ip', () => ({ requestClientIp: () => '203.0.113.7' }))
 
 function auction(overrides: Partial<Auction> = {}): Auction {
   return {
@@ -268,10 +269,11 @@ describe('/api/auction/:platform/:id location enrichment overlay', () => {
     })
     const handler = await loadHandler()
     vi.mocked(readLatestObservedAuction).mockRejectedValue(new Error('connection lost'))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    await expect(handler({ context: { params: { platform: 'zvg-portal', id: '7265' } } })).rejects.toMatchObject({
-      statusCode: 503,
-    })
+    const failure = handler({ context: { params: { platform: 'zvg-portal', id: '7265' } } })
+    await expect(failure).rejects.toMatchObject({ statusCode: 503 })
+    await expect(failure).rejects.not.toMatchObject({ message: expect.stringContaining('connection lost') })
     expect(crawl).not.toHaveBeenCalled()
   })
 
@@ -301,5 +303,48 @@ describe('/api/auction/:platform/:id location enrichment overlay', () => {
 
     expect(crawl).toHaveBeenCalledOnce()
     expect(registryMock.ensureEnabledCountriesLoaded).toHaveBeenCalledOnce()
+  })
+
+  it('rate-limits anonymous live lookups per client so random ids cannot amplify upstream crawls', async () => {
+    const crawl = vi.fn().mockResolvedValue({ auctions: [] })
+    registryMock.platforms.push({
+      id: 'test-platform',
+      name: 'Test Platform',
+      baseUrl: 'https://example.test',
+      country: 'de',
+      regions: [{ code: 'all', name: 'All' }],
+      crawl,
+    })
+    const handler = await loadHandler()
+
+    for (let i = 0; i < 10; i++) {
+      await expect(handler({ context: { params: { platform: 'test-platform', id: `random-${i}` } } }))
+        .rejects.toMatchObject({ statusCode: 404 })
+    }
+    await expect(handler({ context: { params: { platform: 'test-platform', id: 'random-10' } } }))
+      .rejects.toMatchObject({ statusCode: 429 })
+    expect(crawl).toHaveBeenCalledTimes(10)
+  })
+
+  it('refuses a second concurrent region crawl instead of queueing more upstream load', async () => {
+    let releaseCrawl!: (value: { auctions: Auction[] }) => void
+    const crawl = vi.fn(() => new Promise<{ auctions: Auction[] }>((resolve) => { releaseCrawl = resolve }))
+    registryMock.platforms.push({
+      id: 'test-platform',
+      name: 'Test Platform',
+      baseUrl: 'https://example.test',
+      country: 'de',
+      regions: [{ code: 'all', name: 'All' }],
+      crawl,
+    } as unknown as PlatformCrawler)
+    const handler = await loadHandler()
+
+    const first = handler({ context: { params: { platform: 'test-platform', id: 'first' } } })
+    await vi.waitFor(() => expect(crawl).toHaveBeenCalledOnce())
+    await expect(handler({ context: { params: { platform: 'test-platform', id: 'second' } } }))
+      .rejects.toMatchObject({ statusCode: 503 })
+    releaseCrawl({ auctions: [] })
+    await expect(first).rejects.toMatchObject({ statusCode: 404 })
+    expect(crawl).toHaveBeenCalledOnce()
   })
 })

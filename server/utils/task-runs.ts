@@ -214,6 +214,29 @@ export async function recordTaskRunEnd(
   })
 }
 
+/** Only recordTaskRunEnd of the process that started a run resets its
+ *  'running' status, so a run killed by a deploy or OOM would stay 'running'
+ *  (and keep /settings polling) until the task happens to start again. Called
+ *  once at boot, after migrations and before any task can start. `startedAt`
+ *  stays so reprocess-bootstrap's restart-storm guard keeps working.
+ *  ponytail: assumes one app instance, like the in-memory task exclusivity;
+ *  during a rolling deploy an old instance's still-running task briefly shows
+ *  as interrupted until its own end write lands. A per-boot instance id in
+ *  the status would be the upgrade path for real multi-instance runs. */
+export async function resetInterruptedTaskRuns(): Promise<void> {
+  const finishedAt = new Date().toISOString()
+  const all = await readAllTaskRunStatuses()
+  await Promise.all(Object.entries(all)
+    .filter(([, status]) => status.status === 'running')
+    .map(([task, status]) => enqueue(task as TrackedTask, () => writeTaskRunStatus(task as TrackedTask, {
+      ...status,
+      status: 'idle',
+      finishedAt,
+      lastError: 'Lauf durch Neustart des Servers abgebrochen',
+      progress: null,
+    }))))
+}
+
 /** Updates only `progress`/`progressByCountry`, leaving
  *  `status`/`startedAt`/`lastResult` untouched — for a long-running loop
  *  (crawlAll's regions, enrich's per-auction worker, reprocess's

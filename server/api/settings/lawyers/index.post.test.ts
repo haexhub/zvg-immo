@@ -70,16 +70,18 @@ describe('/api/settings/lawyers POST', () => {
     expect(singleSpy).toHaveBeenCalled()
   })
 
-  it('rejects with 500 when the insert fails', async () => {
+  it('rejects with a generic 500 that keeps the DB error as cause when the insert fails', async () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
     vi.stubGlobal('readBody', vi.fn(async () => ({ name: 'Jane Doe', email: 'jane@example.com', countries: ['de'] })))
-    const insert = vi.fn(() => chain({ data: null, error: { message: 'duplicate key' } }))
+    const dbError = { message: 'duplicate key' }
+    const insert = vi.fn(() => chain({ data: null, error: dbError }))
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
     const from = vi.fn(() => ({ insert }))
     const { getServiceClient } = await import('../../../utils/supabase')
     vi.mocked(getServiceClient).mockReturnValue({ from } as never)
 
     const handler = (await import('./index.post')).default as unknown as (event: unknown) => Promise<unknown>
-    await expect(handler({})).rejects.toMatchObject({ statusCode: 500, message: 'duplicate key' })
+    await expect(handler({})).rejects.toMatchObject({ statusCode: 500, message: 'Anwalt konnte nicht angelegt werden.', cause: dbError })
   })
 })

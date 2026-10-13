@@ -8,7 +8,7 @@ function auction(): Auction {
     country: 'pt',
     region: '',
     externalId: '191921',
-    caseNumber: 'NP1201552026',
+    caseNumber: '',
     authority: '',
     title: 'Moradia sita em Alter do Chão',
     address: null,
@@ -98,11 +98,11 @@ describe('applyDetail', () => {
     expect(a.photoCount).toBe(1)
     expect(a.lat).toBeUndefined()
     expect(a.photoUrls).toBeUndefined()
-    expect(a.caseNumber).toBe('NP1201552026')
+    expect(a.caseNumber).toBe('')
     expect(a.authority).toBe('')
   })
 
-  it('replaces the referencia placeholder with the real case number/court', () => {
+  it('fills in the real case number/court', () => {
     const a = auction()
     applyDetail(a, item({ processoNumero: '1201/11.1TBCTB', processoTribunal: 'C.Branco - JC Cível - Juiz 2' }))
     expect(a.caseNumber).toBe('1201/11.1TBCTB')

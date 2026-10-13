@@ -27,7 +27,8 @@ export default defineEventHandler(async (event): Promise<{ ok: true }> => {
         statusMessage: 'Dieser Anwalt hat bereits Anfragen erhalten und kann nicht gelöscht werden. Bitte stattdessen deaktivieren.',
       })
     }
-    throw createError({ statusCode: 500, statusMessage: error.message })
+    console.warn('[settings/lawyers] delete failed', error)
+    throw createError({ statusCode: 500, statusMessage: 'Anwalt konnte nicht gelöscht werden.', cause: error })
   }
   return { ok: true }
 })

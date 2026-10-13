@@ -7,6 +7,7 @@
 // signed out.
 
 import type { PublicLawyer } from '~/server/api/lawyers.get'
+import { safeHref } from '~/lib/utils'
 
 const props = defineProps<{
   platform: string
@@ -45,6 +46,12 @@ const pending = ref(false)
 const error = ref<string | null>(null)
 const sent = ref(false)
 const idempotencyKey = ref<string | null>(null)
+// The key identifies one specific inquiry: a retry after an ambiguous failure
+// reuses it, but an edited lawyer or message is a new inquiry. Reusing the old
+// key would make the server replay the earlier (possibly committed) request.
+watch([selectedLawyerId, message, () => props.platform, () => props.externalId], () => {
+  idempotencyKey.value = null
+})
 
 async function submit(): Promise<void> {
   if (!selectedLawyerId.value || !message.value.trim()) return
@@ -104,7 +111,7 @@ function loginLink(): string {
         <p v-if="selectedLawyerId" class="text-xs text-muted-foreground">
           <template v-for="l in lawyers.filter((x) => x.id === selectedLawyerId)" :key="l.id">
             <span v-if="l.languages?.length">{{ t('lawyerContact.languages', { languages: l.languages.join(', ') }) }}</span>
-            <a v-if="l.website" :href="l.website" target="_blank" rel="noopener" class="ml-2 hover:underline">{{ t('lawyerContact.website') }}</a>
+            <a v-if="safeHref(l.website)" :href="safeHref(l.website)" target="_blank" rel="noopener" class="ml-2 hover:underline">{{ t('lawyerContact.website') }}</a>
           </template>
         </p>
       </div>

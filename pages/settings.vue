@@ -21,8 +21,11 @@ function clearAuthState(): void {
 
 provide(settingsSessionExpiredKey, clearAuthState)
 
-const { normalizeSettingsError } = useSettingsError()
+const { normalizeSettingsError } = useSettingsError(clearAuthState)
 const { stopProgressPolling } = useSettingsTaskOverview()
+// The progress timer is module-scoped and shared by all cards; leaving
+// /settings must not keep it polling the expensive overview endpoint.
+onBeforeUnmount(stopProgressPolling)
 
 async function probeSession(): Promise<void> {
   try {

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Auction, AuctionExtraction } from '~/types/auction'
 import type { ClampedExtraction } from '../utils/extract/llm-clamp'
-import type { ReprocessInput } from './reprocess-input'
+import type { ReprocessInput } from '../utils/tasks/reprocess-input'
 import { downloadBlob, findLatestCapture } from '../utils/storage-download'
 import { getPool } from '../utils/db'
 import { readAuctionRecordMap } from '../utils/auction-record'
@@ -10,12 +10,14 @@ import { readArtifactProcessingState } from '../utils/artifact-version-state'
 import { readExtractionChainStrategy, readExtractionLlmConfigChain } from '../utils/extract/llm-task-config'
 import { readLlmExecutionMode } from '../utils/app-settings'
 import { isLlmBatchPending, submitLlmBatch } from '../utils/extract/llm-batch'
-import { extractByLlm, isLlmProviderUnavailable } from '../utils/extract/llm'
+import { extractByLlm } from '../utils/extract/llm'
+import { isLlmProviderUnavailable } from '../utils/extract/llm-errors'
 import { prepareArchivedLlmDocuments } from '../utils/extract/llm-documents'
 import { writeAuctionDetails } from '../utils/auction-details'
 import { upsertCurrentAuctions } from '../utils/current-auctions'
 import { recordTaskRunError } from '../utils/task-run-errors'
 import { recordLlmUsage } from '../utils/llm-usage'
+import { recordTaskRunStart } from '../utils/task-runs'
 
 vi.mock('../utils/storage-download', () => ({
   findLatestCapture: vi.fn(),
@@ -50,13 +52,12 @@ vi.mock('../utils/extract/llm-batch', () => ({
 }))
 vi.mock('../utils/extract/llm', () => ({
   extractByLlm: vi.fn(),
+}))
+vi.mock('../utils/extract/llm-errors', () => ({
   isDailyQuotaError: vi.fn(() => false),
   isLlmProviderError: vi.fn(() => false),
   isLlmProviderUnavailable: vi.fn(() => false),
   isRateLimitError: vi.fn(() => false),
-  DOCUMENT_SUMMARY_SCHEMA_NAME: 'document_summary_v1',
-  DOCUMENT_SUMMARY_SCHEMA: {},
-  DOCUMENT_SUMMARY_SYSTEM_PROMPT: 'document summary prompt',
 }))
 vi.mock('../utils/extract/llm-documents', () => ({
   prepareArchivedLlmDocuments: vi.fn(async (_auction, opts) => ({
@@ -84,11 +85,12 @@ vi.mock('../utils/task-run-errors', () => ({
 vi.mock('../utils/llm-usage', () => ({
   recordLlmUsage: vi.fn(),
 }))
+vi.mock('../utils/automatic-task-gate', () => ({ isAutomaticLlmEnabled: vi.fn(async () => true) }))
 
 vi.stubGlobal('defineTask', (definition: unknown) => definition)
 
-const { reprocessAuction, runReprocess } = await import('./reprocess')
-const { DOCUMENT_SUMMARY_SCHEMA_NAME } = await import('../utils/extract/llm')
+const { reprocessAuction, runReprocess, runReprocessTask } = await import('./reprocess')
+const { DOCUMENT_SUMMARY_SCHEMA_NAME } = await import('../utils/extract/llm-schema')
 
 const emptyArtifactState = {
   latest: null,
@@ -494,6 +496,29 @@ describe('runReprocess structured persistence', () => {
     })
   })
 
+  it('keeps a prior LLM extraction visible and warns when a forced batch submission fails', async () => {
+    const prior = extraction({ llmAnalyzedAt: '2026-08-01T10:00:00.000Z' })
+    vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map([['zvg-portal:7265', {
+      auction: { ...auction(), extraction: prior },
+      detailsId: 7,
+      detailsVersion: 2,
+      artifactVersionId: 11,
+    }]]))
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+      baseUrl: 'https://api.example.test', apiKey: 'secret', model: 'batch-model', provider: 'openai-compatible',
+    }])
+    vi.mocked(submitLlmBatch).mockResolvedValue(null)
+
+    const result = await runReprocess({ country: 'de', batch: true, force: true })
+
+    expect(result.warning).toContain('LLM-Batch-Einreichung')
+    expect(writeAuctionDetails).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ source: 'llm', livingAreaSqm: 120, landAreaSqm: 500, llmAnalyzedAt: prior.llmAnalyzedAt }),
+      expect.any(Object),
+    )
+  })
+
   it('routes a candidate needing multimodal content to the synchronous path when the configured batch provider is OpenRouter (text-only)', async () => {
     vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
       baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'sk-or-test', model: 'google/gemini-3.5-flash-lite', provider: 'openrouter',
@@ -639,6 +664,28 @@ describe('runReprocess structured persistence', () => {
       status: 'failed',
       errorMessage: 'Keine gültige Extraktion in der Provider-Antwort',
     }))
+  })
+})
+
+describe('runReprocessTask', () => {
+  it('skips a scheduled run while a manual run is active instead of superseding it', async () => {
+    const records = await readAuctionRecordMap()
+    let releaseManual!: () => void
+    const manualBlocks = new Promise<void>((resolve) => { releaseManual = resolve })
+    vi.mocked(readAuctionRecordMap).mockImplementationOnce(async () => {
+      await manualBlocks
+      return records
+    })
+
+    const manual = runReprocessTask({ trigger: 'manual' })
+    await vi.waitFor(() => expect(readAuctionRecordMap).toHaveBeenCalledTimes(2))
+    // The cron payload carries no trigger.
+    const scheduled = runReprocessTask({})
+
+    releaseManual()
+    await expect(scheduled).resolves.toStrictEqual({})
+    await expect(manual).resolves.toMatchObject({ result: expect.objectContaining({ processed: 1 }) })
+    expect(recordTaskRunStart).toHaveBeenCalledTimes(1)
   })
 })
 

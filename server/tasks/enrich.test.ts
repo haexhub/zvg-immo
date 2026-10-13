@@ -4,7 +4,7 @@ import type { AuctionFetchState } from '../utils/auction-fetch-state'
 import { crawlAll } from '../crawlers/registry'
 import { ensureAuctionIdentity, upsertCurrentAuctions } from '../utils/current-auctions'
 import { writeAuctionDetails } from '../utils/auction-details'
-import { readAuctionRecordMap } from '../utils/auction-record'
+import { readAuctionRecord, readAuctionRecordMap } from '../utils/auction-record'
 import { readLatestArtifactVersions } from '../utils/artifact-version-state'
 import {
   readAuctionFetchStates,
@@ -17,6 +17,7 @@ import { extractDocumentPhotos } from '../utils/extract/document-images'
 import { archiveAuction } from '../utils/raw-archive'
 import { recordObservations } from '../utils/history'
 import { recordCrawlScope } from '../utils/crawl-state'
+import { recordTaskRunStart } from '../utils/task-runs'
 
 vi.mock('../crawlers/registry', () => ({
   crawlAll: vi.fn(),
@@ -27,7 +28,7 @@ vi.mock('../crawlers/registry', () => ({
 vi.mock('../utils/current-auctions', () => ({ ensureAuctionIdentity: vi.fn(), upsertCurrentAuctions: vi.fn() }))
 vi.mock('../utils/auction-relationships', () => ({ rebuildAutomaticAuctionRelationships: vi.fn() }))
 vi.mock('../utils/auction-details', () => ({ writeAuctionDetails: vi.fn() }))
-vi.mock('../utils/auction-record', () => ({ readAuctionRecordMap: vi.fn() }))
+vi.mock('../utils/auction-record', () => ({ readAuctionRecord: vi.fn(), readAuctionRecordMap: vi.fn() }))
 vi.mock('../utils/artifact-version-state', () => ({ readLatestArtifactVersions: vi.fn() }))
 vi.mock('../utils/auction-fetch-state', () => ({
   readAuctionFetchStates: vi.fn(),
@@ -35,11 +36,11 @@ vi.mock('../utils/auction-fetch-state', () => ({
   writeAuctionEnrichClaim: vi.fn(),
   writeAuctionPhotoPipelineState: vi.fn(),
 }))
-vi.mock('../utils/exchange-rate', () => ({ getRates: vi.fn(async () => ({})), deriveMarketValueEur: vi.fn() }))
+vi.mock('../utils/exchange-rate', () => ({ loadRatesOrPegged: vi.fn(async () => ({})), deriveMarketValueEur: vi.fn() }))
 vi.mock('../utils/alert-matching', () => ({ matchAlerts: vi.fn() }))
 vi.mock('../utils/extract/native-images', () => ({ downloadNativeImages: vi.fn() }))
 vi.mock('../utils/extract/document-images', () => ({ extractDocumentPhotos: vi.fn() }))
-vi.mock('../utils/extract/llm-documents', () => ({
+vi.mock('../utils/extract/llm-documents-live', () => ({
   prepareLiveLlmDocuments: vi.fn(async () => ({
     documentSetComplete: true,
     documentSetItems: [],
@@ -69,9 +70,10 @@ vi.mock('../utils/task-runs', () => ({
   recordTaskRunProgress: vi.fn(),
 }))
 vi.mock('../utils/task-run-errors', () => ({ recordTaskRunError: vi.fn() }))
+vi.mock('../utils/automatic-task-gate', () => ({ isAutomaticCrawlingEnabled: vi.fn(async () => true) }))
 vi.stubGlobal('defineTask', (definition: unknown) => definition)
 
-const { runEnrich } = await import('./enrich')
+const { runEnrich, runEnrichTask } = await import('./enrich')
 
 function auction(): Auction {
   return {
@@ -146,6 +148,7 @@ beforeEach(() => {
   vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map())
   vi.mocked(readLatestArtifactVersions).mockResolvedValue(new Map())
   vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map())
+  vi.mocked(readAuctionRecord).mockResolvedValue(null)
   vi.mocked(writeAuctionDetails).mockResolvedValue({ version: 1, changed: true })
   vi.mocked(downloadNativeImages).mockResolvedValue([])
 })
@@ -203,6 +206,49 @@ describe('runEnrich structured persistence', () => {
     // anchor for "the claim was set before this iteration's work began".
     expect(vi.mocked(writeAuctionEnrichClaim).mock.invocationCallOrder[0])
       .toBeLessThan(vi.mocked(writeAuctionPhotoPipelineState).mock.invocationCallOrder[0]!)
+  })
+
+  it('reports a per-item state-write failure and keeps working the remaining items', async () => {
+    const first = auction()
+    const second = { ...auction(), externalId: '43' }
+    vi.mocked(crawlAll).mockResolvedValue(crawlResult([first, second]))
+    vi.mocked(writeAuctionPhotoPipelineState).mockRejectedValueOnce(new Error('connection reset'))
+
+    const outcome = await runEnrich({ country: 'de' })
+
+    expect(outcome.result).toMatchObject({ archived: 2, failed: 1 })
+    expect(outcome.warning).toContain('connection reset')
+    expect(writeAuctionEnrichClaim).toHaveBeenCalledWith('test-platform', '42', null)
+    expect(writeAuctionEnrichClaim).toHaveBeenCalledWith('test-platform', '43', null)
+  })
+
+  it('keeps an aborted run pending until every sibling worker settled its in-flight item', async () => {
+    const first = auction()
+    const second = { ...auction(), externalId: '43' }
+    vi.mocked(crawlAll).mockResolvedValue(crawlResult([first, second]))
+    const controller = new AbortController()
+    let releaseFirst!: () => void
+    const firstBlocks = new Promise<void>((resolve) => { releaseFirst = resolve })
+    vi.mocked(readAuctionRecord).mockImplementation(async (_platform, externalId) => {
+      if (externalId === '42') {
+        await firstBlocks
+        return null
+      }
+      controller.abort(new Error('enrich wurde durch einen neueren Lauf beendet'))
+      throw new Error('aborted mid-item')
+    })
+
+    let settled = false
+    const run = runEnrich({ country: 'de' }, controller.signal).finally(() => { settled = true })
+    await vi.waitFor(() => expect(writeAuctionEnrichClaim).toHaveBeenCalledWith('test-platform', '43', null))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    // The task lock is released only when runEnrich settles; the sibling
+    // still working on #42 must not be left running past that point.
+    expect(settled).toBe(false)
+
+    releaseFirst()
+    await expect(run).rejects.toThrow('enrich wurde durch einen neueren Lauf beendet')
+    expect(writeAuctionEnrichClaim).toHaveBeenCalledWith('test-platform', '42', null)
   })
 
   it('checks native photos on the first pass and writes details only once', async () => {
@@ -284,6 +330,84 @@ describe('runEnrich structured persistence', () => {
   })
 })
 
+describe('runEnrich concurrent extraction writes', () => {
+  const rulesExtraction = {
+    propertyType: null,
+    landAreaSqm: null,
+    livingAreaSqm: null,
+    rooms: null,
+    units: null,
+    source: 'rules' as const,
+    confidence: 'low' as const,
+    at: '2026-08-01T10:00:00.000Z',
+  }
+  const llmExtraction = {
+    ...rulesExtraction,
+    propertyType: 'einfamilienhaus' as const,
+    livingAreaSqm: 120,
+    source: 'llm' as const,
+    confidence: 'high' as const,
+    llmAnalyzedAt: '2026-08-02T11:00:00.000Z',
+  }
+
+  it('builds the worker entry from the live record, not the run-start snapshot', async () => {
+    const listing = auction()
+    vi.mocked(crawlAll).mockResolvedValue(crawlResult([listing]))
+    // Snapshot has no extraction (so the auction is todo); reprocess stored
+    // an LLM extraction while the run was working.
+    vi.mocked(readAuctionRecord).mockResolvedValue(
+      { auction: { ...listing, extraction: llmExtraction }, detailsId: 2, detailsVersion: 2, artifactVersionId: 5 },
+    )
+
+    await runEnrich({ country: 'de' })
+
+    expect(writeAuctionDetails).toHaveBeenCalledWith(
+      listing,
+      expect.objectContaining({ source: 'llm', llmAnalyzedAt: llmExtraction.llmAnalyzedAt }),
+      { artifactVersionId: 5 },
+    )
+  })
+
+  it('leaves the photo set unchecked when the worker could not store it', async () => {
+    const listing = { ...auction(), photoUrls: ['https://example.test/front.jpg'] }
+    vi.mocked(crawlAll).mockResolvedValue(crawlResult([listing]))
+    vi.mocked(downloadNativeImages).mockResolvedValue(['abc123.jpg'])
+    vi.mocked(writeAuctionDetails).mockRejectedValueOnce(new Error('connection reset'))
+
+    const outcome = await runEnrich({ country: 'de' })
+
+    expect(outcome.warning).toContain('connection reset')
+    // finalize writes the re-read (photo-less) record; a "checked" state here
+    // would suppress the backfill that recovers the photos next run.
+    expect(writeAuctionPhotoPipelineState).not.toHaveBeenCalled()
+  })
+
+  it('finalizes untouched listings with the re-read extraction, not the run-start snapshot', async () => {
+    const listing = auction()
+    vi.mocked(crawlAll).mockResolvedValue(crawlResult([listing]))
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([
+      ['test-platform:42', fetchState({ photosCheckedAt: '2026-08-01T10:00:00.000Z', photoPipelineVersion: 99 })],
+    ]))
+    vi.mocked(readAuctionRecordMap)
+      .mockResolvedValueOnce(new Map([
+        ['test-platform:42', { auction: { ...listing, extraction: rulesExtraction }, detailsId: 1, detailsVersion: 1, artifactVersionId: 5 }],
+      ]))
+      .mockResolvedValueOnce(new Map([
+        ['test-platform:42', { auction: { ...listing, extraction: llmExtraction }, detailsId: 2, detailsVersion: 2, artifactVersionId: 5 }],
+      ]))
+
+    const outcome = await runEnrich({ country: 'de' })
+
+    expect(outcome.result).toMatchObject({ todo: 0 })
+    expect(writeAuctionDetails).toHaveBeenCalledTimes(1)
+    expect(writeAuctionDetails).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ source: 'llm', llmAnalyzedAt: llmExtraction.llmAnalyzedAt }),
+      { artifactVersionId: 5 },
+    )
+  })
+})
+
 describe('runEnrich scoped identity retry', () => {
   it('skips the live crawl and force-reprocesses exactly the requested identity, bypassing finalizeEnrichPersistence', async () => {
     const listing = auction()
@@ -353,5 +477,52 @@ describe('runEnrich scoped identity retry', () => {
 
     expect(crawlAll).not.toHaveBeenCalled()
     expect(outcome.result).toMatchObject({ crawled: 0, archived: 0 })
+  })
+})
+
+describe('runEnrichTask', () => {
+  function blockCrawl(listing: Auction) {
+    let release!: () => void
+    const blocked = new Promise<void>((resolve) => { release = resolve })
+    vi.mocked(crawlAll).mockImplementation(async () => {
+      await blocked
+      return crawlResult([listing])
+    })
+    return release
+  }
+
+  it('queues a scoped retry behind an active full run instead of aborting it', async () => {
+    const listing = auction()
+    const releaseCrawl = blockCrawl(listing)
+    vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map([
+      ['test-platform:42', { auction: listing, detailsId: 1, detailsVersion: 1, artifactVersionId: 5 }],
+    ]))
+
+    const full = runEnrichTask({ country: 'de', trigger: 'manual' })
+    await vi.waitFor(() => expect(crawlAll).toHaveBeenCalledTimes(1))
+    const retry = runEnrichTask({ identities: [{ platform: 'test-platform', externalId: '42' }], trigger: 'manual' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(recordTaskRunStart).toHaveBeenCalledTimes(1)
+
+    releaseCrawl()
+    await expect(full).resolves.toMatchObject({ result: expect.objectContaining({ crawled: 1 }) })
+    // The full run reached its finalize phase instead of being superseded.
+    expect(recordObservations).toHaveBeenCalledTimes(1)
+    await expect(retry).resolves.toMatchObject({ result: expect.objectContaining({ crawled: 1, archived: 1 }) })
+    expect(recordTaskRunStart).toHaveBeenCalledTimes(2)
+  })
+
+  it('skips a scheduled run while a manual run is active', async () => {
+    const releaseCrawl = blockCrawl(auction())
+
+    const manual = runEnrichTask({ country: 'de', trigger: 'manual' })
+    await vi.waitFor(() => expect(crawlAll).toHaveBeenCalledTimes(1))
+    // The cron payload carries no trigger.
+    const scheduled = runEnrichTask({})
+
+    releaseCrawl()
+    await expect(scheduled).resolves.toStrictEqual({})
+    await expect(manual).resolves.toMatchObject({ result: expect.objectContaining({ crawled: 1 }) })
+    expect(crawlAll).toHaveBeenCalledTimes(1)
   })
 })

@@ -23,7 +23,7 @@ function searchHtml(ids: string[], total: number, nextStartAtHit?: number): stri
 function detailHtml(id: string): string {
   return `
     <h3 id="h-Adress">Adress</h3><p class="normal">Testgatan ${id}</p>
-    <h3 id="h-Kommun">Kommun</h3><p class="normal">Test kommun</p>
+    <h3 id="h-Kommun">Kommun</h3><p class="normal">Umeå kommun</p>
     <h2 id="h-Upplatelseform">Upplatelseform</h2><p class="normal">Äganderätt.</p>
     <div id="datumet">2026-08-27</div>
   `
@@ -32,7 +32,7 @@ function detailHtml(id: string): string {
 function detailHtmlWithGallery(id: string): string {
   return `
     <h3 id="h-Adress">Adress</h3><p class="normal">Testgatan ${id}</p>
-    <h3 id="h-Kommun">Kommun</h3><p class="normal">Test kommun</p>
+    <h3 id="h-Kommun">Kommun</h3><p class="normal">Umeå kommun</p>
     <h2 id="h-Upplatelseform">Upplatelseform</h2><p class="normal">Äganderätt.</p>
     <div id="datumet">2026-08-27</div>
     <img src="/images/18.static/1/logotyp-footer.png">
@@ -61,7 +61,7 @@ function withdrawnDetailHtml(id: string): string {
   return `
     <h3 id="h-Status">Status</h3><p class="normal">Utgår</p>
     <h3 id="h-Adress">Adress</h3><p class="normal">Testgatan ${id}</p>
-    <h3 id="h-Kommun">Kommun</h3><p class="normal">Test kommun</p>
+    <h3 id="h-Kommun">Kommun</h3><p class="normal">Umeå kommun</p>
     <div id="datumet">2026-08-27</div>
   `
 }
@@ -312,6 +312,7 @@ describe('fetchAllListings', () => {
 
     expect(result.auctions.map((a) => a.externalId)).toEqual(['101001', '101002', '101003'])
     expect(result.total).toBe(3)
+    expect(result.complete).toBe(true)
     expect(requestedUrls).toContain(`${BASE}/Sokfastigheterbostadsratter.html?query=*&startAtHit=10`)
     expect(requestedUrls).toContain(`${BASE}/22660.html?query=*&startAtHit=10`)
     expect(requestedUrls.filter((url) => url === `${BASE}/101002.html`)).toHaveLength(1)
@@ -336,7 +337,29 @@ describe('fetchAllListings', () => {
     const result = await fetchAllListings('se-kronofogden')
 
     expect(result.auctions.map((a) => a.externalId)).toEqual(['101003'])
+    expect(result.complete).toBe(false)
     expect(warn).toHaveBeenCalledOnce()
+  })
+
+  it('marks the crawl incomplete and logs when a detail page fails', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
+      const href = String(url)
+      if (href === `${BASE}/Sokfastigheterbostadsratter.html?query=*`) {
+        return new Response(searchHtml(['101001', '101002'], 2), { status: 200 })
+      }
+      if (href === `${BASE}/22660.html?query=*`) return new Response(searchHtml([], 0), { status: 200 })
+      if (href === `${BASE}/101002.html`) return new Response('upstream error', { status: 500 })
+      const id = href.match(/\/(\d+)\.html$/)?.[1]
+      if (id) return new Response(detailHtml(id), { status: 200 })
+      return new Response('not found', { status: 404 })
+    }))
+
+    const result = await fetchAllListings('se-kronofogden')
+
+    expect(result.auctions.map((a) => a.externalId)).toEqual(['101001'])
+    expect(result.complete).toBe(false)
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('101002'))
   })
 
   it('uses the embedded showing address with postcode when Kronofogden exposes it', async () => {

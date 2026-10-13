@@ -35,7 +35,10 @@ async function enrichOne(auction: Auction): Promise<void> {
   // Aufgehobene auctions are skipped inside enrichInBatches (no error), so a
   // throw here only signals real fetch failures — the enrich task then leaves
   // the listing unstamped and retries it on a later run.
-  if (r.errors > 0) throw new Error('zvbawu detail fetch failed')
+  if (r.errors > 0) {
+    // The enrich task only logs the message, so carry the reason in it too.
+    throw new Error(`zvbawu detail fetch failed: ${(r.firstError as Error).message}`, { cause: r.firstError })
+  }
 }
 
 async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
@@ -73,7 +76,7 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
     const result = await enrichInBatches(auctions, applyDetail)
     if (result.errors > 0) {
       console.warn(
-        `[zvbawu] enriched ${result.enriched}/${auctions.length}, ${result.errors} detail fetches failed`,
+        `[zvbawu] enriched ${result.enriched}/${auctions.length}, ${result.errors} detail fetches failed (first: ${(result.firstError as Error).message})`,
       )
     }
   }

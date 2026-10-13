@@ -89,6 +89,10 @@ let progressPollTimer: ReturnType<typeof setInterval> | null = null
 const PROGRESS_POLL_GRACE_MS = 30_000
 let progressPollObservedRunning = false
 let progressPollStartedAt = 0
+// A failed refresh keeps the last snapshot, whose stale "running" status
+// would otherwise keep a broken endpoint polled every 3 s indefinitely.
+const PROGRESS_POLL_MAX_FAILURES = 10
+let progressPollFailures = 0
 // Module-scope, not useState: several settings cards call loadLlmBatchJobs()
 // from their own onMounted, all firing in the same tick — without this,
 // every /settings page load fired the same expensive endpoint 4x in
@@ -173,7 +177,11 @@ export function useSettingsTaskOverview() {
       llmBatchJobsError.value = null
       try {
         llmBatchJobs.value = await $fetch<LlmBatchJobsOverview>('/api/settings/llm-batch-jobs', { cache: 'no-store' })
-        if (anyTrackedTaskRunning()) startProgressPolling()
+        if (!progressPollTimer && anyTrackedTaskRunning()) {
+          startProgressPolling()
+          // Running was already observed here, so no grace window is needed.
+          progressPollObservedRunning = true
+        }
       } catch (err) {
         llmBatchJobsError.value = normalizeSettingsError(err, t('settings.llmBatch.loadError'))
       } finally {
@@ -186,11 +194,21 @@ export function useSettingsTaskOverview() {
   }
 
   function startProgressPolling(): void {
-    if (progressPollTimer) return
-    progressPollObservedRunning = anyTrackedTaskRunning()
+    // Every call announces a freshly-triggered task, so the grace window
+    // restarts even while the timer already polls an earlier run — otherwise
+    // observedRunning left over from that run stops polling on the first idle
+    // tick, before the new task got to record "running".
+    progressPollObservedRunning = false
     progressPollStartedAt = Date.now()
+    progressPollFailures = 0
+    if (progressPollTimer) return
     progressPollTimer = setInterval(async () => {
       await loadLlmBatchJobs()
+      if (llmBatchJobsError.value) {
+        if (++progressPollFailures >= PROGRESS_POLL_MAX_FAILURES) stopProgressPolling()
+        return
+      }
+      progressPollFailures = 0
       if (anyTrackedTaskRunning()) {
         progressPollObservedRunning = true
         return

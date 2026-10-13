@@ -1,12 +1,12 @@
 import { recordTaskRunEnd, recordTaskRunStart } from '~/server/utils/task-runs'
-import { runExclusiveTask } from '~/server/utils/exclusive-task'
+import { isTaskActive, runExclusiveTask } from '~/server/utils/exclusive-task'
 import { isAutomaticLlmEnabled } from '~/server/utils/automatic-task-gate'
-import type { ReprocessOptions, ReprocessResult } from './reprocess-input'
-import { runReprocess } from './reprocess-run'
+import type { ReprocessOptions, ReprocessResult } from '../utils/tasks/reprocess-input'
+import { runReprocess } from '../utils/tasks/reprocess-run'
 
-export { reprocessAuction } from './reprocess-single'
-export { runReprocess } from './reprocess-run'
-export type { ReprocessOptions, ReprocessResult } from './reprocess-input'
+export { reprocessAuction } from '../utils/tasks/reprocess-single'
+export { runReprocess } from '../utils/tasks/reprocess-run'
+export type { ReprocessOptions, ReprocessResult } from '../utils/tasks/reprocess-input'
 
 /**
  * Runs extraction with the task's durable status bookkeeping and in-process
@@ -14,11 +14,18 @@ export type { ReprocessOptions, ReprocessResult } from './reprocess-input'
  * `runTask`: Nitro returns the already-running task for a duplicate task name
  * and silently discards the new payload. That made a retry request a no-op
  * whenever the scheduled reprocess was still active. runExclusiveTask keeps
- * the intended latest-run-wins behavior while preserving the new options.
+ * the intended latest-run-wins behavior while preserving the new options —
+ * but only between manual runs: a scheduled/boot run carries none of the
+ * manual scope (country, force, failedOnly, …) and skips instead of aborting
+ * an explicitly requested run.
  */
 export async function runReprocessTask(options: ReprocessOptions = {}): Promise<{ result: ReprocessResult } | Record<string, never>> {
   if (options.trigger !== 'manual' && !await isAutomaticLlmEnabled()) {
     console.log('[reprocess] automatic LLM processing disabled — skipping scheduled/boot run')
+    return {}
+  }
+  if (options.trigger !== 'manual' && isTaskActive('reprocess')) {
+    console.log('[reprocess] a run is already active — skipping scheduled/boot run')
     return {}
   }
   return await runExclusiveTask('reprocess', async (signal) => {

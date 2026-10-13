@@ -115,6 +115,25 @@ describe('submitGeminiBatch', () => {
     expect(recordLlmBatchCapability).toHaveBeenCalledWith('gemini-native', { ok: true, message: null, source: 'enrich' })
   })
 
+  it('caps each item at the configured maxTokens like the sync path', async () => {
+    stubOfetch([
+      { match: '/upload/v1beta/files', raw: { headers: { 'x-goog-upload-url': 'https://upload.example/session-1' } } },
+      { match: 'upload.example/session-1', data: { file: { name: 'files/abc' } } },
+      { match: ':batchGenerateContent', data: { name: 'batches/xyz' } },
+    ])
+    const { submitGeminiBatch } = await import('./gemini-batch')
+
+    await submitGeminiBatch(
+      [{ key: 'zvg-portal:1', input: { title: 'Haus', description: 'schön', pdfText: null } }],
+      { ...config, maxTokens: 2048 },
+      'enrich',
+    )
+
+    const uploadCall = vi.mocked($fetch).mock.calls.find(([url]) => (url as string).includes('upload.example/session-1'))
+    const jsonl = new TextDecoder().decode((uploadCall?.[1] as { body: Uint8Array }).body)
+    expect(JSON.parse(jsonl.split('\n')[0]!).request.generationConfig.maxOutputTokens).toBe(2048)
+  })
+
   it('records the real Google error body as capability ok:false on a rejected submit', async () => {
     stubOfetch([
       { match: '/upload/v1beta/files', raw: { headers: { 'x-goog-upload-url': 'https://upload.example/session-1' } } },
@@ -349,7 +368,7 @@ describe('pollGeminiBatch', () => {
         data: { metadata: { state: 'JOB_STATE_SUCCEEDED' }, response: { output: { responsesFile: 'files/results' } } },
       },
     ])
-    const { pollGeminiBatch } = await import('./gemini-batch')
+    const { pollGeminiBatch } = await import('./gemini-batch-client')
 
     await expect(pollGeminiBatch('batches/xyz', config)).resolves.toEqual({
       state: 'succeeded',
@@ -359,7 +378,7 @@ describe('pollGeminiBatch', () => {
 
   it('falls back to a bare top-level state field', async () => {
     stubOfetch([{ match: '/v1beta/batches/xyz', data: { state: 'RUNNING' } }])
-    const { pollGeminiBatch } = await import('./gemini-batch')
+    const { pollGeminiBatch } = await import('./gemini-batch-client')
 
     await expect(pollGeminiBatch('batches/xyz', config)).resolves.toEqual({ state: 'pending' })
   })
@@ -371,7 +390,7 @@ describe('pollGeminiBatch', () => {
         data: { state: 'JOB_STATE_SUCCEEDED', dest: { fileName: 'files/results' } },
       },
     ])
-    const { pollGeminiBatch } = await import('./gemini-batch')
+    const { pollGeminiBatch } = await import('./gemini-batch-client')
 
     await expect(pollGeminiBatch('batches/xyz', config)).resolves.toEqual({
       state: 'succeeded',
@@ -381,7 +400,7 @@ describe('pollGeminiBatch', () => {
 
   it('reports failed for a failed/cancelled state', async () => {
     stubOfetch([{ match: '/v1beta/batches/xyz', data: { metadata: { state: 'JOB_STATE_FAILED' } } }])
-    const { pollGeminiBatch } = await import('./gemini-batch')
+    const { pollGeminiBatch } = await import('./gemini-batch-client')
 
     await expect(pollGeminiBatch('batches/xyz', config)).resolves.toEqual({ state: 'failed' })
   })
@@ -393,7 +412,7 @@ describe('pollGeminiBatch', () => {
         data: { metadata: { state: 'JOB_STATE_FAILED' }, error: { code: 13, message: 'internal error' } },
       },
     ])
-    const { pollGeminiBatch } = await import('./gemini-batch')
+    const { pollGeminiBatch } = await import('./gemini-batch-client')
 
     await expect(pollGeminiBatch('batches/xyz', config)).resolves.toEqual({
       state: 'failed',
@@ -403,28 +422,28 @@ describe('pollGeminiBatch', () => {
 
   it('reports expired for an expired state', async () => {
     stubOfetch([{ match: '/v1beta/batches/xyz', data: { metadata: { state: 'JOB_STATE_EXPIRED' } } }])
-    const { pollGeminiBatch } = await import('./gemini-batch')
+    const { pollGeminiBatch } = await import('./gemini-batch-client')
 
     await expect(pollGeminiBatch('batches/xyz', config)).resolves.toEqual({ state: 'expired' })
   })
 
   it('treats success without a discoverable result file name as failed', async () => {
     stubOfetch([{ match: '/v1beta/batches/xyz', data: { metadata: { state: 'JOB_STATE_SUCCEEDED' } } }])
-    const { pollGeminiBatch } = await import('./gemini-batch')
+    const { pollGeminiBatch } = await import('./gemini-batch-client')
 
     await expect(pollGeminiBatch('batches/xyz', config)).resolves.toEqual({ state: 'failed' })
   })
 
   it('treats an unrecognized state as pending rather than throwing', async () => {
     stubOfetch([{ match: '/v1beta/batches/xyz', data: { metadata: { state: 'SOMETHING_NEW' } } }])
-    const { pollGeminiBatch } = await import('./gemini-batch')
+    const { pollGeminiBatch } = await import('./gemini-batch-client')
 
     await expect(pollGeminiBatch('batches/xyz', config)).resolves.toEqual({ state: 'pending' })
   })
 
   it('treats a request failure as pending (retried next tick)', async () => {
     stubOfetch([{ match: '/v1beta/batches/xyz', error: new Error('timeout') }])
-    const { pollGeminiBatch } = await import('./gemini-batch')
+    const { pollGeminiBatch } = await import('./gemini-batch-client')
 
     await expect(pollGeminiBatch('batches/xyz', config)).resolves.toEqual({ state: 'pending' })
   })
@@ -462,7 +481,7 @@ describe('fetchGeminiBatchResults', () => {
       JSON.stringify({ key: 'zvg-portal:2', error: { message: 'internal error' } }),
     ]
     stubOfetch([{ match: '/download/v1beta/files/results', data: lines.join('\n') }])
-    const { fetchGeminiBatchResults } = await import('./gemini-batch')
+    const { fetchGeminiBatchResults } = await import('./gemini-batch-client')
 
     const results = await fetchGeminiBatchResults('files/results', config)
 
@@ -477,7 +496,7 @@ describe('fetchGeminiBatchResults', () => {
   it('skips malformed lines instead of throwing', async () => {
     const lines = ['not json', JSON.stringify({ key: 'zvg-portal:1', response: {} })]
     stubOfetch([{ match: '/download/v1beta/files/results', data: lines.join('\n') }])
-    const { fetchGeminiBatchResults } = await import('./gemini-batch')
+    const { fetchGeminiBatchResults } = await import('./gemini-batch-client')
 
     const results = await fetchGeminiBatchResults('files/results', config)
 
@@ -500,7 +519,7 @@ describe('fetchGeminiBatchResults', () => {
       }),
     ]
     stubOfetch([{ match: '/download/v1beta/files/results', data: lines.join('\n') }])
-    const { fetchGeminiBatchResults } = await import('./gemini-batch')
+    const { fetchGeminiBatchResults } = await import('./gemini-batch-client')
 
     const results = await fetchGeminiBatchResults('files/results', config, { '1': 'zvg-portal:2' })
 
@@ -513,10 +532,10 @@ describe('fetchGeminiBatchResults', () => {
     })
   })
 
-  it('returns an empty array when the download request fails', async () => {
+  it('rejects when the download request fails so the poll task retries the job', async () => {
     stubOfetch([{ match: '/download/v1beta/files/results', error: new Error('gone') }])
-    const { fetchGeminiBatchResults } = await import('./gemini-batch')
+    const { fetchGeminiBatchResults } = await import('./gemini-batch-client')
 
-    await expect(fetchGeminiBatchResults('files/results', config)).resolves.toEqual([])
+    await expect(fetchGeminiBatchResults('files/results', config)).rejects.toThrow('gone')
   })
 })

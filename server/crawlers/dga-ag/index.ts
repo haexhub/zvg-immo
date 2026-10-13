@@ -10,10 +10,14 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
   const all = isAllScope(opts.region)
   const regionName = DGA_REGION_NAMES[opts.region]
   const scoped = all ? auctions : auctions.filter((a) => a.region === regionName)
+  // Not a single Bundesland marker on a non-empty page means the markup
+  // changed: every scoped run would come back empty yet "successful" and
+  // crawl_state would hide the whole dga-ag catalog as gone.
+  const markersMissing = auctions.length > 0 && auctions.every((a) => !a.region)
 
   return {
     platform: PLATFORM_ID,
-    platformsSucceeded: [PLATFORM_ID],
+    platformsSucceeded: !all && markersMissing ? [] : [PLATFORM_ID],
     source: BASE_URL,
     countries: [COUNTRY],
     regions: all ? DGA_REGIONS.map((r) => r.name) : [regionName ?? opts.region],

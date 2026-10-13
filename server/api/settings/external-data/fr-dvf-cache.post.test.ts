@@ -7,7 +7,7 @@ afterEach(() => {
 })
 
 describe('/api/settings/external-data/fr-dvf-cache', () => {
-  it('passes a valid import payload to the task helper', async () => {
+  it('passes a valid import payload to the task helper without a request-chosen cachePath', async () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     vi.stubGlobal('readBody', vi.fn(async () => ({
       csvPath: '/data/dvf.csv',
@@ -34,7 +34,6 @@ describe('/api/settings/external-data/fr-dvf-cache', () => {
     expect(runTask).toHaveBeenCalledWith('import-fr-dvf-cache', {
       payload: {
         csvPath: '/data/dvf.csv',
-        cachePath: '/cache/fr-dvf.json',
         sourceVersion: 'dvf-2025',
         generatedAt: '2026-07-26T00:00:00.000Z',
       },

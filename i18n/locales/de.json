@@ -87,6 +87,7 @@
     "loadingData": "Lade Daten …",
     "loadError": "Fehler beim Laden: {msg}",
     "geoError": "Fehler beim Geokodieren: {msg}",
+    "loadMoreError": "Weitere Auktionen konnten nicht geladen werden.",
     "loadingLocations": "Lade Standorte …",
     "initialLoadHint": "Erstaufruf kann mehrere Minuten dauern (alle registrierten Quellen parallel)",
     "noResults": "Keine Termine entsprechen den Filtern.",
@@ -162,6 +163,17 @@
         "attention": "Prüfen"
       }
     },
+    "outbound": {
+      "title": "Ausgehende Nachrichten",
+      "description": "Zustand der langlebigen Mail-Outbox; Inhalte und Empfänger bleiben verborgen.",
+      "refresh": "Aktualisieren",
+      "loadError": "Zustand konnte nicht geladen werden.",
+      "pending": "Ausstehend: {count}",
+      "processing": "In Arbeit: {count}",
+      "failed": "Dauerhaft fehlgeschlagen: {count}",
+      "attempt": "Versuch {count}",
+      "unknownError": "unbekannt"
+    },
     "messageDetails": {
       "show": "{count} Einträge anzeigen",
       "hide": "Einträge ausblenden"
@@ -215,6 +227,7 @@
       "updateError": "Aktualisieren fehlgeschlagen.",
       "hasInquiries": "Anwalt hat bereits Anfragen — bitte deaktivieren statt löschen.",
       "deleteError": "Löschen fehlgeschlagen.",
+      "deleteConfirm": "Anwalt „{name}“ wirklich löschen?",
       "saveError": "Speichern fehlgeschlagen.",
       "colName": "Name",
       "colCountries": "Länder",
@@ -285,6 +298,7 @@
       "addProfile": "Profil hinzufügen",
       "removeProfile": "Profil entfernen",
       "deleteError": "Löschen fehlgeschlagen.",
+      "deleteConfirm": "Profil „{name}“ wirklich löschen? Der gespeicherte API-Key wird entfernt und das Profil aus allen Modellzuordnungen gestrichen.",
       "profileNameLabel": "Profilname",
       "newProfileName": "Neues LLM-Profil",
       "providerLabel": "Provider",
@@ -409,18 +423,9 @@
     },
     "osmImport": {
       "title": "OSM-Standortdaten",
-      "description": "Lädt Meer/See/Fluss/Berg/Flughafen/Ski-Daten pro Land aus OpenStreetMap-Extracts. Ein Land ohne Daten wird beim täglichen Lauf automatisch geladen; ein Land mit Daten wird danach nie mehr automatisch neu geladen — nur ein manueller Reimport hier löst das aus.",
-      "loadError": "Status konnte nicht geladen werden.",
-      "requestError": "Reimport konnte nicht angefordert werden.",
-      "refresh": "Status aktualisieren",
-      "rowCount": "{count} Objekte geladen",
       "rawRowCount": "{count} OSM-Rohobjekte verfügbar",
-      "noData": "Noch keine Daten",
-      "requestMissing": "Fehlende Daten laden",
       "loadOpen": "Offene OSM-Daten laden",
       "retryBlocked": "Blockierte OSM-Daten erneut laden",
-      "request": "Reimport anfordern",
-      "requesting": "Anfordern …",
       "pending": "Angefordert am {at} — wird beim nächsten täglichen Lauf verarbeitet."
     },
     "geoMetrics": {
@@ -485,6 +490,8 @@
       "run": "Testlauf starten",
       "running": "Läuft …",
       "runError": "Testlauf fehlgeschlagen.",
+      "started": "Testlauf gestartet — läuft im Hintergrund, das Ergebnis erscheint hier.",
+      "failed": "Testlauf fehlgeschlagen: {message}",
       "candidates": "Kandidaten",
       "processed": "Verarbeitet",
       "skipped": "Übersprungen",
@@ -962,7 +969,9 @@
       "title": "Favoriten",
       "empty": "Noch keine Favoriten.",
       "added": "Hinzugefügt {date}",
-      "remove": "Entfernen"
+      "remove": "Entfernen",
+      "loadError": "Die Favoriten konnten nicht geladen werden.",
+      "updateError": "Die Favoriten konnten nicht geändert werden."
     }
   },
   "objektDetail": {
@@ -1458,6 +1467,7 @@
   },
   "lotPopover": {
     "loadingPhotos": "Lade Fotos …",
+    "loadError": "Objektdetails konnten nicht geladen werden.",
     "untitled": "Objekt",
     "auctionDate": "Termin",
     "marketValue": "Verkehrswert",

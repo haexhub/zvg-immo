@@ -149,15 +149,17 @@ export function mapItem(item: ListItem, platformId: string): Auction {
 
 export async function fetchAllListings(
   platformId: string,
-): Promise<{ auctions: Auction[]; total: number | null }> {
+): Promise<{ auctions: Auction[]; total: number | null; complete: boolean }> {
   const auctions: Auction[] = []
   for (let page = 1; page <= MAX_PAGES; page++) {
     const html = await fetchListPage(page)
     const items = parseListPage(html)
-    if (items.length === 0) break
+    if (items.length === 0) return { auctions, total: auctions.length, complete: true }
     auctions.push(
       ...items.filter((item) => !isNonPropertyTitle(item.title)).map((item) => mapItem(item, platformId)),
     )
   }
-  return { auctions, total: auctions.length }
+  // Never hit an empty page: the cap cut the walk short.
+  console.warn(`[bcpea] MAX_PAGES (${MAX_PAGES}) reached, later listings were dropped — raise the cap`)
+  return { auctions, total: auctions.length, complete: false }
 }

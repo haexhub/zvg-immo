@@ -198,10 +198,10 @@ export async function deleteRawArchiveCountry(countryInput: string): Promise<Del
       }
     }))
   } catch (err) {
-    throw createError({
-      statusCode: 500,
-      statusMessage: `Archiv konnte nicht gelöscht werden: ${(err as Error).message}`,
-    })
+    // Drizzle's message is "Failed query: <full SQL>" — useless to the admin
+    // and it drops SQLSTATE/stack; keep those in the server log instead.
+    console.error('[deleteRawArchiveCountry]', err)
+    throw createError({ statusCode: 500, statusMessage: 'Archiv konnte nicht gelöscht werden.', cause: err })
   }
 
   const keys = orphanedBlobs.map((row) => row.s3Key)

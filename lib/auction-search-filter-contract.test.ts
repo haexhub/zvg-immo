@@ -22,6 +22,24 @@ describe('auction search filter contract', () => {
     expect(serializeAuctionSearchFilters(parseAuctionSearchFilters(query, true), true)).toEqual(query)
   })
 
+  it('normalizes country codes to the lowercase ISO form crawled auctions carry', () => {
+    const filters = parseAuctionSearchFilters({ country: 'DE,de,At,xyz' })
+    expect(filters.countries).toEqual(['de', 'at'])
+    expect(serializeAuctionSearchFilters(filters)).toEqual({ country: 'de,at' })
+  })
+
+  it('keeps UI region keys and an explicit hideRulesOnly opt-out across a submit/parse round trip', () => {
+    // The landing bar serializes its own refs and /search parses them back.
+    const query = serializeAuctionSearchFilters(
+      { ...defaultAuctionSearchFilters(), countries: ['de'], regionKeys: ['de:sn'], hideRulesOnly: false },
+      true,
+    )
+    expect(query).toEqual({ country: 'de', region: 'de:sn', llmOnly: '0' })
+    const parsed = parseAuctionSearchFilters(query, true)
+    expect(parsed.regionKeys).toEqual(['de:sn'])
+    expect(parsed.hideRulesOnly).toBe(false)
+  })
+
   it('uses defaults for empty or invalid values and does not turn empty numbers into zero', () => {
     expect(parseAuctionSearchFilters({ priceMin: '', sort: 'wrong' })).toEqual(defaultAuctionSearchFilters())
   })
@@ -32,8 +50,28 @@ describe('auction search filter contract', () => {
     expect(unsupportedAlertFilterKeys(filters)).toEqual(['nearSea'])
   })
 
+  it('rejects extraction-backed alert filters a fresh list crawl can never satisfy', () => {
+    const filters = parseAuctionSearchFilters({
+      livMin: '0', yearBuiltMax: '2000', condition: 'gepflegt', features: 'balkon', photos: '1', llmOnly: '1',
+      nearSea: '0', priceMin: '1000', category: 'einfamilienhaus',
+    })
+    expect(unsupportedAlertFilterKeys(filters)).toEqual([
+      'livMin', 'yearBuiltMax', 'condition', 'features', 'onlyWithPhotos', 'hideRulesOnly',
+    ])
+    expect(unsupportedAlertFilterKeys(parseAuctionSearchFilters({ llmOnly: '0', priceMax: '5' }))).toEqual([])
+  })
+
   it('defaults a saved coordinate pair without a radius to 25km so distance filtering stays executable', () => {
     const filters = parseAuctionSearchFilters({ nearLat: '52.5', nearLng: '13.4' })
     expect(filters.nearRadius).toBe(25)
+  })
+
+  it('drops coordinates outside the WGS84 ranges before they reach PostGIS', () => {
+    expect(parseAuctionSearchFilters({ nearLat: '90.1', nearLng: '13.4', nearRadius: '25' })).toMatchObject({
+      nearLat: null, nearLng: 13.4, nearRadius: 25,
+    })
+    expect(parseAuctionSearchFilters({ nearLat: '52.5', nearLng: '180.1', nearRadius: '25' })).toMatchObject({
+      nearLat: 52.5, nearLng: null, nearRadius: 25,
+    })
   })
 })

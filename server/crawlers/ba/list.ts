@@ -110,45 +110,63 @@ function mapItem(item: ListItem, detail: DetailResponse | null, platformId: stri
   }
 }
 
-export async function fetchAllListings(platformId: string): Promise<{ auctions: Auction[]; total: number | null }> {
+/** Runs `fn(0..count-1)` with at most `concurrency` calls in flight. */
+async function runBounded(count: number, concurrency: number, fn: (i: number) => Promise<void>): Promise<void> {
+  let cursor = 0
+  async function worker() {
+    while (cursor < count) await fn(cursor++)
+  }
+  await Promise.all(Array.from({ length: concurrency }, () => worker()))
+}
+
+export async function fetchAllListings(
+  platformId: string,
+): Promise<{ auctions: Auction[]; total: number | null; complete: boolean }> {
   const firstPage = await apiFetch<ListItem[]>(
     `/sudske-prodaje?page=1&pageSize=${PAGE_SIZE}&vrstaPredmeta=${VRSTA}`,
   )
-  if (firstPage.length === 0) return { auctions: [], total: 0 }
+  if (!Array.isArray(firstPage)) throw new Error('pravosudje.ba: unexpected list response shape')
+  if (firstPage.length === 0) return { auctions: [], total: 0, complete: true }
 
+  // The page count derives from `total`; a missing/garbled value would make
+  // Array.from({ length: NaN }) silently fetch page 1 only.
   const total = firstPage[0]!.total
+  if (!Number.isInteger(total) || total < 0) {
+    throw new Error(`pravosudje.ba: invalid total ${JSON.stringify(total)}`)
+  }
   const pageCount = Math.ceil(total / PAGE_SIZE)
 
-  // Fetch remaining pages (parallel, tolerant of individual failures)
-  const remaining = await Promise.allSettled(
-    Array.from({ length: pageCount - 1 }, (_, i) =>
-      apiFetch<ListItem[]>(
+  // Remaining pages share the detail fetches' concurrency cap instead of all
+  // firing at once against the court portal. A failed page is tolerated but
+  // marks the run incomplete, so its listings don't read as gone.
+  const pages: ListItem[][] = []
+  let failedPages = 0
+  await runBounded(Math.max(pageCount - 1, 0), DETAIL_CONCURRENCY, async (i) => {
+    try {
+      const page = await apiFetch<ListItem[]>(
         `/sudske-prodaje?page=${i + 2}&pageSize=${PAGE_SIZE}&vrstaPredmeta=${VRSTA}`,
-      ),
-    ),
-  )
-  const allItems: ListItem[] = [
-    ...firstPage,
-    ...remaining.flatMap((r) => (r.status === 'fulfilled' ? r.value : [])),
-  ]
+      )
+      if (!Array.isArray(page)) throw new Error('unexpected list response shape')
+      pages[i] = page
+    } catch (err) {
+      failedPages++
+      console.warn(`[pravosudje.ba] page ${i + 2} failed: ${(err as Error).message}`)
+    }
+  })
+  const allItems: ListItem[] = [...firstPage, ...pages.flat()]
 
   // Fetch detail for each item with bounded concurrency
   const details: (DetailResponse | null)[] = new Array(allItems.length).fill(null)
-  let cursor = 0
-  async function detailWorker() {
-    while (cursor < allItems.length) {
-      const i = cursor++
-      const item = allItems[i]
-      if (!item) continue
-      try {
-        details[i] = await apiFetch<DetailResponse>(`/vijest/${item.id}?lang=B`)
-      } catch {
-        details[i] = null
-      }
+  await runBounded(allItems.length, DETAIL_CONCURRENCY, async (i) => {
+    const item = allItems[i]
+    if (!item) return
+    try {
+      details[i] = await apiFetch<DetailResponse>(`/vijest/${item.id}?lang=B`)
+    } catch {
+      details[i] = null
     }
-  }
-  await Promise.all(Array.from({ length: DETAIL_CONCURRENCY }, () => detailWorker()))
+  })
 
   const auctions = allItems.map((item, i) => mapItem(item, details[i] ?? null, platformId))
-  return { auctions, total }
+  return { auctions, total, complete: failedPages === 0 }
 }

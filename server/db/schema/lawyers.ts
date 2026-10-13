@@ -36,7 +36,8 @@ export const lawyers = pgTable('lawyers', {
 // One row per inquiry a logged-in user sends to a lawyer
 // (server/api/lawyer-inquiries/index.post.ts) — the billing record for that
 // lawyer's commission. lawyerId is ON DELETE RESTRICT: a lawyer with
-// existing inquiries can only be deactivated, not deleted.
+// existing inquiries can only be deactivated, not deleted. Users may only
+// read their own rows via PostgREST (see the policy note in access.ts).
 export const lawyerInquiries = pgTable('lawyer_inquiries', {
   id: uuid('id').primaryKey().defaultRandom(),
   userId: uuid('user_id').notNull(),
@@ -55,9 +56,9 @@ export const lawyerInquiries = pgTable('lawyer_inquiries', {
   index('idx_inquiries_lawyer_time').on(table.lawyerId, table.createdAt.desc()),
   index('idx_inquiries_user_time').on(table.userId, table.createdAt.desc()),
   unique('lawyer_inquiries_user_id_idempotency_key').on(table.userId, table.idempotencyKey),
+  // Read-only for PostgREST roles, see the `own_rows` note in ./access.ts.
   pgPolicy('own_rows', {
-    for: 'all',
+    for: 'select',
     using: sql`${table.userId} = auth.uid()`,
-    withCheck: sql`${table.userId} = auth.uid()`,
   }),
 ]).enableRLS()
