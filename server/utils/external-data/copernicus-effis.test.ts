@@ -90,7 +90,7 @@ const BERLIN_POS_LIST = '52.51 13.39 52.51 13.41 52.53 13.41 52.53 13.39 52.51 1
 describe('parseBurntAreaGml', () => {
   it('parses features and flips GML lat,lng posList order to lng,lat', () => {
     const gml = sampleGml(sampleFeature('modis.ba.poly.1', BERLIN_POS_LIST, '2022-08-10 00:00:00', 'DE', '600'))
-    const zones = parseBurntAreaGml(gml)
+    const { zones } = parseBurntAreaGml(gml)
 
     expect(zones).toHaveLength(1)
     expect(zones[0]).toMatchObject({
@@ -108,7 +108,7 @@ describe('parseBurntAreaGml', () => {
       '  <gml:featureMember><ms:modis.ba.poly gml:id="modis.ba.poly.2"><ms:COUNTRY>ES</ms:COUNTRY></ms:modis.ba.poly></gml:featureMember>',
     ].join('\n'))
 
-    expect(parseBurntAreaGml(gml)).toHaveLength(1)
+    expect(parseBurntAreaGml(gml)).toMatchObject({ zones: [{ id: 'modis.ba.poly.1' }], featureCount: 2 })
   })
 
   it('treats a missing AREA_HA as null rather than zero', () => {
@@ -119,7 +119,7 @@ describe('parseBurntAreaGml', () => {
       '<ms:COUNTRY>DE</ms:COUNTRY></ms:modis.ba.poly></gml:featureMember>',
     )
 
-    expect(parseBurntAreaGml(gml)[0]).toMatchObject({ areaHa: null })
+    expect(parseBurntAreaGml(gml).zones[0]).toMatchObject({ areaHa: null })
   })
 })
 
@@ -258,6 +258,34 @@ describe('importCopernicusEffisBurntAreaCache', () => {
       generatedAt: checkedAt,
       zones: [{ country: 'DE', areaHa: 600 }],
     })
+  })
+
+  it('keeps paginating past a full page with an unparseable feature', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'zvg-effis-'))
+    const cachePath = join(tmp, 'copernicus-effis.json')
+    const pages = [
+      sampleGml([
+        sampleFeature('page-1', BERLIN_POS_LIST, '2022-08-10 00:00:00', 'DE', '600'),
+        '  <gml:featureMember><ms:modis.ba.poly gml:id="no-geometry"></ms:modis.ba.poly></gml:featureMember>',
+      ].join('\n')),
+      sampleGml(sampleFeature('page-2', BERLIN_POS_LIST, '2022-08-10 00:00:00', 'DE', '600')),
+    ]
+    const fetchImpl = vi.fn(async (url: URL) => {
+      const body = pages[Number(url.searchParams.get('startindex')) / 2] ?? sampleGml('')
+      return new Response(body, { status: 200, headers: { 'content-type': 'text/xml' } })
+    })
+
+    const summary = await importCopernicusEffisBurntAreaCache({
+      cachePath,
+      serviceUrl: 'https://example.test/effis',
+      generatedAt: checkedAt,
+      pageSize: 2,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    })
+
+    expect(summary).toMatchObject({ fetched: 3, normalized: 2, pages: 2 })
+    const cached = await readBurntAreaCache(cachePath)
+    expect(cached.zones.map((zone) => zone.id)).toEqual(['page-1', 'page-2'])
   })
 
   it('simplifies the raster staircase out of the cached outlines', async () => {

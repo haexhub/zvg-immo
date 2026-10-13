@@ -152,11 +152,14 @@ export async function readBurntAreaCache(path: string, sourceVersion?: string): 
  *  text (`gml:featureMember`, not `featureMember`), so every selector below
  *  matches on the prefixed name. Only single-ring `gml:Polygon` geometries
  *  are handled — every feature observed in this dataset uses one; a feature
- *  without a parseable posList is skipped rather than guessed at. */
-export function parseBurntAreaGml(xml: string): BurntAreaZone[] {
+ *  without a parseable posList is skipped rather than guessed at.
+ *  `featureCount` counts every featureMember, skipped ones included, so the
+ *  importer can tell a full page from the last one. */
+export function parseBurntAreaGml(xml: string): { zones: BurntAreaZone[]; featureCount: number } {
   const $ = cheerio.load(xml, { xmlMode: true })
   const zones: BurntAreaZone[] = []
-  $('gml\\:featureMember').each((index, el) => {
+  const members = $('gml\\:featureMember')
+  members.each((index, el) => {
     const feature = $(el).children().first()
     const ring = ringFromPosList(feature.find('gml\\:posList').first().text())
     if (!ring) return
@@ -170,7 +173,7 @@ export function parseBurntAreaGml(xml: string): BurntAreaZone[] {
       areaHa: areaHa != null && Number.isFinite(areaHa) ? areaHa : null,
     })
   })
-  return zones
+  return { zones, featureCount: members.length }
 }
 
 /** Keeps only zones recent and large enough to matter for a current risk
@@ -201,12 +204,14 @@ export async function importCopernicusEffisBurntAreaCache(
     if (options.maxPages != null && pages >= options.maxPages) break
     const gml = await fetchBurntAreaGmlPage(fetchImpl, serviceUrl, { bbox, startIndex, pageSize })
     pages++
-    const pageZones = parseBurntAreaGml(gml)
-    fetched += pageZones.length
-    zones.push(...pageZones
+    const page = parseBurntAreaGml(gml)
+    fetched += page.featureCount
+    zones.push(...page.zones
       .filter((zone) => isRelevantZone(zone, generatedAt))
       .map((zone) => ({ ...zone, polygon: simplifyPolygon(zone.polygon, SIMPLIFY_TOLERANCE_DEGREES) })))
-    if (pageZones.length < pageSize) break
+    // A skipped (unparseable) feature must not make a full page look like the
+    // last one and silently truncate the cache.
+    if (page.featureCount < pageSize) break
   }
 
   // Same reasoning as the flood import: never replace a good cache with an
