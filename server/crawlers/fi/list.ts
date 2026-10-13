@@ -45,7 +45,7 @@ export interface ApiSeller {
 
 export interface ApiResponse {
   entry: ApiEntry
-  seller: ApiSeller
+  seller?: ApiSeller | null
 }
 
 async function htmlFetch(url: string): Promise<string> {
@@ -112,7 +112,11 @@ async function fetchDetail(id: string): Promise<ApiResponse | null> {
   })
   if (res.status === 404) return null
   if (!res.ok) throw new Error(`huutokaupat.com detail ${id}: HTTP ${res.status}`)
-  return (await res.json()) as ApiResponse
+  const data = (await res.json()) as Partial<ApiResponse> | null
+  // The cast alone checks nothing: reject a body without a usable entry here
+  // instead of letting mapDetail crash on it.
+  if (typeof data?.entry?.id !== 'number') throw new Error(`huutokaupat.com detail ${id}: response without entry`)
+  return data as ApiResponse
 }
 
 export function mapDetail(id: string, data: ApiResponse, platformId: string): Auction {
@@ -157,7 +161,7 @@ export function mapDetail(id: string, data: ApiResponse, platformId: string): Au
     region: '',
     externalId: id,
     caseNumber: '',
-    authority: seller.displayName ?? 'Ulosottolaitos',
+    authority: seller?.displayName ?? 'Ulosottolaitos',
     title: entry.categoryName ?? null,
     address: entry.location ?? null,
     marketValueEur: price,
@@ -189,6 +193,7 @@ export async function fetchAllListings(
   if (ids.length === 0) return { auctions: [], total: 0, complete }
 
   const results: (Auction | null)[] = new Array(ids.length).fill(null)
+  let failedDetails = 0
   let cursor = 0
   async function worker() {
     while (cursor < ids.length) {
@@ -200,13 +205,16 @@ export async function fetchAllListings(
         if (data?.entry?.metadata?.category === REAL_ESTATE_CATEGORY) {
           results[i] = mapDetail(id, data, platformId)
         }
-      } catch {
-        results[i] = null
+      } catch (err) {
+        failedDetails++
+        console.warn(`[huutokaupat] detail ${id} failed: ${(err as Error).message}`)
       }
     }
   }
   await Promise.all(Array.from({ length: DETAIL_CONCURRENCY }, worker))
 
   const auctions = results.filter((a): a is Auction => a !== null)
-  return { auctions, total: auctions.length, complete }
+  // Only the detail API tells whether a listing is real estate, so a failed
+  // detail call may hide one — the run must not read as complete.
+  return { auctions, total: auctions.length, complete: complete && failedDetails === 0 }
 }
