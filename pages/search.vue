@@ -180,10 +180,6 @@ watch([geocodingInProgress, mapVisible, shouldFetchMissingGeo], ([running, visib
   else stopGeoPoll()
 }, { immediate: true })
 
-onDeactivated(() => stopGeoPoll())
-onActivated(() => {
-  if (geocodingInProgress.value && mapVisible.value) startGeoPoll()
-})
 onBeforeUnmount(() => stopGeoPoll())
 
 const filtered = computed<AuctionSummary[]>(() => data.value?.auctions ?? [])

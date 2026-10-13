@@ -14,6 +14,10 @@ useHead(() => ({
 
 <template>
   <NuxtLayout>
-    <NuxtPage :keepalive="true" />
+    <!-- No keepalive: NuxtLayout remounts its subtree on every layout switch,
+         so a cached /search never survived the trip to a detail page anyway.
+         A global cache only piled up every visited detail page with its map
+         and live locale/translation watchers. -->
+    <NuxtPage />
   </NuxtLayout>
 </template>

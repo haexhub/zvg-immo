@@ -34,10 +34,9 @@ const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), [tabindex]:not([tab
 const photoRetried = reactive(new Set<string>())
 const brokenPhotoUrls = reactive(new Set<string>())
 
-// This component instance is reused across auction detail pages (no :key
-// tied to the route, keepalive'd <NuxtPage>) — without this, a photo marked
-// broken on one auction would wrongly stay broken forever, even for an
-// unrelated later auction or a revisit of the same one.
+// The parent has no :key tied to the auction, so this instance can receive
+// another auction's photos without remounting — without this, a photo marked
+// broken on one auction would wrongly stay broken for an unrelated later one.
 watch(() => props.photos, () => {
   photoRetried.clear()
   brokenPhotoUrls.clear()
