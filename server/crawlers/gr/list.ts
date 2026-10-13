@@ -88,7 +88,8 @@ async function mapDetail(url: string, html: string, platformId: string): Promise
 
   // The facts live in the JSON-LD block parsed below, but the raw HTML is
   // archived unconditionally — it's the G1 archive target regardless of
-  // whether JSON-LD extraction below succeeds.
+  // whether JSON-LD extraction below succeeds. Unguarded: archive
+  // persistence failures must fail the crawl (see fetch-archive.ts).
   await archiveDetailCapture(
     Buffer.from(html, 'utf8'),
     { platform: platformId, country: COUNTRY, externalId: id, caseNumber: '', authority: '' },
@@ -96,6 +97,18 @@ async function mapDetail(url: string, html: string, platformId: string): Promise
     new Date().toISOString(),
   )
 
+  // Parsing stays guarded like fr/avoventes: one lot with unexpected JSON-LD
+  // field types must drop only that lot, not reject the worker's Promise.all
+  // and fail the whole ~7.5k-lot crawl on every run.
+  try {
+    return parseDetail(url, id, html, platformId)
+  } catch (err) {
+    console.warn(`[eauction24] parsing ${url} failed: ${(err as Error).message}`)
+    return null
+  }
+}
+
+function parseDetail(url: string, id: string, html: string, platformId: string): Auction | null {
   const $ = load(html)
   const ld = extractRealEstateLd($)
   if (!ld) return null
@@ -169,11 +182,15 @@ export async function fetchAllListings(
       const i = cursor++
       const url = urls[i]
       if (!url) continue
+      let html: string
       try {
-        auctions[i] = await mapDetail(url, await htmlFetch(url), platformId)
+        html = await htmlFetch(url)
       } catch {
-        auctions[i] = null
+        continue
       }
+      // Outside the try: mapDetail's archive persistence failures must fail
+      // the crawl (see fetch-archive.ts) instead of silently dropping the lot.
+      auctions[i] = await mapDetail(url, html, platformId)
     }
   }
   await Promise.all(Array.from({ length: DETAIL_CONCURRENCY }, worker))

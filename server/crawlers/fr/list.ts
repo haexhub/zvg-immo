@@ -214,21 +214,25 @@ async function fetchDetail(href: string, platformId: string): Promise<DetailInfo
   if (url.origin !== new URL(FR_BASE).origin) {
     throw new Error(`Unexpected detail URL origin: ${url.origin}`)
   }
+  let html: string
+  let detail: DetailInfo
   try {
-    const html = await htmlFetch(url.toString())
-    const detail = parseDetailPage(html, href)
-    // Licitor never publishes a real court case number (see mapItem below) —
-    // caseNumber stays '' here too, matching the auction this capture keys to.
-    await archiveDetailCapture(
-      Buffer.from(html, 'utf8'),
-      { platform: platformId, country: COUNTRY, externalId: detail.externalId, caseNumber: '', authority: detail.authority },
-      url.toString(),
-      new Date().toISOString(),
-    )
-    return detail
+    html = await htmlFetch(url.toString())
+    detail = parseDetailPage(html, href)
   } catch {
     return null
   }
+  // Outside the try: archive persistence failures must fail the crawl (see
+  // fetch-archive.ts), not silently degrade the listing to list-page data.
+  // Licitor never publishes a real court case number (see mapItem below) —
+  // caseNumber stays '' here too, matching the auction this capture keys to.
+  await archiveDetailCapture(
+    Buffer.from(html, 'utf8'),
+    { platform: platformId, country: COUNTRY, externalId: detail.externalId, caseNumber: '', authority: detail.authority },
+    url.toString(),
+    new Date().toISOString(),
+  )
+  return detail
 }
 
 function mapItem(item: ListItem, detail: DetailInfo | null, platformId: string): Auction {

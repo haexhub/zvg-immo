@@ -46,4 +46,12 @@ describe('licitor crawl', () => {
     expect(result.auctions.map((a) => a.externalId)).toEqual(['12345'])
     expect(result.platformsSucceeded).toEqual([])
   })
+
+  it('fails the crawl instead of hiding an archive persistence failure', async () => {
+    stubLicitor(null)
+    archiveDetailCapture.mockRejectedValue(new Error('ENOSPC'))
+    const { licitorCrawler } = await import('./index')
+
+    await expect(licitorCrawler.crawl({ region: 'all' })).rejects.toThrow('ENOSPC')
+  })
 })
