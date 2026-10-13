@@ -5,8 +5,15 @@
 // check (e.g. verifying a new provider/model config against a handful of
 // auctions) without either waiting for the next cron tick or an unbounded
 // country-wide run.
+//
+// Detached, not awaited: up to MAX_LIMIT forced extractions (incl. vision
+// calls) can outlast the reverse proxy's request timeout, and a client retry
+// after a perceived 504 would let runExclusiveTask abort the almost-finished
+// first run (see geo-metrics.post.ts). The run's summary, warning and LLM
+// error land in reprocessStatus (server/utils/task-runs.ts), which the
+// settings card polls via /api/settings/llm-batch-jobs.
 
-import { runReprocessTask, type ReprocessOptions, type ReprocessResult } from '~/server/tasks/reprocess'
+import { runReprocessTask, type ReprocessOptions } from '~/server/tasks/reprocess'
 
 const MAX_LIMIT = 200
 
@@ -28,6 +35,11 @@ export default defineEventHandler(async (event) => {
     trigger: 'manual',
   }
 
-  const outcome = await runReprocessTask({ ...opts }) as { result: ReprocessResult }
-  return outcome.result
+  // The rejection is already recorded as reprocessStatus.lastError by
+  // runReprocessTask; the catch only keeps the trigger from becoming an
+  // unhandled rejection.
+  void runReprocessTask(opts).catch((err: unknown) => {
+    console.error('[settings/reprocess] trigger failed:', (err as Error).message)
+  })
+  return { started: true as const }
 })

@@ -485,6 +485,8 @@
       "run": "Testlauf starten",
       "running": "Läuft …",
       "runError": "Testlauf fehlgeschlagen.",
+      "started": "Testlauf gestartet — läuft im Hintergrund, das Ergebnis erscheint hier.",
+      "failed": "Testlauf fehlgeschlagen: {message}",
       "candidates": "Kandidaten",
       "processed": "Verarbeitet",
       "skipped": "Übersprungen",

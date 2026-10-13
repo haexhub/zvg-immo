@@ -485,6 +485,8 @@
       "run": "Start test run",
       "running": "Running …",
       "runError": "Test run failed.",
+      "started": "Test run started — runs in the background, the result appears here.",
+      "failed": "Test run failed: {message}",
       "candidates": "Candidates",
       "processed": "Processed",
       "skipped": "Skipped",
