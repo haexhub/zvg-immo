@@ -46,9 +46,8 @@ export async function fetchDetailPage(
 
   // Gutachten-PDF is not present on every auction — HTML is archived
   // unconditionally rather than only as a fallback for lots without one.
-  // Archiving is crawl-only: the identity is supplied by enrichInBatches, but
-  // omitted by the user-facing photo endpoint (auction-detail.get.ts), whose
-  // captures the continuous crawl already covers — no writes on that read path.
+  // Archiving is crawl-only: the identity is supplied by enrichInBatches;
+  // callers without one get no writes.
   if (identity) {
     await archiveDetailCapture(Buffer.from(html, 'utf8'), identity, url, new Date().toISOString())
   }

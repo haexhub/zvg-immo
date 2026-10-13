@@ -1,7 +1,7 @@
 // Rasterizes PDF pages to JPEGs via poppler's `pdftoppm` (already in the
 // runtime image). Used for two purposes that both need "a PDF page as an
-// image": the pdf-thumb API (server/api/pdf-thumb.get.ts, photo-only PDF
-// attachments) and the vision-LLM page images in llm-documents.ts (Gutachten
+// image": the zvg-thumb API (server/api/zvg-thumb.get.ts, Foto.pdf thumbnails)
+// and the vision-LLM page images in llm-documents.ts (Gutachten
 // PDFs that are scanned images, where pdftotext returns nothing useful).
 
 import { execFile } from 'node:child_process'
