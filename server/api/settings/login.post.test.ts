@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 vi.mock('../../utils/settings-auth', () => ({
   checkRateLimit: vi.fn(() => true),
   recordFailedAttempt: vi.fn(),
+  currentSessionSigningKey: vi.fn(async () => 'signing-key'),
   signSession: vi.fn(() => 'signed-session-token'),
   timingSafePasswordEqual: vi.fn(() => false),
 }))
@@ -76,7 +77,7 @@ describe('/api/settings/login POST', () => {
 
     const handler = (await import('./login.post')).default as unknown as (event: unknown) => Promise<unknown>
     await expect(handler(makeEvent())).resolves.toEqual({ ok: true })
-    expect(signSession).toHaveBeenCalledWith('secret', expect.any(Number))
+    expect(signSession).toHaveBeenCalledWith('signing-key', expect.any(Number), expect.any(Number))
     expect(setCookie).toHaveBeenCalledWith(
       expect.anything(),
       'settings_session',

@@ -3,9 +3,10 @@
 // to establish or check the session.
 //
 // On success, refreshes the cookie's expiry (sliding-window 24h) so an active
-// user doesn't get logged out mid-flow.
+// user doesn't get logged out mid-flow. The original issue time is carried
+// forward, so the refresh never extends a session past SESSION_MAX_AGE_MS.
 
-import { signSession, verifySession } from '../utils/settings-auth'
+import { currentSessionSigningKey, signSession, verifySession } from '../utils/settings-auth'
 
 const SESSION_COOKIE = 'settings_session'
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000
@@ -14,7 +15,7 @@ const PUBLIC_PATHS = new Set([
   '/api/settings/session',
 ])
 
-export default defineEventHandler((event) => {
+export default defineEventHandler(async (event) => {
   const url = event.node.req.url ?? ''
   // Strip query string so a `?foo=bar` doesn't bypass the whitelist. Decode
   // and lowercase so encoded or differently-cased variants can't slip past
@@ -32,19 +33,27 @@ export default defineEventHandler((event) => {
 
   const config = useRuntimeConfig()
   const secret = String(config.settingsSessionSecret ?? '')
-  if (!secret) {
+  const password = String(config.settingsPassword ?? '')
+  if (!secret || !password) {
     throw createError({ statusCode: 503, statusMessage: 'Settings are not configured on this server.' })
   }
-  const cookie = getCookie(event, SESSION_COOKIE) ?? ''
   const now = Date.now()
-  if (!verifySession(secret, cookie, now)) {
+  // Fail closed: without the current session epoch a logged-out cookie could
+  // not be told apart from a live one.
+  const key = await currentSessionSigningKey(secret, password, now).catch((error: unknown) => {
+    console.warn('[settings-auth] session epoch read failed', error)
+    throw createError({ statusCode: 503, statusMessage: 'Settings session store unavailable.', cause: error })
+  })
+  const cookie = getCookie(event, SESSION_COOKIE) ?? ''
+  const issuedAt = verifySession(key, cookie, now)
+  if (issuedAt === null) {
     throw createError({ statusCode: 401, statusMessage: 'Not authenticated.' })
   }
 
   // Refresh the cookie on every request so an active user doesn't get
   // logged out mid-flow.
   const expiry = now + SESSION_TTL_MS
-  setCookie(event, SESSION_COOKIE, signSession(secret, expiry), {
+  setCookie(event, SESSION_COOKIE, signSession(key, issuedAt, expiry), {
     httpOnly: true,
     secure: !import.meta.dev,
     sameSite: 'lax',

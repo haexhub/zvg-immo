@@ -3,12 +3,14 @@
 // console. Public route — never leaks whether the cookie was valid vs
 // missing beyond the boolean.
 
-import { verifySession } from '../../utils/settings-auth'
+import { currentSessionSigningKey, verifySession } from '../../utils/settings-auth'
 
-export default defineEventHandler((event) => {
+export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig()
   const secret = String(config.settingsSessionSecret ?? '')
-  if (!secret) return { authed: false }
+  const password = String(config.settingsPassword ?? '')
+  if (!secret || !password) return { authed: false }
   const cookie = getCookie(event, 'settings_session') ?? ''
-  return { authed: verifySession(secret, cookie, Date.now()) }
+  const now = Date.now()
+  return { authed: verifySession(await currentSessionSigningKey(secret, password, now), cookie, now) !== null }
 })

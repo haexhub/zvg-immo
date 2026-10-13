@@ -4,6 +4,7 @@
 
 import {
   checkRateLimit,
+  currentSessionSigningKey,
   recordFailedAttempt,
   signSession,
   timingSafePasswordEqual,
@@ -46,8 +47,11 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 401, statusMessage: 'Falsches Passwort.' })
   }
 
+  // Only reached after the password matched, so this await cannot split the
+  // rate-limit check from its record above.
+  const key = await currentSessionSigningKey(secret, password, now)
   const expiry = now + SESSION_TTL_MS
-  setCookie(event, SESSION_COOKIE, signSession(secret, expiry), {
+  setCookie(event, SESSION_COOKIE, signSession(key, now, expiry), {
     httpOnly: true,
     secure: !import.meta.dev,
     sameSite: 'lax',
