@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Auction, CuratedPhoto } from '~/types/auction'
-import type { ArtifactVersionRef } from '../utils/artifact-version-state'
-import type { AuctionFetchState } from '../utils/auction-fetch-state'
-import type { AuctionRecord } from '../utils/auction-record'
+import type { ArtifactVersionRef } from '../artifact-version-state'
+import type { AuctionFetchState } from '../auction-fetch-state'
+import type { AuctionRecord } from '../auction-record'
 
-vi.mock('../crawlers/registry', () => ({ platforms: [] }))
-vi.mock('../utils/exchange-rate', () => ({ loadRatesOrPegged: vi.fn(async () => ({})) }))
-vi.mock('../utils/verkehrswert-cache', () => ({
+vi.mock('../../crawlers/registry', () => ({ platforms: [] }))
+vi.mock('../exchange-rate', () => ({ loadRatesOrPegged: vi.fn(async () => ({})) }))
+vi.mock('../verkehrswert-cache', () => ({
   cacheKey: (platform: string, externalId: string) => `${platform}:${externalId}`,
   readVerkehrswertCache: vi.fn(async () => ({})),
 }))

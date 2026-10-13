@@ -1,9 +1,9 @@
 import { recordTaskRunEnd, recordTaskRunStart } from '~/server/utils/task-runs'
 import { isTaskActive, runExclusiveTask } from '~/server/utils/exclusive-task'
 import { isAutomaticCrawlingEnabled } from '~/server/utils/automatic-task-gate'
-import { runEnrich, type EnrichOptions } from './enrich-worker'
+import { runEnrich, type EnrichOptions } from '../utils/tasks/enrich-worker'
 
-export { runEnrich, type EnrichOptions } from './enrich-worker'
+export { runEnrich, type EnrichOptions } from '../utils/tasks/enrich-worker'
 
 /**
  * Manual triggers call this directly instead of Nitro's `runTask`, which

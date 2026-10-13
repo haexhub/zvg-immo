@@ -12,15 +12,15 @@ import {
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 import { isTaskActive, runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-task'
 import { recordTaskRunEnd, recordTaskRunProgress, recordTaskRunStart, type TaskRunSummary } from '~/server/utils/task-runs'
-import { inScope, orderByStaleness } from './external-enrichment-scope'
+import { inScope, orderByStaleness } from '../utils/tasks/external-enrichment-scope'
 import {
   defaultHazardAdapters,
   defaultLocationContextAdapters,
   defaultMarketAdapters,
   recordProviderFailure,
-} from './external-enrichment-adapters'
+} from '../utils/tasks/external-enrichment-adapters'
 
-export { withLocationContextEnhancers } from './external-enrichment-adapters'
+export { withLocationContextEnhancers } from '../utils/tasks/external-enrichment-adapters'
 
 export interface MarketComparisonAdapter {
   id: string

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Auction, AuctionExtraction } from '~/types/auction'
 import type { ClampedExtraction } from '../utils/extract/llm-clamp'
-import type { ReprocessInput } from './reprocess-input'
+import type { ReprocessInput } from '../utils/tasks/reprocess-input'
 import { downloadBlob, findLatestCapture } from '../utils/storage-download'
 import { getPool } from '../utils/db'
 import { readAuctionRecordMap } from '../utils/auction-record'

@@ -22,7 +22,7 @@ import type {
   LocationContextAdapter,
   LocationContextEnhancer,
   MarketComparisonAdapter,
-} from './external-enrichment'
+} from '~/server/tasks/external-enrichment'
 
 export function recordProviderFailure(
   summary: ExternalEnrichmentSummary,

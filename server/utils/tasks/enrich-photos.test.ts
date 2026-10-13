@@ -1,17 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Auction } from '~/types/auction'
-import { downloadNativeImages } from '../utils/extract/native-images'
-import { archivePhotoBlob } from '../utils/raw-archive'
+import { downloadNativeImages } from '../extract/native-images'
+import { archivePhotoBlob } from '../raw-archive'
 import { processEnrichPhotos } from './enrich-photos'
 
-vi.mock('../utils/extract/native-images', () => ({ downloadNativeImages: vi.fn() }))
-vi.mock('../utils/extract/document-images', () => ({ extractDocumentPhotos: vi.fn() }))
-vi.mock('../utils/image-storage', async (importOriginal) => ({
-  ...await importOriginal<typeof import('../utils/image-storage')>(),
+vi.mock('../extract/native-images', () => ({ downloadNativeImages: vi.fn() }))
+vi.mock('../extract/document-images', () => ({ extractDocumentPhotos: vi.fn() }))
+vi.mock('../image-storage', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../image-storage')>(),
   imagesBucketConfigured: vi.fn(() => false),
   uploadImage: vi.fn(),
 }))
-vi.mock('../utils/raw-archive', () => ({ archivePhotoBlob: vi.fn() }))
+vi.mock('../raw-archive', () => ({ archivePhotoBlob: vi.fn() }))
 
 afterEach(() => vi.clearAllMocks())
 

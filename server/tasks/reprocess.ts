@@ -1,12 +1,12 @@
 import { recordTaskRunEnd, recordTaskRunStart } from '~/server/utils/task-runs'
 import { isTaskActive, runExclusiveTask } from '~/server/utils/exclusive-task'
 import { isAutomaticLlmEnabled } from '~/server/utils/automatic-task-gate'
-import type { ReprocessOptions, ReprocessResult } from './reprocess-input'
-import { runReprocess } from './reprocess-run'
+import type { ReprocessOptions, ReprocessResult } from '../utils/tasks/reprocess-input'
+import { runReprocess } from '../utils/tasks/reprocess-run'
 
-export { reprocessAuction } from './reprocess-single'
-export { runReprocess } from './reprocess-run'
-export type { ReprocessOptions, ReprocessResult } from './reprocess-input'
+export { reprocessAuction } from '../utils/tasks/reprocess-single'
+export { runReprocess } from '../utils/tasks/reprocess-run'
+export type { ReprocessOptions, ReprocessResult } from '../utils/tasks/reprocess-input'
 
 /**
  * Runs extraction with the task's durable status bookkeeping and in-process

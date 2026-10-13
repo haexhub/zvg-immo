@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { getPool } from '../utils/db'
+import { getPool } from '../db'
 import { findCandidates } from './reprocess-input'
 
-vi.mock('../utils/db', () => ({ getPool: vi.fn() }))
-vi.mock('../crawlers/registry', () => ({
+vi.mock('../db', () => ({ getPool: vi.fn() }))
+vi.mock('../../crawlers/registry', () => ({
   ensureEnabledCountriesLoaded: vi.fn(async () => ['de']),
   getEnabledCountryCodes: vi.fn(() => ['de']),
   isCountryEnabled: vi.fn(() => true),

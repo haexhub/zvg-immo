@@ -25,7 +25,7 @@ const MAX_NATIVE_DOCUMENT_BASE64_CHARS = 18_000_000
 /** Must match llm.ts's provider-facing PDF text cap. */
 export const MAX_MAP_REDUCE_DOCUMENT_TEXT_CHARS = 24_000
 
-/** Map-reduce (server/tasks/reprocess-map-reduce.ts): the point past which
+/** Map-reduce (server/utils/tasks/reprocess-map-reduce.ts): the point past which
  *  the single combined-call path (buildDocumentLlmParts above) already
  *  starts silently losing content — MAX_SCANNED_DOCUMENTS scanned docs get
  *  page images at all, everything beyond that is dropped, and the combined

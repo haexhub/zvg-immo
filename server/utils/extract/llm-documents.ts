@@ -32,7 +32,7 @@ export interface PreparedLlmDocuments {
     /** Set instead of pdfText/pdfPageImages/pdfBytes/pdfDocuments when
      *  map-reduce triggered (more than MAP_REDUCE_DOCUMENT_THRESHOLD PDFs,
      *  and the caller opted in via allowMapReduce — see
-     *  server/tasks/reprocess-map-reduce.ts). Undefined otherwise, including
+     *  server/utils/tasks/reprocess-map-reduce.ts). Undefined otherwise, including
      *  always for the batch-submission call site, which never opts in and
      *  keeps getting today's combined fields unconditionally. */
     documentSummaryInputs?: Array<DocumentSummaryInput<PreparedAttachmentDocument>>

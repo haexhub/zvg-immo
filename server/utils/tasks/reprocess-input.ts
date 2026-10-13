@@ -329,7 +329,7 @@ export async function buildReprocessInput(
     includeCandidateImages?: boolean
     /** Opt-in to the per-document map-reduce path for auctions with more
      *  than pdf-documents.ts's MAP_REDUCE_DOCUMENT_THRESHOLD PDFs — see
-     *  server/tasks/reprocess-map-reduce.ts. Only reprocessAuction's sync
+     *  server/utils/tasks/reprocess-map-reduce.ts. Only reprocessAuction's sync
      *  call sites set this; the batch-submission call site in
      *  reprocess-run.ts never does, so it keeps getting the combined
      *  pdfText/pdfPageImages/pdfBytes input unconditionally. */

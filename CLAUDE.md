@@ -75,8 +75,10 @@ Produktionsdateien unter `server`, `components`, `composables`, `pages` und
 `lib` bleiben bei höchstens 500 Zeilen. Der CI-Size-Gate in
 `.github/workflows/ci.yml` prüft dies ohne Tests, Migrationen und Vendor-Code.
 Bei Reprocess liegen Kandidaten/Input-Helper, Einzelauswertung und Orchestrierung
-in getrennten Task-Modulen; Enrich trennt Auswahl, Worker und Abschluss-
-Persistenz. Die öffentlichen Task- und Utility-Importpfade bleiben Fassaden.
+in getrennten Modulen unter `server/utils/tasks/`; Enrich trennt Auswahl, Worker
+und Abschluss-Persistenz. Nitro registriert jede Datei in `server/tasks/` als
+Task, dort liegen deshalb nur `defineTask`-Fassaden. Die öffentlichen Task- und
+Utility-Importpfade bleiben Fassaden.
 
 ## Öffentliche Daten-Lesepfade
 

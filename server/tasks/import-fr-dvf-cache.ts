@@ -30,7 +30,7 @@ async function configuredCachePath(): Promise<string | null> {
   // Dynamic imports so tests passing an explicit cachePath never load the pg
   // pool or the adapter wiring.
   const { getPool } = await import('~/server/utils/db')
-  const { resolvedSourceValues } = await import('./external-enrichment-adapters')
+  const { resolvedSourceValues } = await import('../utils/tasks/external-enrichment-adapters')
   const values = await resolvedSourceValues(getPool(), 'fr-dvf-geolocated')
   return values ? String(values.cachePath) : null
 }
