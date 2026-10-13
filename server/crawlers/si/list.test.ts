@@ -150,4 +150,9 @@ describe('fetchAllListings', () => {
     expect(complete).toBe(false)
     expect(fetchMock).toHaveBeenCalledTimes(30)
   })
+
+  it('throws when the response lacks pagination.countAll', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ list: [] })))
+    await expect(fetchAllListings('si-sodnedrazbe')).rejects.toThrow(/unexpected response shape/)
+  })
 })

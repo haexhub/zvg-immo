@@ -77,9 +77,16 @@ async function fetchEventos(): Promise<PtEvento[]> {
     })
     if (!res.ok) throw new Error(`e-leiloes.pt Eventos fetch failed: ${res.status}`)
 
-    const data = (await res.json()) as PtEventosResponse
+    const data = (await res.json()) as Partial<PtEventosResponse> | null
+    // A missing or non-numeric total would end the loop after page 1 (`first <
+    // total` is false) and slip past the MAX_PAGES guard below, so a schema
+    // change upstream would pass for a complete, tiny crawl.
+    const pageTotal = data?.pagination?.total
+    if (!Array.isArray(data?.list) || typeof pageTotal !== 'number' || !Number.isInteger(pageTotal)) {
+      throw new Error('e-leiloes.pt Eventos: unexpected response shape (list/pagination.total)')
+    }
     all.push(...data.list)
-    total = data.pagination.total
+    total = pageTotal
     first += PAGE_SIZE
   }
 

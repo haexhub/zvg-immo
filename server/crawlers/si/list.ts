@@ -151,9 +151,13 @@ export async function fetchAllListings(
     })
     if (!res.ok) throw new Error(`sodnedrazbe.si list fetch failed: ${res.status}`)
 
-    const data = (await res.json()) as SiListResponse
+    const data = (await res.json()) as Partial<SiListResponse> | null
+    const pageCountAll = data?.pagination?.countAll
+    if (!Array.isArray(data?.list) || typeof pageCountAll !== 'number' || !Number.isInteger(pageCountAll)) {
+      throw new Error('sodnedrazbe.si list: unexpected response shape (list/pagination.countAll)')
+    }
     for (const p of data.list) auctions.push(mapPublication(p, platformId))
-    countAll = data.pagination.countAll
+    countAll = pageCountAll
 
     offset += PAGE_SIZE
     if (offset >= countAll) {
