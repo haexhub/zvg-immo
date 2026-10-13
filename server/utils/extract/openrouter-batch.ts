@@ -183,42 +183,38 @@ export async function pollOpenRouterBatch(jobName: string, config: LlmConfig): P
 
 /** Results are embedded inline on the batch object once it's completed — no
  *  separate result file/endpoint — so this just re-fetches the same resource
- *  pollOpenRouterBatch checked the status of. */
+ *  pollOpenRouterBatch checked the status of. A failed fetch throws so the
+ *  poll task retries instead of resolving the job with zero results. */
 export async function fetchOpenRouterBatchResults(
   jobName: string,
   config: LlmConfig,
   customIdMap: Record<string, string>,
 ): Promise<LlmBatchResultItem[]> {
   const id = jobName.slice(JOB_NAME_PREFIX.length)
-  try {
-    const resp = await $fetch<{
-      results?: Array<{
-        custom_id?: unknown
-        response?: { status_code?: unknown; body?: unknown } | null
-        error?: unknown
-      }> | null
-    }>(`${betaApiBase(config)}/batches/${id}`, {
-      headers: authHeaders(config),
-      signal: AbortSignal.timeout(30_000),
+  const resp = await $fetch<{
+    results?: Array<{
+      custom_id?: unknown
+      response?: { status_code?: unknown; body?: unknown } | null
+      error?: unknown
+    }> | null
+  }>(`${betaApiBase(config)}/batches/${id}`, {
+    headers: authHeaders(config),
+    signal: AbortSignal.timeout(30_000),
+  })
+  const out: LlmBatchResultItem[] = []
+  for (const result of resp.results ?? []) {
+    if (typeof result.custom_id !== 'string') continue
+    const key = customIdMap[result.custom_id] ?? result.custom_id
+    const ok = !result.error && result.response?.status_code === 200
+    const raw = ok ? parseOpenAiExtractionResponse(result.response!.body) : null
+    const usage = ok ? parseOpenAiUsage(result.response!.body) : null
+    const extraction = raw ? clampExtraction(raw) : null
+    out.push({
+      key,
+      extraction,
+      usage,
+      error: extraction ? null : (extractBatchItemErrorMessage(result.error, result.response) ?? 'Keine gültige Extraktion in der Batch-Antwort'),
     })
-    const out: LlmBatchResultItem[] = []
-    for (const result of resp.results ?? []) {
-      if (typeof result.custom_id !== 'string') continue
-      const key = customIdMap[result.custom_id] ?? result.custom_id
-      const ok = !result.error && result.response?.status_code === 200
-      const raw = ok ? parseOpenAiExtractionResponse(result.response!.body) : null
-      const usage = ok ? parseOpenAiUsage(result.response!.body) : null
-      const extraction = raw ? clampExtraction(raw) : null
-      out.push({
-        key,
-        extraction,
-        usage,
-        error: extraction ? null : (extractBatchItemErrorMessage(result.error, result.response) ?? 'Keine gültige Extraktion in der Batch-Antwort'),
-      })
-    }
-    return out
-  } catch (err) {
-    console.warn(`[openrouter-batch] fetch results failed for ${jobName}: ${(err as Error).message}`)
-    return []
   }
+  return out
 }

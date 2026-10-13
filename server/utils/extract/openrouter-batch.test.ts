@@ -198,9 +198,9 @@ describe('fetchOpenRouterBatchResults', () => {
     expect(results[1]).toEqual({ key: 'zvg-portal:9999', extraction: null, usage: null, error: 'failed' })
   })
 
-  it('returns an empty array when the fetch fails', async () => {
+  it('rejects when the fetch fails so the poll task retries the job', async () => {
     stubOfetch([{ match: '/api/beta/batches/batch_x', error: new Error('network down') }])
     const { fetchOpenRouterBatchResults } = await import('./openrouter-batch')
-    await expect(fetchOpenRouterBatchResults('openrouter_batch_x', config, {})).resolves.toEqual([])
+    await expect(fetchOpenRouterBatchResults('openrouter_batch_x', config, {})).rejects.toThrow('network down')
   })
 })

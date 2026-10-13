@@ -513,10 +513,10 @@ describe('fetchGeminiBatchResults', () => {
     })
   })
 
-  it('returns an empty array when the download request fails', async () => {
+  it('rejects when the download request fails so the poll task retries the job', async () => {
     stubOfetch([{ match: '/download/v1beta/files/results', error: new Error('gone') }])
     const { fetchGeminiBatchResults } = await import('./gemini-batch')
 
-    await expect(fetchGeminiBatchResults('files/results', config)).resolves.toEqual([])
+    await expect(fetchGeminiBatchResults('files/results', config)).rejects.toThrow('gone')
   })
 })
