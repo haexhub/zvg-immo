@@ -189,7 +189,11 @@ function mapDetail(id: string, html: string, platformId: string): Auction | null
   const address = extractFact(html, 'Adress')
   const showingAddress = extractShowingAddress(html)
   const kommun = extractFact(html, 'Kommun')
-  const regionName = regionNameForKommun(kommun) ?? 'Schweden'
+  const mappedRegion = regionNameForKommun(kommun)
+  // Unmapped listings land in a pseudo-region that no per-län crawl picks up,
+  // so they never appear; make that visible instead of dropping them silently.
+  if (!mappedRegion) console.warn(`[se-kronofogden] ${id}: kommun ${JSON.stringify(kommun)} not mapped to a län`)
+  const regionName = mappedRegion ?? 'Schweden'
   const marknadsvardRaw = extractFact(html, 'Marknadsvarde')
   const arendenummer = extractFact(html, 'Arendenummer') ?? ''
   const storlek = extractFact(html, 'Storlek')

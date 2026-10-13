@@ -23,7 +23,7 @@ function searchHtml(ids: string[], total: number, nextStartAtHit?: number): stri
 function detailHtml(id: string): string {
   return `
     <h3 id="h-Adress">Adress</h3><p class="normal">Testgatan ${id}</p>
-    <h3 id="h-Kommun">Kommun</h3><p class="normal">Test kommun</p>
+    <h3 id="h-Kommun">Kommun</h3><p class="normal">Umeå kommun</p>
     <h2 id="h-Upplatelseform">Upplatelseform</h2><p class="normal">Äganderätt.</p>
     <div id="datumet">2026-08-27</div>
   `
@@ -32,7 +32,7 @@ function detailHtml(id: string): string {
 function detailHtmlWithGallery(id: string): string {
   return `
     <h3 id="h-Adress">Adress</h3><p class="normal">Testgatan ${id}</p>
-    <h3 id="h-Kommun">Kommun</h3><p class="normal">Test kommun</p>
+    <h3 id="h-Kommun">Kommun</h3><p class="normal">Umeå kommun</p>
     <h2 id="h-Upplatelseform">Upplatelseform</h2><p class="normal">Äganderätt.</p>
     <div id="datumet">2026-08-27</div>
     <img src="/images/18.static/1/logotyp-footer.png">
@@ -61,7 +61,7 @@ function withdrawnDetailHtml(id: string): string {
   return `
     <h3 id="h-Status">Status</h3><p class="normal">Utgår</p>
     <h3 id="h-Adress">Adress</h3><p class="normal">Testgatan ${id}</p>
-    <h3 id="h-Kommun">Kommun</h3><p class="normal">Test kommun</p>
+    <h3 id="h-Kommun">Kommun</h3><p class="normal">Umeå kommun</p>
     <div id="datumet">2026-08-27</div>
   `
 }

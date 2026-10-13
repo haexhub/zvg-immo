@@ -280,6 +280,8 @@ export const SE_COUNTY_BY_MUNICIPALITY: Record<string, string> = {
   'Smedjebacken': 'Dalarna',
   'Mora': 'Dalarna',
   'Falun': 'Dalarna',
+  // Official name 'Falu kommun' uses the old genitive form, not 'Falun'.
+  'Falu': 'Dalarna',
   'Borlänge': 'Dalarna',
   'Säter': 'Dalarna',
   'Hedemora': 'Dalarna',
@@ -364,7 +366,9 @@ function normalizeMunicipalityKey(value: string): string {
 }
 
 function stripMunicipalitySuffix(value: string): string {
-  const base = value.trim().replace(/\s+kommun$/i, '').trim()
+  // Besides '<Name> kommun', a few municipalities officially call themselves
+  // 'Region Gotland' or '<Name>s stad' (e.g. 'Stockholms stad').
+  const base = value.trim().replace(/^region\s+/i, '').replace(/\s+(kommun|stad)$/i, '').trim()
   if (COUNTY_BY_NORMALIZED_MUNICIPALITY.has(normalizeMunicipalityKey(base))) return base
   return base.endsWith('s') ? base.slice(0, -1) : base
 }
