@@ -45,6 +45,12 @@ const pending = ref(false)
 const error = ref<string | null>(null)
 const sent = ref(false)
 const idempotencyKey = ref<string | null>(null)
+// The key identifies one specific inquiry: a retry after an ambiguous failure
+// reuses it, but an edited lawyer or message is a new inquiry. Reusing the old
+// key would make the server replay the earlier (possibly committed) request.
+watch([selectedLawyerId, message, () => props.platform, () => props.externalId], () => {
+  idempotencyKey.value = null
+})
 
 async function submit(): Promise<void> {
   if (!selectedLawyerId.value || !message.value.trim()) return
