@@ -115,6 +115,25 @@ describe('submitGeminiBatch', () => {
     expect(recordLlmBatchCapability).toHaveBeenCalledWith('gemini-native', { ok: true, message: null, source: 'enrich' })
   })
 
+  it('caps each item at the configured maxTokens like the sync path', async () => {
+    stubOfetch([
+      { match: '/upload/v1beta/files', raw: { headers: { 'x-goog-upload-url': 'https://upload.example/session-1' } } },
+      { match: 'upload.example/session-1', data: { file: { name: 'files/abc' } } },
+      { match: ':batchGenerateContent', data: { name: 'batches/xyz' } },
+    ])
+    const { submitGeminiBatch } = await import('./gemini-batch')
+
+    await submitGeminiBatch(
+      [{ key: 'zvg-portal:1', input: { title: 'Haus', description: 'schön', pdfText: null } }],
+      { ...config, maxTokens: 2048 },
+      'enrich',
+    )
+
+    const uploadCall = vi.mocked($fetch).mock.calls.find(([url]) => (url as string).includes('upload.example/session-1'))
+    const jsonl = new TextDecoder().decode((uploadCall?.[1] as { body: Uint8Array }).body)
+    expect(JSON.parse(jsonl.split('\n')[0]!).request.generationConfig.maxOutputTokens).toBe(2048)
+  })
+
   it('records the real Google error body as capability ok:false on a rejected submit', async () => {
     stubOfetch([
       { match: '/upload/v1beta/files', raw: { headers: { 'x-goog-upload-url': 'https://upload.example/session-1' } } },

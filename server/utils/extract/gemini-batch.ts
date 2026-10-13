@@ -203,7 +203,7 @@ function selectLineItemsForQuota(
   return { selected, retryItems, estimatedTokens: totalEstimatedTokens }
 }
 
-function buildJsonlLine(key: string, input: LlmInput): string | null {
+function buildJsonlLine(key: string, input: LlmInput, config: LlmConfig): string | null {
   const parts = buildParts(input)
   if (parts.length === 0) return null
   return JSON.stringify({
@@ -214,6 +214,9 @@ function buildJsonlLine(key: string, input: LlmInput): string | null {
       generationConfig: {
         responseMimeType: 'application/json',
         responseSchema: toGeminiSchema(UNIVERSAL_AUCTION_SCHEMA),
+        // Same output cap as the sync path (gemini-native.ts) and the other
+        // batch clients; without it a batch item could run to the model max.
+        maxOutputTokens: config.maxTokens ?? 4096,
       },
     },
   })
@@ -274,7 +277,7 @@ export async function submitGeminiBatch(
   source: 'enrich' | 'reprocess',
 ): Promise<GeminiBatchSubmitResult | null> {
   const lineItems = items
-    .map((item) => ({ item, line: buildJsonlLine(item.key, item.input) }))
+    .map((item) => ({ item, line: buildJsonlLine(item.key, item.input, config) }))
     .filter((entry): entry is { item: { key: string; input: LlmInput }; line: string } => entry.line != null)
   if (lineItems.length === 0) return null
   return withGeminiBatchQuotaLock(() => submitGeminiBatchLocked(lineItems, config, source))
