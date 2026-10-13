@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { mapDetail } from './list'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { fetchAllListings, mapDetail } from './list'
 
 /** Trimmed-down detail page mirroring the live markup (okid=100001, Juli 2026). */
 const DETAIL_HTML = `
@@ -68,5 +68,49 @@ describe('mapDetail', () => {
     expect(auction.marketValueEur).toBe(1700)
     expect(auction.auctionDateIso).toBe('2026-07-14T10:00:00')
     expect(auction.cancelled).toBe(false)
+  })
+})
+
+describe('fetchAllListings', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  function stubOksjonikeskus(opts: { page2Status: number; failingOkid?: string; failingStatus?: number }): void {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('page=1')) return new Response('<a href="?okid=100001"></a><a href="?okid=100002"></a>')
+      if (url.includes('page=')) return new Response('<a href="?okid=100001"></a>', { status: opts.page2Status })
+      if (opts.failingOkid && url.endsWith(`okid=${opts.failingOkid}`)) return new Response('', { status: opts.failingStatus ?? 502 })
+      return new Response(DETAIL_HTML)
+    }))
+  }
+
+  it('reports a complete run when every list and detail page answered', async () => {
+    stubOksjonikeskus({ page2Status: 200 })
+    const result = await fetchAllListings('ee-oksjonikeskus')
+    expect(result.auctions).toHaveLength(2)
+    expect(result.complete).toBe(true)
+  })
+
+  it('keeps the harvested lots but reports an incomplete run when a later list page fails', async () => {
+    stubOksjonikeskus({ page2Status: 500 })
+    const result = await fetchAllListings('ee-oksjonikeskus')
+    expect(result.auctions).toHaveLength(2)
+    expect(result.complete).toBe(false)
+  })
+
+  it('reports an incomplete run when a detail page fails', async () => {
+    stubOksjonikeskus({ page2Status: 200, failingOkid: '100002' })
+    const result = await fetchAllListings('ee-oksjonikeskus')
+    expect(result.auctions.map((a) => a.externalId)).toEqual(['100001'])
+    expect(result.complete).toBe(false)
+  })
+  it.each([404, 410])('treats a detail page answering %i as a withdrawn lot, not a failure', async (status) => {
+    stubOksjonikeskus({ page2Status: 200, failingOkid: '100002', failingStatus: status })
+    const result = await fetchAllListings('ee-oksjonikeskus')
+    expect(result.auctions.map((a) => a.externalId)).toEqual(['100001'])
+    expect(result.complete).toBe(true)
   })
 })

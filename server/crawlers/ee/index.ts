@@ -4,7 +4,7 @@ import { PLATFORM_ID, EE_BASE, COUNTRY, EE_REGIONS } from './constants'
 import { fetchAllListings } from './list'
 
 async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
-  const { auctions, total } = await fetchAllListings(PLATFORM_ID)
+  const { auctions, total, complete } = await fetchAllListings(PLATFORM_ID)
   return createCrawlResult({
     platform: PLATFORM_ID,
     source: EE_BASE,
@@ -12,6 +12,7 @@ async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
     regions: EE_REGIONS,
     totalReported: total,
     auctions,
+    complete,
   })
 }
 
