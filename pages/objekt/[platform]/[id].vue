@@ -15,7 +15,7 @@ const id = String(route.params.id)
 const { t, locale } = useI18n()
 const propertyTypeLabel = usePropertyTypeLabel()
 const { data: a, error, pending } = await useFetch<AuctionDetail | null>(
-  `/api/auction/${platform}/${id}`,
+  `/api/auction/${encodeURIComponent(platform)}/${encodeURIComponent(id)}`,
   { default: () => null },
 )
 
@@ -178,7 +178,7 @@ useHead(() => ({
           <span class="font-mono text-muted-foreground">{{ a.caseNumber }}</span>
           <NuxtLink
             v-if="adminAuthed"
-            :to="`/admin/auktion/${platform}/${id}`"
+            :to="`/admin/auktion/${encodeURIComponent(platform)}/${encodeURIComponent(id)}`"
             class="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
           >
             {{ $t('objektDetail.technicalLink') }}
