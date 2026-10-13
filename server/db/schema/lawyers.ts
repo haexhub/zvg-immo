@@ -36,7 +36,8 @@ export const lawyers = pgTable('lawyers', {
 // One row per inquiry a logged-in user sends to a lawyer
 // (server/api/lawyer-inquiries/index.post.ts) — the billing record for that
 // lawyer's commission. lawyerId is ON DELETE RESTRICT: a lawyer with
-// existing inquiries can only be deactivated, not deleted.
+// existing inquiries can only be deactivated, not deleted. Users may only
+// read their own rows via PostgREST (see the policy note in access.ts).
 export const lawyerInquiries = pgTable('lawyer_inquiries', {
   id: uuid('id').primaryKey().defaultRandom(),
   userId: uuid('user_id').notNull(),

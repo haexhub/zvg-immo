@@ -3,12 +3,14 @@
 // migrated by the `auth` service in docker-compose.yml — Drizzle must never
 // create or alter that schema, see the note on userId below).
 //
-// The `own_rows` policies are read-only on purpose: Kong exposes /rest/v1 to
-// any anon-key holder, and a signed-in user's JWT would otherwise let them
-// INSERT/UPDATE these rows directly, skipping the Nuxt routes' validation
-// (filter contract, size limits, alert-filter checks, inquiry rate limits).
-// Every write goes through the service-role client (server/utils/supabase.ts),
-// which bypasses RLS; without a write policy RLS denies writes for everyone else.
+// The `own_rows` policies are read-only on purpose: Kong exposes PostgREST
+// (/rest/v1) to any signed-in user's JWT, and the supabase/postgres image
+// grants anon/authenticated full table privileges by default. A direct
+// INSERT/UPDATE would skip the Nuxt routes' validation (filter contract, size
+// limits, alert-filter checks, API-key revocation, lawyer-inquiry rate limits
+// and commission). Every write goes through the service-role client
+// (server/utils/supabase.ts) or the table owner, both of which bypass RLS;
+// without a write policy RLS denies writes for everyone else.
 import { sql } from 'drizzle-orm'
 import {
   bigint,
