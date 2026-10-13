@@ -239,7 +239,10 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
             try {
               normalizeAuctionDescription(a)
               applyDescriptionMarketValue(a)
-              deriveMarketValueEur(a, rates, priorRecord?.auction)
+              // The live record is only re-read further down (photo/extraction
+              // step); the run-start snapshot is enough to keep a stored EUR
+              // conversion of the same native amount.
+              deriveMarketValueEur(a, rates, records.get(key)?.auction)
               a.detailFetchedAt = at
               // Re-archive now that detail data (description/attachments/
               // source*) is on the auction — a new content hash whenever
