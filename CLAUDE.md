@@ -76,6 +76,14 @@ werden beim Speichern bzw.
 Aktivieren eines Alerts mit 400 abgelehnt. Alte betroffene Subscriptions werden
 beim Matching übersprungen und protokolliert, nie stillschweigend gelockert.
 
+## Admin-MCP-Server
+
+`tools/admin-mcp/` enthält einen lokalen MCP-Server (Python, stdio), über den
+Claude Code Probeläufe und Admin-Status ohne Passwort im Kontext nutzen kann.
+Er ruft ausschließlich die bestehende `/api/settings/*`-API auf; neue
+Admin-Funktionen werden dort erst als eigenes, kuratiertes Tool aufgenommen.
+Einrichtung und Tool-Liste: `tools/admin-mcp/README.md`.
+
 ## Modulgrößen
 
 Produktionsdateien unter `server`, `components`, `composables`, `pages`, `lib`
