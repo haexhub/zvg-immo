@@ -160,6 +160,10 @@ _persist_feature_json() {
     fi
 }
 
+# Print shell-quoted repository and feature path assignments for eval.
+# Resolve the feature directory from the environment or feature.json; return 1
+# if unavailable. Persist an environment override unless --no-persist or
+# SPECIFY_FEATURE_NO_PERSIST disables writing feature.json.
 get_feature_paths() {
     # Read-only callers (e.g. check-prerequisites.sh --paths-only) pass
     # --no-persist so pure path resolution never writes .specify/feature.json,
@@ -242,6 +246,8 @@ has_jq() {
     command -v jq >/dev/null 2>&1
 }
 
+# Print the active integration's command separator for the optional repo root.
+# Cache the result per repository, defaulting to '.' when no valid setting exists.
 get_invoke_separator() {
     local repo_root="${1:-$(get_repo_root)}"
     if [[ "${_SPECIFY_INVOKE_SEPARATOR_CACHE_REPO_ROOT:-}" == "$repo_root" && -n "${_SPECIFY_INVOKE_SEPARATOR_CACHE_VALUE:-}" ]]; then
@@ -354,6 +360,8 @@ PY
     printf '%s\n' "$separator"
 }
 
+# Print a normalized /speckit command using the optional repo root's separator.
+# Accept a bare command name or one prefixed with /, speckit. or speckit-.
 format_speckit_command() {
     local command_name="$1"
     local repo_root="${2:-$(get_repo_root)}"
@@ -402,9 +410,13 @@ json_escape() {
     done
 }
 
+# Print the label ($2) with a check or cross according to file ($1) existence.
 check_file() { [[ -f "$1" ]] && echo "  ✓ $2" || echo "  ✗ $2"; }
+# Print the label ($2) with a check or cross for a nonempty directory ($1).
 check_dir() { [[ -d "$1" && -n $(ls -A "$1" 2>/dev/null) ]] && echo "  ✓ $2" || echo "  ✗ $2"; }
 
+# Print an available Python 3 invocation (python3, python or py -3).
+# Return 1 when none of the candidates can run Python 3.
 _python3_command() {
     if command -v python3 >/dev/null 2>&1 &&
         python3 -c 'import sys; raise SystemExit(sys.version_info.major != 3)' >/dev/null 2>&1; then
@@ -420,6 +432,9 @@ _python3_command() {
     fi
 }
 
+# Print enabled extension IDs from directory ($1), ordered by priority then ID.
+# Include unregistered directories at priority 10; fail for an invalid registry
+# or when a registry exists but Python 3 is unavailable.
 _sorted_extension_ids() {
     local ext_dir="$1"
     local python_spec
