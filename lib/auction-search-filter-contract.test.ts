@@ -22,6 +22,12 @@ describe('auction search filter contract', () => {
     expect(serializeAuctionSearchFilters(parseAuctionSearchFilters(query, true), true)).toEqual(query)
   })
 
+  it('normalizes country codes to the lowercase ISO form crawled auctions carry', () => {
+    const filters = parseAuctionSearchFilters({ country: 'DE,de,At,xyz' })
+    expect(filters.countries).toEqual(['de', 'at'])
+    expect(serializeAuctionSearchFilters(filters)).toEqual({ country: 'de,at' })
+  })
+
   it('uses defaults for empty or invalid values and does not turn empty numbers into zero', () => {
     expect(parseAuctionSearchFilters({ priceMin: '', sort: 'wrong' })).toEqual(defaultAuctionSearchFilters())
   })

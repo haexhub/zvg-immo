@@ -46,8 +46,6 @@ export async function buildAuctionSearchFilter(
   await ensureEnabledCountriesLoaded()
   const enabled = getEnabledCountryCodes()
   const requested = filters.countries
-    .filter((entry) => /^[a-z]{2}$/i.test(entry))
-    .map((entry) => entry.toLowerCase())
   const countries = requested.length ? requested.filter((entry) => enabled.includes(entry)) : enabled
   where.push(`a.country = ANY(${add(countries)}::text[])`)
 

@@ -113,7 +113,10 @@ export function defaultAuctionSearchFilters(hideRulesOnly = false): AuctionSearc
 export function parseAuctionSearchFilters(query: SearchFilterQuery, hideRulesOnlyDefault = false): AuctionSearchFilters {
   const defaults = defaultAuctionSearchFilters(hideRulesOnlyDefault)
   const parsed = { ...defaults,
-    countries: commaList(query.country), regionKeys: commaList(query.region), search: first(query.q),
+    // Crawled auctions carry lowercase ISO codes; normalize once here so the
+    // SQL search and in-memory alert matching read `DE` the same way.
+    countries: [...new Set(commaList(query.country).filter((code) => /^[a-z]{2}$/i.test(code)).map((code) => code.toLowerCase()))],
+    regionKeys: commaList(query.region), search: first(query.q),
     authority: first(query.authority) || defaults.authority,
     urbanRural: first(query.urbanRural) || defaults.urbanRural,
     category: first(query.category) || defaults.category,
