@@ -260,13 +260,16 @@ export async function pdfToText(
   if (archive && stdout.trim()) {
     await archiveDocumentText(stdout, archive.identity, proxyUrl, archive.capturedAt)
   }
+  const tmp = `${cachePath}.${randomUUID()}.tmp`
   try {
     await mkdir(CACHE_DIR, { recursive: true })
-    const tmp = `${cachePath}.${randomUUID()}.tmp`
     await writeFile(tmp, stdout)
     await rename(tmp, cachePath)
-    return stdout
-  } catch {
-    return null
+  } catch (err) {
+    // Cache failures (full volume, read-only FS) must not turn a successful
+    // extraction into a failed one.
+    console.warn(`[extract/pdf-text] text cache write failed: ${(err as Error).message}`)
+    await rm(tmp, { force: true }).catch(() => undefined)
   }
+  return stdout
 }
