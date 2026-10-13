@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Auction } from '~/types/auction'
 import { getPool } from './db'
+import { coordinatesMovedSignificantly } from './external-data/geo'
 
 vi.mock('./db', () => ({ getPool: vi.fn() }))
 vi.mock('~/server/tasks/external-enrichment', () => ({ runExternalEnrichment: vi.fn(async () => ({})) }))
@@ -9,7 +10,6 @@ const { runExternalEnrichment } = await import('~/server/tasks/external-enrichme
 
 const {
   auctionToCurrentRow,
-  coordinatesMovedSignificantly,
   ensureAuctionIdentity,
   recordGeocodeAttempts,
   upsertCurrentAuctions,

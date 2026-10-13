@@ -12,9 +12,6 @@ import { getPool } from './db'
 import { coordinatesMovedSignificantly } from './external-data/geo'
 import type { GeocodeStatus } from './geocode'
 
-/** Re-exported for tests. */
-export { coordinatesMovedSignificantly }
-
 const COLUMNS = [
   'platform',
   'external_id',
