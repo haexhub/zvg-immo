@@ -22,7 +22,6 @@ import {
   recordInMemoryRateLimitHit,
 } from '../../../utils/in-memory-rate-limit'
 import { requestClientIp } from '../../../utils/request-client-ip'
-import { publicError } from '../../../utils/public-error'
 
 // Every live lookup costs upstream requests (a region crawl is one full list
 // fetch per region), and this route is anonymous: without these bounds a
