@@ -171,6 +171,17 @@ describe('DvfTransactionCache', () => {
     expect(candidateDvfTransactionsForAuction(auction({ lat: 43.6047, lng: 1.4442 }), cache)).toEqual([])
   })
 
+  it('includes sales across a geohash cell edge that are within the radius', () => {
+    // 48.8671875° is a precision-4 cell edge; the sale is ~550 m north of it.
+    const sale = { ...loadDvfCsv(csv(1)).transactions[0]!, lat: 48.87, lng: 2.3522 }
+    const cache = buildDvfTransactionCache([sale], { sourceVersion: 'fixture-2025' })
+    const nearby = auction({ lat: 48.865, lng: 2.3522 })
+    expect(encodeGeohash(nearby.lat!, nearby.lng!, 4)).not.toBe(encodeGeohash(sale.lat, sale.lng, 4))
+
+    expect(candidateDvfTransactionsForAuction(nearby, cache)).toEqual([sale])
+    expect(candidateDvfTransactionsForAuction(nearby, cache, { radiusMeters: 100 })).toEqual([])
+  })
+
   it('imports a CSV file into a JSON cache that the adapter can use', async () => {
     tmp = await mkdtemp(join(tmpdir(), 'zvg-dvf-'))
     const csvPath = join(tmp, 'dvf.csv')

@@ -3,12 +3,13 @@ import type { Auction, MarketComparisonPropertyClass } from '~/types/auction'
 import { readJsonCache, writeJsonCache } from '../json-cache'
 import {
   buildDvfMarketComparison,
+  DEFAULT_DVF_RADIUS_METERS,
   normalizeDvfMutation,
   type DvfMarketComparisonOptions,
   type DvfTransaction,
   type RawDvfRow,
 } from './fr-dvf'
-import { encodeGeohash } from './geohash'
+import { encodeGeohash, geohashesWithinRadius } from './geohash'
 import type { MarketComparisonAdapter } from '~/server/tasks/external-enrichment'
 
 export interface DvfTransactionGroupIndex {
@@ -132,18 +133,21 @@ export async function readDvfTransactionCache(path: string): Promise<DvfTransact
 export function candidateDvfTransactionsForAuction(
   auction: Auction,
   cache: DvfTransactionCache,
-  options: { geohashPrefixLength?: number } = {},
+  options: { geohashPrefixLength?: number; radiusMeters?: number } = {},
 ): DvfTransaction[] {
   if (auction.lat == null || auction.lng == null) return []
   const propertyClass = marketClassForAuction(auction)
   const group = cache.groups[propertyClass]
   if (!group) return []
-  const geohash = encodeGeohash(
+  // The comparison keeps every sale within the radius, so the candidates must
+  // cover all cells the radius reaches, not only the auction's own cell.
+  const geohashes = geohashesWithinRadius(
     auction.lat,
     auction.lng,
+    options.radiusMeters ?? DEFAULT_DVF_RADIUS_METERS,
     options.geohashPrefixLength ?? DEFAULT_GEOHASH_PREFIX_LENGTH,
   )
-  const indexes = group.byGeohash[geohash] ?? []
+  const indexes = geohashes.flatMap((geohash) => group.byGeohash[geohash] ?? [])
   return indexes.map((index) => cache.transactions[index]).filter((tx): tx is DvfTransaction => !!tx)
 }
 

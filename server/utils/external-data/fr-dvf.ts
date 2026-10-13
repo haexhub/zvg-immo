@@ -39,7 +39,7 @@ export interface DvfMarketComparisonOptions {
   similarBandPct?: number
 }
 
-const DEFAULT_RADIUS_METERS = 10_000
+export const DEFAULT_DVF_RADIUS_METERS = 10_000
 // DVF contains transaction-level public records. Use an intentionally higher
 // floor than the UI's generic display threshold to avoid tiny cohorts.
 const DEFAULT_MIN_SAMPLES = 11
@@ -120,7 +120,7 @@ export function buildDvfMarketComparison(
   const propertyClass = classifyMarketPropertyClass(auction)
   if (propertyClass === 'unknown' || propertyClass === 'mixed') return insufficient(own, auction.region, propertyClass)
 
-  const radiusMeters = options.radiusMeters ?? DEFAULT_RADIUS_METERS
+  const radiusMeters = options.radiusMeters ?? DEFAULT_DVF_RADIUS_METERS
   const comparablePrices = transactions
     .filter((tx) => tx.propertyClass === propertyClass)
     .filter((tx) => distanceMeters({ lat: auction.lat!, lng: auction.lng! }, tx) <= radiusMeters)
