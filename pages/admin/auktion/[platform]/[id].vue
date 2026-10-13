@@ -33,7 +33,7 @@ const overviewError = ref<string | null>(null)
 function clearAuthState(): void {
   authed.value = false
 }
-const { normalizeSettingsError } = useSettingsError()
+const { normalizeSettingsError } = useSettingsError(clearAuthState)
 const { llmProfileOptions, setLlmProfileOptions } = useLlmProfileOptions()
 
 async function probeSession(): Promise<void> {
@@ -84,7 +84,6 @@ async function loadOverview(): Promise<void> {
   } catch (err) {
     overview.value = null
     overviewError.value = normalizeSettingsError(err, t('settings.auctionTechnical.loadError'))
-    if ((err as { statusCode?: number }).statusCode === 401) clearAuthState()
   } finally {
     overviewPending.value = false
   }

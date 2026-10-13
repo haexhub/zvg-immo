@@ -2,9 +2,12 @@ import type { InjectionKey } from 'vue'
 
 export const settingsSessionExpiredKey: InjectionKey<() => void> = Symbol('settingsSessionExpired')
 
-export function useSettingsError() {
+// A component providing settingsSessionExpiredKey cannot inject its own
+// provide (Vue only looks at ancestors), so a page that owns the auth state
+// passes its expiry handler directly.
+export function useSettingsError(onSessionExpired?: () => void) {
   const { t } = useI18n()
-  const expireSession = inject(settingsSessionExpiredKey, null)
+  const expireSession = onSessionExpired ?? inject(settingsSessionExpiredKey, null)
 
   function normalizeSettingsError(err: unknown, fallback: string): string {
     const e = typeof err === 'object' && err !== null
