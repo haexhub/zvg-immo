@@ -131,7 +131,10 @@ export default defineEventHandler(async (event): Promise<AuctionDetail> => {
   const lng = sourcePoint?.lng ?? point?.lng ?? null
   applyDescriptionMarketValue(auction)
   const [locationEnrichment, relatedAuctions, geoMetrics] = await Promise.all([
-    readLocationEnrichment(platform, id),
+    readLocationEnrichment(platform, id).catch((err) => {
+      console.warn(`[api/auction] location enrichment read ${platform}/${id}: ${(err as Error).message}`)
+      return null
+    }),
     readAuctionRelationships(platform, id),
     readAuctionGeoMetrics(platform, id).catch((err) => {
       console.warn(`[api/auction] geo metrics read ${platform}/${id}: ${(err as Error).message}`)

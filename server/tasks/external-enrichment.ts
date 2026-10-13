@@ -4,8 +4,10 @@ import { geocodeAddress } from '~/server/utils/geocode'
 import { getPool } from '~/server/utils/db'
 import { coordinatesMovedSignificantly } from '~/server/utils/external-data/geo'
 import {
+  readLocationEnrichment,
   readLocationEnrichmentCache,
   writeLocationEnrichmentCache,
+  type LocationEnrichmentCache,
 } from '~/server/utils/external-data/location-enrichment'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 import { runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-task'
@@ -137,10 +139,16 @@ export async function runExternalEnrichment(
   // meant every such trigger joined and sorted the entire auctions/
   // auction_details/auction_fetch_state tables, which under concurrent crawl
   // load queued up on the shared pool and blew its 15s query_timeout.
-  const records = options.platform && options.externalId
-    ? await readAuctionRecord(options.platform, options.externalId).then((record) => record ? [record] : [])
+  const { platform, externalId } = options
+  const records = platform && externalId
+    ? await readAuctionRecord(platform, externalId).then((record) => record ? [record] : [])
     : await readAuctionRecords(options.country, { includePhotos: false })
-  const existing = await readLocationEnrichmentCache()
+  // Both reads throw rather than yield an empty map: with no previous entry
+  // every adapter that comes back empty this run would null out stored data.
+  const existing: LocationEnrichmentCache = platform && externalId
+    ? await readLocationEnrichment(platform, externalId)
+      .then((entry): LocationEnrichmentCache => entry ? { [cacheKey(platform, externalId)]: entry } : {})
+    : await readLocationEnrichmentCache()
   const summary: ExternalEnrichmentSummary = {
     processed: 0,
     written: 0,

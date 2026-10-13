@@ -8,6 +8,7 @@ vi.mock('~/server/utils/auction-record', () => ({
 }))
 vi.mock('~/server/utils/geocode', () => ({ geocodeAddress: vi.fn() }))
 vi.mock('~/server/utils/external-data/location-enrichment', () => ({
+  readLocationEnrichment: vi.fn(),
   readLocationEnrichmentCache: vi.fn(),
   writeLocationEnrichmentCache: vi.fn(),
 }))
@@ -195,14 +196,14 @@ describe('runExternalEnrichment', () => {
   it('reads only the requested auction for per-auction runs', async () => {
     vi.stubGlobal('defineTask', (def: unknown) => def)
     const { readAuctionRecord, readAuctionRecords } = await import('~/server/utils/auction-record')
-    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    const { readLocationEnrichment, readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
     vi.mocked(readAuctionRecord).mockResolvedValue({
       auction: auction({ platform: 'zvg-portal', externalId: '123' }),
       detailsId: null,
       detailsVersion: null,
       artifactVersionId: null,
     })
-    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
+    vi.mocked(readLocationEnrichment).mockResolvedValue(null)
     vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
 
     const { runExternalEnrichment } = await import('./external-enrichment')
@@ -217,7 +218,26 @@ describe('runExternalEnrichment', () => {
 
     expect(readAuctionRecord).toHaveBeenCalledWith('zvg-portal', '123')
     expect(readAuctionRecords).not.toHaveBeenCalled()
+    expect(readLocationEnrichment).toHaveBeenCalledWith('zvg-portal', '123')
+    expect(readLocationEnrichmentCache).not.toHaveBeenCalled()
     expect(summary).toMatchObject({ processed: 1, written: 1 })
+  })
+
+  it('aborts instead of overwriting stored enrichment when the previous entries cannot be read', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(auction()))
+    vi.mocked(readLocationEnrichmentCache).mockRejectedValue(new Error('query_timeout'))
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    await expect(runExternalEnrichment({
+      marketAdapters: [],
+      landValueAdapters: [],
+      hazardAdapters: [],
+      locationContextAdapters: [],
+    })).rejects.toThrow('query_timeout')
+    expect(writeLocationEnrichmentCache).not.toHaveBeenCalled()
   })
 
   it('writes cached enrichment from market, land-value and hazard adapters', async () => {
