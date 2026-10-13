@@ -125,7 +125,7 @@ export async function fetchAllListings(
     }
     if (cookies) headers['Cookie'] = cookies
 
-    const res = await fetch(nextUrl, { headers })
+    const res = await fetch(nextUrl, { headers, signal: AbortSignal.timeout(20_000) })
     if (!res.ok) throw new Error(`MNV fetch failed: ${res.status} ${nextUrl}`)
 
     // Maintain session cookies for subsequent pagination requests
