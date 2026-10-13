@@ -288,9 +288,13 @@ export async function writeAuctionLlmPipelineState(
 }
 
 /** How long a sync LLM claim is trusted before llm-status.ts's read-side falls
- *  it back to 'error'/'open' — claude-proxy.ts's own request timeout is 120s
- *  plus a handful of transient retries, so a real in-flight call never
- *  approaches this; it only matters for a run that died mid-item. */
+ *  it back to 'error'/'open'. Meant for a run that died mid-item; typical sync
+ *  calls finish well within it.
+ *  ponytail: not an upper bound on a live call — extract/providers/claude-proxy.ts
+ *  allows 11 min per request and llm.ts retries timeouts (TRANSIENT_RETRY_DELAYS_MS),
+ *  so a slow scanned appraisal can outlive the lease and briefly show as
+ *  'error'/'open' while still running. Only the status display is affected;
+ *  raise this (or renew the claim per attempt) if that becomes confusing. */
 export const LLM_CLAIM_LEASE_MS = 10 * 60 * 1000
 
 /** Marks a single identity as currently undergoing a synchronous LLM call —
