@@ -39,6 +39,14 @@ export default defineEventHandler(async (event) => {
 
   const trustForwarded = String(config.trustForwardedFor ?? '') === '1'
   const ip = clientIp(event, trustForwarded)
+  const body = await readBody<{ password?: unknown }>(event).catch(
+    () => undefined,
+  ) ?? ({} as { password?: unknown })
+
+  // Check and record must stay in one synchronous stretch with no await in
+  // between: otherwise a burst of parallel requests all pass the check while
+  // the first ones are still reading their body, and the limit only counts
+  // sequential attempts.
   const now = Date.now()
   if (!checkRateLimit(ip, now)) {
     throw createError({
@@ -46,10 +54,6 @@ export default defineEventHandler(async (event) => {
       statusMessage: 'Zu viele Fehlversuche. Bitte 60 Sekunden warten.',
     })
   }
-
-  const body = await readBody<{ password?: unknown }>(event).catch(
-    () => undefined,
-  ) ?? ({} as { password?: unknown })
   const submitted = typeof body.password === 'string' ? body.password : ''
   if (!timingSafePasswordEqual(submitted, password)) {
     recordFailedAttempt(ip, now)

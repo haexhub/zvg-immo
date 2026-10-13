@@ -85,6 +85,30 @@ describe('/api/settings/login POST', () => {
     )
   })
 
+  it('caps a parallel burst of wrong passwords at the limiter threshold', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
+    vi.stubGlobal('useRuntimeConfig', () => ({ settingsPassword: 'correct', settingsSessionSecret: 'secret' }))
+    vi.stubGlobal('getRequestHeader', () => undefined)
+    // Yield a macrotask like h3's streamed body read, so all requests are
+    // in flight before any of them reaches the password compare.
+    vi.stubGlobal('readBody', vi.fn(() => new Promise((resolve) => setImmediate(() => resolve({ password: 'wrong' })))))
+
+    const actual = await vi.importActual<typeof import('../../utils/settings-auth')>('../../utils/settings-auth')
+    actual.resetRateLimit()
+    const { checkRateLimit, recordFailedAttempt, timingSafePasswordEqual } = await import('../../utils/settings-auth')
+    vi.mocked(checkRateLimit).mockImplementation(actual.checkRateLimit)
+    vi.mocked(recordFailedAttempt).mockImplementation(actual.recordFailedAttempt)
+    vi.mocked(timingSafePasswordEqual).mockImplementation(actual.timingSafePasswordEqual)
+
+    const handler = (await import('./login.post')).default as unknown as (event: unknown) => Promise<unknown>
+    const results = await Promise.allSettled(Array.from({ length: 10 }, () => handler(makeEvent('203.0.113.7'))))
+    const codes = results.map((r) => (r.status === 'rejected' ? (r.reason as { statusCode: number }).statusCode : 200))
+    expect(codes.filter((c) => c === 401)).toHaveLength(5)
+    expect(codes.filter((c) => c === 429)).toHaveLength(5)
+    actual.resetRateLimit()
+  })
+
   it('keys the rate limit off the socket address when x-forwarded-for is not trusted', async () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
