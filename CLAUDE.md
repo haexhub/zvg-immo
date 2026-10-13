@@ -10,26 +10,31 @@ Rules:
 
 ## Settings-Seite (Admin-UI)
 
-`pages/settings.vue` rendert die Cards aus `components/settings/*.vue` in drei Sektionen (Crawling & Anreicherung / KI-LLM / Verwaltung). "detached" = POST antwortet sofort mit `{started:true}`, der eigentliche Task läuft im Hintergrund weiter (Reverse-Proxy-Timeout umgehen); Fortschritt kommt über GET-Status bzw. `useSettingsTaskOverview`/`usePollWhileActive`.
+`pages/settings.vue` rendert nach dem Login (`/api/settings/{login,logout,session}`) zuerst `SettingsCountryStatusOverview` und danach die Cards aus `components/settings/*.vue` in vier Sektionen (Betrieb & Fehler / Crawling & Anreicherung / KI-LLM / Verwaltung). "detached" = POST antwortet sofort mit `{started:true}`, der eigentliche Task läuft im Hintergrund weiter (Reverse-Proxy-Timeout umgehen); Fortschritt kommt über GET-Status bzw. `useSettingsTaskOverview`/`usePollWhileActive`.
 Manuelle Reprocess-/Enrich-/External-Enrichment-Trigger rufen `runReprocessTask`/`runEnrichTask`/`runExternalEnrichmentTask` direkt auf, nie Nitros `runTask` (das verwirft bei laufendem Task die Payload). Unter manuellen Reprocess-/External-Läufen gilt latest-run-wins; manuelle Enrich-Läufe reihen sich hinter den aktiven ein (ein Abbruch kostete Crawl und Finalize-Persistenz). Ein Cron-/Boot-Lauf überspringt, solange ein Lauf aktiv ist.
 
 | Card | Routen | Modus |
 |---|---|---|
-| SettingsCountrySourcesCard | GET/PUT `/api/settings/countries`, POST `/api/settings/countries/[code]/enrich` | Enrich detached |
-| SettingsOsmImportCard | GET `/api/settings/osm-import`, POST `/api/settings/osm-import/[country]` | pro Land; der POST merkt die Anforderung nur vor, importiert wird vom täglichen Host-Job (nicht in dieser App) |
+| SettingsCountryStatusOverview | GET `/api/settings/{crawl-status,llm-status,translation-status-by-language,osm-import,status-snapshots}`, GET `/api/settings/{crawl,llm,translation,osm}-status/[country]`, POST `/api/settings/countries/[code]/{enrich,enrich-backlog,enrich-retry-failed,reprocess-backlog,reprocess-retry-failed,reprocess-force,translation-retry-open,translation-retry-failed}`, POST `/api/settings/auction/[platform]/[id]/{enrich,reprocess,translation}-retry`, POST `/api/settings/osm-enrichment/[country]`, POST `/api/settings/osm-import/[country]` | alle POSTs detached (Enrich verkettet Reprocess/External-Enrichment nach dem Crawl); `osm-import` merkt die Anforderung pro Land nur vor, importiert wird vom täglichen Host-Job (nicht in dieser App). Verschachtelt: SettingsAutomationControlsCard, SettingsCountrySourcesCard, SettingsTranslationLanguageStatusCard |
+| SettingsAutomationControlsCard | GET/PUT `/api/settings/automation` | sync |
+| SettingsCountrySourcesCard | GET/PUT `/api/settings/countries` | sync |
+| SettingsOperationsCard | GET `/api/settings/operations` | sync |
 | SettingsGeoMetricsCard | GET/POST `/api/settings/geo-metrics` | detached, **nur ganz Europa** (kein Pro-Land-Scoping) |
-| SettingsExternalDataCard | GET `/api/settings/external-data/sources`, PUT `.../sources/[id]`, POST `.../enrichment` | Enrichment detached; die Polygon-Cache-Importe (`eu-flood-risk-cache`, `copernicus-effis-cache`) laufen detached mit Status über `/api/settings/llm-batch-jobs`, nur `fr-dvf-cache` ist sync/awaited |
-| SettingsReprocessCard | POST `/api/settings/reprocess` | detached |
-| SettingsLlmKillSwitchCard | GET/PUT `/api/settings/llm-kill-switch` | sync, wirkt sofort ohne Redeploy; blockt extraction/translation/insights/admin-trial-run, indem die geteilten Config-Resolver (`readExtractionLlmConfigChain`, `resolveActiveLlmConfigChain`, `resolveLlmConfigForProfile`, Insight-Endpoint) auf "nicht konfiguriert" zurückfallen — bereits eingereichte Batch-Jobs werden weiter abgerufen |
+| SettingsExternalDataCard | GET `/api/settings/external-data/{sources,coverage}`, PUT `.../sources/[id]`, POST `.../enrichment`, POST `.../{eu-flood-risk,copernicus-effis,eurostat-tourism-nuts,fr-dvf}-cache` | Enrichment detached; die Cache-Importe `eu-flood-risk-cache`, `copernicus-effis-cache` und `eurostat-tourism-nuts-cache` laufen detached mit Status über `/api/settings/llm-batch-jobs`, nur `fr-dvf-cache` ist sync/awaited |
+| SettingsReprocessCard | POST `/api/settings/reprocess` | detached, Ergebnis über `reprocessStatus` |
+| SettingsLlmKillSwitchCard | GET/PUT `/api/settings/llm-kill-switch` | sync, wirkt sofort ohne Redeploy; blockt extraction/translation/admin-trial-run, indem die geteilten Config-Resolver (`readExtractionLlmConfigChain`, `resolveActiveLlmConfigChain`, `resolveLlmConfigForProfile`) auf "nicht konfiguriert" zurückfallen und `auction-admin-trial.ts` den Schalter direkt prüft — bereits eingereichte Batch-Jobs werden weiter abgerufen |
 | SettingsLlmConfigCard | GET/PUT `/api/settings/llm-config` | sync |
 | SettingsLlmProfilesCard | GET/PUT `/api/settings/llm-profiles`, DELETE `.../llm-profiles/[id]`, POST `/api/settings/llm-provider/models` | sync |
 | SettingsLlmAssignmentsCard | GET `/api/settings/llm-profiles`, PUT `/api/settings/llm-assignments` | sync |
 | SettingsLlmBatchCard | GET `/api/settings/llm-batch-jobs` (geteiltes Status-Overview für Reprocess/Enrich/External-Enrichment/Offload) | sync |
 | SettingsLlmCostCard | GET `/api/settings/llm-costs` (aggregiert `llm_usage_events`) | sync |
 | SettingsLawyersCard | GET/POST/PUT/DELETE `/api/settings/lawyers[/id]` | sync |
+| SettingsOutboundDeliveriesCard | GET `/api/settings/outbound-deliveries` | sync |
 | SettingsDisplayCard | GET/PUT `/api/settings/display` | sync |
-| ArchiveBrowser | GET `/api/settings/archive/{countries,regions,cases,documents}`, DELETE `.../archive/countries/[code]` | sync |
-| SettingsClaudeFlow (in Reprocess/LlmProfiles/CountrySources/LlmBatch verschachtelt) | `/api/settings/claude/{status,login,code,reset,logout}` | sync, self-polling via `usePollWhileActive` solange ein Login-Flow aktiv ist |
+| ArchiveBrowser | GET `/api/settings/archive/{countries,regions,cases,documents}`, GET `.../archive/download/[id]`, DELETE `.../archive/countries/[code]` | sync |
+| SettingsClaudeFlow (nur in SettingsLlmProfilesCard, nur bei einem `claude-proxy`-Profil) | `/api/settings/claude/{status,login,code,reset,logout}` | sync, self-polling via `usePollWhileActive` solange ein Login-Flow aktiv ist |
+
+Außerhalb der Settings-Seite nutzt `pages/admin/auktion/[platform]/[id].vue` die Routen unter `/api/settings/auction/[platform]/[id]/` (technical, versions, reprocess). Ohne UI-Aufrufer, nur per API: `/api/settings/llm-provider` GET/PUT/DELETE (Legacy-Provider-Override) und POST `/api/settings/countries/[code]/rebuild` (sync).
 
 Geteilte Composables: `useSettingsError` (401 → Session-Expiry), `useSettingsAction` (pending/error/run-Boilerplate), `useSettingsTaskOverview` (llm-batch-jobs, gebündeltes Polling), `usePollWhileActive` (generisches Intervall-Polling mit Abbruchbedingung), `useLlmProfileOptions` (geteilte Profil-Liste zwischen LlmProfiles/LlmAssignments).
 
