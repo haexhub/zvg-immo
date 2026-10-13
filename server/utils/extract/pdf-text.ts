@@ -208,14 +208,19 @@ const CJK_CID_ENCODING_RE = /RKSJ|UniGB|UniCNS|UniJIS|UniKS|EUC-|KSC/i
 /**
  * Whether this PDF's fonts look trustworthy, i.e. none uses a CJK CID
  * encoding — a strong signal that its text layer is bogus (see
- * CJK_CID_ENCODING_RE above). Fails open (true = "trust the text") so a
- * missing/erroring `pdffonts` never makes extraction worse than before this
- * check existed.
+ * CJK_CID_ENCODING_RE above). Fails open (true = "trust the text") when
+ * `pdffonts` cannot inspect the file, while still rejecting an explicit CJK
+ * encoding marker present in the raw font dictionary.
  */
 export async function pdfHasTrustworthyEncoding(buf: Buffer): Promise<boolean> {
   const dir = await mkdtemp(join(tmpdir(), 'zvg-pdffonts-'))
   const inputPath = join(dir, 'in.pdf')
   try {
+    // Check the raw dictionary first as a fallback for Poppler versions that
+    // accept the file but omit a malformed font from their output table.
+    if (/\/Encoding\s*\/[^\s/]*(?:RKSJ|UniGB|UniCNS|UniJIS|UniKS|EUC-|KSC)/i.test(buf.toString('latin1'))) {
+      return false
+    }
     await writeFile(inputPath, buf)
     const { stdout } = await exec('pdffonts', [inputPath], {
       timeout: 30_000,
@@ -229,6 +234,8 @@ export async function pdfHasTrustworthyEncoding(buf: Buffer): Promise<boolean> {
       // width tail columns from the end rather than indexing from the start.
       .some((line) => CJK_CID_ENCODING_RE.test(line.trim().split(/\s+/).at(-6) ?? ''))
   } catch {
+    // Keep the historical fail-open behavior for files without an explicit
+    // CJK marker when Poppler cannot inspect them.
     return true
   } finally {
     await rm(dir, { recursive: true, force: true })
