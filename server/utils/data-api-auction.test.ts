@@ -65,7 +65,7 @@ describe('readPublicAuctions', () => {
 
   it('scopes the collection to enabled countries, so a paused country returns nothing', async () => {
     const { getPool } = await import('./db')
-    const query = vi.fn(async (statement: string) => ({ rows: statement.includes('COUNT(*)') ? [{ total: '0' }] : [] }))
+    const query = vi.fn(async (statement: string, _params: unknown[]) => ({ rows: statement.includes('COUNT(*)') ? [{ total: '0' }] : [] }))
     vi.mocked(getPool).mockReturnValue({ query } as never)
     const { readPublicAuctions } = await import('./data-api-auction')
     const base = { includeWithdrawn: false, page: 1, pageSize: 25 }
