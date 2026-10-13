@@ -163,6 +163,17 @@
         "attention": "Prüfen"
       }
     },
+    "outbound": {
+      "title": "Ausgehende Nachrichten",
+      "description": "Zustand der langlebigen Mail-Outbox; Inhalte und Empfänger bleiben verborgen.",
+      "refresh": "Aktualisieren",
+      "loadError": "Zustand konnte nicht geladen werden.",
+      "pending": "Ausstehend: {count}",
+      "processing": "In Arbeit: {count}",
+      "failed": "Dauerhaft fehlgeschlagen: {count}",
+      "attempt": "Versuch {count}",
+      "unknownError": "unbekannt"
+    },
     "messageDetails": {
       "show": "{count} Einträge anzeigen",
       "hide": "Einträge ausblenden"

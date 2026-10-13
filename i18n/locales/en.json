@@ -163,6 +163,17 @@
         "attention": "Needs attention"
       }
     },
+    "outbound": {
+      "title": "Outbound messages",
+      "description": "State of the durable mail outbox; contents and recipients stay hidden.",
+      "refresh": "Refresh",
+      "loadError": "Could not load the outbox state.",
+      "pending": "Pending: {count}",
+      "processing": "Processing: {count}",
+      "failed": "Permanently failed: {count}",
+      "attempt": "Attempt {count}",
+      "unknownError": "unknown"
+    },
     "messageDetails": {
       "show": "Show {count} entries",
       "hide": "Hide entries"
