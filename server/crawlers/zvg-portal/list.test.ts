@@ -43,4 +43,14 @@ describe('parseAuctionsHtml', () => {
     expect(auction.address).toBe('Göppersdorfer Straße 11c, 01819 Bahretal')
     expect(auction.marketValueEur).toBe(95000)
   })
+
+  it('scopes the Aktenzeichen fallback id by Land and court when there is no zvg_id', () => {
+    const withoutLink = STRONG_CHUNK.replace(/<a [^>]*>([\s\S]*?)<\/a>/, '$1')
+    const otherCourt = withoutLink.replace('Dresden in Sachsen', 'Leipzig in Sachsen')
+    const { auctions } = parseAuctionsHtml(withoutLink + otherCourt, 'sn', 'zvg-portal')
+    expect(auctions.map((a) => a.externalId)).toEqual([
+      'az:sn:Dresden:0525 K 0116/2024',
+      'az:sn:Leipzig:0525 K 0116/2024',
+    ])
+  })
 })
