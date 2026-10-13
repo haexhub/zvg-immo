@@ -3,7 +3,7 @@ import type { Auction, MarketComparisonPropertyClass } from '~/types/auction'
 import { readJsonCache, writeJsonCache } from '../json-cache'
 import {
   buildDvfMarketComparison,
-  normalizeDvfRow,
+  normalizeDvfMutation,
   type DvfMarketComparisonOptions,
   type DvfTransaction,
   type RawDvfRow,
@@ -24,8 +24,11 @@ export interface DvfTransactionCache {
 }
 
 export interface DvfCsvLoadResult {
+  /** CSV data rows read. */
   rows: number
+  /** Mutations kept as transactions. */
   normalized: number
+  /** Mutations dropped (no price/coordinates, mixed or unclassifiable). */
   dropped: number
   transactions: DvfTransaction[]
 }
@@ -177,7 +180,19 @@ function marketClassForAuction(auction: Auction): MarketComparisonPropertyClass 
 function createDvfCsvLoader(): { write: (chunk: string) => void; end: () => DvfCsvLoadResult } {
   const transactions: DvfTransaction[] = []
   let rows = 0
+  let mutations = 0
   let header: string[] | null = null
+  // DVF exports list a mutation's rows contiguously, so a mutation is complete
+  // as soon as the id changes — only one mutation's rows are ever buffered.
+  // Rows without an id_mutation are each their own mutation.
+  let mutation: RawDvfRow[] = []
+  const flushMutation = () => {
+    if (mutation.length === 0) return
+    mutations++
+    const normalized = normalizeDvfMutation(mutation)
+    if (normalized) transactions.push(normalized)
+    mutation = []
+  }
   const parser = createCsvRecordParser((record) => {
     if (!record.some((value) => value.trim())) return
     if (!header) {
@@ -187,14 +202,15 @@ function createDvfCsvLoader(): { write: (chunk: string) => void; end: () => DvfC
     const row: Record<string, string> = {}
     for (const [index, key] of header.entries()) row[key] = record[index] ?? ''
     rows++
-    const normalized = normalizeDvfRow(row as RawDvfRow)
-    if (normalized) transactions.push(normalized)
+    if (!row.id_mutation || row.id_mutation !== mutation[0]?.id_mutation) flushMutation()
+    mutation.push(row)
   })
   return {
     write: parser.write,
     end() {
       parser.end()
-      return { rows, normalized: transactions.length, dropped: rows - transactions.length, transactions }
+      flushMutation()
+      return { rows, normalized: transactions.length, dropped: mutations - transactions.length, transactions }
     },
   }
 }

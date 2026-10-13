@@ -114,6 +114,22 @@ describe('loadDvfCsv', () => {
   })
 })
 
+describe('loadDvfCsv mutations', () => {
+  it('groups consecutive rows of one mutation into a single transaction', () => {
+    const content = [
+      'id_mutation;valeur_fonciere;type_local;surface_reelle_bati;lot1_numero;latitude;longitude',
+      'm1;600000;Appartement;50;1;48,8566;2,3522',
+      'm1;600000;Appartement;70;2;48,8566;2,3522',
+      'm2;300000;Maison;100;;48,8566;2,3522',
+    ].join('\n')
+
+    const result = loadDvfCsv(content)
+
+    expect(result).toMatchObject({ rows: 3, normalized: 2, dropped: 0 })
+    expect(result.transactions.map((tx) => [tx.id, tx.builtAreaSqm])).toEqual([['m1', 120], ['m2', 100]])
+  })
+})
+
 describe('loadDvfCsvFile', () => {
   it('parses identically however the stream splits quotes, escapes and CRLFs', async () => {
     const content = '\uFEFF' + [

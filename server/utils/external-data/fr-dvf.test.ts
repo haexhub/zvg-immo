@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Auction } from '~/types/auction'
-import { buildDvfMarketComparison, normalizeDvfRow, type DvfTransaction } from './fr-dvf'
+import { buildDvfMarketComparison, normalizeDvfMutation, type DvfTransaction } from './fr-dvf'
 
 function auction(overrides: Partial<Auction> = {}): Auction {
   return {
@@ -58,9 +58,9 @@ function tx(priceEur: number, builtAreaSqm: number, overrides: Partial<DvfTransa
   }
 }
 
-describe('normalizeDvfRow', () => {
+describe('normalizeDvfMutation', () => {
   it('parses French decimal commas and maps local types', () => {
-    expect(normalizeDvfRow({
+    expect(normalizeDvfMutation([{
       id_mutation: 'm1',
       date_mutation: '2025-01-01',
       valeur_fonciere: '250000,50',
@@ -71,7 +71,7 @@ describe('normalizeDvfRow', () => {
       surface_terrain: '300',
       latitude: '48,8566',
       longitude: '2,3522',
-    })).toMatchObject({
+    }])).toMatchObject({
       id: 'm1',
       priceEur: 250000.5,
       builtAreaSqm: 125.5,
@@ -81,8 +81,40 @@ describe('normalizeDvfRow', () => {
   })
 
   it('drops rows without price or coordinates', () => {
-    expect(normalizeDvfRow({ valeur_fonciere: '0', latitude: '48', longitude: '2' })).toBeNull()
-    expect(normalizeDvfRow({ valeur_fonciere: '100000', latitude: null, longitude: '2' })).toBeNull()
+    expect(normalizeDvfMutation([{ valeur_fonciere: '0', type_local: 'Maison', latitude: '48', longitude: '2' }])).toBeNull()
+    expect(normalizeDvfMutation([{ valeur_fonciere: '100000', type_local: 'Maison', latitude: null, longitude: '2' }])).toBeNull()
+  })
+
+  it('counts a multi-row mutation once, with its price over the summed distinct areas', () => {
+    const base = {
+      id_mutation: 'm1',
+      valeur_fonciere: '2400000',
+      type_local: 'Appartement',
+      surface_reelle_bati: '50',
+      id_parcelle: '75056000AB0001',
+      surface_terrain: '800',
+      nature_culture: 'sols',
+      latitude: '48,8566',
+      longitude: '2,3522',
+    }
+    const rows = Array.from({ length: 12 }, (_, i) => ({ ...base, lot1_numero: String(i + 1) }))
+    // A cellar sold with the flats adds neither a class nor living area.
+    rows.push({ ...base, lot1_numero: '13', type_local: 'Dépendance', surface_reelle_bati: '' })
+
+    expect(normalizeDvfMutation(rows)).toMatchObject({
+      id: 'm1',
+      propertyClass: 'apartment',
+      priceEur: 2_400_000,
+      builtAreaSqm: 600,
+      landAreaSqm: 800,
+    })
+  })
+
+  it('drops mutations mixing local types', () => {
+    expect(normalizeDvfMutation([
+      { id_mutation: 'm1', valeur_fonciere: '500000', type_local: 'Maison', surface_reelle_bati: '100', latitude: '48', longitude: '2' },
+      { id_mutation: 'm1', valeur_fonciere: '500000', type_local: 'Appartement', surface_reelle_bati: '40', latitude: '48', longitude: '2' },
+    ])).toBeNull()
   })
 })
 
