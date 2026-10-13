@@ -455,6 +455,23 @@ describe('importEuFloodRiskGeoJsonCache', () => {
     })
   })
 
+  it('keeps the previous cache when the layer returns an empty FeatureCollection', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'zvg-eu-flood-'))
+    const cachePath = join(tmp, 'eu-flood-risk.geojson')
+    await writeFile(cachePath, '{"previous":true}', 'utf8')
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ type: 'FeatureCollection', features: [] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+
+    await expect(importEuFloodRiskGeoJsonCache({
+      cachePath,
+      serviceUrl: 'https://example.test/MapServer/2',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    })).rejects.toThrow('no usable zones')
+    expect(await readFile(cachePath, 'utf8')).toBe('{"previous":true}')
+  })
+
   it('surfaces ArcGIS errors instead of writing a cache', async () => {
     tmp = await mkdtemp(join(tmpdir(), 'zvg-eu-flood-'))
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({

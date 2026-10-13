@@ -314,6 +314,20 @@ describe('importCopernicusEffisBurntAreaCache', () => {
     expect(cached.zones.map((zone) => zone.id)).toEqual(['recent-large'])
   })
 
+  it('keeps the previous cache when the WFS returns no relevant burnt areas', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'zvg-effis-'))
+    const cachePath = join(tmp, 'copernicus-effis.json')
+    await writeFile(cachePath, '{"previous":true}', 'utf8')
+    const fetchImpl = vi.fn(async () => new Response(sampleGml(''), { status: 200, headers: { 'content-type': 'text/xml' } }))
+
+    await expect(importCopernicusEffisBurntAreaCache({
+      cachePath,
+      serviceUrl: 'https://example.test/effis',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    })).rejects.toThrow('no relevant burnt areas')
+    expect(await readFile(cachePath, 'utf8')).toBe('{"previous":true}')
+  })
+
   it('surfaces request failures instead of writing a cache', async () => {
     tmp = await mkdtemp(join(tmpdir(), 'zvg-effis-'))
     const fetchImpl = vi.fn(async () => new Response('error', { status: 500, statusText: 'Internal Server Error' }))

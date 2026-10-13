@@ -113,6 +113,10 @@ export async function importEuFloodRiskGeoJsonCache(
     sourceVersion,
     generatedAt,
   })
+  // An empty FeatureCollection passes every shape check (layer swapped, where
+  // clause matching nothing) and would atomically replace the previous good
+  // cache, turning every flood verdict into 'unknown' until the next run.
+  if (normalized.zones.length === 0) throw new Error(`EU flood risk import returned no usable zones from ${serviceUrl}`)
   await writeJsonCache(options.cachePath, collection)
 
   return {

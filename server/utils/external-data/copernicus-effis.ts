@@ -204,6 +204,9 @@ export async function importCopernicusEffisBurntAreaCache(
     if (pageZones.length < pageSize) break
   }
 
+  // Same reasoning as the flood import: never replace a good cache with an
+  // empty one just because the WFS answered with an empty FeatureCollection.
+  if (zones.length === 0) throw new Error(`Copernicus EFFIS import returned no relevant burnt areas from ${serviceUrl}`)
   const collection: BurntAreaCollection = { sourceVersion, generatedAt, zones }
   await writeJsonCache(options.cachePath, collection)
 
