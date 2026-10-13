@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { getTableConfig, PgTable } from 'drizzle-orm/pg-core'
 import * as schema from './index'
 
-const tables = Object.values(schema).filter((value): value is PgTable => value instanceof PgTable)
+const tables = (Object.values(schema) as unknown[]).filter((value): value is PgTable => value instanceof PgTable)
 
 describe('RLS policies', () => {
   it('only let PostgREST roles read rows, never write them', () => {
