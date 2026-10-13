@@ -282,13 +282,20 @@ services:
     image: grafana/grafana:latest
     container_name: zvg-immo-grafana
     restart: unless-stopped
+    # Same exposure as Studio: the provisioned datasource connects as the
+    # postgres superuser, so Grafana's login is the only thing between a
+    # visitor and arbitrary SQL. Bound to loopback; tunnel it (ssh -L
+    # 3001:localhost:3001 <host>) when needed. Docker-published ports bypass
+    # host firewall INPUT rules, so a 0.0.0.0 binding would be public.
     ports:
-      - "3001:3000"
+      - "127.0.0.1:3001:3000"
     volumes:
       - grafana-data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      # Required: Grafana ignores an empty override and falls back to
+      # admin/admin.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be set}
       # Read by the provisioned datasource config's ${SUPABASE_DB_PASSWORD}
       # expansion — Grafana expands env vars from its own process
       # environment, docker-compose's ${...} substitution only applies to
