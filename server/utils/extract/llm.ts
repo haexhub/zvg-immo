@@ -48,7 +48,7 @@ export interface LlmInput {
   documentText?: string | null
   pdfText?: string | null
   /** Base64 JPEGs of Gutachten pages 1..N, used when pdfText is too sparse to
-   *  be the scanned PDF's real content (see pdfPagesToBase64Jpeg). Page 1
+   *  be the scanned PDF's real content (see renderPdfPagesJpeg). Page 1
    *  alone isn't enough — it's almost always a cover page, the facts sought
    *  are on later pages. */
   pdfPageImages?: string[] | null
