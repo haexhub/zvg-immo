@@ -210,12 +210,24 @@ export async function createLawyerInquiryWithDelivery(input: NewLawyerInquiry): 
   }
 }
 
+// A worker that died mid-send leaves its 'processing' lease behind. Reclaiming
+// it counts as an attempt, so once every attempt is used up the row must end
+// 'failed' (with its inquiry) instead of being reclaimed forever.
+const FAIL_EXHAUSTED_LEASES_SQL = `WITH exhausted AS (
+     UPDATE outbound_deliveries
+     SET status = 'failed', locked_at = NULL, last_error_class = 'lease_expired'
+     WHERE status = 'processing' AND locked_at < now() - interval '10 minutes' AND attempts >= $1
+     RETURNING kind, payload
+   )
+   UPDATE lawyer_inquiries SET delivery_status = 'failed'
+   WHERE id::text IN (SELECT payload->>'inquiryId' FROM exhausted WHERE kind = 'lawyer_inquiry')`
+
 async function claimNextDelivery(db: Pool): Promise<ClaimedDelivery | null> {
   const { rows } = await db.query<ClaimedDelivery>(
     `WITH candidate AS (
        SELECT id FROM outbound_deliveries
        WHERE (status = 'pending' AND next_attempt_at <= now())
-          OR (status = 'processing' AND locked_at < now() - interval '10 minutes')
+          OR (status = 'processing' AND locked_at < now() - interval '10 minutes' AND attempts < $1)
        ORDER BY next_attempt_at, created_at
        FOR UPDATE SKIP LOCKED
        LIMIT 1
@@ -225,10 +237,9 @@ async function claimNextDelivery(db: Pool): Promise<ClaimedDelivery | null> {
      FROM candidate
      WHERE d.id = candidate.id
      RETURNING d.id, d.kind, d.payload, d.attempts`,
+    [MAX_DELIVERY_ATTEMPTS],
   )
-  const row = rows[0]
-  if (!row || (row.kind !== 'alert' && row.kind !== 'lawyer_inquiry') || !row.payload) return null
-  return row
+  return rows[0] ?? null
 }
 
 async function markDeliverySent(db: Pool, delivery: ClaimedDelivery): Promise<void> {
@@ -302,9 +313,21 @@ export async function drainOutboundDeliveries(limit = 20): Promise<{ sent: numbe
   if (!db) return { sent: 0, failed: 0 }
   let sent = 0
   let failed = 0
+  await db.query(FAIL_EXHAUSTED_LEASES_SQL, [MAX_DELIVERY_ATTEMPTS])
   for (let i = 0; i < limit; i++) {
     const delivery = await claimNextDelivery(db)
     if (!delivery) break
+    if ((delivery.kind !== 'alert' && delivery.kind !== 'lawyer_inquiry') || !delivery.payload) {
+      // Only a hand-inserted row can look like this; retrying cannot fix it,
+      // and stopping here would let it stall every later due delivery.
+      await db.query(
+        `UPDATE outbound_deliveries SET status = 'failed', locked_at = NULL, last_error_class = 'invalid_payload'
+         WHERE id = $1`,
+        [delivery.id],
+      )
+      failed++
+      continue
+    }
     try {
       const payload = delivery.payload as MailPayload
       await sendMail(payload)

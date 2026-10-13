@@ -17,12 +17,24 @@ export interface MailOptions {
 
 const FROM = 'zvg-immo Alerts <alerts@zvg-immo.local>'
 
+// Well below the outbox's 10-minute processing lease (outbound-delivery.ts):
+// nodemailer's 10-minute default socket timeout would let a hung send outlive
+// its lease and be reclaimed while still in flight.
+const SMTP_TIMEOUTS_MS = { connectionTimeout: 30_000, greetingTimeout: 30_000, socketTimeout: 60_000 }
+
 let transporter: Transporter | null | undefined
 
 function getTransporter(): Transporter | null {
   if (transporter !== undefined) return transporter
   const url = useRuntimeConfig().smtpUrl as string | undefined
-  transporter = url ? nodemailer.createTransport(url) : null
+  if (!url) return (transporter = null)
+  // nodemailer drops object options next to a connection URL, so the
+  // timeouts go into its query string; values the operator set there win.
+  const smtpUrl = new URL(url)
+  for (const [key, ms] of Object.entries(SMTP_TIMEOUTS_MS)) {
+    if (!smtpUrl.searchParams.has(key)) smtpUrl.searchParams.set(key, String(ms))
+  }
+  transporter = nodemailer.createTransport(smtpUrl.toString())
   return transporter
 }
 

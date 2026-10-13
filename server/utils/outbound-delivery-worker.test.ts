@@ -57,6 +57,7 @@ describe('durable mail worker', () => {
             payload: { inquiryId: 'inquiry-1', to: 'lawyer@example.test', subject: 'Test', text: 'Hello' },
           }] }
         }
+        if (sql.includes('WITH exhausted')) return { rows: [] }
         throw new Error('markDeliveryFailure must use a transactional client, not the bare pool')
       }),
       connect: vi.fn(async () => ({
@@ -76,5 +77,48 @@ describe('durable mail worker', () => {
     expect(clientQueries.at(-1)).toEqual(['COMMIT'])
     expect(clientQueries.some((q) => String(q[0]).includes('UPDATE outbound_deliveries') && q.includes('failed'))).toBe(true)
     expect(clientQueries.some((q) => String(q[0]).includes('UPDATE lawyer_inquiries') && String(q[0]).includes("'failed'"))).toBe(true)
+  })
+  it('ends exhausted stale leases as failed and only reclaims leases with attempts left', async () => {
+    const poolQueries: unknown[][] = []
+    const pool = {
+      query: vi.fn(async (sql: string, params: unknown[] = []) => {
+        poolQueries.push([sql, ...params])
+        return { rows: [] }
+      }),
+      connect: vi.fn(),
+    }
+    getPool.mockReturnValue(pool)
+
+    await expect(drainOutboundDeliveries(1)).resolves.toEqual({ sent: 0, failed: 0 })
+
+    const [exhaust, claim] = poolQueries
+    expect(String(exhaust![0])).toContain("status = 'failed'")
+    expect(String(exhaust![0])).toContain('attempts >= $1')
+    expect(String(exhaust![0])).toContain('UPDATE lawyer_inquiries')
+    expect(exhaust![1]).toBe(6)
+    expect(String(claim![0])).toContain('attempts < $1')
+    expect(claim![1]).toBe(6)
+  })
+
+  it('fails a malformed row and keeps draining the deliveries behind it', async () => {
+    const claims = [
+      { id: 'poison', kind: 'bogus', attempts: 1, payload: null },
+      { id: 'delivery-2', kind: 'lawyer_inquiry', attempts: 1, payload: { inquiryId: 'inquiry-2', to: 'lawyer@example.test', subject: 'Test', text: 'Hello' } },
+    ]
+    const poolQueries: unknown[][] = []
+    const pool = {
+      query: vi.fn(async (sql: string, params: unknown[] = []) => {
+        if (sql.includes('WITH candidate')) return { rows: claims.splice(0, 1) }
+        poolQueries.push([sql, ...params])
+        return { rows: [] }
+      }),
+      connect: vi.fn(async () => ({ query: vi.fn(async () => ({ rows: [] })), release: vi.fn() })),
+    }
+    getPool.mockReturnValue(pool)
+    sendMail.mockResolvedValueOnce(undefined)
+
+    await expect(drainOutboundDeliveries(5)).resolves.toEqual({ sent: 1, failed: 1 })
+    expect(poolQueries.some((q) => String(q[0]).includes("'invalid_payload'") && q[1] === 'poison')).toBe(true)
+    expect(sendMail).toHaveBeenCalledOnce()
   })
 })
