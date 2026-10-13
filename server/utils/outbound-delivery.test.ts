@@ -12,6 +12,9 @@ describe('outbound delivery policy', () => {
     expect(deliveryRetryAt(1, now).toISOString()).toBe('2026-08-09T10:01:00.000Z')
     expect(deliveryRetryAt(99, now).toISOString()).toBe('2026-08-09T11:00:00.000Z')
     expect(classifyDeliveryError(new Error('SMTP 550 user@example.test rejected'))).toBe('smtp_550')
+    expect(classifyDeliveryError(Object.assign(new Error('Message failed'), { responseCode: 554 }))).toBe('smtp_554')
+    expect(classifyDeliveryError(new Error('connect ECONNREFUSED 10.0.0.1:465'))).toBe('network')
+    expect(classifyDeliveryError(new Error('connect EHOSTUNREACH 10.0.0.1:587'))).toBe('network')
   })
 
   it('accepts a stable UUID idempotency key and rejects malformed or oversized keys', () => {

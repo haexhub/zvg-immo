@@ -52,10 +52,15 @@ export function classifyDeliveryError(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err)
   // Thrown by mailer.ts when a production deploy lacks NUXT_SMTP_URL.
   if (message === 'smtp_not_configured') return message
-  const smtp = /\b([45]\d\d)\b/.exec(message)
-  if (smtp) return `smtp_${smtp[1]}`
+  // nodemailer puts the server's reply code on the error; trust it over text.
+  const responseCode = (err as { responseCode?: unknown } | null)?.responseCode
+  if (typeof responseCode === 'number' && responseCode >= 400 && responseCode < 600) return `smtp_${responseCode}`
+  // Before the text fallback: socket errors embed the target port
+  // (`connect ECONNREFUSED 1.2.3.4:465`), which is not an SMTP code.
   if (/timeout|timed out|etimedout/i.test(message)) return 'timeout'
-  if (/econn|network|socket/i.test(message)) return 'network'
+  if (/econn|ehostunreach|enotfound|network|socket/i.test(message)) return 'network'
+  const smtp = /(?:^|\s)([45]\d\d)(?:[\s-]|$)/.exec(message)
+  if (smtp) return `smtp_${smtp[1]}`
   return 'unknown'
 }
 
