@@ -187,6 +187,16 @@ describe('DvfTransactionCache', () => {
     expect(candidateDvfTransactionsForAuction(nearby, cache, { radiusMeters: 100 })).toEqual([])
   })
 
+  it('treats a file without the transaction indexes as an empty cache instead of throwing per auction', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'zvg-dvf-'))
+    const cachePath = join(tmp, 'dvf-cache.json')
+    await writeFile(cachePath, JSON.stringify({ sourceVersion: 'other-format', transactions: [] }))
+
+    await expect(readDvfTransactionCache(cachePath)).resolves.toMatchObject({ sourceVersion: 'missing', groups: {} })
+    const adapter = await createDvfFileMarketAdapter({ cachePath })
+    await expect(adapter.compare(auction())).resolves.toMatchObject({ samples: 0 })
+  })
+
   it('imports a CSV file into a JSON cache that the adapter can use', async () => {
     tmp = await mkdtemp(join(tmpdir(), 'zvg-dvf-'))
     const csvPath = join(tmp, 'dvf.csv')

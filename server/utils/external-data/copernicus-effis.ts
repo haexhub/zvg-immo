@@ -136,15 +136,42 @@ const MIN_BURNT_AREA_HA = 10
 const SIMPLIFY_TOLERANCE_DEGREES = 0.001
 
 export async function readBurntAreaCache(path: string, sourceVersion?: string): Promise<BurntAreaCollection> {
-  const parsed = JSON.parse(await readFile(path, 'utf8')) as Partial<BurntAreaCollection> | null
-  const zones = Array.isArray(parsed?.zones) ? parsed.zones : []
-  const bbox = parsed?.bbox
+  // The path is admin-configurable, so the file may be an older format or not
+  // this cache at all: a zone without a usable polygon would make every
+  // assessment throw, so it is dropped here rather than trusted by a cast.
+  const parsed = JSON.parse(await readFile(path, 'utf8')) as unknown
+  const record = parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {}
+  const zones = Array.isArray(record.zones) ? record.zones.flatMap((zone) => burntAreaZoneOrEmpty(zone)) : []
+  const bbox = record.bbox
   return {
-    sourceVersion: sourceVersion ?? parsed?.sourceVersion ?? 'unknown',
-    generatedAt: parsed?.generatedAt ?? new Date(0).toISOString(),
+    sourceVersion: sourceVersion ?? stringOrNull(record.sourceVersion) ?? 'unknown',
+    generatedAt: stringOrNull(record.generatedAt) ?? new Date(0).toISOString(),
     zones,
-    ...(Array.isArray(bbox) && bbox.length === 4 && bbox.every(Number.isFinite) ? { bbox } : {}),
+    ...(Array.isArray(bbox) && bbox.length === 4 && bbox.every(Number.isFinite)
+      ? { bbox: bbox as [number, number, number, number] }
+      : {}),
   }
+}
+
+function burntAreaZoneOrEmpty(input: unknown): BurntAreaZone[] {
+  if (!input || typeof input !== 'object') return []
+  const zone = input as Record<string, unknown>
+  const polygon = zone.polygon
+  const isPolygon = Array.isArray(polygon) && polygon.length > 0 && polygon.every((ring) =>
+    Array.isArray(ring) && ring.every((position) =>
+      Array.isArray(position) && Number.isFinite(position[0]) && Number.isFinite(position[1])))
+  if (typeof zone.id !== 'string' || !isPolygon) return []
+  return [{
+    id: zone.id,
+    polygon: polygon as GeoJsonPolygonCoordinates,
+    fireDate: stringOrNull(zone.fireDate),
+    country: stringOrNull(zone.country),
+    areaHa: Number.isFinite(zone.areaHa) ? zone.areaHa as number : null,
+  }]
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === 'string' ? value : null
 }
 
 /** Parses a WFS GetFeature GML3 response for modis.ba.poly into normalized

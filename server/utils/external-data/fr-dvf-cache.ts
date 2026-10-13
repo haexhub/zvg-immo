@@ -125,11 +125,23 @@ export async function writeDvfTransactionCache(path: string, cache: DvfTransacti
 }
 
 export async function readDvfTransactionCache(path: string): Promise<DvfTransactionCache> {
-  return readJsonCache<DvfTransactionCache>(
-    path,
-    () => ({ sourceVersion: 'missing', generatedAt: new Date(0).toISOString(), transactions: [], groups: {} }),
-    'fr-dvf-cache',
-  )
+  const empty = (): DvfTransactionCache =>
+    ({ sourceVersion: 'missing', generatedAt: new Date(0).toISOString(), transactions: [], groups: {} })
+  const cache = await readJsonCache<object>(path, empty, 'fr-dvf-cache')
+  // readJsonCache only guarantees "some object"; the path is admin-configurable,
+  // and a file without these indexes would make every French lookup throw.
+  if (isDvfTransactionCache(cache)) return cache
+  console.warn(`[fr-dvf-cache] ${path} is not a DVF transaction cache, treating it as empty`)
+  return empty()
+}
+
+function isDvfTransactionCache(input: object): input is DvfTransactionCache {
+  const cache = input as Partial<Record<keyof DvfTransactionCache, unknown>>
+  if (typeof cache.sourceVersion !== 'string' || !Array.isArray(cache.transactions)) return false
+  if (!cache.groups || typeof cache.groups !== 'object') return false
+  return Object.values(cache.groups).every((group: Partial<DvfTransactionGroupIndex> | undefined) =>
+    !!group?.byGeohash && typeof group.byGeohash === 'object'
+    && Object.values(group.byGeohash).every((indexes) => Array.isArray(indexes)))
 }
 
 export function candidateDvfTransactionsForAuction(

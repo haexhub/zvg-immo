@@ -391,4 +391,23 @@ describe('readBurntAreaCache', () => {
       severity: 'unknown',
     })
   })
+
+  it('drops zones without a usable polygon instead of letting every assessment throw', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'zvg-effis-'))
+    const cachePath = join(tmp, 'copernicus-effis.json')
+    const square = [[[13.39, 52.51], [13.41, 52.51], [13.41, 52.53], [13.39, 52.53], [13.39, 52.51]]]
+    await writeFile(cachePath, JSON.stringify({
+      sourceVersion: 'v1',
+      generatedAt: checkedAt,
+      zones: [
+        { id: 'no-polygon', areaHa: 600 },
+        { id: 'broken-ring', polygon: [[['13.39', 52.51]]], areaHa: 600 },
+        { id: 'ok', polygon: square, fireDate: 2022, areaHa: '600' },
+      ],
+    }), 'utf8')
+
+    const collection = await readBurntAreaCache(cachePath)
+    expect(collection.zones).toEqual([{ id: 'ok', polygon: square, fireDate: null, country: null, areaHa: null }])
+    expect(buildWildfireHazardAssessment(auction(), collection, { checkedAt })).toMatchObject({ status: 'inside' })
+  })
 })
