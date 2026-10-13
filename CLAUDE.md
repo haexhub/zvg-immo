@@ -78,8 +78,8 @@ beim Matching übersprungen und protokolliert, nie stillschweigend gelockert.
 
 ## Modulgrößen
 
-Produktionsdateien unter `server`, `components`, `composables`, `pages` und
-`lib` bleiben bei höchstens 500 Zeilen. Der CI-Size-Gate in
+Produktionsdateien unter `server`, `components`, `composables`, `pages`, `lib`
+und `types` bleiben bei höchstens 500 Zeilen. Der CI-Size-Gate in
 `.github/workflows/ci.yml` prüft dies ohne Tests, Migrationen und Vendor-Code.
 Bei Reprocess liegen Kandidaten/Input-Helper, Einzelauswertung und Orchestrierung
 in getrennten Modulen unter `server/utils/tasks/`; Enrich trennt Auswahl, Worker
