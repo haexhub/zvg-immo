@@ -118,6 +118,11 @@ describe('parseListPage', () => {
     expect(item?.cityLine).toBe('01067 Dresden')
   })
 
+  it('recognizes the Bundesland marker among other class tokens', () => {
+    const [item] = parseListPage(LIST_HTML.replace('class="Sachsen"', 'class="Sachsen d-none"'))
+    expect(item?.regionCode).toBe('sn')
+  })
+
   it('falls back to nulls when region/geo/price/title are absent', () => {
     const [, item] = parseListPage(LIST_HTML)
     expect(item?.externalId).toBe('X26-02-002')
