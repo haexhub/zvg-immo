@@ -41,10 +41,10 @@ const auction = {
 } as never
 
 function alertSupabase(options: { email?: string, userError?: Error, filters?: Record<string, unknown> } = {}) {
-  const inserted = vi.fn(async () => ({ error: null }))
+  // notified_matches is only read here; outbound-delivery confirms it after a
+  // successful send, so enqueueAlertDelivery is the observable side effect.
   const notifiedSelect = {
     select: vi.fn(() => ({ eq: vi.fn(async () => ({ data: [], error: null })) })),
-    insert: inserted,
   }
   const client = {
     from: vi.fn((table: string) => table === 'alert_subscriptions'
@@ -56,10 +56,11 @@ function alertSupabase(options: { email?: string, userError?: Error, filters?: R
       data: { user: options.email ? { email: options.email } : null }, error: options.userError ?? null,
     })) } },
   }
-  return { client, inserted }
+  return { client }
 }
 
 afterEach(() => {
+  vi.restoreAllMocks()
   vi.clearAllMocks()
 })
 
@@ -149,26 +150,37 @@ describe('toAuctionFilters', () => {
 })
 
 describe('alert delivery state', () => {
-  it('does not record a match when the recipient lookup fails', async () => {
-    const { client, inserted } = alertSupabase({ userError: new Error('directory unavailable') })
+  it('queues no mail when the recipient lookup fails', async () => {
+    const { client } = alertSupabase({ email: 'person@example.test', userError: new Error('directory unavailable') })
     getServiceClient.mockReturnValue(client)
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
     await matchAlerts('de', 'sn', { auctions: [auction] } as never)
 
-    expect(inserted).not.toHaveBeenCalled()
+    expect(enqueueAlertDelivery).not.toHaveBeenCalled()
   })
 
-  it('does not record a match when durable enqueue fails, so a later crawl can retry', async () => {
-    const { client, inserted } = alertSupabase({ email: 'person@example.test' })
+  it('retries the match on a later crawl when durable enqueue fails', async () => {
+    const { client } = alertSupabase({ email: 'person@example.test' })
     getServiceClient.mockReturnValue(client)
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     enqueueAlertDelivery.mockRejectedValueOnce(new Error('database down')).mockResolvedValueOnce(true)
 
     await matchAlerts('de', 'sn', { auctions: [auction] } as never)
-    expect(inserted).not.toHaveBeenCalled()
+    await matchAlerts('de', 'sn', { auctions: [auction] } as never)
+
+    expect(enqueueAlertDelivery).toHaveBeenCalledTimes(2)
+  })
+
+  it('skips and logs a legacy subscription with an unsupported geo-metric filter instead of loosening it', async () => {
+    const { client } = alertSupabase({ email: 'person@example.test', filters: { nearSea: '5' } })
+    getServiceClient.mockReturnValue(client)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
     await matchAlerts('de', 'sn', { auctions: [auction] } as never)
-    expect(enqueueAlertDelivery).toHaveBeenCalledTimes(2)
-    expect(inserted).not.toHaveBeenCalled()
+
+    expect(enqueueAlertDelivery).not.toHaveBeenCalled()
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('unsupported filters: nearSea'))
   })
 
   it('matches a radius alert against cached geocodes without mutating the crawl batch', async () => {
