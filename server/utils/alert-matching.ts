@@ -18,7 +18,7 @@ import { parseAuctionSearchFilters, unsupportedAlertFilterKeys } from '~/lib/auc
 import { listCountries } from '../crawlers/registry'
 import { isNationwideOnlyCountry } from './region-picker'
 import { getServiceClient } from './supabase'
-import { enqueueAlertDelivery } from './outbound-delivery'
+import { canonicalAppOrigin, enqueueAlertDelivery } from './outbound-delivery'
 import { fillAuctionGeocodes } from './auction-geocoding'
 import { redactAffectedPersonNames } from './public-auction-redaction'
 
@@ -150,6 +150,9 @@ async function processSubscription(
     return
   }
 
+  // Throws on a misconfigured NUXT_APP_ORIGIN; nothing is queued then, so the
+  // next crawl retries these matches once the origin is fixed.
+  const origin = canonicalAppOrigin()
   for (const a of fresh) {
     try {
       const queued = await enqueueAlertDelivery({
@@ -157,7 +160,7 @@ async function processSubscription(
         // The mail leaves the service and is kept in the outbox payload, so it
         // gets the same person-name guard as every public read path.
         subject: `Neue Auktion: ${redactAffectedPersonNames(a.title) ?? a.caseNumber}`,
-        text: buildMailBody(a),
+        text: buildMailBody(a, origin),
         alertSubscriptionId: subscriptionId,
         platform: a.platform,
         externalId: a.externalId,
@@ -171,10 +174,13 @@ async function processSubscription(
   }
 }
 
-function buildMailBody(a: Auction): string {
+// The app detail page is the primary link: zvg-portal has no detailUrl at
+// all, and elsewhere it points at the unredacted upstream portal.
+function buildMailBody(a: Auction, origin: string): string {
   const lines = [`Amtsgericht: ${a.authority}`, `Aktenzeichen: ${a.caseNumber}`]
   if (a.marketValueEur != null) lines.push(`Verkehrswert: ${a.marketValueEur.toLocaleString('de-DE')} €`)
   if (a.auctionDateText) lines.push(`Termin: ${a.auctionDateText}`)
-  if (a.detailUrl) lines.push(`Details: ${a.detailUrl}`)
+  lines.push(`Details: ${origin}/objekt/${encodeURIComponent(a.platform)}/${encodeURIComponent(a.externalId)}`)
+  if (a.detailUrl) lines.push(`Quelle: ${a.detailUrl}`)
   return lines.join('\n')
 }

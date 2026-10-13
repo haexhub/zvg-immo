@@ -9,7 +9,7 @@ const { getServiceClient, enqueueAlertDelivery, fillAuctionGeocodes } = vi.hoist
 }))
 
 vi.mock('./supabase', () => ({ getServiceClient }))
-vi.mock('./outbound-delivery', () => ({ enqueueAlertDelivery }))
+vi.mock('./outbound-delivery', () => ({ enqueueAlertDelivery, canonicalAppOrigin: () => 'https://app.example.test' }))
 vi.mock('./auction-geocoding', () => ({ fillAuctionGeocodes }))
 
 // toAuctionFilters resolves `${countryCode}:${regionCode}` pairs to
@@ -200,5 +200,17 @@ describe('alert delivery state', () => {
     const [delivery] = enqueueAlertDelivery.mock.calls[0]!
     expect(delivery.subject).toContain('[anonymisiert]')
     expect(delivery.subject).not.toContain('Hans Müller')
+  })
+
+  it('links the app detail page from NUXT_APP_ORIGIN even when the source has no detail URL', async () => {
+    const { client } = alertSupabase({ email: 'person@example.test' })
+    getServiceClient.mockReturnValue(client)
+    enqueueAlertDelivery.mockResolvedValue(true)
+
+    await matchAlerts('de', 'sn', { auctions: [{ ...(auction as object), detailUrl: null }] } as never)
+
+    const [delivery] = enqueueAlertDelivery.mock.calls[0]!
+    expect(delivery.text).toContain('Details: https://app.example.test/objekt/portal/42')
+    expect(delivery.text).not.toContain('Quelle:')
   })
 })
