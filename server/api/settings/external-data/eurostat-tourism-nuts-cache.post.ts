@@ -8,8 +8,10 @@ import type { ImportEurostatTourismNutsCachePayload } from '~/server/tasks/impor
 export default defineEventHandler(async (event): Promise<{ started: true }> => {
   const body = await readBody<Record<string, unknown>>(event).catch(() => undefined) ?? ({} as Record<string, unknown>)
 
+  // cachePath is deliberately not taken from the request: the task writes to
+  // the source's configured (or default) path, so a request body cannot pick
+  // the file the import overwrites.
   const payload: ImportEurostatTourismNutsCachePayload = {
-    cachePath: optionalString(body.cachePath),
     generatedAt: optionalString(body.generatedAt),
   }
 

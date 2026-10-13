@@ -42,6 +42,9 @@ export interface ExternalDataConfigField {
    *  adapter list entirely (same graceful-degrade contract nuxt.config.ts
    *  documents today for empty externalData.* values). */
   required?: boolean
+  /** url fields only: hosts (and their subdomains) a /settings override may
+   *  point at — see config.ts's externalDataOverrideError. */
+  allowedHosts?: string[]
 }
 
 export interface ExternalDataSource {
@@ -278,6 +281,7 @@ export const EXTERNAL_DATA_SOURCES: readonly ExternalDataSource[] = [
         envVar: 'NUXT_EXTERNAL_DATA_EEA_NOISE_SERVICE_BASE_URL',
         defaultValue: '',
         required: true,
+        allowedHosts: ['eea.europa.eu'],
       },
       {
         key: 'timeoutMs',
@@ -309,6 +313,7 @@ export const EXTERNAL_DATA_SOURCES: readonly ExternalDataSource[] = [
         envVar: 'NUXT_EXTERNAL_DATA_CAMS_AIR_QUALITY_SERVICE_URL',
         defaultValue: 'https://air-quality-api.open-meteo.com/v1/air-quality',
         required: true,
+        allowedHosts: ['open-meteo.com'],
       },
       {
         key: 'timeoutMs',
@@ -339,6 +344,7 @@ export const EXTERNAL_DATA_SOURCES: readonly ExternalDataSource[] = [
         envVar: 'NUXT_EXTERNAL_DATA_OPEN_METEO_CLIMATE_SERVICE_URL',
         defaultValue: 'https://archive-api.open-meteo.com/v1/archive',
         required: true,
+        allowedHosts: ['open-meteo.com'],
       },
       {
         key: 'timeoutMs',

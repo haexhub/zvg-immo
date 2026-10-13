@@ -46,7 +46,7 @@ describe('PUT /api/settings/external-data/sources/:id', () => {
   it('saves a valid override and echoes back the coerced values', async () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
-    vi.stubGlobal('readBody', vi.fn(async () => ({ serviceBaseUrl: 'https://mirror.example/services/noiseStoryMap', timeoutMs: '5000' })))
+    vi.stubGlobal('readBody', vi.fn(async () => ({ serviceBaseUrl: 'https://noise.discomap.eea.europa.eu/arcgis/rest/services/noiseStoryMap', timeoutMs: '5000' })))
 
     const { getPool } = await import('~/server/utils/db')
     vi.mocked(getPool).mockReturnValue(fakePool() as never)
@@ -54,7 +54,19 @@ describe('PUT /api/settings/external-data/sources/:id', () => {
     const handler = (await import('./[id].put')).default as unknown as (event: unknown) => Promise<unknown>
     await expect(handler({ context: { params: { id: 'eea-environmental-noise-directive' } } })).resolves.toEqual({
       id: 'eea-environmental-noise-directive',
-      values: { serviceBaseUrl: 'https://mirror.example/services/noiseStoryMap', timeoutMs: 5000 },
+      values: { serviceBaseUrl: 'https://noise.discomap.eea.europa.eu/arcgis/rest/services/noiseStoryMap', timeoutMs: 5000 },
     })
+  })
+
+  it('400s a path override outside the external-data cache dir', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
+    vi.stubGlobal('readBody', vi.fn(async () => ({ geoJsonPath: '/etc/passwd' })))
+
+    const { getPool } = await import('~/server/utils/db')
+    vi.mocked(getPool).mockReturnValue(fakePool() as never)
+
+    const handler = (await import('./[id].put')).default as unknown as (event: unknown) => Promise<unknown>
+    await expect(handler({ context: { params: { id: 'eu-flood-risk-areas' } } })).rejects.toMatchObject({ statusCode: 400 })
   })
 })

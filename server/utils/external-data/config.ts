@@ -6,6 +6,7 @@
 // /settings and get picked up by server/tasks/external-enrichment.ts, without
 // touching the API route or the settings card.
 
+import { isAbsolute, relative, resolve, sep } from 'node:path'
 import type { Pool } from 'pg'
 import {
   EXTERNAL_DATA_SOURCES,
@@ -37,6 +38,28 @@ function coerceFieldValue(raw: unknown, field: ExternalDataConfigField): string 
   }
   const trimmed = typeof raw === 'string' ? raw.trim() : ''
   return trimmed || undefined
+}
+
+// A DB override comes from a settings session, whereas env values are the
+// operator's own deployment config — so only overrides are confined: a path
+// to the external-data cache dir every documented deployment uses (the import
+// tasks write cache files to it), a url to https on the source's own hosts.
+// Another directory or a mirror stays possible via the NUXT_EXTERNAL_DATA_* env var.
+const EXTERNAL_DATA_DIR = resolve(process.cwd(), '.cache_zvg', 'external')
+
+export function externalDataOverrideError(field: ExternalDataConfigField, value: string | number): string | null {
+  if (field.type === 'path') {
+    const rel = relative(EXTERNAL_DATA_DIR, resolve(String(value)))
+    const inside = rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)
+    return inside ? null : `${field.key} muss unter .cache_zvg/external liegen.`
+  }
+  if (field.type === 'url') {
+    const hosts = field.allowedHosts ?? []
+    const url = URL.canParse(String(value)) ? new URL(String(value)) : null
+    const hostAllowed = hosts.some((host) => url?.hostname === host || url?.hostname.endsWith(`.${host}`))
+    return url?.protocol === 'https:' && hostAllowed ? null : `${field.key} muss eine https-URL auf ${hosts.join(', ') || '(keinem erlaubten Host)'} sein.`
+  }
+  return null
 }
 
 /** DB-stored overrides only, no env/default merge — mirrors
@@ -92,7 +115,10 @@ export async function setStoredExternalDataSourceConfig(
   const values: ExternalDataSourceConfigValues = {}
   for (const field of source.configFields ?? []) {
     const value = coerceFieldValue(rawValues[field.key], field)
-    if (value !== undefined) values[field.key] = value
+    if (value === undefined) continue
+    const error = externalDataOverrideError(field, value)
+    if (error) throw createError({ statusCode: 400, statusMessage: error })
+    values[field.key] = value
   }
   await db.query(
     `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, now())

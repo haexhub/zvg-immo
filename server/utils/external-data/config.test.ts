@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Pool } from 'pg'
 import {
   configurableExternalDataSources,
@@ -99,9 +99,35 @@ describe('stored external-data source config (DB round-trip)', () => {
 
   it('bulk-reads every configurable source in one call', async () => {
     const db = makeFakePool()
-    await setStoredExternalDataSourceConfig(db, 'fr-dvf-geolocated', { cachePath: '/app/.cache_zvg/external/fr-dvf.json' })
+    await setStoredExternalDataSourceConfig(db, 'fr-dvf-geolocated', { cachePath: '.cache_zvg/external/fr-dvf.json' })
     const all = await getAllStoredExternalDataSourceConfigs(db)
-    expect(all['fr-dvf-geolocated']).toEqual({ cachePath: '/app/.cache_zvg/external/fr-dvf.json' })
+    expect(all['fr-dvf-geolocated']).toEqual({ cachePath: '.cache_zvg/external/fr-dvf.json' })
     expect(all['cams-air-quality']).toEqual({})
+  })
+
+  describe('override confinement', () => {
+    afterEach(() => vi.unstubAllGlobals())
+
+    it.each([
+      ['copernicus-effis', { cachePath: '/etc/cron.d/zvg' }],
+      ['fr-dvf-geolocated', { cachePath: '.cache_zvg/external/../../server/index.mjs' }],
+      ['fr-dvf-geolocated', { cachePath: '.cache_zvg/external' }],
+      ['eea-environmental-noise-directive', { serviceBaseUrl: 'http://noise.discomap.eea.europa.eu/x' }],
+      ['cams-air-quality', { serviceUrl: 'https://169.254.169.254/latest/meta-data' }],
+      ['cams-air-quality', { serviceUrl: 'https://evil-open-meteo.com/v1/air-quality' }],
+    ])('400s %s override %o without storing it', async (sourceId, rawValues) => {
+      vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
+      const db = makeFakePool()
+      await expect(setStoredExternalDataSourceConfig(db, sourceId, rawValues)).rejects.toMatchObject({ statusCode: 400 })
+      expect(await getStoredExternalDataSourceConfig(db, sourceId)).toEqual({})
+    })
+
+    it('accepts paths inside the cache dir and subdomains of an allowed host', async () => {
+      const db = makeFakePool()
+      expect(await setStoredExternalDataSourceConfig(db, 'copernicus-effis', { cachePath: `${process.cwd()}/.cache_zvg/external/effis.json` }))
+        .toEqual({ cachePath: `${process.cwd()}/.cache_zvg/external/effis.json` })
+      expect(await setStoredExternalDataSourceConfig(db, 'cams-air-quality', { serviceUrl: 'https://customer-air-quality-api.open-meteo.com/v1/air-quality' }))
+        .toEqual({ serviceUrl: 'https://customer-air-quality-api.open-meteo.com/v1/air-quality' })
+    })
   })
 })
