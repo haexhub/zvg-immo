@@ -352,6 +352,22 @@ export default defineNuxtConfig({
       '50 23 * * *': ['status-snapshot'],
     },
     routeRules: {
+      // Baseline hardening for every response; nothing in front of the app is
+      // known to add these. frame-ancestors/X-Frame-Options stop clickjacking
+      // of /settings and the lawyer inquiry form.
+      // ponytail: no script-src/connect-src CSP yet — the app talks to
+      // Supabase, MapTiler/OSM/Esri tiles and inlines Nuxt payload scripts, so
+      // a restrictive policy needs nonce support and an origin allow-list
+      // tested against every map/auth flow before it can be enforced; start it
+      // as Content-Security-Policy-Report-Only.
+      '/**': {
+        headers: {
+          'Content-Security-Policy': "frame-ancestors 'none'",
+          'X-Frame-Options': 'DENY',
+          'X-Content-Type-Options': 'nosniff',
+          'Referrer-Policy': 'strict-origin-when-cross-origin',
+        },
+      },
       // /api/auctions and /api/auctions-geo query Postgres per request and send
       // no-store themselves: their results depend on the full filter/pagination
       // query and, for the geo endpoint, on a geocode cache that grows while the
