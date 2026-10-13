@@ -20,6 +20,20 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Same image as docker-compose.yml's `db` service: the migrations need its
+    # PostGIS extension and Supabase's auth schema (auth.users, auth.uid()).
+    services:
+      postgres:
+        image: supabase/postgres:17.6.1.136
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -h localhost"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
     steps:
       - uses: actions/checkout@v6
 
@@ -50,6 +64,21 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      # The real-Postgres suites (describeDb, skipped above without
+      # TEST_DATABASE_URL) catch what a mocked query() can't: writes against
+      # columns or FKs a migration changed. They share one database and some
+      # touch table-wide state (geo_features epochs, triggers), so they run
+      # one file at a time.
+      - name: Apply migrations to the test database
+        run: pnpm exec drizzle-kit migrate
+        env:
+          NUXT_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+
+      - name: Real-Postgres tests
+        run: grep -rlZ --include='*.test.ts' TEST_DATABASE_URL server | xargs -0 pnpm exec vitest run --no-file-parallelism
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
 
       - name: Build
         run: pnpm build

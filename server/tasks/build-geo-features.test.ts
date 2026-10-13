@@ -242,7 +242,7 @@ async function seedFixture(client: PoolClient): Promise<void> {
        ($4, $5, ST_GeomFromText('LINESTRING(13 53,13.01 53.01)', 4326), '{"piste:type": "downhill", "name": "Test-Kunstpiste"}'::jsonb, $3)`,
     [
       IDS.indoorDownhillPiste.osm_type, IDS.indoorDownhillPiste.osm_id, TEST_COUNTRY,
-      IDS.flatlandDownhillPiste.osm_type, IDS.flatlandDownhillPiste.osm_id, TEST_COUNTRY,
+      IDS.flatlandDownhillPiste.osm_type, IDS.flatlandDownhillPiste.osm_id,
     ],
   )
 
