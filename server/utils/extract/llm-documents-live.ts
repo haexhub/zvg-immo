@@ -1,10 +1,8 @@
 // Live crawl-time document preparation: fetches attachments over HTTP (with
 // dga-ag/zvg-portal-specific source resolution and retry-on-login-redirect),
 // as opposed to llm-documents.ts's archived-reprocess path, which reads
-// already-archived blobs via storage-download.ts. Split out of
-// llm-documents.ts purely to keep both files under the project's 500-line
-// module-size ceiling — prepareLiveLlmDocuments is re-exported from there so
-// callers (enrich-worker.ts) import from the same place as before.
+// already-archived blobs via storage-download.ts. Depends on llm-documents.ts
+// for the shared per-document preparation, never the other way round.
 
 import type { Attachment } from '~/types/auction'
 import { getDgaAgSessionCookie, isDgaAgLoginRedirect } from '~/server/crawlers/dga-ag/session'

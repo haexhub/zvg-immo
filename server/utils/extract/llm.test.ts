@@ -8,7 +8,6 @@ import {
   extractByLlm,
   isDailyQuotaError,
   isRateLimitError,
-  parseExtractionResponse,
   resolveLlmConfig,
   SYSTEM_PROMPT,
   UNIVERSAL_AUCTION_SCHEMA,
@@ -17,6 +16,7 @@ import {
   UNIVERSAL_AUCTION_SCHEMA_VERSION,
 } from './llm'
 import { coerceRulesHint } from './llm-clamp'
+import { parseExtractionResponse } from './providers/claude-proxy'
 
 describe('isRateLimitError', () => {
   it('recognizes an HTTP 429 $fetch error', () => {

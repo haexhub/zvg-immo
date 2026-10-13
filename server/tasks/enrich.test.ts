@@ -39,7 +39,7 @@ vi.mock('../utils/exchange-rate', () => ({ loadRatesOrPegged: vi.fn(async () => 
 vi.mock('../utils/alert-matching', () => ({ matchAlerts: vi.fn() }))
 vi.mock('../utils/extract/native-images', () => ({ downloadNativeImages: vi.fn() }))
 vi.mock('../utils/extract/document-images', () => ({ extractDocumentPhotos: vi.fn() }))
-vi.mock('../utils/extract/llm-documents', () => ({
+vi.mock('../utils/extract/llm-documents-live', () => ({
   prepareLiveLlmDocuments: vi.fn(async () => ({
     documentSetComplete: true,
     documentSetItems: [],

@@ -388,9 +388,3 @@ export async function readArchivedAuction(platform: string, externalId: string):
     return null
   }
 }
-
-// Live crawl-time document preparation (fetches attachments over HTTP, as
-// opposed to everything above which reads already-archived blobs) lives in
-// its own module — this file was pushing the 500-line module-size ceiling.
-// Re-exported here so callers keep importing from this file unchanged.
-export { prepareLiveLlmDocuments, type ArchivedLiveDocuments } from './llm-documents-live'

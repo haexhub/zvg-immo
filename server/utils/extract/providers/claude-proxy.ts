@@ -9,13 +9,26 @@ import {
   isRateLimitError,
   isTransientRequestError,
   LlmProviderError,
-  parseExtractionResponse,
   TRANSIENT_RETRY_DELAYS_MS,
-} from '../llm'
+} from '../llm-errors'
 
 type ClaudeContentBlock =
   | { type: 'text'; text: string }
   | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
+
+/** Pull the structured object out of the proxy's `final_result` tool_use block. */
+export function parseExtractionResponse(resp: unknown): Record<string, unknown> | null {
+  if (!resp || typeof resp !== 'object') return null
+  const content = (resp as { content?: unknown }).content
+  if (!Array.isArray(content)) return null
+  const block = content.find(
+    (c): c is { input: unknown } =>
+      !!c && typeof c === 'object' && (c as { type?: unknown }).type === 'tool_use' &&
+      (c as { name?: unknown }).name === 'final_result',
+  )
+  if (!block || typeof block.input !== 'object' || block.input == null) return null
+  return block.input as Record<string, unknown>
+}
 
 // The proxy's OAuth/Claude-CLI path allows large multimodal requests up to
 // 10 minutes. Scanned appraisals can legitimately need several minutes: the

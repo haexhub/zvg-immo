@@ -5,14 +5,13 @@
 import {
   buildParts,
   clampExtraction,
-  parseExtractionResponse,
   SYSTEM_PROMPT,
   UNIVERSAL_AUCTION_SCHEMA,
   type ContentPart,
   type LlmConfig,
   type LlmInput,
 } from './llm'
-import { parseClaudeUsage } from './providers/claude-proxy'
+import { parseClaudeUsage, parseExtractionResponse } from './providers/claude-proxy'
 import { apiBase, customIdForKey, extractOfetchErrorMessage, isTransientBatchError } from './batch-shared'
 import { insertLlmBatchJob, recordLlmBatchCapability } from '../llm-batch-jobs'
 import type { PollResult } from './gemini-batch'

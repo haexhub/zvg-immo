@@ -32,7 +32,8 @@ vi.mock('~/server/crawlers/dga-ag/session', async (importOriginal) => {
   return { ...actual, getDgaAgSessionCookie: vi.fn(async () => 'fe_typo_user=session1') }
 })
 
-const { htmlToText, pickAllLlmDocumentAttachments, prepareArchivedLlmDocuments, prepareLiveLlmDocuments } = await import('./llm-documents')
+const { htmlToText, pickAllLlmDocumentAttachments, prepareArchivedLlmDocuments } = await import('./llm-documents')
+const { prepareLiveLlmDocuments } = await import('./llm-documents-live')
 const { getDgaAgSessionCookie } = await import('~/server/crawlers/dga-ag/session')
 
 function att(overrides: Partial<Attachment>): Attachment {

@@ -6,7 +6,7 @@
 
 import { createHash } from 'node:crypto'
 import type { ContentPart, ExtractionProvider, ExtractionRequest, LlmConfig, LlmUsage } from '../llm'
-import { isDailyQuotaError, isRateLimitError, isTransientRequestError, LlmProviderError, TRANSIENT_RETRY_DELAYS_MS } from '../llm'
+import { isDailyQuotaError, isRateLimitError, isTransientRequestError, LlmProviderError, TRANSIENT_RETRY_DELAYS_MS } from '../llm-errors'
 import { toGeminiSchema } from './gemini-schema'
 
 type GeminiPart = { text: string } | { inlineData: { mimeType: string; data: string } }

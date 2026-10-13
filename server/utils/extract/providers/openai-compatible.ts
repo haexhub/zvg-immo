@@ -4,13 +4,8 @@
 // is a baseUrl/apiKey/model config change, never a new class.
 
 import type { ContentPart, ExtractionProvider, ExtractionRequest, LlmConfig, LlmUsage } from '../llm'
-import {
-  isRateLimitError,
-  isTransientRequestError,
-  LlmProviderError,
-  TRANSIENT_RETRY_DELAYS_MS,
-  UNIVERSAL_AUCTION_SCHEMA_NAME,
-} from '../llm'
+import { isRateLimitError, isTransientRequestError, LlmProviderError, TRANSIENT_RETRY_DELAYS_MS } from '../llm-errors'
+import { UNIVERSAL_AUCTION_SCHEMA_NAME } from '../llm-schema'
 
 type OpenAiContentPart =
   | { type: 'text'; text: string }
