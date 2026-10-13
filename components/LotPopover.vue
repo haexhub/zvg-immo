@@ -85,7 +85,7 @@ onMounted(async () => {
       `/api/auction/${encodeURIComponent(props.auction.platform)}/${encodeURIComponent(props.auction.externalId)}/summary`,
     )
   } catch (err) {
-    loadError.value = apiErrorMessage(err, 'Objektdetails konnten nicht geladen werden.')
+    loadError.value = apiErrorMessage(err, t('lotPopover.loadError'))
   } finally {
     loading.value = false
   }

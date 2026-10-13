@@ -87,6 +87,7 @@
     "loadingData": "Loading data …",
     "loadError": "Error loading data: {msg}",
     "geoError": "Error geocoding: {msg}",
+    "loadMoreError": "More auctions could not be loaded.",
     "loadingLocations": "Loading locations …",
     "initialLoadHint": "The first load can take several minutes (every registered source runs in parallel)",
     "noResults": "No listings match the filters.",
@@ -955,7 +956,9 @@
       "title": "Favorites",
       "empty": "No favorites yet.",
       "added": "Added {date}",
-      "remove": "Remove"
+      "remove": "Remove",
+      "loadError": "Favorites could not be loaded.",
+      "updateError": "Favorites could not be updated."
     }
   },
   "objektDetail": {
@@ -1451,6 +1454,7 @@
   },
   "lotPopover": {
     "loadingPhotos": "Loading photos …",
+    "loadError": "Property details could not be loaded.",
     "untitled": "Property",
     "auctionDate": "Auction date",
     "marketValue": "Market value",

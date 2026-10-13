@@ -222,7 +222,7 @@ async function loadMoreUnbounded(): Promise<void> {
       auctions: [...data.value.auctions, ...next.auctions],
     }
   } catch (err) {
-    listActionError.value = apiErrorMessage(err, 'Weitere Auktionen konnten nicht geladen werden.')
+    listActionError.value = apiErrorMessage(err, t('search.loadMoreError'))
   } finally {
     loadMorePending.value = false
   }
@@ -269,7 +269,7 @@ watch(boundedQuery, async (query) => {
     })
     if (boundedRequestKey === key) boundedData.value = result
   } catch (err) {
-    if (boundedRequestKey === key) listActionError.value = apiErrorMessage(err, 'Weitere Auktionen konnten nicht geladen werden.')
+    if (boundedRequestKey === key) listActionError.value = apiErrorMessage(err, t('search.loadMoreError'))
   } finally {
     if (boundedRequestKey === key) boundedPending.value = false
   }
@@ -295,7 +295,7 @@ async function loadMoreBounded(): Promise<void> {
       }
     }
   } catch (err) {
-    listActionError.value = apiErrorMessage(err, 'Weitere Auktionen konnten nicht geladen werden.')
+    listActionError.value = apiErrorMessage(err, t('search.loadMoreError'))
   } finally {
     boundedLoadMorePending.value = false
   }

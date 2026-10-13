@@ -87,6 +87,7 @@
     "loadingData": "Lade Daten …",
     "loadError": "Fehler beim Laden: {msg}",
     "geoError": "Fehler beim Geokodieren: {msg}",
+    "loadMoreError": "Weitere Auktionen konnten nicht geladen werden.",
     "loadingLocations": "Lade Standorte …",
     "initialLoadHint": "Erstaufruf kann mehrere Minuten dauern (alle registrierten Quellen parallel)",
     "noResults": "Keine Termine entsprechen den Filtern.",
@@ -955,7 +956,9 @@
       "title": "Favoriten",
       "empty": "Noch keine Favoriten.",
       "added": "Hinzugefügt {date}",
-      "remove": "Entfernen"
+      "remove": "Entfernen",
+      "loadError": "Die Favoriten konnten nicht geladen werden.",
+      "updateError": "Die Favoriten konnten nicht geändert werden."
     }
   },
   "objektDetail": {
@@ -1451,6 +1454,7 @@
   },
   "lotPopover": {
     "loadingPhotos": "Lade Fotos …",
+    "loadError": "Objektdetails konnten nicht geladen werden.",
     "untitled": "Objekt",
     "auctionDate": "Termin",
     "marketValue": "Verkehrswert",
