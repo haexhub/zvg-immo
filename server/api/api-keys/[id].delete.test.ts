@@ -21,10 +21,10 @@ describe('/api/api-keys/[id] DELETE', () => {
     vi.mocked(getServiceClient).mockReturnValue({ from: vi.fn(() => ({ update })) } as never)
 
     const handler = (await import('./[id].delete')).default as unknown as (event: unknown) => Promise<unknown>
-    await expect(handler({ context: { params: { id: 'key-9' }, user: { id: 'user-1' } } })).resolves.toEqual({ ok: true })
+    await expect(handler({ context: { params: { id: '11111111-1111-4111-8111-111111111111' }, user: { id: 'user-1' } } })).resolves.toEqual({ ok: true })
 
     expect(update).toHaveBeenCalledWith({ active: false })
-    expect(eq).toHaveBeenCalledWith('id', 'key-9')
+    expect(eq).toHaveBeenCalledWith('id', '11111111-1111-4111-8111-111111111111')
     expect(eq).toHaveBeenCalledWith('user_id', 'user-1')
   })
 })

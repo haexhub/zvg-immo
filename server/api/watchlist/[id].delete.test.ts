@@ -22,10 +22,10 @@ describe('/api/watchlist/[id] DELETE', () => {
     vi.mocked(getServiceClient).mockReturnValue({ from } as never)
 
     const handler = (await import('./[id].delete')).default as unknown as (event: unknown) => Promise<unknown>
-    await expect(handler({ context: { params: { id: 'row-9' }, user: { id: 'user-1' } } })).resolves.toEqual({ ok: true })
+    await expect(handler({ context: { params: { id: '11111111-1111-4111-8111-111111111111' }, user: { id: 'user-1' } } })).resolves.toEqual({ ok: true })
 
     expect(from).toHaveBeenCalledWith('watchlist_items')
-    expect(eq).toHaveBeenCalledWith('id', 'row-9')
+    expect(eq).toHaveBeenCalledWith('id', '11111111-1111-4111-8111-111111111111')
     expect(eq).toHaveBeenCalledWith('user_id', 'user-1')
   })
 })

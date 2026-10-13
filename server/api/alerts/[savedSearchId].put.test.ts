@@ -9,10 +9,10 @@ afterEach(() => {
 })
 
 function makeEvent() {
-  return { context: { params: { savedSearchId: 'search-9' }, user: { id: 'user-1' } } }
+  return { context: { params: { savedSearchId: '11111111-1111-4111-8111-111111111111' }, user: { id: 'user-1' } } }
 }
 
-async function loadHandler(body: unknown, search: unknown = { id: 'search-9', filters: { country: 'de' } }) {
+async function loadHandler(body: unknown, search: unknown = { id: '11111111-1111-4111-8111-111111111111', filters: { country: 'de' } }) {
   vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
   vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
   vi.stubGlobal('readBody', vi.fn(async () => body))
@@ -43,7 +43,7 @@ describe('/api/alerts/[savedSearchId] PUT', () => {
     const { run, upsert } = await loadHandler({ enabled: false })
     await expect(run()).resolves.toEqual({ enabled: false })
     expect(upsert).toHaveBeenCalledWith(
-      { user_id: 'user-1', saved_search_id: 'search-9', enabled: false },
+      { user_id: 'user-1', saved_search_id: '11111111-1111-4111-8111-111111111111', enabled: false },
       { onConflict: 'saved_search_id' },
     )
   })
@@ -52,9 +52,9 @@ describe('/api/alerts/[savedSearchId] PUT', () => {
     const { run, eq, upsert } = await loadHandler({ enabled: true })
     await expect(run()).resolves.toEqual({ enabled: true })
 
-    expect(eq).toHaveBeenCalledWith('id', 'search-9')
+    expect(eq).toHaveBeenCalledWith('id', '11111111-1111-4111-8111-111111111111')
     expect(eq).toHaveBeenCalledWith('user_id', 'user-1')
-    expect(upsert).toHaveBeenCalledWith({ user_id: 'user-1', saved_search_id: 'search-9', enabled: true }, { onConflict: 'saved_search_id' })
+    expect(upsert).toHaveBeenCalledWith({ user_id: 'user-1', saved_search_id: '11111111-1111-4111-8111-111111111111', enabled: true }, { onConflict: 'saved_search_id' })
   })
 
   it('404s without subscribing when the saved search belongs to someone else', async () => {
