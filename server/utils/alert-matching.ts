@@ -20,6 +20,7 @@ import { isNationwideOnlyCountry } from './region-picker'
 import { getServiceClient } from './supabase'
 import { enqueueAlertDelivery } from './outbound-delivery'
 import { fillAuctionGeocodes } from './auction-geocoding'
+import { redactAffectedPersonNames } from './public-auction-redaction'
 
 /** Converts saved_searches.filters (the raw route.query object pages/index.vue
  *  POSTs, see lib/auction-filters.ts's header comment) into the AuctionFilters
@@ -153,7 +154,9 @@ async function processSubscription(
     try {
       const queued = await enqueueAlertDelivery({
         to: email,
-        subject: `Neue Auktion: ${a.title ?? a.caseNumber}`,
+        // The mail leaves the service and is kept in the outbox payload, so it
+        // gets the same person-name guard as every public read path.
+        subject: `Neue Auktion: ${redactAffectedPersonNames(a.title) ?? a.caseNumber}`,
         text: buildMailBody(a),
         alertSubscriptionId: subscriptionId,
         platform: a.platform,

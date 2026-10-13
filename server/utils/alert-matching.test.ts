@@ -188,4 +188,17 @@ describe('alert delivery state', () => {
     expect(enqueueAlertDelivery).toHaveBeenCalledWith(expect.objectContaining({ externalId: '42' }))
     expect(unlocated.lat).toBeUndefined()
   })
+
+  it('redacts affected person names from the queued mail subject', async () => {
+    const { client } = alertSupabase({ email: 'person@example.test' })
+    getServiceClient.mockReturnValue(client)
+    enqueueAlertDelivery.mockResolvedValue(true)
+    const named = { ...(auction as object), title: 'Einfamilienhaus des Schuldners Hans Müller' } as Auction
+
+    await matchAlerts('de', 'sn', { auctions: [named] } as never)
+
+    const [delivery] = enqueueAlertDelivery.mock.calls[0]!
+    expect(delivery.subject).toContain('[anonymisiert]')
+    expect(delivery.subject).not.toContain('Hans Müller')
+  })
 })
