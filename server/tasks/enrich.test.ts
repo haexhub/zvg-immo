@@ -341,7 +341,7 @@ describe('runEnrich concurrent extraction writes', () => {
   }
   const llmExtraction = {
     ...rulesExtraction,
-    propertyType: 'house' as const,
+    propertyType: 'einfamilienhaus' as const,
     livingAreaSqm: 120,
     source: 'llm' as const,
     confidence: 'high' as const,
