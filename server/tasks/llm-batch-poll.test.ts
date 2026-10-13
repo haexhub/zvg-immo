@@ -383,7 +383,7 @@ describe('runLlmBatchPoll', () => {
 
     await runLlmBatchPoll()
 
-    expect(resolveLlmConfigForProfile).toHaveBeenCalledWith({}, 'profile-a')
+    expect(resolveLlmConfigForProfile).toHaveBeenCalledWith({}, 'profile-a', { ignoreKillSwitch: true })
     expect(pollLlmBatch).toHaveBeenCalledWith('batches/abc', { ...profileConfig, model: 'gemini-flash-latest' })
     expect(fetchLlmBatchResults).toHaveBeenCalledWith('batches/abc', expect.objectContaining({ resultFileName: 'files/result' }), { ...profileConfig, model: 'gemini-flash-latest' }, {})
   })

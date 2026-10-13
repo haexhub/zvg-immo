@@ -68,11 +68,15 @@ function splitKey(key: string): { platform: string; externalId: string } | null 
 // submit-time profile where one was recorded, falling back to the current
 // chain's config only for legacy jobs submitted before that snapshot
 // existed (or a since-deleted profile).
+// Both lookups bypass the LLM kill switch: polling/fetching a job that was
+// already submitted spends no new budget, and leaving it unpolled would let
+// its results and item markers expire so the items get submitted (and paid)
+// again once the switch is off.
 async function resolveJobLlmConfig(job: LlmBatchJob, fallback: LlmConfig): Promise<LlmConfig> {
   if (!job.profileId) return fallback
   const pool = getPool()
   if (!pool) return fallback
-  const resolved = await resolveLlmConfigForProfile(pool, job.profileId)
+  const resolved = await resolveLlmConfigForProfile(pool, job.profileId, { ignoreKillSwitch: true })
   return resolved ? { ...resolved, model: job.model ?? resolved.model } : fallback
 }
 
@@ -93,7 +97,7 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
   throwIfTaskAborted(signal)
   if (jobs.length === 0) return { checked: 0, merged: 0 }
 
-  const llmConfig = await readExtractionLlmConfig()
+  const llmConfig = await readExtractionLlmConfig({ ignoreKillSwitch: true })
   if (!llmConfig) {
     console.warn('[llm-batch-poll] pending jobs exist but no LLM provider is configured — skipping')
     return { checked: 0, merged: 0 }
