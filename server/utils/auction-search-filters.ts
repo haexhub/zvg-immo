@@ -56,9 +56,8 @@ export async function buildAuctionSearchFilter(
   where.push(`(a.auction_date_iso IS NULL OR a.auction_date_iso >= now())`)
 
   // Expiry, part two. The date filter above only reaches auctions that have a
-  // date, and eight platforms (agi, bima, dga-ag, gb, kip, lt, pt, us) never
-  // publish one — as does every classifieds-style source added since. No
-  // portal publishes a "sold"/"withdrawn" flag either. The
+  // date, and several platforms (and classifieds-style sources) do not always
+  // publish one. No portal publishes a "sold"/"withdrawn" flag either. The
   // one remaining signal is that a crawl which DID complete stopped returning
   // the listing — recorded as auctions.last_seen_at vs crawl_state.last_success_at
   // (server/utils/crawl-state.ts).

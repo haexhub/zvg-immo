@@ -52,6 +52,12 @@ export function auctionToCurrentRow(a: Auction, updatedAt: string): CurrentAucti
     authority: a.authority,
     case_number: a.caseNumber,
     title: a.title,
+    // ponytail: most crawlers hand over court-local wall-clock times without
+    // an offset (date-only for some), and timestamptz reads them as UTC, so
+    // expiry (`>= now()`) and display are off by the zone offset (1-3 h in
+    // Europe, 4+ h for us). Upgrade: convert to an instant with the
+    // country's (us: channel's) zone at parse time, let date-only values
+    // expire at local end of day, then re-crawl to rewrite stored rows.
     auction_date_iso: a.auctionDateIso,
     auction_date_text: a.auctionDateText,
     cancelled: a.cancelled,
