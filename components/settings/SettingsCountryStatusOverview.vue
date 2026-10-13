@@ -160,7 +160,7 @@ async function load(): Promise<void> {
 // starts honoring it. `requestedAt` therefore stays set for hours, so this
 // must not poll open-endedly — bounded to a short window right after a
 // manual request, the only moment the row count can plausibly move while an
-// admin is watching (see SettingsOsmImportCard.vue, which this replaces).
+// admin is watching.
 const { start: startOsmPolling } = usePollWhileActive(
   () => Object.values(osmByCountry.value).some((country) => !!country.requestedAt),
   load,

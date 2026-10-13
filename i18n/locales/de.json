@@ -409,18 +409,9 @@
     },
     "osmImport": {
       "title": "OSM-Standortdaten",
-      "description": "Lädt Meer/See/Fluss/Berg/Flughafen/Ski-Daten pro Land aus OpenStreetMap-Extracts. Ein Land ohne Daten wird beim täglichen Lauf automatisch geladen; ein Land mit Daten wird danach nie mehr automatisch neu geladen — nur ein manueller Reimport hier löst das aus.",
-      "loadError": "Status konnte nicht geladen werden.",
-      "requestError": "Reimport konnte nicht angefordert werden.",
-      "refresh": "Status aktualisieren",
-      "rowCount": "{count} Objekte geladen",
       "rawRowCount": "{count} OSM-Rohobjekte verfügbar",
-      "noData": "Noch keine Daten",
-      "requestMissing": "Fehlende Daten laden",
       "loadOpen": "Offene OSM-Daten laden",
       "retryBlocked": "Blockierte OSM-Daten erneut laden",
-      "request": "Reimport anfordern",
-      "requesting": "Anfordern …",
       "pending": "Angefordert am {at} — wird beim nächsten täglichen Lauf verarbeitet."
     },
     "geoMetrics": {

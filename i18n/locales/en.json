@@ -409,18 +409,9 @@
     },
     "osmImport": {
       "title": "OSM location data",
-      "description": "Loads sea/lake/river/mountain/airport/ski data per country from OpenStreetMap extracts. A country with no data yet gets loaded automatically on the daily run; a country that already has data is never reloaded automatically again — only a manual reimport here triggers that.",
-      "loadError": "Could not load status.",
-      "requestError": "Could not request reimport.",
-      "refresh": "Refresh status",
-      "rowCount": "{count} features loaded",
       "rawRowCount": "{count} raw OSM features available",
-      "noData": "No data yet",
-      "requestMissing": "Load missing data",
       "loadOpen": "Load open OSM data",
       "retryBlocked": "Reload blocked OSM data",
-      "request": "Request reimport",
-      "requesting": "Requesting …",
       "pending": "Requested at {at} — will be processed on the next daily run."
     },
     "geoMetrics": {
