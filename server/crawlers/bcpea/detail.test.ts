@@ -148,6 +148,14 @@ describe('enrichOne', () => {
     expect(a.thumbnailUrl).toBe('https://sales.bcpea.org/upload/91381/455825/20260804_125953.jpg?w=270&h=270')
   })
 
+  it('keeps a stored description when the ОПИСАНИЕ group is missing', async () => {
+    const html = DETAIL_HTML.replace('<div class="label">ОПИСАНИЕ</div>', '<div class="label">ДРУГО</div>')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(html)))
+    const a = makeAuction({ description: 'Gespeicherte Beschreibung' })
+    await enrichOne(a)
+    expect(a.description).toBe('Gespeicherte Beschreibung')
+  })
+
   it('throws on upstream errors so the enrich task retries', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 502 })))
     await expect(enrichOne(makeAuction())).rejects.toThrow('502')

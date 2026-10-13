@@ -113,7 +113,11 @@ export async function enrichOne(auction: Auction): Promise<void> {
     auction.marketValueText = price.text
   }
 
-  auction.description = extractDescription($)
+  // Only overwrite when found (same convention as alo/kip): a scoped retry
+  // passes the stored record in, and a renamed description block must not
+  // wipe the description LLM extraction relies on.
+  const description = extractDescription($)
+  if (description) auction.description = description
 
   const photoUrls = extractPhotoUrls($)
   if (photoUrls.length > 0) {
