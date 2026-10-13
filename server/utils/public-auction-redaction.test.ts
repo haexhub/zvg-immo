@@ -58,6 +58,15 @@ describe('redactAffectedPersonNames', () => {
     expect(redactAffectedPersonNames(value)).toBe('Schuldner: [anonymisiert]')
   })
 
+  it.each([
+    ['Eigentümer: Müller, Hans', 'Eigentümer: [anonymisiert]'],
+    ['Schuldner: MÜLLER Hans', 'Schuldner: [anonymisiert]'],
+    ['Eigentümer ist Hans Müller.', 'Eigentümer ist [anonymisiert].'],
+    ['Eigentümer laut Grundbuch: Müller, Hans', 'Eigentümer laut Grundbuch: [anonymisiert]'],
+  ])('redacts common register name formats (%s)', (value, expected) => {
+    expect(redactAffectedPersonNames(value)).toBe(expected)
+  })
+
   it('does not alter ordinary property or place names', () => {
     expect(redactAffectedPersonNames('Einfamilienhaus in Bad Neustadt am Main')).toBe(
       'Einfamilienhaus in Bad Neustadt am Main',

@@ -29,13 +29,19 @@ const AFFECTED_PERSON_ROLE = [
 
 // A full name, initial plus surname, or titled surname. Requiring a surname
 // (rather than accepting a single capitalised word) avoids treating ordinary
-// German prose following a role as a person's name.
-const NAME_WORD = String.raw`[A-ZÀ-ÖØ-Þ][\p{Ll}À-ÖØ-öø-ÿ'’-]+`
+// German prose following a role as a person's name. Register and court texts
+// also write "Müller, Hans" and upper-case surnames ("MÜLLER Hans", common in
+// BOE and French notices), so both forms count as a full name.
+const NAME_WORD = String.raw`[A-ZÀ-ÖØ-Þ](?:[\p{Ll}À-ÖØ-öø-ÿ'’-]+|[A-ZÀ-ÖØ-Þ'’-]+)`
 const NAME_PART = String.raw`(?:(?:von|van|de|der|den|ten)[ \t]+)?${NAME_WORD}`
-const PERSON_NAME = String.raw`(?:(?:Herrn?|Frau|Mr\.?|Mrs\.?|Ms\.?)[ \t]+)?(?:[A-ZÀ-ÖØ-Þ]\.[ \t]+${NAME_WORD}|(?:Dr\.?|Prof\.?)[ \t]+${NAME_WORD}|${NAME_WORD}(?:[ \t]+${NAME_PART}){1,3})`
+const PERSON_NAME = String.raw`(?:(?:Herrn?|Frau|Mr\.?|Mrs\.?|Ms\.?)[ \t]+)?(?:[A-ZÀ-ÖØ-Þ]\.[ \t]+${NAME_WORD}|(?:Dr\.?|Prof\.?)[ \t]+${NAME_WORD}|${NAME_WORD}(?:[ \t]+${NAME_PART}){1,3}|${NAME_WORD},[ \t]*${NAME_WORD})`
 
-const roleThenName = new RegExp(String.raw`\b(${AFFECTED_PERSON_ROLE})[ \t]+${PERSON_NAME}`, 'gu')
-const labelledRoleThenName = new RegExp(String.raw`\b(${AFFECTED_PERSON_ROLE})[ \t]*:[ \t]*${PERSON_NAME}`, 'gu')
+// Short connectives between role and name ("Eigentümer ist Hans Müller",
+// "Eigentümer laut Grundbuch: Müller, Hans") stay part of the kept role text.
+const ROLE_THEN_FILLER = String.raw`(?:${AFFECTED_PERSON_ROLE})(?:[ \t]+(?:ist|sind|war|waren|is|are|was|were))?`
+const ROLE_THEN_SOURCE = String.raw`(?:${AFFECTED_PERSON_ROLE})(?:[ \t]+(?:laut|lt\.|gemäß|according[ \t]+to)[ \t]+[^:\n]{1,30}?)?`
+const roleThenName = new RegExp(String.raw`\b(${ROLE_THEN_FILLER})[ \t]+${PERSON_NAME}`, 'gu')
+const labelledRoleThenName = new RegExp(String.raw`\b(${ROLE_THEN_SOURCE})[ \t]*:[ \t]*${PERSON_NAME}`, 'gu')
 const nameBeforeRole = new RegExp(
   String.raw`\b${PERSON_NAME}(?=\s*,?\s*(?:als\s+)?(?:${AFFECTED_PERSON_ROLE})\b)`,
   'gu',
