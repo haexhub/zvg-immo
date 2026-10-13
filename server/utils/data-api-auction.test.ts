@@ -42,15 +42,31 @@ describe('readPublicAuctions', () => {
       }],
       total: 3,
     })
-    expect(result.data).not.toContainEqual(expect.objectContaining({ id: 'expired-but-not-withdrawn' }))
 
     const selectCall = query.mock.calls.find(([statement]) => (statement as string).includes('OFFSET'))!
+    // Current-only collection: not expired, not dropped by the last completed
+    // crawl of its scope, not withdrawn — and a stable order for LIMIT/OFFSET.
     expect(selectCall[0]).toContain('(a.auction_date_iso IS NULL OR a.auction_date_iso >= now())')
+    expect(selectCall[0]).toContain('a.last_seen_at < cs.last_success_at')
+    expect(selectCall[0]).toContain('a.cancelled = false')
+    expect(selectCall[0]).toContain('ORDER BY a.platform, a.external_id')
     expect(selectCall[0]).toContain('LIMIT $5 OFFSET $6')
     expect(selectCall[0]).not.toContain('payload')
     expect(selectCall[1]).toEqual(['de', 'Bayern', 'zvg-portal', 'einfamilienhaus', 25, 25])
     const countCall = query.mock.calls.find(([statement]) => (statement as string).includes('COUNT(*)'))!
     expect(countCall[1]).toEqual(['de', 'Bayern', 'zvg-portal', 'einfamilienhaus'])
+    expect(countCall[0]).toContain('a.last_seen_at < cs.last_success_at')
+  })
+
+  it('keeps withdrawn auctions when includeWithdrawn is set', async () => {
+    const { getPool } = await import('./db')
+    const query = vi.fn(async (statement: string) => ({ rows: statement.includes('COUNT(*)') ? [{ total: '0' }] : [] }))
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+    const { readPublicAuctions } = await import('./data-api-auction')
+
+    await readPublicAuctions({ includeWithdrawn: true, page: 1, pageSize: 25 })
+
+    for (const [statement] of query.mock.calls) expect(statement).not.toContain('a.cancelled = false')
   })
 })
 
@@ -69,6 +85,7 @@ describe('readPublicAuctionLinks', () => {
     expect(query).toHaveBeenCalledOnce()
     const [statement, params] = query.mock.calls[0] as unknown as [string, unknown[]]
     expect(statement).toContain('(a.auction_date_iso IS NULL OR a.auction_date_iso >= now())')
+    expect(statement).toContain('a.last_seen_at < cs.last_success_at')
     expect(statement).toContain('a.cancelled = false')
     expect(statement).toContain('ORDER BY a.platform, a.external_id')
     expect(statement).toContain('LIMIT $1')
