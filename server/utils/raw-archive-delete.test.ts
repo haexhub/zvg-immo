@@ -148,7 +148,13 @@ describe('deleteRawArchiveCountry', () => {
     })
     vi.mocked(getDb).mockReturnValue(client.db as never)
 
-    await expect(deleteRawArchiveCountry('de')).rejects.toMatchObject({ statusCode: 500 })
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const err = await deleteRawArchiveCountry('de').catch((e: unknown) => e) as { statusCode: number; statusMessage: string; cause: unknown }
+    expect(err.statusCode).toBe(500)
+    expect(err.statusMessage).not.toContain('count failed')
+    expect(err.cause).toBeInstanceOf(Error)
+    expect(consoleError).toHaveBeenCalled()
+    consoleError.mockRestore()
     expect(client.queries.map((q) => q.sql.toLowerCase())).toContain('rollback')
     expect(client.release).toHaveBeenCalledOnce()
     expect(removeMock).not.toHaveBeenCalled()
