@@ -53,3 +53,27 @@ describe('readPublicAuctions', () => {
     expect(countCall[1]).toEqual(['de', 'Bayern', 'zvg-portal', 'einfamilienhaus'])
   })
 })
+
+describe('readPublicAuctionLinks', () => {
+  it('reads the current collection in one bounded, stably ordered query without COUNT or OFFSET', async () => {
+    const { getPool } = await import('./db')
+    const query = vi.fn(async () => ({
+      rows: [{ platform: 'zvg-portal', external_id: '7265', source_updated_iso: new Date('2026-08-01T10:00:00.000Z') }],
+    }))
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+    const { readPublicAuctionLinks } = await import('./data-api-auction')
+
+    await expect(readPublicAuctionLinks(100)).resolves.toEqual([
+      { appUrl: '/objekt/zvg-portal/7265', lastUpdated: '2026-08-01T10:00:00.000Z' },
+    ])
+    expect(query).toHaveBeenCalledOnce()
+    const [statement, params] = query.mock.calls[0] as unknown as [string, unknown[]]
+    expect(statement).toContain('(a.auction_date_iso IS NULL OR a.auction_date_iso >= now())')
+    expect(statement).toContain('a.cancelled = false')
+    expect(statement).toContain('ORDER BY a.platform, a.external_id')
+    expect(statement).toContain('LIMIT $1')
+    expect(statement).not.toContain('COUNT(*)')
+    expect(statement).not.toContain('OFFSET')
+    expect(params).toEqual([100])
+  })
+})

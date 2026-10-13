@@ -73,11 +73,17 @@ function toPublicAuction(row: PublicAuctionRow): PublicAuction {
     units: row.units,
     photoCount: row.photo_count ?? 0,
     lastUpdated: isoOrNull(row.source_updated_iso),
-    appUrl: `/objekt/${encodeURIComponent(row.platform)}/${encodeURIComponent(row.external_id)}`,
+    appUrl: publicAppUrl(row.platform, row.external_id),
   }
 }
 
-function buildWhere(query: PublicAuctionQuery): { where: string; values: unknown[] } {
+function publicAppUrl(platform: string, externalId: string): string {
+  return `/objekt/${encodeURIComponent(platform)}/${encodeURIComponent(externalId)}`
+}
+
+type PublicAuctionFilter = Omit<PublicAuctionQuery, 'page' | 'pageSize'>
+
+function buildWhere(query: PublicAuctionFilter): { where: string; values: unknown[] } {
   const values: unknown[] = []
   const add = (value: unknown): string => {
     values.push(value)
@@ -145,4 +151,28 @@ export async function readPublicAuctions(query: PublicAuctionQuery): Promise<{ d
     [...values, query.pageSize, offset]),
   ])
   return { data: rows.map(toPublicAuction), total: Number(countRows[0]?.total ?? 0) }
+}
+
+/**
+ * App URLs of current, non-withdrawn auctions for the sitemap: the same
+ * collection rule as readPublicAuctions, but one bounded read in the same stable order
+ * instead of paging with a repeated COUNT(*) and ever-growing OFFSET scans.
+ */
+export async function readPublicAuctionLinks(limit: number): Promise<Array<Pick<PublicAuction, 'appUrl' | 'lastUpdated'>>> {
+  const db = getPool()
+  if (!db) return []
+  const { where, values } = buildWhere({ includeWithdrawn: false })
+  const { rows } = await db.query<Pick<PublicAuctionRow, 'platform' | 'external_id' | 'source_updated_iso'>>(
+    `SELECT a.platform, a.external_id, fs.source_updated_iso
+      FROM auctions a
+      LEFT JOIN auction_fetch_state fs ON fs.platform = a.platform AND fs.external_id = a.external_id
+      ${where}
+      ORDER BY a.platform, a.external_id
+      LIMIT $${values.length + 1}`,
+    [...values, limit],
+  )
+  return rows.map((row) => ({
+    appUrl: publicAppUrl(row.platform, row.external_id),
+    lastUpdated: isoOrNull(row.source_updated_iso),
+  }))
 }
