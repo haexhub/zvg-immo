@@ -11,12 +11,16 @@ const SEARCH_PATHS = [
   '/22660.html',
 ] as const
 
+/** `complete` is false when a search source or detail page failed: the
+ *  missing listings must not read as gone (see crawl-state.ts recordCrawlScope). */
+type ListingsResult = { auctions: Auction[]; total: number | null; complete: boolean }
+
 let allListingsCache:
   | {
     platformId: string
     fetchRef: typeof fetch
     expiresAt: number
-    promise: Promise<{ auctions: Auction[]; total: number | null }>
+    promise: Promise<ListingsResult>
   }
   | null = null
 
@@ -309,7 +313,7 @@ function mapDetail(id: string, html: string, platformId: string): Auction | null
 export async function fetchAllListings(
   platformId: string,
   regionCode = 'all',
-): Promise<{ auctions: Auction[]; total: number | null }> {
+): Promise<ListingsResult> {
   const all = await fetchAllListingsUnfiltered(platformId)
   const regionName = regionNameForRegionCode(regionCode)
   const auctions = regionName
@@ -318,12 +322,13 @@ export async function fetchAllListings(
   return {
     auctions: auctions.map((auction) => ({ ...auction })),
     total: auctions.length,
+    complete: all.complete,
   }
 }
 
 async function fetchAllListingsUnfiltered(
   platformId: string,
-): Promise<{ auctions: Auction[]; total: number | null }> {
+): Promise<ListingsResult> {
   const now = Date.now()
   if (
     allListingsCache
@@ -351,7 +356,7 @@ async function fetchAllListingsUnfiltered(
 
 async function fetchAllListingsFresh(
   platformId: string,
-): Promise<{ auctions: Auction[]; total: number | null }> {
+): Promise<ListingsResult> {
   const searchResults = await Promise.all(
     SEARCH_PATHS.map(async (path) => {
       try {
@@ -374,10 +379,11 @@ async function fetchAllListingsFresh(
   }
 
   const ids = [...new Set(searchResults.flatMap((result) => result.ids ?? []))]
-  if (ids.length === 0) return { auctions: [], total: 0 }
+  if (ids.length === 0) return { auctions: [], total: 0, complete: failed.length === 0 }
 
   // Fetch detail pages with bounded concurrency
   const htmls: (string | null)[] = new Array(ids.length).fill(null)
+  const detailErrors: string[] = []
   let cursor = 0
   async function worker() {
     while (cursor < ids.length) {
@@ -386,18 +392,24 @@ async function fetchAllListingsFresh(
       if (!id) continue
       try {
         htmls[i] = await htmlFetch(`${SE_BASE}/${id}.html`)
-      } catch {
+      } catch (error) {
         htmls[i] = null
+        detailErrors.push(`${id}: ${errorMessage(error)}`)
       }
     }
   }
   await Promise.all(Array.from({ length: DETAIL_CONCURRENCY }, worker))
+  if (detailErrors.length > 0) {
+    console.warn(
+      `[se-kronofogden] ${detailErrors.length}/${ids.length} detail pages failed — crawl incomplete: ${detailErrors.slice(0, 5).join('; ')}`,
+    )
+  }
 
   const auctions = ids
     .map((id, i) => (htmls[i] ? mapDetail(id, htmls[i]!, platformId) : null))
     .filter((a): a is Auction => a !== null)
 
-  return { auctions, total: auctions.length }
+  return { auctions, total: auctions.length, complete: failed.length === 0 && detailErrors.length === 0 }
 }
 
 export async function fetchListingById(id: string, platformId: string): Promise<Auction | null> {

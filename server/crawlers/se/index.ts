@@ -4,7 +4,7 @@ import { PLATFORM_ID, SE_BASE, COUNTRY, SE_REGIONS, regionNameForRegionCode } fr
 import { fetchAllListings, fetchListingById } from './list'
 
 async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
-  const { auctions, total } = await fetchAllListings(PLATFORM_ID, opts.region)
+  const { auctions, total, complete } = await fetchAllListings(PLATFORM_ID, opts.region)
   const regionName = regionNameForRegionCode(opts.region)
   return createCrawlResult({
     platform: PLATFORM_ID,
@@ -13,6 +13,7 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
     regions: regionName ? [{ code: opts.region, name: regionName }] : SE_REGIONS,
     totalReported: total,
     auctions,
+    complete,
   })
 }
 

@@ -312,6 +312,7 @@ describe('fetchAllListings', () => {
 
     expect(result.auctions.map((a) => a.externalId)).toEqual(['101001', '101002', '101003'])
     expect(result.total).toBe(3)
+    expect(result.complete).toBe(true)
     expect(requestedUrls).toContain(`${BASE}/Sokfastigheterbostadsratter.html?query=*&startAtHit=10`)
     expect(requestedUrls).toContain(`${BASE}/22660.html?query=*&startAtHit=10`)
     expect(requestedUrls.filter((url) => url === `${BASE}/101002.html`)).toHaveLength(1)
@@ -336,7 +337,29 @@ describe('fetchAllListings', () => {
     const result = await fetchAllListings('se-kronofogden')
 
     expect(result.auctions.map((a) => a.externalId)).toEqual(['101003'])
+    expect(result.complete).toBe(false)
     expect(warn).toHaveBeenCalledOnce()
+  })
+
+  it('marks the crawl incomplete and logs when a detail page fails', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
+      const href = String(url)
+      if (href === `${BASE}/Sokfastigheterbostadsratter.html?query=*`) {
+        return new Response(searchHtml(['101001', '101002'], 2), { status: 200 })
+      }
+      if (href === `${BASE}/22660.html?query=*`) return new Response(searchHtml([], 0), { status: 200 })
+      if (href === `${BASE}/101002.html`) return new Response('upstream error', { status: 500 })
+      const id = href.match(/\/(\d+)\.html$/)?.[1]
+      if (id) return new Response(detailHtml(id), { status: 200 })
+      return new Response('not found', { status: 404 })
+    }))
+
+    const result = await fetchAllListings('se-kronofogden')
+
+    expect(result.auctions.map((a) => a.externalId)).toEqual(['101001'])
+    expect(result.complete).toBe(false)
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('101002'))
   })
 
   it('uses the embedded showing address with postcode when Kronofogden exposes it', async () => {
