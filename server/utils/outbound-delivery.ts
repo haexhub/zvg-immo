@@ -36,6 +36,7 @@ interface ClaimedDelivery {
 }
 
 export class LawyerInquiryRateLimitError extends Error {}
+export class LawyerInquiryIdempotencyConflictError extends Error {}
 
 export function validateIdempotencyKey(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
@@ -119,20 +120,42 @@ function rowToInquiry(row: Record<string, unknown>): StoredLawyerInquiry {
   }
 }
 
+const SELECT_INQUIRY_BY_IDEMPOTENCY_KEY = `SELECT id, lawyer_id, platform, external_id, message, commission_cents, commission_status, delivery_status, created_at
+  FROM lawyer_inquiries WHERE user_id = $1 AND idempotency_key = $2`
+
+type InquiryReplayInput = Pick<NewLawyerInquiry, 'userId' | 'idempotencyKey' | 'lawyerId' | 'platform' | 'externalId' | 'message'>
+
+/** A key names exactly one inquiry: replaying it with a different payload
+ * would silently answer "sent" for a request that was never stored. */
+function replayInquiry(row: Record<string, unknown>, input: InquiryReplayInput): StoredLawyerInquiry {
+  const inquiry = rowToInquiry(row)
+  if (inquiry.lawyerId !== input.lawyerId || inquiry.platform !== input.platform
+    || inquiry.externalId !== input.externalId || inquiry.message !== input.message) {
+    throw new LawyerInquiryIdempotencyConflictError('Dieser Idempotency-Key gehört zu einer anderen Anfrage.')
+  }
+  return inquiry
+}
+
+/** Looks up an already committed inquiry for this key, so a retry gets its
+ * original result even if auction, lawyer or coverage changed meanwhile. */
+export async function findLawyerInquiryReplay(input: InquiryReplayInput): Promise<StoredLawyerInquiry | null> {
+  const db = getPool()
+  if (!db) return null
+  const { rows } = await db.query(SELECT_INQUIRY_BY_IDEMPOTENCY_KEY, [input.userId, input.idempotencyKey])
+  return rows[0] ? replayInquiry(rows[0], input) : null
+}
+
 export async function createLawyerInquiryWithDelivery(input: NewLawyerInquiry): Promise<StoredLawyerInquiry> {
   const db = getPool()
   if (!db) throw new Error('Datenbank ist nicht konfiguriert.')
   const client = await db.connect()
   try {
     await client.query('BEGIN')
-    const existing = await client.query(
-      `SELECT id, lawyer_id, platform, external_id, message, commission_cents, commission_status, delivery_status, created_at
-       FROM lawyer_inquiries WHERE user_id = $1 AND idempotency_key = $2`,
-      [input.userId, input.idempotencyKey],
-    )
+    const existing = await client.query(SELECT_INQUIRY_BY_IDEMPOTENCY_KEY, [input.userId, input.idempotencyKey])
     if (existing.rows[0]) {
+      const replay = replayInquiry(existing.rows[0], input)
       await client.query('COMMIT')
-      return rowToInquiry(existing.rows[0])
+      return replay
     }
 
     // Serialise a user's requests to one lawyer so the rate-limit count and
@@ -142,14 +165,11 @@ export async function createLawyerInquiryWithDelivery(input: NewLawyerInquiry): 
     // rate-limit lock. Re-check before counting/inserting so concurrent
     // retries converge on the original billable row instead of its unique
     // constraint becoming a 500 response.
-    const concurrentExisting = await client.query(
-      `SELECT id, lawyer_id, platform, external_id, message, commission_cents, commission_status, delivery_status, created_at
-       FROM lawyer_inquiries WHERE user_id = $1 AND idempotency_key = $2`,
-      [input.userId, input.idempotencyKey],
-    )
+    const concurrentExisting = await client.query(SELECT_INQUIRY_BY_IDEMPOTENCY_KEY, [input.userId, input.idempotencyKey])
     if (concurrentExisting.rows[0]) {
+      const replay = replayInquiry(concurrentExisting.rows[0], input)
       await client.query('COMMIT')
-      return rowToInquiry(concurrentExisting.rows[0])
+      return replay
     }
     const recent = await client.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM lawyer_inquiries

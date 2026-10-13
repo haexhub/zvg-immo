@@ -3,7 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 const { getPool } = vi.hoisted(() => ({ getPool: vi.fn() }))
 vi.mock('./db', () => ({ getPool }))
 
-const { createLawyerInquiryWithDelivery, LawyerInquiryRateLimitError } = await import('./outbound-delivery')
+const {
+  createLawyerInquiryWithDelivery, findLawyerInquiryReplay, LawyerInquiryIdempotencyConflictError, LawyerInquiryRateLimitError,
+} = await import('./outbound-delivery')
 
 const row = {
   id: 'inquiry-1', lawyer_id: 'lawyer-1', platform: 'portal', external_id: '42', message: 'Hello',
@@ -53,5 +55,19 @@ describe('lawyer inquiry idempotency and rate limit', () => {
 
     await expect(createLawyerInquiryWithDelivery(input)).rejects.toBeInstanceOf(LawyerInquiryRateLimitError)
     expect(pool.client.query).not.toHaveBeenCalledWith(expect.stringContaining('INSERT INTO lawyer_inquiries'), expect.anything())
+  })
+
+  it('refuses to replay a key that was reused for a different lawyer or message', async () => {
+    const pool = poolWith(async (sql) => ({ rows: sql.includes('FROM lawyer_inquiries WHERE user_id') ? [row] : [] }))
+    getPool.mockReturnValue(pool)
+
+    await expect(createLawyerInquiryWithDelivery({ ...input, lawyerId: 'lawyer-2' })).rejects.toBeInstanceOf(LawyerInquiryIdempotencyConflictError)
+    expect(pool.client.query).toHaveBeenCalledWith('ROLLBACK')
+    expect(pool.client.query).not.toHaveBeenCalledWith('COMMIT')
+
+    const replayPool = { query: vi.fn(async () => ({ rows: [row] })) }
+    getPool.mockReturnValue(replayPool)
+    await expect(findLawyerInquiryReplay(input)).resolves.toMatchObject({ id: 'inquiry-1' })
+    await expect(findLawyerInquiryReplay({ ...input, message: 'Changed' })).rejects.toBeInstanceOf(LawyerInquiryIdempotencyConflictError)
   })
 })

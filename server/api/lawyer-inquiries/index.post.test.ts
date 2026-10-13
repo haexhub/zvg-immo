@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { getServiceClient, readAuctionRecord, createLawyerInquiryWithDelivery, canonicalAppOrigin } = vi.hoisted(() => ({
+const { getServiceClient, readAuctionRecord, createLawyerInquiryWithDelivery, findLawyerInquiryReplay, canonicalAppOrigin } = vi.hoisted(() => ({
   getServiceClient: vi.fn(),
   readAuctionRecord: vi.fn(),
   createLawyerInquiryWithDelivery: vi.fn(),
+  findLawyerInquiryReplay: vi.fn(),
   canonicalAppOrigin: vi.fn(),
 }))
 
@@ -11,7 +12,7 @@ vi.mock('../../utils/supabase', () => ({ getServiceClient }))
 vi.mock('../../utils/auction-record', () => ({ readAuctionRecord }))
 vi.mock('../../utils/outbound-delivery', async () => {
   const actual = await vi.importActual<typeof import('../../utils/outbound-delivery')>('../../utils/outbound-delivery')
-  return { ...actual, createLawyerInquiryWithDelivery, canonicalAppOrigin }
+  return { ...actual, createLawyerInquiryWithDelivery, findLawyerInquiryReplay, canonicalAppOrigin }
 })
 
 vi.stubGlobal('defineEventHandler', <T>(handler: T) => handler)
@@ -42,6 +43,11 @@ function lawyerClient(active = true) {
   }
 }
 
+const stored = {
+  id: 'inquiry-1', lawyerId: 'lawyer-1', platform: 'portal', externalId: '42', message: 'Bitte melden Sie sich.',
+  commissionCents: 12900, commissionStatus: 'pending', deliveryStatus: 'pending', createdAt: '2026-08-09T10:00:00.000Z',
+}
+
 async function loadHandler() {
   vi.resetModules()
   return (await import('./index.post')).default as unknown as (event: Record<string, unknown>) => Promise<unknown>
@@ -51,10 +57,8 @@ beforeEach(() => {
   getServiceClient.mockReturnValue(lawyerClient())
   readAuctionRecord.mockResolvedValue({ auction: { country: 'de', authority: 'AG Test', caseNumber: '1 K 2/26' } })
   canonicalAppOrigin.mockReturnValue('https://zvg.example.test')
-  createLawyerInquiryWithDelivery.mockResolvedValue({
-    id: 'inquiry-1', lawyerId: 'lawyer-1', platform: 'portal', externalId: '42', message: 'Bitte melden Sie sich.',
-    commissionCents: 12900, commissionStatus: 'pending', deliveryStatus: 'pending', createdAt: '2026-08-09T10:00:00.000Z',
-  })
+  findLawyerInquiryReplay.mockResolvedValue(null)
+  createLawyerInquiryWithDelivery.mockResolvedValue(stored)
 })
 
 afterEach(() => vi.clearAllMocks())
@@ -89,5 +93,22 @@ describe('POST /api/lawyer-inquiries', () => {
     expect(createLawyerInquiryWithDelivery).toHaveBeenCalledWith(expect.objectContaining({
       mail: expect.objectContaining({ text: expect.not.stringContaining('attacker.example') }),
     }))
+  })
+
+  it('replays a committed inquiry even after its lawyer was deactivated', async () => {
+    getServiceClient.mockReturnValue(lawyerClient(false))
+    findLawyerInquiryReplay.mockResolvedValue(stored)
+    const handler = await loadHandler()
+    await expect(handler(makeEvent())).resolves.toEqual(stored)
+    expect(readAuctionRecord).not.toHaveBeenCalled()
+    expect(createLawyerInquiryWithDelivery).not.toHaveBeenCalled()
+  })
+
+  it('answers 422 when an idempotency key is reused for a different inquiry', async () => {
+    const { LawyerInquiryIdempotencyConflictError } = await import('../../utils/outbound-delivery')
+    findLawyerInquiryReplay.mockRejectedValue(new LawyerInquiryIdempotencyConflictError('conflict'))
+    const handler = await loadHandler()
+    await expect(handler(makeEvent())).rejects.toMatchObject({ statusCode: 422 })
+    expect(createLawyerInquiryWithDelivery).not.toHaveBeenCalled()
   })
 })
