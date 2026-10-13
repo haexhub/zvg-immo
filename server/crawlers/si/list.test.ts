@@ -129,7 +129,10 @@ describe('mapPublication', () => {
 })
 
 describe('fetchAllListings', () => {
-  afterEach(() => vi.unstubAllGlobals())
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
 
   function listResponse(countAll: number): Response {
     return new Response(JSON.stringify({ list: [makePublication()], pagination: { countAll } }), { status: 200 })
@@ -142,12 +145,14 @@ describe('fetchAllListings', () => {
   })
 
   it('reports the walk incomplete when MAX_PAGES cuts it short', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
     const fetchMock = vi.fn(async () => listResponse(1_000_000))
     vi.stubGlobal('fetch', fetchMock)
 
-    const { complete } = await fetchAllListings('si-sodnedrazbe')
+    const { complete, total } = await fetchAllListings('si-sodnedrazbe')
 
     expect(complete).toBe(false)
+    expect(total).toBe(1_000_000)
     expect(fetchMock).toHaveBeenCalledTimes(30)
   })
 

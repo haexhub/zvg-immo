@@ -166,5 +166,10 @@ export async function fetchAllListings(
     }
   }
 
+  if (!complete) {
+    // Hitting the page cap leaves publications unfetched: keep what we have,
+    // but the crawl must not count as complete or the rest would read as gone.
+    console.warn(`[si-sodnedrazbe] hit MAX_PAGES (${MAX_PAGES}) with ${(countAll ?? 0) - auctions.length} publications unfetched`)
+  }
   return { auctions, total: countAll, complete }
 }
