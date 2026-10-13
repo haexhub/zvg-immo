@@ -32,7 +32,7 @@ vi.mock('~/server/crawlers/dga-ag/session', async (importOriginal) => {
   return { ...actual, getDgaAgSessionCookie: vi.fn(async () => 'fe_typo_user=session1') }
 })
 
-const { htmlToText, pickAllLlmDocumentAttachments, prepareArchivedLlmDocuments } = await import('./llm-documents')
+const { htmlToText, mapDocumentsBounded, pickAllLlmDocumentAttachments, prepareArchivedLlmDocuments } = await import('./llm-documents')
 const { prepareLiveLlmDocuments } = await import('./llm-documents-live')
 const { getDgaAgSessionCookie } = await import('~/server/crawlers/dga-ag/session')
 
@@ -170,6 +170,22 @@ describe('pickAllLlmDocumentAttachments', () => {
     ])
 
     expect(picked.map((item) => item.filename)).toEqual(['terms.txt'])
+  })
+})
+
+describe('mapDocumentsBounded', () => {
+  it('keeps input order while never running more than three documents at once', async () => {
+    let running = 0
+    let peak = 0
+    const result = await mapDocumentsBounded([5, 1, 4, 2, 3, 0, 6], async (delay, index) => {
+      running++
+      peak = Math.max(peak, running)
+      await new Promise((resolve) => setTimeout(resolve, delay))
+      running--
+      return index
+    })
+    expect(result).toEqual([0, 1, 2, 3, 4, 5, 6])
+    expect(peak).toBe(3)
   })
 })
 

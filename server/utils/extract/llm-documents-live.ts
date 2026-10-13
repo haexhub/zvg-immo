@@ -10,6 +10,7 @@ import type { ArchivedDocumentSetItem, DocumentIdentity } from '../raw-archive'
 import {
   attachmentLabel,
   formatHint,
+  mapDocumentsBounded,
   pickAllLlmDocumentAttachments,
   prepareDocument,
   type PreparedAttachmentDocument,
@@ -107,7 +108,7 @@ export async function prepareLiveLlmDocuments(
   const candidates = pickAllLlmDocumentAttachments(attachments)
   const fetchErrors: string[] = []
   const prepared = (
-    await Promise.all(candidates.map(async (attachment, ordinal) => {
+    await mapDocumentsBounded(candidates, async (attachment, ordinal) => {
       const { bytes, error } = await fetchAttachmentBytes(attachment)
       if (!bytes) {
         if (error) fetchErrors.push(`${attachmentLabel(attachment)}: ${error}`)
@@ -118,7 +119,7 @@ export async function prepareLiveLlmDocuments(
         capturedAt,
         nativeDocuments: false,
       })
-    }))
+    })
   ).filter((doc): doc is PreparedAttachmentDocument => doc != null)
   const documentSetItems = prepared
     .filter((doc): doc is PreparedAttachmentDocument & { contentHash: string } => !!doc.contentHash)
