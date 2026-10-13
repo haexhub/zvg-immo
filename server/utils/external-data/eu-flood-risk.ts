@@ -47,6 +47,9 @@ export interface FloodRiskZoneCollection {
   sourceVersion: string
   generatedAt: string
   zones: FloodRiskZone[]
+  /** EEA country codes the zones were reported for; absent when the cache
+   *  carries no `countryCode` property, so coverage can't be judged. */
+  countryCodes?: ReadonlySet<string>
 }
 
 export interface FloodRiskEvaluationOptions {
@@ -106,11 +109,23 @@ export function normalizeFloodRiskFeatureCollection(
     }]
   })
 
+  const countryCodes = new Set(zones.flatMap((zone) => {
+    const code = stringProperty(zone.properties, 'countryCode')
+    return code ? [code.trim().toUpperCase()] : []
+  }))
   return {
     sourceVersion,
     generatedAt,
     zones,
+    ...(countryCodes.size > 0 ? { countryCodes } : {}),
   }
+}
+
+/** The EEA reports Greece as EL and the United Kingdom as UK, not by their
+ *  ISO 3166 codes the crawlers use. */
+export function eeaCountryCode(country: string): string {
+  const code = country.trim().toUpperCase()
+  return code === 'GR' ? 'EL' : code === 'GB' ? 'UK' : code
 }
 
 export function buildFloodHazardAssessment(
@@ -128,6 +143,13 @@ export function buildFloodHazardAssessment(
   }
 
   if (collection.zones.length === 0) {
+    return assessment('unknown', 'unknown', null, checkedAt)
+  }
+
+  // No zones reported for this country means no data, not "no flood risk":
+  // the nearest zone would otherwise sit hundreds of km away across a border
+  // and turn every auction there into a green 'outside'.
+  if (collection.countryCodes && !collection.countryCodes.has(eeaCountryCode(auction.country))) {
     return assessment('unknown', 'unknown', null, checkedAt)
   }
 

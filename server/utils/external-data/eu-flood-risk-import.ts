@@ -1,6 +1,7 @@
 import { writeJsonCache } from '../json-cache'
 import { EXTERNAL_DATA_SOURCES } from './sources'
 import {
+  eeaCountryCode,
   isFeature,
   isFeatureCollection,
   normalizeFloodRiskFeatureCollection,
@@ -220,7 +221,7 @@ function hasArcGisError(input: unknown): input is { error: { message: string } }
 
 function countryWhereClause(countryCodes: string[] | undefined): string {
   const normalized = (countryCodes ?? [])
-    .map((country) => country.trim().toUpperCase())
+    .map(eeaCountryCode)
     .filter((country) => /^[A-Z]{2}$/.test(country))
   if (normalized.length === 0) return '1=1'
   return `countryCode IN (${normalized.map((country) => `'${country}'`).join(',')})`

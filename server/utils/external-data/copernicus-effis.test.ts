@@ -163,6 +163,16 @@ describe('buildWildfireHazardAssessment', () => {
     }, { checkedAt })).toMatchObject({ status: 'unknown', severity: 'unknown', distanceMeters: null })
   })
 
+  it('reports unknown rather than outside beyond the imported extent', async () => {
+    const collection = await readBurntAreaCache(fixturePath)
+
+    expect(buildWildfireHazardAssessment(
+      auction({ country: 'us', lat: 40.71, lng: -74.01 }),
+      collection,
+      { checkedAt },
+    )).toMatchObject({ status: 'unknown', severity: 'unknown', distanceMeters: null })
+  })
+
   it('reports unknown severity when the matched zone has no AREA_HA', () => {
     const collection = {
       sourceVersion: 'v1',

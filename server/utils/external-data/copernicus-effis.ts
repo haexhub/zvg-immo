@@ -55,6 +55,9 @@ export interface BurntAreaCollection {
   sourceVersion: string
   generatedAt: string
   zones: BurntAreaZone[]
+  /** The bbox the import queried; caches written before it was recorded
+   *  fall back to DEFAULT_BBOX. */
+  bbox?: [number, number, number, number]
 }
 
 export interface BurntAreaEvaluationOptions {
@@ -135,10 +138,12 @@ const SIMPLIFY_TOLERANCE_DEGREES = 0.001
 export async function readBurntAreaCache(path: string, sourceVersion?: string): Promise<BurntAreaCollection> {
   const parsed = JSON.parse(await readFile(path, 'utf8')) as Partial<BurntAreaCollection> | null
   const zones = Array.isArray(parsed?.zones) ? parsed.zones : []
+  const bbox = parsed?.bbox
   return {
     sourceVersion: sourceVersion ?? parsed?.sourceVersion ?? 'unknown',
     generatedAt: parsed?.generatedAt ?? new Date(0).toISOString(),
     zones,
+    ...(Array.isArray(bbox) && bbox.length === 4 && bbox.every(Number.isFinite) ? { bbox } : {}),
   }
 }
 
@@ -207,7 +212,7 @@ export async function importCopernicusEffisBurntAreaCache(
   // Same reasoning as the flood import: never replace a good cache with an
   // empty one just because the WFS answered with an empty FeatureCollection.
   if (zones.length === 0) throw new Error(`Copernicus EFFIS import returned no relevant burnt areas from ${serviceUrl}`)
-  const collection: BurntAreaCollection = { sourceVersion, generatedAt, zones }
+  const collection: BurntAreaCollection = { sourceVersion, generatedAt, zones, bbox }
   await writeJsonCache(options.cachePath, collection)
 
   return {
@@ -236,6 +241,13 @@ export function buildWildfireHazardAssessment(
   }
 
   if (collection.zones.length === 0) {
+    return assessment('unknown', 'unknown', null, checkedAt)
+  }
+
+  // Outside the queried extent there is no burnt-area record at all, so the
+  // nearest European zone must not turn e.g. a US auction into 'outside'.
+  const [minLng, minLat, maxLng, maxLat] = collection.bbox ?? DEFAULT_BBOX
+  if (point.lng < minLng || point.lng > maxLng || point.lat < minLat || point.lat > maxLat) {
     return assessment('unknown', 'unknown', null, checkedAt)
   }
 

@@ -8,6 +8,7 @@ import {
   createEuFloodRiskFileAdapter,
   type GeoJsonPolygonCoordinates,
   loadFloodRiskGeoJson,
+  normalizeFloodRiskFeatureCollection,
 } from './eu-flood-risk'
 // The import path lives in its own module (see eu-flood-risk-import.ts); its
 // tests stay here with the rest of the flood-risk cluster.
@@ -179,6 +180,27 @@ describe('buildFloodHazardAssessment', () => {
       severity: 'unknown',
       distanceMeters: null,
     })
+  })
+
+  it('reports unknown rather than outside for a country the zones were not reported for', () => {
+    const polygon: GeoJsonPolygonCoordinates = [[
+      [13.39, 52.51],
+      [13.41, 52.51],
+      [13.41, 52.53],
+      [13.39, 52.53],
+      [13.39, 52.51],
+    ]]
+    const collection = normalizeFloodRiskFeatureCollection({
+      type: 'FeatureCollection',
+      features: [{ type: 'Feature', properties: { countryCode: 'EL' }, geometry: { type: 'Polygon', coordinates: polygon } }],
+    }, { generatedAt: checkedAt })
+
+    // Greek zones are reported as EL, so a Greek auction is covered...
+    expect(buildFloodHazardAssessment(auction({ country: 'gr', lat: 37.98, lng: 23.73 }), collection, { checkedAt }))
+      .toMatchObject({ status: 'outside' })
+    // ...while a German one is not, however far away the nearest zone is.
+    expect(buildFloodHazardAssessment(auction({ country: 'de', lat: 52.7, lng: 13.4 }), collection, { checkedAt }))
+      .toMatchObject({ status: 'unknown', severity: 'unknown', distanceMeters: null })
   })
 
   it('treats the nearby threshold as an inclusive source-specific meter distance', () => {
@@ -423,7 +445,7 @@ describe('importEuFloodRiskGeoJsonCache', () => {
       sourceVersion: 'flood-v1',
       generatedAt: checkedAt,
       pageSize: 1,
-      countryCodes: ['de'],
+      countryCodes: ['de', 'gr'],
       fetchImpl: fetchImpl as unknown as typeof fetch,
     })
 
@@ -439,7 +461,8 @@ describe('importEuFloodRiskGeoJsonCache', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2)
     const firstUrl = fetchImpl.mock.calls[0]?.[0] as URL
     expect(firstUrl.searchParams.get('f')).toBe('geojson')
-    expect(firstUrl.searchParams.get('where')).toBe("countryCode IN ('DE')")
+    // The EEA reports Greece as EL, not by its ISO code.
+    expect(firstUrl.searchParams.get('where')).toBe("countryCode IN ('DE','EL')")
     expect(firstUrl.searchParams.get('outSR')).toBe('4326')
     // Server-side generalization is what keeps this import inside the
     // container's heap: full-resolution polygons measured 542 MB / ~2.5 GB
