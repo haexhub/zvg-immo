@@ -14,8 +14,7 @@ vi.mock('~/server/utils/translation-llm-chain', () => ({
   fingerprintConfigChain: vi.fn(() => 'fingerprint'),
 }))
 vi.mock('~/server/utils/extract/llm', () => ({ isLlmProviderUnavailable: vi.fn(() => false) }))
-vi.mock('~/server/api/auction/[platform]/[id]/translation.post', () => ({
-  SUPPORTED_TARGET_LANGS: new Set(['de', 'en']),
+vi.mock('~/server/utils/auction-translation', () => ({
   auctionTranslationContentHash: vi.fn(() => 'content-hash'),
   tryTranslate: vi.fn(),
 }))
@@ -69,6 +68,24 @@ describe('retryAuctionTranslation', () => {
     const { retryAuctionTranslation } = await import('./translation-retry')
 
     await expect(retryAuctionTranslation({} as Pool, 'se-kronofogden', '1', 'de')).resolves.toBe('started')
+  })
+
+  it('logs instead of leaking an unhandled rejection when recording the failure fails', async () => {
+    const { readAuctionRecord } = await import('~/server/utils/auction-record')
+    const { claimAuctionTranslation, failAuctionTranslation, readContentTranslation } = await import('~/server/utils/content-translation')
+    vi.mocked(readAuctionRecord).mockResolvedValue({ auction: auction('1'), detailsId: 1, detailsVersion: 1, artifactVersionId: null })
+    vi.mocked(claimAuctionTranslation).mockResolvedValue(CLAIM)
+    vi.mocked(readContentTranslation).mockRejectedValue(new Error('db down'))
+    vi.mocked(failAuctionTranslation).mockRejectedValue(new Error('db still down'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { retryAuctionTranslation } = await import('./translation-retry')
+
+    await expect(retryAuctionTranslation({} as Pool, 'se-kronofogden', '1', 'de')).resolves.toBe('started')
+
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledWith(
+      '[translation-retry] background retry failed for se-kronofogden:1/de: db still down',
+    ))
+    warn.mockRestore()
   })
 })
 

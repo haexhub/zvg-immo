@@ -225,7 +225,7 @@ describe('/api/auction/:platform/:id/translation', () => {
     const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
     const { readAuctionTranslation, claimAuctionTranslation } = await import('~/server/utils/content-translation')
     const handler = await loadHandler()
-    const { auctionTranslationContentHash } = await import('./translation.post')
+    const { auctionTranslationContentHash } = await import('~/server/utils/auction-translation')
     const cached = {
       contentHash: auctionTranslationContentHash(auction()),
       status: 'completed' as const,
@@ -265,7 +265,7 @@ describe('/api/auction/:platform/:id/translation', () => {
       claimAuctionTranslation,
     } = await import('~/server/utils/content-translation')
     const handler = await loadHandler()
-    const { auctionTranslationContentHash } = await import('./translation.post')
+    const { auctionTranslationContentHash } = await import('~/server/utils/auction-translation')
     const expectedContentHash = auctionTranslationContentHash(auction())
     const payload = {
       title: 'Fresh title for changed content',

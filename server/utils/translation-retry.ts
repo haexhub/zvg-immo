@@ -25,7 +25,7 @@ import { fingerprintConfigChain, resolveActiveLlmConfigChain } from '~/server/ut
 import { recordLlmUsage } from '~/server/utils/llm-usage'
 import { countryContentLanguage, type ContentTargetLang } from '~/lib/content-language'
 import { extractTranslatableExtractionTexts } from '~/lib/extraction-translation'
-import { auctionTranslationContentHash, tryTranslate } from '~/server/api/auction/[platform]/[id]/translation.post'
+import { auctionTranslationContentHash, tryTranslate } from '~/server/utils/auction-translation'
 
 async function runRetry(
   db: Pool,
@@ -105,7 +105,12 @@ export async function retryAuctionTranslation(
   const contentHash = auctionTranslationContentHash(record.auction)
   const claim = await claimAuctionTranslation(db, platform, externalId, record.detailsVersion, targetLang, contentHash)
   if (!claim) return 'already_running'
-  void runRetry(db, platform, externalId, record.detailsVersion, targetLang, contentHash, claim, record.auction)
+  // runRetry records translation failures itself; this only catches the
+  // failure-recording write failing, which would otherwise be an unhandled
+  // rejection without the auction it belonged to.
+  void runRetry(db, platform, externalId, record.detailsVersion, targetLang, contentHash, claim, record.auction).catch((err: unknown) => {
+    console.warn(`[translation-retry] background retry failed for ${platform}:${externalId}/${targetLang}: ${(err as Error).message}`)
+  })
   return 'started'
 }
 

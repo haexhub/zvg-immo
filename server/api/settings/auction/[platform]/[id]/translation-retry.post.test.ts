@@ -17,6 +17,8 @@ vi.mock('~/server/utils/translation-llm-chain', () => ({
 vi.mock('~/server/utils/extract/llm', () => ({ isLlmProviderUnavailable: vi.fn(() => false) }))
 vi.mock('~/server/api/auction/[platform]/[id]/translation.post', () => ({
   SUPPORTED_TARGET_LANGS: new Set(['de', 'en']),
+}))
+vi.mock('~/server/utils/auction-translation', () => ({
   auctionTranslationContentHash: vi.fn(() => 'content-hash'),
   tryTranslate: vi.fn(),
 }))
@@ -106,7 +108,7 @@ describe('/api/settings/auction/[platform]/[id]/translation-retry', () => {
     const { getPool } = await import('~/server/utils/db')
     const { claimAuctionTranslation, completeAuctionTranslation, readContentTranslation } = await import('~/server/utils/content-translation')
     const { resolveActiveLlmConfigChain } = await import('~/server/utils/translation-llm-chain')
-    const { tryTranslate } = await import('~/server/api/auction/[platform]/[id]/translation.post')
+    const { tryTranslate } = await import('~/server/utils/auction-translation')
     vi.mocked(getPool).mockReturnValue({} as Pool)
     vi.mocked(readAuctionRecord).mockResolvedValue({ auction: auction(), detailsId: 1, detailsVersion: 1, artifactVersionId: null })
     vi.mocked(claimAuctionTranslation).mockResolvedValue(CLAIM)
@@ -131,7 +133,7 @@ describe('/api/settings/auction/[platform]/[id]/translation-retry', () => {
     const { getPool } = await import('~/server/utils/db')
     const { claimAuctionTranslation, failAuctionTranslation, readContentTranslation } = await import('~/server/utils/content-translation')
     const { resolveActiveLlmConfigChain } = await import('~/server/utils/translation-llm-chain')
-    const { tryTranslate } = await import('~/server/api/auction/[platform]/[id]/translation.post')
+    const { tryTranslate } = await import('~/server/utils/auction-translation')
     vi.mocked(getPool).mockReturnValue({} as Pool)
     vi.mocked(readAuctionRecord).mockResolvedValue({ auction: auction(), detailsId: 1, detailsVersion: 1, artifactVersionId: null })
     vi.mocked(claimAuctionTranslation).mockResolvedValue(CLAIM)
