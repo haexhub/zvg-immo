@@ -18,6 +18,13 @@ const PEGGED_RATES: Record<string, number> = {
   BAM: 1.95583,
 }
 
+// Currencies the crawlers price in (server/crawlers/*). A 200 response that
+// lacks any of them (maintenance page, changed XML) must not replace a good
+// cache for 24 h, so it is rejected and getRates() falls back to stale rates.
+// ponytail: hard-coded list; if ECB ever stops publishing one of these (euro
+// adoption), drop it here together with the crawler's currency.
+const REQUIRED_ECB_CURRENCIES = ['CZK', 'DKK', 'GBP', 'HUF', 'PLN', 'SEK', 'USD']
+
 interface RateCache {
   fetchedAt: string
   rates: Record<string, number>
@@ -153,8 +160,11 @@ async function fetchAndCache(): Promise<Record<string, number>> {
   const re = /currency='([A-Z]+)'\s+rate='([0-9.]+)'/g
   let m: RegExpExecArray | null
   while ((m = re.exec(xml)) !== null) {
-    rates[m[1]!] = parseFloat(m[2]!)
+    const rate = parseFloat(m[2]!)
+    if (Number.isFinite(rate) && rate > 0) rates[m[1]!] = rate
   }
+  const missing = REQUIRED_ECB_CURRENCIES.filter((currency) => rates[currency] === undefined)
+  if (missing.length) throw new Error(`ECB rate feed is missing ${missing.join(', ')}`)
   const entry: RateCache = { fetchedAt: new Date().toISOString(), rates }
   memory = entry
   await mkdir(dirname(CACHE_PATH), { recursive: true })

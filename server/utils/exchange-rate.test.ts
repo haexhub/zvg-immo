@@ -128,6 +128,18 @@ describe('getRates', () => {
     expect(rates.USD).toBe(1.1)
   })
 
+  it('rejects a 200 response without the required rates and keeps serving the stale cache', async () => {
+    const { writeFile } = await import('node:fs/promises')
+    const staleFetchedAt = new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString() // 30h old, past the 24h TTL
+    vi.mocked(readFile).mockResolvedValue(JSON.stringify({ fetchedAt: staleFetchedAt, rates: { HUF: 400 } }))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<html>Wartungsarbeiten</html>', { status: 200 })))
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const { getRates } = await import('./exchange-rate')
+    expect((await getRates()).HUF).toBe(400)
+    expect(writeFile).not.toHaveBeenCalled()
+  })
+
   it('throws when there is no disk cache to fall back to and the live fetch fails', async () => {
     vi.mocked(readFile).mockRejectedValue(new Error('ENOENT'))
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')))
