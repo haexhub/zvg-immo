@@ -829,6 +829,59 @@ describe('runExternalEnrichment', () => {
       }),
     })
   })
+
+  it('keeps previous results only while the auction stays at the position they were computed for', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(
+      auction({ externalId: 'same' }),
+      auction({ externalId: 'moved' }),
+    ))
+    const stored = (externalId: string, lat: number) => ({
+      platform: 'test',
+      externalId,
+      lat,
+      lng: 2.3522,
+      marketComparison,
+      hazards: [hazard],
+      locationContext,
+      checkedAt: '2026-07-01T00:00:00.000Z',
+      sourceVersion: 'old',
+    })
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({
+      'test:same': stored('same', 48.8566),
+      // ~11 km away: the geocode was corrected since the last run.
+      'test:moved': stored('moved', 48.7566),
+    })
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+    const previousSeen: Array<LocationContext | null | undefined> = []
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    await runExternalEnrichment({
+      marketAdapters: [],
+      landValueAdapters: [],
+      hazardAdapters: [],
+      locationContextAdapters: [{
+        id: 'osm-fixture',
+        sourceVersion: 'v1',
+        supports: () => true,
+        context: vi.fn(async (_auction: Auction, previous?: LocationContext | null) => {
+          previousSeen.push(previous)
+          return null
+        }),
+      }],
+    })
+
+    expect(writeLocationEnrichmentCache).toHaveBeenCalledWith({
+      'test:same': expect.objectContaining({ marketComparison, hazards: [hazard], locationContext }),
+    })
+    expect(writeLocationEnrichmentCache).toHaveBeenCalledWith({
+      'test:moved': expect.objectContaining({ marketComparison: null, hazards: null, locationContext: null }),
+    })
+    expect(previousSeen).toContain(null)
+    expect(previousSeen).toContain(locationContext)
+  })
 })
 
 describe('withLocationContextEnhancers', () => {

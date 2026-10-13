@@ -9,7 +9,11 @@ import { runExternalEnrichment } from '~/server/tasks/external-enrichment'
 import { runExclusiveTask } from '~/server/utils/exclusive-task'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 import { getPool } from './db'
+import { coordinatesMovedSignificantly } from './external-data/geo'
 import type { GeocodeStatus } from './geocode'
+
+/** Re-exported for tests. */
+export { coordinatesMovedSignificantly }
 
 const COLUMNS = [
   'platform',
@@ -67,40 +71,11 @@ export function auctionToCurrentRow(a: Auction, updatedAt: string): CurrentAucti
   }
 }
 
-// Geocoders return slightly different coordinates for the same address between
-// runs, so an exact comparison would re-enrich constantly. 100 m is well above
-// that noise and well below the distance at which the location context (nearby
-// amenities, hazard zones, noise bands) would meaningfully differ.
-const COORDINATE_CHANGE_THRESHOLD_METERS = 100
-
 // node-postgres returns `numeric` as a string to avoid float precision loss.
 function numeric(value: number | string | null): number | null {
   if (value == null) return null
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : null
-}
-
-function distanceMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const R = 6_371_000
-  const toRad = (deg: number): number => (deg * Math.PI) / 180
-  const dLat = toRad(lat2 - lat1)
-  const dLng = toRad(lng2 - lng1)
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2
-  return 2 * R * Math.asin(Math.sqrt(a))
-}
-
-/** Exported for tests. */
-export function coordinatesMovedSignificantly(
-  previous: { lat: number | null; lng: number | null } | null,
-  next: { lat: number | null; lng: number | null },
-): boolean {
-  if (next.lat == null || next.lng == null) return false
-  // First coordinates this auction ever had — including a brand new auction,
-  // whose identity row is created before any geocoding has run.
-  if (previous?.lat == null || previous?.lng == null) return true
-  return distanceMeters(previous.lat, previous.lng, next.lat, next.lng) > COORDINATE_CHANGE_THRESHOLD_METERS
 }
 
 /**

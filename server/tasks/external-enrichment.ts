@@ -2,6 +2,7 @@ import type { Auction, HazardAssessment, LandValueBaseline, LocationContext, Mar
 import { readAuctionRecord, readAuctionRecords } from '~/server/utils/auction-record'
 import { geocodeAddress } from '~/server/utils/geocode'
 import { getPool } from '~/server/utils/db'
+import { coordinatesMovedSignificantly } from '~/server/utils/external-data/geo'
 import {
   readLocationEnrichmentCache,
   writeLocationEnrichmentCache,
@@ -185,7 +186,11 @@ export async function runExternalEnrichment(
       const auction: Auction = { ...rawAuction, lat: point.lat, lng: point.lng }
       summary.processed++
       const key = cacheKey(auction.platform, auction.externalId)
-      const previous = existing[key]
+      // An entry computed before the geocode was corrected describes another
+      // place: its fallbacks below and the enhancer merge (noise bands, air
+      // quality) would otherwise pin the old position's data indefinitely.
+      const stored = existing[key]
+      const previous = stored && !coordinatesMovedSignificantly(stored, point) ? stored : undefined
 
       const marketComparison = await firstMarketComparison(auction, marketAdapters, summary)
       throwIfTaskAborted(signal)
