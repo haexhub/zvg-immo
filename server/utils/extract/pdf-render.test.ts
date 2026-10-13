@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { imageSize } from './image-bytes'
 import { renderPdfPageJpeg, renderPdfPagesJpeg } from './pdf-render'
 
 // Minimal one-page PDF (no proper xref table) — poppler recovers these via
@@ -66,5 +67,16 @@ describe('renderPdfPagesJpeg', () => {
   it('rasterizes a single-page PDF to a one-element array', async () => {
     const jpegs = await renderPdfPagesJpeg(MINI_PDF)
     expect(jpegs).toHaveLength(1)
+  })
+})
+
+describe('page pixel bound', () => {
+  it('fits an oversized MediaBox into the render box instead of rendering it at full DPI', async () => {
+    // 200 x 200 inch plan sheet: at a fixed 90 DPI this would be 18000 px square.
+    const hugePage = Buffer.from(MINI_PDF.toString('latin1').replace('/MediaBox[0 0 200 200]', '/MediaBox[0 0 14400 14400]'), 'latin1')
+    for (const jpeg of [await renderPdfPageJpeg(hugePage), ...(await renderPdfPagesJpeg(hugePage))]) {
+      const size = imageSize(jpeg)
+      expect(Math.max(size!.width, size!.height)).toBeLessThanOrEqual(1100)
+    }
   })
 })

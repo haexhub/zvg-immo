@@ -17,19 +17,23 @@ const exec = promisify(execFile)
 // cost per document rather than reflecting a real-world page limit.
 const DEFAULT_MAX_RENDER_PAGES = 20
 
+// Fit every page into this pixel box instead of a fixed DPI: a fixed DPI makes
+// the bitmap size follow the untrusted MediaBox (a 200-inch plan page would be
+// ~18k px square). 1100 px is about what A4 gave at the former 90 DPI.
+const JPEG_ARGS = ['-jpeg', '-jpegopt', 'quality=80', '-scale-to', '1100']
+
 /** Rasterize one 1-based PDF page to a JPEG buffer. */
 export async function renderPdfPageJpeg(pdfBuf: Buffer, page = 1): Promise<Buffer> {
   const dir = join(tmpdir(), `pdf-render-${randomUUID()}`)
   const inputPath = `${dir}.pdf`
   const outputPrefix = `${dir}-out`
   const outputPath = `${outputPrefix}.jpg`
-  await writeFile(inputPath, pdfBuf)
   try {
+    await writeFile(inputPath, pdfBuf)
     await exec(
       'pdftoppm',
       [
-        '-jpeg', '-jpegopt', 'quality=80',
-        '-r', '90',
+        ...JPEG_ARGS,
         '-f', String(page), '-l', String(page),
         '-singlefile',
         inputPath, outputPrefix,
@@ -75,7 +79,7 @@ export async function renderPdfPagesJpeg(
     const lastPage = Math.max(1, Math.min(totalPages, maxPages))
     await exec(
       'pdftoppm',
-      ['-jpeg', '-jpegopt', 'quality=80', '-r', '90', '-f', '1', '-l', String(lastPage), inputPath, outputPrefix],
+      [...JPEG_ARGS, '-f', '1', '-l', String(lastPage), inputPath, outputPrefix],
       { timeout: 60_000 },
     )
     const files = (await readdir(workDir))
