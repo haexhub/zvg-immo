@@ -173,7 +173,11 @@ export function useSettingsTaskOverview() {
       llmBatchJobsError.value = null
       try {
         llmBatchJobs.value = await $fetch<LlmBatchJobsOverview>('/api/settings/llm-batch-jobs', { cache: 'no-store' })
-        if (anyTrackedTaskRunning()) startProgressPolling()
+        if (!progressPollTimer && anyTrackedTaskRunning()) {
+          startProgressPolling()
+          // Running was already observed here, so no grace window is needed.
+          progressPollObservedRunning = true
+        }
       } catch (err) {
         llmBatchJobsError.value = normalizeSettingsError(err, t('settings.llmBatch.loadError'))
       } finally {
@@ -186,9 +190,13 @@ export function useSettingsTaskOverview() {
   }
 
   function startProgressPolling(): void {
-    if (progressPollTimer) return
-    progressPollObservedRunning = anyTrackedTaskRunning()
+    // Every call announces a freshly-triggered task, so the grace window
+    // restarts even while the timer already polls an earlier run — otherwise
+    // observedRunning left over from that run stops polling on the first idle
+    // tick, before the new task got to record "running".
+    progressPollObservedRunning = false
     progressPollStartedAt = Date.now()
+    if (progressPollTimer) return
     progressPollTimer = setInterval(async () => {
       await loadLlmBatchJobs()
       if (anyTrackedTaskRunning()) {
