@@ -110,6 +110,18 @@ describe('normalizeDvfMutation', () => {
     })
   })
 
+  it('classifies a sale without any local but with a land use as land', () => {
+    const land = { id_mutation: 'm1', valeur_fonciere: '90000', type_local: '', latitude: '48', longitude: '2' }
+    expect(normalizeDvfMutation([
+      { ...land, id_parcelle: 'p1', nature_culture: 'terrains a bâtir', surface_terrain: '600' },
+      { ...land, id_parcelle: 'p2', nature_culture: 'terres', surface_terrain: '400' },
+    ])).toMatchObject({ propertyClass: 'land', builtAreaSqm: null, landAreaSqm: 1000 })
+    // A garage sold on its own is neither a home nor land.
+    expect(normalizeDvfMutation([
+      { ...land, type_local: 'Dépendance', id_parcelle: 'p1', nature_culture: 'sols', surface_terrain: '50' },
+    ])).toBeNull()
+  })
+
   it('drops mutations mixing local types', () => {
     expect(normalizeDvfMutation([
       { id_mutation: 'm1', valeur_fonciere: '500000', type_local: 'Maison', surface_reelle_bati: '100', latitude: '48', longitude: '2' },

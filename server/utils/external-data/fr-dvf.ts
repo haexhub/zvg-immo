@@ -69,7 +69,9 @@ export function normalizeDvfMutation(rows: RawDvfRow[]): DvfTransaction | null {
   const classes = new Set<MarketComparisonPropertyClass>()
   const builtAreas = new Map<string, number>()
   const landAreas = new Map<string, number>()
+  let hasLocal = false
   for (const row of rows) {
+    if (row.type_local?.trim()) hasLocal = true
     const localClass = classifyDvfLocal(row.type_local)
     const builtArea = positiveOrNull(parseFrenchNumber(row.surface_reelle_bati))
     if (localClass) {
@@ -78,6 +80,12 @@ export function normalizeDvfMutation(rows: RawDvfRow[]): DvfTransaction | null {
     }
     const landArea = positiveOrNull(parseFrenchNumber(row.surface_terrain))
     if (landArea != null) landAreas.set(`${row.id_parcelle ?? ''}|${row.nature_culture ?? ''}`, landArea)
+  }
+  // DVF has no 'Terrain' local: a pure land sale leaves type_local empty on
+  // every row and states the land use in nature_culture. A lone dependency
+  // (garage, cellar) also has no class but is not land.
+  if (classes.size === 0 && !hasLocal && landAreas.size > 0 && rows.some((row) => row.nature_culture?.trim())) {
+    classes.add('land')
   }
   // Mixed sales (house + flat, or with commercial premises) have no single
   // comparable price per m².
@@ -194,7 +202,6 @@ function classifyDvfLocal(typeLocal: string | null | undefined): MarketCompariso
   if (!normalized || normalized === 'dependance') return null
   if (normalized === 'maison') return 'house'
   if (normalized === 'appartement') return 'apartment'
-  if (normalized === 'terrain') return 'land'
   return 'unknown'
 }
 
