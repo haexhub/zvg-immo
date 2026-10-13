@@ -346,6 +346,30 @@ describe('/api/settings/llm-batch-jobs', () => {
     expect(readAuctionRecords).toHaveBeenCalledTimes(1)
   })
 
+  it('lets polls that overlap a running computation share it, and retries after a failure', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
+      await import('~/server/utils/llm-batch-jobs')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { isGeminiBatchTierPaid } = await import('~/server/utils/extract/gemini-batch')
+    const { getTaskRunStatus } = await import('~/server/utils/task-runs')
+    vi.mocked(listPendingLlmBatchJobs).mockRejectedValueOnce(new Error('db down')).mockResolvedValue([])
+    vi.mocked(listRecentLlmBatchJobs).mockResolvedValue([])
+    vi.mocked(getAllLlmBatchCapabilities).mockResolvedValue({})
+    vi.mocked(readAuctionRecords).mockResolvedValue([])
+    vi.mocked(isGeminiBatchTierPaid).mockReturnValue(true)
+    vi.mocked(getTaskRunStatus).mockResolvedValue(IDLE_REPROCESS_STATUS)
+
+    const handler = (await import('./llm-batch-jobs.get')).default as () => Promise<unknown>
+    const failed = await Promise.allSettled([handler(), handler()])
+    expect(failed.map((r) => r.status)).toEqual(['rejected', 'rejected'])
+    expect(listPendingLlmBatchJobs).toHaveBeenCalledTimes(1)
+
+    await Promise.all([handler(), handler(), handler()])
+    expect(listPendingLlmBatchJobs).toHaveBeenCalledTimes(2)
+    expect(readAuctionRecords).toHaveBeenCalledTimes(1)
+  })
+
   it('recomputes once the cache TTL has elapsed', async () => {
     vi.useFakeTimers()
     try {

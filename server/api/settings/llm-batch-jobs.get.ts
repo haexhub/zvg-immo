@@ -102,9 +102,11 @@ const MAX_PENDING_JOBS_DISPLAYED = 50
 // tick was measured at several MB per response. A short cache lets bursts of
 // near-simultaneous polls (multiple open /settings tabs, or the client's own
 // mount-time + interval calls) share one computation; staleness of a few
-// seconds is invisible on a progress counter.
+// seconds is invisible on a progress counter. Polls arriving while the scan
+// is still running join the in-flight promise instead of starting their own.
 const OVERVIEW_CACHE_TTL_MS = 4000
 let cachedOverview: { data: LlmBatchJobsOverview; expiresAt: number } | null = null
+let inflightOverview: Promise<LlmBatchJobsOverview> | null = null
 
 function providerForJob(jobName: string): LlmBatchJobOverviewItem['provider'] {
   // Checked first — OpenRouter's own batch ids also start with "batch_" (see
@@ -116,9 +118,15 @@ function providerForJob(jobName: string): LlmBatchJobOverviewItem['provider'] {
   return 'gemini'
 }
 
-export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
-  if (cachedOverview && cachedOverview.expiresAt > Date.now()) return cachedOverview.data
+export default defineEventHandler((): Promise<LlmBatchJobsOverview> => {
+  if (cachedOverview && cachedOverview.expiresAt > Date.now()) return Promise.resolve(cachedOverview.data)
+  inflightOverview ??= computeOverview().finally(() => {
+    inflightOverview = null
+  })
+  return inflightOverview
+})
 
+async function computeOverview(): Promise<LlmBatchJobsOverview> {
   const [
     jobs,
     recentJobs,
@@ -275,4 +283,4 @@ export default defineEventHandler(async (): Promise<LlmBatchJobsOverview> => {
   }
   cachedOverview = { data: result, expiresAt: Date.now() + OVERVIEW_CACHE_TTL_MS }
   return result
-})
+}
