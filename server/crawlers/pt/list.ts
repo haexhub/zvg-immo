@@ -121,7 +121,10 @@ function mapEvento(evento: PtEvento, mapa: PtMapaItem | undefined, platformId: s
     country: COUNTRY,
     region: '',
     externalId: String(evento.id),
-    caseNumber: evento.referencia,
+    // The real court case number/court only come from the detail endpoint
+    // (applyDetail). A non-empty placeholder here would overwrite the enriched
+    // value on every re-crawl; the referencia stays reachable via detailUrl.
+    caseNumber: '',
     authority: '',
     title: clean(evento.titulo),
     address: buildAddress(evento, mapa),

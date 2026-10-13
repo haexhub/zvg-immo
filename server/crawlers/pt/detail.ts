@@ -48,8 +48,8 @@ export function applyDetail(auction: Auction, item: PtEventoDetail): void {
   const description = [text(item.descricao), text(item.observacoes)].filter(Boolean).join('\n\n')
   if (description) auction.description = description
 
-  // Replace the e-leilões referencia (already used above it as the fetch key
-  // in enrichOne) with the real court case number/court once known.
+  // The list crawl leaves caseNumber/authority empty; fill in the real court
+  // case number/court once known.
   const processoNumero = text(item.processoNumero)
   if (processoNumero) auction.caseNumber = processoNumero
   const processoTribunal = text(item.processoTribunal)
