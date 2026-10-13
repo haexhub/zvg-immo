@@ -27,6 +27,10 @@ import { fillAuctionGeocodes } from './auction-geocoding'
  *  query-param → ref → AuctionFilters pipeline, just server-side against a
  *  stored jsonb blob instead of route.query. */
 export function toAuctionFilters(stored: Record<string, unknown>): AuctionFilters {
+  // Deliberately without the admin hideRulesOnly default the SQL search
+  // applies: a fresh crawl batch has no LLM analysis yet, so that default
+  // (true out of the box) would drop every auction and silence all alerts.
+  // An explicit llmOnly=1 is rejected as unsupported instead.
   const filters = parseAuctionSearchFilters(stored)
   const regionKeys = filters.regionKeys // `${countryCode}:${regionCode}` pairs
 
