@@ -26,6 +26,11 @@ describe('mergeStoredAuction', () => {
     expect([merged.lat, merged.lng]).toEqual([52.5, 13.4])
   })
 
+  it('keeps an enriched court when the list crawl leaves authority empty', () => {
+    const merged = mergeStoredAuction(auction({ authority: '' }), auction({ authority: 'Sąd Rejonowy w Zgorzelcu' }))
+    expect(merged.authority).toBe('Sąd Rejonowy w Zgorzelcu')
+  })
+
   it('does not restore mutable current bids', () => {
     expect(mergeStoredAuction(auction(), auction({ currentBid: 90_000 })).currentBid).toBeUndefined()
   })

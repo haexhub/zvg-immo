@@ -23,6 +23,9 @@ export function mergeStoredAuction(next: Auction, previous: Auction): Auction {
     next.description = previousDescription
   }
   if (!next.caseNumber && previous.caseNumber) next.caseNumber = previous.caseNumber
+  // Like caseNumber, some list crawls (pl, pt) leave the court empty
+  // and only enrichOne fills it from the detail page.
+  if (!next.authority && previous.authority) next.authority = previous.authority
   if (next.pdfUrl == null && previous.pdfUrl != null) {
     next.pdfUrl = previous.pdfUrl
     next.pdfUrlUpstream = previous.pdfUrlUpstream
