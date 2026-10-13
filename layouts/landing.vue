@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { Search } from 'lucide-vue-next'
 import type { CountryEntry } from '~/server/crawlers/registry'
-import { ALL_SCOPE, isAllScope } from '~/lib/auction-constants'
+import { ALL_SCOPE } from '~/lib/auction-constants'
+import { defaultAuctionSearchFilters, serializeAuctionSearchFilters } from '~/lib/auction-search-filter-contract'
 import { toggleInArray } from '~/lib/toggle-array'
 
 // The landing search bar lives in SiteHeader's search row, and a page can't
@@ -9,10 +10,19 @@ import { toggleInArray } from '~/lib/toggle-array'
 // the layout owns the filter state the bar writes to. It used to sit in the
 // hero and teleport itself into the header on scroll; the header now hosts it
 // outright and only shrinks it (see useHeaderCompact).
-const { data: countries } = await useFetch<CountryEntry[]>('/api/regions', {
-  cache: 'no-store',
-  default: () => [],
-})
+// /api/display-settings carries the admin default for hideRulesOnly, which
+// /search falls back to whenever llmOnly is absent from the URL — the landing
+// checkbox has to start from (and serialize against) that same default.
+const [{ data: countries }, { data: displaySettings }] = await Promise.all([
+  useFetch<CountryEntry[]>('/api/regions', {
+    cache: 'no-store',
+    default: () => [],
+  }),
+  useFetch<{ hideRulesOnlyAuctions: boolean }>('/api/display-settings', {
+    default: () => ({ hideRulesOnlyAuctions: true }),
+  }),
+])
+const hideRulesOnlyServerDefault = computed(() => displaySettings.value?.hideRulesOnlyAuctions ?? true)
 
 const { t } = useI18n()
 const router = useRouter()
@@ -53,7 +63,7 @@ const conditionFilter = ref<string[]>([])
 const featuresFilter = ref<string[]>([])
 const onlyWithPhotos = ref(false)
 const includeCancelled = ref(false)
-const hideRulesOnly = ref(false)
+const hideRulesOnly = ref(hideRulesOnlyServerDefault.value)
 
 const nearSea = ref<number | null>(null)
 const nearLake = ref<number | null>(null)
@@ -102,49 +112,31 @@ function setNearby(lat: number, lng: number): void {
   nearRadius.value = 25
 }
 
+// Serialized through the shared filter contract so /search parses exactly
+// what the landing bar meant (UI region keys, explicit llmOnly=0, ...).
 function submitSearch(): void {
-  const query: Record<string, string> = {}
-  if (selectedCountries.value.length) query.country = selectedCountries.value.join(',')
-  if (selectedRegionKeys.value.length) {
-    const regionNames = selectedRegionKeys.value
-      .map((key) => availableRegions.value.find((r) => r.key === key))
-      .filter((r): r is NonNullable<typeof r> => r != null)
-      .map((r) => `${r.country}:${r.name}`)
-    if (regionNames.length) query.regionNames = regionNames.join(',')
-  }
-  const q = search.value.trim()
-  if (q) query.q = q
-  if (!isAllScope(authorityFilter.value)) query.authority = authorityFilter.value
-  if (priceMin.value != null) query.priceMin = String(priceMin.value)
-  if (priceMax.value != null) query.priceMax = String(priceMax.value)
-  if (landAreaMin.value != null) query.landMin = String(landAreaMin.value)
-  if (landAreaMax.value != null) query.landMax = String(landAreaMax.value)
-  if (livingAreaMin.value != null) query.livMin = String(livingAreaMin.value)
-  if (livingAreaMax.value != null) query.livMax = String(livingAreaMax.value)
-  if (yearBuiltMin.value != null) query.yearBuiltMin = String(yearBuiltMin.value)
-  if (yearBuiltMax.value != null) query.yearBuiltMax = String(yearBuiltMax.value)
-  if (renovationYearMin.value != null) query.renovationYearMin = String(renovationYearMin.value)
-  if (renovationYearMax.value != null) query.renovationYearMax = String(renovationYearMax.value)
-  if (nearSea.value != null) query.nearSea = String(nearSea.value)
-  if (nearLake.value != null) query.nearLake = String(nearLake.value)
-  if (nearRiver.value != null) query.nearRiver = String(nearRiver.value)
-  if (nearMountain.value != null) query.nearMountain = String(nearMountain.value)
-  if (nearAirport.value != null) query.nearAirport = String(nearAirport.value)
-  if (nearSkiDownhill.value != null) query.nearSkiDownhill = String(nearSkiDownhill.value)
-  if (nearSkiNordic.value != null) query.nearSkiNordic = String(nearSkiNordic.value)
-  if (!isAllScope(urbanRural.value)) query.urbanRural = urbanRural.value
-  if (nearLat.value != null && nearLng.value != null) {
-    query.nearLat = String(nearLat.value)
-    query.nearLng = String(nearLng.value)
-    query.nearRadius = String(nearRadius.value ?? 25)
-  }
-  if (!isAllScope(categoryFilter.value)) query.category = categoryFilter.value
-  if (platformFilter.value.length) query.platform = platformFilter.value.join(',')
-  if (conditionFilter.value.length) query.condition = conditionFilter.value.join(',')
-  if (featuresFilter.value.length) query.features = featuresFilter.value.join(',')
-  if (onlyWithPhotos.value) query.photos = '1'
-  if (includeCancelled.value) query.cancelled = '1'
-  if (hideRulesOnly.value) query.llmOnly = '1'
+  const query = serializeAuctionSearchFilters({
+    ...defaultAuctionSearchFilters(),
+    countries: selectedCountries.value,
+    // Region keys of a since-deselected country stay in the ref; drop them.
+    regionKeys: selectedRegionKeys.value.filter((key) => availableRegions.value.some((r) => r.key === key)),
+    search: search.value,
+    authority: authorityFilter.value,
+    priceMin: priceMin.value, priceMax: priceMax.value,
+    landMin: landAreaMin.value, landMax: landAreaMax.value,
+    livMin: livingAreaMin.value, livMax: livingAreaMax.value,
+    yearBuiltMin: yearBuiltMin.value, yearBuiltMax: yearBuiltMax.value,
+    renovationYearMin: renovationYearMin.value, renovationYearMax: renovationYearMax.value,
+    nearSea: nearSea.value, nearLake: nearLake.value, nearRiver: nearRiver.value,
+    nearMountain: nearMountain.value, nearAirport: nearAirport.value,
+    nearSkiDownhill: nearSkiDownhill.value, nearSkiNordic: nearSkiNordic.value,
+    urbanRural: urbanRural.value,
+    nearLat: nearLat.value, nearLng: nearLng.value, nearRadius: nearRadius.value,
+    category: categoryFilter.value,
+    platform: platformFilter.value, condition: conditionFilter.value, features: featuresFilter.value,
+    onlyWithPhotos: onlyWithPhotos.value, includeCancelled: includeCancelled.value,
+    hideRulesOnly: hideRulesOnly.value,
+  }, hideRulesOnlyServerDefault.value)
   router.push({ path: '/search', query })
 }
 

@@ -28,6 +28,18 @@ describe('auction search filter contract', () => {
     expect(serializeAuctionSearchFilters(filters)).toEqual({ country: 'de,at' })
   })
 
+  it('keeps UI region keys and an explicit hideRulesOnly opt-out across a submit/parse round trip', () => {
+    // The landing bar serializes its own refs and /search parses them back.
+    const query = serializeAuctionSearchFilters(
+      { ...defaultAuctionSearchFilters(), countries: ['de'], regionKeys: ['de:sn'], hideRulesOnly: false },
+      true,
+    )
+    expect(query).toEqual({ country: 'de', region: 'de:sn', llmOnly: '0' })
+    const parsed = parseAuctionSearchFilters(query, true)
+    expect(parsed.regionKeys).toEqual(['de:sn'])
+    expect(parsed.hideRulesOnly).toBe(false)
+  })
+
   it('uses defaults for empty or invalid values and does not turn empty numbers into zero', () => {
     expect(parseAuctionSearchFilters({ priceMin: '', sort: 'wrong' })).toEqual(defaultAuctionSearchFilters())
   })
