@@ -6,10 +6,12 @@ import { clean, formatGrPrice, parseGrDateTime, parseGrPrice } from './text'
 
 const FETCH_RETRIES = 2
 
-/** Retries transient failures (timeout, network error, 5xx) so a blip on one
- *  of the ~7.5k detail fetches doesn't drop that lot for a whole 12h cycle.
- *  4xx responses are not retried — they won't succeed on a second attempt. */
-async function htmlFetch(url: string): Promise<string> {
+/** Retries transient failures (timeout, network error, 5xx, 429 rate limit)
+ *  so a blip on one of the ~7.5k detail fetches doesn't drop that lot for a
+ *  whole 12h cycle. Other 4xx responses are not retried — they won't succeed
+ *  on a second attempt. 404/410 resolve to null: the page is gone, which
+ *  callers must not mistake for a failed fetch. */
+async function htmlFetch(url: string): Promise<string | null> {
   for (let attempt = 0; ; attempt++) {
     let res: Response | undefined
     try {
@@ -22,7 +24,11 @@ async function htmlFetch(url: string): Promise<string> {
       if (attempt >= FETCH_RETRIES) throw err
     }
     if (res && !res.ok) {
-      if (res.status < 500) throw new Error(`eauction24.gr ${url}: HTTP ${res.status}`)
+      if (res.status === 404 || res.status === 410) {
+        await res.arrayBuffer().catch(() => {})
+        return null
+      }
+      if (res.status < 500 && res.status !== 429) throw new Error(`eauction24.gr ${url}: HTTP ${res.status}`)
       if (attempt >= FETCH_RETRIES) throw new Error(`eauction24.gr ${url}: HTTP ${res.status}`)
       await res.arrayBuffer().catch(() => {}) // drain body to avoid socket leak on retried 5xx
     }
@@ -36,6 +42,7 @@ async function htmlFetch(url: string): Promise<string> {
  *  untouched. */
 async function fetchAuctionUrls(): Promise<string[]> {
   const xml = await htmlFetch(SITEMAP_URL)
+  if (xml === null) throw new Error(`eauction24.gr ${SITEMAP_URL}: sitemap not found`)
   const urls = [...xml.matchAll(/<loc>(https:\/\/eauction24\.gr\/auction\/\d+)<\/loc>/g)].map(
     (m) => m[1]!,
   )
@@ -171,23 +178,31 @@ function parseDetail(url: string, id: string, html: string, platformId: string):
 
 export async function fetchAllListings(
   platformId: string,
-): Promise<{ auctions: Auction[]; total: number | null }> {
+): Promise<{ auctions: Auction[]; total: number | null; complete: boolean }> {
   const urls = await fetchAuctionUrls()
-  if (urls.length === 0) return { auctions: [], total: 0 }
+  if (urls.length === 0) return { auctions: [], total: 0, complete: true }
 
   const auctions: (Auction | null)[] = new Array(urls.length).fill(null)
+  let failedDetails = 0
+  let firstFailure: unknown = null
   let cursor = 0
   async function worker() {
     while (cursor < urls.length) {
       const i = cursor++
       const url = urls[i]
       if (!url) continue
-      let html: string
+      let html: string | null
       try {
         html = await htmlFetch(url)
-      } catch {
+      } catch (err) {
+        failedDetails++
+        firstFailure ??= err
         continue
       }
+      // A sitemap entry whose page is gone (404/410) is a withdrawn lot, not
+      // one missing from this run — a stale entry must not keep every run
+      // incomplete and so disable staleness detection for the platform.
+      if (html === null) continue
       // Outside the try: mapDetail's archive persistence failures must fail
       // the crawl (see fetch-archive.ts) instead of silently dropping the lot.
       auctions[i] = await mapDetail(url, html, platformId)
@@ -195,6 +210,14 @@ export async function fetchAllListings(
   }
   await Promise.all(Array.from({ length: DETAIL_CONCURRENCY }, worker))
 
+  // One summary line instead of one per lot: a throttled run can fail
+  // thousands of details at once.
+  if (failedDetails > 0) {
+    console.warn(
+      `[eauction24] ${failedDetails}/${urls.length} detail fetches failed, first: ${(firstFailure as Error).message}`,
+    )
+  }
   const result = auctions.filter((a): a is Auction => a !== null)
-  return { auctions: result, total: result.length }
+  // A lot whose detail page failed is missing from this run, not gone.
+  return { auctions: result, total: result.length, complete: failedDetails === 0 }
 }
