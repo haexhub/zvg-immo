@@ -46,4 +46,18 @@ describe('data-api-auth middleware', () => {
     expect(event.context.apiKey).toEqual({ id: 'key-1', userId: 'user-1' })
     await expect(handler(makeEvent('/api/data/v1/auctions'))).rejects.toMatchObject({ statusCode: 429 })
   })
+
+  it('shares one burst budget across all keys of the same user', async () => {
+    const handler = await loadMiddleware()
+
+    for (let i = 0; i < 60; i++) {
+      vi.mocked(getApiKeyRecord).mockResolvedValueOnce({ id: `key-${i}`, user_id: 'user-a' } as never)
+      await handler(makeEvent('/api/data/v1/auctions'))
+    }
+    vi.mocked(getApiKeyRecord).mockResolvedValueOnce({ id: 'key-fresh', user_id: 'user-a' } as never)
+    await expect(handler(makeEvent('/api/data/v1/auctions'))).rejects.toMatchObject({ statusCode: 429 })
+
+    vi.mocked(getApiKeyRecord).mockResolvedValueOnce({ id: 'key-other', user_id: 'user-b' } as never)
+    await expect(handler(makeEvent('/api/data/v1/auctions'))).resolves.toBeUndefined()
+  })
 })
