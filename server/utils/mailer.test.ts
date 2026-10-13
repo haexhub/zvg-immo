@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { classifyDeliveryError } from './outbound-delivery'
 
-const { createTransport } = vi.hoisted(() => ({ createTransport: vi.fn(() => ({ sendMail: vi.fn(async () => ({})) })) }))
+const { createTransport } = vi.hoisted(() => ({ createTransport: vi.fn((_url: string) => ({ sendMail: vi.fn(async () => ({})) })) }))
 vi.mock('nodemailer', () => ({ default: { createTransport } }))
 
 afterEach(() => {
@@ -27,7 +27,7 @@ describe('mailer transport', () => {
     const { sendMail } = await import('./mailer')
 
     await sendMail({ to: 'lawyer@example.test', subject: 'Test', text: 'Hello' })
-    const url = new URL(createTransport.mock.calls[0]![0] as string)
+    const url = new URL(createTransport.mock.calls[0]![0])
     expect(url.searchParams.get('socketTimeout')).toBe('5000')
     expect(url.searchParams.get('connectionTimeout')).toBe('30000')
     expect(url.searchParams.get('greetingTimeout')).toBe('30000')
