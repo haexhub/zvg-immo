@@ -11,7 +11,12 @@ export default defineEventHandler(async (event): Promise<{ enabled: boolean }> =
     throw createError({ statusCode: 400, statusMessage: 'savedSearchId fehlt.' })
   }
   const body = await readBody<{ enabled?: unknown }>(event).catch(() => undefined) ?? ({} as { enabled?: unknown })
-  const enabled = body.enabled !== false
+  // Only an explicit boolean may toggle: a truncated body or `"false"` must
+  // not silently (re-)enable mails the user meant to switch off.
+  if (typeof body.enabled !== 'boolean') {
+    throw createError({ statusCode: 400, statusMessage: 'enabled muss true oder false sein.' })
+  }
+  const enabled = body.enabled
 
   const supabase = getServiceClient()
   if (!supabase) {
