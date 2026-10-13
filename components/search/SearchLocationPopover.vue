@@ -54,8 +54,14 @@ function useNearby(): void {
   navigator.geolocation.getCurrentPosition(
     (pos) => {
       geoPending.value = false
-      emit('set-nearby', pos.coords.latitude, pos.coords.longitude)
-      addRecentSearch(t('searchBar.location.nearby'), {})
+      const { latitude, longitude } = pos.coords
+      emit('set-nearby', latitude, longitude)
+      // The recent entry replays its query as the whole /search URL, so it
+      // must carry the radius search itself — an empty query would clear
+      // every filter instead of restoring "nearby". 25 km matches set-nearby.
+      addRecentSearch(t('searchBar.location.nearby'), {
+        nearLat: String(latitude), nearLng: String(longitude), nearRadius: '25',
+      })
     },
     () => {
       geoPending.value = false
