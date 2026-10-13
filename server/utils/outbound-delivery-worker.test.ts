@@ -4,7 +4,7 @@ const { getPool, sendMail } = vi.hoisted(() => ({ getPool: vi.fn(), sendMail: vi
 vi.mock('./db', () => ({ getPool }))
 vi.mock('./mailer', () => ({ sendMail }))
 
-const { drainOutboundDeliveries } = await import('./outbound-delivery')
+const { drainOutboundDeliveries, enqueueAlertDelivery } = await import('./outbound-delivery')
 
 afterEach(() => vi.clearAllMocks())
 
@@ -120,5 +120,50 @@ describe('durable mail worker', () => {
     await expect(drainOutboundDeliveries(5)).resolves.toEqual({ sent: 1, failed: 1 })
     expect(poolQueries.some((q) => String(q[0]).includes("'invalid_payload'") && q[1] === 'poison')).toBe(true)
     expect(sendMail).toHaveBeenCalledOnce()
+  })
+  it('confirms a sent alert in notified_matches inside the same transaction as the outbox row', async () => {
+    const clientQueries: unknown[][] = []
+    let claimed = false
+    const pool = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('WITH candidate') && !claimed) {
+          claimed = true
+          return { rows: [{
+            id: 'delivery-1', kind: 'alert', attempts: 1,
+            payload: { alertSubscriptionId: 'sub-1', platform: 'portal', externalId: '42', to: 'buyer@example.test', subject: 'Treffer', text: 'Hello' },
+          }] }
+        }
+        return { rows: [] }
+      }),
+      connect: vi.fn(async () => ({
+        query: vi.fn(async (sql: string, params: unknown[] = []) => {
+          clientQueries.push([sql, ...params])
+          return { rows: [] }
+        }),
+        release: vi.fn(),
+      })),
+    }
+    getPool.mockReturnValue(pool)
+    sendMail.mockResolvedValueOnce(undefined)
+
+    await expect(drainOutboundDeliveries(1)).resolves.toEqual({ sent: 1, failed: 0 })
+
+    expect(clientQueries[0]).toEqual(['BEGIN'])
+    expect(clientQueries.at(-1)).toEqual(['COMMIT'])
+    expect(clientQueries.some((q) => String(q[0]).includes("SET status = 'sent'"))).toBe(true)
+    expect(clientQueries).toContainEqual([expect.stringContaining('INSERT INTO notified_matches'), 'sub-1', 'portal', '42'])
+  })
+
+  it('enqueues one alert per subscription and auction via the dedupe key', async () => {
+    const pool = { query: vi.fn(async () => ({ rows: [] })) }
+    getPool.mockReturnValue(pool)
+    const payload = { alertSubscriptionId: 'sub-1', platform: 'portal', externalId: '42', to: 'buyer@example.test', subject: 'Treffer', text: 'Hello' }
+
+    await expect(enqueueAlertDelivery(payload)).resolves.toBe(true)
+
+    expect(pool.query).toHaveBeenCalledWith(
+      expect.stringContaining('ON CONFLICT (dedupe_key) DO NOTHING'),
+      ['alert:sub-1:portal:42', JSON.stringify(payload)],
+    )
   })
 })
