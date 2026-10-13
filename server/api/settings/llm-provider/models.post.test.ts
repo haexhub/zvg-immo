@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
   vi.resetModules()
 })
 
@@ -41,5 +42,40 @@ describe('fetchOpenRouterModels', () => {
     await fetchOpenRouterModels('https://openrouter.ai/api/v1/')
 
     expect(fetchMock).toHaveBeenCalledWith('https://openrouter.ai/api/v1/models', expect.anything())
+  })
+})
+
+describe('/api/settings/llm-provider/models POST upstream failures', () => {
+  async function importHandler(body: Record<string, unknown>) {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    vi.stubGlobal('readBody', async () => body)
+    vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string; cause?: unknown }) => Object.assign(new Error(input.statusMessage), input))
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    return (await import('./models.post')).default as unknown as (event: unknown) => Promise<unknown>
+  }
+
+  it('reports a rejected API key as such, keeps the cause and stays 502', async () => {
+    const upstream = Object.assign(new Error('Forbidden'), { statusCode: 403 })
+    vi.stubGlobal('$fetch', vi.fn().mockRejectedValue(upstream))
+    const handler = await importHandler({ provider: 'gemini-native', apiKey: 'bad-key' })
+
+    await expect(handler({})).rejects.toMatchObject({
+      statusCode: 502,
+      statusMessage: expect.stringContaining('API-Key abgelehnt'),
+      cause: upstream,
+    })
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('Gemini-API'), upstream)
+  })
+
+  it('keeps the "not reachable" message for transport errors without a status', async () => {
+    const upstream = new TypeError('fetch failed')
+    vi.stubGlobal('$fetch', vi.fn().mockRejectedValue(upstream))
+    const handler = await importHandler({ provider: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1' })
+
+    await expect(handler({})).rejects.toMatchObject({
+      statusCode: 502,
+      statusMessage: expect.stringContaining('OpenRouter nicht erreichbar'),
+      cause: upstream,
+    })
   })
 })
