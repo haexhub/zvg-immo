@@ -8,7 +8,7 @@
 // leaves it on disk for the next run. The whole task is a hard no-op while no
 // images bucket is configured — deleting then would destroy the only copy.
 
-import { readdir, readFile, rm, stat } from 'node:fs/promises'
+import { readdir, readFile, rm, rmdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { getPool } from '~/server/utils/db'
 import { imagesBucketConfigured, uploadImage } from '~/server/utils/image-storage'
@@ -184,7 +184,7 @@ export async function runOffloadImages(signal?: AbortSignal): Promise<OffloadIma
       }
       if (offloadedHere > 0) result.auctionsOffloaded++
       // Drop the now-empty directory; rmdir fails harmlessly if files remain.
-      await rm(dir, { recursive: false }).catch(() => undefined)
+      await rmdir(dir).catch(() => undefined)
     }
   }
 
