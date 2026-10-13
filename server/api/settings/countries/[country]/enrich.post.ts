@@ -4,12 +4,14 @@
 //
 // Every long-running phase goes through its task wrapper so /settings can poll
 // status (enrich queues behind an active run; reprocess and external
-// enrichment let a newer run supersede an older one). The request awaits only
-// the crawl/archive phase; reprocess and external enrichment are detached
-// because a country-wide extraction run takes far longer than the reverse proxy
-// keeps a request open. Their failures are not lost: both record their outcome
-// via server/utils/task-runs.ts, which /settings polls and renders next to this
-// button (enrichStatus / reprocessStatus / externalEnrichmentStatus).
+// enrichment let a newer run supersede an older one). The whole chain is
+// detached: a country-wide crawl alone can take far longer than the reverse
+// proxy keeps a request open, so the request only validates and answers
+// {started:true}. Reprocess and external enrichment are chained via .then so
+// they only start once the crawl/archive phase has finished. Failures are not
+// lost: every phase records its outcome via server/utils/task-runs.ts, which
+// /settings polls and renders next to this button (enrichStatus /
+// reprocessStatus / externalEnrichmentStatus).
 
 import { runReprocessTask } from '~/server/tasks/reprocess'
 import { runEnrichTask } from '~/server/tasks/enrich'
@@ -36,26 +38,22 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: `${registered.name} ist deaktiviert.` })
   }
 
-  const outcome = await runEnrichTask({ country, force: true, recordCrawlScope: true, trigger: 'manual' })
-  // Detached on purpose — see the file header. A rejection here is still
-  // recorded as the task's lastError by its own task entry point; the catch
-  // only keeps the trigger itself from becoming an unhandled rejection.
-  if (runExtraction) {
-    void runReprocessTask({ country, force: forceExtraction, trigger: 'manual' }).catch((err: unknown) => {
-      console.error('[settings/enrich] reprocess trigger failed:', (err as Error).message)
+  // Detached on purpose — see the file header. A rejection is still recorded
+  // as the failing task's lastError by its own wrapper; the catches only keep
+  // the triggers from becoming unhandled rejections.
+  void runEnrichTask({ country, force: true, recordCrawlScope: true, trigger: 'manual' })
+    .then(() => {
+      if (runExtraction) {
+        void runReprocessTask({ country, force: forceExtraction, trigger: 'manual' }).catch((err: unknown) => {
+          console.error('[settings/enrich] reprocess trigger failed:', (err as Error).message)
+        })
+      }
+      void runExternalEnrichmentTask({ country, trigger: 'manual' }).catch((err: unknown) => {
+        console.error('[settings/enrich] external enrichment trigger failed:', (err as Error).message)
+      })
     })
-  }
-  void runExternalEnrichmentTask({ country, trigger: 'manual' }).catch((err: unknown) => {
-    console.error('[settings/enrich] external enrichment trigger failed:', (err as Error).message)
-  })
-  return {
-    ...outcome,
-    result: outcome?.result
-      ? {
-          ...outcome.result,
-          warning: outcome.warning ?? null,
-          followUpTasksStarted: runExtraction,
-        }
-      : outcome?.result,
-  }
+    .catch((err: unknown) => {
+      console.error('[settings/enrich] enrich trigger failed:', (err as Error).message)
+    })
+  return { started: true as const }
 })
