@@ -69,3 +69,32 @@ describe('useAuctionSearchState queryParams', () => {
     expect(fired).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('useAuctionSearchState search input', () => {
+  it('keeps typed text the URL sync trimmed or has not debounced yet', async () => {
+    vi.useFakeTimers()
+    const state = await setup()
+
+    state.search.value = 'Haus '
+    await vi.advanceTimersByTimeAsync(300)
+    expect(route.query.q).toBe('Haus')
+    expect(state.search.value).toBe('Haus ')
+
+    state.search.value = 'Haus B'
+    state.updateMapView(51.1, 10.2, 6)
+    await nextTick()
+    expect(route.query.mapLat).toBe('51.1')
+    expect(state.search.value).toBe('Haus B')
+  })
+
+  it('still takes over a q changed from outside (back/forward, recent pick)', async () => {
+    vi.useFakeTimers()
+    const state = await setup({ q: 'Haus' })
+
+    route.query = { q: 'Wohnung' }
+    await vi.advanceTimersByTimeAsync(300)
+
+    expect(state.search.value).toBe('Wohnung')
+    expect(route.query.q).toBe('Wohnung')
+  })
+})

@@ -277,7 +277,13 @@ export function useAuctionSearchState(options: {
   watch(() => route.query, (q) => {
     const hadCountrySelection = selectedCountries.value.length > 0
     applyingRouteFilters = true
-    applyFilters(parseAuctionSearchFilters(q, options.hideRulesOnlyServerDefault.value))
+    const routeFilters = parseAuctionSearchFilters(q, options.hideRulesOnlyServerDefault.value)
+    // Our own URL sync writes the trimmed, debounced text. Echoing that back
+    // into the input would eat a trailing space and anything typed since the
+    // last debounce (a pan/zoom also lands here), so only an external q change
+    // (back/forward, recent pick) may replace what the user is typing.
+    if (routeFilters.search === debouncedSearch.value.trim()) routeFilters.search = search.value
+    applyFilters(routeFilters)
     void nextTick(() => {
       applyingRouteFilters = false
     })
