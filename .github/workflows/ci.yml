@@ -1,6 +1,8 @@
 # Gates every PR (and push to main) on lint + typecheck + tests + build, so
-# broken TS/config/templates never reach main silently — build-image.yml
-# only builds after merge and doesn't run on pull requests.
+# broken TS/config/templates never reach main silently. build-image.yml also
+# calls this workflow (workflow_call) and only builds/tags an image once it
+# passed for that exact commit — PR gating alone can't stop a red main (two
+# individually green PRs, a direct push) from being tagged :latest.
 
 name: CI
 
@@ -11,6 +13,7 @@ on:
   push:
     branches:
       - main
+  workflow_call:
 
 # Install and test steps run third-party code (lifecycle scripts, test
 # deps); the token never needs more than read access to the checkout.

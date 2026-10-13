@@ -43,7 +43,16 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Lint, typecheck, tests and build for this exact commit. The SSR smoke test
+  # below only proves "/" renders; without this gate a commit with red CI
+  # would still get the :latest tag that podman auto-update deploys.
+  ci:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
   build:
+    needs: ci
     strategy:
       fail-fast: false
       matrix:
