@@ -110,11 +110,13 @@ function mapItem(item: ListItem, detail: DetailResponse | null, platformId: stri
   }
 }
 
-export async function fetchAllListings(platformId: string): Promise<{ auctions: Auction[]; total: number | null }> {
+export async function fetchAllListings(
+  platformId: string,
+): Promise<{ auctions: Auction[]; total: number | null; complete: boolean }> {
   const firstPage = await apiFetch<ListItem[]>(
     `/sudske-prodaje?page=1&pageSize=${PAGE_SIZE}&vrstaPredmeta=${VRSTA}`,
   )
-  if (firstPage.length === 0) return { auctions: [], total: 0 }
+  if (firstPage.length === 0) return { auctions: [], total: 0, complete: true }
 
   const total = firstPage[0]!.total
   const pageCount = Math.ceil(total / PAGE_SIZE)
@@ -127,6 +129,8 @@ export async function fetchAllListings(platformId: string): Promise<{ auctions: 
       ),
     ),
   )
+  const failedPages = remaining.filter((r) => r.status === 'rejected').length
+  if (failedPages > 0) console.warn(`[ba] ${failedPages} of ${pageCount} list pages failed — crawl incomplete`)
   const allItems: ListItem[] = [
     ...firstPage,
     ...remaining.flatMap((r) => (r.status === 'fulfilled' ? r.value : [])),
@@ -150,5 +154,5 @@ export async function fetchAllListings(platformId: string): Promise<{ auctions: 
   await Promise.all(Array.from({ length: DETAIL_CONCURRENCY }, () => detailWorker()))
 
   const auctions = allItems.map((item, i) => mapItem(item, details[i] ?? null, platformId))
-  return { auctions, total }
+  return { auctions, total, complete: failedPages === 0 }
 }

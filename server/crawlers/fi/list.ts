@@ -62,16 +62,17 @@ function extractListingIds(html: string): string[] {
   return [...new Set(raw.map((m) => m.match(/\/kohde\/(\d+)\//)![1]!))]
 }
 
-async function discoverIds(): Promise<string[]> {
+async function discoverIds(): Promise<{ ids: string[]; complete: boolean }> {
   const seen = new Set<string>()
   for (let page = 1; page <= MAX_PAGES; page++) {
     const html = await htmlFetch(`${LIST_URL}?sivu=${page}`)
     const ids = extractListingIds(html)
     const before = seen.size
     for (const id of ids) seen.add(id)
-    if (ids.length === 0 || seen.size === before) break
+    if (ids.length === 0 || seen.size === before) return { ids: [...seen], complete: true }
   }
-  return [...seen]
+  // MAX_PAGES cut the walk short before a page stopped yielding new ids.
+  return { ids: [...seen], complete: false }
 }
 
 function stripHtml(html: string): string | null {
@@ -183,9 +184,9 @@ export function mapDetail(id: string, data: ApiResponse, platformId: string): Au
 
 export async function fetchAllListings(
   platformId: string,
-): Promise<{ auctions: Auction[]; total: number | null }> {
-  const ids = await discoverIds()
-  if (ids.length === 0) return { auctions: [], total: 0 }
+): Promise<{ auctions: Auction[]; total: number | null; complete: boolean }> {
+  const { ids, complete } = await discoverIds()
+  if (ids.length === 0) return { auctions: [], total: 0, complete }
 
   const results: (Auction | null)[] = new Array(ids.length).fill(null)
   let cursor = 0
@@ -207,5 +208,5 @@ export async function fetchAllListings(
   await Promise.all(Array.from({ length: DETAIL_CONCURRENCY }, worker))
 
   const auctions = results.filter((a): a is Auction => a !== null)
-  return { auctions, total: auctions.length }
+  return { auctions, total: auctions.length, complete }
 }

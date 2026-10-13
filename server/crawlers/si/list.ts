@@ -126,10 +126,14 @@ export function mapPublication(p: SiPublication, platformId: string): Auction {
   }
 }
 
-export async function fetchAllListings(platformId: string): Promise<{ auctions: Auction[]; total: number | null }> {
+export async function fetchAllListings(
+  platformId: string,
+): Promise<{ auctions: Auction[]; total: number | null; complete: boolean }> {
   const auctions: Auction[] = []
   let offset = 0
   let countAll: number | null = null
+  // Stays false when MAX_PAGES cuts the walk short before countAll.
+  let complete = false
 
   for (let page = 0; page < MAX_PAGES; page++) {
     const res = await fetch(`${SI_API_BASE}${LIST_PATH}`, {
@@ -152,8 +156,11 @@ export async function fetchAllListings(platformId: string): Promise<{ auctions: 
     countAll = data.pagination.countAll
 
     offset += PAGE_SIZE
-    if (offset >= countAll) break
+    if (offset >= countAll) {
+      complete = true
+      break
+    }
   }
 
-  return { auctions, total: countAll }
+  return { auctions, total: countAll, complete }
 }

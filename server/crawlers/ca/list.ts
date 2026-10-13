@@ -373,9 +373,9 @@ export function mapProperty(
 
 export async function fetchAllListings(
   platformId: string,
-): Promise<{ auctions: Auction[]; total: number | null }> {
+): Promise<{ auctions: Auction[]; total: number | null; complete: boolean }> {
   const salePages = await discoverSalePages()
-  if (salePages.length === 0) return { auctions: [], total: 0 }
+  if (salePages.length === 0) return { auctions: [], total: 0, complete: true }
 
   // Fetch first, parse afterwards. The sale pages are large (up to ~650 KB of
   // Divi markup) and cheerio's synchronous parse would otherwise block the
@@ -399,13 +399,19 @@ export async function fetchAllListings(
   await Promise.all(Array.from({ length: DETAIL_CONCURRENCY }, worker))
 
   const auctions: Auction[] = []
+  let complete = true
   for (const [i, url] of salePages.entries()) {
     const page = html[i]
-    if (!page || !url) continue
+    if (!url) continue
+    if (!page) {
+      complete = false
+      continue
+    }
     let parsedPage: ReturnType<typeof parseSalePage>
     try {
       parsedPage = parseSalePage(page, url)
     } catch (err) {
+      complete = false
       console.warn(`ontariotaxsales.ca: parse failed for ${url}`, err)
       continue
     }
@@ -414,5 +420,5 @@ export async function fetchAllListings(
       auctions.push(mapProperty(prop, url, municipality, parsedPage.dateTime, platformId))
     }
   }
-  return { auctions, total: auctions.length }
+  return { auctions, total: auctions.length, complete }
 }

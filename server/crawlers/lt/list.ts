@@ -74,9 +74,12 @@ function parsePage(html: string, platformId: string): { auctions: Auction[]; has
 
 export async function fetchAllListings(
   platformId: string,
-): Promise<{ auctions: Auction[]; total: number | null }> {
+): Promise<{ auctions: Auction[]; total: number | null; complete: boolean }> {
   const allAuctions: Auction[] = []
   const MAX_PAGES = 100
+  // Only a short last page proves the walk reached the end; a failed probe or
+  // the page cap leaves it incomplete (see createCrawlResult's `complete`).
+  let complete = false
 
   for (let page = 0; page < MAX_PAGES; page++) {
     const url = `${LT_BASE}${LIST_PATH}${page}`
@@ -85,16 +88,19 @@ export async function fetchAllListings(
       signal: AbortSignal.timeout(15_000),
     })
     if (!res.ok) {
-      // Treat failure on a probe request (we have data, just checking if there's more)
-      // as end-of-pages rather than discarding all already-collected auctions.
+      // A failed probe for more pages keeps the auctions already collected
+      // instead of discarding them, but the run stays incomplete.
       if (allAuctions.length > 0) break
       throw new Error(`eaukcionai.lt fetch failed: ${res.status} ${url}`)
     }
 
     const { auctions, hasMore } = parsePage(await res.text(), platformId)
     allAuctions.push(...auctions)
-    if (!hasMore) break
+    if (!hasMore) {
+      complete = true
+      break
+    }
   }
 
-  return { auctions: allAuctions, total: null }
+  return { auctions: allAuctions, total: null, complete }
 }

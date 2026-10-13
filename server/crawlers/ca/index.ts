@@ -5,7 +5,7 @@ import { PLATFORM_ID, CA_BASE, COUNTRY, CA_REGIONS } from './constants'
 import { fetchAllListings, htmlFetch, parsePropertyPage } from './list'
 
 async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
-  const { auctions, total } = await fetchAllListings(PLATFORM_ID)
+  const { auctions, total, complete } = await fetchAllListings(PLATFORM_ID)
   return createCrawlResult({
     platform: PLATFORM_ID,
     source: CA_BASE,
@@ -13,6 +13,7 @@ async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
     regions: CA_REGIONS,
     totalReported: total,
     auctions,
+    complete,
   })
 }
 

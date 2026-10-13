@@ -7,7 +7,7 @@ import { pdfToText } from '~/server/utils/extract/pdf-text'
 import { docxToText } from '~/server/utils/extract/docx-text'
 
 async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
-  const { auctions, total } = await fetchAllListings(PLATFORM_ID)
+  const { auctions, total, complete } = await fetchAllListings(PLATFORM_ID)
   return createCrawlResult({
     platform: PLATFORM_ID,
     source: BA_WEB_BASE,
@@ -15,6 +15,7 @@ async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
     regions: BA_REGIONS,
     totalReported: total,
     auctions,
+    complete,
   })
 }
 

@@ -105,7 +105,9 @@ export function parsePage(html: string, platformId: string): PageResult {
   return { auctions, nextPagePath, totalReported }
 }
 
-export async function fetchAllListings(platformId: string): Promise<{ auctions: Auction[]; total: number | null }> {
+export async function fetchAllListings(
+  platformId: string,
+): Promise<{ auctions: Auction[]; total: number | null; complete: boolean }> {
   const allAuctions: Auction[] = []
   let totalReported: number | null = null
 
@@ -152,5 +154,6 @@ export async function fetchAllListings(platformId: string): Promise<{ auctions: 
     nextUrl = result.nextPagePath ? `${HU_BASE}${result.nextPagePath}` : null
   }
 
-  return { auctions: allAuctions, total: totalReported }
+  // A next page still pending here means MAX_PAGES cut the walk short.
+  return { auctions: allAuctions, total: totalReported, complete: nextUrl == null }
 }

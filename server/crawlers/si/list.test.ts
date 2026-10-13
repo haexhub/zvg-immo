@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { mapPublication, type SiPublication } from './list'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { fetchAllListings, mapPublication, type SiPublication } from './list'
 
 function makePublication(overrides: Partial<SiPublication> = {}): SiPublication {
   return {
@@ -125,5 +125,29 @@ describe('mapPublication', () => {
     )
     expect(a.startingBid).toBeNull()
     expect(a.sourceSecurityDeposit).toBeNull()
+  })
+})
+
+describe('fetchAllListings', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  function listResponse(countAll: number): Response {
+    return new Response(JSON.stringify({ list: [makePublication()], pagination: { countAll } }), { status: 200 })
+  }
+
+  it('reports the walk complete once offset reaches countAll', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => listResponse(1)))
+
+    expect((await fetchAllListings('si-sodnedrazbe')).complete).toBe(true)
+  })
+
+  it('reports the walk incomplete when MAX_PAGES cuts it short', async () => {
+    const fetchMock = vi.fn(async () => listResponse(1_000_000))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { complete } = await fetchAllListings('si-sodnedrazbe')
+
+    expect(complete).toBe(false)
+    expect(fetchMock).toHaveBeenCalledTimes(30)
   })
 })

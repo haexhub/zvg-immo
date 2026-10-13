@@ -8,7 +8,7 @@ import { enrichOne } from './detail'
 // constants.ts), so there is nothing to branch on — unlike kip/index.ts, which
 // filters its regions by opts.region because it registers real sub-regions.
 async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
-  const auctions = await fetchAllListings()
+  const { auctions, complete } = await fetchAllListings()
 
   return createCrawlResult({
     platform: PLATFORM_ID,
@@ -21,6 +21,7 @@ async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
     // contractually null when unknown or aggregated.
     totalReported: null,
     auctions,
+    complete,
   })
 }
 

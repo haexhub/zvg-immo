@@ -152,7 +152,10 @@ export function mapItem(item: ListItem, oblast: AloOblast): Auction {
   }
 }
 
-export async function fetchCategoryListings(categorySlug: string, oblast: AloOblast): Promise<Auction[]> {
+export async function fetchCategoryListings(
+  categorySlug: string,
+  oblast: AloOblast,
+): Promise<{ auctions: Auction[]; complete: boolean }> {
   const byId = new Map<string, Auction>()
   let page = 1
   try {
@@ -171,14 +174,15 @@ export async function fetchCategoryListings(categorySlug: string, oblast: AloObl
     // fails after fetch.ts's retries is likely enough that it must not discard
     // the pages already walked: search serves from the `auctions` table, which
     // this walk's surviving listings still reach, and the rest is picked up
-    // next cycle. A walk that yielded nothing at all is a different story —
+    // next cycle. The run is reported incomplete so crawl-state.ts does not
+    // hide the listings this walk missed in the meantime. A walk that yielded nothing at all is a different story —
     // an unknown region_id/category slug or an outright block — and stays a
     // hard failure rather than a silent zero-listing "success".
     if (byId.size === 0) throw err
     console.warn(
       `[alo] ${oblast.name}/${categorySlug}: page ${page} failed, keeping the ${byId.size} listings walked so far — ${(err as Error).message}`,
     )
-    return [...byId.values()]
+    return { auctions: [...byId.values()], complete: false }
   }
   // Only reachable when the walk never hit a 404/empty page, i.e. the cap cut
   // it short — otherwise indistinguishable from a complete crawl. See MAX_PAGES.
@@ -187,15 +191,18 @@ export async function fetchCategoryListings(categorySlug: string, oblast: AloObl
       `[alo] ${oblast.name}/${categorySlug}: MAX_PAGES (${MAX_PAGES}) reached, later listings were dropped — raise the cap`,
     )
   }
-  return [...byId.values()]
+  return { auctions: [...byId.values()], complete: page <= MAX_PAGES }
 }
 
-export async function fetchAllListings(): Promise<Auction[]> {
+export async function fetchAllListings(): Promise<{ auctions: Auction[]; complete: boolean }> {
   const auctions: Auction[] = []
+  let complete = true
   for (const oblast of ALO_OBLASTI) {
     for (const categorySlug of ALO_CATEGORIES) {
-      auctions.push(...(await fetchCategoryListings(categorySlug, oblast)))
+      const scope = await fetchCategoryListings(categorySlug, oblast)
+      auctions.push(...scope.auctions)
+      complete &&= scope.complete
     }
   }
-  return auctions
+  return { auctions, complete }
 }
