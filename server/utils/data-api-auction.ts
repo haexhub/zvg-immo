@@ -3,6 +3,7 @@
 // auction-record.ts; this module deliberately selects only the v1 contract.
 
 import { parseAuctionSearchFilters } from '~/lib/auction-search-filter-contract'
+import { ensureEnabledCountriesLoaded, getEnabledCountryCodes } from '~/server/crawlers/registry'
 import { type PublicAuction } from './data-api-shape'
 import { getPool } from './db'
 import { redactAffectedPersonNames } from './public-auction-redaction'
@@ -83,7 +84,7 @@ function publicAppUrl(platform: string, externalId: string): string {
 
 type PublicAuctionFilter = Omit<PublicAuctionQuery, 'page' | 'pageSize'>
 
-function buildWhere(query: PublicAuctionFilter): { where: string; values: unknown[] } {
+function buildWhere(query: PublicAuctionFilter, enabledCountries: string[]): { where: string; values: unknown[] } {
   const values: unknown[] = []
   const add = (value: unknown): string => {
     values.push(value)
@@ -106,8 +107,12 @@ function buildWhere(query: PublicAuctionFilter): { where: string; values: unknow
   ]
   // Use the shared URL parser for country spelling/normalization. The v1
   // endpoint intentionally keeps its existing single-country semantics.
-  const country = parseAuctionSearchFilters({ country: query.country }).countries[0]
-  if (country) conditions.push(`a.country = ${add(country.toLowerCase())}`)
+  // A paused country is no longer crawled, so its crawl_state never advances
+  // and the staleness rule above cannot expire its listings; scope to the
+  // enabled countries like public discovery does (auction-search-filters.ts).
+  const country = parseAuctionSearchFilters({ country: query.country }).countries[0]?.toLowerCase()
+  const countries = country ? enabledCountries.filter((entry) => entry === country) : enabledCountries
+  conditions.push(`a.country = ANY(${add(countries)}::text[])`)
   if (query.region) conditions.push(`a.region = ${add(query.region)}`)
   if (query.platform) conditions.push(`a.platform = ${add(query.platform)}`)
   if (query.propertyType) conditions.push(`d.property_type = ${add(query.propertyType)}`)
@@ -134,7 +139,8 @@ LEFT JOIN auction_fetch_state fs ON fs.platform = a.platform AND fs.external_id 
 export async function readPublicAuctions(query: PublicAuctionQuery): Promise<{ data: PublicAuction[]; total: number }> {
   const db = getPool()
   if (!db) return { data: [], total: 0 }
-  const { where, values } = buildWhere(query)
+  await ensureEnabledCountriesLoaded()
+  const { where, values } = buildWhere(query, getEnabledCountryCodes())
   const offset = (query.page - 1) * query.pageSize
   const [{ rows: countRows }, { rows }] = await Promise.all([
     db.query<{ total: string }>(`SELECT COUNT(*) AS total FROM auctions a
@@ -161,7 +167,8 @@ export async function readPublicAuctions(query: PublicAuctionQuery): Promise<{ d
 export async function readPublicAuctionLinks(limit: number): Promise<Array<Pick<PublicAuction, 'appUrl' | 'lastUpdated'>>> {
   const db = getPool()
   if (!db) return []
-  const { where, values } = buildWhere({ includeWithdrawn: false })
+  await ensureEnabledCountriesLoaded()
+  const { where, values } = buildWhere({ includeWithdrawn: false }, getEnabledCountryCodes())
   const { rows } = await db.query<Pick<PublicAuctionRow, 'platform' | 'external_id' | 'source_updated_iso'>>(
     `SELECT a.platform, a.external_id, fs.source_updated_iso
       FROM auctions a

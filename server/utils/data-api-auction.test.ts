@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('./db', () => ({ getPool: vi.fn() }))
+vi.mock('~/server/crawlers/registry', () => ({
+  ensureEnabledCountriesLoaded: vi.fn(async () => {}),
+  getEnabledCountryCodes: vi.fn(() => ['de', 'at']),
+}))
 
 afterEach(() => {
   vi.resetModules()
@@ -52,10 +56,26 @@ describe('readPublicAuctions', () => {
     expect(selectCall[0]).toContain('ORDER BY a.platform, a.external_id')
     expect(selectCall[0]).toContain('LIMIT $5 OFFSET $6')
     expect(selectCall[0]).not.toContain('payload')
-    expect(selectCall[1]).toEqual(['de', 'Bayern', 'zvg-portal', 'einfamilienhaus', 25, 25])
+    expect(selectCall[0]).toContain('a.country = ANY($1::text[])')
+    expect(selectCall[1]).toEqual([['de'], 'Bayern', 'zvg-portal', 'einfamilienhaus', 25, 25])
     const countCall = query.mock.calls.find(([statement]) => (statement as string).includes('COUNT(*)'))!
-    expect(countCall[1]).toEqual(['de', 'Bayern', 'zvg-portal', 'einfamilienhaus'])
+    expect(countCall[1]).toEqual([['de'], 'Bayern', 'zvg-portal', 'einfamilienhaus'])
     expect(countCall[0]).toContain('a.last_seen_at < cs.last_success_at')
+  })
+
+  it('scopes the collection to enabled countries, so a paused country returns nothing', async () => {
+    const { getPool } = await import('./db')
+    const query = vi.fn(async (statement: string) => ({ rows: statement.includes('COUNT(*)') ? [{ total: '0' }] : [] }))
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+    const { readPublicAuctions } = await import('./data-api-auction')
+    const base = { includeWithdrawn: false, page: 1, pageSize: 25 }
+
+    await readPublicAuctions(base)
+    expect(query.mock.calls[0]?.[1]).toEqual([['de', 'at']])
+
+    query.mockClear()
+    await readPublicAuctions({ ...base, country: 'fr' })
+    expect(query.mock.calls[0]?.[1]).toEqual([[]])
   })
 
   it('keeps withdrawn auctions when includeWithdrawn is set', async () => {
@@ -88,9 +108,10 @@ describe('readPublicAuctionLinks', () => {
     expect(statement).toContain('a.last_seen_at < cs.last_success_at')
     expect(statement).toContain('a.cancelled = false')
     expect(statement).toContain('ORDER BY a.platform, a.external_id')
-    expect(statement).toContain('LIMIT $1')
+    expect(statement).toContain('a.country = ANY($1::text[])')
+    expect(statement).toContain('LIMIT $2')
     expect(statement).not.toContain('COUNT(*)')
     expect(statement).not.toContain('OFFSET')
-    expect(params).toEqual([100])
+    expect(params).toEqual([['de', 'at'], 100])
   })
 })
