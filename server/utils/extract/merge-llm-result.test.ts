@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AuctionExtraction } from '~/types/auction'
-import type { ClampedExtraction } from './llm'
+import type { ClampedExtraction } from './llm-clamp'
 import { falsifiedRuleFields, mergeLlmResult, ruleChecksMatchingHint, type MergeInputFields } from './merge-llm-result'
 
 const AT = '2026-07-23T00:00:00.000Z'

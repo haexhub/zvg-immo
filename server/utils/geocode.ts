@@ -6,14 +6,6 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { buildGeocodeQueries } from './geocode-normalizers'
 
-export {
-  normalizeBgAddress,
-  normalizeEeAddress,
-  normalizeLtAddress,
-  normalizeLvAddress,
-  normalizeSeAddress,
-} from './geocode-normalizers'
-
 const CACHE_DIR = join(process.cwd(), '.cache_zvg', 'geocode')
 
 // Geocoder backend. Defaults to the public Nominatim (fine for local dev and

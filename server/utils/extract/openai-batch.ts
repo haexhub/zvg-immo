@@ -1,16 +1,14 @@
 import {
   buildParts,
-  clampExtraction,
-  SYSTEM_PROMPT,
-  UNIVERSAL_AUCTION_SCHEMA,
-  UNIVERSAL_AUCTION_SCHEMA_NAME,
   type LlmConfig,
   type LlmInput,
 } from './llm'
+import { clampExtraction } from './llm-clamp'
+import { SYSTEM_PROMPT, UNIVERSAL_AUCTION_SCHEMA, UNIVERSAL_AUCTION_SCHEMA_NAME } from './llm-schema'
 import { parseOpenAiExtractionResponse, parseOpenAiUsage, toOpenAiContent } from './providers/openai-compatible'
 import { apiBase, customIdForKey, extractBatchItemErrorMessage, extractOfetchErrorMessage, isTransientBatchError } from './batch-shared'
 import { insertLlmBatchJob, recordLlmBatchCapability } from '../llm-batch-jobs'
-import type { PollResult } from './gemini-batch'
+import type { PollResult } from './gemini-batch-client'
 import type { LlmBatchResultItem, LlmBatchSubmitResult } from './llm-batch'
 
 const MAX_OPENAI_BATCH_REQUESTS = 50_000

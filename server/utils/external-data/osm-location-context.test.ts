@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Pool } from 'pg'
-import { buildLocationContext, createLocalOsmLocationContextAdapter } from './osm-location-context'
+import { createLocalOsmLocationContextAdapter } from './osm-location-context'
+import { buildLocationContext } from './osm-location-context-builder'
 import type { Auction } from '~/types/auction'
 
 function auction(overrides: Partial<Auction> = {}): Auction {

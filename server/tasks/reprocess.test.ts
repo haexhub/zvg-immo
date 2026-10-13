@@ -10,7 +10,8 @@ import { readArtifactProcessingState } from '../utils/artifact-version-state'
 import { readExtractionChainStrategy, readExtractionLlmConfigChain } from '../utils/extract/llm-task-config'
 import { readLlmExecutionMode } from '../utils/app-settings'
 import { isLlmBatchPending, submitLlmBatch } from '../utils/extract/llm-batch'
-import { extractByLlm, isLlmProviderUnavailable } from '../utils/extract/llm'
+import { extractByLlm } from '../utils/extract/llm'
+import { isLlmProviderUnavailable } from '../utils/extract/llm-errors'
 import { prepareArchivedLlmDocuments } from '../utils/extract/llm-documents'
 import { writeAuctionDetails } from '../utils/auction-details'
 import { upsertCurrentAuctions } from '../utils/current-auctions'
@@ -51,13 +52,12 @@ vi.mock('../utils/extract/llm-batch', () => ({
 }))
 vi.mock('../utils/extract/llm', () => ({
   extractByLlm: vi.fn(),
+}))
+vi.mock('../utils/extract/llm-errors', () => ({
   isDailyQuotaError: vi.fn(() => false),
   isLlmProviderError: vi.fn(() => false),
   isLlmProviderUnavailable: vi.fn(() => false),
   isRateLimitError: vi.fn(() => false),
-  DOCUMENT_SUMMARY_SCHEMA_NAME: 'document_summary_v1',
-  DOCUMENT_SUMMARY_SCHEMA: {},
-  DOCUMENT_SUMMARY_SYSTEM_PROMPT: 'document summary prompt',
 }))
 vi.mock('../utils/extract/llm-documents', () => ({
   prepareArchivedLlmDocuments: vi.fn(async (_auction, opts) => ({
@@ -90,7 +90,7 @@ vi.mock('../utils/automatic-task-gate', () => ({ isAutomaticLlmEnabled: vi.fn(as
 vi.stubGlobal('defineTask', (definition: unknown) => definition)
 
 const { reprocessAuction, runReprocess, runReprocessTask } = await import('./reprocess')
-const { DOCUMENT_SUMMARY_SCHEMA_NAME } = await import('../utils/extract/llm')
+const { DOCUMENT_SUMMARY_SCHEMA_NAME } = await import('../utils/extract/llm-schema')
 
 const emptyArtifactState = {
   latest: null,

@@ -1,5 +1,7 @@
 import type { Auction, AuctionExtraction, CuratedPhoto } from '~/types/auction'
-import { extractByLlm, isDailyQuotaError, isLlmProviderUnavailable, type LlmConfig, type LlmUsage, type PhotoCuration } from '~/server/utils/extract/llm'
+import { extractByLlm, type LlmConfig, type LlmUsage } from '~/server/utils/extract/llm'
+import { isDailyQuotaError, isLlmProviderUnavailable } from '~/server/utils/extract/llm-errors'
+import type { PhotoCuration } from '~/server/utils/extract/llm-clamp'
 import { falsifiedRuleFields, mergeLlmResult, ruleChecksMatchingHint, type RuleCheckedField } from '~/server/utils/extract/merge-llm-result'
 import { readArtifactProcessingState, type ArtifactProcessingState } from '~/server/utils/artifact-version-state'
 import { normalizePhoto } from '~/lib/photo'

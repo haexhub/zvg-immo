@@ -8,7 +8,7 @@ import {
   OPEN_METEO_CLIMATE_SOURCE_VERSION,
   readClimateNormals,
 } from './open-meteo-climate'
-import { buildLocationContext } from './osm-location-context'
+import { buildLocationContext } from './osm-location-context-builder'
 import type { Auction } from '~/types/auction'
 
 function auction(overrides: Partial<Auction> = {}): Auction {

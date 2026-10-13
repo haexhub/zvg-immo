@@ -35,13 +35,11 @@
 
 import {
   buildParts,
-  clampExtraction,
-  SYSTEM_PROMPT,
-  UNIVERSAL_AUCTION_SCHEMA,
-  type ClampedExtraction,
   type LlmConfig,
   type LlmInput,
 } from './llm'
+import { clampExtraction, type ClampedExtraction } from './llm-clamp'
+import { SYSTEM_PROMPT, UNIVERSAL_AUCTION_SCHEMA } from './llm-schema'
 import { DEFAULT_MODEL, parseGeminiExtractionResponse, toGeminiParts } from './providers/gemini-native'
 import { toGeminiSchema } from './providers/gemini-schema'
 import { apiBase, extractOfetchErrorMessage, isTransientBatchError } from './batch-shared'
@@ -54,8 +52,6 @@ import {
   type GeminiBatchQuotaUsage,
   withGeminiBatchQuotaLock,
 } from '../llm-batch-jobs'
-export { fetchGeminiBatchResults, pollGeminiBatch, type PollResult } from './gemini-batch-client'
-
 interface GeminiBatchQuotaPolicy {
   tier: 'free' | 'paid'
   maxJobsPerDay: number | null

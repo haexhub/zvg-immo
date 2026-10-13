@@ -4,17 +4,16 @@
 
 import {
   buildParts,
-  clampExtraction,
-  SYSTEM_PROMPT,
-  UNIVERSAL_AUCTION_SCHEMA,
   type ContentPart,
   type LlmConfig,
   type LlmInput,
 } from './llm'
+import { clampExtraction } from './llm-clamp'
+import { SYSTEM_PROMPT, UNIVERSAL_AUCTION_SCHEMA } from './llm-schema'
 import { parseClaudeUsage, parseExtractionResponse } from './providers/claude-proxy'
 import { apiBase, customIdForKey, extractOfetchErrorMessage, isTransientBatchError } from './batch-shared'
 import { insertLlmBatchJob, recordLlmBatchCapability } from '../llm-batch-jobs'
-import type { PollResult } from './gemini-batch'
+import type { PollResult } from './gemini-batch-client'
 import type { LlmBatchResultItem, LlmBatchSubmitResult } from './llm-batch'
 
 type AnthropicContentBlock =

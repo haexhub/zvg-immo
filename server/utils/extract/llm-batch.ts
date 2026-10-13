@@ -4,12 +4,13 @@ import {
   submitAnthropicBatch,
 } from './anthropic-batch'
 import {
-  fetchGeminiBatchResults,
   isGeminiBatchTierPaid,
-  pollGeminiBatch,
   submitGeminiBatch,
-  type PollResult,
 } from './gemini-batch'
+import {
+  fetchGeminiBatchResults,
+  pollGeminiBatch,
+} from './gemini-batch-client'
 import {
   fetchOpenAiBatchResults,
   pollOpenAiBatch,
@@ -20,7 +21,8 @@ import {
   pollOpenRouterBatch,
   submitOpenRouterBatch,
 } from './openrouter-batch'
-import type { ClampedExtraction, LlmConfig, LlmInput, LlmUsage } from './llm'
+import type { ClampedExtraction } from './llm-clamp'
+import type { LlmConfig, LlmInput, LlmUsage } from './llm'
 import { isOpenAiBatchBaseUrl } from '../llm-provider-capabilities'
 import { getLlmBatchCapability } from '../llm-batch-jobs'
 

@@ -9,7 +9,7 @@
 
 import type { Pool } from 'pg'
 import { getPool } from '~/server/utils/db'
-import { isLlmProviderUnavailable } from '~/server/utils/extract/llm'
+import { isLlmProviderUnavailable } from '~/server/utils/extract/llm-errors'
 import { callPlaceNameTranslationLlm } from '~/server/utils/extract/text-llm'
 import { resolveActiveLlmConfigChain } from '~/server/utils/translation-llm-chain'
 import { readPlaceNameTranslations, writePlaceNameTranslations } from '~/server/utils/place-name-translation'

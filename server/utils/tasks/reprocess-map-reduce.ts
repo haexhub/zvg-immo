@@ -10,17 +10,14 @@
 // mergeLlmResult needs no changes at all.
 
 import {
-  DOCUMENT_SUMMARY_SCHEMA,
-  DOCUMENT_SUMMARY_SCHEMA_NAME,
-  DOCUMENT_SUMMARY_SYSTEM_PROMPT,
   extractByLlm,
-  isDailyQuotaError,
-  isRateLimitError,
-  type ClampedExtraction,
   type LlmConfig,
   type LlmInput,
   type LlmUsage,
 } from '~/server/utils/extract/llm'
+import { DOCUMENT_SUMMARY_SCHEMA, DOCUMENT_SUMMARY_SCHEMA_NAME, DOCUMENT_SUMMARY_SYSTEM_PROMPT } from '~/server/utils/extract/llm-schema'
+import { isDailyQuotaError, isRateLimitError } from '~/server/utils/extract/llm-errors'
+import type { ClampedExtraction } from '~/server/utils/extract/llm-clamp'
 import type { PreparedAttachmentDocument } from '~/server/utils/extract/llm-documents'
 import type { DocumentSummaryInput } from '~/server/utils/extract/pdf-documents'
 

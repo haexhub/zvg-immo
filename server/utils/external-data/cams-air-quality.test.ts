@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { airQualityLevel, createCamsAirQualityEnhancer, readAirQuality } from './cams-air-quality'
-import { buildLocationContext } from './osm-location-context'
+import { buildLocationContext } from './osm-location-context-builder'
 import type { Auction } from '~/types/auction'
 
 function auction(overrides: Partial<Auction> = {}): Auction {

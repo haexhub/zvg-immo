@@ -1,5 +1,5 @@
 import type { LlmConfig } from './llm'
-import { clampExtraction } from './llm'
+import { clampExtraction } from './llm-clamp'
 import { parseGeminiExtractionResponse, parseGeminiUsage } from './providers/gemini-native'
 import { apiBase } from './batch-shared'
 import type { LlmBatchResultItem } from './llm-batch'

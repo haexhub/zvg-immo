@@ -21,7 +21,8 @@ import {
   readContentTranslation,
   writeContentTranslation,
 } from '~/server/utils/content-translation'
-import { isLlmProviderUnavailable, type LlmConfig } from '~/server/utils/extract/llm'
+import type { LlmConfig } from '~/server/utils/extract/llm'
+import { isLlmProviderUnavailable } from '~/server/utils/extract/llm-errors'
 import type { TranslationResult } from '~/server/utils/extract/text-llm'
 import { fingerprintConfigChain, resolveActiveLlmConfigChain } from '~/server/utils/translation-llm-chain'
 import { recordLlmUsage } from '~/server/utils/llm-usage'

@@ -4,7 +4,8 @@
 // 500-line module ceiling — this block is the one part of the run that needs
 // nothing from the candidate loop but the maps it filled.
 
-import type { LlmConfig, LlmInput, RulesHint } from '~/server/utils/extract/llm'
+import type { LlmConfig, LlmInput } from '~/server/utils/extract/llm'
+import type { RulesHint } from '~/server/utils/extract/llm-clamp'
 import { submitLlmBatch } from '~/server/utils/extract/llm-batch'
 import { writeAuctionLlmPipelineState, type AuctionFetchState } from '~/server/utils/auction-fetch-state'
 

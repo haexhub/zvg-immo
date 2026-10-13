@@ -581,7 +581,8 @@ describe('/api/auction/:platform/:id/translation', () => {
   it('falls back to the next configured model when the primary is unavailable', async () => {
     const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
     const { getLlmProviderOverrideChain } = await import('~/server/utils/app-settings')
-    const { resolveLlmConfig, LlmProviderError } = await import('~/server/utils/extract/llm')
+    const { resolveLlmConfig } = await import('~/server/utils/extract/llm')
+    const { LlmProviderError } = await import('~/server/utils/extract/llm-errors')
     const { completeAuctionTranslation, failAuctionTranslation } = await import('~/server/utils/content-translation')
     const handler = await loadHandler()
 

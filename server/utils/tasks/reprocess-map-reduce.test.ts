@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ClampedExtraction, LlmConfig, LlmInput } from '~/server/utils/extract/llm'
+import type { ClampedExtraction } from '~/server/utils/extract/llm-clamp'
+import type { LlmConfig, LlmInput } from '~/server/utils/extract/llm'
 import type { DocumentSummaryInput } from '~/server/utils/extract/pdf-documents'
 import type { PreparedAttachmentDocument } from '~/server/utils/extract/llm-documents'
 
@@ -10,13 +11,20 @@ vi.mock('~/server/utils/extract/llm', async (importOriginal) => {
   return {
     ...actual,
     extractByLlm: extractByLlmMock,
+  }
+})
+
+vi.mock('~/server/utils/extract/llm-errors', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/server/utils/extract/llm-errors')>()
+  return {
+    ...actual,
     isRateLimitError: (err: unknown) => (err as { rateLimit?: boolean } | null)?.rateLimit === true,
     isDailyQuotaError: (err: unknown) => (err as { dailyQuota?: boolean } | null)?.dailyQuota === true,
   }
 })
 
 const { runMapReduceExtraction } = await import('./reprocess-map-reduce')
-const { DOCUMENT_SUMMARY_SCHEMA_NAME } = await import('~/server/utils/extract/llm')
+const { DOCUMENT_SUMMARY_SCHEMA_NAME } = await import('~/server/utils/extract/llm-schema')
 
 const config: LlmConfig = { baseUrl: 'https://example.test', model: 'test-model' }
 const base: LlmInput = { title: 'Testauktion', description: 'Beschreibung' }
