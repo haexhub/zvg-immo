@@ -133,64 +133,36 @@ describe('aggregate', () => {
 })
 
 describe('createOpenMeteoClimateNormalsEnhancer / readClimateNormals', () => {
-  // Models the same-cell serialization a real pg_advisory_lock gives: a
-  // second lock request for a key already held waits for the holder's
-  // pg_advisory_unlock before it proceeds. A successful write updates `row`
-  // so the loser's re-read (inside the lock) sees the winner's cached result.
+  // A successful write updates `row` so later reads see the cached result.
   function fakePool(existingRow: Record<string, unknown> | null = null) {
     const inserted: unknown[][] = []
     let row = existingRow
-    const locks = new Map<string, Promise<void>>()
-
-    async function acquireLock(key: string): Promise<() => void> {
-      while (locks.has(key)) await locks.get(key)
-      let release!: () => void
-      locks.set(key, new Promise((resolve) => { release = resolve }))
-      return () => { locks.delete(key); release() }
-    }
-
-    function makeQuery() {
-      let releaseLock: (() => void) | null = null
-      return vi.fn(async (queryArg: unknown, params: unknown[] = []) => {
-        const text = typeof queryArg === 'string' ? queryArg : (queryArg as { text: string }).text
-        const n = text.replace(/\s+/g, ' ').trim().toLowerCase()
-        if (n.includes('pg_advisory_unlock')) {
-          releaseLock?.()
-          releaseLock = null
-          return { rows: [], rowCount: 0 }
+    const query = vi.fn(async (queryArg: unknown, params: unknown[] = []) => {
+      const text = typeof queryArg === 'string' ? queryArg : (queryArg as { text: string }).text
+      const n = text.replace(/\s+/g, ' ').trim().toLowerCase()
+      if (n.includes('select') && n.includes('from climate_cells')) {
+        return { rows: row ? [row] : [], rowCount: row ? 1 : 0 }
+      }
+      if (n.includes('insert into climate_cells')) {
+        inserted.push(params)
+        row = {
+          summer_avg_temp_c: String(params[2]),
+          winter_avg_temp_c: String(params[3]),
+          annual_precip_mm: params[4],
+          frost_days: params[5],
+          monthly: JSON.parse(params[6] as string),
+          source_version: params[7],
+          fetched_at: '2026-08-06T00:00:00.000Z',
         }
-        if (n.includes('pg_advisory_lock')) {
-          releaseLock = await acquireLock(String(params[0]))
-          return { rows: [], rowCount: 0 }
-        }
-        if (n.includes('select') && n.includes('from climate_cells')) {
-          return { rows: row ? [row] : [], rowCount: row ? 1 : 0 }
-        }
-        if (n.includes('insert into climate_cells')) {
-          inserted.push(params)
-          row = {
-            summer_avg_temp_c: String(params[2]),
-            winter_avg_temp_c: String(params[3]),
-            annual_precip_mm: params[4],
-            frost_days: params[5],
-            monthly: JSON.parse(params[6] as string),
-            source_version: params[7],
-            fetched_at: '2026-08-06T00:00:00.000Z',
-          }
-          return { rows: [], rowCount: 1 }
-        }
-        throw new Error(`unexpected query: ${text}`)
-      })
-    }
-
-    // withCellLock calls pool.connect() itself (no drizzle transaction
-    // dispatch involved), so each concurrent lock attempt just needs its own
-    // `makeQuery()` closure from `connect`, matching a real per-session
-    // connection.
-    const query = makeQuery()
-    const connect = vi.fn(async () => ({ query: makeQuery(), release: vi.fn() }))
+        return { rows: [], rowCount: 1 }
+      }
+      throw new Error(`unexpected query: ${text}`)
+    })
+    // Checking out a dedicated client would pin a pool connection for the
+    // whole archive fetch — the tests assert it never happens.
+    const connect = vi.fn()
     const pool = { query, connect, inserted }
-    return pool as unknown as Pool & { inserted: unknown[][] }
+    return pool as unknown as Pool & { inserted: unknown[][]; connect: ReturnType<typeof vi.fn> }
   }
 
   it('fetches, aggregates and caches on a miss', async () => {
@@ -213,7 +185,7 @@ describe('createOpenMeteoClimateNormalsEnhancer / readClimateNormals', () => {
     expect((db as unknown as { inserted: unknown[][] }).inserted).toHaveLength(1)
   })
 
-  it('serializes concurrent misses on the same cold cell so only one fetch happens', async () => {
+  it('shares one fetch between concurrent misses on the same cold cell without holding a connection', async () => {
     const db = fakePool(null)
     const fetchImpl = vi.fn<typeof fetch>(async () => buildSampleArchiveResponse())
 
@@ -228,6 +200,7 @@ describe('createOpenMeteoClimateNormalsEnhancer / readClimateNormals', () => {
     expect(first?.months).toHaveLength(12)
     expect(second?.months).toHaveLength(12)
     expect((db as unknown as { inserted: unknown[][] }).inserted).toHaveLength(1)
+    expect(db.connect).not.toHaveBeenCalled()
   })
 
   it('serves a fresh cached cell without calling fetch again', async () => {
