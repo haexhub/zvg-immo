@@ -15,6 +15,8 @@ export interface LawyerInput {
   active: boolean
 }
 
+const MAX_COMMISSION_CENTS = 2_147_483_647
+
 function optionalString(v: unknown): string | null {
   if (typeof v !== 'string') return null
   const trimmed = v.trim()
@@ -55,6 +57,11 @@ export function parseLawyerInput(body: Record<string, unknown>): LawyerInput {
     typeof commissionCentsRaw === 'number' && Number.isFinite(commissionCentsRaw)
       ? Math.round(commissionCentsRaw)
       : null
+  // commission_cents is a Postgres integer; reject here instead of letting an
+  // out-of-range value surface as a raw database error.
+  if (commissionCents !== null && (commissionCents < 0 || commissionCents > MAX_COMMISSION_CENTS)) {
+    throw createError({ statusCode: 400, statusMessage: 'commissionCents muss zwischen 0 und 2147483647 liegen.' })
+  }
 
   return {
     name,

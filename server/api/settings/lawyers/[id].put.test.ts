@@ -11,7 +11,7 @@ function chain(result: { data: unknown; error: unknown }, eqSpy?: (...args: unkn
       return chain(result, eqSpy)
     }),
     select: vi.fn(() => chain(result, eqSpy)),
-    single: vi.fn(() => chain(result, eqSpy)),
+    maybeSingle: vi.fn(() => chain(result, eqSpy)),
   })
 }
 
@@ -23,6 +23,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
   vi.resetModules()
   vi.clearAllMocks()
+  vi.restoreAllMocks()
 })
 
 describe('/api/settings/lawyers/[id] PUT', () => {
@@ -78,5 +79,21 @@ describe('/api/settings/lawyers/[id] PUT', () => {
 
     const handler = (await import('./[id].put')).default as unknown as (event: unknown) => Promise<unknown>
     await expect(handler(makeEvent('missing'))).rejects.toMatchObject({ statusCode: 404 })
+  })
+
+  it.each([
+    [{ code: '22P02', message: 'invalid input syntax for type uuid' }, 404, 'Anwalt nicht gefunden.'],
+    [{ code: '08006', message: 'connection failure' }, 500, 'Anwalt konnte nicht gespeichert werden.'],
+  ])('maps database error %o to %i without leaking the raw message', async (dbError, statusCode, statusMessage) => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
+    vi.stubGlobal('readBody', vi.fn(async () => ({ name: 'Jane Doe', email: 'jane@example.com', countries: ['de'] })))
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const update = vi.fn(() => chain({ data: null, error: dbError }))
+    const { getServiceClient } = await import('../../../utils/supabase')
+    vi.mocked(getServiceClient).mockReturnValue({ from: vi.fn(() => ({ update })) } as never)
+
+    const handler = (await import('./[id].put')).default as unknown as (event: unknown) => Promise<unknown>
+    await expect(handler(makeEvent('x'))).rejects.toMatchObject({ statusCode, statusMessage })
   })
 })
