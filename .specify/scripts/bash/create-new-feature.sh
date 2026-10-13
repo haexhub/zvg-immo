@@ -97,8 +97,6 @@ fi
 MAX_FEATURE_NUMBER=9223372036854775807
 MAX_BRANCH_LENGTH=244
 
-# Return success if the decimal digit string ($1), ignoring leading zeros,
-# is at most MAX_FEATURE_NUMBER; return 1 if it exceeds that limit.
 is_feature_number_in_range() {
     local value="$1"
     local normalized="${value#"${value%%[!0]*}"}"
