@@ -95,7 +95,7 @@ export async function fetchDetail(auction: Auction): Promise<DetailInfo> {
   }
   const capturedAt = new Date().toISOString()
   // Promise.all is safe here — the shared rate gate in fetch.ts serializes
-  // both requests internally, so the 800ms gap still applies between them.
+  // both requests internally, so MIN_GAP_MS still applies between them.
   const [v1, v3] = await Promise.all([
     fetchTab(auction.externalId, 1),
     fetchTab(auction.externalId, 3),
