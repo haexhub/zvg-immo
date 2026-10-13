@@ -63,7 +63,11 @@ export async function useAuctionDetailTranslation(options: {
   const { t, locale } = useI18n()
   const currentTranslationRequest = computed(() => translationRequest(options.auction.value, locale.value))
   const translationError = useState<string | null>(`auction-translation-error:${options.platform}:${options.id}`, () => null)
-  const { data: loadedTranslation, pending: translationFetchPending } = await useAsyncData<LoadedAuctionTranslation | null>(
+  // Not awaited here: Vue only restores the component instance/effect scope
+  // after the page's own top-level await, not after awaits inside this
+  // function. Every watch/onScopeDispose below must register synchronously so
+  // it is stopped on unmount; the cache lookup is awaited at the very end.
+  const translationLookup = useAsyncData<LoadedAuctionTranslation | null>(
     `auction-translation:${options.platform}:${options.id}`,
     async () => {
       const request = currentTranslationRequest.value
@@ -82,6 +86,7 @@ export async function useAuctionDetailTranslation(options: {
     },
     { default: () => null, watch: [currentTranslationRequest] },
   )
+  const { data: loadedTranslation, pending: translationFetchPending } = translationLookup
 
   const activeTranslation = computed(() => {
     const request = currentTranslationRequest.value
@@ -181,6 +186,8 @@ export async function useAuctionDetailTranslation(options: {
       if (!disposed && seq === translationSeq.value) translationGenerationPending.value = false
     }
   }, { immediate: true })
+
+  await translationLookup
 
   return {
     translationError,
