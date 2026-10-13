@@ -1,6 +1,9 @@
 <script setup lang="ts">
-// Bootstraps the account-locale sync once for the whole app.
+// Bootstraps the account-locale and -currency syncs once for the whole app.
+// Their user watchers live in the setup scope of whoever calls them first,
+// and only app.vue is never unmounted (layouts are, on every layout switch).
 useLocalePreference()
+useCurrencyPreference()
 const { isDark } = useThemePreference()
 
 const { t } = useI18n()
