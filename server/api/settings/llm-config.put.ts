@@ -11,12 +11,15 @@ export default defineEventHandler(async (event): Promise<Record<LlmMaxTokensKind
     throw createError({ statusCode: 503, statusMessage: 'Postgres ist nicht konfiguriert.' })
   }
   const body = await readBody<Record<string, unknown>>(event).catch(() => undefined) ?? ({} as Record<string, unknown>)
-  for (const kind of KINDS) {
+  // Validate every kind before writing any, so a 400 never leaves an earlier
+  // kind already persisted.
+  const values = KINDS.map((kind): [LlmMaxTokensKind, number] => {
     const value = body[kind]
     if (typeof value !== 'number' || !Number.isFinite(value)) {
       throw createError({ statusCode: 400, statusMessage: `${kind}: ungültiger Wert.` })
     }
-    await setLlmMaxTokens(db, kind, value)
-  }
+    return [kind, value]
+  })
+  for (const [kind, value] of values) await setLlmMaxTokens(db, kind, value)
   return await getAllLlmMaxTokens(db)
 })
