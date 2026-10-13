@@ -36,7 +36,10 @@ const REGION_NAME = 'Baden-Württemberg'
 
 const FETCH_TIMEOUT_MS = 15_000
 
-async function fetchPage(courtSlug: string, page: number): Promise<ListPage | null> {
+/** Throws on HTTP/network/timeout/payload failures: an empty court result is
+ *  indistinguishable from "this court has no auctions", so a failed fetch must
+ *  reject crawlCourt for index.ts to withhold the platform's success. */
+async function fetchPage(courtSlug: string, page: number): Promise<ListPage> {
   const url = `${ZVBAWU_BASE}/amtsgerichte/${courtSlug}/zwangsversteigerungen${page > 1 ? `?page=${page}` : ''}`
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
@@ -49,13 +52,12 @@ async function fetchPage(courtSlug: string, page: number): Promise<ListPage | nu
         'Accept-Language': 'de-DE,de;q=0.9',
       },
     })
-    if (!res.ok) return null
-    const html = await res.text()
-    return extractInertiaPage<ListPage>(html)
-  } catch {
-    // AbortError or network failure — treat as a missing page so the caller
-    // (crawlCourt) breaks out cleanly instead of aborting the whole run.
-    return null
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const parsed = extractInertiaPage<ListPage>(await res.text())
+    if (!parsed) throw new Error('no Inertia page payload')
+    return parsed
+  } catch (err) {
+    throw new Error(`zvbawü ${url} failed: ${(err as Error).message}`, { cause: err })
   } finally {
     clearTimeout(timer)
   }
@@ -121,18 +123,11 @@ export async function crawlCourt(
   platformId: string,
 ): Promise<CourtParseResult> {
   const first = await fetchPage(court.slug, 1)
-  if (!first) return { totalReported: 0, auctions: [] }
   const meta = first.props.auctions.meta
   const auctions = first.props.auctions.data.map((a) => mapAuction(a, platformId, court.name))
   // last_page can be >1 for high-volume courts (per_page=12).
   for (let p = 2; p <= meta.last_page; p++) {
     const page = await fetchPage(court.slug, p)
-    if (!page) {
-      console.warn(
-        `[zvbawu] ${court.slug}: page ${p}/${meta.last_page} failed — stopping pagination early`,
-      )
-      break
-    }
     for (const a of page.props.auctions.data) {
       auctions.push(mapAuction(a, platformId, court.name))
     }
