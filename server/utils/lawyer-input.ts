@@ -23,6 +23,22 @@ function optionalString(v: unknown): string | null {
   return trimmed ? trimmed : null
 }
 
+/** The website is rendered publicly as an href (components/LawyerContact.vue),
+ *  so only absolute http(s) URLs are stored — never `javascript:` or `data:`. */
+function websiteUrl(v: unknown): string | null {
+  const raw = optionalString(v)
+  if (!raw) return null
+  const protocol = URL.canParse(raw) ? new URL(raw).protocol : ''
+  if (protocol !== 'http:' && protocol !== 'https:') {
+    throw createError({ statusCode: 400, statusMessage: 'website muss eine http(s)-URL sein.' })
+  }
+  return raw
+}
+
+// One plain address: the value becomes the outbox mail's `to`, where a comma
+// or whitespace would turn it into several recipients.
+const SINGLE_EMAIL_RE = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/
+
 function stringArray(v: unknown): string[] {
   if (!Array.isArray(v)) return []
   return v
@@ -44,13 +60,17 @@ function nullableStringArray(v: unknown): string[] | null {
 }
 
 /** Parses+validates a create/update request body. Throws a 400 createError
- *  when required fields (name/email/countries) are missing or malformed. */
+ *  when required fields (name/email/countries) are missing or malformed, or
+ *  when the website is not an http(s) URL. */
 export function parseLawyerInput(body: Record<string, unknown>): LawyerInput {
   const name = typeof body.name === 'string' ? body.name.trim() : ''
   const email = typeof body.email === 'string' ? body.email.trim() : ''
   const countries = countryArray(body.countries)
   if (!name || !email || countries.length === 0) {
     throw createError({ statusCode: 400, statusMessage: 'name, email und countries (min. 1 Land) sind erforderlich.' })
+  }
+  if (!SINGLE_EMAIL_RE.test(email)) {
+    throw createError({ statusCode: 400, statusMessage: 'email muss eine einzelne gültige Adresse sein.' })
   }
   const commissionCentsRaw = body.commissionCents
   const commissionCents =
@@ -71,7 +91,7 @@ export function parseLawyerInput(body: Record<string, unknown>): LawyerInput {
     phone: optionalString(body.phone),
     specialization: optionalString(body.specialization),
     languages: nullableStringArray(body.languages),
-    website: optionalString(body.website),
+    website: websiteUrl(body.website),
     commissionCents,
     active: body.active !== false,
   }

@@ -7,6 +7,7 @@
 // signed out.
 
 import type { PublicLawyer } from '~/server/api/lawyers.get'
+import { safeHref } from '~/lib/utils'
 
 const props = defineProps<{
   platform: string
@@ -110,7 +111,7 @@ function loginLink(): string {
         <p v-if="selectedLawyerId" class="text-xs text-muted-foreground">
           <template v-for="l in lawyers.filter((x) => x.id === selectedLawyerId)" :key="l.id">
             <span v-if="l.languages?.length">{{ t('lawyerContact.languages', { languages: l.languages.join(', ') }) }}</span>
-            <a v-if="l.website" :href="l.website" target="_blank" rel="noopener" class="ml-2 hover:underline">{{ t('lawyerContact.website') }}</a>
+            <a v-if="safeHref(l.website)" :href="safeHref(l.website)" target="_blank" rel="noopener" class="ml-2 hover:underline">{{ t('lawyerContact.website') }}</a>
           </template>
         </p>
       </div>
