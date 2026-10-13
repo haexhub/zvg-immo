@@ -16,6 +16,7 @@ import { writeAuctionDetails } from '../utils/auction-details'
 import { upsertCurrentAuctions } from '../utils/current-auctions'
 import { recordTaskRunError } from '../utils/task-run-errors'
 import { recordLlmUsage } from '../utils/llm-usage'
+import { recordTaskRunStart } from '../utils/task-runs'
 
 vi.mock('../utils/storage-download', () => ({
   findLatestCapture: vi.fn(),
@@ -84,10 +85,11 @@ vi.mock('../utils/task-run-errors', () => ({
 vi.mock('../utils/llm-usage', () => ({
   recordLlmUsage: vi.fn(),
 }))
+vi.mock('../utils/automatic-task-gate', () => ({ isAutomaticLlmEnabled: vi.fn(async () => true) }))
 
 vi.stubGlobal('defineTask', (definition: unknown) => definition)
 
-const { reprocessAuction, runReprocess } = await import('./reprocess')
+const { reprocessAuction, runReprocess, runReprocessTask } = await import('./reprocess')
 const { DOCUMENT_SUMMARY_SCHEMA_NAME } = await import('../utils/extract/llm')
 
 const emptyArtifactState = {
@@ -639,6 +641,28 @@ describe('runReprocess structured persistence', () => {
       status: 'failed',
       errorMessage: 'Keine gültige Extraktion in der Provider-Antwort',
     }))
+  })
+})
+
+describe('runReprocessTask', () => {
+  it('skips a scheduled run while a manual run is active instead of superseding it', async () => {
+    const records = await readAuctionRecordMap()
+    let releaseManual!: () => void
+    const manualBlocks = new Promise<void>((resolve) => { releaseManual = resolve })
+    vi.mocked(readAuctionRecordMap).mockImplementationOnce(async () => {
+      await manualBlocks
+      return records
+    })
+
+    const manual = runReprocessTask({ trigger: 'manual' })
+    await vi.waitFor(() => expect(readAuctionRecordMap).toHaveBeenCalledTimes(2))
+    // The cron payload carries no trigger.
+    const scheduled = runReprocessTask({})
+
+    releaseManual()
+    await expect(scheduled).resolves.toStrictEqual({})
+    await expect(manual).resolves.toMatchObject({ result: expect.objectContaining({ processed: 1 }) })
+    expect(recordTaskRunStart).toHaveBeenCalledTimes(1)
   })
 })
 

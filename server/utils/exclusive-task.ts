@@ -50,6 +50,16 @@ export async function runExclusiveTask<T>(
   }
 }
 
+/**
+ * Whether a run of `task` is in flight. Scheduled/boot triggers check this
+ * right before runExclusiveTask (no await in between) so they skip instead of
+ * superseding a manual run: a manual run started via a direct task entry point
+ * is invisible to Nitro's own same-name dedupe.
+ */
+export function isTaskActive(task: string): boolean {
+  return activeTasks.has(task)
+}
+
 export function throwIfTaskAborted(signal?: AbortSignal): void {
   if (!signal?.aborted) return
   throw signal.reason instanceof Error ? signal.reason : new Error('Task abgebrochen')

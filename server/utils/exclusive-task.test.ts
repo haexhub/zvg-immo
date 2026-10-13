@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { runExclusiveTask, TaskSupersededError, throwIfTaskAborted } from './exclusive-task'
+import { isTaskActive, runExclusiveTask, TaskSupersededError, throwIfTaskAborted } from './exclusive-task'
 
 describe('runExclusiveTask', () => {
   it('aborts the active run and starts its replacement only after cleanup', async () => {
@@ -92,5 +92,24 @@ describe('runExclusiveTask', () => {
 
     expect(refresh).toBe('refresh')
     expect(enrich).toBe('enrich')
+  })
+
+  it('reports a run as active until it settles, so scheduled triggers can yield to it', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    expect(isTaskActive('active-test')).toBe(false)
+
+    const run = runExclusiveTask('active-test', async () => {
+      await gate
+      return 'done'
+    })
+    expect(isTaskActive('active-test')).toBe(true)
+    expect(isTaskActive('other-task')).toBe(false)
+
+    release()
+    await expect(run).resolves.toBe('done')
+    expect(isTaskActive('active-test')).toBe(false)
   })
 })
