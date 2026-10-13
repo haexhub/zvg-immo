@@ -114,7 +114,7 @@ function parseListPage(html: string, platformId: string): Auction[] {
 
 export async function fetchAllListings(
   platformId: string,
-): Promise<{ auctions: Auction[]; total: number | null }> {
+): Promise<{ auctions: Auction[]; total: number | null; complete: boolean }> {
   const cookie = await establishFilterSession()
   const auctions: Auction[] = []
   const seen = new Set<string>()
@@ -131,8 +131,11 @@ export async function fetchAllListings(
       signal: AbortSignal.timeout(20_000),
     })
     if (!res.ok) {
-      if (auctions.length > 0) break
-      throw new Error(`izsoles.ta.gov.lv fetch failed: ${res.status} ${url}`)
+      if (auctions.length === 0) throw new Error(`izsoles.ta.gov.lv fetch failed: ${res.status} ${url}`)
+      // Out-of-range pages are clamped, so a failing follow-up page is a real
+      // error: keep what was fetched but don't report it as a complete crawl.
+      console.warn(`[lv-eizsoles] ${url} failed with ${res.status} — crawl incomplete`)
+      return { auctions, total: null, complete: false }
     }
     /** Out-of-range page numbers are clamped to the last page instead of
      *  returning an empty list, so stop as soon as a page adds nothing new. */
@@ -144,5 +147,5 @@ export async function fetchAllListings(
     auctions.push(...pageAuctions)
   }
 
-  return { auctions, total: auctions.length }
+  return { auctions, total: auctions.length, complete: true }
 }

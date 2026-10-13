@@ -5,7 +5,7 @@ import { fetchAllListings } from './list'
 import { enrichOne } from './detail'
 
 async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
-  const { auctions, total } = await fetchAllListings(PLATFORM_ID)
+  const { auctions, total, complete } = await fetchAllListings(PLATFORM_ID)
   return createCrawlResult({
     platform: PLATFORM_ID,
     source: LV_BASE,
@@ -13,6 +13,7 @@ async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
     regions: LV_REGIONS,
     totalReported: total,
     auctions,
+    complete,
   })
 }
 
