@@ -4,6 +4,7 @@
 // drizzle-orm's migrator only applies migrations it hasn't recorded yet.
 
 import { runMigrations } from '../utils/db'
+import { holdTasksUntilMigrated } from '../utils/exclusive-task'
 import { recordAppStart, recordMigrationStatus } from '../utils/operations-status'
 
 export default defineNitroPlugin((nitroApp) => {
@@ -12,12 +13,15 @@ export default defineNitroPlugin((nitroApp) => {
   // rejection. Instead every request awaits the shared migration promise: no
   // handler ever runs against a partially migrated database, and a failure
   // keeps surfacing on each request instead of being logged once and lost.
+  // Tasks (cron and boot nudges bypass the request hook) wait on the same
+  // promise via runExclusiveTask.
   const migrations = recordAppStart()
     .then(async () => {
       await recordMigrationStatus('running')
       await runMigrations()
       await recordMigrationStatus('ready')
     })
+  holdTasksUntilMigrated(migrations)
   migrations.catch((err: unknown) => {
     void recordMigrationStatus('failed', err)
     console.error('[db-bootstrap] migration failed:', (err as Error).message)

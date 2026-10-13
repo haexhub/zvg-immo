@@ -1,4 +1,5 @@
 import { captureDailyStatusSnapshot } from '~/server/utils/status-daily-snapshots'
+import { runExclusiveTask } from '~/server/utils/exclusive-task'
 
 export default defineTask({
   meta: {
@@ -6,8 +7,10 @@ export default defineTask({
     description: 'Store one daily, per-country reading of the admin pipeline status.',
   },
   async run() {
-    const rows = await captureDailyStatusSnapshot()
-    console.log(`[status-snapshot] stored ${rows} status rows`)
-    return { result: { rows } }
+    return await runExclusiveTask('status-snapshot', async () => {
+      const rows = await captureDailyStatusSnapshot()
+      console.log(`[status-snapshot] stored ${rows} status rows`)
+      return { result: { rows } }
+    })
   },
 })

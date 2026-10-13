@@ -6,6 +6,15 @@ interface ActiveTask {
 
 const activeTasks = new Map<string, ActiveTask>()
 const generations = new Map<string, number>()
+// Scheduled and boot-time runs come through Nitro's runTask, not HTTP, so the
+// request hook in server/plugins/db-bootstrap.ts that holds requests until
+// migrations finish never sees them. That plugin registers its migration
+// promise here instead, and every run waits on it before touching the DB.
+let migrationsReady: Promise<unknown> = Promise.resolve()
+
+export function holdTasksUntilMigrated(migrations: Promise<unknown>): void {
+  migrationsReady = migrations
+}
 
 export class TaskSupersededError extends Error {
   constructor(task: string) {
@@ -39,6 +48,11 @@ export async function runExclusiveTask<T>(
   let promise!: Promise<T>
   promise = (async () => {
     await previous?.promise.catch(() => undefined)
+    try {
+      await migrationsReady
+    } catch (err) {
+      throw new Error(`${task} übersprungen: Datenbank-Migration fehlgeschlagen`, { cause: err })
+    }
     if (!options.queue && generations.get(task) !== generation) throw new TaskSupersededError(task)
     const result = await operation(controller.signal)
     // An operation can observe the abort and still return normally (or ignore
