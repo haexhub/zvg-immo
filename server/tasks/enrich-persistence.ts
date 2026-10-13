@@ -1,7 +1,7 @@
 import type { Auction } from '~/types/auction'
 import type { crawlAll } from '~/server/crawlers/registry'
 import { applyAuctionExtraction } from '~/server/utils/auction-extraction'
-import type { AuctionRecord } from '~/server/utils/auction-record'
+import { readAuctionRecordMap } from '~/server/utils/auction-record'
 import { mergeStoredAuction } from '~/server/utils/auction-merge'
 import { upsertCurrentAuctions } from '~/server/utils/current-auctions'
 import { normalizeAuctionDescriptions } from '~/server/utils/description-normalization'
@@ -14,7 +14,7 @@ import { throwIfTaskAborted } from '~/server/utils/exclusive-task'
 
 export async function finalizeEnrichPersistence({
   result,
-  records,
+  country,
   persistedDetails,
   capturedAt,
   at,
@@ -22,7 +22,8 @@ export async function finalizeEnrichPersistence({
   signal,
 }: {
   result: Awaited<ReturnType<typeof crawlAll>>
-  records: Map<string, AuctionRecord>
+  /** The run's country scope; the stored records are re-read for it here. */
+  country?: string
   persistedDetails: Map<string, { marketValueEur: number | null; marketValueText: string | null }>
   capturedAt: string
   at: string
@@ -32,6 +33,13 @@ export async function finalizeEnrichPersistence({
   // Re-read shortly before the final projection so values produced while
   // this crawl was running are included.
   const vwCache = await readVerkehrswertCache()
+  // Same for the stored records: the run-start snapshot predates hours of
+  // concurrent reprocess/llm-batch-poll writes, and writing its extraction
+  // back would roll a newer LLM result back to the old rules values.
+  // ponytail: one re-read per finalize, not per auction — a reprocess write
+  // landing during the loop below can still be overwritten for that identity;
+  // closing that needs an expected-llm_analyzed_at check in writeAuctionDetails.
+  const records = await readAuctionRecordMap(country)
   for (const a of result.auctions) {
     throwIfTaskAborted(signal)
     if (a.marketValueEur != null) continue
@@ -41,11 +49,13 @@ export async function finalizeEnrichPersistence({
     a.marketValueText = hit.marketValueText
   }
   // Preserve structured details for list-only rows and overlay the latest
-  // extraction before writing the current SQL projection.
+  // extraction before writing the current SQL projection. The re-read record
+  // wins over the worker's in-memory entry: it already contains that entry's
+  // write plus anything stored after it.
   for (const auction of result.auctions) {
     const record = records.get(cacheKey(auction.platform, auction.externalId))
     if (auction.detailFetchedAt == null && record) mergeStoredAuction(auction, record.auction)
-    applyAuctionExtraction(auction, auction.extraction ?? record?.auction.extraction)
+    applyAuctionExtraction(auction, record?.auction.extraction ?? auction.extraction)
   }
   normalizeAuctionDescriptions(result.auctions)
   await writeAuctionCrawlFetchState(result.auctions)

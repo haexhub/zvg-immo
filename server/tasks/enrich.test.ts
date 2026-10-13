@@ -4,7 +4,7 @@ import type { AuctionFetchState } from '../utils/auction-fetch-state'
 import { crawlAll } from '../crawlers/registry'
 import { ensureAuctionIdentity, upsertCurrentAuctions } from '../utils/current-auctions'
 import { writeAuctionDetails } from '../utils/auction-details'
-import { readAuctionRecordMap } from '../utils/auction-record'
+import { readAuctionRecord, readAuctionRecordMap } from '../utils/auction-record'
 import { readLatestArtifactVersions } from '../utils/artifact-version-state'
 import {
   readAuctionFetchStates,
@@ -27,7 +27,7 @@ vi.mock('../crawlers/registry', () => ({
 vi.mock('../utils/current-auctions', () => ({ ensureAuctionIdentity: vi.fn(), upsertCurrentAuctions: vi.fn() }))
 vi.mock('../utils/auction-relationships', () => ({ rebuildAutomaticAuctionRelationships: vi.fn() }))
 vi.mock('../utils/auction-details', () => ({ writeAuctionDetails: vi.fn() }))
-vi.mock('../utils/auction-record', () => ({ readAuctionRecordMap: vi.fn() }))
+vi.mock('../utils/auction-record', () => ({ readAuctionRecord: vi.fn(), readAuctionRecordMap: vi.fn() }))
 vi.mock('../utils/artifact-version-state', () => ({ readLatestArtifactVersions: vi.fn() }))
 vi.mock('../utils/auction-fetch-state', () => ({
   readAuctionFetchStates: vi.fn(),
@@ -146,6 +146,7 @@ beforeEach(() => {
   vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map())
   vi.mocked(readLatestArtifactVersions).mockResolvedValue(new Map())
   vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map())
+  vi.mocked(readAuctionRecord).mockResolvedValue(null)
   vi.mocked(writeAuctionDetails).mockResolvedValue({ version: 1, changed: true })
   vi.mocked(downloadNativeImages).mockResolvedValue([])
 })
@@ -281,6 +282,84 @@ describe('runEnrich structured persistence', () => {
       photoPipelineVersion: null,
       photoAttempted: true,
     })
+  })
+})
+
+describe('runEnrich concurrent extraction writes', () => {
+  const rulesExtraction = {
+    propertyType: null,
+    landAreaSqm: null,
+    livingAreaSqm: null,
+    rooms: null,
+    units: null,
+    source: 'rules' as const,
+    confidence: 'low' as const,
+    at: '2026-08-01T10:00:00.000Z',
+  }
+  const llmExtraction = {
+    ...rulesExtraction,
+    propertyType: 'house' as const,
+    livingAreaSqm: 120,
+    source: 'llm' as const,
+    confidence: 'high' as const,
+    llmAnalyzedAt: '2026-08-02T11:00:00.000Z',
+  }
+
+  it('builds the worker entry from the live record, not the run-start snapshot', async () => {
+    const listing = auction()
+    vi.mocked(crawlAll).mockResolvedValue(crawlResult([listing]))
+    // Snapshot has no extraction (so the auction is todo); reprocess stored
+    // an LLM extraction while the run was working.
+    vi.mocked(readAuctionRecord).mockResolvedValue(
+      { auction: { ...listing, extraction: llmExtraction }, detailsId: 2, detailsVersion: 2, artifactVersionId: 5 },
+    )
+
+    await runEnrich({ country: 'de' })
+
+    expect(writeAuctionDetails).toHaveBeenCalledWith(
+      listing,
+      expect.objectContaining({ source: 'llm', llmAnalyzedAt: llmExtraction.llmAnalyzedAt }),
+      { artifactVersionId: 5 },
+    )
+  })
+
+  it('leaves the photo set unchecked when the worker could not store it', async () => {
+    const listing = { ...auction(), photoUrls: ['https://example.test/front.jpg'] }
+    vi.mocked(crawlAll).mockResolvedValue(crawlResult([listing]))
+    vi.mocked(downloadNativeImages).mockResolvedValue(['abc123.jpg'])
+    vi.mocked(writeAuctionDetails).mockRejectedValueOnce(new Error('connection reset'))
+
+    const outcome = await runEnrich({ country: 'de' })
+
+    expect(outcome.warning).toContain('connection reset')
+    // finalize writes the re-read (photo-less) record; a "checked" state here
+    // would suppress the backfill that recovers the photos next run.
+    expect(writeAuctionPhotoPipelineState).not.toHaveBeenCalled()
+  })
+
+  it('finalizes untouched listings with the re-read extraction, not the run-start snapshot', async () => {
+    const listing = auction()
+    vi.mocked(crawlAll).mockResolvedValue(crawlResult([listing]))
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([
+      ['test-platform:42', fetchState({ photosCheckedAt: '2026-08-01T10:00:00.000Z', photoPipelineVersion: 99 })],
+    ]))
+    vi.mocked(readAuctionRecordMap)
+      .mockResolvedValueOnce(new Map([
+        ['test-platform:42', { auction: { ...listing, extraction: rulesExtraction }, detailsId: 1, detailsVersion: 1, artifactVersionId: 5 }],
+      ]))
+      .mockResolvedValueOnce(new Map([
+        ['test-platform:42', { auction: { ...listing, extraction: llmExtraction }, detailsId: 2, detailsVersion: 2, artifactVersionId: 5 }],
+      ]))
+
+    const outcome = await runEnrich({ country: 'de' })
+
+    expect(outcome.result).toMatchObject({ todo: 0 })
+    expect(writeAuctionDetails).toHaveBeenCalledTimes(1)
+    expect(writeAuctionDetails).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ source: 'llm', llmAnalyzedAt: llmExtraction.llmAnalyzedAt }),
+      { artifactVersionId: 5 },
+    )
   })
 })
 

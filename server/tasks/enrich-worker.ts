@@ -2,7 +2,7 @@ import type { AuctionExtraction } from '~/types/auction'
 import { crawlAll, ensureEnabledCountriesLoaded, listRegions, platforms } from '~/server/crawlers/registry'
 import { ensureAuctionIdentity, upsertCurrentAuctions } from '~/server/utils/current-auctions'
 import { writeAuctionDetails } from '~/server/utils/auction-details'
-import { readAuctionRecordMap, type AuctionRecord } from '~/server/utils/auction-record'
+import { readAuctionRecord, readAuctionRecordMap, type AuctionRecord } from '~/server/utils/auction-record'
 import { applyAuctionExtraction } from '~/server/utils/auction-extraction'
 import { mergeStoredAuction } from '~/server/utils/auction-merge'
 import { readLatestArtifactVersions } from '~/server/utils/artifact-version-state'
@@ -200,8 +200,6 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
         try {
           const crawler = byPlatform.get(a.platform)
           const key = cacheKey(a.platform, a.externalId)
-          const priorRecord = records.get(key)
-          const priorEntry = priorRecord?.auction.extraction ?? undefined
 
           // Detail fetch (description + attachments) so downstream document
           // archiving/photo mining has real data to work with. Stamp
@@ -279,6 +277,13 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
             }
           }
 
+          // Re-read the live row instead of trusting the run-start snapshot in
+          // `records`: by now it can be hours old, and reprocess/llm-batch-poll
+          // may have stored a newer (LLM) extraction that writing the snapshot
+          // back below would silently roll back.
+          const priorRecord = (await readAuctionRecord(a.platform, a.externalId)) ?? records.get(key)
+          const priorEntry = priorRecord?.auction.extraction ?? undefined
+
           // Photo pipeline — see enrich-photos.ts.
           const photoOutcome = await processEnrichPhotos(a, priorEntry, fetchStates.get(key), documentIdentity, {
             at,
@@ -316,7 +321,6 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
               }
           a.extraction = entry
           await writeAuctionCrawlFetchState([a])
-          await writeAuctionPhotoPipelineState(a.platform, a.externalId, photoOutcome.photoState)
           // Make this auction visible right away instead of waiting for the
           // whole run to finish — otherwise a freshly activated country shows
           // nothing in /search until every listing has been processed.
@@ -331,6 +335,10 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
             if (a.detailFetchedAt == null && priorRecord) mergeStoredAuction(a, priorRecord.auction)
             applyAuctionExtraction(a, entry)
             await writeAuctionDetails(a, entry, { artifactVersionId: priorRecord?.artifactVersionId ?? null })
+            // Only mark the photo set checked once it is actually stored:
+            // finalize re-reads the record and would otherwise drop these
+            // photos for good, with no backfill left to recover them.
+            await writeAuctionPhotoPipelineState(a.platform, a.externalId, photoOutcome.photoState)
             persistedDetails.set(key, {
               marketValueEur: a.marketValueEur,
               marketValueText: a.marketValueText,
@@ -365,7 +373,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
     if (!scopedRetry) {
       await finalizeEnrichPersistence({
         result,
-        records,
+        country: opts.country,
         persistedDetails,
         capturedAt,
         at,
