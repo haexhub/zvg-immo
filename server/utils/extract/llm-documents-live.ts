@@ -7,9 +7,7 @@
 // callers (enrich-worker.ts) import from the same place as before.
 
 import type { Attachment } from '~/types/auction'
-import { BASE_URL as DGA_AG_BASE_URL } from '~/server/crawlers/dga-ag/constants'
 import { getDgaAgSessionCookie, isDgaAgLoginRedirect } from '~/server/crawlers/dga-ag/session'
-import { UA, ZVG_BASE } from '~/server/crawlers/zvg-portal/constants'
 import type { ArchivedDocumentSetItem, DocumentIdentity } from '../raw-archive'
 import {
   attachmentLabel,
@@ -18,6 +16,8 @@ import {
   prepareDocument,
   type PreparedAttachmentDocument,
 } from './llm-documents'
+import { resolveAttachmentSource } from './pdf-text'
+import { fetchPublicUrl } from './public-fetch'
 
 export interface ArchivedLiveDocuments {
   documentSetItems: ArchivedDocumentSetItem[]
@@ -46,30 +46,6 @@ function acceptForHint(format: ReturnType<typeof formatHint>): string {
   }
 }
 
-async function resolveAttachmentSource(
-  proxyUrl: string,
-  accept: string,
-): Promise<{ url: string; headers: Record<string, string> }> {
-  if (proxyUrl.startsWith('/api/zvg-proxy')) {
-    const q = new URLSearchParams(proxyUrl.split('?')[1] ?? '')
-    const url = `${ZVG_BASE}/index.php?button=showAnhang&land_abk=${q.get('land_abk')}&file_id=${q.get('file_id')}&zvg_id=${q.get('zvg_id')}`
-    return { url, headers: { 'User-Agent': UA, Accept: accept, Referer: `${ZVG_BASE}/index.php?button=Suchen` } }
-  }
-  if (proxyUrl.startsWith(`${ZVG_BASE}/`)) {
-    return {
-      url: proxyUrl,
-      headers: { 'User-Agent': UA, Accept: accept, Referer: `${ZVG_BASE}/index.php?button=Suchen` },
-    }
-  }
-  // Same authenticated-download requirement as pdf-text.ts's resolveSource —
-  // see its comment on the dga-ag.de branch.
-  if (proxyUrl.startsWith(`${DGA_AG_BASE_URL}/securedl/`)) {
-    const cookie = await getDgaAgSessionCookie()
-    return { url: proxyUrl, headers: { 'User-Agent': UA, Accept: accept, ...(cookie ? { Cookie: cookie } : {}) } }
-  }
-  return { url: proxyUrl, headers: { 'User-Agent': UA, Accept: accept } }
-}
-
 interface FetchedAttachment {
   bytes: Buffer | null
   error?: string
@@ -81,7 +57,7 @@ async function fetchAttachmentBytesOnce(
 ): Promise<FetchedAttachment & { finalUrl: string | null }> {
   let finalUrl: string | null = null
   try {
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(30_000) })
+    const res = await fetchPublicUrl(url, { headers, signal: AbortSignal.timeout(30_000) })
     finalUrl = res.url || null
     if (!res.ok) return { bytes: null, error: `HTTP ${res.status}`, finalUrl }
     const contentLength = Number(res.headers.get('content-length') ?? '')

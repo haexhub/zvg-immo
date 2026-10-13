@@ -8,6 +8,9 @@ import { getDb } from '../db'
 import { queryText } from '~/test-support/drizzle-query'
 
 vi.mock('../db', () => ({ getDb: vi.fn() }))
+// fetchPublicUrl resolves every upstream host before fetching; answer with a
+// public address so the stubbed fetch is reached without real DNS.
+vi.mock('node:dns/promises', () => ({ lookup: vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]) }))
 vi.mock('~/server/crawlers/dga-ag/session', async (importOriginal) => {
   const actual = await importOriginal<typeof import('~/server/crawlers/dga-ag/session')>()
   return { ...actual, getDgaAgSessionCookie: vi.fn(async () => 'fe_typo_user=session1') }

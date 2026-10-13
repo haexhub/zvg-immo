@@ -4,6 +4,10 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { downloadNativeImages } from './native-images'
 
+// fetchPublicUrl resolves every upstream host before fetching; answer with a
+// public address so the stubbed fetch is reached without real DNS.
+vi.mock('node:dns/promises', () => ({ lookup: vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]) }))
+
 // Minimal valid JPEG/PNG/WebP magic-byte prefixes. Real bodies would be longer
 // but downloadNativeImages only inspects the first bytes to reject non-images.
 const JPEG_MAGIC = Buffer.from([0xff, 0xd8, 0xff, 0xe0])

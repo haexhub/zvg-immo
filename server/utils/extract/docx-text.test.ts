@@ -9,6 +9,9 @@ import { getDb } from '../db'
 import { queryText } from '~/test-support/drizzle-query'
 
 vi.mock('../db', () => ({ getDb: vi.fn() }))
+// fetchPublicUrl resolves every upstream host before fetching; answer with a
+// public address so the stubbed fetch is reached without real DNS.
+vi.mock('node:dns/promises', () => ({ lookup: vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]) }))
 
 // Imported after the mock so the module under test picks up the mocked getDb.
 const { docxBufferToText, docxToText } = await import('./docx-text')

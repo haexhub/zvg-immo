@@ -6,16 +6,18 @@
 
 import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { Dispatcher } from 'undici'
 import { detectImageExt, imageContentHash } from './image-bytes'
+import { fetchPublicUrl } from './public-fetch'
 
 // Network/timeout errors are left to throw (unlike a non-OK HTTP status,
 // which resolves to null below): downloadNativeImages needs to tell "fetch
 // never even completed" apart from "server responded, no image here" so it
 // can avoid reporting a transient network failure as a confirmed absence of
 // photos (see photosCheckedAt/photoFailures in enrich.ts).
-async function fetchImageBytes(url: string, opts: Pick<DownloadNativeImagesOptions, 'dispatcher' | 'redirect'>): Promise<Buffer | null> {
-  const res = await fetch(url, {
+async function fetchImageBytes(url: string): Promise<Buffer | null> {
+  // Photo URLs are upstream values too, so they go through the same
+  // public-host/redirect guard as attachments.
+  const res = await fetchPublicUrl(url, {
     // 30s upper bound: the enrich task's Promise.all fan-out would otherwise
     // stall a whole worker on one hung upstream. AT-Edikte (Lotus-Domino) is
     // the slowest we hit, ~500ms typical.
@@ -24,9 +26,7 @@ async function fetchImageBytes(url: string, opts: Pick<DownloadNativeImagesOptio
       'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101 Firefox/130.0',
       Accept: 'image/jpeg,image/png,image/*;q=0.9,*/*;q=0.1',
     },
-    redirect: opts.redirect,
-    dispatcher: opts.dispatcher,
-  } as RequestInit & { dispatcher?: Dispatcher })
+  })
   if (!res.ok) {
     // Transient — worth a retry, unlike a stable 404/403 on a dead link.
     if (res.status === 408 || res.status === 429 || res.status >= 500) {
@@ -43,8 +43,6 @@ const MIN_BYTES = 512
 export interface DownloadNativeImagesOptions {
   destDir: string
   maxImages?: number
-  dispatcher?: Dispatcher
-  redirect?: RequestRedirect
 }
 
 /**
@@ -88,7 +86,7 @@ export async function downloadNativeImages(
     if (written.length >= cap) break
     let buf: Buffer | null
     try {
-      buf = await fetchImageBytes(url, opts)
+      buf = await fetchImageBytes(url)
     } catch (err) {
       hadFetchError = true
       lastFetchError = (err as Error).message
