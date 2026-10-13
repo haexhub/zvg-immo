@@ -1,7 +1,4 @@
-import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
-import type { Auction, AuctionExtraction, CuratedPhoto } from '~/types/auction'
-import { normalizePhoto } from '~/lib/photo'
+import type { AuctionExtraction } from '~/types/auction'
 import { crawlAll, ensureEnabledCountriesLoaded, listRegions, platforms } from '~/server/crawlers/registry'
 import { ensureAuctionIdentity, upsertCurrentAuctions } from '~/server/utils/current-auctions'
 import { writeAuctionDetails } from '~/server/utils/auction-details'
@@ -12,17 +9,9 @@ import { readLatestArtifactVersions } from '~/server/utils/artifact-version-stat
 import { readAuctionFetchStates, writeAuctionCrawlFetchState, writeAuctionEnrichClaim, writeAuctionPhotoPipelineState } from '~/server/utils/auction-fetch-state'
 import { deriveMarketValueEur, getRates } from '~/server/utils/exchange-rate'
 import { matchAlerts } from '~/server/utils/alert-matching'
-import { downloadNativeImages } from '~/server/utils/extract/native-images'
-import { extractDocumentPhotos } from '~/server/utils/extract/document-images'
 import { prepareLiveLlmDocuments } from '~/server/utils/extract/llm-documents-live'
-import { imagesBucketConfigured, mimeTypeFor, uploadImage } from '~/server/utils/image-storage'
 import { interleaveByPlatform } from '~/server/utils/interleave-by-platform'
-import { isSafePathSegment } from '~/server/utils/path-segment'
-import {
-  archiveAuction,
-  archiveDocumentSet,
-  archivePhotoBlob,
-} from '~/server/utils/raw-archive'
+import { archiveAuction, archiveDocumentSet } from '~/server/utils/raw-archive'
 import { cacheKey, readVerkehrswertCache } from '~/server/utils/verkehrswert-cache'
 import { recordObservations } from '~/server/utils/history'
 import { recordCrawlScope } from '~/server/utils/crawl-state'
@@ -34,18 +23,13 @@ import { runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-t
 import { fillAuctionGeocodes } from '~/server/utils/auction-geocoding'
 import { loadScopedRetryResult, prepareEnrichWork } from './enrich-work-selection'
 import { finalizeEnrichPersistence } from './enrich-persistence'
-
-const IMAGES_DIR = join(process.cwd(), '.cache_zvg', 'images')
+import { processEnrichPhotos } from './enrich-photos'
 
 const ENRICH_CONCURRENCY = 8
 // How many of this run's errors go into the single-line lastWarning preview
 // (/settings). Every error is recorded in full in task_run_errors regardless
 // of this limit — this only bounds the inline summary's length.
 const WARNING_PREVIEW_LIMIT = 50
-const CONTENT_HASH_IMAGE_FILE_RE = /^([0-9a-f]{8,32})\.(?:jpe?g|png|webp)$/i
-function imageContentHashFromFilename(name: string): string | null {
-  return CONTENT_HASH_IMAGE_FILE_RE.exec(name)?.[1] ?? null
-}
 // Guards against overlapping runs: a cold-start bootstrap run (many detail
 // fetches + document downloads) can still be active when the cron tick
 // fires. Two concurrent runs would double-fetch details and race on the
@@ -295,102 +279,20 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
             }
           }
 
-          // Photo pipeline — mirror native image URLs first, then mine every
-          // document candidate. Native URLs stay in `auction.photoUrls` for
-          // display; `extraction.photos` stores document-derived images only
-          // after dropping exact byte duplicates whose content hash matches a
-          // mirrored native image.
-          let curatedPhotos: CuratedPhoto[] | undefined
-          const priorFetchState = fetchStates.get(key)
-          let photosCheckedAt = priorFetchState?.photosCheckedAt ?? null
-          let photoFailures = priorFetchState?.photoFailures ?? 0
-          let photoPipelineVersion = priorFetchState?.photoPipelineVersion ?? null
-          const photoAttempted = needsPhotoBackfill(a) && isSafePathSegment(a.platform) && isSafePathSegment(a.externalId)
-          if (photoAttempted) {
-            const destDir = join(IMAGES_DIR, a.platform, a.externalId)
-            const priorPhotos = priorEntry?.photos?.map(normalizePhoto) ?? []
-            const targetVersion = targetPhotoPipelineVersion(a)
-            const rebuildingPhotoSet = scopedForce || (priorFetchState?.photoPipelineVersion ?? 1) < targetVersion
-            let photos = rebuildingPhotoSet ? [] : priorPhotos.map((photo) => photo.file)
-            let newlyDownloadedPhotos: string[] = []
-            const nativeFotoUrls = nativePhotoUrls(a)
-            const nativePhotoHashes = new Set<string>()
-            const addNewlyDownloadedPhotos = (names: readonly string[]) => {
-              newlyDownloadedPhotos = [...new Set([...newlyDownloadedPhotos, ...names])]
-            }
-            const addDisplayedPhotos = (names: readonly string[]) => {
-              photos = [...new Set([...photos, ...names])]
-            }
-            // Native gallery download and document/PDF mining are independent
-            // sources — each gets its own try/catch so one throwing (a
-            // transient upstream problem) doesn't discard photos the other
-            // already found, and doesn't skip the other source entirely.
-            const sourceErrors: string[] = []
-            if (nativeFotoUrls.length > 0) {
-              try {
-                const nativePhotos = await downloadNativeImages([...new Set(nativeFotoUrls)], { destDir })
-                addNewlyDownloadedPhotos(nativePhotos)
-                addDisplayedPhotos(nativePhotos)
-                for (const name of nativePhotos) {
-                  const hash = imageContentHashFromFilename(name)
-                  if (hash) nativePhotoHashes.add(hash)
-                }
-              } catch (err) {
-                sourceErrors.push((err as Error).message)
-              }
-            }
-            if (a.attachments.length > 0) {
-              photoExtractions++
-              try {
-                const documentPhotos = await extractDocumentPhotos(a.attachments, {
-                  destDir,
-                })
-                addNewlyDownloadedPhotos(documentPhotos)
-                addDisplayedPhotos(
-                  documentPhotos.filter((name) => {
-                    const hash = imageContentHashFromFilename(name)
-                    return !hash || !nativePhotoHashes.has(hash)
-                  }),
-                )
-              } catch (err) {
-                sourceErrors.push((err as Error).message)
-              }
-            }
-            photosTotal += photos.length
-            try {
-              // Archive every freshly downloaded photo's raw bytes (kind='photo')
-              // and mirror it into the images bucket (WP-4) when configured, so
-              // /api/auction-image can fall back to Supabase once the local cache
-              // is gone. uploadImage never throws and no-ops without a configured
-              // bucket.
-              for (const name of [...new Set(newlyDownloadedPhotos)]) {
-                const bytes = await readFile(join(destDir, name))
-                await archivePhotoBlob(bytes, mimeTypeFor(name) as any, documentIdentity, at)
-                if (imagesBucketConfigured()) await uploadImage(bytes, `${a.platform}/${a.externalId}/${name}`)
-              }
-            } catch (err) {
-              sourceErrors.push((err as Error).message)
-            }
-            if (sourceErrors.length > 0) {
-              photoFailures++
-              pushRunError('photo_extraction', `Fotoextraktion ${a.platform}:${a.externalId}: ${sourceErrors.join('; ')}`, a)
-              if (photos.length === 0 && priorPhotos.length > 0) {
-                photos = priorPhotos.map((photo) => photo.file)
-              }
-            } else {
-              // Completed without throwing — "checked", regardless of whether
-              // any photos were actually found (a legitimately photo-less
-              // listing/document stops being retried from here on).
-              photosCheckedAt = at
-              photoFailures = 0
-              photoPipelineVersion = targetPhotoPipelineVersion(a)
-            }
-            curatedPhotos = photos.length > 0
-              ? photos.map((name) => priorPhotos.find((photo) => photo.file === name) ?? normalizePhoto(name))
-              : undefined
-          } else {
-            curatedPhotos = priorEntry?.photos?.map(normalizePhoto)
+          // Photo pipeline — see enrich-photos.ts.
+          const photoOutcome = await processEnrichPhotos(a, priorEntry, fetchStates.get(key), documentIdentity, {
+            at,
+            scopedForce,
+            needsPhotoBackfill,
+            nativePhotoUrls,
+            targetPhotoPipelineVersion,
+          })
+          if (photoOutcome.minedDocuments) photoExtractions++
+          photosTotal += photoOutcome.photoCount
+          if (photoOutcome.error) {
+            pushRunError('photo_extraction', `Fotoextraktion ${a.platform}:${a.externalId}: ${photoOutcome.error}`, a)
           }
+          const curatedPhotos = photoOutcome.curatedPhotos
 
           // Carry extraction-owned facts forward while updating only photo output.
           const entry: AuctionExtraction = priorEntry
@@ -414,12 +316,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
               }
           a.extraction = entry
           await writeAuctionCrawlFetchState([a])
-          await writeAuctionPhotoPipelineState(a.platform, a.externalId, {
-            photosCheckedAt,
-            photoFailures,
-            photoPipelineVersion,
-            photoAttempted,
-          })
+          await writeAuctionPhotoPipelineState(a.platform, a.externalId, photoOutcome.photoState)
           // Make this auction visible right away instead of waiting for the
           // whole run to finish — otherwise a freshly activated country shows
           // nothing in /search until every listing has been processed.
