@@ -195,9 +195,13 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
         throwIfTaskAborted(signal)
         const a = todo[cursor++]
         if (!a) continue
-        // Fresh timestamp, not the shared `at` below (fixed at run start).
-        await writeAuctionEnrichClaim(a.platform, a.externalId, new Date().toISOString())
+        // Every per-item failure (including the claim/state writes) is caught
+        // here: a rejected worker would fail Promise.all below and release the
+        // task lock while its sibling workers kept crawling, letting a new run
+        // start alongside them. Only an abort escapes (see allSettled below).
         try {
+          // Fresh timestamp, not the shared `at` below (fixed at run start).
+          await writeAuctionEnrichClaim(a.platform, a.externalId, new Date().toISOString())
           const crawler = byPlatform.get(a.platform)
           const key = cacheKey(a.platform, a.externalId)
 
@@ -347,7 +351,16 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
           } catch (err) {
             pushRunError('auction_details', `Details ${a.platform}:${a.externalId}: ${(err as Error).message}`, a)
           }
-        } finally { await writeAuctionEnrichClaim(a.platform, a.externalId, null) }
+        } catch (err) {
+          throwIfTaskAborted(signal)
+          pushRunError('enrich_item', `Enrich ${a.platform}:${a.externalId}: ${(err as Error).message}`, a)
+        } finally {
+          try {
+            await writeAuctionEnrichClaim(a.platform, a.externalId, null)
+          } catch (err) {
+            pushRunError('enrich_claim', `Enrich-Claim ${a.platform}:${a.externalId}: ${(err as Error).message}`, a)
+          }
+        }
         archived++
         archivedByCountry.set(a.country, (archivedByCountry.get(a.country) ?? 0) + 1)
         void recordTaskRunProgress(
@@ -357,7 +370,12 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
         )
       }
     }
-    await Promise.all(Array.from({ length: ENRICH_CONCURRENCY }, worker))
+    // allSettled, not all: an aborted worker must not release the task lock
+    // while its siblings still finish their in-flight item (detail fetch,
+    // downloads, claim release) and would write alongside the next run.
+    const settled = await Promise.allSettled(Array.from({ length: ENRICH_CONCURRENCY }, worker))
+    const rejected = settled.find((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected')
+    if (rejected) throw rejected.reason
     // The per-country snapshot outlives the run in /settings, so its final
     // state has to get past the progress throttle — the last few in-loop
     // reports above are routinely swallowed by it.

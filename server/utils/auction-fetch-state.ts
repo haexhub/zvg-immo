@@ -170,8 +170,8 @@ export async function writeAuctionCrawlFetchState(auctions: Auction[]): Promise<
 }
 
 /** How long an enrich claim is trusted before crawl-status.ts's read-side
- *  falls it back to 'open'/'error' — a crashed worker (no per-item try/catch
- *  around enrich-worker.ts's loop body) leaves the claim stuck otherwise.
+ *  falls it back to 'open'/'error' — a crashed process or a failed
+ *  claim-clearing write in enrich-worker.ts leaves the claim stuck otherwise.
  *  Kept in sync by hand with the hardcoded interval literal in
  *  crawl-status.ts's STATUS_CTE. */
 export const ENRICH_CLAIM_LEASE_MS = 15 * 60 * 1000

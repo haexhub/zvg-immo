@@ -206,6 +206,49 @@ describe('runEnrich structured persistence', () => {
       .toBeLessThan(vi.mocked(writeAuctionPhotoPipelineState).mock.invocationCallOrder[0]!)
   })
 
+  it('reports a per-item state-write failure and keeps working the remaining items', async () => {
+    const first = auction()
+    const second = { ...auction(), externalId: '43' }
+    vi.mocked(crawlAll).mockResolvedValue(crawlResult([first, second]))
+    vi.mocked(writeAuctionPhotoPipelineState).mockRejectedValueOnce(new Error('connection reset'))
+
+    const outcome = await runEnrich({ country: 'de' })
+
+    expect(outcome.result).toMatchObject({ archived: 2, failed: 1 })
+    expect(outcome.warning).toContain('connection reset')
+    expect(writeAuctionEnrichClaim).toHaveBeenCalledWith('test-platform', '42', null)
+    expect(writeAuctionEnrichClaim).toHaveBeenCalledWith('test-platform', '43', null)
+  })
+
+  it('keeps an aborted run pending until every sibling worker settled its in-flight item', async () => {
+    const first = auction()
+    const second = { ...auction(), externalId: '43' }
+    vi.mocked(crawlAll).mockResolvedValue(crawlResult([first, second]))
+    const controller = new AbortController()
+    let releaseFirst!: () => void
+    const firstBlocks = new Promise<void>((resolve) => { releaseFirst = resolve })
+    vi.mocked(readAuctionRecord).mockImplementation(async (_platform, externalId) => {
+      if (externalId === '42') {
+        await firstBlocks
+        return null
+      }
+      controller.abort(new Error('enrich wurde durch einen neueren Lauf beendet'))
+      throw new Error('aborted mid-item')
+    })
+
+    let settled = false
+    const run = runEnrich({ country: 'de' }, controller.signal).finally(() => { settled = true })
+    await vi.waitFor(() => expect(writeAuctionEnrichClaim).toHaveBeenCalledWith('test-platform', '43', null))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    // The task lock is released only when runEnrich settles; the sibling
+    // still working on #42 must not be left running past that point.
+    expect(settled).toBe(false)
+
+    releaseFirst()
+    await expect(run).rejects.toThrow('enrich wurde durch einen neueren Lauf beendet')
+    expect(writeAuctionEnrichClaim).toHaveBeenCalledWith('test-platform', '42', null)
+  })
+
   it('checks native photos on the first pass and writes details only once', async () => {
     const listing = { ...auction(), photoUrls: ['https://example.test/front.jpg'] }
     vi.mocked(crawlAll).mockResolvedValue(crawlResult([listing]))
