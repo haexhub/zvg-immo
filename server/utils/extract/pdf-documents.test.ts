@@ -76,6 +76,17 @@ describe('buildDocumentLlmParts', () => {
       { label: 'Teil 2', data: 'base64-b' },
     ])
   })
+
+  it('omits native PDFs that would push the request past the inline budget', async () => {
+    const big = 'A'.repeat(10_000_000)
+    const result = await buildDocumentLlmParts([
+      { source: 'a', label: 'Teil 1', data: big },
+      { source: 'b', label: 'Teil 2', data: big },
+      { source: 'c', label: 'Teil 3', data: 'base64-c' },
+    ], { native: true })
+
+    expect(result.pdfDocuments?.map((document) => document.label)).toEqual(['Teil 1', 'Teil 3'])
+  })
 })
 
 describe('buildDocumentSummaryInputs', () => {
