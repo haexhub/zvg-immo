@@ -105,9 +105,13 @@ def fake():
 
 
 async def session_run(base, fn, **env):
+    child_env = os.environ.copy()
+    child_env.pop("ZVG_ADMIN_PASSWORD_FILE", None)
+    child_env.pop("ZVG_MCP_READONLY", None)
+    child_env.update({"ZVG_BASE_URL": base, "ZVG_ADMIN_PASSWORD": PASSWORD, **env})
     params = StdioServerParameters(
         command=sys.executable, args=[SERVER],
-        env={**os.environ, "ZVG_BASE_URL": base, "ZVG_ADMIN_PASSWORD": PASSWORD, **env},
+        env=child_env,
     )
     async with stdio_client(params) as (r, w):
         async with ClientSession(r, w) as s:
@@ -169,10 +173,14 @@ def test_assignment_validation(fake):
     assert puts == [("PUT", "/api/settings/llm-assignments", {"assignments": {"extraction": ["p1"], "translation": ["p1"]}, "strategy": "round-robin"})]
 
 
-def test_run_trial_waits_for_the_new_trial_row(fake):
+def test_run_trial_waits_for_the_new_trial_row(fake, monkeypatch, tmp_path):
     async def go(s):
         return text(await s.call_tool("run_trial", {"platform": "kip", "external_id": "H1", "profile_id": "p1", "wait_seconds": 20}))
 
+    password_file = tmp_path / "wrong-password"
+    password_file.write_text("wrong", encoding="utf-8")
+    monkeypatch.setenv("ZVG_ADMIN_PASSWORD_FILE", str(password_file))
+    monkeypatch.setenv("ZVG_MCP_READONLY", "1")
     res = json.loads(anyio.run(lambda: session_run(fake, go)))
     assert res["status"] == "success" and res["llmModel"] == "claude-sonnet-5-5"
     posts = [c for c in Fake.calls if c[0] == "POST" and c[1].endswith("/reprocess")]

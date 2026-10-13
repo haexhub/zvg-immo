@@ -21,6 +21,7 @@ from __future__ import annotations
 import functools
 import json
 import os
+import threading
 import time
 import urllib.parse
 from pathlib import Path
@@ -34,6 +35,8 @@ BASE_URL = os.environ.get("ZVG_BASE_URL", "https://zvg.haex.cloud").rstrip("/")
 READONLY = os.environ.get("ZVG_MCP_READONLY") == "1"
 MAX_RESULT_CHARS = 24_000
 CHAIN_STRATEGIES = ("fallback", "round-robin")
+_TRIAL_LOCKS = {}
+_TRIAL_LOCKS_GUARD = threading.Lock()
 
 # Fields of GET .../versions/{n} that are worth diffing (see
 # server/api/settings/auction/[platform]/[id]/versions/[version].get.ts).
@@ -269,18 +272,25 @@ def compare_trial_to_live(platform: str, external_id: str, trial_model: str | No
 def run_trial(platform: str, external_id: str, profile_id: str, wait_seconds: int = 240) -> str:
     """Startet eine Probe-Extraktion mit einem LLM-Profil und wartet auf das Ergebnis. Schreibt nur eine Trial-Version, die Live-Version bleibt unveraendert. Verbraucht LLM-Kontingent."""
     base = auction_path(platform, external_id)
-    baseline = {r["id"] for r in admin.request("GET", base + "/technical").get("extractionHistory", [])}
-    admin.request("POST", base + "/reprocess", body={"profileId": profile_id})
-    deadline = time.time() + max(10, min(600, wait_seconds))
-    while time.time() < deadline:
-        time.sleep(5)
-        history = admin.request("GET", base + "/technical").get("extractionHistory", [])
-        new = [r for r in history if r.get("isTrial") and r["id"] not in baseline and r.get("status") != "pending"]
-        if new:
-            r = new[0]
-            keys = ("status", "version", "llmModel", "llmCostUsd", "llmInputTokens", "llmOutputTokens", "llmDurationMs", "errorMessage")
-            return out({k: r.get(k) for k in keys})
-    return "Noch kein Ergebnis nach der Wartezeit - der Lauf kann trotzdem noch fertig werden (get_auction_technical)."
+    # The API currently returns only {started: true}, so the new row cannot be
+    # correlated with a request ID. Serialize trials per auction until the API
+    # exposes one; keeping the locks process-local is sufficient because this
+    # stdio server owns the calls from its MCP client.
+    with _TRIAL_LOCKS_GUARD:
+        trial_lock = _TRIAL_LOCKS.setdefault(base, threading.Lock())
+    with trial_lock:
+        baseline = {r["id"] for r in admin.request("GET", base + "/technical").get("extractionHistory", [])}
+        admin.request("POST", base + "/reprocess", body={"profileId": profile_id})
+        deadline = time.time() + max(10, min(600, wait_seconds))
+        while time.time() < deadline:
+            time.sleep(5)
+            history = admin.request("GET", base + "/technical").get("extractionHistory", [])
+            new = [r for r in history if r.get("isTrial") and r["id"] not in baseline and r.get("status") != "pending"]
+            if new:
+                r = new[0]
+                keys = ("status", "version", "llmModel", "llmCostUsd", "llmInputTokens", "llmOutputTokens", "llmDurationMs", "errorMessage")
+                return out({k: r.get(k) for k in keys})
+        return "Noch kein Ergebnis nach der Wartezeit - der Lauf kann trotzdem noch fertig werden (get_auction_technical)."
 
 
 @tool(DESTRUCTIVE, write=True)
