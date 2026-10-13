@@ -68,8 +68,10 @@ export default defineEventHandler(async () => {
     }
   } catch (err) {
     // Same rationale as boe.get.ts: this endpoint's job is to surface
-    // problems, so a failed catalog query shouldn't itself 500 — that would
-    // hide behind a generic error instead of reporting what broke.
-    return { ...base, ok: false, checked: false, error: (err as Error).message }
+    // problems, so a failed catalog query shouldn't itself 500. The route is
+    // anonymous, though, and pg errors carry hosts, IPs and role names — the
+    // details go to the server log only.
+    console.error('[api/_health/db] catalog query failed:', err)
+    return { ...base, ok: false, checked: false, error: 'database query failed' }
   }
 })

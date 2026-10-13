@@ -269,10 +269,11 @@ describe('/api/auction/:platform/:id location enrichment overlay', () => {
     })
     const handler = await loadHandler()
     vi.mocked(readLatestObservedAuction).mockRejectedValue(new Error('connection lost'))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    await expect(handler({ context: { params: { platform: 'zvg-portal', id: '7265' } } })).rejects.toMatchObject({
-      statusCode: 503,
-    })
+    const failure = handler({ context: { params: { platform: 'zvg-portal', id: '7265' } } })
+    await expect(failure).rejects.toMatchObject({ statusCode: 503 })
+    await expect(failure).rejects.not.toMatchObject({ message: expect.stringContaining('connection lost') })
     expect(crawl).not.toHaveBeenCalled()
   })
 

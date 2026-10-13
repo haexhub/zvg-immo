@@ -21,6 +21,7 @@ import {
   recordInMemoryRateLimitHit,
 } from '../../../utils/in-memory-rate-limit'
 import { requestClientIp } from '../../../utils/request-client-ip'
+import { publicError } from '../../../utils/public-error'
 
 // Every live lookup costs upstream requests (a region crawl is one full list
 // fetch per region), and this route is anonymous: without these bounds a
@@ -140,10 +141,7 @@ export default defineEventHandler(async (event): Promise<AuctionDetail> => {
       // A failed observation lookup is a database problem, not a miss — must
       // not fall through to findLiveAuction, or a database hiccup would
       // trigger a live upstream crawl on every affected detail page.
-      throw createError({
-        statusCode: 503,
-        statusMessage: `Beobachtungsverlauf nicht erreichbar: ${(err as Error).message}`,
-      })
+      throw publicError('api/auction', 503, 'Beobachtungsverlauf nicht erreichbar', err)
     }
   }
   const hit = stored?.auction ?? observed ?? (await findLiveAuction(platform, id, requestClientIp(event)))

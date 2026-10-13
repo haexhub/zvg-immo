@@ -35,11 +35,9 @@ export default defineNitroPlugin((nitroApp) => {
     try {
       await migrations
     } catch (err) {
-      throw createError({
-        statusCode: 503,
-        statusMessage: 'Datenbank-Migration fehlgeschlagen',
-        data: { detail: (err as Error).message },
-      })
+      // The cause is logged above and recorded for /api/settings/operations;
+      // public routes must not echo migration/driver error text.
+      throw createError({ statusCode: 503, statusMessage: 'Datenbank-Migration fehlgeschlagen', cause: err })
     }
   })
 })

@@ -74,6 +74,20 @@ describe('/api/_health/db', () => {
     })
   })
 
+  it('reports a failed check without echoing the driver error to anonymous callers', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const query = vi.fn().mockRejectedValue(new Error('password authentication failed for user "postgres"'))
+    const { getPool } = await import('~/server/utils/db')
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+    const handler = (await import('./db.get')).default as unknown as () => Promise<unknown>
+
+    const result = await handler()
+
+    expect(result).toMatchObject({ ok: false, checked: false, error: 'database query failed' })
+    expect(JSON.stringify(result)).not.toContain('postgres')
+  })
+
   it('reports unchecked instead of throwing when the serving database is not configured', async () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     const { getPool } = await import('~/server/utils/db')

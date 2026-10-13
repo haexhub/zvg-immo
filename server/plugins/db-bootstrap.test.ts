@@ -54,6 +54,7 @@ describe('db bootstrap diagnostics', () => {
 
     await vi.waitFor(() => expect(mocks.recordMigrationStatus).toHaveBeenLastCalledWith('failed', migrationError))
     await expect(requestHandler({ path: '/api/regions' })).rejects.toMatchObject({ statusCode: 503 })
+    await expect(requestHandler({ path: '/api/regions' })).rejects.not.toHaveProperty('data')
     await expect(requestHandler({ path: '/api/settings/operations' })).resolves.toBeUndefined()
   })
 })
