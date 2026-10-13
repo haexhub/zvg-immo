@@ -313,6 +313,27 @@ describe('prepareArchivedLlmDocuments', () => {
   })
 })
 
+/** Minimal streamed Response whose `url` reflects where a redirect landed. */
+function fakeResponse(url: string, body: string): Response {
+  const bytes = new TextEncoder().encode(body)
+  let read = false
+  return {
+    ok: true,
+    url,
+    headers: new Headers(),
+    body: {
+      getReader: () => ({
+        read: async () => {
+          if (read) return { done: true, value: undefined }
+          read = true
+          return { done: false, value: bytes }
+        },
+        cancel: async () => undefined,
+      }),
+    },
+  } as unknown as Response
+}
+
 describe('prepareLiveLlmDocuments', () => {
   const identity = { platform: 'se-kronofogden', country: 'se', region: 'Schweden', externalId: '101746', caseNumber: null, authority: 'Kronofogden' }
 
@@ -348,26 +369,6 @@ describe('prepareLiveLlmDocuments', () => {
   })
 
   it('retries a dga-ag securedl attachment once with a fresh session after landing on the login page', async () => {
-    function fakeResponse(url: string, body: string): Response {
-      const bytes = new TextEncoder().encode(body)
-      let read = false
-      return {
-        ok: true,
-        url,
-        headers: new Headers(),
-        body: {
-          getReader: () => ({
-            read: async () => {
-              if (read) return { done: true, value: undefined }
-              read = true
-              return { done: false, value: bytes }
-            },
-            cancel: async () => undefined,
-          }),
-        },
-      } as unknown as Response
-    }
-
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(fakeResponse('https://www.dga-ag.de/login.html?redirect=1', '<html>Bitte einloggen</html>'))
@@ -386,6 +387,32 @@ describe('prepareLiveLlmDocuments', () => {
     expect(result.documentSetComplete).toBe(true)
     expect(result.errors).toBeUndefined()
 
+    vi.unstubAllGlobals()
+  })
+
+  it('drops a dga-ag securedl attachment when the forced re-login still lands on the login page', async () => {
+    // A failed re-login backs off and yields no cookie (session.ts), so the
+    // retry runs anonymously and gets the login page again with HTTP 200.
+    vi.mocked(getDgaAgSessionCookie).mockResolvedValue(null)
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(fakeResponse('https://www.dga-ag.de/login.html?redirect=1', '<html>Bitte einloggen</html>'))
+      .mockResolvedValueOnce(fakeResponse('https://www.dga-ag.de/login.html?redirect=1', '<html>Bitte einloggen</html>'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const dgaAgIdentity = { platform: 'dga-ag', country: 'de', region: 'Sachsen', externalId: 'S26-03-011', caseNumber: null, authority: 'DGA AG' }
+    const attachments: Attachment[] = [
+      att({ kind: 'appraisal', label: 'Objektunterlagen', filename: 'Unterlagen.pdf', proxyUrl: 'https://www.dga-ag.de/securedl/sec/abc/Unterlagen.pdf' }),
+    ]
+
+    const result = await prepareLiveLlmDocuments(attachments, dgaAgIdentity, '2026-08-20T08:27:35.000Z')
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(result.documentSetItems).toEqual([])
+    expect(result.documentSetComplete).toBe(false)
+    expect(result.errors).toEqual([expect.stringContaining('dga-ag login required')])
+
+    vi.mocked(getDgaAgSessionCookie).mockResolvedValue('fe_typo_user=session1')
     vi.unstubAllGlobals()
   })
 })

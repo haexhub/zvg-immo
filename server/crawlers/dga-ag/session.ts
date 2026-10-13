@@ -9,6 +9,10 @@ const FETCH_TIMEOUT_MS = 20_000
  *  /login.html instead of erroring; detail.ts detects that and forces a
  *  fresh login rather than relying on this TTL being exactly right. */
 const SESSION_MAX_AGE_MS = 20 * 60_000
+/** After a failed login, every caller runs anonymously for this long instead
+ *  of re-posting (likely wrong) credentials once per object — an enrich run
+ *  touches ~250 objects, which would look like brute forcing to the site. */
+const LOGIN_FAILURE_BACKOFF_MS = 10 * 60_000
 
 interface DgaAgCredentials {
   username: string
@@ -91,12 +95,14 @@ async function login(creds: DgaAgCredentials): Promise<string> {
 }
 
 let cached: { cookie: string; at: number } | null = null
-let inFlight: Promise<string> | null = null
+let failedAt: number | null = null
+let inFlight: Promise<string | null> | null = null
 
 /**
  * Cookie header for authenticated dga-ag.de requests, or null when no
- * credentials are configured (the crawler's existing public-only path).
- * Cached across calls within one process for SESSION_MAX_AGE_MS; pass
+ * credentials are configured or the login failed within the last
+ * LOGIN_FAILURE_BACKOFF_MS — callers then take the crawler's public-only
+ * path. Cached across calls within one process for SESSION_MAX_AGE_MS; pass
  * `forceRefresh` after detecting an expired session (a fetch redirected back
  * to /login.html) to get a new one instead of the stale cached cookie.
  */
@@ -104,13 +110,22 @@ export async function getDgaAgSessionCookie(opts: { forceRefresh?: boolean } = {
   const creds = getCredentials()
   if (!creds) return null
   if (inFlight) return inFlight
+  if (failedAt != null && Date.now() - failedAt < LOGIN_FAILURE_BACKOFF_MS) return null
   if (!opts.forceRefresh && cached && Date.now() - cached.at < SESSION_MAX_AGE_MS) {
     return cached.cookie
   }
   const promise = (async () => {
-    const cookie = await login(creds)
-    cached = { cookie, at: Date.now() }
-    return cookie
+    try {
+      const cookie = await login(creds)
+      cached = { cookie, at: Date.now() }
+      failedAt = null
+      return cookie
+    } catch (err) {
+      cached = null
+      failedAt = Date.now()
+      console.warn(`[dga-ag] login failed, using the public pages for ${LOGIN_FAILURE_BACKOFF_MS / 60_000} min:`, err)
+      return null
+    }
   })()
   inFlight = promise
   try {

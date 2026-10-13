@@ -117,7 +117,12 @@ async function fetchAttachmentBytes(att: Attachment): Promise<FetchedAttachment>
   if (!isDgaAgLoginRedirect(att.proxyUrl, firstResult.finalUrl)) return firstResult
   await getDgaAgSessionCookie({ forceRefresh: true })
   const retry = await resolveAttachmentSource(att.proxyUrl, accept)
-  return await fetchAttachmentBytesOnce(retry.url, retry.headers)
+  const retried = await fetchAttachmentBytesOnce(retry.url, retry.headers)
+  // A failed re-login backs off and yields no cookie instead of throwing
+  // (session.ts), so the anonymous retry can land on the login page again
+  // with HTTP 200 — never archive that page as the attachment.
+  if (isDgaAgLoginRedirect(att.proxyUrl, retried.finalUrl)) return { bytes: null, error: 'dga-ag login required' }
+  return retried
 }
 
 export async function prepareLiveLlmDocuments(

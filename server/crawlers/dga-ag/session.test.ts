@@ -26,6 +26,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 describe('getDgaAgSessionCookie', () => {
@@ -110,14 +111,20 @@ describe('getDgaAgSessionCookie', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
-  it('throws when the login response carries no fe_typo_user cookie (wrong credentials)', async () => {
+  it('falls back to anonymous and does not retry the login while backing off (wrong credentials)', async () => {
     vi.stubGlobal('useRuntimeConfig', () => ({ dgaAg: { username: 'user@test.de', password: 'wrong' } }))
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(withSetCookie(LOGIN_HTML, ['__Secure-typo3nonce_x=nonce123; path=/']))
       .mockResolvedValueOnce(withSetCookie(LOGIN_HTML, []))
     vi.stubGlobal('fetch', fetchMock)
 
-    await expect(getDgaAgSessionCookie()).rejects.toThrow(/session cookie/)
+    expect(await getDgaAgSessionCookie()).toBeNull()
+    expect(await getDgaAgSessionCookie()).toBeNull()
+    expect(await getDgaAgSessionCookie({ forceRefresh: true })).toBeNull()
+    // Only the first call's GET + POST — the later ones never re-send credentials.
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('login failed'), expect.any(Error))
   })
 })
