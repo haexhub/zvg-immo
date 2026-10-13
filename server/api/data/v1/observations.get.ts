@@ -14,6 +14,24 @@ import type { PaginatedResponse } from './auctions.get'
 
 const DEFAULT_PAGE_SIZE = 100
 const MAX_PAGE_SIZE = 500
+// Only ISO 8601 dates (optionally with time): V8's legacy Date.parse also
+// accepts inputs such as "1" or "March 7" that would mean something else, or
+// nothing, to Postgres.
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}(?:[T ][\d:.]+(?:Z|[+-]\d{2}:?\d{2})?)?$/
+
+// Parse once and bind the normalized ISO instant, so Postgres never re-parses
+// the raw query string with its own rules (and session time zone).
+function parseDateParam(raw: unknown, name: 'from' | 'to'): string | undefined {
+  if (typeof raw !== 'string') return undefined
+  const date = new Date(raw)
+  const day = raw.slice(0, 10)
+  // V8 rolls impossible days over (2026-02-30 -> 2026-03-02); reject them.
+  const isRealDay = () => new Date(`${day}T00:00:00Z`).toISOString().slice(0, 10) === day
+  if (!ISO_DATE.test(raw) || Number.isNaN(date.getTime()) || !isRealDay()) {
+    throw createError({ statusCode: 400, statusMessage: `Ungültiges "${name}"-Datum.` })
+  }
+  return date.toISOString()
+}
 
 export default defineEventHandler(async (event): Promise<PaginatedResponse<PublicObservation>> => {
   const db = getDb()
@@ -24,14 +42,8 @@ export default defineEventHandler(async (event): Promise<PaginatedResponse<Publi
   const query = getQuery(event)
   const country = typeof query.country === 'string' ? query.country.toLowerCase() : undefined
   const region = typeof query.region === 'string' ? query.region : undefined
-  const from = typeof query.from === 'string' ? query.from : undefined
-  const to = typeof query.to === 'string' ? query.to : undefined
-  if (from !== undefined && Number.isNaN(Date.parse(from))) {
-    throw createError({ statusCode: 400, statusMessage: 'Ungültiges "from"-Datum.' })
-  }
-  if (to !== undefined && Number.isNaN(Date.parse(to))) {
-    throw createError({ statusCode: 400, statusMessage: 'Ungültiges "to"-Datum.' })
-  }
+  const from = parseDateParam(query.from, 'from')
+  const to = parseDateParam(query.to, 'to')
   const { page, pageSize } = parsePagination(query, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
 
   const conditions = []

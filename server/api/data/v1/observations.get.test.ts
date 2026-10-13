@@ -33,6 +33,8 @@ describe('/api/data/v1/observations', () => {
     expect(selectStatement).toContain('external_id')
     expect(selectStatement).not.toContain('SELECT *')
     expect(selectStatement).not.toContain('payload')
+    // Bound as the normalized instant, not the raw query string.
+    expect(selectStatement).toContain('2026-08-01T00:00:00.000Z')
   })
 
   it('keeps existing 503 and invalid-date 400 status codes', async () => {
@@ -47,5 +49,12 @@ describe('/api/data/v1/observations', () => {
     vi.mocked(getDb).mockReturnValue({ execute: vi.fn() } as never)
     vi.stubGlobal('getQuery', () => ({ from: 'not-a-date' }))
     await expect(handler({})).rejects.toMatchObject({ statusCode: 400, statusMessage: 'Ungültiges "from"-Datum.' })
+    // Date.parse accepts these, Postgres does not: must be a 400, not a 500.
+    vi.stubGlobal('getQuery', () => ({ to: '1' }))
+    await expect(handler({})).rejects.toMatchObject({ statusCode: 400, statusMessage: 'Ungültiges "to"-Datum.' })
+    vi.stubGlobal('getQuery', () => ({ from: 'March 7' }))
+    await expect(handler({})).rejects.toMatchObject({ statusCode: 400 })
+    vi.stubGlobal('getQuery', () => ({ from: '2026-02-30' }))
+    await expect(handler({})).rejects.toMatchObject({ statusCode: 400 })
   })
 })
