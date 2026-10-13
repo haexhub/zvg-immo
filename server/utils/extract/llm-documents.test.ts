@@ -179,6 +179,10 @@ describe('htmlToText', () => {
       htmlToText('<html><style>.x{}</style><script>alert(1)</script><body><h1>Wohnhaus</h1><p>140&nbsp;m&sup2; &amp; Garage</p></body></html>'),
     ).toContain('Wohnhaus\n140 m&sup2; & Garage')
   })
+
+  it('replaces out-of-range numeric entities instead of throwing', () => {
+    expect(htmlToText('<p>a&#99999999;b&#x7FFFFFFF;c&#228;</p>')).toBe('a\uFFFDb\uFFFDcä')
+  })
 })
 
 describe('prepareArchivedLlmDocuments', () => {

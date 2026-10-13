@@ -130,14 +130,14 @@ function decodeHtmlEntities(text: string): string {
     .replace(/&gt;/gi, '>')
     .replace(/&quot;/gi, '"')
     .replace(/&apos;/gi, "'")
-    .replace(/&#(\d+);/g, (_m, n) => {
-      const code = Number(n)
-      return Number.isFinite(code) ? String.fromCodePoint(code) : ''
-    })
-    .replace(/&#x([0-9a-f]+);/gi, (_m, n) => {
-      const code = Number.parseInt(n, 16)
-      return Number.isFinite(code) ? String.fromCodePoint(code) : ''
-    })
+    .replace(/&#(\d+);/g, (_m, n) => codePointText(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_m, n) => codePointText(Number.parseInt(n, 16)))
+}
+
+// Crawled HTML can carry a broken reference like `&#99999999;`; fromCodePoint
+// throws a RangeError above U+10FFFF, which would fail the whole document set.
+function codePointText(code: number): string {
+  return Number.isInteger(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : '\uFFFD'
 }
 
 export function htmlToText(html: string): string {
