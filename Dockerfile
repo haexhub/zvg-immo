@@ -37,7 +37,11 @@ COPY --from=builder /app/server/db/migrations ./server/db/migrations
 # Cache directory — mount as a named volume in compose to persist across
 # restarts. process.cwd() is /app at runtime, matching the paths in
 # server/utils/geocode.ts and server/api/zvg-thumb.get.ts.
-RUN mkdir -p /app/.cache_zvg/geocode /app/.cache_zvg/thumbs \
+# .raw_outbox (NUXT_RAW_OUTBOX_DIR, see server/utils/raw-archive.ts) must exist
+# here too: a fresh named volume only inherits node ownership when its mount
+# point exists in the image, otherwise its root is root:root and every archive
+# write fails with EACCES.
+RUN mkdir -p /app/.cache_zvg/geocode /app/.cache_zvg/thumbs /app/.raw_outbox \
     && chown -R node:node /app
 
 USER node
