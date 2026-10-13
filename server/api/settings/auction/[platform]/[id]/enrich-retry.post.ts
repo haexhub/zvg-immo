@@ -11,6 +11,7 @@
 
 import { isSafePathSegment } from '~/server/utils/path-segment'
 import { readAuctionRecord } from '~/server/utils/auction-record'
+import { runEnrichTask } from '~/server/tasks/enrich'
 
 export default defineEventHandler(async (event) => {
   const platform = String(getRouterParam(event, 'platform') ?? '')
@@ -24,8 +25,10 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, statusMessage: 'auction not found' })
   }
 
-  void runTask('enrich', {
-    payload: { country: record.auction.country, identities: [{ platform, externalId: id }], trigger: 'manual' },
+  void runEnrichTask({
+    country: record.auction.country,
+    identities: [{ platform, externalId: id }],
+    trigger: 'manual',
   }).catch((err: unknown) => {
     console.error('[settings/auction/enrich-retry] trigger failed:', (err as Error).message)
   })

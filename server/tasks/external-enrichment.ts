@@ -10,7 +10,7 @@ import {
   type LocationEnrichmentCache,
 } from '~/server/utils/external-data/location-enrichment'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
-import { runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-task'
+import { isTaskActive, runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-task'
 import { recordTaskRunEnd, recordTaskRunProgress, recordTaskRunStart, type TaskRunSummary } from '~/server/utils/task-runs'
 import { inScope, orderByStaleness } from './external-enrichment-scope'
 import {
@@ -71,6 +71,8 @@ export interface ExternalEnrichmentOptions {
   osmOnly?: boolean
   /** Skip auctions that already have an OpenStreetMap location context. */
   onlyMissingLocationContext?: boolean
+  /** 'manual' for /settings triggers; anything else yields to an active run. */
+  trigger?: 'cron' | 'manual'
 }
 
 export interface ExternalEnrichmentSummary {
@@ -88,32 +90,47 @@ export interface ExternalEnrichmentSummary {
   durationMs: number
 }
 
+/**
+ * Manual triggers call this directly instead of Nitro's `runTask`, which
+ * returns an already-running task for a duplicate name and silently drops the
+ * new payload. A newer manual run supersedes the active one; the 15-minute
+ * cron batch skips while one is active.
+ */
+export async function runExternalEnrichmentTask(
+  options: ExternalEnrichmentOptions = {},
+): Promise<{ result: ExternalEnrichmentSummary } | Record<string, never>> {
+  if (options.trigger !== 'manual' && isTaskActive('external-enrichment')) {
+    console.log('[external-enrichment] a run is already active — skipping scheduled run')
+    return {}
+  }
+  return await runExclusiveTask('external-enrichment', async (signal) => {
+    // Recorded because /settings triggers this detached: without a persisted
+    // status a provider failure would vanish with the promise.
+    await recordTaskRunStart('external-enrichment')
+    try {
+      const result = await runExternalEnrichment(options, signal)
+      const { errors, ...summary } = result
+      await recordTaskRunEnd('external-enrichment', {
+        result: summary,
+        warning: errors.length > 0
+          ? `${errors.length} Fehler: ${errors.slice(0, 20).join('; ')}`
+          : null,
+      })
+      return { result }
+    } catch (err) {
+      await recordTaskRunEnd('external-enrichment', { error: (err as Error).message })
+      throw err
+    }
+  })
+}
+
 export default defineTask({
   meta: {
     name: 'external-enrichment',
     description: 'Refresh cached external market and natural-hazard overlays for auction detail pages.',
   },
   async run(event) {
-    const options = (event?.payload ?? {}) as ExternalEnrichmentOptions
-    return await runExclusiveTask('external-enrichment', async (signal) => {
-      // Recorded because /settings triggers this detached: without a persisted
-      // status a provider failure would vanish with the promise.
-      await recordTaskRunStart('external-enrichment')
-      try {
-        const result = await runExternalEnrichment(options, signal)
-        const { errors, ...summary } = result
-        await recordTaskRunEnd('external-enrichment', {
-          result: summary,
-          warning: errors.length > 0
-            ? `${errors.length} Fehler: ${errors.slice(0, 20).join('; ')}`
-            : null,
-        })
-        return { result }
-      } catch (err) {
-        await recordTaskRunEnd('external-enrichment', { error: (err as Error).message })
-        throw err
-      }
-    })
+    return await runExternalEnrichmentTask((event?.payload ?? {}) as ExternalEnrichmentOptions)
   },
 })
 

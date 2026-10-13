@@ -1,4 +1,4 @@
-import type { ExternalEnrichmentOptions } from '~/server/tasks/external-enrichment'
+import { runExternalEnrichmentTask } from '~/server/tasks/external-enrichment'
 
 const MAX_LIMIT = 1000
 
@@ -16,9 +16,7 @@ export default defineEventHandler(async (event): Promise<{ started: true }> => {
   const country = optionalToken(body.country, 'country')
   const platform = optionalToken(body.platform, 'platform')
   const externalId = optionalToken(body.externalId, 'externalId')
-  void runTask('external-enrichment', {
-    payload: { limit, country, platform, externalId } satisfies ExternalEnrichmentOptions,
-  }).catch((err: unknown) => {
+  void runExternalEnrichmentTask({ limit, country, platform, externalId, trigger: 'manual' }).catch((err: unknown) => {
     console.error('[settings/external-data/enrichment] trigger failed:', (err as Error).message)
   })
   return { started: true }

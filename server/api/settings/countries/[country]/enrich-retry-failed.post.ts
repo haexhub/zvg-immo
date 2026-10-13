@@ -5,6 +5,7 @@
 // reprocess-retry-failed.post.ts, just for the crawl/archive side.
 
 import { readCrawlStatusIdentities } from '~/server/utils/crawl-status'
+import { runEnrichTask } from '~/server/tasks/enrich'
 import { ensureEnabledCountriesLoaded, isCountryEnabled, listRegisteredCountries } from '~/server/crawlers/registry'
 
 export default defineEventHandler(async (event) => {
@@ -21,7 +22,7 @@ export default defineEventHandler(async (event) => {
   const identities = await readCrawlStatusIdentities(country, 'error')
   if (identities.length === 0) return { started: false }
 
-  void runTask('enrich', { payload: { country, identities, trigger: 'manual' } }).catch((err: unknown) => {
+  void runEnrichTask({ country, identities, trigger: 'manual' }).catch((err: unknown) => {
     console.error('[settings/enrich-retry-failed] trigger failed:', (err as Error).message)
   })
   return { started: true }

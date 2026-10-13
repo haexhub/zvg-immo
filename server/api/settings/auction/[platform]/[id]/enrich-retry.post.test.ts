@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('~/server/utils/auction-record', () => ({ readAuctionRecord: vi.fn() }))
+vi.mock('~/server/tasks/enrich', () => ({ runEnrichTask: vi.fn() }))
 
 function auction(overrides: Record<string, unknown> = {}) {
   return {
@@ -48,13 +49,17 @@ describe('/api/settings/auction/[platform]/[id]/enrich-retry', () => {
     vi.stubGlobal('getRouterParam', (_e: unknown, name: string) => (name === 'platform' ? 'zvg-portal' : '7265'))
     const { readAuctionRecord } = await import('~/server/utils/auction-record')
     vi.mocked(readAuctionRecord).mockResolvedValue({ auction: auction(), detailsId: 1, detailsVersion: 1, artifactVersionId: null })
-    const runTask = vi.fn().mockResolvedValue({ result: {} })
-    vi.stubGlobal('runTask', runTask)
+    const { runEnrichTask } = await import('~/server/tasks/enrich')
+    vi.mocked(runEnrichTask).mockResolvedValue({})
     const handler = await loadHandler()
 
     await expect(handler(event('zvg-portal', '7265'))).resolves.toEqual({ started: true })
-    expect(runTask).toHaveBeenCalledWith('enrich', {
-      payload: { country: 'de', identities: [{ platform: 'zvg-portal', externalId: '7265' }], trigger: 'manual' },
+    // Direct entry point, not Nitro's runTask: that would drop this payload
+    // whenever the scheduled enrich is already running.
+    expect(runEnrichTask).toHaveBeenCalledWith({
+      country: 'de',
+      identities: [{ platform: 'zvg-portal', externalId: '7265' }],
+      trigger: 'manual',
     })
   })
 
@@ -62,7 +67,8 @@ describe('/api/settings/auction/[platform]/[id]/enrich-retry', () => {
     vi.stubGlobal('getRouterParam', (_e: unknown, name: string) => (name === 'platform' ? 'zvg-portal' : '7265'))
     const { readAuctionRecord } = await import('~/server/utils/auction-record')
     vi.mocked(readAuctionRecord).mockResolvedValue({ auction: auction(), detailsId: 1, detailsVersion: 1, artifactVersionId: null })
-    vi.stubGlobal('runTask', vi.fn().mockRejectedValue(new Error('boom')))
+    const { runEnrichTask } = await import('~/server/tasks/enrich')
+    vi.mocked(runEnrichTask).mockRejectedValue(new Error('boom'))
     const handler = await loadHandler()
 
     await expect(handler(event('zvg-portal', '7265'))).resolves.toEqual({ started: true })

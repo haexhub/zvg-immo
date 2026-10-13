@@ -11,6 +11,7 @@ Rules:
 ## Settings-Seite (Admin-UI)
 
 `pages/settings.vue` rendert die Cards aus `components/settings/*.vue` in drei Sektionen (Crawling & Anreicherung / KI-LLM / Verwaltung). "detached" = POST antwortet sofort mit `{started:true}`, der eigentliche Task läuft im Hintergrund weiter (Reverse-Proxy-Timeout umgehen); Fortschritt kommt über GET-Status bzw. `useSettingsTaskOverview`/`usePollWhileActive`.
+Manuelle Reprocess-/Enrich-/External-Enrichment-Trigger rufen `runReprocessTask`/`runEnrichTask`/`runExternalEnrichmentTask` direkt auf, nie Nitros `runTask` (das verwirft bei laufendem Task die Payload). Unter manuellen Reprocess-/External-Läufen gilt latest-run-wins; manuelle Enrich-Läufe reihen sich hinter den aktiven ein (ein Abbruch kostete Crawl und Finalize-Persistenz). Ein Cron-/Boot-Lauf überspringt, solange ein Lauf aktiv ist.
 
 | Card | Routen | Modus |
 |---|---|---|

@@ -17,6 +17,7 @@ import { extractDocumentPhotos } from '../utils/extract/document-images'
 import { archiveAuction } from '../utils/raw-archive'
 import { recordObservations } from '../utils/history'
 import { recordCrawlScope } from '../utils/crawl-state'
+import { recordTaskRunStart } from '../utils/task-runs'
 
 vi.mock('../crawlers/registry', () => ({
   crawlAll: vi.fn(),
@@ -69,9 +70,10 @@ vi.mock('../utils/task-runs', () => ({
   recordTaskRunProgress: vi.fn(),
 }))
 vi.mock('../utils/task-run-errors', () => ({ recordTaskRunError: vi.fn() }))
+vi.mock('../utils/automatic-task-gate', () => ({ isAutomaticCrawlingEnabled: vi.fn(async () => true) }))
 vi.stubGlobal('defineTask', (definition: unknown) => definition)
 
-const { runEnrich } = await import('./enrich')
+const { runEnrich, runEnrichTask } = await import('./enrich')
 
 function auction(): Auction {
   return {
@@ -475,5 +477,52 @@ describe('runEnrich scoped identity retry', () => {
 
     expect(crawlAll).not.toHaveBeenCalled()
     expect(outcome.result).toMatchObject({ crawled: 0, archived: 0 })
+  })
+})
+
+describe('runEnrichTask', () => {
+  function blockCrawl(listing: Auction) {
+    let release!: () => void
+    const blocked = new Promise<void>((resolve) => { release = resolve })
+    vi.mocked(crawlAll).mockImplementation(async () => {
+      await blocked
+      return crawlResult([listing])
+    })
+    return release
+  }
+
+  it('queues a scoped retry behind an active full run instead of aborting it', async () => {
+    const listing = auction()
+    const releaseCrawl = blockCrawl(listing)
+    vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map([
+      ['test-platform:42', { auction: listing, detailsId: 1, detailsVersion: 1, artifactVersionId: 5 }],
+    ]))
+
+    const full = runEnrichTask({ country: 'de', trigger: 'manual' })
+    await vi.waitFor(() => expect(crawlAll).toHaveBeenCalledTimes(1))
+    const retry = runEnrichTask({ identities: [{ platform: 'test-platform', externalId: '42' }], trigger: 'manual' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(recordTaskRunStart).toHaveBeenCalledTimes(1)
+
+    releaseCrawl()
+    await expect(full).resolves.toMatchObject({ result: expect.objectContaining({ crawled: 1 }) })
+    // The full run reached its finalize phase instead of being superseded.
+    expect(recordObservations).toHaveBeenCalledTimes(1)
+    await expect(retry).resolves.toMatchObject({ result: expect.objectContaining({ crawled: 1, archived: 1 }) })
+    expect(recordTaskRunStart).toHaveBeenCalledTimes(2)
+  })
+
+  it('skips a scheduled run while a manual run is active', async () => {
+    const releaseCrawl = blockCrawl(auction())
+
+    const manual = runEnrichTask({ country: 'de', trigger: 'manual' })
+    await vi.waitFor(() => expect(crawlAll).toHaveBeenCalledTimes(1))
+    // The cron payload carries no trigger.
+    const scheduled = runEnrichTask({})
+
+    releaseCrawl()
+    await expect(scheduled).resolves.toStrictEqual({})
+    await expect(manual).resolves.toMatchObject({ result: expect.objectContaining({ crawled: 1 }) })
+    expect(crawlAll).toHaveBeenCalledTimes(1)
   })
 })

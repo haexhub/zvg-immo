@@ -646,6 +646,7 @@ describe('runExternalEnrichment', () => {
       landValueAdapters: [],
       hazardAdapters: [],
       locationContextAdapters: [contextAdapter],
+      trigger: 'manual',
     }
     const first = task.run({ payload })
     await vi.waitFor(() => expect(contextAdapter.context).toHaveBeenCalledTimes(1))
@@ -657,6 +658,48 @@ describe('runExternalEnrichment', () => {
     await expect(first).rejects.toThrow('external-enrichment wurde durch einen neueren Lauf beendet')
     await expect(second).resolves.toMatchObject({ result: expect.objectContaining({ processed: 1 }) })
     expect(contextAdapter.context).toHaveBeenCalledTimes(2)
+  })
+
+  it('skips a scheduled run while a manual run is active instead of superseding it', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(
+      auction({ platform: 'se-kronofogden', country: 'se', externalId: '1' }),
+    ))
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+
+    let releaseFirst!: () => void
+    const firstRunBlocks = new Promise<void>((resolve) => { releaseFirst = resolve })
+    const contextAdapter = {
+      id: 'osm-fixture',
+      sourceVersion: 'v1',
+      supports: vi.fn(() => true),
+      context: vi.fn(async () => {
+        if (contextAdapter.context.mock.calls.length === 1) await firstRunBlocks
+        return locationContext
+      }),
+    }
+
+    const task = (await import('./external-enrichment')).default as {
+      run(event?: { payload?: Record<string, unknown> }): Promise<{ result: unknown }>
+    }
+    const payload = {
+      country: 'se',
+      marketAdapters: [],
+      landValueAdapters: [],
+      hazardAdapters: [],
+      locationContextAdapters: [contextAdapter],
+    }
+    const first = task.run({ payload: { ...payload, trigger: 'manual' } })
+    await vi.waitFor(() => expect(contextAdapter.context).toHaveBeenCalledTimes(1))
+    // The cron payload carries no trigger.
+    await expect(task.run({ payload: { scheduledTime: Date.now() } })).resolves.toStrictEqual({})
+
+    releaseFirst()
+    await expect(first).resolves.toMatchObject({ result: expect.objectContaining({ processed: 1 }) })
+    expect(contextAdapter.context).toHaveBeenCalledTimes(1)
   })
 
   it('persists each auction as it finishes, so an abort mid-run keeps already-processed results', async () => {
