@@ -230,7 +230,14 @@ export class GeminiNativeProvider implements ExtractionProvider {
     }
     opts?.onUsage?.(parseGeminiUsage(resp))
     const parsed = parseGeminiExtractionResponse(resp)
-    if (!parsed) throw new LlmProviderError('gemini-native', 'ungültige oder leere Provider-Antwort')
-    return parsed
+    if (parsed) return parsed
+    // See OpenAiCompatibleProvider: an unparseable response is a per-auction
+    // failure for extractByLlm's callers, not an unavailable model.
+    if (opts?.onRequestError) {
+      const finishReason = (resp as { candidates?: { finishReason?: unknown }[] })?.candidates?.[0]?.finishReason
+      console.warn(`[extract/llm] unparseable response (finishReason=${String(finishReason)})`)
+      return null
+    }
+    throw new LlmProviderError('gemini-native', 'ungültige oder leere Provider-Antwort')
   }
 }

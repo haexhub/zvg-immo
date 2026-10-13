@@ -97,6 +97,14 @@ describe('ClaudeProxyProvider.extract', () => {
     expect(rateLimitedOnRequestError).not.toHaveBeenCalled()
   })
 
+  it('resolves a truncated response to null when reprocess supplies onRequestError', async () => {
+    const truncated = { content: [{ type: 'tool_use', input: null }], stop_reason: 'max_tokens' }
+    vi.stubGlobal('$fetch', vi.fn().mockResolvedValue(truncated))
+    const provider = new ClaudeProxyProvider(config)
+    await expect(provider.extract(req, { onRequestError: vi.fn() })).resolves.toBeNull()
+    await expect(provider.extract(req)).rejects.toThrow('ungültige oder leere Provider-Antwort')
+  })
+
   it('calls onUsage with the token counts once a response is received', async () => {
     const okResponse = {
       content: [{ type: 'tool_use', name: 'final_result', input: { propertyType: 'haus' } }],

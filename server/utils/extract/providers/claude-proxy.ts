@@ -123,7 +123,15 @@ export class ClaudeProxyProvider implements ExtractionProvider {
     }
     opts?.onUsage?.(parseClaudeUsage(resp))
     const parsed = parseExtractionResponse(resp)
-    if (!parsed) throw new LlmProviderError('claude-proxy', 'ungültige oder leere Provider-Antwort')
-    return parsed
+    if (parsed) return parsed
+    // Unlike a request failure above, an unparseable response (e.g. JSON cut
+    // off at max_tokens) is about this input, not a proxy outage: reprocess
+    // counts it as a per-auction failure instead of stopping the whole run.
+    if (opts?.onRequestError) {
+      const stopReason = (resp as { stop_reason?: unknown })?.stop_reason
+      console.warn(`[extract/llm] unparseable response (stop_reason=${String(stopReason)})`)
+      return null
+    }
+    throw new LlmProviderError('claude-proxy', 'ungültige oder leere Provider-Antwort')
   }
 }

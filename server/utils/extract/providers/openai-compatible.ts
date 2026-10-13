@@ -188,7 +188,17 @@ export class OpenAiCompatibleProvider implements ExtractionProvider {
     }
     opts?.onUsage?.(parseOpenAiUsage(resp))
     const parsed = parseOpenAiExtractionResponse(resp)
-    if (!parsed) throw new LlmProviderError(this.providerLabel, 'ungültige oder leere Provider-Antwort')
-    return parsed
+    if (parsed) return parsed
+    // A response did come back, so this is about this input (e.g. JSON cut
+    // off at max_tokens), not an unavailable model: extractByLlm's callers
+    // count it as a per-auction failure instead of stopping the whole run.
+    // Callers without onRequestError (translations) still get a rejection,
+    // which lets their config chain try the next model.
+    if (opts?.onRequestError) {
+      const finishReason = (resp as { choices?: { finish_reason?: unknown }[] })?.choices?.[0]?.finish_reason
+      console.warn(`[extract/llm] unparseable response (finish_reason=${String(finishReason)})`)
+      return null
+    }
+    throw new LlmProviderError(this.providerLabel, 'ungültige oder leere Provider-Antwort')
   }
 }

@@ -149,9 +149,11 @@ export interface LlmUsage {
 /** Narrow seam between prompt/schema building (provider-agnostic) and the
  *  wire format a specific backend expects. Swapping or adding a provider
  *  means writing a new implementation of this interface, not touching
- *  buildParts/clampExtraction. Implementations resolve to null for a request
- *  failure or unparseable response, but must throw (not swallow to null) when
- *  the failure is a rate limit/quota error — see isRateLimitError(). `opts.
+ *  buildParts/clampExtraction. When the caller passes `opts.onRequestError`,
+ *  implementations resolve to null for an empty/unparseable response (and,
+ *  except claude-proxy, for a request failure); without it they throw
+ *  LlmProviderError. They must always throw (not swallow to null) when the
+ *  failure is a rate limit/quota error — see isRateLimitError(). `opts.
  *  onRequestError` fires only for an actual request failure (network/HTTP
  *  error), never for an empty/unparseable response — reprocess.ts uses it to
  *  tell "the provider errored" apart from "the provider returned nothing",
