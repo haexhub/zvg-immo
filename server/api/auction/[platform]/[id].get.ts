@@ -4,6 +4,7 @@
 import type { Auction, LocationEnrichment } from '~/types/auction'
 import { geocodeAddress } from '../../../utils/geocode'
 import { isSafePathSegment } from '../../../utils/path-segment'
+import { publicError } from '../../../utils/public-error'
 import { cacheKey } from '../../../utils/verkehrswert-cache'
 import { applyDescriptionMarketValue } from '../../../utils/description-market-value'
 import { deriveMarketValueEur, getRates } from '../../../utils/exchange-rate'
@@ -141,7 +142,7 @@ export default defineEventHandler(async (event): Promise<AuctionDetail> => {
       // A failed observation lookup is a database problem, not a miss — must
       // not fall through to findLiveAuction, or a database hiccup would
       // trigger a live upstream crawl on every affected detail page.
-      throw publicError('api/auction', 503, 'Beobachtungsverlauf nicht erreichbar', err)
+      throw publicError('GET /api/auction', 503, 'Beobachtungsverlauf nicht erreichbar.', err)
     }
   }
   const hit = stored?.auction ?? observed ?? (await findLiveAuction(platform, id, requestClientIp(event)))

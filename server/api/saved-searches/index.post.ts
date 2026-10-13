@@ -4,6 +4,7 @@
 // nested objects and non-string values never reach the jsonb column.
 
 import { getServiceClient } from '../../utils/supabase'
+import { publicError } from '../../utils/public-error'
 import type { SavedSearch } from './index.get'
 import {
   hasExplicitHideRulesOnly,
@@ -55,7 +56,7 @@ export default defineEventHandler(async (event): Promise<SavedSearch> => {
     .select('id, name, filters, created_at')
     .single()
   if (error || !data) {
-    throw createError({ statusCode: 500, statusMessage: error?.message ?? 'Speichern fehlgeschlagen.' })
+    throw publicError('POST /api/saved-searches', 500, 'Speichern fehlgeschlagen.', error)
   }
   return {
     id: data.id as string,

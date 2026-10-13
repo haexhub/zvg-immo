@@ -14,3 +14,9 @@ export const SAFE_SEGMENT_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i
 export function isSafePathSegment(s: string): boolean {
   return SAFE_SEGMENT_RE.test(s)
 }
+
+/** Row ids in path params: checked up front so a malformed value is a 400
+ * instead of a Postgres `invalid input syntax for type uuid` 500. */
+export function isUuidSegment(s: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)
+}

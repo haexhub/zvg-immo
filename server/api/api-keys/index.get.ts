@@ -5,6 +5,7 @@
 // to recognize/manage a key.
 
 import { getServiceClient } from '../../utils/supabase'
+import { publicError } from '../../utils/public-error'
 
 export interface ApiKeySummary {
   id: string
@@ -26,7 +27,7 @@ export default defineEventHandler(async (event): Promise<ApiKeySummary[]> => {
     .eq('user_id', event.context.user!.id)
     .order('created_at', { ascending: false })
   if (error) {
-    throw createError({ statusCode: 500, statusMessage: error.message })
+    throw publicError('GET /api/api-keys', 500, 'API-Keys konnten nicht geladen werden.', error)
   }
   return (data ?? []).map((row) => ({
     id: row.id as string,

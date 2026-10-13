@@ -12,6 +12,8 @@
 
 import { getServiceClient } from '../../utils/supabase'
 import { readAuctionRecord } from '../../utils/auction-record'
+import { publicError } from '../../utils/public-error'
+import { isUuidSegment } from '../../utils/path-segment'
 import {
   canonicalAppOrigin,
   createLawyerInquiryWithDelivery,
@@ -41,7 +43,7 @@ function inquiryError(err: unknown): never {
   if (err instanceof LawyerInquiryIdempotencyConflictError) {
     throw createError({ statusCode: 422, statusMessage: err.message })
   }
-  throw createError({ statusCode: 500, statusMessage: `Anfrage konnte nicht gespeichert werden: ${(err as Error).message}` })
+  throw publicError('POST /api/lawyer-inquiries', 500, 'Anfrage konnte nicht gespeichert werden.', err)
 }
 
 export default defineEventHandler(async (event): Promise<LawyerInquiry> => {
@@ -84,13 +86,18 @@ export default defineEventHandler(async (event): Promise<LawyerInquiry> => {
     throw createError({ statusCode: 503, statusMessage: 'Supabase ist nicht konfiguriert.' })
   }
 
+  // Lawyer ids are uuids; anything else would only surface as a Postgres
+  // type error, so it is simply an unknown lawyer.
+  if (!isUuidSegment(lawyerId)) {
+    throw createError({ statusCode: 404, statusMessage: 'Anwalt nicht gefunden oder nicht aktiv.' })
+  }
   const { data: lawyer, error: lawyerError } = await supabase
     .from('lawyers')
     .select('id, email, name, active, countries, commission_cents')
     .eq('id', lawyerId)
     .maybeSingle()
   if (lawyerError) {
-    throw createError({ statusCode: 500, statusMessage: lawyerError.message })
+    throw publicError('POST /api/lawyer-inquiries', 500, 'Anwalt konnte nicht geladen werden.', lawyerError)
   }
   if (!lawyer || !lawyer.active) {
     throw createError({ statusCode: 404, statusMessage: 'Anwalt nicht gefunden oder nicht aktiv.' })

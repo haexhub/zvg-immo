@@ -3,6 +3,7 @@
 // server/middleware/supabase-auth.ts has already verified event.context.user.
 
 import { getServiceClient } from '../../utils/supabase'
+import { publicError } from '../../utils/public-error'
 import type { LawyerInquiry } from './index.post'
 
 export default defineEventHandler(async (event): Promise<LawyerInquiry[]> => {
@@ -16,7 +17,7 @@ export default defineEventHandler(async (event): Promise<LawyerInquiry[]> => {
     .eq('user_id', event.context.user!.id)
     .order('created_at', { ascending: false })
   if (error) {
-    throw createError({ statusCode: 500, statusMessage: error.message })
+    throw publicError('GET /api/lawyer-inquiries', 500, 'Anfragen konnten nicht geladen werden.', error)
   }
   return (data ?? []).map((row) => ({
     id: row.id as string,
