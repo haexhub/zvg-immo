@@ -47,7 +47,10 @@ export interface CountryRebuildResult {
   errors: Array<{ region: string; message: string }>
 }
 
-let runningCountry: string | null = null
+// One slot per country: a single shared slot let a rebuild of another country
+// overwrite (or its end clear) the guard, so a second rebuild of a country
+// still crawling could delete the rows the first run was writing.
+const runningCountries = new Set<string>()
 
 export async function deleteCountryCurrentData<TSchema extends Record<string, unknown>>(
   db: NodePgDatabase<TSchema>,
@@ -114,7 +117,7 @@ export async function rebuildCountry(countryInput: string): Promise<CountryRebui
   if (!isCountryEnabled(country)) {
     throw createError({ statusCode: 400, statusMessage: `${registered.name} ist deaktiviert.` })
   }
-  if (runningCountry === country) {
+  if (runningCountries.has(country)) {
     throw createError({ statusCode: 409, statusMessage: `${registered.name} wird bereits neu gecrawlt.` })
   }
 
@@ -123,7 +126,7 @@ export async function rebuildCountry(countryInput: string): Promise<CountryRebui
     throw createError({ statusCode: 503, statusMessage: 'Postgres ist nicht konfiguriert.' })
   }
 
-  runningCountry = country
+  runningCountries.add(country)
   const startedAt = Date.now()
   const capturedAt = new Date(startedAt).toISOString()
   try {
@@ -168,6 +171,6 @@ export async function rebuildCountry(countryInput: string): Promise<CountryRebui
       errors,
     }
   } finally {
-    runningCountry = null
+    runningCountries.delete(country)
   }
 }
