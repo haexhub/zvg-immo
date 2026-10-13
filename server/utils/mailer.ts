@@ -1,9 +1,10 @@
 // Thin nodemailer wrapper around runtimeConfig.smtpUrl — the app-level
-// mailer for alert emails (server/utils/alert-matching.ts). Distinct from
-// GoTrue's own separate SMTP config (docker-compose.yml's `auth` service),
-// which only handles GoTrue's own transactional mail. Empty smtpUrl (local
-// dev without SMTP) degrades sendMail() to a no-op with a log line instead
-// of throwing — same graceful-degrade pattern as extractLlm.baseUrl.
+// mailer used by the outbound_deliveries worker (server/utils/outbound-delivery.ts)
+// for alert and lawyer-inquiry mail. Distinct from GoTrue's own separate SMTP
+// config (docker-compose.yml's `auth` service), which only handles GoTrue's
+// own transactional mail. Empty smtpUrl degrades sendMail() to a no-op only in
+// local dev; in production it throws so the outbox keeps the row pending and
+// eventually 'failed' instead of marking undelivered mail as sent.
 
 import nodemailer, { type Transporter } from 'nodemailer'
 
@@ -28,7 +29,10 @@ function getTransporter(): Transporter | null {
 export async function sendMail(options: MailOptions): Promise<void> {
   const transport = getTransporter()
   if (!transport) {
-    console.log(`[mailer] NUXT_SMTP_URL not set — would send "${options.subject}" to ${options.to}`)
+    // Message doubles as the outbox error class (classifyDeliveryError).
+    if (!import.meta.dev) throw new Error('smtp_not_configured')
+    // No recipient/subject in the log: they carry user and lawyer PII.
+    console.log('[mailer] NUXT_SMTP_URL not set — dev no-op, mail not sent')
     return
   }
   await transport.sendMail({

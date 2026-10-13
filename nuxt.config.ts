@@ -223,12 +223,13 @@ export default defineNuxtConfig({
     supabaseUrl: '',
     //   NUXT_SUPABASE_SERVICE_ROLE_KEY=<from scripts/generate-supabase-keys.mjs>
     supabaseServiceRoleKey: '',
-    // App-level mailer for alert emails (server/utils/mailer.ts, nodemailer
-    // over this connection string), used by server/utils/alert-matching.ts.
+    // App-level mailer for alert and lawyer-inquiry emails
+    // (server/utils/mailer.ts, nodemailer over this connection string), used
+    // by the outbound_deliveries worker (server/utils/outbound-delivery.ts).
     // Distinct from GoTrue's own separate SMTP config (docker-compose.yml's
     // `auth` service, GOTRUE_SMTP_*) for GoTrue's own transactional mail.
-    // Empty → sendMail() logs instead of sending (dev fallback, same
-    // graceful-degrade pattern as extractLlm.baseUrl).
+    // Empty → sendMail() is a no-op in dev only; in production every delivery
+    // fails with `smtp_not_configured` and stays visible in the outbox.
     //   NUXT_SMTP_URL=smtps://user:pass@smtp.example.com:465
     smtpUrl: '',
     public: {

@@ -49,6 +49,8 @@ export function deliveryRetryAt(attempt: number, now = new Date()): Date {
 /** A short, non-secret operational class. The full SMTP error is never stored. */
 export function classifyDeliveryError(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err)
+  // Thrown by mailer.ts when a production deploy lacks NUXT_SMTP_URL.
+  if (message === 'smtp_not_configured') return message
   const smtp = /\b([45]\d\d)\b/.exec(message)
   if (smtp) return `smtp_${smtp[1]}`
   if (/timeout|timed out|etimedout/i.test(message)) return 'timeout'

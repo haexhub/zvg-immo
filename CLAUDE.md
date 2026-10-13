@@ -45,6 +45,8 @@ läuft alle fünf Minuten und beim Boot, claimed Zeilen mit `FOR UPDATE SKIP LOC
 und liefert mindestens einmal (kein Exactly-once-Versprechen). Erfolgreiche Alerts
 werden erst danach in `notified_matches` bestätigt; fehlgeschlagene Zustellungen
 werden exponentiell verzögert und nach sechs Versuchen terminal `failed`.
+Fehlt `NUXT_SMTP_URL`, ist der Versand nur im Dev ein No-op; in Produktion
+scheitert jede Zustellung mit `smtp_not_configured`.
 `/api/settings/outbound-deliveries` zeigt nur sekretfreie Zähler/Fehlerklassen.
 
 Anwaltsanfragen verlangen einen browsergenerierten `Idempotency-Key` (UUID),
