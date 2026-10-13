@@ -167,12 +167,13 @@ interface HostRestartState {
   increases: string[]
 }
 
-const EMPTY_RESTART_STATE: HostRestartState = { lastCount: 0, increases: [] }
-
-async function readHostRestartState(): Promise<HostRestartState> {
+/** null when no usable previous observation exists (first run, lost volume,
+ * unreadable file) — the caller then only records a baseline. */
+async function readHostRestartState(): Promise<HostRestartState | null> {
   try {
     const raw = JSON.parse(await readFile(HOST_RESTART_STATE_PATH, 'utf8')) as Record<string, unknown>
-    const lastCount = asNonNegativeInteger(raw.lastCount) ?? 0
+    const lastCount = asNonNegativeInteger(raw.lastCount)
+    if (lastCount === null) return null
     const increases = Array.isArray(raw.increases)
       ? raw.increases.map(asIsoDate).filter((entry): entry is string => !!entry).slice(-MAX_RESTART_SAMPLES)
       : []
@@ -181,7 +182,7 @@ async function readHostRestartState(): Promise<HostRestartState> {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
       console.warn(`[operations-status] could not read host restart state: ${(err as Error).message}`)
     }
-    return { ...EMPTY_RESTART_STATE }
+    return null
   }
 }
 
@@ -206,6 +207,12 @@ async function writeHostRestartState(state: HostRestartState): Promise<void> {
 async function trackHostRestarts(currentCount: number | null, now = new Date()): Promise<number> {
   if (currentCount === null) return 0
   const state = await readHostRestartState()
+  // Without a previous count every restart systemd ever recorded would be
+  // stamped "now"; the first observation only establishes the baseline.
+  if (!state) {
+    await writeHostRestartState({ lastCount: currentCount, increases: [] })
+    return 0
+  }
   const delta = Math.max(0, currentCount - state.lastCount)
   const increases = [...state.increases, ...Array<string>(delta).fill(now.toISOString())].slice(-MAX_RESTART_SAMPLES)
   if (currentCount !== state.lastCount) {
