@@ -64,9 +64,20 @@ const NUMBER_KEYS = [
   'nearLat', 'nearLng', 'nearRadius',
 ] as const
 
-export const ALERT_UNSUPPORTED_FILTER_KEYS = [
+const ALERT_UNSUPPORTED_GEO_METRIC_KEYS = [
   'nearSea', 'nearLake', 'nearRiver', 'nearMountain', 'nearAirport', 'nearSki',
   'nearSkiDownhill', 'nearSkiNordic', 'urbanRural',
+] as const
+
+// Read from the document extraction / LLM analysis or the detail page, none
+// of which a list crawl carries (zvg-portal lists even report photoCount 0).
+const ALERT_UNSUPPORTED_EXTRACTION_KEYS = [
+  'landMin', 'landMax', 'livMin', 'livMax', 'yearBuiltMin', 'yearBuiltMax',
+  'renovationYearMin', 'renovationYearMax', 'condition', 'features', 'onlyWithPhotos', 'hideRulesOnly',
+] as const
+
+export const ALERT_UNSUPPORTED_FILTER_KEYS = [
+  ...ALERT_UNSUPPORTED_GEO_METRIC_KEYS, ...ALERT_UNSUPPORTED_EXTRACTION_KEYS,
 ] as const
 
 function first(value: unknown): string {
@@ -168,11 +179,17 @@ export function activeAuctionSearchFilterCount(filters: AuctionSearchFilters, hi
   return scalar + (filters.nearLat != null && filters.nearLng != null ? 1 : 0)
 }
 
-/** The fresh alert batch has no geo-metric/OSM context.  These must be
- * rejected when saved rather than silently ignored during notification. */
+/** The fresh alert batch has no geo-metric/OSM context and no extraction, so
+ * filterAuctions() would drop every auction for these.  They must be rejected
+ * when saved rather than silently never matching during notification. */
 export function unsupportedAlertFilterKeys(filters: AuctionSearchFilters): string[] {
   return ALERT_UNSUPPORTED_FILTER_KEYS.filter((key) => {
     const value = filters[key]
-    return typeof value === 'number' ? value > 0 : typeof value === 'string' && value !== ALL_SCOPE
+    if (Array.isArray(value)) return value.length > 0
+    if (typeof value === 'boolean') return value
+    // Geo metrics treat 0 as "off" (as the SQL search does); any extraction
+    // range bound, even 0, excludes auctions without that value.
+    if (typeof value === 'number') return (ALERT_UNSUPPORTED_GEO_METRIC_KEYS as readonly string[]).includes(key) ? value > 0 : true
+    return typeof value === 'string' && value !== ALL_SCOPE
   })
 }

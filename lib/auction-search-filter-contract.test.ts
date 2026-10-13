@@ -32,6 +32,17 @@ describe('auction search filter contract', () => {
     expect(unsupportedAlertFilterKeys(filters)).toEqual(['nearSea'])
   })
 
+  it('rejects extraction-backed alert filters a fresh list crawl can never satisfy', () => {
+    const filters = parseAuctionSearchFilters({
+      livMin: '0', yearBuiltMax: '2000', condition: 'gepflegt', features: 'balkon', photos: '1', llmOnly: '1',
+      nearSea: '0', priceMin: '1000', category: 'einfamilienhaus',
+    })
+    expect(unsupportedAlertFilterKeys(filters)).toEqual([
+      'livMin', 'yearBuiltMax', 'condition', 'features', 'onlyWithPhotos', 'hideRulesOnly',
+    ])
+    expect(unsupportedAlertFilterKeys(parseAuctionSearchFilters({ llmOnly: '0', priceMax: '5' }))).toEqual([])
+  })
+
   it('defaults a saved coordinate pair without a radius to 25km so distance filtering stays executable', () => {
     const filters = parseAuctionSearchFilters({ nearLat: '52.5', nearLng: '13.4' })
     expect(filters.nearRadius).toBe(25)

@@ -58,8 +58,11 @@ definieren und mit Round-trip-Tests absichern.
 Alerts teilen die in-memory-Auswertung für alle verfügbaren Crawl-Felder;
 `nearLat`/`nearLng`/`nearRadius` werden per Distanz geprüft. Umgebungskriterien
 mit vorausberechneten Geo-/OSM-Metriken (`nearSea`, `nearLake`, `nearRiver`,
-`nearMountain`, `nearAirport`, `nearSki`, `urbanRural`) sind für frische
-Crawl-Batches nicht korrekt evaluierbar und werden beim Speichern bzw.
+`nearMountain`, `nearAirport`, `nearSki`, `urbanRural`) sowie Kriterien aus
+Extraktion/LLM-Analyse bzw. Detailseite (`landMin`/`landMax`, `livMin`/`livMax`,
+`yearBuilt*`, `renovationYear*`, `condition`, `features`, `photos`,
+`llmOnly=1`) sind für frische Crawl-Batches nicht korrekt evaluierbar und
+werden beim Speichern bzw.
 Aktivieren eines Alerts mit 400 abgelehnt. Alte betroffene Subscriptions werden
 beim Matching übersprungen und protokolliert, nie stillschweigend gelockert.
 
