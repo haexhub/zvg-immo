@@ -19,6 +19,7 @@ vi.mock('~/server/api/auction/[platform]/[id]/translation.post', () => ({
   SUPPORTED_TARGET_LANGS: new Set(['de', 'en']),
 }))
 vi.mock('~/server/utils/auction-translation', () => ({
+  translationSourceAuction: vi.fn((auction: unknown) => auction),
   auctionTranslationContentHash: vi.fn(() => 'content-hash'),
   tryTranslate: vi.fn(),
 }))

@@ -4,6 +4,7 @@
 // key their caches by the same content hash.
 
 import { sha256Hex } from '~/server/utils/raw-archive'
+import { redactAuctionForPublication } from '~/server/utils/public-auction-redaction'
 import type { LlmUsage } from '~/server/utils/extract/llm'
 import { callTranslationLlm, type TranslationResult } from '~/server/utils/extract/text-llm'
 import type { ContentTargetLang } from '~/lib/content-language'
@@ -75,6 +76,16 @@ export async function tryTranslate(
     config,
     onUsage,
   )
+}
+
+/**
+ * The auction text that gets translated: only the public-safe projection. This
+ * keeps affected persons' names away from the provider and out of the
+ * translation tables, and gives old cached translations a new content hash so
+ * they cannot be served after a source text was found to contain such a name.
+ */
+export function translationSourceAuction(auction: Auction): Auction {
+  return redactAuctionForPublication(auction).auction
 }
 
 export function auctionTranslationContentHash(auction: Pick<Auction, 'title' | 'address' | 'description' | 'extraction'>): string {
