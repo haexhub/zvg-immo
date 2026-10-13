@@ -2,6 +2,7 @@ import type { Auction, LocationContext, LocationNoiseIndicator, LocationNoiseObs
 import type { LocationContextEnhancer } from '~/server/tasks/external-enrichment'
 import { maxOf } from '~/lib/array-math'
 import { EXTERNAL_DATA_SOURCES } from './sources'
+import { qualityVerdict } from './osm-location-quality'
 
 export interface EeaNoiseLayerConfig {
   source: LocationNoiseSource
@@ -283,12 +284,4 @@ function adjustQualityForNoise(
     weaknesses: [...weaknesses],
     caveats: [...caveats],
   }
-}
-
-function qualityVerdict(score: number): LocationContext['quality']['verdict'] {
-  if (score >= 82) return 'excellent'
-  if (score >= 68) return 'good'
-  if (score >= 50) return 'average'
-  if (score >= 32) return 'weak'
-  return 'isolated'
 }

@@ -11,6 +11,7 @@ import {
 } from './fr-dvf'
 import { readCachedFileCollection } from './cached-file-collection'
 import { encodeGeohash, geohashesWithinRadius } from './geohash'
+import { classifyMarketPropertyClass } from './market'
 import type { MarketComparisonAdapter } from '~/server/tasks/external-enrichment'
 
 export interface DvfTransactionGroupIndex {
@@ -137,7 +138,7 @@ export function candidateDvfTransactionsForAuction(
   options: { geohashPrefixLength?: number; radiusMeters?: number } = {},
 ): DvfTransaction[] {
   if (auction.lat == null || auction.lng == null) return []
-  const propertyClass = marketClassForAuction(auction)
+  const propertyClass = classifyMarketPropertyClass(auction)
   const group = cache.groups[propertyClass]
   if (!group) return []
   // The comparison keeps every sale within the radius, so the candidates must
@@ -174,21 +175,6 @@ export async function createDvfFileMarketAdapter(
       return buildDvfMarketComparison(auction, candidates, options)
     },
   }
-}
-
-function marketClassForAuction(auction: Auction): MarketComparisonPropertyClass {
-  const propertyType = auction.extraction?.propertyType
-  if (
-    propertyType === 'einfamilienhaus' ||
-    propertyType === 'zweifamilienhaus' ||
-    propertyType === 'mehrfamilienhaus' ||
-    propertyType === 'doppelhaushaelfte' ||
-    propertyType === 'reihenhaus'
-  ) return 'house'
-  if (propertyType === 'eigentumswohnung') return 'apartment'
-  if (propertyType === 'land-forst' || propertyType === 'unbebaut') return 'land'
-  if (propertyType === 'wohn-geschaefts') return 'mixed'
-  return 'unknown'
 }
 
 function createDvfCsvLoader(): { write: (chunk: string) => void; end: () => DvfCsvLoadResult } {

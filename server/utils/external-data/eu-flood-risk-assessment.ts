@@ -2,6 +2,17 @@ import { minOf } from '~/lib/array-math'
 import { distanceMeters, type Point } from './geo'
 import type { GeoJsonLinearRing, GeoJsonPolygonCoordinates } from './eu-flood-risk'
 
+/** Whether a polygon cache built at `generatedAt` is older than the source's
+ *  allowed age; an unparseable timestamp counts as stale. */
+export function isStale(generatedAt: string, checkedAt: string, maxAgeDays: number | undefined): boolean {
+  if (maxAgeDays == null) return false
+  const generatedTime = Date.parse(generatedAt)
+  const checkedTime = Date.parse(checkedAt)
+  if (!Number.isFinite(generatedTime)) return true
+  if (!Number.isFinite(checkedTime)) return true
+  return checkedTime - generatedTime > maxAgeDays * 24 * 60 * 60 * 1000
+}
+
 export interface GeoBounds {
   minLat: number
   maxLat: number

@@ -37,6 +37,7 @@ import { readCachedFileCollection } from './cached-file-collection'
 import { simplifyPolygon } from './polygon-simplify'
 import {
   distanceToPolygonMeters,
+  isStale,
   pointInPolygon,
 } from './eu-flood-risk-assessment'
 import type { GeoJsonLinearRing, GeoJsonPolygonCoordinates } from './eu-flood-risk'
@@ -235,6 +236,9 @@ export function buildWildfireHazardAssessment(
     return assessment('unknown', 'unknown', null, checkedAt)
   }
 
+  // ponytail: measures every zone's outline per auction (no bbox pruning like
+  // the flood adapter's nearestZone). Fine for the ~31k burnt areas; if it
+  // gets slow, store per-zone bounds in the cache and skip by lower bound.
   const matches = collection.zones
     .map((zone) => ({
       zone,
@@ -348,13 +352,4 @@ function ringFromPosList(posList: string): GeoJsonLinearRing | null {
 function textOrNull(value: string): string | null {
   const trimmed = value.trim()
   return trimmed || null
-}
-
-function isStale(generatedAt: string, checkedAt: string, maxAgeDays: number | undefined): boolean {
-  if (maxAgeDays == null) return false
-  const generatedTime = Date.parse(generatedAt)
-  const checkedTime = Date.parse(checkedAt)
-  if (!Number.isFinite(generatedTime)) return true
-  if (!Number.isFinite(checkedTime)) return true
-  return checkedTime - generatedTime > maxAgeDays * 24 * 60 * 60 * 1000
 }

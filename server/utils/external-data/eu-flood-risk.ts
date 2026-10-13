@@ -8,6 +8,7 @@ import { EXTERNAL_DATA_SOURCES } from './sources'
 import {
   boundsDistanceMeters,
   distanceToPolygonMeters,
+  isStale,
   pointInPolygon,
   polygonsBounds,
   type GeoBounds,
@@ -185,15 +186,6 @@ function assessment(
     checkedAt,
     ...(stale ? { stale: true } : {}),
   }
-}
-
-function isStale(generatedAt: string, checkedAt: string, maxAgeDays: number | undefined): boolean {
-  if (maxAgeDays == null) return false
-  const generatedTime = Date.parse(generatedAt)
-  const checkedTime = Date.parse(checkedAt)
-  if (!Number.isFinite(generatedTime)) return true
-  if (!Number.isFinite(checkedTime)) return true
-  return checkedTime - generatedTime > maxAgeDays * 24 * 60 * 60 * 1000
 }
 
 /**
