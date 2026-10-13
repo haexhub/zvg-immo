@@ -176,13 +176,15 @@ export async function geocodeStatus(
 export async function geocodeAddress(
   address: string | null,
   country: string,
-  options: { fetchMissing?: boolean } = { fetchMissing: true },
+  options: { fetchMissing?: boolean } = {},
 ): Promise<GeoPoint | null> {
   if (!address) return null
   const c = country.toLowerCase()
-  // During the failure cooldown a cache miss behaves like fetchMissing=false:
-  // serve what's cached but leave Nominatim alone until the ban blows over.
-  const fetchMissing = Boolean(options.fetchMissing) && Date.now() >= cooldownUntil
+  // Cache-only unless a caller opts in: only the exclusive geocode task may
+  // hit the upstream geocoder, so a new request path can't fan out to it by
+  // forgetting the option. During the failure cooldown a cache miss behaves
+  // like fetchMissing=false too: leave Nominatim alone until the ban blows over.
+  const fetchMissing = options.fetchMissing === true && Date.now() >= cooldownUntil
   for (const q of buildGeocodeQueries(address, c)) {
     const cached = await readCacheEntry(q, c)
     if (cached.state === 'hit') return cached.point!
