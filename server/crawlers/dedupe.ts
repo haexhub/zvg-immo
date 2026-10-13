@@ -46,65 +46,66 @@ export function completenessScore(a: Auction): number {
 }
 
 /**
+ * Resolve auctions that share a cross-platform identity key (Aktenzeichen or
+ * the FR address fingerprint). Several auctions of ONE platform under the
+ * same key are distinct lots of one case (e.g. agi lotti of one procedura,
+ * several Bulgarian announcements of one enforcement case) and all survive.
+ * Across platforms exactly one platform keeps its lots: the one listing the
+ * most lots, so a portal that splits the case into lots is never reduced to
+ * another portal's single summary record. Only on a tie in lot count does
+ * the richest record (completenessScore) decide — rather than whichever
+ * platform happens to be registered/crawled first.
+ */
+function resolveKeyGroup(group: readonly Auction[]): Auction[] {
+  const byPlatform = new Map<string, Auction[]>()
+  for (const a of group) {
+    const lots = byPlatform.get(a.platform)
+    if (lots) lots.push(a)
+    else byPlatform.set(a.platform, [a])
+  }
+  const richest = (lots: readonly Auction[]) => Math.max(...lots.map(completenessScore))
+  let winner: Auction[] = []
+  for (const lots of byPlatform.values()) {
+    if (lots.length > winner.length || (lots.length === winner.length && richest(lots) > richest(winner))) {
+      winner = lots
+    }
+  }
+  return winner
+}
+
+/**
  * Collapse the merged auctions of every platform covering one region so the
  * same real-world sale shows up once.
  */
 export function dedupeRegionAuctions(regionAuctions: readonly Auction[]): Auction[] {
-  // Overlapping platforms (e.g. zvg-portal + zvbawü both list the same BW
-  // property) would otherwise produce duplicate pins and list rows. Dedup by
-  // a normalized {authority, caseNumber} key — the Aktenzeichen is the
-  // court's own case number and is stable across portals. Among auctions
-  // sharing a key, keep the one with the richer record (completenessScore)
-  // rather than whichever platform happens to be registered/crawled first.
-  const azWinners = new Map<string, Auction>()
   const pfSeen = new Set<string>()
-  const noAzAuctions: Auction[] = []
+  const keyGroups = new Map<string, Auction[]>()
+  const auctions: Auction[] = []
   for (const a of regionAuctions) {
-    const az = a.caseNumber.trim().toLowerCase().replace(/\s+/g, ' ')
-    const ag = a.authority.trim().toLowerCase()
-    if (az && ag) {
-      const key = `az|${ag}|${az}`
-      const existing = azWinners.get(key)
-      if (!existing || completenessScore(a) > completenessScore(existing)) {
-        azWinners.set(key, a)
-      }
-      continue
-    }
-    // No court case number available — {platform, externalId} is checked
-    // unconditionally so platform-internal uniqueness is always preserved,
-    // independently of the cross-platform address+date matching below.
+    // {platform, externalId} is checked first and unconditionally so
+    // platform-internal uniqueness is always preserved, independently of the
+    // cross-platform matching below.
     const pfKey = `pf|${a.platform}|${a.externalId}`
     if (pfSeen.has(pfKey)) continue
     pfSeen.add(pfKey)
-    noAzAuctions.push(a)
-  }
-
-  // French judicial-sale sources never publish the court's own case number,
-  // yet frequently cross-publish the exact same sale — collapse auctions
-  // sharing a {postal code, house number, date} fingerprint (frAddressDateKey)
-  // to whichever has the richer record, but ONLY across different platforms.
-  // Two same-platform auctions sharing that fingerprint are distinct lots
-  // (e.g. two apartments in one seized building sold the same day) and must
-  // both survive — grouping by platform first guards that.
-  const addrGroups = new Map<string, Auction[]>()
-  const auctions: Auction[] = []
-  for (const a of noAzAuctions) {
-    const key = frAddressDateKey(a)
+    // Overlapping platforms (e.g. zvg-portal + zvbawü both list the same BW
+    // property) would otherwise produce duplicate pins and list rows. Match
+    // them by a normalized {authority, caseNumber} key — the Aktenzeichen is
+    // the court's own case number and is stable across portals. French
+    // judicial-sale sources never publish it, yet frequently cross-publish
+    // the exact same sale, so they fall back to a {postal code, house number,
+    // date} fingerprint (frAddressDateKey).
+    const az = a.caseNumber.trim().toLowerCase().replace(/\s+/g, ' ')
+    const ag = a.authority.trim().toLowerCase()
+    const key = az && ag ? `az|${ag}|${az}` : frAddressDateKey(a)
     if (!key) {
       auctions.push(a)
       continue
     }
-    const group = addrGroups.get(key)
+    const group = keyGroups.get(key)
     if (group) group.push(a)
-    else addrGroups.set(key, [a])
+    else keyGroups.set(key, [a])
   }
-  for (const group of addrGroups.values()) {
-    if (new Set(group.map((a) => a.platform)).size === 1) {
-      auctions.push(...group)
-    } else {
-      auctions.push(group.reduce((best, a) => (completenessScore(a) > completenessScore(best) ? a : best)))
-    }
-  }
-  auctions.push(...azWinners.values())
+  for (const group of keyGroups.values()) auctions.push(...resolveKeyGroup(group))
   return auctions
 }
