@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest'
-import { buildDetailInfo } from './detail'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { Auction } from '~/types/auction'
+import { archiveDetailCapture } from '~/server/utils/fetch-archive'
+import { buildDetailInfo, enrichInBatches } from './detail'
+import { ZVBAWU_BASE } from './constants'
+
+vi.mock('~/server/utils/fetch-archive', () => ({ archiveDetailCapture: vi.fn() }))
 
 /** Trimmed live payload of /zwangsversteigerungen/reihenendhaus-mit-garage.1253692
  *  (props.auction), fetched 2026-07-17. */
@@ -99,5 +104,33 @@ describe('buildDetailInfo', () => {
     expect(info.cancelled).toBe(false)
     expect(info.photoCount).toBe(1)
     expect(info.attachments.map((x) => x.kind)).toEqual(['announcement', 'photo'])
+  })
+})
+
+describe('enrichInBatches', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.mocked(archiveDetailCapture).mockReset()
+  })
+
+  const item = { externalId: '1', cancelled: false, detailUrlUpstream: `${ZVBAWU_BASE}/x.1` } as Auction
+
+  it('reports a broken raw archive as such instead of a generic fetch failure', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('<div data-page="{}"></div>')))
+    const diskFull = new Error('ENOSPC')
+    vi.mocked(archiveDetailCapture).mockRejectedValue(diskFull)
+
+    const result = await enrichInBatches([item], () => {})
+
+    expect(result.errors).toBe(1)
+    expect(result.firstError).toMatchObject({ message: expect.stringMatching(/raw archive failed/), cause: diskFull })
+  })
+
+  it('keeps the HTTP status of a failed detail fetch', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 503 })))
+
+    const result = await enrichInBatches([item], () => {})
+
+    expect(result.firstError).toMatchObject({ message: expect.stringMatching(/HTTP 503/) })
   })
 })
