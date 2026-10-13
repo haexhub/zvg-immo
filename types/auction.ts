@@ -412,6 +412,10 @@ export interface Auction {
    *  Overlaid as-is by /api/auctions-geo. */
   lat?: number | null
   lng?: number | null
+  /** Set when the source deliberately hides the exact location (BImA
+   *  `show_address: false`). Null lat/lng then means "withheld", not "missing
+   *  from this list crawl", so mergeStoredAuction must not restore stored ones. */
+  coordinatesWithheld?: true
   /** ISO timestamp of the last successful (non-throwing) `enrichOne` call.
    *  Absent on the fresh listing crawl and persisted in auction_fetch_state.
    *  Used by the enrich task to distinguish

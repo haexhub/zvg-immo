@@ -62,14 +62,21 @@ export function mergeStoredAuction(next: Auction, previous: Auction): Auction {
   // full one. Once details were fetched the stored address wins, together
   // with its coordinates: a list-row point is often just a geocode of that
   // coarse address and would move the pin to e.g. a postal-code centroid.
-  if (previous.detailFetchedAt != null && previous.address != null && next.address !== previous.address) {
+  // A source that withholds the location (coordinatesWithheld) hides the
+  // address too, so neither is restored for it.
+  if (
+    !next.coordinatesWithheld &&
+    previous.detailFetchedAt != null &&
+    previous.address != null &&
+    next.address !== previous.address
+  ) {
     next.address = previous.address
     if (previous.lat != null && previous.lng != null) {
       next.lat = previous.lat
       next.lng = previous.lng
     }
   }
-  if (next.lat == null && previous.lat != null && previous.lng != null) {
+  if (next.lat == null && !next.coordinatesWithheld && previous.lat != null && previous.lng != null) {
     next.lat = previous.lat
     next.lng = previous.lng
   }

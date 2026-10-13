@@ -61,6 +61,20 @@ describe('mergeStoredAuction', () => {
     expect([merged.lat, merged.lng]).toEqual([53.05, 8.83])
   })
 
+  it('restores neither the stored address nor its pin when the source withholds the location', () => {
+    const previous = auction({
+      address: 'Musterstr. 5, 28277 Bremen', lat: 53.05, lng: 8.83,
+      detailFetchedAt: '2026-08-01T10:00:00.000Z',
+    })
+    const merged = mergeStoredAuction(
+      auction({ address: null, lat: null, lng: null, coordinatesWithheld: true }),
+      previous,
+    )
+
+    expect(merged.address).toBeNull()
+    expect([merged.lat, merged.lng]).toEqual([null, null])
+  })
+
   it('keeps the list address and coordinates before details were fetched', () => {
     const merged = mergeStoredAuction(
       auction({ address: '28277 Bremen', lat: 53.03, lng: 8.86 }),
