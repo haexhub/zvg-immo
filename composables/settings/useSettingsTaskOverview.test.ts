@@ -73,4 +73,20 @@ describe('useSettingsTaskOverview progress polling', () => {
     await vi.advanceTimersByTimeAsync(9000)
     expect(fetchMock.mock.calls.length).toBe(callsWhenStopped)
   })
+
+  it('stops polling when the endpoint keeps failing behind a stale running snapshot', async () => {
+    const { fetchMock, overview: tasks } = await loadComposable([
+      overview('running', 'idle'),
+      new Error('503 Service Unavailable'),
+    ])
+
+    await tasks.loadLlmBatchJobs()
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(tasks.llmBatchJobs.value?.enrichStatus.status).toBe('running')
+    const callsWhenStopped = fetchMock.mock.calls.length
+    expect(callsWhenStopped).toBe(11)
+
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(fetchMock.mock.calls.length).toBe(callsWhenStopped)
+  })
 })

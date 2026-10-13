@@ -89,6 +89,10 @@ let progressPollTimer: ReturnType<typeof setInterval> | null = null
 const PROGRESS_POLL_GRACE_MS = 30_000
 let progressPollObservedRunning = false
 let progressPollStartedAt = 0
+// A failed refresh keeps the last snapshot, whose stale "running" status
+// would otherwise keep a broken endpoint polled every 3 s indefinitely.
+const PROGRESS_POLL_MAX_FAILURES = 10
+let progressPollFailures = 0
 // Module-scope, not useState: several settings cards call loadLlmBatchJobs()
 // from their own onMounted, all firing in the same tick — without this,
 // every /settings page load fired the same expensive endpoint 4x in
@@ -196,9 +200,15 @@ export function useSettingsTaskOverview() {
     // tick, before the new task got to record "running".
     progressPollObservedRunning = false
     progressPollStartedAt = Date.now()
+    progressPollFailures = 0
     if (progressPollTimer) return
     progressPollTimer = setInterval(async () => {
       await loadLlmBatchJobs()
+      if (llmBatchJobsError.value) {
+        if (++progressPollFailures >= PROGRESS_POLL_MAX_FAILURES) stopProgressPolling()
+        return
+      }
+      progressPollFailures = 0
       if (anyTrackedTaskRunning()) {
         progressPollObservedRunning = true
         return
