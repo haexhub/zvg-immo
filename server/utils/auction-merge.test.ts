@@ -49,4 +49,25 @@ describe('mergeStoredAuction', () => {
 
     expect(merged.description).toBe('Kurzer Text')
   })
+
+  it('keeps the fetched detail address and its coordinates over a coarse list address', () => {
+    const previous = auction({
+      address: 'Musterstr. 5, 28277 Bremen', lat: 53.05, lng: 8.83,
+      detailFetchedAt: '2026-08-01T10:00:00.000Z',
+    })
+    const merged = mergeStoredAuction(auction({ address: '28277 Bremen', lat: 53.03, lng: 8.86 }), previous)
+
+    expect(merged.address).toBe('Musterstr. 5, 28277 Bremen')
+    expect([merged.lat, merged.lng]).toEqual([53.05, 8.83])
+  })
+
+  it('keeps the list address and coordinates before details were fetched', () => {
+    const merged = mergeStoredAuction(
+      auction({ address: '28277 Bremen', lat: 53.03, lng: 8.86 }),
+      auction({ address: 'Alte Adresse', lat: 53.05, lng: 8.83, detailFetchedAt: null }),
+    )
+
+    expect(merged.address).toBe('28277 Bremen')
+    expect([merged.lat, merged.lng]).toEqual([53.03, 8.86])
+  })
 })

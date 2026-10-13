@@ -54,6 +54,18 @@ export function mergeStoredAuction(next: Auction, previous: Auction): Auction {
     next.photoUrls = previous.photoUrls
     next.photoCount = Math.max(next.photoCount, previous.photoUrls.length)
   }
+  // Several list endpoints only expose a coarse address (KIP: postal code +
+  // city, BOE: "CP Ort, España") that the detail page later replaces with the
+  // full one. Once details were fetched the stored address wins, together
+  // with its coordinates: a list-row point is often just a geocode of that
+  // coarse address and would move the pin to e.g. a postal-code centroid.
+  if (previous.detailFetchedAt != null && previous.address != null && next.address !== previous.address) {
+    next.address = previous.address
+    if (previous.lat != null && previous.lng != null) {
+      next.lat = previous.lat
+      next.lng = previous.lng
+    }
+  }
   if (next.lat == null && previous.lat != null && previous.lng != null) {
     next.lat = previous.lat
     next.lng = previous.lng
