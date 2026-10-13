@@ -12,7 +12,7 @@ import { getDb } from './db'
 import { readAuctionRecord } from './auction-record'
 import { upsertCurrentAuctions } from './current-auctions'
 import {
-  auctionDetailsValues, cacheLatestAuctionDetails, invalidateAuctionDetailsCache,
+  auctionDetailsValues,
   normalizedPhotos, pgTextArrayLiteral, photoRowsEqual, VALUE_COLUMNS,
   type AuctionDetailsRow, type AuctionPhotoRow, type Raw,
 } from './auction-details-read'
@@ -51,7 +51,6 @@ export async function promoteAuctionDetailsVersion(
   })
   if (!promoted) return 'not_found'
 
-  invalidateAuctionDetailsCache()
   // upsertCurrentAuctions only touches identity/scheduling columns (title,
   // dates, cancelled, coordinates) — none of which a promote changes — but
   // the plan calls for it anyway so this stays the one place that bumps
@@ -197,7 +196,7 @@ export async function writeAuctionDetails(
       `) : { rows: [] as Array<{ version: number }> }
       const unchangedVersion = unchanged.rows[0]?.version
       if (unchangedVersion !== undefined) {
-        return { version: unchangedVersion, changed: false as const, row: null as AuctionDetailsRow | null }
+        return { version: unchangedVersion, changed: false as const }
       }
 
       // is_latest has a partial UNIQUE index (one true row per identity) —
@@ -246,11 +245,8 @@ export async function writeAuctionDetails(
       `)
     }
 
-    return { version: row.version, changed: true as const, row }
+    return { version: row.version, changed: true as const }
   })
 
-  // A trial row is never the live version — caching it here would make
-  // readLatestAuctionDetails serve the experiment instead of the live row.
-  if (result.changed && !options.trial) cacheLatestAuctionDetails(platform, externalId, result.row!)
   return { version: result.version, changed: result.changed }
 }

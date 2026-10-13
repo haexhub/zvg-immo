@@ -3,7 +3,6 @@ import type { Auction, AuctionExtraction, CuratedPhoto, PhotoCategory } from '~/
 import { extractTranslatableExtractionTexts } from '~/lib/extraction-translation'
 import { normalizePhoto } from '~/lib/photo'
 import { getDb } from './db'
-import { cacheKey } from './verkehrswert-cache'
 import { normalizeDescriptionText } from './description-normalization'
 import { withDerivedExtractionFields } from './extract/merge-llm-result'
 
@@ -68,17 +67,13 @@ export async function readAuctionPhotos(auctionDetailsId: number): Promise<Curat
   const { rows } = await db.execute<Raw<AuctionPhotoRow>>(sql`SELECT ordinal, file, category, caption, is_property_photo, appeal_score FROM auction_photos WHERE auction_details_id = ${auctionDetailsId} ORDER BY ordinal`)
   return rows.map((row) => ({ file: row.file, category: row.category, caption: row.caption, isPropertyPhoto: row.is_property_photo, ...(row.appeal_score == null ? {} : { appealScore: row.appeal_score }) }))
 }
-const latestCache = new Map<string, AuctionDetailsRow | null>()
-export const invalidateAuctionDetailsCache = () => latestCache.clear()
 export async function readLatestAuctionDetails(platform: string, externalId: string): Promise<AuctionDetailsRow | null> {
-  const key = cacheKey(platform, externalId); const cached = latestCache.get(key); if (cached !== undefined) return cached
   const db = getDb(); if (!db) return null
   const { rows } = await db.execute<Raw<AuctionDetailsRow>>(sql`SELECT * FROM auction_details WHERE platform = ${platform} AND external_id = ${externalId} AND is_latest = true`)
-  const row = rows[0] ?? null; if (row) latestCache.set(key, row); return row
+  return rows[0] ?? null
 }
 export async function readAuctionDetailsAtVersion(platform: string, externalId: string, version: number): Promise<AuctionDetailsRow | null> {
   const db = getDb(); if (!db) return null
   const { rows } = await db.execute<Raw<AuctionDetailsRow>>(sql`SELECT * FROM auction_details WHERE platform = ${platform} AND external_id = ${externalId} AND version = ${version}`)
   return rows[0] ?? null
 }
-export const cacheLatestAuctionDetails = (platform: string, externalId: string, row: AuctionDetailsRow) => latestCache.set(cacheKey(platform, externalId), row)
