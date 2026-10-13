@@ -89,12 +89,15 @@ export function useAuctionSearchState(options: {
       .flatMap((c) => c.regions.map((r) => ({ ...r, key: `${c.code}:${r.code}`, countryName: countryLabel(c.code, c.name) })))
   })
 
-  const queryParams = computed(() => {
-    // mapLat/mapLng/mapZoom track the map viewport, not a search filter — left
-    // in route.query they'd churn on every pan/zoom and re-trigger fetches
-    // that only care about the filters below.
+  const queryParams = computed((previous?: Record<string, unknown>) => {
+    // mapLat/mapLng/mapZoom track the map viewport, not a search filter, so
+    // they stay out of the request. Dropping the keys alone is not enough:
+    // this computed still re-runs on every pan/zoom, and useFetch deep-watches
+    // its `query` option and refetches on every new object identity, even
+    // when the key hash is unchanged. Reusing the previous object for an equal
+    // query keeps pans/zooms from refetching /api/auctions and the geo points.
     const { mapLat: _mapLat, mapLng: _mapLng, mapZoom: _mapZoom, ...filterQuery } = route.query
-    return {
+    const next = {
       ...filterQuery,
       country: selectedCountries.value.length ? selectedCountries.value.join(',') : undefined,
       regionNames: selectedRegionKeys.value
@@ -107,6 +110,7 @@ export function useAuctionSearchState(options: {
       page: 1,
       pageSize: 30,
     }
+    return previous && JSON.stringify(previous) === JSON.stringify(next) ? previous : next
   })
 
   const priceMinDisplay = computed<number | null>({
