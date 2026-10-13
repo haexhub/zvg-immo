@@ -41,8 +41,13 @@ async function fetchAuthenticatedDetailHtml(url: string): Promise<string> {
   const first = await fetchDetailHtml(url, cookie)
   if (!first.finalUrl.includes('/login.html')) return first.html
   const fresh = await getDgaAgSessionCookie({ forceRefresh: true })
-  if (!fresh) return first.html
-  return (await fetchDetailHtml(url, fresh)).html
+  if (fresh) {
+    const retry = await fetchDetailHtml(url, fresh)
+    if (!retry.finalUrl.includes('/login.html')) return retry.html
+  }
+  // Never hand the login page to the parser (its og:title would overwrite the
+  // object title) — the anonymous view still has everything but the PDF link.
+  return (await fetchDetailHtml(url, null)).html
 }
 
 /** The free-text "Lage und Umfeld dieser Immobilie" paragraph isn't filled in

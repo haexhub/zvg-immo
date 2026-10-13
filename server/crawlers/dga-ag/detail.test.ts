@@ -196,6 +196,30 @@ describe('enrichOne', () => {
     const detailCall = fetchMock.mock.calls[2]!
     expect((detailCall[1]?.headers as Record<string, string>).Cookie).toBe('fe_typo_user=session456')
   })
+
+  it('falls back to the anonymous page when even a fresh session redirects to the login page', async () => {
+    vi.stubGlobal('useRuntimeConfig', () => ({ dgaAg: { username: 'user@test.de', password: 'secret' } }))
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes('/login.html') && init?.method === 'POST') {
+        return withSetCookie('<html>Herzlich Willkommen</html>', ['fe_typo_user=session456; path=/'])
+      }
+      if (url.includes('/login.html')) {
+        return withSetCookie(LOGIN_HTML, ['__Secure-typo3nonce_x=nonce123; path=/'])
+      }
+      const headers = init?.headers as Record<string, string> | undefined
+      if (!headers?.Cookie) return htmlResponse(DETAIL_HTML_FULL)
+      // A session the site rejects for this object: redirected to the login form.
+      const redirected = htmlResponse('<html><head><meta property="og:title" content="Login"></head></html>')
+      Object.defineProperty(redirected, 'url', { value: 'https://www.dga-ag.de/login.html' })
+      return redirected
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const auction = makeAuction()
+    await enrichOne(auction)
+
+    expect(auction.title).toBe('Sonniges Reihenhaus')
+    expect(auction.description).toBe('Ruhige Wohnlage am Stadtrand von Dresden.')
+  })
 })
 
 describe('fetchFreshObjectDocumentUrl', () => {
