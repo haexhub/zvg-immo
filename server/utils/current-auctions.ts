@@ -95,12 +95,41 @@ function numeric(value: number | string | null): number | null {
  * for the *same* auction, leaving the sweep alone.
  */
 function triggerLocationEnrichment(platform: string, externalId: string): void {
-  void runExclusiveTask(
-    `external-enrichment-single:${cacheKey(platform, externalId)}`,
-    (signal) => runExternalEnrichment({ platform, externalId }, signal),
-  ).catch((err: unknown) => {
-    console.error(`[current-auctions] external enrichment trigger failed for ${platform}/${externalId}: ${(err as Error).message}`)
-  })
+  pendingTriggers.set(cacheKey(platform, externalId), { platform, externalId })
+  drainLocationEnrichmentTriggers()
+}
+
+// The per-auction lock above has no global bound, and a cold geocode run hands
+// thousands of first-time coordinates to one upsertCurrentAuctions call. Each
+// run holds pool connections (Open-Meteo climate cell locks wait on the
+// globally serialised Open-Meteo gate), so an unbounded fan-out starved the
+// 10-connection pool for every other reader. Pending triggers are coalesced
+// per auction and drained a couple at a time.
+// ponytail: in-process queue, lost on restart. Never-enriched auctions are
+// still picked up first by the 15-minute sweep (orderByStaleness); a moved
+// auction waits for its regular staleness turn. Upgrade path: persist the
+// pending keys (e.g. reset location_enrichment.checked_at) if that matters.
+const MAX_CONCURRENT_TRIGGERS = 2
+const pendingTriggers = new Map<string, { platform: string; externalId: string }>()
+let activeTriggers = 0
+
+function drainLocationEnrichmentTriggers(): void {
+  while (activeTriggers < MAX_CONCURRENT_TRIGGERS) {
+    const next = pendingTriggers.entries().next()
+    if (next.done) return
+    const [key, { platform, externalId }] = next.value
+    pendingTriggers.delete(key)
+    activeTriggers++
+    void runExclusiveTask(
+      `external-enrichment-single:${key}`,
+      (signal) => runExternalEnrichment({ platform, externalId }, signal),
+    ).catch((err: unknown) => {
+      console.error(`[current-auctions] external enrichment trigger failed for ${platform}/${externalId}: ${(err as Error).message}`)
+    }).finally(() => {
+      activeTriggers--
+      drainLocationEnrichmentTriggers()
+    })
+  }
 }
 
 const UPDATE_COLUMNS = COLUMNS.filter((column) => column !== 'platform' && column !== 'external_id')

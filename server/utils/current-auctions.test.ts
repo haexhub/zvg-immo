@@ -232,6 +232,34 @@ describe('upsertCurrentAuctions location-enrichment trigger', () => {
     await Promise.resolve()
     expect(mockedRunExternalEnrichment).toHaveBeenCalledTimes(1)
   })
+
+  it('bounds concurrent triggers and coalesces duplicates while queued', async () => {
+    const mockedRunExternalEnrichment = vi.mocked(runExternalEnrichment)
+    mockedRunExternalEnrichment.mockClear()
+    const releases: Array<() => void> = []
+    mockedRunExternalEnrichment.mockImplementation(() => new Promise((resolve) => {
+      releases.push(() => resolve({} as never))
+    }))
+    const flush = async () => {
+      for (let i = 0; i < 10; i++) await Promise.resolve()
+    }
+
+    vi.mocked(getPool).mockReturnValue(mockPool([]) as never)
+    const auctions = ['a', 'b', 'c', 'd', 'e'].map((externalId) => makeAuction({ externalId, lat: 52.1, lng: 13.2 }))
+    await upsertCurrentAuctions(auctions, '2026-08-02T11:00:00.000Z')
+    // A second batch re-triggering a still-queued auction must not queue it twice.
+    await upsertCurrentAuctions([auctions[4]!], '2026-08-02T11:05:00.000Z')
+    await flush()
+    expect(mockedRunExternalEnrichment).toHaveBeenCalledTimes(2)
+
+    while (releases.length > 0) {
+      releases.shift()!()
+      await flush()
+    }
+    expect(mockedRunExternalEnrichment.mock.calls.map(([options]) => options?.externalId))
+      .toEqual(['a', 'b', 'c', 'd', 'e'])
+    mockedRunExternalEnrichment.mockImplementation(async () => ({}) as never)
+  })
 })
 
 // Real Postgres, not a fake pool: a mocked query() can't catch a write
