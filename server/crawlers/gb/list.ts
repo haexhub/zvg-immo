@@ -106,12 +106,14 @@ export function parseListPage(html: string): ListItem[] {
 /** Discovers every current lot nationwide by fetching each of the ~30 branch
  *  pages. Isolate failures per branch: a transient error on one region
  *  (timeout, HTTP 5xx) must not discard the listings already collected from
- *  the others. Lots are deduped by href — a lot could in principle be linked
+ *  the others — but the run is then partial and must not read as complete,
+ *  or crawl_state would hide that branch's lots as gone. Lots are deduped by href — a lot could in principle be linked
  *  from more than one branch page (e.g. bordering regions), and this also
  *  protects against `discoverListItems` being extended to pull in an
  *  overlapping aggregator page later. */
-async function discoverListItems(): Promise<Map<string, ListItem>> {
+async function discoverListItems(): Promise<{ byHref: Map<string, ListItem>; complete: boolean }> {
   const byHref = new Map<string, ListItem>()
+  let complete = true
 
   for (const region of GB_LIST_REGIONS) {
     try {
@@ -120,11 +122,12 @@ async function discoverListItems(): Promise<Map<string, ListItem>> {
         if (!byHref.has(item.href)) byHref.set(item.href, item)
       }
     } catch (err) {
+      complete = false
       console.error(`auctionhouse.co.uk: failed to fetch region "${region}"`, err)
     }
   }
 
-  return byHref
+  return { byHref, complete }
 }
 
 function mapItem(item: ListItem, platformId: string): Auction {
@@ -171,8 +174,8 @@ function mapItem(item: ListItem, platformId: string): Auction {
 
 export async function fetchAllListings(
   platformId: string,
-): Promise<{ auctions: Auction[]; total: number | null }> {
-  const byHref = await discoverListItems()
+): Promise<{ auctions: Auction[]; total: number | null; complete: boolean }> {
+  const { byHref, complete } = await discoverListItems()
   const auctions = [...byHref.values()].map((item) => mapItem(item, platformId))
-  return { auctions, total: auctions.length }
+  return { auctions, total: auctions.length, complete }
 }

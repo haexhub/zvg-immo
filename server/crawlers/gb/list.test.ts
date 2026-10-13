@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { parseListPage } from './list'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { fetchAllListings, parseListPage } from './list'
 
 /** Trimmed markup from https://www.auctionhouse.co.uk/london (verified live
  *  — see server/crawlers/gb/constants.ts). Includes one online-auction lot
@@ -59,5 +59,24 @@ describe('parseListPage', () => {
     expect(item?.title).toBe('4 Bed Semi-Detached House')
     expect(item?.priceGbp).toBe(475_000)
     expect(item?.thumbnailUrl).toBe('https://www.auctionhouse.co.uk/lot-image/906416')
+  })
+})
+
+describe('fetchAllListings', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('keeps the other branches\' lots but reports the run as incomplete when one branch fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.stubGlobal('fetch', vi.fn(async (url: string) =>
+      url.endsWith('/london') ? new Response('', { status: 404 }) : new Response(LIST_FIXTURE),
+    ))
+
+    const result = await fetchAllListings('gb-auctionhouse')
+
+    expect(result.auctions).toHaveLength(2)
+    expect(result.complete).toBe(false)
   })
 })

@@ -5,10 +5,11 @@ import { fetchAllListings } from './list'
 import { enrichOne } from './detail'
 
 async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
-  const { auctions, total } = await fetchAllListings(PLATFORM_ID)
+  const { auctions, total, complete } = await fetchAllListings(PLATFORM_ID)
   return {
     platform: PLATFORM_ID,
-    platformsSucceeded: [PLATFORM_ID],
+    // A failed branch page leaves its lots out of this run (see list.ts).
+    platformsSucceeded: complete ? [PLATFORM_ID] : [],
     source: GB_BASE,
     countries: [COUNTRY],
     regions: [REGION_NAME],
