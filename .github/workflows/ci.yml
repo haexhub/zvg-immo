@@ -12,6 +12,11 @@ on:
     branches:
       - main
 
+# Install and test steps run third-party code (lifecycle scripts, test
+# deps); the token never needs more than read access to the checkout.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
