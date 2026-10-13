@@ -56,6 +56,7 @@ function searchPageFixture(overrides: Record<string, unknown> = {}): Record<stri
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 describe('fetchAllPublicSales', () => {
@@ -77,5 +78,44 @@ describe('fetchAllPublicSales', () => {
     const { auctions } = await fetchAllPublicSales('biddit')
     expect(auctions[0]?.auction.startingBid).toBeNull()
     expect(auctions[0]?.auction.currentBid).toBeNull()
+  })
+
+  it('reports a run with a failed follow-up page as incomplete', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.stubGlobal('fetch', vi.fn(async (url: string) =>
+      url.includes('page=0')
+        ? jsonResponse(searchPageFixture({ totalElements: 2, totalPages: 2, last: false }))
+        : jsonResponse({}, 503),
+    ))
+    const result = await fetchAllPublicSales('biddit')
+    expect(result.auctions).toHaveLength(1)
+    expect(result.totalReported).toBe(2)
+    expect(result.complete).toBe(false)
+  })
+
+  it('reports a run incomplete when a live re-rank repeats a lot instead of returning a new one', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // Both pages return 297841: the lot that should have been on page 1 slid
+    // past the page boundary and never arrived.
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      jsonResponse(searchPageFixture({ totalElements: 2, totalPages: 2, last: false })),
+    ))
+    const result = await fetchAllPublicSales('biddit')
+    expect(result.auctions).toHaveLength(1)
+    expect(result.complete).toBe(false)
+  })
+
+  it('reports a run complete when every page loads and all reported lots are distinct', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const fixture = searchPageFixture({ totalElements: 2, totalPages: 2, last: false })
+      if (!url.includes('page=0')) {
+        const item = (fixture.content as { content: Record<string, unknown> }[])[0]!
+        item.content.referenceCode = '297842'
+      }
+      return jsonResponse(fixture)
+    }))
+    const result = await fetchAllPublicSales('biddit')
+    expect(result.auctions.map((m) => m.auction.externalId).sort()).toEqual(['297841', '297842'])
+    expect(result.complete).toBe(true)
   })
 })
