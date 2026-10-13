@@ -2,7 +2,7 @@ import { load } from 'cheerio'
 import type { Auction } from '~/types/auction'
 import { archiveDetailCapture } from '~/server/utils/fetch-archive'
 import type { DocumentIdentity } from '~/server/utils/raw-archive'
-import { GB_BASE, GB_ONLINE_BASE, UA, ONLINE_CRAWL_DELAY_MS } from './constants'
+import { GB_BASE, GB_ONLINE_BASE, UA, ONLINE_CRAWL_DELAY_MS, isRobotsDisallowed } from './constants'
 
 function clean(text: string): string {
   return text.replace(/\s+/g, ' ').trim()
@@ -82,7 +82,8 @@ export function parseOwnDetail(html: string): DetailInfo {
         .map((_i, el) => $(el).attr('src'))
         .get()
         .filter((src): src is string => Boolean(src))
-        .map(absoluteUrl),
+        .map(absoluteUrl)
+        .filter((src) => !isRobotsDisallowed(src)),
     ),
   ]
 
@@ -135,7 +136,7 @@ export function parseOnlineDetail(html: string): DetailInfo {
       $('#carousel-lot-images .carousel-inner img')
         .map((_i, el) => $(el).attr('src'))
         .get()
-        .filter((src): src is string => Boolean(src)),
+        .filter((src): src is string => Boolean(src) && !isRobotsDisallowed(src, GB_ONLINE_BASE)),
     ),
   ]
 
@@ -155,7 +156,7 @@ export function parseOnlineDetail(html: string): DetailInfo {
 
 export async function enrichOne(auction: Auction): Promise<void> {
   const href = auction.detailUrlUpstream
-  if (!href) return
+  if (!href || isRobotsDisallowed(href)) return
   const url = new URL(href)
   const identity: DocumentIdentity = {
     platform: auction.platform,

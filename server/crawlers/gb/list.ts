@@ -1,6 +1,6 @@
 import { load } from 'cheerio'
 import type { Auction } from '~/types/auction'
-import { GB_BASE, GB_LIST_REGIONS, UA, COUNTRY } from './constants'
+import { GB_BASE, GB_LIST_REGIONS, UA, COUNTRY, isRobotsDisallowed } from './constants'
 
 function clean(text: string): string {
   return text.replace(/\s+/g, ' ').trim()
@@ -89,13 +89,14 @@ export function parseListPage(html: string): ListItem[] {
     if (!href) return
     const priceText = clean($a.find('.grid-view-guide').first().text()) || null
     const imgSrc = $a.find('img.lot-image').first().attr('src')
+    const thumbnailUrl = imgSrc ? absoluteUrl(imgSrc) : null
     items.push({
       href,
       address: clean($a.find('.grid-address').first().text()) || null,
       title: clean($a.find('.summary-info-wrapper p.fw-bold').first().text()) || null,
       priceGbp: parseGbpAmount(priceText),
       priceText,
-      thumbnailUrl: imgSrc ? absoluteUrl(imgSrc) : null,
+      thumbnailUrl: thumbnailUrl && !isRobotsDisallowed(thumbnailUrl) ? thumbnailUrl : null,
       branchName,
     })
   })

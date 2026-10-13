@@ -101,4 +101,15 @@ describe('parseOnlineDetail', () => {
     expect(d.lat).toBeCloseTo(54.766552)
     expect(d.lng).toBeCloseTo(-1.340293)
   })
+
+  it('drops gallery images on a robots.txt-disallowed path', () => {
+    const html = ONLINE_FIXTURE.replace(
+      '<div class="item"><img src="https://cdn',
+      '<div class="item"><img src="/asset-file-item/123" /></div><div class="item"><img src="https://cdn',
+    )
+    expect(parseOnlineDetail(html).photoUrls).toEqual([
+      'https://cdn.eigpropertyauctions.co.uk/ams/images/96/auction/0/2770097_web_medium',
+      'https://cdn.eigpropertyauctions.co.uk/ams/images/96/auction/0/2770098_web_medium',
+    ])
+  })
 })
