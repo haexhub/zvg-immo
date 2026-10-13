@@ -1,7 +1,9 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { afterEach, describe, expect, it } from 'vitest'
+import { Readable } from 'node:stream'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Auction } from '~/types/auction'
 import {
   buildDvfTransactionCache,
@@ -9,9 +11,15 @@ import {
   createDvfFileMarketAdapter,
   importDvfCsvFileToCache,
   loadDvfCsv,
+  loadDvfCsvFile,
   readDvfTransactionCache,
 } from './fr-dvf-cache'
 import { encodeGeohash } from './geohash'
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  return { ...actual, createReadStream: vi.fn(actual.createReadStream) }
+})
 
 let tmp: string | null = null
 
@@ -103,6 +111,26 @@ describe('loadDvfCsv', () => {
       lat: 48.8566,
       lng: 2.3522,
     })
+  })
+})
+
+describe('loadDvfCsvFile', () => {
+  it('parses identically however the stream splits quotes, escapes and CRLFs', async () => {
+    const content = '\uFEFF' + [
+      'id_mutation;date_mutation;valeur_fonciere;code_commune;commune;type_local;surface_reelle_bati;surface_terrain;latitude;longitude',
+      'm1;2025-01-01;450000;75056;"Paris ""1er""; centre";Maison;100;300;48,8566;2,3522',
+      'm2;2025-01-02;"500 000";75056;"";Appartement;50;;48,8566;2,3522',
+      '',
+    ].join('\r\n')
+    const expected = loadDvfCsv(content)
+    expect(expected.transactions[0]?.communeName).toBe('Paris "1er"; centre')
+    expect(expected.normalized).toBe(2)
+
+    for (let size = 1; size <= content.length; size++) {
+      const chunks = Array.from({ length: Math.ceil(content.length / size) }, (_, i) => content.slice(i * size, (i + 1) * size))
+      vi.mocked(createReadStream).mockReturnValueOnce(Readable.from(chunks) as ReturnType<typeof createReadStream>)
+      await expect(loadDvfCsvFile('/dvf.csv'), `chunk size ${size}`).resolves.toEqual(expected)
+    }
   })
 })
 

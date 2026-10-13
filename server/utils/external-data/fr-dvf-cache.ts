@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
 import type { Auction, MarketComparisonPropertyClass } from '~/types/auction'
 import { readJsonCache, writeJsonCache } from '../json-cache'
 import {
@@ -46,8 +46,19 @@ export interface ImportDvfCsvFileOptions {
 
 const DEFAULT_GEOHASH_PREFIX_LENGTH = 4
 
+/**
+ * Streams the CSV: a national DVF export is several hundred MB, and reading it
+ * as one string plus every parsed record (~40 columns each) overflowed V8's
+ * string limit or the container heap inside the Nitro process. Each row is now
+ * normalized as soon as it is parsed, so only DvfTransactions stay resident.
+ * ponytail: the transactions and the cache's JSON string are still held whole
+ * (fine for one national year); a multi-year corpus needs a chunked cache
+ * format and a detached import.
+ */
 export async function loadDvfCsvFile(path: string): Promise<DvfCsvLoadResult> {
-  return loadDvfCsv(await readFile(path, 'utf8'))
+  const loader = createDvfCsvLoader()
+  for await (const chunk of createReadStream(path, { encoding: 'utf8' })) loader.write(chunk as string)
+  return loader.end()
 }
 
 export async function importDvfCsvFileToCache(options: ImportDvfCsvFileOptions): Promise<{
@@ -65,18 +76,9 @@ export async function importDvfCsvFileToCache(options: ImportDvfCsvFileOptions):
 }
 
 export function loadDvfCsv(content: string): DvfCsvLoadResult {
-  const rows = parseDelimitedRows(content)
-  const transactions: DvfTransaction[] = []
-  for (const row of rows) {
-    const normalized = normalizeDvfRow(row)
-    if (normalized) transactions.push(normalized)
-  }
-  return {
-    rows: rows.length,
-    normalized: transactions.length,
-    dropped: rows.length - transactions.length,
-    transactions,
-  }
+  const loader = createDvfCsvLoader()
+  loader.write(content)
+  return loader.end()
 }
 
 export function buildDvfTransactionCache(
@@ -172,21 +174,29 @@ function marketClassForAuction(auction: Auction): MarketComparisonPropertyClass 
   return 'unknown'
 }
 
-function parseDelimitedRows(content: string): RawDvfRow[] {
-  const cleaned = content.replace(/^\uFEFF/, '').trim()
-  if (!cleaned) return []
-  const delimiter = detectDelimiter(cleaned)
-  const records = parseRecords(cleaned, delimiter)
-  const header = records[0]?.map((value) => value.trim()) ?? []
-  if (header.length === 0) return []
-
-  return records.slice(1)
-    .filter((record) => record.some((value) => value.trim()))
-    .map((record) => {
-      const row: Record<string, string> = {}
-      for (const [index, key] of header.entries()) row[key] = record[index] ?? ''
-      return row
-    })
+function createDvfCsvLoader(): { write: (chunk: string) => void; end: () => DvfCsvLoadResult } {
+  const transactions: DvfTransaction[] = []
+  let rows = 0
+  let header: string[] | null = null
+  const parser = createCsvRecordParser((record) => {
+    if (!record.some((value) => value.trim())) return
+    if (!header) {
+      header = record.map((value) => value.trim())
+      return
+    }
+    const row: Record<string, string> = {}
+    for (const [index, key] of header.entries()) row[key] = record[index] ?? ''
+    rows++
+    const normalized = normalizeDvfRow(row as RawDvfRow)
+    if (normalized) transactions.push(normalized)
+  })
+  return {
+    write: parser.write,
+    end() {
+      parser.end()
+      return { rows, normalized: transactions.length, dropped: rows - transactions.length, transactions }
+    },
+  }
 }
 
 function detectDelimiter(content: string): string {
@@ -197,41 +207,77 @@ function detectDelimiter(content: string): string {
     .sort((a, b) => b.count - a.count)[0]?.delimiter ?? ';'
 }
 
-function parseRecords(content: string, delimiter: string): string[][] {
-  const records: string[][] = []
+/** Incremental CSV record parser: chunks can split a line, a quoted field, a
+ *  `""` escape or a CRLF anywhere, so all parser state survives between
+ *  writes. */
+function createCsvRecordParser(onRecord: (record: string[]) => void): { write: (chunk: string) => void; end: () => void } {
+  let delimiter: string | null = null
+  // Text not consumed yet: everything before the header line is complete (the
+  // delimiter is detected from it), or a trailing `"`/`\r` whose meaning
+  // depends on the next chunk's first character.
+  let pending = ''
   let record: string[] = []
   let field = ''
   let quoted = false
 
-  for (let i = 0; i < content.length; i++) {
-    const char = content[i]
-    const next = content[i + 1]
-    if (char === '"') {
-      if (quoted && next === '"') {
-        field += '"'
-        i++
-      } else {
-        quoted = !quoted
+  function consume(text: string, final: boolean): void {
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i]
+      if (!final && i === text.length - 1 && (char === '"' || char === '\r')) {
+        pending = char
+        return
       }
-      continue
+      const next = text[i + 1]
+      if (char === '"') {
+        if (quoted && next === '"') {
+          field += '"'
+          i++
+        } else {
+          quoted = !quoted
+        }
+        continue
+      }
+      if (!quoted && char === delimiter) {
+        record.push(field)
+        field = ''
+        continue
+      }
+      if (!quoted && (char === '\n' || char === '\r')) {
+        if (char === '\r' && next === '\n') i++
+        record.push(field)
+        onRecord(record)
+        record = []
+        field = ''
+        continue
+      }
+      field += char
     }
-    if (!quoted && char === delimiter) {
-      record.push(field)
-      field = ''
-      continue
-    }
-    if (!quoted && (char === '\n' || char === '\r')) {
-      if (char === '\r' && next === '\n') i++
-      record.push(field)
-      records.push(record)
-      record = []
-      field = ''
-      continue
-    }
-    field += char
   }
 
-  record.push(field)
-  records.push(record)
-  return records
+  function take(chunk: string): string {
+    const text = pending + chunk
+    pending = ''
+    return delimiter == null ? text.replace(/^\uFEFF/, '') : text
+  }
+
+  return {
+    write(chunk) {
+      const text = take(chunk)
+      if (delimiter == null) {
+        if (!/[\r\n]/.test(text)) {
+          pending = text
+          return
+        }
+        delimiter = detectDelimiter(text.trimStart())
+      }
+      consume(text, false)
+    },
+    end() {
+      const text = take('')
+      delimiter ??= detectDelimiter(text.trimStart())
+      consume(text, true)
+      record.push(field)
+      onRecord(record)
+    },
+  }
 }
