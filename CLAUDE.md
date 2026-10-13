@@ -56,7 +56,9 @@ den für die SQL-Suche aufgelösten `regionNames`. Neue Filter zuerst dort
 definieren und mit Round-trip-Tests absichern.
 
 Alerts teilen die in-memory-Auswertung für alle verfügbaren Crawl-Felder;
-`nearLat`/`nearLng`/`nearRadius` werden per Distanz geprüft. Umgebungskriterien
+`nearLat`/`nearLng`/`nearRadius` werden per Distanz gegen Quell- bzw. gecachte
+Geocodes geprüft (cache-only, Treffer also ggf. erst nach dem Geocode-Task).
+Umgebungskriterien
 mit vorausberechneten Geo-/OSM-Metriken (`nearSea`, `nearLake`, `nearRiver`,
 `nearMountain`, `nearAirport`, `nearSki`, `urbanRural`) sowie Kriterien aus
 Extraktion/LLM-Analyse bzw. Detailseite (`landMin`/`landMax`, `livMin`/`livMax`,

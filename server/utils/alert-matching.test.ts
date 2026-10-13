@@ -2,13 +2,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { filterAuctions } from '~/lib/auction-filters'
 import type { Auction } from '~/types/auction'
 
-const { getServiceClient, enqueueAlertDelivery } = vi.hoisted(() => ({
+const { getServiceClient, enqueueAlertDelivery, fillAuctionGeocodes } = vi.hoisted(() => ({
   getServiceClient: vi.fn(),
   enqueueAlertDelivery: vi.fn(),
+  fillAuctionGeocodes: vi.fn(),
 }))
 
 vi.mock('./supabase', () => ({ getServiceClient }))
 vi.mock('./outbound-delivery', () => ({ enqueueAlertDelivery }))
+vi.mock('./auction-geocoding', () => ({ fillAuctionGeocodes }))
 
 // toAuctionFilters resolves `${countryCode}:${regionCode}` pairs to
 // `${countryCode}:${regionDisplayName}` via listCountries() — stub the
@@ -38,7 +40,7 @@ const auction = {
   caseNumber: '1 K 2/26', country: 'de', region: 'Sachsen', cancelled: false,
 } as never
 
-function alertSupabase(options: { email?: string, userError?: Error } = {}) {
+function alertSupabase(options: { email?: string, userError?: Error, filters?: Record<string, unknown> } = {}) {
   const inserted = vi.fn(async () => ({ error: null }))
   const notifiedSelect = {
     select: vi.fn(() => ({ eq: vi.fn(async () => ({ data: [], error: null })) })),
@@ -47,7 +49,7 @@ function alertSupabase(options: { email?: string, userError?: Error } = {}) {
   const client = {
     from: vi.fn((table: string) => table === 'alert_subscriptions'
       ? { select: vi.fn(() => ({ eq: vi.fn(async () => ({
-        data: [{ id: 'sub-1', user_id: 'user-1', saved_searches: { filters: {} } }], error: null,
+        data: [{ id: 'sub-1', user_id: 'user-1', saved_searches: { filters: options.filters ?? {} } }], error: null,
       })) })) }
       : notifiedSelect),
     auth: { admin: { getUserById: vi.fn(async () => ({
@@ -167,5 +169,23 @@ describe('alert delivery state', () => {
     await matchAlerts('de', 'sn', { auctions: [auction] } as never)
     expect(enqueueAlertDelivery).toHaveBeenCalledTimes(2)
     expect(inserted).not.toHaveBeenCalled()
+  })
+
+  it('matches a radius alert against cached geocodes without mutating the crawl batch', async () => {
+    const { client } = alertSupabase({
+      email: 'person@example.test', filters: { nearLat: '51.34', nearLng: '12.37', nearRadius: '30' },
+    })
+    getServiceClient.mockReturnValue(client)
+    enqueueAlertDelivery.mockResolvedValue(true)
+    fillAuctionGeocodes.mockImplementation(async (items: Auction[]) => {
+      for (const item of items) Object.assign(item, { lat: 51.3, lng: 12.4 })
+    })
+    const unlocated = { ...(auction as object), address: 'Leipzig' } as Auction
+
+    await matchAlerts('de', 'sn', { auctions: [unlocated] } as never)
+
+    expect(fillAuctionGeocodes).toHaveBeenCalledWith([expect.objectContaining({ externalId: '42' })], { fetchMissing: false })
+    expect(enqueueAlertDelivery).toHaveBeenCalledWith(expect.objectContaining({ externalId: '42' }))
+    expect(unlocated.lat).toBeUndefined()
   })
 })

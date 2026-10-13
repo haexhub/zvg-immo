@@ -19,6 +19,7 @@ import { listCountries } from '../crawlers/registry'
 import { isNationwideOnlyCountry } from './region-picker'
 import { getServiceClient } from './supabase'
 import { enqueueAlertDelivery } from './outbound-delivery'
+import { fillAuctionGeocodes } from './auction-geocoding'
 
 /** Converts saved_searches.filters (the raw route.query object pages/index.vue
  *  POSTs, see lib/auction-filters.ts's header comment) into the AuctionFilters
@@ -81,11 +82,23 @@ export async function matchAlerts(country: string, region: string, result: Crawl
     return
   }
 
+  // Most list crawls (zvg-portal among them) carry no source coordinates, and
+  // only the scheduled/admin geocode task produces new ones.  Radius alerts
+  // therefore read cached geocodes (on copies, so the batch the caller
+  // archives is untouched) and fire on the first batch after the address got
+  // geocoded; notified_matches keeps that to a single mail.
+  let located: Promise<Auction[]> | undefined
+  const locatedAuctions = () => located ??= (async () => {
+    const copies = result.auctions.map((a) => ({ ...a }))
+    await fillAuctionGeocodes(copies, { fetchMissing: false })
+    return copies
+  })()
+
   for (const sub of subscriptions) {
     try {
       const savedSearch = Array.isArray(sub.saved_searches) ? sub.saved_searches[0] : sub.saved_searches
       if (!savedSearch) continue
-      await processSubscription(supabase, sub.id, sub.user_id, savedSearch.filters, result.auctions)
+      await processSubscription(supabase, sub.id, sub.user_id, savedSearch.filters, result.auctions, locatedAuctions)
     } catch (err) {
       console.warn(`[alert-matching] subscription ${sub.id}: ${(err as Error).message}`)
     }
@@ -98,6 +111,7 @@ async function processSubscription(
   userId: string,
   storedFilters: Record<string, unknown>,
   auctions: Auction[],
+  locatedAuctions: () => Promise<Auction[]>,
 ): Promise<void> {
   const filters = toAuctionFilters(storedFilters ?? {})
   const unsupported = unsupportedAlertFilterKeys(filters)
@@ -108,7 +122,8 @@ async function processSubscription(
     console.warn(`[alert-matching] subscription ${subscriptionId}: unsupported filters: ${unsupported.join(', ')}`)
     return
   }
-  const matched = filterAuctions(auctions, filters)
+  const radiusSearch = filters.nearLat != null && filters.nearLng != null
+  const matched = filterAuctions(radiusSearch ? await locatedAuctions() : auctions, filters)
   if (matched.length === 0) return
 
   const { data: existing, error: existingError } = await supabase
