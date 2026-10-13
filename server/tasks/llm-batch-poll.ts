@@ -173,7 +173,7 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
         continue
       }
 
-      const results = await fetchLlmBatchResults(job.jobName, poll.resultFileName, jobConfig, job.customIdMap)
+      const results = await fetchLlmBatchResults(job.jobName, poll, jobConfig, job.customIdMap)
       throwIfTaskAborted(signal)
       let rulesFalsified = 0
       for (const { key, extraction, usage, error } of results) {

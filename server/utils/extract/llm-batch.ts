@@ -140,15 +140,17 @@ export async function pollLlmBatch(jobName: string, config: LlmConfig): Promise<
 
 export async function fetchLlmBatchResults(
   jobName: string,
-  resultFileName: string | undefined,
+  files: Pick<PollResult, 'resultFileName' | 'errorFileName'>,
   config: LlmConfig,
   customIdMap: Record<string, string>,
 ): Promise<LlmBatchResultItem[]> {
+  const { resultFileName, errorFileName } = files
   if (jobName.startsWith('openrouter_')) return fetchOpenRouterBatchResults(jobName, config, customIdMap)
   if (jobName.startsWith('msgbatch_')) return fetchAnthropicBatchResults(jobName, config, customIdMap)
   if (jobName.startsWith('batch_')) {
-    if (!resultFileName) return []
-    return fetchOpenAiBatchResults(resultFileName, config, customIdMap)
+    const fileIds = [resultFileName, errorFileName].filter((id): id is string => !!id)
+    if (fileIds.length === 0) return []
+    return fetchOpenAiBatchResults(fileIds, config, customIdMap)
   }
   if (!resultFileName) return []
   return fetchGeminiBatchResults(resultFileName, config, customIdMap)

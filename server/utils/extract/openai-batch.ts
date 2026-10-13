@@ -214,6 +214,7 @@ export async function pollOpenAiBatch(jobName: string, config: LlmConfig): Promi
     const resp = await $fetch<{
       status?: string
       output_file_id?: string | null
+      error_file_id?: string | null
       errors?: { data?: Array<{ message?: string }> } | null
     }>(`${apiBase(config)}/batches/${jobName}`, {
       headers: authHeaders(config),
@@ -221,11 +222,17 @@ export async function pollOpenAiBatch(jobName: string, config: LlmConfig): Promi
     })
     const errorMessage = resp.errors?.data?.[0]?.message
     if (resp.status === 'completed') {
-      if (!resp.output_file_id) {
-        console.warn(`[openai-batch] job ${jobName} completed without an output_file_id`)
+      if (!resp.output_file_id && !resp.error_file_id) {
+        console.warn(`[openai-batch] job ${jobName} completed without an output or error file`)
         return { state: 'failed' }
       }
-      return { state: 'succeeded', resultFileName: resp.output_file_id }
+      // Requests that failed (e.g. a 400 for an oversized image) are only in
+      // error_file_id; dropping it would leave those items without an outcome.
+      return {
+        state: 'succeeded',
+        ...(resp.output_file_id ? { resultFileName: resp.output_file_id } : {}),
+        ...(resp.error_file_id ? { errorFileName: resp.error_file_id } : {}),
+      }
     }
     if (resp.status === 'failed' || resp.status === 'cancelled') return { state: 'failed', errorMessage }
     if (resp.status === 'expired') return { state: 'expired', errorMessage }
@@ -236,18 +243,19 @@ export async function pollOpenAiBatch(jobName: string, config: LlmConfig): Promi
   }
 }
 
+/** Parse the output and error files of a completed batch; both share one JSONL line shape. */
 export async function fetchOpenAiBatchResults(
-  outputFileId: string,
+  fileIds: readonly string[],
   config: LlmConfig,
   customIdMap: Record<string, string>,
 ): Promise<LlmBatchResultItem[]> {
-  const text = await $fetch<string>(`${apiBase(config)}/files/${outputFileId}/content`, {
+  const texts = await Promise.all(fileIds.map((fileId) => $fetch<string>(`${apiBase(config)}/files/${fileId}/content`, {
     headers: authHeaders(config),
     signal: AbortSignal.timeout(120_000),
     responseType: 'text',
-  })
+  })))
   const out: LlmBatchResultItem[] = []
-  for (const line of text.split('\n')) {
+  for (const line of texts.join('\n').split('\n')) {
     const trimmed = line.trim()
     if (!trimmed) continue
     let parsed: {

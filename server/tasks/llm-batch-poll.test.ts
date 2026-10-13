@@ -385,7 +385,7 @@ describe('runLlmBatchPoll', () => {
 
     expect(resolveLlmConfigForProfile).toHaveBeenCalledWith({}, 'profile-a')
     expect(pollLlmBatch).toHaveBeenCalledWith('batches/abc', { ...profileConfig, model: 'gemini-flash-latest' })
-    expect(fetchLlmBatchResults).toHaveBeenCalledWith('batches/abc', 'files/result', { ...profileConfig, model: 'gemini-flash-latest' }, {})
+    expect(fetchLlmBatchResults).toHaveBeenCalledWith('batches/abc', expect.objectContaining({ resultFileName: 'files/result' }), { ...profileConfig, model: 'gemini-flash-latest' }, {})
   })
 
   it('falls back to the current chain config for a legacy job without a profile snapshot', async () => {

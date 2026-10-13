@@ -4,7 +4,13 @@ import { parseGeminiExtractionResponse, parseGeminiUsage } from './providers/gem
 import { apiBase } from './batch-shared'
 import type { LlmBatchResultItem } from './llm-batch'
 
-export interface PollResult { state: 'pending' | 'succeeded' | 'failed' | 'expired'; resultFileName?: string; errorMessage?: string }
+export interface PollResult {
+  state: 'pending' | 'succeeded' | 'failed' | 'expired'
+  resultFileName?: string
+  /** OpenAI only: failed requests land in a separate error file, not the output file. */
+  errorFileName?: string
+  errorMessage?: string
+}
 const SUCCEEDED_STATES = new Set(['JOB_STATE_SUCCEEDED', 'BATCH_STATE_SUCCEEDED', 'SUCCEEDED'])
 const FAILED_STATES = new Set(['JOB_STATE_FAILED', 'BATCH_STATE_FAILED', 'FAILED', 'JOB_STATE_CANCELLED', 'BATCH_STATE_CANCELLED', 'CANCELLED'])
 const EXPIRED_STATES = new Set(['JOB_STATE_EXPIRED', 'BATCH_STATE_EXPIRED', 'EXPIRED'])
