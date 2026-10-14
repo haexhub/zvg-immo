@@ -9,7 +9,7 @@ import { withDerivedExtractionFields, type MergeInputFields } from '~/server/uti
 import { buildReprocessFields } from '~/server/utils/extract/reprocess-fields'
 import { getPool } from '~/server/utils/db'
 import { hasUnparsedArtifactVersion, readArtifactProcessingState, type ArtifactProcessingState } from '~/server/utils/artifact-version-state'
-import { downloadBlob, findLatestCapture } from '~/server/utils/storage-download'
+import { readArchivedAuctionSnapshot } from '~/server/utils/archived-auction'
 import { isSafePathSegment } from '~/server/utils/path-segment'
 import { downloadImage, mimeTypeFor } from '~/server/utils/image-storage'
 import { normalizePhoto } from '~/lib/photo'
@@ -359,17 +359,10 @@ export async function buildReprocessInput(
     auction: Auction
   } | null
 > {
-  const auctionCapture = await findLatestCapture('auction', platform, externalId)
-  if (!auctionCapture) return null
-  const auctionBytes = await downloadBlob(auctionCapture.contentHash)
-  if (!auctionBytes) return null
-
-  let auction: Auction
-  try {
-    auction = JSON.parse(auctionBytes.toString('utf8')) as Auction
-  } catch {
-    return null
-  }
+  // Newest snapshot, with the detail data (description, ...) it lacks filled
+  // in from the last enriched one — see archived-auction.ts.
+  const auction = await readArchivedAuctionSnapshot(platform, externalId)
+  if (!auction) return null
 
   const artifactState = opts.artifactState ?? await readArtifactProcessingState(platform, externalId)
   const documentSetChanged = hasNewArchivedDocuments(artifactState)

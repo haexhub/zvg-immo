@@ -67,6 +67,38 @@ export async function findLatestCapture(
   }
 }
 
+/**
+ * Newest-first `artifact_captures` rows for `(kind, platform, externalId)`,
+ * one per distinct `content_hash`. A crawl re-archives an unchanged listing
+ * on every run (same hash, new row), so without the dedupe a handful of
+ * identical listing snapshots would push an older, different one out of any
+ * `limit` window. Empty when none exists or the archive isn't configured.
+ */
+export async function listDistinctCaptures(
+  kind: CaptureKind,
+  platform: string,
+  externalId: string,
+  limit: number,
+): Promise<CaptureRef[]> {
+  const db = getPool()
+  if (!db) return []
+  try {
+    const { rows } = await db.query<{ content_hash: string; source_url: string | null; captured_at: string }>(
+      `SELECT content_hash, max(source_url) AS source_url, max(captured_at) AS captured_at
+       FROM artifact_captures
+       WHERE kind = $1 AND platform = $2 AND external_id = $3
+       GROUP BY content_hash
+       ORDER BY max(captured_at) DESC
+       LIMIT $4`,
+      [kind, platform, externalId, limit],
+    )
+    return rows.map((row) => ({ contentHash: row.content_hash, sourceUrl: row.source_url, capturedAt: row.captured_at }))
+  } catch (err) {
+    console.warn(`[storage-download] listDistinctCaptures failed: ${(err as Error).message}`)
+    return []
+  }
+}
+
 export async function readDocumentSet(
   platform: string,
   externalId: string,
