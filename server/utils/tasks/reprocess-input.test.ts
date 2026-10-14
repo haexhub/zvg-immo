@@ -31,6 +31,12 @@ describe('findCandidates', () => {
     expect(lastSql()).not.toContain('a.cancelled = false')
   })
 
+  it('hands failedOnly runs to the SQL-level locked selection', async () => {
+    await findCandidates({ failedOnly: true, limit: 10 }, ['de'])
+    expect(lastSql()).toContain('s.llm_failures >= $1')
+    expect(lastSql()).toContain('FROM auction_fetch_state s')
+  })
+
   it('keeps the case-number lookup unfiltered too', async () => {
     await findCandidates({ caseNumber: '0032 K 0044/2025' }, ['de'])
     expect(lastSql()).not.toContain('a.cancelled = false')

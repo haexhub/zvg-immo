@@ -34,6 +34,36 @@ describe('/api/settings/reprocess', () => {
     })
   })
 
+  it('retryFailed retries only locked auctions, bounded and without forcing', async () => {
+    const { runReprocessTask } = await import('~/server/tasks/reprocess')
+    vi.mocked(runReprocessTask).mockReturnValue(new Promise(() => {}))
+    const handler = await loadHandler({ limit: 25, platform: 'zvg-portal', retryFailed: true, force: true, batch: true })
+
+    await expect(handler({})).resolves.toEqual({ started: true })
+    expect(runReprocessTask).toHaveBeenCalledWith({
+      limit: 25,
+      force: false,
+      country: undefined,
+      platform: 'zvg-portal',
+      externalId: undefined,
+      caseNumber: undefined,
+      batch: false,
+      trigger: 'manual',
+      failedOnly: true,
+      ignoreCooldown: true,
+      ignoreBatchPending: true,
+      ignoreLlmBudget: true,
+    })
+  })
+
+  it('retryFailed still requires a valid limit', async () => {
+    const { runReprocessTask } = await import('~/server/tasks/reprocess')
+    const handler = await loadHandler({ retryFailed: true })
+
+    await expect(handler({})).rejects.toMatchObject({ statusCode: 400 })
+    expect(runReprocessTask).not.toHaveBeenCalled()
+  })
+
   it('keeps a background task failure out of the HTTP response', async () => {
     const { runReprocessTask } = await import('~/server/tasks/reprocess')
     vi.mocked(runReprocessTask).mockRejectedValue(new Error('boom'))

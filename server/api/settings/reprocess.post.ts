@@ -24,15 +24,25 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: `limit: ganze Zahl zwischen 1 und ${MAX_LIMIT} erforderlich.` })
   }
 
+  // retryFailed: retry auctions locked out of the LLM pipeline (llm_failures >=
+  // MAX_LLM_FAILURES, no successful extraction yet) — the same options as the
+  // country-wide reprocess-retry-failed action, but bounded by `limit` and
+  // scopable by country/platform. Never forces: an already-extracted auction
+  // is not touched, and the oldest last attempt goes first so repeated
+  // bounded runs work through the whole locked set. Synchronous provider path
+  // like the other explicit retries, so a failed submission can't look like a
+  // no-op.
+  const retryFailed = body.retryFailed === true
   const opts: ReprocessOptions = {
     limit: body.limit,
-    force: body.force !== false,
+    force: retryFailed ? false : body.force !== false,
     country: typeof body.country === 'string' ? body.country : undefined,
     platform: typeof body.platform === 'string' ? body.platform : undefined,
     externalId: typeof body.externalId === 'string' ? body.externalId : undefined,
     caseNumber: typeof body.caseNumber === 'string' ? body.caseNumber : undefined,
-    batch: typeof body.batch === 'boolean' ? body.batch : undefined,
+    batch: retryFailed ? false : typeof body.batch === 'boolean' ? body.batch : undefined,
     trigger: 'manual',
+    ...(retryFailed ? { failedOnly: true, ignoreCooldown: true, ignoreBatchPending: true, ignoreLlmBudget: true } : {}),
   }
 
   // The rejection is already recorded as reprocessStatus.lastError by
