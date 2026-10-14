@@ -219,6 +219,16 @@ def get_llm_jobs() -> str:
 
 @tool(READ)
 @guarded
+def list_locked_auctions(country: str, limit: int = 50, offset: int = 0, search: str | None = None) -> str:
+    """Fuer die LLM-Pipeline gesperrte Auktionen eines Landes (>= 3 Fehlversuche, keine erfolgreiche Extraktion) mit Fehlerzaehler und letzter Fehlermeldung. country: ISO-2 (de, bg, se). limit 1-200."""
+    params: dict[str, Any] = {"bucket": "error", "limit": max(1, min(200, limit)), "offset": max(0, offset)}
+    if search:
+        params["search"] = search
+    return out(admin.request("GET", f"/api/settings/llm-status/{seg(country.lower())}", params=params))
+
+
+@tool(READ)
+@guarded
 def get_auction_technical(platform: str, external_id: str) -> str:
     """Technikseite einer Auktion: Fetch-Status, Dokumente, Extraktionshistorie (Versionen, Modelle, Kosten, Fehler)."""
     return out(admin.request("GET", auction_path(platform, external_id) + "/technical"))
@@ -331,6 +341,30 @@ def set_llm_assignments(extraction: list[str], translation: list[str], strategy:
     if strategy:
         body["strategy"] = strategy
     return out(admin.request("PUT", "/api/settings/llm-assignments", body=body))
+
+
+@tool(DESTRUCTIVE, write=True)
+@guarded
+def retry_locked_auctions(limit: int, country: str | None = None, platform: str | None = None) -> str:
+    """Versucht gesperrte Auktionen (>= 3 Fehlversuche, keine erfolgreiche Extraktion) erneut mit der zugewiesenen LLM-Kette. Schreibt neue LIVE-Versionen und verbraucht LLM-Kontingent. limit 1-200; die am laengsten nicht versuchten kommen zuerst, wiederholte Laeufe arbeiten also die ganze Sperrliste ab. Ein neuer manueller Reprocess ersetzt einen laufenden - deshalb wird abgelehnt, solange einer laeuft. Fortschritt ueber get_llm_jobs."""
+    if not 1 <= limit <= 200:
+        return "FEHLER: limit muss zwischen 1 und 200 liegen."
+    status = (admin.request("GET", "/api/settings/llm-batch-jobs").get("reprocessStatus") or {}).get("status")
+    if status == "running":
+        return "ABGELEHNT: Es laeuft bereits ein Reprocess (get_llm_jobs). Ein neuer manueller Lauf wuerde ihn ersetzen - erst abwarten."
+    body: dict[str, Any] = {"limit": limit, "retryFailed": True}
+    if country:
+        body["country"] = country.lower()
+    if platform:
+        body["platform"] = platform
+    return out(admin.request("POST", "/api/settings/reprocess", body=body))
+
+
+@tool(DESTRUCTIVE, write=True)
+@guarded
+def retry_auction_llm(platform: str, external_id: str) -> str:
+    """Erzwingt die LLM-Extraktion fuer genau eine Auktion mit der zugewiesenen Kette (auch wenn sie nicht gesperrt ist). Schreibt eine neue LIVE-Version. Laeuft im Hintergrund; Ergebnis ueber get_auction_technical."""
+    return out(admin.request("POST", auction_path(platform, external_id) + "/reprocess-retry"))
 
 
 @tool(DESTRUCTIVE, write=True)

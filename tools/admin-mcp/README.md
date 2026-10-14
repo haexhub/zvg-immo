@@ -28,9 +28,9 @@ Umgebungsvariablen: `ZVG_BASE_URL` (Default `https://zvg.haex.cloud`),
 
 | Art | Tool |
 |---|---|
-| Lesen | `get_operations`, `get_llm_overview`, `list_llm_profiles`, `get_llm_kill_switch`, `get_llm_costs`, `get_llm_jobs`, `get_auction_technical`, `get_auction_version`, `compare_auction_versions`, `compare_trial_to_live` |
+| Lesen | `get_operations`, `get_llm_overview`, `list_llm_profiles`, `get_llm_kill_switch`, `get_llm_costs`, `get_llm_jobs`, `list_locked_auctions`, `get_auction_technical`, `get_auction_version`, `compare_auction_versions`, `compare_trial_to_live` |
 | Probelauf | `run_trial` – schreibt nur eine Trial-Version, die Live-Version bleibt unverändert; wartet bis zu `wait_seconds` (Default 240) |
-| Schreiben (Live-Wirkung) | `set_llm_kill_switch`, `set_llm_assignments`, `start_reprocess`, `delete_trial_version` (lehnt Nicht-Trials ab) |
+| Schreiben (Live-Wirkung) | `set_llm_kill_switch`, `set_llm_assignments`, `start_reprocess`, `retry_locked_auctions` (begrenzt auf 1–200, lehnt ab solange ein Reprocess läuft), `retry_auction_llm`, `delete_trial_version` (lehnt Nicht-Trials ab) |
 
 Schreib-Tools sind als nicht-readonly markiert, Claude Code fragt vor jedem
 Aufruf nach. Die Live-wirksamen (`set_*`, `start_reprocess`, `delete_*`) sollten

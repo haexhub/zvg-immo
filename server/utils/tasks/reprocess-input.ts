@@ -10,6 +10,7 @@ import { buildReprocessFields } from '~/server/utils/extract/reprocess-fields'
 import { getPool } from '~/server/utils/db'
 import { hasUnparsedArtifactVersion, readArtifactProcessingState, type ArtifactProcessingState } from '~/server/utils/artifact-version-state'
 import { readArchivedAuctionSnapshot } from '~/server/utils/archived-auction'
+import { findLockedCandidates } from './reprocess-locked-candidates'
 import { isSafePathSegment } from '~/server/utils/path-segment'
 import { downloadImage, mimeTypeFor } from '~/server/utils/image-storage'
 import { normalizePhoto } from '~/lib/photo'
@@ -205,6 +206,7 @@ export async function findCandidates(opts: ReprocessOptions, countries: readonly
   if (countries.length === 0) return []
   const db = getPool()
   if (!db) return []
+  if (opts.failedOnly) return findLockedCandidates(opts, countries)
   const conditions = ["rc.kind = 'auction'"]
   const params: unknown[] = []
   if (countries.length === 1) {

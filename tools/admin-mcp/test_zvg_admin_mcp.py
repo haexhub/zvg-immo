@@ -31,6 +31,7 @@ HISTORY = [
 class Fake(BaseHTTPRequestHandler):
     calls: list[tuple[str, str, object]] = []
     trial_started = False
+    reprocess_running = False
 
     def log_message(self, *a):  # quiet
         pass
@@ -89,6 +90,8 @@ class Fake(BaseHTTPRequestHandler):
             return self._json(200, LIVE)
         if self.path.endswith("/versions/6"):
             return self._json(200, TRIAL)
+        if self.path.startswith("/api/settings/llm-batch-jobs"):
+            return self._json(200, {"reprocessStatus": {"status": "running" if Fake.reprocess_running else "idle"}})
         if self.path.startswith("/api/settings/llm-profiles"):
             return self._json(200, {"profiles": [{"id": "p1", "name": "Sonnet"}], "assignments": {}, "strategy": "fallback"})
         self._json(200, {"path": self.path})
@@ -98,6 +101,7 @@ class Fake(BaseHTTPRequestHandler):
 def fake():
     Fake.calls = []
     Fake.trial_started = False
+    Fake.reprocess_running = False
     srv = HTTPServer(("127.0.0.1", 0), Fake)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{srv.server_port}"
@@ -148,7 +152,9 @@ def test_readonly_hides_write_tools(fake):
 
     names = anyio.run(lambda: session_run(fake, go, ZVG_MCP_READONLY="1"))
     assert "get_operations" in names
-    assert not names & {"run_trial", "set_llm_kill_switch", "set_llm_assignments", "start_reprocess", "delete_trial_version"}
+    assert "list_locked_auctions" in names
+    assert not names & {"run_trial", "set_llm_kill_switch", "set_llm_assignments", "start_reprocess", "delete_trial_version",
+                        "retry_locked_auctions", "retry_auction_llm"}
 
 
 def test_wrong_password_is_reported_without_leaking_it(fake):
@@ -185,3 +191,28 @@ def test_run_trial_waits_for_the_new_trial_row(fake, monkeypatch, tmp_path):
     assert res["status"] == "success" and res["llmModel"] == "claude-sonnet-5-5"
     posts = [c for c in Fake.calls if c[0] == "POST" and c[1].endswith("/reprocess")]
     assert posts == [("POST", "/api/settings/auction/kip/H1/reprocess", {"profileId": "p1"})]
+
+
+def test_retry_locked_auctions_sends_a_bounded_retry_and_refuses_while_running(fake):
+    async def go(s):
+        bad = text(await s.call_tool("retry_locked_auctions", {"limit": 500}))
+        Fake.reprocess_running = True
+        busy = text(await s.call_tool("retry_locked_auctions", {"limit": 20, "country": "DE"}))
+        Fake.reprocess_running = False
+        ok = text(await s.call_tool("retry_locked_auctions", {"limit": 20, "country": "DE", "platform": "zvg-portal"}))
+        return bad, busy, ok
+
+    bad, busy, ok = anyio.run(lambda: session_run(fake, go))
+    assert "zwischen 1 und 200" in bad and "ABGELEHNT" in busy and '"started": true' in ok
+    posts = [c for c in Fake.calls if c[0] == "POST" and c[1] == "/api/settings/reprocess"]
+    assert posts == [("POST", "/api/settings/reprocess", {"limit": 20, "retryFailed": True, "country": "de", "platform": "zvg-portal"})]
+
+
+def test_list_locked_auctions_and_single_retry_paths(fake):
+    async def go(s):
+        await s.call_tool("list_locked_auctions", {"country": "DE", "limit": 5, "search": "kip"})
+        await s.call_tool("retry_auction_llm", {"platform": "kip", "external_id": "H1"})
+
+    anyio.run(lambda: session_run(fake, go))
+    assert any(c[0] == "GET" and c[1].startswith("/api/settings/llm-status/de?bucket=error&limit=5&offset=0&search=kip") for c in Fake.calls)
+    assert ("POST", "/api/settings/auction/kip/H1/reprocess-retry", None) in Fake.calls
