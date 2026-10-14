@@ -1,7 +1,7 @@
 import { deflateRawSync } from 'node:zlib'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Attachment, Auction } from '~/types/auction'
-import { downloadBlob, findLatestCapture, readDocumentSet } from '../storage-download'
+import { downloadBlob, findLatestCapture, listDistinctCaptures, readDocumentSet } from '../storage-download'
 
 // fetchPublicUrl resolves every upstream host before fetching; answer with a
 // public address so the stubbed fetch is reached without real DNS.
@@ -9,6 +9,7 @@ vi.mock('node:dns/promises', () => ({ lookup: vi.fn(async () => [{ address: '93.
 vi.mock('../storage-download', () => ({
   downloadBlob: vi.fn(),
   findLatestCapture: vi.fn(),
+  listDistinctCaptures: vi.fn(),
   readDocumentSet: vi.fn(),
 }))
 // archiveDocumentBlob/archiveDocumentText hit Postgres via getPool(), which
@@ -141,6 +142,7 @@ function zipWithDocumentXml(xml: string): Buffer {
 
 beforeEach(() => {
   vi.mocked(findLatestCapture).mockResolvedValue(null)
+  vi.mocked(listDistinctCaptures).mockResolvedValue([])
   vi.mocked(readDocumentSet).mockResolvedValue(null)
   vi.mocked(downloadBlob).mockResolvedValue(null)
 })

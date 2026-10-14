@@ -7,6 +7,7 @@ import {
   type DocumentIdentity,
 } from '../raw-archive'
 import { downloadBlob, findLatestCapture, readDocumentSet } from '../storage-download'
+import { readArchivedAuctionSnapshot } from '../archived-auction'
 import { detectImageExt, type ImageExt } from './image-bytes'
 import { docxBufferToText } from './docx-text'
 import { buildDocumentLlmParts, buildDocumentSummaryInputs, MAP_REDUCE_DOCUMENT_THRESHOLD, type DocumentSummaryInput } from './pdf-documents'
@@ -399,14 +400,7 @@ export async function prepareArchivedLlmDocuments(
   return documentSet == null ? { ...prepared, documentSetComplete: false } : prepared
 }
 
+/** Read the newest archived auction, filling missing detail fields from older captures. */
 export async function readArchivedAuction(platform: string, externalId: string): Promise<Auction | null> {
-  const capture = await findLatestCapture('auction', platform, externalId)
-  if (!capture) return null
-  const bytes = await downloadBlob(capture.contentHash)
-  if (!bytes) return null
-  try {
-    return JSON.parse(bytes.toString('utf8')) as Auction
-  } catch {
-    return null
-  }
+  return readArchivedAuctionSnapshot(platform, externalId)
 }

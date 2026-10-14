@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Auction, AuctionExtraction } from '~/types/auction'
 import type { ClampedExtraction } from '../utils/extract/llm-clamp'
 import type { ReprocessInput } from '../utils/tasks/reprocess-input'
-import { downloadBlob, findLatestCapture } from '../utils/storage-download'
+import { downloadBlob, listDistinctCaptures } from '../utils/storage-download'
 import { getPool } from '../utils/db'
 import { readAuctionRecordMap } from '../utils/auction-record'
 import { readAuctionFetchStates, writeAuctionLlmClaim, writeAuctionLlmPipelineState } from '../utils/auction-fetch-state'
@@ -20,7 +20,7 @@ import { recordLlmUsage } from '../utils/llm-usage'
 import { recordTaskRunStart } from '../utils/task-runs'
 
 vi.mock('../utils/storage-download', () => ({
-  findLatestCapture: vi.fn(),
+  listDistinctCaptures: vi.fn(),
   downloadBlob: vi.fn(),
   readDocumentSet: vi.fn(async () => null),
 }))
@@ -154,11 +154,11 @@ beforeEach(() => {
   vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([])
   vi.mocked(readExtractionChainStrategy).mockResolvedValue('fallback')
   vi.mocked(readLlmExecutionMode).mockResolvedValue('sync')
-  vi.mocked(findLatestCapture).mockResolvedValue({
+  vi.mocked(listDistinctCaptures).mockResolvedValue([{
     contentHash: 'auction-hash',
     sourceUrl: null,
     capturedAt: '2026-08-02T10:00:00.000Z',
-  })
+  }])
   vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction())))
   vi.mocked(writeAuctionDetails).mockResolvedValue({ version: 3, changed: true })
 })
@@ -170,7 +170,7 @@ afterEach(() => {
 
 describe('reprocessAuction structured provenance', () => {
   it('returns null when no archived auction capture exists', async () => {
-    vi.mocked(findLatestCapture).mockResolvedValue(null)
+    vi.mocked(listDistinctCaptures).mockResolvedValue([])
 
     await expect(reprocessAuction(
       'zvg-portal',
@@ -185,11 +185,11 @@ describe('reprocessAuction structured provenance', () => {
   })
 
   it('returns null when archived auction bytes cannot be loaded', async () => {
-    vi.mocked(findLatestCapture).mockResolvedValue({
+    vi.mocked(listDistinctCaptures).mockResolvedValue([{
       contentHash: 'missing-blob',
       sourceUrl: null,
       capturedAt: '2026-08-02T10:00:00.000Z',
-    })
+    }])
     vi.mocked(downloadBlob).mockResolvedValue(null)
 
     await expect(reprocessAuction(
@@ -203,11 +203,11 @@ describe('reprocessAuction structured provenance', () => {
   })
 
   it('keeps the parsed artifact pointer when only rules run', async () => {
-    vi.mocked(findLatestCapture).mockResolvedValue({
+    vi.mocked(listDistinctCaptures).mockResolvedValue([{
       contentHash: 'auction-hash',
       sourceUrl: null,
       capturedAt: '2026-08-02T10:00:00.000Z',
-    })
+    }])
     vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction())))
 
     const result = await reprocessAuction(
