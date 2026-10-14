@@ -109,7 +109,13 @@ onMounted(refreshStatus)
       {{ $t('settings.claude.description') }}
     </p>
 
-    <p v-if="!status" class="text-sm text-muted-foreground">{{ $t('settings.claude.loadingStatus') }}</p>
+    <p v-if="!status && !claudeError" class="text-sm text-muted-foreground">{{ $t('settings.claude.loadingStatus') }}</p>
+
+    <!-- Status could not be loaded: the error is shown below, so don't keep
+         claiming to load — offer a retry instead. -->
+    <Button v-else-if="!status" type="button" variant="outline" size="sm" @click="refreshStatus">
+      {{ $t('settings.claude.retry') }}
+    </Button>
 
     <template v-else>
       <div v-if="status.state === 'idle' && !status.credentialsExist" class="space-y-3">
