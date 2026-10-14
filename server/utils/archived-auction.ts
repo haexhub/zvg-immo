@@ -9,8 +9,8 @@
 // merged) far less than the same model got from the enriched snapshot.
 //
 // So: keep the newest snapshot as the base (it carries the current bids,
-// dates and cancellation state) and fill what it lacks from the newest older
-// snapshot that actually has detail data.
+// dates and cancellation state) and fill what it lacks from older snapshots
+// that actually have detail data.
 
 import type { Auction } from '~/types/auction'
 import { downloadBlob, listDistinctCaptures } from '~/server/utils/storage-download'
@@ -20,6 +20,7 @@ import { downloadBlob, listDistinctCaptures } from '~/server/utils/storage-downl
  *  every run. */
 export const SNAPSHOT_SCAN_LIMIT = 8
 
+/** Parse one archived auction blob without allowing malformed data to abort a scan. */
 function parseAuction(bytes: Buffer): Auction | null {
   try {
     const parsed = JSON.parse(bytes.toString('utf8')) as Auction
@@ -74,13 +75,12 @@ export async function readArchivedAuctionSnapshot(platform: string, externalId: 
   if (!newestBytes) return null
   const base = parseAuction(newestBytes)
   if (!base) return null
-  if (hasDetailData(base)) return base
-
+  let merged = base
   for (const capture of captures.slice(1)) {
     const bytes = await downloadBlob(capture.contentHash)
     if (!bytes) continue
     const older = parseAuction(bytes)
-    if (older && hasDetailData(older)) return overlayDetailData(base, older)
+    if (older && hasDetailData(older)) merged = overlayDetailData(merged, older)
   }
-  return base
+  return merged
 }

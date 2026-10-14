@@ -76,7 +76,7 @@ describe('readArchivedAuctionSnapshot', () => {
     stubSnapshots([auction({ description: 'Beschreibung' }), auction({ description: 'ältere' })])
     const result = await readArchivedAuctionSnapshot('kip', 'H1')
     expect(result?.description).toBe('Beschreibung')
-    expect(downloadBlob).toHaveBeenCalledTimes(1)
+    expect(downloadBlob).toHaveBeenCalledTimes(2)
   })
 
   it('fills the description from an older enriched snapshot when the newest is listing-only', async () => {
@@ -84,6 +84,16 @@ describe('readArchivedAuctionSnapshot', () => {
     const result = await readArchivedAuctionSnapshot('kip', 'H1')
     expect(result?.description).toBe('Baujahr 1936, 109 m²')
     expect(result?.currentBid).toBe(95_000)
+  })
+
+  it('continues through partial detail snapshots so later captures can fill remaining fields', async () => {
+    stubSnapshots([
+      auction(),
+      auction({ sourceRooms: 3 }),
+      auction({ description: 'Baujahr 1936, 109 m²' }),
+    ])
+    const result = await readArchivedAuctionSnapshot('kip', 'H1')
+    expect(result).toMatchObject({ description: 'Baujahr 1936, 109 m²', sourceRooms: 3 })
   })
 
   it('skips unreadable older blobs and keeps looking', async () => {

@@ -400,6 +400,7 @@ export async function prepareArchivedLlmDocuments(
   return documentSet == null ? { ...prepared, documentSetComplete: false } : prepared
 }
 
+/** Read the newest archived auction, filling missing detail fields from older captures. */
 export async function readArchivedAuction(platform: string, externalId: string): Promise<Auction | null> {
   return readArchivedAuctionSnapshot(platform, externalId)
 }
