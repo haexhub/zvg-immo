@@ -24,6 +24,7 @@ describe('findLockedCandidates', () => {
     const { sql, params } = lastCall()
     expect(sql).toContain('s.llm_failures >= $1')
     expect(sql).toContain('d.llm_analyzed_at IS NOT NULL')
+    expect(sql).not.toContain('d.is_latest')
     expect(sql).toContain('a.cancelled = false')
     expect(params.slice(0, 2)).toEqual([3, ['de']])
     expect(rows).toEqual([{ platform: 'zvg-portal', externalId: '7', country: 'de' }])

@@ -28,7 +28,7 @@ export async function findLockedCandidates(opts: ReprocessOptions, countries: re
              WHERE rc.kind = 'auction' AND rc.platform = s.platform AND rc.external_id = s.external_id)`,
     `NOT EXISTS (SELECT 1 FROM auction_details d
                  WHERE d.platform = s.platform AND d.external_id = s.external_id
-                   AND d.is_latest AND NOT d.is_trial AND d.llm_analyzed_at IS NOT NULL)`,
+                   AND NOT d.is_trial AND d.llm_analyzed_at IS NOT NULL)`,
   ]
   if (opts.platform) conditions.push(`s.platform = $${params.push(opts.platform)}`)
   if (opts.externalId) conditions.push(`s.external_id = $${params.push(opts.externalId)}`)

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('~/server/tasks/reprocess', () => ({ runReprocessTask: vi.fn() }))
+vi.mock('~/server/utils/exclusive-task', () => ({ isTaskActive: vi.fn(() => false) }))
 
 async function loadHandler(body: unknown) {
   vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
@@ -12,7 +13,7 @@ async function loadHandler(body: unknown) {
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.resetModules()
-  vi.clearAllMocks()
+  vi.resetAllMocks()
 })
 
 describe('/api/settings/reprocess', () => {
@@ -61,6 +62,16 @@ describe('/api/settings/reprocess', () => {
     const handler = await loadHandler({ retryFailed: true })
 
     await expect(handler({})).rejects.toMatchObject({ statusCode: 400 })
+    expect(runReprocessTask).not.toHaveBeenCalled()
+  })
+
+  it('rejects a request while another reprocess is active', async () => {
+    const { isTaskActive } = await import('~/server/utils/exclusive-task')
+    vi.mocked(isTaskActive).mockReturnValue(true)
+    const { runReprocessTask } = await import('~/server/tasks/reprocess')
+    const handler = await loadHandler({ limit: 1, retryFailed: true })
+
+    await expect(handler({})).rejects.toMatchObject({ statusCode: 409 })
     expect(runReprocessTask).not.toHaveBeenCalled()
   })
 

@@ -14,6 +14,7 @@
 // settings card polls via /api/settings/llm-batch-jobs.
 
 import { runReprocessTask, type ReprocessOptions } from '~/server/tasks/reprocess'
+import { isTaskActive } from '~/server/utils/exclusive-task'
 
 const MAX_LIMIT = 200
 
@@ -22,6 +23,9 @@ export default defineEventHandler(async (event) => {
 
   if (typeof body.limit !== 'number' || !Number.isInteger(body.limit) || body.limit < 1 || body.limit > MAX_LIMIT) {
     throw createError({ statusCode: 400, statusMessage: `limit: ganze Zahl zwischen 1 und ${MAX_LIMIT} erforderlich.` })
+  }
+  if (isTaskActive('reprocess')) {
+    throw createError({ statusCode: 409, statusMessage: 'Ein Reprocess läuft bereits. Bitte erst dessen Abschluss abwarten.' })
   }
 
   // retryFailed: retry auctions locked out of the LLM pipeline (llm_failures >=
