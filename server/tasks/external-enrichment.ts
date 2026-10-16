@@ -5,9 +5,9 @@ import { getPool } from '~/server/utils/db'
 import { coordinatesMovedSignificantly } from '~/server/utils/external-data/geo'
 import {
   readLocationEnrichment,
-  readLocationEnrichmentCache,
+  readLocationEnrichmentStaleness,
+  toLocationEnrichmentStaleness,
   writeLocationEnrichmentCache,
-  type LocationEnrichmentCache,
 } from '~/server/utils/external-data/location-enrichment'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 import { isTaskActive, runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-task'
@@ -157,12 +157,15 @@ export async function runExternalEnrichment(
   // auction_details/auction_fetch_state tables, which under concurrent crawl
   // load queued up on the shared pool and blew its 15s query_timeout.
   const { platform, externalId } = options
-  // Both reads throw rather than yield an empty map: with no previous entry
-  // every adapter that comes back empty this run would null out stored data.
-  const existing: LocationEnrichmentCache = platform && externalId
+  // Only what picking the batch needs (when each auction was last checked and
+  // its location-context source), not the stored entries themselves — the table
+  // is ~800 MB of JSON. The batch's own previous entries are read per auction
+  // below. Both reads throw rather than yield an empty map: with no previous
+  // entry every adapter that comes back empty this run would null out stored data.
+  const staleness = platform && externalId
     ? await readLocationEnrichment(platform, externalId)
-      .then((entry): LocationEnrichmentCache => entry ? { [cacheKey(platform, externalId)]: entry } : {})
-    : await readLocationEnrichmentCache()
+      .then((entry) => new Map(entry ? [[cacheKey(platform, externalId), toLocationEnrichmentStaleness(entry)]] : []))
+    : await readLocationEnrichmentStaleness()
   const summary: ExternalEnrichmentSummary = {
     processed: 0,
     written: 0,
@@ -185,7 +188,7 @@ export async function runExternalEnrichment(
   throwIfTaskAborted(signal)
 
   const wantsLocationContext = (auction: { platform: string; externalId: string }) =>
-    !options.onlyMissingLocationContext || existing[cacheKey(auction.platform, auction.externalId)]?.locationContext?.source.id !== 'openstreetmap-overpass'
+    !options.onlyMissingLocationContext || staleness.get(cacheKey(auction.platform, auction.externalId))?.locationContextSourceId !== 'openstreetmap-overpass'
   const effectiveLimit = options.limit ?? DEFAULT_BATCH_LIMIT
   // Two phases so the whole table is never held: stream just the identities in
   // scope, order those by staleness, and only then load the records of the
@@ -207,7 +210,7 @@ export async function runExternalEnrichment(
       }
     }
   }
-  const batchKeys = orderByStaleness(candidates, existing).slice(0, effectiveLimit)
+  const batchKeys = orderByStaleness(candidates, staleness).slice(0, effectiveLimit)
   const batchRecords = await readAuctionRecordsByKeys(batchKeys, { includePhotos: false })
   const batch = batchKeys.flatMap((candidate) => {
     const record = batchRecords.get(cacheKey(candidate.platform, candidate.externalId))
@@ -230,7 +233,7 @@ export async function runExternalEnrichment(
       // An entry computed before the geocode was corrected describes another
       // place: its fallbacks below and the enhancer merge (noise bands, air
       // quality) would otherwise pin the old position's data indefinitely.
-      const stored = existing[key]
+      const stored = await readLocationEnrichment(auction.platform, auction.externalId)
       const previous = stored && !coordinatesMovedSignificantly(stored, point) ? stored : undefined
 
       const marketComparison = await firstMarketComparison(auction, marketAdapters, summary)

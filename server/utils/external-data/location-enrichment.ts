@@ -22,8 +22,61 @@ export function invalidateLocationEnrichmentCache(): void {
   detailCache.clear()
 }
 
+/** Per auction, just what choosing the next batch needs. */
+export interface LocationEnrichmentStaleness {
+  checkedAt: string
+  /** `locationContext.source.id` of the stored entry, null when it has none. */
+  locationContextSourceId: string | null
+}
+
+export function toLocationEnrichmentStaleness(entry: LocationEnrichment): LocationEnrichmentStaleness {
+  return { checkedAt: entry.checkedAt, locationContextSourceId: entry.locationContext?.source.id ?? null }
+}
+
+/**
+ * When each auction was last checked and where its location context came from —
+ * all the batch selection reads of the stored enrichment. Two columns instead of
+ * readLocationEnrichmentCache: that table holds ~800 MB of JSON (the OSM
+ * location context is ~23 KB per auction), and holding it to look at two fields
+ * made every 15-minute run push the app towards 1.5 GB.
+ *
+ * Throws on a failed read for the same reason as the full-table read: an empty
+ * stand-in would make the run treat every auction as new.
+ */
+export async function readLocationEnrichmentStaleness(): Promise<Map<string, LocationEnrichmentStaleness>> {
+  const db = getPool()
+  if (!db) {
+    // No database: memory is the only store (see writeLocationEnrichmentCache).
+    const memory = (await cachePromise?.catch(() => null)) ?? Object.fromEntries(detailCache)
+    return new Map(Object.entries(memory).map(([key, entry]) => [key, toLocationEnrichmentStaleness(entry)]))
+  }
+  try {
+    const { rows } = await db.query<{
+      platform: string
+      external_id: string
+      checked_at: string | Date
+      checked_at_json: string | null
+      location_context_source: string | null
+    }>(
+      `SELECT platform, external_id, checked_at,
+              enrichment ->> 'checkedAt' AS checked_at_json,
+              enrichment #>> '{locationContext,source,id}' AS location_context_source
+       FROM location_enrichment`,
+    )
+    return new Map(rows.map((row) => [
+      cacheKey(row.platform, row.external_id),
+      // Same precedence as fromRow: the checkedAt inside the document wins.
+      { checkedAt: normalizeIso(row.checked_at_json ?? row.checked_at), locationContextSourceId: row.location_context_source },
+    ]))
+  } catch (err) {
+    throw new Error(`location_enrichment read failed: ${(err as Error).message}`, { cause: err })
+  }
+}
+
 /** Throws on a failed read: an empty stand-in would make the enrichment run
- *  treat every auction as new and overwrite its stored results with null. */
+ *  treat every auction as new and overwrite its stored results with null.
+ *  Materializes the whole table (~800 MB of JSON) — tasks use
+ *  readLocationEnrichmentStaleness / readLocationEnrichment instead. */
 export async function readLocationEnrichmentCache(): Promise<LocationEnrichmentCache> {
   if (!cachePromise) cachePromise = loadLocationEnrichmentCache()
   try {

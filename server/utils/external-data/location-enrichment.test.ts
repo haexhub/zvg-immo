@@ -62,6 +62,17 @@ function makeFakePool(rows: Array<{
     if (sql.includes('SELECT platform, external_id, enrichment, checked_at FROM location_enrichment')) {
       return { rows, rowCount: rows.length }
     }
+    if (sql.includes("enrichment #>> '{locationContext,source,id}'")) {
+      // What Postgres would compute for the two JSON paths — never the document itself.
+      const slim = rows.map((row) => ({
+        platform: row.platform,
+        external_id: row.external_id,
+        checked_at: row.checked_at,
+        checked_at_json: row.enrichment.checkedAt ?? null,
+        location_context_source: row.enrichment.locationContext?.source.id ?? null,
+      }))
+      return { rows: slim, rowCount: slim.length }
+    }
     if (sql.includes('INSERT INTO location_enrichment')) {
       for (let i = 0; i < params.length; i += 4) {
         upserted.push({
@@ -143,6 +154,59 @@ describe('readLocationEnrichmentCache', () => {
     await readLocationEnrichmentCache()
 
     expect(pool.query).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('readLocationEnrichmentStaleness', () => {
+  const row = { platform: 'zvg-portal', external_id: '7265', enrichment, checked_at: enrichment.checkedAt }
+
+  it('reads the check time and location-context source without the stored documents', async () => {
+    const { getPool } = await import('../db')
+    const withContext = {
+      ...enrichment,
+      locationContext: { source: { id: 'openstreetmap-overpass' } },
+    } as unknown as LocationEnrichment
+    const pool = makeFakePool([{ ...row, enrichment: withContext }, { ...row, external_id: '9', enrichment }])
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { readLocationEnrichmentStaleness } = await import('./location-enrichment')
+
+    const staleness = await readLocationEnrichmentStaleness()
+
+    expect(staleness.get('zvg-portal:7265')).toEqual({ checkedAt: enrichment.checkedAt, locationContextSourceId: 'openstreetmap-overpass' })
+    expect(staleness.get('zvg-portal:9')).toEqual({ checkedAt: enrichment.checkedAt, locationContextSourceId: null })
+    expect(pool.query).toHaveBeenCalledTimes(1)
+    // The ~800 MB `enrichment` document must never be selected as a column.
+    expect(String(pool.query.mock.calls[0]![0])).not.toMatch(/SELECT[^;]*\benrichment,/)
+  })
+
+  it('lets the check time inside the document win over the column, like the full read', async () => {
+    const { getPool } = await import('../db')
+    const pool = makeFakePool([{ ...row, enrichment: { ...enrichment, checkedAt: '2026-09-01T00:00:00.000Z' }, checked_at: '2026-07-01T00:00:00.000Z' }])
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { readLocationEnrichmentStaleness } = await import('./location-enrichment')
+
+    expect((await readLocationEnrichmentStaleness()).get('zvg-portal:7265')?.checkedAt).toBe('2026-09-01T00:00:00.000Z')
+  })
+
+  it('rejects a failed read instead of returning an empty map', async () => {
+    const { getPool } = await import('../db')
+    const pool = makeFakePool([row])
+    vi.mocked(getPool).mockReturnValue(pool as never)
+    const { readLocationEnrichmentStaleness } = await import('./location-enrichment')
+    pool.query.mockRejectedValueOnce(new Error('query_timeout'))
+
+    await expect(readLocationEnrichmentStaleness()).rejects.toThrow('location_enrichment read failed: query_timeout')
+    expect((await readLocationEnrichmentStaleness()).size).toBe(1)
+  })
+
+  it('serves what was written to memory when Postgres is not configured', async () => {
+    const { getPool } = await import('../db')
+    vi.mocked(getPool).mockReturnValue(null)
+    const { readLocationEnrichmentStaleness, writeLocationEnrichmentCache } = await import('./location-enrichment')
+
+    await writeLocationEnrichmentCache({ 'zvg-portal:7265': enrichment })
+
+    expect((await readLocationEnrichmentStaleness()).get('zvg-portal:7265')).toEqual({ checkedAt: enrichment.checkedAt, locationContextSourceId: null })
   })
 })
 
