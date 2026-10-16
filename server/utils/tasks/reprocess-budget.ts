@@ -1,4 +1,4 @@
-import { getLlmConcurrency, getLlmMaxPerRun } from '~/server/utils/app-settings'
+import { MAX_LLM_CONCURRENCY, getLlmConcurrency, getLlmMaxPerRun } from '~/server/utils/app-settings'
 import { getPool } from '~/server/utils/db'
 
 // Claude OAuth subscriptions have a shared, finite weekly allowance. One
@@ -24,7 +24,10 @@ export function readMaxLlmPerRun(): number {
 
 /** Env/default lane count (NUXT_EXTRACT_LLM_CONCURRENCY). */
 export function readLlmConcurrency(): number {
-  return positiveInt((useRuntimeConfig().extractLlm as { concurrency?: string })?.concurrency, DEFAULT_LLM_CONCURRENCY)
+  return Math.min(
+    MAX_LLM_CONCURRENCY,
+    positiveInt((useRuntimeConfig().extractLlm as { concurrency?: string })?.concurrency, DEFAULT_LLM_CONCURRENCY),
+  )
 }
 
 /** Per-run LLM budget: the admin-set value (/settings) wins over the env

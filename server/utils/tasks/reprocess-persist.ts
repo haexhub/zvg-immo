@@ -9,7 +9,7 @@ import { resolveCostUsd } from '~/server/utils/extract/llm-pricing'
 
 /** Run-level values every persisted entry of one reprocess run shares. */
 export interface ReprocessPersistContext {
-  runTrigger: string
+  runTrigger: 'cron' | 'manual'
   /** The run's start timestamp (`updated_at` of the touched auctions). */
   at: string
 }

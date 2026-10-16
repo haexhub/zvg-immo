@@ -14,6 +14,7 @@ interface AutomationSettings {
 
 const { pending, error, run } = useSettingsAction()
 const settings = ref<AutomationSettings>({ crawlersEnabled: true, llmEnabled: true, llmMaxPerRun: null, llmMaxPerRunDefault: 1, llmConcurrency: null, llmConcurrencyDefault: 1 })
+const loaded = ref(false)
 // Drafts of the two number inputs; '' means "use the default".
 const maxPerRunDraft = ref('')
 const concurrencyDraft = ref('')

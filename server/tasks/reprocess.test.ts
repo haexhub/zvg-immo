@@ -51,7 +51,7 @@ vi.mock('../utils/extract/llm-task-config', () => ({
   readExtractionChainStrategy: vi.fn(),
   readExtractionLlmConfigChain: vi.fn(),
 }))
-vi.mock('../utils/app-settings', () => ({ readLlmExecutionMode: vi.fn(), getLlmMaxPerRun: vi.fn(async () => null), getLlmConcurrency: vi.fn(async () => null) }))
+vi.mock('../utils/app-settings', () => ({ MAX_LLM_CONCURRENCY: 8, readLlmExecutionMode: vi.fn(), getLlmMaxPerRun: vi.fn(async () => null), getLlmConcurrency: vi.fn(async () => null) }))
 vi.mock('../utils/extract/llm-batch', () => ({
   isLlmBatchPending: vi.fn(() => false),
   isLlmBatchProviderBroken: vi.fn(async () => false),
@@ -1088,6 +1088,36 @@ describe('runReprocess parallel lanes', () => {
     // The shared budget holds exactly even with lanes racing for the last slots.
     expect(stats.calls).toBe(5)
     expect(result).toMatchObject({ candidates: 12, processed: 12, llmCalls: 5 })
+  })
+
+  it('reserves the full map-reduce call budget across parallel lanes', async () => {
+    seedCandidates()
+    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { maxPerRun: '5' } }))
+    vi.mocked(getLlmConcurrency).mockResolvedValue(3)
+    vi.mocked(prepareArchivedLlmDocuments).mockImplementation(async (_auction, opts) => ({
+      input: {
+        documentSummaryInputs: [
+          { label: 'Gutachten', parts: { pdfText: 'Gutachten', pdfPageImages: null, pdfBytes: null } },
+          { label: 'Exposé', parts: { pdfText: 'Exposé', pdfPageImages: null, pdfBytes: null } },
+          { label: 'Grundriss', parts: { pdfText: 'Grundriss', pdfPageImages: null, pdfBytes: null } },
+        ],
+      },
+      documentSetItems: [],
+      documentSetComplete: true,
+      artifactVersionId: opts.artifactVersionId,
+    }) as never)
+    const stats = { calls: 0 }
+    const extraction = { documentSummary: 'summary', photoCuration: [], ruleCheck: null } as unknown as ClampedExtraction
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+      opts?.onProviderAttempt?.()
+      stats.calls++
+      return extraction
+    })
+
+    const result = await runReprocess({ country: 'de' })
+
+    expect(stats.calls).toBeLessThanOrEqual(5)
+    expect(result.llmCalls).toBe(stats.calls)
   })
 
   it('keeps per-country progress consistent with the totals', async () => {

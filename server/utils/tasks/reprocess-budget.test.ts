@@ -4,7 +4,7 @@ import { getLlmConcurrency, getLlmMaxPerRun } from '../app-settings'
 import { resolveLlmConcurrency, resolveMaxLlmPerRun } from './reprocess-budget'
 
 vi.mock('../db', () => ({ getPool: vi.fn() }))
-vi.mock('../app-settings', () => ({ getLlmMaxPerRun: vi.fn(), getLlmConcurrency: vi.fn() }))
+vi.mock('../app-settings', () => ({ MAX_LLM_CONCURRENCY: 8, getLlmMaxPerRun: vi.fn(), getLlmConcurrency: vi.fn() }))
 
 let envMaxPerRun = '20'
 let envConcurrency = ''
@@ -51,6 +51,8 @@ describe('resolveLlmConcurrency', () => {
     vi.mocked(getLlmConcurrency).mockResolvedValue(null)
     envConcurrency = '3'
     await expect(resolveLlmConcurrency()).resolves.toBe(3)
+    envConcurrency = '100'
+    await expect(resolveLlmConcurrency()).resolves.toBe(8)
     envConcurrency = ''
     await expect(resolveLlmConcurrency()).resolves.toBe(1)
   })

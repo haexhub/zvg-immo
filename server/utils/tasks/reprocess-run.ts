@@ -158,15 +158,31 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
 
   async function handleCandidate({ platform, externalId, country }: Candidate): Promise<void> {
     throwIfTaskAborted(signal)
-    // Whether this candidate holds a slot in llmReserved. Released once its
-    // first real request is counted in llmCalls (onLlmAttempt) — so the call
-    // isn't counted twice — or at the latest in `finally`.
-    let reserved = false
-    function releaseReservation(): void {
-      if (!reserved) return
-      reserved = false
-      llmReserved--
-      llmReservedByPlatform.set(platform, (llmReservedByPlatform.get(platform) ?? 1) - 1)
+    // Calls promised to this candidate but not yet started. Released one at a
+    // time as onLlmAttempt increments llmCalls, or all at once in finally.
+    let reservedCalls = 0
+    function reserveLlmCalls(requested: number): number {
+      const additional = requested - reservedCalls
+      if (additional <= 0) return reservedCalls
+      const platformReserved = llmReservedByPlatform.get(platform) ?? 0
+      const available = opts.ignoreLlmBudget
+        ? Infinity
+        : Math.min(
+          maxLlmPerRun - totals.llmCalls - llmReserved,
+          llmCapPerPlatform - (llmCallsByPlatform.get(platform) ?? 0) - platformReserved,
+        )
+      const granted = Math.max(0, Math.min(additional, available))
+      reservedCalls += granted
+      llmReserved += granted
+      llmReservedByPlatform.set(platform, platformReserved + granted)
+      return reservedCalls
+    }
+    function releaseReservation(count = 1): void {
+      const released = Math.min(count, reservedCalls)
+      if (released === 0) return
+      reservedCalls -= released
+      llmReserved -= released
+      llmReservedByPlatform.set(platform, (llmReservedByPlatform.get(platform) ?? released) - released)
     }
     // Hoisted out of the try block below so the catch can still see them: a
     // thrown rate-limit/unparseable-response error (see the catch's comment)
@@ -223,11 +239,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       // Held until `finally`: from here to there other lanes see this
       // candidate's call as already spoken for. Taken in the same tick as the
       // check above, so two lanes can't both claim the last slot.
-      if (llmReady) {
-        reserved = true
-        llmReserved++
-        llmReservedByPlatform.set(platform, (llmReservedByPlatform.get(platform) ?? 0) + 1)
-      }
+      if (llmReady) reserveLlmCalls(1)
       if (opts.force && llmConfig && !llmReady) {
         bump(country, 'skipped')
         return
@@ -262,7 +274,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
         if (batchSupportsMultimodal(llmConfig) || !inputNeedsMultimodal(base.input)) {
           releaseReservation()
           bump(country, 'llmCalls')
-          llmCallsByPlatform.set(platform, platformLlmCalls + 1)
+          llmCallsByPlatform.set(platform, (llmCallsByPlatform.get(platform) ?? 0) + 1)
           batchItems.push({ key, input: base.input })
           batchArtifactVersions.set(key, base.artifactVersionId)
           batchRulesHints.set(key, base.input.rulesHint ?? null)
@@ -305,7 +317,6 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
         return
       }
 
-      let platformLlmCallsSoFar = platformLlmCalls
       // Claimed only for a real sync LLM call (not the rules-only fallback
       // below); cleared below, in the catch block, or by persistEntry's
       // writeAuctionLlmPipelineState. A fresh timestamp, not the shared `at`
@@ -325,9 +336,10 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
         remainingLlmBudget: opts.ignoreLlmBudget
           ? Infinity
           : Math.min(
-            maxLlmPerRun - totals.llmCalls - (llmReserved - (reserved ? 1 : 0)),
-            llmCapPerPlatform - platformLlmCallsSoFar,
+            maxLlmPerRun - totals.llmCalls - (llmReserved - reservedCalls),
+            llmCapPerPlatform - (llmCallsByPlatform.get(platform) ?? 0),
           ),
+        reserveLlmCalls,
         // Only handed over when the sync path starts on the very config the
         // input above was built for — a rotated or quota-filtered chain head
         // is a different provider and has to build its own.
@@ -344,8 +356,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
           syncLlmAttempted = true
           releaseReservation()
           bump(country, 'llmCalls')
-          platformLlmCallsSoFar++
-          llmCallsByPlatform.set(platform, platformLlmCallsSoFar)
+          llmCallsByPlatform.set(platform, (llmCallsByPlatform.get(platform) ?? 0) + 1)
         },
         onLlmError: (err) => {
           bump(country, 'llmErrors')
@@ -378,7 +389,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       if (result.llmCalled && !syncLlmAttempted) {
         releaseReservation()
         bump(country, 'llmCalls')
-        llmCallsByPlatform.set(platform, platformLlmCallsSoFar + 1)
+        llmCallsByPlatform.set(platform, (llmCallsByPlatform.get(platform) ?? 0) + 1)
       }
       rulesFalsified += result.rulesFalsified.length
 
@@ -438,7 +449,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
         return
       }
     } finally {
-      releaseReservation()
+      releaseReservation(reservedCalls)
       void recordTaskRunProgress(
         'reprocess',
         { candidatesTotal: candidates.length, ...totals, rulesFalsified },
