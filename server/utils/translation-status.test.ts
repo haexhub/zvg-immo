@@ -178,6 +178,7 @@ describe('readTranslationStatusIdentities', () => {
       { platform: 'se-kronofogden', externalId: '101740', lang: 'de' },
     ])
     expect(query.mock.calls[0]?.[0]).toContain('JOIN auction_details d')
+    expect(query.mock.calls[0]?.[0]).toContain('a.auction_date_iso IS NULL OR a.auction_date_iso >= now()')
     expect(query.mock.calls[0]?.[1]).toEqual([['de', 'en'], 'se'])
   })
 })

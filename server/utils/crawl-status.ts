@@ -7,6 +7,7 @@
 // detail_fetched_at exists yet.
 
 import { ENRICH_CLAIM_LEASE_MS } from './auction-fetch-state'
+import { CURRENT_AUCTION_CONDITIONS } from './current-auction-sql'
 import { getPool } from './db'
 
 export type CrawlStatusBucket = 'done' | 'error' | 'open' | 'pending'
@@ -70,6 +71,7 @@ crawl_status AS (
   FROM auctions a
   LEFT JOIN auction_fetch_state fs ON fs.platform = a.platform AND fs.external_id = a.external_id
   LEFT JOIN last_error le ON le.platform = a.platform AND le.external_id = a.external_id
+  WHERE ${CURRENT_AUCTION_CONDITIONS.join(' AND ')}
 )
 `
 

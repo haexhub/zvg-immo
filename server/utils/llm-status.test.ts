@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AuctionExtraction } from '~/types/auction'
 import type { AuctionRecord } from './auction-record'
-import { classifyLlmStatus, hasMissingLlmFields } from './llm-status'
+import { classifyLlmStatus, hasMissingLlmFields, isLlmExtractionInScope } from './llm-status'
 
 function extraction(overrides: Partial<AuctionExtraction> = {}): AuctionExtraction {
   return {
@@ -117,5 +117,21 @@ describe('classifyLlmStatus', () => {
     expect(
       classifyLlmStatus(record({ extraction: extraction({ llmAnalyzedAt: '2026-08-01T10:00:00.000Z' }), llmClaimedAt: new Date().toISOString() })),
     ).toBe('done')
+  })
+})
+
+describe('isLlmExtractionInScope', () => {
+  it('keeps a current, uncancelled auction in scope', () => {
+    expect(isLlmExtractionInScope(record())).toBe(true)
+    expect(isLlmExtractionInScope({ ...record(), isCurrent: true })).toBe(true)
+  })
+
+  it('drops an expired auction, which no reprocess run would pick up', () => {
+    expect(isLlmExtractionInScope({ ...record(), isCurrent: false })).toBe(false)
+  })
+
+  it('drops a cancelled auction', () => {
+    const base = record()
+    expect(isLlmExtractionInScope({ ...base, auction: { ...base.auction, cancelled: true } })).toBe(false)
   })
 })

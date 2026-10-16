@@ -10,6 +10,7 @@ import type {
 import type { Condition } from '~/lib/condition'
 import type { Feature } from '~/lib/features'
 import type { PropertyType } from '~/lib/property-type'
+import { CURRENT_AUCTION_CONDITIONS } from './current-auction-sql'
 import { getPool } from './db'
 import { cacheKey } from './verkehrswert-cache'
 
@@ -18,6 +19,9 @@ export interface AuctionRecord {
   detailsId: number | null
   detailsVersion: number | null
   artifactVersionId: number | null
+  /** Still on offer (date not passed, still returned by its last completed
+   *  crawl) — see current-auction-sql.ts. Undefined for hand-built records. */
+  isCurrent?: boolean
 }
 
 interface AuctionRecordRow {
@@ -31,6 +35,7 @@ interface AuctionRecordRow {
   auction_date_iso: Date | string | null
   auction_date_text: string | null
   cancelled: boolean
+  is_current: boolean
   current_address: string | null
   current_description: string | null
   current_photo_count: number | null
@@ -104,6 +109,7 @@ interface AuctionPhotoRow {
 const SELECT_SQL = `SELECT
   a.platform, a.external_id, a.country, a.region, a.authority, a.case_number,
   a.title, a.auction_date_iso, a.auction_date_text, a.cancelled,
+  (${CURRENT_AUCTION_CONDITIONS.join(' AND ')}) AS is_current,
   d.address AS current_address,
   d.description AS current_description,
   d.photo_count AS current_photo_count,
@@ -186,6 +192,7 @@ function fromRow(row: AuctionRecordRow, photos: CuratedPhoto[]): AuctionRecord {
     detailsId: row.details_id == null ? null : Number(row.details_id),
     detailsVersion: row.details_version,
     artifactVersionId: row.artifact_version_id == null ? null : Number(row.artifact_version_id),
+    isCurrent: row.is_current,
     auction: {
       platform: row.platform,
       externalId: row.external_id,
