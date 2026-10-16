@@ -25,7 +25,11 @@ vi.mock('../utils/extract/llm-task-config', () => ({
   readExtractionLlmConfig: vi.fn(),
   resolveLlmConfigForProfile: vi.fn(),
 }))
-vi.mock('../utils/auction-record', () => ({ readAuctionRecordMap: vi.fn() }))
+vi.mock('../utils/auction-record', () => {
+  const readAuctionRecordMap = vi.fn()
+  // The task loads just the jobs' auctions; serve that from the map each test prepares.
+  return { readAuctionRecordMap, readAuctionRecordsByKeys: (...args: unknown[]) => readAuctionRecordMap(...args) }
+})
 vi.mock('../utils/auction-fetch-state', () => ({
   readAuctionFetchStates: vi.fn(),
   writeAuctionLlmPipelineState: vi.fn(),

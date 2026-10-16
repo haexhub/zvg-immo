@@ -20,7 +20,7 @@ import {
   upsertCurrentAuctions,
   type GeocodeAttempt,
 } from '../utils/current-auctions'
-import { readAuctionRecordMap } from '../utils/auction-record'
+import { readAuctionRecordsByKeys } from '../utils/auction-record'
 import {
   cacheKey,
   readVerkehrswertCache,
@@ -145,25 +145,32 @@ async function runGeocode(signal: AbortSignal) {
     }
 }
 
+const PERSIST_CHUNK_SIZE = 500
+
 async function persistGeocodedAuctions(auctions: Auction[], signal: AbortSignal): Promise<number> {
   if (auctions.length === 0) return 0
   await ensureAuctionIdentity(auctions)
-  const records = await readAuctionRecordMap()
   const at = new Date().toISOString()
   let persisted = 0
 
-  for (const auction of auctions) {
-    throwIfTaskAborted(signal)
-    try {
-      const record = records.get(cacheKey(auction.platform, auction.externalId))
-      if (auction.detailFetchedAt == null && record) mergeStoredAuction(auction, record.auction)
-      applyAuctionExtraction(auction, auction.extraction ?? record?.auction.extraction)
-      const written = await writeAuctionDetails(auction, auction.extraction ?? null, {
-        artifactVersionId: record?.artifactVersionId ?? null,
-      })
-      if (written?.changed) persisted++
-    } catch (err) {
-      console.warn(`[geocode] persist ${auction.platform}:${auction.externalId}: ${(err as Error).message}`)
+  // A chunk of auctions at a time: their stored records are read just for that
+  // chunk instead of the whole table (~350 MB) up front.
+  for (let start = 0; start < auctions.length; start += PERSIST_CHUNK_SIZE) {
+    const chunk = auctions.slice(start, start + PERSIST_CHUNK_SIZE)
+    const records = await readAuctionRecordsByKeys(chunk)
+    for (const auction of chunk) {
+      throwIfTaskAborted(signal)
+      try {
+        const record = records.get(cacheKey(auction.platform, auction.externalId))
+        if (auction.detailFetchedAt == null && record) mergeStoredAuction(auction, record.auction)
+        applyAuctionExtraction(auction, auction.extraction ?? record?.auction.extraction)
+        const written = await writeAuctionDetails(auction, auction.extraction ?? null, {
+          artifactVersionId: record?.artifactVersionId ?? null,
+        })
+        if (written?.changed) persisted++
+      } catch (err) {
+        console.warn(`[geocode] persist ${auction.platform}:${auction.externalId}: ${(err as Error).message}`)
+      }
     }
   }
 

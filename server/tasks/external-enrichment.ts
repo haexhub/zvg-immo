@@ -1,5 +1,5 @@
 import type { Auction, HazardAssessment, LandValueBaseline, LocationContext, MarketComparison } from '~/types/auction'
-import { readAuctionRecord, readAuctionRecords } from '~/server/utils/auction-record'
+import { iterateAuctionRecords, readAuctionRecord, readAuctionRecordsByKeys } from '~/server/utils/auction-record'
 import { geocodeAddress } from '~/server/utils/geocode'
 import { getPool } from '~/server/utils/db'
 import { coordinatesMovedSignificantly } from '~/server/utils/external-data/geo'
@@ -157,9 +157,6 @@ export async function runExternalEnrichment(
   // auction_details/auction_fetch_state tables, which under concurrent crawl
   // load queued up on the shared pool and blew its 15s query_timeout.
   const { platform, externalId } = options
-  const records = platform && externalId
-    ? await readAuctionRecord(platform, externalId).then((record) => record ? [record] : [])
-    : await readAuctionRecords(options.country, { includePhotos: false })
   // Both reads throw rather than yield an empty map: with no previous entry
   // every adapter that comes back empty this run would null out stored data.
   const existing: LocationEnrichmentCache = platform && externalId
@@ -187,16 +184,35 @@ export async function runExternalEnrichment(
   const locationContextAdapters = options.locationContextAdapters ?? await defaultLocationContextAdapters(db, checkedAt, summary)
   throwIfTaskAborted(signal)
 
-  const inScopeAuctions = records.map((record) => record.auction).filter((auction) =>
-    inScope(auction, options)
-    && (!options.onlyMissingLocationContext || existing[cacheKey(auction.platform, auction.externalId)]?.locationContext?.source.id !== 'openstreetmap-overpass'),
-  )
+  const wantsLocationContext = (auction: { platform: string; externalId: string }) =>
+    !options.onlyMissingLocationContext || existing[cacheKey(auction.platform, auction.externalId)]?.locationContext?.source.id !== 'openstreetmap-overpass'
   const effectiveLimit = options.limit ?? DEFAULT_BATCH_LIMIT
-  // Sliced to the limit up front: resolvePoint below skips (not counts)
+  // Two phases so the whole table is never held: stream just the identities in
+  // scope, order those by staleness, and only then load the records of the
+  // batch. Sliced to the limit up front: resolvePoint below skips (not counts)
   // auctions without coordinates, so looping the unsliced scope and relying
   // only on the processed>=effectiveLimit break could still scan arbitrarily
   // far past the intended batch size.
-  const batch = orderByStaleness(inScopeAuctions, existing).slice(0, effectiveLimit)
+  const candidates: Array<{ platform: string; externalId: string; country: string }> = []
+  if (platform && externalId) {
+    const record = await readAuctionRecord(platform, externalId)
+    if (record && inScope(record.auction, options) && wantsLocationContext(record.auction)) {
+      candidates.push({ platform, externalId, country: record.auction.country })
+    }
+  } else {
+    for await (const record of iterateAuctionRecords(options.country, { includePhotos: false })) {
+      const { auction } = record
+      if (inScope(auction, options) && wantsLocationContext(auction)) {
+        candidates.push({ platform: auction.platform, externalId: auction.externalId, country: auction.country })
+      }
+    }
+  }
+  const batchKeys = orderByStaleness(candidates, existing).slice(0, effectiveLimit)
+  const batchRecords = await readAuctionRecordsByKeys(batchKeys, { includePhotos: false })
+  const batch = batchKeys.flatMap((candidate) => {
+    const record = batchRecords.get(cacheKey(candidate.platform, candidate.externalId))
+    return record ? [record.auction] : []
+  })
   const total = batch.length
 
   for (const rawAuction of batch) {

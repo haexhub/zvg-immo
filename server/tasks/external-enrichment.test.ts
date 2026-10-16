@@ -2,10 +2,35 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { join } from 'node:path'
 import type { Auction, HazardAssessment, LandValueBaseline, LocationContext, MarketComparison } from '~/types/auction'
 
-vi.mock('~/server/utils/auction-record', () => ({
-  readAuctionRecord: vi.fn(),
-  readAuctionRecords: vi.fn(),
-}))
+vi.mock('~/server/utils/auction-record', () => {
+  const readAuctionRecord = vi.fn()
+  const readAuctionRecords = vi.fn()
+  type Rec = { auction: { platform: string; externalId: string } }
+  const keyOf = (platform: string, externalId: string) => `${platform}:${externalId}`
+  // The task streams identities first and then loads just the batch. The shim
+  // streams whatever each test stubs on readAuctionRecords, remembers it, and
+  // serves the by-key load from that (falling back to readAuctionRecord) — so
+  // the two phases behave like the real functions without touching the spies.
+  let streamed: Rec[] = []
+  return {
+    readAuctionRecord,
+    readAuctionRecords,
+    iterateAuctionRecords: (...args: unknown[]) => (async function* () {
+      streamed = (await readAuctionRecords(...args)) ?? []
+      yield* streamed
+    })(),
+    readAuctionRecordsByKeys: async (keys: Array<{ platform: string; externalId: string }>) => {
+      const known = new Map<string, Rec>(streamed.map((r) => [keyOf(r.auction.platform, r.auction.externalId), r]))
+      const out = new Map<string, Rec>()
+      for (const { platform, externalId } of keys) {
+        const key = keyOf(platform, externalId)
+        const record = known.get(key) ?? await readAuctionRecord(platform, externalId)
+        if (record) out.set(key, record)
+      }
+      return out
+    },
+  }
+})
 vi.mock('~/server/utils/geocode', () => ({ geocodeAddress: vi.fn() }))
 vi.mock('~/server/utils/external-data/location-enrichment', () => ({
   readLocationEnrichment: vi.fn(),

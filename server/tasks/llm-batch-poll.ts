@@ -10,7 +10,7 @@ import type { LlmConfig } from '../utils/extract/llm'
 import { falsifiedRuleFields, mergeLlmResult, ruleChecksMatchingHint } from '../utils/extract/merge-llm-result'
 import { buildReprocessFields } from '../utils/extract/reprocess-fields'
 import { applyAuctionExtraction } from '../utils/auction-extraction'
-import { readAuctionRecordMap } from '../utils/auction-record'
+import { readAuctionRecordsByKeys } from '../utils/auction-record'
 import { upsertCurrentAuctions } from '../utils/current-auctions'
 import { writeAuctionDetails } from '../utils/auction-details'
 import { readAuctionFetchStates, writeAuctionLlmPipelineState } from '../utils/auction-fetch-state'
@@ -103,7 +103,9 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
     return { checked: 0, merged: 0 }
   }
 
-  const records = await readAuctionRecordMap()
+  // Only the auctions these jobs cover, not the whole table.
+  const jobKeys = jobs.flatMap((job) => Object.values(job.customIdMap)).flatMap((key) => splitKey(key) ?? [])
+  const records = await readAuctionRecordsByKeys(jobKeys)
   const fetchStates = await readAuctionFetchStates()
   throwIfTaskAborted(signal)
   const at = new Date().toISOString()

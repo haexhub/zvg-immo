@@ -28,7 +28,11 @@ vi.mock('../crawlers/registry', () => ({
 vi.mock('../utils/current-auctions', () => ({ ensureAuctionIdentity: vi.fn(), upsertCurrentAuctions: vi.fn() }))
 vi.mock('../utils/auction-relationships', () => ({ rebuildAutomaticAuctionRelationships: vi.fn() }))
 vi.mock('../utils/auction-details', () => ({ writeAuctionDetails: vi.fn() }))
-vi.mock('../utils/auction-record', () => ({ readAuctionRecord: vi.fn(), readAuctionRecordMap: vi.fn() }))
+vi.mock('../utils/auction-record', () => {
+  const readAuctionRecordMap = vi.fn()
+  // Finalize re-reads just the run's auctions; serve that from the map each test prepares.
+  return { readAuctionRecord: vi.fn(), readAuctionRecordMap, readAuctionRecordsByKeys: (...args: unknown[]) => readAuctionRecordMap(...args) }
+})
 vi.mock('../utils/artifact-version-state', () => ({ readLatestArtifactVersions: vi.fn() }))
 vi.mock('../utils/auction-fetch-state', () => ({
   readAuctionFetchStates: vi.fn(),

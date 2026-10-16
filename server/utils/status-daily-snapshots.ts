@@ -2,7 +2,7 @@
 // A snapshot is an upsert: an operator can safely re-run the task after a
 // deployment without getting multiple incomparable readings for one day.
 
-import { readAuctionRecords } from './auction-record'
+import { iterateAuctionRecords, type AuctionRecord } from './auction-record'
 import { readCrawlStatusByCountry } from './crawl-status'
 import { getPool } from './db'
 import { classifyLlmStatus, isLlmExtractionInScope } from './llm-status'
@@ -45,9 +45,9 @@ function formatLocalDate(date: Date): string {
   return `${year}-${month}-${day}`
 }
 
-function llmCounts(records: Awaited<ReturnType<typeof readAuctionRecords>>): Record<string, Counts> {
+async function llmCounts(records: AsyncIterable<AuctionRecord>): Promise<Record<string, Counts>> {
   const out: Record<string, Counts> = {}
-  for (const record of records) {
+  for await (const record of records) {
     if (!isLlmExtractionInScope(record)) continue
     const counts = out[record.auction.country] ?? (out[record.auction.country] = { ...EMPTY_COUNTS })
     counts[classifyLlmStatus(record)]++
@@ -60,13 +60,12 @@ function llmCounts(records: Awaited<ReturnType<typeof readAuctionRecords>>): Rec
 export async function captureDailyStatusSnapshot(snapshotDate = berlinDay()): Promise<number> {
   const db = getPool()
   if (!db) return 0
-  const [crawl, records, translations, osm] = await Promise.all([
+  const [crawl, llm, translations, osm] = await Promise.all([
     readCrawlStatusByCountry(),
-    readAuctionRecords(undefined, { includePhotos: false }),
+    llmCounts(iterateAuctionRecords(undefined, { includePhotos: false })),
     readTranslationStatusByCountryAndLanguage(),
     readOsmStatusByCountry(),
   ])
-  const llm = llmCounts(records)
   const countries = new Set([...Object.keys(crawl), ...Object.keys(llm), ...Object.keys(translations), ...osm.map((row) => row.code)])
   let saved = 0
   for (const country of countries) {

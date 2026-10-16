@@ -25,7 +25,16 @@ vi.mock('../utils/storage-download', () => ({
   readDocumentSet: vi.fn(async () => null),
 }))
 vi.mock('../utils/db', () => ({ getPool: vi.fn() }))
-vi.mock('../utils/auction-record', () => ({ readAuctionRecordMap: vi.fn() }))
+vi.mock('../utils/auction-record', () => {
+  const readAuctionRecordMap = vi.fn()
+  return {
+    readAuctionRecordMap,
+    // reprocess-run reads records per candidate chunk; serve it from the map each test prepares.
+    createCandidateRecordLoader: () => ({
+      get: async (platform: string, externalId: string) => (await readAuctionRecordMap()).get(`${platform}:${externalId}`),
+    }),
+  }
+})
 vi.mock('../utils/auction-fetch-state', () => ({
   readAuctionFetchStates: vi.fn(),
   writeAuctionLlmClaim: vi.fn(),
