@@ -18,7 +18,7 @@ import { interleaveByPlatform } from '~/server/utils/interleave-by-platform'
 import { recordTaskRunError } from '~/server/utils/task-run-errors'
 import { recordTaskRunProgress, type TaskRunSummary } from '~/server/utils/task-runs'
 import { throwIfTaskAborted } from '~/server/utils/exclusive-task'
-import { buildLlmRateLimitWarning, buildReprocessInput, buildRulesOnlyEntry, effectiveCandidateCountries, findCandidates, hasNewArchivedDocuments, inputNeedsMultimodal, readMaxLlmPerRun, type ReprocessInput, type ReprocessOptions, type ReprocessResult } from './reprocess-input'
+import { buildLlmRateLimitWarning, buildReprocessInput, buildRulesOnlyEntry, effectiveCandidateCountries, findCandidates, hasNewArchivedDocuments, inputNeedsMultimodal, resolveMaxLlmPerRun, type ReprocessInput, type ReprocessOptions, type ReprocessResult } from './reprocess-input'
 import { reprocessAuction } from './reprocess-single'
 import { submitReprocessBatch } from './reprocess-batch-submit'
 
@@ -60,7 +60,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
    *  per-minute quota, and gemini-native paces per key. */
   let chainCursor = 0
   const executionMode = await readLlmExecutionMode()
-  const maxLlmPerRun = readMaxLlmPerRun()
+  const maxLlmPerRun = await resolveMaxLlmPerRun()
   const at = new Date().toISOString()
   const nowMs = new Date(at).getTime()
   /** Whether a locked-out auction (llm_failures >= MAX_LLM_FAILURES) is past

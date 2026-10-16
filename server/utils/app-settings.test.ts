@@ -16,6 +16,7 @@ import {
   getAutomaticLlmEnabled,
   getHideRulesOnlyAuctions,
   getLlmKillSwitch,
+  getLlmMaxPerRun,
   getLlmMaxTokens,
   getLlmProviderProfileSettings,
   getLlmProviderOverride,
@@ -23,6 +24,7 @@ import {
   setEnabledCountries,
   setAutomaticCrawlingEnabled,
   setAutomaticLlmEnabled,
+  setAutomationSettings,
   setHideRulesOnlyAuctions,
   setLlmKillSwitch,
   setLlmMaxTokens,
@@ -967,5 +969,19 @@ describe('automatic processing preferences', () => {
     await setAutomaticLlmEnabled(db, false)
     await expect(getAutomaticLlmEnabled(db)).resolves.toBe(false)
     await expect(getAutomaticCrawlingEnabled(db)).resolves.toBe(false)
+  })
+
+  it('stores the per-run LLM cap only via setAutomationSettings and falls back to null', async () => {
+    const db = makeFakePool() as unknown as Pool
+    await expect(getLlmMaxPerRun(db)).resolves.toBeNull()
+
+    await setAutomationSettings(db, { crawlersEnabled: true, llmEnabled: true, llmMaxPerRun: 150 })
+    await expect(getLlmMaxPerRun(db)).resolves.toBe(150)
+
+    // undefined leaves it alone, null clears it back to the env default
+    await setAutomationSettings(db, { crawlersEnabled: false, llmEnabled: true })
+    await expect(getLlmMaxPerRun(db)).resolves.toBe(150)
+    await setAutomationSettings(db, { crawlersEnabled: false, llmEnabled: true, llmMaxPerRun: null })
+    await expect(getLlmMaxPerRun(db)).resolves.toBeNull()
   })
 })
