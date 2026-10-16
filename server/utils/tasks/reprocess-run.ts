@@ -32,7 +32,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
 
   const candidateCountries = await effectiveCandidateCountries(opts)
   const rawCandidates = await findCandidates(opts, candidateCountries)
-  const candidates = interleaveByPlatform(rawCandidates)
+  const candidates = opts.preserveCandidateOrder ? rawCandidates : interleaveByPlatform(rawCandidates)
   if (candidates.length === 0) {
     const durationMs = Date.now() - startedAt
     console.log(`[reprocess] candidates=0 processed=0 skipped=0 llmCalls=0 in ${(durationMs / 1000).toFixed(0)}s`)

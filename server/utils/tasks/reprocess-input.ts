@@ -90,6 +90,9 @@ export interface ReprocessOptions {
    *  failedOnly, so this never lets one bucket's retry reach into the
    *  other's candidates. */
   ignoreBatchPending?: boolean
+  /** Internal retry-slice option: keep the selector's oldest-first order
+   * instead of interleaving candidates by platform. */
+  preserveCandidateOrder?: boolean
 }
 
 export interface ReprocessResult {
