@@ -16,6 +16,7 @@ import {
   getAutomaticLlmEnabled,
   getHideRulesOnlyAuctions,
   getLlmKillSwitch,
+  getLlmConcurrency,
   getLlmMaxPerRun,
   getLlmMaxTokens,
   getLlmProviderProfileSettings,
@@ -983,5 +984,16 @@ describe('automatic processing preferences', () => {
     await expect(getLlmMaxPerRun(db)).resolves.toBe(150)
     await setAutomationSettings(db, { crawlersEnabled: false, llmEnabled: true, llmMaxPerRun: null })
     await expect(getLlmMaxPerRun(db)).resolves.toBeNull()
+  })
+
+  it('stores the reprocess lane count independently of the budget', async () => {
+    const db = makeFakePool() as unknown as Pool
+    await expect(getLlmConcurrency(db)).resolves.toBeNull()
+    await setAutomationSettings(db, { crawlersEnabled: true, llmEnabled: true, llmMaxPerRun: 150, llmConcurrency: 4 })
+    await expect(getLlmConcurrency(db)).resolves.toBe(4)
+    await expect(getLlmMaxPerRun(db)).resolves.toBe(150)
+    await setAutomationSettings(db, { crawlersEnabled: true, llmEnabled: true, llmConcurrency: null })
+    await expect(getLlmConcurrency(db)).resolves.toBeNull()
+    await expect(getLlmMaxPerRun(db)).resolves.toBe(150)
   })
 })

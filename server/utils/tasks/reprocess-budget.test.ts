@@ -1,23 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { getPool } from '../db'
-import { getLlmMaxPerRun } from '../app-settings'
-import { resolveMaxLlmPerRun } from './reprocess-input'
+import { getLlmConcurrency, getLlmMaxPerRun } from '../app-settings'
+import { resolveLlmConcurrency, resolveMaxLlmPerRun } from './reprocess-budget'
 
 vi.mock('../db', () => ({ getPool: vi.fn() }))
-vi.mock('../app-settings', () => ({ getLlmMaxPerRun: vi.fn() }))
-vi.mock('../../crawlers/registry', () => ({
-  ensureEnabledCountriesLoaded: vi.fn(),
-  getEnabledCountryCodes: vi.fn(() => []),
-  isCountryEnabled: vi.fn(() => true),
-}))
+vi.mock('../app-settings', () => ({ MAX_LLM_CONCURRENCY: 8, getLlmMaxPerRun: vi.fn(), getLlmConcurrency: vi.fn() }))
 
 let envMaxPerRun = '20'
-vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { maxPerRun: envMaxPerRun } }))
+let envConcurrency = ''
+vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { maxPerRun: envMaxPerRun, concurrency: envConcurrency } }))
 
 beforeEach(() => {
   envMaxPerRun = '20'
+  envConcurrency = ''
   vi.mocked(getPool).mockReturnValue({} as never)
   vi.mocked(getLlmMaxPerRun).mockReset()
+  vi.mocked(getLlmConcurrency).mockReset()
 })
 
 describe('resolveMaxLlmPerRun', () => {
@@ -42,5 +40,25 @@ describe('resolveMaxLlmPerRun', () => {
     await expect(resolveMaxLlmPerRun()).resolves.toBe(20)
     vi.mocked(getPool).mockReturnValue(null as never)
     await expect(resolveMaxLlmPerRun()).resolves.toBe(20)
+  })
+})
+
+describe('resolveLlmConcurrency', () => {
+  it('prefers the admin-set lane count, then env, then 1', async () => {
+    vi.mocked(getLlmConcurrency).mockResolvedValue(4)
+    await expect(resolveLlmConcurrency()).resolves.toBe(4)
+
+    vi.mocked(getLlmConcurrency).mockResolvedValue(null)
+    envConcurrency = '3'
+    await expect(resolveLlmConcurrency()).resolves.toBe(3)
+    envConcurrency = '100'
+    await expect(resolveLlmConcurrency()).resolves.toBe(8)
+    envConcurrency = ''
+    await expect(resolveLlmConcurrency()).resolves.toBe(1)
+  })
+
+  it('stays sequential when the setting cannot be read', async () => {
+    vi.mocked(getLlmConcurrency).mockRejectedValue(new Error('db down'))
+    await expect(resolveLlmConcurrency()).resolves.toBe(1)
   })
 })

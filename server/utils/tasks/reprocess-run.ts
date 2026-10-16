@@ -1,16 +1,11 @@
-import type { Auction, AuctionExtraction } from '~/types/auction'
 import { batchSupportsMultimodal, isLlmBatchPending, isLlmBatchProviderBroken, supportsLlmBatch, supportsNativeBatchDocuments } from '~/server/utils/extract/llm-batch'
 import { readLlmExecutionMode } from '~/server/utils/app-settings'
 import { LLM_FAILURE_RETRY_COOLDOWN_HOURS, MAX_LLM_FAILURES, readExtractionChainStrategy, readExtractionLlmConfigChain } from '~/server/utils/extract/llm-task-config'
-import { type LlmConfig, type LlmInput, type LlmUsage } from '~/server/utils/extract/llm'
+import { type LlmConfig, type LlmInput } from '~/server/utils/extract/llm'
 import { type RulesHint } from '~/server/utils/extract/llm-clamp'
 import { isLlmProviderError, isRateLimitError } from '~/server/utils/extract/llm-errors'
 import { recordLlmUsage } from '~/server/utils/llm-usage'
-import { resolveCostUsd } from '~/server/utils/extract/llm-pricing'
-import { applyAuctionExtraction } from '~/server/utils/auction-extraction'
-import { createCandidateRecordLoader, type AuctionRecord } from '~/server/utils/auction-record'
-import { upsertCurrentAuctions } from '~/server/utils/current-auctions'
-import { writeAuctionDetails } from '~/server/utils/auction-details'
+import { createCandidateRecordLoader } from '~/server/utils/auction-record'
 import { readArtifactProcessingState } from '~/server/utils/artifact-version-state'
 import { readAuctionFetchStates, writeAuctionLlmClaim, writeAuctionLlmPipelineState } from '~/server/utils/auction-fetch-state'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
@@ -18,7 +13,10 @@ import { interleaveByPlatform } from '~/server/utils/interleave-by-platform'
 import { recordTaskRunError } from '~/server/utils/task-run-errors'
 import { recordTaskRunProgress, type TaskRunSummary } from '~/server/utils/task-runs'
 import { throwIfTaskAborted } from '~/server/utils/exclusive-task'
-import { buildLlmRateLimitWarning, buildReprocessInput, buildRulesOnlyEntry, effectiveCandidateCountries, findCandidates, hasNewArchivedDocuments, inputNeedsMultimodal, resolveMaxLlmPerRun, type ReprocessInput, type ReprocessOptions, type ReprocessResult } from './reprocess-input'
+import { runPool } from '~/server/utils/run-pool'
+import { buildLlmRateLimitWarning, buildReprocessInput, buildRulesOnlyEntry, effectiveCandidateCountries, findCandidates, hasNewArchivedDocuments, inputNeedsMultimodal, type Candidate, type ReprocessInput, type ReprocessOptions, type ReprocessResult } from './reprocess-input'
+import { resolveLlmConcurrency, resolveMaxLlmPerRun } from './reprocess-budget'
+import { persistReprocessEntry } from './reprocess-persist'
 import { reprocessAuction } from './reprocess-single'
 import { submitReprocessBatch } from './reprocess-batch-submit'
 
@@ -61,6 +59,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
   let chainCursor = 0
   const executionMode = await readLlmExecutionMode()
   const maxLlmPerRun = await resolveMaxLlmPerRun()
+  const concurrency = await resolveLlmConcurrency()
   const at = new Date().toISOString()
   const nowMs = new Date(at).getTime()
   /** Whether a locked-out auction (llm_failures >= MAX_LLM_FAILURES) is past
@@ -95,7 +94,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       .map((c) => `${c.provider ?? 'openai-compatible'}/${c.model}`)
       .join(chainStrategy === 'round-robin' ? ' + ' : ' → ')
     console.log(
-      `[reprocess] llm ${chainLabel} strategy=${chainStrategy} mode=${useBatch ? 'batch' : 'sync'} maxPerRun=${maxLlmPerRun}`,
+      `[reprocess] llm ${chainLabel} strategy=${chainStrategy} mode=${useBatch ? 'batch' : 'sync'} maxPerRun=${maxLlmPerRun} concurrency=${concurrency}`,
     )
   } else {
     console.log('[reprocess] llm disabled — rules-only')
@@ -109,10 +108,8 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
   const llmCapPerPlatform = Math.max(1, Math.ceil(maxLlmPerRun / llmPlatformCount))
   const llmCallsByPlatform = new Map<string, number>()
 
-  // Per-country breakdown for /settings — diffed from the aggregate counters
-  // below in the loop's `finally` block rather than incremented at each of
-  // their many call sites, since every increment happens somewhere within
-  // one candidate's iteration regardless of which branch it took.
+  // Per-country breakdown for /settings, kept by `bump` (below) right next to
+  // the aggregate counters.
   const candidatesTotalByCountry = new Map<string, number>()
   for (const c of candidates) candidatesTotalByCountry.set(c.country, (candidatesTotalByCountry.get(c.country) ?? 0) + 1)
   // Seeded at 0/N so every country in scope shows up right away instead of
@@ -125,11 +122,21 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
     ]),
   )
 
-  let processed = 0
-  let skipped = 0
-  let llmCalls = 0
-  let llmErrors = 0
+  // Candidates run in parallel lanes (see runPool below), so the counters are
+  // bumped where they happen — the aggregate and the per-country snapshot
+  // together — instead of being diffed per iteration.
+  const totals = { processed: 0, skipped: 0, llmCalls: 0, llmErrors: 0 }
+  function bump(country: string, counter: keyof typeof totals): void {
+    totals[counter]++
+    const prev = progressByCountry.get(country)
+    if (prev) progressByCountry.set(country, { ...prev, [counter]: (prev[counter] ?? 0) + 1 })
+  }
   let rulesFalsified = 0
+  let stopRun = false
+  // LLM calls promised to candidates still in flight, so lanes started
+  // together can't all pass the budget check against the same stale count.
+  let llmReserved = 0
+  const llmReservedByPlatform = new Map<string, number>()
   let lastLlmError: string | undefined
   let warning: string | undefined
   const batchItems: { key: string; input: LlmInput }[] = []
@@ -139,6 +146,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
   // Distinguishes a persistEntry (DB write) failure from an LLM-call failure
   // in the catch block below — both land there, but they need different
   // task_run_errors categories (a storage outage isn't an LLM problem).
+  const persistCtx = { runTrigger: opts.trigger ?? 'cron', at }
   const persistFailureMark = Symbol('persistFailure')
   function markPersistFailure(err: unknown): unknown {
     if (err instanceof Error) (err as Error & { [persistFailureMark]?: true })[persistFailureMark] = true
@@ -148,57 +156,34 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
     return err instanceof Error && persistFailureMark in err
   }
 
-  async function persistEntry(
-    record: AuctionRecord,
-    entry: AuctionExtraction,
-    artifactVersionId: number | null,
-    llmFailures: number,
-    archivedAuction: Auction,
-    llmAttempted: boolean,
-    llmConfigUsed: LlmConfig | null = null,
-    llmDurationMs: number | null = null,
-    llmUsage: LlmUsage | null = null,
-  ): Promise<void> {
-    // record.auction is reconstructed from auctions LEFT JOIN LATERAL
-    // auction_details (see auction-record.ts) — when no auction_details row
-    // exists yet (a brand-new identity, or one whose details were wiped, e.g.
-    // by rebuildCountry), every crawl-owned field on it is null/0. This task
-    // never crawls live, so without this fallback that blank snapshot would
-    // become the permanent first version — address stays empty forever and
-    // geocoding never gets a query to run (see WP-3 SE root cause). The
-    // archived 'auction' capture this run already read is the actual crawl
-    // output and the correct source for that first write; lat/lng stay from
-    // record.auction since geocoding writes there independently and may be
-    // newer than the archive.
-    const base = record.detailsId == null
-      ? { ...archivedAuction, lat: record.auction.lat, lng: record.auction.lng }
-      : record.auction
-    const updated: Auction = { ...base, extraction: entry }
-    applyAuctionExtraction(updated, entry)
-    await writeAuctionDetails(updated, entry, {
-      artifactVersionId,
-      llmProvider: llmConfigUsed ? (llmConfigUsed.provider ?? 'openai-compatible') : null,
-      llmModel: llmConfigUsed?.model ?? null, llmProfileId: llmConfigUsed?.profileId ?? null,
-      runTrigger: opts.trigger ?? 'cron',
-      llmDurationMs,
-      llmCostUsd: llmConfigUsed ? resolveCostUsd(llmConfigUsed.model, llmUsage) : null,
-      llmInputTokens: llmUsage?.inputTokens ?? null, llmOutputTokens: llmUsage?.outputTokens ?? null,
-    })
-    await upsertCurrentAuctions([updated], at)
-    await writeAuctionLlmPipelineState(record.auction.platform, record.auction.externalId, {
-      llmBatchJob: null,
-      llmArtifactVersionId: null,
-      llmRulesHint: null,
-      llmFailures,
-      llmAttempted,
-    })
-    record.auction = updated
-    record.artifactVersionId = artifactVersionId
-  }
-
-  for (const { platform, externalId, country } of candidates) {
+  async function handleCandidate({ platform, externalId, country }: Candidate): Promise<void> {
     throwIfTaskAborted(signal)
-    const before = { processed, skipped, llmCalls, llmErrors }
+    // Calls promised to this candidate but not yet started. Released one at a
+    // time as onLlmAttempt increments llmCalls, or all at once in finally.
+    let reservedCalls = 0
+    function reserveLlmCalls(requested: number): number {
+      const additional = requested - reservedCalls
+      if (additional <= 0) return reservedCalls
+      const platformReserved = llmReservedByPlatform.get(platform) ?? 0
+      const available = opts.ignoreLlmBudget
+        ? Infinity
+        : Math.min(
+          maxLlmPerRun - totals.llmCalls - llmReserved,
+          llmCapPerPlatform - (llmCallsByPlatform.get(platform) ?? 0) - platformReserved,
+        )
+      const granted = Math.max(0, Math.min(additional, available))
+      reservedCalls += granted
+      llmReserved += granted
+      llmReservedByPlatform.set(platform, platformReserved + granted)
+      return reservedCalls
+    }
+    function releaseReservation(count = 1): void {
+      const released = Math.min(count, reservedCalls)
+      if (released === 0) return
+      reservedCalls -= released
+      llmReserved -= released
+      llmReservedByPlatform.set(platform, (llmReservedByPlatform.get(platform) ?? released) - released)
+    }
     // Hoisted out of the try block below so the catch can still see them: a
     // thrown rate-limit/unparseable-response error (see the catch's comment)
     // reaches onLlmAttempt before propagating past reprocessAuction, and the
@@ -213,8 +198,8 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       const key = cacheKey(platform, externalId)
       const record = await records.get(platform, externalId)
       if (!record) {
-        skipped++
-        continue
+        bump(country, 'skipped')
+        return
       }
       const storedPriorEntry = record.auction.extraction ?? undefined
       const priorState = fetchStates.get(key)
@@ -241,18 +226,23 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
               ? { llmBatchJob: priorState.llmBatchJob, at: priorState.updatedAt }
               : undefined))))
       if (!eligible) {
-        skipped++
-        continue
+        bump(country, 'skipped')
+        return
       }
 
       const platformLlmCalls = llmCallsByPlatform.get(platform) ?? 0
       const llmReady = !!llmConfig && (
         opts.ignoreLlmBudget ||
-        (llmCalls < maxLlmPerRun && platformLlmCalls < llmCapPerPlatform)
+        (totals.llmCalls + llmReserved < maxLlmPerRun &&
+          platformLlmCalls + (llmReservedByPlatform.get(platform) ?? 0) < llmCapPerPlatform)
       )
+      // Held until `finally`: from here to there other lanes see this
+      // candidate's call as already spoken for. Taken in the same tick as the
+      // check above, so two lanes can't both claim the last slot.
+      if (llmReady) reserveLlmCalls(1)
       if (opts.force && llmConfig && !llmReady) {
-        skipped++
-        continue
+        bump(country, 'skipped')
+        return
       }
 
       /** Set only when the batch path built an input and then handed the
@@ -271,8 +261,8 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
           artifactState,
         })
         if (!base || !base.input) {
-          skipped++
-          continue
+          bump(country, 'skipped')
+          return
         }
         // A candidate the configured batch provider can't take (OpenRouter's
         // Batch API rejects any image/document content outright — see
@@ -282,8 +272,9 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
         // it would stay eligible and get queued into the same doomed batch
         // again every run, forever.
         if (batchSupportsMultimodal(llmConfig) || !inputNeedsMultimodal(base.input)) {
-          llmCalls++
-          llmCallsByPlatform.set(platform, platformLlmCalls + 1)
+          releaseReservation()
+          bump(country, 'llmCalls')
+          llmCallsByPlatform.set(platform, (llmCallsByPlatform.get(platform) ?? 0) + 1)
           batchItems.push({ key, input: base.input })
           batchArtifactVersions.set(key, base.artifactVersionId)
           batchRulesHints.set(key, base.input.rulesHint ?? null)
@@ -295,13 +286,13 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
           const entry = priorEntry && (base.documentSetChanged || priorEntry.source === 'llm')
             ? priorEntry
             : buildRulesOnlyEntry(base.fields, priorEntry, at)
-          processed++
+          bump(country, 'processed')
           // llmAttempted: false — queued, not yet submitted. The batch
           // submission loop below marks the real attempt once it actually
           // goes out (only some queued items may make it into submitted).
-          await persistEntry(record, entry, artifactState.parsedArtifactVersionId, priorLlmFailures, base.auction, false)
+          await persistReprocessEntry(persistCtx, record, entry, artifactState.parsedArtifactVersionId, priorLlmFailures, base.auction, false)
             .catch((persistErr) => { throw markPersistFailure(persistErr) })
-          continue
+          return
         }
         batchFallbackBase = base
       }
@@ -321,11 +312,11 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       if (llmReady && syncConfigs.length === 0) {
         warning = 'Alle konfigurierten LLM-Modelle haben ihr Tageskontingent erreicht.'
         console.warn('[reprocess] every configured model is over its daily quota — stopping this run early')
-        skipped++
-        break
+        bump(country, 'skipped')
+        stopRun = true
+        return
       }
 
-      let platformLlmCallsSoFar = platformLlmCalls
       // Claimed only for a real sync LLM call (not the rules-only fallback
       // below); cleared below, in the catch block, or by persistEntry's
       // writeAuctionLlmPipelineState. A fresh timestamp, not the shared `at`
@@ -344,7 +335,11 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
         // not just whether llmReady allowed a first call to start.
         remainingLlmBudget: opts.ignoreLlmBudget
           ? Infinity
-          : Math.min(maxLlmPerRun - llmCalls, llmCapPerPlatform - platformLlmCallsSoFar),
+          : Math.min(
+            maxLlmPerRun - totals.llmCalls - (llmReserved - reservedCalls),
+            llmCapPerPlatform - (llmCallsByPlatform.get(platform) ?? 0),
+          ),
+        reserveLlmCalls,
         // Only handed over when the sync path starts on the very config the
         // input above was built for — a rotated or quota-filtered chain head
         // is a different provider and has to build its own.
@@ -359,12 +354,12 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
         },
         onLlmAttempt: () => {
           syncLlmAttempted = true
-          llmCalls++
-          platformLlmCallsSoFar++
-          llmCallsByPlatform.set(platform, platformLlmCallsSoFar)
+          releaseReservation()
+          bump(country, 'llmCalls')
+          llmCallsByPlatform.set(platform, (llmCallsByPlatform.get(platform) ?? 0) + 1)
         },
         onLlmError: (err) => {
-          llmErrors++
+          bump(country, 'llmErrors')
           const message = err instanceof Error ? err.message : String(err)
           lastLlmError = `${platform}:${externalId}: ${message}`
         },
@@ -388,20 +383,21 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       if (!result) {
         // buildReprocessInput bailed before persistEntry could clear the claim.
         if (llmClaimed) await writeAuctionLlmClaim(platform, externalId, null)
-        skipped++
-        continue
+        bump(country, 'skipped')
+        return
       }
       if (result.llmCalled && !syncLlmAttempted) {
-        llmCalls++
-        llmCallsByPlatform.set(platform, platformLlmCallsSoFar + 1)
+        releaseReservation()
+        bump(country, 'llmCalls')
+        llmCallsByPlatform.set(platform, (llmCallsByPlatform.get(platform) ?? 0) + 1)
       }
       rulesFalsified += result.rulesFalsified.length
 
-      processed++
+      bump(country, 'processed')
 
       // Persist each result immediately so a long run survives a deployment.
-      await persistEntry(
-        record, result.entry, result.artifactVersionId, result.llmFailures, result.auction, result.llmCalled,
+      await persistReprocessEntry(
+        persistCtx, record, result.entry, result.artifactVersionId, result.llmFailures, result.auction, result.llmCalled,
         result.llmConfigUsed, result.llmDurationMs, result.llmUsage,
       ).catch((persistErr) => { throw markPersistFailure(persistErr) })
     } catch (err) {
@@ -412,7 +408,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       // MAX_LLM_FAILURES, or it would permanently downgrade the auction to
       // rules-only once the limit is hit, long after the outage clears.
       console.warn(`[reprocess] failed for ${platform}:${externalId}: ${(err as Error).message}`)
-      skipped++
+      bump(country, 'skipped')
       // Unconditional (unlike the llmAttempted-gated write below): a throw
       // before onLlmAttempt fired would otherwise leave the claim stuck.
       if (llmClaimed) await writeAuctionLlmClaim(platform, externalId, null)
@@ -443,35 +439,32 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       if (isRateLimitError(err)) {
         warning = buildLlmRateLimitWarning(err, llmConfig)
         console.warn('[reprocess] LLM provider rate-limited — stopping this run early')
-        break
+        stopRun = true
+        return
       }
       if (isLlmProviderError(err)) {
         warning = `LLM-Providerfehler: ${err.message}`
         console.warn('[reprocess] LLM provider unavailable — stopping this run early')
-        break
+        stopRun = true
+        return
       }
     } finally {
-      const prevCountry = progressByCountry.get(country)
-      progressByCountry.set(country, {
-        candidatesTotal: candidatesTotalByCountry.get(country) ?? 0,
-        processed: (prevCountry?.processed ?? 0) + (processed - before.processed),
-        skipped: (prevCountry?.skipped ?? 0) + (skipped - before.skipped),
-        llmCalls: (prevCountry?.llmCalls ?? 0) + (llmCalls - before.llmCalls),
-        llmErrors: (prevCountry?.llmErrors ?? 0) + (llmErrors - before.llmErrors),
-      })
+      releaseReservation(reservedCalls)
       void recordTaskRunProgress(
         'reprocess',
-        { candidatesTotal: candidates.length, processed, skipped, llmCalls, llmErrors, rulesFalsified },
+        { candidatesTotal: candidates.length, ...totals, rulesFalsified },
         { lastLlmError, progressByCountry: Object.fromEntries(progressByCountry) },
       )
     }
   }
+
+  await runPool(candidates, concurrency, handleCandidate, () => stopRun)
   // The per-country snapshot outlives the run in /settings, so its final
   // state has to get past the progress throttle — with a fast loop the last
   // in-loop reports above are routinely swallowed by it.
   await recordTaskRunProgress(
     'reprocess',
-    { candidatesTotal: candidates.length, processed, skipped, llmCalls, llmErrors, rulesFalsified },
+    { candidatesTotal: candidates.length, ...totals, rulesFalsified },
     { lastLlmError, progressByCountry: Object.fromEntries(progressByCountry), flush: true },
   )
 
@@ -484,14 +477,11 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
 
   const durationMs = Date.now() - startedAt
   console.log(
-    `[reprocess] candidates=${candidates.length} processed=${processed} skipped=${skipped} llmCalls=${llmCalls} llmErrors=${llmErrors} rulesFalsified=${rulesFalsified} in ${(durationMs / 1000).toFixed(0)}s`,
+    `[reprocess] candidates=${candidates.length} processed=${totals.processed} skipped=${totals.skipped} llmCalls=${totals.llmCalls} llmErrors=${totals.llmErrors} rulesFalsified=${rulesFalsified} in ${(durationMs / 1000).toFixed(0)}s`,
   )
   return {
     candidates: candidates.length,
-    processed,
-    skipped,
-    llmCalls,
-    llmErrors,
+    ...totals,
     rulesFalsified,
     durationMs,
     ...(warning ? { warning } : {}),

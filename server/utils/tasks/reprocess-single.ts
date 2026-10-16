@@ -46,11 +46,15 @@ export async function reprocessAuction(
     prebuiltBase?: ReprocessInput
     /** Caps how many map-reduce calls (map + reduce) this candidate may make
      *  this run — see runReprocess's remaining-budget computation. Ignored
-     *  outside the map-reduce path (base.documentSummaryInputs unset). A
-     *  candidate whose document count needs more than this budget allows is
-     *  skipped (returns null) rather than partially processed, and stays
-     *  eligible for a later run with more budget. */
+     *  outside the map-reduce path (base.documentSummaryInputs unset). Excess
+     *  documents are deferred into the reduce prompt and remain eligible for
+     *  a later run with more budget. */
     remainingLlmBudget?: number
+    /** Atomically reserves as many calls as are available for this candidate.
+     * Used by the parallel reprocess pool so map-reduce calls cannot all pass
+     * the same stale remaining-budget snapshot. Returns the total number of
+     * calls currently reserved for this candidate. */
+    reserveLlmCalls?: (requested: number) => number
   } = {},
 ): Promise<{
   entry: AuctionExtraction
@@ -106,7 +110,9 @@ export async function reprocessAuction(
     // on config B). A provider-unavailable mid-sequence fails the whole
     // attempt instead; the normal llmFailures/24h-cooldown safety net picks
     // it up again next run, same as any other failed candidate.
-    const remaining = opts.remainingLlmBudget ?? Infinity
+    const remaining = opts.reserveLlmCalls
+      ? opts.reserveLlmCalls(base.documentSummaryInputs.length + 1)
+      : opts.remainingLlmBudget ?? Infinity
     if (remaining < 2) return null
     const documentsForMapPhase = base.documentSummaryInputs.slice(0, remaining - 1)
     const budgetDeferredLabels = base.documentSummaryInputs
