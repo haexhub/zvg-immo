@@ -31,6 +31,14 @@ describe('findCandidates', () => {
     expect(lastSql()).not.toContain('a.cancelled = false')
   })
 
+  it('skips expired auctions in a scan but not an explicitly addressed one', async () => {
+    await findCandidates({}, ['bg'])
+    expect(lastSql()).toContain('a.auction_date_iso IS NULL OR a.auction_date_iso >= now()')
+    expect(lastSql()).toContain('a.last_seen_at < cs.last_success_at')
+    await findCandidates({ platform: 'bg-bcpea', externalId: '1' }, ['bg'])
+    expect(lastSql()).not.toContain('a.auction_date_iso')
+  })
+
   it('hands failedOnly runs to the SQL-level locked selection', async () => {
     await findCandidates({ failedOnly: true, limit: 10 }, ['de'])
     expect(lastSql()).toContain('s.llm_failures >= $1')

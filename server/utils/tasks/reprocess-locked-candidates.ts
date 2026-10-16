@@ -1,4 +1,5 @@
 import { getPool } from '~/server/utils/db'
+import { CURRENT_AUCTION_CONDITIONS } from '~/server/utils/current-auction-sql'
 import { MAX_LLM_FAILURES } from '~/lib/llm-limits'
 import type { Candidate, ReprocessOptions } from './reprocess-input'
 
@@ -35,7 +36,8 @@ export async function findLockedCandidates(opts: ReprocessOptions, countries: re
   if (opts.caseNumber) conditions.push(`a.case_number = $${params.push(opts.caseNumber)}`)
   // Same rule as findCandidates: hidden (cancelled/sold) listings aren't worth
   // LLM budget, unless one auction was addressed explicitly.
-  if (!opts.externalId && !opts.caseNumber) conditions.push('a.cancelled = false')
+  // Same for expired ones (CURRENT_AUCTION_CONDITIONS).
+  if (!opts.externalId && !opts.caseNumber) conditions.push('a.cancelled = false', ...CURRENT_AUCTION_CONDITIONS)
   const limitClause = opts.limit ? ` LIMIT $${params.push(opts.limit)}` : ''
   const { rows } = await db.query<{ platform: string; external_id: string; country: string }>(
     `SELECT s.platform, s.external_id, a.country

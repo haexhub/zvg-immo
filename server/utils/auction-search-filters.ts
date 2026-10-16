@@ -7,6 +7,7 @@
 import type { Pool } from 'pg'
 import { ensureEnabledCountriesLoaded, getEnabledCountryCodes } from '~/server/crawlers/registry'
 import { getHideRulesOnlyAuctions } from '~/server/utils/app-settings'
+import { CURRENT_AUCTION_CONDITIONS } from '~/server/utils/current-auction-sql'
 import { GEO_METRIC_CATEGORIES } from '~/server/utils/geo-metric-categories'
 import { proximityConditionAnyOf } from '~/server/utils/osm-proximity'
 import { commaList, finiteNumber, hasExplicitHideRulesOnly, parseAuctionSearchFilters } from '~/lib/auction-search-filter-contract'
@@ -49,31 +50,10 @@ export async function buildAuctionSearchFilter(
   const countries = requested.length ? requested.filter((entry) => enabled.includes(entry)) : enabled
   where.push(`a.country = ANY(${add(countries)}::text[])`)
 
-  // `auctions` is upserted row-by-row (current-auctions.ts) and never pruned,
-  // so an auction whose date has passed keeps its row indefinitely. Filter it
-  // here, the same way the enabled-country scope above is applied at read time
-  // rather than by deleting rows.
-  where.push(`(a.auction_date_iso IS NULL OR a.auction_date_iso >= now())`)
-
-  // Expiry, part two. The date filter above only reaches auctions that have a
-  // date, and several platforms (and classifieds-style sources) do not always
-  // publish one. No portal publishes a "sold"/"withdrawn" flag either. The
-  // one remaining signal is that a crawl which DID complete stopped returning
-  // the listing — recorded as auctions.last_seen_at vs crawl_state.last_success_at
-  // (server/utils/crawl-state.ts).
-  //
-  // Written as NOT EXISTS so every uncertainty resolves to "keep showing it":
-  // no crawl_state row for the scope (never crawled, or crawl_region still
-  // NULL from before this column existed) means no row to compare against, so
-  // nothing is hidden. A broken crawler therefore goes stale rather than
-  // silently emptying its source out of the search results.
-  where.push(`NOT EXISTS (
-    SELECT 1 FROM crawl_state cs
-     WHERE cs.country = a.country
-       AND cs.region = a.crawl_region
-       AND cs.platform = a.platform
-       AND a.last_seen_at < cs.last_success_at
-  )`)
+  // Expiry (date passed, or a completed crawl no longer returned the listing).
+  // `auctions` is never pruned, so this is applied at read time — see
+  // current-auction-sql.ts for the rules and why every uncertainty keeps a row.
+  where.push(...CURRENT_AUCTION_CONDITIONS)
 
   const regionNames = commaList(query.regionNames)
   if (regionNames.length) where.push(`(a.country || ':' || a.region) = ANY(${add(regionNames)}::text[])`)

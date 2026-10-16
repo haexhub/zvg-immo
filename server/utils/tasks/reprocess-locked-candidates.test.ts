@@ -45,6 +45,14 @@ describe('findLockedCandidates', () => {
     expect(params[2]).toBe('kip')
   })
 
+  it('skips expired auctions unless one is addressed explicitly', async () => {
+    await findLockedCandidates({}, ['bg'])
+    expect(lastCall().sql).toContain('a.auction_date_iso IS NULL OR a.auction_date_iso >= now()')
+    expect(lastCall().sql).toContain('a.last_seen_at < cs.last_success_at')
+    await findLockedCandidates({ platform: 'bg-bcpea', externalId: '1' }, ['bg'])
+    expect(lastCall().sql).not.toContain('a.auction_date_iso')
+  })
+
   it('does not hide a cancelled auction that is addressed explicitly', async () => {
     await findLockedCandidates({ platform: 'kip', externalId: 'H1' }, ['de'])
     expect(lastCall().sql).not.toContain('a.cancelled = false')

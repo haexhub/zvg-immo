@@ -10,6 +10,7 @@ import { buildReprocessFields } from '~/server/utils/extract/reprocess-fields'
 import { getPool } from '~/server/utils/db'
 import { hasUnparsedArtifactVersion, readArtifactProcessingState, type ArtifactProcessingState } from '~/server/utils/artifact-version-state'
 import { readArchivedAuctionSnapshot } from '~/server/utils/archived-auction'
+import { CURRENT_AUCTION_CONDITIONS } from '~/server/utils/current-auction-sql'
 import { findLockedCandidates } from './reprocess-locked-candidates'
 import { isSafePathSegment } from '~/server/utils/path-segment'
 import { downloadImage, mimeTypeFor } from '~/server/utils/image-storage'
@@ -227,7 +228,9 @@ export async function findCandidates(opts: ReprocessOptions, countries: readonly
   // had is ~40% sold — and none of it ever becomes visible again. An
   // explicitly addressed auction still goes through: /settings' single-auction
   // action targets one row by id and must not silently do nothing.
-  if (!targetsSingleAuction(opts)) conditions.push('a.cancelled = false')
+  // Expired listings are hidden the same way, so they get no LLM budget
+  // either (same exemption for an explicitly addressed auction).
+  if (!targetsSingleAuction(opts)) conditions.push('a.cancelled = false', ...CURRENT_AUCTION_CONDITIONS)
   const limitClause = opts.limit ? ` LIMIT $${params.push(opts.limit)}` : ''
   const { rows } = await db.query<{ platform: string; external_id: string; country: string }>(
     `SELECT DISTINCT rc.platform, rc.external_id, a.country
