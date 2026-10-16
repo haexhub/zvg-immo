@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('~/server/utils/auction-record', () => ({ readAuctionRecords: vi.fn() }))
+vi.mock('~/server/utils/auction-record', () => {
+  const readAuctionRecords = vi.fn()
+  return {
+    readAuctionRecords,
+    // The code streams records; serve the stream from the array each test stubs.
+    iterateAuctionRecords: (...args: unknown[]) => (async function* () { yield* (await readAuctionRecords(...args)) ?? [] })(),
+  }
+})
 
 const COMPLETE_LLM_FIELDS = {
   condition: null, features: [], bedrooms: null, bathrooms: null, floor: null,

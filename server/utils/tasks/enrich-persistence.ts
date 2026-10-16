@@ -1,7 +1,7 @@
 import type { Auction } from '~/types/auction'
 import type { crawlAll } from '~/server/crawlers/registry'
 import { applyAuctionExtraction } from '~/server/utils/auction-extraction'
-import { readAuctionRecordMap } from '~/server/utils/auction-record'
+import { readAuctionRecordsByKeys } from '~/server/utils/auction-record'
 import { mergeStoredAuction } from '~/server/utils/auction-merge'
 import { upsertCurrentAuctions } from '~/server/utils/current-auctions'
 import { normalizeAuctionDescriptions } from '~/server/utils/description-normalization'
@@ -12,9 +12,10 @@ import { rebuildAutomaticAuctionRelationships } from '~/server/utils/auction-rel
 import { cacheKey, readVerkehrswertCache } from '~/server/utils/verkehrswert-cache'
 import { throwIfTaskAborted } from '~/server/utils/exclusive-task'
 
+const RECORD_CHUNK_SIZE = 500
+
 export async function finalizeEnrichPersistence({
   result,
-  country,
   persistedDetails,
   capturedAt,
   at,
@@ -22,7 +23,7 @@ export async function finalizeEnrichPersistence({
   signal,
 }: {
   result: Awaited<ReturnType<typeof crawlAll>>
-  /** The run's country scope; the stored records are re-read for it here. */
+  /** The run's country scope (the stored records are re-read per auction, not per country). */
   country?: string
   persistedDetails: Map<string, { marketValueEur: number | null; marketValueText: string | null }>
   capturedAt: string
@@ -39,7 +40,6 @@ export async function finalizeEnrichPersistence({
   // ponytail: one re-read per finalize, not per auction — a reprocess write
   // landing during the loop below can still be overwritten for that identity;
   // closing that needs an expected-llm_analyzed_at check in writeAuctionDetails.
-  const records = await readAuctionRecordMap(country)
   for (const a of result.auctions) {
     throwIfTaskAborted(signal)
     if (a.marketValueEur != null) continue
@@ -52,10 +52,18 @@ export async function finalizeEnrichPersistence({
   // extraction before writing the current SQL projection. The re-read record
   // wins over the worker's in-memory entry: it already contains that entry's
   // write plus anything stored after it.
-  for (const auction of result.auctions) {
-    const record = records.get(cacheKey(auction.platform, auction.externalId))
-    if (auction.detailFetchedAt == null && record) mergeStoredAuction(auction, record.auction)
-    applyAuctionExtraction(auction, record?.auction.extraction ?? auction.extraction)
+  const artifactVersionIds = new Map<string, number | null>()
+  // Read per chunk of auctions: the whole table at once is ~350 MB, on top of
+  // what the run's own preloaded records still hold at this point.
+  for (let start = 0; start < result.auctions.length; start += RECORD_CHUNK_SIZE) {
+    const chunk = result.auctions.slice(start, start + RECORD_CHUNK_SIZE)
+    const records = await readAuctionRecordsByKeys(chunk)
+    for (const auction of chunk) {
+      const record = records.get(cacheKey(auction.platform, auction.externalId))
+      artifactVersionIds.set(cacheKey(auction.platform, auction.externalId), record?.artifactVersionId ?? null)
+      if (auction.detailFetchedAt == null && record) mergeStoredAuction(auction, record.auction)
+      applyAuctionExtraction(auction, record?.auction.extraction ?? auction.extraction)
+    }
   }
   normalizeAuctionDescriptions(result.auctions)
   await writeAuctionCrawlFetchState(result.auctions)
@@ -70,9 +78,8 @@ export async function finalizeEnrichPersistence({
       persisted.marketValueText === a.marketValueText
     ) continue
     try {
-      const record = records.get(cacheKey(a.platform, a.externalId))
       await writeAuctionDetails(a, a.extraction ?? null, {
-        artifactVersionId: record?.artifactVersionId ?? null,
+        artifactVersionId: artifactVersionIds.get(cacheKey(a.platform, a.externalId)) ?? null,
       })
     } catch (err) {
       pushRunError('auction_details', `auction_details ${a.platform}:${a.externalId}: ${(err as Error).message}`, a)

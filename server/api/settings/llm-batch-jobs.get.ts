@@ -12,7 +12,7 @@ import {
   type LlmBatchCapability,
   type LlmBatchJobStatus,
 } from '~/server/utils/llm-batch-jobs'
-import { readAuctionRecords } from '~/server/utils/auction-record'
+import { iterateAuctionRecords } from '~/server/utils/auction-record'
 import { readAuctionFetchStates } from '~/server/utils/auction-fetch-state'
 import { hasMissingLlmFields, isLlmExtractionInScope } from '~/server/utils/llm-status'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
@@ -166,7 +166,6 @@ async function computeOverview(): Promise<LlmBatchJobsOverview> {
       source: 'config',
     }
   }
-  const records = await readAuctionRecords(undefined, { includePhotos: false })
   const fetchStates = await readAuctionFetchStates()
   const keysByJob = new Map<string, string[]>()
   const pendingJobNames = new Set(jobs.map((job) => job.jobName))
@@ -189,7 +188,8 @@ async function computeOverview(): Promise<LlmBatchJobsOverview> {
     return bucket
   }
 
-  for (const record of records) {
+  // Streamed, not materialized: this is polled while a task runs (see llm-status.get.ts).
+  for await (const record of iterateAuctionRecords(undefined, { includePhotos: false })) {
     // Out of the extraction task's scope entirely — counting it would inflate
     // a backlog no run will ever work off (see isLlmExtractionInScope).
     if (!isLlmExtractionInScope(record)) continue

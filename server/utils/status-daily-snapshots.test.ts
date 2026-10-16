@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('./db', () => ({ getPool: vi.fn() }))
-vi.mock('./auction-record', () => ({ readAuctionRecords: vi.fn() }))
+vi.mock('./auction-record', () => {
+  const readAuctionRecords = vi.fn()
+  return {
+    readAuctionRecords,
+    // The code streams records; serve the stream from the array each test stubs.
+    iterateAuctionRecords: (...args: unknown[]) => (async function* () { yield* (await readAuctionRecords(...args)) ?? [] })(),
+  }
+})
 vi.mock('./crawl-status', () => ({ readCrawlStatusByCountry: vi.fn() }))
 vi.mock('./llm-status', () => ({ classifyLlmStatus: vi.fn(), isLlmExtractionInScope: vi.fn() }))
 vi.mock('./osm-status', () => ({ readOsmStatusByCountry: vi.fn() }))

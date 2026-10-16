@@ -8,7 +8,7 @@ import { isLlmProviderError, isRateLimitError } from '~/server/utils/extract/llm
 import { recordLlmUsage } from '~/server/utils/llm-usage'
 import { resolveCostUsd } from '~/server/utils/extract/llm-pricing'
 import { applyAuctionExtraction } from '~/server/utils/auction-extraction'
-import { readAuctionRecordMap, type AuctionRecord } from '~/server/utils/auction-record'
+import { createCandidateRecordLoader, type AuctionRecord } from '~/server/utils/auction-record'
 import { upsertCurrentAuctions } from '~/server/utils/current-auctions'
 import { writeAuctionDetails } from '~/server/utils/auction-details'
 import { readArtifactProcessingState } from '~/server/utils/artifact-version-state'
@@ -38,7 +38,8 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
     console.log(`[reprocess] candidates=0 processed=0 skipped=0 llmCalls=0 in ${(durationMs / 1000).toFixed(0)}s`)
     return { candidates: 0, processed: 0, skipped: 0, llmCalls: 0, llmErrors: 0, rulesFalsified: 0, durationMs }
   }
-  const records = await readAuctionRecordMap(opts.country)
+  // Per chunk of candidates, not the whole table (~350 MB held for the run's hour).
+  const records = createCandidateRecordLoader(candidates)
   const fetchStates = await readAuctionFetchStates()
   // Batch submission (below) is committed to one model per job, so only the
   // sync path (reprocessAuction, further down) gets the rest of the chain as
@@ -210,7 +211,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
     let llmClaimed = false
     try {
       const key = cacheKey(platform, externalId)
-      const record = records.get(key)
+      const record = await records.get(platform, externalId)
       if (!record) {
         skipped++
         continue

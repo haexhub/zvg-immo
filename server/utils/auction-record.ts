@@ -269,15 +269,124 @@ export async function readAuctionRecord(platform: string, externalId: string): P
   return (await attachPhotos(result.rows))[0] ?? null
 }
 
+/**
+ * Serialises whole-table loads. One load of the ~54k auctions costs ~330-530 MB
+ * at peak and keeps ~220-350 MB alive while the result is held; three at once
+ * (a task, a settings poll, a snapshot) measured ~1.5 GB — enough to get the
+ * app OOM-killed on a host with no headroom. Waiting for the previous load
+ * costs seconds; running them side by side costs the process.
+ */
+let fullLoadChain: Promise<unknown> = Promise.resolve()
+function exclusiveFullLoad<T>(load: () => Promise<T>): Promise<T> {
+  const run = fullLoadChain.then(load, load)
+  fullLoadChain = run.catch(() => undefined)
+  return run
+}
+
+/** Prefer iterateAuctionRecords (bounded memory) when the caller only folds
+ *  over the records; this materializes every one of them. */
 export async function readAuctionRecords(country?: string, options: { includePhotos?: boolean } = {}): Promise<AuctionRecord[]> {
   const db = getPool()
   if (!db) return []
-  const result = country
-    ? await db.query<AuctionRecordRow>(`${SELECT_SQL} WHERE a.country = $1 ORDER BY a.platform, a.external_id`, [country])
-    : await db.query<AuctionRecordRow>(`${SELECT_SQL} ORDER BY a.platform, a.external_id`)
-  return options.includePhotos === false
-    ? result.rows.map((row) => fromRow(row, []))
-    : await attachPhotos(result.rows)
+  return await exclusiveFullLoad(async () => {
+    const result = country
+      ? await db.query<AuctionRecordRow>(`${SELECT_SQL} WHERE a.country = $1 ORDER BY a.platform, a.external_id`, [country])
+      : await db.query<AuctionRecordRow>(`${SELECT_SQL} ORDER BY a.platform, a.external_id`)
+    return options.includePhotos === false
+      ? result.rows.map((row) => fromRow(row, []))
+      : await attachPhotos(result.rows)
+  })
+}
+
+const ITERATE_CHUNK_SIZE = 500
+
+/**
+ * Walks every auction (optionally of one country) in `platform, external_id`
+ * order by keyset pagination, so only one chunk is ever in memory. Same record
+ * shape and order as readAuctionRecords. It is not a snapshot: rows written
+ * while it runs may or may not be seen, which is fine for the counting and
+ * filtering it exists for.
+ */
+export async function* iterateAuctionRecords(
+  country?: string,
+  options: { includePhotos?: boolean; chunkSize?: number } = {},
+): AsyncGenerator<AuctionRecord> {
+  const db = getPool()
+  if (!db) return
+  const chunkSize = options.chunkSize ?? ITERATE_CHUNK_SIZE
+  let after: { platform: string; externalId: string } | null = null
+  for (;;) {
+    const params: unknown[] = []
+    const conditions: string[] = []
+    if (country) conditions.push(`a.country = $${params.push(country)}`)
+    if (after) conditions.push(`(a.platform, a.external_id) > ($${params.push(after.platform)}, $${params.push(after.externalId)})`)
+    const { rows } = await db.query<AuctionRecordRow>(
+      `${SELECT_SQL}${conditions.length ? ` WHERE ${conditions.join(' AND ')}` : ''} ORDER BY a.platform, a.external_id LIMIT $${params.push(chunkSize)}`,
+      params,
+    )
+    if (rows.length === 0) return
+    const records = options.includePhotos === false ? rows.map((row) => fromRow(row, [])) : await attachPhotos(rows)
+    yield* records
+    if (rows.length < chunkSize) return
+    const last = rows[rows.length - 1]!
+    after = { platform: last.platform, externalId: last.external_id }
+  }
+}
+
+export interface AuctionKey {
+  platform: string
+  externalId: string
+}
+
+const BY_KEYS_CHUNK_SIZE = 500
+
+/** Records for exactly these auctions, keyed like readAuctionRecordMap. Unknown
+ *  keys are simply absent. */
+export async function readAuctionRecordsByKeys(
+  keys: readonly AuctionKey[],
+  options: { includePhotos?: boolean } = {},
+): Promise<Map<string, AuctionRecord>> {
+  const db = getPool()
+  const out = new Map<string, AuctionRecord>()
+  if (!db) return out
+  for (let start = 0; start < keys.length; start += BY_KEYS_CHUNK_SIZE) {
+    const chunk = keys.slice(start, start + BY_KEYS_CHUNK_SIZE)
+    const { rows } = await db.query<AuctionRecordRow>(
+      `${SELECT_SQL} WHERE (a.platform, a.external_id) IN (SELECT p, e FROM unnest($1::text[], $2::text[]) AS t(p, e))`,
+      [chunk.map((key) => key.platform), chunk.map((key) => key.externalId)],
+    )
+    const records = options.includePhotos === false ? rows.map((row) => fromRow(row, [])) : await attachPhotos(rows)
+    for (const record of records) out.set(cacheKey(record.auction.platform, record.auction.externalId), record)
+  }
+  return out
+}
+
+const CANDIDATE_CHUNK_SIZE = 200
+
+/**
+ * Lookup for a run that walks a known candidate list in order (reprocess):
+ * records are read a chunk at a time, for just those candidates, instead of
+ * the whole table up front. Only the current chunk stays resident, and each
+ * record is as fresh as the moment its chunk was read rather than as old as the
+ * run's start. Out-of-order access still works, it just re-reads a chunk.
+ */
+export function createCandidateRecordLoader(candidates: readonly AuctionKey[], chunkSize = CANDIDATE_CHUNK_SIZE) {
+  const positions = new Map(candidates.map((candidate, index) => [cacheKey(candidate.platform, candidate.externalId), index]))
+  let chunkStart = -1
+  let chunk = new Map<string, AuctionRecord>()
+  return {
+    async get(platform: string, externalId: string): Promise<AuctionRecord | undefined> {
+      const key = cacheKey(platform, externalId)
+      const position = positions.get(key)
+      if (position === undefined) return undefined
+      const start = position - (position % chunkSize)
+      if (start !== chunkStart) {
+        chunk = await readAuctionRecordsByKeys(candidates.slice(start, start + chunkSize))
+        chunkStart = start
+      }
+      return chunk.get(key)
+    },
+  }
 }
 
 export async function readAuctionRecordMap(

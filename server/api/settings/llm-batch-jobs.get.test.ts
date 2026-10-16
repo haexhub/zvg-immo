@@ -5,7 +5,14 @@ vi.mock('~/server/utils/llm-batch-jobs', () => ({
   listRecentLlmBatchJobs: vi.fn(),
   getAllLlmBatchCapabilities: vi.fn(),
 }))
-vi.mock('~/server/utils/auction-record', () => ({ readAuctionRecords: vi.fn() }))
+vi.mock('~/server/utils/auction-record', () => {
+  const readAuctionRecords = vi.fn()
+  return {
+    readAuctionRecords,
+    // The code streams records; serve the stream from the array each test stubs.
+    iterateAuctionRecords: (...args: unknown[]) => (async function* () { yield* (await readAuctionRecords(...args)) ?? [] })(),
+  }
+})
 vi.mock('~/server/utils/auction-fetch-state', () => ({ readAuctionFetchStates: vi.fn(async () => new Map()) }))
 vi.mock('~/server/utils/extract/gemini-batch', () => ({ isGeminiBatchTierPaid: vi.fn() }))
 vi.mock('~/server/utils/task-runs', () => ({ getTaskRunStatus: vi.fn() }))

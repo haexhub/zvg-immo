@@ -1,5 +1,5 @@
 import { getPool } from '~/server/utils/db'
-import { readAuctionRecords } from '~/server/utils/auction-record'
+import { iterateAuctionRecords } from '~/server/utils/auction-record'
 import { classifyLlmStatus, isLlmExtractionInScope, type LlmStatusBucket } from '~/server/utils/llm-status'
 import { ensureEnabledCountriesLoaded, listRegisteredCountries } from '~/server/crawlers/registry'
 
@@ -13,6 +13,9 @@ export interface LlmStatusItem {
   llmFailures: number
   lastErrorMessage: string | null
 }
+
+/** What is kept per match while streaming, before the error message is resolved for the page. */
+type LlmStatusMatch = Omit<LlmStatusItem, 'lastErrorMessage'>
 
 export interface LlmStatusList {
   items: LlmStatusItem[]
@@ -79,48 +82,49 @@ export default defineEventHandler(async (event): Promise<LlmStatusList> => {
     throw createError({ statusCode: 400, statusMessage: 'direction muss asc oder desc sein.' })
   }
 
-  const records = await readAuctionRecords(country, { includePhotos: false })
-  const matching = records
-    .filter(isLlmExtractionInScope)
-    .filter((record) => classifyLlmStatus(record) === bucket)
-    .filter((record) => !search || [
-      record.auction.platform,
-      record.auction.externalId,
-      record.auction.title,
-      record.auction.region,
-      record.auction.caseNumber,
-    ].some((value) => value?.toLocaleLowerCase().includes(search)))
-    .sort((left, right) => {
-      const field = (sort || 'platform') as LlmStatusSort
-      const value = (record: typeof left): string | number => {
-        if (field === 'title') return record.auction.title ?? ''
-        if (field === 'region') return record.auction.region
-        if (field === 'failures') return record.auction.processing?.llmFailures ?? 0
-        // Error messages are only resolved for the visible error page below;
-        // platform remains the stable, inexpensive order for that column.
-        return record.auction.platform
-      }
-      const a = value(left)
-      const b = value(right)
-      const compared = typeof a === 'number' && typeof b === 'number' ? a - b : String(a).localeCompare(String(b))
-      return direction === 'desc' ? -compared : compared
+  // Streamed, keeping only a slim projection of the matches: a country can hold
+  // tens of thousands of records and this page is requested repeatedly.
+  const matching: LlmStatusMatch[] = []
+  for await (const record of iterateAuctionRecords(country, { includePhotos: false })) {
+    if (!isLlmExtractionInScope(record) || classifyLlmStatus(record) !== bucket) continue
+    const { auction } = record
+    if (search && ![auction.platform, auction.externalId, auction.title, auction.region, auction.caseNumber]
+      .some((value) => value?.toLocaleLowerCase().includes(search))) continue
+    matching.push({
+      platform: auction.platform,
+      externalId: auction.externalId,
+      title: auction.title,
+      region: auction.region,
+      caseNumber: auction.caseNumber,
+      auctionDateIso: auction.auctionDateIso,
+      llmFailures: auction.processing?.llmFailures ?? 0,
     })
+  }
+  matching.sort((left, right) => {
+    const field = (sort || 'platform') as LlmStatusSort
+    const value = (item: LlmStatusMatch): string | number => {
+      if (field === 'title') return item.title ?? ''
+      if (field === 'region') return item.region
+      if (field === 'failures') return item.llmFailures
+      // Error messages are only resolved for the visible error page below;
+      // platform remains the stable, inexpensive order for that column.
+      return item.platform
+    }
+    const a = value(left)
+    const b = value(right)
+    const compared = typeof a === 'number' && typeof b === 'number' ? a - b : String(a).localeCompare(String(b))
+    return direction === 'desc' ? -compared : compared
+  })
   const page = matching.slice(offset, offset + limit)
   const errors = bucket === 'error'
-    ? await lastErrorMessages(page.map((r) => ({ platform: r.auction.platform, externalId: r.auction.externalId })))
+    ? await lastErrorMessages(page.map((item) => ({ platform: item.platform, externalId: item.externalId })))
     : new Map<string, string>()
 
   return {
     total: matching.length,
-    items: page.map((record) => ({
-      platform: record.auction.platform,
-      externalId: record.auction.externalId,
-      title: record.auction.title,
-      region: record.auction.region,
-      caseNumber: record.auction.caseNumber,
-      auctionDateIso: record.auction.auctionDateIso,
-      llmFailures: record.auction.processing?.llmFailures ?? 0,
-      lastErrorMessage: errors.get(`${record.auction.platform}:${record.auction.externalId}`) ?? null,
+    items: page.map((item) => ({
+      ...item,
+      lastErrorMessage: errors.get(`${item.platform}:${item.externalId}`) ?? null,
     })),
   }
 })
