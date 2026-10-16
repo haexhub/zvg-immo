@@ -8,7 +8,7 @@ import { readAuctionRecordMap } from '../utils/auction-record'
 import { readAuctionFetchStates, writeAuctionLlmClaim, writeAuctionLlmPipelineState } from '../utils/auction-fetch-state'
 import { readArtifactProcessingState } from '../utils/artifact-version-state'
 import { readExtractionChainStrategy, readExtractionLlmConfigChain } from '../utils/extract/llm-task-config'
-import { readLlmExecutionMode } from '../utils/app-settings'
+import { getLlmConcurrency, readLlmExecutionMode } from '../utils/app-settings'
 import { isLlmBatchPending, submitLlmBatch } from '../utils/extract/llm-batch'
 import { extractByLlm } from '../utils/extract/llm'
 import { isLlmProviderUnavailable } from '../utils/extract/llm-errors'
@@ -17,7 +17,8 @@ import { writeAuctionDetails } from '../utils/auction-details'
 import { upsertCurrentAuctions } from '../utils/current-auctions'
 import { recordTaskRunError } from '../utils/task-run-errors'
 import { recordLlmUsage } from '../utils/llm-usage'
-import { recordTaskRunStart } from '../utils/task-runs'
+import { recordTaskRunProgress, recordTaskRunStart } from '../utils/task-runs'
+import { isRateLimitError } from '../utils/extract/llm-errors'
 
 vi.mock('../utils/storage-download', () => ({
   listDistinctCaptures: vi.fn(),
@@ -50,7 +51,7 @@ vi.mock('../utils/extract/llm-task-config', () => ({
   readExtractionChainStrategy: vi.fn(),
   readExtractionLlmConfigChain: vi.fn(),
 }))
-vi.mock('../utils/app-settings', () => ({ readLlmExecutionMode: vi.fn(), getLlmMaxPerRun: vi.fn(async () => null) }))
+vi.mock('../utils/app-settings', () => ({ readLlmExecutionMode: vi.fn(), getLlmMaxPerRun: vi.fn(async () => null), getLlmConcurrency: vi.fn(async () => null) }))
 vi.mock('../utils/extract/llm-batch', () => ({
   isLlmBatchPending: vi.fn(() => false),
   isLlmBatchProviderBroken: vi.fn(async () => false),
@@ -1020,5 +1021,105 @@ describe('runReprocess crawl-owned field recovery (WP-3 SE root cause)', () => {
       expect.anything(),
       expect.anything(),
     )
+  })
+})
+
+describe('runReprocess parallel lanes', () => {
+  const ids = Array.from({ length: 12 }, (_, i) => String(100 + i))
+
+  function seedCandidates(): void {
+    // Earlier tests leave unconsumed *Once values behind (clearAllMocks keeps
+    // them), so start these from a clean slate.
+    for (const fn of [listDistinctCaptures, downloadBlob, readArtifactProcessingState, readAuctionFetchStates, writeAuctionDetails, extractByLlm, isRateLimitError]) {
+      vi.mocked(fn).mockReset()
+    }
+    vi.mocked(isRateLimitError).mockReturnValue(false)
+    vi.mocked(prepareArchivedLlmDocuments).mockReset()
+    vi.mocked(prepareArchivedLlmDocuments).mockImplementation(async (_auction, opts) => ({
+      input: {},
+      documentSetItems: [],
+      documentSetComplete: true,
+      artifactVersionId: opts.artifactVersionId,
+    }) as never)
+    vi.mocked(isLlmBatchPending).mockReset()
+    vi.mocked(isLlmBatchPending).mockReturnValue(false)
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map())
+    vi.mocked(readArtifactProcessingState).mockResolvedValue(emptyArtifactState)
+    vi.mocked(writeAuctionDetails).mockResolvedValue({ version: 3, changed: true })
+    vi.mocked(listDistinctCaptures).mockResolvedValue([{ contentHash: 'auction-hash', sourceUrl: null, capturedAt: '2026-08-02T10:00:00.000Z' }])
+    vi.mocked(getPool).mockReturnValue({
+      query: vi.fn(async () => ({ rows: ids.map((id) => ({ platform: 'zvg-portal', external_id: id, country: 'de' })) })),
+    } as never)
+    vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map(ids.map((id) => [`zvg-portal:${id}`, {
+      auction: { ...auction(), externalId: id },
+      detailsId: 7,
+      detailsVersion: 2,
+      artifactVersionId: null,
+    }])))
+    vi.mocked(downloadBlob).mockImplementation(async () => Buffer.from(JSON.stringify(auction())))
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+      baseUrl: 'https://api.example.test', apiKey: 'secret', model: 'vision-model', provider: 'gemini-native',
+    }])
+  }
+
+  function trackInFlight() {
+    const stats = { active: 0, peak: 0, calls: 0 }
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+      opts?.onProviderAttempt?.()
+      stats.calls++
+      stats.active++
+      stats.peak = Math.max(stats.peak, stats.active)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      stats.active--
+      return null
+    })
+    return stats
+  }
+
+  it('runs candidates in parallel up to the configured lane count and never beyond the budget', async () => {
+    seedCandidates()
+    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { maxPerRun: '5' } }))
+    vi.mocked(getLlmConcurrency).mockResolvedValue(3)
+    const stats = trackInFlight()
+
+    const result = await runReprocess({ country: 'de' })
+
+    expect(stats.peak).toBe(3)
+    // The shared budget holds exactly even with lanes racing for the last slots.
+    expect(stats.calls).toBe(5)
+    expect(result).toMatchObject({ candidates: 12, processed: 12, llmCalls: 5 })
+  })
+
+  it('keeps per-country progress consistent with the totals', async () => {
+    seedCandidates()
+    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { maxPerRun: '4' } }))
+    vi.mocked(getLlmConcurrency).mockResolvedValue(4)
+    trackInFlight()
+
+    await runReprocess({ country: 'de' })
+
+    const [, , extra] = vi.mocked(recordTaskRunProgress).mock.calls.at(-1)!
+    expect(extra?.progressByCountry?.de).toEqual({ candidatesTotal: 12, processed: 12, skipped: 0, llmCalls: 4, llmErrors: 0 })
+  })
+
+  it('stops handing out candidates after a rate limit, letting in-flight ones finish', async () => {
+    seedCandidates()
+    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { maxPerRun: '50' } }))
+    vi.mocked(getLlmConcurrency).mockResolvedValue(2)
+    const rateLimit = new Error('429 too many requests')
+    vi.mocked(isRateLimitError).mockImplementation((err) => err === rateLimit)
+    let calls = 0
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+      opts?.onProviderAttempt?.()
+      calls++
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      throw rateLimit
+    })
+
+    const result = await runReprocess({ country: 'de' })
+
+    expect(calls).toBeLessThanOrEqual(2)
+    expect(result.warning).toBeDefined()
+    expect(result.processed).toBe(0)
   })
 })

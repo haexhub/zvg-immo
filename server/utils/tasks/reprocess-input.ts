@@ -8,7 +8,6 @@ import type { DocumentSummaryInput } from '~/server/utils/extract/pdf-documents'
 import { withDerivedExtractionFields, type MergeInputFields } from '~/server/utils/extract/merge-llm-result'
 import { buildReprocessFields } from '~/server/utils/extract/reprocess-fields'
 import { getPool } from '~/server/utils/db'
-import { getLlmMaxPerRun } from '~/server/utils/app-settings'
 import { hasUnparsedArtifactVersion, readArtifactProcessingState, type ArtifactProcessingState } from '~/server/utils/artifact-version-state'
 import { readArchivedAuctionSnapshot } from '~/server/utils/archived-auction'
 import { CURRENT_AUCTION_CONDITIONS } from '~/server/utils/current-auction-sql'
@@ -19,12 +18,6 @@ import { normalizePhoto } from '~/lib/photo'
 import { ensureEnabledCountriesLoaded, getEnabledCountryCodes, isCountryEnabled } from '~/server/crawlers/registry'
 
 const IMAGES_DIR = join(process.cwd(), '.cache_zvg', 'images')
-// Claude OAuth subscriptions have a shared, finite weekly allowance. One
-// bounded call per scheduled/manual run is deliberately conservative: an
-// operator can raise it through NUXT_EXTRACT_LLM_MAX_PER_RUN after measuring
-// real usage, but an unset setting must never drain a week's allowance in an
-// hourly sweep.
-const DEFAULT_MAX_LLM_PER_RUN = 1
 // Cap on candidate photos sent to the LLM for curation per call — a Gutachten
 // with dozens of embedded rasters would otherwise blow the token budget.
 const MAX_CANDIDATE_PHOTOS = 8
@@ -71,7 +64,7 @@ export interface ReprocessOptions {
   failedOnly?: boolean
   /** Explicit admin retry of locked-out candidates may process the complete
    *  selected error bucket. The normal cron and force actions keep the global
-   *  per-run budget (see readMaxLlmPerRun). */
+   *  per-run budget (see reprocess-budget.ts). */
   ignoreLlmBudget?: boolean
   /** Excludes any candidate at or past MAX_LLM_FAILURES outright, even one
    *  whose LLM_FAILURE_RETRY_COOLDOWN_HOURS window has elapsed. Without this,
@@ -135,19 +128,6 @@ export function inputNeedsMultimodal(input: LlmInput): boolean {
     input.pdfBytes ||
     input.pdfDocuments?.length
   )
-}
-
-export function readMaxLlmPerRun(): number {
-  const raw = Number((useRuntimeConfig().extractLlm as { maxPerRun?: string })?.maxPerRun)
-  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_MAX_LLM_PER_RUN
-}
-
-/** Per-run LLM budget: the admin-set value (/settings) wins over the env
- *  default, so it can be raised without a redeploy. */
-export async function resolveMaxLlmPerRun(): Promise<number> {
-  const db = getPool()
-  const stored = db ? await getLlmMaxPerRun(db).catch(() => null) : null
-  return stored ?? readMaxLlmPerRun()
 }
 
 export interface Candidate {

@@ -92,6 +92,11 @@ export default defineNuxtConfig({
       // single day.
       //   NUXT_EXTRACT_LLM_MAX_PER_RUN=5
       maxPerRun: '',
+      // How many candidates one reprocess run works on in parallel (each lane
+      // is a request in flight against the provider's quota and a DB
+      // connection). Empty → 1 (sequential). Overridable on /settings.
+      //   NUXT_EXTRACT_LLM_CONCURRENCY=3
+      concurrency: '',
       // Locked-out auctions (llm_failures >= MAX_LLM_FAILURES) the scheduled
       // run retries per run on top of maxPerRun, oldest attempt first and
       // outside that cap (see reprocess-locked-slice.ts). Empty → 10; 0 → off.
