@@ -3,6 +3,7 @@ import { isTaskActive, runExclusiveTask } from '~/server/utils/exclusive-task'
 import { isAutomaticLlmEnabled } from '~/server/utils/automatic-task-gate'
 import type { ReprocessOptions, ReprocessResult } from '../utils/tasks/reprocess-input'
 import { runReprocess } from '../utils/tasks/reprocess-run'
+import { isPlainScheduledRun, runLockedRetrySlice } from '../utils/tasks/reprocess-locked-slice'
 
 export { reprocessAuction } from '../utils/tasks/reprocess-single'
 export { runReprocess } from '../utils/tasks/reprocess-run'
@@ -31,7 +32,11 @@ export async function runReprocessTask(options: ReprocessOptions = {}): Promise<
   return await runExclusiveTask('reprocess', async (signal) => {
     await recordTaskRunStart('reprocess')
     try {
+      // Before the long full-backlog pass: that one can run for an hour and is
+      // cut short by a restart or a rate limit, which would starve the slice.
+      const slice = isPlainScheduledRun(options) ? await runLockedRetrySlice(signal) : null
       const result = await runReprocess(options, signal)
+      if (slice?.warning) result.warning = result.warning ? `${slice.warning} ${result.warning}` : slice.warning
       const { warning, lastLlmError, ...summary } = result
       await recordTaskRunEnd('reprocess', { result: summary, warning, llmError: lastLlmError })
       return { result }

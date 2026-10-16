@@ -11,6 +11,7 @@ Rules:
 ## Settings-Seite (Admin-UI)
 
 `pages/settings.vue` rendert nach dem Login (`/api/settings/{login,logout,session}`) zuerst `SettingsCountryStatusOverview` und danach die Cards aus `components/settings/*.vue` in vier Sektionen (Betrieb & Fehler / Crawling & Anreicherung / KI-LLM / Verwaltung). "detached" = POST antwortet sofort mit `{started:true}`, der eigentliche Task läuft im Hintergrund weiter (Reverse-Proxy-Timeout umgehen); Fortschritt kommt über GET-Status bzw. `useSettingsTaskOverview`/`usePollWhileActive`.
+Der geplante Reprocess-Lauf (Cron/Boot, ohne Scope-Optionen) versucht vor seinem Vollpass zusätzlich bis zu `extractLlm.lockedRetryPerRun` gesperrte Auktionen erneut (Default 10, `NUXT_EXTRACT_LLM_LOCKED_RETRY_PER_RUN`, 0 = aus; `reprocess-locked-slice.ts`) — ohne das erreicht das gleichmäßig auf Plattformen verteilte `maxPerRun`-Budget gesperrte Auktionen nur zufällig.
 Manuelle Reprocess-/Enrich-/External-Enrichment-Trigger rufen `runReprocessTask`/`runEnrichTask`/`runExternalEnrichmentTask` direkt auf, nie Nitros `runTask` (das verwirft bei laufendem Task die Payload). Unter manuellen Reprocess-/External-Läufen gilt latest-run-wins; manuelle Enrich-Läufe reihen sich hinter den aktiven ein (ein Abbruch kostete Crawl und Finalize-Persistenz). Ein Cron-/Boot-Lauf überspringt, solange ein Lauf aktiv ist.
 
 | Card | Routen | Modus |

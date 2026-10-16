@@ -92,6 +92,12 @@ export default defineNuxtConfig({
       // single day.
       //   NUXT_EXTRACT_LLM_MAX_PER_RUN=5
       maxPerRun: '',
+      // Locked-out auctions (llm_failures >= MAX_LLM_FAILURES) the scheduled
+      // run retries per run on top of maxPerRun, oldest attempt first and
+      // outside that cap (see reprocess-locked-slice.ts). Empty → 10; 0 → off.
+      // Each retry costs one to a few calls, so size it like maxPerRun.
+      //   NUXT_EXTRACT_LLM_LOCKED_RETRY_PER_RUN=10
+      lockedRetryPerRun: '',
       // Gemini Batch safety rail. The Gemini API doesn't expose a reliable
       // "am I Free/Paid Tier?" endpoint to API-key callers; AI Studio remains
       // the source of truth for the active tier/limits. Fail closed to "free"
