@@ -19,7 +19,7 @@ vi.mock('../utils/automatic-task-gate', () => ({ isAutomaticLlmEnabled: vi.fn(as
 vi.stubGlobal('defineTask', (definition: unknown) => definition)
 
 const { runReprocess } = await import('../utils/tasks/reprocess-run')
-const { runReprocessTask } = await import('./reprocess')
+const { default: reprocessTask, runReprocessTask } = await import('./reprocess')
 const {
   DEFAULT_LOCKED_RETRY_PER_RUN,
   isPlainScheduledRun,
@@ -209,5 +209,29 @@ describe('runReprocessTask locked slice', () => {
       warning: undefined,
       llmError: 'full-error',
     })
+  })
+})
+
+describe('reprocess task entry point', () => {
+  // Nitro calls the default export, not runReprocessTask directly. A facade
+  // that only re-exports the runner (no local binding) still passes every
+  // test above but throws a ReferenceError here — and in production.
+  it('runs a scheduled payload through the task runner', async () => {
+    const task = reprocessTask as unknown as { run(event: { payload?: unknown }): Promise<unknown> }
+
+    await expect(task.run({ payload: {} })).resolves.toMatchObject({ result: expect.objectContaining({ processed: 20 }) })
+
+    // locked slice + full pass
+    expect(runReprocess).toHaveBeenCalledTimes(2)
+  })
+
+  it('passes a manual payload on unchanged', async () => {
+    const task = reprocessTask as unknown as { run(event: { payload?: unknown }): Promise<unknown> }
+
+    await task.run({ payload: { trigger: 'manual', platform: 'zvg-portal' } })
+
+    expect(vi.mocked(runReprocess).mock.calls.map(([options]) => options)).toEqual([
+      { trigger: 'manual', platform: 'zvg-portal' },
+    ])
   })
 })
